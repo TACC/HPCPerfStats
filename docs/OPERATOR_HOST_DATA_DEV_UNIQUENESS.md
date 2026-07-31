@@ -75,3 +75,53 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 ```
 
 Then redeploy the Phase 1 image and let `migrate` apply `0030` for real.
+
+---
+
+## Stage 2 — apply 5-column UNIQUE and restore compression (`0032`)
+
+Stage 2 ships in a **separate image** that includes migration `0032_host_data_unique_include_dev_db`. It replaces the live 4-column UNIQUE with `UNIQUE (time, host, type, event, dev)` and restores `add_compression_policy('host_data', compress_after => INTERVAL '8d')`.
+
+**Do not run Stage 2 until** that site’s Stage 1 done gate is green (`compressed_chunks = 0`) and, on **hpcperfstats02**, the PK normalize block above has left only the 4-column UNIQUE (no `contype = p`). Migration `0032` does **not** drop or rewrite primary keys; if a multi-column PK remains, migrate soft-skips with a NOTICE and leaves uniqueness unchanged.
+
+**Compose cwd (prose only):** same as Stage 1 — checkout with `docker-compose.yaml`. Do not prefix paste blocks with `cd`.
+
+### Preflight (per site)
+
+**db — confirm decompress gate still zero and constraint shape:**
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';" -c "SELECT c.conname, c.contype, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) AS columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype IN ('p', 'u') ORDER BY c.contype, c.conname;" -c "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
+```
+
+Expect: `compressed_chunks = 0`; one 4-column UNIQUE on `(time, host, type, event)`; **no** primary-key row (especially on 02); `null_dev_rows` ideally `0`. If `null_dev_rows` is huge, backfill before migrate (session timeout off):
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; UPDATE host_data SET dev = '' WHERE dev IS NULL;"
+```
+
+### Deploy and one-shot migrate (avoid `web` crash-loop)
+
+`ADD UNIQUE` on a large `host_data` can run for a long time. Under Compose `restart: always`, a timed-out or killed startup migrate crash-loops `web`. Prefer a **stopped `web` + one-shot migrate**:
+
+1. Deploy / pull the image that contains migration `0032` (rebuild stack as you normally release).
+2. **Stop `web`** (or scale it to 0) so nothing restarts mid-DDL. Keep **`db`** up.
+3. Run migrate once:
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml run --rm web bash -lc 'python3 hpcperfstats/site/manage.py migrate machine 0032'
+```
+
+4. Start `web` again (normal `up` / recreate).
+
+If you accidentally start `web` before the gates pass, `0032` is written to **soft-skip** (NOTICE + success) when compressed chunks remain or a multi-column PK is still present — uniqueness will not change until you fix the gate and re-run migrate (one-shot again).
+
+### Post-check
+
+**db — 5-col UNIQUE present; compression policy/job restored:**
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT c.conname, c.contype, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) AS columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype IN ('p', 'u') ORDER BY c.contype, c.conname;" -c "SELECT job_id, proc_name, schedule_interval, config FROM timescaledb_information.jobs WHERE hypertable_name = 'host_data' AND proc_name LIKE '%compress%' ORDER BY job_id;"
+```
+
+Expect a UNIQUE on `(time, host, type, event, dev)` (name may be `host_data_time_host_type_event_dev_uniq`) and a compression policy/job for `host_data` at **8 days**. After the policy ages in, `compressed_chunks` may become non-zero again — that is expected; do not re-run Stage 1 decompress unless you intentionally remove the policy again.

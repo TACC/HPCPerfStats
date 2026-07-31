@@ -24,7 +24,7 @@ The **hpcperfstats** package is split into two parts:
 | [**design-document.md**](docs/design-document.md) | As-built system design: architecture, data flow, components, contracts, and operations context. |
 | [**using-the-website-as-a-researcher.md**](docs/using-the-website-as-a-researcher.md) | How to read the Django/React job UI—plots, metrics, and diagnostic themes—for HPC users and researchers. |
 | [**TESTING.md**](docs/TESTING.md) | Test commands, CI, compose-backed workflows, Playwright/Vitest, and host vs container pytest notes. |
-| [**OPERATOR_HOST_DATA_DEV_UNIQUENESS.md**](docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md) | Phase 1 operator decompress for `host_data` 5-col uniqueness (per-site batch sizes, `df` gate, Phase 2 prerequisite). |
+| [**OPERATOR_HOST_DATA_DEV_UNIQUENESS.md**](docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md) | `host_data` 5-col uniqueness: Stage 1 decompress (+ 02 PK normalize) and Stage 2 one-shot migrate for `0032` / compress_after 8d. |
 
 **Maintaining `MONITOR_VARIABLES.md`:** the catalog is generated and augmented by maintainer scripts in the same folder: [`regenerate_monitor_variables_catalog.py`](docs/regenerate_monitor_variables_catalog.py), [`augment_monitor_variables_diagnostics.py`](docs/augment_monitor_variables_diagnostics.py).
 

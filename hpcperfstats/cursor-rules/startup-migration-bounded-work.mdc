@@ -24,16 +24,17 @@ globs: services-conf/django_startup.sh,hpcperfstats/site/lib/machine/migrations/
 | Concern | Do | Don't |
 |---------|----|-------|
 | Compression policy change | Idempotent `remove_compression_policy(..., if_exists => true)` / bounded `add_compression_policy` | Full hypertable rewrite in the same migrate as a timeout-prone UPDATE |
-| Unique / PK rewrite on compressed hypertables | Phase 1: state + policy off; Phase 2 after `compressed_chunks=0` | `ADD UNIQUE` while compressed chunks exist |
+| Unique / PK rewrite on compressed hypertables | Phase 1: state + policy off; Phase 2 (`0032`) after `compressed_chunks=0` with soft-skip NOTICE if still compressed or multi-col PK remains | `ADD UNIQUE` while compressed chunks exist; drop/recreate PK inside migrate on 02-class sites |
+| Phase 2 long UNIQUE | Operator one-shot `migrate` with `web` stopped (`docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md` Stage 2); session `statement_timeout = 0`; composite PK normalize is operator-owned | Rely on `django_startup` + `restart: always` for multi-hour `ADD UNIQUE` |
 | Model drift | Commit a reviewed migration; keep `makemigrations --check` green in CI/tests | Rely on startup `makemigrations` to "heal" drift |
 | Startup script | `manage.py migrate` (+ collectstatic / heal) | `manage.py makemigrations` before migrate |
 
 ## Regression coverage
 
-- `test_migrations.py` — Phase 1 `0030` contracts; `0031` state-only; Autodetector + host `call_command(makemigrations --check --dry-run)` (history check stubbed) for 0031-class Meta drift
+- `test_migrations.py` — Phase 1 `0030` contracts; `0031` state-only; Phase 2 `0032` soft-skips / no PK drop / 5-col UNIQUE / 8d policy; Autodetector + host `call_command(makemigrations --check --dry-run)` (history check stubbed) for 0031-class Meta drift
 - `test_makemigrations_check_compose.py` — compose runs unpatched `makemigrations --check --dry-run` against live Timescale
 - `test_rediswait.py::test_django_startup_does_not_run_makemigrations` — startup script guard
-- Operator decompress: `docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md`
+- Operator Stage 1 decompress + Stage 2 one-shot migrate: `docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md`
 
 ## Overlap
 

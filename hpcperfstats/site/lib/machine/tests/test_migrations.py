@@ -170,6 +170,67 @@ def test_0031_is_state_only():
   assert not any(isinstance(op, forbidden) for op in ops)
 
 
+def _0032_sql():
+  mod = importlib.import_module(
+      "hpcperfstats.site.lib.machine.migrations.0032_host_data_unique_include_dev_db"
+  )
+  assert mod.Migration.dependencies == [
+      ("machine", "0031_alter_job_plot_artifact_options_and_more")
+  ]
+  assert mod.Migration.atomic is False
+  assert len(mod.Migration.operations) == 1
+  op = mod.Migration.operations[0]
+  assert isinstance(op, migrations.RunSQL)
+  assert isinstance(op.sql, str)
+  assert op.reverse_sql is migrations.RunSQL.noop
+  return op.sql
+
+
+def test_0032_sets_statement_timeout_zero():
+  sql = _0032_sql()
+  assert "SET statement_timeout = 0" in sql
+
+
+def test_0032_skips_when_compressed_chunks_present():
+  sql = _0032_sql().lower()
+  assert "is_compressed" in sql
+  assert "raise notice" in sql
+  assert "skipping" in sql
+  assert "compressed" in sql
+
+
+def test_0032_does_not_drop_primary_key():
+  """Operator owns hpcperfstats02 PK normalize; migrate must not DROP PK."""
+  sql = _0032_sql()
+  sql_l = sql.lower()
+  assert "drop constraint host_data_pkey" not in sql_l
+  assert "host_data_pkey" not in sql_l
+  assert "multi_col_pk" in sql_l
+  assert "contype = 'p'" in sql_l
+  # UNIQUE drops use discovered conname via format(... %I), not a hard-coded PK.
+  assert "DROP CONSTRAINT %I" in sql or "drop constraint %i" in sql_l
+
+
+def test_0032_drops_four_col_unique_by_columns():
+  sql = _0032_sql()
+  assert "ARRAY['time', 'host', 'type', 'event']::text[]" in sql
+  assert "ARRAY['time', 'host', 'type', 'event', 'dev']::text[]" in sql
+  assert "host_data_time_host_type_event_dev_uniq" in sql
+  assert "UNIQUE (time, host, type, event, dev)" in sql
+  assert "DROP CONSTRAINT" in sql.upper() or "drop constraint" in sql.lower()
+
+
+def test_0032_restores_compression_policy_8d():
+  sql = _0032_sql()
+  assert "add_compression_policy" in sql
+  assert "compress_after => INTERVAL '8d'" in sql
+
+
+def test_0032_coalesces_null_dev():
+  sql = _0032_sql().lower()
+  assert "update host_data set dev = '' where dev is null" in sql
+
+
 def test_no_pending_model_migrations():
   """Host Autodetector: no model/migration drift (0031-class Meta surprises)."""
   from django.apps import apps

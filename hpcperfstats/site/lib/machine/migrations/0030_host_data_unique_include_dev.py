@@ -5,8 +5,8 @@ Target uniqueness is ``(time, host, type, event, dev)``, but Timescale cannot
 
 * Updates Django state to the 5-column ``unique_together`` (no DB UNIQUE swap).
 * Idempotently removes the ``host_data`` compression policy so operators can
-  decompress chunks outside migrate (Phase 2 later adds the DB UNIQUE / PK
-  rewrite and restores ``compress_after 8d``).
+  decompress chunks outside migrate (Phase 2 ``0032`` adds the DB UNIQUE and
+  restores ``compress_after 8d``; operator owns any aberrant PK normalize).
 
 Deliberately does **not** run an unbounded ``UPDATE host_data`` (that timed
 out under ``statement_timeout`` and crash-looped ``web``) and does **not**
