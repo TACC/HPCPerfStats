@@ -27,10 +27,15 @@ Follow neighboring tabs for typography (**`h3`** subsection headings), **`text-m
 
 ### Metrics tab source subsections
 
-- Group `metrics_list` rows by API **`type`** into ordered **`h3`** sections: **CPU → GPU → File System → Network → Misc** (map in [`jobMetricSourceSections.ts`](hpcperfstats/site/frontend/src/utils/jobMetricSourceSections.ts)).
+- Group `metrics_list` rows by API **`type`** into ordered **`h3`** sections inside Shadcn **`Card`** chrome (same rounded family as Job overview): **CPU → GPU → File System → Network → Misc** (map in [`jobMetricSourceSections.ts`](hpcperfstats/site/frontend/src/utils/jobMetricSourceSections.ts)).
 - **CPU** includes host CPU/PMC/IMC/DF/RAPL/CHA plus **`host_mem` / `host_numa`**; GPU includes `nvidia_gpu` / `amd_gpu` / **`intel_gpu`** / `gpu`; Network includes IB/OPA/Ethernet/LNET (`host_ib`, `host_opa`, `host_net`, `net`, `host_lnet`, `lnet`).
 - **Always show Network** (empty body: muted **Data not available.**). **Hide** empty GPU, File System, and Misc headings.
 - Preserve post-merge display order within each section (including combined DP/SP vector-width row under CPU). Two-column tables stay **per section**.
+
+### Resources section Cards
+
+- Wrap Resources blocks in **`Card`** chrome in order **Watt hours → GPU Information → Shared File Systems → Client/Server logs**.
+- **GPU Information:** aggregate stats are the main surface; **GPU inventory** is a default-**closed** `Collapsible` under the aggregates.
 
 ## Documentation
 

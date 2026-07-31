@@ -988,28 +988,136 @@ export default function JobDetail() {
         <h2 id="job-detail-resources-heading" className="text-lg font-medium">
           Resources
         </h2>
-        <div className="max-w-4xl">
-            {wattHoursMetric ? (
-              <Table className="mb-3 border text-sm">
-                <TableCaption className="sr-only">
-                  {wattHoursHasGpu
-                    ? `CPU and GPU energy for job ${job.jid}`
-                    : `CPU energy for job ${job.jid}`}
-                </TableCaption>
-                <TableBody>
-                  <TableRow>
-                    <TableCell className="border border-border">
-                      <b>{getJobWattHoursResourcesTitle(wattHoursHasGpu)}</b>
-                    </TableCell>
-                    <TableCell className="border border-border text-right">
-                      {formatDecimalStandard(wattHoursMetric.value)}
-                      {wattHoursMetric.units ? ` ${wattHoursMetric.units}` : ""}
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            ) : null}
-            <Table className="border text-sm">
+        <div className="job-detail-resources-cards flex max-w-4xl flex-col gap-3">
+          {wattHoursMetric ? (
+            <Card className="job-detail-resources-card mb-0" data-resources-block="watt-hours">
+              <CardContent>
+                <Table className="mb-0 border text-sm">
+                  <TableCaption className="sr-only">
+                    {wattHoursHasGpu
+                      ? `CPU and GPU energy for job ${job.jid}`
+                      : `CPU energy for job ${job.jid}`}
+                  </TableCaption>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell className="border border-border">
+                        <b>{getJobWattHoursResourcesTitle(wattHoursHasGpu)}</b>
+                      </TableCell>
+                      <TableCell className="border border-border text-right">
+                        {formatDecimalStandard(wattHoursMetric.value)}
+                        {wattHoursMetric.units ? ` ${wattHoursMetric.units}` : ""}
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {(detailsLoading ||
+            gpu_active != null ||
+            gpu_count != null ||
+            gpu_utilization_max != null ||
+            gpu_utilization_mean != null ||
+            gpuInventoryRows.length > 0) && (
+            <Card className="job-detail-resources-card mb-0" data-resources-block="gpu">
+              <CardContent className="space-y-3">
+                <h3 className="text-base font-medium">GPU Information</h3>
+                {detailsLoading &&
+                gpu_active == null &&
+                gpu_count == null &&
+                gpuInventoryRows.length === 0 ? (
+                  <p className="text-muted-foreground mb-0" role="status">
+                    Loading GPU statistics…
+                  </p>
+                ) : (
+                  <>
+                    <Table className="mb-0 border text-sm">
+                      <TableBody>
+                        {gpuStatsRows.map((row) => (
+                          <TableRow key={row.key}>
+                            <TableCell className={gpuStatsTableCellClass.label}>
+                              <b>{row.label}</b>
+                            </TableCell>
+                            <TableCell className={gpuStatsTableCellClass.value}>
+                              {row.value}
+                              {row.key === "gpu_util_max" &&
+                              gpuUtilOutOf != null &&
+                              row.value
+                                ? ` (sum of per-GPU %; out of ${formatDecimalStandard(gpuUtilOutOf)})`
+                                : null}
+                              {row.key === "gpu_util_mean" &&
+                              gpuUtilOutOf != null &&
+                              row.value
+                                ? ` (sum of per-GPU %; out of ${formatDecimalStandard(gpuUtilOutOf)})`
+                                : null}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                    {gpuInventoryRows.length > 0 ? (
+                      <Collapsible className="job-detail-gpu-inventory rounded-lg border px-3 py-2">
+                        <CollapsibleTrigger className="cursor-pointer text-left text-sm font-medium">
+                          GPU inventory ({formatDecimalStandard(gpuInventoryRows.length)} device
+                          {gpuInventoryRows.length === 1 ? "" : "s"})
+                          <span className="ms-2 text-sm font-normal text-muted-foreground">
+                            — expand for per-host device rows
+                          </span>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="mt-2">
+                          <p className="text-muted-foreground text-xs mb-2">
+                            {gpuInventoryHasDeviceIds
+                              ? "One row per host device. Utilization is percent of that GPU (0–100); job totals above sum across devices."
+                              : "Node-aggregate GPU telemetry (per-device IDs were not stored for this job). Dev shows — until new ingest preserves device identity."}
+                          </p>
+                          <Table className="mb-0 border text-sm">
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Host</TableHead>
+                                <TableHead>Dev</TableHead>
+                                <TableHead className="text-right">Max util %</TableHead>
+                                <TableHead className="text-right">Mean util %</TableHead>
+                                <TableHead className="text-right">Peak power W</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {gpuInventoryRows.map((row, idx) => (
+                                <TableRow key={`${row.host ?? ""}-${row.dev ?? ""}-${idx}`}>
+                                  <TableCell>{row.host ?? "—"}</TableCell>
+                                  <TableCell>{formatGpuDevCell(row.dev)}</TableCell>
+                                  <TableCell className="text-right">
+                                    {row.util_max != null
+                                      ? formatDecimalStandard(row.util_max)
+                                      : "—"}
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    {row.util_mean != null
+                                      ? formatDecimalStandard(row.util_mean)
+                                      : "—"}
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    {row.power_max_w != null
+                                      ? formatDecimalStandard(row.power_max_w)
+                                      : "—"}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    ) : null}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          <Card className="job-detail-resources-card mb-0" data-resources-block="shared-fs">
+            <CardContent className="space-y-3">
+              <h3 className="text-base font-medium">Shared File Systems</h3>
+              <Table className="mb-0 border text-sm">
                 <TableCaption className="sr-only">
                   Shared file system I/O for job {job.jid}
                 </TableCaption>
@@ -1059,114 +1167,38 @@ export default function JobDetail() {
                     ))
                   )}
                 </TableBody>
-            </Table>
-        {(detailsLoading ||
-          gpu_active != null ||
-          gpu_count != null ||
-          gpuInventoryRows.length > 0) && (
-          <div className="mt-3">
-            {detailsLoading &&
-            gpu_active == null &&
-            gpu_count == null &&
-            gpuInventoryRows.length === 0 ? (
-              <p className="text-muted-foreground mb-0" role="status">
-                Loading GPU statistics…
-              </p>
-            ) : (
-              <>
-                <Table className="mb-0 border text-sm">
-                  <TableBody>
-                    {gpuStatsRows.map((row) => (
-                      <TableRow key={row.key}>
-                        <TableCell className={gpuStatsTableCellClass.label}>
-                          <b>{row.label}</b>
-                        </TableCell>
-                        <TableCell className={gpuStatsTableCellClass.value}>
-                          {row.value}
-                          {row.key === "gpu_util_max" &&
-                          gpuUtilOutOf != null &&
-                          row.value
-                            ? ` (sum of per-GPU %; out of ${formatDecimalStandard(gpuUtilOutOf)})`
-                            : null}
-                          {row.key === "gpu_util_mean" &&
-                          gpuUtilOutOf != null &&
-                          row.value
-                            ? ` (sum of per-GPU %; out of ${formatDecimalStandard(gpuUtilOutOf)})`
-                            : null}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {gpuInventoryRows.length > 0 ? (
-                  <div className="mt-3">
-                    <h3 className="text-sm font-medium mb-1">GPU inventory</h3>
-                    <p className="text-muted-foreground text-xs mb-2">
-                      {gpuInventoryHasDeviceIds
-                        ? "One row per host device. Utilization is percent of that GPU (0–100); job totals above sum across devices."
-                        : "Node-aggregate GPU telemetry (per-device IDs were not stored for this job). Dev shows — until new ingest preserves device identity."}
-                    </p>
-                    <Table className="mb-0 border text-sm">
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Host</TableHead>
-                          <TableHead>Dev</TableHead>
-                          <TableHead className="text-right">Max util %</TableHead>
-                          <TableHead className="text-right">Mean util %</TableHead>
-                          <TableHead className="text-right">Peak power W</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {gpuInventoryRows.map((row, idx) => (
-                          <TableRow key={`${row.host ?? ""}-${row.dev ?? ""}-${idx}`}>
-                            <TableCell>{row.host ?? "—"}</TableCell>
-                            <TableCell>{formatGpuDevCell(row.dev)}</TableCell>
-                            <TableCell className="text-right">
-                              {row.util_max != null
-                                ? formatDecimalStandard(row.util_max)
-                                : "—"}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {row.util_mean != null
-                                ? formatDecimalStandard(row.util_mean)
-                                : "—"}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {row.power_max_w != null
-                                ? formatDecimalStandard(row.power_max_w)
-                                : "—"}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : null}
-              </>
-            )}
-          </div>
-        )}
-        </div>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {isSafeHttpUrl(client_url) && (
-            <a
-              href={client_url!}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-            >
-              Client Logs
-            </a>
-          )}
-          {isSafeHttpUrl(server_url) && (
-            <a
-              href={server_url!}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-            >
-              Server Logs
-            </a>
+              </Table>
+            </CardContent>
+          </Card>
+
+          {(isSafeHttpUrl(client_url) || isSafeHttpUrl(server_url)) && (
+            <Card className="job-detail-resources-card mb-0" data-resources-block="logs">
+              <CardContent>
+                <h3 className="mb-3 text-base font-medium">Client / Server logs</h3>
+                <div className="flex flex-wrap gap-2">
+                  {isSafeHttpUrl(client_url) && (
+                    <a
+                      href={client_url!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                    >
+                      Client Logs
+                    </a>
+                  )}
+                  {isSafeHttpUrl(server_url) && (
+                    <a
+                      href={server_url!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                    >
+                      Server Logs
+                    </a>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           )}
         </div>
       </section>
@@ -1253,10 +1285,16 @@ export default function JobDetail() {
             ) : (
               <div className="job-detail-metrics-sections space-y-4">
                 {metricsSourceSections.map((section) => (
-                  <div key={section.id} className="job-detail-metrics-section">
-                    <h3 className="mb-2 text-base font-medium">{section.label}</h3>
-                    {renderMetricsSectionTables(section.id, section.rows)}
-                  </div>
+                  <Card
+                    key={section.id}
+                    className="job-detail-metrics-section mb-0"
+                    data-metrics-section={section.id}
+                  >
+                    <CardContent>
+                      <h3 className="mb-2 text-base font-medium">{section.label}</h3>
+                      {renderMetricsSectionTables(section.id, section.rows)}
+                    </CardContent>
+                  </Card>
                 ))}
               </div>
             )}

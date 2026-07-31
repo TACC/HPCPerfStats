@@ -499,6 +499,32 @@ describe("JobDetail", () => {
     expect(cpuSection?.textContent).toMatch(/Peak non-local NUMA memory access rate/);
   });
 
+  it("wraps Metrics source subsections in Cards", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        metrics_list: [
+          {
+            metric: "avg_freq",
+            type: "pmc",
+            units: "GHz",
+            value: 2.5,
+            no_data_reason: null,
+          },
+        ],
+      },
+    });
+    const { container } = renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "CPU", level: 3 })).toBeInTheDocument();
+    });
+    const cpuCard = container.querySelector('[data-metrics-section="cpu"]');
+    const networkCard = container.querySelector('[data-metrics-section="network"]');
+    expect(cpuCard?.getAttribute("data-slot")).toBe("card");
+    expect(networkCard?.getAttribute("data-slot")).toBe("card");
+    expect(cpuCard?.textContent).toMatch(/Average effective CPU frequency/);
+  });
+
   it("hides empty GPU section and always shows Network with empty body", async () => {
     setJobDetailQueryMock({
       data: {
@@ -638,7 +664,37 @@ describe("JobDetail", () => {
     expect(screen.getByText("4.00")).toBeInTheDocument();
   });
 
-  it("shows GPU inventory table and util out-of scale when inventory present", async () => {
+  it("orders Resources Cards Watt hours → GPU Information → Shared File Systems → logs", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        gpu_count: 4,
+        gpu_active: 2,
+        client_url: "https://logs.example/client/1",
+        server_url: "https://logs.example/server/1",
+        metrics_list: [
+          {
+            metric: "job_cpu_gpu_watt_hours",
+            type: "job",
+            units: "Wh",
+            value: 12.5,
+            no_data_reason: null,
+          },
+        ],
+      },
+    });
+    const { container } = renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "GPU Information", level: 3 })).toBeInTheDocument();
+    });
+    const blocks = Array.from(
+      container.querySelectorAll("[data-resources-block]"),
+    ).map((el) => el.getAttribute("data-resources-block"));
+    expect(blocks).toEqual(["watt-hours", "gpu", "shared-fs", "logs"]);
+    expect(container.querySelectorAll('#job-detail-resources [data-slot="card"]').length).toBe(4);
+  });
+
+  it("shows GPU inventory collapsed under aggregates until expanded", async () => {
     setJobDetailQueryMock({
       data: {
         ...minimalJobDetailResponse,
@@ -670,14 +726,21 @@ describe("JobDetail", () => {
     renderJobDetail("12345");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "GPU Information", level: 3 })).toBeInTheDocument();
     });
-    expect(screen.getByRole("heading", { name: "GPU inventory" })).toBeInTheDocument();
-    expect(screen.getAllByText("c561-007").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Total GPUs allocated:")).toBeInTheDocument();
     expect(screen.getAllByText(/out of 400\.00/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/GPU inventory \(2\.00 devices\)/)).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Host" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText(/GPU inventory \(2\.00 devices\)/));
+    await waitFor(() => {
+      expect(screen.getByRole("columnheader", { name: "Host" })).toBeInTheDocument();
+    });
+    expect(screen.getAllByText("c561-007").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("shows node-aggregate note and em dash Dev for empty-dev inventory", async () => {
+  it("shows node-aggregate note and em dash Dev for empty-dev inventory when expanded", async () => {
     setJobDetailQueryMock({
       data: {
         ...minimalJobDetailResponse,
@@ -701,17 +764,14 @@ describe("JobDetail", () => {
     renderJobDetail("12345");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "GPU Information", level: 3 })).toBeInTheDocument();
     });
-    expect(screen.getByRole("heading", { name: "GPU inventory" })).toBeInTheDocument();
-    expect(
-      screen.getByText(/Node-aggregate GPU telemetry/i),
-    ).toBeInTheDocument();
+    fireEvent.click(screen.getByText(/GPU inventory \(1\.00 device\)/));
+    await waitFor(() => {
+      expect(screen.getByText(/Node-aggregate GPU telemetry/i)).toBeInTheDocument();
+    });
     expect(screen.queryByText(/One row per host device/i)).not.toBeInTheDocument();
-    // Empty string must render as em dash, not a blank cell.
-    const inventoryHeading = screen.getByRole("heading", { name: "GPU inventory" });
-    const table = inventoryHeading.parentElement?.querySelector("table");
-    expect(table).toBeTruthy();
+    const table = screen.getByRole("columnheader", { name: "Host" }).closest("table");
     expect(table?.textContent).toMatch(/—/);
   });
 
