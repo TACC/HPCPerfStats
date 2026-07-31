@@ -33,6 +33,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     daily_tar_paths_for_stats_paths,
     daily_tar_seal_calendar_eligible,
     daily_tar_needs_day_close_work,
+    partition_day_close_handoff_paths_for_append_vs_ingest,
     raw_stats_path_needs_tar_append,
     raw_stats_path_tar_append_decision,
     ARCHIVE_SKIP_MEMBER_EXISTS,
@@ -4788,6 +4789,87 @@ def test_raw_stats_path_needs_tar_append_no_tar_yet(tmp_path):
       str(daily_dir),
       first_ts=ts,
   )
+
+
+def test_partition_day_close_handoff_db_ready_not_in_archive_goes_append(
+    tmp_path, monkeypatch,
+):
+  """DbReadyNotInArchive: DB-ready + needs append → append bucket, not ingest."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts = _local_day_epoch("2026-06-02")
+  raw_path = host_dir / ts
+  raw_path.write_text(f"{ts} job1 node1\n")
+  ready = {str(raw_path)}
+  append_paths, ingest_paths = partition_day_close_handoff_paths_for_append_vs_ingest(
+      [str(raw_path)],
+      str(daily_dir),
+      ingest_ready_fn=lambda p: p in ready,
+  )
+  assert append_paths == [os.path.normpath(str(raw_path))]
+  assert ingest_paths == []
+
+
+def test_partition_day_close_handoff_not_db_ready_stays_ingest(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts = _local_day_epoch("2026-06-02")
+  raw_path = host_dir / ts
+  raw_path.write_text(f"{ts} job1 node1\n")
+  append_paths, ingest_paths = partition_day_close_handoff_paths_for_append_vs_ingest(
+      [str(raw_path)],
+      str(daily_dir),
+      ingest_ready_fn=lambda _p: False,
+  )
+  assert append_paths == []
+  assert ingest_paths == [os.path.normpath(str(raw_path))]
+
+
+def test_partition_day_close_handoff_member_exists_stays_ingest(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts = _local_day_epoch("2026-06-02")
+  raw_path = host_dir / ts
+  payload = f"{ts} job1 node1\n".encode()
+  raw_path.write_bytes(payload)
+  tar_path = daily_dir / "2026-06-02.tar"
+  member_name = get_tar_member_name(str(raw_path))
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(raw_path), arcname=member_name)
+  append_paths, ingest_paths = partition_day_close_handoff_paths_for_append_vs_ingest(
+      [str(raw_path)],
+      str(daily_dir),
+      ingest_ready_fn=lambda _p: True,
+  )
+  assert append_paths == []
+  assert ingest_paths == [os.path.normpath(str(raw_path))]
+
+
+def test_partition_day_close_handoff_mixed_split(tmp_path):
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts_a = _local_day_epoch("2026-06-02")
+  ts_b = str(int(ts_a) + 3600)
+  need_append = host_dir / ts_a
+  need_ingest = host_dir / ts_b
+  need_append.write_text(f"{ts_a} job1 node1\n")
+  need_ingest.write_text(f"{ts_b} job1 node1\n")
+  ready = {os.path.normpath(str(need_append))}
+  append_paths, ingest_paths = partition_day_close_handoff_paths_for_append_vs_ingest(
+      [str(need_append), str(need_ingest)],
+      str(daily_dir),
+      ingest_ready_fn=lambda p: p in ready,
+  )
+  assert append_paths == [os.path.normpath(str(need_append))]
+  assert ingest_paths == [os.path.normpath(str(need_ingest))]
 
 
 def test_raw_stats_path_needs_tar_append_skips_matching_member(tmp_path):

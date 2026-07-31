@@ -296,6 +296,8 @@ if os.path.isfile(asyncp):
 
 **Failure signature (pre-fix):** many open mutable `daily_archive_dir/YYYY-MM-DD.tar` (`open_tar_n` high for days); sticky days sit in **`phase=deleting`** with **`verified_not_deleted=0`** but large **`retryable_skips`** that never clear; repeating `day_close handoff requeue … reason=batch_delete_waiting_on_ingest` with stable `paths=N` → `delete deferred … reason=delete_disqualified` → (healthy) Branch H `chunk_in_progress_day` while ingest owns those pins → cycle. Open `.tar` never reaches tar-drop.
 
+**DbReadyNotInArchive (locked 2026-07-31, Branch C insufficient):** Branch C reclassify under `PHASE_DELETING` is deployed, but sample sticky pins are **already DB head-ready** and **not** members of the open daily tar (`status=skipped_not_in_archive` / `reason=not_in_sealed_archive`). Ingest-only handoff clears checkpoint and requeues; paths often finish as **`checkpoint_immediate`** without landing in `files_to_be_archived`, so membership never appears and reclassify upgrades stay 0. **Fix:** day-close handoff partitions DB-ready + `raw_stats_path_needs_tar_append` pins onto **`handoff_mode=archive_append`** (direct archive heap enqueue) while true not-DB-ready pins stay on ingest handoff. Preserve `delete_disqualified` and Branch H.
+
 **Concurrent worseners (same path — amplifiers, not primary RC):** post-ingest re-handoff thrash without reclassify; broad fail-closed `delete_disqualified` while pins live (**preserve**); sticky `same_boot` handoff subset while hundreds of retryables remain; handoff/chunk path cap vs large skip sets; true DB-gate not ready for a subset; Branch H overlay latency (**preserve** — not RC).
 
 ```bash
@@ -310,7 +312,7 @@ zst_n=len(glob.glob(os.path.join(d,\"????-??-??.tar.zst\")))
 print(\"open_tar_n\", open_n, \"sealed_zst_n\", zst_n, \"daily_archive_dir\", d)
 "'
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
-grep -E 'batch_delete_waiting_on_ingest|delete deferred.*delete_disqualified|chunk_in_progress_day|day_close reclassify upgraded|Day raw removal reclassify' /tmp/pipeline-full.log | tail -80
+grep -E 'batch_delete_waiting_on_ingest|handoff_mode=archive_append|delete deferred.*delete_disqualified|chunk_in_progress_day|day_close reclassify upgraded|Day raw removal reclassify' /tmp/pipeline-full.log | tail -80
 
 # T0 — day_raw_removal census for a sticky ISO day (replace DAY=)
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
@@ -328,11 +330,11 @@ print(\"phase\", m.get(\"phase\"), \"entries\", len(ents), \"verified_not_delete
 "'
 ```
 
-**Fail (T0):** hours/days of `phase=deleting` + `verified_not_deleted=0` + flat/high `retryable_skips` with the same handoff `paths=N` and no `day_close reclassify upgraded` / skip drain; `open_tar_n` does not decline for those days.
+**Fail (T0):** hours/days of `phase=deleting` + `verified_not_deleted=0` + flat/high `retryable_skips` with the same handoff `paths=N` and no `day_close reclassify upgraded` / skip drain; `open_tar_n` does not decline for those days. Also fail when sticky pins are DB-ready + `not_in_sealed_archive` but logs show only ingest-only handoff (`queue_head=yes`) with **no** `handoff_mode=archive_append` / June `Archived batch` / `pending_archive_heap` for that day.
 
-**Pass (T0):** after deploy, sticky days log `janitor: day_close reclassify upgraded=` and/or `Day raw removal reclassify`; `retryable_skips` decline when membership+DB gate pass; handoff `paths=N` shrinks or clears; **`delete_disqualified` remains** while pins live; Branch H may still defer `chunk_in_progress_day` (healthy overlay).
+**Pass (T0):** after deploy, sticky days log `janitor: day_close reclassify upgraded=` and/or `Day raw removal reclassify`; **and/or** DB-ready not-in-archive pins log **`handoff_mode=archive_append`** then archive duty for that calendar day; `retryable_skips` decline when membership+DB gate pass; handoff `paths=N` shrinks or clears; **`delete_disqualified` remains** while pins live; Branch H may still defer `chunk_in_progress_day` (healthy overlay).
 
-**Pass (T1):** `open_tar_n` declines; sticky days leave `phase=deleting` (toward done/tar-drop/complete); no multi-day Branch C loop of identical handoff path counts with undrained retryables.
+**Pass (T1):** `open_tar_n` declines for lead/sticky days; sticky days leave `phase=deleting` (toward done/tar-drop/complete); no multi-day Branch C / DbReadyNotInArchive loop of identical handoff path counts with undrained retryables. **Do not** treat green `handoff_lead_uncapped` alone as day-close health while multi-hundred-GB mutable June `.tar` remain.
 
 ### T0 / T1 — tar append exit 2 / large member (`out of off_t range`, 2026-07)
 
@@ -605,9 +607,36 @@ grep -E 'oldest_day_chunk_gate |youngest_day_chunk_gate |oldest_day_chunk_gate_p
 grep -E 'oldest_day_chunk_gate .*chunk_len=|youngest_day_chunk_gate .*chunk_len=|handoff_lead_uncapped=' /tmp/pipeline-full.log | tail -40
 ```
 
-**Pass (T0):** `oldest_day_chunk_gate` / `youngest_day_chunk_gate` / `chunk ingest summary` continues; when oldest/youngest day has fewer paths than `chunk_size` and pending is full, expect **`chunk_pad_n>`0**. **Chunk length:** when the gate day **is** the oldest incomplete/handoff day, **`chunk_len`** stays near configured **`chunk_size`** (not steady `chunk_len≪chunk_size` like pre-fix `419` vs `3000`). When the gate day is **newer** than the oldest non-ingested day (typical CLI ``current`` + June handoff), expect **`handoff_lead_uncapped=yes`** and **`chunk_len ≈ handoff_lead_n + chunk_size`** (may exceed `sync_ingest_queue_max_size`) — not subtractive `chunk_len==chunk_size` with June pins eating July slots. Under frozen `incomplete_n` + same gate tar, expect **`pending reconcile cap skipped reason=unchanged_incomplete`** (or `oldest_day_gate_stall_unchanged`) between waves — including when prior cap **`elapsed_s` > soft TTL 120s** (hard ceiling ~900s) — not back-to-back **`pending reconcile cap begin/done source=accrual`** with **`elapsed_s` hundreds–thousands** and identical `incomplete_n`. After `archive_job_done`, expect `chunk dispatch begin` within minutes (not ~14 min of duplicate accrual rebuilds). `immediate day_close defer … handoff_priority` may appear; it must **not** be followed by another full reconcile solely for that defer.
+**Pass (T0):** `oldest_day_chunk_gate` / `youngest_day_chunk_gate` / `chunk ingest summary` continues; when oldest/youngest day has fewer paths than `chunk_size` and pending is full, expect **`chunk_pad_n>`0**. **Chunk length:** when the gate day **is** the oldest incomplete/handoff day, **`chunk_len`** stays near configured **`chunk_size`** (not steady `chunk_len≪chunk_size` like pre-fix `419` vs `3000`). When the gate day is **newer** than the oldest non-ingested day (typical CLI ``current`` + June handoff), expect **`handoff_lead_uncapped=yes`** and **`chunk_len ≈ handoff_lead_n + chunk_size`** (may exceed `sync_ingest_queue_max_size`) — not subtractive `chunk_len==chunk_size` with June pins eating July slots. **Do not** treat July-only `Archived batch` as broken oldest handoff when lead telemetry is healthy — see **MisreadArchive** T0 below. Under frozen `incomplete_n` + same gate tar, expect **`pending reconcile cap skipped reason=unchanged_incomplete`** (or `oldest_day_gate_stall_unchanged`) between waves — including when prior cap **`elapsed_s` > soft TTL 120s** (hard ceiling ~900s) — not back-to-back **`pending reconcile cap begin/done source=accrual`** with **`elapsed_s` hundreds–thousands** and identical `incomplete_n`. After `archive_job_done`, expect `chunk dispatch begin` within minutes (not ~14 min of duplicate accrual rebuilds). `immediate day_close defer … handoff_priority` may appear; it must **not** be followed by another full reconcile solely for that defer.
 
 **Pass (T1):** Oldest/youngest-day paths still lead the chunk (`epochs` / sample still prioritize head day); under additive handoff, the **entire** oldest non-ingested day leads first, then a full `chunk_size` of gate/pad — other older days' pins are held (F2/F3) but not prepended. Padded later-day paths may appear **after** head-day paths within the same chunk. Reconcile skip must clear after ingest progress / oldest advance (`incomplete_n` change) or hard-ceiling expiry — next wave may show a full **`pending reconcile cap begin`** again.
+
+### T0 / T1 — MisreadArchive: July-only `Archived batch` ≠ broken oldest handoff (CLI `current`, 2026-07)
+
+**Failure signature (operator misread):** under CLI ``current``, hours of `Archived batch … -> …/YYYY-07-….tar` (newest gate days) with little or no June `Archived batch`, interpreted as “oldest handoff not working.” That signal alone is **insufficient**.
+
+**Why July archive can be healthy:** additive select (`handoff_lead_uncapped=yes`) prepends the whole oldest non-ingested day, then still takes a full `chunk_size` of the **youngest** incomplete gate (often July). Archive append follows **file calendar day** — July gate/pad files dominate `Archived batch` while June lead files that are **already tar members** finish as **`checkpoint_immediate`**. Then `checkpoint_immediate_n ≈ handoff_lead_n` and **no** June `Archived batch` line is expected.
+
+**Not MisreadArchive — DbReadyNotInArchive:** when lead-day paths are DB-ready but **`not_in_sealed_archive`** (open June `.tar` still growing / never sealing), `checkpoint_immediate` for those pins is a **stall**, not health. Require `open_tar_n` decline / `handoff_mode=archive_append` / reclassify drain — see Branch C / DbReadyNotInArchive T0 above. Green `handoff_lead_uncapped` alone does **not** clear day-close health.
+
+```bash
+# T0 — lead vs archive day (full pipeline log; never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+grep -E 'handoff_lead_uncapped|youngest_day_chunk_gate |chunk_day_histogram|chunk ingest summary|Archived batch|archive_job_duty|soft_skip' /tmp/pipeline-full.log | tail -120
+```
+
+**Fail (T0) — real lead/archive bugs (not MisreadArchive):**
+
+| Class | Signature |
+|-------|-----------|
+| **NoLead** | No `handoff_lead_uncapped=yes` while older closed/unprocessed days remain; `chunk_day_histogram` omits the calendar-oldest work day under youngest gate |
+| **SubtractiveDeployGap** | Steady `chunk_len==chunk_size` with June pins eating July slots and **no** `handoff_lead_uncapped` (additive code not deployed) |
+| **LeadIngestNoArchive** | `handoff_lead_uncapped=yes` **and** June lead paths appear in `archive_deferred_n` / `archive_job_duty` / `to_add=` with soft_skip or zero append — **not** when `checkpoint_immediate_n≈handoff_lead_n` **and** those pins are already tar members |
+| **DbReadyNotInArchive** | `handoff_lead_uncapped=yes` + sticky `skipped_not_in_archive` / open multi-hundred-GB June `.tar` + DB-ready sample not in members; ingest-only handoff without `handoff_mode=archive_append` |
+
+**Pass (T0) — MisreadArchive (healthy):** `handoff_lead_uncapped=yes` with June (or older) in `chunk_day_histogram`; `chunk_len ≈ handoff_lead_n + chunk_size` (or lead + gate + pad); July `Archived batch` / `archive_job_duty` for gate/pad days; chunk ingest summary shows **`checkpoint_immediate_n≈handoff_lead_n`** for the lead day while July paths account for **`archive_deferred_n`**. Do **not** open a NoLead incident from July-only `Archived batch` alone.
+
+**Pass (T1):** Lead day rotates through older closed-raw / orphan-rehandoff days (`handoff_lead_day=…`) while youngest gate may flip among recent incomplete tars; lead telemetry stays uncapped; July-heavy archive waves continue without requiring June `Archived batch`.
 
 ### T1 verify — ingest oldest-first (hpcperfstats03 / cross_day_bucket gate defer)
 

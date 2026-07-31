@@ -1499,6 +1499,44 @@ def raw_stats_path_needs_tar_append(
   return needs_append
 
 
+def partition_day_close_handoff_paths_for_append_vs_ingest(
+    paths,
+    tgz_archive_dir,
+    *,
+    ingest_ready_fn=None,
+):
+  """Split day-close handoff pins into archive-append vs ingest requeue.
+
+  DbReadyNotInArchive (hpcperfstats03): ``skipped_not_in_archive`` pins that
+  already pass the DB gate must drive **tar append**, not ingest-only handoff.
+  Re-ingest alone often ends as ``checkpoint_immediate`` without ensuring the
+  path lands in ``files_to_be_archived``, so Branch C reclassify never sees
+  membership and open daily ``.tar`` never seal/tar_drop.
+
+  Returns ``(append_paths, ingest_paths)`` preserving input order within each
+  bucket. Missing on-disk paths are dropped. When ``ingest_ready_fn`` is set,
+  only paths that return true are eligible for the append bucket; not-ready
+  paths stay on ingest handoff.
+  """
+  append_paths = []
+  ingest_paths = []
+  for path in paths or ():
+    path_norm = os.path.normpath(str(path or ""))
+    if not path_norm or not os.path.isfile(path_norm):
+      continue
+    db_ready = True
+    if ingest_ready_fn is not None:
+      try:
+        db_ready = bool(ingest_ready_fn(path_norm))
+      except Exception:
+        db_ready = False
+    if db_ready and raw_stats_path_needs_tar_append(path_norm, tgz_archive_dir):
+      append_paths.append(path_norm)
+    else:
+      ingest_paths.append(path_norm)
+  return append_paths, ingest_paths
+
+
 def daily_tar_paths_for_stats_paths(
     paths, tgz_archive_dir, first_timestamp_by_path=None,
 ):

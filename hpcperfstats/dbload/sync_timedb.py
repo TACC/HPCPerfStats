@@ -171,6 +171,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     sort_pending_stats_paths_oldest_first,
     INGEST_PARSE_FAILED_QUARANTINE_REASON,
     quarantine_ingest_failed_raw_path,
+    partition_day_close_handoff_paths_for_append_vs_ingest,
     raw_stats_path_tar_append_decision,
     rescan_pending_stats_files,
     set_archive_members_invalidation_hook,
@@ -7818,68 +7819,118 @@ def run_sync_timedb_supervisor_loop(
           flush=True,
       )
       return
-    _batch_remove_processed_paths(
-        requeued_paths,
-        processed_files,
-        processed_files_order,
-        checkpoint_entries,
-        checkpoint_path,
-        file_states=file_states,
-        host_scan_hints=host_scan_hints,
-        persist=False,
+    ingest_ready_fn = (
+        stats_file_head_ingested_in_db
+        if cfg.get_sync_archive_require_db_ingest()
+        else None
     )
-    max_slice = cfg.get_sync_ingest_chunk_size()
-    if len(requeued_paths) > max_slice:
-      day_token = (
-          calendar_date_from_daily_tar_path(tar_norm).isoformat()
-          if calendar_date_from_daily_tar_path(tar_norm) is not None
-          else tar_norm
-      )
-      log_print(
-          "day_close handoff steady-chunk enqueue day=%s paths=%d "
-          "handoff_mode=steady_chunk chunk_size=%d reason=%s"
-          % (
-              day_token,
-              len(requeued_paths),
-              cfg.get_sync_ingest_chunk_size(),
-              reason or "",
-          ),
-          flush=True,
-      )
-    for path in requeued_paths:
-      handoff_priority_paths.add(path)
-      handoff_source_tar_by_path[path] = tar_norm
-    _flush_checkpoint_if_needed(force=True)
-    if day_close_manifest is not None:
-      day_close_manifest.defer_for_ingest_handoff(tar_norm)
-    handoff_requeued_tars_this_boot.add(tar_norm)
-    pending_stats_files = _cap_pending_after_rescan(
-        _apply_handoff_priority_to_pending(pending_stats_files),
-        handoff=True,
+    append_paths, ingest_paths = (
+        partition_day_close_handoff_paths_for_append_vs_ingest(
+            requeued_paths,
+            tgz_archive_dir,
+            ingest_ready_fn=ingest_ready_fn,
+        )
     )
     source_day = (
         calendar_date_from_daily_tar_path(tar_norm).isoformat()
         if calendar_date_from_daily_tar_path(tar_norm) is not None
         else tar_norm
     )
-    sample_path = requeued_paths[0]
-    derived = _derive_stats_path_date(sample_path)
-    derived_day = derived.isoformat() if derived is not None else ""
-    log_print(
-        "day_close handoff requeue day=%s paths=%d reason=%s "
-        "checkpoint_cleared=yes queue_head=yes sample_path=%s "
-        "source_day=%s derived_day=%s"
-        % (
-            source_day,
-            len(requeued_paths),
-            reason or "",
-            sample_path,
-            source_day,
-            derived_day,
-        ),
-        flush=True,
-    )
-    archive_janitor.signal_work_available()
+    if append_paths:
+      # DbReadyNotInArchive: enqueue tar append directly so Branch C reclassify
+      # can see membership; do not rely on ingest-only requeue / checkpoint_immediate.
+      _batch_remove_processed_paths(
+          append_paths,
+          processed_files,
+          processed_files_order,
+          checkpoint_entries,
+          checkpoint_path,
+          file_states=file_states,
+          host_scan_hints=host_scan_hints,
+          persist=False,
+      )
+      for path in append_paths:
+        handoff_priority_paths.add(path)
+        handoff_source_tar_by_path[path] = tar_norm
+      _flush_checkpoint_if_needed(force=True)
+      if day_close_manifest is not None:
+        day_close_manifest.defer_for_ingest_handoff(tar_norm)
+      _finalize_ingest_archive_batch(
+          append_paths,
+          append_paths,
+          context_label="day_close_handoff_append",
+      )
+      sample_path = append_paths[0]
+      derived = _derive_stats_path_date(sample_path)
+      derived_day = derived.isoformat() if derived is not None else ""
+      log_print(
+          "day_close handoff requeue day=%s paths=%d reason=%s "
+          "handoff_mode=archive_append checkpoint_cleared=yes "
+          "sample_path=%s source_day=%s derived_day=%s"
+          % (
+              source_day,
+              len(append_paths),
+              reason or "batch_delete_waiting_on_archive_append",
+              sample_path,
+              source_day,
+              derived_day,
+          ),
+          flush=True,
+      )
+    if ingest_paths:
+      _batch_remove_processed_paths(
+          ingest_paths,
+          processed_files,
+          processed_files_order,
+          checkpoint_entries,
+          checkpoint_path,
+          file_states=file_states,
+          host_scan_hints=host_scan_hints,
+          persist=False,
+      )
+      max_slice = cfg.get_sync_ingest_chunk_size()
+      if len(ingest_paths) > max_slice:
+        log_print(
+            "day_close handoff steady-chunk enqueue day=%s paths=%d "
+            "handoff_mode=steady_chunk chunk_size=%d reason=%s"
+            % (
+                source_day,
+                len(ingest_paths),
+                cfg.get_sync_ingest_chunk_size(),
+                reason or "",
+            ),
+            flush=True,
+        )
+      for path in ingest_paths:
+        handoff_priority_paths.add(path)
+        handoff_source_tar_by_path[path] = tar_norm
+      _flush_checkpoint_if_needed(force=True)
+      if day_close_manifest is not None:
+        day_close_manifest.defer_for_ingest_handoff(tar_norm)
+      pending_stats_files = _cap_pending_after_rescan(
+          _apply_handoff_priority_to_pending(pending_stats_files),
+          handoff=True,
+      )
+      sample_path = ingest_paths[0]
+      derived = _derive_stats_path_date(sample_path)
+      derived_day = derived.isoformat() if derived is not None else ""
+      log_print(
+          "day_close handoff requeue day=%s paths=%d reason=%s "
+          "checkpoint_cleared=yes queue_head=yes sample_path=%s "
+          "source_day=%s derived_day=%s"
+          % (
+              source_day,
+              len(ingest_paths),
+              reason or "",
+              sample_path,
+              source_day,
+              derived_day,
+          ),
+          flush=True,
+      )
+    if append_paths or ingest_paths:
+      handoff_requeued_tars_this_boot.add(tar_norm)
+      archive_janitor.signal_work_available()
 
   def _process_boot_handoffs_once():
     nonlocal pending_stats_files, boot_handoffs_processed
