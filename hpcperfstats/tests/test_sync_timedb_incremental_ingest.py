@@ -89,7 +89,7 @@ def _apply_arc_and_finalize_rowwise_ref(stats_df, carry=None):
   if carry is not None and carry.arc:
     first_rows = stats_df.groupby(_ARC_GROUP_COLS, observed=True).head(1)
     for idx, row in first_rows.iterrows():
-      key = (row["host"], row["type"], row["event"])
+      key = (row["host"], row["type"], str(row.get("dev") or ""), row["event"])
       prev = carry.arc.get(key)
       if prev is None:
         continue
@@ -103,7 +103,17 @@ def _apply_arc_and_finalize_rowwise_ref(stats_df, carry=None):
   if carry is not None:
     for key, group in stats_df.groupby(_ARC_GROUP_COLS, observed=True):
       last = group.iloc[-1]
-      carry.arc[key] = {"time": float(last["time"])}
+      # Normalize key to (host, type, dev, event) even if groupby key shape varies.
+      if isinstance(key, tuple) and len(key) == 4:
+        carry_key = (key[0], key[1], str(key[2] or ""), key[3])
+      else:
+        carry_key = (
+            last["host"],
+            last["type"],
+            str(last.get("dev") or ""),
+            last["event"],
+        )
+      carry.arc[carry_key] = {"time": float(last["time"])}
 
   stats_df["time"] = pd.to_datetime(stats_df["time"], unit="s").dt.tz_localize("UTC")
   return stats_df.dropna(subset=["host", "type", "event", "time", "value"])

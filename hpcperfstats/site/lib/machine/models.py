@@ -181,11 +181,13 @@ class metrics_data(models.Model):
 
 
 class host_data(models.Model):
-  """TimescaleDB hypertable: per (time, host, jid, type, event) value/delta/arc.
+  """TimescaleDB hypertable: per (time, host, type, event, dev) value/delta/arc.
 
   Job/sample scoping in the application uses job_data.start_time/end_time and
   job_data.host_list (FQDNs); host_data.jid is retained for compatibility and
   ad-hoc queries but is not used when gathering job samples.
+  ``dev`` is the monitor device id for GPU types (``""`` when absent); uniqueness
+  includes ``dev`` so multi-GPU samples at the same timestamp are insertable.
   Table: host_data.
 
     """
@@ -193,6 +195,7 @@ class host_data(models.Model):
   host = models.CharField(max_length=64, blank=True, null=True)
   jid = models.CharField(max_length=32, blank=True, null=True)
   type = models.CharField(max_length=32, blank=True, null=True)
+  # Prefer empty string over NULL so UNIQUE(time,host,type,event,dev) works in PG.
   dev = models.CharField(max_length=64, blank=True, null=True)
   event = models.CharField(max_length=64, blank=True, null=True)
   unit = models.CharField(max_length=16, blank=True, null=True)
@@ -202,7 +205,7 @@ class host_data(models.Model):
 
   class Meta:
     db_table = 'host_data'
-    unique_together = (('time', 'host', 'type', 'event'),)
+    unique_together = (('time', 'host', 'type', 'event', 'dev'),)
     indexes = [
         models.Index(fields=["host", "time"]),
         models.Index(fields=["jid", "time"]),

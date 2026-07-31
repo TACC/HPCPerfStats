@@ -24,6 +24,7 @@ Multi-`dev` metric collapse in ingest parse (`_collapse_stats_with_deltas` and h
 | Collapse need | Required approach |
 |---------------|-------------------|
 | Sum across devs (`min_count=1`) | `_groupby_sum_min_count` |
+| **GPU types** (`nvidia_gpu` / `amd_gpu` / `intel_gpu`) | Collapse group cols **include `dev`** (`_COLLAPSE_GROUP_COLS_WITH_DEV`) — keep per-device rows; sum/mean/max/OR only within a device. Non-GPU types keep `_COLLAPSE_GROUP_COLS` (no `dev`) and set `dev=''` on output. |
 | Event-dispatched standard reducers (sum/max/mean) | Partition by event class → `groupby.agg` with native reducers |
 | Bitwise OR (`clocks_event_reasons`) | `_nvidia_bitwise_or_values` on OR slice only |
 | Custom reducer (DCGM cluster-mean, dynamic gap) | `_collapse_dcg_cpu_power_vectorized` — explicit `for key, group in grouped` + NumPy helper, **not** `apply` |
@@ -31,6 +32,8 @@ Multi-`dev` metric collapse in ingest parse (`_collapse_stats_with_deltas` and h
 | Last-row-per-group **carry** (`carry.raw` / `carry.arc`) | `groupby(...).tail(1)` (or native `last`) + array extraction into the carry dict — **never** `group.iloc[-1]` per group |
 | First-row carry application | Index-aligned / mapped assignment (`.loc[...]` once) — **never** `iterrows()` + `.at[...]` or per-row `index.get_loc` |
 | Streaming resume offset | Feed every line from offset 0 through `feed_line` / `feed_lines`; gate emission with parser `start_idx` (same as `parse_stats_lines`). Physical `readline` skip is forbidden. |
+
+Arc continuity (`_ARC_GROUP_COLS`) includes ``dev`` so multi-GPU rates stay per-device. Node-level summary plots still sum across devices in ``get_aggregate_df``.
 
 ## Resume state integrity (RC-0)
 

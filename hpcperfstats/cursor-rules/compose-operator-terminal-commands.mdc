@@ -329,7 +329,9 @@ if host0 and t0 and t1:
 
 **Anti-pattern — broad `host_data` discovery with `ILIKE` / multi-host `ANY` / full-window `GROUP BY`:** do not ship Pending `db` blocks that `ILIKE '%gpu%'`, scan all job hosts, or aggregate every sample in a multi-day accounting window; use the cheapest-first pattern above.
 
-**Anti-pattern — assume telemetry+LIMIT always finishes:** even the corrected one-host `ORDER BY time DESC LIMIT 20` probe can still hit **`statement timeout`** at 60s on large hypertables (hpcperfstats03, 2026-07-23, finding #7). When **`metrics_data` already shows poison** (e.g. `max_gpu_link_gbps≈2^63/1e9` or `≈2^64/1e9`, `max_packetrate≫1e11`), **abandon raw `host_data`** for that diagnosis and continue from **`metrics_data` / web ORM** only.
+**Anti-pattern — assume telemetry+LIMIT always finishes:** even the corrected one-host `ORDER BY time DESC LIMIT 20` probe can still hit **`statement timeout`** at 60s on large hypertables (hpcperfstats03, 2026-07-23, finding #7). When **`metrics_data` already shows poison** (e.g. `max_gpu_link_gbps≈2^63/1e9` or `≈2^64/1e9`, `max_packetrate≫1e11`, `detail_gpu_count` N×N, `avg_gpu_mem_bw_gbps` ≫1e5), **abandon raw `host_data`** for that diagnosis and continue from **`metrics_data` / web ORM** only.
+
+**Anti-pattern — empty host+telemetry GPU probe means “no GPU job”:** a correct `host`+telemetry+`LIMIT` probe can return **0 rows** while `metrics_data` still has GPU poison (hpcperfstats01 JID `3351747`, 2026-07-31 — `detail_gpu_count=16`, `avg_gpu_mem_bw_gbps≈7.09e10` with units `GB/s`, but zero `nvidia_gpu` samples in window). Treat empty raw rows as **retention/purge or missing samples**, not absence of the job’s GPU metrics; ground the diagnosis on `metrics_data`.
 
 **Anti-pattern — no-artifact cohorts without metrics readiness:** listing jobs with empty `job_detail_artifact` ordered only by `-end_time` is dominated by **metrics-incomplete** rows (`metrics_distinct_time_count` None/0). Filter **`metrics_distinct_time_count__gte=N`** (site ops used **N=100**) to measure the **metrics-ready missing-detail** gap (857260-class).
 

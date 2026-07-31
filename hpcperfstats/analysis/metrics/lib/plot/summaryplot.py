@@ -95,7 +95,8 @@ def _cycled_d3_category20_palette(n):
 
 _CAS_BW_CONV = 64 / (1024 * 1024 * 1024)
 _BYTES_TO_MB = 1 / (1024 * 1024)
-_BYTES_TO_GB = 1 / (1024 * 1024 * 1024)
+_BYTES_TO_GBPS = 1e-9  # decimal GB/s — match metrics avg_gpu_* / link conversions
+_BYTES_TO_GB = _BYTES_TO_GBPS  # GPU rate plots; prefer _BYTES_TO_GBPS for new call sites
 # Intel CHA counter names after dbload event map (must match host_data.event strings).
 _CHA_ARC_EVENTS = (
     "SF_EVICTIONS_MES,E",

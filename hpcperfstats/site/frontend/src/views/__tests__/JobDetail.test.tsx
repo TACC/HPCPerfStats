@@ -677,6 +677,44 @@ describe("JobDetail", () => {
     expect(screen.getAllByText(/out of 400\.00/).length).toBeGreaterThanOrEqual(1);
   });
 
+  it("shows node-aggregate note and em dash Dev for empty-dev inventory", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        gpu_active: 1,
+        gpu_utilization_max: 90.0,
+        gpu_utilization_mean: 40.0,
+        gpu_count: 16,
+        gpu_inventory: [
+          {
+            host: "c561-007",
+            dev: "",
+            type: "nvidia_gpu",
+            util_max: 90.0,
+            util_mean: 40.0,
+            power_max_w: 250.0,
+          },
+        ],
+      },
+    });
+
+    renderJobDetail("12345");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+    });
+    expect(screen.getByRole("heading", { name: "GPU inventory" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/Node-aggregate GPU telemetry/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/One row per host device/i)).not.toBeInTheDocument();
+    // Empty string must render as em dash, not a blank cell.
+    const inventoryHeading = screen.getByRole("heading", { name: "GPU inventory" });
+    const table = inventoryHeading.parentElement?.querySelector("table");
+    expect(table).toBeTruthy();
+    expect(table?.textContent).toMatch(/—/);
+  });
+
   it("renders one Bokeh embed when a host-level plot tab is selected", async () => {
     window.Bokeh = {
       embed: {

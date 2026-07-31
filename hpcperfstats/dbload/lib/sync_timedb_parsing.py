@@ -79,6 +79,9 @@ _NVIDIA_GPU_SUM_EVENTS = frozenset({
 _NVIDIA_GPU_MAX_EVENTS = frozenset({
     "module_power_usage",
     "sysio_power_usage",
+    # Node GPU count is emitted on every device row; MAX avoids N×N when
+    # identity collapses without a distinct ``dev`` (legacy / empty-dev path).
+    "gpu_count",
 })
 _NVIDIA_GPU_MEAN_EVENTS = frozenset({"temperature"})
 _NVIDIA_GPU_OR_EVENTS = frozenset({"clocks_event_reasons"})
@@ -91,11 +94,16 @@ _DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS = frozenset({
 })
 
 _HOST_CPU_HW_TYPES = frozenset({HOST_CPU_HW_TYPE, LEGACY_HOST_CPU_HW_TYPE})
+_GPU_STATS_TYPES = frozenset({"nvidia_gpu", "amd_gpu", "intel_gpu"})
 
+# Non-GPU collapse drops device identity (sum across ``dev``).
 _COLLAPSE_GROUP_COLS = ["host", "type", "event", "unit", "time"]
+# GPU types keep monitor ``dev`` so Job Detail can inventorize per device.
+_COLLAPSE_GROUP_COLS_WITH_DEV = ["host", "type", "dev", "event", "unit", "time"]
 _COUNTER_GROUP_COLS = ["host", "type", "dev", "event"]
-_ARC_GROUP_COLS = ["host", "type", "event"]
-_NVIDIA_GROUP_KEY_EVENT_INDEX = _COLLAPSE_GROUP_COLS.index("event")
+# Arc continuity must match counter grain (include ``dev`` for multi-GPU).
+_ARC_GROUP_COLS = ["host", "type", "dev", "event"]
+_NVIDIA_GROUP_KEY_EVENT_INDEX = _COLLAPSE_GROUP_COLS_WITH_DEV.index("event")
 
 _SLOW_TIER_OPT = "R=S"
 _TIER_MARKERS = frozenset({"@fast", "@full"})
@@ -180,8 +188,14 @@ def _collapse_dcg_cpu_power_vectorized(ccm_df, gcols):
 
 def _collapse_nvidia_gpu_group(group):
   """Apply-reference NVIDIA collapse; production path uses vectorized helper."""
-  key = group.name
-  event_name = key[_NVIDIA_GROUP_KEY_EVENT_INDEX] if isinstance(key, tuple) else key
+  # Prefer the event column so this works with/without ``dev`` in the group key.
+  if "event" in group.columns and len(group):
+    event_name = group["event"].iloc[0]
+  else:
+    key = group.name
+    event_name = (
+        key[_NVIDIA_GROUP_KEY_EVENT_INDEX] if isinstance(key, tuple) else key
+    )
   group = group.copy()
   group["value"] = nan_out_dcgm_numeric_blanks(group["value"].to_numpy(dtype=np.float64))
   if event_name in _NVIDIA_GPU_MAX_EVENTS:
@@ -970,10 +984,28 @@ def _apply_counter_deltas(stats_df, carry=None):
   return stats_df
 
 
+def _normalize_collapse_dev_column(stats_df):
+  """Fill missing ``dev`` with ``''`` so group keys and UNIQUE semantics match."""
+  if "dev" not in stats_df.columns:
+    out = stats_df.copy()
+    out["dev"] = ""
+    return out
+  out = stats_df.copy()
+  dev = out["dev"]
+  out["dev"] = dev.where(dev.notna(), "").astype(str).replace(
+      {"nan": "", "None": "", "<NA>": ""}
+  )
+  return out
+
+
 def _collapse_stats_with_deltas(stats_df):
+  """Collapse multi-row samples; GPU types keep ``dev``, others sum across devices."""
+  stats_df = _normalize_collapse_dev_column(stats_df)
   gcols = _COLLAPSE_GROUP_COLS
+  gcols_gpu = _COLLAPSE_GROUP_COLS_WITH_DEV
   nv_df = stats_df[stats_df["type"] == "nvidia_gpu"]
-  rest_df = stats_df[stats_df["type"] != "nvidia_gpu"]
+  other_gpu_df = stats_df[stats_df["type"].isin({"amd_gpu", "intel_gpu"})]
+  rest_df = stats_df[~stats_df["type"].isin(_GPU_STATS_TYPES)]
   parts = []
   if not rest_df.empty:
     ccm_power_mask = (
@@ -982,16 +1014,27 @@ def _collapse_stats_with_deltas(stats_df):
     ccm_power_df = rest_df[ccm_power_mask]
     rest_other = rest_df[~ccm_power_mask]
     if not rest_other.empty:
-      parts.append(_groupby_sum_min_count(rest_other, gcols))
+      collapsed_rest = _groupby_sum_min_count(rest_other, gcols)
+      collapsed_rest["dev"] = ""
+      parts.append(collapsed_rest)
     if not ccm_power_df.empty:
-      parts.append(_collapse_dcg_cpu_power_vectorized(ccm_power_df, gcols))
+      collapsed_ccm = _collapse_dcg_cpu_power_vectorized(ccm_power_df, gcols)
+      collapsed_ccm["dev"] = ""
+      parts.append(collapsed_ccm)
+  if not other_gpu_df.empty:
+    # Identity groups when each (host,dev,event,time) is unique.
+    parts.append(_groupby_sum_min_count(other_gpu_df, gcols_gpu))
   if not nv_df.empty:
-    parts.append(_collapse_nvidia_gpu_vectorized(nv_df, gcols))
+    parts.append(_collapse_nvidia_gpu_vectorized(nv_df, gcols_gpu))
 
   if not parts:
     return _empty_delta_arc_frame()
   collapsed = concat(parts, ignore_index=True) if len(parts) > 1 else parts[0]
   del parts
+  if "dev" not in collapsed.columns:
+    collapsed["dev"] = ""
+  else:
+    collapsed["dev"] = collapsed["dev"].fillna("").astype(str)
   return collapsed.sort_values(by=_ARC_GROUP_COLS + ["time"])
 
 
@@ -1014,6 +1057,7 @@ def _apply_arc_and_finalize(stats_df, carry=None):
       positions = stats_df.index.get_indexer(first.index)
       hosts = first["host"].to_numpy()
       types = first["type"].to_numpy()
+      devs = first["dev"].to_numpy() if "dev" in first.columns else [""] * len(first)
       events = first["event"].to_numpy()
       times = first["time"].to_numpy(dtype=np.float64, copy=False)
       deltas = first["delta"].to_numpy(dtype=np.float64, copy=False)
@@ -1021,7 +1065,7 @@ def _apply_arc_and_finalize(stats_df, carry=None):
         pos = int(positions[i])
         if pos < 0:
           continue
-        prev = carry.arc.get((hosts[i], types[i], events[i]))
+        prev = carry.arc.get((hosts[i], types[i], str(devs[i] or ""), events[i]))
         if prev is None:
           continue
         dt = float(times[i]) - float(prev["time"])
@@ -1036,10 +1080,11 @@ def _apply_arc_and_finalize(stats_df, carry=None):
     if not last.empty:
       hosts = last["host"].to_numpy()
       types = last["type"].to_numpy()
+      devs = last["dev"].to_numpy() if "dev" in last.columns else [""] * len(last)
       events = last["event"].to_numpy()
       times = last["time"].to_numpy(dtype=np.float64, copy=False)
       for i in range(len(last)):
-        carry.arc[(hosts[i], types[i], events[i])] = {
+        carry.arc[(hosts[i], types[i], str(devs[i] or ""), events[i])] = {
             "time": float(times[i]),
         }
 

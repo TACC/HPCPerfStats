@@ -7,6 +7,19 @@ from hpcperfstats.dbload.lib.date_utils import to_pydatetime_or_none
 from hpcperfstats.site.lib.machine.models import host_data, job_data
 
 
+def _dev_str_from_stats_row(row) -> str:
+  """Monitor device id for ``host_data.dev``; missing/NaN → ``''`` (not NULL)."""
+  dev_val = getattr(row, "dev", None)
+  if dev_val is None or (isinstance(dev_val, float) and pd.isna(dev_val)):
+    return ""
+  if pd.isna(dev_val):
+    return ""
+  s = str(dev_val).strip()
+  if not s or s.lower() == "nan":
+    return ""
+  return s
+
+
 def host_data_instance_from_stats_row(row) -> host_data:
   """Build an unsaved ``host_data`` from a stats DataFrame row (namedtuple)."""
   jid_val = getattr(row, "jid", None)
@@ -19,7 +32,7 @@ def host_data_instance_from_stats_row(row) -> host_data:
       host=row.host,
       jid=jid_str,
       type=row.type,
-      dev=None,
+      dev=_dev_str_from_stats_row(row),
       event=row.event,
       unit=row.unit,
       value=float(row.value) if pd.notna(row.value) else None,

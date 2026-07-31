@@ -8,6 +8,7 @@ from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
     DeltaCarryState,
     _COLLAPSE_GROUP_COLS,
+    _COLLAPSE_GROUP_COLS_WITH_DEV,
     _collapse_dcg_cpu_power_gauge_group,
     _collapse_dcg_cpu_power_vectorized,
     _collapse_nvidia_gpu_group,
@@ -465,8 +466,8 @@ def test_compute_deltas_and_arc_keeps_first_timestamp_value():
   assert pd.isna(result.iloc[0]["arc"])
 
 
-def test_compute_deltas_and_arc_nvidia_gpu_util_sums_across_dev():
-  """nvidia_gpu gpu_util: same timestamp two devs -> value is sum (per plan)."""
+def test_compute_deltas_and_arc_nvidia_gpu_util_keeps_dev():
+  """nvidia_gpu gpu_util: same timestamp two devs -> one row per device."""
   stats_df = pd.DataFrame([
       {
           "host": "h", "type": "nvidia_gpu", "dev": "0",
@@ -478,12 +479,13 @@ def test_compute_deltas_and_arc_nvidia_gpu_util_sums_across_dev():
       },
   ])
   result = compute_deltas_and_arc(stats_df)
-  assert len(result) == 1
-  assert result.iloc[0]["value"] == 90.0
+  assert len(result) == 2
+  by_dev = {str(r["dev"]): float(r["value"]) for _, r in result.iterrows()}
+  assert by_dev == {"0": 40.0, "1": 50.0}
 
 
-def test_compute_deltas_and_arc_nvidia_temperature_means_across_dev():
-  """nvidia_gpu temperature: two devs -> mean value and mean delta."""
+def test_compute_deltas_and_arc_nvidia_temperature_keeps_dev():
+  """nvidia_gpu temperature: two devs stay distinct (mean only within a device)."""
   stats_df = pd.DataFrame([
       {
           "host": "h", "type": "nvidia_gpu", "dev": "0",
@@ -495,8 +497,9 @@ def test_compute_deltas_and_arc_nvidia_temperature_means_across_dev():
       },
   ])
   result = compute_deltas_and_arc(stats_df)
-  assert len(result) == 1
-  assert result.iloc[0]["value"] == 70.0
+  assert len(result) == 2
+  by_dev = {str(r["dev"]): float(r["value"]) for _, r in result.iterrows()}
+  assert by_dev == {"0": 60.0, "1": 80.0}
 
 
 def test_compute_deltas_and_arc_dcg_cpu_power_clusters_sockets():
@@ -532,8 +535,8 @@ def test_compute_deltas_and_arc_dcg_cpu_power_clusters_sockets():
   assert abs(float(result.iloc[0]["value"]) - 180.0) < 1e-6
 
 
-def test_compute_deltas_and_arc_nvidia_module_power_max_across_dev():
-  """module_power_usage: max across GPU devs (avoid double-count on superchips)."""
+def test_compute_deltas_and_arc_nvidia_module_power_keeps_dev():
+  """module_power_usage: one row per GPU (MAX only within a device group)."""
   stats_df = pd.DataFrame([
       {
           "host": "h",
@@ -559,12 +562,12 @@ def test_compute_deltas_and_arc_nvidia_module_power_max_across_dev():
       },
   ])
   result = compute_deltas_and_arc(stats_df)
-  assert len(result) == 1
-  assert float(result.iloc[0]["value"]) == 500.0
+  assert len(result) == 2
+  assert set(float(v) for v in result["value"]) == {500.0}
 
 
-def test_compute_deltas_and_arc_nvidia_clocks_event_reasons_bitwise_or():
-  """nvidia_gpu clocks_event_reasons: OR across devs."""
+def test_compute_deltas_and_arc_nvidia_clocks_event_reasons_keeps_dev():
+  """nvidia_gpu clocks_event_reasons: OR only within each device."""
   stats_df = pd.DataFrame([
       {
           "host": "h", "type": "nvidia_gpu", "dev": "0",
@@ -576,16 +579,50 @@ def test_compute_deltas_and_arc_nvidia_clocks_event_reasons_bitwise_or():
       },
   ])
   result = compute_deltas_and_arc(stats_df)
-  assert len(result) == 1
-  assert int(result.iloc[0]["value"]) == 7
+  assert len(result) == 2
+  by_dev = {str(r["dev"]): int(r["value"]) for _, r in result.iterrows()}
+  assert by_dev == {"0": 5, "1": 2}
+
+
+def test_compute_deltas_and_arc_nvidia_gpu_count_max_not_nxn():
+  """Monitor emits node gpu_count=N on every device; keep-dev + MAX → N not N²."""
+  rows = []
+  for d in ("0", "1", "2", "3"):
+    rows.append({
+        "host": "h", "type": "nvidia_gpu", "dev": d,
+        "event": "gpu_count", "unit": "#", "time": 100.0, "value": 4.0, "wid": 48, "mult": 1,
+    })
+  result = compute_deltas_and_arc(pd.DataFrame(rows))
+  assert len(result) == 4
+  assert all(float(v) == 4.0 for v in result["value"])
+
+
+def test_collapse_nvidia_gpu_count_max_when_dev_collapsed():
+  """Defense: same empty-dev identity with duplicated gpu_count uses MAX."""
+  rows = [
+      {
+          "host": "h", "type": "nvidia_gpu", "dev": "",
+          "event": "gpu_count", "unit": "#", "time": 100.0, "value": 4.0, "delta": 0.0,
+      }
+      for _ in range(4)
+  ]
+  collapsed = _collapse_nvidia_gpu_vectorized(
+      pd.DataFrame(rows), _COLLAPSE_GROUP_COLS_WITH_DEV)
+  assert len(collapsed) == 1
+  assert float(collapsed.iloc[0]["value"]) == 4.0
 
 
 def _collapse_compare_columns():
-  return ["host", "type", "event", "unit", "time", "value", "delta"]
+  return ["host", "type", "dev", "event", "unit", "time", "value", "delta"]
 
 
 def _assert_collapse_frames_equal(actual, expected):
   cols = _collapse_compare_columns()
+  for frame in (actual, expected):
+    if "dev" not in frame.columns:
+      frame["dev"] = ""
+    else:
+      frame["dev"] = frame["dev"].fillna("").astype(str)
   actual_sorted = actual[cols].sort_values(by=cols).reset_index(drop=True)
   expected_sorted = expected[cols].sort_values(by=cols).reset_index(drop=True)
   pd.testing.assert_frame_equal(actual_sorted, expected_sorted, check_dtype=False)
@@ -667,7 +704,7 @@ def _mixed_collapse_fixture():
 
 def test_collapse_nvidia_gpu_vectorized_matches_apply_reference():
   nv_df = _nvidia_multi_event_fixture()
-  gcols = _COLLAPSE_GROUP_COLS
+  gcols = _COLLAPSE_GROUP_COLS_WITH_DEV
   expected = (
       nv_df.groupby(gcols, observed=True)
       .apply(_collapse_nvidia_gpu_group, include_groups=False)
@@ -697,7 +734,9 @@ def test_collapse_dcg_cpu_power_vectorized_matches_apply_reference():
       .apply(_collapse_dcg_cpu_power_gauge_group, include_groups=False)
       .reset_index()
   )
+  expected["dev"] = ""
   actual = _collapse_dcg_cpu_power_vectorized(ccm_df, gcols)
+  actual["dev"] = ""
   _assert_collapse_frames_equal(actual, expected)
 
 
@@ -706,29 +745,37 @@ def test_collapse_stats_with_deltas_vectorized_matches_apply_reference():
   actual = _collapse_stats_with_deltas(stats_df.copy())
 
   gcols = _COLLAPSE_GROUP_COLS
+  gcols_gpu = _COLLAPSE_GROUP_COLS_WITH_DEV
   parts = []
   from hpcperfstats.dbload.lib import sync_timedb_parsing as parsing
 
-  rest_df = stats_df[stats_df["type"] != "nvidia_gpu"]
+  rest_df = stats_df[~stats_df["type"].isin(parsing._GPU_STATS_TYPES)]
   ccm_power_mask = (
       rest_df["type"].isin(parsing._HOST_CPU_HW_TYPES)
       & rest_df["event"].isin(parsing._DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS))
   ccm_power_df = rest_df[ccm_power_mask]
   rest_other = rest_df[~ccm_power_mask]
   if not rest_other.empty:
-    parts.append(
-        rest_other.groupby(gcols, observed=True).sum(min_count=1).reset_index()
-    )
+    part = rest_other.groupby(gcols, observed=True).sum(min_count=1).reset_index()
+    part["dev"] = ""
+    parts.append(part)
   if not ccm_power_df.empty:
-    parts.append(
+    part = (
         ccm_power_df.groupby(gcols, observed=True)
         .apply(_collapse_dcg_cpu_power_gauge_group, include_groups=False)
         .reset_index()
     )
+    part["dev"] = ""
+    parts.append(part)
+  other_gpu = stats_df[stats_df["type"].isin({"amd_gpu", "intel_gpu"})]
+  if not other_gpu.empty:
+    parts.append(
+        other_gpu.groupby(gcols_gpu, observed=True).sum(min_count=1).reset_index()
+    )
   nv_df = stats_df[stats_df["type"] == "nvidia_gpu"]
   if not nv_df.empty:
     parts.append(
-        nv_df.groupby(gcols, observed=True)
+        nv_df.groupby(gcols_gpu, observed=True)
         .apply(_collapse_nvidia_gpu_group, include_groups=False)
         .reset_index()
     )
@@ -736,7 +783,7 @@ def test_collapse_stats_with_deltas_vectorized_matches_apply_reference():
   _assert_collapse_frames_equal(actual, expected)
 
 
-def test_compute_deltas_and_arc_nvidia_unknown_event_sums_across_dev():
+def test_compute_deltas_and_arc_nvidia_unknown_event_keeps_dev():
   stats_df = pd.DataFrame([
       {
           "host": "h", "type": "nvidia_gpu", "dev": "0",
@@ -748,8 +795,9 @@ def test_compute_deltas_and_arc_nvidia_unknown_event_sums_across_dev():
       },
   ])
   result = compute_deltas_and_arc(stats_df)
-  assert len(result) == 1
-  assert float(result.iloc[0]["value"]) == 30.0
+  assert len(result) == 2
+  by_dev = {str(r["dev"]): float(r["value"]) for _, r in result.iterrows()}
+  assert by_dev == {"0": 12.0, "1": 18.0}
 
 
 def test_compute_deltas_and_arc_nvidia_sum_all_nan_yields_nan():
@@ -764,14 +812,15 @@ def test_compute_deltas_and_arc_nvidia_sum_all_nan_yields_nan():
           "event": "gpu_util", "unit": "#", "time": 100.0, "value": float("nan"), "delta": float("nan"),
       },
   ])
-  collapsed = _collapse_nvidia_gpu_vectorized(stats_df, _COLLAPSE_GROUP_COLS)
-  assert len(collapsed) == 1
-  assert pd.isna(collapsed.iloc[0]["value"])
+  collapsed = _collapse_nvidia_gpu_vectorized(
+      stats_df, _COLLAPSE_GROUP_COLS_WITH_DEV)
+  assert len(collapsed) == 2
+  assert all(pd.isna(v) for v in collapsed["value"])
   assert pd.isna(collapsed.iloc[0]["delta"])
 
 
 def test_collapse_nvidia_gpu_excludes_dcgm_blanks_from_sum():
-  """Mixed blank + real power_usage must sum only real watts (not 4× blank)."""
+  """DCGM blank on one device is NaN'd; other devices keep real watts (keep-dev)."""
   from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK
 
   stats_df = pd.DataFrame([
@@ -791,16 +840,21 @@ def test_collapse_nvidia_gpu_excludes_dcgm_blanks_from_sum():
           "value": 300.0, "delta": 1.0,
       },
   ])
-  collapsed = _collapse_nvidia_gpu_vectorized(stats_df, _COLLAPSE_GROUP_COLS)
-  assert len(collapsed) == 1
-  assert float(collapsed.iloc[0]["value"]) == 550.0
-  # Apply reference must match.
+  gcols = _COLLAPSE_GROUP_COLS_WITH_DEV
+  collapsed = _collapse_nvidia_gpu_vectorized(stats_df, gcols)
+  assert len(collapsed) == 3
+  by_dev = {
+      str(r["dev"]): r["value"] for _, r in collapsed.iterrows()
+  }
+  assert pd.isna(by_dev["0"])
+  assert float(by_dev["1"]) == 250.0
+  assert float(by_dev["2"]) == 300.0
   expected = (
-      stats_df.groupby(_COLLAPSE_GROUP_COLS, observed=True)
+      stats_df.groupby(gcols, observed=True)
       .apply(_collapse_nvidia_gpu_group, include_groups=False)
       .reset_index()
   )
-  assert float(expected.iloc[0]["value"]) == 550.0
+  _assert_collapse_frames_equal(collapsed, expected)
 
 
 def test_collapse_nvidia_gpu_or_skips_dcgm_int64_blank():
@@ -818,9 +872,13 @@ def test_collapse_nvidia_gpu_or_skips_dcgm_int64_blank():
           "value": 7.0, "delta": 1.0,
       },
   ])
-  collapsed = _collapse_nvidia_gpu_vectorized(stats_df, _COLLAPSE_GROUP_COLS)
-  assert len(collapsed) == 1
-  assert float(collapsed.iloc[0]["value"]) == 7.0
+  gcols = _COLLAPSE_GROUP_COLS_WITH_DEV
+  collapsed = _collapse_nvidia_gpu_vectorized(stats_df, gcols)
+  assert len(collapsed) == 2
+  by_dev = {str(r["dev"]): float(r["value"]) for _, r in collapsed.iterrows()}
+  # Blank device OR of empty set → 0; real device keeps mask.
+  assert by_dev["0"] == 0.0
+  assert by_dev["1"] == 7.0
 
 
 def test_host_data_instance_from_stats_row_sets_jid_when_present():

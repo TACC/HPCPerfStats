@@ -15,6 +15,13 @@ GPU-derived job-detail fields (including `gpu_count`, utilization summaries, and
 - Do **not** merge NVIDIA, AMD, and Intel streams into a mixed synthetic GPU type for a single field unless a feature explicitly requires mixed-vendor aggregation and tests are added.
 - For newly added GPU summary statistics from monitor payloads, wire the same precedence into analysis (`gpu_job_detail_summary.py`, metrics classes), API assembly, and UI rendering in the same task.
 
+## Per-device identity (`host_data.dev`)
+
+- GPU ingest must **retain** monitor `dev` through collapse and Timescale insert (`unique_together` includes `dev`; empty → `''`, never NULL for uniqueness).
+- Analysis and Job Detail inventory group by `(host, dev)`. Summary / node-level plots sum across `dev` at query time (`get_aggregate_df`).
+- `gpu_count` is a **node** count: collapse uses **MAX** across duplicate emits (never SUM of per-device copies of N → N²).
+- Legacy rows with empty `dev` are node aggregates — UI must not claim one row per GPU.
+
 ## DCGM blank-family sentinels
 
 - NVIDIA DCGM blank-family values (`DCGM_FP64_BLANK` / `DCGM_INT64_BLANK` and offsets; see `hpcperfstats/lib/dcgm_blank.py` mirroring `dcgm_structs.h`) are **missing telemetry**, not real watts/%/bitmasks.

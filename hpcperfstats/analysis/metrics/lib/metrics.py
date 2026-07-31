@@ -1341,7 +1341,7 @@ class Metrics():
         "avg_gpu_mem_bw_gbps": {
             "typename": "nvidia_gpu",
             "events": ["gpu_mem_bw_bytes_rate"],
-            "conv": 0.0,
+            "conv": 1e-9,
             "units": "GB/s",
         },
         "avg_fabric_mb_per_avg_tensor": {
@@ -1670,8 +1670,14 @@ class Metrics():
                      events=None,
                      conv=1.0,
                      cache=None,
-                     rows_cache=None):
-    """Mean sampled ``value`` by host and 5m bucket (same bucketing as ``job_arc``)."""
+                     rows_cache=None,
+                     reject_dcgm_blank=False,
+                     max_sane=None):
+    """Mean sampled ``value`` by host and 5m bucket (same bucketing as ``job_arc``).
+
+    ``reject_dcgm_blank`` NaNs out DCGM blank-family gauges before means.
+    ``max_sane`` (after ``conv``) rejects impossible magnitudes as missing.
+    """
     import pandas as pd
 
     if not getattr(jt, "_base_filter", None):
@@ -1687,6 +1693,8 @@ class Metrics():
           _coerce_metrics_identity_str(typename),
           _hashable_metric_events_signature(events),
           float(conv),
+          bool(reject_dcgm_blank),
+          None if max_sane is None else float(max_sane),
       )
       if cache_key in cache:
         return cache[cache_key]
@@ -1708,6 +1716,16 @@ class Metrics():
       if cache is not None:
         cache[cache_key] = None
       return None
+    if reject_dcgm_blank and "value" in df.columns:
+      vals = nan_out_dcgm_numeric_blanks(
+          df["value"].to_numpy(dtype=np.float64, copy=True))
+      df = df.copy()
+      df["value"] = vals
+      df = df[np.isfinite(df["value"].to_numpy(dtype=np.float64))]
+      if df.empty:
+        if cache is not None:
+          cache[cache_key] = None
+        return None
     if not pd.api.types.is_datetime64_any_dtype(df["time"]):
       df["time"] = pd.to_datetime(df["time"])
     df["bucket"] = df["time"].dt.floor("5min")
@@ -1728,6 +1746,10 @@ class Metrics():
       return None
     per_host_vals = grouped.groupby("host")["sum"].mean()
     value = float(per_host_vals.mean())
+    if max_sane is not None and (
+        not np.isfinite(value) or abs(value) > float(max_sane)
+    ):
+      value = None
     if cache is not None:
       cache[cache_key] = value
     return value
@@ -2342,6 +2364,8 @@ class Metrics():
                 conv=1.0 / 1e9,
                 cache=simple_metric_cache,
                 rows_cache=host_data_rows_cache,
+                reject_dcgm_blank=True,
+                max_sane=_MAX_SANE_GPU_LINK_GBPS,
             )
             if v is not None:
               value = float(v)

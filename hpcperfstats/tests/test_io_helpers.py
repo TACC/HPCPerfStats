@@ -26,12 +26,29 @@ def test_host_data_instance_from_stats_row_maps_fields():
   assert h.time == ts.to_pydatetime()
   assert h.host == "n.example.com"
   assert h.type == "cpu"
-  assert h.dev is None
+  assert h.dev == ""
   assert h.event == "cycles"
   assert h.unit == "count"
   assert h.value == 1.5
   assert h.delta == 0.25
   assert h.arc == 100.0
+
+
+def test_host_data_instance_from_stats_row_persists_dev():
+  ts = pd.Timestamp("2020-06-01 12:00:00")
+  row = SimpleNamespace(
+      time=ts,
+      host="n.example.com",
+      type="nvidia_gpu",
+      dev="0",
+      event="gpu_util",
+      unit="%",
+      value=40.0,
+      delta=1.0,
+      arc=None,
+  )
+  h = host_data_instance_from_stats_row(row)
+  assert h.dev == "0"
 
 
 def test_job_data_instance_from_acct_row_maps_fields():

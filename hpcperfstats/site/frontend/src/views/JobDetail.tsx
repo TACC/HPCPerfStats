@@ -622,6 +622,15 @@ export default function JobDetail() {
       ? Number(gpu_count) * 100
       : null;
   const gpuInventoryRows = Array.isArray(gpu_inventory) ? gpu_inventory : [];
+  const gpuInventoryHasDeviceIds = gpuInventoryRows.some(
+    (row) => row.dev != null && String(row.dev).trim() !== "",
+  );
+  const formatGpuDevCell = (dev: string | null | undefined): string => {
+    if (dev == null || String(dev).trim() === "") {
+      return "—";
+    }
+    return String(dev);
+  };
 
   const hasDeviceData = Object.keys(schema).length > 0;
   const plotConfigByKey = JOB_PLOT_CONFIGS.reduce<Record<JobPlotConfigKey, JobPlotConfig>>((acc, config) => {
@@ -1093,8 +1102,9 @@ export default function JobDetail() {
                   <div className="mt-3">
                     <h3 className="text-sm font-medium mb-1">GPU inventory</h3>
                     <p className="text-muted-foreground text-xs mb-2">
-                      One row per host device. Utilization is percent of that GPU (0–100);
-                      job totals above sum across devices.
+                      {gpuInventoryHasDeviceIds
+                        ? "One row per host device. Utilization is percent of that GPU (0–100); job totals above sum across devices."
+                        : "Node-aggregate GPU telemetry (per-device IDs were not stored for this job). Dev shows — until new ingest preserves device identity."}
                     </p>
                     <Table className="mb-0 border text-sm">
                       <TableHeader>
@@ -1110,7 +1120,7 @@ export default function JobDetail() {
                         {gpuInventoryRows.map((row, idx) => (
                           <TableRow key={`${row.host ?? ""}-${row.dev ?? ""}-${idx}`}>
                             <TableCell>{row.host ?? "—"}</TableCell>
-                            <TableCell>{row.dev ?? "—"}</TableCell>
+                            <TableCell>{formatGpuDevCell(row.dev)}</TableCell>
                             <TableCell className="text-right">
                               {row.util_max != null
                                 ? formatDecimalStandard(row.util_max)
