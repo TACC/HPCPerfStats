@@ -30,7 +30,8 @@ globs: services-conf/django_startup.sh,hpcperfstats/site/lib/machine/migrations/
 
 ## Regression coverage
 
-- `test_migrations.py` — Phase 1 `0030` has no unbounded `UPDATE`, removes policy, skips UNIQUE/decompress; `0031` is state-only; `makemigrations --check` clean
+- `test_migrations.py` — Phase 1 `0030` contracts; `0031` state-only; Autodetector + host `call_command(makemigrations --check --dry-run)` (history check stubbed) for 0031-class Meta drift
+- `test_makemigrations_check_compose.py` — compose runs unpatched `makemigrations --check --dry-run` against live Timescale
 - `test_rediswait.py::test_django_startup_does_not_run_makemigrations` — startup script guard
 - Operator decompress: `docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md`
 

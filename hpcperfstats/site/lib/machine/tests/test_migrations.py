@@ -171,10 +171,7 @@ def test_0031_is_state_only():
 
 
 def test_no_pending_model_migrations():
-  """Removing startup makemigrations must not leave model/migration drift.
-
-  Uses MigrationAutodetector (no live DB) — equivalent to ``makemigrations --check``.
-  """
+  """Host Autodetector: no model/migration drift (0031-class Meta surprises)."""
   from django.apps import apps
   from django.db.migrations.autodetector import MigrationAutodetector
   from django.db.migrations.loader import MigrationLoader
@@ -186,3 +183,50 @@ def test_no_pending_model_migrations():
       ProjectState.from_apps(apps),
   ).changes(graph=loader.graph)
   assert changes == {}, f"Pending model/migration drift: {sorted(changes)}"
+
+
+def test_makemigrations_check_command_reports_no_changes(monkeypatch):
+  """Run real ``makemigrations --check --dry-run`` on the host.
+
+  Production used to call this at startup and silently emit Meta-option drift
+  (``0031_alter_job_plot_artifact_options_and_more``). ``check_consistent_history``
+  needs a live DB; stub it so the command's Autodetector path still runs.
+  Compose re-runs the unpatched command in ``test_makemigrations_check_compose.py``.
+  """
+  from io import StringIO
+
+  from django.core.management import call_command
+  from django.core.management.base import CommandError
+  from django.db.migrations.loader import MigrationLoader
+
+  monkeypatch.setattr(
+      MigrationLoader,
+      "check_consistent_history",
+      lambda self, connection: None,
+  )
+
+  out = StringIO()
+  try:
+    call_command(
+        "makemigrations",
+        "--check",
+        "--dry-run",
+        stdout=out,
+        stderr=out,
+    )
+  except SystemExit as exc:
+    code = exc.code if isinstance(exc.code, int) else 1
+    if code != 0:
+      raise AssertionError(
+          "makemigrations --check found pending model/migration drift "
+          f"(0031-class Meta / field surprises):\n{out.getvalue()}"
+      ) from exc
+  except CommandError as exc:
+    raise AssertionError(
+        f"makemigrations --check failed:\n{out.getvalue()}\n{exc}"
+    ) from exc
+
+  text = out.getvalue()
+  assert "Migrations for" not in text, (
+      "makemigrations --check would autogenerate new migration(s):\n" + text
+  )
