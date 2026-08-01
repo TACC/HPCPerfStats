@@ -42,13 +42,13 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 ### Parallel decompress (multi-CPU)
 
-A single `SELECT decompress_chunk(…) FROM … LIMIT N` runs **serially** inside one Postgres session. Prefer the parallel helper: list up to *N* compressed chunk names, fork one `psql` per chunk, `wait`, loop.
+A single `SELECT decompress_chunk(…) FROM … LIMIT N` runs **serially** inside one Postgres session. Prefer the parallel helper: keeps up to *N* decompressions in flight; when any one finishes it rechecks `compressed_chunks` and starts another immediately (sliding pool).
 
 ```bash
 ./scripts/decompress_host_data_chunks.sh 10
 ```
 
-Pass concurrency as the first argument (default **10**). Suggested starts: **02 → 10–20**, **01/04 → 5–10**, **03 → 2** (disk cushion; each chunk expands ~34 GB). Abort if `df` free space drops below remaining projected expansion.
+Pass concurrency as the first argument (default **10**). Suggested starts: **02 → 10–20**, **01/04 → 5–10**, **03 → 2** (disk cushion; each chunk expands ~34 GB). Abort if `df` free space drops below remaining projected expansion. Per-chunk failures are skipped for the rest of the run; the script aborts only on stall or when nothing left can be started.
 ## Disk watch
 
 ```bash
