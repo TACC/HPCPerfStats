@@ -13,12 +13,14 @@ Phase 1 does **not** fix multi-GPU individuation; the live 4-column UNIQUE still
 
 ## Per-site batch sizes (measured 2026-07-31)
 
-| Host | Compressed chunks | Expansion | Suggested `LIMIT` | Notes |
-|------|-------------------|-----------|-------------------|-------|
-| hpcperfstats04 | 1 | ~0 | 5 | Trivial |
-| hpcperfstats01 | 47 | ~409 GB | 5 | Cheap; mostly already uncompressed |
-| hpcperfstats03 | 106 | ~3523 GB | **2** | Tightest free-space cushion (~2.6T after); `df` every batch |
-| hpcperfstats02 | 1275 | ~3754 GB | 20 | Longest loop; normalize its redundant 4-col PK after decompression |
+
+| Host           | Compressed chunks | Expansion | Suggested `LIMIT` | Notes                                                              |
+| -------------- | ----------------- | --------- | ----------------- | ------------------------------------------------------------------ |
+| hpcperfstats04 | 1                 | ~0        | 5                 | Trivial                                                            |
+| hpcperfstats01 | 47                | ~409 GB   | 5                 | Cheap; mostly already uncompressed                                 |
+| hpcperfstats03 | 106               | ~3523 GB  | **2**             | Tightest free-space cushion (~2.6T after); `df` every batch        |
+| hpcperfstats02 | 1275              | ~3754 GB  | 20                | Longest loop; normalize its redundant 4-col PK after decompression |
+
 
 Recommended order: **04 → 01 → 03 → 02**. Abort a site if free space drops below its remaining projected expansion.
 
@@ -38,6 +40,15 @@ Repeat until `compressed_chunks = 0`. Set `LIMIT` from the table above (example 
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; SELECT decompress_chunk(format('%I.%I', chunk_schema, chunk_name)::regclass, true) FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data' AND is_compressed ORDER BY range_start LIMIT 5;"
 ```
 
+### Parallel decompress (multi-CPU)
+
+A single `SELECT decompress_chunk(…) FROM … LIMIT N` runs **serially** inside one Postgres session. Prefer the parallel helper: list up to *N* compressed chunk names, fork one `psql` per chunk, `wait`, loop.
+
+```bash
+./scripts/decompress_host_data_chunks.sh 10
+```
+
+Pass concurrency as the first argument (default **10**). Suggested starts: **02 → 10–20**, **01/04 → 5–10**, **03 → 2** (disk cushion; each chunk expands ~34 GB). Abort if `df` free space drops below remaining projected expansion.
 ## Disk watch
 
 ```bash
@@ -91,7 +102,7 @@ Stage 2 ships in a **separate image** that includes migration `0032_host_data_un
 **db — confirm decompress gate still zero and constraint shape:**
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';" -c "SELECT c.conname, c.contype, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) AS columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype IN ('p', 'u') ORDER BY c.contype, c.conname;" -c "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';" -c "SELECT c.conname, c.contype, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) AS columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype IN ('p', 'u') ORDER BY c.contype, c.conname;" -c "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
 ```
 
 Expect: `compressed_chunks = 0`; one 4-column UNIQUE on `(time, host, type, event)`; **no** primary-key row (especially on 02); `null_dev_rows` ideally `0`. If `null_dev_rows` is huge, backfill before migrate (session timeout off):
@@ -102,19 +113,39 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 ### Deploy and one-shot migrate (avoid `web` crash-loop)
 
-`ADD UNIQUE` on a large `host_data` can run for a long time. Under Compose `restart: always`, a timed-out or killed startup migrate crash-loops `web`. Prefer a **stopped `web` + one-shot migrate**:
+`ADD UNIQUE` on a large `host_data` can run for a long time. Under Compose `restart: always`, a timed-out or killed startup migrate crash-loops `web`. Prefer **stopped `web` + stopped `pipeline` + one-shot migrate**, with `**db` (and redis/rabbitmq) left up**.
 
-1. Deploy / pull the image that contains migration `0032` (rebuild stack as you normally release).
-2. **Stop `web`** (or scale it to 0) so nothing restarts mid-DDL. Keep **`db`** up.
-3. Run migrate once:
+Checkout must already contain the Stage 2 commit (migration `0032_host_data_unique_include_dev_db`). Do not start `web` until the one-shot migrate finishes.
+
+**1. Stop writers / migrate-on-start (`pipeline` then `web`). Keep `db` up:**
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml run --rm web bash -lc 'python3 hpcperfstats/site/manage.py migrate machine 0032'
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml stop -t 300 pipeline && docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml stop -t 120 web
 ```
 
-4. Start `web` again (normal `up` / recreate).
+**2. Build the Stage 2 app image (`web` / `pipeline` share it). Do not `up` yet:**
 
-If you accidentally start `web` before the gates pass, `0032` is written to **soft-skip** (NOTICE + success) when compressed chunks remain or a multi-column PK is still present — uniqueness will not change until you fix the gate and re-run migrate (one-shot again).
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml build web pipeline
+```
+
+Python-only sites can instead use `./scripts/rebuild_pipeline.sh --no-start` (stops + builds; skips compose up). Prefer that when SPA did not change; use the `compose build` block above when you are not using the helper script.
+
+**3. One-shot migrate with `web` still down (uses the image from step 2):**
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml run --rm --no-deps web bash -lc 'python3 hpcperfstats/site/manage.py migrate machine 0032'
+```
+
+**4. Bring app containers back (recreate on the new image):**
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml up -d --force-recreate --no-deps web && docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml up -d --force-recreate --no-deps pipeline
+```
+
+If `proxy` was stopped for a name-reuse recreate on podman-compose, start it again after `web` is healthy: `docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml start proxy`.
+
+If you accidentally start `web` before the gates pass, `0032` is written to **soft-skip** (NOTICE + success) when compressed chunks remain or a multi-column PK is still present — uniqueness will not change until you fix the gate and re-run migrate (one-shot again with `web`/`pipeline` stopped).
 
 ### Post-check
 
