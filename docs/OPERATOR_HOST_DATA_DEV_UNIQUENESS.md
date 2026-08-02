@@ -49,6 +49,7 @@ A single `SELECT decompress_chunk(…) FROM … LIMIT N` runs **serially** insid
 ```
 
 Pass concurrency as the first argument (default **10**). Suggested starts: **02 → 10–20**, **01/04 → 5–10**, **03 → 2** (disk cushion; each chunk expands ~34 GB). Abort if `df` free space drops below remaining projected expansion. Per-chunk failures are skipped for the rest of the run; the script aborts only on stall or when nothing left can be started.
+
 ## Disk watch
 
 ```bash
@@ -86,6 +87,64 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 ```
 
 Then redeploy the Phase 1 image and let `migrate` apply `0030` for real.
+
+---
+
+## Upgrade Timescale catalog to the compose pin (minor)
+
+Compose pins `**timescale/timescaledb:2.28.2-pg15**`. Pulling/recreating `db` updates the **container libraries**; the **catalog** `extversion` does **not** auto-bump on an existing `postgres_data` volume. Sites surveyed 2026-07-31 still spanned catalog **2.17.2 / 2.21.0 / 2.24.0 / 2.28.2** while every image offered **2.28.2**.
+
+Stay on the **2.28.x** line while on PostgreSQL 15 — Timescale **2.29+ drops PG15**. Do not change the compose tag to a newer major Timescale without a PG major upgrade plan.
+
+**Compose cwd (prose only):** checkout with `docker-compose.yaml`. Do not prefix paste blocks with `cd`.
+
+### 1. Check installed vs available
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T db psql -h localhost -U hpcperfstats -X -c "SELECT e.extversion AS installed, a.default_version AS available_in_image, version() FROM pg_extension e JOIN pg_available_extensions a ON a.name = e.extname WHERE e.extname = 'timescaledb';"
+```
+
+If `installed` already equals `available_in_image` (both `2.28.2` with the current pin), skip the rest. If `available_in_image` is still old, the running `db` container is not on the pinned image — fix that with step 2 before `ALTER EXTENSION`.
+
+### 2. Pull pin and recreate `db` (volume kept)
+
+Briefly stop writers so they are not mid-transaction across the recreate (optional but safer on busy sites):
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml stop -t 300 pipeline && docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml stop -t 120 web
+```
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml pull db && docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml up -d --force-recreate --no-deps db
+```
+
+Wait until healthy (`pg_isready`), then continue. Bring `web` / `pipeline` back only after step 3 succeeds (or after you decide to defer the catalog bump).
+
+### 3. Bump the extension catalog
+
+`ALTER EXTENSION` must be the **first** statement in the session (`psql -X`). `POSTGRES_USER` is `hpcperfstats` (superuser in this image). Repeat until `installed` matches `available_in_image` — large jumps (e.g. 2.17 → 2.28) often need several `UPDATE` hops along Timescale’s upgrade path:
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T db psql -h localhost -U hpcperfstats -X -v ON_ERROR_STOP=1 -c "ALTER EXTENSION timescaledb UPDATE;"
+```
+
+Re-check after each hop:
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T db psql -h localhost -U hpcperfstats -X -c "SELECT e.extversion AS installed, a.default_version AS available_in_image FROM pg_extension e JOIN pg_available_extensions a ON a.name = e.extname WHERE e.extname = 'timescaledb';"
+```
+
+If `UPDATE` errors asking for a specific intermediate version, run `ALTER EXTENSION timescaledb UPDATE TO '<that_version>';` then continue with plain `UPDATE` until you reach **2.28.2**. If the image lacks an intermediate `.so`, see Timescale’s Docker upgrade notes (HA images ship more historical libraries than the slim `timescale/timescaledb` tag this compose uses).
+
+This fleet does not require `timescaledb_toolkit` for Stage 1/2; skip toolkit unless you know the database has that extension.
+
+### 4. Restart app containers
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml up -d --no-deps web pipeline
+```
+
+Catalog upgrade is **independent** of Stage 1 decompress / Stage 2 `0032`; do it whenever operators want fleet Timescale versions aligned. Prefer finishing decompress (or at least avoiding a recreate mid-`decompress_chunk` batch) before step 2.
 
 ---
 
