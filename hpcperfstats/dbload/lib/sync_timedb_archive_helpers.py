@@ -7675,6 +7675,44 @@ def rescan_pending_stats_files(
   )
   if use_snapshot:
     discovered_files = list(startup_closed_paths)
+    # Idle refill (force_snapshot_paths=True) must merge a live find with the
+    # coordinator snapshot. Snapshot-only freezes discovery on a stale
+    # closed_paths list while newly closed segments accrue (hpcperfstats04:
+    # closed_paths=5382 frozen, pending=0 for 13h+). Non-idle should_force_full
+    # alone stays snapshot-only (T2 fast-path).
+    if force_snapshot_paths:
+      find_files = collect_stats_files_in_range(
+          directory,
+          startdate,
+          enddate,
+          host_name_ext,
+          host_scan_hints=host_scan_hints,
+          force_full_scan=should_force_full,
+          newest_first=newest_first,
+          mtime_days=None if should_force_full else mtime_days,
+          log_fn=log_fn,
+      )
+      seen = set(discovered_files)
+      find_only_n = 0
+      for path in find_files:
+        if path in seen:
+          continue
+        discovered_files.append(path)
+        seen.add(path)
+        find_only_n += 1
+      if log_fn is not None and find_only_n:
+        log_fn(
+            "idle_rescan_merge snapshot_n=%d find_n=%d find_only_n=%d "
+            "merged_n=%d force_full=%s"
+            % (
+                len(startup_closed_paths),
+                len(find_files),
+                find_only_n,
+                len(discovered_files),
+                "yes" if should_force_full else "no",
+            ),
+            flush=True,
+        )
     if newest_first:
       discovered_files = sort_pending_stats_paths_oldest_first(
           discovered_files,

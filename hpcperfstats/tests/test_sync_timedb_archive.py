@@ -9323,6 +9323,7 @@ def test_rescan_force_snapshot_paths_uses_closed_list_despite_rescan_count(
     tmp_path,
     monkeypatch,
 ):
+  """force_snapshot_paths unions coordinator snap with live find (not snap-only)."""
   from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
 
   host_dir = tmp_path / "host.cluster.test"
@@ -9347,8 +9348,86 @@ def test_rescan_force_snapshot_paths_uses_closed_list_despite_rescan_count(
       startup_closed_paths=[str(snap_path)],
       force_snapshot_paths=True,
   )
-  assert result == [str(snap_path)]
+  assert result == [str(snap_path), str(walk_path)]
   assert hints["__rescan_count__"] == 4
+
+
+def test_rescan_force_snapshot_merges_incremental_find_for_post_snapshot_closes(
+    tmp_path,
+    monkeypatch,
+):
+  """Idle-refill stall: processed snap paths + new find close → pending=[new].
+
+  Production signature (hpcperfstats04): force_snapshot_paths=True freezes on a
+  stale coordinator closed_paths list already in processed_files while newly
+  closed segments accrue on disk. Union with collect_stats_files_in_range must
+  recover the find-only path after exclude.
+  """
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+  host_dir = tmp_path / "host.cluster.test"
+  host_dir.mkdir(parents=True)
+  processed_path = host_dir / "already_ingested.stats"
+  new_closed_path = host_dir / "post_snapshot_close.stats"
+  processed_path.write_text("1\n", encoding="utf-8")
+  new_closed_path.write_text("1\n", encoding="utf-8")
+  find_calls = []
+
+  def _fake_collect(*_a, **kwargs):
+    find_calls.append(dict(kwargs))
+    return [str(new_closed_path)]
+
+  monkeypatch.setattr(helpers, "collect_stats_files_in_range", _fake_collect)
+  result = helpers.rescan_pending_stats_files(
+      str(tmp_path),
+      "current",
+      None,
+      "cluster.test",
+      {str(processed_path)},
+      host_scan_hints={"__rescan_count__": 1},
+      startup_closed_paths=[str(processed_path)],
+      force_snapshot_paths=True,
+  )
+  assert result == [str(new_closed_path)]
+  assert len(find_calls) == 1
+  assert find_calls[0].get("force_full_scan") is False
+  assert find_calls[0].get("mtime_days") is not None
+
+
+def test_rescan_force_full_snapshot_without_force_flag_stays_snapshot_only(
+    tmp_path,
+    monkeypatch,
+):
+  """Non-idle should_force_full + snap must remain snapshot-only (T2 fast-path)."""
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+  host_dir = tmp_path / "host.cluster.test"
+  host_dir.mkdir(parents=True)
+  snap_path = host_dir / "snap.stats"
+  walk_path = host_dir / "walk.stats"
+  snap_path.write_text("1\n", encoding="utf-8")
+  walk_path.write_text("1\n", encoding="utf-8")
+  find_calls = []
+
+  def _fake_collect(*_a, **_k):
+    find_calls.append(1)
+    return [str(walk_path)]
+
+  monkeypatch.setattr(helpers, "collect_stats_files_in_range", _fake_collect)
+  # __rescan_count__ % full_every == 0 → should_force_full True without idle force.
+  result = helpers.rescan_pending_stats_files(
+      str(tmp_path),
+      "backlog",
+      None,
+      "cluster.test",
+      set(),
+      host_scan_hints={"__rescan_count__": 0},
+      full_rescan_every=1,
+      startup_closed_paths=[str(snap_path)],
+      force_snapshot_paths=False,
+  )
+  assert result == [str(snap_path)]
+  assert find_calls == []
 
 
 def test_supplement_pending_paths_from_closed_paths_refills_toward_max(

@@ -38,6 +38,7 @@ Equivalent manual command: day-close plan **Phase 1b** pytest line in [`tests/ru
 |------|--------|----------|
 | `test_arch_oldest_day_gate_blocked_paths_enter_pending` | `test_sync_timedb_architecture_contract.py` | `incomplete_n>0` → blocked paths at pending head |
 | `test_arch_june04_handoff_after_giant_finalize_dispatches_chunk` | `test_sync_timedb_supervisor.py` | Giant finalize defer → handoff → **next chunk dispatches** (behavioral replay; RC-F Phase 2) |
+| `test_rescan_force_snapshot_merges_incremental_find_for_post_snapshot_closes` | `test_sync_timedb_archive.py` | Idle `force_snapshot_paths` unions snap + find; post-snapshot close becomes pending after exclude (hpcperfstats04 stale-snapshot stall) |
 | `test_arch_*` battery | Phase 1b `-k` | Must stay green; no weaken/xfail without plan amend |
 
 ## Runtime stall telemetry (backlog sites)

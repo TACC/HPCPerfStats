@@ -759,6 +759,35 @@ grep -E 'Files marked for archival: 0|archive_job_begin' /tmp/pipeline-full.log 
 
 **Pass (T2):** Every **`pending rescan begin`** is followed by **`pending rescan done`** within minutes (not ~862s **`startup archive scan ready wait_s`** on MainThread alone). **`idle_rescan_snapshot_source=accrual|coordinator`** appears on idle refill. **`pending cap supplement`** or **`capped_pending`** near **`ingest_queue_max`** after queue drain despite **`incomplete_n=2`** cross-day stragglers. **`oldest_day_chunk_gate_cross_day_db_complete`** after all-**`db_skip=head_tail`** defer chunks. During large-day pre-seal, **`pre_seal_verify classify progress`** should show rising **`verified_n/N`** within one worker session, then **`pre_seal_verify complete`** — **`verify budget exhausted`** must **not** appear (removed). **`pre_seal_verify start`** without **`complete`** for >5m is a failure. No **`archive_job_begin`** for unrelated calendar days immediately after **`Files marked for archival: 0`** chunks.
 
+### T0 / T1 / T2 verify — idle-rescan stale snapshot stall (hpcperfstats04, 2026-08)
+
+**Failure signature (pre-fix):** hosts keep appending `current` and rotating closed epochs; RabbitMQ drained; supervisor alive; yet **`Worker idle loops while waiting for pending files`** advances every ~300s with identical **`idle_rescan_snapshot_source=coordinator closed_paths=N`** (frozen N) and **`pending=0`**. Light janitor ticks show **`maintenance_pass_s=0.000`** (no heavy snapshot republish). Timescale **`host_data`** lag: **`newest_3h` NULL** while `newest_24h` is many hours old.
+
+**Root cause:** empty-queue idle refill sets **`force_snapshot_paths=True`**; **`rescan_pending_stats_files`** used **only** the coordinator snapshot (all members already in `processed_files`) and never walked disk.
+
+**Fix:** idle **`force_snapshot_paths`** unions snapshot with **`collect_stats_files_in_range`** (mtime by default; full find on Nth tick). Non-idle `should_force_full` alone stays snapshot-only.
+
+```bash
+# T0 — frozen snapshot + advancing idle counter (pre-fix signature)
+docker compose -p hpcperfstats logs pipeline 2>&1 | \
+  grep -E 'idle_rescan_snapshot_source=|Worker idle loops|idle_rescan_merge|ingest file path=|Number of host stats files to process' | tail -80
+
+# T0 — Timescale freshness (expect non-NULL newest_3h within ~one idle interval + drain after fix)
+docker compose -p hpcperfstats exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout='45s'; SELECT max(time) AS newest_3h FROM host_data WHERE time > now() - interval '3 hours';" -c "SET statement_timeout='60s'; SELECT max(time) AS newest_24h FROM host_data WHERE time > now() - interval '24 hours';"
+
+# T1 — merge / pending recovery after deploy
+docker compose -p hpcperfstats logs pipeline 2>&1 | \
+  grep -E 'idle_rescan_merge|pending rescan done|chunk dispatch begin|chunk ingest summary|Worker idle loops' | tail -60
+```
+
+| Tier | Pass |
+|------|------|
+| **T0** | Pre-fix: frozen `closed_paths=N` + rising idle counter + `newest_3h` NULL confirms stall. Post-deploy smoke: supervisor still `sync_timedb.py [main]`; no crash-loop. |
+| **T1 (~1h)** | **`idle_rescan_merge … find_only_n>0`** (or pending non-zero without further idle counter advance) when closed raw accrues after snapshot publish; **`chunk dispatch begin`** / **`ingest file path=`** resume; idle-loop counter stops advancing or resets. |
+| **T2 (catch-up)** | **`newest_3h` non-NULL** and trending toward wall clock; `closed_paths=` / merge counts not stuck on a single frozen N for hours while rotations continue; no return of perpetual `pending=0` idle loops with healthy upstream. |
+
+Regression tests: **`test_rescan_force_snapshot_merges_incremental_find_for_post_snapshot_closes`**, **`test_rescan_force_snapshot_paths_uses_closed_list_despite_rescan_count`**, **`test_rescan_force_full_snapshot_without_force_flag_stays_snapshot_only`**.
+
 ### T0 / T1 verify — enqueued but `days_started=0` (stale/ghost deferred trap, 2026-07)
 
 **Failure signature (pre-fix / hpcperfstats03):** discover reports **`enqueued≥1`** (or repeated **`janitor: day_close enqueue`**) while the same or next tick ends with **`debt_popped=0 days_started=0 debt_remaining>0`** and **`active_workers=0`**. Async day-close sidecar shows heap days with **`status=deferred`** and **`detail=stale_manifest_recovery`** or **`ghost_manifest_reconcile`** (not classic **`waiting_on_ingest`**). No **`day-close-N`** worker progress lines. Multi-hour tick **`duration_s`** here is time spent in reconcile/discover before fill, not live workers.
