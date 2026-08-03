@@ -48,3 +48,15 @@ export function delayMs(ms: number): Promise<void> {
     setTimeout(resolve, n);
   });
 }
+
+/**
+ * Compile-time regression: Next 16.3+ defines ``ImportMetaEnv``; ``VITEST`` must
+ * remain available via ``src/types/global.d.ts`` (declare global augmentation).
+ */
+type AssertVitestOnImportMetaEnv = ImportMetaEnv extends {
+  readonly VITEST?: string;
+}
+  ? true
+  : never;
+const importMetaEnvHasVitest: AssertVitestOnImportMetaEnv = true;
+void importMetaEnvHasVitest;

@@ -1,5 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { delayMs } from "./bokeh-embed-defaults";
+import {
+  delayMs,
+  defaultDeferEmbedUntilVisible,
+  defaultEmbedSettleAfterIdleMs,
+  isVitestLike,
+} from "./bokeh-embed-defaults";
+
+describe("bokeh-embed-defaults Vitest env contract", () => {
+  it("detects Vitest via import.meta.env.VITEST (Next 16.3 ImportMetaEnv merge)", () => {
+    expect(isVitestLike()).toBe(true);
+    expect(defaultDeferEmbedUntilVisible()).toBe(false);
+    expect(defaultEmbedSettleAfterIdleMs()).toBe(0);
+  });
+});
 
 describe("bokeh-embed-defaults delayMs", () => {
   afterEach(() => {

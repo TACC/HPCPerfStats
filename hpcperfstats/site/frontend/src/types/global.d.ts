@@ -3,7 +3,7 @@ import type { BokehJS } from "@bokeh/bokehjs";
 /**
  * Augment Next/Vite ``ImportMetaEnv`` in the global scope.
  * Module-scoped ``interface ImportMetaEnv`` does not merge after Next 16.3
- * ships its own ``ImportMetaEnv`` (see import-meta-env-vitest-contract.ts).
+ * ships its own ``ImportMetaEnv``; keep ``VITEST`` here for ``isVitestLike()``.
  */
 declare global {
   interface ImportMetaEnv {
