@@ -3,10 +3,12 @@
 # See docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md.
 #
 # Keeps up to N chunk UPDATEs in flight. When any one finishes, picks the next
-# uncompressed chunk that still has NULL dev and starts another (sliding pool).
+# uncompressed chunk and starts another (sliding pool). Progress is remaining
+# uncompressed chunks not yet completed/skipped — chunk catalog only (no
+# host_data NULL row counts or existence probes).
 #
-# Prefer Stage 1 done (compressed_chunks = 0). Compressed chunks are skipped;
-# if NULLs remain only under compressed chunks, the script exits non-zero.
+# Prefer Stage 1 done (compressed_chunks = 0). Compressed chunks are not in the
+# worklist; decompress first for a complete backfill.
 # Prefer pipeline/web stopped so ingest is not fighting the rewrite.
 #
 # Usage (from checkout with docker-compose.yaml):
@@ -14,10 +16,7 @@
 #   ./scripts/backfill_host_data_null_dev.sh 16
 #   ./scripts/backfill_host_data_null_dev.sh 4
 #
-# Progress:
-#   docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml \
-#     exec db psql -h localhost -U hpcperfstats -c \
-#     "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
+# Optional post-run verify: see OPERATOR_HOST_DATA_DEV_UNIQUENESS.md (null_dev_rows).
 set -euo pipefail
 
 CONCURRENCY="${1:-8}"
@@ -27,6 +26,7 @@ if ! [[ "$CONCURRENCY" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
+# Consecutive completions without a drop in remaining chunks before giving up.
 STALL_LIMIT="${HPCPERFSTATS_NULL_DEV_STALL_LIMIT:-5}"
 
 COMPOSE=(docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml)
@@ -45,9 +45,32 @@ psql_cmd() {
   "${COMPOSE[@]}" exec -T db psql -h localhost -U hpcperfstats -v ON_ERROR_STOP=1 -c "$1"
 }
 
-remaining_nulls() {
-  local n
-  n="$(psql_at "SELECT count(*) FROM host_data WHERE dev IS NULL;")"
+# Uncompressed host_data chunks still to run (exclude completed / skipped / in-flight).
+# Args: excluded chunk names (may be empty).
+remaining_chunks() {
+  local excl_sql="" c first=1 n
+  if [[ "$#" -gt 0 ]]; then
+    excl_sql="AND format('%I.%I', chunk_schema, chunk_name) NOT IN ("
+    for c in "$@"; do
+      [[ -z "$c" ]] && continue
+      c="${c//\'/\'\'}"
+      if [[ "$first" -eq 1 ]]; then
+        first=0
+      else
+        excl_sql+=", "
+      fi
+      excl_sql+="'${c}'"
+    done
+    excl_sql+=")"
+    if [[ "$first" -eq 1 ]]; then
+      excl_sql=""
+    fi
+  fi
+  n="$(psql_at "SELECT count(*)
+                FROM timescaledb_information.chunks
+                WHERE hypertable_name = 'host_data'
+                  AND NOT is_compressed
+                  ${excl_sql};")"
   printf '%s' "${n//$'\r'/}"
 }
 
@@ -59,12 +82,12 @@ compressed_n() {
   printf '%s' "${n//$'\r'/}"
 }
 
-# One line: chunk|range_start|range_end  (uncompressed chunks with NULL dev only).
+# One line: chunk|range_start|range_end (uncompressed only; chunk catalog).
 # Args: excluded chunk names (may be empty).
 next_chunk_row() {
   local excl_sql="" c first=1
   if [[ "$#" -gt 0 ]]; then
-    excl_sql="AND format('%I.%I', c.chunk_schema, c.chunk_name) NOT IN ("
+    excl_sql="AND format('%I.%I', chunk_schema, chunk_name) NOT IN ("
     for c in "$@"; do
       [[ -z "$c" ]] && continue
       c="${c//\'/\'\'}"
@@ -82,24 +105,31 @@ next_chunk_row() {
   fi
   psql_at "SELECT format(
               '%s|%s|%s',
-              format('%I.%I', c.chunk_schema, c.chunk_name),
-              c.range_start,
-              c.range_end
+              format('%I.%I', chunk_schema, chunk_name),
+              range_start,
+              range_end
             )
-           FROM timescaledb_information.chunks c
-           WHERE c.hypertable_name = 'host_data'
-             AND NOT c.is_compressed
+           FROM timescaledb_information.chunks
+           WHERE hypertable_name = 'host_data'
+             AND NOT is_compressed
              ${excl_sql}
-             AND EXISTS (
-               SELECT 1
-               FROM host_data h
-               WHERE h.time >= c.range_start
-                 AND h.time < c.range_end
-                 AND h.dev IS NULL
-               LIMIT 1
-             )
-           ORDER BY c.range_start
+           ORDER BY range_start
            LIMIT 1;" | tr -d '\r'
+}
+
+# Collect chunk names to exclude from remaining / next: completed + skipped + inflight.
+exclude_list() {
+  local pid c
+  exclude=()
+  for c in "${!completed[@]}"; do
+    exclude+=("$c")
+  done
+  for c in "${!skipped[@]}"; do
+    exclude+=("$c")
+  done
+  for pid in "${!inflight[@]}"; do
+    exclude+=("${inflight[$pid]}")
+  done
 }
 
 JOB_SEQ=0
@@ -119,7 +149,6 @@ start_one() {
 
   (
     echo "  start ${chunk}  ${t0} .. ${t1}"
-    # Quote timestamps for SQL; chunk regclass not needed — time-range UPDATE.
     t0_sql="${t0//\'/\'\'}"
     t1_sql="${t1//\'/\'\'}"
     if psql_cmd "SET statement_timeout = 0;
@@ -169,15 +198,9 @@ wait_one() {
 }
 
 fill_slots() {
-  local exclude row chunk pid c
+  local row chunk pid c
   while [[ "${#inflight[@]}" -lt "$CONCURRENCY" ]]; do
-    exclude=()
-    for pid in "${!inflight[@]}"; do
-      exclude+=("${inflight[$pid]}")
-    done
-    for c in "${!skipped[@]}"; do
-      exclude+=("$c")
-    done
+    exclude_list
 
     if [[ "${#exclude[@]}" -gt 0 ]]; then
       row="$(next_chunk_row "${exclude[@]}")"
@@ -202,6 +225,8 @@ fill_slots() {
 declare -A inflight=()
 declare -A pid_job=()
 declare -A skipped=()
+declare -A completed=()
+exclude=()
 total_failed=0
 total_ok=0
 prev_left=""
@@ -211,12 +236,17 @@ echo "parallel host_data.dev NULL→'' backfill: concurrency=${CONCURRENCY} (sli
 
 comp="$(compressed_n)"
 if [[ "$comp" =~ ^[0-9]+$ && "$comp" -gt 0 ]]; then
-  echo "warning: ${comp} compressed host_data chunk(s) — those ranges are skipped; decompress first for a complete backfill" >&2
+  echo "warning: ${comp} compressed host_data chunk(s) — not in worklist; decompress first for a complete backfill" >&2
 fi
 
 while true; do
-  left="$(remaining_nulls)"
-  echo "null_dev_rows=${left} inflight=${#inflight[@]} skipped=${#skipped[@]} ok=${total_ok} failed=${total_failed}"
+  exclude_list
+  if [[ "${#exclude[@]}" -gt 0 ]]; then
+    left="$(remaining_chunks "${exclude[@]}")"
+  else
+    left="$(remaining_chunks)"
+  fi
+  echo "remaining_chunks=${left} inflight=${#inflight[@]} completed=${#completed[@]} skipped=${#skipped[@]} ok=${total_ok} failed=${total_failed}"
 
   if [[ "$left" == "0" && "${#inflight[@]}" -eq 0 ]]; then
     echo "done (ok=${total_ok} skipped_failures=${total_failed})"
@@ -230,18 +260,14 @@ while true; do
       echo "done (ok=${total_ok} skipped_failures=${total_failed})"
       exit 0
     fi
-    comp="$(compressed_n)"
-    if [[ "$comp" =~ ^[0-9]+$ && "$comp" -gt 0 ]]; then
-      echo "aborting: ${left} null_dev row(s) remain and ${comp} compressed chunk(s) were skipped — decompress then re-run" >&2
-    else
-      echo "aborting: ${left} null_dev row(s) remain but no uncompressed chunk with NULLs could be started" >&2
-    fi
+    echo "aborting: ${left} uncompressed chunk(s) remain but none could be started (all skipped or unavailable)" >&2
     exit 1
   fi
 
   wait_one
   if [[ "${DONE_RC}" -eq 0 ]]; then
     total_ok=$((total_ok + 1))
+    completed["$DONE_CHUNK"]=1
   else
     total_failed=$((total_failed + 1))
     skipped["$DONE_CHUNK"]=1
@@ -250,15 +276,20 @@ while true; do
 
   fill_slots
 
-  left="$(remaining_nulls)"
-  echo "null_dev_rows=${left} (after ${DONE_CHUNK})"
+  exclude_list
+  if [[ "${#exclude[@]}" -gt 0 ]]; then
+    left="$(remaining_chunks "${exclude[@]}")"
+  else
+    left="$(remaining_chunks)"
+  fi
+  echo "remaining_chunks=${left} (after ${DONE_CHUNK})"
 
   if [[ "$left" =~ ^[0-9]+$ && -n "$prev_left" ]]; then
     if [[ "$left" -ge "$prev_left" ]]; then
       stall=$((stall + 1))
-      echo "warning: no progress (${stall}/${STALL_LIMIT}) — still ${left} null_dev row(s)" >&2
+      echo "warning: no progress (${stall}/${STALL_LIMIT}) — still ${left} chunk(s) remaining" >&2
       if [[ "$stall" -ge "$STALL_LIMIT" ]]; then
-        echo "aborting: null_dev_rows stuck at ${left}; draining ${#inflight[@]} in-flight job(s)" >&2
+        echo "aborting: remaining_chunks stuck at ${left}; draining ${#inflight[@]} in-flight job(s)" >&2
         while [[ "${#inflight[@]}" -gt 0 ]]; do
           wait_one
         done

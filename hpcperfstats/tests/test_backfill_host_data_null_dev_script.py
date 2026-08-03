@@ -39,3 +39,15 @@ def test_backfill_host_data_null_dev_rejects_bad_concurrency(bad_arg):
   assert completed.returncode == 2
   assert "usage:" in completed.stderr
   assert "concurrency must be a positive integer" in completed.stderr
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_host_data_null_dev_progress_is_chunk_catalog_not_null_row_selects():
+  """Regression: progress/pickers must not SELECT/count NULL rows on host_data."""
+  text = SCRIPT.read_text(encoding="utf-8")
+  assert "remaining_chunks" in text
+  assert "timescaledb_information.chunks" in text
+  # UPDATE may still filter AND dev IS NULL; forbid progress probes on host_data.
+  assert "SELECT count(*) FROM host_data WHERE dev IS NULL" not in text
+  assert "EXISTS (" not in text
+  assert "FROM host_data h" not in text

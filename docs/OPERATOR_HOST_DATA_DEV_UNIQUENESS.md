@@ -168,15 +168,15 @@ Expect: `compressed_chunks = 0`; one 4-column UNIQUE on `(time, host, type, even
 
 ### Parallel NULL → `''` backfill (multi-CPU)
 
-A single `UPDATE host_data SET dev = '' WHERE dev IS NULL` runs in **one** Postgres backend and does not parallelize. Prefer the sliding-pool helper (same model as decompress): up to *N* chunk-scoped UPDATEs in flight; when one finishes it starts the next uncompressed chunk that still has NULL `dev`.
+A single `UPDATE host_data SET dev = '' WHERE dev IS NULL` runs in **one** Postgres backend and does not parallelize. Prefer the sliding-pool helper (same model as decompress): up to *N* chunk-scoped UPDATEs in flight; when one finishes it starts the next uncompressed chunk. Progress is **remaining uncompressed chunks** from the Timescale chunk catalog (no `host_data` NULL row counts inside the script). Each worker only runs the time-range `UPDATE … AND dev IS NULL`.
 
-**Compose cwd (prose only):** checkout with `docker-compose.yaml`. Prefer **pipeline/web stopped** so ingest is not fighting the rewrite. Stage 1 should already show `compressed_chunks = 0`; compressed chunks are skipped and the script aborts if NULLs remain only under them.
+**Compose cwd (prose only):** checkout with `docker-compose.yaml`. Prefer **pipeline/web stopped** so ingest is not fighting the rewrite. Stage 1 should already show `compressed_chunks = 0`; compressed chunks are not in the worklist.
 
 ```bash
 ./scripts/backfill_host_data_null_dev.sh 8
 ```
 
-Pass concurrency as the first argument (default **8**). Suggested starts: **4–8** on smaller sites, **8–16** on large uncompressed hypertables. Re-check:
+Pass concurrency as the first argument (default **8**). Suggested starts: **4–8** on smaller sites, **8–16** on large uncompressed hypertables. Optional post-run verify:
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
