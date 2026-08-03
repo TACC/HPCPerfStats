@@ -28,18 +28,18 @@ dependencies = [
   "numpy==2.5.1",
   "numexpr",
   "psycopg==3.3.4",
-  "pandas==3.0.3",
-  "bokeh==3.9.1",
+  "pandas==3.0.5",
+  "bokeh==3.9.2",
   "Django>=6.0.7,<7.0",
   "python-hostlist",
-  "pika==1.4.1",
+  "pika==1.4.2",
   "mysqlclient",
   "gunicorn",
   "requests>=2.34.2",
-  "cryptography>=49.0.0",
+  "cryptography>=50.0.0",
   "pillow>=12.3.0",
   "tzdata",
-  "redis==8.0.1",
+  "redis==8.1.0",
   "djangorestframework",
   "drf-spectacular>=0.30.0",
   "django-cors-headers",
@@ -51,14 +51,14 @@ test = [
   "pytest>=9.1.1",
   "pytest-django>=4.12.0",
   "pytest-cov>=7.1.0",
-  "playwright>=1.61.0",
+  "playwright>=1.62.0",
   "psycopg[binary]",
 ]
 dev = [
-  "ruff>=0.15.21",
+  "ruff>=0.16.1",
   "pylint>=4.0.6",  # optional; Ruff is the primary linter (see docs/TESTING.md)
   "vulture>=2.16",
-  "pre-commit>=4.6.0",
+  "pre-commit>=4.6.1",
 ]
 
 [tool.pytest.ini_options]

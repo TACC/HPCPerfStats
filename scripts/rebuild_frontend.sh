@@ -20,7 +20,7 @@ source "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"
 
 FRONTEND_DIR="${REPO_ROOT}/hpcperfstats/site/frontend"
 STATIC_FRONTEND="${REPO_ROOT}/hpcperfstats/site/hpcperfstats_site/static/frontend"
-NODE_IMAGE="node:26.5.0-alpine3.23"
+NODE_IMAGE="node:26.5.1-alpine3.23"
 
 SKIP_NPM_CI=0
 DEPLOY=1

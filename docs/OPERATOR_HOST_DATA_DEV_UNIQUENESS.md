@@ -92,7 +92,7 @@ Then redeploy the Phase 1 image and let `migrate` apply `0030` for real.
 
 ## Upgrade Timescale catalog to the compose pin (minor)
 
-Compose pins `**timescale/timescaledb:2.28.2-pg15**`. Pulling/recreating `db` updates the **container libraries**; the **catalog** `extversion` does **not** auto-bump on an existing `postgres_data` volume. Sites surveyed 2026-07-31 still spanned catalog **2.17.2 / 2.21.0 / 2.24.0 / 2.28.2** while every image offered **2.28.2**.
+Compose pins `**timescale/timescaledb:2.28.3-pg15**`. Pulling/recreating `db` updates the **container libraries**; the **catalog** `extversion` does **not** auto-bump on an existing `postgres_data` volume. Sites surveyed 2026-07-31 still spanned catalog **2.17.2 / 2.21.0 / 2.24.0 / 2.28.2** while every image offered **2.28.2** (compose now pins **2.28.3**).
 
 Stay on the **2.28.x** line while on PostgreSQL 15 — Timescale **2.29+ drops PG15**. Do not change the compose tag to a newer major Timescale without a PG major upgrade plan.
 
@@ -104,7 +104,7 @@ Stay on the **2.28.x** line while on PostgreSQL 15 — Timescale **2.29+ drops P
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T db psql -h localhost -U hpcperfstats -X -c "SELECT e.extversion AS installed, a.default_version AS available_in_image, version() FROM pg_extension e JOIN pg_available_extensions a ON a.name = e.extname WHERE e.extname = 'timescaledb';"
 ```
 
-If `installed` already equals `available_in_image` (both `2.28.2` with the current pin), skip the rest. If `available_in_image` is still old, the running `db` container is not on the pinned image — fix that with step 2 before `ALTER EXTENSION`.
+If `installed` already equals `available_in_image` (both `2.28.3` with the current pin), skip the rest. If `available_in_image` is still old, the running `db` container is not on the pinned image — fix that with step 2 before `ALTER EXTENSION`.
 
 ### 2. Pull pin and recreate `db` (volume kept)
 
@@ -134,7 +134,7 @@ Re-check after each hop:
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T db psql -h localhost -U hpcperfstats -X -c "SELECT e.extversion AS installed, a.default_version AS available_in_image FROM pg_extension e JOIN pg_available_extensions a ON a.name = e.extname WHERE e.extname = 'timescaledb';"
 ```
 
-If `UPDATE` errors asking for a specific intermediate version, run `ALTER EXTENSION timescaledb UPDATE TO '<that_version>';` then continue with plain `UPDATE` until you reach **2.28.2**. If the image lacks an intermediate `.so`, see Timescale’s Docker upgrade notes (HA images ship more historical libraries than the slim `timescale/timescaledb` tag this compose uses).
+If `UPDATE` errors asking for a specific intermediate version, run `ALTER EXTENSION timescaledb UPDATE TO '<that_version>';` then continue with plain `UPDATE` until you reach **2.28.3**. If the image lacks an intermediate `.so`, see Timescale’s Docker upgrade notes (HA images ship more historical libraries than the slim `timescale/timescaledb` tag this compose uses).
 
 This fleet does not require `timescaledb_toolkit` for Stage 1/2; skip toolkit unless you know the database has that extension.
 
