@@ -164,7 +164,27 @@ Stage 2 ships in a **separate image** that includes migration `0032_host_data_un
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';" -c "SELECT c.conname, c.contype, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) AS columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype IN ('p', 'u') ORDER BY c.contype, c.conname;" -c "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
 ```
 
-Expect: `compressed_chunks = 0`; one 4-column UNIQUE on `(time, host, type, event)`; **no** primary-key row (especially on 02); `null_dev_rows` ideally `0`. If `null_dev_rows` is huge, backfill before migrate (session timeout off):
+Expect: `compressed_chunks = 0`; one 4-column UNIQUE on `(time, host, type, event)`; **no** primary-key row (especially on 02); `null_dev_rows` ideally `0`. If `null_dev_rows` is huge, backfill **before** migrate.
+
+### Parallel NULL → `''` backfill (multi-CPU)
+
+A single `UPDATE host_data SET dev = '' WHERE dev IS NULL` runs in **one** Postgres backend and does not parallelize. Prefer the sliding-pool helper (same model as decompress): up to *N* chunk-scoped UPDATEs in flight; when one finishes it starts the next uncompressed chunk that still has NULL `dev`.
+
+**Compose cwd (prose only):** checkout with `docker-compose.yaml`. Prefer **pipeline/web stopped** so ingest is not fighting the rewrite. Stage 1 should already show `compressed_chunks = 0`; compressed chunks are skipped and the script aborts if NULLs remain only under them.
+
+```bash
+./scripts/backfill_host_data_null_dev.sh 8
+```
+
+Pass concurrency as the first argument (default **8**). Suggested starts: **4–8** on smaller sites, **8–16** on large uncompressed hypertables. Re-check:
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
+```
+
+Expect `null_dev_rows = 0` before running Stage 2 migrate.
+
+Serial one-shot (small sites only):
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; UPDATE host_data SET dev = '' WHERE dev IS NULL;"
