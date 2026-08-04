@@ -76,6 +76,15 @@ def run_sacct_for_date(single_date):
     return start_str, result.stdout
 
 
+def sacct_body_has_job_rows(body: str) -> bool:
+    """True when sacct -P text has at least one job row after the header.
+
+    Empty output or header-only (no jobs that day) returns False.
+    """
+    lines = [ln for ln in body.splitlines() if ln.strip()]
+    return len(lines) >= 2
+
+
 def write_accounting_daily_file(outdir: str, date_str: str, body: str) -> str:
     """Write pipe-delimited sacct body to ``{outdir}/{date_str}.txt``.
 
@@ -139,6 +148,9 @@ def _run_file_mode(file_dir: str, start_date: datetime, end_date: datetime) -> N
             print(f"Warning: sacct failed for {date_str}", file=sys.stderr)
             continue
         body = output.decode("utf-8", errors="replace")
+        if not sacct_body_has_job_rows(body):
+            print(f"{date_str}: no jobs; skipped")
+            continue
         path = write_accounting_daily_file(file_dir, date_str, body)
         print(f"{date_str}: wrote {path}")
 

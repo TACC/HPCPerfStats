@@ -74,13 +74,44 @@ def test_main_file_mode_skips_failed_sacct(tmp_path, capsys):
     assert "sacct failed for 2024-01-01" in capsys.readouterr().err
 
 
+def test_main_file_mode_skips_header_only_no_job_rows(tmp_path, capsys):
+    """sacct -P still prints a header when there are no jobs; do not write the day."""
+    with patch(
+        "hpcperfstats_tools.sacct_gen.run_sacct_for_date",
+        return_value=("2024-01-01", b"JobID|User\n"),
+    ):
+        main(["-f", str(tmp_path), "2024-01-01", "2024-01-02"])
+    assert not list(tmp_path.glob("*.txt"))
+    out = capsys.readouterr().out
+    assert "no jobs" in out.lower() or "skipped" in out.lower()
+    assert "wrote" not in out
+
+
+def test_main_file_mode_skips_empty_sacct_output(tmp_path, capsys):
+    with patch(
+        "hpcperfstats_tools.sacct_gen.run_sacct_for_date",
+        return_value=("2024-01-01", b""),
+    ):
+        main(["-f", str(tmp_path), "2024-01-01", "2024-01-02"])
+    assert not list(tmp_path.glob("*.txt"))
+
+
+def test_sacct_body_has_job_rows():
+    from hpcperfstats_tools.sacct_gen import sacct_body_has_job_rows
+
+    assert sacct_body_has_job_rows("") is False
+    assert sacct_body_has_job_rows("JobID|User\n") is False
+    assert sacct_body_has_job_rows("JobID|User\n\n") is False
+    assert sacct_body_has_job_rows("JobID|User\n1|alice\n") is True
+
+
 def test_main_file_mode_respects_date_range(tmp_path):
     calls = []
 
     def fake_sacct(single_date):
         date_str = single_date.strftime("%Y-%m-%d")
         calls.append(date_str)
-        return date_str, b"h\n"
+        return date_str, b"JobID|User\n1|alice\n"
 
     with patch("hpcperfstats_tools.sacct_gen.run_sacct_for_date", side_effect=fake_sacct):
         main(["-f", str(tmp_path), "2024-01-01", "2024-01-04"])
