@@ -66,10 +66,13 @@ hpcperfstats-jobstats --insecure 12345
 
 ### hpcperfstats-sacct-gen
 
-Runs `sacct` for a date range and POSTs the pipe-delimited output to the HPCPerfStats ingest endpoint. Used on a login node or host that has Slurm and network access to the portal. The API stores the data using the same logic as the portal’s sync_acct and also writes `{acct_path}/YYYY-MM-DD.txt` for scheduled `sync_acct.py` reingest. The API returns HTTP 409 when a POST would replace an on-disk file with fewer lines (staff API key required).
+Runs `sacct` for a date range in one of two **mutually exclusive** modes:
+
+- **API mode** (default): POSTs the pipe-delimited output to the HPCPerfStats ingest endpoint. The API stores the data using the same logic as the portal’s sync_acct and also writes `{acct_path}/YYYY-MM-DD.txt` for scheduled `sync_acct.py` reingest. The API returns HTTP 409 when a POST would replace an on-disk file with fewer lines (staff API key required).
+- **File mode** (`-f DIR`): writes the same pipe-delimited body to `DIR/YYYY-MM-DD.txt` locally (same naming as the ingest API). `DIR` must already exist. No API URL or key required. Do not combine with `--api-key`.
 
 ```bash
-# Ingest today only (default)
+# Ingest today only (default API mode)
 hpcperfstats-sacct-gen
 
 # Ingest a specific date range (end date exclusive)
@@ -77,6 +80,9 @@ hpcperfstats-sacct-gen 2024-01-01 2024-01-08
 
 # Pass API key (and cache it for next time)
 hpcperfstats-sacct-gen --api-key YOUR_KEY 2024-01-01 2024-01-02
+
+# Write daily .txt files instead of POSTing (DIR must exist)
+hpcperfstats-sacct-gen -f /path/to/accounting 2024-01-01 2024-01-08
 ```
 
 **Options:**
@@ -85,13 +91,14 @@ hpcperfstats-sacct-gen --api-key YOUR_KEY 2024-01-01 2024-01-02
 |-------------|-------------|
 | `start_date` | Start date (YYYY-MM-DD or parseable). Default: today. |
 | `end_date`   | End date, exclusive. Default: start + 1 day. |
-| `--api-key`  | API key (optional; otherwise uses cache). |
+| `-f DIR`     | Write `DIR/YYYY-MM-DD.txt` files instead of API ingest. Mutually exclusive with `--api-key`. |
+| `--api-key`  | API key (optional in API mode; otherwise uses cache). Mutually exclusive with `-f`. |
 
 **Requirements:**
 
-- `[API] base_url` must be set in your tools INI (see Configuration).
 - Slurm `sacct` on the machine where the command runs.
-- Staff-capable API key for the ingest endpoint.
+- **API mode:** `[API] base_url` in your tools INI (see Configuration); staff-capable API key for the ingest endpoint.
+- **File mode:** `-f DIR` must be an existing directory.
 
 ## Python library usage
 
