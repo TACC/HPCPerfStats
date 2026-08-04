@@ -266,6 +266,78 @@ def test_flush_clears_batch_lists():
   assert pending_proc == []
 
 
+def test_dedupe_proc_objs_keep_last_for_upsert_batch():
+  """Regression: duplicate (jid,host,proc) in one bulk_create upsert fails on Postgres."""
+  from types import SimpleNamespace
+
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  first = SimpleNamespace(jid="1", host="h", proc="bash", vm_rss=1)
+  second = SimpleNamespace(jid="1", host="h", proc="bash", vm_rss=99)
+  other = SimpleNamespace(jid="1", host="h", proc="python", vm_rss=5)
+  out = ldi._dedupe_proc_objs_keep_last([first, other, second])
+  assert len(out) == 2
+  by_proc = {o.proc: o for o in out}
+  assert by_proc["bash"].vm_rss == 99
+  assert by_proc["python"].vm_rss == 5
+
+
+def test_flush_orm_batch_dedupes_proc_before_bulk_create(monkeypatch):
+  """Ensure flush collapses duplicate proc keys before update_conflicts write."""
+  from types import SimpleNamespace
+
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  captured = {}
+
+  class _FakeManager:
+    def bulk_create(self, objs, **kwargs):
+      captured.setdefault("calls", []).append((list(objs), kwargs))
+
+  class _FakeModel:
+    objects = _FakeManager()
+
+  monkeypatch.setattr(
+      "django.db.close_old_connections",
+      lambda: None,
+  )
+  monkeypatch.setattr(
+      "django.db.connections.close_all",
+      lambda: None,
+      raising=False,
+  )
+  # Patch models imported inside _flush_orm_batch.
+  import hpcperfstats.site.lib.machine.models as models
+
+  monkeypatch.setattr(models, "proc_data", _FakeModel)
+  monkeypatch.setattr(models, "host_data", _FakeModel)
+  monkeypatch.setattr(ldi.cfg, "get_sync_bulk_create_batch_size", lambda: 10000)
+
+  first = SimpleNamespace(
+      jid="1", host="h", proc="bash", device="bash/1/0/0",
+      **{k: None for k in (
+          "uid", "vm_peak", "vm_size", "vm_lck", "vm_hwm", "vm_rss", "vm_data",
+          "vm_stk", "vm_exe", "vm_lib", "vm_pte", "vm_swap", "threads",
+      )}
+  )
+  second = SimpleNamespace(
+      jid="1", host="h", proc="bash", device="bash/1/0/0",
+      **{k: None for k in (
+          "uid", "vm_peak", "vm_size", "vm_lck", "vm_hwm", "vm_rss", "vm_data",
+          "vm_stk", "vm_exe", "vm_lib", "vm_pte", "vm_swap", "threads",
+      )}
+  )
+  second.vm_rss = 42
+
+  ldi._flush_orm_batch([], [first, second])
+  assert "calls" in captured
+  # First call is proc_data (only proc objs were passed).
+  objs, kwargs = captured["calls"][0]
+  assert len(objs) == 1
+  assert objs[0].proc == "bash"
+  assert kwargs.get("update_conflicts") is True
+
+
 def test_worker_main_configures_blas_before_numpy(monkeypatch):
   """Regression: listend DB workers must cap OpenBLAS before parsing imports numpy.
 

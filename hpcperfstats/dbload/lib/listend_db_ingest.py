@@ -211,6 +211,22 @@ def _proc_data_row_kwargs(row):
   return kwargs
 
 
+def _dedupe_proc_objs_keep_last(proc_objs: list) -> list:
+  """Collapse duplicate ``(jid, host, proc)`` rows so one bulk_create upsert is safe.
+
+  Postgres rejects ``ON CONFLICT DO UPDATE`` when the same unique key appears
+  twice in a single statement ("cannot affect row a second time"). Multi-sample
+  batches routinely repeat the same process across timestamps; keep the latest.
+  """
+  if len(proc_objs) <= 1:
+    return list(proc_objs)
+  by_key = {}
+  for obj in proc_objs:
+    key = (getattr(obj, "jid", None), getattr(obj, "host", None), getattr(obj, "proc", None))
+    by_key[key] = obj
+  return list(by_key.values())
+
+
 def _flush_orm_batch(host_objs: list, proc_objs: list) -> None:
   """Write pending ORM instances; clear caller lists on success."""
   from django.db import close_old_connections, connections
@@ -222,6 +238,7 @@ def _flush_orm_batch(host_objs: list, proc_objs: list) -> None:
   close_old_connections()
   batch_size = cfg.get_sync_bulk_create_batch_size()
   update_fields = ("device",) + HOST_PROC_KEYS
+  proc_objs = _dedupe_proc_objs_keep_last(proc_objs)
 
   def _write_once():
     for i in range(0, len(proc_objs), batch_size):
