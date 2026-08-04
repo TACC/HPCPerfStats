@@ -1,3 +1,4 @@
+import contextlib
 import signal
 import threading
 import time
@@ -6,6 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 from types import SimpleNamespace
+
+from django.db.utils import OperationalError
 
 from hpcperfstats.analysis.metrics.lib import metrics
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import MultiprocessingWorkerExitError
@@ -268,6 +271,11 @@ def test_unwrap_returns_worker_compute_error_on_value_error(monkeypatch):
       raise ValueError("cannot convert float NaN to integer")
 
   monkeypatch.setattr(metrics, "run_with_db_retry", lambda fn, attempts=2: fn())
+  monkeypatch.setattr(
+      metrics,
+      "_pg_session_statement_timeout_for_metrics_worker",
+      contextlib.nullcontext,
+  )
   out = metrics._unwrap((_Metrics(), _Job()))
   assert out["status"] == "worker_compute_error"
   assert out["jid"] == "j-bad"
@@ -333,6 +341,11 @@ def test_unwrap_returns_worker_compute_error_on_per_job_timeout(monkeypatch):
 
   monkeypatch.setattr(metrics, "run_with_db_retry", lambda fn, attempts=2: fn())
   monkeypatch.setattr(metrics, "_resolve_metrics_run_per_job_timeout_s", lambda: 0.05)
+  monkeypatch.setattr(
+      metrics,
+      "_pg_session_statement_timeout_for_metrics_worker",
+      contextlib.nullcontext,
+  )
   out = metrics._unwrap((_Metrics(), _Job()))
   assert out["status"] == "worker_compute_error"
   assert out["error_type"] == "MetricsComputeJobTimeoutError"
@@ -554,4 +567,152 @@ def test_metrics_run_stall_with_shared_pool_calls_reset(monkeypatch):
   assert called["n"] == 1
   assert len(outcomes) == 2
   assert outcomes[1]["status"] == "worker_stall_timeout"
+
+
+def test_pg_session_statement_timeout_for_metrics_worker_disables_when_zero(monkeypatch):
+  executed = []
+
+  class _Cursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      return False
+
+    def execute(self, sql, params=None):
+      executed.append((sql, params))
+
+  class _Conn:
+    vendor = "postgresql"
+
+    def cursor(self):
+      return _Cursor()
+
+  monkeypatch.setattr(
+      metrics.cfg, "get_metrics_worker_statement_timeout_ms", lambda: 0
+  )
+  monkeypatch.setattr(metrics.cfg, "get_db_statement_timeout_ms", lambda: 120000)
+  monkeypatch.setattr(metrics, "connections", {"default": _Conn()})
+  with metrics._pg_session_statement_timeout_for_metrics_worker():
+    pass
+  assert executed[0][0] == "SET statement_timeout = 0"
+  assert executed[-1] == ("SET statement_timeout = %s", [120000])
+
+
+def test_pg_session_statement_timeout_for_metrics_worker_sets_positive_ms(monkeypatch):
+  executed = []
+
+  class _Cursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      return False
+
+    def execute(self, sql, params=None):
+      executed.append((sql, params))
+
+  class _Conn:
+    vendor = "postgresql"
+
+    def cursor(self):
+      return _Cursor()
+
+  monkeypatch.setattr(
+      metrics.cfg, "get_metrics_worker_statement_timeout_ms", lambda: 600000
+  )
+  monkeypatch.setattr(metrics.cfg, "get_db_statement_timeout_ms", lambda: 120000)
+  monkeypatch.setattr(metrics, "connections", {"default": _Conn()})
+  with metrics._pg_session_statement_timeout_for_metrics_worker():
+    pass
+  assert executed[0] == ("SET statement_timeout = %s", [600000])
+  assert executed[-1] == ("SET statement_timeout = %s", [120000])
+
+
+def test_pg_session_statement_timeout_for_metrics_worker_restore_swallows_db_error(
+    monkeypatch,
+):
+  class _Cursor:
+    def __init__(self, fail_restore=False):
+      self._fail_restore = fail_restore
+      self._n = 0
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      return False
+
+    def execute(self, sql, params=None):
+      del params
+      self._n += 1
+      if self._fail_restore and "statement_timeout" in sql and self._n > 1:
+        raise OperationalError("connection already closed")
+
+  class _Conn:
+    vendor = "postgresql"
+
+    def __init__(self):
+      self._cursors = 0
+
+    def cursor(self):
+      self._cursors += 1
+      return _Cursor(fail_restore=self._cursors > 1)
+
+  monkeypatch.setattr(
+      metrics.cfg, "get_metrics_worker_statement_timeout_ms", lambda: 0
+  )
+  monkeypatch.setattr(metrics.cfg, "get_db_statement_timeout_ms", lambda: 120000)
+  monkeypatch.setattr(metrics, "connections", {"default": _Conn()})
+  with metrics._pg_session_statement_timeout_for_metrics_worker():
+    pass
+
+
+def test_host_data_metric_rows_with_host_chunk_retry_splits_on_timeout(monkeypatch):
+  """48-host / single-batch style: timeout on full chunk → halve and succeed."""
+  hosts = ["h{0}.example.com".format(i) for i in range(8)]
+  seen = []
+
+  class _QS:
+    def __init__(self, chunk):
+      self._chunk = chunk
+
+    def values(self, *args, **kwargs):
+      del args, kwargs
+      return self
+
+    def order_by(self, *args):
+      del args
+      return self
+
+    def __iter__(self):
+      size = len(self._chunk)
+      seen.append(size)
+      if size == 8:
+        raise OperationalError("canceling statement due to statement timeout")
+      for h in self._chunk:
+        yield {"host": h, "time": "t0", "value": 1.0}
+
+  class _HD:
+    objects = SimpleNamespace()
+
+  def _filter(**kwargs):
+    chunk = list(kwargs.get("host__in") or [])
+    return _QS(chunk)
+
+  _HD.objects.filter = _filter
+  monkeypatch.setattr(
+      "hpcperfstats.site.lib.machine.models.host_data",
+      _HD,
+  )
+  monkeypatch.setattr(metrics, "close_old_connections", lambda: None)
+  out = metrics._host_data_metric_rows_with_host_chunk_retry(
+      hosts,
+      {"time__gte": "a", "time__lte": "b"},
+      "cpu",
+      ["user"],
+      "value",
+  )
+  assert seen == [8, 4, 4]
+  assert len(out) == 8
 

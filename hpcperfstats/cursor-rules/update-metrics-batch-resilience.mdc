@@ -13,6 +13,8 @@ When changing `hpcperfstats/analysis/metrics/lib/metrics.py` (`Metrics.run`, `_u
 - **DB errors:** catch `OperationalError` / `DatabaseError` → return `worker_db_error` (skip jid, batch continues).
 - **Compute errors:** catch any other `Exception` from `compute_metrics` → return `worker_compute_error` (skip jid, batch continues). Do not let `ValueError`, `IndexError`, etc. propagate through the pool.
 - **Per-job wall clock:** `_run_compute_metrics_timed` uses `SIGALRM` / `setitimer` with `_resolve_metrics_run_per_job_timeout_s()` (INI `metrics_run_per_job_timeout_s`, env `HPCPERFSTATS_METRICS_RUN_PER_JOB_TIMEOUT_S`; `0` → `metrics_run_stall_timeout_s`). Timeout → `MetricsComputeJobTimeoutError` → `worker_compute_error`.
+- **Worker session `statement_timeout`:** wrap compute in `_pg_session_statement_timeout_for_metrics_worker()` using `[PIPELINE] metrics_worker_statement_timeout_ms` (default **0** = disable for the compute window; env `HPCPERFSTATS_METRICS_WORKER_STATEMENT_TIMEOUT_MS`). Do **not** rely on global `[PORTAL] db_statement_timeout_ms` (often 120s) for multi-host `host_data` compute — that caused `worker_db_error` skips on ~48-host jobs. Restore is best-effort (swallow closed-connection errors).
+- **Metric row fetches:** `_host_data_metric_rows_batched` / `_host_data_metric_rows_with_host_chunk_retry` must split `host__in` on statement timeout (reuse `jid_table._is_statement_timeout_error` pattern) so ≤64-host jobs that fit in one batch can still complete when a non-zero worker timeout is configured.
 - **`DatabaseUnavailableExit`:** still re-raise for shutdown.
 
 ## Numeric edge cases in `compute_metric`

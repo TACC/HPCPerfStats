@@ -607,6 +607,7 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_run_poll_timeout_s() == 5.0
   assert cfg.get_metrics_run_stall_timeout_s() == 900.0
   assert cfg.get_metrics_run_per_job_timeout_s() == 0.0
+  assert cfg.get_metrics_worker_statement_timeout_ms() == 0
   assert cfg.get_metrics_persist_statement_timeout_ms() == 120000
   assert cfg.get_metrics_persist_lock_timeout_ms() == 10000
   assert cfg.get_metrics_prewarm_retry_attempts() == 2
@@ -642,6 +643,7 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
       "metrics_prewarm_backpressure_wait_s = 0.75\n"
       "metrics_run_poll_timeout_s = 1.5\n"
       "metrics_run_stall_timeout_s = 120\n"
+      "metrics_worker_statement_timeout_ms = 300000\n"
       "metrics_persist_statement_timeout_ms = 45000\n"
       "metrics_persist_lock_timeout_ms = 7000\n"
       "metrics_prewarm_retry_attempts = 5\n"
@@ -661,6 +663,7 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_prewarm_backpressure_wait_s() == 0.75
   assert cfg.get_metrics_run_poll_timeout_s() == 1.5
   assert cfg.get_metrics_run_stall_timeout_s() == 120.0
+  assert cfg.get_metrics_worker_statement_timeout_ms() == 300000
   assert cfg.get_metrics_persist_statement_timeout_ms() == 45000
   assert cfg.get_metrics_persist_lock_timeout_ms() == 7000
   assert cfg.get_metrics_prewarm_retry_attempts() == 5
@@ -671,6 +674,7 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_METRICS_PREWARM_BACKPRESSURE_WAIT_S", "1.25")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_RUN_POLL_TIMEOUT_S", "2.5")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S", "45")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_WORKER_STATEMENT_TIMEOUT_MS", "90000")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_PERSIST_STATEMENT_TIMEOUT_MS", "9000")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_PERSIST_LOCK_TIMEOUT_MS", "3000")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_S", "3.5")
@@ -683,6 +687,7 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_prewarm_backpressure_wait_s() == 1.25
   assert cfg.get_metrics_run_poll_timeout_s() == 2.5
   assert cfg.get_metrics_run_stall_timeout_s() == 45.0
+  assert cfg.get_metrics_worker_statement_timeout_ms() == 90000
   assert cfg.get_metrics_persist_statement_timeout_ms() == 9000
   assert cfg.get_metrics_persist_lock_timeout_ms() == 3000
   assert cfg.get_metrics_prewarm_drain_batch_budget_s() == 3.5

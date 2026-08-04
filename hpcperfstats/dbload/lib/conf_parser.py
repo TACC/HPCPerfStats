@@ -70,6 +70,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "metrics_run_poll_timeout_s"),
     ("PIPELINE", "metrics_run_stall_timeout_s"),
     ("PIPELINE", "metrics_run_per_job_timeout_s"),
+    ("PIPELINE", "metrics_worker_statement_timeout_ms"),
     ("PIPELINE", "metrics_persist_statement_timeout_ms"),
     ("PIPELINE", "metrics_persist_lock_timeout_ms"),
     ("PIPELINE", "metrics_proxy_reject_jid_batch_size"),
@@ -258,6 +259,7 @@ INI_OPTION_DEFAULTS = {
     'metrics_run_poll_timeout_s': '5',
     'metrics_run_stall_timeout_s': '900',
     'metrics_run_per_job_timeout_s': '0',
+    'metrics_worker_statement_timeout_ms': '0',
     'metrics_persist_statement_timeout_ms': '120000',
     'metrics_persist_lock_timeout_ms': '10000',
     'metrics_proxy_reject_jid_batch_size': '48',
@@ -2217,6 +2219,28 @@ def get_metrics_run_per_job_timeout_s():
     )
   except (TypeError, ValueError, OverflowError):
     return 0.0
+
+
+def get_metrics_worker_statement_timeout_ms():
+  """PostgreSQL ``statement_timeout`` ms for metrics pool compute.
+
+  ``0`` disables the session timeout for the compute window (SIGALRM remains
+  the per-job wall clock). Env ``HPCPERFSTATS_METRICS_WORKER_STATEMENT_TIMEOUT_MS``
+  overrides ``[PIPELINE] metrics_worker_statement_timeout_ms``.
+  """
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_WORKER_STATEMENT_TIMEOUT_MS", ""
+  ).strip()
+  if env:
+    try:
+      return max(0, int(env))
+    except (TypeError, ValueError, OverflowError):
+      return 0
+  _ensure_cfg_loaded()
+  try:
+    return max(0, int(_pipeline_get("metrics_worker_statement_timeout_ms")))
+  except (TypeError, ValueError, OverflowError):
+    return 0
 
 
 def get_metrics_persist_statement_timeout_ms():

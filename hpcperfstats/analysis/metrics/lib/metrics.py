@@ -6,6 +6,7 @@ reuse the parent's PostgreSQL session (named server-side cursors / iterator
 state); writes are done in the main process only.
 
 """
+import contextlib
 import json
 import os
 import hpcperfstats.dbload.lib.conf_parser as cfg
@@ -790,6 +791,43 @@ class _JobForMetrics:
       del type_df
 
 
+@contextlib.contextmanager
+def _pg_session_statement_timeout_for_metrics_worker():
+  """Apply ``metrics_worker_statement_timeout_ms`` for pool compute, then restore.
+
+  Default ``0`` disables PostgreSQL ``statement_timeout`` for the compute window
+  so legitimate multi-host ``host_data`` scans are not canceled at the web/API
+  120s session limit. Per-job SIGALRM remains the wall-clock backstop. Restore
+  is best-effort (swallow OperationalError/DatabaseError on dead connections).
+  """
+  try:
+    conn = connections["default"]
+  except Exception:
+    yield
+    return
+  if getattr(conn, "vendor", None) != "postgresql":
+    yield
+    return
+  timeout_ms = int(cfg.get_metrics_worker_statement_timeout_ms())
+  restore_ms = cfg.get_db_statement_timeout_ms()
+  with conn.cursor() as cursor:
+    if timeout_ms <= 0:
+      cursor.execute("SET statement_timeout = 0")
+    else:
+      cursor.execute("SET statement_timeout = %s", [timeout_ms])
+  try:
+    yield
+  finally:
+    try:
+      with conn.cursor() as cursor:
+        if restore_ms > 0:
+          cursor.execute("SET statement_timeout = %s", [restore_ms])
+        else:
+          cursor.execute("SET statement_timeout = 0")
+    except (OperationalError, DatabaseError):
+      pass
+
+
 def _unwrap(args):
   """Wrapper for pool: call compute_metrics on the job. Used by Metrics.run.
 
@@ -806,11 +844,13 @@ def _unwrap(args):
   # crashing the entire pool.
   try:
     per_job_timeout_s = _resolve_metrics_run_per_job_timeout_s()
-    payload = run_with_db_retry(
-        lambda: _run_compute_metrics_timed(
-            metrics_obj, job, per_job_timeout_s),
-        attempts=2,
-    )
+
+    def _compute():
+      with _pg_session_statement_timeout_for_metrics_worker():
+        return _run_compute_metrics_timed(
+            metrics_obj, job, per_job_timeout_s)
+
+    payload = run_with_db_retry(_compute, attempts=2)
     if not isinstance(payload, dict):
       payload = {}
     return {
@@ -1167,11 +1207,77 @@ def _host_data_row_cache_key(tkw, typename, events, metric_column):
   return (typename, metric_column, _hashable_metric_events_signature(events), t_part)
 
 
+def _host_data_metric_rows_with_host_chunk_retry(
+    host_chunk,
+    tkw,
+    typename,
+    events,
+    metric_column,
+    *,
+    min_hosts=1,
+    max_attempts=2,
+):
+  """Materialize metric ``values()`` rows; split hosts or retry on statement timeout.
+
+  Mirrors ``jid_table._queryset_to_dataframe_with_host_chunk_retry`` for the
+  list-of-dicts path used by metric bucketing.
+  """
+  from hpcperfstats.site.lib.machine.models import host_data
+
+  hosts = [str(h) for h in host_chunk if h]
+  if not hosts:
+    return []
+  last_exc = None
+  for attempt in range(max_attempts):
+    try:
+      close_old_connections()
+      qs = (
+          host_data.objects.filter(
+              **tkw,
+              host__in=hosts,
+              type=typename,
+              event__in=events,
+          )
+          .values("host", "time", metric_column)
+          .order_by("host", "time")
+      )
+      return list(qs)
+    except OperationalError as exc:
+      last_exc = exc
+      if not jid_table._is_statement_timeout_error(exc):
+        raise
+      if len(hosts) > min_hosts:
+        mid = max(1, len(hosts) // 2)
+        left = _host_data_metric_rows_with_host_chunk_retry(
+            hosts[:mid],
+            tkw,
+            typename,
+            events,
+            metric_column,
+            min_hosts=min_hosts,
+            max_attempts=max_attempts,
+        )
+        right = _host_data_metric_rows_with_host_chunk_retry(
+            hosts[mid:],
+            tkw,
+            typename,
+            events,
+            metric_column,
+            min_hosts=min_hosts,
+            max_attempts=max_attempts,
+        )
+        return left + right
+      if attempt + 1 >= max_attempts:
+        raise
+      close_old_connections()
+  if last_exc is not None:
+    raise last_exc
+  return []
+
+
 def _host_data_metric_rows_batched(
     tkw, hosts, typename, events, metric_column, rows_cache=None):
   """Fetch host_data rows for metrics bucketing; chunk ``host__in`` like jid_table."""
-  from hpcperfstats.site.lib.machine.models import host_data
-
   host_list = list(hosts)
   if not host_list:
     return []
@@ -1186,18 +1292,10 @@ def _host_data_metric_rows_batched(
   rows = []
   for i in range(0, len(host_list), batch):
     chunk = host_list[i:i + batch]
-    qs = (
-        host_data.objects.filter(
-            **tkw,
-            host__in=chunk,
-            type=typename,
-            event__in=ev,
-        )
-        .values("host", "time", metric_column)
-        .order_by("host", "time")
+    rows.extend(
+        _host_data_metric_rows_with_host_chunk_retry(
+            chunk, tkw, typename, ev, metric_column)
     )
-    for row in qs:
-      rows.append(row)
   if rows_cache is not None and cache_key is not None:
     rows_cache[cache_key] = rows
   return rows

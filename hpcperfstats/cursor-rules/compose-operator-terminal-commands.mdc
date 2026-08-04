@@ -281,6 +281,15 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 |----|-------|
 | `job_data.objects.filter(...).values("jid", "metrics_distinct_time_count", …)` | `.values("metrics_complete")` |
 
+### Anti-pattern — inventing `job_data.nnodes`
+
+`job_data` has **no** `nnodes` field (Slurm accounting name). Operator ORM `.values("nnodes")` raises **`FieldError`** (hpcperfstats04 2026-08-04). Use **`nhosts`** (model field) and/or **`len(host_list)`** / SQL **`cardinality(host_list)`**; core count is **`ncores`**.
+
+| Do | Don't |
+|----|-------|
+| `.values("jid", "nhosts", "ncores", "host_list", …)` | `.values("nnodes")` |
+| `cardinality(host_list) AS nhosts` in `psql` | invent Slurm column names on `job_data` |
+
 ### Anti-pattern — inventing `job_detail_artifact.schema_version` / `fingerprint`
 
 `job_detail_artifact` fields are **`artifact_kind`**, **`artifact_schema`**, **`artifact_scope`**, **`input_fingerprint`**, payload columns — not `schema_version` or `fingerprint`. Selecting invented names raises **`FieldError`** (hpcperfstats03, 2026-07-23).
