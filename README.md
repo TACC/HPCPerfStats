@@ -147,7 +147,7 @@ The monitor now uses a **static-bundle** build flow for packaging. The canonical
 
 Do this from your scheduler’s **prolog** and **epilog**.
 
-**Accounting ingest (SLURM `sacct`):** Use `hpcperfstats-sacct-gen` from the **hpcperfstats-tools** package. This command runs `sacct` for a date range and POSTs the results directly to the HPCPerfStats API ingest endpoint. Each successful POST also creates or overwrites a daily accounting file at `{acct_path}/YYYY-MM-DD.txt` (same pipe-delimited body Slurm returned). The scheduled `sync_acct.py` job can reingest these files from disk. The API rejects payloads with fewer lines than the existing file for that date (HTTP 409) so a partial `sacct` export cannot replace a fuller one.
+**Accounting ingest (SLURM `sacct`):** Use `hpcperfstats-sacct-gen` from the **hpcperfstats-tools** package. By default this command runs `sacct` for a date range and POSTs the results to the HPCPerfStats API ingest endpoint. Each successful POST also creates or overwrites a daily accounting file at `{acct_path}/YYYY-MM-DD.txt` (same pipe-delimited body Slurm returned). Alternatively, use **`-f DIR`** to write those `YYYY-MM-DD.txt` files locally (same format/naming) without calling the API; `-f` is mutually exclusive with `--api-key`, and `DIR` must already exist. The scheduled `sync_acct.py` job can reingest these files from disk. The API rejects payloads with fewer lines than the existing file for that date (HTTP 409) so a partial `sacct` export cannot replace a fuller one.
 
 1. **Install the tools (Python):**
 
@@ -170,14 +170,18 @@ Do this from your scheduler’s **prolog** and **epilog**.
 
    # Ingest an explicit date range (end_date is exclusive)
    hpcperfstats-sacct-gen 2024-01-01 2024-01-08 --api-key YOUR_KEY
+
+   # Write daily YYYY-MM-DD.txt files locally instead of POSTing (DIR must exist;
+   # mutually exclusive with --api-key)
+   hpcperfstats-sacct-gen -f /path/to/accounting 2024-01-01 2024-01-08
    ```
 
 **Run-location and permissions requirements:**
 
 - Run `hpcperfstats-sacct-gen` on a host where Slurm’s `sacct` binary exists and works (typically a Slurm login node).
 - Run it as a user that has the correct Slurm permissions to query the relevant jobs/accounts via `sacct`.
-- The API key you pass with `--api-key` must be staff-capable for the ingest endpoint.
-- The `web` container must have the shared data volume mounted at `/hpcperfstats/` (same as `pipeline`) so the API can write under `acct_path` (default `/hpcperfstats/accounting`).
+- **API mode:** the API key you pass with `--api-key` must be staff-capable for the ingest endpoint; the `web` container must have the shared data volume mounted at `/hpcperfstats/` (same as `pipeline`) so the API can write under `acct_path` (default `/hpcperfstats/accounting`).
+- **File mode (`-f DIR`):** `DIR` must already exist; no API URL or key is required. Place or sync the resulting `.txt` files where `sync_acct.py` expects them (`acct_path`).
 
 ---
 
