@@ -780,13 +780,15 @@ def test_ready_jids_batches_in_window_min_max_lookups(monkeypatch):
 @pytest.mark.machine_unit_mock
 def test_latest_sample_time_by_host_postgresql_uses_lateral_unnest(monkeypatch):
   """PostgreSQL path uses LATERAL LIMIT 1 per host (not DISTINCT ON) and batches."""
+  from hpcperfstats.site.lib.machine import host_data_latest
+
   exec_log = []
   monkeypatch.setattr(
-      update_metrics.transaction,
+      host_data_latest.transaction,
       "atomic",
       lambda using=None: contextlib.nullcontext(),
   )
-  monkeypatch.setattr(update_metrics, "HOST_LAST_TIME_LOOKUP_BATCH", 2)
+  monkeypatch.setattr(host_data_latest, "HOST_LAST_TIME_LOOKUP_BATCH", 2)
 
   class FakeCursor:
     def __enter__(self):
@@ -820,7 +822,7 @@ def test_latest_sample_time_by_host_postgresql_uses_lateral_unnest(monkeypatch):
 
   handler = MagicMock()
   handler.__getitem__ = lambda self, name: fake_conn
-  monkeypatch.setattr(update_metrics, "connections", handler)
+  monkeypatch.setattr(host_data_latest, "connections", handler)
 
   out = update_metrics._latest_sample_time_by_host(["z", "y", "x"])
   assert sorted(out.keys()) == ["x", "y", "z"]

@@ -1,6 +1,7 @@
 """Django REST Framework API views for machine app. All data via JSON for React SPA."""
 import hashlib
 import logging
+import os
 import threading
 import time
 from contextlib import contextmanager
@@ -69,6 +70,7 @@ from .openapi_schema import (
 from .cache_utils import (
     KEY_ADMIN_CACHE_STATS,
     KEY_ADMIN_RMQ_STATS,
+    KEY_ADMIN_RMQ_SNAPSHOT,
     KEY_ADMIN_TIMESCALE_STATS,
     KEY_ADMIN_HOST_STATS,
     KEY_ADMIN_XALT_STATS,
@@ -118,7 +120,12 @@ from hpcperfstats.dbload.sync_acct import (
     persist_accounting_daily_file,
     sync_acct_from_content,
 )
-from .models import ApiKey, host_data, job_data, metrics_data
+from .models import ApiKey, job_data, metrics_data
+from .host_data_latest import (
+    format_host_data_newest_iso,
+    latest_sample_time_by_host,
+    latest_sample_time_by_host_in_window,
+)
 from .oauth2 import check_for_tokens
 from .throttles import ExpensiveReadThrottle, StaffIngestThrottle
 from .query_utils import (
@@ -162,12 +169,17 @@ HOST_PLOT_MAX_WINDOW_DAYS = 7
 
 
 def _get_admin_host_stats_statement_timeout_ms():
-    """Statement timeout for heavy admin host-stats query only."""
+    """Statement timeout for Admin Monitor 3h GROUP BY fallback only.
+
+    Primary path uses Redis inventory + LATERAL LIMIT 1 (no long timeout).
+    Never floor at 600s — that matched the old 8-day GroupAggregate hang.
+    """
     try:
         default_ms = int(cfg.get_db_statement_timeout_ms())
     except Exception:
-        default_ms = 120000
-    return max(default_ms, 600000)
+        default_ms = 60000
+    # Bound the last-resort 3h aggregate: at least 45s, at most 60s.
+    return min(max(default_ms, 45000), 60000)
 
 
 @contextmanager
@@ -368,7 +380,6 @@ from django.db.models import (
     FloatField,
     When,
     ExpressionWrapper,
-    Max,
 )
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 
@@ -1051,6 +1062,24 @@ def _get_timescaledb_stats():
                         stats["host_data_size_pretty"] = total_pretty
             except Exception:
                 pass
+
+            # Site-wide newest sample: ORDER BY time DESC LIMIT 1 (3h window).
+            # Never use multi-day GROUP BY max(time) or max(range_start) here.
+            try:
+                cur.execute(
+                    """
+                    SELECT time
+                    FROM host_data
+                    WHERE time > now() - interval '3 hours'
+                    ORDER BY time DESC
+                    LIMIT 1
+                    """
+                )
+                row = cur.fetchone()
+                if row and row[0] is not None:
+                    stats["host_data_newest"] = format_host_data_newest_iso(row[0])
+            except Exception:
+                pass
     except Exception:
         # If anything goes wrong at the connection level, just return what we have.
         pass
@@ -1062,14 +1091,43 @@ def _get_timescaledb_stats():
 
     return stats
 
+
+def _list_recent_host_fqdns_from_redis():
+    """FQDNs from Django-cache Redis ``recent_host:*`` keys (listend inventory)."""
+    hosts = []
+
+    def _decode_key(raw_key):
+        if isinstance(raw_key, bytes):
+            return raw_key.decode("utf-8", "replace")
+        return str(raw_key)
+
+    try:
+        client = _get_redis_cache_client()
+        if client is None or not hasattr(client, "scan_iter"):
+            return hosts
+        for key in client.scan_iter(match="recent_host:*", count=1000):
+            key_str = _decode_key(key)
+            if not key_str.startswith("recent_host:"):
+                continue
+            host = key_str.split("recent_host:", 1)[1]
+            if host and "." in host:
+                hosts.append(host)
+    except Exception:
+        return []
+    return hosts
+
+
 def _get_rabbitmq_stats():
-    """Return basic RabbitMQ queue statistics for the HPCPerfStats Monitor.
+    """Return RabbitMQ statistics for the HPCPerfStats Monitor.
 
-    Uses AMQP (default port 5672) via a short-lived pika connection — the same
-    protocol listend uses for queue depth. Does not require the RabbitMQ
-    management plugin or HTTP port 15672.
+    Uses the RabbitMQ Management HTTP API (default ``http://{rmq_server}:15672``).
+    Credentials/URL can be overridden via environment variables:
+      - RABBITMQ_MANAGEMENT_URL
+      - RABBITMQ_MANAGEMENT_USER (default: guest)
+      - RABBITMQ_MANAGEMENT_PASSWORD (default: guest)
 
-    Fields: ``queue``, ``messages`` (ready message count), ``consumers``.
+    The ~24h publish estimate is derived from deltas of the cumulative publish
+    counter between Redis snapshots (``KEY_ADMIN_RMQ_SNAPSHOT``).
     """
     try:
         cached_stats = cache.get(KEY_ADMIN_RMQ_STATS)
@@ -1081,49 +1139,176 @@ def _get_rabbitmq_stats():
     stats = {}
 
     try:
-        rmq_host = cfg.get_rmq_server()
-        rmq_queue = cfg.get_rmq_queue()
+        import requests  # type: ignore
     except Exception:
-        return stats
-
-    # Import pika lazily so a missing dependency does not break Django startup.
-    try:
-        import pika  # type: ignore
-    except Exception:
-        stats["error"] = "Failed to import pika for RabbitMQ AMQP stats"
+        stats["error"] = "Failed to import requests for RabbitMQ management stats"
         try:
             cache.set(KEY_ADMIN_RMQ_STATS, stats, timeout=TIMEOUT_ADMIN_STATS)
         except Exception:
             pass
         return stats
 
-    # Short-lived connection (same pattern as listend._get_rmq_queue_depth_for_monitor):
-    # BlockingConnection/channels are not thread-safe across callers.
-    connection = None
     try:
-        connection = pika.BlockingConnection(pika.ConnectionParameters(rmq_host))
-        channel = connection.channel()
+        rmq_host = cfg.get_rmq_server()
+        rmq_queue = cfg.get_rmq_queue()
+    except Exception:
+        return stats
+
+    base_url = os.environ.get("RABBITMQ_MANAGEMENT_URL", f"http://{rmq_host}:15672")
+    user = os.environ.get("RABBITMQ_MANAGEMENT_USER", "guest")
+    password = os.environ.get("RABBITMQ_MANAGEMENT_PASSWORD", "guest")
+    auth = (user, password)
+    queue_url = f"{base_url.rstrip('/')}/api/queues/%2F/{rmq_queue}"
+    nodes_url = f"{base_url.rstrip('/')}/api/nodes"
+
+    def _rate_from_details(msg_stats, key):
+        details = msg_stats.get(f"{key}_details") or {}
+        rate = details.get("rate")
+        if rate is None:
+            return None
         try:
-            declared = channel.queue_declare(
-                queue=rmq_queue, durable=True, passive=True
-            )
-        except Exception:
-            declared = channel.queue_declare(
-                queue=rmq_queue, durable=True, passive=False
-            )
-        method = declared.method
-        stats["queue"] = rmq_queue
-        stats["messages"] = int(method.message_count)
-        stats["consumers"] = int(method.consumer_count)
+            return float(rate)
+        except (TypeError, ValueError):
+            return None
+
+    try:
+        resp = requests.get(queue_url, auth=auth, timeout=5)
     except Exception as e:
-        stats["error"] = f"Failed to query RabbitMQ queue via AMQP: {e}"
-    finally:
-        if connection is not None:
+        stats["error"] = f"Failed to connect to RabbitMQ management API: {e}"
+    else:
+        if resp.status_code != 200:
+            stats["error"] = (
+                f"RabbitMQ management API returned HTTP {resp.status_code}"
+            )
+        else:
             try:
-                if not connection.is_closed:
-                    connection.close()
-            except Exception:
-                pass
+                data = resp.json()
+            except Exception as e:
+                stats["error"] = (
+                    f"Failed to decode RabbitMQ management API response: {e}"
+                )
+                data = {}
+
+            if data:
+                stats["queue"] = rmq_queue
+                stats["messages"] = data.get("messages")
+                stats["messages_ready"] = data.get("messages_ready")
+                stats["messages_unacknowledged"] = data.get(
+                    "messages_unacknowledged"
+                )
+                stats["consumers"] = data.get("consumers")
+                stats["message_bytes"] = data.get("message_bytes")
+                stats["message_bytes_ready"] = data.get("message_bytes_ready")
+                stats["message_bytes_unacknowledged"] = data.get(
+                    "message_bytes_unacknowledged"
+                )
+
+                msg_stats = data.get("message_stats") or {}
+                publish_total = msg_stats.get("publish")
+                deliver_total = msg_stats.get("deliver_get")
+                ack_total = msg_stats.get("ack")
+                redeliver_total = msg_stats.get("redeliver")
+                if publish_total is not None:
+                    stats["messages_published_total"] = publish_total
+                if deliver_total is not None:
+                    stats["messages_delivered_total"] = deliver_total
+                if ack_total is not None:
+                    stats["messages_acked_total"] = ack_total
+                if redeliver_total is not None:
+                    stats["messages_redelivered_total"] = redeliver_total
+
+                publish_rate = _rate_from_details(msg_stats, "publish")
+                deliver_rate = _rate_from_details(msg_stats, "deliver_get")
+                ack_rate = _rate_from_details(msg_stats, "ack")
+                redeliver_rate = _rate_from_details(msg_stats, "redeliver")
+                if publish_rate is not None:
+                    stats["messages_publish_rate"] = publish_rate
+                if deliver_rate is not None:
+                    stats["messages_deliver_rate"] = deliver_rate
+                if ack_rate is not None:
+                    stats["messages_ack_rate"] = ack_rate
+                if redeliver_rate is not None:
+                    stats["messages_redeliver_rate"] = redeliver_rate
+
+                now = timezone.now()
+                snapshot = None
+                try:
+                    snapshot = cache.get(KEY_ADMIN_RMQ_SNAPSHOT)
+                except Exception:
+                    snapshot = None
+
+                if isinstance(snapshot, dict):
+                    ts = snapshot.get("timestamp")
+                    prev_publish = snapshot.get("publish")
+                    try:
+                        if ts is not None and prev_publish is not None:
+                            prev_time = datetime.fromisoformat(ts)
+                            if prev_time.tzinfo is None:
+                                prev_time = timezone.make_aware(
+                                    prev_time, dt_timezone.utc
+                                )
+                            delta = now - prev_time
+                            hours = delta.total_seconds() / 3600.0
+                            if hours > 0 and publish_total is not None:
+                                since_snapshot = max(
+                                    0, int(publish_total - int(prev_publish))
+                                )
+                                stats["messages_published_since_snapshot"] = (
+                                    since_snapshot
+                                )
+                                stats["snapshot_hours"] = round(hours, 2)
+                                rate_per_hour = since_snapshot / hours
+                                stats[
+                                    "messages_published_last_24h_estimate"
+                                ] = int(rate_per_hour * 24.0)
+                    except Exception:
+                        pass
+
+                try:
+                    cache.set(
+                        KEY_ADMIN_RMQ_SNAPSHOT,
+                        {
+                            "timestamp": now.isoformat(),
+                            "publish": publish_total,
+                        },
+                        timeout=2 * 24 * 3600,
+                    )
+                except Exception:
+                    pass
+
+    # Node memory / disk / alarms (best-effort; do not overwrite queue error).
+    try:
+        nodes_resp = requests.get(nodes_url, auth=auth, timeout=5)
+        if nodes_resp.status_code == 200:
+            nodes = nodes_resp.json()
+            if isinstance(nodes, list) and nodes:
+                running = [
+                    n for n in nodes if isinstance(n, dict) and n.get("running")
+                ]
+                node = running[0] if running else (
+                    nodes[0] if isinstance(nodes[0], dict) else None
+                )
+                if node is not None:
+                    if node.get("name") is not None:
+                        stats["node_name"] = node.get("name")
+                    if node.get("mem_used") is not None:
+                        stats["mem_used"] = node.get("mem_used")
+                    if node.get("mem_limit") is not None:
+                        stats["mem_limit"] = node.get("mem_limit")
+                    if node.get("disk_free") is not None:
+                        stats["disk_free"] = node.get("disk_free")
+                    if node.get("disk_free_limit") is not None:
+                        stats["disk_free_limit"] = node.get("disk_free_limit")
+                    if node.get("erlang_version") is not None:
+                        stats["erlang_version"] = node.get("erlang_version")
+                    alarms = node.get("alarms")
+                    if isinstance(alarms, list):
+                        if alarms:
+                            stats["alarms"] = ", ".join(str(a) for a in alarms)
+                        else:
+                            stats["alarms"] = "(none)"
+    except Exception:
+        pass
 
     try:
         cache.set(KEY_ADMIN_RMQ_STATS, stats, timeout=TIMEOUT_ADMIN_STATS)
@@ -1144,20 +1329,7 @@ def _get_recent_rabbitmq_host_stats():
         return str(raw_key)
 
     try:
-        client = getattr(cache, "_cache", None)
-        if hasattr(client, "get_client"):
-            try:
-                client = client.get_client()
-            except Exception:
-                client = None
-        if client is None:
-            client = getattr(cache, "client", None)
-            if hasattr(client, "get_client"):
-                try:
-                    client = client.get_client()
-                except Exception:
-                    client = None
-
+        client = _get_redis_cache_client()
         if client is not None and hasattr(client, "scan_iter"):
             for key in client.scan_iter(match="recent_host:*", count=1000):
                 key_str = _decode_key(key)
@@ -3015,27 +3187,27 @@ def admin_monitor(request):
     def _host_stats_fn():
         """Return per-host last_seen timestamps and age buckets for admin monitor.
 
-        Uses host_data over the last 8 days, aggregating directly from the
-        hypertable without a separate host list, to keep queries fast even on
-        large installations.
+        Primary: Redis ``recent_host:*`` inventory + LATERAL ``ORDER BY time DESC
+        LIMIT 1`` per host. Fallback when Redis is empty: 3h ``GROUP BY`` Max
+        under a short statement timeout (never 8-day aggregate / 600s floor).
         """
         now = timezone.now()
-        time_bounds = now - timedelta(days=8)
-
         host_stats_local = []
         try:
-            latest_qs = (
-                host_data.objects.filter(time__gte=time_bounds)
-                .values("host")
-                .annotate(last_time=Max("time"))
-            )
-            with _pg_session_statement_timeout_for_admin_host_stats_query():
-                for row in latest_qs:
-                    host = row.get("host") or ""
-                    last_time = row.get("last_time")
-                    entry = _admin_monitor_host_stat_dict(host, last_time, now)
-                    if entry is not None:
-                        host_stats_local.append(entry)
+            fqdns = _list_recent_host_fqdns_from_redis()
+            if fqdns:
+                latest_by_host = latest_sample_time_by_host(fqdns)
+            else:
+                logger.info(
+                    "admin_monitor host_stats: Redis recent_host empty; "
+                    "using 3h GROUP BY fallback"
+                )
+                with _pg_session_statement_timeout_for_admin_host_stats_query():
+                    latest_by_host = latest_sample_time_by_host_in_window()
+            for host, last_time in latest_by_host.items():
+                entry = _admin_monitor_host_stat_dict(host or "", last_time, now)
+                if entry is not None:
+                    host_stats_local.append(entry)
         except Exception as exc:
             logging.getLogger(__name__).warning(
                 "Failed to load latest host timestamps for admin_monitor: %s",
@@ -3056,7 +3228,7 @@ def admin_monitor(request):
         keys_by_section = {
             "hosts": [KEY_ADMIN_HOST_STATS],
             "cache": [KEY_ADMIN_CACHE_STATS],
-            "rabbitmq": [KEY_ADMIN_RMQ_STATS],
+            "rabbitmq": [KEY_ADMIN_RMQ_STATS, KEY_ADMIN_RMQ_SNAPSHOT],
             "timescaledb": [KEY_ADMIN_TIMESCALE_STATS],
             "xalt": [KEY_ADMIN_XALT_STATS],
         }

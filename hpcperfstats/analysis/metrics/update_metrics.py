@@ -97,6 +97,10 @@ from hpcperfstats.site.lib.machine.models import (
     job_plot_artifact,
     metrics_data,
 )
+from hpcperfstats.site.lib.machine.host_data_latest import (
+    HOST_LAST_TIME_LOOKUP_BATCH,
+    latest_sample_time_by_host as _latest_sample_time_by_host,
+)
 from hpcperfstats.site.lib.machine.public_metrics_artifacts import (
     refresh_public_expansion_factor_artifacts_parallel,
     refresh_public_expansion_factor_artifacts_safe,
@@ -111,10 +115,7 @@ LAST_UPDATE_METRICS_DIAGNOSTICS = None
 # Process jobs in chunks to bound memory; full job rows are not all held at once.
 CHUNK_SIZE = 500
 
-# host_data "latest sample per host" probes: keep each round-trip bounded.
-# PostgreSQL uses a per-host LATERAL + LIMIT 1 (index probe on (host, time))
-# inside a short transaction with parallel workers disabled for the probe.
-HOST_LAST_TIME_LOOKUP_BATCH = 64
+# HOST_LAST_TIME_LOOKUP_BATCH imported from host_data_latest (LATERAL batches).
 
 # Running a full GC every chunk is expensive on large backfills; amortize it.
 GC_COLLECT_EVERY_N_CHUNKS = 20
@@ -1599,53 +1600,6 @@ def _in_window_min_max_by_job_rows(jobs):
   for row in jobs:
     bounds.setdefault(row["jid"], (None, None))
   return bounds
-
-
-def _latest_sample_time_by_host(hosts):
-  """Map host -> max(host_data.time) for ``hosts``, using bounded batches."""
-  latest_by_host = {}
-  if not hosts:
-    return latest_by_host
-  host_list = sorted(hosts)
-  batch = max(1, int(HOST_LAST_TIME_LOOKUP_BATCH))
-  conn = connections["default"]
-  if conn.vendor == "postgresql":
-    ops = conn.ops
-    tbl = ops.quote_name(host_data._meta.db_table)
-    col_host = ops.quote_name("host")
-    col_time = ops.quote_name("time")
-    # DISTINCT ON + ORDER BY over many hypertable chunks can still trigger huge
-    # parallel sorts. One backward index scan per host (LATERAL LIMIT 1) stays
-    # bounded when (host, time) is indexed.
-    sql = (
-        "SELECT h.host_val, m.{t} FROM unnest(%s::text[]) AS h(host_val) "
-        "LEFT JOIN LATERAL ("
-        " SELECT d.{t} FROM {tbl} d WHERE d.{h} = h.host_val "
-        " ORDER BY d.{t} DESC LIMIT 1"
-        ") AS m ON TRUE"
-    ).format(h=col_host, t=col_time, tbl=tbl)
-    using = getattr(conn, "alias", None) or "default"
-    for i in range(0, len(host_list), batch):
-      chunk = host_list[i:i + batch]
-      with transaction.atomic(using=using):
-        with conn.cursor() as cursor:
-          cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
-          cursor.execute(sql, [chunk])
-          for row_host, row_time in cursor.fetchall():
-            if row_time is not None:
-              latest_by_host[row_host] = row_time
-    return latest_by_host
-
-  for i in range(0, len(host_list), batch):
-    chunk = host_list[i:i + batch]
-    qs = (
-        host_data.objects.filter(host__in=chunk)
-        .values("host")
-        .annotate(last_time=Max("time"))
-    )
-    for row in qs:
-      latest_by_host[row.get("host")] = row.get("last_time")
-  return latest_by_host
 
 
 def _ready_jids_from_job_rows(jobs):

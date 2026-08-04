@@ -69,7 +69,7 @@ class TestAdminMonitorRefresh:
     assert response.data == {"rabbitmq_stats": {"ok": True}}
     deleted_keys = {call.args[0] for call in mock_cache.delete.call_args_list}
     assert api.KEY_ADMIN_RMQ_STATS in deleted_keys
-    assert "admin_monitor_rmq_snapshot" not in deleted_keys
+    assert api.KEY_ADMIN_RMQ_SNAPSHOT in deleted_keys
 
   def test_admin_monitor_refresh_without_section_clears_all_cached_sections(self):
     from hpcperfstats.site.lib.machine import api
@@ -106,12 +106,13 @@ class TestAdminMonitorRefresh:
     assert api.KEY_ADMIN_RMQ_STATS in deleted_keys
     assert api.KEY_ADMIN_TIMESCALE_STATS in deleted_keys
     assert api.KEY_ADMIN_XALT_STATS in deleted_keys
-    assert "admin_monitor_rmq_snapshot" not in deleted_keys
+    assert api.KEY_ADMIN_RMQ_SNAPSHOT in deleted_keys
 
 
 @pytest.mark.django_db(databases=[])
 class TestAdminMonitorHostStatsTimeout:
-  def test_admin_monitor_hosts_sets_longer_statement_timeout_for_host_query(self):
+  def test_admin_monitor_hosts_sets_statement_timeout_on_3h_fallback(self):
+    """Redis-empty path uses 3h GROUP BY under SET LOCAL statement_timeout."""
     from hpcperfstats.site.lib.machine import api
 
     factory = RequestFactory()
@@ -123,17 +124,17 @@ class TestAdminMonitorHostStatsTimeout:
     cursor_cm.__enter__.return_value = cursor
     cursor_cm.__exit__.return_value = None
 
-    fake_qs = [{"host": "n1.example", "last_time": datetime.now(timezone.utc)}]
-    filter_qs = MagicMock()
-    filter_qs.values.return_value.annotate.return_value = fake_qs
-
+    last = datetime.now(timezone.utc)
     with patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None), patch(
       "hpcperfstats.site.lib.machine.api.cached_orm",
       side_effect=lambda _key, _timeout, query_fn: query_fn(),
     ), patch(
-      "hpcperfstats.site.lib.machine.api.host_data.objects.filter",
-      return_value=filter_qs,
+      "hpcperfstats.site.lib.machine.api._list_recent_host_fqdns_from_redis",
+      return_value=[],
     ), patch(
+      "hpcperfstats.site.lib.machine.api.latest_sample_time_by_host_in_window",
+      return_value={"n1.example": last},
+    ) as mock_window, patch(
       "hpcperfstats.site.lib.machine.api.connection.vendor",
       "postgresql",
     ), patch(
@@ -144,13 +145,45 @@ class TestAdminMonitorHostStatsTimeout:
       return_value=cursor_cm,
     ), patch(
       "hpcperfstats.site.lib.machine.api._get_admin_host_stats_statement_timeout_ms",
-      return_value=987654,
+      return_value=55000,
     ):
       response = api.admin_monitor(request)
 
     assert response.status_code == 200
     assert response.data["host_stats"][0]["host"] == "n1.example"
-    cursor.execute.assert_called_once_with("SET LOCAL statement_timeout = %s", [987654])
+    mock_window.assert_called_once()
+    cursor.execute.assert_called_once_with("SET LOCAL statement_timeout = %s", [55000])
+
+  def test_admin_monitor_hosts_uses_redis_lateral_without_8d_max(self):
+    """Redis inventory uses LATERAL helper; never 8-day Max aggregate."""
+    from hpcperfstats.site.lib.machine import api
+
+    factory = RequestFactory()
+    request = factory.get("/api/admin_monitor/", {"section": "hosts"})
+    request.session = {"is_staff": True}
+
+    last = datetime.now(timezone.utc)
+    with patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None), patch(
+      "hpcperfstats.site.lib.machine.api.cached_orm",
+      side_effect=lambda _key, _timeout, query_fn: query_fn(),
+    ), patch(
+      "hpcperfstats.site.lib.machine.api._list_recent_host_fqdns_from_redis",
+      return_value=["c1.example.org"],
+    ), patch(
+      "hpcperfstats.site.lib.machine.api.latest_sample_time_by_host",
+      return_value={"c1.example.org": last},
+    ) as mock_lateral, patch(
+      "hpcperfstats.site.lib.machine.api.latest_sample_time_by_host_in_window",
+    ) as mock_window, patch(
+      "hpcperfstats.site.lib.machine.api.host_data.objects.filter",
+    ) as mock_filter:
+      response = api.admin_monitor(request)
+
+    assert response.status_code == 200
+    assert response.data["host_stats"][0]["host"] == "c1.example.org"
+    mock_lateral.assert_called_once_with(["c1.example.org"])
+    mock_window.assert_not_called()
+    mock_filter.assert_not_called()
 
 
 @pytest.mark.django_db(databases=[])

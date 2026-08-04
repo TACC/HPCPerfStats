@@ -219,4 +219,34 @@ describe("AdminMonitor", () => {
     });
     expect(screen.queryByRole("button", { name: /Refresh Data/i })).not.toBeInTheDocument();
   });
+
+  it("renders management RabbitMQ stats labels including node and rates", async () => {
+    mockSectionQuery({
+      rabbitmq: {
+        data: {
+          queue: "horizon",
+          messages: 10,
+          messages_publish_rate: 1.5,
+          mem_used: 1048576,
+          alarms: "(none)",
+          node_name: "rabbit@rabbitmq",
+        },
+      },
+    });
+
+    renderWithProviders(<AdminMonitor />);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /RabbitMQ statistics/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Publish rate (msg/s)")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Erlang memory used (bytes)")).toBeInTheDocument();
+    expect(screen.getByText("Node alarms")).toBeInTheDocument();
+    expect(screen.getByText("Node name")).toBeInTheDocument();
+  });
 });

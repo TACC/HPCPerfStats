@@ -424,7 +424,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 | PostgreSQL shell | `docker compose exec db psql -h localhost -U hpcperfstats` |
 | Pipeline shell (data/processing) | `docker compose exec pipeline su hpcperfstats` |
 | Get queues and message counts from rabbitmq | `docker compose exec rabbitmq rabbitmqctl list_queues name messages consumers` |
-| Admin Monitor RabbitMQ stats | Staff Admin Monitor → RabbitMQ statistics reads queue depth over **AMQP 5672** (no management plugin / port 15672). |
+| Admin Monitor RabbitMQ stats | Staff Admin Monitor → RabbitMQ statistics uses the **management HTTP API** on compose-internal **`http://rabbitmq:15672`** (image `rabbitmq:*-management-alpine`). Port **15672 is not published on the host**; `loopback_users.guest = false` in `services-conf/rabbitmq_management.conf` allows `web`→`rabbitmq` auth. |
 
 ---
 

@@ -1074,7 +1074,8 @@ export default function AdminMonitor() {
               )}
               <Table className="border text-sm">
                 <TableCaption className="sr-only">
-                  RabbitMQ queue depth, consumer, and message volume statistics.
+                  RabbitMQ queue depth, consumer, message volume, rates, and node
+                  memory/disk/alarm statistics.
                 </TableCaption>
                 <TableBody>
                   {(() => {
@@ -1092,11 +1093,26 @@ export default function AdminMonitor() {
                         "Messages published (total since broker start)",
                       messages_delivered_total:
                         "Messages delivered/consumed (total since broker start)",
+                      messages_acked_total:
+                        "Messages acknowledged (total since broker start)",
+                      messages_redelivered_total:
+                        "Messages redelivered (total since broker start)",
+                      messages_publish_rate: "Publish rate (msg/s)",
+                      messages_deliver_rate: "Deliver rate (msg/s)",
+                      messages_ack_rate: "Ack rate (msg/s)",
+                      messages_redeliver_rate: "Redeliver rate (msg/s)",
                       messages_published_since_snapshot:
                         "Messages published since previous snapshot",
                       snapshot_hours: "Hours covered by previous snapshot window",
                       messages_published_last_24h_estimate:
                         "Approx. messages published in last 24 hours",
+                      node_name: "Node name",
+                      mem_used: "Erlang memory used (bytes)",
+                      mem_limit: "Erlang memory limit (bytes)",
+                      disk_free: "Disk free (bytes)",
+                      disk_free_limit: "Disk free alarm limit (bytes)",
+                      alarms: "Node alarms",
+                      erlang_version: "Erlang version",
                     };
                     return Object.entries(rabbitStats)
                       .filter(([key, value]) => key in LABELS && value !== null && value !== undefined)

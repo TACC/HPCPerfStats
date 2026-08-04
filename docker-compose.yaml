@@ -151,7 +151,8 @@ services:
           - db
 
   rabbitmq:
-    image: rabbitmq:4.3.4-alpine
+    # Management plugin (HTTP API on 15672) for Admin Monitor stats.
+    image: rabbitmq:4.3.4-management-alpine
     restart: always
     environment:
       - RABBITMQ_DEFAULT_USER=guest
@@ -166,11 +167,15 @@ services:
       retries: 10
     ports:
       - 5672:5672
+      # Management HTTP API / UI — keep compose-internal only (Django uses
+      # http://rabbitmq:15672). Do not publish 15672 on the host.
+      # - 15672:15672
     volumes:
       - rabbitmq_messages:/var/lib/rabbitmq/
       - /var/log/rabbitmq:/var/log/rabbitmq
       - ./services-conf/rabbitmq_logging.conf:/etc/rabbitmq/conf.d/30-logging_settings.conf:ro
       - ./services-conf/rabbitmq_max_message_size.conf:/etc/rabbitmq/conf.d/20-max_message_size.conf:ro
+      - ./services-conf/rabbitmq_management.conf:/etc/rabbitmq/conf.d/40-management.conf:ro
     networks:
       hpcperfstats_net:
         aliases:

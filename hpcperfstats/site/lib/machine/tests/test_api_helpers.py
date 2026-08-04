@@ -500,13 +500,18 @@ class TestCollectFutureResultsWithDeadline:
 
 
 class TestAdminHostStatsHelpers:
-    def test_get_admin_host_stats_statement_timeout_ms_minimum(self):
+    def test_get_admin_host_stats_statement_timeout_ms_bounded(self):
         from hpcperfstats.site.lib.machine import api
 
         with patch.object(
             api.cfg, "get_db_statement_timeout_ms", return_value=1000
         ):
-            assert api._get_admin_host_stats_statement_timeout_ms() >= 600000
+            assert api._get_admin_host_stats_statement_timeout_ms() == 45000
+
+        with patch.object(
+            api.cfg, "get_db_statement_timeout_ms", return_value=120000
+        ):
+            assert api._get_admin_host_stats_statement_timeout_ms() == 60000
 
     def test_get_admin_host_stats_statement_timeout_ms_handles_config_error(self):
         from hpcperfstats.site.lib.machine import api
@@ -514,7 +519,17 @@ class TestAdminHostStatsHelpers:
         with patch.object(
             api.cfg, "get_db_statement_timeout_ms", side_effect=RuntimeError("bad")
         ):
-            assert api._get_admin_host_stats_statement_timeout_ms() == 600000
+            assert api._get_admin_host_stats_statement_timeout_ms() == 60000
+
+    def test_get_admin_host_stats_statement_timeout_ms_never_floors_at_600s(self):
+        from hpcperfstats.site.lib.machine import api
+
+        with patch.object(
+            api.cfg, "get_db_statement_timeout_ms", return_value=30000
+        ):
+            ms = api._get_admin_host_stats_statement_timeout_ms()
+            assert ms <= 60000
+            assert ms < 600000
 
     def test_pg_session_statement_timeout_skips_non_postgresql(self):
         from hpcperfstats.site.lib.machine import api
@@ -712,6 +727,7 @@ class TestTimescaledbStats:
             (10, 4),
             (100, 200, "100 bytes", "200 bytes"),
             (5000, 9000, "9 kB"),
+            (datetime(2026, 8, 4, 0, 55, tzinfo=dt_timezone.utc),),
         ]
         cursor_cm = MagicMock()
         cursor_cm.__enter__.return_value = cursor
@@ -723,6 +739,7 @@ class TestTimescaledbStats:
         assert stats["database_name"] == "portal"
         assert stats["hypertable_count"] == 3
         assert stats["host_data_row_estimate"] == 5000
+        assert "2026-08-04" in (stats.get("host_data_newest") or "")
 
 
 class TestRabbitmqStats:
@@ -733,70 +750,140 @@ class TestRabbitmqStats:
         with patch.object(api.cache, "get", return_value=cached):
             assert api._get_rabbitmq_stats() == cached
 
-    def test_fetches_queue_stats_via_amqp(self):
+    def test_fetches_queue_and_node_stats_via_management(self):
         from hpcperfstats.site.lib.machine import api
 
-        method = MagicMock()
-        method.message_count = 5
-        method.consumer_count = 2
-        declared = MagicMock()
-        declared.method = method
-        channel = MagicMock()
-        channel.queue_declare.return_value = declared
-        connection = MagicMock()
-        connection.is_closed = False
-        connection.channel.return_value = channel
-        mock_pika = MagicMock()
-        mock_pika.BlockingConnection.return_value = connection
-        mock_pika.ConnectionParameters.side_effect = lambda host: ("params", host)
+        queue_payload = {
+            "messages": 5,
+            "messages_ready": 3,
+            "messages_unacknowledged": 2,
+            "consumers": 1,
+            "message_bytes": 100,
+            "message_bytes_ready": 60,
+            "message_bytes_unacknowledged": 40,
+            "message_stats": {
+                "publish": 1000,
+                "deliver_get": 900,
+                "ack": 850,
+                "redeliver": 5,
+                "publish_details": {"rate": 1.25},
+                "deliver_get_details": {"rate": 1.1},
+                "ack_details": {"rate": 1.0},
+                "redeliver_details": {"rate": 0.01},
+            },
+        }
+        nodes_payload = [
+            {
+                "name": "rabbit@rabbitmq",
+                "running": True,
+                "mem_used": 2048,
+                "mem_limit": 4096,
+                "disk_free": 10_000_000,
+                "disk_free_limit": 50_000_000,
+                "alarms": [],
+                "erlang_version": "26.2",
+            }
+        ]
+
+        def _get(url, auth=None, timeout=None):
+            resp = MagicMock()
+            resp.status_code = 200
+            if "/api/queues/" in url:
+                resp.json.return_value = queue_payload
+            else:
+                resp.json.return_value = nodes_payload
+            return resp
+
+        mock_requests = MagicMock()
+        mock_requests.get.side_effect = _get
 
         import sys
 
         with patch.object(api.cache, "get", return_value=None), patch.object(
             api.cfg, "get_rmq_server", return_value="rabbit"
         ), patch.object(api.cfg, "get_rmq_queue", return_value="q1"), patch.dict(
-            sys.modules, {"pika": mock_pika}
+            sys.modules, {"requests": mock_requests}
         ), patch.object(api.cache, "set") as cache_set:
             stats = api._get_rabbitmq_stats()
+
         assert stats["queue"] == "q1"
         assert stats["messages"] == 5
-        assert stats["consumers"] == 2
+        assert stats["messages_ready"] == 3
+        assert stats["messages_unacknowledged"] == 2
+        assert stats["consumers"] == 1
+        assert stats["message_bytes"] == 100
+        assert stats["messages_published_total"] == 1000
+        assert stats["messages_delivered_total"] == 900
+        assert stats["messages_acked_total"] == 850
+        assert stats["messages_redelivered_total"] == 5
+        assert stats["messages_publish_rate"] == 1.25
+        assert stats["messages_deliver_rate"] == 1.1
+        assert stats["messages_ack_rate"] == 1.0
+        assert stats["messages_redeliver_rate"] == 0.01
+        assert stats["node_name"] == "rabbit@rabbitmq"
+        assert stats["mem_used"] == 2048
+        assert stats["mem_limit"] == 4096
+        assert stats["disk_free"] == 10_000_000
+        assert stats["disk_free_limit"] == 50_000_000
+        assert stats["alarms"] == "(none)"
+        assert stats["erlang_version"] == "26.2"
         assert "error" not in stats
-        assert "management" not in str(stats).lower()
-        channel.queue_declare.assert_called_with(
-            queue="q1", durable=True, passive=True
-        )
-        connection.close.assert_called_once()
         cache_set.assert_called()
+        snapshot_calls = [
+            c
+            for c in cache_set.call_args_list
+            if c.args and c.args[0] == api.KEY_ADMIN_RMQ_SNAPSHOT
+        ]
+        assert snapshot_calls
 
-    def test_passive_declare_fallback_to_non_passive(self):
+    def test_snapshot_yields_24h_publish_estimate(self):
         from hpcperfstats.site.lib.machine import api
+        from datetime import timedelta
 
-        method = MagicMock()
-        method.message_count = 3
-        method.consumer_count = 1
-        declared = MagicMock()
-        declared.method = method
-        channel = MagicMock()
-        channel.queue_declare.side_effect = [Exception("missing"), declared]
-        connection = MagicMock()
-        connection.is_closed = False
-        connection.channel.return_value = channel
-        mock_pika = MagicMock()
-        mock_pika.BlockingConnection.return_value = connection
+        now = datetime(2026, 8, 3, 12, 0, tzinfo=dt_timezone.utc)
+        prior = {
+            "timestamp": (now - timedelta(hours=2)).isoformat(),
+            "publish": 800,
+        }
+        queue_payload = {
+            "messages": 1,
+            "consumers": 0,
+            "message_stats": {"publish": 1000, "deliver_get": 0},
+        }
+
+        def _cache_get(key):
+            if key == api.KEY_ADMIN_RMQ_STATS:
+                return None
+            if key == api.KEY_ADMIN_RMQ_SNAPSHOT:
+                return prior
+            return None
+
+        def _get(url, auth=None, timeout=None):
+            resp = MagicMock()
+            resp.status_code = 200
+            if "/api/queues/" in url:
+                resp.json.return_value = queue_payload
+            else:
+                resp.json.return_value = []
+            return resp
+
+        mock_requests = MagicMock()
+        mock_requests.get.side_effect = _get
 
         import sys
 
-        with patch.object(api.cache, "get", return_value=None), patch.object(
+        with patch.object(api.cache, "get", side_effect=_cache_get), patch.object(
             api.cfg, "get_rmq_server", return_value="rabbit"
         ), patch.object(api.cfg, "get_rmq_queue", return_value="q1"), patch.dict(
-            sys.modules, {"pika": mock_pika}
-        ), patch.object(api.cache, "set"):
+            sys.modules, {"requests": mock_requests}
+        ), patch.object(api.timezone, "now", return_value=now), patch.object(
+            api.cache, "set"
+        ):
             stats = api._get_rabbitmq_stats()
-        assert stats["messages"] == 3
-        assert stats["consumers"] == 1
-        assert channel.queue_declare.call_count == 2
-        assert channel.queue_declare.call_args_list[1].kwargs.get("passive") is False
+
+        assert stats["messages_published_since_snapshot"] == 200
+        assert stats["snapshot_hours"] == 2.0
+        assert stats["messages_published_last_24h_estimate"] == 2400
 
 
 class TestXaltJidCoverage:
@@ -915,30 +1002,29 @@ class TestRabbitmqStatsErrorBranches:
         ):
             assert api._get_rabbitmq_stats() == {}
 
-    def test_connection_error_sets_amqp_error_field(self):
+    def test_connection_error_sets_management_error_field(self):
         from hpcperfstats.site.lib.machine import api
         import sys
 
-        mock_pika = MagicMock()
-        mock_pika.BlockingConnection.side_effect = ConnectionError("refused")
+        mock_requests = MagicMock()
+        mock_requests.get.side_effect = ConnectionError("refused")
         with patch.object(api.cache, "get", return_value=None), patch.object(
             api.cfg, "get_rmq_server", return_value="rabbit"
         ), patch.object(api.cfg, "get_rmq_queue", return_value="q1"), patch.dict(
-            sys.modules, {"pika": mock_pika}
+            sys.modules, {"requests": mock_requests}
         ), patch.object(api.cache, "set"):
             stats = api._get_rabbitmq_stats()
         assert "error" in stats
-        assert "AMQP" in stats["error"]
-        assert "management" not in stats["error"].lower()
+        assert "management" in stats["error"].lower()
 
-    def test_pika_import_failure_sets_error(self):
+    def test_requests_import_failure_sets_error(self):
         from hpcperfstats.site.lib.machine import api
 
         real_import = __import__
 
         def _import(name, *args, **kwargs):
-            if name == "pika":
-                raise ImportError("no pika")
+            if name == "requests":
+                raise ImportError("no requests")
             return real_import(name, *args, **kwargs)
 
         with patch.object(api.cache, "get", return_value=None), patch.object(
@@ -948,29 +1034,52 @@ class TestRabbitmqStatsErrorBranches:
         ), patch.object(api.cache, "set"):
             stats = api._get_rabbitmq_stats()
         assert "error" in stats
-        assert "pika" in stats["error"].lower()
+        assert "requests" in stats["error"].lower()
+
+    def test_http_error_status_sets_error(self):
+        from hpcperfstats.site.lib.machine import api
+        import sys
+
+        resp = MagicMock()
+        resp.status_code = 404
+        mock_requests = MagicMock()
+        mock_requests.get.return_value = resp
+
+        with patch.object(api.cache, "get", return_value=None), patch.object(
+            api.cfg, "get_rmq_server", return_value="rabbit"
+        ), patch.object(api.cfg, "get_rmq_queue", return_value="q1"), patch.dict(
+            sys.modules, {"requests": mock_requests}
+        ), patch.object(api.cache, "set"):
+            stats = api._get_rabbitmq_stats()
+        assert "error" in stats
+        assert "404" in stats["error"]
 
     def test_cache_set_failure_still_returns_stats(self):
         from hpcperfstats.site.lib.machine import api
         import sys
 
-        method = MagicMock()
-        method.message_count = 10
-        method.consumer_count = 0
-        declared = MagicMock()
-        declared.method = method
-        channel = MagicMock()
-        channel.queue_declare.return_value = declared
-        connection = MagicMock()
-        connection.is_closed = False
-        connection.channel.return_value = channel
-        mock_pika = MagicMock()
-        mock_pika.BlockingConnection.return_value = connection
+        queue_payload = {
+            "messages": 10,
+            "consumers": 0,
+            "message_stats": {},
+        }
+
+        def _get(url, auth=None, timeout=None):
+            resp = MagicMock()
+            resp.status_code = 200
+            if "/api/queues/" in url:
+                resp.json.return_value = queue_payload
+            else:
+                resp.json.return_value = []
+            return resp
+
+        mock_requests = MagicMock()
+        mock_requests.get.side_effect = _get
 
         with patch.object(api.cache, "get", return_value=None), patch.object(
             api.cfg, "get_rmq_server", return_value="rabbit"
         ), patch.object(api.cfg, "get_rmq_queue", return_value="q1"), patch.dict(
-            sys.modules, {"pika": mock_pika}
+            sys.modules, {"requests": mock_requests}
         ), patch.object(api.cache, "set", side_effect=RuntimeError("no cache")):
             stats = api._get_rabbitmq_stats()
         assert stats["messages"] == 10

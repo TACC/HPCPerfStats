@@ -237,6 +237,8 @@ Piping or redirecting **`rabbitmqctl` / `rabbitmq-plugins` stderr to `/dev/null`
 | Print `rabbitmqctl` stdout **and** stderr (`2>&1`), or omit redirects | `rabbitmqctl status 2>/dev/null \| head` |
 | Prefer listener probe (`ss`/`nc`) plus unfiltered `rabbitmqctl list_queues name messages consumers` | Assume empty CLI output means “no queues” |
 
+With the **`rabbitmq:*-management-alpine`** image, listeners should include **15672** (compose-internal; not published on the host) and `rabbitmq-plugins list -e` should show **`rabbitmq_management`**. Absence of 15672 means the non-management image is still running.
+
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec rabbitmq sh -lc 'rabbitmqctl status 2>&1 | head -20; echo ---; rabbitmq-plugins list -e 2>&1; echo ---; (ss -lntp 2>/dev/null || netstat -lntp 2>/dev/null || true) | grep -E "5672|15672" || true; echo ---; rabbitmqctl list_queues name messages consumers 2>&1 | head -20'
 ```
@@ -373,6 +375,26 @@ if host0 and t0 and t1:
 **Anti-pattern — broad `host_data` discovery with `ILIKE` / multi-host `ANY` / full-window `GROUP BY`:** do not ship Pending `db` blocks that `ILIKE '%gpu%'`, scan all job hosts, or aggregate every sample in a multi-day accounting window; use the cheapest-first pattern above.
 
 **Anti-pattern — assume telemetry+LIMIT always finishes:** even the corrected one-host `ORDER BY time DESC LIMIT 20` probe can still hit **`statement timeout`** at 60s on large hypertables (hpcperfstats03, 2026-07-23, finding #7). When **`metrics_data` already shows poison** (e.g. `max_gpu_link_gbps≈2^63/1e9` or `≈2^64/1e9`, `max_packetrate≫1e11`, `detail_gpu_count` N×N, `avg_gpu_mem_bw_gbps` ≫1e5), **abandon raw `host_data`** for that diagnosis and continue from **`metrics_data` / web ORM** only.
+
+### Anti-pattern — Admin Monitor / freshness: 8-day `GROUP BY host, max(time)` (hpcperfstats04)
+
+On large hypertables, **`SELECT host, max(time) FROM host_data WHERE time >= now() - interval '8 days' GROUP BY host`** costs ~**2e7+** and can hang ~10 minutes under a **600s** statement timeout. Admin Monitor now uses Redis **`recent_host:*`** + LATERAL **`ORDER BY time DESC LIMIT 1`**, with a **3h** `GROUP BY` only when Redis is empty.
+
+| Do | Don't |
+|----|-------|
+| `SELECT time FROM host_data WHERE time > now() - interval '3 hours' ORDER BY time DESC LIMIT 1` | `SELECT max(time) …` over multi-day windows without LIMIT |
+| Per-host: LATERAL / index probe for known FQDNs from Redis DB `/1` | 8-day `GROUP BY host, max(time)` for Admin Monitor |
+| 3h `GROUP BY` only as last-resort fallback (≤60s timeout) | Floor statement_timeout at **600000** ms for host freshness |
+
+**Anti-pattern — `time >= max(range_start)` as a “cheap” bound:** joining or filtering with **`max(range_start)` from `timescaledb_information.chunks`** still scans many chunks (cost ~**1.5e7** on hpcperfstats04). Prefer **`ORDER BY time DESC LIMIT 1`** in a short wall-clock window.
+
+**Anti-pattern — bare `redis-cli` without `-n N`:** Django cache `redis_location` often ends in **`/1`**. Bare `redis-cli` (or `redis-cli` without `-n`) defaults to **DB0**, which can be empty while **DB1** has hundreds of `recent_host:*` keys. Always:
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec redis sh -lc 'redis-cli -n 1 DBSIZE; redis-cli -n 1 --scan --pattern "recent_host:*" | wc -l; redis-cli -n 1 --scan --pattern "recent_host:*" | head -5'
+```
+
+Resolve **`N`** from `redis://…/N` in INI / Django settings when unsure.
 
 **Anti-pattern — empty host+telemetry GPU probe means “no GPU job”:** a correct `host`+telemetry+`LIMIT` probe can return **0 rows** while `metrics_data` still has GPU poison (hpcperfstats01 JID `3351747`, 2026-07-31 — `detail_gpu_count=16`, `avg_gpu_mem_bw_gbps≈7.09e10` with units `GB/s`, but zero `nvidia_gpu` samples in window). Treat empty raw rows as **retention/purge or missing samples**, not absence of the job’s GPU metrics; ground the diagnosis on `metrics_data`.
 

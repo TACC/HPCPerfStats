@@ -772,8 +772,8 @@ grep -E 'Files marked for archival: 0|archive_job_begin' /tmp/pipeline-full.log 
 docker compose -p hpcperfstats logs pipeline 2>&1 | \
   grep -E 'idle_rescan_snapshot_source=|Worker idle loops|idle_rescan_merge|ingest file path=|Number of host stats files to process' | tail -80
 
-# T0 — Timescale freshness (expect non-NULL newest_3h within ~one idle interval + drain after fix)
-docker compose -p hpcperfstats exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout='45s'; SELECT max(time) AS newest_3h FROM host_data WHERE time > now() - interval '3 hours';" -c "SET statement_timeout='60s'; SELECT max(time) AS newest_24h FROM host_data WHERE time > now() - interval '24 hours';"
+# T0 — Timescale freshness (cheap LIMIT 1; never multi-day GROUP BY max(time))
+docker compose -p hpcperfstats exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout='45s'; SELECT time AS newest_3h FROM host_data WHERE time > now() - interval '3 hours' ORDER BY time DESC LIMIT 1;" -c "SET statement_timeout='60s'; SELECT time AS newest_24h FROM host_data WHERE time > now() - interval '24 hours' ORDER BY time DESC LIMIT 1;"
 
 # T1 — merge / pending recovery after deploy
 docker compose -p hpcperfstats logs pipeline 2>&1 | \

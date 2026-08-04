@@ -284,6 +284,7 @@ class TestTimescaledbFetchoneClosure:
             (5, None, None, None),
             None,
             (None, None, None),
+            None,
         ]
         cursor_cm = MagicMock()
         cursor_cm.__enter__.return_value = cursor
@@ -297,14 +298,14 @@ class TestTimescaledbFetchoneClosure:
 
 
 class TestRabbitmqClosure:
-    def test_pika_import_failure_sets_error(self):
+    def test_requests_import_failure_sets_error(self):
         from hpcperfstats.site.lib.machine import api
 
         real_import = __import__
 
         def _import(name, *args, **kwargs):
-            if name == "pika":
-                raise ImportError("no pika")
+            if name == "requests":
+                raise ImportError("no requests")
             return real_import(name, *args, **kwargs)
 
         with patch.object(api.cache, "get", return_value=None), patch.object(
@@ -314,58 +315,63 @@ class TestRabbitmqClosure:
         ), patch.object(api.cache, "set"):
             stats = api._get_rabbitmq_stats()
         assert "error" in stats
-        assert "pika" in stats["error"].lower()
+        assert "requests" in stats["error"].lower()
 
-    def test_amqp_success_closes_connection(self):
+    def test_management_success_maps_queue_fields(self):
         from hpcperfstats.site.lib.machine import api
 
-        method = MagicMock()
-        method.message_count = 7
-        method.consumer_count = 1
-        declared = MagicMock()
-        declared.method = method
-        channel = MagicMock()
-        channel.queue_declare.return_value = declared
-        connection = MagicMock()
-        connection.is_closed = False
-        connection.channel.return_value = channel
-        mock_pika = MagicMock()
-        mock_pika.BlockingConnection.return_value = connection
+        queue_payload = {
+            "messages": 7,
+            "consumers": 1,
+            "message_stats": {"publish": 10},
+        }
+
+        def _get(url, auth=None, timeout=None):
+            resp = MagicMock()
+            resp.status_code = 200
+            if "/api/queues/" in url:
+                resp.json.return_value = queue_payload
+            else:
+                resp.json.return_value = [
+                    {
+                        "name": "n1",
+                        "running": True,
+                        "mem_used": 1,
+                        "alarms": ["memory"],
+                    }
+                ]
+            return resp
+
+        mock_requests = MagicMock()
+        mock_requests.get.side_effect = _get
 
         with patch.object(api.cache, "get", return_value=None), patch.object(
             api.cfg, "get_rmq_server", return_value="r"
         ), patch.object(api.cfg, "get_rmq_queue", return_value="q"), patch.dict(
-            sys.modules, {"pika": mock_pika}
+            sys.modules, {"requests": mock_requests}
         ), patch.object(api.cache, "set"):
             stats = api._get_rabbitmq_stats()
         assert stats["messages"] == 7
         assert stats["consumers"] == 1
-        connection.close.assert_called_once()
+        assert stats["alarms"] == "memory"
 
-    def test_connection_close_exception_is_swallowed(self):
+    def test_json_decode_error_sets_error(self):
         from hpcperfstats.site.lib.machine import api
 
-        method = MagicMock()
-        method.message_count = 1
-        method.consumer_count = 0
-        declared = MagicMock()
-        declared.method = method
-        channel = MagicMock()
-        channel.queue_declare.return_value = declared
-        connection = MagicMock()
-        connection.is_closed = False
-        connection.close.side_effect = RuntimeError("close fail")
-        connection.channel.return_value = channel
-        mock_pika = MagicMock()
-        mock_pika.BlockingConnection.return_value = connection
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.side_effect = ValueError("bad json")
+        mock_requests = MagicMock()
+        mock_requests.get.return_value = resp
 
         with patch.object(api.cache, "get", return_value=None), patch.object(
             api.cfg, "get_rmq_server", return_value="r"
         ), patch.object(api.cfg, "get_rmq_queue", return_value="q"), patch.dict(
-            sys.modules, {"pika": mock_pika}
+            sys.modules, {"requests": mock_requests}
         ), patch.object(api.cache, "set"):
             stats = api._get_rabbitmq_stats()
-        assert stats["messages"] == 1
+        assert "error" in stats
+        assert "decode" in stats["error"].lower()
 
 
 class TestRecentRabbitmqHostsClosure:
