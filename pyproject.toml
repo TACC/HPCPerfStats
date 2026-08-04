@@ -22,7 +22,7 @@ classifiers = [
 dependencies = [
   "requests>=2.34.2",
   "python-dateutil==2.9.0.post0",
-  "pandas==3.0.3",
+  "pandas==3.0.5",
 ]
 
 [project.optional-dependencies]
