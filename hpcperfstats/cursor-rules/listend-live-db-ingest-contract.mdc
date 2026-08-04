@@ -1,0 +1,41 @@
+---
+description: listend live Timescale dual-write via host-affine sliding pool; no incomplete samples; sync_timedb completeness when live on
+alwaysApply: false
+globs: hpcperfstats/listend.py,hpcperfstats/dbload/lib/listend_db_ingest.py,hpcperfstats/dbload/lib/sync_timedb_file_complete_ingest_mark.py,hpcperfstats/dbload/lib/sync_timedb_ingest_readiness.py
+---
+
+# listend live DB ingest contract
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+## Invariants
+
+- **File durable; DB best-effort.** RabbitMQ ack only after successful archive append. DB enqueue never blocks or fails ack; queue-full / byte-budget overflow → drop + log; sync_timedb repairs from disk.
+- **Never insert incomplete samples.** `host_data` uniqueness / itimes / duplicate-scan use **host + unix-second**. Any row for second `T` without the full event set from that monitor sample makes sync_timedb treat `T` as done → **permanent silent loss** under `ignore_conflicts`. Live path: whole-sample skip without schema (or with schema mismatch / parse failure); no per-type silent drops like the file parser.
+- **Host-affine workers** (`hash(host) % N`, stable adler32): per-host `schema_by_host` + `DeltaCarryState`. `$` updates schema; cold-start may seed from on-disk `current` `!` lines. Carry survives `bulk_create` flush; schema/carry not cleared on flush.
+- **Batch size** — `listend_db_ingest_batch_samples` (default 100). `$` does not count toward batch. Flush on batch full, idle `queue.get` timeout, or shutdown.
+- **Queue budget** — `listend_db_ingest_queue_max_gb` (default 8 GiB) total across workers; byte tracker authoritative; Queue `maxsize` derived from budget ÷ min payload floor.
+- **Connection recycle** — on idle timeout and max age (`get_db_conn_max_age()` / module constants). No long-lived single connection after one `ensure_django()`.
+- **Strict post-use memory release** — drop message/DataFrame refs after parse; clear ORM batches after flush; reuse `release_spawn_pool_worker_memory` cadence on flush/idle (not every sample). Run **memory-leak review** before close when changing this path.
+- **When `listend_db_ingest_enabled`:** sync_timedb must **not** use weak `_try_db_complete_head_tail_fast_path` / `_try_db_complete_tail_window_fast_path`. Fall through to duplicate-timestamp scan (`db_skip=full_scan` when all sample seconds present). Archive/delete gate requires **sync_timedb file-complete mark** (or zero-host mark for proc-only) — never live-only head+tail. Live listend **never** writes the file-complete mark.
+- Process titles: `listend.py [main]` / `worker:listend-db-pool`. Extend the existing 10-minute idle monitor with DB counters.
+
+## Canonical modules
+
+| Concern | Location |
+|---------|----------|
+| Pool / workers / submit | `hpcperfstats/dbload/lib/listend_db_ingest.py` |
+| Wire + ack | `hpcperfstats/listend.py` |
+| File-complete mark | `hpcperfstats/dbload/lib/sync_timedb_file_complete_ingest_mark.py` |
+| Archive gate | `hpcperfstats/dbload/lib/sync_timedb_ingest_readiness.py` |
+| INI | `listend_db_ingest_*` in `[PIPELINE]` via `conf_parser` |
+
+## Residual risk (accepted)
+
+Queue drop of sample *k* can leave carry reflecting *k−1* while *k+1* is written with a skewed delta (first-writer-wins). Mitigate with large queue budget; sync_timedb still repairs missing *seconds* from disk but cannot overwrite live-written keys.
+
+## Overlap
+
+- **`sync-timedb-db-before-archive-contract.mdc`** — gate semantics when live on.
+- **`process-title-and-pool-labels.mdc`** — titles.
+- **`runtime-resource-and-metrics-safety.mdc`** — Postgres connection sizing.

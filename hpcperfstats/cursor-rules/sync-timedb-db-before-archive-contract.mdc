@@ -21,16 +21,17 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 
 Closed segment is archive/delete-ready when **either**:
 
-1. **Host head+tail** — both of:
+1. **Host head+tail** — both of (only when **`listend_db_ingest_enabled` is off**):
    - The **first** digit-leading timestamp line's **hostname token** has at least one **`host_data`** row in the **same Unix second**.
    - The **last** digit-leading timestamp line's **hostname token** has at least one **`host_data`** row in the **same Unix second**.
 2. **Durable zero-host ingest mark** — successful ingest wrote **no parsed host stats records** (`stats_rows_parsed=0` / empty host payload, typically `proc_rows>0`) and recorded a fingerprint mark under `{archive_dir}/.sync_timedb_zero_host_ingest_mark.json` (`sync_timedb_zero_host_ingest_mark.py`). Gate on **parsed** counts, never post-collapse write counts alone (RC-0). **`proc_data` has no `time` column** — do not invent proc head/tail probes. Keep **`need_archival=True`** for these paths; do **not** clear archival marks as a substitute for gate readiness.
+3. **When `listend_db_ingest_enabled`:** do **not** treat live-only head+tail as ready. Require a **sync_timedb file-complete mark** (`sync_timedb_file_complete_ingest_mark.py`, written after successful ingest or `db_skip=full_scan`) **or** the zero-host mark. Live listend never writes the file-complete mark. Weak ingest `_try_db_complete_head_tail_fast_path` / `_try_db_complete_tail_window_fast_path` return `None` when live on — fall through to duplicate-timestamp scan. See **`listend-live-db-ingest-contract.mdc`**.
 
 - Monitor fractional seconds; do not use exact `time=` equality (Unix-second windows).
 - **`host` must be the hostname token from the stats file line** (same field written to `host_data.host` during ingest). Do **not** use the archive path's parent directory name (often FQDN) for the DB lookup.
 - Head and tail hosts may differ; both must pass. When head second equals tail second (tiny file), one DB probe is enough.
 - Canonical probes: `read_stats_file_head_identity` + `read_stats_file_tail_identity` (EOF-backward streaming via `parse_last_timestamp_line_streaming`) + `head_timestamp_present_in_db` in `sync_timedb_ingest_readiness.py` / `sync_timedb_archive_helpers.py`.
-- **Limitation:** middle segments may be missing in DB and still pass when only the head and tail seconds are present.
+- **Limitation (live off):** middle segments may be missing in DB and still pass when only the head and tail seconds are present.
 - **Fail closed:** never-ingested / failed / incomplete host ingest without a mark still skips with `Archive/delete gate: skipped … without head/tail timestamps in DB`.
 - **Emergency override:** **`sync_archive_require_db_ingest = no`** disables the gate (log once).
 

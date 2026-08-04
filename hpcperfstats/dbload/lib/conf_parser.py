@@ -157,6 +157,10 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_enable_ingest_first_durability_mode"),
     ("PIPELINE", "sync_archive_require_db_ingest"),
     ("PIPELINE", "sync_archive_maint_hints"),
+    ("PIPELINE", "listend_db_ingest_enabled"),
+    ("PIPELINE", "listend_db_ingest_pool_processes"),
+    ("PIPELINE", "listend_db_ingest_queue_max_gb"),
+    ("PIPELINE", "listend_db_ingest_batch_samples"),
     ("PIPELINE", "acct_path"),
     ("PIPELINE", "archive_dir"),
     ("PIPELINE", "daily_archive_dir"),
@@ -341,6 +345,10 @@ INI_OPTION_DEFAULTS = {
     'sync_enable_ingest_first_durability_mode': 'yes',
     'sync_archive_require_db_ingest': 'yes',
     'sync_archive_maint_hints': 'yes',
+    'listend_db_ingest_enabled': 'yes',
+    'listend_db_ingest_pool_processes': '30',
+    'listend_db_ingest_queue_max_gb': '8',
+    'listend_db_ingest_batch_samples': '100',
     'acct_path': None,
     'archive_dir': None,
     'daily_archive_dir': None,
@@ -2936,6 +2944,33 @@ def get_sync_archive_maint_hints():
   return _parse_bool(
       _pipeline_get("sync_archive_maint_hints"),
   )
+
+
+def get_listend_db_ingest_enabled():
+  """Whether listend asynchronously dual-writes samples to Timescale (default on)."""
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("listend_db_ingest_enabled"),
+      default=True,
+  )
+
+
+def get_listend_db_ingest_pool_processes():
+  """Host-affine spawn workers for listend live DB ingest (default 30)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("listend_db_ingest_pool_processes"))
+
+
+def get_listend_db_ingest_queue_max_gb():
+  """Total in-flight listend DB-queue memory budget in GiB across workers (default 8)."""
+  _ensure_cfg_loaded()
+  return max(0.001, _pipeline_getfloat("listend_db_ingest_queue_max_gb"))
+
+
+def get_listend_db_ingest_batch_samples():
+  """Samples cached per listend DB worker before bulk_create (default 100)."""
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("listend_db_ingest_batch_samples"))
 
 
 def get_redis_location():

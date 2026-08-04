@@ -178,8 +178,28 @@ def _path_ready_via_zero_host_mark(path):
   return bool(has_zero_host_ingest_mark(path))
 
 
+def _path_ready_via_file_complete_mark(path):
+  from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
+      has_file_complete_ingest_mark,
+  )
+
+  return bool(has_file_complete_ingest_mark(path))
+
+
+def _live_db_ingest_enabled():
+  try:
+    return bool(cfg.get_listend_db_ingest_enabled())
+  except Exception:
+    return False
+
+
 def stats_file_head_ingested_in_db(path, *, log_fn=None):
-  """Return True when head+tail host_data is present OR a zero-host ingest mark exists."""
+  """Return True when the path is archive/delete ready.
+
+  Default (live ingest off): host_data head+tail **or** zero-host mark.
+  When listend live DB ingest is on: sync_timedb file-complete mark **or**
+  zero-host mark (never live-only head+tail).
+  """
   from hpcperfstats.dbload.sync_timedb import _sync_worker_db_task
 
   with _sync_worker_db_task():
@@ -197,9 +217,15 @@ def stats_file_head_ingested_in_db(path, *, log_fn=None):
 
     ready = False
     if not stats_file_is_active_segment(path):
-      ready = _path_head_tail_ready_in_db(path)
-      if not ready:
-        ready = _path_ready_via_zero_host_mark(path)
+      if _live_db_ingest_enabled():
+        ready = (
+            _path_ready_via_file_complete_mark(path)
+            or _path_ready_via_zero_host_mark(path)
+        )
+      else:
+        ready = _path_head_tail_ready_in_db(path)
+        if not ready:
+          ready = _path_ready_via_zero_host_mark(path)
 
     _PATH_READY_CACHE[fp] = {"ready": bool(ready), "checked_at": now}
     _trim_path_ready_cache()
@@ -212,7 +238,11 @@ def build_head_ingest_ready_set(
     *,
     log_fn=None,
 ):
-  """Return paths ready via host_data gate seconds OR durable zero-host ingest mark."""
+  """Return paths ready via host_data gate seconds OR durable ingest marks.
+
+  When listend live DB ingest is on, host_data head+tail alone is insufficient —
+  require the sync_timedb file-complete mark (or zero-host mark for proc-only).
+  """
   from hpcperfstats.dbload.sync_timedb import _sync_worker_db_task
 
   with _sync_worker_db_task():
@@ -220,34 +250,43 @@ def build_head_ingest_ready_set(
       _log_gate_disabled_once(log_fn)
       return set(closed_paths or [])
 
-    seconds_by_host = {}
-    path_samples = {}
-    for path in closed_paths or []:
-      if stats_file_is_active_segment(path):
-        continue
-      sampled = gate_identities_by_path.get(path)
-      if not sampled:
-        continue
-      path_samples[path] = sampled
-      for host, seconds in sampled.items():
-        seconds_by_host.setdefault(host, set()).update(seconds)
-
-    host_ok = {
-        host: host_timestamp_seconds_all_present(host, seconds)
-        for host, seconds in seconds_by_host.items()
-    }
-
+    live_on = _live_db_ingest_enabled()
     ready_paths = set()
-    for path, sampled in path_samples.items():
-      if all(host_ok.get(host, False) for host in sampled):
-        ready_paths.add(path)
+
+    if not live_on:
+      seconds_by_host = {}
+      path_samples = {}
+      for path in closed_paths or []:
+        if stats_file_is_active_segment(path):
+          continue
+        sampled = gate_identities_by_path.get(path)
+        if not sampled:
+          continue
+        path_samples[path] = sampled
+        for host, seconds in sampled.items():
+          seconds_by_host.setdefault(host, set()).update(seconds)
+
+      host_ok = {
+          host: host_timestamp_seconds_all_present(host, seconds)
+          for host, seconds in seconds_by_host.items()
+      }
+
+      for path, sampled in path_samples.items():
+        if all(host_ok.get(host, False) for host in sampled):
+          ready_paths.add(path)
 
     for path in closed_paths or []:
       if path in ready_paths:
         continue
       if stats_file_is_active_segment(path):
         continue
-      if _path_ready_via_zero_host_mark(path):
+      if live_on:
+        if (
+            _path_ready_via_file_complete_mark(path)
+            or _path_ready_via_zero_host_mark(path)
+        ):
+          ready_paths.add(path)
+      elif _path_ready_via_zero_host_mark(path):
         ready_paths.add(path)
     return ready_paths
 

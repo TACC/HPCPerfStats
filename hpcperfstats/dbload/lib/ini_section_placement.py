@@ -70,7 +70,7 @@ XALT_OPTIONS = frozenset({
 
 # Longest prefix match wins when iterating rules in order.
 SECTION_OPTION_PREFIX_RULES = (
-    ("PIPELINE", ("sync_", "metrics_", "ingest_", "pipeline_overlap")),
+    ("PIPELINE", ("sync_", "metrics_", "ingest_", "listend_", "pipeline_overlap")),
     (
         "PORTAL",
         (

@@ -2805,6 +2805,10 @@ def _try_db_complete_head_tail_fast_path(
     lines=None,
 ):
   """When head and tail seconds are in DB, skip full duplicate scan (returns start_idx=-1)."""
+  # Live listend dual-write can place head+tail while middles were dropped from
+  # the live queue — never trust this weak probe when live ingest is enabled.
+  if cfg.get_listend_db_ingest_enabled():
+    return None
   del head_timestamp_utc  # callers pass head ts for API stability; fast path uses tail only
   if lines is not None:
     tail_t, _tail_jid, tail_host = parse_last_timestamp_line(lines)
@@ -2829,6 +2833,8 @@ def _try_db_complete_tail_window_fast_path(
     timestamp_present=None,
 ):
   """Bounded tail-line probe for large head-present files before full duplicate scan."""
+  if cfg.get_listend_db_ingest_enabled():
+    return None
   stream_thresh = cfg.get_sync_ingest_stream_duplicate_scan_bytes()
   if stream_thresh <= 0:
     return None
@@ -3241,6 +3247,16 @@ def _log_ingest_worker_result(result, *, remaining=None, supplement=False):
       outcome=outcome.outcome,
       stats_rows=outcome.stats_rows,
       stats_rows_parsed=outcome.stats_rows_parsed,
+      log_fn=log_print,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
+      maybe_record_file_complete_ingest_mark_from_outcome,
+  )
+  maybe_record_file_complete_ingest_mark_from_outcome(
+      stats_file,
+      ingest_ok=outcome.ingest_ok,
+      outcome=outcome.outcome,
+      db_skip=outcome.db_skip,
       log_fn=log_print,
   )
 

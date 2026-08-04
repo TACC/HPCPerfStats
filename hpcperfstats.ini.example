@@ -445,10 +445,24 @@ daily_archive_dir = %(data_dir)s/daily_archive
 
 # Require head+tail DB ingest readiness before tar append or raw delete (default yes).
 # When yes, first and last digit-leading timestamp seconds must exist in host_data.
+# When listend live DB ingest is on, archive/delete also requires a sync_timedb file-complete mark.
 # sync_archive_require_db_ingest = yes
 
 # Persist archive maintenance hints for faster restarts (default yes).
 # sync_archive_maint_hints = yes
+
+# listend async dual-write of samples to Timescale after archive append (default yes).
+# listend_db_ingest_enabled = yes
+
+# Host-affine spawn workers for listend live DB ingest (default 30).
+# Size against Postgres max_connections alongside sync_ingest_pool_processes.
+# listend_db_ingest_pool_processes = 30
+
+# Total in-flight listend DB-queue memory budget in GiB across all workers (default 8).
+# listend_db_ingest_queue_max_gb = 8
+
+# Samples cached per listend DB worker before one bulk_create (default 100).
+# listend_db_ingest_batch_samples = 100
 
 # Keep uncompressed YYYY-MM-DD.tar after sealing globally (default no).
 # Prior days drop at seal when raw is gone; calendar-today uses grace hours below.

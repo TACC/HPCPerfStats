@@ -11,7 +11,7 @@ from hpcperfstats.dbload.lib.print_utils import ingest_logging
 
 # Bump when ANY persisted semantics change (day-close eligibility, checkpoint
 # shape, manifest phase meaning, delete-gate assumptions, hints debt, etc.).
-SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION = 7
+SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION = 8
 
 PERSISTENCE_CONTRACT_BASENAME = ".sync_timedb_persistence.json"
 
@@ -30,6 +30,7 @@ PERSISTENCE_ARTIFACT_REGISTRY: Dict[str, str] = {
     "day_raw_removal_dir": ".sync_timedb_day_raw_removal",
     "unparsable_raw": ".sync_timedb_unparsable_raw.json",
     "zero_host_ingest_mark": ".sync_timedb_zero_host_ingest_mark.json",
+    "file_complete_ingest_mark": ".sync_timedb_file_complete_ingest_mark.json",
 }
 
 INGEST_CHECKPOINT_SCHEMA_VERSION = 1
@@ -38,6 +39,7 @@ MAINT_HINTS_SCHEMA_VERSION = 2
 UNPARSABLE_RAW_SCHEMA_VERSION = 1
 DEAD_LETTER_SCHEMA_VERSION = 1
 ZERO_HOST_INGEST_MARK_SCHEMA_VERSION = 1
+FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION = 1
 
 LogFn = Optional[Callable[..., Any]]
 
@@ -205,6 +207,8 @@ def _expected_schema_version(kind: str) -> Optional[int]:
     return MANIFEST_SCHEMA_VERSION
   if kind == "zero_host_ingest_mark":
     return ZERO_HOST_INGEST_MARK_SCHEMA_VERSION
+  if kind == "file_complete_ingest_mark":
+    return FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION
   return None
 
 
@@ -301,6 +305,26 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
     if entries is None:
       return True
     return isinstance(entries, dict)
+  if kind == "file_complete_ingest_mark":
+    if not isinstance(raw, dict):
+      return False
+    schema = raw.get("schema_version")
+    if schema is not None and expected is not None:
+      try:
+        if int(schema) != expected:
+          if log_fn:
+            log_fn(
+                "reject %s schema_version=%s expected=%s"
+                % (kind, schema, expected),
+                flush=True,
+            )
+          return False
+      except (TypeError, ValueError):
+        return False
+    entries = raw.get("entries")
+    if entries is None:
+      return True
+    return isinstance(entries, dict)
   return True
 
 
@@ -341,6 +365,10 @@ def _unwrap_envelope(raw: Any, *, kind: str) -> Any:
     if isinstance(raw, dict):
       return raw
     return None
+  if kind == "file_complete_ingest_mark":
+    if isinstance(raw, dict):
+      return raw
+    return None
   return raw
 
 
@@ -365,6 +393,8 @@ def load_persistence_document(
     ):
       default = None
     elif kind == "zero_host_ingest_mark":
+      default = {"entries": {}}
+    elif kind == "file_complete_ingest_mark":
       default = {"entries": {}}
     else:
       default = None
@@ -439,6 +469,18 @@ def save_persistence_document(
     payload["contract_version"] = contract_version
     payload.setdefault(
         "schema_version", ZERO_HOST_INGEST_MARK_SCHEMA_VERSION,
+    )
+    if not isinstance(payload.get("entries"), dict):
+      payload["entries"] = {}
+    _save_json_atomic(path, payload, compact=compact)
+    return
+  if kind == "file_complete_ingest_mark":
+    if not isinstance(payload, dict):
+      payload = {}
+    payload = dict(payload)
+    payload["contract_version"] = contract_version
+    payload.setdefault(
+        "schema_version", FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION,
     )
     if not isinstance(payload.get("entries"), dict):
       payload["entries"] = {}

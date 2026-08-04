@@ -44,6 +44,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | Trigger paths | Read these rules |
 |---------------|------------------|
 | `hpcperfstats/dbload/sync_timedb.py`, `sync_timedb_archive.py`, `hpcperfstats/dbload/lib/sync_timedb_*.py`, `dbload/lib/**`, `multiprocessing_pool_health.py` | `sync-timedb-persistence-contract.mdc`, `sync-timedb-archive-janitor-contract.mdc`, `sync-timedb-db-before-archive-contract.mdc`, `sync-timedb-lock-and-archive-contract.mdc`, `sync-timedb-post-chunk-archive-hygiene.mdc`, `sync-timedb-change-regression-gate.mdc`, `sync-timedb-hot-path-janitor-lock-priority.mdc`, `runtime-resource-and-metrics-safety.mdc`, `process-title-and-pool-labels.mdc` |
+| `hpcperfstats/listend.py`, `hpcperfstats/dbload/lib/listend_db_ingest.py`, `hpcperfstats/dbload/lib/sync_timedb_file_complete_ingest_mark.py`, `hpcperfstats/tests/test_listend_db_ingest.py` | `listend-live-db-ingest-contract.mdc`, `process-title-and-pool-labels.mdc`, `runtime-resource-and-metrics-safety.mdc`, `sync-timedb-db-before-archive-contract.mdc` |
 | `hpcperfstats/tests/test_sync_timedb*.py`, `tests/run_sync_timedb_regression_battery.sh` | `sync-timedb-change-regression-gate.mdc`, `test-first-discipline.mdc` |
 | `hpcperfstats/dbload/lib/sync_timedb_parsing.py`, collapse tests in `hpcperfstats/tests/test_sync_timedb.py` | `sync-timedb-parsing-collapse-vectorization.mdc` |
 | Startup archive scan | `sync-timedb-canonical-startup-archive-scan.mdc` |

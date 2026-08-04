@@ -22,7 +22,7 @@ All operator sidecars under `{archive_data_dir}` share one versioned persistence
 `{archive_data_dir}/.sync_timedb_persistence.json`:
 
 ```json
-{"contract_version": 7, "written_at": 1710000000.0}
+{"contract_version": 8, "written_at": 1710000000.0}
 ```
 
 **Startup:** if missing or `contract_version != SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION`, call `reset_sync_timedb_persistence()` (unlink all registered artifacts **and** `LEGACY_ORPHAN_ARTIFACT_PATHS`), write fresh contract, proceed with empty in-memory state.
@@ -38,6 +38,7 @@ All operator sidecars under `{archive_data_dir}` share one versioned persistence
 | `day_raw_removal_dir` | `.sync_timedb_day_raw_removal/` |
 | `unparsable_raw` | `.sync_timedb_unparsable_raw.json` |
 | `zero_host_ingest_mark` | `.sync_timedb_zero_host_ingest_mark.json` (fingerprint → successful zero-host-row ingest; archive/delete OR path) |
+| `file_complete_ingest_mark` | `.sync_timedb_file_complete_ingest_mark.json` (fingerprint → sync_timedb completed path via ingest or `db_skip=full_scan`; required for archive/delete when listend live DB ingest is on) |
 
 ### Zero-host mark provenance (RC-0)
 

@@ -312,7 +312,15 @@ def on_message(channel, method_frame, _header_frame, body):
   delivery_tag = getattr(method_frame, "delivery_tag", None)
   try:
     message = body.decode(errors="replace")
-    append_monitor_payload_to_archive(message)
+    host = append_monitor_payload_to_archive(message)
+    # Best-effort live DB dual-write; never blocks or fails the ack path.
+    try:
+      from hpcperfstats.dbload.lib.listend_db_ingest import submit_listend_db_ingest
+
+      submit_listend_db_ingest(host, message)
+    except Exception as submit_err:
+      if DEBUG:
+        log_print("listend db ingest submit error: %s" % submit_err)
     channel.basic_ack(delivery_tag=delivery_tag)
   except Exception as e:
     # Critical behavior: do not acknowledge on failure.
@@ -356,11 +364,21 @@ def _idle_monitor():
     # Queue depth via a dedicated connection (see _get_rmq_queue_depth_for_monitor).
     queue_depth = _get_rmq_queue_depth_for_monitor()
 
+    db_suffix = ""
+    try:
+      from hpcperfstats.dbload.lib.listend_db_ingest import get_listend_db_ingest_pool
+
+      pool = get_listend_db_ingest_pool()
+      if pool is not None and pool.enabled and pool._started:
+        db_suffix = "; " + pool.format_idle_monitor_suffix()
+    except Exception:
+      pass
+
     log_print(
         "Messages consumed in the last 10 minutes: %d; "
         "messages waiting to be consumed: %d; "
-        "current file unlinks (last 10 minutes): %d" %
-        (count_last_10, queue_depth, unlink_count_last_10))
+        "current file unlinks (last 10 minutes): %d%s" %
+        (count_last_10, queue_depth, unlink_count_last_10, db_suffix))
 
     _last_idle_report_time = now
 
@@ -403,6 +421,15 @@ def main():
         recent_host_thread = Thread(target=_recent_host_worker, daemon=True)
         recent_host_thread.start()
         _recent_host_worker_thread_started = True
+
+      try:
+        from hpcperfstats.dbload.lib.listend_db_ingest import (
+            start_listend_db_ingest_pool,
+        )
+
+        start_listend_db_ingest_pool()
+      except Exception as pool_err:
+        log_print("Failed to start listend db ingest pool: %s" % pool_err)
 
       # Outer loop: keep the daemon running indefinitely by reconnecting to
       # RabbitMQ on failure instead of exiting. The process will typically only
@@ -478,6 +505,12 @@ def main():
   finally:
     _idle_monitor_stop_event.set()
     _recent_host_worker_stop_event.set()
+    try:
+      from hpcperfstats.dbload.lib.listend_db_ingest import stop_listend_db_ingest_pool
+
+      stop_listend_db_ingest_pool()
+    except Exception:
+      pass
     try:
       if connection and not connection.is_closed:
         connection.close()

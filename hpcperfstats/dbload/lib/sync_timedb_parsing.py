@@ -450,6 +450,31 @@ def iter_stats_file_lines(stats_file):
       pass
 
 
+def _digit_line_identity(s):
+  """Return ``(t, jid, host)`` from a digit-leading line, or ``None`` if malformed.
+
+  Accepts extra trailing tokens (monitor lines may carry more than three fields).
+  """
+  try:
+    parts = s.split()
+    if len(parts) < 3:
+      return None
+    return (parts[0], parts[1], parts[2])
+  except (TypeError, ValueError, AttributeError):
+    return None
+
+
+def _digit_line_unix_second(s):
+  """Return unix-second from a digit-leading line, or ``None`` if malformed."""
+  parsed = _digit_line_identity(s)
+  if parsed is None:
+    return None
+  try:
+    return int(float(parsed[0]))
+  except (TypeError, ValueError):
+    return None
+
+
 def parse_first_timestamp_line(lines):
   for l in lines:
     if not l:
@@ -459,8 +484,10 @@ def parse_first_timestamp_line(lines):
       if not s:
         continue
       if s[0].isdigit():
-        t, jid, host = s.split()
-        return (t, jid, host)
+        parsed = _digit_line_identity(s)
+        if parsed is None:
+          continue
+        return parsed
     except Exception:
       pass
   return (None, None, None)
@@ -476,8 +503,10 @@ def parse_last_timestamp_line(lines):
       if not s:
         continue
       if s[0].isdigit():
-        t, jid, host = s.split()
-        return (t, jid, host)
+        parsed = _digit_line_identity(s)
+        if parsed is None:
+          continue
+        return parsed
     except Exception:
       pass
   return (None, None, None)
@@ -523,11 +552,9 @@ def parse_last_timestamp_line_streaming(stats_file, *, tail_read_bytes=65536):
             s = line.lstrip()
             if not s or not s[0].isdigit():
               continue
-            try:
-              t, jid, host = s.split()
-              return (t, jid, host)
-            except Exception:
-              pass
+            parsed = _digit_line_identity(s)
+            if parsed is not None:
+              return parsed
   except FileNotFoundError:
     return (None, None, None)
   finally:
@@ -566,9 +593,11 @@ def find_processing_start_index(lines, itimes_set, timestamp_present=None):
     if not s:
       continue
     if s[0].isdigit():
-      t, _jid, _host = s.split()
+      unix_sec = _digit_line_unix_second(s)
+      if unix_sec is None:
+        continue
       if not _timestamp_present_for_duplicate(
-          itimes_set, timestamp_present, int(float(t))):
+          itimes_set, timestamp_present, unix_sec):
         start_idx = last_idx
         need_archival = True
         break
@@ -606,9 +635,12 @@ def find_processing_start_index_streaming(
       line_idx += 1
       continue
     if s[0].isdigit():
-      t, _jid, _host = s.split()
+      unix_sec = _digit_line_unix_second(s)
+      if unix_sec is None:
+        line_idx += 1
+        continue
       if not _timestamp_present_for_duplicate(
-          itimes_set, timestamp_present, int(float(t))):
+          itimes_set, timestamp_present, unix_sec):
         start_idx = last_idx
         return start_idx, True
       last_idx = line_idx
@@ -630,11 +662,9 @@ def parse_first_timestamp_line_streaming(stats_file):
     if not s:
       continue
     if s[0].isdigit():
-      try:
-        t, jid, host = s.split()
-        return (t, jid, host)
-      except Exception:
-        pass
+      parsed = _digit_line_identity(s)
+      if parsed is not None:
+        return parsed
   return (None, None, None)
 
 
@@ -715,9 +745,11 @@ def tail_window_timestamps_all_present_streaming(
     s = line.lstrip()
     if not s or not s[0].isdigit():
       continue
-    t, _jid, _host = s.split()
+    unix_sec = _digit_line_unix_second(s)
+    if unix_sec is None:
+      continue
     if not _timestamp_present_for_duplicate(
-        itimes_set, timestamp_present, int(float(t))):
+        itimes_set, timestamp_present, unix_sec):
       return False
   return True
 
@@ -811,7 +843,10 @@ class IncrementalStatsParser:
       _append_stats_rows(self.stats, rec, vals_dict)
 
     elif i >= self.start_idx and s[0].isdigit():
-      t, jid, host = s.split()
+      parsed = _digit_line_identity(s)
+      if parsed is None:
+        return
+      t, jid, host = parsed
       self.insert = True
       self.line_ctx["tags"] = {"time": float(t), "host": host}
       self.line_ctx["tags2"] = {"time": float(t), "host": host, "jid": jid}
