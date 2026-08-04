@@ -28,7 +28,7 @@ def host_data_instance_from_stats_row(row) -> host_data:
   else:
     jid_str = None
   return host_data(
-      time=row.time.to_pydatetime(),
+      time=to_pydatetime_or_none(row.time),
       host=row.host,
       jid=jid_str,
       type=row.type,

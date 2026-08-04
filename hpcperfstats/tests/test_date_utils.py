@@ -1,8 +1,14 @@
 """Unit tests for dbload.date_utils."""
+import warnings
 from datetime import datetime, timedelta
 
+import pandas as pd
 
-from hpcperfstats.dbload.lib.date_utils import daterange, parse_start_end_dates
+from hpcperfstats.dbload.lib.date_utils import (
+    daterange,
+    parse_start_end_dates,
+    to_pydatetime_or_none,
+)
 
 
 def test_parse_start_end_dates_from_argv():
@@ -96,3 +102,17 @@ def test_daterange_single_day_exclusive():
   days = list(daterange(start, end, inclusive_end=False))
   assert len(days) == 1
   assert days[0] == start
+
+
+def test_to_pydatetime_or_none_nanosecond_no_warning():
+  """Regression: ns timestamps must convert without UserWarning noise."""
+  ts = pd.Timestamp("2020-06-01 12:00:00.123456789")
+  with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    dt = to_pydatetime_or_none(ts)
+  assert dt == ts.to_pydatetime(warn=False)
+  assert not any("nanoseconds" in str(w.message).lower() for w in caught)
+
+
+def test_to_pydatetime_or_none_nat():
+  assert to_pydatetime_or_none(pd.NaT) is None

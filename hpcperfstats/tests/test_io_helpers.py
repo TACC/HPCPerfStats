@@ -23,7 +23,7 @@ def test_host_data_instance_from_stats_row_maps_fields():
       arc=100.0,
   )
   h = host_data_instance_from_stats_row(row)
-  assert h.time == ts.to_pydatetime()
+  assert h.time == ts.to_pydatetime(warn=False)
   assert h.host == "n.example.com"
   assert h.type == "cpu"
   assert h.dev == ""
@@ -32,6 +32,30 @@ def test_host_data_instance_from_stats_row_maps_fields():
   assert h.value == 1.5
   assert h.delta == 0.25
   assert h.arc == 100.0
+
+
+def test_host_data_instance_from_stats_row_nanosecond_timestamp_no_warning():
+  """Regression: ns resolution must not flood logs (listend live ingest path)."""
+  import warnings
+
+  ts = pd.Timestamp("2020-06-01 12:00:00.123456789")
+  row = SimpleNamespace(
+      time=ts,
+      host="n.example.com",
+      type="cpu",
+      event="cycles",
+      unit="count",
+      value=1.0,
+      delta=None,
+      arc=None,
+  )
+  with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    h = host_data_instance_from_stats_row(row)
+  assert not any(
+      "nanoseconds" in str(w.message).lower() for w in caught
+  ), [str(w.message) for w in caught]
+  assert h.time == ts.to_pydatetime(warn=False)
 
 
 def test_host_data_instance_from_stats_row_persists_dev():

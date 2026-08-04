@@ -6,10 +6,15 @@ from hpcperfstats.dbload.lib.print_utils import log_print
 
 
 def to_pydatetime_or_none(ts):
-  """Convert pandas Timestamp/NaT to Python datetime or None."""
+  """Convert pandas Timestamp/NaT to Python datetime or None.
+
+  Uses ``warn=False`` because Python ``datetime`` only has microsecond
+  resolution; monitor/pandas timestamps often carry nanoseconds and the
+  default warning floods listend/sync_timedb logs.
+  """
   if pd.isna(ts):
     return None
-  return ts.to_pydatetime()
+  return ts.to_pydatetime(warn=False)
 
 
 def parse_start_end_dates(

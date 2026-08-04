@@ -332,6 +332,12 @@ def _worker_main(
     per_worker_budget: int,
 ) -> None:
   del per_worker_budget  # tracked on put; kept for future diagnostics
+  # Cap BLAS/OpenMP before any numpy/pandas import (30 workers × default
+  # OpenBLAS threads exhausts pthread resources → EAGAIN).
+  from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
+
+  configure_blas_thread_env()
+
   from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
   from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
   from hpcperfstats.dbload.lib.sync_timedb_parsing import DeltaCarryState

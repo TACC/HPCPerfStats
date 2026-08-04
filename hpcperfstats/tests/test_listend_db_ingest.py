@@ -264,3 +264,32 @@ def test_flush_clears_batch_lists():
       pending_proc = []
   assert pending_host == []
   assert pending_proc == []
+
+
+def test_worker_main_configures_blas_before_numpy(monkeypatch):
+  """Regression: listend DB workers must cap OpenBLAS before parsing imports numpy.
+
+  Without this, ~30 workers × default OpenBLAS threads hit pthread_create EAGAIN.
+  """
+  import os
+
+  import hpcperfstats.dbload.lib.blas_thread_env as blas_env
+
+  for key in blas_env.BLAS_THREAD_ENV_KEYS:
+    monkeypatch.delenv(key, raising=False)
+
+  # Inspect source order contract: configure_blas_thread_env before sync_timedb_parsing.
+  import inspect
+
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  src = inspect.getsource(ldi._worker_main)
+  blas_pos = src.find("configure_blas_thread_env")
+  parsing_pos = src.find("sync_timedb_parsing")
+  assert blas_pos != -1
+  assert parsing_pos != -1
+  assert blas_pos < parsing_pos
+
+  blas_env.configure_blas_thread_env()
+  assert os.environ.get("OPENBLAS_NUM_THREADS") == "1"
+  assert os.environ.get("OMP_NUM_THREADS") == "1"
