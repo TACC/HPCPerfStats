@@ -52,7 +52,7 @@ class TestAdminMonitorRefresh:
     assert response.data == {"xalt_stats": {"ok": True}}
     mock_cache.delete.assert_called_with(api.KEY_ADMIN_XALT_STATS)
 
-  def test_admin_monitor_refresh_clears_rabbitmq_snapshot_and_stats(self):
+  def test_admin_monitor_refresh_clears_rabbitmq_stats(self):
     from hpcperfstats.site.lib.machine import api
 
     factory = RequestFactory()
@@ -69,7 +69,7 @@ class TestAdminMonitorRefresh:
     assert response.data == {"rabbitmq_stats": {"ok": True}}
     deleted_keys = {call.args[0] for call in mock_cache.delete.call_args_list}
     assert api.KEY_ADMIN_RMQ_STATS in deleted_keys
-    assert api.KEY_ADMIN_RMQ_SNAPSHOT in deleted_keys
+    assert "admin_monitor_rmq_snapshot" not in deleted_keys
 
   def test_admin_monitor_refresh_without_section_clears_all_cached_sections(self):
     from hpcperfstats.site.lib.machine import api
@@ -104,9 +104,9 @@ class TestAdminMonitorRefresh:
     assert api.KEY_ADMIN_HOST_STATS in deleted_keys
     assert api.KEY_ADMIN_CACHE_STATS in deleted_keys
     assert api.KEY_ADMIN_RMQ_STATS in deleted_keys
-    assert api.KEY_ADMIN_RMQ_SNAPSHOT in deleted_keys
     assert api.KEY_ADMIN_TIMESCALE_STATS in deleted_keys
     assert api.KEY_ADMIN_XALT_STATS in deleted_keys
+    assert "admin_monitor_rmq_snapshot" not in deleted_keys
 
 
 @pytest.mark.django_db(databases=[])

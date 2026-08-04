@@ -228,6 +228,19 @@ docker compose logs pipeline
 
 Match **`README.md`** *Useful commands* and **`readme-installation-sync.mdc`** (`docker compose exec <service>` over hardcoded container names).
 
+### Anti-pattern — `rabbitmqctl … 2>/dev/null` hides failures (hpcperfstats04)
+
+Piping or redirecting **`rabbitmqctl` / `rabbitmq-plugins` stderr to `/dev/null`** yields empty pastes when the CLI fails (wrong user, node not ready, cookie mismatch) while **`ss`/`netstat` listeners still print**. Operators then cannot tell whether plugins/queues were queried.
+
+| Do | Don't |
+|----|-------|
+| Print `rabbitmqctl` stdout **and** stderr (`2>&1`), or omit redirects | `rabbitmqctl status 2>/dev/null \| head` |
+| Prefer listener probe (`ss`/`nc`) plus unfiltered `rabbitmqctl list_queues name messages consumers` | Assume empty CLI output means “no queues” |
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec rabbitmq sh -lc 'rabbitmqctl status 2>&1 | head -20; echo ---; rabbitmq-plugins list -e 2>&1; echo ---; (ss -lntp 2>/dev/null || netstat -lntp 2>/dev/null || true) | grep -E "5672|15672" || true; echo ---; rabbitmqctl list_queues name messages consumers 2>&1 | head -20'
+```
+
 ### Anti-pattern — reading app files from the checkout tree instead of the installed package
 
 The image runs `pip install --no-deps .` so `web` / `pipeline` import `hpcperfstats` from **site-packages**. `/home/hpcperfstats/hpcperfstats/` under the container cwd is often a stale `COPY . .` snapshot. `showmigrations` can list a migration that `ls hpcperfstats/site/lib/machine/migrations/` never shows (hpcperfstats04, 2026-07-31 — ephemeral `0031` written by startup `makemigrations` into site-packages).

@@ -423,7 +423,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 | View logs  | `sudo docker compose logs` |
 | PostgreSQL shell | `docker compose exec db psql -h localhost -U hpcperfstats` |
 | Pipeline shell (data/processing) | `docker compose exec pipeline su hpcperfstats` |
-| Get queues and message counts from rabbitmq | `docker compose exec rabbitmq rabbitmqctl list_queues` |
+| Get queues and message counts from rabbitmq | `docker compose exec rabbitmq rabbitmqctl list_queues name messages consumers` |
+| Admin Monitor RabbitMQ stats | Staff Admin Monitor → RabbitMQ statistics reads queue depth over **AMQP 5672** (no management plugin / port 15672). |
 
 ---
 
