@@ -21,6 +21,7 @@ When changing `hpcperfstats/analysis/metrics/lib/metrics.py` (`Metrics.run`, `_u
 
 - Before `int(amax(...))` or similar on host_data columns, filter with `np.isfinite` or use `_finite_amax`. All-NaN GPU/telemetry columns must return metric `None`, not raise.
 - Apply the same pattern anywhere a single metric can abort `compute_metrics` for the whole jid.
+- **`time_imbalance` complexity:** must stay **`O(nhosts × nt)`** via prefix/suffix trapezoid integrals (`_time_imbalance_min_ratio_for_rate`). Do **not** restore per-split Python list comps + repeated `trapz` (historical **`O(nhosts × nt²)`** — stall audit finding #19; production signature `MetricsComputeJobTimeoutError: compute_metrics exceeded 900s` on ~48–54 host / multi-hour jobs). Do **not** “fix” those timeouts by raising `metrics_run_stall_timeout_s` / per-job timeout alone. Regression: `hpcperfstats/analysis/metrics/tests/test_time_imbalance.py`.
 
 ## Pool stall recovery (`_drain_metrics_imap` / `Metrics.run`)
 
@@ -38,6 +39,7 @@ When changing `hpcperfstats/analysis/metrics/lib/metrics.py` (`Metrics.run`, `_u
 ## Tests (same task)
 
 - `hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py` — `_unwrap`, stall partial return, per-job timeout.
+- `hpcperfstats/analysis/metrics/tests/test_time_imbalance.py` — O(n) prefix parity vs quadratic reference; large-`nt` wall budget.
 - `hpcperfstats/site/lib/machine/tests/test_metrics.py` — NaN/`_finite_amax` regressions for affected metrics.
 - `hpcperfstats/site/lib/machine/tests/test_update_metrics.py` — stall exit propagation and statement-timeout restore on closed connections.
 - `hpcperfstats/tests/test_dbload/lib/dbload/lib/conf_parser.py` + `test_hpcperfstats_ini_example.py` when adding/changing INI knobs.

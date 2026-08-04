@@ -290,6 +290,15 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 | `.values("jid", "nhosts", "ncores", "host_list", …)` | `.values("nnodes")` |
 | `cardinality(host_list) AS nhosts` in `psql` | invent Slurm column names on `job_data` |
 
+### Anti-pattern — inventing Django model `Job`
+
+There is **no** `Job` class in `hpcperfstats.site.lib.machine.models`. The accounting table model is **`job_data`**. `from …models import Job` raises **`ImportError: cannot import name 'Job'`** (hpcperfstats04 2026-08-04). Prefer string `jid` values (`CharField` PK).
+
+| Do | Don't |
+|----|-------|
+| `from hpcperfstats.site.lib.machine.models import job_data` | `from …models import Job` |
+| `job_data.objects.filter(jid__in=[…]).values("jid", "nhosts", …)` | `Job.objects.…` |
+
 ### Anti-pattern — inventing `job_detail_artifact.schema_version` / `fingerprint`
 
 `job_detail_artifact` fields are **`artifact_kind`**, **`artifact_schema`**, **`artifact_scope`**, **`input_fingerprint`**, payload columns — not `schema_version` or `fingerprint`. Selecting invented names raises **`FieldError`** (hpcperfstats03, 2026-07-23).
@@ -464,10 +473,10 @@ psql -h db -U hpcperfstats -c "SELECT 1"
 ```bash
 docker compose exec web bash -lc '
 python -m pytest hpcperfstats/site/lib/machine/tests/test_foo.py -q &&
-python hpcperfstats/site/manage.py shell -c "from machine.models import Job; print(Job.objects.count())"
+python hpcperfstats/site/manage.py shell -c "from hpcperfstats.site.lib.machine.models import job_data; print(job_data.objects.count())"
 '
 
-docker compose exec db psql -h localhost -U hpcperfstats -c "SELECT COUNT(*) FROM machine_job;"
+docker compose exec db psql -h localhost -U hpcperfstats -c "SELECT COUNT(*) FROM job_data;"
 ```
 
 **Good** — filtered logs + in-container check (after INI paths known):
@@ -509,6 +518,7 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | Treat `ls *.fnctl.lock` / sidecar presence as held flock | Sidecar may be an uncontended orphan (read-lock leave-behind); `fuser` is often **absent** in the pipeline image (`which fuser` → None) | Authoritative probe: in-container `try_file_write_lock` on the daily `.tar` (or `lsof` on the sidecar fd). `OK_uncontended` + unlock removing the sidecar ⇒ orphan, not `write_lock_contended` |
 | `try_file_write_lock(path, timeout_seconds=0)` or `.release()` / treat as plain lock object | **`TypeError: unexpected keyword argument 'timeout_seconds'`** — `try_file_write_lock` is a **`@contextmanager`** with **no kwargs**; contended → **`TimeoutError`** inside `with` | `with try_file_write_lock(tar): pass` (or print OK); `except TimeoutError: …`. Blocking waits use `file_write_lock(path, timeout_seconds=…)` instead |
 | `docker compose … up -d web` after a crash-loop | **podman-compose** may fail with **name already in use** / exit **125** when `hpcperfstats_web_1` still exists | Prefer `podman start hpcperfstats_web_1` (or `podman rm -f hpcperfstats_web_1` then `up -d web`). SPA shell missing after Vite→Next upgrade is auto-healed by `django_startup` / `spa_static_root_heal` once `web` actually starts with a Next package image |
+| Nested `docker compose …` **inside** an already-running `docker compose exec …` shell | Pipeline/web images have **no** Docker CLI → **`docker: not found`** / exit **127** (hpcperfstats04 2026-08-04). Host compose cannot be re-entered from inside the container | Keep **one** host-side `docker compose exec` per paste. Chain only **in-container** commands (`python3`, `ls`, `grep`). For host logs use **host** `docker compose logs …` (not nested inside `exec`) |
 
 **Good** — podman service check + filtered log tail (paths from INI first):
 

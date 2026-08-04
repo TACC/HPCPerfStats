@@ -230,6 +230,7 @@ The issues below are grouped by how directly they can explain “16 jobs process
 19. **`time_imbalance` is quadratic in time slices.**
     - File: `hpcperfstats/analysis/metrics/lib/metrics.py`
     - Result: jobs with many sampled timestamps can become severe CPU hotspots.
+    - **Status (2026-08-04):** addressed — `_time_imbalance_min_ratio_for_rate` uses prefix trapezoid segments (`O(nhosts × nt)`). Do not reintroduce nested `trapz` / index-list loops; see `update-metrics-batch-resilience.mdc` and `tests/test_time_imbalance.py`.
 
 20. **Workers still write `job.host_data_schema_json` directly.**
     - File: `hpcperfstats/analysis/metrics/lib/metrics.py`
@@ -354,7 +355,7 @@ The true throughput killers are therefore:
 
 ### Secondary amplifiers
 
-13. Revisit `time_imbalance` complexity and consider a cheaper approximation or guard for large sampled jobs.
+13. Revisit `time_imbalance` complexity and consider a cheaper approximation or guard for large sampled jobs. **Done (2026-08-04):** prefix-integral rewrite (`O(nhosts × nt)`), not approximation/timeout raise — see finding #19 status note.
 14. Move worker-side schema writes out of the worker path or at least log/time them explicitly.
 15. Tighten rescan diagnostics and avoid replaying the same expensive head query every 5 seconds when the queue is already saturated.
 16. Shorten heartbeat cadence during backfills or add a separate short-interval stall reporter.

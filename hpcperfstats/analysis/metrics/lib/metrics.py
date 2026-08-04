@@ -84,11 +84,6 @@ from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
 from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
 from hpcperfstats.dbload.lib.db_unavailable import DatabaseUnavailableExit
 
-try:
-  from numpy import trapezoid as trapz
-except ImportError:
-  from numpy import trapz
-
 NUMEXPR_MIN_ARRAY_SIZE = 100_000
 METRICS_POOL_JOIN_TIMEOUT_S = max(
     1.0,
@@ -368,6 +363,54 @@ def _coerced_metric_name_set(metric_names):
 # Skip time_imbalance slices where b/a is non-finite or absurd (near-zero "before"
 # integral blows up the ratio); values above this are not meaningful as %.
 _TIME_IMBALANCE_MAX_SLICE_RATIO = 1e9
+
+
+def _time_imbalance_min_ratio_for_rate(rate, tmid):
+  """Minimum after/before mean CPU-rate ratio over mid timeline splits.
+
+  Matches the historical ``time_imbalance`` loop (same split set, windows, and
+  clamps) but uses prefix trapezoid segments so cost is ``O(n)`` in
+  ``n = len(rate)`` instead of ``O(n^2)`` repeated ``trapz`` calls.
+
+  ``rate`` / ``tmid`` are per-interval series (length ``nt - 1``). Returns the
+  minimum finite ratio, or ``None`` when no slice qualifies.
+  """
+  rate = np.asarray(rate, dtype=np.float64)
+  tmid = np.asarray(tmid, dtype=np.float64)
+  n = int(rate.shape[0])
+  if n < 4 or tmid.shape[0] != n:
+    return None
+  # Segment contributions between consecutive midpoint samples (numpy trapz).
+  seg = 0.5 * (rate[:-1] + rate[1:]) * (tmid[1:] - tmid[:-1])
+  # cum[k] == sum(seg[:k]) == trapz(rate[:k+1], tmid[:k+1]) for k>=1 with
+  # cum[0]==0; trapz(rate[:i], tmid[:i]) == cum[i-1]; trapz(rate[i:], tmid[i:])
+  # == total - cum[i] (excludes the segment that straddles i-1 -> i).
+  cum = np.empty(n, dtype=np.float64)
+  cum[0] = 0.0
+  if n > 1:
+    np.cumsum(seg, out=cum[1:])
+  total = float(cum[n - 1])
+  min_ratio = None
+  # Historical loop: i in {2 .. nt-3} with nt = n+1 => i in {2 .. n-2}.
+  for i in range(2, n - 1):
+    before_window = float(tmid[i] - tmid[0])
+    after_window = float(tmid[-1] - tmid[i])
+    if before_window <= 0 or after_window <= 0:
+      continue
+    a = float(cum[i - 1]) / before_window
+    if not (a > 0) or not np.isfinite(a):
+      continue
+    b = (total - float(cum[i])) / after_window
+    if not np.isfinite(b):
+      continue
+    ratio = b / a
+    if not np.isfinite(ratio) or ratio < 0:
+      continue
+    if ratio > _TIME_IMBALANCE_MAX_SLICE_RATIO:
+      continue
+    if min_ratio is None or ratio < min_ratio:
+      min_ratio = ratio
+  return min_ratio
 
 
 def _add_arrays(a, b):
@@ -3610,7 +3653,6 @@ class time_imbalance():
     if schema is None or "user" not in schema:
       return None, typename, '%'
     tmid = (u.t[:-1] + u.t[1:]) / 2.0
-    dt = diff(u.t)
     user_i = schema["user"].index
     vals = []
     for hostname, stats in _stats.items():
@@ -3618,29 +3660,9 @@ class time_imbalance():
       rate = np.nan_to_num(rate, nan=0.0, posinf=0.0, neginf=0.0)
       # Cumulative CPU jiffies are monotonic; negative dy/dt is reset/wrap/noise.
       rate = np.maximum(rate, 0.0)
-      # skip first and last two time slices
-      for i in [x + 2 for x in range(len(u.t) - 4)]:
-        r1 = range(i)
-        r2 = [x + i for x in range(len(dt) - i)]
-        before_window = tmid[i] - tmid[0]
-        after_window = tmid[-1] - tmid[i]
-        if before_window <= 0 or after_window <= 0:
-          continue
-        # integral before time slice
-        a = trapz(rate[r1], tmid[r1]) / before_window
-        if not (a > 0) or not np.isfinite(a):
-          continue
-        # integral after time slice
-        b = trapz(rate[r2], tmid[r2]) / after_window
-        if not np.isfinite(b):
-          continue
-        # ratio of integral after time over before time
-        ratio = b / a
-        if not np.isfinite(ratio) or ratio < 0:
-          continue
-        if ratio > _TIME_IMBALANCE_MAX_SLICE_RATIO:
-          continue
-        vals += [ratio]
+      host_min = _time_imbalance_min_ratio_for_rate(rate, tmid)
+      if host_min is not None:
+        vals.append(host_min)
     if vals:
       value = 100 * min(vals)
       return value, typename, '%'
