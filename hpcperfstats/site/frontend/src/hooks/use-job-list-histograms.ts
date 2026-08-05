@@ -81,7 +81,6 @@ export function fingerprintJobListHistogramEntries(
   return entries
     .map((entry) =>
       [
-        entry.metric ?? "",
         entry.title ?? "",
         entry.plot_unavailable_reason ?? "",
         JSON.stringify(entry.plot_item_thumb ?? null),
