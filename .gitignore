@@ -31,6 +31,10 @@ tacc_stats.egg-info/
 !monitor/tests/*.sh
 !monitor/tests/**/*.sh
 !tests/**/*.sh
+# Compose service startup scripts under services-conf/ (rsync_data.sh stays ignored above).
+!services-conf/django_startup.sh
+!services-conf/supervisor_startup.sh
+!services-conf/proxy_entrypoint.sh
 *.so
 *.d
 .project

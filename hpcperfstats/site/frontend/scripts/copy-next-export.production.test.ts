@@ -68,4 +68,65 @@ describe("copy-next-export production mode", () => {
     expect(fs.existsSync(path.join(dest, "machine", "index.html"))).toBe(true);
     expect(fs.existsSync(path.join(dest, "bokeh-playwright-smoke"))).toBe(false);
   });
+
+  it("emits nginx CSP includes with recomputable hashes and no unsafe-inline", async () => {
+    const {
+      buildNginxCspInclude,
+      collectInlineCspHashes,
+      sha256CspHash,
+    } = await import("./copy-next-export.mjs");
+
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "copy-next-export-"));
+    const outDir = path.join(tmpRoot, "out");
+    const targetDir = path.join(tmpRoot, "static");
+    const scriptBody = "window.__TEST__=1;";
+    const styleBody = "body{color:red}";
+    const styleAttr = "display:none";
+    fs.mkdirSync(path.join(outDir, "machine"), { recursive: true });
+    fs.mkdirSync(path.join(outDir, "pub"), { recursive: true });
+    fs.writeFileSync(
+      path.join(outDir, "machine", "index.html"),
+      `<html><head><style>${styleBody}</style></head>` +
+        `<body style="${styleAttr}"><script>${scriptBody}</script></body></html>`,
+    );
+    fs.writeFileSync(
+      path.join(outDir, "pub", "index.html"),
+      `<html><body><script>${scriptBody}</script></body></html>`,
+    );
+
+    runCopyNextExport({ out: outDir, target: targetDir, productionStatic: true });
+
+    const machineInc = fs.readFileSync(
+      path.join(targetDir, "nginx-csp-machine.inc"),
+      "utf8",
+    );
+    const pubInc = fs.readFileSync(path.join(targetDir, "nginx-csp-pub.inc"), "utf8");
+    expect(machineInc).toContain("Content-Security-Policy");
+    expect(machineInc).not.toContain("unsafe-inline");
+    expect(machineInc).toContain("unsafe-eval");
+    expect(pubInc).not.toContain("unsafe-inline");
+    expect(pubInc).not.toContain("unsafe-eval");
+
+    const scriptHash = sha256CspHash(scriptBody);
+    const styleHash = sha256CspHash(styleBody);
+    const attrHash = sha256CspHash(styleAttr);
+    expect(machineInc).toContain(scriptHash);
+    expect(machineInc).toContain(styleHash);
+    expect(machineInc).toContain(attrHash);
+    expect(machineInc).toContain("'unsafe-hashes'");
+    expect(pubInc).toContain(scriptHash);
+
+    const recomputed = collectInlineCspHashes(path.join(targetDir, "machine"));
+    expect(recomputed.scriptHashes).toContain(scriptHash);
+    expect(recomputed.styleHashes).toContain(styleHash);
+    expect(recomputed.styleAttrHashes).toContain(attrHash);
+
+    const rebuilt = buildNginxCspInclude({
+      scriptHashes: recomputed.scriptHashes,
+      styleHashes: recomputed.styleHashes,
+      styleAttrHashes: recomputed.styleAttrHashes,
+      allowUnsafeEval: true,
+    });
+    expect(rebuilt).toBe(machineInc);
+  });
 });

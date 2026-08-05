@@ -41,6 +41,15 @@ globs:
 - Next may still **compile** test-only App Router pages during `build:prod`; they must **not** appear under `hpcperfstats_site/static/frontend/` after production copy.
 - When adding a new test-only export route, append its top-level dir name to `PRODUCTION_EXCLUDED_EXPORT_DIRS`, extend `copy-next-export.production.test.ts`, and update this rule in the **same task**.
 
+## Edge CSP includes (both full and production copies)
+
+After copying `out/` → `hpcperfstats_site/static/frontend/`, `copy-next-export.mjs` always writes:
+
+- `nginx-csp-machine.inc` — hash-based CSP + justified Bokeh `unsafe-eval`
+- `nginx-csp-pub.inc` — hash-based CSP without `unsafe-eval`
+
+Neither include may contain `unsafe-inline`. Proxy startup consumes these from the shared static volume. Extend `copy-next-export.production.test.ts` whenever hash extraction or include naming changes.
+
 ## `frontend/test/` layout
 
 | Path | Purpose |

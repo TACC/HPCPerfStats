@@ -341,12 +341,27 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    ```
 
    Compose bind-mounts **`./services-conf/nginx.conf`** to **`/etc/nginx/http.d/default.conf`**
-   on **`proxy`** (same pattern as **`nginx-static-files.conf`**, **`nginx-django-proxy-common.inc`**,
-   and **`nginx-edge-security-headers.inc`**),
-   so this **`cp`** step is **required** before **`docker compose up`**. Edit **`nginx.conf`** for TLS paths.
+   on **`proxy`**, and bind-mounts the shared snippets (**`nginx-static-files.conf`**,
+   **`nginx-django-proxy-common.inc`**, **`nginx-edge-security-headers.inc`**,
+   **`nginx-csp-no-active.inc`**, **`nginx-csp-django-html.inc`**) as the **only**
+   runtime source for those files (they are **not** baked into **`proxy.Dockerfile`**).
+   The **`cp`** of **`nginx.conf.example`** → **`nginx.conf`** is **required** before
+   **`docker compose up`**. Edit **`nginx.conf`** for TLS paths.
+   When upgrading, merge **`ssl_trusted_certificate`**, **`include /etc/nginx/nginx-resolver.inc`**,
+   and related OCSP comments from **`nginx.conf.example`** into the deployment-local
+   **`nginx.conf`** (gitignored) so stapling stays complete after template changes.
 
-   The proxy image still **`cp`**s **`nginx.conf`** into **`default.conf`** at **build** time when that file exists in the context (**`nginx.conf.example`** otherwise) so non-Compose **`docker run`** has a usable baseline.
-
+   The proxy image **`cp`**s **`nginx.conf`** (or **`nginx.conf.example`**) into
+   **`default.conf`** at **build** time for a non-Compose baseline, bakes
+   **`hps-proxy-allowed-hosts.inc`** from **`[DEFAULT] server=`**, and ships
+   **`proxy_entrypoint.sh`** plus the resolver helper. Compose still replaces
+   **`default.conf`** with the host **`nginx.conf`** mount. Runtime
+   **`proxy_entrypoint.sh`** regenerates the OCSP **`resolver`** include from
+   container **`/etc/resolv.conf`**, waits for build-generated SPA CSP includes under
+   **`/srv/static/frontend/nginx-csp-{machine,pub}.inc`**, runs **`nginx -t`**, then starts nginx.
+   Nginx is the public authority for HSTS, framing, COOP, Permissions-Policy, Referrer-Policy,
+   and CSP (hash-based for SPA shells; no-active for JSON/redirects). Certificates without an
+   AIA OCSP URL will not staple; that must not take the site offline.
    Hostnames come from **`[DEFAULT] server=`** in
    **`hpcperfstats.ini`** (preferred in the build context, else
    **`hpcperfstats.ini.example`**): **`parse_hpcperfstats_proxy_hosts.py`** emits

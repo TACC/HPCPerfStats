@@ -76,11 +76,25 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   assert "NGINX_SSL_CERT" not in content
   assert "PROXY_NGINX_TLS" not in content
   assert "./services-conf/nginx-django-proxy-common.inc:/etc/nginx/nginx-django-proxy-common.inc:ro" in content
+  assert "./services-conf/nginx-edge-security-headers.inc:/etc/nginx/nginx-edge-security-headers.inc:ro" in content
+  assert "./services-conf/nginx-csp-no-active.inc:/etc/nginx/nginx-csp-no-active.inc:ro" in content
+  assert "./services-conf/nginx-csp-django-html.inc:/etc/nginx/nginx-csp-django-html.inc:ro" in content
   assert (repo_root / "services-conf" / "nginx-static-files.conf").exists()
   assert (repo_root / "services-conf" / "nginx-django-proxy-common.inc").exists()
+  assert (repo_root / "services-conf" / "nginx-csp-no-active.inc").exists()
+  assert (repo_root / "services-conf" / "nginx-csp-django-html.inc").exists()
   assert (repo_root / "services-conf" / "parse_hpcperfstats_proxy_hosts.py").exists()
   assert (repo_root / "services-conf" / "write_nginx_proxy_allowed_hosts_include.py").exists()
+  assert (repo_root / "services-conf" / "write_nginx_resolver_include.py").exists()
+  assert (repo_root / "services-conf" / "proxy_entrypoint.sh").exists()
   assert (repo_root / "services-conf" / "nginx.conf.example").exists()
+  dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
+  # Mount-only snippets must not also be COPY'd (single source of truth = compose volumes).
+  assert "COPY services-conf/nginx-static-files.conf" not in dockerfile
+  assert "COPY services-conf/nginx-edge-security-headers.inc" not in dockerfile
+  assert "COPY services-conf/nginx-csp-no-active.inc" not in dockerfile
+  assert "COPY services-conf/nginx-csp-django-html.inc" not in dockerfile
+  assert "COPY services-conf/nginx-django-proxy-common.inc" not in dockerfile
 
 
 def test_proxy_dockerfile_pins_nginx_and_brotli_to_same_edge_version():
@@ -100,6 +114,8 @@ def test_proxy_dockerfile_pins_nginx_and_brotli_to_same_edge_version():
   assert "nginx-mod-http-brotli=${NGINX_EDGE_VERSION}" in dockerfile
   assert "ALPINE_EDGE_MAIN=" in dockerfile
   assert "--repository=${ALPINE_EDGE_MAIN}" in dockerfile
+  assert "ca-certificates" in dockerfile
+  assert 'CMD ["/usr/local/bin/proxy_entrypoint.sh"]' in dockerfile
 
 
 def test_docker_compose_app_uses_configurable_pipeline_ssh_mount():

@@ -8,7 +8,9 @@ paths:
     get:
       operationId: admin_monitor_retrieve
       description: |-
-        Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis, RabbitMQ, TimescaleDB stats).
+        Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis,.
+
+          RabbitMQ, TimescaleDB stats).
 
         Supports a lightweight, per-section API via the optional 'section' query
         param:
@@ -19,8 +21,21 @@ paths:
         - ?section=timescaledb -> {"timescaledb_stats": {...}}
         - ?section=xalt      -> {"xalt_stats": {...}}
         - omitted/other       -> {"host_stats": [...], "rabbitmq_host_stats": [...],
-                                  "cache_stats": {...}, "rabbitmq_stats": {...},
-                                  "timescaledb_stats": {...}, "xalt_stats": {...}}
+                                  "cache_stats": {...},
+                                    "rabbitmq_stats":
+                                    {...},
+                                  "timescaledb_stats":
+                                    {...}, "xalt_stats":
+                                    {...}}
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> admin_monitor(None)  # doctest: +SKIP
       parameters:
       - in: query
         name: refresh
@@ -91,14 +106,27 @@ paths:
       description: |-
         Invalidate cache entries associated with the provided page path.
 
-        Deletes Django ``@cache_page`` / ``dynamic_cache_page`` rows via ``cache.delete``
-        (correct key prefix/versioning), then raw Redis ``SCAN`` for keys whose names
+        Deletes Django ``@cache_page`` / ``dynamic_cache_page`` rows via
+          ``cache.delete``
+        (correct key prefix/versioning), then raw Redis ``SCAN`` for keys whose
+          names
         embed the same URL MD5 as Django's cache layer (covers ``Vary`` variants).
 
-        For any ``/machine`` or ``/machine/...`` path, also targets ``/api/home/`` and
+        For any ``/machine`` or ``/machine/...`` path, also targets ``/api/home/``
+          and
         drops ``home_options`` ORM cache keys (dates, metrics list, queues, states,
-        site newest job end). Works without a raw Redis client (LocMem): ORM + Django
+        site newest job end). Works without a raw Redis client (LocMem): ORM +
+          Django
         cache deletes still run.
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> invalidate_cache_for_page(None)  # doctest: +SKIP
       tags:
       - admin
       requestBody:
@@ -144,8 +172,19 @@ paths:
   /api/home/:
     get:
       operationId: home_retrieve
-      description: 'Return options for search form: date_list, metrics, queues, states,
-        machine_name.'
+      description: |-
+        Return options for search form: date_list, metrics, queues, states,.
+
+          machine_name.
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> home_options(None)  # doctest: +SKIP
       tags:
       - home
       security:
@@ -173,8 +212,19 @@ paths:
   /api/host_plot/:
     get:
       operationId: host_plot_retrieve
-      description: Return Bokeh plot_item for a single host and time range (GET host,
-        end_time__gte, end_time__lte).
+      description: |-
+        Return Bokeh plot_item for a single host and time range (GET host,.
+
+          end_time__gte, end_time__lte).
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> host_plot(None)  # doctest: +SKIP
       summary: Host utilization plot
       parameters:
       - in: query
@@ -232,6 +282,15 @@ paths:
         GPU fields are intentionally omitted from this initial endpoint so the page
         can render quickly; per-user GPU stats are fetched asynchronously from
         job_monitor_gpu_for_user.
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> job_monitor(None)  # doctest: +SKIP
       parameters:
       - in: query
         name: days
@@ -264,8 +323,19 @@ paths:
   /api/job_monitor/gpu/:
     get:
       operationId: job_monitor_gpu_retrieve
-      description: Staff-only GPU rollup for Job Monitor (single ``username`` or batch
-        ``usernames``).
+      description: |-
+        Staff-only GPU rollup for Job Monitor (single ``username`` or batch.
+
+          ``usernames``).
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> job_monitor_gpu_for_user(None)  # doctest: +SKIP
       parameters:
       - in: query
         name: days
@@ -307,8 +377,19 @@ paths:
   /api/jobs/:
     get:
       operationId: jobs_retrieve
-      description: Paginated job list only (histograms via separate job_list_histograms
-        endpoint).
+      description: |-
+        Paginated job list only (histograms via separate job_list_histograms.
+
+          endpoint).
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> job_list(None)  # doctest: +SKIP
       parameters:
       - in: query
         name: account
@@ -415,7 +496,19 @@ paths:
   /api/jobs/{jid}/{type_name}/:
     get:
       operationId: jobs_retrieve_3
-      description: 'Type detail: Bokeh json_item (tplot_item), stats_data, schema.'
+      description: |-
+        Type detail: Bokeh json_item (tplot_item), stats_data, schema.
+
+        Args:
+          request (Any): Request passed to this helper.
+          jid (Any): Jid passed to this helper.
+          type_name (Any): Type name passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> type_detail(None, None, None)  # doctest: +SKIP
       parameters:
       - in: path
         name: jid
@@ -484,8 +577,20 @@ paths:
   /api/jobs/{id}/:
     get:
       operationId: jobs_retrieve_2
-      description: 'Single job detail: metadata, host_list, fsio, xalt, schema, URLs
-        (plots via separate job_plots endpoint).'
+      description: |-
+        Single job detail: metadata, host_list, fsio, xalt, schema, URLs (plots via.
+
+          separate job_plots endpoint).
+
+        Args:
+          request (Any): Request passed to this helper.
+          pk (Any): Pk passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> job_detail(None, None)  # doctest: +SKIP
       parameters:
       - in: query
         name: defer
@@ -567,11 +672,24 @@ paths:
         - GPU roofline
 
         Query params:
-        - plot: omit or ``all`` for all three; or one of summary_plot, roofline, gpu_roofline.
+        - plot: omit or ``all`` for all three; or one of summary_plot, roofline,
+          gpu_roofline.
         - zoom: ``1`` for zoom layout (single-plot requests only).
-        - progressive: ``1`` with plot=all (no zoom): HTTP 200 with ``status`` partial/ready and
-          only completed plot fields included while others are listed in ``loading_plots``;
+        - progressive: ``1`` with plot=all (no zoom): HTTP 200 with ``status``
+          partial/ready and
+          only completed plot fields included while others are listed in
+            ``loading_plots``;
           avoids 202 while still using one endpoint and shared background tasks.
+
+        Args:
+          request (Any): Request passed to this helper.
+          pk (Any): Pk passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> job_plots(None, None)  # doctest: +SKIP
       parameters:
       - in: path
         name: id
@@ -653,7 +771,17 @@ paths:
   /api/jobs/filter_options/:
     get:
       operationId: jobs_filter_options_retrieve
-      description: Faceted header-filter option values for the current job-list selection.
+      description: |-
+        Faceted header-filter option values for the current job-list selection.
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> job_list_filter_options_view(None)  # doctest: +SKIP
       parameters:
       - in: query
         name: account
@@ -762,8 +890,14 @@ paths:
         - group=metric&metric=<name>: return a single metric histogram (thumb and
           full) for the given metric name.
 
-        Example:
-          /api/jobs/histograms/?end_time__date=2024-01-01&group=metric&metric=runtime
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> job_list_histograms(None)  # doctest: +SKIP
       parameters:
       - in: query
         name: group
@@ -834,7 +968,17 @@ paths:
       description: |-
         Return multiple metric histograms in one response (single dataframe build).
 
-        Query param ``metrics`` is comma-separated (default: runtime,nhosts,queue_wait).
+        Query param ``metrics`` is comma-separated (default:
+          runtime,nhosts,queue_wait).
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> job_list_histograms_batch(None)  # doctest: +SKIP
       parameters:
       - in: query
         name: account
@@ -934,8 +1078,18 @@ paths:
   /api/pub/cluster-dashboard/:
     get:
       operationId: pub_cluster_dashboard_retrieve
-      description: 'Public cluster dashboard: meta by default; lazy period or full
-        bundle via query params.'
+      description: |-
+        Return public dashboard meta, a lazy expansion-factor block, or a full bundle.
+
+        Args:
+          request (Any): DRF request with optional ``section`` / ``grouping`` /
+              ``period`` / ``full`` query parameters.
+
+        Returns:
+          Any: DRF ``Response`` with JSON payload and Cache-Control headers.
+
+        Examples:
+          >>> PublicClusterDashboardAggregateView().get(None)  # doctest: +SKIP
       parameters:
       - in: query
         name: full
@@ -946,15 +1100,26 @@ paths:
         name: grouping
         schema:
           type: string
+          enum:
+          - monthly
+          - yearly
+        description: Lazy grouping. Required with section/period. monthly expects
+          YYYY-MM; yearly expects YYYY.
       - in: query
         name: period
         schema:
           type: string
+          pattern: ^(\d{4}|\d{4}-(0[1-9]|1[0-2]))$
+        description: Lazy period key. Required with section/grouping. Format YYYY-MM
+          for monthly or YYYY for yearly.
       - in: query
         name: section
         schema:
           type: string
-        description: Lazy section (expansion_factor)
+          enum:
+          - expansion_factor
+        description: Lazy section. When present, grouping and period are required.
+          Only expansion_factor is supported.
       tags:
       - public
       responses:
@@ -964,6 +1129,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/PublicClusterDashboard'
           description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Invalid or incomplete lazy query parameters
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Valid period syntax but artifact not available
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Too many requests
   /api/sacct/ingest/:
     post:
       operationId: sacct_ingest_create
@@ -974,6 +1157,19 @@ paths:
         raw pipe-delimited sacct output (same format as sacct -P -o ...). Query
         param date=YYYY-MM-DD is required (the date of the data being ingested) to
         compute which jobs are already in the DB.
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Raises:
+          Exception: Raised when ``sacct_ingest`` hits a ``Exception`` failure
+          path.
+
+        Examples:
+          >>> sacct_ingest(None)  # doctest: +SKIP
       parameters:
       - in: query
         name: date
@@ -1036,7 +1232,17 @@ paths:
   /api/session/:
     get:
       operationId: session_retrieve
-      description: Return current session state for SPA (logged_in, username, is_staff).
+      description: |-
+        Return current session state for SPA (logged_in, username, is_staff).
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> session_info(None)  # doctest: +SKIP
       tags:
       - session
       security:
@@ -1064,7 +1270,17 @@ paths:
   /api/session/drop-staff/:
     post:
       operationId: session_drop_staff_create
-      description: Remove staff access for the current authenticated session only.
+      description: |-
+        Remove staff access for the current authenticated session only.
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> drop_staff_for_session(None)  # doctest: +SKIP
       tags:
       - session
       security:
@@ -1092,8 +1308,17 @@ paths:
   /api/user-api-key/:
     get:
       operationId: user_api_key_retrieve
-      description: Return API key visibility for the OAuth session (create key if
-        none exists).
+      description: |-
+        Return API key visibility for the OAuth session (create key if none exists).
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> user_api_key_status(None)  # doctest: +SKIP
       tags:
       - session
       security:
@@ -1121,8 +1346,17 @@ paths:
   /api/user-api-key/rotate/:
     post:
       operationId: user_api_key_rotate_create
-      description: Revoke active keys for this user and return a newly minted raw
-        key.
+      description: |-
+        Revoke active keys for this user and return a newly minted raw key.
+
+        Args:
+          request (Any): Request passed to this helper.
+
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+
+        Examples:
+          >>> user_api_key_rotate(None)  # doctest: +SKIP
       tags:
       - session
       security:
@@ -1151,6 +1385,14 @@ components:
   schemas:
     AdminMonitorHostStat:
       type: object
+      description: |-
+        Hold AdminMonitorHostStatSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         host:
           type: string
@@ -1162,7 +1404,7 @@ components:
     AdminMonitorResponse:
       type: object
       description: Section keys at top level; only one or a combined bundle is present
-        per request.
+        per.
       properties:
         host_stats:
           type: array
@@ -1186,6 +1428,14 @@ components:
           additionalProperties: {}
     DropStaffResponse:
       type: object
+      description: |-
+        Hold DropStaffResponseSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         ok:
           type: boolean
@@ -1199,6 +1449,14 @@ components:
       - ok
     ErrorDetail:
       type: object
+      description: |-
+        Hold ErrorDetailSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         detail:
           type: string
@@ -1236,6 +1494,14 @@ components:
       - host
     HomeMetricOption:
       type: object
+      description: |-
+        Hold HomeMetricOptionSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         type:
           type: string
@@ -1249,6 +1515,14 @@ components:
       - units
     HomeOptions:
       type: object
+      description: |-
+        Hold HomeOptionsSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         machine_name:
           type: string
@@ -1284,6 +1558,14 @@ components:
       - year_list
     HostPlotResponse:
       type: object
+      description: |-
+        Hold HostPlotResponseSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         host:
           type: string
@@ -1303,6 +1585,14 @@ components:
       - plot_item
     InvalidateCacheRequestRequest:
       type: object
+      description: |-
+        Hold InvalidateCacheRequestSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         page_path:
           type: string
@@ -1311,6 +1601,14 @@ components:
       - page_path
     InvalidateCacheResponse:
       type: object
+      description: |-
+        Hold InvalidateCacheResponseSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         ok:
           type: boolean
@@ -1406,6 +1704,14 @@ components:
       - jid
     JobDetailResponse:
       type: object
+      description: |-
+        Hold JobDetailResponseSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         job_data:
           $ref: '#/components/schemas/JobDetailJob'
@@ -1473,6 +1779,14 @@ components:
           $ref: '#/components/schemas/StaffArtifactContract'
     JobListAggregates:
       type: object
+      description: |-
+        Hold JobListAggregatesSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         total_node_hours:
           type: number
@@ -1482,6 +1796,14 @@ components:
           format: double
     JobListEntry:
       type: object
+      description: |-
+        Hold JobListEntrySerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         jid:
           type: string
@@ -1547,6 +1869,14 @@ components:
       - jid
     JobListFilterOptions:
       type: object
+      description: |-
+        Hold JobListFilterOptionsSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         usernames:
           type: array
@@ -1572,6 +1902,14 @@ components:
           $ref: '#/components/schemas/JobListFilterOptionsTruncated'
     JobListFilterOptionsResponse:
       type: object
+      description: |-
+        Hold JobListFilterOptionsResponseSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         filter_options:
           allOf:
@@ -1579,6 +1917,14 @@ components:
           nullable: true
     JobListFilterOptionsTruncated:
       type: object
+      description: |-
+        Hold JobListFilterOptionsTruncatedSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         usernames:
           type: boolean
@@ -1641,6 +1987,14 @@ components:
           nullable: true
     JobListPagination:
       type: object
+      description: |-
+        Hold JobListPaginationSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         page:
           type: integer
@@ -1658,6 +2012,14 @@ components:
           nullable: true
     JobListPerformanceStatusOption:
       type: object
+      description: |-
+        Hold JobListPerformanceStatusOptionSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         sort_rank:
           type: integer
@@ -1668,6 +2030,14 @@ components:
       - sort_rank
     JobListResponse:
       type: object
+      description: |-
+        Hold JobListResponseSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         nj:
           type: integer
@@ -1741,6 +2111,14 @@ components:
             $ref: '#/components/schemas/JobMonitorGpuRow'
     JobMonitorGpuRow:
       type: object
+      description: |-
+        Hold JobMonitorGpuRowSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         username:
           type: string
@@ -1758,6 +2136,14 @@ components:
           type: boolean
     JobMonitorResponse:
       type: object
+      description: |-
+        Hold JobMonitorResponseSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         window_days:
           type: integer
@@ -1771,6 +2157,14 @@ components:
             $ref: '#/components/schemas/JobMonitorRow'
     JobMonitorRow:
       type: object
+      description: |-
+        Hold JobMonitorRowSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         username:
           type: string
@@ -1903,6 +2297,14 @@ components:
           nullable: true
     PublicClusterDashboard:
       type: object
+      description: |-
+        Hold PublicClusterDashboardSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         status:
           type: string
@@ -1935,6 +2337,14 @@ components:
             $ref: '#/components/schemas/PublicClusterMetricBlock'
     PublicClusterMetricBlock:
       type: object
+      description: |-
+        Hold PublicClusterMetricBlockSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         title:
           type: string
@@ -1942,6 +2352,14 @@ components:
           nullable: true
     PublicDashboardExpansionFactorSection:
       type: object
+      description: |-
+        Hold PublicDashboardExpansionFactorSectionSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         monthly_period_keys:
           type: array
@@ -1959,11 +2377,27 @@ components:
           additionalProperties: {}
     PublicDashboardSections:
       type: object
+      description: |-
+        Hold PublicDashboardSectionsSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         expansion_factor:
           $ref: '#/components/schemas/PublicDashboardExpansionFactorSection'
     PublicExpansionFactorHistogramBlock:
       type: object
+      description: |-
+        Hold PublicExpansionFactorHistogramBlockSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         scheduler_expansion_factor_daily_means_in_month_count:
           type: integer
@@ -1981,6 +2415,14 @@ components:
           nullable: true
     SacctIngestResponse:
       type: object
+      description: |-
+        Hold SacctIngestResponseSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         ok:
           type: boolean
@@ -1990,6 +2432,14 @@ components:
           type: string
     SessionInfo:
       type: object
+      description: |-
+        Hold SessionInfoSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         logged_in:
           type: boolean
@@ -2029,6 +2479,14 @@ components:
       - db_plot
     TypeDetailResponse:
       type: object
+      description: |-
+        Hold TypeDetailResponseSerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         type_name:
           type: string
@@ -2049,6 +2507,14 @@ components:
           type: string
     UserApiKey:
       type: object
+      description: |-
+        Hold UserApiKeySerializer state and behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
+
+        Subclasses ``Serializer``, extending that type with this class's fields and
+        behavior.
       properties:
         username:
           type: string

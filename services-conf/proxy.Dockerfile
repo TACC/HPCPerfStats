@@ -5,24 +5,35 @@ ARG NGINX_EDGE_VERSION=1.30.4-r2
 ARG ALPINE_EDGE_MAIN=https://dl-cdn.alpinelinux.org/alpine/edge/main
 
 RUN apk add --no-cache \
+    ca-certificates \
     netcat-openbsd \
     python3 \
  && apk add --no-cache \
     nginx=${NGINX_EDGE_VERSION} \
     nginx-mod-http-brotli=${NGINX_EDGE_VERSION} \
-    --repository=${ALPINE_EDGE_MAIN}
+    --repository=${ALPINE_EDGE_MAIN} \
+ && update-ca-certificates
 
 RUN nginx -v
 
-RUN mkdir -p /usr/local/lib/hpcperfstats-proxy
+RUN mkdir -p /usr/local/lib/hpcperfstats-proxy /etc/nginx
 
+# Shared nginx snippets (static-files, edge headers, CSP, django-proxy-common) are
+# compose bind-mounts only — do not COPY them here or they drift from mounts.
+# Image bakes: Python helpers, entrypoint, default.conf baseline, hosts include,
+# and a placeholder OCSP resolver (entrypoint overwrites at start).
 COPY services-conf/parse_hpcperfstats_proxy_hosts.py \
     services-conf/write_nginx_proxy_allowed_hosts_include.py \
+    services-conf/write_nginx_resolver_include.py \
     /usr/local/lib/hpcperfstats-proxy/
+
+COPY services-conf/proxy_entrypoint.sh /usr/local/bin/proxy_entrypoint.sh
 
 ENV PYTHONPATH=/usr/local/lib/hpcperfstats-proxy
 
-RUN chmod 755 /usr/local/lib/hpcperfstats-proxy/write_nginx_proxy_allowed_hosts_include.py
+RUN chmod 755 /usr/local/lib/hpcperfstats-proxy/write_nginx_proxy_allowed_hosts_include.py \
+    /usr/local/lib/hpcperfstats-proxy/write_nginx_resolver_include.py \
+    /usr/local/bin/proxy_entrypoint.sh
 
 WORKDIR /build
 
@@ -45,8 +56,14 @@ RUN set -eu; \
     python3 /usr/local/lib/hpcperfstats-proxy/write_nginx_proxy_allowed_hosts_include.py \
       --ini "${INI}" \
       --out /etc/nginx/hps-proxy-allowed-hosts.inc; \
+    # Placeholder resolver so image-time inspection is possible; runtime entrypoint overwrites.
+    printf '%s\n' \
+      '# Placeholder replaced at container start by write_nginx_resolver_include.py' \
+      'resolver 127.0.0.11 ipv6=off valid=300s;' \
+      'resolver_timeout 5s;' \
+      > /etc/nginx/nginx-resolver.inc; \
     rm -rf /build
 
 STOPSIGNAL SIGTERM
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["/usr/local/bin/proxy_entrypoint.sh"]

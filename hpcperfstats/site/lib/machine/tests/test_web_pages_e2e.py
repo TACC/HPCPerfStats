@@ -20,6 +20,7 @@ from django.utils import timezone
 from unittest.mock import Mock, patch
 
 from hpcperfstats.site.lib.machine.models import job_data
+from hpcperfstats.site.lib.machine.tests.csrf_test_utils import csrf_headers
 from hpcperfstats.tests.public_robots_js_registry import (
     format_public_robots_txt_body,
     load_public_robots_allow_prefixes,
@@ -133,7 +134,7 @@ class TestWebPagesEndToEnd:
     session["is_staff"] = True
     session.save()
 
-    drop_response = client.post("/api/session/drop-staff/")
+    drop_response = client.post("/api/session/drop-staff/", **csrf_headers())
     assert drop_response.status_code == 200
     payload = drop_response.json()
     assert payload["ok"] is True
@@ -179,12 +180,14 @@ class TestWebPagesEndToEnd:
           "/api/sacct/ingest/?date=2026-01-01",
           data="",
           content_type="text/plain",
+          **csrf_headers(),
       )
       assert staff_ingest.status_code == 200
       staff_invalidate = client.post(
           "/api/cache/invalidate-page/",
           data={"page_path": "/machine/jobs"},
           content_type="application/json",
+          **csrf_headers(),
       )
       assert staff_invalidate.status_code == 200
 
@@ -198,12 +201,14 @@ class TestWebPagesEndToEnd:
           "/api/sacct/ingest/?date=2026-01-01",
           data="",
           content_type="text/plain",
+          **csrf_headers(),
       )
       assert non_staff_ingest.status_code == 403
       non_staff_invalidate = client.post(
           "/api/cache/invalidate-page/",
           data={"page_path": "/machine/jobs"},
           content_type="application/json",
+          **csrf_headers(),
       )
       assert non_staff_invalidate.status_code == 403
 

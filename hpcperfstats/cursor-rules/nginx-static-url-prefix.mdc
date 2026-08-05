@@ -15,7 +15,7 @@ globs: services-conf/nginx*
   - [`services-conf/nginx-static-files.conf`](services-conf/nginx-static-files.conf) — `location /static/` → `alias /srv/static/;`
   - Same file — SPA shells under **`/machine/`** and **`/pub/`**; **`/favicon.ico`** returns **404** at the edge; an explicit prefix allowlist proxies to Gunicorn for **`hpcperfstats_site.urls`** (anything else hits **`location / { return 404; }`**).
   - [`services-conf/nginx-django-proxy-common.inc`](services-conf/nginx-django-proxy-common.inc) — shared `proxy_*` headers/timeouts included by each Gunicorn `location`.
-  - [`docker-compose.yaml`](docker-compose.yaml) — shared volume `staticfiles_data` mounted at `STATIC_ROOT` on `web` (`/home/hpcperfstats/staticfiles`) and read-only on `proxy` as `/srv/static`; mounts both nginx snippets into the **proxy** container.
+  - [`docker-compose.yaml`](docker-compose.yaml) — shared volume `staticfiles_data` mounted at `STATIC_ROOT` on `web` (`/home/hpcperfstats/staticfiles`) and read-only on `proxy` as `/srv/static`; mounts nginx snippets into the **proxy** container (`nginx-static-files.conf`, `nginx-django-proxy-common.inc`, `nginx-edge-security-headers.inc`, `nginx-csp-no-active.inc`, `nginx-csp-django-html.inc`). Those snippets are **compose mounts only** — **`proxy.Dockerfile`** must not also **`COPY`** them.
 - **Do not** add Django URL patterns (`django.conf.urls.static.static` for `STATIC_URL`), **WhiteNoise**, or other middleware/views to answer **`STATIC_URL`** (`/static/`). That would duplicate nginx and violate the deployment contract.
 
 ## Django’s role (files on disk, not the `/static/` HTTP path)

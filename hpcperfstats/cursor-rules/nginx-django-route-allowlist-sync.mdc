@@ -31,7 +31,7 @@ This allowlist must stay aligned with **top-level routes intended to hit Django/
 2. **`hpcperfstats/site/hpcperfstats_site/tests/test_nginx_static_wsgi_contract.py`**
    - Extend or shrink **`test_nginx_static_files_conf_allowlists_django_prefixes_and_default_404`** string markers so the test continues to lock the allowlist contract whenever prefixes change.
 3. **`docker-compose.yaml`**
-   - If introducing a **new** included snippet path for nginx, add the matching **`proxy`** **`volumes`** mount (today **`nginx-static-files.conf`**, **`nginx-django-proxy-common.inc`**, and **`nginx-edge-security-headers.inc`** are mounted).
+   - If introducing a **new** included snippet path for nginx, add the matching **`proxy`** **`volumes`** mount (today **`nginx-static-files.conf`**, **`nginx-django-proxy-common.inc`**, **`nginx-edge-security-headers.inc`**, **`nginx-csp-no-active.inc`**, and **`nginx-csp-django-html.inc`** are mounted; SPA hash CSP includes arrive via the **`staticfiles_data`** volume). Do **not** also **`COPY`** those mount-only snippets in **`proxy.Dockerfile`**.
 
 ## Verification
 

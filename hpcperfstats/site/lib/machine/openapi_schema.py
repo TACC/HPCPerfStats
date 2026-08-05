@@ -373,10 +373,32 @@ PUBLIC_CLUSTER_DASHBOARD_SCHEMA = extend_schema(
             name="section",
             type=str,
             location=OpenApiParameter.QUERY,
-            description="Lazy section (expansion_factor)",
+            description=(
+                "Lazy section. When present, grouping and period are required. "
+                "Only expansion_factor is supported."
+            ),
+            enum=["expansion_factor"],
         ),
-        OpenApiParameter(name="grouping", type=str, location=OpenApiParameter.QUERY),
-        OpenApiParameter(name="period", type=str, location=OpenApiParameter.QUERY),
+        OpenApiParameter(
+            name="grouping",
+            type=str,
+            location=OpenApiParameter.QUERY,
+            description=(
+                "Lazy grouping. Required with section/period. "
+                "monthly expects YYYY-MM; yearly expects YYYY."
+            ),
+            enum=["monthly", "yearly"],
+        ),
+        OpenApiParameter(
+            name="period",
+            type=str,
+            location=OpenApiParameter.QUERY,
+            description=(
+                "Lazy period key. Required with section/grouping. "
+                "Format YYYY-MM for monthly or YYYY for yearly."
+            ),
+            pattern=r"^(\d{4}|\d{4}-(0[1-9]|1[0-2]))$",
+        ),
         OpenApiParameter(
             name="full",
             type=int,
@@ -384,5 +406,19 @@ PUBLIC_CLUSTER_DASHBOARD_SCHEMA = extend_schema(
             description="1 to return legacy full bundle",
         ),
     ],
-    responses={200: os.PublicClusterDashboardSerializer},
+    responses={
+        200: os.PublicClusterDashboardSerializer,
+        400: OpenApiResponse(
+            response=os.ErrorDetailSerializer,
+            description="Invalid or incomplete lazy query parameters",
+        ),
+        404: OpenApiResponse(
+            response=os.ErrorDetailSerializer,
+            description="Valid period syntax but artifact not available",
+        ),
+        429: OpenApiResponse(
+            response=os.ErrorDetailSerializer,
+            description="Too many requests",
+        ),
+    },
 )

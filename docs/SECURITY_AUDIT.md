@@ -1,6 +1,6 @@
 # Security audit memo (HPCPerfStats)
 
-Internal reference for security posture review. **Last reviewed:** 2026-07-31 (frontend stack security posture documented after Mid-2026 SPA migration; prior Dependabot npm sweep 2026-07-26).
+Internal reference for security posture review. **Last reviewed:** 2026-08-05 (Burp Suite report disposition + nginx HSTS/OCSP/CSP edge hardening; prior frontend stack posture 2026-07-31; Dependabot npm sweep 2026-07-26).
 
 ## Executive summary
 
@@ -28,7 +28,7 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 | pillow       | 12.2.0          | Clean |
 | gunicorn     | 26.0.0          | Clean |
 
-`pyproject.toml` runtime floors: `Django>=6.0.6,<7`, `requests>=2.34.2`, `cryptography>=49.0.0`, `pillow>=12.2.0`.
+`pyproject.toml` runtime floors: `Django>=6.0.7,<6.1` (cap below 6.1 until DRF ships Django 6.1 `cc_delim_re` compatibility), `requests>=2.34.2`, `cryptography>=49.0.0`, `pillow>=12.2.0`.
 
 **Host dev venv** (not shipped): `idna` 3.13 (CVE-2026-45409 → 3.15+), `pip` 26.1.1 (PYSEC-2026-196 → 26.1.2+). Treat as developer-workstation hygiene only.
 
@@ -71,7 +71,7 @@ No high-severity issues. Production-code medium B608 locations (2026-06-05): `an
 | F2 | Medium | AuthN | `check_for_tokens` now enforces session idle/absolute limits, periodic token validation, and refresh-token fallback. | **Fixed** |
 | F3 | Medium | Abuse | DRF throttles added for authenticated baseline + expensive routes + staff ingest; `sacct_ingest` now enforces app-level request-size limit. | **Fixed** |
 | F4 | Medium | Config | `CORS_ALLOWED_ORIGINS` now parses env and fails fast in production if unset or using dev localhost origins. | **Fixed** |
-| F5 | Low | CSP | Enforced CSP still includes `unsafe-eval` on Bokeh-heavy routes (`/api/jobs/`, `/api/host_plot/`); strict CSP (no `unsafe-eval`) on `/login_prompt`, `/pub/`, and other non-Bokeh API shells. Report-only policy omits `unsafe-eval` to stage tightening. CustomJS removed from plot pipeline (Python pre-formatted hovers). | **Partially mitigated** |
+| F5 | Low | CSP | Enforced CSP still includes `unsafe-eval` on Bokeh-heavy **machine** SPA HTML only; nginx hash-based CSP removes `unsafe-inline` for Next static shells; JSON/redirects use `script-src 'none'; style-src 'none'`. Report-only policy also omits unsafe-inline. CustomJS removed from plot pipeline (Python pre-formatted hovers). | **Mostly mitigated** (Bokeh `unsafe-eval` retained, documented) |
 | F6 | Medium | Observability | `/csp-report/` returned **403** for browser-style POSTs when CSRF checks apply (no CSRF token on CSP reports). | **Fixed** (csrf_exempt + body cap; tests) |
 | F7 | Low | API keys | Stored as SHA-256 of high-entropy raw key; consider a pepper if policy requires. | Open (optional) |
 | F8 | Low | Subprocess/SQL | Ingest/archive uses subprocess and raw SQL with parameters; keep arguments non-user-controlled. | Ongoing review |
@@ -99,19 +99,43 @@ In **2026-06** the browser UI moved from a hand-rolled JS / Vite SPA to **Next.j
 | **Build telemetry opt-out** | Frontend image/rebuild paths set `NEXT_TELEMETRY_DISABLED=1` so build tooling does not phone home. | `scripts/rebuild_frontend.sh`, Docker frontend builder |
 | **Dependency floors** | npm `overrides` pin patched transitive packages (Orval/Next/Bokeh trees); CI + Dependabot keep `npm audit` clean (see snapshot above). | `package.json` `overrides` |
 
-**Residual SPA risks (unchanged by the migration):** Bokeh still needs path-scoped `unsafe-eval` CSP on plot API shells (F5); Zod only helps for **registered** routes — unregistered endpoints skip runtime parse and must not be added casually; OpenAPI/Orval drift remains a process risk if schema regen is skipped.
+**Residual SPA risks (unchanged by the migration):** Bokeh still needs path-scoped `unsafe-eval` CSP on **machine** SPA HTML (F5); Zod only helps for **registered** routes — unregistered endpoints skip runtime parse and must not be added casually; OpenAPI/Orval drift remains a process risk if schema regen is skipped.
+
+## Burp Suite report disposition (2026-08-05)
+
+Source: operator scan PDF `2026-08-05-hpcperfstats04.pdf` against the public TLS site (1 Low + 26 Informational instances across ten categories). Disposition below is evidence-based against current code and live headers.
+
+| # | Finding | Security issue? | Evidence / defenses | Remediation (2026-08-05) | Residual risk |
+|---|---------|-----------------|---------------------|--------------------------|---------------|
+| 1 | Strict transport security not enforced | **Yes (valid)** | Django already sent HSTS on proxied routes; nginx-owned `/machine/`, `/static/`, `/robots.txt` did not. | Edge `Strict-Transport-Security: max-age=31536000; includeSubDomains` on every HTTPS nginx response (`nginx-edge-security-headers.inc`). Preload remains **off**. | Operators must merge TLS/OCSP directives into gitignored `nginx.conf`. |
+| 2 | Reflected XSS in `grouping` / `period` | **Not directly exploitable; hardening gap** | Response is `application/json` + `nosniff`; payload was not HTML-executable. Error detail previously echoed rejected values. | Strict lazy-query allowlist; generic non-reflective 400/404 (`public_api.py`). | Future HTML renderers must keep SafeJSON / no reflection. |
+| 3 | CSP allows untrusted script execution | **Yes (defense-in-depth)** | Policies allowed `unsafe-inline` (and Bokeh `unsafe-eval`). | Build-time SHA-256 hashes in nginx CSP includes; no `unsafe-inline`; machine keeps justified `unsafe-eval` only; JSON/redirects use no-active CSP. | Bokeh `unsafe-eval` until CustomJS-free embed. |
+| 4 | CSP allows untrusted style execution | **Yes (defense-in-depth)** | Same `unsafe-inline` style allowance. | Hash `<style>` blocks + `unsafe-hashes` for static `style=` attributes; app styles prefer classes. | Dynamic runtime style attrs without hashes will violate CSP (tests catch). |
+| 5 | CORS | **No** | Same-origin `Access-Control-Allow-Origin`; production origins fail closed. | None (document only). | Misconfigured `CORS_ALLOWED_ORIGINS` still fails closed in prod. |
+| 6 | Input returned in response | **Informational prerequisite** | Same as #2. | Closed by non-reflective validation. | None beyond #2. |
+| 7 | Frameable SPA responses | **Yes (valid)** | SPA HTML bypassed Django `X-Frame-Options`. | nginx `X-Frame-Options: SAMEORIGIN` + CSP `frame-ancestors 'self'`. | Nested framing within same origin remains allowed by design. |
+| 8 | DOM data manipulation | **False positive for shown flow** | Sink is Next `history.replaceState` via `URLSearchParams`, not `innerHTML`. | Documented; retain URL helper tests. | New sinks that write HTML must stay escaped. |
+| 9 | robots.txt | **Not a security issue** | Advertises public `/pub/` shells only; authZ is server-side. | None. | Do not treat robots as access control. |
+| 10 | Cacheable HTTPS response | **Not a security issue here** | Anonymous pre-warmed public aggregates; intentional `max-age=120`; loading/errors use `no-store`. | None. | Do not cache authenticated responses publicly. |
+
+### Live TLS / OCSP notes (operator discovery)
+
+- Leaf certificate advertised OCSP AIA (`http://ocsp-c.emsign.com`) but the server previously sent **no** stapled response.
+- Completed OCSP contract: `ssl_stapling` + `ssl_stapling_verify` + `ssl_trusted_certificate` (CA bundle) + runtime `resolver` include from `/etc/resolv.conf`.
+- Certificates **without** an AIA OCSP URL (many modern Let’s Encrypt leafs) will not staple; that must not take the site offline.
 
 ## Positive controls (summary)
 
 - `SECRET_KEY` required when `DEBUG` is false; dev-only default only when `DEBUG` is true.
 - `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE` off HTTP-only cookies when not `DEBUG`.
 - Session hardening includes configured idle/absolute timeout windows and OAuth token refresh/validation checks.
-- HSTS, `SECURE_PROXY_SSL_HEADER`, `Permissions-Policy`, `COOP`, CSP + CSP-Report-Only in middleware.
+- **nginx** emits HSTS, framing, COOP, Permissions-Policy, Referrer-Policy, and CSP for public traffic; Django middleware remains defense-in-depth for direct Gunicorn.
+- OCSP stapling completed when the leaf advertises an AIA responder (trusted CA bundle + runtime resolver).
 - API key material hashed at rest; staff ingest requires `_require_staff`.
 - API throttling is active for authenticated and expensive API routes, with stricter staff-ingest scope.
-- SPA stack controls in **Frontend stack security posture** (static export, TypeScript, OpenAPI/Orval/Zod, CSRF mutator, no CDN, prod build boundary).
+- SPA stack controls in **Frontend stack security posture** (static export, TypeScript, OpenAPI/Orval/Zod, CSRF mutator, no CDN, prod build boundary, hash-based edge CSP).
 - `robots.txt` defaults to **`Disallow: /`** with explicit **`Allow:`** prefixes only for anonymous **`/pub/`** HTML shell paths (canonical registry in [`publicRobotsAllowPrefixes.js`](../hpcperfstats/site/frontend/src/config/publicRobotsAllowPrefixes.js), emitted by **`scripts/generate-robots-txt.mjs`** during the Next static-export build; nginx serves **`/robots.txt`** from **`STATIC_ROOT`**); **`/api/pub/`** remains uncrawlable by default.
-- Anonymous **`GET /api/pub/cluster-dashboard/`** returns only pre-warmed JSON bundles; scoped DRF throttle **`public_cluster_dashboard`** limits abuse (`REST_FRAMEWORK` rate + env override; legacy `API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE` respected as fallback).
+- Anonymous **`GET /api/pub/cluster-dashboard/`** returns only pre-warmed JSON bundles; scoped DRF throttle **`public_cluster_dashboard`** limits abuse (`REST_FRAMEWORK` rate + env override; legacy `API_THROTTLE_PUBLIC_MONTHLY_METRICS_RATE` respected as fallback); lazy query params are allowlisted and non-reflective.
 - `SafeJSONRenderer` avoids non-finite JSON floats.
 
 ## References
@@ -135,3 +159,4 @@ In **2026-06** the browser UI moved from a hand-rolled JS / Vite SPA to **Next.j
 | 2026-07-26 | Dependabot npm sweep: `next@^16.2.11` + transitive overrides; local `npm audit` 0 (690 pkgs); Vitest 562 green. |
 | 2026-07-31 | Documented Mid-2026 frontend stack as security controls (static export, TypeScript, OpenAPI/Orval/Zod, CSRF mutator, no CDN, prod/test build boundary); corrected `robots.txt` build wording (Next export, not Vite). |
 | 2026-08-03 | Dependency pin refresh: Bokeh 3.9.2, Next 16.3, Redis/Timescale/RabbitMQ image bumps; npm overrides for `hono` / `ip-address` / `undici`; `npm audit` 0 (686 pkgs); Vitest 584 green. |
+| 2026-08-05 | Burp 2026-08-05 disposition: nginx-canonical HSTS/framing/CSP; OCSP trusted cert + runtime resolver; hash-based SPA CSP (no unsafe-inline); public dashboard non-reflective validation. |

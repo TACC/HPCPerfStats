@@ -48,11 +48,12 @@ def test_hpcperfstats_base_layers_python_deps_on_pyproject():
 
 
 def test_pyproject_dependencies_write_valid_pip_requirements_file():
-  """Comma/version pins must not be shell-quoted (regression for Django>=6.0.6,<7.0)."""
+  """Comma/version pins must not be shell-quoted (regression for Django floor pins)."""
   deps = _pyproject_runtime_requirements()
   requirements_text = "\n".join(deps) + "\n"
 
-  assert "Django>=6.0.6,<7.0" in requirements_text
+  # Cap below Django 6.1 until DRF ships cc_delim_re / split_header_value compatibility.
+  assert "Django>=6.0.7,<6.1" in requirements_text
   assert "'Django" not in requirements_text
   assert '"Django' not in requirements_text
 

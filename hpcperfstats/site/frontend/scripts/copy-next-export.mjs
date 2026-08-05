@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,161 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(__dirname, "..");
 const outDir = path.join(frontendRoot, "out");
 const targetDir = path.resolve(frontendRoot, "../hpcperfstats_site/static/frontend");
+
+const INLINE_SCRIPT_RE = /<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi;
+const INLINE_STYLE_RE = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
+const STYLE_ATTR_RE = /\sstyle\s*=\s*(["'])([\s\S]*?)\1/gi;
+
+/**
+ * @param {string} content
+ * @returns {string}
+ */
+export function sha256CspHash(content) {
+  const digest = crypto.createHash("sha256").update(content, "utf8").digest("base64");
+  return `'sha256-${digest}'`;
+}
+
+/**
+ * @param {string} html
+ * @returns {{ scriptHashes: string[], styleHashes: string[], styleAttrHashes: string[] }}
+ */
+export function extractInlineCspHashesFromHtml(html) {
+  const scriptHashes = new Set();
+  const styleHashes = new Set();
+  const styleAttrHashes = new Set();
+
+  for (const match of html.matchAll(INLINE_SCRIPT_RE)) {
+    scriptHashes.add(sha256CspHash(match[1]));
+  }
+  for (const match of html.matchAll(INLINE_STYLE_RE)) {
+    styleHashes.add(sha256CspHash(match[1]));
+  }
+  for (const match of html.matchAll(STYLE_ATTR_RE)) {
+    styleAttrHashes.add(sha256CspHash(match[2]));
+  }
+
+  return {
+    scriptHashes: [...scriptHashes].sort(),
+    styleHashes: [...styleHashes].sort(),
+    styleAttrHashes: [...styleAttrHashes].sort(),
+  };
+}
+
+/**
+ * @param {string} rootDir
+ * @returns {string[]}
+ */
+function listHtmlFiles(rootDir) {
+  /** @type {string[]} */
+  const files = [];
+  if (!fs.existsSync(rootDir)) {
+    return files;
+  }
+  const stack = [rootDir];
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current) {
+      continue;
+    }
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
+        continue;
+      }
+      if (entry.isFile() && entry.name.endsWith(".html")) {
+        files.push(full);
+      }
+    }
+  }
+  return files.sort();
+}
+
+/**
+ * @param {string} rootDir
+ * @returns {{ scriptHashes: string[], styleHashes: string[], styleAttrHashes: string[] }}
+ */
+export function collectInlineCspHashes(rootDir) {
+  const scriptHashes = new Set();
+  const styleHashes = new Set();
+  const styleAttrHashes = new Set();
+  for (const file of listHtmlFiles(rootDir)) {
+    const html = fs.readFileSync(file, "utf8");
+    const extracted = extractInlineCspHashesFromHtml(html);
+    for (const hash of extracted.scriptHashes) {
+      scriptHashes.add(hash);
+    }
+    for (const hash of extracted.styleHashes) {
+      styleHashes.add(hash);
+    }
+    for (const hash of extracted.styleAttrHashes) {
+      styleAttrHashes.add(hash);
+    }
+  }
+  return {
+    scriptHashes: [...scriptHashes].sort(),
+    styleHashes: [...styleHashes].sort(),
+    styleAttrHashes: [...styleAttrHashes].sort(),
+  };
+}
+
+/**
+ * @param {{
+ *   scriptHashes?: string[],
+ *   styleHashes?: string[],
+ *   styleAttrHashes?: string[],
+ *   allowUnsafeEval?: boolean,
+ * }} options
+ * @returns {string}
+ */
+export function buildNginxCspInclude({
+  scriptHashes = [],
+  styleHashes = [],
+  styleAttrHashes = [],
+  allowUnsafeEval = false,
+} = {}) {
+  const scriptParts = ["'self'", ...scriptHashes];
+  if (allowUnsafeEval) {
+    scriptParts.push("'unsafe-eval'");
+  }
+  const styleParts = ["'self'", ...styleHashes];
+  if (styleAttrHashes.length) {
+    styleParts.push("'unsafe-hashes'", ...styleAttrHashes);
+  }
+  const policy = [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'self'",
+    "form-action 'self'",
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    `style-src ${styleParts.join(" ")}`,
+    `script-src ${scriptParts.join(" ")}`,
+    "connect-src 'self'",
+    "upgrade-insecure-requests",
+    "report-uri /csp-report/",
+  ].join("; ");
+  return `add_header Content-Security-Policy "${policy}" always;\n`;
+}
+
+/**
+ * @param {string} target
+ */
+export function writeNginxCspIncludes(target) {
+  const machineHashes = collectInlineCspHashes(path.join(target, "machine"));
+  const pubHashes = collectInlineCspHashes(path.join(target, "pub"));
+  fs.writeFileSync(
+    path.join(target, "nginx-csp-machine.inc"),
+    buildNginxCspInclude({ ...machineHashes, allowUnsafeEval: true }),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(target, "nginx-csp-pub.inc"),
+    buildNginxCspInclude({ ...pubHashes, allowUnsafeEval: false }),
+    "utf8",
+  );
+}
 
 export function isProductionStaticCopy(argv = process.argv, env = process.env) {
   return env.HPCPERFSTATS_PRODUCTION_STATIC === "1" || argv.includes("--production");
@@ -46,6 +202,7 @@ export function runCopyNextExport({
   }
   const skipped = productionStatic ? [...PRODUCTION_EXCLUDED_EXPORT_DIRS] : [];
   copyRecursive(out, target, { productionStatic });
+  writeNginxCspIncludes(target);
   return { out, target, mode: productionStatic ? "production" : "full", skipped };
 }
 
@@ -62,6 +219,9 @@ if (isDirectRun) {
       }
     }
     console.log(`copy-next-export (${mode}): copied ${out} → ${target}`);
+    console.log(
+      "copy-next-export: wrote nginx-csp-machine.inc and nginx-csp-pub.inc for edge CSP",
+    );
   } catch (err) {
     console.error(err instanceof Error ? err.message : err);
     process.exit(1);

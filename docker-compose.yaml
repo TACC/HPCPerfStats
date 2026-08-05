@@ -66,11 +66,15 @@ services:
     volumes:
       # Main vhost (TLS paths, listen, includes): host file replaces image-baked default.conf.
       # Create with: cp services-conf/nginx.conf.example services-conf/nginx.conf
-      # hps-proxy-allowed-hosts.inc stays image-baked from INI at build unless you rebuild proxy.
+      # Shared routing/security snippets: compose mounts are the only source of truth
+      # (proxy.Dockerfile does not COPY these — avoid bake+mount duplication).
+      # hps-proxy-allowed-hosts.inc and nginx-resolver.inc stay image/runtime-managed.
       - ./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro
       - ./services-conf/nginx-static-files.conf:/etc/nginx/nginx-static-files.conf:ro
       - ./services-conf/nginx-django-proxy-common.inc:/etc/nginx/nginx-django-proxy-common.inc:ro
       - ./services-conf/nginx-edge-security-headers.inc:/etc/nginx/nginx-edge-security-headers.inc:ro
+      - ./services-conf/nginx-csp-no-active.inc:/etc/nginx/nginx-csp-no-active.inc:ro
+      - ./services-conf/nginx-csp-django-html.inc:/etc/nginx/nginx-csp-django-html.inc:ro
       - /etc/letsencrypt/:/etc/letsencrypt/:ro
       - staticfiles_data:/srv/static:ro
       - media_data:/srv/media:ro

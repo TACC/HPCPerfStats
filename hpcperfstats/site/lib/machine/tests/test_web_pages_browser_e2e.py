@@ -83,26 +83,23 @@ def test_browser_flow_for_web_pages():
         assert "Allow: {}".format(prefix) in expected
       assert "Disallow: /" in expected
 
+      csp_probe = page.context.request.post(
+          f"{base_url}/csp-report/",
+          headers={"Content-Type": "application/csp-report"},
+          data='{"csp-report": {"document-uri": "https://example.test"}}',
+      )
+      assert csp_probe.status == 204
+
       # Browsers wrap text/plain robots bodies in a shell that fails axe;
       # probe a minimal document instead so WCAG checks still exercise the harness.
+      # Navigate to about:blank first so a prior Django HTML 404 CSP (no
+      # unsafe-inline) does not block Playwright's axe script injection.
+      page.goto("about:blank")
       page.set_content(
           "<!DOCTYPE html><html lang=\"en\"><head>"
           "<meta charset=\"utf-8\"/><title>accessibility probe</title></head>"
           "<body></body></html>",
       )
       assert_no_serious_axe_violations(page)
-
-      status_code = page.evaluate(
-          """async (baseUrl) => {
-            const response = await fetch(`${baseUrl}/csp-report/`, {
-              method: "POST",
-              headers: {"Content-Type": "application/csp-report"},
-              body: JSON.stringify({"csp-report": {"document-uri": "https://example.test"}}),
-            });
-            return response.status;
-          }""",
-          base_url,
-      )
-      assert status_code == 204
 
       browser.close()

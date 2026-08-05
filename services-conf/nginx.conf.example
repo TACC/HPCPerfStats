@@ -79,8 +79,14 @@ server {
         client_max_body_size 64M;
 
         ssl_protocols TLSv1.2 TLSv1.3;
+        # OCSP stapling: requires ssl_trusted_certificate (CA bundle) and a resolver
+        # include generated at container start from /etc/resolv.conf. Certificates without
+        # an AIA OCSP URL (many modern Let's Encrypt leafs) will not staple; that must not
+        # take the site offline. Merge these directives into deployment-local nginx.conf.
         ssl_stapling on;
         ssl_stapling_verify on;
+        ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        include /etc/nginx/nginx-resolver.inc;
         ssl_ciphers ECDHE-RSA-CHACHA20-POLY1305:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-CCM:DHE-RSA-AES256-CCM8:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-CCM:DHE-RSA-AES128-CCM8:DHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256;
 
         ssl_prefer_server_ciphers on;

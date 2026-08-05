@@ -21,7 +21,13 @@ _SERIOUS_IMPACTS = frozenset({"critical", "serious"})
 
 
 def inject_axe(page) -> None:
-  """Ensure axe is defined on the page (loads vendored script once)."""
+  """Ensure axe is defined on the page (loads vendored script once).
+
+  ``add_script_tag(path=...)`` injects an inline ``<script>`` body. Pages that
+  already carry a strict CSP without ``unsafe-inline`` (for example Django HTML
+  404 responses) will block that injection. Callers probing synthetic documents
+  should navigate to ``about:blank`` (no CSP) before ``set_content`` / inject.
+  """
   if not AXE_MIN_JS.is_file():
     raise FileNotFoundError("Missing vendored axe-core: {}".format(AXE_MIN_JS))
   has_axe = page.evaluate("() => typeof window.axe !== 'undefined'")
