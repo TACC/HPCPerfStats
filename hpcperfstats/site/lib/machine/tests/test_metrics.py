@@ -10,15 +10,16 @@ from pandas import Timestamp
 from unittest.mock import MagicMock, patch
 
 from hpcperfstats.analysis.metrics.lib.job_metric_display_labels import JOB_METRIC_SHORT_LABELS
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import JID_TABLE_HOST_QUERY_BATCH
 from hpcperfstats.analysis.metrics.lib.metrics import (
     METRIC_NOT_COMPUTED_YET,
+    METRICS_HOST_QUERY_BATCH,
     Metrics,
     _EventIndex,
     _Host,
     _Schema,
     _host_data_metric_rows_batched,
     _jid_table_host_data_time_kwargs,
+    _metric_type_events_feasible,
     avg_ethbw,
     avg_freq,
     avg_gpuutil,
@@ -1702,9 +1703,9 @@ def test_job_arc_uses_time__in_when_jid_table_large_job_sampled():
 
 @pytest.mark.django_db(databases=[])
 def test_host_data_metric_rows_batched_splits_host__in():
-  """Large host lists query host_data in jid_table-sized batches."""
+  """Large host lists query host_data in METRICS_HOST_QUERY_BATCH chunks."""
 
-  n = JID_TABLE_HOST_QUERY_BATCH + 2
+  n = METRICS_HOST_QUERY_BATCH + 2
   hosts = ["h{0}.x".format(i) for i in range(n)]
   chunk_sizes = []
 
@@ -1727,7 +1728,7 @@ def test_host_data_metric_rows_batched_splits_host__in():
     rows = _host_data_metric_rows_batched(
         tkw, hosts, "net", ["rx_bytes"], "arc")
   assert rows == []
-  assert chunk_sizes == [JID_TABLE_HOST_QUERY_BATCH, 2]
+  assert chunk_sizes == [METRICS_HOST_QUERY_BATCH, 2]
 
 
 @pytest.mark.django_db(databases=[])
@@ -1764,7 +1765,7 @@ def test_job_arc_issues_multiple_queries_when_many_hosts(monkeypatch):
 
   from django.utils import timezone as django_tz
 
-  n = JID_TABLE_HOST_QUERY_BATCH + 1
+  n = METRICS_HOST_QUERY_BATCH + 1
   hosts = ["h{0}.x".format(i) for i in range(n)]
   t0 = django_tz.now()
   jt = SimpleNamespace(
@@ -1798,5 +1799,44 @@ def test_job_arc_issues_multiple_queries_when_many_hosts(monkeypatch):
   m = Metrics()
   m.job_arc(jt, typename="net", events=["rx_bytes"], conv=1.0)
   assert len(calls) == 2
-  assert calls[0] == JID_TABLE_HOST_QUERY_BATCH
+  assert calls[0] == METRICS_HOST_QUERY_BATCH
   assert calls[1] == 1
+
+
+def test_metric_type_events_feasible_skips_impossible_types():
+  assert _metric_type_events_feasible({}, "amd64_pmc", ["FLOPS"]) is True
+  assert _metric_type_events_feasible(
+      {"cpu": ["user", "system"]}, "amd64_pmc", ["FLOPS"]
+  ) is False
+  assert _metric_type_events_feasible(
+      {"cpu": ["user", "system"]}, "cpu", ["user"]
+  ) is True
+
+
+@pytest.mark.django_db(databases=[])
+def test_job_arc_skips_orm_when_schema_rules_out_type(monkeypatch):
+  """Regression: empty vendor probes must not list(qs) until 900s SIGALRM."""
+  from types import SimpleNamespace
+
+  from django.utils import timezone as django_tz
+
+  t0 = django_tz.now()
+  jt = SimpleNamespace(
+      schema={"cpu": ["user", "system", "idle"]},
+      _base_filter={
+          "time__gte": t0,
+          "time__lte": t0,
+          "host__in": ["h1.x"],
+      },
+  )
+  filter_calls = []
+
+  class Mgr:
+    def filter(self, **kwargs):
+      filter_calls.append(kwargs)
+      raise AssertionError("job_arc must not query host_data for impossible types")
+
+  monkeypatch.setattr("hpcperfstats.site.lib.machine.models.host_data.objects", Mgr())
+  m = Metrics()
+  assert m.job_arc(jt, typename="amd64_pmc", events=["FLOPS"], conv=1e-9) is None
+  assert filter_calls == []

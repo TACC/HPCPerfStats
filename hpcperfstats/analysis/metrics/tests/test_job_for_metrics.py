@@ -716,3 +716,90 @@ def test_host_data_metric_rows_with_host_chunk_retry_splits_on_timeout(monkeypat
   assert seen == [8, 4, 4]
   assert len(out) == 8
 
+
+def test_metric_type_events_feasible_skips_impossible_types():
+  assert metrics._metric_type_events_feasible({}, "amd64_pmc", ["FLOPS"]) is True
+  assert metrics._metric_type_events_feasible(
+      {"cpu": ["user", "system"]}, "amd64_pmc", ["FLOPS"]
+  ) is False
+  assert metrics._metric_type_events_feasible(
+      {"cpu": ["user", "system"]}, "cpu", ["user"]
+  ) is True
+
+
+def test_job_arc_skips_orm_when_schema_rules_out_type(monkeypatch):
+  """Regression: empty vendor probes must not list(qs) until 900s SIGALRM."""
+  from django.utils import timezone as django_tz
+
+  t0 = django_tz.now()
+  jt = SimpleNamespace(
+      schema={"cpu": ["user", "system", "idle"]},
+      _base_filter={
+          "time__gte": t0,
+          "time__lte": t0,
+          "host__in": ["h1.x"],
+      },
+  )
+  filter_calls = []
+
+  class _HD:
+    objects = SimpleNamespace()
+
+  def _filter(**kwargs):
+    filter_calls.append(kwargs)
+    raise AssertionError("job_arc must not query host_data for impossible types")
+
+  _HD.objects.filter = _filter
+  monkeypatch.setattr(
+      "hpcperfstats.site.lib.machine.models.host_data",
+      _HD,
+  )
+  m = metrics.Metrics()
+  assert m.job_arc(jt, typename="amd64_pmc", events=["FLOPS"], conv=1e-9) is None
+  assert filter_calls == []
+
+
+def test_host_data_metric_rows_batched_uses_metrics_host_batch(monkeypatch):
+  """~48-host jobs must not issue a single 64-host query by default."""
+  n = metrics.METRICS_HOST_QUERY_BATCH + 2
+  hosts = ["h{0}.x".format(i) for i in range(n)]
+  chunk_sizes = []
+
+  class _QS:
+    def __init__(self, chunk):
+      self._chunk = chunk
+
+    def values(self, *args, **kwargs):
+      del args, kwargs
+      return self
+
+    def order_by(self, *args):
+      del args
+      return self
+
+    def __iter__(self):
+      chunk_sizes.append(len(self._chunk))
+      return iter(())
+
+  class _HD:
+    objects = SimpleNamespace()
+
+  def _filter(**kwargs):
+    return _QS(list(kwargs.get("host__in") or []))
+
+  _HD.objects.filter = _filter
+  monkeypatch.setattr(
+      "hpcperfstats.site.lib.machine.models.host_data",
+      _HD,
+  )
+  monkeypatch.setattr(metrics, "close_old_connections", lambda: None)
+  rows = metrics._host_data_metric_rows_batched(
+      {"time__gte": "a", "time__lte": "b"},
+      hosts,
+      "net",
+      ["rx_bytes"],
+      "arc",
+  )
+  assert rows == []
+  assert chunk_sizes == [metrics.METRICS_HOST_QUERY_BATCH, 2]
+

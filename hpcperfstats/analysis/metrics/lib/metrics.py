@@ -629,6 +629,28 @@ class _Schema:
     return iter(self.events)
 
 
+def _metric_type_events_feasible(schema, typ, events):
+  """Return False when ``jt.schema`` is known and no requested event exists for typ.
+
+  Same contract as SummaryPlot ``_summary_type_events_feasible``: empty/unknown
+  schema allows ORM; populated schema skips impossible type/event probes so
+  cascading ``job_arc`` helpers do not burn the per-job wall clock on empty
+  ``host_data`` scans (production: MetricsComputeJobTimeoutError in list(qs)).
+  """
+  if not isinstance(schema, dict) or not schema:
+    return True
+  if not events:
+    return any(t in schema for t in type_probe_names(typ))
+  probed_events = set(events_probe_names(list(events), typ=typ))
+  for t in type_probe_names(typ):
+    if t not in schema:
+      continue
+    present = schema[t]
+    if probed_events.intersection(present):
+      return True
+  return False
+
+
 def _schema_has_events(schema, *event_names):
   """True when ``schema`` defines every listed event (handles incomplete ``mem``/fabric/net rows)."""
   if schema is None:
@@ -1318,9 +1340,15 @@ def _host_data_metric_rows_with_host_chunk_retry(
   return []
 
 
+# Prefer smaller host__in chunks than jid_table's 64 so ~48-host jobs issue
+# several bounded queries; pairs with metrics_worker_statement_timeout_ms so
+# chunk-on-timeout split can fire before the 900s SIGALRM.
+METRICS_HOST_QUERY_BATCH = 16
+
+
 def _host_data_metric_rows_batched(
     tkw, hosts, typename, events, metric_column, rows_cache=None):
-  """Fetch host_data rows for metrics bucketing; chunk ``host__in`` like jid_table."""
+  """Fetch host_data rows for metrics bucketing; chunk ``host__in`` for bounded SQL."""
   host_list = list(hosts)
   if not host_list:
     return []
@@ -1330,7 +1358,7 @@ def _host_data_metric_rows_batched(
     if cache_key is not None and cache_key in rows_cache:
       return rows_cache[cache_key]
   batch = jid_table._coerce_jid_table_host_query_batch_size(
-      jid_table.JID_TABLE_HOST_QUERY_BATCH)
+      METRICS_HOST_QUERY_BATCH)
   ev = _flatten_event_names_for_host_data_query(events, typ=typename)
   rows = []
   for i in range(0, len(host_list), batch):
@@ -1753,11 +1781,18 @@ class Metrics():
       )
       if cache_key in cache:
         return cache[cache_key]
+    schema = getattr(jt, "schema", None)
+    if not _metric_type_events_feasible(schema, typename, events):
+      if cache is not None:
+        cache[cache_key] = None
+      return None
     tkw = _jid_table_host_data_time_kwargs(base)
     if not tkw:
       return None
     rows = []
     for typ in type_probe_names(typename):
+      if not _metric_type_events_feasible(schema, typ, events):
+        continue
       rows = _host_data_metric_rows_batched(
           tkw, hosts, typ, events, "arc", rows_cache=rows_cache)
       if rows:
@@ -1839,11 +1874,18 @@ class Metrics():
       )
       if cache_key in cache:
         return cache[cache_key]
+    schema = getattr(jt, "schema", None)
+    if not _metric_type_events_feasible(schema, typename, events):
+      if cache is not None:
+        cache[cache_key] = None
+      return None
     tkw = _jid_table_host_data_time_kwargs(base)
     if not tkw:
       return None
     rows = []
     for typ in type_probe_names(typename):
+      if not _metric_type_events_feasible(schema, typ, events):
+        continue
       rows = _host_data_metric_rows_batched(
           tkw, hosts, typ, events, "value", rows_cache=rows_cache)
       if rows:
@@ -1936,8 +1978,13 @@ class Metrics():
       return None
 
     def _sum_arc_events(events):
+      schema = getattr(jt, "schema", None)
+      if not _metric_type_events_feasible(schema, HOST_CPU_TYPE, events):
+        return None
       rows = []
       for typ in type_probe_names(HOST_CPU_TYPE):
+        if not _metric_type_events_feasible(schema, typ, events):
+          continue
         rows = _host_data_metric_rows_batched(
             tkw, hosts, typ, events, "arc", rows_cache=rows_cache)
         if rows:

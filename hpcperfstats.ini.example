@@ -186,8 +186,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Per-job compute wall clock in pool workers; 0 uses metrics_run_stall_timeout_s (default 0).
 # metrics_run_per_job_timeout_s = 0
 
-# statement_timeout ms for metrics pool compute; 0 disables during compute (default 0).
-# metrics_worker_statement_timeout_ms = 0
+# statement_timeout ms for metrics pool compute (default 120000). Arms host__in
+# chunk-on-timeout split; 0 disables session timeout (SIGALRM remains the wall clock).
+# metrics_worker_statement_timeout_ms = 120000
 
 # statement_timeout ms for metrics persistence (default 120000).
 # metrics_persist_statement_timeout_ms = 120000

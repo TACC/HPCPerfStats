@@ -607,7 +607,7 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_run_poll_timeout_s() == 5.0
   assert cfg.get_metrics_run_stall_timeout_s() == 900.0
   assert cfg.get_metrics_run_per_job_timeout_s() == 0.0
-  assert cfg.get_metrics_worker_statement_timeout_ms() == 0
+  assert cfg.get_metrics_worker_statement_timeout_ms() == 120000
   assert cfg.get_metrics_persist_statement_timeout_ms() == 120000
   assert cfg.get_metrics_persist_lock_timeout_ms() == 10000
   assert cfg.get_metrics_prewarm_retry_attempts() == 2

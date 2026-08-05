@@ -259,7 +259,8 @@ INI_OPTION_DEFAULTS = {
     'metrics_run_poll_timeout_s': '5',
     'metrics_run_stall_timeout_s': '900',
     'metrics_run_per_job_timeout_s': '0',
-    'metrics_worker_statement_timeout_ms': '0',
+    # Non-zero arms host__in chunk-on-timeout during compute (0 = disable).
+    'metrics_worker_statement_timeout_ms': '120000',
     'metrics_persist_statement_timeout_ms': '120000',
     'metrics_persist_lock_timeout_ms': '10000',
     'metrics_proxy_reject_jid_batch_size': '48',
@@ -2224,9 +2225,11 @@ def get_metrics_run_per_job_timeout_s():
 def get_metrics_worker_statement_timeout_ms():
   """PostgreSQL ``statement_timeout`` ms for metrics pool compute.
 
-  ``0`` disables the session timeout for the compute window (SIGALRM remains
-  the per-job wall clock). Env ``HPCPERFSTATS_METRICS_WORKER_STATEMENT_TIMEOUT_MS``
-  overrides ``[PIPELINE] metrics_worker_statement_timeout_ms``.
+  Default ``120000`` so ``_host_data_metric_rows_with_host_chunk_retry`` can
+  split large ``host__in`` queries before the per-job SIGALRM. ``0`` disables
+  the session timeout for the compute window (SIGALRM remains the wall clock).
+  Env ``HPCPERFSTATS_METRICS_WORKER_STATEMENT_TIMEOUT_MS`` overrides
+  ``[PIPELINE] metrics_worker_statement_timeout_ms``.
   """
   env = os.environ.get(
       "HPCPERFSTATS_METRICS_WORKER_STATEMENT_TIMEOUT_MS", ""
@@ -2235,12 +2238,12 @@ def get_metrics_worker_statement_timeout_ms():
     try:
       return max(0, int(env))
     except (TypeError, ValueError, OverflowError):
-      return 0
+      return 120000
   _ensure_cfg_loaded()
   try:
     return max(0, int(_pipeline_get("metrics_worker_statement_timeout_ms")))
   except (TypeError, ValueError, OverflowError):
-    return 0
+    return 120000
 
 
 def get_metrics_persist_statement_timeout_ms():

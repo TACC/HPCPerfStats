@@ -13,8 +13,9 @@ When changing `hpcperfstats/analysis/metrics/lib/metrics.py` (`Metrics.run`, `_u
 - **DB errors:** catch `OperationalError` / `DatabaseError` → return `worker_db_error` (skip jid, batch continues).
 - **Compute errors:** catch any other `Exception` from `compute_metrics` → return `worker_compute_error` (skip jid, batch continues). Do not let `ValueError`, `IndexError`, etc. propagate through the pool.
 - **Per-job wall clock:** `_run_compute_metrics_timed` uses `SIGALRM` / `setitimer` with `_resolve_metrics_run_per_job_timeout_s()` (INI `metrics_run_per_job_timeout_s`, env `HPCPERFSTATS_METRICS_RUN_PER_JOB_TIMEOUT_S`; `0` → `metrics_run_stall_timeout_s`). Timeout → `MetricsComputeJobTimeoutError` → `worker_compute_error`.
-- **Worker session `statement_timeout`:** wrap compute in `_pg_session_statement_timeout_for_metrics_worker()` using `[PIPELINE] metrics_worker_statement_timeout_ms` (default **0** = disable for the compute window; env `HPCPERFSTATS_METRICS_WORKER_STATEMENT_TIMEOUT_MS`). Do **not** rely on global `[PORTAL] db_statement_timeout_ms` (often 120s) for multi-host `host_data` compute — that caused `worker_db_error` skips on ~48-host jobs. Restore is best-effort (swallow closed-connection errors).
-- **Metric row fetches:** `_host_data_metric_rows_batched` / `_host_data_metric_rows_with_host_chunk_retry` must split `host__in` on statement timeout (reuse `jid_table._is_statement_timeout_error` pattern) so ≤64-host jobs that fit in one batch can still complete when a non-zero worker timeout is configured.
+- **Worker session `statement_timeout`:** wrap compute in `_pg_session_statement_timeout_for_metrics_worker()` using `[PIPELINE] metrics_worker_statement_timeout_ms` (default **120000**; env `HPCPERFSTATS_METRICS_WORKER_STATEMENT_TIMEOUT_MS`; **`0`** disables for the compute window). Do **not** rely on global `[PORTAL] db_statement_timeout_ms` alone for multi-host `host_data` compute without chunk-on-timeout — naked 120s cancel caused `worker_db_error` skips. Default **0** left workers stuck in `list(qs)` until the 900s SIGALRM (`MetricsComputeJobTimeoutError` in `job_arc` / `_job_arc_avg_flops`). Restore is best-effort (swallow closed-connection errors).
+- **Metric row fetches:** `_host_data_metric_rows_batched` uses **`METRICS_HOST_QUERY_BATCH` (16)** and `_host_data_metric_rows_with_host_chunk_retry` splits further on statement timeout (reuse `jid_table._is_statement_timeout_error`) so ~48-host jobs stay bounded.
+- **Schema-gated simple metrics:** `job_arc` / `job_value_mean` / avg CPU usage host_data probes must call `_metric_type_events_feasible(jt.schema, …)` (SummaryPlot pattern) so cascading `_job_arc_avg_flops` / `_mbw` vendor probes do not scan impossible types.
 - **`DatabaseUnavailableExit`:** still re-raise for shutdown.
 
 ## Numeric edge cases in `compute_metric`
@@ -38,9 +39,9 @@ When changing `hpcperfstats/analysis/metrics/lib/metrics.py` (`Metrics.run`, `_u
 
 ## Tests (same task)
 
-- `hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py` — `_unwrap`, stall partial return, per-job timeout.
+- `hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py` — `_unwrap`, stall partial return, per-job timeout, host-chunk retry, schema-gated `job_arc`, `METRICS_HOST_QUERY_BATCH`.
 - `hpcperfstats/analysis/metrics/tests/test_time_imbalance.py` — O(n) prefix parity vs quadratic reference; large-`nt` wall budget.
-- `hpcperfstats/site/lib/machine/tests/test_metrics.py` — NaN/`_finite_amax` regressions for affected metrics.
+- `hpcperfstats/site/lib/machine/tests/test_metrics.py` — NaN/`_finite_amax` regressions for affected metrics; host batch / schema gate (compose).
 - `hpcperfstats/site/lib/machine/tests/test_update_metrics.py` — stall exit propagation and statement-timeout restore on closed connections.
 - `hpcperfstats/tests/test_dbload/lib/dbload/lib/conf_parser.py` + `test_hpcperfstats_ini_example.py` when adding/changing INI knobs.
 
