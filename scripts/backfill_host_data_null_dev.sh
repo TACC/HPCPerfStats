@@ -39,6 +39,16 @@ psql_cmd() {
   "${COMPOSE[@]}" exec -T db psql -h localhost -U hpcperfstats -v ON_ERROR_STOP=1 -c "$1"
 }
 
+# VACUUM cannot run inside a transaction block. A single -c with "SET; VACUUM"
+# is one implicit transaction — use separate -c so SET applies to the session
+# and VACUUM runs outside a multi-statement txn.
+psql_vacuum_chunk() {
+  local chunk="$1"
+  "${COMPOSE[@]}" exec -T db psql -h localhost -U hpcperfstats -v ON_ERROR_STOP=1 \
+    -c "SET statement_timeout = 0" \
+    -c "VACUUM (ANALYZE) ${chunk};"
+}
+
 # Build AND … NOT IN (…) for chunk names. Sets excl_sql (may be empty).
 build_excl_sql() {
   local c first=1
@@ -163,7 +173,7 @@ vacuum_finished_chunk() {
     return 0
   fi
   echo "  vacuum ${chunk}"
-  if ! psql_cmd "SET statement_timeout = 0; VACUUM (ANALYZE) ${chunk};"; then
+  if ! psql_vacuum_chunk "$chunk"; then
     echo "  warning: VACUUM failed for ${chunk} (continuing)" >&2
     return 0
   fi

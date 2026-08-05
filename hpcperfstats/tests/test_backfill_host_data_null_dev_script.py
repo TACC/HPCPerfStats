@@ -87,7 +87,11 @@ def test_backfill_host_data_null_dev_uses_time_ranges_not_offset_paging():
   assert "OFFSET" not in code_only.upper()
   assert "sleep " not in code_only
   assert "pg_ls_waldir" not in code_only
-  assert "SET statement_timeout = 0; VACUUM" in code_only
+  assert "psql_vacuum_chunk" in code_only
+  # VACUUM must not share a single -c with SET (implicit transaction block).
+  assert "SET statement_timeout = 0; VACUUM" not in code_only
+  assert '-c "SET statement_timeout = 0"' in code_only
+  assert '-c "VACUUM (ANALYZE) ${chunk};"' in code_only
 
 
 @pytest.mark.machine_unit_mock
