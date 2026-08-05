@@ -130,6 +130,41 @@ def test_proxy_entrypoint_writes_csp_only_under_etc_nginx():
   validate_idx = entry.index('validate_csp_include "${CSP_PUB}" "pub"')
   nginx_t_idx = entry.index("nginx -t")
   assert regen_idx < validate_idx < nginx_t_idx
+  # Bokeh style-src 'unsafe-inline' is allowed; script-src 'unsafe-inline' is not.
+  assert 'script-src[^;]*unsafe-inline' in entry
+  assert 'grep -q "unsafe-inline"' not in entry
+  assert "script-src unsafe-inline" in entry
+
+
+def test_proxy_csp_validate_rejects_only_script_src_unsafe_inline(tmp_path):
+  """Regression: style-src 'unsafe-inline' must not fail proxy CSP validation."""
+  import subprocess
+
+  ok = tmp_path / "ok.inc"
+  bad = tmp_path / "bad.inc"
+  ok.write_text(
+      'add_header Content-Security-Policy "style-src \'self\' \'unsafe-inline\'; '
+      "script-src 'self' 'sha256-abc=';\" always;\n",
+      encoding="utf-8",
+  )
+  bad.write_text(
+      'add_header Content-Security-Policy "script-src \'self\' \'unsafe-inline\';" '
+      "always;\n",
+      encoding="utf-8",
+  )
+  # Same predicate as proxy_entrypoint.sh validate_csp_include.
+  ok_proc = subprocess.run(
+      ["grep", "-E", "script-src[^;]*unsafe-inline", str(ok)],
+      check=False,
+      capture_output=True,
+  )
+  bad_proc = subprocess.run(
+      ["grep", "-E", "script-src[^;]*unsafe-inline", str(bad)],
+      check=False,
+      capture_output=True,
+  )
+  assert ok_proc.returncode != 0, "style-only unsafe-inline must pass validation"
+  assert bad_proc.returncode == 0, "script-src unsafe-inline must be detected"
 
 
 def test_package_frontend_static_has_no_nginx_config_files():

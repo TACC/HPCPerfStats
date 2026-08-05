@@ -46,7 +46,7 @@ Remove or never publish under served trees:
 2. **SPA CSP authority is the HTML document:** `copy-next-export` and SPA heal embed a per-document `<meta http-equiv="Content-Security-Policy">` whose script hashes match that file’s inline scripts.
 3. **`/machine/` and `/pub/` nginx locations must not `add_header` a hash CSP** — a stale header intersects with the document policy and blocks Next.js (production forever-load / React #412). Keep edge security headers only.
 4. `copy-next-export.mjs` may still write private artifacts under `hpcperfstats_site/edge_nginx/` (not collected as `/static/`).
-5. **`proxy_entrypoint.sh`** may regenerate private `/etc/nginx/nginx-csp-*.inc` for diagnostics/validation; those files are **not** included by SPA locations.
+5. **`proxy_entrypoint.sh`** may regenerate private `/etc/nginx/nginx-csp-*.inc` for diagnostics/validation; those files are **not** included by SPA locations. Validation must reject **`script-src 'unsafe-inline'`** only — path-justified **`style-src 'unsafe-inline'`** for Bokeh is required and must not crash-loop the proxy.
 6. **`spa_static_root_heal`** purges leaked `*.inc` from `STATIC_ROOT/frontend` and injects CSP meta after verify/heal.
 7. **`/static/`** **404**s denylisted suffixes including `*.inc`.
 

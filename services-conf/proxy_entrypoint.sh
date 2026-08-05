@@ -29,8 +29,10 @@ validate_csp_include() {
     echo "proxy_entrypoint: ${label} CSP include lacks Content-Security-Policy: ${path}" >&2
     return 1
   fi
-  if grep -q "unsafe-inline" "${path}"; then
-    echo "proxy_entrypoint: ${label} CSP include still allows unsafe-inline: ${path}" >&2
+  # Bokeh SPA policies use style-src 'unsafe-inline' (path-justified). Never allow
+  # script-src 'unsafe-inline' — that would undo the hash-based script contract.
+  if grep -E "script-src[^;]*unsafe-inline" "${path}" >/dev/null 2>&1; then
+    echo "proxy_entrypoint: ${label} CSP include allows script-src unsafe-inline: ${path}" >&2
     return 1
   fi
   # Refuse policies that still point browsers at a public static path.
