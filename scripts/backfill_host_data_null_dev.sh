@@ -134,7 +134,7 @@ sample_db_pressure_metrics() {
   row="${row//$'\r'/}"
   row="${row//$'\n'/}"
   if [[ -z "$row" || "$row" != *"|"* ]]; then
-    printf '0|-1|-1\n'
+    printf '%s\n' '0|-1|-1'
     return 0
   fi
   printf '%s\n' "$row"
@@ -146,7 +146,8 @@ sample_disk_avail_bytes() {
   if [[ "$avail" =~ ^[0-9]+$ ]]; then
     printf '%s\n' "$avail"
   else
-    printf '-1\n'
+    # Unknown avail: print sentinel via format+arg (leading '-' is not a printf option).
+    printf '%s\n' '-1'
   fi
 }
 

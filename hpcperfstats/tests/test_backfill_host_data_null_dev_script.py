@@ -124,3 +124,20 @@ def test_null_dev_update_baseline_ewma():
   assert _bash_source_call("null_dev_update_baseline", "0", "1000", "0.2") == "1000"
   out = _bash_source_call("null_dev_update_baseline", "1000", "2000", "0.2")
   assert out == "1200"
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_printf_unknown_metric_sentinel_not_treated_as_option():
+  """Regression: printf '-1\\n' fails on bash (invalid option); use format + arg."""
+  text = SCRIPT.read_text(encoding="utf-8")
+  code_only = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+  assert "printf '-1" not in code_only
+  assert "printf '%s\\n' '-1'" in code_only
+  completed = subprocess.run(
+      ["bash", "-c", "printf '%s\\n' '-1'"],
+      check=False,
+      capture_output=True,
+      text=True,
+  )
+  assert completed.returncode == 0
+  assert completed.stdout.strip() == "-1"
