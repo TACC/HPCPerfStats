@@ -476,6 +476,137 @@ def test_jid_table_get_aggregate_df_reraises_compute_timeout():
   assert calls == [1], "pandas fallback must not run after the alarm fires"
 
 
+def test_jid_table_get_aggregate_df_sql_timeout_splits_not_pandas_fallback():
+  """PG statement timeout on SQL SUM must host-split; skip raw-row fallback."""
+  inst = jid_table.__new__(jid_table)
+  inst.jid = "jid-agg-pg-timeout"
+  inst._large_job_plot_cache_token = "full"
+  hosts = [f"n{i}.example.com" for i in range(8)]
+  inst._base_filter = {
+      "host__in": hosts,
+      "time__gte": datetime(2024, 6, 1, tzinfo=timezone.utc),
+      "time__lte": datetime(2024, 6, 2, tzinfo=timezone.utc),
+  }
+  pandas_calls = []
+  retry_calls = []
+
+  def fake_pandas(*_a, **_k):
+    pandas_calls.append(1)
+    raise AssertionError("pandas fallback must not run when split succeeds")
+
+  def retry_with_split(host_chunk, build_qs, **kwargs):
+    hosts_list = [str(h) for h in host_chunk if h]
+    retry_calls.append(len(hosts_list))
+    if len(hosts_list) > 4:
+      mid = max(1, len(hosts_list) // 2)
+      left = retry_with_split(hosts_list[:mid], build_qs, **kwargs)
+      right = retry_with_split(hosts_list[mid:], build_qs, **kwargs)
+      return pd.concat([left, right], ignore_index=True)
+    return pd.DataFrame(
+        {
+            "host": [hosts_list[0]],
+            "time": [datetime(2024, 6, 1, 12, tzinfo=timezone.utc)],
+            "sum_val": [1.0],
+        }
+    )
+
+  with patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table."
+      "_queryset_to_dataframe_with_host_chunk_retry",
+      retry_with_split,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table."
+      "_fetch_host_data_values_frames",
+      fake_pandas,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
+      lambda _key, _timeout, query_fn: query_fn(),
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table."
+      "host_data_sum_val_per_sample_queryset",
+      lambda qs, _col: qs,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table."
+      "host_data_restore_time_column",
+      lambda df: df,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data",
+  ) as mock_hd:
+    mock_hd.objects.filter.return_value.filter.return_value = (
+        mock_hd.objects.filter.return_value
+    )
+    out = jid_table.get_aggregate_df(inst, "nvidia_gpu", "arc", ["gpu_util"])
+
+  assert pandas_calls == []
+  assert retry_calls, "expected host-chunk retry to run"
+  assert not out.empty
+  assert "sum_val" in out.columns
+
+
+def test_jid_table_get_aggregate_df_pandas_fallback_uses_fetch_frames():
+  """When SQL path fails hard, pandas fallback must use chunked fetch frames."""
+  inst = jid_table.__new__(jid_table)
+  inst.jid = "jid-agg-pandas-fallback"
+  inst._large_job_plot_cache_token = "full"
+  inst._base_filter = {
+      "host__in": ["n1.example.com", "n2.example.com"],
+      "time__gte": datetime(2024, 6, 1, tzinfo=timezone.utc),
+      "time__lte": datetime(2024, 6, 2, tzinfo=timezone.utc),
+  }
+  fetch_batches = []
+
+  def fail_sql(_host_chunk, _build_qs, **_kwargs):
+    raise OperationalError("canceling statement due to statement timeout")
+
+  def fake_fetch(host_list, build_qs, batch_size=None):
+    fetch_batches.append(batch_size)
+    rows = []
+    for h in host_list:
+      # Drive build_qs so DCGM/filter wiring still runs.
+      _ = build_qs([h])
+      rows.append(
+          {
+              "host": h,
+              "time": datetime(2024, 6, 1, 12, tzinfo=timezone.utc),
+              "arc": 2.0,
+          }
+      )
+    return pd.DataFrame(rows)
+
+  with patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table."
+      "_queryset_to_dataframe_with_host_chunk_retry",
+      fail_sql,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table."
+      "_fetch_host_data_values_frames",
+      fake_fetch,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
+      lambda _key, _timeout, query_fn: query_fn(),
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table."
+      "host_data_sum_val_per_sample_queryset",
+      lambda qs, _col: qs,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data",
+  ) as mock_hd:
+    mock_hd.objects.filter.return_value = mock_hd.objects.filter.return_value
+    mock_hd.objects.filter.return_value.filter.return_value = (
+        mock_hd.objects.filter.return_value
+    )
+    mock_hd.objects.filter.return_value.values.return_value = []
+    out = jid_table.get_aggregate_df(inst, "nvidia_gpu", "arc", ["gpu_util"])
+
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      TYPE_DETAIL_HOST_QUERY_BATCH,
+  )
+
+  assert fetch_batches == [TYPE_DETAIL_HOST_QUERY_BATCH]
+  assert not out.empty
+  assert set(out["sum_val"].tolist()) == {2.0}
+
+
 def test_type_detail_get_aggregate_df_reraises_compute_timeout():
   """TypeDetailDataProvider must not swallow the metrics wall-clock alarm either."""
   from hpcperfstats.analysis.metrics.lib.metrics import MetricsComputeJobTimeoutError

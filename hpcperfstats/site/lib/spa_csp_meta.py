@@ -134,6 +134,7 @@ def build_csp_policy(
     style_hashes: list[str] | None = None,
     style_attr_hashes: list[str] | None = None,
     allow_unsafe_eval: bool = False,
+    allow_bokeh_style_inline: bool = False,
 ) -> str:
   """
   Build a Content-Security-Policy header/meta value (no nginx wrapper).
@@ -143,6 +144,9 @@ def build_csp_policy(
     style_hashes (list[str] | None): Quoted hashes for ``<style>`` bodies.
     style_attr_hashes (list[str] | None): Quoted hashes for ``style="…"`` attrs.
     allow_unsafe_eval (bool): When True, append ``'unsafe-eval'`` (machine/Bokeh).
+    allow_bokeh_style_inline (bool): When True, use ``style-src 'self'
+      'unsafe-inline'`` and omit style hashes (CSP3 ignores ``unsafe-inline``
+      when hashes are present). Required for BokehJS runtime ``<style>`` tags.
 
   Returns:
     str: CSP policy string.
@@ -150,13 +154,19 @@ def build_csp_policy(
   Examples:
     >>> "unsafe-eval" in build_csp_policy(allow_unsafe_eval=True)
     True
+    >>> "unsafe-inline" in build_csp_policy(allow_bokeh_style_inline=True)
+    True
   """
   scripts = ["'self'", *(script_hashes or [])]
   if allow_unsafe_eval:
     scripts.append("'unsafe-eval'")
-  styles = ["'self'", *(style_hashes or [])]
-  if style_attr_hashes:
-    styles.extend(["'unsafe-hashes'", *style_attr_hashes])
+  if allow_bokeh_style_inline:
+    # CSP3: style hashes disable 'unsafe-inline'; omit them for Bokeh embeds.
+    styles = ["'self'", "'unsafe-inline'"]
+  else:
+    styles = ["'self'", *(style_hashes or [])]
+    if style_attr_hashes:
+      styles.extend(["'unsafe-hashes'", *style_attr_hashes])
   return "; ".join(
       [
           "default-src 'self'",
@@ -181,6 +191,7 @@ def build_nginx_csp_include(
     style_hashes: list[str] | None = None,
     style_attr_hashes: list[str] | None = None,
     allow_unsafe_eval: bool = False,
+    allow_bokeh_style_inline: bool = False,
 ) -> str:
   """
   Render an nginx ``add_header Content-Security-Policy …`` include body.
@@ -190,6 +201,8 @@ def build_nginx_csp_include(
     style_hashes (list[str] | None): Quoted hashes for ``<style>`` bodies.
     style_attr_hashes (list[str] | None): Quoted hashes for ``style="…"`` attrs.
     allow_unsafe_eval (bool): When True, append ``'unsafe-eval'`` (machine/Bokeh).
+    allow_bokeh_style_inline (bool): When True, Bokeh-safe ``style-src`` without
+      style hashes (see ``build_csp_policy``).
 
   Returns:
     str: Include file text ending with a newline.
@@ -203,6 +216,7 @@ def build_nginx_csp_include(
       style_hashes=style_hashes,
       style_attr_hashes=style_attr_hashes,
       allow_unsafe_eval=allow_unsafe_eval,
+      allow_bokeh_style_inline=allow_bokeh_style_inline,
   )
   return f'add_header Content-Security-Policy "{policy}" always;\n'
 
@@ -238,9 +252,11 @@ def inject_csp_meta_into_frontend_tree(frontend_root: Path) -> int:
   """
   Embed per-document CSP meta into every SPA HTML file under ``frontend_root``.
 
-  Machine-tree pages allow Bokeh ``unsafe-eval``; other paths do not. Policy
-  hashes match that file's inline scripts so SPA heal cannot leave a stale
-  nginx header blocking the page.
+  Machine-tree pages allow Bokeh ``unsafe-eval``; other paths do not.
+  Machine and pub trees allow ``style-src 'unsafe-inline'`` for BokehJS
+  runtime ``<style>`` injection (script hashes remain). Policy script hashes
+  match that file's inline scripts so SPA heal cannot leave a stale nginx
+  header blocking the page.
 
   Args:
     frontend_root (Path): Public SPA export root (``STATIC_ROOT/frontend``).
@@ -264,7 +280,12 @@ def inject_csp_meta_into_frontend_tree(frontend_root: Path) -> int:
     except ValueError:
       rel = path.name
     allow_eval = rel == "machine" or rel.startswith("machine/")
-    policy = build_csp_policy(**hashes, allow_unsafe_eval=allow_eval)
+    allow_bokeh_style = allow_eval or rel == "pub" or rel.startswith("pub/")
+    policy = build_csp_policy(
+        **hashes,
+        allow_unsafe_eval=allow_eval,
+        allow_bokeh_style_inline=allow_bokeh_style,
+    )
     next_html = inject_csp_meta_into_html(without_meta, policy)
     if next_html != raw:
       path.write_text(next_html, encoding="utf-8")
@@ -306,11 +327,19 @@ def write_spa_csp_includes(
   machine_out = out_dir / "nginx-csp-machine.inc"
   pub_out = out_dir / "nginx-csp-pub.inc"
   machine_out.write_text(
-      build_nginx_csp_include(**machine_hashes, allow_unsafe_eval=True),
+      build_nginx_csp_include(
+          **machine_hashes,
+          allow_unsafe_eval=True,
+          allow_bokeh_style_inline=True,
+      ),
       encoding="utf-8",
   )
   pub_out.write_text(
-      build_nginx_csp_include(**pub_hashes, allow_unsafe_eval=False),
+      build_nginx_csp_include(
+          **pub_hashes,
+          allow_unsafe_eval=False,
+          allow_bokeh_style_inline=True,
+      ),
       encoding="utf-8",
   )
   return machine_out, pub_out

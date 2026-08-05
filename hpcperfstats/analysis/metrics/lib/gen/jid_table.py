@@ -2007,13 +2007,17 @@ class jid_table:
 
     def _fn_pandas_groupby() -> Any:
       """
-      Internal helper to handle function pandas groupby.
-      
+      Aggregate via raw host_data rows when SQL SUM is unavailable.
+
+      Uses host-chunk timeout split/retry (same contract as TypeDetail).
+
       Returns:
-        Any: Value produced by this call (type depends on inputs).
-      
+        Any: DataFrame with host, time, sum_val columns (possibly empty).
+
       Examples:
-        >>> jid_table()._fn_pandas_groupby()  # doctest: +SKIP
+        >>> # Called from get_aggregate_df fallback after SQL failure
+        >>> True
+        True
       """
       hosts = [str(h) for h in self._base_filter.get("host__in") or []]
       import pandas as pd
@@ -2022,27 +2026,47 @@ class jid_table:
         return pd.DataFrame(columns=["host", "time", "sum_val"])
 
       tkw = self._host_data_time_filter_kwargs()
+      host_batch = (
+          TYPE_DETAIL_HOST_QUERY_BATCH
+          if reject_dcgm_blank
+          else JID_TABLE_HOST_QUERY_BATCH
+      )
       frames = []
-      for host_chunk in _iter_acct_host_batches(hosts):
-        df_raw = None
-        for candidate_typ in type_probe_names(typ):
+      for candidate_typ in type_probe_names(typ):
+        def build_qs_raw(
+          host_chunk: Any,
+          ct: Any = candidate_typ,
+        ) -> Any:
+          """
+          Build raw-row values queryset for one host sub-chunk.
+
+          Args:
+            host_chunk (Any): Hostnames for this ``host__in`` slice.
+            ct (Any): Candidate ``host_data.type`` string.
+
+          Returns:
+            Any: Django values queryset (host, time, val_col).
+
+          Examples:
+            >>> # Wired into _fetch_host_data_values_frames
+            >>> True
+            True
+          """
           qs = host_data.objects.filter(
               host__in=host_chunk,
               **tkw,
-              type=candidate_typ,
+              type=ct,
               event__in=probed_events,
           )
           if reject_dcgm_blank and val_col in ("value", "delta", "arc"):
             qs = qs.filter(**{f"{val_col}__lt": DCGM_FP64_BLANK})
-          qs = qs.values("host", "time", val_col)
-          df_raw = queryset_to_dataframe(qs)
-          if (
-              not df_raw.empty
-              and "host" in df_raw.columns
-              and "time" in df_raw.columns
-              and val_col in df_raw.columns
-          ):
-            break
+          return qs.values("host", "time", val_col)
+
+        df_raw = _fetch_host_data_values_frames(
+            hosts,
+            build_qs_raw,
+            batch_size=host_batch,
+        )
         if (
             df_raw is None
             or df_raw.empty
@@ -2057,6 +2081,7 @@ class jid_table:
             .rename(columns={val_col: "sum_val"})
         )
         frames.append(df_grouped)
+        break
       if not frames:
         return pd.DataFrame(columns=["host", "time", "sum_val"])
       df_all = pd.concat(frames, ignore_index=True)
@@ -2070,16 +2095,20 @@ class jid_table:
 
     def _fn() -> Any:
       """
-      Internal helper to handle function.
-      
+      Prefer SQL SUM per sample; fall back to raw-row groupby on failure.
+
+      Host chunks use timeout split/retry; GPU types use a smaller batch.
+
       Returns:
-        Any: Value produced by this call (type depends on inputs).
-      
+        Any: DataFrame with host, time, sum_val columns (possibly empty).
+
       Raises:
-        Exception: Raised when ``_fn`` hits a ``Exception`` failure path.
-      
+        Exception: Control-flow timeouts (SIGALRM) are re-raised.
+
       Examples:
-        >>> jid_table()._fn()  # doctest: +SKIP
+        >>> # Invoked via cached_orm inside get_aggregate_df
+        >>> True
+        True
       """
       import pandas as pd
 
@@ -2091,22 +2120,53 @@ class jid_table:
       if val_col not in _ALLOWED:
         return _fn_pandas_groupby()
 
+      host_batch = (
+          TYPE_DETAIL_HOST_QUERY_BATCH
+          if reject_dcgm_blank
+          else JID_TABLE_HOST_QUERY_BATCH
+      )
+
       try:
         tkw = self._host_data_time_filter_kwargs()
         frames = []
-        for host_chunk in _iter_acct_host_batches(hosts):
+        for host_chunk in _iter_acct_host_batches(hosts, host_batch):
           chunk_frames = []
           for candidate_typ in type_probe_names(typ):
-            qs_base = host_data.objects.filter(
-                host__in=host_chunk,
-                **tkw,
-                type=candidate_typ,
-                event__in=probed_events,
+            def build_qs_sql(
+              host_subchunk: Any,
+              ct: Any = candidate_typ,
+            ) -> Any:
+              """
+              Build SQL SUM-per-sample queryset for one host sub-chunk.
+
+              Args:
+                host_subchunk (Any): Hostnames for this ``host__in`` slice.
+                ct (Any): Candidate ``host_data.type`` string.
+
+              Returns:
+                Any: Aggregated Django queryset (host, sample_time, sum_val).
+
+              Examples:
+                >>> # Wired into _queryset_to_dataframe_with_host_chunk_retry
+                >>> True
+                True
+              """
+              qs_base = host_data.objects.filter(
+                  host__in=host_subchunk,
+                  **tkw,
+                  type=ct,
+                  event__in=probed_events,
+              )
+              if reject_dcgm_blank:
+                qs_base = qs_base.filter(**{f"{val_col}__lt": DCGM_FP64_BLANK})
+              return host_data_sum_val_per_sample_queryset(qs_base, val_col)
+
+            df_chunk = host_data_restore_time_column(
+                _queryset_to_dataframe_with_host_chunk_retry(
+                    host_chunk,
+                    build_qs_sql,
+                )
             )
-            if reject_dcgm_blank:
-              qs_base = qs_base.filter(**{f"{val_col}__lt": DCGM_FP64_BLANK})
-            qs_sql = host_data_sum_val_per_sample_queryset(qs_base, val_col)
-            df_chunk = host_data_restore_time_column(queryset_to_dataframe(qs_sql))
             if not df_chunk.empty and "sum_val" in df_chunk.columns:
               chunk_frames.append(df_chunk)
               break

@@ -56,6 +56,7 @@ alwaysApply: false
 - **Unmount:** abort pending embed pipelines on route/view unmount (`AbortController` + early return in lock callback) so list→detail navigation does not wait behind stale embeds.
 - **Progressive Job Detail merge:** When `job_plots?progressive=1` returns `partial`, never flip a completed plot kind (`summary_plot` / `roofline` / `gpu_roofline`) back to loading solely because that kind’s item field is omitted. Cap progressive SPA polls; fail closed with Retry.
 - **Pub vs Job List hist:** Stabilizing Job List distribution embeds does **not** automatically fix `/pub/cluster-dashboard/` expansion histograms — those use `usePubExpansionPeriod` + `LazyExpansionHistogram` (`previewMode` + fingerprint-stable `initialBlock`).
+- **Aggregate host-chunk timeout:** Summary/roofline builders call `jid_table.get_aggregate_df`. That path must split/retry on PostgreSQL statement timeout (TypeDetail twin) and use a smaller GPU host batch — see **`update-metrics-batch-resilience.mdc`**. SPA progressive merge does not fix a stuck backend aggregate.
 
 ## Overlap
 

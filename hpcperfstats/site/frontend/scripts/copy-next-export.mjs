@@ -114,6 +114,7 @@ export function collectInlineCspHashes(rootDir) {
  *   styleHashes?: string[],
  *   styleAttrHashes?: string[],
  *   allowUnsafeEval?: boolean,
+ *   allowBokehStyleInline?: boolean,
  * }} options
  * @returns {string}
  */
@@ -122,14 +123,22 @@ export function buildCspPolicy({
   styleHashes = [],
   styleAttrHashes = [],
   allowUnsafeEval = false,
+  allowBokehStyleInline = false,
 } = {}) {
   const scriptParts = ["'self'", ...scriptHashes];
   if (allowUnsafeEval) {
     scriptParts.push("'unsafe-eval'");
   }
-  const styleParts = ["'self'", ...styleHashes];
-  if (styleAttrHashes.length) {
-    styleParts.push("'unsafe-hashes'", ...styleAttrHashes);
+  /** @type {string[]} */
+  let styleParts;
+  if (allowBokehStyleInline) {
+    // CSP3: style hashes disable 'unsafe-inline'; omit them for Bokeh embeds.
+    styleParts = ["'self'", "'unsafe-inline'"];
+  } else {
+    styleParts = ["'self'", ...styleHashes];
+    if (styleAttrHashes.length) {
+      styleParts.push("'unsafe-hashes'", ...styleAttrHashes);
+    }
   }
   return [
     "default-src 'self'",
@@ -153,6 +162,7 @@ export function buildCspPolicy({
  *   styleHashes?: string[],
  *   styleAttrHashes?: string[],
  *   allowUnsafeEval?: boolean,
+ *   allowBokehStyleInline?: boolean,
  * }} options
  * @returns {string}
  */
@@ -207,7 +217,13 @@ export function injectCspMetaIntoFrontendTree(frontendRoot) {
       const hashes = extractInlineCspHashesFromHtml(withoutMeta);
       const rel = path.relative(frontendRoot, full).split(path.sep).join("/");
       const allowUnsafeEval = rel === "machine" || rel.startsWith("machine/");
-      const policy = buildCspPolicy({ ...hashes, allowUnsafeEval });
+      const allowBokehStyleInline =
+        allowUnsafeEval || rel === "pub" || rel.startsWith("pub/");
+      const policy = buildCspPolicy({
+        ...hashes,
+        allowUnsafeEval,
+        allowBokehStyleInline,
+      });
       const next = injectCspMetaIntoHtml(withoutMeta, policy);
       if (next !== raw) {
         fs.writeFileSync(full, next, "utf8");
@@ -228,12 +244,20 @@ export function writeNginxCspIncludes(htmlRoot, outDir = htmlRoot) {
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(
     path.join(outDir, "nginx-csp-machine.inc"),
-    buildNginxCspInclude({ ...machineHashes, allowUnsafeEval: true }),
+    buildNginxCspInclude({
+      ...machineHashes,
+      allowUnsafeEval: true,
+      allowBokehStyleInline: true,
+    }),
     "utf8",
   );
   fs.writeFileSync(
     path.join(outDir, "nginx-csp-pub.inc"),
-    buildNginxCspInclude({ ...pubHashes, allowUnsafeEval: false }),
+    buildNginxCspInclude({
+      ...pubHashes,
+      allowUnsafeEval: false,
+      allowBokehStyleInline: true,
+    }),
     "utf8",
   );
 }

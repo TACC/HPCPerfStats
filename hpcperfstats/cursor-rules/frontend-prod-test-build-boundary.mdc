@@ -48,7 +48,7 @@ After copying `out/` → `hpcperfstats_site/static/frontend/`, `copy-next-export
 - `nginx-csp-machine.inc` — hash-based CSP + justified Bokeh `unsafe-eval`
 - `nginx-csp-pub.inc` — hash-based CSP without `unsafe-eval`
 
-Neither include may contain `unsafe-inline`. **Document CSP (required):** `copy-next-export` / SPA heal embed `<meta http-equiv="Content-Security-Policy">` per HTML file. Private `edge_nginx/` artifacts are optional. Nginx SPA locations must **not** send a hash CSP `add_header` (**`frontend-static-prod-serve-only.mdc`**). Extend `copy-next-export.production.test.ts` whenever hash extraction or include naming changes.
+Neither include may contain **`script-src 'unsafe-inline'`**. Machine/pub includes **do** use path-justified **`style-src 'self' 'unsafe-inline'`** for BokehJS runtime styles (omit style hashes when that flag is on — CSP3). Machine may retain Bokeh `unsafe-eval` on script-src; pub must not. **Document CSP (required):** `copy-next-export` / SPA heal embed `<meta http-equiv="Content-Security-Policy">` per HTML file. Private `edge_nginx/` artifacts are optional. Nginx SPA locations must **not** send a hash CSP `add_header` (**`frontend-static-prod-serve-only.mdc`**). Extend `copy-next-export.production.test.ts` whenever hash extraction, Bokeh style-inline flag, or include naming changes.
 
 ## `frontend/test/` layout
 

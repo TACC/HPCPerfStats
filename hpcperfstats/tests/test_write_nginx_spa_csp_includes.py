@@ -38,6 +38,30 @@ def test_inject_csp_meta_covers_inline_script_hash(tmp_path: Path):
   assert "http-equiv=\"Content-Security-Policy\"" in html
   assert sha256_csp_hash(body) in html
   assert "unsafe-eval" in html
+  assert "style-src 'self' 'unsafe-inline'" in html
+  assert "unsafe-inline" not in html.split("script-src")[1].split(";")[0]
+  pub_html = (pub / "index.html").read_text(encoding="utf-8")
+  assert "style-src 'self' 'unsafe-inline'" in pub_html
+  assert "unsafe-eval" not in pub_html
+
+
+def test_build_csp_policy_bokeh_style_inline_omits_style_hashes():
+  from hpcperfstats.site.lib.spa_csp_meta import build_csp_policy
+
+  policy = build_csp_policy(
+      script_hashes=["'sha256-abc='"],
+      style_hashes=["'sha256-style='"],
+      style_attr_hashes=["'sha256-attr='"],
+      allow_unsafe_eval=True,
+      allow_bokeh_style_inline=True,
+  )
+  assert "style-src 'self' 'unsafe-inline'" in policy
+  assert "'sha256-style='" not in policy
+  assert "'unsafe-hashes'" not in policy
+  assert "'sha256-abc='" in policy
+  assert "unsafe-eval" in policy
+  script_src = policy.split("script-src ")[1].split(";")[0]
+  assert "unsafe-inline" not in script_src
 
 
 def test_write_spa_csp_includes_writes_only_to_out_dir(tmp_path: Path):
@@ -59,7 +83,14 @@ def test_write_spa_csp_includes_writes_only_to_out_dir(tmp_path: Path):
   machine_out, pub_out = write_spa_csp_includes(frontend, out_dir)
   assert machine_out.parent == out_dir
   assert not (frontend / "nginx-csp-machine.inc").exists()
-  assert sha256_csp_hash(script_body) in machine_out.read_text(encoding="utf-8")
+  machine_text = machine_out.read_text(encoding="utf-8")
+  pub_text = pub_out.read_text(encoding="utf-8")
+  assert sha256_csp_hash(script_body) in machine_text
+  assert "style-src 'self' 'unsafe-inline'" in machine_text
+  assert "style-src 'self' 'unsafe-inline'" in pub_text
+  assert "unsafe-eval" in machine_text
+  assert "unsafe-eval" not in pub_text
+  assert "'unsafe-hashes'" not in machine_text
 
 
 def test_inject_replaces_prior_meta():
