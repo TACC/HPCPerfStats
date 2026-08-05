@@ -25,6 +25,7 @@ RUN mkdir -p /usr/local/lib/hpcperfstats-proxy /etc/nginx
 COPY services-conf/parse_hpcperfstats_proxy_hosts.py \
     services-conf/write_nginx_proxy_allowed_hosts_include.py \
     services-conf/write_nginx_resolver_include.py \
+    services-conf/write_nginx_spa_csp_includes.py \
     /usr/local/lib/hpcperfstats-proxy/
 
 COPY services-conf/proxy_entrypoint.sh /usr/local/bin/proxy_entrypoint.sh
@@ -33,6 +34,7 @@ ENV PYTHONPATH=/usr/local/lib/hpcperfstats-proxy
 
 RUN chmod 755 /usr/local/lib/hpcperfstats-proxy/write_nginx_proxy_allowed_hosts_include.py \
     /usr/local/lib/hpcperfstats-proxy/write_nginx_resolver_include.py \
+    /usr/local/lib/hpcperfstats-proxy/write_nginx_spa_csp_includes.py \
     /usr/local/bin/proxy_entrypoint.sh
 
 WORKDIR /build

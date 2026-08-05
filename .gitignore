@@ -21,6 +21,7 @@ services-conf/supervisord.conf
 services-conf/nginx.conf
 services-conf/rsync_data.sh
 dist/
+hpcperfstats/site/hpcperfstats_site/edge_nginx/
 rabbitmq-c/
 tacc_stats.egg-info/
 *.pyc

@@ -48,7 +48,7 @@ After copying `out/` → `hpcperfstats_site/static/frontend/`, `copy-next-export
 - `nginx-csp-machine.inc` — hash-based CSP + justified Bokeh `unsafe-eval`
 - `nginx-csp-pub.inc` — hash-based CSP without `unsafe-eval`
 
-Neither include may contain `unsafe-inline`. These are **handoff-only** files for the proxy: **`proxy_entrypoint.sh`** installs them under `/etc/nginx/` and strips non-web leftovers from the public tree before nginx starts (**`frontend-static-prod-serve-only.mdc`**). Extend `copy-next-export.production.test.ts` whenever hash extraction or include naming changes.
+Neither include may contain `unsafe-inline`. Build artifacts go under private `hpcperfstats_site/edge_nginx/` (**not** `static/frontend`). At runtime **`proxy_entrypoint.sh`** regenerates includes into **`/etc/nginx/`** only from on-volume HTML (**`frontend-static-prod-serve-only.mdc`**). HTTP GETs for `*.inc` under `/static/` remain 404. Extend `copy-next-export.production.test.ts` whenever hash extraction or include naming changes.
 
 ## `frontend/test/` layout
 

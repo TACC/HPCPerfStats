@@ -11,6 +11,7 @@ from hpcperfstats.site.lib.spa_static_root_heal import (
   ensure_spa_shells_in_static_root,
   missing_required_shells,
   package_has_required_shells,
+  purge_nginx_config_from_public_frontend,
   resolve_package_frontend_dir,
   spa_shell_fingerprint,
 )
@@ -154,3 +155,32 @@ def test_package_has_required_shells_and_resolve(tmp_path: Path):
     settings_dir=tmp_path,
   )
   assert resolved == frontend
+
+
+def test_purge_nginx_config_from_public_frontend_removes_inc(tmp_path: Path):
+  frontend = tmp_path / "frontend"
+  _write(frontend / "machine" / "index.html", "ok")
+  _write(frontend / "nginx-csp-machine.inc", "add_header Content-Security-Policy \"x\";\n")
+  _write(frontend / "notes.md", "# no")
+  removed = purge_nginx_config_from_public_frontend(frontend)
+  assert "nginx-csp-machine.inc" in removed
+  assert "notes.md" in removed
+  assert not (frontend / "nginx-csp-machine.inc").exists()
+  assert (frontend / "machine" / "index.html").is_file()
+
+
+def test_ensure_spa_shells_purges_leaked_nginx_inc(
+  tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+  package = tmp_path / "pkg" / "frontend"
+  _write(package / "machine" / "index.html", "same")
+  _write(package / "pub" / "index.html", "same")
+  static_root = tmp_path / "staticfiles"
+  volume = static_root / "frontend"
+  _write(volume / "machine" / "index.html", "same")
+  _write(volume / "pub" / "index.html", "same")
+  _write(volume / "nginx-csp-pub.inc", "leak")
+
+  ensure_spa_shells_in_static_root(static_root=static_root, package_frontend=package)
+  assert not (volume / "nginx-csp-pub.inc").exists()
+  assert "Purged non-web leftovers" in capsys.readouterr().out

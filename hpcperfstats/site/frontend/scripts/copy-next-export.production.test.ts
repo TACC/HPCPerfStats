@@ -94,14 +94,24 @@ describe("copy-next-export production mode", () => {
       `<html><body><script>${scriptBody}</script></body></html>`,
     );
 
-    runCopyNextExport({ out: outDir, target: targetDir, productionStatic: true });
+    runCopyNextExport({
+      out: outDir,
+      target: targetDir,
+      productionStatic: true,
+      edgeNginxDir: path.join(tmpRoot, "edge_nginx"),
+    });
+
+    expect(fs.existsSync(path.join(targetDir, "nginx-csp-machine.inc"))).toBe(false);
+    expect(fs.existsSync(path.join(targetDir, "nginx-csp-pub.inc"))).toBe(false);
 
     const machineInc = fs.readFileSync(
-      path.join(targetDir, "nginx-csp-machine.inc"),
+      path.join(tmpRoot, "edge_nginx", "nginx-csp-machine.inc"),
       "utf8",
     );
-    const pubInc = fs.readFileSync(path.join(targetDir, "nginx-csp-pub.inc"), "utf8");
-    expect(machineInc).toContain("Content-Security-Policy");
+    const pubInc = fs.readFileSync(
+      path.join(tmpRoot, "edge_nginx", "nginx-csp-pub.inc"),
+      "utf8",
+    );    expect(machineInc).toContain("Content-Security-Policy");
     expect(machineInc).not.toContain("unsafe-inline");
     expect(machineInc).toContain("unsafe-eval");
     expect(pubInc).not.toContain("unsafe-inline");

@@ -42,10 +42,12 @@ Remove or never publish under served trees:
 
 ## Runtime contract (proxy)
 
-1. `copy-next-export.mjs` may write **handoff-only** files (today: `nginx-csp-machine.inc` / `nginx-csp-pub.inc`) onto the shared volume so the proxy can read hashes.
-2. **`proxy_entrypoint.sh`** must **install** those policies under `/etc/nginx/`, then **delete** non-web leftovers from `/srv/static/frontend` (at least all `*.inc`, plus other denylisted suffixes) **before** `nginx -t` / `exec nginx`.
-3. **`nginx-static-files.conf`** must **404** HTTP GETs for denylisted suffixes under `/static/` (defense in depth if `collectstatic` / SPA heal reintroduces handoff files after proxy start).
-4. Nginx **`include`** for SPA CSP must reference **`/etc/nginx/nginx-csp-*.inc`**, never `/srv/static/frontend/…`.
+1. **Never** place nginx config (`nginx-csp-*.inc`, any `*.inc`) under `/srv/static` / `STATIC_ROOT` / package `static/frontend`.
+2. `copy-next-export.mjs` may write CSP artifacts under private `hpcperfstats_site/edge_nginx/` (not collected as `/static/`).
+3. **`proxy_entrypoint.sh`** reads SPA HTML from the **read-only** volume and writes `nginx-csp-*.inc` **only** to `/etc/nginx/` (`write_nginx_spa_csp_includes.py --out-dir`), then `nginx -t`.
+4. **`nginx-static-files.conf`** `include`s `/etc/nginx/nginx-csp-*.inc` and **404**s HTTP GETs for denylisted suffixes under `/static/` (including `*.inc`).
+5. **`spa_static_root_heal`** purges `*.inc` (and other denylisted leftovers) from `STATIC_ROOT/frontend` after verify/heal so collectstatic cannot leave config on the public tree.
+6. After SPA heal/rebuild, **restart `proxy`** so `/etc/nginx` CSP hashes match the new HTML.
 
 ## Agent checklist (same task)
 

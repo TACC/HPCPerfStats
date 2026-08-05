@@ -149,21 +149,28 @@ export function buildNginxCspInclude({
 }
 
 /**
- * @param {string} target
+ * @param {string} htmlRoot Directory containing machine/ and pub/ HTML trees
+ * @param {string} outDir Private directory for nginx-csp-*.inc (NOT under static/)
  */
-export function writeNginxCspIncludes(target) {
-  const machineHashes = collectInlineCspHashes(path.join(target, "machine"));
-  const pubHashes = collectInlineCspHashes(path.join(target, "pub"));
+export function writeNginxCspIncludes(htmlRoot, outDir = htmlRoot) {
+  const machineHashes = collectInlineCspHashes(path.join(htmlRoot, "machine"));
+  const pubHashes = collectInlineCspHashes(path.join(htmlRoot, "pub"));
+  fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(
-    path.join(target, "nginx-csp-machine.inc"),
+    path.join(outDir, "nginx-csp-machine.inc"),
     buildNginxCspInclude({ ...machineHashes, allowUnsafeEval: true }),
     "utf8",
   );
   fs.writeFileSync(
-    path.join(target, "nginx-csp-pub.inc"),
+    path.join(outDir, "nginx-csp-pub.inc"),
     buildNginxCspInclude({ ...pubHashes, allowUnsafeEval: false }),
     "utf8",
   );
+}
+
+/** Private CSP artifact dir beside Django static/ — never under STATIC_URL. */
+export function defaultEdgeNginxCspDir(staticFrontendTarget = targetDir) {
+  return path.resolve(staticFrontendTarget, "..", "..", "edge_nginx");
 }
 
 export function isProductionStaticCopy(argv = process.argv, env = process.env) {
@@ -193,6 +200,7 @@ export function runCopyNextExport({
   out = outDir,
   target = targetDir,
   productionStatic = isProductionStaticCopy(),
+  edgeNginxDir = defaultEdgeNginxCspDir(target),
 } = {}) {
   if (!fs.existsSync(out)) {
     throw new Error("copy-next-export: run `next build` first — out/ not found");
@@ -202,8 +210,21 @@ export function runCopyNextExport({
   }
   const skipped = productionStatic ? [...PRODUCTION_EXCLUDED_EXPORT_DIRS] : [];
   copyRecursive(out, target, { productionStatic });
-  writeNginxCspIncludes(target);
-  return { out, target, mode: productionStatic ? "production" : "full", skipped };
+  // Never publish nginx config into the public static/frontend tree.
+  for (const name of ["nginx-csp-machine.inc", "nginx-csp-pub.inc"]) {
+    const leaked = path.join(target, name);
+    if (fs.existsSync(leaked)) {
+      fs.rmSync(leaked, { force: true });
+    }
+  }
+  writeNginxCspIncludes(target, edgeNginxDir);
+  return {
+    out,
+    target,
+    edgeNginxDir,
+    mode: productionStatic ? "production" : "full",
+    skipped,
+  };
 }
 
 const isDirectRun =
@@ -212,7 +233,9 @@ const isDirectRun =
 if (isDirectRun) {
   try {
     const productionStatic = isProductionStaticCopy();
-    const { out, target, mode, skipped } = runCopyNextExport({ productionStatic });
+    const { out, target, edgeNginxDir, mode, skipped } = runCopyNextExport({
+      productionStatic,
+    });
     for (const entry of skipped) {
       if (fs.existsSync(path.join(out, entry))) {
         console.log(`copy-next-export: skipping production-excluded dir ${entry}/`);
@@ -220,7 +243,7 @@ if (isDirectRun) {
     }
     console.log(`copy-next-export (${mode}): copied ${out} → ${target}`);
     console.log(
-      "copy-next-export: wrote nginx-csp-machine.inc and nginx-csp-pub.inc for edge CSP",
+      `copy-next-export: wrote edge CSP includes under ${edgeNginxDir} (not under static/)`,
     );
   } catch (err) {
     console.error(err instanceof Error ? err.message : err);

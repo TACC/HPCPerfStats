@@ -21,7 +21,10 @@ export declare function buildNginxCspInclude(options?: {
   allowUnsafeEval?: boolean;
 }): string;
 
-export declare function writeNginxCspIncludes(target: string): void;
+/** Write CSP includes to outDir (private). Never use the public static/frontend tree. */
+export declare function writeNginxCspIncludes(htmlRoot: string, outDir?: string): void;
+
+export declare function defaultEdgeNginxCspDir(staticFrontendTarget?: string): string;
 
 export declare function isProductionStaticCopy(
   argv?: string[],
@@ -38,9 +41,11 @@ export declare function runCopyNextExport(options?: {
   out?: string;
   target?: string;
   productionStatic?: boolean;
+  edgeNginxDir?: string;
 }): {
   out: string;
   target: string;
+  edgeNginxDir: string;
   mode: "production" | "full";
   skipped: string[];
 };

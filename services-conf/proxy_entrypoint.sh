@@ -1,16 +1,17 @@
 #!/bin/sh
-# Proxy container entrypoint: generate OCSP resolver include, wait for SPA CSP
-# policy files on the shared static volume, install them under /etc/nginx,
-# strip non-web leftovers from the public frontend tree, validate nginx, exec.
+# Proxy container entrypoint: OCSP resolver; wait for SPA HTML on the read-only
+# static volume; write hash CSP includes ONLY under /etc/nginx (never under
+# /srv/static); validate; exec nginx.
 set -eu
 
 RESOLV_CONF="${HPCPERFSTATS_PROXY_RESOLV:-/etc/resolv.conf}"
 RESOLVER_OUT="${HPCPERFSTATS_PROXY_RESOLVER_OUT:-/etc/nginx/nginx-resolver.inc}"
-CSP_MACHINE="${HPCPERFSTATS_PROXY_CSP_MACHINE:-/srv/static/frontend/nginx-csp-machine.inc}"
-CSP_PUB="${HPCPERFSTATS_PROXY_CSP_PUB:-/srv/static/frontend/nginx-csp-pub.inc}"
-CSP_MACHINE_DST="${HPCPERFSTATS_PROXY_CSP_MACHINE_DST:-/etc/nginx/nginx-csp-machine.inc}"
-CSP_PUB_DST="${HPCPERFSTATS_PROXY_CSP_PUB_DST:-/etc/nginx/nginx-csp-pub.inc}"
 FRONTEND_STATIC_ROOT="${HPCPERFSTATS_PROXY_FRONTEND_STATIC:-/srv/static/frontend}"
+CSP_OUT_DIR="${HPCPERFSTATS_PROXY_CSP_OUT_DIR:-/etc/nginx}"
+CSP_MACHINE="${CSP_OUT_DIR}/nginx-csp-machine.inc"
+CSP_PUB="${CSP_OUT_DIR}/nginx-csp-pub.inc"
+MACHINE_HTML="${HPCPERFSTATS_PROXY_MACHINE_HTML:-${FRONTEND_STATIC_ROOT}/machine/index.html}"
+PUB_HTML="${HPCPERFSTATS_PROXY_PUB_HTML:-${FRONTEND_STATIC_ROOT}/pub/index.html}"
 CSP_WAIT_SECONDS="${HPCPERFSTATS_PROXY_CSP_WAIT_SECONDS:-120}"
 
 python3 /usr/local/lib/hpcperfstats-proxy/write_nginx_resolver_include.py \
@@ -32,48 +33,37 @@ validate_csp_include() {
     echo "proxy_entrypoint: ${label} CSP include still allows unsafe-inline: ${path}" >&2
     return 1
   fi
+  # Refuse policies that still point browsers at a public static path.
+  case "${path}" in
+    /srv/static/*|/home/*/staticfiles/*)
+      echo "proxy_entrypoint: refusing CSP include under public static tree: ${path}" >&2
+      return 1
+      ;;
+  esac
   return 0
-}
-
-# Remove config/docs/source-map leftovers so nginx never serves them from /static/.
-# Do not delete Next RSC *.txt payloads — those are required for client navigation.
-strip_non_web_frontend_static() {
-  root="$1"
-  if [ ! -d "${root}" ]; then
-    return 0
-  fi
-  find "${root}" -type f \( \
-    -name '*.inc' -o \
-    -name '*.md' -o \
-    -name '*.markdown' -o \
-    -name '*.map' -o \
-    -name '*.example' -o \
-    -name '*.sh' -o \
-    -name '*.py' -o \
-    -name '*.toml' -o \
-    -name '*.ini' -o \
-    -name '*.yml' -o \
-    -name '*.yaml' \
-  \) -delete
 }
 
 i=0
 while [ "${i}" -lt "${CSP_WAIT_SECONDS}" ]; do
-  if [ -f "${CSP_MACHINE}" ] && [ -f "${CSP_PUB}" ]; then
+  if [ -f "${MACHINE_HTML}" ] && [ -f "${PUB_HTML}" ]; then
     break
   fi
   i=$((i + 1))
   sleep 1
 done
 
+if [ ! -f "${MACHINE_HTML}" ] || [ ! -f "${PUB_HTML}" ]; then
+  echo "proxy_entrypoint: SPA HTML missing under ${FRONTEND_STATIC_ROOT} after ${CSP_WAIT_SECONDS}s" >&2
+  exit 1
+fi
+
+# Hash CSP from HTML → private /etc/nginx only. Never write nginx config into /srv/static.
+python3 /usr/local/lib/hpcperfstats-proxy/write_nginx_spa_csp_includes.py \
+  --frontend-root "${FRONTEND_STATIC_ROOT}" \
+  --out-dir "${CSP_OUT_DIR}"
+
 validate_csp_include "${CSP_MACHINE}" "machine"
 validate_csp_include "${CSP_PUB}" "pub"
-
-# Install CSP policies where nginx includes them; then strip non-web leftovers
-# (including the volume CSP handoff files) from the public frontend tree.
-cp "${CSP_MACHINE}" "${CSP_MACHINE_DST}"
-cp "${CSP_PUB}" "${CSP_PUB_DST}"
-strip_non_web_frontend_static "${FRONTEND_STATIC_ROOT}"
 
 nginx -t
 exec nginx -g "daemon off;"

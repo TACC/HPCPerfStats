@@ -99,10 +99,10 @@ def test_nginx_static_files_conf_includes_edge_headers_on_every_owned_location()
 
 def test_nginx_static_files_conf_spa_uses_hashed_csp_includes():
   conf = (_SERVICES / "nginx-static-files.conf").read_text(encoding="utf-8")
+  # Private nginx includes only — never under the public static volume.
   assert "include /etc/nginx/nginx-csp-machine.inc" in conf
   assert "include /etc/nginx/nginx-csp-pub.inc" in conf
   assert "include /etc/nginx/nginx-csp-no-active.inc" in conf
-  # SPA hash CSP must not remain include'd from the public static volume.
   assert "include /srv/static/frontend/nginx-csp-machine.inc" not in conf
   assert "include /srv/static/frontend/nginx-csp-pub.inc" not in conf
 
@@ -115,25 +115,30 @@ def test_nginx_static_files_conf_denies_non_web_static_suffixes():
   assert "return 404" in conf[deny_idx : deny_idx + 400]
 
 
-def test_proxy_entrypoint_installs_csp_includes_then_strips_non_web_frontend_static():
-  """Entrypoint copies volume CSP files under /etc/nginx then strips public leftovers."""
+def test_proxy_entrypoint_writes_csp_only_under_etc_nginx():
+  """CSP includes are regenerated into /etc/nginx from HTML; never under /srv/static."""
   entry = (_SERVICES / "proxy_entrypoint.sh").read_text(encoding="utf-8")
-  assert 'CSP_MACHINE="${HPCPERFSTATS_PROXY_CSP_MACHINE:-/srv/static/frontend/nginx-csp-machine.inc}"' in entry
-  assert 'CSP_PUB="${HPCPERFSTATS_PROXY_CSP_PUB:-/srv/static/frontend/nginx-csp-pub.inc}"' in entry
-  assert 'CSP_MACHINE_DST="${HPCPERFSTATS_PROXY_CSP_MACHINE_DST:-/etc/nginx/nginx-csp-machine.inc}"' in entry
-  assert 'CSP_PUB_DST="${HPCPERFSTATS_PROXY_CSP_PUB_DST:-/etc/nginx/nginx-csp-pub.inc}"' in entry
-  assert 'cp "${CSP_MACHINE}" "${CSP_MACHINE_DST}"' in entry
-  assert 'cp "${CSP_PUB}" "${CSP_PUB_DST}"' in entry
-  assert "strip_non_web_frontend_static" in entry
-  assert "-name '*.inc'" in entry
-  assert "-name '*.map'" in entry
-  # Copy+strip must run after validate and before nginx -t; do not delete Next RSC *.txt.
+  assert "write_nginx_spa_csp_includes.py" in entry
+  assert '--out-dir "${CSP_OUT_DIR}"' in entry
+  assert 'CSP_OUT_DIR="${HPCPERFSTATS_PROXY_CSP_OUT_DIR:-/etc/nginx}"' in entry
+  assert 'CSP_MACHINE="${CSP_OUT_DIR}/nginx-csp-machine.inc"' in entry
+  assert "refusing CSP include under public static tree" in entry
+  assert "/srv/static/frontend/nginx-csp" not in entry or "CSP_OUT_DIR" in entry
+  # Must not write CSP into the public tree.
+  assert "--out-dir \"${FRONTEND_STATIC_ROOT}\"" not in entry
+  regen_idx = entry.index("write_nginx_spa_csp_includes.py")
   validate_idx = entry.index('validate_csp_include "${CSP_PUB}" "pub"')
-  cp_idx = entry.index('cp "${CSP_MACHINE}" "${CSP_MACHINE_DST}"')
-  strip_idx = entry.index('strip_non_web_frontend_static "${FRONTEND_STATIC_ROOT}"')
   nginx_t_idx = entry.index("nginx -t")
-  assert validate_idx < cp_idx < strip_idx < nginx_t_idx
-  assert "-name '*.txt'" not in entry
+  assert regen_idx < validate_idx < nginx_t_idx
+
+
+def test_package_frontend_static_has_no_nginx_config_files():
+  """Public package static/frontend must not ship nginx CSP includes."""
+  frontend = Path(__file__).resolve().parents[1] / "static" / "frontend"
+  if not frontend.is_dir():
+    return
+  leaked = sorted(frontend.rglob("*.inc"))
+  assert leaked == [], f"nginx config must not live under public static: {leaked}"
 
 
 def test_nginx_static_files_conf_returns_favicon_at_edge():

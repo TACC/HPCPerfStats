@@ -29,6 +29,59 @@ REQUIRED_SPA_SHELLS: tuple[str, ...] = ("machine/index.html", "pub/index.html")
 _MACHINE_SHELL = "machine/index.html"
 
 
+def purge_nginx_config_from_public_frontend(
+  frontend_root: str | Path,
+  *,
+  out: TextIO | None = None,
+) -> list[str]:
+  """
+  Delete nginx/config leftovers under the public SPA static tree.
+
+  Args:
+    frontend_root (str | Path): ``STATIC_ROOT/frontend`` (or package static
+      frontend) that nginx may HTTP-serve.
+    out (TextIO | None): Optional log stream for removed paths.
+
+  Returns:
+    list[str]: Relative paths removed (posix), sorted.
+
+  Examples:
+    >>> purge_nginx_config_from_public_frontend("/no/such/frontend")
+    []
+  """
+  root = Path(frontend_root)
+  if not root.is_dir():
+    return []
+  removed: list[str] = []
+  patterns = (
+    "*.inc",
+    "*.md",
+    "*.markdown",
+    "*.map",
+    "*.example",
+    "*.sh",
+    "*.py",
+    "*.toml",
+    "*.ini",
+    "*.yml",
+    "*.yaml",
+  )
+  for pattern in patterns:
+    for path in root.rglob(pattern):
+      if not path.is_file():
+        continue
+      rel = path.relative_to(root).as_posix()
+      path.unlink(missing_ok=True)
+      removed.append(rel)
+  removed = sorted(set(removed))
+  if removed and out is not None:
+    print(
+      "Purged non-web leftovers from public frontend static: " + ", ".join(removed),
+      file=out,
+    )
+  return removed
+
+
 def missing_required_shells(
   frontend_root: str | Path,
   required: Sequence[str] = REQUIRED_SPA_SHELLS,
@@ -338,6 +391,7 @@ def ensure_spa_shells_in_static_root(
         "Verified SPA shells in STATIC_ROOT: " + ", ".join(required),
         file=out_stream,
       )
+      purge_nginx_config_from_public_frontend(dest_frontend, out=out_stream)
       return
     # Shells exist but package/volume machine/index.html content diverges
     # (typical after from-scratch image rebuild while staticfiles_data persists).
@@ -360,6 +414,7 @@ def ensure_spa_shells_in_static_root(
       out_stream=out_stream,
       err_stream=err_stream,
     )
+    purge_nginx_config_from_public_frontend(dest_frontend, out=out_stream)
     return
 
   if not package.is_dir() or not package_has_required_shells(package, required):
@@ -379,6 +434,7 @@ def ensure_spa_shells_in_static_root(
     out_stream=out_stream,
     err_stream=err_stream,
   )
+  purge_nginx_config_from_public_frontend(dest_frontend, out=out_stream)
 
 
 def ensure_spa_shells_from_django_settings() -> None:
