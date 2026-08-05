@@ -90,8 +90,10 @@ def test_backfill_host_data_null_dev_uses_time_ranges_not_offset_paging():
   assert "psql_vacuum_chunk" in code_only
   # VACUUM must not share a single -c with SET (implicit transaction block).
   assert "SET statement_timeout = 0; VACUUM" not in code_only
-  assert '-c "SET statement_timeout = 0"' in code_only
-  assert '-c "VACUUM (ANALYZE) ${chunk};"' in code_only
+  assert '-c "SET statement_timeout = 0"' in code_only or "SET statement_timeout = 0; SET max_parallel_maintenance_workers" in code_only
+  assert "VACUUM (ANALYZE, PARALLEL" in code_only
+  assert "VACUUM_PARALLEL" in code_only
+  assert 'VACUUM_PARALLEL="${HPCPERFSTATS_NULL_DEV_VACUUM_PARALLEL:-8}"' in text
 
 
 @pytest.mark.machine_unit_mock

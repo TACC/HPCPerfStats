@@ -5,7 +5,7 @@
 # Best practices baked in:
 #   - Chunk by explicit time ranges from Timescale chunk catalog (never LIMIT/OFFSET
 #     row paging). Each worker: UPDATE … WHERE time >= … AND time < … AND dev IS NULL.
-#   - VACUUM (ANALYZE) the finished chunk, then immediately start another chunk (no sleep).
+#   - VACUUM (ANALYZE, PARALLEL 8) the finished chunk, then immediately start another.
 #   - Adaptive worker count (default): start low, ramp toward max while monitoring
 #     replication lag, uncheckpointed WAL (current LSN − redo) vs max_wal_size,
 #     PGDATA free space, and chunk UPDATE latency vs EWMA baseline.
@@ -42,11 +42,16 @@ psql_cmd() {
 # VACUUM cannot run inside a transaction block. A single -c with "SET; VACUUM"
 # is one implicit transaction — use separate -c so SET applies to the session
 # and VACUUM runs outside a multi-statement txn.
+# PARALLEL uses maintenance workers; raise session caps so PARALLEL 8 is honored.
 psql_vacuum_chunk() {
   local chunk="$1"
+  local parallel="${2:-${VACUUM_PARALLEL:-8}}"
+  if ! [[ "$parallel" =~ ^[1-9][0-9]*$ ]]; then
+    parallel=8
+  fi
   "${COMPOSE[@]}" exec -T db psql -h localhost -U hpcperfstats -v ON_ERROR_STOP=1 \
-    -c "SET statement_timeout = 0" \
-    -c "VACUUM (ANALYZE) ${chunk};"
+    -c "SET statement_timeout = 0; SET max_parallel_maintenance_workers = ${parallel}; SET max_parallel_workers = ${parallel}" \
+    -c "VACUUM (ANALYZE, PARALLEL ${parallel}) ${chunk};"
 }
 
 # Build AND … NOT IN (…) for chunk names. Sets excl_sql (may be empty).
@@ -172,8 +177,8 @@ vacuum_finished_chunk() {
   if [[ -z "$chunk" ]]; then
     return 0
   fi
-  echo "  vacuum ${chunk}"
-  if ! psql_vacuum_chunk "$chunk"; then
+  echo "  vacuum ${chunk} (PARALLEL ${VACUUM_PARALLEL:-8})"
+  if ! psql_vacuum_chunk "$chunk" "${VACUUM_PARALLEL:-8}"; then
     echo "  warning: VACUUM failed for ${chunk} (continuing)" >&2
     return 0
   fi
@@ -359,6 +364,11 @@ backfill_host_data_null_dev_main() {
 
   STALL_LIMIT="${HPCPERFSTATS_NULL_DEV_STALL_LIMIT:-5}"
   VACUUM_EVERY="${HPCPERFSTATS_NULL_DEV_VACUUM_EVERY:-1}"
+  VACUUM_PARALLEL="${HPCPERFSTATS_NULL_DEV_VACUUM_PARALLEL:-8}"
+  if ! [[ "$VACUUM_PARALLEL" =~ ^[1-9][0-9]*$ ]]; then
+    echo "HPCPERFSTATS_NULL_DEV_VACUUM_PARALLEL must be a positive integer" >&2
+    exit 2
+  fi
   LAG_LIMIT_SEC="${HPCPERFSTATS_NULL_DEV_LAG_LIMIT_SEC:-30}"
   WAL_FRAC="${HPCPERFSTATS_NULL_DEV_WAL_FRAC:-5.0}"
   DISK_MIN_BYTES="${HPCPERFSTATS_NULL_DEV_DISK_MIN_BYTES:-10737418240}" # 10 GiB
@@ -393,9 +403,9 @@ backfill_host_data_null_dev_main() {
   fi
 
   if [[ "$FIXED_CONCURRENCY" -eq 1 ]]; then
-    echo "parallel host_data.dev NULL→'' backfill: fixed concurrency=${TARGET_CONCURRENCY} (time-range chunks; VACUUM every ${VACUUM_EVERY})"
+    echo "parallel host_data.dev NULL→'' backfill: fixed concurrency=${TARGET_CONCURRENCY} (time-range chunks; VACUUM every ${VACUUM_EVERY}, PARALLEL ${VACUUM_PARALLEL})"
   else
-    echo "parallel host_data.dev NULL→'' backfill: adaptive workers ${MIN_CONCURRENCY}..${MAX_CONCURRENCY} (time-range chunks; VACUUM every ${VACUUM_EVERY}; lag/WAL/disk/latency throttle)"
+    echo "parallel host_data.dev NULL→'' backfill: adaptive workers ${MIN_CONCURRENCY}..${MAX_CONCURRENCY} (time-range chunks; VACUUM every ${VACUUM_EVERY}, PARALLEL ${VACUUM_PARALLEL}; lag/WAL/disk/latency throttle)"
   fi
 
   local left comp
