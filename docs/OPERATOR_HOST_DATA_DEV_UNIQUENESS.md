@@ -168,15 +168,21 @@ Expect: `compressed_chunks = 0`; one 4-column UNIQUE on `(time, host, type, even
 
 ### Parallel NULL → `''` backfill (multi-CPU)
 
-A single `UPDATE host_data SET dev = '' WHERE dev IS NULL` runs in **one** Postgres backend and does not parallelize. Prefer the sliding-pool helper (same model as decompress): up to *N* chunk-scoped UPDATEs in flight; when one finishes it starts the next uncompressed chunk. Progress is **remaining uncompressed chunks** from the Timescale chunk catalog (no `host_data` NULL row counts inside the script). Each worker only runs the time-range `UPDATE … AND dev IS NULL`.
+A single `UPDATE host_data SET dev = '' WHERE dev IS NULL` runs in **one** Postgres backend and does not parallelize. Prefer the sliding-pool helper:
+
+- **Range chunks (no OFFSET):** each worker updates one Timescale chunk by explicit `time` bounds from `timescaledb_information.chunks` (`WHERE time >= … AND time < … AND dev IS NULL`). Progress is remaining uncompressed chunks in that catalog — not `LIMIT/OFFSET` row paging (which gets slower as the offset grows).
+- **VACUUM then next chunk:** after each successful UPDATE (default), `VACUUM (ANALYZE)` that chunk relation, then immediately fill the free slot with the next chunk (no sleep).
+- **Adaptive workers (default):** start at 1 and ramp toward the max concurrency argument while watching replication lag (`pg_stat_replication`), WAL on-disk vs `max_wal_size` (`pg_ls_waldir`), PGDATA free space, and chunk UPDATE latency vs an EWMA baseline. Backs off before I/O saturation; records `best_workers` for the run. Use fixed concurrency only when you need a hard pin (`HPCPERFSTATS_NULL_DEV_FIXED_CONCURRENCY=1`).
 
 **Compose cwd (prose only):** checkout with `docker-compose.yaml`. Prefer **pipeline/web stopped** so ingest is not fighting the rewrite. Stage 1 should already show `compressed_chunks = 0`; compressed chunks are not in the worklist.
 
 ```bash
-./scripts/backfill_host_data_null_dev.sh 8
+./scripts/backfill_host_data_null_dev.sh
 ```
 
-Pass concurrency as the first argument (default **8**). Suggested starts: **4–8** on smaller sites, **8–16** on large uncompressed hypertables. Optional post-run verify:
+First argument is an optional **max** worker cap (default **30**). Adaptive mode starts at 1 and ramps toward that cap while healthy (lag/WAL/disk/latency); it will usually settle below 30. Pass a lower cap only if you want a harder ceiling (for example `./scripts/backfill_host_data_null_dev.sh 8`). Knobs (optional env): `HPCPERFSTATS_NULL_DEV_MIN_CONCURRENCY`, `HPCPERFSTATS_NULL_DEV_VACUUM_EVERY`, `HPCPERFSTATS_NULL_DEV_LAG_LIMIT_SEC` (default `30`), `HPCPERFSTATS_NULL_DEV_WAL_FRAC` (default `0.70`), `HPCPERFSTATS_NULL_DEV_DISK_MIN_BYTES` (default 10 GiB), `HPCPERFSTATS_NULL_DEV_LATENCY_RATIO` (default `2.0`), `HPCPERFSTATS_NULL_DEV_HEALTHY_NEEDED` (default `3` healthy completions before ramp).
+
+Optional post-run verify:
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
