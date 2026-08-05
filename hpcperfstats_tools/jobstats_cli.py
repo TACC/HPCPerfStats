@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-"""Text CLI summary for a single Slurm job.
+"""
+Text CLI summary for a single Slurm job.
 
-This script prints a job-efficiency style report similar to the
-Princeton `jobstats` tool, using the same DB and metrics that power the
-HPCPerfStats web UI.
+Attributes:
+  BAR_WIDTH: Attribute.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from .api_client import ApiClient
 from .api_key_cache import (
@@ -26,7 +26,18 @@ BAR_WIDTH = 60
 
 
 def _format_timedelta(seconds: Optional[float]) -> str:
-  """Return human-readable D-HH:MM:SS for a seconds value."""
+  """
+  Return human-readable D-HH:MM:SS for a seconds value.
+  
+  Args:
+    seconds (Optional[float]): Seconds, or None when absent.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _format_timedelta(None)  # doctest: +SKIP
+  """
   if seconds is None:
     return "N/A"
   try:
@@ -45,7 +56,18 @@ def _format_timedelta(seconds: Optional[float]) -> str:
 
 
 def _bar(percentage: Optional[float]) -> str:
-  """Return an ASCII bar for a 0–100 percentage."""
+  """
+  Return an ASCII bar for a 0–100 percentage.
+  
+  Args:
+    percentage (Optional[float]): Percentage, or None when absent.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _bar(None)  # doctest: +SKIP
+  """
   if percentage is None:
     return "[no data]".ljust(BAR_WIDTH + 7)
   try:
@@ -58,9 +80,23 @@ def _bar(percentage: Optional[float]) -> str:
   return f"[{bar} {pct:3.0f}%]"
 
 
-def _compute_metrics(job_data: Dict[str, object],
-                     metrics_list) -> Dict[str, object]:
-  """Collect selected metrics and useful aggregates for a job."""
+def _compute_metrics(
+  job_data: Dict[str, object],
+  metrics_list: Any,
+) -> Dict[str, object]:
+  """
+  Collect selected metrics and useful aggregates for a job.
+  
+  Args:
+    job_data (Dict[str, object]): Mapping for job data.
+    metrics_list (Any): Metrics list passed to this helper.
+  
+  Returns:
+    Dict[str, object]: Dict[str, object] produced by this call.
+  
+  Examples:
+    >>> _compute_metrics({}, None)  # doctest: +SKIP
+  """
   metrics_by_name = {
       m["metric"]: m for m in metrics_list if m.get("metric")
   }
@@ -96,11 +132,30 @@ def _compute_metrics(job_data: Dict[str, object],
   }
 
 
-def _get_json(client: ApiClient,
-              base_url: str,
-              path: str,
-              verify: bool,
-              api_key: Optional[str]) -> Tuple[Optional[Dict[str, object]], int]:
+def _get_json(
+  client: ApiClient,
+  base_url: str,
+  path: str,
+  verify: bool,
+  api_key: Optional[str],
+) -> Tuple[Optional[Dict[str, object]], int]:
+  """
+  Internal helper to return the json.
+  
+  Args:
+    client (ApiClient): Client.
+    base_url (str): String for base url.
+    path (str): String for path.
+    verify (bool): Boolean flag for verify.
+    api_key (Optional[str]): Api key, or None when absent.
+  
+  Returns:
+    Tuple[Optional[Dict[str, object]], int]: Tuple[Optional[Dict[str, object]], int]
+    produced by this call.
+  
+  Examples:
+    >>> _get_json(None, "x", "x", True, None)  # doctest: +SKIP
+  """
   result = client.get_json(path)
   url = base_url.rstrip("/") + "/" + path.lstrip("/")
   if result.status_code == 0:
@@ -130,11 +185,27 @@ def _get_json(client: ApiClient,
   return result.data, result.status_code
 
 
-def print_jobstats(jid: str,
-                   api_url: str,
-                   verify_tls: bool,
-                   api_key: Optional[str]) -> int:
-  """Fetch job + metrics via REST API and print a jobstats-style summary."""
+def print_jobstats(
+  jid: str,
+  api_url: str,
+  verify_tls: bool,
+  api_key: Optional[str],
+) -> int:
+  """
+  Fetch job + metrics via REST API and print a jobstats-style summary.
+  
+  Args:
+    jid (str): String for jid.
+    api_url (str): String for api url.
+    verify_tls (bool): Boolean flag for verify tls.
+    api_key (Optional[str]): Api key, or None when absent.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> print_jobstats("x", "x", True, None)  # doctest: +SKIP
+  """
   client = ApiClient(
       base_url=api_url,
       api_key=api_key,
@@ -236,6 +307,18 @@ def print_jobstats(jid: str,
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+  """
+  Run this module's command-line entrypoint.
+  
+  Args:
+    argv (Optional[list[str]]): Argv, or None when absent.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> main(None)  # doctest: +SKIP
+  """
   parser = argparse.ArgumentParser(
       description="Print an efficiency summary for a single Slurm job.",
       formatter_class=argparse.RawDescriptionHelpFormatter,

@@ -1,7 +1,7 @@
-"""Utility tools for interacting with an HPCPerfStats deployment.
-
-Currently provides the `jobstats` style command line client.
 """
+Utility tools for interacting with an HPCPerfStats deployment.
+"""
+from __future__ import annotations
 
 from .api_client import ApiClient, ApiResult
 from .job_dataframe import get_job_full_dataframe

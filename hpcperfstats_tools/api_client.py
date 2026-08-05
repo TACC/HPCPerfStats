@@ -1,4 +1,6 @@
-"""Reusable REST API client for hpcperfstats-tools."""
+"""
+Reusable REST API client for hpcperfstats-tools.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +15,15 @@ from .api_auth import apply_api_key_header
 
 @dataclass
 class ApiResult:
+  """
+  Hold ApiResult state and behavior.
+  
+  Attributes:
+    data: ``data``.
+    error: ``error``.
+    ok: ``ok``.
+    status_code: ``status_code``.
+  """
   ok: bool
   status_code: int
   data: Optional[Any] = None
@@ -20,16 +31,41 @@ class ApiResult:
 
 
 class ApiClient:
-  """Small API client used by tool CLIs and helper libraries."""
+  """
+  Small API client used by tool CLIs and helper libraries.
+  
+  Attributes:
+    api_key: Instance attribute ``api_key``.
+    base_url: Instance attribute ``base_url``.
+    session: Instance attribute ``session``.
+    timeout: Instance attribute ``timeout``.
+    verify_tls: Instance attribute ``verify_tls``.
+  """
 
   def __init__(
-      self,
-      base_url: str,
-      api_key: Optional[str] = None,
-      verify_tls: bool = True,
-      timeout: int = 30,
-      session: Optional[requests.Session] = None,
-  ):
+    self,
+    base_url: str,
+    api_key: Optional[str] = None,
+    verify_tls: bool = True,
+    timeout: int = 30,
+    session: Optional[requests.Session] = None,
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      base_url (str): String for base url.
+      api_key (Optional[str]): Api key, or None when absent.
+      verify_tls (bool): Boolean flag for verify tls.
+      timeout (int): Integer value for timeout.
+      session (Optional[requests.Session]): Session, or None when absent.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ApiClient("x", None, True, 0, None)  # doctest: +SKIP
+    """
     self.base_url = self._normalize_base_url(base_url)
     self.api_key = api_key
     self.verify_tls = verify_tls
@@ -38,13 +74,49 @@ class ApiClient:
 
   @staticmethod
   def _normalize_base_url(base_url: str) -> str:
+    """
+    Internal helper to normalize the base url.
+    
+    Args:
+      base_url (str): String for base url.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> ApiClient()._normalize_base_url("x")  # doctest: +SKIP
+    """
     return (base_url or "").rstrip("/") + "/"
 
   def _url(self, path: str) -> str:
+    """
+    Internal helper to handle url.
+    
+    Args:
+      path (str): String for path.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> ApiClient()._url("x")  # doctest: +SKIP
+    """
     return urljoin(self.base_url, path.lstrip("/"))
 
   @staticmethod
   def _default_port_for_scheme(scheme: str) -> int:
+    """
+    Internal helper to handle default port for scheme.
+    
+    Args:
+      scheme (str): String for scheme.
+    
+    Returns:
+      int: int produced by this call.
+    
+    Examples:
+      >>> ApiClient()._default_port_for_scheme("x")  # doctest: +SKIP
+    """
     if scheme == "https":
       return 443
     if scheme == "http":
@@ -53,7 +125,20 @@ class ApiClient:
 
   @classmethod
   def _origin_parts(cls, url: str) -> tuple[str, str, int]:
-    """Return (scheme_lower, hostname_lower, port) with default ports filled for http/https."""
+    """
+    Return (scheme_lower, hostname_lower, port) with default ports filled for.
+    
+      http/https.
+    
+    Args:
+      url (str): String for url.
+    
+    Returns:
+      tuple[str, str, int]: tuple[str, str, int] produced by this call.
+    
+    Examples:
+      >>> ApiClient()._origin_parts("x")  # doctest: +SKIP
+    """
     p = urlparse(url)
     scheme = (p.scheme or "").lower()
     host = (p.hostname or "").lower().rstrip(".")
@@ -66,11 +151,22 @@ class ApiClient:
 
   @classmethod
   def _is_safe_post_redirect(cls, source_url: str, target_url: str) -> bool:
-    """True if we may re-POST to target after a redirect from source.
-
+    """
+    True if we may re-POST to target after a redirect from source.
+    
     Allows strict same-origin (normalized host and port) and a single hop
     http://host → https://host when both use default ports, so sites that
     redirect HTTP to HTTPS do not trip the cross-origin guard.
+    
+    Args:
+      source_url (str): String for source url.
+      target_url (str): String for target url.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ApiClient()._is_safe_post_redirect("x", "x")  # doctest: +SKIP
     """
     s_scheme, s_host, s_port = cls._origin_parts(source_url)
     t_scheme, t_host, t_port = cls._origin_parts(target_url)
@@ -88,9 +184,33 @@ class ApiClient:
     return False
 
   def _headers(self, base: Optional[dict[str, str]] = None) -> dict[str, str]:
+    """
+    Internal helper to handle headers.
+    
+    Args:
+      base (Optional[dict[str, str]]): Base, or None when absent.
+    
+    Returns:
+      dict[str, str]: dict[str, str] produced by this call.
+    
+    Examples:
+      >>> ApiClient()._headers(None)  # doctest: +SKIP
+    """
     return apply_api_key_header(dict(base or {}), self.api_key)
 
   def get_json(self, path: str) -> ApiResult:
+    """
+    Return the json.
+    
+    Args:
+      path (str): String for path.
+    
+    Returns:
+      ApiResult: ApiResult produced by this call.
+    
+    Examples:
+      >>> ApiClient().get_json("x")  # doctest: +SKIP
+    """
     url = self._url(path)
     try:
       resp = self.session.get(
@@ -111,7 +231,20 @@ class ApiClient:
     return ApiResult(ok=True, status_code=resp.status_code, data=data)
 
   def post_text(self, path: str, body: str, timeout: int = 300) -> ApiResult:
-    """POST plain text. Follows one same-origin redirect preserving method/body."""
+    """
+    POST plain text. Follows one same-origin redirect preserving method/body.
+    
+    Args:
+      path (str): String for path.
+      body (str): String for body.
+      timeout (int): Integer value for timeout.
+    
+    Returns:
+      ApiResult: ApiResult produced by this call.
+    
+    Examples:
+      >>> ApiClient().post_text("x", "x", 0)  # doctest: +SKIP
+    """
     url = self._url(path)
     headers = self._headers({"Content-Type": "text/plain; charset=utf-8"})
     try:

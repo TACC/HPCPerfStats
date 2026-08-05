@@ -1,7 +1,8 @@
-"""Shared API key file cache for HPCPerfStats CLIs.
+"""
+Shared API key file cache for HPCPerfStats CLIs.
 
-Used by jobstats CLI (standalone and in-repo) to load/save API keys
-per base URL in ~/.hpcperfstats-api.
+Attributes:
+  API_KEY_CACHE: Attribute.
 """
 
 from __future__ import annotations
@@ -14,12 +15,22 @@ API_KEY_CACHE = Path.home() / ".hpcperfstats-api"
 
 
 def load_cached_api_key(api_url: str) -> Optional[str]:
-  """Load API key for api_url from ~/.hpcperfstats-api if present.
-
+  """
+  Load API key for api_url from ~/.hpcperfstats-api if present.
+  
   Supported formats:
   - Single line file with just the key (applies to all URLs)
   - One mapping per line: '<base_url> <key>'
   Lines starting with '#' are ignored.
+  
+  Args:
+    api_url (str): String for api url.
+  
+  Returns:
+    Optional[str]: Optional[str] — the result, or None when unavailable.
+  
+  Examples:
+    >>> load_cached_api_key("x")  # doctest: +SKIP
   """
   if not API_KEY_CACHE.exists():
     return None
@@ -47,7 +58,19 @@ def load_cached_api_key(api_url: str) -> Optional[str]:
 
 
 def save_cached_api_key(api_url: str, api_key: str) -> None:
-  """Persist API key for api_url into ~/.hpcperfstats-api."""
+  """
+  Persist API key for api_url into ~/.hpcperfstats-api.
+  
+  Args:
+    api_url (str): String for api url.
+    api_key (str): String for api key.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> save_cached_api_key("x", "x")  # doctest: +SKIP
+  """
   base = api_url.rstrip("/")
   lines = []
   if API_KEY_CACHE.exists():
@@ -80,9 +103,20 @@ def save_cached_api_key(api_url: str, api_key: str) -> None:
 
 
 def api_key_help_url(api_url: str) -> str:
-  """Best-effort URL of the browsable page where the user can create an API key.
-
-  Prefer env override HPCPERF_API_KEY_URL; otherwise strip /api/ and point to /api-key/.
+  """
+  Best-effort URL of the browsable page where the user can create an API key.
+  
+  Prefer env override HPCPERF_API_KEY_URL; otherwise strip /api/ and point to
+    /api-key/.
+  
+  Args:
+    api_url (str): String for api url.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> api_key_help_url("x")  # doctest: +SKIP
   """
   override = os.environ.get("HPCPERF_API_KEY_URL")
   if override:

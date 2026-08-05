@@ -1,24 +1,17 @@
-"""Run sacct for a date range and either POST to the API or write daily .txt files.
-
-Two mutually exclusive modes:
-
-- **API mode** (default): each day's pipe-delimited sacct output is POSTed to
-  ``sacct/ingest/``, which uses sync_acct logic and also writes
-  ``{acct_path}/YYYY-MM-DD.txt`` on the server.
-- **File mode** (``-f DIR``): write the same pipe-delimited body to
-  ``DIR/YYYY-MM-DD.txt`` locally (same naming as the ingest API / sync_acct).
-  DIR must already exist. Do not combine with ``--api-key``.
-
-API mode requires ``[API] base_url`` in the INI pointed to by
-HPCPERFSTATS_TOOLS_INI, plus ``--api-key`` or a key cached in
-``~/.hpcperfstats-api`` (same scheme as jobstats_cli).
 """
+Run sacct for a date range and either POST to the API or write daily .txt files.
+
+Attributes:
+  SACCT_FIELDS: Attribute.
+"""
+from __future__ import annotations
+
 import argparse
 import os
 import subprocess
 import sys
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Iterator, Optional
 
 from dateutil.parser import parse
 
@@ -32,8 +25,25 @@ from .api_key_cache import (
 from .config import get_api_base_url
 
 
-def _daterange(start_date: datetime, end_date: datetime, inclusive_end: bool = False):
-    """Yield each date from start_date through end_date, one day at a time."""
+def _daterange(
+  start_date: datetime,
+  end_date: datetime,
+  inclusive_end: bool = False,
+) -> Iterator[Any]:
+    """
+    Yield each date from start_date through end_date, one day at a time.
+    
+    Args:
+      start_date (datetime): Start date.
+      end_date (datetime): End date.
+      inclusive_end (bool): Boolean flag for inclusive end.
+    
+    Yields:
+      Iterator[Any]: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _daterange(None, None, True)  # doctest: +SKIP
+    """
     days = int((end_date - start_date).days)
     if inclusive_end:
         days += 1
@@ -48,8 +58,21 @@ SACCT_FIELDS = (
 )
 
 
-def run_sacct_for_date(single_date):
-    """Run sacct for a single day; return (date_str, stdout_bytes) or (date_str, None) on failure."""
+def run_sacct_for_date(single_date: Any) -> Any:
+    """
+    Run sacct for a single day; return (date_str, stdout_bytes) or (date_str,.
+    
+      None) on failure.
+    
+    Args:
+      single_date (Any): Single date passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> run_sacct_for_date(None)  # doctest: +SKIP
+    """
     start_str = single_date.strftime("%Y-%m-%d")
     end_date = single_date + timedelta(1)
     end_str = end_date.strftime("%Y-%m-%d")
@@ -77,20 +100,44 @@ def run_sacct_for_date(single_date):
 
 
 def sacct_body_has_job_rows(body: str) -> bool:
-    """True when sacct -P text has at least one job row after the header.
-
+    """
+    True when sacct -P text has at least one job row after the header.
+    
     Empty output or header-only (no jobs that day) returns False.
+    
+    Args:
+      body (str): String for body.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> sacct_body_has_job_rows("x")  # doctest: +SKIP
     """
     lines = [ln for ln in body.splitlines() if ln.strip()]
     return len(lines) >= 2
 
 
 def write_accounting_daily_file(outdir: str, date_str: str, body: str) -> str:
-    """Write pipe-delimited sacct body to ``{outdir}/{date_str}.txt``.
-
-    Matches the naming used by the sacct ingest API / ``persist_accounting_daily_file``
-    (``YYYY-MM-DD.txt``). Uses a temp file + ``os.replace`` for an atomic overwrite.
+    """
+    Write pipe-delimited sacct body to ``{outdir}/{date_str}.txt``.
+    
+    Matches the naming used by the sacct ingest API /
+      ``persist_accounting_daily_file``
+    (``YYYY-MM-DD.txt``). Uses a temp file + ``os.replace`` for an atomic
+      overwrite.
     Returns the final path written.
+    
+    Args:
+      outdir (str): String for outdir.
+      date_str (str): String for date str.
+      body (str): String for body.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> write_accounting_daily_file("x", "x", "x")  # doctest: +SKIP
     """
     path = os.path.join(outdir, "%s.txt" % date_str)
     tmp_path = "%s.tmp" % path
@@ -100,17 +147,30 @@ def write_accounting_daily_file(outdir: str, date_str: str, body: str) -> str:
     return path
 
 
-def send_to_api(base_url, api_key, date_str, body):
-    """POST sacct output to the ingest endpoint. Return (success, message).
-
+def send_to_api(base_url: Any, api_key: Any, date_str: Any, body: Any) -> Any:
+    """
+    POST sacct output to the ingest endpoint. Return (success, message).
+    
     Some deployments may issue an HTTP redirect (for example, HTTP→HTTPS or
     path normalization). The Python requests library may convert a POST into a
     GET when following a 301/302 redirect, which would cause Django to return
     "405 Method Not Allowed" on the ingest view (which only allows POST).
-
+    
     To avoid this, we first send the request with redirects disabled and, if
     we receive a redirect status with a Location header, we re‑POST once to
     the redirected URL while preserving the HTTP method and body.
+    
+    Args:
+      base_url (Any): Base url passed to this helper.
+      api_key (Any): Api key passed to this helper.
+      date_str (Any): Date str passed to this helper.
+      body (Any): Value to inspect (typically a numeric scalar).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> send_to_api(None, None, None, None)  # doctest: +SKIP
     """
     client = ApiClient(base_url=base_url, api_key=api_key, verify_tls=True, timeout=300)
     result = client.post_text(f"sacct/ingest/?date={date_str}", body=body, timeout=300)
@@ -121,7 +181,19 @@ def send_to_api(base_url, api_key, date_str, body):
     return True, result.data.get("inserted", 0)
 
 
-def _parse_date_range(args):
+def _parse_date_range(args: Any) -> Any:
+    """
+    Internal helper to parse the date range.
+    
+    Args:
+      args (Any): Args passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _parse_date_range(None)  # doctest: +SKIP
+    """
     try:
         start_date = parse(args.start_date) if args.start_date else datetime.now()
     except Exception:
@@ -134,7 +206,25 @@ def _parse_date_range(args):
     return start_date, end_date
 
 
-def _run_file_mode(file_dir: str, start_date: datetime, end_date: datetime) -> None:
+def _run_file_mode(
+  file_dir: str,
+  start_date: datetime,
+  end_date: datetime,
+) -> None:
+    """
+    Internal helper to run the file mode.
+    
+    Args:
+      file_dir (str): String for file dir.
+      start_date (datetime): Start date.
+      end_date (datetime): End date.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _run_file_mode("x", None, None)  # doctest: +SKIP
+    """
     if not os.path.isdir(file_dir):
         print(
             "Error: -f path is not a directory: %s" % file_dir,
@@ -155,7 +245,21 @@ def _run_file_mode(file_dir: str, start_date: datetime, end_date: datetime) -> N
         print(f"{date_str}: wrote {path}")
 
 
-def _run_api_mode(args, start_date: datetime, end_date: datetime) -> None:
+def _run_api_mode(args: Any, start_date: datetime, end_date: datetime) -> None:
+    """
+    Internal helper to run the api mode.
+    
+    Args:
+      args (Any): Args passed to this helper.
+      start_date (datetime): Start date.
+      end_date (datetime): End date.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _run_api_mode(None, None, None)  # doctest: +SKIP
+    """
     base_url = get_api_base_url(default=None) or None
     if not base_url:
         print(
@@ -194,6 +298,18 @@ def _run_api_mode(args, start_date: datetime, end_date: datetime) -> None:
 
 
 def main(argv: Optional[list[str]] = None) -> None:
+    """
+    Run this module's command-line entrypoint.
+    
+    Args:
+      argv (Optional[list[str]]): Argv, or None when absent.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> main(None)  # doctest: +SKIP
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Run sacct for a date range and either POST to the HPCPerfStats API "

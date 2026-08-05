@@ -1,4 +1,6 @@
-"""API-only helpers for building job sample DataFrames."""
+"""
+API-only helpers for building job sample DataFrames.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +14,18 @@ from .config import get_api_base_url
 
 
 def _job_metadata_columns(job_data: dict[str, Any]) -> dict[str, Any]:
+  """
+  Internal helper to handle job metadata columns.
+  
+  Args:
+    job_data (dict[str, Any]): Mapping for job data.
+  
+  Returns:
+    dict[str, Any]: dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> _job_metadata_columns({})  # doctest: +SKIP
+  """
   return {
       "jid": job_data.get("jid"),
       "jobname": job_data.get("jobname"),
@@ -28,16 +42,35 @@ def _job_metadata_columns(job_data: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_job_full_dataframe(
-    jid: str,
-    api_url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    verify_tls: bool = True,
+  jid: str,
+  api_url: Optional[str] = None,
+  api_key: Optional[str] = None,
+  verify_tls: bool = True,
 ) -> pd.DataFrame:
-  """Return an API-derived DataFrame with all available per-type samples + metadata.
-
+  """
+  Return an API-derived DataFrame with all available per-type samples +.
+  
+    metadata.
+  
   Data is assembled from:
   - `/jobs/{jid}/` for job metadata and available type schema
   - `/jobs/{jid}/{type_name}/` for per-type stats_data rows and schema
+  
+  Args:
+    jid (str): String for jid.
+    api_url (Optional[str]): Api url, or None when absent.
+    api_key (Optional[str]): Api key, or None when absent.
+    verify_tls (bool): Boolean flag for verify tls.
+  
+  Returns:
+    pd.DataFrame: Result DataFrame, or None when nothing usable remains.
+  
+  Raises:
+    RuntimeError: Raised when ``get_job_full_dataframe`` hits a ``RuntimeError``
+    failure path.
+  
+  Examples:
+    >>> get_job_full_dataframe("x", None, None, True)  # doctest: +SKIP
   """
   base_url = api_url or get_api_base_url() or "http://localhost:8000/api/"
   resolved_api_key = api_key or load_cached_api_key(base_url)
