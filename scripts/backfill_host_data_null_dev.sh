@@ -182,6 +182,7 @@ vacuum_finished_chunk() {
 maybe_adapt_concurrency() {
   local duration_ms="${1:-0}"
   local lag_sec wal_bytes max_wal disk_avail pressure new_target reason limit_ms
+  local wal_pct wal_cap_pct
 
   if [[ "$FIXED_CONCURRENCY" -eq 1 ]]; then
     TARGET_CONCURRENCY="$MAX_CONCURRENCY"
@@ -194,10 +195,12 @@ maybe_adapt_concurrency() {
     "${lag_sec:-0}" "$LAG_LIMIT_SEC" \
     "${wal_bytes:--1}" "${max_wal:--1}" "$WAL_FRAC" \
     "${disk_avail:--1}" "$DISK_MIN_BYTES")"
+  wal_pct="$(null_dev_wal_pct_of_max "${wal_bytes:--1}" "${max_wal:--1}")"
+  wal_cap_pct="$(awk -v f="$WAL_FRAC" 'BEGIN { printf "%d", 100.0 * f }')"
 
   reason="hold"
   if [[ "$pressure" == "1" ]]; then
-    reason="pressure(lag=${lag_sec:-?}s checkpoint_wal=${wal_bytes:-?}/${max_wal:-?} disk_avail=${disk_avail:-?})"
+    reason="pressure(lag=${lag_sec:-?}s checkpoint_wal=${wal_pct}%_of_max_wal (cap ${wal_cap_pct}%; bytes ${wal_bytes:-?}/${max_wal:-?}) disk_avail=${disk_avail:-?})"
     healthy_streak=0
   elif [[ "$duration_ms" =~ ^[1-9][0-9]*$ && "$baseline_ms" =~ ^[1-9][0-9]*$ ]]; then
     limit_ms="$(awk -v b="$baseline_ms" -v r="$LATENCY_RATIO" 'BEGIN { printf "%d", b * r }')"
@@ -207,11 +210,11 @@ maybe_adapt_concurrency() {
       pressure=1
     else
       healthy_streak=$((healthy_streak + 1))
-      reason="healthy_streak=${healthy_streak}"
+      reason="healthy_streak=${healthy_streak} checkpoint_wal=${wal_pct}%_of_max_wal"
     fi
   else
     healthy_streak=$((healthy_streak + 1))
-    reason="warming baseline"
+    reason="warming baseline checkpoint_wal=${wal_pct}%_of_max_wal"
   fi
 
   if [[ "$duration_ms" =~ ^[1-9][0-9]*$ && "$pressure" != "1" ]]; then
@@ -357,7 +360,7 @@ backfill_host_data_null_dev_main() {
   STALL_LIMIT="${HPCPERFSTATS_NULL_DEV_STALL_LIMIT:-5}"
   VACUUM_EVERY="${HPCPERFSTATS_NULL_DEV_VACUUM_EVERY:-1}"
   LAG_LIMIT_SEC="${HPCPERFSTATS_NULL_DEV_LAG_LIMIT_SEC:-30}"
-  WAL_FRAC="${HPCPERFSTATS_NULL_DEV_WAL_FRAC:-0.70}"
+  WAL_FRAC="${HPCPERFSTATS_NULL_DEV_WAL_FRAC:-5.0}"
   DISK_MIN_BYTES="${HPCPERFSTATS_NULL_DEV_DISK_MIN_BYTES:-10737418240}" # 10 GiB
   LATENCY_RATIO="${HPCPERFSTATS_NULL_DEV_LATENCY_RATIO:-2.0}"
   HEALTHY_NEEDED="${HPCPERFSTATS_NULL_DEV_HEALTHY_NEEDED:-3}"

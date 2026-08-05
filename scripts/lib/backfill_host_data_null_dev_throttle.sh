@@ -3,22 +3,41 @@
 #
 # Pressure signals (any trip ⇒ back off one worker):
 #   - streaming replication lag (seconds; 0 when no standbys)
-#   - uncheckpointed WAL bytes (current LSN − redo_lsn) vs max_wal_size
+#   - uncheckpointed WAL bytes (current LSN − redo_lsn) vs max_wal_size * WAL_MULT
 #   - PGDATA free bytes
 # Latency degrade: chunk UPDATE duration >> EWMA baseline ⇒ back off
 # Healthy streak at current target ⇒ ramp toward max (finds ceiling before degrade)
+#
+# WAL_MULT (env HPCPERFSTATS_NULL_DEV_WAL_FRAC) is a multiple of max_wal_size,
+# not a 0–1 fraction. Bulk UPDATE routinely exceeds 1× max_wal_size (Postgres
+# starts WAL checkpoints around that soft target). Default 5.0 ≈ allow up to
+# 500% of max_wal_size uncheckpointed before backing off.
+# Do not confuse with checkpoint log "wrote N buffers (P%)" — that P% is
+# shared_buffers written, not WAL fill.
 
-# null_dev_eval_pressure LAG_SEC LAG_LIMIT CHECKPOINT_WAL_BYTES MAX_WAL_BYTES WAL_FRAC
+# null_dev_wal_pct_of_max CHECKPOINT_WAL_BYTES MAX_WAL_BYTES
+# Integer percent of max_wal_size (may exceed 100). Unknown → -1.
+null_dev_wal_pct_of_max() {
+  local wal_bytes="${1:--1}"
+  local max_wal_bytes="${2:--1}"
+  if ! [[ "$wal_bytes" =~ ^[0-9]+$ && "$max_wal_bytes" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s\n' '-1'
+    return 0
+  fi
+  awk -v w="$wal_bytes" -v m="$max_wal_bytes" 'BEGIN { printf "%d", (100.0 * w) / m }'
+}
+
+# null_dev_eval_pressure LAG_SEC LAG_LIMIT CHECKPOINT_WAL_BYTES MAX_WAL_BYTES WAL_MULT
 #   DISK_AVAIL_BYTES DISK_MIN_BYTES
 # Prints 1 if under pressure, else 0. Unknown metrics (-1) are ignored.
-# CHECKPOINT_WAL_BYTES is pg_wal_lsn_diff(pg_current_wal_lsn(), redo_lsn), not
-# sum(pg_ls_waldir()) — on-disk WAL commonly exceeds max_wal_size.
+# CHECKPOINT_WAL_BYTES is pg_wal_lsn_diff(pg_current_wal_lsn(), redo_lsn).
+# WAL_MULT is multiples of max_wal_size (default 5.0).
 null_dev_eval_pressure() {
   local lag_sec="${1:-0}"
   local lag_limit="${2:-30}"
   local wal_bytes="${3:--1}"
   local max_wal_bytes="${4:--1}"
-  local wal_frac="${5:-0.70}"
+  local wal_frac="${5:-5.0}"
   local disk_avail="${6:--1}"
   local disk_min="${7:--1}"
 
@@ -28,7 +47,7 @@ null_dev_eval_pressure() {
   fi
 
   if [[ "$wal_bytes" =~ ^[0-9]+$ && "$max_wal_bytes" =~ ^[1-9][0-9]*$ ]]; then
-    # Integer compare of wal_bytes vs floor(max_wal * frac) using awk.
+    # Pressure when uncheckpointed WAL > WAL_MULT * max_wal_size.
     local wal_cap
     wal_cap="$(awk -v m="$max_wal_bytes" -v f="$wal_frac" 'BEGIN { printf "%d", m * f }')"
     if [[ "$wal_cap" =~ ^[0-9]+$ && "$wal_bytes" -gt "$wal_cap" ]]; then

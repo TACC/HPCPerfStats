@@ -96,17 +96,32 @@ def test_backfill_host_data_null_dev_uses_time_ranges_not_offset_paging():
 
 @pytest.mark.machine_unit_mock
 def test_null_dev_eval_pressure_trips_on_lag_wal_and_disk():
-  assert _bash_source_call("null_dev_eval_pressure", "0", "30", "-1", "-1", "0.70", "-1", "-1") == "0"
-  assert _bash_source_call("null_dev_eval_pressure", "31", "30", "-1", "-1", "0.70", "-1", "-1") == "1"
-  # Checkpoint-WAL 80 of 100 with 0.70 frac → pressure
+  assert _bash_source_call("null_dev_eval_pressure", "0", "30", "-1", "-1", "5.0", "-1", "-1") == "0"
+  assert _bash_source_call("null_dev_eval_pressure", "31", "30", "-1", "-1", "5.0", "-1", "-1") == "1"
+  # 80 of 100 with mult 0.70 → pressure; with mult 5.0 → healthy
   assert _bash_source_call("null_dev_eval_pressure", "0", "30", "80", "100", "0.70", "-1", "-1") == "1"
-  assert _bash_source_call("null_dev_eval_pressure", "0", "30", "50", "100", "0.70", "-1", "-1") == "0"
-  # Healthy uncheckpointed WAL under 70% of max_wal_size (~6 GiB)
+  assert _bash_source_call("null_dev_eval_pressure", "0", "30", "80", "100", "5.0", "-1", "-1") == "0"
+  # Operator false alarm: ~4.2× max_wal is normal under bulk UPDATE; default mult 5 allows it
   assert _bash_source_call(
-      "null_dev_eval_pressure", "0", "30", "2000000000", "6442450944", "0.70", "-1", "-1"
+      "null_dev_eval_pressure", "0", "30", "27175106808", "6442450944", "5.0", "-1", "-1"
   ) == "0"
-  assert _bash_source_call("null_dev_eval_pressure", "0", "30", "-1", "-1", "0.70", "100", "200") == "1"
-  assert _bash_source_call("null_dev_eval_pressure", "0", "30", "-1", "-1", "0.70", "500", "200") == "0"
+  assert _bash_source_call(
+      "null_dev_eval_pressure", "0", "30", "27175106808", "6442450944", "0.70", "-1", "-1"
+  ) == "1"
+  # Trip when beyond 5× max_wal
+  assert _bash_source_call(
+      "null_dev_eval_pressure", "0", "30", "40000000000", "6442450944", "5.0", "-1", "-1"
+  ) == "1"
+  assert _bash_source_call("null_dev_eval_pressure", "0", "30", "-1", "-1", "5.0", "100", "200") == "1"
+  assert _bash_source_call("null_dev_eval_pressure", "0", "30", "-1", "-1", "5.0", "500", "200") == "0"
+
+
+@pytest.mark.machine_unit_mock
+def test_null_dev_wal_pct_of_max_reports_percent_not_buffer_checkpoint_pct():
+  """27175106808/6442450944 ≈ 421% of max_wal — not the log's buffers (42.1%)."""
+  assert _bash_source_call("null_dev_wal_pct_of_max", "27175106808", "6442450944") == "421"
+  assert _bash_source_call("null_dev_wal_pct_of_max", "2000000000", "6442450944") == "31"
+  assert _bash_source_call("null_dev_wal_pct_of_max", "-1", "6442450944") == "-1"
 
 
 @pytest.mark.machine_unit_mock
