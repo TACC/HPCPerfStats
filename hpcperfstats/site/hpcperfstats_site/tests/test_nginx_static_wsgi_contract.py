@@ -97,14 +97,16 @@ def test_nginx_static_files_conf_includes_edge_headers_on_every_owned_location()
   assert conf.count("include /etc/nginx/nginx-edge-security-headers.inc") >= 9
 
 
-def test_nginx_static_files_conf_spa_uses_hashed_csp_includes():
+def test_nginx_static_files_conf_spa_uses_document_csp_not_nginx_hash_header():
   conf = (_SERVICES / "nginx-static-files.conf").read_text(encoding="utf-8")
-  # Private nginx includes only — never under the public static volume.
-  assert "include /etc/nginx/nginx-csp-machine.inc" in conf
-  assert "include /etc/nginx/nginx-csp-pub.inc" in conf
-  assert "include /etc/nginx/nginx-csp-no-active.inc" in conf
+  # Hash CSP is embedded in HTML meta; nginx must not send a competing header.
+  assert "include /etc/nginx/nginx-csp-machine.inc" not in conf
+  assert "include /etc/nginx/nginx-csp-pub.inc" not in conf
   assert "include /srv/static/frontend/nginx-csp-machine.inc" not in conf
   assert "include /srv/static/frontend/nginx-csp-pub.inc" not in conf
+  assert "location ^~ /machine/" in conf
+  assert "include /etc/nginx/nginx-edge-security-headers.inc" in conf
+  assert "include /etc/nginx/nginx-csp-no-active.inc" in conf
 
 
 def test_nginx_static_files_conf_denies_non_web_static_suffixes():
@@ -123,8 +125,6 @@ def test_proxy_entrypoint_writes_csp_only_under_etc_nginx():
   assert 'CSP_OUT_DIR="${HPCPERFSTATS_PROXY_CSP_OUT_DIR:-/etc/nginx}"' in entry
   assert 'CSP_MACHINE="${CSP_OUT_DIR}/nginx-csp-machine.inc"' in entry
   assert "refusing CSP include under public static tree" in entry
-  assert "/srv/static/frontend/nginx-csp" not in entry or "CSP_OUT_DIR" in entry
-  # Must not write CSP into the public tree.
   assert "--out-dir \"${FRONTEND_STATIC_ROOT}\"" not in entry
   regen_idx = entry.index("write_nginx_spa_csp_includes.py")
   validate_idx = entry.index('validate_csp_include "${CSP_PUB}" "pub"')

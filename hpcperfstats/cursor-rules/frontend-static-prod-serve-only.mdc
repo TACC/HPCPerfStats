@@ -43,11 +43,12 @@ Remove or never publish under served trees:
 ## Runtime contract (proxy)
 
 1. **Never** place nginx config (`nginx-csp-*.inc`, any `*.inc`) under `/srv/static` / `STATIC_ROOT` / package `static/frontend`.
-2. `copy-next-export.mjs` may write CSP artifacts under private `hpcperfstats_site/edge_nginx/` (not collected as `/static/`).
-3. **`proxy_entrypoint.sh`** reads SPA HTML from the **read-only** volume and writes `nginx-csp-*.inc` **only** to `/etc/nginx/` (`write_nginx_spa_csp_includes.py --out-dir`), then `nginx -t`.
-4. **`nginx-static-files.conf`** `include`s `/etc/nginx/nginx-csp-*.inc` and **404**s HTTP GETs for denylisted suffixes under `/static/` (including `*.inc`).
-5. **`spa_static_root_heal`** purges `*.inc` (and other denylisted leftovers) from `STATIC_ROOT/frontend` after verify/heal so collectstatic cannot leave config on the public tree.
-6. After SPA heal/rebuild, **restart `proxy`** so `/etc/nginx` CSP hashes match the new HTML.
+2. **SPA CSP authority is the HTML document:** `copy-next-export` and SPA heal embed a per-document `<meta http-equiv="Content-Security-Policy">` whose script hashes match that file’s inline scripts.
+3. **`/machine/` and `/pub/` nginx locations must not `add_header` a hash CSP** — a stale header intersects with the document policy and blocks Next.js (production forever-load / React #412). Keep edge security headers only.
+4. `copy-next-export.mjs` may still write private artifacts under `hpcperfstats_site/edge_nginx/` (not collected as `/static/`).
+5. **`proxy_entrypoint.sh`** may regenerate private `/etc/nginx/nginx-csp-*.inc` for diagnostics/validation; those files are **not** included by SPA locations.
+6. **`spa_static_root_heal`** purges leaked `*.inc` from `STATIC_ROOT/frontend` and injects CSP meta after verify/heal.
+7. **`/static/`** **404**s denylisted suffixes including `*.inc`.
 
 ## Agent checklist (same task)
 

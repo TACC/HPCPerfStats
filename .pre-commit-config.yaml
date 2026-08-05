@@ -25,7 +25,10 @@ repos:
     hooks:
       - id: frontend-eslint
         name: frontend eslint (staged)
-        entry: bash -c 'cd hpcperfstats/site/frontend && npm run lint -- --max-warnings=0'
+        # GUI git / Cursor often omit Homebrew from PATH; prefer explicit npm.
+        entry: >-
+          bash -c 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH";
+          cd hpcperfstats/site/frontend && npm run lint -- --max-warnings=0'
         language: system
         files: ^hpcperfstats/site/frontend/.*\.(ts|tsx)$
         pass_filenames: false
@@ -34,7 +37,9 @@ repos:
     hooks:
       - id: frontend-pre-push
         name: frontend typecheck + knip (pre-push)
-        entry: bash -c 'cd hpcperfstats/site/frontend && npm run typecheck && npm run lint:dead'
+        entry: >-
+          bash -c 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH";
+          cd hpcperfstats/site/frontend && npm run typecheck && npm run lint:dead'
         language: system
         stages: [pre-push]
         pass_filenames: false

@@ -117,7 +117,7 @@ export function collectInlineCspHashes(rootDir) {
  * }} options
  * @returns {string}
  */
-export function buildNginxCspInclude({
+export function buildCspPolicy({
   scriptHashes = [],
   styleHashes = [],
   styleAttrHashes = [],
@@ -131,7 +131,7 @@ export function buildNginxCspInclude({
   if (styleAttrHashes.length) {
     styleParts.push("'unsafe-hashes'", ...styleAttrHashes);
   }
-  const policy = [
+  return [
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
@@ -145,7 +145,77 @@ export function buildNginxCspInclude({
     "upgrade-insecure-requests",
     "report-uri /csp-report/",
   ].join("; ");
+}
+
+/**
+ * @param {{
+ *   scriptHashes?: string[],
+ *   styleHashes?: string[],
+ *   styleAttrHashes?: string[],
+ *   allowUnsafeEval?: boolean,
+ * }} options
+ * @returns {string}
+ */
+export function buildNginxCspInclude(options = {}) {
+  const policy = buildCspPolicy(options);
   return `add_header Content-Security-Policy "${policy}" always;\n`;
+}
+
+const CSP_META_RE =
+  /<meta\s+http-equiv=(['"])Content-Security-Policy\1[^>]*>\s*/gi;
+
+/**
+ * @param {string} html
+ * @param {string} policy
+ * @returns {string}
+ */
+export function injectCspMetaIntoHtml(html, policy) {
+  const cleaned = html.replace(CSP_META_RE, "");
+  const attr = policy.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${attr}">`;
+  const headMatch = cleaned.match(/<head([^>]*)>/i);
+  if (headMatch && headMatch.index != null) {
+    const insertAt = headMatch.index + headMatch[0].length;
+    return cleaned.slice(0, insertAt) + meta + cleaned.slice(insertAt);
+  }
+  return meta + cleaned;
+}
+
+/**
+ * Embed per-document CSP meta into every HTML file under frontendRoot.
+ * @param {string} frontendRoot
+ * @returns {number}
+ */
+export function injectCspMetaIntoFrontendTree(frontendRoot) {
+  if (!fs.existsSync(frontendRoot)) {
+    return 0;
+  }
+  let updated = 0;
+  const stack = [frontendRoot];
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current) continue;
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith(".html")) continue;
+      const raw = fs.readFileSync(full, "utf8");
+      const withoutMeta = raw.replace(CSP_META_RE, "");
+      const hashes = extractInlineCspHashesFromHtml(withoutMeta);
+      const rel = path.relative(frontendRoot, full).split(path.sep).join("/");
+      const allowUnsafeEval = rel === "machine" || rel.startsWith("machine/");
+      const policy = buildCspPolicy({ ...hashes, allowUnsafeEval });
+      const next = injectCspMetaIntoHtml(withoutMeta, policy);
+      if (next !== raw) {
+        fs.writeFileSync(full, next, "utf8");
+        updated += 1;
+      }
+    }
+  }
+  return updated;
 }
 
 /**
@@ -217,6 +287,8 @@ export function runCopyNextExport({
       fs.rmSync(leaked, { force: true });
     }
   }
+  // Per-document CSP meta travels with HTML (avoids stale nginx hash headers).
+  injectCspMetaIntoFrontendTree(target);
   writeNginxCspIncludes(target, edgeNginxDir);
   return {
     out,

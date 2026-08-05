@@ -104,6 +104,14 @@ describe("copy-next-export production mode", () => {
     expect(fs.existsSync(path.join(targetDir, "nginx-csp-machine.inc"))).toBe(false);
     expect(fs.existsSync(path.join(targetDir, "nginx-csp-pub.inc"))).toBe(false);
 
+    const machineHtml = fs.readFileSync(
+      path.join(targetDir, "machine", "index.html"),
+      "utf8",
+    );
+    expect(machineHtml).toContain('http-equiv="Content-Security-Policy"');
+    expect(machineHtml).toContain(sha256CspHash(scriptBody));
+    expect(machineHtml).toContain("unsafe-eval");
+
     const machineInc = fs.readFileSync(
       path.join(tmpRoot, "edge_nginx", "nginx-csp-machine.inc"),
       "utf8",

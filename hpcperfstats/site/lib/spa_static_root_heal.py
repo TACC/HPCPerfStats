@@ -471,3 +471,8 @@ def ensure_spa_shells_from_django_settings() -> None:
     static_root=settings.STATIC_ROOT,
     package_frontend=package,
   )
+  from hpcperfstats.site.lib.spa_csp_meta import inject_csp_meta_into_frontend_tree
+
+  n = inject_csp_meta_into_frontend_tree(Path(settings.STATIC_ROOT) / "frontend")
+  if n:
+    print(f"Embedded per-document CSP meta into {n} SPA HTML file(s)")

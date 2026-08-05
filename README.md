@@ -358,10 +358,11 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    **`default.conf`** with the host **`nginx.conf`** mount. Runtime
    **`proxy_entrypoint.sh`** regenerates the OCSP **`resolver`** include from
    container **`/etc/resolv.conf`**, waits for SPA HTML under
-   **`/srv/static/frontend/{machine,pub}/index.html`**, writes hash CSP includes
-   **only** to **`/etc/nginx/nginx-csp-{machine,pub}.inc`** (never under
-   **`/srv/static`**), runs **`nginx -t`**, then starts nginx. Rebuild/restart
-   **`proxy`** after SPA updates so CSP hashes match the served HTML.
+   **`/srv/static/frontend/{machine,pub}/index.html`**, and may write private
+   diagnostic CSP includes under **`/etc/nginx/`** (never under **`/srv/static`**).
+   SPA shells carry their own hash CSP via HTML **`<meta http-equiv="Content-Security-Policy">`**
+   (written at frontend export / SPA heal); nginx **`/machine/`** and **`/pub/`**
+   locations must **not** send a competing hash CSP header.
    HTTP GETs for **`*.inc`** under **`/static/`** return **404**.
    Nginx is the public authority for HSTS, framing, COOP, Permissions-Policy, Referrer-Policy,
    and CSP (hash-based for SPA shells; no-active for JSON/redirects). Certificates without an
