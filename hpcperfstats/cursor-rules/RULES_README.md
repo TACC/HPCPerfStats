@@ -31,6 +31,7 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`startup-migration-bounded-work.mdc`** — `django_startup` migrate must stay bounded (no unbounded hypertable work); production never runs `makemigrations`.
 - **`dockerignore-test-artifacts-sync.mdc`** — `.dockerignore` must exclude test-only paths; keep `test_dockerignore_test_artifacts.py` in sync when test layout changes.
 - **`frontend-prod-test-build-boundary.mdc`** — `build` vs `build:prod`, `tsconfig.app`/`test`, `frontend/test/` tree, production static export exclusions.
+- **`frontend-static-prod-serve-only.mdc`** — nginx may only serve web-required static assets; strip/deny config/test leftovers (`nginx-csp-*.inc`, etc.) before nginx online.
 - **`python-docstring-and-typing-contract.mdc`** — Google-style Args/Returns + signature hints for every in-scope Python `def`; hard inventory gate via `scripts/python_def_inventory.py` / `docs/python_def_inventory.json`.
 
 Adding a new domain rule (same task, non-optional):

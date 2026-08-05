@@ -1,0 +1,68 @@
+---
+description: Production static trees must only contain web-required assets; strip config/test before nginx serves
+alwaysApply: false
+globs:
+  - hpcperfstats/site/frontend/scripts/copy-next-export.mjs
+  - hpcperfstats/site/hpcperfstats_site/static/frontend/**
+  - services-conf/proxy_entrypoint.sh
+  - services-conf/nginx-static-files.conf
+  - services-conf/nginx*.conf
+  - scripts/rebuild_frontend.sh
+---
+
+# Frontend / static: serve only production web assets
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+## Law
+
+> Under every path nginx serves to browsers (`/static/`, `/machine/`, `/pub/`, `/media/` as applicable), ship **only** files the website must fetch in production. Configuration, build intermediates, tests, docs, and operator leftovers must be **gone before nginx comes online** (or denied at the edge).
+
+## Public trees
+
+| URL prefix | Disk | Allowed |
+|------------|------|---------|
+| `/static/` | `/srv/static/` (`STATIC_ROOT`) | Hashed SPA under `frontend/_next/`, Django admin/app static, `frontend/robots.txt` via dedicated location |
+| `/machine/`, `/pub/` | `/srv/static/frontend/{machine,pub}/` | HTML shells, Next RSC `.txt` payloads, assets referenced by those shells |
+| `/media/` | `/srv/media/` | User/media objects only |
+
+## Forbidden on the public volume (non-exhaustive)
+
+Remove or never publish under served trees:
+
+- **Edge/nginx config:** `nginx-csp-*.inc`, any `*.inc`
+- **Source maps / VCS / docs / samples:** `*.map`, `*.md`, `*.example`, `.git*`, `Dockerfile*`
+- **Scripts / config dumps:** `*.sh`, `*.py`, `*.toml`, `*.ini`, `*.yml` / `*.yaml` (unless a product feature explicitly serves that MIME under a documented path)
+- **Test-only export routes:** dirs in `PRODUCTION_EXCLUDED_EXPORT_DIRS` (`frontend-prod-test-build-boundary.mdc`)
+
+## Required (do not strip)
+
+- Next App Router static-export **`index.txt` / `__next.*.txt`** — RSC flight payloads used by client navigation.
+- `index.html`, `_next/static/**` JS/CSS/fonts/media, `robots.txt`, `404.html` as emitted by the production export.
+
+## Runtime contract (proxy)
+
+1. `copy-next-export.mjs` may write **handoff-only** files (today: `nginx-csp-machine.inc` / `nginx-csp-pub.inc`) onto the shared volume so the proxy can read hashes.
+2. **`proxy_entrypoint.sh`** must **install** those policies under `/etc/nginx/`, then **delete** non-web leftovers from `/srv/static/frontend` (at least all `*.inc`, plus other denylisted suffixes) **before** `nginx -t` / `exec nginx`.
+3. **`nginx-static-files.conf`** must **404** HTTP GETs for denylisted suffixes under `/static/` (defense in depth if `collectstatic` / SPA heal reintroduces handoff files after proxy start).
+4. Nginx **`include`** for SPA CSP must reference **`/etc/nginx/nginx-csp-*.inc`**, never `/srv/static/frontend/…`.
+
+## Agent checklist (same task)
+
+When adding anything under `hpcperfstats_site/static/frontend/` or changing export/copy/proxy static wiring:
+
+1. Ask: **does a browser need this URL in prod?** If no → do not leave it on a served path after proxy start.
+2. Extend entrypoint strip denylist and/or nginx `/static/` deny regex in the **same** change.
+3. Add/extend regression tests (`test_nginx_static_wsgi_contract.py`, `copy-next-export.production.test.ts`, entrypoint string/order asserts).
+4. Cross-check **`frontend-prod-test-build-boundary.mdc`** for test-route exclusions.
+
+## Scan baseline (2026-08-05)
+
+Package `static/frontend` non-web leftovers found: **`nginx-csp-machine.inc`**, **`nginx-csp-pub.inc`** only (handoff files). No `.map` / `.md` / test routes in the production tree at scan time. Next `*.txt` under `machine/` / `pub/` are **required**, not leftovers.
+
+## Overlap
+
+- **`frontend-prod-test-build-boundary.mdc`** — `build:prod` vs full build; excluded export dirs; CSP **generation**.
+- **`nginx-static-url-prefix.mdc`** — who answers `/static/`; SPA heal.
+- **`security-posture-and-review-triggers.mdc`** — CSP hash contract and proxy install/remove.
+- **`dockerignore-test-artifacts-sync.mdc`** — keep test trees out of the image context.

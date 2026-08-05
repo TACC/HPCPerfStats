@@ -48,7 +48,7 @@ After copying `out/` → `hpcperfstats_site/static/frontend/`, `copy-next-export
 - `nginx-csp-machine.inc` — hash-based CSP + justified Bokeh `unsafe-eval`
 - `nginx-csp-pub.inc` — hash-based CSP without `unsafe-eval`
 
-Neither include may contain `unsafe-inline`. Proxy startup consumes these from the shared static volume. Extend `copy-next-export.production.test.ts` whenever hash extraction or include naming changes.
+Neither include may contain `unsafe-inline`. These are **handoff-only** files for the proxy: **`proxy_entrypoint.sh`** installs them under `/etc/nginx/` and strips non-web leftovers from the public tree before nginx starts (**`frontend-static-prod-serve-only.mdc`**). Extend `copy-next-export.production.test.ts` whenever hash extraction or include naming changes.
 
 ## `frontend/test/` layout
 
@@ -85,6 +85,7 @@ When touching this boundary:
 ## Overlap
 
 - **`dockerignore-test-artifacts-sync.mdc`** — docker context exclusions for `frontend/test/`
+- **`frontend-static-prod-serve-only.mdc`** — strip/deny non-web leftovers on the public static volume before nginx serves
 - **`frontend-stack-wiring-contract.mdc`** — test mock layers; test-utils path under `test/vitest/test-utils/`
 - **`bokeh-version-and-vendor-patch-upgrade.mdc`** — full `build` before Playwright; Bokeh fixture regen
 - **`web-pages-e2e-test-maintenance.mdc`** — fixture paths under `test/fixtures/`

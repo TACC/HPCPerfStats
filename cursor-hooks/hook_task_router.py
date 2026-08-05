@@ -219,7 +219,21 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "frontend-prod-test-build-boundary.mdc",
+            "frontend-static-prod-serve-only.mdc",
             "dockerignore-test-artifacts-sync.mdc",
+        ],
+    },
+    {
+        "id": "frontend_static_prod_serve",
+        "patterns": [
+            "hpcperfstats/site/hpcperfstats_site/static/frontend/*",
+            "services-conf/proxy_entrypoint.sh",
+            "services-conf/nginx-static-files.conf",
+            "services-conf/nginx*.conf",
+        ],
+        "rules": [
+            "frontend-static-prod-serve-only.mdc",
+            "nginx-static-url-prefix.mdc",
         ],
     },
     {

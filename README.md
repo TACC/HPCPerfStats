@@ -358,7 +358,9 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    **`default.conf`** with the host **`nginx.conf`** mount. Runtime
    **`proxy_entrypoint.sh`** regenerates the OCSP **`resolver`** include from
    container **`/etc/resolv.conf`**, waits for build-generated SPA CSP includes under
-   **`/srv/static/frontend/nginx-csp-{machine,pub}.inc`**, runs **`nginx -t`**, then starts nginx.
+   **`/srv/static/frontend/nginx-csp-{machine,pub}.inc`**, copies them to
+   **`/etc/nginx/`** and removes the **`/srv`** copies (so they are not HTTP-served),
+   runs **`nginx -t`**, then starts nginx.
    Nginx is the public authority for HSTS, framing, COOP, Permissions-Policy, Referrer-Policy,
    and CSP (hash-based for SPA shells; no-active for JSON/redirects). Certificates without an
    AIA OCSP URL will not staple; that must not take the site offline.
