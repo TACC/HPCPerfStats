@@ -5,6 +5,7 @@ import { ApiError } from "@/api/api-error";
 import { orvalResponseData } from "@/api/orval-response";
 import { HISTOGRAM_EMBED_VERSION } from "@/api-paths";
 import type { JobListHistogramEntry, MetricHistStatusMap } from "@/types/view-models";
+import { fingerprintBokehJsonItem } from "@/utils/fingerprint-bokeh-json-item";
 import { normalizeJobListHistogramEntry } from "@/utils/normalize-job-list-histogram-entry";
 
 export type MetricName = "runtime" | "nhosts" | "queue_wait";
@@ -83,8 +84,8 @@ export function fingerprintJobListHistogramEntries(
       [
         entry.title ?? "",
         entry.plot_unavailable_reason ?? "",
-        JSON.stringify(entry.plot_item_thumb ?? null),
-        JSON.stringify(entry.plot_item_full ?? null),
+        fingerprintBokehJsonItem(entry.plot_item_thumb ?? null),
+        fingerprintBokehJsonItem(entry.plot_item_full ?? null),
       ].join("\u001f"),
     )
     .join("\u001e");

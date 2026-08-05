@@ -4,12 +4,16 @@ import { orvalResponseData } from "@/api/orval-response";
 import type { JobPlotBatchResponse, JobPlotsState } from "@/types/view-models";
 import {
   JOB_PLOT_CONFIGS,
+  clearJobPlotsLoadingFlags,
   createEmptyJobPlotsState,
   jobPlotStatesEqual,
   mergeProgressiveJobPlotsState,
   plotsStateFromBatchResponse,
 } from "@/utils/job-detail-plots";
-import { scheduleJobPlotsRetry } from "@/utils/job-plots-polling";
+import {
+  JOB_PLOTS_MAX_PROGRESSIVE_ATTEMPTS,
+  scheduleJobPlotsRetry,
+} from "@/utils/job-plots-polling";
 
 /** Progressive job plots polling via Orval `jobsPlotsRetrieve`. */
 export function useJobPlotsQuery(pk: string, enabled: boolean) {
@@ -18,12 +22,27 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
   const [plotsFetchFailed, setPlotsFetchFailed] = useState(false);
   const plotsFetchGenRef = useRef(0);
   const plotsRetryCancelRef = useRef<(() => void) | null>(null);
+  const progressiveAttemptsRef = useRef(0);
   const prevPkRef = useRef<string>("");
+
+  const failClosedProgressive = useCallback(() => {
+    plotsRetryCancelRef.current?.();
+    plotsRetryCancelRef.current = null;
+    setPlotsFetchFailed(true);
+    setPlotsLoading(false);
+    setPlots((prev) => clearJobPlotsLoadingFlags(prev));
+  }, []);
 
   const fetchAllJobPlotsWithPolling = useCallback(
     async (cancelledCheck: () => boolean): Promise<void> => {
       let keepLoading = false;
       try {
+        progressiveAttemptsRef.current += 1;
+        if (progressiveAttemptsRef.current > JOB_PLOTS_MAX_PROGRESSIVE_ATTEMPTS) {
+          failClosedProgressive();
+          return;
+        }
+
         const plotEnvelope = await jobsPlotsRetrieve(pk, {
           progressive: "1",
         });
@@ -57,6 +76,7 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
           return;
         }
 
+        progressiveAttemptsRef.current = 0;
         if (
           plotResponse &&
           typeof plotResponse === "object" &&
@@ -80,13 +100,14 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
         }
       }
     },
-    [pk],
+    [pk, failClosedProgressive],
   );
 
   const retryJobPlots = useCallback(() => {
     setPlotsFetchFailed(false);
     setPlotsLoading(true);
     setPlots(createEmptyJobPlotsState(true));
+    progressiveAttemptsRef.current = 0;
     plotsFetchGenRef.current += 1;
     const gen = plotsFetchGenRef.current;
     void fetchAllJobPlotsWithPolling(() => plotsFetchGenRef.current !== gen);
@@ -98,6 +119,7 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
       setPlotsLoading(false);
       setPlotsFetchFailed(false);
       prevPkRef.current = "";
+      progressiveAttemptsRef.current = 0;
       plotsRetryCancelRef.current?.();
       plotsRetryCancelRef.current = null;
       return;
@@ -119,6 +141,7 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
       setPlots(createEmptyJobPlotsState(true));
       setPlotsLoading(true);
       setPlotsFetchFailed(false);
+      progressiveAttemptsRef.current = 0;
     }
 
     void fetchAllJobPlotsWithPolling(cancelledCheck);

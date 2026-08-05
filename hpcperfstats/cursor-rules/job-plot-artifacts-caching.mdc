@@ -54,6 +54,8 @@ alwaysApply: false
 - **Global lock:** `BokehEmbed` serializes `embed_item` via `bokehEmbedChain`; lazy-mount heavy sections (pub dashboard year/month toggle, job-list charts tab) to avoid stampeding the lock.
 - **List stagger:** pass `embedStaggerIndex` (0, 1, 2, …) on job-list histogram thumbs so embed starts are spaced by `LIST_EMBED_STAGGER_MS` (see `bokeh-embed-defaults.ts`).
 - **Unmount:** abort pending embed pipelines on route/view unmount (`AbortController` + early return in lock callback) so list→detail navigation does not wait behind stale embeds.
+- **Progressive Job Detail merge:** When `job_plots?progressive=1` returns `partial`, never flip a completed plot kind (`summary_plot` / `roofline` / `gpu_roofline`) back to loading solely because that kind’s item field is omitted. Cap progressive SPA polls; fail closed with Retry.
+- **Pub vs Job List hist:** Stabilizing Job List distribution embeds does **not** automatically fix `/pub/cluster-dashboard/` expansion histograms — those use `usePubExpansionPeriod` + `LazyExpansionHistogram` (`previewMode` + fingerprint-stable `initialBlock`).
 
 ## Overlap
 

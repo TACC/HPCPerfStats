@@ -97,4 +97,31 @@ describe("useJobPlotsQuery", () => {
     expect(jobsPlotsRetrieve).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
+
+  it("stops progressive polling after max attempts and sets plotsFetchFailed", async () => {
+    vi.useFakeTimers();
+    vi.mocked(jobsPlotsRetrieve).mockResolvedValue(
+      orvalOkEnvelope({
+        status: "partial",
+        progressive: true,
+        loading_plots: ["summary_plot", "roofline", "gpu_roofline"],
+        retry_after_seconds: 0.01,
+      }),
+    );
+
+    const { result } = renderHook(() => useJobPlotsQuery("111", true));
+
+    // scheduleJobPlotsRetry floors delay at 250ms; need ~61 attempts to hit the cap.
+    for (let i = 0; i < 70; i += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+      });
+      if (result.current.plotsFetchFailed) break;
+    }
+
+    expect(result.current.plotsFetchFailed).toBe(true);
+    expect(result.current.plotsLoading).toBe(false);
+    expect(jobsPlotsRetrieve.mock.calls.length).toBeLessThanOrEqual(60);
+    vi.useRealTimers();
+  });
 });

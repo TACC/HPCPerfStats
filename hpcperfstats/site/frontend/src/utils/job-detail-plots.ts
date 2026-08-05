@@ -1,5 +1,6 @@
 import type { BokehJsonItem } from "@/types/bokeh";
 import type { JobPlotBatchResponse, JobPlotsState } from "@/types/view-models";
+import { fingerprintBokehJsonItem } from "@/utils/fingerprint-bokeh-json-item";
 
 export type JobPlotConfigKey = "summary_plot" | "roofline" | "gpu_roofline";
 
@@ -84,7 +85,27 @@ export function mergeProgressiveJobPlotsState(
       };
       return acc;
     }
-    acc[config.key] = { ...previous, loading: true };
+    // Kind absent from loading_plots and missing item field: do not re-spin completed slots.
+    const completed =
+      previous.plotItem != null || previous.unavailableReason != null;
+    acc[config.key] = {
+      ...previous,
+      loading: completed ? false : previous.loading,
+    };
+    return acc;
+  }, {});
+}
+
+/** Clear progressive loading flags while retaining last good items (poll-cap fail-closed). */
+export function clearJobPlotsLoadingFlags(plots: JobPlotsState | null): JobPlotsState {
+  const base = plots ?? createEmptyJobPlotsState(false);
+  return JOB_PLOT_CONFIGS.reduce<JobPlotsState>((acc, config) => {
+    const previous = base[config.key] ?? {
+      loading: false,
+      plotItem: null,
+      unavailableReason: null,
+    };
+    acc[config.key] = { ...previous, loading: false };
     return acc;
   }, {});
 }
@@ -99,9 +120,9 @@ export function jobPlotEntryEqual(
   if (p.plotItem === q.plotItem) return true;
   if (p.plotItem == null && q.plotItem == null) return true;
   if (p.plotItem == null || q.plotItem == null) return false;
-  const left = p.plotItem as Record<string, unknown>;
-  const right = q.plotItem as Record<string, unknown>;
-  return left.root_id === right.root_id && left.target_id === right.target_id;
+  return (
+    fingerprintBokehJsonItem(p.plotItem) === fingerprintBokehJsonItem(q.plotItem)
+  );
 }
 
 export function jobPlotStatesEqual(

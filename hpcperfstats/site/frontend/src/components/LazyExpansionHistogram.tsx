@@ -70,6 +70,7 @@ export default function LazyExpansionHistogram({
             plotName={`Expansion factor histogram for ${periodKey}`}
             embedAriaLabel={`Expansion factor histogram for ${periodKey}`}
             embedMinHeightPx={320}
+            previewMode
           />
         </div>
       ) : null}
