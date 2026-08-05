@@ -86,8 +86,9 @@ services:
     #
     # Memory / connection budget (operator): max_connections=500 is headroom for many Django
     # workers + threads + pipeline pools, not permission to run 500 heavy queries at once.
-    # Spike control: lower work_mem and parallel gather workers cap per-query RAM; slightly lower
-    # shared_buffers frees container RAM for backends + OS cache (see README Postgres section).
+    # Spike control: lower work_mem caps per-query RAM; parallel gather defaults are raised for
+    # bulk scans (see max_parallel_* below). Slightly lower shared_buffers frees container RAM
+    # for backends + OS cache (see README Postgres section).
     #
     # statement_timeout / idle_in_transaction_session_timeout: align with Django OPTIONS in settings
     # (defaults 120s / 300s in ms). Shed runaway queries; tune bulk jobs if needed.
@@ -119,13 +120,13 @@ services:
       - -c
       - max_wal_size=6GB
       - -c
-      - max_worker_processes=20
+      - max_worker_processes=32
       - -c
-      - max_parallel_workers=8
+      - max_parallel_workers=24
       - -c
-      - max_parallel_workers_per_gather=1
+      - max_parallel_workers_per_gather=4
       - -c
-      - max_parallel_maintenance_workers=1
+      - max_parallel_maintenance_workers=2
       # Ingest replays and occasional DML on compressed host_data chunks can
       # exceed TimescaleDB's default 100k tuple decompress cap per transaction.
       - -c
