@@ -3,14 +3,16 @@
 #
 # Pressure signals (any trip ⇒ back off one worker):
 #   - streaming replication lag (seconds; 0 when no standbys)
-#   - WAL on-disk bytes vs max_wal_size
+#   - uncheckpointed WAL bytes (current LSN − redo_lsn) vs max_wal_size
 #   - PGDATA free bytes
 # Latency degrade: chunk UPDATE duration >> EWMA baseline ⇒ back off
 # Healthy streak at current target ⇒ ramp toward max (finds ceiling before degrade)
 
-# null_dev_eval_pressure LAG_SEC LAG_LIMIT WAL_BYTES MAX_WAL_BYTES WAL_FRAC
+# null_dev_eval_pressure LAG_SEC LAG_LIMIT CHECKPOINT_WAL_BYTES MAX_WAL_BYTES WAL_FRAC
 #   DISK_AVAIL_BYTES DISK_MIN_BYTES
 # Prints 1 if under pressure, else 0. Unknown metrics (-1) are ignored.
+# CHECKPOINT_WAL_BYTES is pg_wal_lsn_diff(pg_current_wal_lsn(), redo_lsn), not
+# sum(pg_ls_waldir()) — on-disk WAL commonly exceeds max_wal_size.
 null_dev_eval_pressure() {
   local lag_sec="${1:-0}"
   local lag_limit="${2:-30}"

@@ -7,8 +7,8 @@
 #     row paging). Each worker: UPDATE … WHERE time >= … AND time < … AND dev IS NULL.
 #   - VACUUM (ANALYZE) the finished chunk, then immediately start another chunk (no sleep).
 #   - Adaptive worker count (default): start low, ramp toward max while monitoring
-#     replication lag, WAL on-disk vs max_wal_size, PGDATA free space, and chunk
-#     UPDATE latency vs EWMA baseline. Back off before I/O saturation.
+#     replication lag, uncheckpointed WAL (current LSN − redo) vs max_wal_size,
+#     PGDATA free space, and chunk UPDATE latency vs EWMA baseline.
 #
 # Prefer Stage 1 done (compressed_chunks = 0). Compressed chunks are not in the
 # worklist. Prefer pipeline/web stopped so ingest is not fighting the rewrite.
@@ -113,7 +113,9 @@ exclude_list() {
   done
 }
 
-# lag_sec|wal_bytes|max_wal_bytes  (−1 for unknown WAL metrics)
+# lag_sec|checkpoint_wal_bytes|max_wal_bytes  (−1 for unknown WAL metrics)
+# WAL pressure uses uncheckpointed bytes (pg_current_wal_lsn − redo_lsn), not
+# sum(pg_ls_waldir): on-disk WAL often exceeds max_wal_size (soft checkpoint target).
 sample_db_pressure_metrics() {
   local row
   row="$(psql_at "
@@ -128,7 +130,11 @@ sample_db_pressure_metrics() {
          FROM pg_stat_replication),
         0
       ),
-      COALESCE((SELECT sum(size)::bigint FROM pg_ls_waldir()), -1),
+      COALESCE(
+        (SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), redo_lsn)::bigint
+         FROM pg_control_checkpoint()),
+        -1
+      ),
       COALESCE(pg_size_bytes(current_setting('max_wal_size')), -1)
     );" 2>/dev/null || true)"
   row="${row//$'\r'/}"
@@ -157,7 +163,7 @@ vacuum_finished_chunk() {
     return 0
   fi
   echo "  vacuum ${chunk}"
-  if ! psql_cmd "VACUUM (ANALYZE) ${chunk};"; then
+  if ! psql_cmd "SET statement_timeout = 0; VACUUM (ANALYZE) ${chunk};"; then
     echo "  warning: VACUUM failed for ${chunk} (continuing)" >&2
     return 0
   fi
@@ -181,7 +187,7 @@ maybe_adapt_concurrency() {
 
   reason="hold"
   if [[ "$pressure" == "1" ]]; then
-    reason="pressure(lag=${lag_sec:-?}s wal=${wal_bytes:-?}/${max_wal:-?} disk_avail=${disk_avail:-?})"
+    reason="pressure(lag=${lag_sec:-?}s checkpoint_wal=${wal_bytes:-?}/${max_wal:-?} disk_avail=${disk_avail:-?})"
     healthy_streak=0
   elif [[ "$duration_ms" =~ ^[1-9][0-9]*$ && "$baseline_ms" =~ ^[1-9][0-9]*$ ]]; then
     limit_ms="$(awk -v b="$baseline_ms" -v r="$LATENCY_RATIO" 'BEGIN { printf "%d", b * r }')"

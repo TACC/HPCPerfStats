@@ -172,7 +172,8 @@ A single `UPDATE host_data SET dev = '' WHERE dev IS NULL` runs in **one** Postg
 
 - **Range chunks (no OFFSET):** each worker updates one Timescale chunk by explicit `time` bounds from `timescaledb_information.chunks` (`WHERE time >= … AND time < … AND dev IS NULL`). Progress is remaining uncompressed chunks in that catalog — not `LIMIT/OFFSET` row paging (which gets slower as the offset grows).
 - **VACUUM then next chunk:** after each successful UPDATE (default), `VACUUM (ANALYZE)` that chunk relation, then immediately fill the free slot with the next chunk (no sleep).
-- **Adaptive workers (default):** start at 1 and ramp toward the max concurrency argument while watching replication lag (`pg_stat_replication`), WAL on-disk vs `max_wal_size` (`pg_ls_waldir`), PGDATA free space, and chunk UPDATE latency vs an EWMA baseline. Backs off before I/O saturation; records `best_workers` for the run. Use fixed concurrency only when you need a hard pin (`HPCPERFSTATS_NULL_DEV_FIXED_CONCURRENCY=1`).
+- **Adaptive workers (default):** start at 1 and ramp toward the max concurrency argument while watching replication lag (`pg_stat_replication`), **uncheckpointed WAL** (`pg_wal_lsn_diff(pg_current_wal_lsn(), redo_lsn)` vs `max_wal_size` — not `sum(pg_ls_waldir())`, which often exceeds the soft `max_wal_size` target), PGDATA free space, and chunk UPDATE latency vs an EWMA baseline. Backs off before I/O saturation; records `best_workers` for the run. Use fixed concurrency only when you need a hard pin (`HPCPERFSTATS_NULL_DEV_FIXED_CONCURRENCY=1`).
+- **VACUUM timeouts:** each chunk `VACUUM (ANALYZE)` runs with `statement_timeout = 0` (same as the UPDATE) so large chunks are not canceled mid-scan.
 
 **Compose cwd (prose only):** checkout with `docker-compose.yaml`. Prefer **pipeline/web stopped** so ingest is not fighting the rewrite. Stage 1 should already show `compressed_chunks = 0`; compressed chunks are not in the worklist.
 
