@@ -5,6 +5,15 @@ default_language_version:
 repos:
   - repo: local
     hooks:
+      - id: python-def-inventory-check
+        name: python def docstring/hint inventory (--check)
+        entry: bash -c '../.venv/bin/python3 scripts/python_def_inventory.py --check'
+        language: system
+        files: ^(hpcperfstats/|scripts/|services-conf/).*\.py$
+        pass_filenames: false
+
+  - repo: local
+    hooks:
       - id: ruff-unused
         name: ruff (Python unused imports/vars)
         entry: bash -c '../.venv/bin/ruff check --select=F401,F841,F811 hpcperfstats cursor-hooks scripts'
