@@ -4,6 +4,7 @@ import { ApiError } from "@/api/api-error";
 import { orvalOkEnvelope } from "@/api/orval-response";
 import {
   JOB_LIST_HISTOGRAM_DEBOUNCE_MS,
+  JOB_LIST_HISTOGRAM_JOBS_IDLE_POLL_MS,
   useJobListHistograms,
 } from "./use-job-list-histograms";
 
@@ -128,12 +129,64 @@ describe("useJobListHistograms", () => {
     await advanceDebounce();
     expect(jobsHistogramsBatchRetrieve).not.toHaveBeenCalled();
 
+    // Idle wait uses a ref + poll — flipping jobsFetching must not re-run the effect.
     rerender({ jobsFetching: false });
-    await advanceDebounce();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(JOB_LIST_HISTOGRAM_JOBS_IDLE_POLL_MS);
+    });
 
     await waitFor(() => {
       expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("does not refetch when jobsFetching toggles with stable paramsKey", async () => {
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(mockBatchResponse());
+
+    const { rerender } = renderHook(
+      ({ jobsFetching }) => useJobListHistograms(STABLE_PARAMS, 0, true, jobsFetching),
+      { initialProps: { jobsFetching: false } },
+    );
+
+    await advanceDebounce();
+    await waitFor(() => {
+      expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
+    });
+
+    rerender({ jobsFetching: true });
+    rerender({ jobsFetching: false });
+    rerender({ jobsFetching: true });
+    rerender({ jobsFetching: false });
+    await advanceDebounce();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(JOB_LIST_HISTOGRAM_JOBS_IDLE_POLL_MS * 4);
+    });
+
+    expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps histograms reference when batch payload fingerprint is unchanged", async () => {
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(mockBatchResponse());
+
+    const { result, rerender } = renderHook(
+      ({ reloadKey }) => useJobListHistograms(STABLE_PARAMS, reloadKey, true),
+      { initialProps: { reloadKey: 0 } },
+    );
+
+    await advanceDebounce();
+    await waitFor(() => {
+      expect(result.current.histograms?.length).toBeGreaterThan(0);
+    });
+    const prior = result.current.histograms;
+
+    rerender({ reloadKey: 1 });
+    await advanceDebounce();
+    await waitFor(() => {
+      expect(result.current.histogramsUpdating).toBe(false);
+    });
+
+    expect(result.current.histograms).toBe(prior);
+    expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(2);
   });
 
   it("does not fetch when disabled", async () => {

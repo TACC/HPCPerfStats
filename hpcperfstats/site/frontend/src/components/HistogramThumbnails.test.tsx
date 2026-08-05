@@ -328,6 +328,76 @@ describe("HistogramThumbnails", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("keeps thumb embed mounted when plot_item_thumb identity changes after layout ready", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const embedItem = vi.fn().mockResolvedValue(embedViewsWithIdleDoc());
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    const { rerender, container } = renderHistograms(
+      <HistogramThumbnails
+        embedAllowed
+        histograms={[
+          {
+            title: "Jobs by queue",
+            plot_item_thumb: VALID_BOKEH_ITEM,
+            plot_item_full: VALID_BOKEH_ITEM,
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => expect(embedItem).toHaveBeenCalled());
+    expect(container.querySelector(".histogram-thumbnail-shell .bokeh-embed")).toBeTruthy();
+    expect(
+      container.querySelector(".histogram-thumbnail-shell [data-bokeh-preview='true']"),
+    ).toBeTruthy();
+
+    const nextThumb = {
+      doc: {
+        root_ids: ["p1001"],
+        roots: [{ id: "p1001", type: "object", attributes: { title: "clone" } }],
+      },
+    };
+    rerender(
+      <SessionContext.Provider
+        value={{ logged_in: true, is_staff: false, username: "tester" }}
+      >
+        <HistogramThumbnails
+          embedAllowed
+          histograms={[
+            {
+              title: "Jobs by queue",
+              plot_item_thumb: nextThumb,
+              plot_item_full: VALID_BOKEH_ITEM,
+            },
+          ]}
+        />
+      </SessionContext.Provider>,
+    );
+
+    // Thumb layout gate must not unmount the embed (lowercase LoadingMessage).
+    // BokehEmbed may briefly show "Loading Jobs by queue…" while re-embedding.
+    expect(screen.queryByText("Loading jobs by queue…")).not.toBeInTheDocument();
+    expect(container.querySelector(".histogram-thumbnail-shell .bokeh-embed")).toBeTruthy();
+    expect(
+      container.querySelector(".histogram-thumbnail-shell [data-bokeh-preview='true']"),
+    ).toBeTruthy();
+  });
+
   it("uses non-modal enlarge dialog so the page stays interactable", async () => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,

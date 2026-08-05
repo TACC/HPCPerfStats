@@ -29,6 +29,9 @@ const NO_JOBS_MATCHED_MESSAGE = "No jobs matched this query.";
 /** Debounce filter-driven histogram batch refetch so rapid chip toggles do not pile up. */
 export const JOB_LIST_HISTOGRAM_DEBOUNCE_MS = 450;
 
+/** Poll interval while waiting for the jobs table `isFetching` flag to clear. */
+export const JOB_LIST_HISTOGRAM_JOBS_IDLE_POLL_MS = 50;
+
 const NO_JOBS_META: JobListHistogramSampleMeta = {
   nj: null,
   histogramNj: null,
@@ -70,6 +73,24 @@ function serializeJobListApiParams(params: Record<string, string>): string {
   return keys.map((key) => `${key}=${params[key]}`).join("&");
 }
 
+/** Compact fingerprint so identical batch payloads keep prior React item refs. */
+export function fingerprintJobListHistogramEntries(
+  entries: JobListHistogramEntry[] | null,
+): string {
+  if (!entries?.length) return "";
+  return entries
+    .map((entry) =>
+      [
+        entry.metric ?? "",
+        entry.title ?? "",
+        entry.plot_unavailable_reason ?? "",
+        JSON.stringify(entry.plot_item_thumb ?? null),
+        JSON.stringify(entry.plot_item_full ?? null),
+      ].join("\u001f"),
+    )
+    .join("\u001e");
+}
+
 /** Loads metric histogram embeds for the current job list filter params (single batch API). */
 export function useJobListHistograms(
   listApiParams: Record<string, string>,
@@ -80,6 +101,9 @@ export function useJobListHistograms(
   const paramsKey = serializeJobListApiParams(listApiParams);
   const listApiParamsRef = useRef(listApiParams);
   listApiParamsRef.current = listApiParams;
+  const jobsFetchingRef = useRef(jobsFetching);
+  jobsFetchingRef.current = jobsFetching;
+  const histogramsFingerprintRef = useRef<string>("");
 
   const [histograms, setHistograms] = useState<JobListHistogramEntry[] | null>(null);
   const [metricHistStatus, setMetricHistStatus] = useState<MetricHistStatusMap>(() =>
@@ -96,6 +120,7 @@ export function useJobListHistograms(
       setBatchError(null);
       setSampleMeta(NO_JOBS_META);
       setHistogramsUpdating(false);
+      histogramsFingerprintRef.current = "";
       return;
     }
 
@@ -113,6 +138,7 @@ export function useJobListHistograms(
 
     const controller = new AbortController();
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let idlePollTimer: ReturnType<typeof setTimeout> | null = null;
 
     const loadHistograms = async () => {
       setHistogramsUpdating(true);
@@ -144,6 +170,7 @@ export function useJobListHistograms(
           setMetricHistStatus(metricStatusFromBatchError(NO_JOBS_MATCHED_MESSAGE));
           setBatchError(NO_JOBS_MATCHED_MESSAGE);
           setHistograms(null);
+          histogramsFingerprintRef.current = "";
           setHistogramsUpdating(false);
           return;
         }
@@ -180,7 +207,12 @@ export function useJobListHistograms(
         }
 
         setMetricHistStatus(nextStatus);
-        setHistograms(entries.length ? entries : null);
+        const nextEntries = entries.length ? entries : null;
+        const nextFingerprint = fingerprintJobListHistogramEntries(nextEntries);
+        if (nextFingerprint !== histogramsFingerprintRef.current) {
+          histogramsFingerprintRef.current = nextFingerprint;
+          setHistograms(nextEntries);
+        }
         setBatchError(null);
         setHistogramsUpdating(false);
       } catch (err) {
@@ -195,16 +227,30 @@ export function useJobListHistograms(
       }
     };
 
+    const startLoadWhenJobsIdle = () => {
+      if (controller.signal.aborted) return;
+      if (!jobsFetchingRef.current) {
+        void loadHistograms();
+        return;
+      }
+      idlePollTimer = setTimeout(() => {
+        idlePollTimer = null;
+        startLoadWhenJobsIdle();
+      }, JOB_LIST_HISTOGRAM_JOBS_IDLE_POLL_MS);
+    };
+
     debounceTimer = setTimeout(() => {
-      if (jobsFetching) return;
-      void loadHistograms();
+      debounceTimer = null;
+      startLoadWhenJobsIdle();
     }, JOB_LIST_HISTOGRAM_DEBOUNCE_MS);
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
+      if (idlePollTimer) clearTimeout(idlePollTimer);
       controller.abort();
     };
-  }, [paramsKey, reloadKey, enabled, jobsFetching]);
+    // jobsFetching is read via jobsFetchingRef — do not re-run on isFetching toggles.
+  }, [paramsKey, reloadKey, enabled]);
 
   return {
     histograms,

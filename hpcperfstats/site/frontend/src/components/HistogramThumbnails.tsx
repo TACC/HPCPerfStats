@@ -173,7 +173,9 @@ function HistogramThumbnail({
       window.cancelAnimationFrame(raf1);
       if (raf2 != null) window.cancelAnimationFrame(raf2);
     };
-  }, [isMobile, plotItemThumb]);
+    // Measure shell size only — do not reset on plotItemThumb identity changes
+    // (that unmounts Bokeh to LoadingMessage and causes remount flicker).
+  }, [isMobile]);
 
   /* Mobile: full histogram only, no popover, container sized for viewport.
      Chart title lives inside the Bokeh figure — do not duplicate it outside. */
@@ -216,7 +218,6 @@ function HistogramThumbnail({
               embedAllowed={embedAllowed}
               embedStaggerIndex={index}
               embedMinHeightPx={THUMB_SIZE.height}
-              maximizeInContainer="width"
               previewMode
               intersectionRootMargin={HISTOGRAM_INTERSECTION_ROOT_MARGIN}
               wrapperClassName="h-[200px] w-[280px] min-h-[200px] min-w-0 overflow-hidden [&_.bokeh-embed-wrapper]:h-full [&_.bokeh-embed-wrapper]:w-full [&_.bokeh-embed-wrapper]:max-w-full [&_.bokeh-embed-wrapper]:min-w-0 [&_.bokeh-embed-wrapper]:overflow-hidden [&_.bokeh-embed]:box-border [&_.bokeh-embed]:h-full [&_.bokeh-embed]:min-h-[200px] [&_.bokeh-embed]:w-full [&_.bokeh-embed]:max-w-full [&_.bokeh-embed]:min-w-0 [&_.bokeh-embed]:overflow-hidden [&_.bokeh-embed_.bk-root]:max-w-full!"

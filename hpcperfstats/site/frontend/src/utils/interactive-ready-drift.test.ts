@@ -123,6 +123,13 @@ describe("interactive-ready drift guard", () => {
     // Desktop thumb + mobile grid set previewMode; enlarge dialog block must not.
     const enlargeBlock = thumbs.slice(thumbs.indexOf("histogram-thumbnail-popover-plot"));
     expect(enlargeBlock).not.toMatch(/previewMode/);
+    // Fixed-size backend thumbs must not stretch_width (zoomed-in flicker); enlarge may.
+    const thumbShellBlock = thumbs.slice(
+      0,
+      thumbs.indexOf("histogram-thumbnail-popover-plot"),
+    );
+    expect(thumbShellBlock).not.toMatch(/maximizeInContainer/);
+    expect(enlargeBlock).toMatch(/maximizeInContainer/);
     const rule = readFileSync(
       join(
         SRC_ROOT,
