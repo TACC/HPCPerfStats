@@ -13,6 +13,16 @@ from datetime import timezone as dt_utc
 
 from django.core.cache import cache
 from django.db import InterfaceError, OperationalError, close_old_connections, connections
+from django.db.models import (
+    DateTimeField,
+    ExpressionWrapper,
+    F,
+    FloatField,
+    Q,
+    Sum,
+    Value,
+)
+from django.db.models.functions import Coalesce
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.analysis.metrics.lib.gen.utils import queryset_to_dataframe
@@ -54,6 +64,93 @@ _STATEMENT_TIMEOUT_ERROR_MARKERS = (
     "canceling statement due to statement timeout",
     "querycanceled",
 )
+
+# Alias for every SQL-side per-(host, time) sum of a host_data value column.
+HOST_DATA_SUM_VAL_ALIAS = "sum_val"
+# Grouping alias for the sample timestamp. ``time`` cannot be reused as an
+# annotation alias (it is a model field) and must not be grouped on directly;
+# see host_data_sum_val_per_sample_queryset.
+HOST_DATA_TIME_ALIAS = "sample_time"
+
+
+def host_data_sum_val_annotation(
+    column, *, nonnegative_only=False, coalesce_zero=True):
+  """Float-typed ``SUM(column)`` for a per-(host, time) host_data aggregate.
+
+  ``host_data.value``/``arc``/``delta`` are ``RealField``, so pairing ``Sum`` with
+  an integer ``Value(0)`` makes Django refuse to resolve the expression type
+  (``FieldError: Expression contains mixed types: RealField, IntegerField``) when
+  the query is compiled — the annotation must carry an explicit float
+  ``output_field``.
+
+  ``coalesce_zero`` keeps parity with pandas ``groupby().sum()``, which returns
+  ``0.0`` for a group whose samples are all NULL; pass ``False`` where callers
+  historically saw ``NULL`` (missing) for such groups. ``nonnegative_only`` drops
+  negative samples (counter resets, bad rollover width) from the sum via an
+  aggregate ``FILTER`` so the ``(host, time)`` group still exists, matching
+  ``Series.where(s >= 0).sum()``.
+  """
+  sum_filter = Q(**{"{0}__gte".format(column): 0}) if nonnegative_only else None
+  aggregate = Sum(column, filter=sum_filter, output_field=FloatField())
+  if not coalesce_zero:
+    return aggregate
+  return Coalesce(aggregate, Value(0.0), output_field=FloatField())
+
+
+def host_data_sum_val_per_sample_queryset(
+    qs, column, *, nonnegative_only=False, coalesce_zero=True):
+  """One row per (host, sample time) with ``column`` summed by PostgreSQL.
+
+  ``host_data.time`` is declared ``primary_key=True`` even though the table is
+  unique on (time, host, type, event, dev). PostgreSQL advertises
+  ``allows_group_by_selected_pks``, so Django treats every other column as
+  functionally dependent on ``time`` and silently drops ``host`` from
+  ``.values("host", "time").annotate(...)`` — the aggregate then sums across all
+  hosts at each timestamp. Grouping on an ``ExpressionWrapper`` keeps the
+  timestamp out of that optimization, so GROUP BY stays (host, time).
+
+  Rows carry ``HOST_DATA_TIME_ALIAS`` instead of ``time``; use
+  ``host_data_restore_time_column`` on the resulting DataFrame.
+  """
+  return (
+      qs.annotate(
+          **{
+              HOST_DATA_TIME_ALIAS:
+                  ExpressionWrapper(F("time"), output_field=DateTimeField())
+          }
+      )
+      .values("host", HOST_DATA_TIME_ALIAS)
+      .annotate(
+          **{
+              HOST_DATA_SUM_VAL_ALIAS:
+                  host_data_sum_val_annotation(
+                      column,
+                      nonnegative_only=nonnegative_only,
+                      coalesce_zero=coalesce_zero,
+                  )
+          }
+      )
+      .order_by("host", HOST_DATA_TIME_ALIAS)
+  )
+
+
+def host_data_restore_time_column(df):
+  """Rename ``HOST_DATA_TIME_ALIAS`` back to ``time`` on an aggregate DataFrame."""
+  if df is None:
+    return df
+  if HOST_DATA_TIME_ALIAS in getattr(df, "columns", ()):
+    return df.rename(columns={HOST_DATA_TIME_ALIAS: "time"})
+  return df
+
+
+def is_metrics_compute_control_flow_error(exc):
+  """True for wall-clock cancellations that must never be swallowed by a fallback.
+
+  ``update_metrics`` pool workers bound each job with ``SIGALRM``
+  (``MetricsComputeJobTimeoutError``, a ``TimeoutError``). The alarm is one-shot,
+  so retrying a slower path inside ``except Exception`` runs unbounded.
+  """
+  return isinstance(exc, TimeoutError)
 
 
 def _coerce_jid_table_host_query_batch_size(batch_size):
@@ -279,7 +376,7 @@ def _type_detail_concat_sum_val_frames(frames):
 
   if not frames:
     return pd.DataFrame(columns=["host", "time", "sum_val"])
-  df = pd.concat(frames, ignore_index=True)
+  df = host_data_restore_time_column(pd.concat(frames, ignore_index=True))
   if df.empty or "sum_val" not in df.columns:
     return pd.DataFrame(columns=["host", "time", "sum_val"])
   if not {"host", "time"}.issubset(df.columns):
@@ -1242,9 +1339,6 @@ class jid_table:
         return _fn_pandas_groupby()
 
       try:
-        from django.db.models import Sum, Value
-        from django.db.models.functions import Coalesce
-
         tkw = self._host_data_time_filter_kwargs()
         frames = []
         for host_chunk in _iter_acct_host_batches(hosts):
@@ -1258,12 +1352,8 @@ class jid_table:
             )
             if reject_dcgm_blank:
               qs_base = qs_base.filter(**{f"{val_col}__lt": DCGM_FP64_BLANK})
-            qs_sql = (
-                qs_base.values("host", "time")
-                .annotate(sum_val=Coalesce(Sum(val_col), Value(0)))
-                .order_by("host", "time")
-            )
-            df_chunk = queryset_to_dataframe(qs_sql)
+            qs_sql = host_data_sum_val_per_sample_queryset(qs_base, val_col)
+            df_chunk = host_data_restore_time_column(queryset_to_dataframe(qs_sql))
             if not df_chunk.empty and "sum_val" in df_chunk.columns:
               chunk_frames.append(df_chunk)
               break
@@ -1281,11 +1371,16 @@ class jid_table:
         )
         df_sql["sum_val"] = df_sql["sum_val"].astype("float64") * conv
         return df_sql
-      except Exception:
-        _logger.debug(
-            "get_aggregate_df SQL aggregate failed jid=%s typ=%s; using pandas",
+      except Exception as exc:
+        if is_metrics_compute_control_flow_error(exc):
+          raise
+        _logger.warning(
+            "get_aggregate_df SQL aggregate failed jid=%s typ=%s error=%s: %s; "
+            "falling back to raw-row pandas groupby",
             self.jid,
             typ,
+            type(exc).__name__,
+            exc,
             exc_info=True,
         )
         return _fn_pandas_groupby()
@@ -1334,8 +1429,6 @@ class jid_table:
     Dual-reads legacy ``read_bytes``/``write_bytes``; returned ``event`` values are
     canonicalized to ``vfs_*``.
         """
-    from django.db.models import Sum
-
     byte_events = ["vfs_read_bytes", "vfs_write_bytes"]
 
     def _llite_fn():
@@ -1371,8 +1464,6 @@ class jid_table:
     read and write. Intended for the job detail File System when Lustre `llite`
     stats are not available.
     """
-    from django.db.models import Sum
-
     nfs_read_events = ("normal_read", "direct_read", "server_read")
     nfs_write_events = ("normal_write", "direct_write", "server_write")
     all_events = list(nfs_read_events) + list(nfs_write_events)
@@ -1564,26 +1655,21 @@ class TypeDetailDataProvider:
       end_time = self.end_time
 
       try:
-        from django.db.models import Sum, Value
-        from django.db.models.functions import Coalesce
-
         sql_frames = []
         for host_chunk in _iter_acct_host_batches(
             self.host_list,
             TYPE_DETAIL_HOST_QUERY_BATCH,
         ):
           def build_qs_sql(host_subchunk, ev=event, met=metric):
-            return (
+            return host_data_sum_val_per_sample_queryset(
                 host_data.objects.filter(
                     type=type_name,
                     time__gte=start_time,
                     time__lte=end_time,
                     host__in=host_subchunk,
                     event=ev,
-                )
-                .values("host", "time")
-                .annotate(sum_val=Coalesce(Sum(met), Value(0)))
-                .order_by("host", "time")
+                ),
+                met,
             )
 
           sql_frames.append(
@@ -1593,13 +1679,17 @@ class TypeDetailDataProvider:
               )
           )
         return _type_detail_concat_sum_val_frames(sql_frames)
-      except Exception:
-        logging.getLogger(__name__).debug(
-            "TypeDetailDataProvider SQL aggregate failed jid=%s type=%s event=%s; "
-            "using pandas",
+      except Exception as exc:
+        if is_metrics_compute_control_flow_error(exc):
+          raise
+        logging.getLogger(__name__).warning(
+            "TypeDetailDataProvider SQL aggregate failed jid=%s type=%s event=%s "
+            "error=%s: %s; falling back to raw-row pandas groupby",
             self.jid,
             type_name,
             event,
+            type(exc).__name__,
+            exc,
             exc_info=True,
         )
 
@@ -1699,21 +1789,20 @@ class HostDataProvider:
     _ALLOWED_METRICS = ("arc", "value", "delta")
     if val_col not in _ALLOWED_METRICS:
       val_col = "arc"
-    from django.db.models import Sum
-
     probed_events = events_probe_names(events, typ=typ)
     df = None
     for candidate_typ in type_probe_names(typ):
-      qs = (
+      # Single-host provider: keep NULL (missing) for all-NULL sample groups,
+      # unlike the job-scoped aggregates that mirror pandas ``sum() == 0.0``.
+      qs = host_data_sum_val_per_sample_queryset(
           self._host_data_qs(
               type=candidate_typ,
               event__in=probed_events,
-          )
-          .values("host", "time")
-          .annotate(sum_val=Sum(val_col))
-          .order_by("host", "time")
+          ),
+          val_col,
+          coalesce_zero=False,
       )
-      candidate = queryset_to_dataframe(qs)
+      candidate = host_data_restore_time_column(queryset_to_dataframe(qs))
       if not candidate.empty and "sum_val" in candidate.columns:
         df = candidate
         break

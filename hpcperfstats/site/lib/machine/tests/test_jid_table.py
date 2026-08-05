@@ -427,6 +427,93 @@ def test_type_detail_provider_invalid_metric_defaults_to_arc():
   assert out["sum_val"].tolist() == [7.0]
 
 
+def test_is_metrics_compute_control_flow_error_matches_only_timeouts():
+  """The fallback guard keys off ``TimeoutError``, the base of the SIGALRM error."""
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      is_metrics_compute_control_flow_error,
+  )
+  from hpcperfstats.analysis.metrics.lib.metrics import MetricsComputeJobTimeoutError
+
+  assert is_metrics_compute_control_flow_error(
+      MetricsComputeJobTimeoutError("exceeded 900s")) is True
+  assert is_metrics_compute_control_flow_error(
+      OperationalError("canceling statement")) is False
+
+
+def test_jid_table_get_aggregate_df_reraises_compute_timeout():
+  """A per-job wall-clock timeout must propagate, not restart the pandas path.
+
+  The ``update_metrics`` SIGALRM budget is one-shot; retrying raw-row fetches
+  inside ``except Exception`` runs unbounded (the 900s traceback showed the
+  fallback re-entered after the alarm already fired).
+  """
+  from hpcperfstats.analysis.metrics.lib.metrics import MetricsComputeJobTimeoutError
+
+  inst = jid_table.__new__(jid_table)
+  inst.jid = "jid-agg-timeout"
+  inst._large_job_plot_cache_token = "full"
+  inst._base_filter = {
+      "host__in": ["n1.example.com"],
+      "time__gte": datetime(2024, 6, 1, tzinfo=timezone.utc),
+      "time__lte": datetime(2024, 6, 2, tzinfo=timezone.utc),
+  }
+  calls = []
+
+  def fake_queryset_to_dataframe(_qs, columns=None):
+    calls.append(1)
+    raise MetricsComputeJobTimeoutError(
+        "compute_metrics exceeded 900s for jid jid-agg-timeout")
+
+  with patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.queryset_to_dataframe",
+      fake_queryset_to_dataframe,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
+      lambda _key, _timeout, query_fn: query_fn(),
+  ), pytest.raises(MetricsComputeJobTimeoutError):
+    jid_table.get_aggregate_df(inst, "host_cpu", "arc", ["user"])
+
+  assert calls == [1], "pandas fallback must not run after the alarm fires"
+
+
+def test_type_detail_get_aggregate_df_reraises_compute_timeout():
+  """TypeDetailDataProvider must not swallow the metrics wall-clock alarm either."""
+  from hpcperfstats.analysis.metrics.lib.metrics import MetricsComputeJobTimeoutError
+
+  provider = TypeDetailDataProvider(
+      jid="jid-type-detail-timeout",
+      type_name="pmc",
+      start_time=datetime(2024, 6, 1, tzinfo=timezone.utc),
+      end_time=datetime(2024, 6, 2, tzinfo=timezone.utc),
+      host_list=["n1.example.com"],
+  )
+  fallback_calls = []
+
+  def fake_retry(_host_chunk, _build_qs, **_kwargs):
+    raise MetricsComputeJobTimeoutError(
+        "compute_metrics exceeded 900s for jid jid-type-detail-timeout")
+
+  def fake_fallback(*_args, **_kwargs):
+    fallback_calls.append(1)
+    return pd.DataFrame(columns=["host", "time", "arc"])
+
+  with patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table."
+      "_queryset_to_dataframe_with_host_chunk_retry",
+      fake_retry,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table."
+      "_fetch_host_data_values_frames",
+      fake_fallback,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
+      lambda _key, _timeout, query_fn: query_fn(),
+  ), pytest.raises(MetricsComputeJobTimeoutError):
+    provider.get_aggregate_df("FLOPS", metric="arc")
+
+  assert fallback_calls == []
+
+
 def test_jid_table_host_data_time_filter_kwargs_full_window():
   """Unsampled jobs use time__gte/time__lte in ORM kwargs."""
   inst = jid_table.__new__(jid_table)
@@ -890,6 +977,109 @@ def test_queryset_to_dataframe_with_host_chunk_retry_splits_on_timeout(monkeypat
   assert chunk_sizes == [8, 4, 4]
   assert len(out) == 2
   assert set(out["sum_val"].tolist()) == {4.0}
+
+
+def _compiled_host_data_sql(qs):
+  sql, _params = qs.query.get_compiler(using="default").as_sql()
+  return sql
+
+
+def _compiled_group_by_terms(qs):
+  sql = _compiled_host_data_sql(qs)
+  assert "GROUP BY " in sql, sql
+  clause = sql.split("GROUP BY ", 1)[1]
+  for stop in (" ORDER BY ", " HAVING ", " LIMIT "):
+    clause = clause.split(stop, 1)[0]
+  return [term.strip() for term in clause.split(",")]
+
+
+def _host_data_agg_base_qs():
+  from hpcperfstats.site.lib.machine.models import host_data
+
+  return host_data.objects.filter(
+      host__in=["h1.example.com", "h2.example.com"],
+      type="host_cpu",
+      event__in=["user", "system"],
+  )
+
+
+def test_host_data_sum_val_annotation_resolves_float_output_field():
+  """``Coalesce(Sum(RealField), Value(0))`` raised FieldError when compiled."""
+  from django.db.models import FloatField, Sum, Value
+  from django.db.models.functions import Coalesce
+
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      host_data_sum_val_annotation,
+  )
+
+  with pytest.raises(Exception):
+    Coalesce(Sum("arc"), Value(0)).output_field  # noqa: B018
+
+  assert isinstance(host_data_sum_val_annotation("arc").output_field, FloatField)
+
+
+def test_host_data_per_sample_queryset_groups_by_host_and_time():
+  """Grouping must survive PostgreSQL's primary-key functional dependency."""
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      HOST_DATA_SUM_VAL_ALIAS,
+      host_data_sum_val_annotation,
+      host_data_sum_val_per_sample_queryset,
+  )
+
+  collapsed = (
+      _host_data_agg_base_qs().values("host", "time")
+      .annotate(**{HOST_DATA_SUM_VAL_ALIAS: host_data_sum_val_annotation("arc")})
+      .order_by("host", "time")
+  )
+  assert len(_compiled_group_by_terms(collapsed)) == 1, (
+      "raw values('host', 'time') no longer collapses; the ExpressionWrapper "
+      "workaround in host_data_sum_val_per_sample_queryset can be simplified"
+  )
+
+  safe = host_data_sum_val_per_sample_queryset(_host_data_agg_base_qs(), "arc")
+  assert len(_compiled_group_by_terms(safe)) == 2
+
+
+def test_host_data_per_sample_queryset_sql_shape():
+  """Float coalesce by default, optional non-negative FILTER, opt-out NULL sums."""
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      host_data_sum_val_per_sample_queryset,
+  )
+
+  sql = _compiled_host_data_sql(
+      host_data_sum_val_per_sample_queryset(_host_data_agg_base_qs(), "arc"))
+  assert 'COALESCE(SUM("host_data"."arc")' in sql
+  assert "FILTER" not in sql
+
+  filtered = _compiled_host_data_sql(
+      host_data_sum_val_per_sample_queryset(
+          _host_data_agg_base_qs(), "arc", nonnegative_only=True)
+  )
+  assert 'FILTER (WHERE "host_data"."arc" >= ' in filtered
+
+  no_coalesce = _compiled_host_data_sql(
+      host_data_sum_val_per_sample_queryset(
+          _host_data_agg_base_qs(), "value", coalesce_zero=False)
+  )
+  assert "COALESCE" not in no_coalesce
+  assert 'SUM("host_data"."value")' in no_coalesce
+
+
+def test_host_data_restore_time_column_renames_alias():
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      HOST_DATA_SUM_VAL_ALIAS,
+      HOST_DATA_TIME_ALIAS,
+      host_data_restore_time_column,
+  )
+
+  df = pd.DataFrame(
+      [{"host": "h1", HOST_DATA_TIME_ALIAS: 1, HOST_DATA_SUM_VAL_ALIAS: 2.0}])
+  assert host_data_restore_time_column(df).columns.tolist() == [
+      "host", "time", HOST_DATA_SUM_VAL_ALIAS
+  ]
+  passthrough = pd.DataFrame([{"host": "h1", "time": 1}])
+  assert host_data_restore_time_column(passthrough) is passthrough
+  assert host_data_restore_time_column(None) is None
 
 
 def test_type_detail_get_aggregate_df_sql_fast_path(monkeypatch):

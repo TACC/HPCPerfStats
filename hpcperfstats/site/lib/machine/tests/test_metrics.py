@@ -9,6 +9,7 @@ from pandas import Timestamp
 
 from unittest.mock import MagicMock, patch
 
+from hpcperfstats.analysis.metrics.lib.gen import jid_table
 from hpcperfstats.analysis.metrics.lib.job_metric_display_labels import JOB_METRIC_SHORT_LABELS
 from hpcperfstats.analysis.metrics.lib.metrics import (
     METRIC_NOT_COMPUTED_YET,
@@ -18,6 +19,7 @@ from hpcperfstats.analysis.metrics.lib.metrics import (
     _Host,
     _Schema,
     _host_data_metric_rows_batched,
+    _host_data_row_cache_key,
     _jid_table_host_data_time_kwargs,
     _metric_type_events_feasible,
     avg_ethbw,
@@ -938,7 +940,7 @@ def test_avg_cpuusage_scales_to_allocated_ncores():
     ncores = 2
     nhosts = 2
 
-  def fake_rows(tkw, hosts, typename, events, metric_column, rows_cache=None):
+  def fake_rows(_tkw, _hosts, _typename, events, _metric_column, **_kwargs):
     ev = set(events)
     if ev & {"idle", "iowait", "irq", "softirq"}:
       return list(rows_idle)
@@ -1678,6 +1680,53 @@ def test_jid_table_host_data_time_kwargs_full_and_sampled():
   }) == {"time__gte": 1, "time__lte": 2}
 
 
+class _FakeHostDataQs:
+  """Fake queryset accepting both the raw ``values()`` and per-sample-sum chains."""
+
+  def __init__(self, hosts, rows, on_materialize=None):
+    self._hosts = hosts
+    self._rows = rows
+    self._on_materialize = on_materialize
+
+  def annotate(self, **_kwargs):
+    return self
+
+  def values(self, *_cols):
+    return self
+
+  def order_by(self, *_args):
+    if self._on_materialize is not None:
+      self._on_materialize(self._hosts)
+    return list(self._rows)
+
+
+class _FakeHostDataManager:
+  """``host_data.objects`` stand-in recording filter kwargs per query."""
+
+  def __init__(self, rows=(), on_materialize=None):
+    self.filter_calls = []
+    self._rows = rows
+    self._on_materialize = on_materialize
+
+  def filter(self, **kwargs):
+    self.filter_calls.append(kwargs)
+    return _FakeHostDataQs(
+        list(kwargs.get("host__in") or []),
+        self._rows,
+        self._on_materialize,
+    )
+
+
+def _agg_row(host, time, value):
+  """One row as returned by the per-(host, time) SQL sum queryset."""
+  return {
+      "host": host,
+      jid_table.HOST_DATA_TIME_ALIAS: time,
+      jid_table.HOST_DATA_SUM_VAL_ALIAS: value,
+  }
+
+
+@pytest.mark.django_db(databases=[])
 def test_job_arc_uses_time__in_when_jid_table_large_job_sampled():
   """Large-job jid_table uses time__in; job_arc must not require time__gte/time__lte."""
   from types import SimpleNamespace
@@ -1692,13 +1741,13 @@ def test_job_arc_uses_time__in_when_jid_table_large_job_sampled():
       }
   )
   m = Metrics()
-  with patch("hpcperfstats.site.lib.machine.models.host_data.objects") as mock_objects:
-    mock_objects.filter.return_value.values.return_value.order_by.return_value = []
+  mgr = _FakeHostDataManager()
+  with patch("hpcperfstats.site.lib.machine.models.host_data.objects", mgr):
     m.job_arc(jt, typename="net", events=["rx_bytes"], conv=1.0)
-    kwargs = mock_objects.filter.call_args.kwargs
-    assert kwargs["time__in"] == [t1]
-    assert "time__gte" not in kwargs
-    assert "time__lte" not in kwargs
+  kwargs = mgr.filter_calls[0]
+  assert kwargs["time__in"] == [t1]
+  assert "time__gte" not in kwargs
+  assert "time__lte" not in kwargs
 
 
 @pytest.mark.django_db(databases=[])
@@ -1708,23 +1757,11 @@ def test_host_data_metric_rows_batched_splits_host__in():
   n = METRICS_HOST_QUERY_BATCH + 2
   hosts = ["h{0}.x".format(i) for i in range(n)]
   chunk_sizes = []
-
-  class Qs:
-    def values(self, *cols):
-      return self
-
-    def order_by(self, *args):
-      chunk_sizes.append(len(self._hosts))
-      return []
-
-  class Mgr:
-    def filter(self, **kwargs):
-      q = Qs()
-      q._hosts = list(kwargs.get("host__in") or [])
-      return q
+  mgr = _FakeHostDataManager(
+      on_materialize=lambda chunk: chunk_sizes.append(len(chunk)))
 
   tkw = {"time__gte": 1, "time__lte": 2}
-  with patch("hpcperfstats.site.lib.machine.models.host_data.objects", Mgr()):
+  with patch("hpcperfstats.site.lib.machine.models.host_data.objects", mgr):
     rows = _host_data_metric_rows_batched(
         tkw, hosts, "net", ["rx_bytes"], "arc")
   assert rows == []
@@ -1735,28 +1772,83 @@ def test_host_data_metric_rows_batched_splits_host__in():
 def test_host_data_metric_rows_batched_rows_cache_reuses_fetch():
   """Same (tkw, typename, events, column) in one compute_metrics pass hits cache."""
   chunk_passes = []
-
-  class Qs:
-    def values(self, *cols):
-      return self
-
-    def order_by(self, *args):
-      chunk_passes.append(1)
-      return [{"host": "h1", "time": 1, "arc": 2.0}]
-
-  class Mgr:
-    def filter(self, **kwargs):
-      return Qs()
+  mgr = _FakeHostDataManager(
+      rows=[{"host": "h1", "time": 1, "arc": 2.0}],
+      on_materialize=lambda _chunk: chunk_passes.append(1),
+  )
 
   tkw = {"time__gte": 1, "time__lte": 2}
   cache = {}
-  with patch("hpcperfstats.site.lib.machine.models.host_data.objects", Mgr()):
+  with patch("hpcperfstats.site.lib.machine.models.host_data.objects", mgr):
     r1 = _host_data_metric_rows_batched(
         tkw, ["h1"], "net", ["rx_bytes"], "arc", rows_cache=cache)
     r2 = _host_data_metric_rows_batched(
         tkw, ["h1"], "net", ["rx_bytes"], "arc", rows_cache=cache)
   assert r1 == r2
   assert len(chunk_passes) == 1
+
+
+@pytest.mark.django_db(databases=[])
+def test_host_data_metric_rows_batched_normalizes_sql_sum_rows():
+  """Per-sample-sum rows are relabelled to the raw shape ``{host, time, column}``."""
+  mgr = _FakeHostDataManager(rows=[_agg_row("h1", 1, 7.0)])
+  tkw = {"time__gte": 1, "time__lte": 2}
+  with patch("hpcperfstats.site.lib.machine.models.host_data.objects", mgr):
+    rows = _host_data_metric_rows_batched(
+        tkw, ["h1"], "net", ["rx_bytes"], "arc", sum_per_sample=True)
+  assert rows == [{"host": "h1", "time": 1, "arc": 7.0}]
+
+
+@pytest.mark.django_db(databases=[])
+def test_host_data_row_cache_key_separates_aggregate_variants():
+  """Raw rows and per-sample sums must not share one compute_metrics memo entry."""
+  tkw = {"time__gte": 1, "time__lte": 2}
+  raw = _host_data_row_cache_key(tkw, "net", ["rx_bytes"], "arc")
+  summed = _host_data_row_cache_key(
+      tkw, "net", ["rx_bytes"], "arc", sum_per_sample=True)
+  nonneg = _host_data_row_cache_key(
+      tkw, "net", ["rx_bytes"], "arc", sum_per_sample=True, nonnegative_only=True)
+  assert len({raw, summed, nonneg}) == 3
+
+
+@pytest.mark.django_db(databases=[])
+def test_job_arc_requests_sql_sum_and_nonnegative_filter(monkeypatch):
+  """job_arc must push the per-sample sum (and rate sign filter) into SQL."""
+  from types import SimpleNamespace
+
+  from django.utils import timezone as django_tz
+
+  t0 = django_tz.now()
+  jt = SimpleNamespace(
+      _base_filter={
+          "time__gte": t0,
+          "time__lte": t0,
+          "host__in": ["h1.x"],
+      }
+  )
+  seen = {}
+
+  def fake_rows(*_a, sum_per_sample=False, nonnegative_only=False, **_k):
+    seen["sum_per_sample"] = sum_per_sample
+    seen["nonnegative_only"] = nonnegative_only
+    return []
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
+      fake_rows,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
+      lambda typename: (typename,),
+  )
+  Metrics().job_arc(
+      jt,
+      typename="net",
+      events=["rx_bytes"],
+      conv=1.0,
+      nonnegative_rate=True,
+  )
+  assert seen == {"sum_per_sample": True, "nonnegative_only": True}
 
 
 @pytest.mark.django_db(databases=[])
@@ -1776,22 +1868,9 @@ def test_job_arc_issues_multiple_queries_when_many_hosts(monkeypatch):
       }
   )
   calls = []
+  mgr = _FakeHostDataManager(on_materialize=lambda chunk: calls.append(len(chunk)))
 
-  class Qs:
-    def values(self, *cols):
-      return self
-
-    def order_by(self, *args):
-      calls.append(len(self._hosts))
-      return []
-
-  class Mgr:
-    def filter(self, **kwargs):
-      q = Qs()
-      q._hosts = list(kwargs.get("host__in") or [])
-      return q
-
-  monkeypatch.setattr("hpcperfstats.site.lib.machine.models.host_data.objects", Mgr())
+  monkeypatch.setattr("hpcperfstats.site.lib.machine.models.host_data.objects", mgr)
   monkeypatch.setattr(
       "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
       lambda typename: (typename,),

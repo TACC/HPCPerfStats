@@ -1253,7 +1253,15 @@ def _jid_table_host_data_time_kwargs(base):
 _HOST_DATA_ROWS_MEMO_MAX_TIME_IN = 4096
 
 
-def _host_data_row_cache_key(tkw, typename, events, metric_column):
+def _host_data_row_cache_key(
+    tkw,
+    typename,
+    events,
+    metric_column,
+    *,
+    sum_per_sample=False,
+    nonnegative_only=False,
+):
   """Hashable key for one batched host_data fetch within a single ``compute_metrics`` pass."""
   if not tkw:
     return None
@@ -1269,7 +1277,60 @@ def _host_data_row_cache_key(tkw, typename, events, metric_column):
     t_part = ("time__in", id(ti))
   else:
     t_part = ("range", tkw.get("time__gte"), tkw.get("time__lte"))
-  return (typename, metric_column, _hashable_metric_events_signature(events), t_part)
+  return (
+      typename,
+      metric_column,
+      bool(sum_per_sample),
+      bool(nonnegative_only),
+      _hashable_metric_events_signature(events),
+      t_part,
+  )
+
+
+def _host_data_metric_rows_queryset(
+    hosts,
+    tkw,
+    typename,
+    events,
+    metric_column,
+    *,
+    sum_per_sample=False,
+    nonnegative_only=False,
+):
+  """Rows for metric bucketing: raw samples, or one SQL-summed row per (host, time).
+
+  ``sum_per_sample`` moves the per-sample total across events and devices into
+  PostgreSQL, so a job with many events/devices transfers one row per sample time
+  instead of ``events × devices`` rows. The aggregate queryset labels its columns
+  with the ``jid_table`` aliases; ``_normalize_host_data_metric_rows`` maps them
+  back so both paths yield ``{host, time, <metric_column>}`` rows.
+  """
+  from hpcperfstats.site.lib.machine.models import host_data
+
+  qs = host_data.objects.filter(
+      **tkw,
+      host__in=hosts,
+      type=typename,
+      event__in=events,
+  )
+  if sum_per_sample:
+    return jid_table.host_data_sum_val_per_sample_queryset(
+        qs, metric_column, nonnegative_only=nonnegative_only)
+  return qs.values("host", "time", metric_column).order_by("host", "time")
+
+
+def _normalize_host_data_metric_rows(rows, metric_column):
+  """Relabel SQL-aggregate rows to the raw-fetch shape ``{host, time, column}``."""
+  time_alias = jid_table.HOST_DATA_TIME_ALIAS
+  sum_alias = jid_table.HOST_DATA_SUM_VAL_ALIAS
+  return [
+      {
+          "host": row["host"],
+          "time": row[time_alias],
+          metric_column: row[sum_alias],
+      }
+      for row in rows
+  ]
 
 
 def _host_data_metric_rows_with_host_chunk_retry(
@@ -1281,14 +1342,14 @@ def _host_data_metric_rows_with_host_chunk_retry(
     *,
     min_hosts=1,
     max_attempts=2,
+    sum_per_sample=False,
+    nonnegative_only=False,
 ):
   """Materialize metric ``values()`` rows; split hosts or retry on statement timeout.
 
   Mirrors ``jid_table._queryset_to_dataframe_with_host_chunk_retry`` for the
   list-of-dicts path used by metric bucketing.
   """
-  from hpcperfstats.site.lib.machine.models import host_data
-
   hosts = [str(h) for h in host_chunk if h]
   if not hosts:
     return []
@@ -1296,17 +1357,20 @@ def _host_data_metric_rows_with_host_chunk_retry(
   for attempt in range(max_attempts):
     try:
       close_old_connections()
-      qs = (
-          host_data.objects.filter(
-              **tkw,
-              host__in=hosts,
-              type=typename,
-              event__in=events,
+      rows = list(
+          _host_data_metric_rows_queryset(
+              hosts,
+              tkw,
+              typename,
+              events,
+              metric_column,
+              sum_per_sample=sum_per_sample,
+              nonnegative_only=nonnegative_only,
           )
-          .values("host", "time", metric_column)
-          .order_by("host", "time")
       )
-      return list(qs)
+      if sum_per_sample:
+        return _normalize_host_data_metric_rows(rows, metric_column)
+      return rows
     except OperationalError as exc:
       last_exc = exc
       if not jid_table._is_statement_timeout_error(exc):
@@ -1321,6 +1385,8 @@ def _host_data_metric_rows_with_host_chunk_retry(
             metric_column,
             min_hosts=min_hosts,
             max_attempts=max_attempts,
+            sum_per_sample=sum_per_sample,
+            nonnegative_only=nonnegative_only,
         )
         right = _host_data_metric_rows_with_host_chunk_retry(
             hosts[mid:],
@@ -1330,6 +1396,8 @@ def _host_data_metric_rows_with_host_chunk_retry(
             metric_column,
             min_hosts=min_hosts,
             max_attempts=max_attempts,
+            sum_per_sample=sum_per_sample,
+            nonnegative_only=nonnegative_only,
         )
         return left + right
       if attempt + 1 >= max_attempts:
@@ -1347,14 +1415,36 @@ METRICS_HOST_QUERY_BATCH = 16
 
 
 def _host_data_metric_rows_batched(
-    tkw, hosts, typename, events, metric_column, rows_cache=None):
-  """Fetch host_data rows for metrics bucketing; chunk ``host__in`` for bounded SQL."""
+    tkw,
+    hosts,
+    typename,
+    events,
+    metric_column,
+    rows_cache=None,
+    *,
+    sum_per_sample=False,
+    nonnegative_only=False,
+):
+  """Fetch host_data rows for metrics bucketing; chunk ``host__in`` for bounded SQL.
+
+  Rows are always ``{host, time, <metric_column>}``. With ``sum_per_sample`` the
+  value is the per-sample total across events and devices, summed by PostgreSQL;
+  host chunks are disjoint and each chunk groups per (host, time), so rows stay
+  unique per (host, time) and callers can skip a pandas groupby.
+  """
   host_list = list(hosts)
   if not host_list:
     return []
   cache_key = None
   if rows_cache is not None:
-    cache_key = _host_data_row_cache_key(tkw, typename, events, metric_column)
+    cache_key = _host_data_row_cache_key(
+        tkw,
+        typename,
+        events,
+        metric_column,
+        sum_per_sample=sum_per_sample,
+        nonnegative_only=nonnegative_only,
+    )
     if cache_key is not None and cache_key in rows_cache:
       return rows_cache[cache_key]
   batch = jid_table._coerce_jid_table_host_query_batch_size(
@@ -1365,7 +1455,14 @@ def _host_data_metric_rows_batched(
     chunk = host_list[i:i + batch]
     rows.extend(
         _host_data_metric_rows_with_host_chunk_retry(
-            chunk, tkw, typename, ev, metric_column)
+            chunk,
+            tkw,
+            typename,
+            ev,
+            metric_column,
+            sum_per_sample=sum_per_sample,
+            nonnegative_only=nonnegative_only,
+        )
     )
   if rows_cache is not None and cache_key is not None:
     rows_cache[cache_key] = rows
@@ -1793,25 +1890,32 @@ class Metrics():
     for typ in type_probe_names(typename):
       if not _metric_type_events_feasible(schema, typ, events):
         continue
+      # Instantaneous total at each sample time (events × devices) is summed in
+      # SQL; pulling every device row into pandas burned the per-job wall clock
+      # on multi-node PMC jobs (MetricsComputeJobTimeoutError in job_arc).
       rows = _host_data_metric_rows_batched(
-          tkw, hosts, typ, events, "arc", rows_cache=rows_cache)
+          tkw,
+          hosts,
+          typ,
+          events,
+          "arc",
+          rows_cache=rows_cache,
+          sum_per_sample=True,
+          nonnegative_only=nonnegative_rate,
+      )
       if rows:
         break
     if not rows:
       if cache is not None:
         cache[cache_key] = None
       return None
-    df = pd.DataFrame(rows)
-    if df.empty:
+    per_time = pd.DataFrame(rows)
+    if per_time.empty:
       if cache is not None:
         cache[cache_key] = None
       return None
-    if nonnegative_rate:
-      df["arc"] = df["arc"].where(df["arc"] >= 0)
-    if not pd.api.types.is_datetime64_any_dtype(df["time"]):
-      df["time"] = pd.to_datetime(df["time"])
-    # Instantaneous total at each sample time (events × devices).
-    per_time = df.groupby(["host", "time"], as_index=False)["arc"].sum()
+    if not pd.api.types.is_datetime64_any_dtype(per_time["time"]):
+      per_time["time"] = pd.to_datetime(per_time["time"])
     per_time["bucket"] = per_time["time"].dt.floor("5min")
     # Mean of instantaneous totals within each 5m bucket (not sum of samples).
     grouped = (
@@ -1986,7 +2090,14 @@ class Metrics():
         if not _metric_type_events_feasible(schema, typ, events):
           continue
         rows = _host_data_metric_rows_batched(
-            tkw, hosts, typ, events, "arc", rows_cache=rows_cache)
+            tkw,
+            hosts,
+            typ,
+            events,
+            "arc",
+            rows_cache=rows_cache,
+            sum_per_sample=True,
+        )
         if rows:
           break
       if not rows:
@@ -1996,10 +2107,8 @@ class Metrics():
         return None
       if not pd.api.types.is_datetime64_any_dtype(df["time"]):
         df["time"] = pd.to_datetime(df["time"])
-      return (
-          df.groupby(["host", "time"], as_index=False)["arc"]
-          .sum()
-      )
+      # Rows are already one per (host, time) from the SQL per-sample sum.
+      return df
 
     busy = _sum_arc_events(busy_events)
     if busy is None or busy.empty:
