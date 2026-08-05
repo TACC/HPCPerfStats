@@ -5,8 +5,8 @@
 # Sliding pool of N concurrent chunk UPDATEs (N from CLI). Progress is remaining
 # uncompressed chunks from the Timescale catalog (no host_data NULL row probes).
 # Each worker: UPDATE by explicit time range (never LIMIT/OFFSET paging).
-# After each successful UPDATE: VACUUM (ANALYZE, PARALLEL 8) that chunk, then
-# immediately start another.
+# After each successful UPDATE: kick off VACUUM (ANALYZE, PARALLEL 8) in the
+# background (does not block starting the next UPDATE), then refill slots.
 #
 # Prefer Stage 1 done (compressed_chunks = 0). Compressed chunks are not in the
 # worklist. Prefer pipeline/web stopped so ingest is not fighting the rewrite.
@@ -36,8 +36,23 @@ fi
 
 COMPOSE=(docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml)
 
+declare -A vacuum_inflight=()
+
+drain_vacuums() {
+  local pid n="${#vacuum_inflight[@]}"
+  if [[ "$n" -eq 0 ]]; then
+    return 0
+  fi
+  echo "draining ${n} vacuum job(s)..."
+  for pid in "${!vacuum_inflight[@]}"; do
+    wait "$pid" 2>/dev/null || true
+    unset "vacuum_inflight[$pid]"
+  done
+}
+
 STATUS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/backfill_host_data_null_dev.XXXXXX")"
 cleanup() {
+  drain_vacuums 2>/dev/null || true
   rm -rf "${STATUS_DIR}"
 }
 trap cleanup EXIT
@@ -138,14 +153,34 @@ exclude_list() {
 
 vacuum_finished_chunk() {
   local chunk="$1"
+  local pid
   if [[ -z "$chunk" ]]; then
     return 0
   fi
-  echo "  vacuum ${chunk} (PARALLEL ${VACUUM_PARALLEL})"
-  if ! psql_vacuum_chunk "$chunk" "$VACUUM_PARALLEL"; then
+  # Async: do not block the UPDATE sliding pool. This chunk is already in
+  # completed[], so no other worker will UPDATE it while VACUUM runs.
+  (
+    echo "  vacuum start ${chunk} (PARALLEL ${VACUUM_PARALLEL})"
+    if psql_vacuum_chunk "$chunk" "$VACUUM_PARALLEL"; then
+      echo "  vacuum done  ${chunk}"
+      exit 0
+    fi
     echo "  warning: VACUUM failed for ${chunk} (continuing)" >&2
-    return 0
-  fi
+    exit 1
+  ) &
+  pid=$!
+  vacuum_inflight["$pid"]="$chunk"
+  echo "  launched vacuum pid=${pid} inflight_vacuums=${#vacuum_inflight[@]}"
+}
+
+reap_finished_vacuums() {
+  local pid
+  for pid in "${!vacuum_inflight[@]}"; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" 2>/dev/null || true
+      unset "vacuum_inflight[$pid]"
+    fi
+  done
 }
 
 JOB_SEQ=0
@@ -250,7 +285,7 @@ prev_left=""
 stall=0
 vacuum_since=0
 
-echo "parallel host_data.dev NULL→'' backfill: concurrency=${CONCURRENCY} (time-range chunks; VACUUM every ${VACUUM_EVERY}, PARALLEL ${VACUUM_PARALLEL})"
+echo "parallel host_data.dev NULL→'' backfill: concurrency=${CONCURRENCY} (time-range chunks; async VACUUM every ${VACUUM_EVERY}, PARALLEL ${VACUUM_PARALLEL})"
 
 comp="$(compressed_n)"
 if [[ "$comp" =~ ^[0-9]+$ && "$comp" -gt 0 ]]; then
@@ -258,15 +293,17 @@ if [[ "$comp" =~ ^[0-9]+$ && "$comp" -gt 0 ]]; then
 fi
 
 while true; do
+  reap_finished_vacuums
   exclude_list
   if [[ "${#exclude[@]}" -gt 0 ]]; then
     left="$(remaining_chunks "${exclude[@]}")"
   else
     left="$(remaining_chunks)"
   fi
-  echo "remaining_chunks=${left} inflight=${#inflight[@]}/${CONCURRENCY} completed=${#completed[@]} skipped=${#skipped[@]} ok=${total_ok} failed=${total_failed}"
+  echo "remaining_chunks=${left} inflight=${#inflight[@]}/${CONCURRENCY} vacuums=${#vacuum_inflight[@]} completed=${#completed[@]} skipped=${#skipped[@]} ok=${total_ok} failed=${total_failed}"
 
   if [[ "$left" == "0" && "${#inflight[@]}" -eq 0 ]]; then
+    drain_vacuums
     echo "done (ok=${total_ok} skipped_failures=${total_failed})"
     exit 0
   fi
@@ -275,10 +312,12 @@ while true; do
 
   if [[ "${#inflight[@]}" -eq 0 ]]; then
     if [[ "$left" == "0" ]]; then
+      drain_vacuums
       echo "done (ok=${total_ok} skipped_failures=${total_failed})"
       exit 0
     fi
     echo "aborting: ${left} uncompressed chunk(s) remain but none could be started (all skipped or unavailable)" >&2
+    drain_vacuums
     exit 1
   fi
 
@@ -312,10 +351,11 @@ while true; do
       stall=$((stall + 1))
       echo "warning: no progress (${stall}/${STALL_LIMIT}) — still ${left} chunk(s) remaining" >&2
       if [[ "$stall" -ge "$STALL_LIMIT" ]]; then
-        echo "aborting: remaining_chunks stuck at ${left}; draining ${#inflight[@]} in-flight job(s)" >&2
+        echo "aborting: remaining_chunks stuck at ${left}; draining ${#inflight[@]} in-flight UPDATE(s)" >&2
         while [[ "${#inflight[@]}" -gt 0 ]]; do
           wait_one
         done
+        drain_vacuums
         exit 1
       fi
     else
