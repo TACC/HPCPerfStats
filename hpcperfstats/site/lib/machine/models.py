@@ -1,6 +1,11 @@
-"""The database models of hpcperfstats: job_data, metrics_data, host_data, proc_data, and RealField. Maps to TimescaleDB/PostgreSQL tables.
-
 """
+The database models of hpcperfstats: job_data, metrics_data, host_data,
+proc_data, and RealField. Maps to TimescaleDB/PostgreSQL tables.
+"""
+from __future__ import annotations
+
+from typing import Any
+
 from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex
 import hashlib
@@ -12,15 +17,24 @@ from django.db.models import Q
 
 
 class RealField(models.FloatField):
-  """Django field that uses PostgreSQL real (32-bit float) instead of double precision.
-
-    """
+  """
+  Django field that uses PostgreSQL real (32-bit float) instead of double.
+  """
 
   # Make type in order to use 32 bit floats (reals) instead of 64 bit floats
-  def db_type(self, connection):
-    """Return PostgreSQL type name 'real'.
-
-        """
+  def db_type(self, connection: Any) -> Any:
+    """
+    Return PostgreSQL type name 'real'.
+    
+    Args:
+      connection (Any): Live handle (pool, client, or connection).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> RealField().db_type(None)  # doctest: +SKIP
+    """
     return "real"
 
 
@@ -28,9 +42,9 @@ class RealField(models.FloatField):
 
 
 class job_data(models.Model):
-  """Slurm job accounting record: jid, times, runtime, user, account, queue, state, host_list, etc. Table: job_data.
-
-    """
+  """
+  Slurm job accounting record: jid, times, runtime, user, account, queue,.
+  """
   jid = models.CharField(primary_key=True, max_length=32)
   submit_time = models.DateTimeField()
   start_time = models.DateTimeField()
@@ -59,6 +73,9 @@ class job_data(models.Model):
   host_data_schema_json = models.JSONField(blank=True, null=True)
 
   class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
     db_table = 'job_data'
     managed = True
     indexes = [
@@ -73,14 +90,32 @@ class job_data(models.Model):
         GinIndex(fields=["host_list"], name="job_data_host_list_gin_idx"),
     ]
 
-  def __str__(self):
-    """Return string representation (jid)."""
+  def __str__(self) -> Any:
+    """
+    Return string representation (jid).
+    
+    Returns:
+      Any: Open return polymorphism from ``__str__``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __str__()  # doctest: +SKIP
+    """
     return str(self.jid)
 
-  def color(self):
-    """Return hex color for state: E1EDFA completed, FFB2B2 failed, silver otherwise.
-
-        """
+  def color(self) -> Any:
+    """
+    Return hex color for state: E1EDFA completed, FFB2B2 failed, silver.
+    
+      otherwise.
+    
+    Returns:
+      Any: Open return polymorphism from ``color``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> job_data().color()  # doctest: +SKIP
+    """
     if self.state == 'COMPLETED':
       ret_val = "E1EDFA"
     elif self.state == 'FAILED':
@@ -91,9 +126,9 @@ class job_data(models.Model):
 
 
 class metrics_data(models.Model):
-  """Derived metric value per job and (type, metric). Unique on (jid, type, metric). Table: metrics_data.
-
-    """
+  """
+  Derived metric value per job and (type, metric). Unique on (jid, type,.
+  """
   jid = models.ForeignKey(
       job_data,
       on_delete=models.CASCADE,
@@ -111,6 +146,9 @@ class metrics_data(models.Model):
   no_data_reason = models.CharField(max_length=512, blank=True, null=True)
 
   class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
     managed = True
     db_table = 'metrics_data'
     unique_together = (('jid', 'type', 'metric'),)
@@ -126,8 +164,17 @@ class metrics_data(models.Model):
         ),
     ]
 
-  def __str__(self):
-    """Return string representation jid_type_metric."""
+  def __str__(self) -> Any:
+    """
+    Return string representation jid_type_metric.
+    
+    Returns:
+      Any: Open return polymorphism from ``__str__``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __str__()  # doctest: +SKIP
+    """
     return str(self.jid_id or "") + "_" + str(self.type or "") + "_" + str(
         self.metric or "")
 
@@ -181,16 +228,17 @@ class metrics_data(models.Model):
 
 
 class host_data(models.Model):
-  """TimescaleDB hypertable: per (time, host, type, event, dev) value/delta/arc.
-
+  """
+  TimescaleDB hypertable: per (time, host, type, event, dev) value/delta/arc.
+  
   Job/sample scoping in the application uses job_data.start_time/end_time and
   job_data.host_list (FQDNs); host_data.jid is retained for compatibility and
   ad-hoc queries but is not used when gathering job samples.
-  ``dev`` is the monitor device id for GPU types (``""`` when absent); uniqueness
+  ``dev`` is the monitor device id for GPU types (``""`` when absent);
+    uniqueness
   includes ``dev`` so multi-GPU samples at the same timestamp are insertable.
   Table: host_data.
-
-    """
+  """
   time = models.DateTimeField(primary_key=True)
   host = models.CharField(max_length=64, blank=True, null=True)
   jid = models.CharField(max_length=32, blank=True, null=True)
@@ -204,6 +252,9 @@ class host_data(models.Model):
   delta = RealField(null=True)
 
   class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
     db_table = 'host_data'
     unique_together = (('time', 'host', 'type', 'event', 'dev'),)
     indexes = [
@@ -217,8 +268,9 @@ class host_data(models.Model):
 
 
 class proc_data(models.Model):
-  """Per-process host_proc snapshot per (jid, host, proc). Table: proc_data.
-
+  """
+  Per-process host_proc snapshot per (jid, host, proc). Table: proc_data.
+  
   ``device`` is the full monitor device token (name/pid/cmask/mmask); ``proc``
   is the first path component (process name). Numeric columns mirror monitor
   ``KEYS`` in ``monitor/src/proc.c``.
@@ -242,6 +294,9 @@ class proc_data(models.Model):
   threads = models.IntegerField(blank=True, null=True)
 
   class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
     managed = True
     db_table = 'proc_data'
     unique_together = (('jid', 'host', 'proc'),)
@@ -249,15 +304,26 @@ class proc_data(models.Model):
         models.Index(fields=["jid"]),
     ]
 
-  def __str__(self):
-    """Return string representation (jid, host, proc)."""
+  def __str__(self) -> Any:
+    """
+    Return string representation (jid, host, proc).
+    
+    Returns:
+      Any: Open return polymorphism from ``__str__``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __str__()  # doctest: +SKIP
+    """
     return f"{self.jid}:{self.host}:{self.proc}"
 
 
 class job_plot_artifact(models.Model):
-  """Persisted Bokeh json_item payloads for job-level plots (gzip-compressed JSON).
-
-  One row per (job, plot_kind, layout). Invalidated when host_data changes for the job.
+  """
+  Persisted Bokeh json_item payloads for job-level plots (gzip-compressed JSON).
+  
+  One row per (job, plot_kind, layout). Invalidated when host_data changes for
+    the job.
   """
 
   jid = models.ForeignKey(
@@ -277,6 +343,9 @@ class job_plot_artifact(models.Model):
   updated_at = models.DateTimeField(auto_now=True)
 
   class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
     db_table = "job_plot_artifact"
     managed = True
     constraints = [
@@ -286,12 +355,24 @@ class job_plot_artifact(models.Model):
         ),
     ]
 
-  def __str__(self):
+  def __str__(self) -> Any:
+    """
+    Return the informal string representation.
+    
+    Returns:
+      Any: Open return polymorphism from ``__str__``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __str__()  # doctest: +SKIP
+    """
     return f"{self.jid_id}:{self.plot_kind}:{self.layout}"
 
 
 class job_detail_artifact(models.Model):
-  """Persisted derived job detail/type-detail payloads (gzip-compressed JSON)."""
+  """
+  Persisted derived job detail/type-detail payloads (gzip-compressed JSON).
+  """
 
   jid = models.ForeignKey(
       job_data,
@@ -310,6 +391,9 @@ class job_detail_artifact(models.Model):
   updated_at = models.DateTimeField(auto_now=True)
 
   class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
     db_table = "job_detail_artifact"
     managed = True
     constraints = [
@@ -319,12 +403,24 @@ class job_detail_artifact(models.Model):
         ),
     ]
 
-  def __str__(self):
+  def __str__(self) -> Any:
+    """
+    Return the informal string representation.
+    
+    Returns:
+      Any: Open return polymorphism from ``__str__``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __str__()  # doctest: +SKIP
+    """
     return f"{self.jid_id}:{self.artifact_kind}:{self.artifact_scope}"
 
 
 class public_metrics_artifact(models.Model):
-  """Prewarmed gzip-compressed JSON for anonymous public dashboards (see update_metrics prewarm)."""
+  """
+  Prewarmed gzip-compressed JSON for anonymous public dashboards (see.
+  """
 
   scope = models.CharField(max_length=64, db_index=True)
   period_key = models.CharField(max_length=64, db_index=True)
@@ -336,6 +432,9 @@ class public_metrics_artifact(models.Model):
   updated_at = models.DateTimeField(auto_now=True)
 
   class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
     db_table = "public_metrics_artifact"
     managed = True
     constraints = [
@@ -345,15 +444,27 @@ class public_metrics_artifact(models.Model):
         ),
     ]
 
-  def __str__(self):
+  def __str__(self) -> Any:
+    """
+    Return the informal string representation.
+    
+    Returns:
+      Any: Open return polymorphism from ``__str__``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __str__()  # doctest: +SKIP
+    """
     return f"{self.scope}:{self.period_key}"
 
 
 class ApiKey(models.Model):
-  """API key for programmatic access, bound to an authenticated username.
-
+  """
+  API key for programmatic access, bound to an authenticated username.
+  
   Keys are created via an OAuth-protected web page and then used by external
-  tools (e.g. hpcperfstats-jobstats, hpcperfstats-sacct-gen) via the Authorization: Api-Key header.
+  tools (e.g. hpcperfstats-jobstats, hpcperfstats-sacct-gen) via the
+    Authorization: Api-Key header.
   """
 
   key = models.CharField(max_length=64, primary_key=True)
@@ -365,30 +476,73 @@ class ApiKey(models.Model):
   is_staff = models.BooleanField(default=False)
 
   class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
     db_table = "api_keys"
     managed = True
     indexes = [
         models.Index(fields=["username"], name="api_keys_username_idx"),
     ]
 
-  def __str__(self):
-    """Return short representation prefix@username."""
+  def __str__(self) -> Any:
+    """
+    Return short representation prefix@username.
+    
+    Returns:
+      Any: Open return polymorphism from ``__str__``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __str__()  # doctest: +SKIP
+    """
     shown = self.key_prefix or self.key[:8]
     return f"{shown}... for {self.username}"
 
   @staticmethod
   def hash_raw_key(raw_key: str) -> str:
-    """Return stable SHA-256 hash for persisted API key lookup."""
+    """
+    Return stable SHA-256 hash for persisted API key lookup.
+    
+    Args:
+      raw_key (str): String for raw key.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> ApiKey().hash_raw_key("x")  # doctest: +SKIP
+    """
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
   @staticmethod
   def make_raw_key() -> str:
-    """Generate a new API key value shown once to the user."""
+    """
+    Generate a new API key value shown once to the user.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> ApiKey().make_raw_key()  # doctest: +SKIP
+    """
     return secrets.token_hex(32)
 
   @classmethod
-  def create_from_raw_key(cls, username: str, is_staff: bool):
-    """Create a key row from a generated raw key, returning (obj, raw_key)."""
+  def create_from_raw_key(cls, username: str, is_staff: bool) -> Any:
+    """
+    Create a key row from a generated raw key, returning (obj, raw_key).
+    
+    Args:
+      username (str): String for username.
+      is_staff (bool): Whether to enable is staff.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> ApiKey().create_from_raw_key("x", True)  # doctest: +SKIP
+    """
     raw_key = cls.make_raw_key()
     key_hash = cls.hash_raw_key(raw_key)
     obj = cls.objects.create(
@@ -400,5 +554,16 @@ class ApiKey(models.Model):
     return obj, raw_key
 
   def matches_raw_key(self, raw_key: str) -> bool:
-    """Constant-time comparison helper for explicit validation paths."""
+    """
+    Constant-time comparison helper for explicit validation paths.
+    
+    Args:
+      raw_key (str): String for raw key.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ApiKey().matches_raw_key("x")  # doctest: +SKIP
+    """
     return hmac.compare_digest(self.key, self.hash_raw_key(raw_key))

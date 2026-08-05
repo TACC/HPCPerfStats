@@ -1,11 +1,20 @@
-"""Per-file ingest timeout and pool stall-abort helpers (shared by sync_timedb and pool dispatch).
+"""
+Per-file ingest timeout and pool stall-abort helpers (shared by sync_timedb and
+pool dispatch).
 
-Default INI fallbacks map **30 GiB → max** per-file ingest budget (24h at reference size).
-Operators should tune ``sync_ingest_per_file_timeout_max_s``, ``per_mib``, and
-``sync_pool_stall_abort_after_timeouts`` together.
+Default INI fallbacks map **30 GiB → max** per-file ingest budget (24h at
+reference size). Operators should tune ``sync_ingest_per_file_timeout_max_s``,
+``per_mib``, and ``sync_pool_stall_abort_after_timeouts`` together.
+
+Attributes:
+  STALL_ABORT_GRACE_S: Attribute.
+  _INGEST_TIMEOUT_MIB_BYTES: Attribute.
+  _TYPICAL_SEALED_MEMBER_BYTES: Attribute.
 """
 
 from __future__ import annotations
+
+from typing import Any, Iterator
 
 import os
 
@@ -17,8 +26,19 @@ _INGEST_TIMEOUT_MIB_BYTES = 1024 * 1024
 _TYPICAL_SEALED_MEMBER_BYTES = 32 * 1024 * 1024
 
 
-def resolve_ingest_per_file_timeout_s(stats_file):
-  """Size-proportional wall-clock budget for one ingest worker task."""
+def resolve_ingest_per_file_timeout_s(stats_file: str) -> Any:
+  """
+  Size-proportional wall-clock budget for one ingest worker task.
+  
+  Args:
+    stats_file (str): String for stats file.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> resolve_ingest_per_file_timeout_s("x")  # doctest: +SKIP
+  """
   base = float(cfg.get_sync_ingest_per_file_timeout_s())
   if base <= 0.0:
     return 0.0
@@ -26,8 +46,24 @@ def resolve_ingest_per_file_timeout_s(stats_file):
   return resolve_ingest_per_file_timeout_for_size_bytes(size, base=base)
 
 
-def resolve_ingest_per_file_timeout_for_size_bytes(size_bytes, *, base=None):
-  """Size-proportional ingest budget for a byte count (not necessarily a path)."""
+def resolve_ingest_per_file_timeout_for_size_bytes(
+  size_bytes: Any,
+  *,
+  base: Any | None = None,
+) -> Any:
+  """
+  Size-proportional ingest budget for a byte count (not necessarily a path).
+  
+  Args:
+    size_bytes (Any): Size bytes passed to this helper.
+    base (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> resolve_ingest_per_file_timeout_for_size_bytes(None, None)
+  """
   if base is None:
     base = float(cfg.get_sync_ingest_per_file_timeout_s())
   if base <= 0.0:
@@ -44,8 +80,19 @@ def resolve_ingest_per_file_timeout_for_size_bytes(size_bytes, *, base=None):
   return max(base, scaled)
 
 
-def max_ingest_per_file_timeout_for_paths(paths):
-  """Largest resolved per-file ingest budget for a set of stats paths."""
+def max_ingest_per_file_timeout_for_paths(paths: Any) -> Any:
+  """
+  Largest resolved per-file ingest budget for a set of stats paths.
+  
+  Args:
+    paths (Any): Iterable of filesystem paths as strings.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> max_ingest_per_file_timeout_for_paths(None)  # doctest: +SKIP
+  """
   floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
   if floor_s <= 0.0:
     return 0.0
@@ -63,8 +110,19 @@ def max_ingest_per_file_timeout_for_paths(paths):
 STALL_ABORT_GRACE_S = 120.0
 
 
-def stall_abort_polls_for_paths(paths):
-  """Poll-timeout abort count for in-flight paths (floor .. INI ceiling)."""
+def stall_abort_polls_for_paths(paths: Any) -> Any:
+  """
+  Poll-timeout abort count for in-flight paths (floor .. INI ceiling).
+  
+  Args:
+    paths (Any): Iterable of filesystem paths as strings.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> stall_abort_polls_for_paths(None)  # doctest: +SKIP
+  """
   poll_s = float(cfg.get_sync_pool_poll_timeout_s())
   ceiling_polls = int(cfg.get_sync_pool_stall_abort_after_timeouts())
   if poll_s <= 0.0:
@@ -84,14 +142,40 @@ def stall_abort_polls_for_paths(paths):
   return max(1, min(ceiling_polls, max(min_polls, dynamic_polls)))
 
 
-def default_giant_supplement_trigger_budget_s():
-  """Default trigger budget: 2 GiB under historical slope (floor-900 anchor + per_mib)."""
+def default_giant_supplement_trigger_budget_s() -> Any:
+  """
+  Default trigger budget: 2 GiB under historical slope (floor-900 anchor +.
+  
+    per_mib).
+  
+  Returns:
+    Any: Open return polymorphism from
+    ``default_giant_supplement_trigger_budget_s``: concrete type depends on
+    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+  
+  Examples:
+    >>> default_giant_supplement_trigger_budget_s()  # doctest: +SKIP
+  """
   per_mib = float(cfg.get_sync_ingest_per_file_timeout_s_per_mib())
   return 900.0 + 2048.0 * per_mib
 
 
-def is_giant_ingest_budget(path, *, trigger_s=None):
-  """True when ``path`` resolved ingest budget meets the giant supplement threshold."""
+def is_giant_ingest_budget(path: str, *, trigger_s: Any | None = None) -> Any:
+  """
+  True when ``path`` resolved ingest budget meets the giant supplement.
+  
+    threshold.
+  
+  Args:
+    path (str): String for path.
+    trigger_s (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> is_giant_ingest_budget("x", None)  # doctest: +SKIP
+  """
   if trigger_s is None:
     trigger_s = float(cfg.get_sync_ingest_giant_pool_supplement_trigger_budget_s())
   if trigger_s <= 0.0:
@@ -100,8 +184,24 @@ def is_giant_ingest_budget(path, *, trigger_s=None):
   return resolved >= float(trigger_s)
 
 
-def any_giant_ingest_budget_in_flight(paths, *, trigger_s=None):
-  """True when any in-flight path qualifies as a giant for pool supplement."""
+def any_giant_ingest_budget_in_flight(
+  paths: Any,
+  *,
+  trigger_s: Any | None = None,
+) -> Any:
+  """
+  True when any in-flight path qualifies as a giant for pool supplement.
+  
+  Args:
+    paths (Any): Iterable of filesystem paths as strings.
+    trigger_s (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> any_giant_ingest_budget_in_flight(None, None)  # doctest: +SKIP
+  """
   if trigger_s is None:
     trigger_s = float(cfg.get_sync_ingest_giant_pool_supplement_trigger_budget_s())
   for path in paths or ():
@@ -111,19 +211,34 @@ def any_giant_ingest_budget_in_flight(paths, *, trigger_s=None):
 
 
 def iter_giant_supplement_paths(
-    pending_tail,
-    *,
-    max_bytes=None,
-    large_max_bytes=None,
-    limit=None,
-    exclude=None,
-    newest_first=False,
-):
-  """Ordered two-pass supplement: ``<max_bytes`` then ``[max_bytes, large_max)``.
-
+  pending_tail: Any,
+  *,
+  max_bytes: Any | None = None,
+  large_max_bytes: Any | None = None,
+  limit: Any | None = None,
+  exclude: Any | None = None,
+  newest_first: bool = False,
+) -> Iterator[Any]:
+  """
+  Ordered two-pass supplement: ``<max_bytes`` then ``[max_bytes, large_max)``.
+  
   Soft max defaults to 1 GiB; large max defaults to 8 GiB. Paths at/above
   ``large_max_bytes`` are never selected. Each path is yielded at most once;
   callers supply ``pending_tail`` in the intended dispatch order.
+  
+  Args:
+    pending_tail (Any): Pending tail passed to this helper.
+    max_bytes (Any | None): One of ``Any``, ``None``.
+    large_max_bytes (Any | None): One of ``Any``, ``None``.
+    limit (Any | None): One of ``Any``, ``None``.
+    exclude (Any | None): One of ``Any``, ``None``.
+    newest_first (bool): Boolean flag for newest first.
+  
+  Yields:
+    Iterator[Any]: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> iter_giant_supplement_paths(None, None, None, None, None, True)
   """
   if max_bytes is None:
     max_bytes = int(cfg.get_sync_ingest_giant_pool_supplement_max_bytes())
@@ -139,7 +254,19 @@ def iter_giant_supplement_paths(
   remaining = None if limit is None else max(0, int(limit))
   yielded = set()
 
-  def _size_of(path):
+  def _size_of(path: str) -> Any:
+    """
+    Internal helper to handle size of.
+    
+    Args:
+      path (str): String for path.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _size_of("x")  # doctest: +SKIP
+    """
     try:
       return int(stats_file_size_bytes(path))
     except (TypeError, ValueError, OSError):
@@ -178,8 +305,19 @@ def iter_giant_supplement_paths(
       remaining -= 1
 
 
-def calendar_day_from_sealed_archive_path(sealed_path):
-  """Return ``YYYY-MM-DD`` ISO day token from a sealed daily archive path."""
+def calendar_day_from_sealed_archive_path(sealed_path: str) -> Any:
+  """
+  Return ``YYYY-MM-DD`` ISO day token from a sealed daily archive path.
+  
+  Args:
+    sealed_path (str): String for sealed path.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> calendar_day_from_sealed_archive_path("x")  # doctest: +SKIP
+  """
   if not sealed_path:
     return ""
   base = os.path.basename(os.path.normpath(str(sealed_path)))
@@ -202,8 +340,19 @@ def calendar_day_from_sealed_archive_path(sealed_path):
   return ""
 
 
-def _redis_member_count_for_sealed_day(day_token):
-  """Best-effort Redis HASH length for a calendar day (0 when unavailable)."""
+def _redis_member_count_for_sealed_day(day_token: Any) -> Any:
+  """
+  Best-effort Redis HASH length for a calendar day (0 when unavailable).
+  
+  Args:
+    day_token (Any): Day token passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _redis_member_count_for_sealed_day(None)  # doctest: +SKIP
+  """
   if not day_token:
     return 0
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
@@ -240,8 +389,24 @@ def _redis_member_count_for_sealed_day(day_token):
     return 0
 
 
-def sealed_archive_member_count_hint(sealed_path, *, member_count=None):
-  """Estimate member count for sealed-day stall budgeting."""
+def sealed_archive_member_count_hint(
+  sealed_path: str,
+  *,
+  member_count: Any | None = None,
+) -> Any:
+  """
+  Estimate member count for sealed-day stall budgeting.
+  
+  Args:
+    sealed_path (str): String for sealed path.
+    member_count (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> sealed_archive_member_count_hint("x", None)  # doctest: +SKIP
+  """
   if member_count is not None:
     try:
       count = int(member_count)
@@ -262,8 +427,26 @@ def sealed_archive_member_count_hint(sealed_path, *, member_count=None):
   return max(1, compressed_size // _TYPICAL_SEALED_MEMBER_BYTES)
 
 
-def estimate_sealed_archive_ingest_budget_s(sealed_path, *, member_count=None):
-  """Wall-clock budget for one sealed-day pool task (sum of member budgets, capped)."""
+def estimate_sealed_archive_ingest_budget_s(
+  sealed_path: str,
+  *,
+  member_count: Any | None = None,
+) -> Any:
+  """
+  Wall-clock budget for one sealed-day pool task (sum of member budgets,.
+  
+    capped).
+  
+  Args:
+    sealed_path (str): String for sealed path.
+    member_count (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> estimate_sealed_archive_ingest_budget_s("x", None)  # doctest: +SKIP
+  """
   floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
   if floor_s <= 0.0:
     return 0.0
@@ -288,8 +471,24 @@ def estimate_sealed_archive_ingest_budget_s(sealed_path, *, member_count=None):
   return max(floor_s, total_s)
 
 
-def max_sealed_archive_ingest_budget_for_paths(sealed_paths, *, member_counts=None):
-  """Largest sealed-day ingest budget across a chunk of sealed archives."""
+def max_sealed_archive_ingest_budget_for_paths(
+  sealed_paths: Any,
+  *,
+  member_counts: Any | None = None,
+) -> Any:
+  """
+  Largest sealed-day ingest budget across a chunk of sealed archives.
+  
+  Args:
+    sealed_paths (Any): Iterable of filesystem paths as strings.
+    member_counts (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> max_sealed_archive_ingest_budget_for_paths(None, None)  # doctest: +SKIP
+  """
   floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
   if floor_s <= 0.0:
     return 0.0
@@ -307,8 +506,24 @@ def max_sealed_archive_ingest_budget_for_paths(sealed_paths, *, member_counts=No
   return best
 
 
-def stall_abort_polls_for_sealed_archives(sealed_paths, *, member_counts=None):
-  """Poll-timeout abort count for in-flight sealed archives (floor .. INI ceiling)."""
+def stall_abort_polls_for_sealed_archives(
+  sealed_paths: Any,
+  *,
+  member_counts: Any | None = None,
+) -> Any:
+  """
+  Poll-timeout abort count for in-flight sealed archives (floor .. INI ceiling).
+  
+  Args:
+    sealed_paths (Any): Iterable of filesystem paths as strings.
+    member_counts (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> stall_abort_polls_for_sealed_archives(None, None)  # doctest: +SKIP
+  """
   poll_s = float(cfg.get_sync_pool_poll_timeout_s())
   ceiling_polls = int(cfg.get_sync_pool_stall_abort_after_timeouts())
   if poll_s <= 0.0:

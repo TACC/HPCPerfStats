@@ -1,11 +1,36 @@
-"""Metric computation for jobs: simple metrics (job_arc/time_bucket) and complex metrics (avg_freq, avg_ethbw, mem_hwm, etc.) via utils-compatible job view. Results written to metrics_data.
+"""
+Metric computation for jobs: simple metrics (job_arc/time_bucket) and complex
+metrics (avg_freq, avg_ethbw, mem_hwm, etc.) via utils-compatible job view.
+Results written to metrics_data.
 
 DB access is process-safe: _unwrap runs in multiprocessing workers, calls
 connections.close_all() then close_old_connections() so forked children never
 reuse the parent's PostgreSQL session (named server-side cursors / iterator
 state); writes are done in the main process only.
 
+Attributes:
+  INSUFFICIENT_DATA_FOR_METRICS_PROCESSING: Attribute.
+  METRICS_HOST_QUERY_BATCH: Attribute.
+  METRICS_POOL_JOIN_TIMEOUT_S: Attribute.
+  METRIC_NOT_COMPUTED_YET: Attribute.
+  NO_GPU_AGGREGATE_TELEMETRY: Attribute.
+  NO_SIMPLE_SAMPLES_MSG: Attribute.
+  NO_TIME_SERIES_MSG: Attribute.
+  NUMEXPR_MIN_ARRAY_SIZE: Attribute.
+  _COMPLEX_NO_DATA_REASONS: Attribute.
+  _COMPLEX_PLACEHOLDER_TYPE_UNITS: Attribute.
+  _GPU_JOB_DETAIL_CATALOG: Attribute.
+  _HOST_DATA_ROWS_MEMO_MAX_TIME_IN: Attribute.
+  _MAX_FABRIC_BW_SANITY_MB_S: Attribute.
+  _MAX_SANE_GPU_LINK_GBPS: Attribute.
+  _MAX_SANE_PACKETRATE: Attribute.
+  _PARENT_PERSIST_TIMEOUT_MARKERS: Attribute.
+  _TIME_IMBALANCE_MAX_SLICE_RATIO: Attribute.
 """
+from __future__ import annotations
+
+from typing import Any, Iterator
+
 import contextlib
 import json
 import os
@@ -98,17 +123,41 @@ _PARENT_PERSIST_TIMEOUT_MARKERS = (
 
 
 class MetricsRunWorkerStallError(TimeoutError):
-  """Raised when ``Metrics.run`` makes no worker-result progress for too long."""
+  """
+  Raised when ``Metrics.run`` makes no worker-result progress for too long.
+  
+  Attributes:
+    partial_outcomes: Attribute.
+    pending_jobs: Attribute.
+    pool_reset_confirmed: Attribute.
+    stalled_for_s: Attribute.
+  """
 
   def __init__(
-      self,
-      stalled_for_s,
-      message,
-      pool_reset_confirmed=False,
-      *,
-      partial_outcomes=None,
-      pending_jobs=None,
-  ):
+    self,
+    stalled_for_s: Any,
+    message: Any,
+    pool_reset_confirmed: bool = False,
+    *,
+    partial_outcomes: Any | None = None,
+    pending_jobs: Any | None = None,
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      stalled_for_s (Any): Stalled for s passed to this helper.
+      message (Any): Message passed to this helper.
+      pool_reset_confirmed (bool): Boolean flag for pool reset confirmed.
+      partial_outcomes (Any | None): One of ``Any``, ``None``.
+      pending_jobs (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> MetricsRunWorkerStallError(None, None, True, None, None)
+    """
     super().__init__(message)
     self.stalled_for_s = float(stalled_for_s)
     self.pool_reset_confirmed = bool(pool_reset_confirmed)
@@ -117,26 +166,57 @@ class MetricsRunWorkerStallError(TimeoutError):
 
 
 class MetricsComputeJobTimeoutError(TimeoutError):
-  """One metrics worker exceeded the per-job compute wall clock."""
+  """
+  One metrics worker exceeded the per-job compute wall clock.
+  """
 
 
-def _metrics_jid_value(job_or_pk):
-  """Stable jid string from either a job-like object or a raw primary key."""
+def _metrics_jid_value(job_or_pk: Any) -> Any:
+  """
+  Stable jid string from either a job-like object or a raw primary key.
+  
+  Args:
+    job_or_pk (Any): Job or pk passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _metrics_jid_value(None)  # doctest: +SKIP
+  """
   return _coerce_metrics_identity_str(getattr(job_or_pk, "jid", job_or_pk))
 
 
 def _metrics_run_outcome(
-    jid,
-    *,
-    ok,
-    status,
-    persisted_rows=0,
-    distinct_time_count=None,
-    persist_s=0.0,
-    error_type=None,
-    error_message=None,
-):
-  """Canonical per-jid outcome emitted by ``Metrics.run``."""
+  jid: Any,
+  *,
+  ok: Any,
+  status: Any,
+  persisted_rows: int = 0,
+  distinct_time_count: Any | None = None,
+  persist_s: float = 0.0,
+  error_type: Any | None = None,
+  error_message: Any | None = None,
+) -> Any:
+  """
+  Canonical per-jid outcome emitted by ``Metrics.run``.
+  
+  Args:
+    jid (Any): Jid passed to this helper.
+    ok (Any): Ok passed to this helper.
+    status (Any): Status passed to this helper.
+    persisted_rows (int): Integer value for persisted rows.
+    distinct_time_count (Any | None): One of ``Any``, ``None``.
+    persist_s (float): Floating-point value for persist s.
+    error_type (Any | None): One of ``Any``, ``None``.
+    error_message (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _metrics_run_outcome(None, None, None, 0, None, 0, None, None)
+  """
   return {
       "jid": _metrics_jid_value(jid),
       "ok": bool(ok),
@@ -149,14 +229,37 @@ def _metrics_run_outcome(
   }
 
 
-def _is_parent_persist_timeout_error(exc):
-  """Best-effort classification for bounded persist timeout/lock timeout failures."""
+def _is_parent_persist_timeout_error(exc: Any) -> Any:
+  """
+  Best-effort classification for bounded persist timeout/lock timeout failures.
+  
+  Args:
+    exc (Any): Exception instance being classified or logged.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _is_parent_persist_timeout_error(None)  # doctest: +SKIP
+  """
   text = str(exc or "").lower()
   return any(marker in text for marker in _PARENT_PERSIST_TIMEOUT_MARKERS)
 
 
-def _wait_pool_processes_bounded(active_pool, timeout_s):
-  """Wait up to ``timeout_s`` for pool worker processes to exit."""
+def _wait_pool_processes_bounded(active_pool: Any, timeout_s: Any) -> Any:
+  """
+  Wait up to ``timeout_s`` for pool worker processes to exit.
+  
+  Args:
+    active_pool (Any): Active pool passed to this helper.
+    timeout_s (Any): Timeout s passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _wait_pool_processes_bounded(None, None)  # doctest: +SKIP
+  """
   workers = list(getattr(active_pool, "_pool", []) or [])
   deadline = time.monotonic() + max(0.1, float(timeout_s))
   for proc in workers:
@@ -171,8 +274,20 @@ def _wait_pool_processes_bounded(active_pool, timeout_s):
   return len(alive) == 0, alive
 
 
-def _close_pool_bounded(active_pool, timeout_s):
-  """Best-effort bounded graceful close; terminates if workers linger."""
+def _close_pool_bounded(active_pool: Any, timeout_s: Any) -> Any:
+  """
+  Best-effort bounded graceful close; terminates if workers linger.
+  
+  Args:
+    active_pool (Any): Active pool passed to this helper.
+    timeout_s (Any): Timeout s passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _close_pool_bounded(None, None)  # doctest: +SKIP
+  """
   try:
     active_pool.close()
   except Exception:
@@ -193,8 +308,20 @@ def _close_pool_bounded(active_pool, timeout_s):
   return all_done
 
 
-def _terminate_pool_bounded(active_pool, timeout_s):
-  """Best-effort bounded terminate used in stall recovery paths."""
+def _terminate_pool_bounded(active_pool: Any, timeout_s: Any) -> Any:
+  """
+  Best-effort bounded terminate used in stall recovery paths.
+  
+  Args:
+    active_pool (Any): Active pool passed to this helper.
+    timeout_s (Any): Timeout s passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _terminate_pool_bounded(None, None)  # doctest: +SKIP
+  """
   try:
     active_pool.terminate()
   except Exception:
@@ -208,8 +335,20 @@ def _terminate_pool_bounded(active_pool, timeout_s):
   return all_done
 
 
-def _log_exception_details(prefix, exc):
-  """Emit type/repr and traceback lines for diagnostics-first scheduler logs."""
+def _log_exception_details(prefix: Any, exc: Any) -> None:
+  """
+  Emit type/repr and traceback lines for diagnostics-first scheduler logs.
+  
+  Args:
+    prefix (Any): Prefix passed to this helper.
+    exc (Any): Exception instance being classified or logged.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _log_exception_details(None, None)  # doctest: +SKIP
+  """
   et = type(exc).__name__
   log_print(
       "{0}: exception_type={1} exception_repr={2!r}".format(prefix, et, exc),
@@ -238,12 +377,23 @@ def _log_exception_details(prefix, exc):
     )
 
 
-def _coerce_metrics_identity_str(value):
-  """Stable string for metrics_data keys and set/hash uses (never lists/dicts raw).
-
-  Bad monitor/ingest payloads occasionally surface list-typed labels in host_data
+def _coerce_metrics_identity_str(value: Any) -> Any:
+  """
+  Stable string for metrics_data keys and set/hash uses (never lists/dicts raw).
+  
+  Bad monitor/ingest payloads occasionally surface list-typed labels in
+    host_data
   or schema-derived paths; using those in ``set`` membership, ``frozenset``, or
   ORM dedupe keys raises ``unhashable type: 'list'``.
+  
+  Args:
+    value (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _coerce_metrics_identity_str(None)  # doctest: +SKIP
   """
   if value is None:
     return ""
@@ -259,25 +409,63 @@ def _coerce_metrics_identity_str(value):
   return str(value)
 
 
-def _hashable_metric_events_signature(events):
-  """Tuple of stable strings for ``simple_metric_cache`` / ``rows_cache`` dict keys.
-
+def _hashable_metric_events_signature(events: Any) -> Any:
+  """
+  Tuple of stable strings for ``simple_metric_cache`` / ``rows_cache`` dict.
+  
+    keys.
+  
   ``tuple(events)`` is unsafe when ingest/catalog corruption nests lists inside
   ``events`` — the tuple can contain a raw ``list``, which is unhashable and
   crashes ``cache_key in cache`` during ``job_arc`` / ``job_value_mean``.
+  
+  Args:
+    events (Any): Events passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _hashable_metric_events_signature(None)  # doctest: +SKIP
   """
   if not events:
     return ()
   return tuple(_coerce_metrics_identity_str(e) for e in events)
 
 
-def _flatten_event_names_for_host_data_query(events, typ=None):
-  """Expand nested sequences and legacy event aliases for ``event__in`` queries."""
+def _flatten_event_names_for_host_data_query(
+  events: Any,
+  typ: Any | None = None,
+) -> Any:
+  """
+  Expand nested sequences and legacy event aliases for ``event__in`` queries.
+  
+  Args:
+    events (Any): Events passed to this helper.
+    typ (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _flatten_event_names_for_host_data_query(None, None)  # doctest: +SKIP
+  """
   return events_probe_names(events, typ=typ)
 
 
-def _sanitize_metrics_compute_rows(rows):
-  """Normalize type/metric/units on every worker-produced row before persist."""
+def _sanitize_metrics_compute_rows(rows: Any) -> Any:
+  """
+  Normalize type/metric/units on every worker-produced row before persist.
+  
+  Args:
+    rows (Any): Rows passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _sanitize_metrics_compute_rows(None)  # doctest: +SKIP
+  """
   out = []
   for row in rows:
     if not isinstance(row, dict):
@@ -296,11 +484,22 @@ def _sanitize_metrics_compute_rows(rows):
   return out
 
 
-def _finite_amax(values, *, reject_dcgm_blank=False):
-  """Return ``amax`` over finite entries, or ``None`` when none are finite.
-
+def _finite_amax(values: Any, *, reject_dcgm_blank: bool = False) -> Any:
+  """
+  Return ``amax`` over finite entries, or ``None`` when none are finite.
+  
   When ``reject_dcgm_blank`` is True, DCGM blank-family sentinels are excluded
   (GPU power / util / throttle gauges).
+  
+  Args:
+    values (Any): Values passed to this helper.
+    reject_dcgm_blank (bool): Boolean flag for reject dcgm blank.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _finite_amax(None, True)  # doctest: +SKIP
   """
   arr = np.asarray(values, dtype=np.float64)
   if arr.size == 0:
@@ -313,16 +512,47 @@ def _finite_amax(values, *, reject_dcgm_blank=False):
   return float(amax(fin))
 
 
-def _resolve_metrics_run_per_job_timeout_s():
-  """Per-job compute wall clock in pool workers (0 INI/env → ``metrics_run_stall_timeout_s``)."""
+def _resolve_metrics_run_per_job_timeout_s() -> Any:
+  """
+  Per-job compute wall clock in pool workers (0 INI/env →.
+  
+    ``metrics_run_stall_timeout_s``).
+  
+  Returns:
+    Any: Open return polymorphism from
+    ``_resolve_metrics_run_per_job_timeout_s``: concrete type depends on
+    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+  
+  Examples:
+    >>> _resolve_metrics_run_per_job_timeout_s()  # doctest: +SKIP
+  """
   per_job = float(cfg.get_metrics_run_per_job_timeout_s())
   if per_job > 0.0:
     return per_job
   return max(5.0, float(cfg.get_metrics_run_stall_timeout_s()))
 
 
-def _run_compute_metrics_timed(metrics_obj, job, timeout_s):
-  """Run ``compute_metrics`` with a Unix wall-clock cap (no-op when ``timeout_s <= 0``)."""
+def _run_compute_metrics_timed(
+  metrics_obj: Any,
+  job: Any,
+  timeout_s: Any,
+) -> Any:
+  """
+  Run ``compute_metrics`` with a Unix wall-clock cap (no-op when ``timeout_s <=.
+  
+    0``).
+  
+  Args:
+    metrics_obj (Any): Metrics obj passed to this helper.
+    job (Any): Job record (Django ``job_data`` or job-like mapping).
+    timeout_s (Any): Timeout s passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _run_compute_metrics_timed(None, None, None)  # doctest: +SKIP
+  """
   timeout_s = float(timeout_s)
   if timeout_s <= 0.0:
     return metrics_obj.compute_metrics(job)
@@ -331,7 +561,24 @@ def _run_compute_metrics_timed(metrics_obj, job, timeout_s):
 
   jid = getattr(job, "jid", "?")
 
-  def _handler(signum, frame):
+  def _handler(signum: Any, frame: Any) -> None:
+    """
+    Internal helper to handle handler.
+    
+    Args:
+      signum (Any): Signum passed to this helper.
+      frame (Any): Frame passed to this helper.
+    
+    Returns:
+      None
+    
+    Raises:
+      MetricsComputeJobTimeoutError: Raised when ``_handler`` hits a
+      ``MetricsComputeJobTimeoutError`` failure path.
+    
+    Examples:
+      >>> _handler(None, None)  # doctest: +SKIP
+    """
     del signum, frame
     raise MetricsComputeJobTimeoutError(
         "compute_metrics exceeded {:.0f}s for jid {}".format(timeout_s, jid))
@@ -352,8 +599,19 @@ def _run_compute_metrics_timed(metrics_obj, job, timeout_s):
     signal.signal(signal.SIGALRM, previous)
 
 
-def _coerced_metric_name_set(metric_names):
-  """Return a hash-safe set of metric names from any iterable."""
+def _coerced_metric_name_set(metric_names: Any) -> Any:
+  """
+  Return a hash-safe set of metric names from any iterable.
+  
+  Args:
+    metric_names (Any): Metric names passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _coerced_metric_name_set(None)  # doctest: +SKIP
+  """
   out = set()
   for name in metric_names or ():
     out.add(_coerce_metrics_identity_str(name))
@@ -365,15 +623,26 @@ def _coerced_metric_name_set(metric_names):
 _TIME_IMBALANCE_MAX_SLICE_RATIO = 1e9
 
 
-def _time_imbalance_min_ratio_for_rate(rate, tmid):
-  """Minimum after/before mean CPU-rate ratio over mid timeline splits.
-
+def _time_imbalance_min_ratio_for_rate(rate: Any, tmid: Any) -> Any:
+  """
+  Minimum after/before mean CPU-rate ratio over mid timeline splits.
+  
   Matches the historical ``time_imbalance`` loop (same split set, windows, and
   clamps) but uses prefix trapezoid segments so cost is ``O(n)`` in
   ``n = len(rate)`` instead of ``O(n^2)`` repeated ``trapz`` calls.
-
+  
   ``rate`` / ``tmid`` are per-interval series (length ``nt - 1``). Returns the
   minimum finite ratio, or ``None`` when no slice qualifies.
+  
+  Args:
+    rate (Any): Rate passed to this helper.
+    tmid (Any): Tmid passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _time_imbalance_min_ratio_for_rate(None, None)  # doctest: +SKIP
   """
   rate = np.asarray(rate, dtype=np.float64)
   tmid = np.asarray(tmid, dtype=np.float64)
@@ -413,8 +682,20 @@ def _time_imbalance_min_ratio_for_rate(rate, tmid):
   return min_ratio
 
 
-def _add_arrays(a, b):
-  """Fast path for a+b on large arrays."""
+def _add_arrays(a: Any, b: Any) -> Any:
+  """
+  Fast path for a+b on large arrays.
+  
+  Args:
+    a (Any): A passed to this helper.
+    b (Any): B passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _add_arrays(None, None)  # doctest: +SKIP
+  """
   if getattr(a, "size", 0) >= NUMEXPR_MIN_ARRAY_SIZE:
     return ne.evaluate("a + b")
   return a + b
@@ -517,11 +798,22 @@ _GPU_JOB_DETAIL_CATALOG = (
 NO_GPU_AGGREGATE_TELEMETRY = "No usable GPU aggregate telemetry for job detail"
 
 
-def _per_interval_rate(values, t):
-  """Compute diff(values) / diff(t) without divide-by-zero.
-
+def _per_interval_rate(values: Any, t: Any) -> Any:
+  """
+  Compute diff(values) / diff(t) without divide-by-zero.
+  
   Sample pairs with non-positive delta-t (duplicate timestamps) yield NaN so
   callers can use nan-aware reductions or substitute zeros for integration.
+  
+  Args:
+    values (Any): Values passed to this helper.
+    t (Any): T passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _per_interval_rate(None, None)  # doctest: +SKIP
   """
   dy = np.asarray(diff(values), dtype=np.float64)
   dt = np.asarray(diff(np.asarray(t, dtype=np.float64)), dtype=np.float64)
@@ -536,8 +828,26 @@ _MAX_SANE_PACKETRATE = 1.0e10  # packets/s
 _MAX_SANE_GPU_LINK_GBPS = 1.0e5  # GB/s
 
 
-def _sane_peak_from_rates(rates, *, divisor=1.0, max_sane=None):
-  """Return max positive finite rate after optional physical ceiling, else None."""
+def _sane_peak_from_rates(
+  rates: Any,
+  *,
+  divisor: float = 1.0,
+  max_sane: Any | None = None,
+) -> Any:
+  """
+  Return max positive finite rate after optional physical ceiling, else None.
+  
+  Args:
+    rates (Any): Rates passed to this helper.
+    divisor (float): Floating-point value for divisor.
+    max_sane (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _sane_peak_from_rates(None, 0, None)  # doctest: +SKIP
+  """
   fin = np.asarray(rates, dtype=np.float64)
   fin = fin[np.isfinite(fin)]
   if fin.size == 0:
@@ -554,8 +864,29 @@ def _sane_peak_from_rates(rates, *, divisor=1.0, max_sane=None):
   return float(positive.max())
 
 
-def _peak_from_cluster_arc(u, typename, column_indices, divisor, max_sane=None):
-  """Peak of host-averaged ingest ``arc`` (already a rate) when available."""
+def _peak_from_cluster_arc(
+  u: Any,
+  typename: Any,
+  column_indices: Any,
+  divisor: Any,
+  max_sane: Any | None = None,
+) -> Any:
+  """
+  Peak of host-averaged ingest ``arc`` (already a rate) when available.
+  
+  Args:
+    u (Any): U passed to this helper.
+    typename (Any): Typename passed to this helper.
+    column_indices (Any): Column indices passed to this helper.
+    divisor (Any): Divisor passed to this helper.
+    max_sane (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _peak_from_cluster_arc(None, None, None, None, None)  # doctest: +SKIP
+  """
   cmap = getattr(u.job, "cluster_mean_arc_by_type", None) or {}
   cm = cmap.get(typename)
   if cm is None or cm.size == 0:
@@ -569,12 +900,31 @@ def _peak_from_cluster_arc(u, typename, column_indices, divisor, max_sane=None):
 
 
 def _peak_interval_rate_from_cluster_mean(
-    u, typename, column_indices, divisor, max_sane=None):
-  """Peak rate from cluster means: prefer ``arc``, else dy/dt on ``value``.
-
+  u: Any,
+  typename: Any,
+  column_indices: Any,
+  divisor: Any,
+  max_sane: Any | None = None,
+) -> Any:
+  """
+  Peak rate from cluster means: prefer ``arc``, else dy/dt on ``value``.
+  
   Uses ``job.cluster_mean_arc_by_type`` / ``cluster_mean_by_type`` (see
   ``_JobForMetrics``). ``max_sane`` is in the same units as the returned peak
   (after ``divisor``). Returns None when only wrap-class poison remains.
+  
+  Args:
+    u (Any): U passed to this helper.
+    typename (Any): Typename passed to this helper.
+    column_indices (Any): Column indices passed to this helper.
+    divisor (Any): Divisor passed to this helper.
+    max_sane (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _peak_interval_rate_from_cluster_mean(None, None, None, None, None)
   """
   arc_peak = _peak_from_cluster_arc(
       u, typename, column_indices, divisor, max_sane=max_sane)
@@ -594,48 +944,127 @@ def _peak_interval_rate_from_cluster_mean(
 
 
 class _EventIndex:
-  """Holds the integer index of an event in a schema. Used by _Schema.__getitem__.
+  """
+  Holds the integer index of an event in a schema. Used by _Schema.__getitem__.
+  
+  Attributes:
+    index: Attribute.
+  """
 
+  def __init__(self, index: int) -> None:
     """
-
-  def __init__(self, index):
-    """Store the integer index for an event."""
+    Store the integer index for an event.
+    
+    Args:
+      index (int): Integer value for index.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _EventIndex(0)  # doctest: +SKIP
+    """
     self.index = index
 
 
 class _Schema:
-  """Schema for a type: list of event names and a name->index mapping.
+  """
+  Schema for a type: list of event names and a name->index mapping.
+  
+  Attributes:
+    _index: Attribute.
+    desc: Attribute.
+    events: Attribute.
+  """
 
+  def __init__(self, events: Any) -> None:
     """
-
-  def __init__(self, events):
-    """Build event list and name->index mapping from event names."""
+    Build event list and name->index mapping from event names.
+    
+    Args:
+      events (Any): Events passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _Schema(None)  # doctest: +SKIP
+    """
     # Normalise event names to strings so that schema construction is robust
     # when upstream code passes non‑string labels (e.g. pandas.Timestamp).
     self.events = [str(e) for e in events]
     self._index = {name: idx for idx, name in enumerate(self.events)}
     self.desc = " ".join(self.events) + "\n"
 
-  def __getitem__(self, name):
-    """Return _EventIndex for the given event name."""
+  def __getitem__(self, name: Any) -> Any:
+    """
+    Return _EventIndex for the given event name.
+    
+    Args:
+      name (Any): Name passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> __getitem__(None)  # doctest: +SKIP
+    """
     return _EventIndex(self._index[name])
 
-  def __contains__(self, name):
-    """Membership check for event columns (partial schemas must not KeyError complex metrics)."""
+  def __contains__(self, name: Any) -> Any:
+    """
+    Membership check for event columns (partial schemas must not KeyError.
+    
+      complex metrics).
+    
+    Args:
+      name (Any): Name passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> __contains__(None)  # doctest: +SKIP
+    """
     return str(name) in self._index
 
-  def __iter__(self):
-    """Iterate event names (required: without this, ``for x in schema`` uses integer indices and breaks __getitem__)."""
+  def __iter__(self) -> Any:
+    """
+    Iterate event names (required: without this, ``for x in schema`` uses.
+    
+      integer indices and breaks __getitem__).
+    
+    Returns:
+      Any: Open return polymorphism from ``__iter__``: concrete type depends
+      on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __iter__()  # doctest: +SKIP
+    """
     return iter(self.events)
 
 
-def _metric_type_events_feasible(schema, typ, events):
-  """Return False when ``jt.schema`` is known and no requested event exists for typ.
-
+def _metric_type_events_feasible(schema: Any, typ: Any, events: Any) -> Any:
+  """
+  Return False when ``jt.schema`` is known and no requested event exists for.
+  
+    typ.
+  
   Same contract as SummaryPlot ``_summary_type_events_feasible``: empty/unknown
   schema allows ORM; populated schema skips impossible type/event probes so
   cascading ``job_arc`` helpers do not burn the per-job wall clock on empty
   ``host_data`` scans (production: MetricsComputeJobTimeoutError in list(qs)).
+  
+  Args:
+    schema (Any): Schema passed to this helper.
+    typ (Any): Typ passed to this helper.
+    events (Any): Events passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _metric_type_events_feasible(None, None, None)  # doctest: +SKIP
   """
   if not isinstance(schema, dict) or not schema:
     return True
@@ -651,15 +1080,48 @@ def _metric_type_events_feasible(schema, typ, events):
   return False
 
 
-def _schema_has_events(schema, *event_names):
-  """True when ``schema`` defines every listed event (handles incomplete ``mem``/fabric/net rows)."""
+def _schema_has_events(schema: Any, *event_names: Any) -> Any:
+  """
+  True when ``schema`` defines every listed event (handles incomplete.
+  
+    ``mem``/fabric/net rows).
+  
+  Args:
+    schema (Any): Schema passed to this helper.
+    *event_names (Any): Extra positional values for ``event_names``; element
+    types match the helper's documented protocol.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _schema_has_events(None)  # doctest: +SKIP
+  """
   if schema is None:
     return False
   return all(name in schema for name in event_names)
 
 
-def _schema_has_events_for_type(schema, typ, *event_names):
-  """True when each event resolves via type-scoped dual-read into ``schema``."""
+def _schema_has_events_for_type(
+  schema: Any,
+  typ: Any,
+  *event_names: Any,
+) -> Any:
+  """
+  True when each event resolves via type-scoped dual-read into ``schema``.
+  
+  Args:
+    schema (Any): Schema passed to this helper.
+    typ (Any): Typ passed to this helper.
+    *event_names (Any): Extra positional values for ``event_names``; element
+    types match the helper's documented protocol.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _schema_has_events_for_type(None, None)  # doctest: +SKIP
+  """
   if schema is None:
     return False
   for name in event_names:
@@ -668,8 +1130,27 @@ def _schema_has_events_for_type(schema, typ, *event_names):
   return True
 
 
-def _schema_event_index(schema, typ, event_name):
-  """Column index for ``event_name`` under ``typ``, preferring canonical probe order."""
+def _schema_event_index(schema: Any, typ: Any, event_name: Any) -> Any:
+  """
+  Column index for ``event_name`` under ``typ``, preferring canonical probe.
+  
+    order.
+  
+  Args:
+    schema (Any): Schema passed to this helper.
+    typ (Any): Typ passed to this helper.
+    event_name (Any): Event name passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    KeyError: Raised when ``_schema_event_index`` hits a ``KeyError`` failure
+    path.
+  
+  Examples:
+    >>> _schema_event_index(None, None, None)  # doctest: +SKIP
+  """
   for probe in event_probe_names_for_type(typ, event_name):
     if probe in schema:
       return schema[probe].index
@@ -677,16 +1158,39 @@ def _schema_event_index(schema, typ, event_name):
 
 
 class _Host:
-  """Minimal host container with a stats dict (typename -> dev -> array).
+  """
+  Minimal host container with a stats dict (typename -> dev -> array).
+  
+  Attributes:
+    stats: Attribute.
+  """
 
+  def __init__(self) -> None:
     """
-
-  def __init__(self):
-    """Initialize empty stats dict."""
+    Initialize empty stats dict.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _Host()  # doctest: +SKIP
+    """
     self.stats = {}
 
 
-def _fqdn_hosts_for_job_model(job):
+def _fqdn_hosts_for_job_model(job: Any) -> Any:
+  """
+  Internal helper to handle fqdn hosts for job model.
+  
+  Args:
+    job (Any): Job record (Django ``job_data`` or job-like mapping).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _fqdn_hosts_for_job_model(None)  # doctest: +SKIP
+  """
   suffix = "." + cfg.get_host_name_ext()
   hosts = []
   for host in (job.host_list or []):
@@ -697,8 +1201,19 @@ def _fqdn_hosts_for_job_model(job):
   return hosts
 
 
-def _in_window_telemetry_bounds_for_job(job):
-  """Return ``(telemetry_first_time, telemetry_last_time)`` for accounting hosts."""
+def _in_window_telemetry_bounds_for_job(job: Any) -> Any:
+  """
+  Return ``(telemetry_first_time, telemetry_last_time)`` for accounting hosts.
+  
+  Args:
+    job (Any): Job record (Django ``job_data`` or job-like mapping).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _in_window_telemetry_bounds_for_job(None)  # doctest: +SKIP
+  """
   start_time = getattr(job, "start_time", None)
   end_time = getattr(job, "end_time", None)
   host_list = getattr(job, "host_list", None)
@@ -734,12 +1249,35 @@ def _in_window_telemetry_bounds_for_job(job):
 
 
 class _JobForMetrics:
-  """Minimal job-like object compatible with hpcperfstats.analysis.metrics.lib.gen.utils.utils. Built from jid_table full host_data DataFrame.
+  """
+  Minimal job-like object compatible with
+    hpcperfstats.analysis.metrics.lib.gen.utils.utils. Built from jid_table full
+    host_data DataFrame.
+  
+  Attributes:
+    acct: Attribute.
+    cluster_mean_arc_by_type: Attribute.
+    cluster_mean_by_type: Attribute.
+    hosts: Attribute.
+    jid: Attribute.
+    per_host_distinct_time_sum: Attribute.
+    schemas: Attribute.
+    times: Attribute.
+  """
 
+  def __init__(self, jt: Any) -> None:
     """
-
-  def __init__(self, jt):
-    """Build job-like view from jid_table full host_data DataFrame."""
+    Build job-like view from jid_table full host_data DataFrame.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _JobForMetrics(None)  # doctest: +SKIP
+    """
     self.jid = jt.jid
     self.hosts = {}
     self.schemas = {}
@@ -857,13 +1395,23 @@ class _JobForMetrics:
 
 
 @contextlib.contextmanager
-def _pg_session_statement_timeout_for_metrics_worker():
-  """Apply ``metrics_worker_statement_timeout_ms`` for pool compute, then restore.
-
+def _pg_session_statement_timeout_for_metrics_worker() -> Iterator[Any]:
+  """
+  Apply ``metrics_worker_statement_timeout_ms`` for pool compute, then restore.
+  
   Default ``0`` disables PostgreSQL ``statement_timeout`` for the compute window
   so legitimate multi-host ``host_data`` scans are not canceled at the web/API
   120s session limit. Per-job SIGALRM remains the wall-clock backstop. Restore
   is best-effort (swallow OperationalError/DatabaseError on dead connections).
+  
+  Yields:
+    Iterator[Any]: Open return polymorphism from
+    ``_pg_session_statement_timeout_for_metrics_worker``: concrete type
+    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+    empty).
+  
+  Examples:
+    >>> _pg_session_statement_timeout_for_metrics_worker()  # doctest: +SKIP
   """
   try:
     conn = connections["default"]
@@ -893,10 +1441,22 @@ def _pg_session_statement_timeout_for_metrics_worker():
       pass
 
 
-def _unwrap(args):
-  """Wrapper for pool: call compute_metrics on the job. Used by Metrics.run.
-
-    """
+def _unwrap(args: Any) -> Any:
+  """
+  Wrapper for pool: call compute_metrics on the job. Used by Metrics.run.
+  
+  Args:
+    args (Any): Args passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    Exception: Raised when ``_unwrap`` hits a ``Exception`` failure path.
+  
+  Examples:
+    >>> _unwrap(None)  # doctest: +SKIP
+  """
   # Fork inherits the parent's DB socket on Linux; Django named cursors (iterator)
   # must never share one PostgreSQL session across processes (#close_all_after_fork).
   connections.close_all()
@@ -910,7 +1470,16 @@ def _unwrap(args):
   try:
     per_job_timeout_s = _resolve_metrics_run_per_job_timeout_s()
 
-    def _compute():
+    def _compute() -> Any:
+      """
+      Internal helper to compute.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Examples:
+        >>> _compute()  # doctest: +SKIP
+      """
       with _pg_session_statement_timeout_for_metrics_worker():
         return _run_compute_metrics_timed(
             metrics_obj, job, per_job_timeout_s)
@@ -966,18 +1535,38 @@ def _unwrap(args):
 
 
 def _persist_metrics_batch(
-    job_results,
-    distinct_time_count,
-    telemetry_first_time=None,
-    telemetry_last_time=None,
-):
-  """Upsert metrics_data rows for job_results; set job_data.metrics_distinct_time_count.
-
-  Uses bulk_create(..., update_conflicts=...) so we do not rely on INSERT RETURNING
+  job_results: Any,
+  distinct_time_count: int,
+  telemetry_first_time: Any | None = None,
+  telemetry_last_time: Any | None = None,
+) -> None:
+  """
+  Upsert metrics_data rows for job_results; set.
+  
+    job_data.metrics_distinct_time_count.
+  
+  Uses bulk_create(..., update_conflicts=...) so we do not rely on INSERT
+    RETURNING
   row-count matching (Django asserts that for plain bulk_create on PostgreSQL;
   some stacks violate it). Dedupes (jid, type, metric) within the batch so
   ON CONFLICT does not hit the same row twice.
   Called in main process only.
+  
+  Args:
+    job_results (Any): Job results passed to this helper.
+    distinct_time_count (int): Integer value for distinct time count.
+    telemetry_first_time (Any | None): One of ``Any``, ``None``.
+    telemetry_last_time (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    None
+  
+  Raises:
+    Exception: Raised when ``_persist_metrics_batch`` hits a ``Exception``
+    failure path.
+  
+  Examples:
+    >>> _persist_metrics_batch(None, 0, None, None)  # doctest: +SKIP
   """
   conn = connections["default"]
   using = getattr(conn, "alias", None) or "default"
@@ -1057,8 +1646,19 @@ def _persist_metrics_batch(
       pass
 
 
-def _persist_metrics_payload(payload):
-  """Persist one worker payload and return a truthful per-jid outcome."""
+def _persist_metrics_payload(payload: Any) -> Any:
+  """
+  Persist one worker payload and return a truthful per-jid outcome.
+  
+  Args:
+    payload (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _persist_metrics_payload(None)  # doctest: +SKIP
+  """
   jid = _metrics_jid_value(payload.get("jid"))
   status = str(payload.get("status") or "ok")
   if status != "ok":
@@ -1144,18 +1744,39 @@ def _persist_metrics_payload(payload):
 
 
 def _drain_metrics_imap(
-    active_pool,
-    tasks,
-    chunksize,
-    *,
-    poll_timeout_s,
-    stall_timeout_s,
-):
-  """Apply ``imap_unordered`` results from workers and persist metrics.
-
+  active_pool: Any,
+  tasks: Any,
+  chunksize: Any,
+  *,
+  poll_timeout_s: Any,
+  stall_timeout_s: Any,
+) -> Any:
+  """
+  Apply ``imap_unordered`` results from workers and persist metrics.
+  
   ``imap_unordered`` can block forever when a worker wedges (driver deadlock,
   query hang, C-extension lock). Poll with timeout and fail fast on prolonged
   no-progress so scheduler code can recover the pool and continue.
+  
+  Args:
+    active_pool (Any): Active pool passed to this helper.
+    tasks (Any): Task payload for a worker (tuple/list per this helper's
+    protocol).
+    chunksize (Any): Chunksize passed to this helper.
+    poll_timeout_s (Any): Poll timeout s passed to this helper.
+    stall_timeout_s (Any): Stall timeout s passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    Exception: Raised when ``_drain_metrics_imap`` hits a ``Exception``
+    failure path.
+    MetricsRunWorkerStallError: Raised when ``_drain_metrics_imap`` hits a
+    ``MetricsRunWorkerStallError`` failure path.
+  
+  Examples:
+    >>> _drain_metrics_imap(None, None, None, None, None)  # doctest: +SKIP
   """
   # multiprocessing IMap* timeout polling is only reliable with chunksize=1.
   # Larger chunks can block indefinitely on ``next(timeout=...)`` and bypass
@@ -1236,8 +1857,21 @@ def _drain_metrics_imap(
   return outcomes
 
 
-def _jid_table_host_data_time_kwargs(base):
-  """ORM time scope from ``jid_table._base_filter`` (full window or sampled ``time__in``)."""
+def _jid_table_host_data_time_kwargs(base: Any) -> Any:
+  """
+  ORM time scope from ``jid_table._base_filter`` (full window or sampled.
+  
+    ``time__in``).
+  
+  Args:
+    base (Any): Base passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _jid_table_host_data_time_kwargs(None)  # doctest: +SKIP
+  """
   if not base:
     return None
   if "time__in" in base:
@@ -1254,15 +1888,33 @@ _HOST_DATA_ROWS_MEMO_MAX_TIME_IN = 4096
 
 
 def _host_data_row_cache_key(
-    tkw,
-    typename,
-    events,
-    metric_column,
-    *,
-    sum_per_sample=False,
-    nonnegative_only=False,
-):
-  """Hashable key for one batched host_data fetch within a single ``compute_metrics`` pass."""
+  tkw: Any,
+  typename: Any,
+  events: Any,
+  metric_column: Any,
+  *,
+  sum_per_sample: bool = False,
+  nonnegative_only: bool = False,
+) -> Any:
+  """
+  Hashable key for one batched host_data fetch within a single.
+  
+    ``compute_metrics`` pass.
+  
+  Args:
+    tkw (Any): Tkw passed to this helper.
+    typename (Any): Typename passed to this helper.
+    events (Any): Events passed to this helper.
+    metric_column (Any): Metric column passed to this helper.
+    sum_per_sample (bool): Boolean flag for sum per sample.
+    nonnegative_only (bool): Boolean flag for nonnegative only.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _host_data_row_cache_key(None, None, None, None, True, True)
+  """
   if not tkw:
     return None
   ti = tkw.get("time__in")
@@ -1288,22 +1940,42 @@ def _host_data_row_cache_key(
 
 
 def _host_data_metric_rows_queryset(
-    hosts,
-    tkw,
-    typename,
-    events,
-    metric_column,
-    *,
-    sum_per_sample=False,
-    nonnegative_only=False,
-):
-  """Rows for metric bucketing: raw samples, or one SQL-summed row per (host, time).
-
+  hosts: Any,
+  tkw: Any,
+  typename: Any,
+  events: Any,
+  metric_column: Any,
+  *,
+  sum_per_sample: bool = False,
+  nonnegative_only: bool = False,
+) -> Any:
+  """
+  Rows for metric bucketing: raw samples, or one SQL-summed row per (host,.
+  
+    time).
+  
   ``sum_per_sample`` moves the per-sample total across events and devices into
-  PostgreSQL, so a job with many events/devices transfers one row per sample time
-  instead of ``events × devices`` rows. The aggregate queryset labels its columns
+  PostgreSQL, so a job with many events/devices transfers one row per sample
+    time
+  instead of ``events × devices`` rows. The aggregate queryset labels its
+    columns
   with the ``jid_table`` aliases; ``_normalize_host_data_metric_rows`` maps them
   back so both paths yield ``{host, time, <metric_column>}`` rows.
+  
+  Args:
+    hosts (Any): Hosts passed to this helper.
+    tkw (Any): Tkw passed to this helper.
+    typename (Any): Typename passed to this helper.
+    events (Any): Events passed to this helper.
+    metric_column (Any): Metric column passed to this helper.
+    sum_per_sample (bool): Boolean flag for sum per sample.
+    nonnegative_only (bool): Boolean flag for nonnegative only.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _host_data_metric_rows_queryset(0)  # doctest: +SKIP
   """
   from hpcperfstats.site.lib.machine.models import host_data
 
@@ -1319,8 +1991,20 @@ def _host_data_metric_rows_queryset(
   return qs.values("host", "time", metric_column).order_by("host", "time")
 
 
-def _normalize_host_data_metric_rows(rows, metric_column):
-  """Relabel SQL-aggregate rows to the raw-fetch shape ``{host, time, column}``."""
+def _normalize_host_data_metric_rows(rows: Any, metric_column: Any) -> Any:
+  """
+  Relabel SQL-aggregate rows to the raw-fetch shape ``{host, time, column}``.
+  
+  Args:
+    rows (Any): Rows passed to this helper.
+    metric_column (Any): Metric column passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _normalize_host_data_metric_rows(None, None)  # doctest: +SKIP
+  """
   time_alias = jid_table.HOST_DATA_TIME_ALIAS
   sum_alias = jid_table.HOST_DATA_SUM_VAL_ALIAS
   return [
@@ -1334,21 +2018,47 @@ def _normalize_host_data_metric_rows(rows, metric_column):
 
 
 def _host_data_metric_rows_with_host_chunk_retry(
-    host_chunk,
-    tkw,
-    typename,
-    events,
-    metric_column,
-    *,
-    min_hosts=1,
-    max_attempts=2,
-    sum_per_sample=False,
-    nonnegative_only=False,
-):
-  """Materialize metric ``values()`` rows; split hosts or retry on statement timeout.
-
+  host_chunk: Any,
+  tkw: Any,
+  typename: Any,
+  events: Any,
+  metric_column: Any,
+  *,
+  min_hosts: int = 1,
+  max_attempts: int = 2,
+  sum_per_sample: bool = False,
+  nonnegative_only: bool = False,
+) -> Any:
+  """
+  Materialize metric ``values()`` rows; split hosts or retry on statement.
+  
+    timeout.
+  
   Mirrors ``jid_table._queryset_to_dataframe_with_host_chunk_retry`` for the
   list-of-dicts path used by metric bucketing.
+  
+  Args:
+    host_chunk (Any): Host chunk passed to this helper.
+    tkw (Any): Tkw passed to this helper.
+    typename (Any): Typename passed to this helper.
+    events (Any): Events passed to this helper.
+    metric_column (Any): Metric column passed to this helper.
+    min_hosts (int): Integer value for min hosts.
+    max_attempts (int): Integer value for max attempts.
+    sum_per_sample (bool): Boolean flag for sum per sample.
+    nonnegative_only (bool): Boolean flag for nonnegative only.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    Exception: Raised when ``_host_data_metric_rows_with_host_chunk_retry``
+    hits a ``Exception`` failure path.
+    last_exc: Raised when ``_host_data_metric_rows_with_host_chunk_retry``
+    hits a ``last_exc`` failure path.
+  
+  Examples:
+    >>> _host_data_metric_rows_with_host_chunk_retry(0)  # doctest: +SKIP
   """
   hosts = [str(h) for h in host_chunk if h]
   if not hosts:
@@ -1415,22 +2125,41 @@ METRICS_HOST_QUERY_BATCH = 16
 
 
 def _host_data_metric_rows_batched(
-    tkw,
-    hosts,
-    typename,
-    events,
-    metric_column,
-    rows_cache=None,
-    *,
-    sum_per_sample=False,
-    nonnegative_only=False,
-):
-  """Fetch host_data rows for metrics bucketing; chunk ``host__in`` for bounded SQL.
-
+  tkw: Any,
+  hosts: Any,
+  typename: Any,
+  events: Any,
+  metric_column: Any,
+  rows_cache: Any | None = None,
+  *,
+  sum_per_sample: bool = False,
+  nonnegative_only: bool = False,
+) -> Any:
+  """
+  Fetch host_data rows for metrics bucketing; chunk ``host__in`` for bounded.
+  
+    SQL.
+  
   Rows are always ``{host, time, <metric_column>}``. With ``sum_per_sample`` the
   value is the per-sample total across events and devices, summed by PostgreSQL;
   host chunks are disjoint and each chunk groups per (host, time), so rows stay
   unique per (host, time) and callers can skip a pandas groupby.
+  
+  Args:
+    tkw (Any): Tkw passed to this helper.
+    hosts (Any): Hosts passed to this helper.
+    typename (Any): Typename passed to this helper.
+    events (Any): Events passed to this helper.
+    metric_column (Any): Metric column passed to this helper.
+    rows_cache (Any | None): One of ``Any``, ``None``.
+    sum_per_sample (bool): Boolean flag for sum per sample.
+    nonnegative_only (bool): Boolean flag for nonnegative only.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _host_data_metric_rows_batched(0)  # doctest: +SKIP
   """
   host_list = list(hosts)
   if not host_list:
@@ -1469,11 +2198,21 @@ def _host_data_metric_rows_batched(
   return rows
 
 
-def _drop_first_bucket_per_host_if_safe(grouped):
-  """Drop the first 5m bucket per host only when a later bucket remains.
-
+def _drop_first_bucket_per_host_if_safe(grouped: Any) -> Any:
+  """
+  Drop the first 5m bucket per host only when a later bucket remains.
+  
   Short jobs that land in a single bucket must keep that sample; otherwise
   ``job_arc`` / ``job_value_mean`` return None even when host_data exists.
+  
+  Args:
+    grouped (Any): Grouped passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _drop_first_bucket_per_host_if_safe(None)  # doctest: +SKIP
   """
   if grouped is None or getattr(grouped, "empty", True):
     return grouped
@@ -1491,14 +2230,26 @@ def _drop_first_bucket_per_host_if_safe(grouped):
 
 
 class Metrics():
-  """Computes simple and complex metrics for a list of jobs in parallel and writes results to metrics_data.
+  """
+  Computes simple and complex metrics for a list of jobs in parallel and writes.
+  
+  Attributes:
+    _shared_pool: Attribute.
+    _shared_pool_kind: Attribute.
+    complex_metrics_list: Attribute.
+    simple_metrics_list: Attribute.
+  """
 
+  def __init__(self) -> None:
     """
-
-  def __init__(self):
-    """Initialize simple_metrics_list and complex_metrics_list.
-
-        """
+    Initialize simple_metrics_list and complex_metrics_list.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> Metrics()  # doctest: +SKIP
+    """
     self.simple_metrics_list = {
         "avg_blockbw": {
             "typename": HOST_BLOCK_TYPE,
@@ -1660,31 +2411,86 @@ class Metrics():
     self._shared_pool = None
     self._shared_pool_kind = None
 
-  def __getstate__(self):
-    """Exclude non-picklable runtime pool when sending self to workers."""
+  def __getstate__(self) -> Any:
+    """
+    Exclude non-picklable runtime pool when sending self to workers.
+    
+    Returns:
+      Any: Open return polymorphism from ``__getstate__``: concrete type
+      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+      empty).
+    
+    Examples:
+      >>> __getstate__()  # doctest: +SKIP
+    """
     state = dict(self.__dict__)
     state["_shared_pool"] = None
     state["_shared_pool_kind"] = None
     return state
 
-  def __setstate__(self, state):
+  def __setstate__(self, state: Any) -> None:
+    """
+    Internal helper to handle setstate.
+    
+    Args:
+      state (Any): State passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> __setstate__(None)  # doctest: +SKIP
+    """
     self.__dict__.update(state)
     if "_shared_pool" not in self.__dict__:
       self._shared_pool = None
     if "_shared_pool_kind" not in self.__dict__:
       self._shared_pool_kind = None
 
-  def _worker_process_count(self):
+  def _worker_process_count(self) -> Any:
+    """
+    Internal helper to handle worker process count.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> Metrics()._worker_process_count()  # doctest: +SKIP
+    """
     return cfg.get_metrics_pool_process_count()
 
-  def _imap_chunksize(self, job_count, threads):
+  def _imap_chunksize(self, job_count: int, threads: Any) -> Any:
+    """
+    Internal helper to handle imap chunksize.
+    
+    Args:
+      job_count (int): Integer value for job count.
+      threads (Any): Threads passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> Metrics()._imap_chunksize(0, None)  # doctest: +SKIP
+    """
     if job_count <= 0:
       return 1
     # Balance IPC overhead and fairness.
     return max(1, job_count // (threads * 4))
 
-  def ensure_pool(self, pool_kind="metrics-pool"):
-    """Create and retain a shared worker pool for repeated run() calls."""
+  def ensure_pool(self, pool_kind: str = "metrics-pool") -> Any:
+    """
+    Create and retain a shared worker pool for repeated run() calls.
+    
+    Args:
+      pool_kind (str): String for pool kind.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> Metrics().ensure_pool("x")  # doctest: +SKIP
+    """
     if (
         self._shared_pool is not None
         and self._shared_pool_kind == pool_kind
@@ -1700,21 +2506,36 @@ class Metrics():
     )
     return self._shared_pool
 
-  def close_pool(self):
-    """Close retained worker pool (idempotent)."""
+  def close_pool(self) -> None:
+    """
+    Close retained worker pool (idempotent).
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> Metrics().close_pool()  # doctest: +SKIP
+    """
     if self._shared_pool is None:
       return
     _close_pool_bounded(self._shared_pool, METRICS_POOL_JOIN_TIMEOUT_S)
     self._shared_pool = None
     self._shared_pool_kind = None
 
-  def reset_pool_hard(self):
-    """Terminate retained worker pool without blocking the scheduler thread.
-
+  def reset_pool_hard(self) -> None:
+    """
+    Terminate retained worker pool without blocking the scheduler thread.
+    
     Detach the pool reference first so ``ensure_pool()`` can create a fresh pool
     while lingering workers are torn down in the background. Blocking on
     ``terminate()``/``join()`` after a wedged worker caused indefinite stalls
     after ``MetricsRunWorkerStallError`` was logged.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> Metrics().reset_pool_hard()  # doctest: +SKIP
     """
     pool = self._shared_pool
     if pool is None:
@@ -1722,7 +2543,16 @@ class Metrics():
     self._shared_pool = None
     self._shared_pool_kind = None
 
-    def _terminate_background():
+    def _terminate_background() -> None:
+      """
+      Internal helper to handle terminate background.
+      
+      Returns:
+        None
+      
+      Examples:
+        >>> Metrics()._terminate_background()  # doctest: +SKIP
+      """
       try:
         _terminate_pool_bounded(pool, METRICS_POOL_JOIN_TIMEOUT_S)
       except Exception:
@@ -1735,10 +2565,27 @@ class Metrics():
     ).start()
 
   # Compute metrics in parallel (Shared memory only)
-  def run(self, job_list, pool=None):
-    """Run metric computation for each job in job_list in a process pool; persist results via metrics_data.update_or_create.
-
-        """
+  def run(self, job_list: Any, pool: Any | None = None) -> Any:
+    """
+    Run metric computation for each job in job_list in a process pool; persist.
+    
+      results via metrics_data.update_or_create.
+    
+    Args:
+      job_list (Any): Job list passed to this helper.
+      pool (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Raises:
+      Exception: Raised when ``run`` hits a ``Exception`` failure path.
+      MetricsRunWorkerStallError: Raised when ``run`` hits a
+      ``MetricsRunWorkerStallError`` failure path.
+    
+    Examples:
+      >>> Metrics().run(None, None)  # doctest: +SKIP
+    """
     if not job_list:
       log_print("Please specify a job list.")
       return []
@@ -1831,19 +2678,22 @@ class Metrics():
         _close_pool_bounded(active_pool, METRICS_POOL_JOIN_TIMEOUT_S)
     return outcomes
 
-  def job_arc(self,
-              jt,
-              name=None,
-              typename=None,
-              events=None,
-              conv=0,
-              units=None,
-              cache=None,
-              rows_cache=None,
-              nonnegative_rate=False,
-              host_aggregate="mean"):
-    """Aggregate arc by host and 5m time bucket via Django ORM.
-
+  def job_arc(
+    self,
+    jt: Any,
+    name: Any | None = None,
+    typename: Any | None = None,
+    events: Any | None = None,
+    conv: int = 0,
+    units: Any | None = None,
+    cache: Any | None = None,
+    rows_cache: Any | None = None,
+    nonnegative_rate: bool = False,
+    host_aggregate: str = "mean",
+  ) -> Any:
+    """
+    Aggregate arc by host and 5m time bucket via Django ORM.
+    
     For each sample time: sum ``arc`` across events and devices (instantaneous
     total). Within each 5m bucket: **mean** of those per-time totals (not a sum
     of all rows — summing samples inflated rates by sample count). For each
@@ -1852,12 +2702,30 @@ class Metrics():
     hosts (most ``avg_*`` simple metrics). When ``host_aggregate="sum"``
     (``avg_cpuusage`` only), returns the **sum** of per-host means
     (job-total busy cores).
-
-    When ``nonnegative_rate`` is True, negative ``arc`` samples are dropped (NaN)
+    
+    When ``nonnegative_rate`` is True, negative ``arc`` samples are dropped
+      (NaN)
     before bucketing. Use for cumulative byte counters (fabric bandwidth) where
     a negative rate indicates reset, wrong rollover width, or bad samples.
-
-        """
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      name (Any | None): One of ``Any``, ``None``.
+      typename (Any | None): One of ``Any``, ``None``.
+      events (Any | None): One of ``Any``, ``None``.
+      conv (int): Integer value for conv.
+      units (Any | None): One of ``Any``, ``None``.
+      cache (Any | None): One of ``Any``, ``None``.
+      rows_cache (Any | None): One of ``Any``, ``None``.
+      nonnegative_rate (bool): Boolean flag for nonnegative rate.
+      host_aggregate (str): String for host aggregate.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> job_arc(0)  # doctest: +SKIP
+    """
     import pandas as pd
 
     if not getattr(jt, "_base_filter", None):
@@ -1944,19 +2812,40 @@ class Metrics():
       cache[cache_key] = value
     return value
 
-  def job_value_mean(self,
-                     jt,
-                     typename=None,
-                     events=None,
-                     conv=1.0,
-                     cache=None,
-                     rows_cache=None,
-                     reject_dcgm_blank=False,
-                     max_sane=None):
-    """Mean sampled ``value`` by host and 5m bucket (same bucketing as ``job_arc``).
-
+  def job_value_mean(
+    self,
+    jt: Any,
+    typename: Any | None = None,
+    events: Any | None = None,
+    conv: float = 1.0,
+    cache: Any | None = None,
+    rows_cache: Any | None = None,
+    reject_dcgm_blank: bool = False,
+    max_sane: Any | None = None,
+  ) -> Any:
+    """
+    Mean sampled ``value`` by host and 5m bucket (same bucketing as.
+    
+      ``job_arc``).
+    
     ``reject_dcgm_blank`` NaNs out DCGM blank-family gauges before means.
     ``max_sane`` (after ``conv``) rejects impossible magnitudes as missing.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      typename (Any | None): One of ``Any``, ``None``.
+      events (Any | None): One of ``Any``, ``None``.
+      conv (float): Floating-point value for conv.
+      cache (Any | None): One of ``Any``, ``None``.
+      rows_cache (Any | None): One of ``Any``, ``None``.
+      reject_dcgm_blank (bool): Boolean flag for reject dcgm blank.
+      max_sane (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> Metrics().job_value_mean(None, None, None, 0, None, None, True, None)
     """
     import pandas as pd
 
@@ -2042,13 +2931,31 @@ class Metrics():
     return value
 
   def _job_avg_cpuusage_allocated(
-      self, jt, job, cache=None, rows_cache=None):
-    """Job-total busy cores scaled to allocated ``ncores`` (not whole-node /proc).
-
+    self,
+    jt: Any,
+    job: Any,
+    cache: Any | None = None,
+    rows_cache: Any | None = None,
+  ) -> Any:
+    """
+    Job-total busy cores scaled to allocated ``ncores`` (not whole-node /proc).
+    
     ``host_cpu`` arcs are node-wide (collapsed per-CPU jiffies). Raw sum across
     hosts can far exceed ``ncores`` on shared nodes. Scale each sample by
     ``util = busy / (busy + idle-family)`` times ``ncores / nhosts``, then sum
     per-host means (same bucketing as ``job_arc``).
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      job (Any): Job record (Django ``job_data`` or job-like mapping).
+      cache (Any | None): One of ``Any``, ``None``.
+      rows_cache (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> Metrics()._job_avg_cpuusage_allocated(None, None, None, None)
     """
     import pandas as pd
 
@@ -2081,7 +2988,19 @@ class Metrics():
     if not tkw:
       return None
 
-    def _sum_arc_events(events):
+    def _sum_arc_events(events: Any) -> Any:
+      """
+      Internal helper to handle sum arc events.
+      
+      Args:
+        events (Any): Events passed to this helper.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Examples:
+        >>> Metrics()._sum_arc_events(None)  # doctest: +SKIP
+      """
       schema = getattr(jt, "schema", None)
       if not _metric_type_events_feasible(schema, HOST_CPU_TYPE, events):
         return None
@@ -2154,15 +3073,30 @@ class Metrics():
     return value
 
   def _job_arc_avg_flops_precision(
-      self,
-      jt,
-      events,
-      cache=None,
-      rows_cache=None,
-      *,
-      grace_scalar_events=None,
-  ):
-    """GFLOP/s from Intel FP_ARITH; else Grace host_cpu_hw scalar events."""
+    self,
+    jt: Any,
+    events: Any,
+    cache: Any | None = None,
+    rows_cache: Any | None = None,
+    *,
+    grace_scalar_events: Any | None = None,
+  ) -> Any:
+    """
+    GFLOP/s from Intel FP_ARITH; else Grace host_cpu_hw scalar events.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      events (Any): Events passed to this helper.
+      cache (Any | None): One of ``Any``, ``None``.
+      rows_cache (Any | None): One of ``Any``, ``None``.
+      grace_scalar_events (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> Metrics()._job_arc_avg_flops_precision(None, None, None, None, None)
+    """
     for core_typ in core_pmc_types_probe_order():
       v = self.job_arc(
           jt,
@@ -2191,8 +3125,28 @@ class Metrics():
             return v, hw_typ
     return None, None
 
-  def _job_arc_avg_flops(self, jt, cache=None, rows_cache=None):
-    """GFLOP/s from AMD PMC, else Intel FP_ARITH/SSE, else ARM host_cpu_hw estimate."""
+  def _job_arc_avg_flops(
+    self,
+    jt: Any,
+    cache: Any | None = None,
+    rows_cache: Any | None = None,
+  ) -> Any:
+    """
+    GFLOP/s from AMD PMC, else Intel FP_ARITH/SSE, else ARM host_cpu_hw.
+    
+      estimate.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      cache (Any | None): One of ``Any``, ``None``.
+      rows_cache (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> Metrics()._job_arc_avg_flops(None, None, None)  # doctest: +SKIP
+    """
     for pmc_typ in amd_pmc_type_names():
       for flop_ev in fp_ops_retired_event_names():
         v = self.job_arc(
@@ -2249,8 +3203,26 @@ class Metrics():
           return v, hw_typ
     return None, None
 
-  def _job_arc_avg_mbw(self, jt, cache=None, rows_cache=None):
-    """Memory bandwidth (GB/s): AMD DF channels, else Intel/ARM IMC CAS sum."""
+  def _job_arc_avg_mbw(
+    self,
+    jt: Any,
+    cache: Any | None = None,
+    rows_cache: Any | None = None,
+  ) -> Any:
+    """
+    Memory bandwidth (GB/s): AMD DF channels, else Intel/ARM IMC CAS sum.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      cache (Any | None): One of ``Any``, ``None``.
+      rows_cache (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> Metrics()._job_arc_avg_mbw(None, None, None)  # doctest: +SKIP
+    """
     from hpcperfstats.dbload.lib.monitor_naming.canonical import AMD_DF_STATS_TYPES
     from hpcperfstats.dbload.lib.monitor_naming.resolve import amd_df_bw_event_conv_tries
 
@@ -2331,10 +3303,28 @@ class Metrics():
         return v, hw_typ
     return None, None
 
-  def _job_arc_avg_sharedfs_iops(self, jt, cache=None, rows_cache=None):
-    """Shared filesystem IOPS from Lustre llite and NFS operation counters.
-
-    Returns summed contribution from available sources and a representative type.
+  def _job_arc_avg_sharedfs_iops(
+    self,
+    jt: Any,
+    cache: Any | None = None,
+    rows_cache: Any | None = None,
+  ) -> Any:
+    """
+    Shared filesystem IOPS from Lustre llite and NFS operation counters.
+    
+    Returns summed contribution from available sources and a representative
+      type.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      cache (Any | None): One of ``Any``, ``None``.
+      rows_cache (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> Metrics()._job_arc_avg_sharedfs_iops(None, None, None)  # doctest: +SKIP
     """
     total = 0.0
     used = []
@@ -2366,10 +3356,28 @@ class Metrics():
       return None, None
     return total, used[0]
 
-  def _job_arc_avg_sharedfs_bw(self, jt, cache=None, rows_cache=None):
-    """Shared filesystem bandwidth from Lustre llite and NFS byte counters.
-
-    Returns summed contribution from available sources and a representative type.
+  def _job_arc_avg_sharedfs_bw(
+    self,
+    jt: Any,
+    cache: Any | None = None,
+    rows_cache: Any | None = None,
+  ) -> Any:
+    """
+    Shared filesystem bandwidth from Lustre llite and NFS byte counters.
+    
+    Returns summed contribution from available sources and a representative
+      type.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      cache (Any | None): One of ``Any``, ``None``.
+      rows_cache (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> Metrics()._job_arc_avg_sharedfs_bw(None, None, None)  # doctest: +SKIP
     """
     conv = 1.0 / (1024 * 1024)
     total = 0.0
@@ -2406,8 +3414,26 @@ class Metrics():
       return None, None
     return total, used[0]
 
-  def _job_arc_avg_ibbw(self, jt, cache=None, rows_cache=None):
-    """Fabric bandwidth from IB/OPA, with Ethernet fallback when unavailable."""
+  def _job_arc_avg_ibbw(
+    self,
+    jt: Any,
+    cache: Any | None = None,
+    rows_cache: Any | None = None,
+  ) -> Any:
+    """
+    Fabric bandwidth from IB/OPA, with Ethernet fallback when unavailable.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      cache (Any | None): One of ``Any``, ``None``.
+      rows_cache (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> Metrics()._job_arc_avg_ibbw(None, None, None)  # doctest: +SKIP
+    """
     v = self.job_arc(
         jt,
         typename=HOST_IB_TYPE,
@@ -2447,12 +3473,24 @@ class Metrics():
     return None, None
 
   # Compute metric
-  def compute_metrics(self, job):
-    """Compute metrics for one job; return dict with rows (metrics_data-shaped dicts) and distinct_time_count.
-
-        distinct_time_count is the sum over hosts of COUNT(DISTINCT time) in
-        jid_table._host_data_qs() for this job (not the global distinct time count).
-        """
+  def compute_metrics(self, job: Any) -> Any:
+    """
+    Compute metrics for one job; return dict with rows (metrics_data-shaped.
+    
+      dicts) and distinct_time_count.
+    
+    distinct_time_count is the sum over hosts of COUNT(DISTINCT time) in
+    jid_table._host_data_qs() for this job (not the global distinct time count).
+    
+    Args:
+      job (Any): Job record (Django ``job_data`` or job-like mapping).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> Metrics().compute_metrics(None)  # doctest: +SKIP
+    """
     results = []
 
     telemetry_first_time = getattr(job, "telemetry_first_time", None)
@@ -2838,13 +3876,27 @@ class Metrics():
     }
 
 
-def job_metrics_catalog_entries():
-  """Ordered catalog of every job-level metric for UI and completeness checks.
-
+def job_metrics_catalog_entries() -> Any:
+  """
+  Ordered catalog of every job-level metric for UI and completeness checks.
+  
   Short labels for the Job detail table are defined in
-  ``hpcperfstats.analysis.metrics.lib.job_metric_display_labels.JOB_METRIC_SHORT_LABELS``
+  ``hpcperfstats.analysis.metrics.lib.job_metric_display_labels.JOB_METRIC_SHORT
+    _LABELS``
   (Python) and mirrored in the SPA
   ``hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.js``.
+  
+  Returns:
+    Any: Open return polymorphism from ``job_metrics_catalog_entries``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Raises:
+    RuntimeError: Raised when ``job_metrics_catalog_entries`` hits a
+    ``RuntimeError`` failure path.
+  
+  Examples:
+    >>> job_metrics_catalog_entries()  # doctest: +SKIP
   """
   m = Metrics()
   missing = set(m.complex_metrics_list) - set(_COMPLEX_PLACEHOLDER_TYPE_UNITS)
@@ -2888,12 +3940,34 @@ def job_metrics_catalog_entries():
   return out
 
 
-def expected_job_metric_row_count():
+def expected_job_metric_row_count() -> Any:
+  """
+  Expected job metric row count.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> expected_job_metric_row_count()  # doctest: +SKIP
+  """
   return len(job_metrics_catalog_entries())
 
 
-def build_job_metrics_display_list(job):
-  """API: full metrics_list with a row per catalog metric (value or no_data_reason)."""
+def build_job_metrics_display_list(job: Any) -> Any:
+  """
+  API: full metrics_list with a row per catalog metric (value or.
+  
+    no_data_reason).
+  
+  Args:
+    job (Any): Job record (Django ``job_data`` or job-like mapping).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> build_job_metrics_display_list(None)  # doctest: +SKIP
+  """
   by_metric = {
       _coerce_metrics_identity_str(o.metric): o for o in job.metrics_data_set.all()
   }
@@ -2917,7 +3991,19 @@ def build_job_metrics_display_list(job):
           "no_data_reason": row.no_data_reason,
       })
   # Job detail UI tiers: valued metrics, then error/Insufficient, then not-computed last.
-  def _display_tier(row):
+  def _display_tier(row: Any) -> Any:
+    """
+    Internal helper to handle display tier.
+    
+    Args:
+      row (Any): Value to inspect (typically a numeric scalar).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _display_tier(None)  # doctest: +SKIP
+    """
     if row.get("value") is not None:
       return 0
     if row.get("no_data_reason") == METRIC_NOT_COMPUTED_YET:
@@ -2951,8 +4037,21 @@ def build_job_metrics_display_list(job):
   return out
 
 
-def _gate_failure_catalog_already_clean(jid):
-  """True when jid already has a full insufficient gate-failure catalog and no artifacts."""
+def _gate_failure_catalog_already_clean(jid: Any) -> Any:
+  """
+  True when jid already has a full insufficient gate-failure catalog and no.
+  
+    artifacts.
+  
+  Args:
+    jid (Any): Jid passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _gate_failure_catalog_already_clean(None)  # doctest: +SKIP
+  """
   expected = expected_job_metric_row_count()
   qs = metrics_data.objects.filter(jid_id=jid)
   if qs.count() != expected:
@@ -2971,15 +4070,28 @@ def _gate_failure_catalog_already_clean(jid):
 
 
 def persist_window_coverage_gate_failure(
-    jid,
-    *,
-    telemetry_first_time=None,
-    telemetry_last_time=None,
-    distinct_time_count=None,
-):
-  """Remove stale metrics/plots and persist full catalog with gate-failure reason.
-
+  jid: Any,
+  *,
+  telemetry_first_time: Any | None = None,
+  telemetry_last_time: Any | None = None,
+  distinct_time_count: Any | None = None,
+) -> Any:
+  """
+  Remove stale metrics/plots and persist full catalog with gate-failure reason.
+  
   Returns True when a write occurred; False when idempotent skip or invalid jid.
+  
+  Args:
+    jid (Any): Jid passed to this helper.
+    telemetry_first_time (Any | None): One of ``Any``, ``None``.
+    telemetry_last_time (Any | None): One of ``Any``, ``None``.
+    distinct_time_count (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> persist_window_coverage_gate_failure(None, None, None, None)
   """
   jid = str(jid or "").strip()
   if not jid:
@@ -3030,13 +4142,27 @@ def persist_window_coverage_gate_failure(
 
 
 class avg_freq():
-  """Average CPU frequency (GHz) from PMC.
-
-  Uses CLOCKS_UNHALTED_CORE/CLOCKS_UNHALTED_REF when present; otherwise APERF/MPERF
+  """
+  Average CPU frequency (GHz) from PMC.
+  
+  Uses CLOCKS_UNHALTED_CORE/CLOCKS_UNHALTED_REF when present; otherwise
+    APERF/MPERF
   with the same nominal reference scaling as Intel (u.freq * APERF/MPERF).
-    """
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> avg_freq().compute_metric(None)  # doctest: +SKIP
+    """
     typename = "pmc"
     schema, _stats = u.get_type(typename)
     if schema is None:
@@ -3074,11 +4200,23 @@ class avg_freq():
 
 
 class avg_ethbw():
-  """Average Ethernet bandwidth (MB/s) from net rx_bytes/tx_bytes.
+  """
+  Average Ethernet bandwidth (MB/s) from net rx_bytes/tx_bytes.
+  """
 
+  def compute_metric(self, u: Any) -> Any:
     """
-
-  def compute_metric(self, u):
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> avg_ethbw().compute_metric(None)  # doctest: +SKIP
+    """
     typename = "net"
     schema, _stats = u.get_type(typename)
     if schema is None or not _schema_has_events(
@@ -3107,12 +4245,32 @@ class avg_ethbw():
 
 
 class avg_gpuutil():
-  """Average GPU utilization (%) from nvidia_gpu or amd_gpu.
+  """
+  Average GPU utilization (%) from nvidia_gpu or amd_gpu.
+  """
 
+  def _avg_gpuutil_for_event(
+    self,
+    u: Any,
+    typename: Any,
+    event_name: Any,
+  ) -> Any:
     """
-
-  def _avg_gpuutil_for_event(self, u, typename, event_name):
-    """Mean utilization (%) for one ``typename`` / ``event_name``, or None if unusable."""
+    Mean utilization (%) for one ``typename`` / ``event_name``, or None if.
+    
+      unusable.
+    
+    Args:
+      u (Any): U passed to this helper.
+      typename (Any): Typename passed to this helper.
+      event_name (Any): Event name passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> avg_gpuutil()._avg_gpuutil_for_event(None, None, None)  # doctest: +SKIP
+    """
     schema, _stats = u.get_type(typename)
     if schema is None or event_name not in schema.events:
       return None
@@ -3131,8 +4289,19 @@ class avg_gpuutil():
       return None
     return value, typename, '%'
 
-  def compute_metric(self, u):
-    # Prefer nvidia → amd → intel (no vendor merge); try gpu_util then utilization.
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> avg_gpuutil().compute_metric(None)  # doctest: +SKIP
+    """
     for typename, events in (
         ("nvidia_gpu", ("gpu_util", "utilization")),
         ("amd_gpu", ("gpu_util",)),
@@ -3146,11 +4315,23 @@ class avg_gpuutil():
 
 
 class avg_packetsize():
-  """Average packet size (MB) from host_ib or opa port xmit/rcv data and packets.
+  """
+  Average packet size (MB) from host_ib or opa port xmit/rcv data and packets.
+  """
 
+  def compute_metric(self, u: Any) -> Any:
     """
-
-  def compute_metric(self, u):
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> avg_packetsize().compute_metric(None)  # doctest: +SKIP
+    """
     ib_schema, ib_stats = u.get_type(HOST_IB_TYPE)
     if ib_schema is not None and _schema_has_events(
         ib_schema,
@@ -3216,12 +4397,25 @@ _MAX_FABRIC_BW_SANITY_MB_S = 1_000_000.0
 
 
 class max_fabricbw():
-  """Maximum fabric bandwidth (MB/s) from host_ib or host_opa port data.
-
+  """
+  Maximum fabric bandwidth (MB/s) from host_ib or host_opa port data.
+  
   Uses the same MiB / OPA flit conversions as ``Metrics._job_arc_avg_ibbw``.
-    """
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> max_fabricbw().compute_metric(None)  # doctest: +SKIP
+    """
     max_bw = 0
     schema, _stats, typename = resolve_get_type(u, (HOST_IB_TYPE,))
     if schema is not None and _schema_has_events(
@@ -3261,11 +4455,23 @@ class max_fabricbw():
 
 
 class max_lnetbw():
-  """Maximum LNET bandwidth (MB/s) from lnet tx_bytes/rx_bytes.
+  """
+  Maximum LNET bandwidth (MB/s) from lnet tx_bytes/rx_bytes.
+  """
 
+  def compute_metric(self, u: Any) -> Any:
     """
-
-  def compute_metric(self, u):
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> max_lnetbw().compute_metric(None)  # doctest: +SKIP
+    """
     typename = "lnet"
     schema, _stats = u.get_type(typename)
     if schema is None or not _schema_has_events(
@@ -3290,11 +4496,23 @@ class max_lnetbw():
 
 
 class max_mds():
-  """Maximum Lustre MDS operations (iops) from llite vfs_*_ops (dual-read legacy).
+  """
+  Maximum Lustre MDS operations (iops) from llite vfs_*_ops (dual-read legacy).
+  """
 
+  def compute_metric(self, u: Any) -> Any:
     """
-
-  def compute_metric(self, u):
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> max_mds().compute_metric(None)  # doctest: +SKIP
+    """
     max_mds = 0
     typename = LUSTRE_LLITE_TYPE
     schema, _stats, resolved_typ = resolve_get_type(u, type_probe_names(typename))
@@ -3340,11 +4558,23 @@ class max_mds():
 
 
 class max_packetrate():
-  """Maximum packet rate (#/s) from host_ib or opa port xmit/rcv packets.
+  """
+  Maximum packet rate (#/s) from host_ib or opa port xmit/rcv packets.
+  """
 
+  def compute_metric(self, u: Any) -> Any:
     """
-
-  def compute_metric(self, u):
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> max_packetrate().compute_metric(None)  # doctest: +SKIP
+    """
     max_pr = 0
     ib_schema, ib_stats = u.get_type(HOST_IB_TYPE)
     if ib_schema is not None and _schema_has_events(
@@ -3389,12 +4619,23 @@ class max_packetrate():
 # by monitor.  It only samples at x mn intervals and
 # may miss high water marks in between.
 class mem_hwm():
-  """Memory high-water mark (GiB) from mem MemUsed - Slab - FilePages.
+  """
+  Memory high-water mark (GiB) from mem MemUsed - Slab - FilePages.
+  """
 
+  def compute_metric(self, u: Any) -> Any:
     """
-
-  def compute_metric(self, u):
-    # mem usage in GB
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> mem_hwm().compute_metric(None)  # doctest: +SKIP
+    """
     max_memusage = 0.0
     typename = "mem"
     schema, _stats = u.get_type(typename)
@@ -3414,8 +4655,19 @@ class mem_hwm():
     return value, typename, 'GiB'
 
 
-def _flops_weighted_events_for_schema(schema):
-  """Return [(event, weight), ...] for total FLOP-equivalent arc columns, or None."""
+def _flops_weighted_events_for_schema(schema: Any) -> Any:
+  """
+  Return [(event, weight), ...] for total FLOP-equivalent arc columns, or None.
+  
+  Args:
+    schema (Any): Schema passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _flops_weighted_events_for_schema(None)  # doctest: +SKIP
+  """
   if schema is None:
     return None
   if "FLOPS" in schema:
@@ -3431,8 +4683,25 @@ def _flops_weighted_events_for_schema(schema):
   return None
 
 
-def _node_imbalance_percent_weighted(u, typename, weighted_events):
-  """Like ``node_imbalance`` but on a weighted sum of counter columns."""
+def _node_imbalance_percent_weighted(
+  u: Any,
+  typename: Any,
+  weighted_events: Any,
+) -> Any:
+  """
+  Like ``node_imbalance`` but on a weighted sum of counter columns.
+  
+  Args:
+    u (Any): U passed to this helper.
+    typename (Any): Typename passed to this helper.
+    weighted_events (Any): Weighted events passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _node_imbalance_percent_weighted(None, None, None)  # doctest: +SKIP
+  """
   schema, _stats = u.get_type(typename)
   if schema is None or not _stats:
     return None
@@ -3467,9 +4736,23 @@ def _node_imbalance_percent_weighted(u, typename, weighted_events):
 
 
 class max_opa_congestion_rate():
-  """Peak interval rate of summed OPA congestion-related counters (events/s)."""
+  """
+  Peak interval rate of summed OPA congestion-related counters (events/s).
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> max_opa_congestion_rate().compute_metric(None)  # doctest: +SKIP
+    """
     typename = "opa"
     schema, _stats = u.get_type(typename)
     if schema is None:
@@ -3502,9 +4785,23 @@ class max_opa_congestion_rate():
 
 
 class max_numa_remote_rate():
-  """Peak interval rate of NUMA remote-access counters (miss/foreign/other_node)."""
+  """
+  Peak interval rate of NUMA remote-access counters (miss/foreign/other_node).
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> max_numa_remote_rate().compute_metric(None)  # doctest: +SKIP
+    """
     typename = "numa"
     schema, _stats = u.get_type(typename)
     if schema is None:
@@ -3532,9 +4829,23 @@ class max_numa_remote_rate():
 
 
 class flops_node_imbalance():
-  """FLOPs rate imbalance across nodes (%), same construction as ``node_imbalance``."""
+  """
+  FLOPs rate imbalance across nodes (%), same construction as.
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> flops_node_imbalance().compute_metric(None)  # doctest: +SKIP
+    """
     typename = u.pmc
     if not typename:
       return None, "pmc", "%"
@@ -3548,8 +4859,21 @@ class flops_node_imbalance():
     return v, typename, "%"
 
 
-def _dram_bw_weighted_events_for_imbalance(u):
-  """Return (typename, [(event, weight), ...]) for DRAM CAS/MBW imbalance, or (None, None)."""
+def _dram_bw_weighted_events_for_imbalance(u: Any) -> Any:
+  """
+  Return (typename, [(event, weight), ...]) for DRAM CAS/MBW imbalance, or.
+  
+    (None, None).
+  
+  Args:
+    u (Any): U passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _dram_bw_weighted_events_for_imbalance(None)  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.monitor_naming.canonical import DRAM_CHAN_BYTES_EVENTS
   from hpcperfstats.dbload.lib.monitor_naming.legacy import LEGACY_AMD_DF_MBW_CHANNEL_EVENTS
 
@@ -3590,8 +4914,29 @@ def _dram_bw_weighted_events_for_imbalance(u):
   return None, None
 
 
-def _node_imbalance_instantaneous_percent(u, typename, event_name):
-  """Imbalance for snapshot ``value`` columns (e.g. GPU util): per-time max vs each host."""
+def _node_imbalance_instantaneous_percent(
+  u: Any,
+  typename: Any,
+  event_name: Any,
+) -> Any:
+  """
+  Imbalance for snapshot ``value`` columns (e.g. GPU util): per-time max vs.
+  
+    each.
+  
+    host.
+  
+  Args:
+    u (Any): U passed to this helper.
+    typename (Any): Typename passed to this helper.
+    event_name (Any): Event name passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _node_imbalance_instantaneous_percent(None, None, None)
+  """
   schema, _stats = u.get_type(typename)
   if schema is None or event_name not in schema or not _stats:
     return None
@@ -3616,9 +4961,23 @@ def _node_imbalance_instantaneous_percent(u, typename, event_name):
 
 
 class max_gpu_power():
-  """Peak GPU power draw (W) from ``nvidia_gpu`` / ``amd_gpu`` / ``intel_gpu``."""
+  """
+  Peak GPU power draw (W) from ``nvidia_gpu`` / ``amd_gpu`` / ``intel_gpu``.
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> max_gpu_power().compute_metric(None)  # doctest: +SKIP
+    """
     for typename in ("nvidia_gpu", "amd_gpu", "intel_gpu"):
       schema, _stats = u.get_type(typename)
       if schema is None or "power_usage" not in schema or not _stats:
@@ -3638,9 +4997,23 @@ class max_gpu_power():
 
 
 class max_gpu_link_gbps():
-  """Peak PCIe+NVLink byte rate (GB/s) from ``nvidia_gpu`` ``gpu_io_link_total_bytes`` arc."""
+  """
+  Peak PCIe+NVLink byte rate (GB/s) from ``nvidia_gpu``.
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> max_gpu_link_gbps().compute_metric(None)  # doctest: +SKIP
+    """
     typename = "nvidia_gpu"
     schema, _stats = u.get_type(typename)
     if schema is None or "gpu_io_link_total_bytes" not in schema:
@@ -3663,9 +5036,23 @@ class max_gpu_link_gbps():
 
 
 class max_gpu_clock_event_reasons():
-  """Maximum observed DCGM clock throttle reason bitmask (opaque; non-zero implies throttling)."""
+  """
+  Maximum observed DCGM clock throttle reason bitmask (opaque; non-zero implies.
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> max_gpu_clock_event_reasons().compute_metric(None)  # doctest: +SKIP
+    """
     mx = 0
     used = None
     for typename in ("nvidia_gpu", "amd_gpu", "intel_gpu"):
@@ -3692,9 +5079,23 @@ class max_gpu_clock_event_reasons():
 
 
 class dram_bw_node_imbalance():
-  """DRAM bandwidth rate imbalance across nodes (%); AMD DF MBW or Intel IMC CAS."""
+  """
+  DRAM bandwidth rate imbalance across nodes (%); AMD DF MBW or Intel IMC CAS.
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> dram_bw_node_imbalance().compute_metric(None)  # doctest: +SKIP
+    """
     typename, we = _dram_bw_weighted_events_for_imbalance(u)
     if not typename or not we:
       return None, "imc", "%"
@@ -3705,9 +5106,23 @@ class dram_bw_node_imbalance():
 
 
 class lnet_node_imbalance():
-  """LNET tx+rx byte rate imbalance across nodes (%)."""
+  """
+  LNET tx+rx byte rate imbalance across nodes (%).
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> lnet_node_imbalance().compute_metric(None)  # doctest: +SKIP
+    """
     typename = "lnet"
     evw = [("tx_bytes", 1.0), ("rx_bytes", 1.0)]
     schema, _stats = u.get_type(typename)
@@ -3722,9 +5137,23 @@ class lnet_node_imbalance():
 
 
 class gpu_util_node_imbalance():
-  """GPU utilization imbalance across nodes from snapshot ``gpu_util`` (or legacy names)."""
+  """
+  GPU utilization imbalance across nodes from snapshot ``gpu_util`` (or legacy.
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> gpu_util_node_imbalance().compute_metric(None)  # doctest: +SKIP
+    """
     for typename, events in (
         ("nvidia_gpu", ("gpu_util", "utilization")),
         ("amd_gpu", ("gpu_util",)),
@@ -3738,9 +5167,23 @@ class gpu_util_node_imbalance():
 
 
 class tensor_node_imbalance():
-  """Tensor-pipe activity imbalance across nodes (``tensor_active`` snapshot)."""
+  """
+  Tensor-pipe activity imbalance across nodes (``tensor_active`` snapshot).
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> tensor_node_imbalance().compute_metric(None)  # doctest: +SKIP
+    """
     for typename in ("nvidia_gpu", "amd_gpu", "intel_gpu"):
       v = _node_imbalance_instantaneous_percent(u, typename, "tensor_active")
       if v is not None:
@@ -3749,9 +5192,23 @@ class tensor_node_imbalance():
 
 
 class fabric_node_imbalance():
-  """Fabric byte-rate imbalance across nodes (%); prefers ``host_ib`` then ``opa``."""
+  """
+  Fabric byte-rate imbalance across nodes (%); prefers ``host_ib`` then ``opa``.
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> fabric_node_imbalance().compute_metric(None)  # doctest: +SKIP
+    """
     for typename, evw in (
         (HOST_IB_TYPE, [("port_xmit_data", 1.0), ("port_rcv_data", 1.0)]),
         ("opa", [("PortXmitData", 1.0), ("PortRcvData", 1.0)]),
@@ -3768,11 +5225,23 @@ class fabric_node_imbalance():
 
 
 class node_imbalance():
-  """CPU node imbalance (%): max deviation of per-node CPU rate from max rate.
+  """
+  CPU node imbalance (%): max deviation of per-node CPU rate from max rate.
+  """
 
+  def compute_metric(self, u: Any) -> Any:
     """
-
-  def compute_metric(self, u):
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> node_imbalance().compute_metric(None)  # doctest: +SKIP
+    """
     typename = "cpu"
     schema, _stats = u.get_type(typename)
     if schema is None or "user" not in schema:
@@ -3799,11 +5268,23 @@ class node_imbalance():
 
 
 class time_imbalance():
-  """CPU time imbalance (%): minimum ratio of integral after/before a time slice.
+  """
+  CPU time imbalance (%): minimum ratio of integral after/before a time slice.
+  """
 
+  def compute_metric(self, u: Any) -> Any:
     """
-
-  def compute_metric(self, u):
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> time_imbalance().compute_metric(None)  # doctest: +SKIP
+    """
     typename = "cpu"
     schema, _stats = u.get_type(typename)
     if schema is None or "user" not in schema:
@@ -3827,14 +5308,27 @@ class time_imbalance():
 
 
 class vecpercent_64b():
-  """Percentage of 64b vectorized FLOPs vs total (from PMC events).
-
+  """
+  Percentage of 64b vectorized FLOPs vs total (from PMC events).
+  
   Requires Intel-style FP_ARITH double events and/or legacy SSE/AVX double
   counter names. AMD ``amd64_pmc`` typically exposes only aggregate ``FLOPS``,
   so this metric usually has no data on AMD until width-resolved events exist.
-    """
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> vecpercent_64b().compute_metric(None)  # doctest: +SKIP
+    """
     typename = "pmc"
     schema, _stats = u.get_type(typename)
     if schema is None:
@@ -3870,13 +5364,26 @@ class vecpercent_64b():
 
 
 class avg_vector_width_64b():
-  """Average 64b vector width (FLOPs-weighted) from PMC events.
-
+  """
+  Average 64b vector width (FLOPs-weighted) from PMC events.
+  
   Same event requirements as ``vecpercent_64b``; not populated from aggregate
   AMD ``FLOPS`` alone.
-    """
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> avg_vector_width_64b().compute_metric(None)  # doctest: +SKIP
+    """
     typename = "pmc"
     schema, _stats = u.get_type(typename)
     if schema is None:
@@ -3912,12 +5419,25 @@ class avg_vector_width_64b():
 
 
 class vecpercent_32b():
-  """Percentage of 32b vectorized FLOPs vs total (from PMC events).
-
+  """
+  Percentage of 32b vectorized FLOPs vs total (from PMC events).
+  
   Uses Intel FP_ARITH single-precision events only; no AMD aggregate FLOPS path.
-    """
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> vecpercent_32b().compute_metric(None)  # doctest: +SKIP
+    """
     typename = "pmc"
     schema, _stats = u.get_type(typename)
     if schema is None:
@@ -3948,12 +5468,25 @@ class vecpercent_32b():
 
 
 class avg_vector_width_32b():
-  """Average 32b vector width (FLOPs-weighted) from PMC events.
-
+  """
+  Average 32b vector width (FLOPs-weighted) from PMC events.
+  
   Same as ``vecpercent_32b``: Intel FP_ARITH single events; not AMD FLOPS-wide.
-    """
+  """
 
-  def compute_metric(self, u):
+  def compute_metric(self, u: Any) -> Any:
+    """
+    Compute the metric.
+    
+    Args:
+      u (Any): U passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> avg_vector_width_32b().compute_metric(None)  # doctest: +SKIP
+    """
     typename = "pmc"
     schema, _stats = u.get_type(typename)
     if schema is None:

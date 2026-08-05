@@ -462,6 +462,17 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "python_docstring_typing",
+        "patterns": [
+            "hpcperfstats/**/*.py",
+            "scripts/**/*.py",
+            "services-conf/**/*.py",
+        ],
+        "rules": [
+            "python-docstring-and-typing-contract.mdc",
+        ],
+    },
+    {
         "id": "package_lib_colocation",
         "patterns": [
             "hpcperfstats/**/lib/**",
@@ -471,6 +482,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "package-lib-colocation.mdc",
         ],
     },
+
     {
         "id": "cursor_rules",
         "patterns": [

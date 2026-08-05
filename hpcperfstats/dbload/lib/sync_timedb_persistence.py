@@ -1,4 +1,20 @@
-"""Versioned persistence contract for sync_timedb operator sidecars."""
+"""
+Versioned persistence contract for sync_timedb operator sidecars.
+
+Attributes:
+  DEAD_LETTER_SCHEMA_VERSION: Attribute.
+  FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION: Attribute.
+  INGEST_CHECKPOINT_SCHEMA_VERSION: Attribute.
+  LEGACY_ORPHAN_ARTIFACT_PATHS: Attribute.
+  LogFn: Attribute.
+  MAINT_HINTS_SCHEMA_VERSION: Attribute.
+  MANIFEST_SCHEMA_VERSION: Attribute.
+  PERSISTENCE_ARTIFACT_REGISTRY: Attribute.
+  PERSISTENCE_CONTRACT_BASENAME: Attribute.
+  SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION: Attribute.
+  UNPARSABLE_RAW_SCHEMA_VERSION: Attribute.
+  ZERO_HOST_INGEST_MARK_SCHEMA_VERSION: Attribute.
+"""
 from __future__ import annotations
 
 import json
@@ -45,10 +61,38 @@ LogFn = Optional[Callable[..., Any]]
 
 
 def persistence_contract_path(archive_data_dir: str) -> str:
+  """
+  Persistence contract path.
+  
+  Args:
+    archive_data_dir (str): String for archive data dir.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> persistence_contract_path("x")  # doctest: +SKIP
+  """
   return os.path.join(archive_data_dir, PERSISTENCE_CONTRACT_BASENAME)
 
 
 def artifact_path(archive_data_dir: str, kind: str) -> str:
+  """
+  Artifact path.
+  
+  Args:
+    archive_data_dir (str): String for archive data dir.
+    kind (str): String for kind.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Raises:
+    KeyError: Raised when ``artifact_path`` hits a ``KeyError`` failure path.
+  
+  Examples:
+    >>> artifact_path("x", "x")  # doctest: +SKIP
+  """
   rel = PERSISTENCE_ARTIFACT_REGISTRY.get(kind)
   if rel is None:
     raise KeyError("unknown persistence artifact kind: %s" % kind)
@@ -56,6 +100,18 @@ def artifact_path(archive_data_dir: str, kind: str) -> str:
 
 
 def _read_json_file(path: str) -> Any:
+  """
+  Internal helper to read the json file.
+  
+  Args:
+    path (str): String for path.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _read_json_file("x")  # doctest: +SKIP
+  """
   try:
     with open(path, "r", encoding="utf-8") as handle:
       return json.load(handle)
@@ -63,7 +119,30 @@ def _read_json_file(path: str) -> Any:
     return None
 
 
-def _save_json_atomic(path: str, payload: Any, *, compact: bool = False) -> None:
+def _save_json_atomic(
+  path: str,
+  payload: Any,
+  *,
+  compact: bool = False,
+) -> None:
+  """
+  Internal helper to save the json atomic.
+  
+  Args:
+    path (str): String for path.
+    payload (Any): Value to inspect (typically a numeric scalar).
+    compact (bool): Boolean flag for compact.
+  
+  Returns:
+    None
+  
+  Raises:
+    Exception: Raised when ``_save_json_atomic`` hits a ``Exception`` failure
+    path.
+  
+  Examples:
+    >>> _save_json_atomic("x", None, True)  # doctest: +SKIP
+  """
   parent = os.path.dirname(str(path)) or "."
   os.makedirs(parent, exist_ok=True)
   fd, tmp_path = tempfile.mkstemp(
@@ -87,6 +166,19 @@ def _save_json_atomic(path: str, payload: Any, *, compact: bool = False) -> None
 
 
 def _unlink_path(path: str, log_fn: LogFn) -> None:
+  """
+  Internal helper to handle unlink path.
+  
+  Args:
+    path (str): String for path.
+    log_fn (LogFn): Log fn.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _unlink_path("x", None)  # doctest: +SKIP
+  """
   try:
     if os.path.isfile(path):
       os.remove(path)
@@ -100,6 +192,19 @@ def _unlink_path(path: str, log_fn: LogFn) -> None:
 
 
 def _unlink_tree(path: str, log_fn: LogFn) -> None:
+  """
+  Internal helper to handle unlink tree.
+  
+  Args:
+    path (str): String for path.
+    log_fn (LogFn): Log fn.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _unlink_tree("x", None)  # doctest: +SKIP
+  """
   if not os.path.isdir(path):
     _unlink_path(path, log_fn)
     return
@@ -126,8 +231,24 @@ def _unlink_tree(path: str, log_fn: LogFn) -> None:
       )
 
 
-def reset_sync_timedb_persistence(archive_data_dir: str, *, log_fn: LogFn = None) -> None:
-  """Delete all registered sidecar artifacts (best-effort)."""
+def reset_sync_timedb_persistence(
+  archive_data_dir: str,
+  *,
+  log_fn: LogFn = None,
+) -> None:
+  """
+  Delete all registered sidecar artifacts (best-effort).
+  
+  Args:
+    archive_data_dir (str): String for archive data dir.
+    log_fn (LogFn): Log fn.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> reset_sync_timedb_persistence("x", None)  # doctest: +SKIP
+  """
   if not archive_data_dir:
     return
   for kind, rel in PERSISTENCE_ARTIFACT_REGISTRY.items():
@@ -142,6 +263,18 @@ def reset_sync_timedb_persistence(archive_data_dir: str, *, log_fn: LogFn = None
 
 
 def _read_contract_version(archive_data_dir: str) -> Optional[int]:
+  """
+  Internal helper to read the contract version.
+  
+  Args:
+    archive_data_dir (str): String for archive data dir.
+  
+  Returns:
+    Optional[int]: Optional[int] — the result, or None when unavailable.
+  
+  Examples:
+    >>> _read_contract_version("x")  # doctest: +SKIP
+  """
   raw = _read_json_file(persistence_contract_path(archive_data_dir))
   if not isinstance(raw, dict):
     return None
@@ -152,18 +285,48 @@ def _read_contract_version(archive_data_dir: str) -> Optional[int]:
     return None
 
 
-def ensure_persistence_contract(archive_data_dir: str, *, log_fn: LogFn = None) -> bool:
-  """Ensure on-disk contract matches current version; reset sidecars when stale.
-
+def ensure_persistence_contract(
+  archive_data_dir: str,
+  *,
+  log_fn: LogFn = None,
+) -> bool:
+  """
+  Ensure on-disk contract matches current version; reset sidecars when stale.
+  
   Returns True when a reset ran (operators should expect full reprocess).
+  
+  Args:
+    archive_data_dir (str): String for archive data dir.
+    log_fn (LogFn): Log fn.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> ensure_persistence_contract("x", None)  # doctest: +SKIP
   """
   with ingest_logging():
     return _ensure_persistence_contract_inner(archive_data_dir, log_fn=log_fn)
 
 
 def _ensure_persistence_contract_inner(
-    archive_data_dir: str, *, log_fn: LogFn = None,
+  archive_data_dir: str,
+  *,
+  log_fn: LogFn = None,
 ) -> bool:
+  """
+  Internal helper to ensure the persistence contract inner.
+  
+  Args:
+    archive_data_dir (str): String for archive data dir.
+    log_fn (LogFn): Log fn.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _ensure_persistence_contract_inner("x", None)  # doctest: +SKIP
+  """
   if not archive_data_dir:
     return False
   os.makedirs(archive_data_dir, exist_ok=True)
@@ -192,6 +355,18 @@ def _ensure_persistence_contract_inner(
 
 
 def _expected_schema_version(kind: str) -> Optional[int]:
+  """
+  Internal helper to handle expected schema version.
+  
+  Args:
+    kind (str): String for kind.
+  
+  Returns:
+    Optional[int]: Optional[int] — the result, or None when unavailable.
+  
+  Examples:
+    >>> _expected_schema_version("x")  # doctest: +SKIP
+  """
   if kind == "ingest_checkpoint":
     return INGEST_CHECKPOINT_SCHEMA_VERSION
   if kind == "archive_dead_letter":
@@ -213,7 +388,20 @@ def _expected_schema_version(kind: str) -> Optional[int]:
 
 
 def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
-  """Return False when envelope schema/version/shape is unsupported."""
+  """
+  Return False when envelope schema/version/shape is unsupported.
+  
+  Args:
+    raw (Any): Raw passed to this helper.
+    kind (str): String for kind.
+    log_fn (LogFn): Log fn.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _validate_envelope(None, "x", None)  # doctest: +SKIP
+  """
   if raw is None:
     return False
   expected = _expected_schema_version(kind)
@@ -329,6 +517,19 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
 
 
 def _unwrap_envelope(raw: Any, *, kind: str) -> Any:
+  """
+  Internal helper to handle unwrap envelope.
+  
+  Args:
+    raw (Any): Raw passed to this helper.
+    kind (str): String for kind.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _unwrap_envelope(None, "x")  # doctest: +SKIP
+  """
   if kind == "ingest_checkpoint":
     if isinstance(raw, list):
       return raw
@@ -373,13 +574,27 @@ def _unwrap_envelope(raw: Any, *, kind: str) -> Any:
 
 
 def load_persistence_document(
-    path: str,
-    kind: str,
-    *,
-    default: Any = None,
-    log_fn: LogFn = None,
+  path: str,
+  kind: str,
+  *,
+  default: Any = None,
+  log_fn: LogFn = None,
 ) -> Any:
-  """Load a registered artifact after ``ensure_persistence_contract``."""
+  """
+  Load a registered artifact after ``ensure_persistence_contract``.
+  
+  Args:
+    path (str): String for path.
+    kind (str): String for kind.
+    default (Any): Default passed to this helper.
+    log_fn (LogFn): Log fn.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> load_persistence_document("x", "x", None, None)  # doctest: +SKIP
+  """
   if default is None:
     if kind == "ingest_checkpoint":
       default = []
@@ -410,13 +625,27 @@ def load_persistence_document(
 
 
 def save_persistence_document(
-    path: str,
-    kind: str,
-    payload: Any,
-    *,
-    compact: bool = True,
+  path: str,
+  kind: str,
+  payload: Any,
+  *,
+  compact: bool = True,
 ) -> None:
-  """Persist a registered artifact with contract/schema envelope where needed."""
+  """
+  Persist a registered artifact with contract/schema envelope where needed.
+  
+  Args:
+    path (str): String for path.
+    kind (str): String for kind.
+    payload (Any): Value to inspect (typically a numeric scalar).
+    compact (bool): Boolean flag for compact.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> save_persistence_document("x", "x", None, True)  # doctest: +SKIP
+  """
   contract_version = SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION
   if kind == "ingest_checkpoint":
     envelope = {

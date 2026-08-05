@@ -1,12 +1,36 @@
-"""Host-side archive-members Redis bulk invalidate + compose redis-cli / restart.
+"""
+Host-side archive-members Redis bulk invalidate + compose redis-cli / restart.
 
-This module is intentionally free of ``print_utils`` / ``conf_parser`` imports so
-``scripts/invalidate_archive_members.py`` can run on hosts whose default
+This module is intentionally free of ``print_utils`` / ``conf_parser`` imports
+so ``scripts/invalidate_archive_members.py`` can run on hosts whose default
 ``python3`` is older than 3.10 (PEP 604) without pulling the full sync_timedb
 Redis L2 stack. Prefer Python >= 3.12 (``requires-python``); the script re-execs
 when needed.
+
+Attributes:
+  DEFAULT_COMPOSE_PROJECT: Attribute.
+  PIPELINE_SERVICE: Attribute.
+  REDIS_SERVICE: Attribute.
+  _ARCHIVE_APPEND_INFLIGHT_PREFIX: Attribute.
+  _COMPLETE_PREFIX: Attribute.
+  _DAILY_TAR_RESTORE_PREFIX: Attribute.
+  _DAY_SKIP_PREFIX: Attribute.
+  _DEDUPE_HINT_PREFIX: Attribute.
+  _DEGRADED_PREFIX: Attribute.
+  _HASH_PREFIX: Attribute.
+  _INGEST_TAR_HOT_PREFIX: Attribute.
+  _INVALIDATE_PENDING_PREFIX: Attribute.
+  _KEY_PREFIX: Attribute.
+  _LOCK_PREFIX: Attribute.
+  _MEMBERSHIP_DAY_EXACT_SCAN_PREFIXES: Attribute.
+  _MEMBERSHIP_IDENTITY_SCAN_PREFIXES: Attribute.
+  _POPULATE_QUEUED_PREFIX: Attribute.
+  _POPULATE_QUEUE_KEY: Attribute.
+  _PROTECTED_COORD_PREFIXES: Attribute.
 """
 from __future__ import annotations
+
+from typing import Any, Iterator
 
 import datetime
 import shlex
@@ -52,11 +76,23 @@ _PROTECTED_COORD_PREFIXES = (
 
 
 def compose_argv(
-    *,
-    project=DEFAULT_COMPOSE_PROJECT,
-    compose_files=None,
-):
-  """Build ``docker compose -p <project> [-f …]`` argv prefix."""
+  *,
+  project: Any = DEFAULT_COMPOSE_PROJECT,
+  compose_files: Any | None = None,
+) -> Any:
+  """
+  Build ``docker compose -p <project> [-f …]`` argv prefix.
+  
+  Args:
+    project (Any): Project passed to this helper.
+    compose_files (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> compose_argv(None, None)  # doctest: +SKIP
+  """
   argv = ["docker", "compose", "-p", str(project or DEFAULT_COMPOSE_PROJECT)]
   for path in compose_files or ():
     argv.extend(["-f", str(path)])
@@ -64,26 +100,65 @@ def compose_argv(
 
 
 class ComposeRedisCliClient:
-  """Minimal Redis client via ``docker compose exec -T redis redis-cli``.
-
+  """
+  Minimal Redis client via ``docker compose exec -T redis redis-cli``.
+  
   Implements ``scan_iter`` / ``delete`` for
   :func:`invalidate_archive_members_redis_bulk`.
+  
+  Attributes:
+    compose_dir: Attribute.
+    compose_files: Attribute.
+    project: Attribute.
+    timeout_s: Attribute.
   """
 
   def __init__(
-      self,
-      *,
-      compose_dir,
-      project=DEFAULT_COMPOSE_PROJECT,
-      compose_files=None,
-      timeout_s=120.0,
-  ):
+    self,
+    *,
+    compose_dir: str,
+    project: Any = DEFAULT_COMPOSE_PROJECT,
+    compose_files: Any | None = None,
+    timeout_s: float = 120.0,
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      compose_dir (str): String for compose dir.
+      project (Any): Project passed to this helper.
+      compose_files (Any | None): One of ``Any``, ``None``.
+      timeout_s (float): Floating-point value for timeout s.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ComposeRedisCliClient("x", None, None, 0)  # doctest: +SKIP
+    """
     self.compose_dir = str(compose_dir)
     self.project = str(project or DEFAULT_COMPOSE_PROJECT)
     self.compose_files = list(compose_files or ())
     self.timeout_s = float(timeout_s)
 
-  def _redis_cli(self, *args):
+  def _redis_cli(self, *args: Any) -> Any:
+    """
+    Internal helper to handle redis cli.
+    
+    Args:
+      *args (Any): Extra positional arguments; unused unless the callee
+      documents a specific leftover protocol.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Raises:
+      RuntimeError: Raised when ``_redis_cli`` hits a ``RuntimeError`` failure
+      path.
+    
+    Examples:
+      >>> ComposeRedisCliClient()._redis_cli()  # doctest: +SKIP
+    """
     cmd = compose_argv(project=self.project, compose_files=self.compose_files)
     cmd.extend(["exec", "-T", REDIS_SERVICE, "redis-cli"] + list(args))
     try:
@@ -111,7 +186,24 @@ class ComposeRedisCliClient:
       )
     return completed.stdout or ""
 
-  def scan_iter(self, match=None, count=100):
+  def scan_iter(
+    self,
+    match: Any | None = None,
+    count: int = 100,
+  ) -> Iterator[Any]:
+    """
+    Scan iter.
+    
+    Args:
+      match (Any | None): One of ``Any``, ``None``.
+      count (int): Integer value for count.
+    
+    Yields:
+      Iterator[Any]: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> ComposeRedisCliClient().scan_iter(None, 0)  # doctest: +SKIP
+    """
     del count
     pattern = match if match else "*"
     out = self._redis_cli("--scan", "--pattern", str(pattern))
@@ -120,7 +212,20 @@ class ComposeRedisCliClient:
       if key:
         yield key
 
-  def delete(self, *keys):
+  def delete(self, *keys: Any) -> Any:
+    """
+    Delete a key from this store.
+    
+    Args:
+      *keys (Any): Extra positional values for ``keys``; element types match
+      the helper's documented protocol.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> ComposeRedisCliClient().delete()  # doctest: +SKIP
+    """
     if not keys:
       return 0
     deleted = 0
@@ -136,14 +241,33 @@ class ComposeRedisCliClient:
 
 
 def restart_pipeline_compose(
-    *,
-    compose_dir,
-    project=DEFAULT_COMPOSE_PROJECT,
-    compose_files=None,
-    timeout_s=300.0,
-    run_fn=None,
-):
-  """Restart the Compose ``pipeline`` service on the host (clears worker L1)."""
+  *,
+  compose_dir: str,
+  project: Any = DEFAULT_COMPOSE_PROJECT,
+  compose_files: Any | None = None,
+  timeout_s: float = 300.0,
+  run_fn: Any | None = None,
+) -> None:
+  """
+  Restart the Compose ``pipeline`` service on the host (clears worker L1).
+  
+  Args:
+    compose_dir (str): String for compose dir.
+    project (Any): Project passed to this helper.
+    compose_files (Any | None): One of ``Any``, ``None``.
+    timeout_s (float): Floating-point value for timeout s.
+    run_fn (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    None
+  
+  Raises:
+    RuntimeError: Raised when ``restart_pipeline_compose`` hits a
+    ``RuntimeError`` failure path.
+  
+  Examples:
+    >>> restart_pipeline_compose("x", None, None, 0, None)  # doctest: +SKIP
+  """
   runner = run_fn or subprocess.run
   cmd = compose_argv(project=project, compose_files=compose_files)
   cmd.extend(["restart", PIPELINE_SERVICE])
@@ -176,12 +300,39 @@ def restart_pipeline_compose(
     )
 
 
-def format_compose_cmd_for_log(argv):
+def format_compose_cmd_for_log(argv: Any) -> Any:
+  """
+  Format the compose cmd for log.
+  
+  Args:
+    argv (Any): CLI argument list (``sys.argv``-like).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> format_compose_cmd_for_log(None)  # doctest: +SKIP
+  """
   return " ".join(shlex.quote(str(part)) for part in argv)
 
 
-def _normalize_bulk_day_tokens(day_tokens):
-  """Validate and normalize calendar day tokens (``YYYY-MM-DD``)."""
+def _normalize_bulk_day_tokens(day_tokens: Any) -> Any:
+  """
+  Validate and normalize calendar day tokens (``YYYY-MM-DD``).
+  
+  Args:
+    day_tokens (Any): Day tokens passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    ValueError: Raised when ``_normalize_bulk_day_tokens`` hits a
+    ``ValueError`` failure path.
+  
+  Examples:
+    >>> _normalize_bulk_day_tokens(None)  # doctest: +SKIP
+  """
   if day_tokens is None:
     return None
   normalized = []
@@ -197,7 +348,19 @@ def _normalize_bulk_day_tokens(day_tokens):
   return sorted(set(normalized))
 
 
-def _bulk_membership_scan_patterns(day_tokens):
+def _bulk_membership_scan_patterns(day_tokens: Any) -> Any:
+  """
+  Internal helper to handle bulk membership scan patterns.
+  
+  Args:
+    day_tokens (Any): Day tokens passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _bulk_membership_scan_patterns(None)  # doctest: +SKIP
+  """
   patterns = []
   if day_tokens is None:
     for prefix in _MEMBERSHIP_IDENTITY_SCAN_PREFIXES:
@@ -213,7 +376,19 @@ def _bulk_membership_scan_patterns(day_tokens):
   return patterns
 
 
-def _is_protected_coord_redis_key(key):
+def _is_protected_coord_redis_key(key: Any) -> Any:
+  """
+  Internal helper to check if protected coord redis key.
+  
+  Args:
+    key (Any): Key passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _is_protected_coord_redis_key(None)  # doctest: +SKIP
+  """
   text = str(key)
   for prefix in _PROTECTED_COORD_PREFIXES:
     if text == prefix or text.startswith(prefix + ":"):
@@ -222,22 +397,34 @@ def _is_protected_coord_redis_key(key):
 
 
 def invalidate_archive_members_redis_bulk(
-    *,
-    day_tokens=None,
-    dry_run=False,
-    client=None,
-):
-  """Bulk-clear archive membership Redis L2 (operator recovery).
-
+  *,
+  day_tokens: Any | None = None,
+  dry_run: bool = False,
+  client: Any | None = None,
+) -> Any:
+  """
+  Bulk-clear archive membership Redis L2 (operator recovery).
+  
   ``day_tokens=None`` clears all membership-related key families and the
   populate queue list. Otherwise only keys for those calendar days.
-
+  
   Does **not** delete ``ingest_tar_hot``, ``archive_append_inflight``, or
   ``daily_tar_restore`` coordination keys.
-
+  
   Returns ``{"scanned": int, "deleted": int, "dry_run": bool, "days": list}``.
   When ``client`` is omitted, returns ``"error": "redis_unavailable"`` (callers
   that have a Redis URL / FakeRedis must pass ``client`` explicitly).
+  
+  Args:
+    day_tokens (Any | None): One of ``Any``, ``None``.
+    dry_run (bool): Boolean flag for dry run.
+    client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> invalidate_archive_members_redis_bulk(None, True, None)
   """
   days = _normalize_bulk_day_tokens(day_tokens)
   result = {

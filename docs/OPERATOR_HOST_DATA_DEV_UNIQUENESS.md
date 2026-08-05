@@ -170,18 +170,17 @@ Expect: `compressed_chunks = 0`; one 4-column UNIQUE on `(time, host, type, even
 
 A single `UPDATE host_data SET dev = '' WHERE dev IS NULL` runs in **one** Postgres backend and does not parallelize. Prefer the sliding-pool helper:
 
-- **Range chunks (no OFFSET):** each worker updates one Timescale chunk by explicit `time` bounds from `timescaledb_information.chunks` (`WHERE time >= … AND time < … AND dev IS NULL`). Progress is remaining uncompressed chunks in that catalog — not `LIMIT/OFFSET` row paging (which gets slower as the offset grows).
-- **VACUUM then next chunk:** after each successful UPDATE (default), `VACUUM (ANALYZE, PARALLEL 8)` that chunk (session raises `max_parallel_maintenance_workers` / `max_parallel_workers` so 8 cores are used), then immediately fill the free slot with the next chunk. Override with `HPCPERFSTATS_NULL_DEV_VACUUM_PARALLEL`.
-- **Adaptive workers (default):** start at 1 and ramp toward the max concurrency argument while watching replication lag, **uncheckpointed WAL** as a **multiple of `max_wal_size`** (`pg_wal_lsn_diff(pg_current_wal_lsn(), redo_lsn)`; default allow up to **5×** / 500% before backoff — bulk UPDATE routinely sits above 1× because `max_wal_size` is only a soft checkpoint target), PGDATA free space, and chunk UPDATE latency. Logs show `checkpoint_wal=N%_of_max_wal`. **Not** the checkpoint log line `wrote N buffers (P%)` — that `P%` is **shared_buffers written**, unrelated to WAL fill. Use fixed concurrency only when you need a hard pin (`HPCPERFSTATS_NULL_DEV_FIXED_CONCURRENCY=1`).
-- **VACUUM timeouts:** `statement_timeout = 0` and parallel GUCs are set in a separate `psql -c` from `VACUUM` (VACUUM cannot run inside a transaction block with preceding statements in the same `-c`).
+- **Fixed CLI concurrency:** first argument is the number of concurrent chunk UPDATEs (default **30**). No lag/WAL/disk/latency auto-throttle.
+- **Range chunks (no OFFSET):** each worker updates one Timescale chunk by explicit `time` bounds from `timescaledb_information.chunks` (`WHERE time >= … AND time < … AND dev IS NULL`). Progress is remaining uncompressed chunks in that catalog — not `LIMIT/OFFSET` row paging.
+- **VACUUM then next chunk (async):** after each successful UPDATE (default), kick off `VACUUM (ANALYZE, PARALLEL 8)` on that chunk **in the background** so the UPDATE pool can refill immediately. The finished chunk is already marked completed, so no other worker UPDATEs it during VACUUM. In-flight vacuums are drained before the script exits. Override parallelism with `HPCPERFSTATS_NULL_DEV_VACUUM_PARALLEL`. `statement_timeout = 0` and parallel GUCs are set in a separate `psql -c` from `VACUUM`.
 
 **Compose cwd (prose only):** checkout with `docker-compose.yaml`. Prefer **pipeline/web stopped** so ingest is not fighting the rewrite. Stage 1 should already show `compressed_chunks = 0`; compressed chunks are not in the worklist.
 
 ```bash
-./scripts/backfill_host_data_null_dev.sh
+./scripts/backfill_host_data_null_dev.sh 16
 ```
 
-First argument is an optional **max** worker cap (default **30**). Adaptive mode starts at 1 and ramps toward that cap while healthy (lag/WAL/disk/latency); it will usually settle below 30. Pass a lower cap only if you want a harder ceiling (for example `./scripts/backfill_host_data_null_dev.sh 8`). Knobs (optional env): `HPCPERFSTATS_NULL_DEV_MIN_CONCURRENCY`, `HPCPERFSTATS_NULL_DEV_VACUUM_EVERY`, `HPCPERFSTATS_NULL_DEV_VACUUM_PARALLEL` (default `8`), `HPCPERFSTATS_NULL_DEV_LAG_LIMIT_SEC` (default `30`), `HPCPERFSTATS_NULL_DEV_WAL_FRAC` (default `5.0` = allow uncheckpointed WAL up to 5× `max_wal_size`; not a 0–1 fraction), `HPCPERFSTATS_NULL_DEV_DISK_MIN_BYTES` (default 10 GiB), `HPCPERFSTATS_NULL_DEV_LATENCY_RATIO` (default `2.0`), `HPCPERFSTATS_NULL_DEV_HEALTHY_NEEDED` (default `3` healthy completions before ramp).
+First argument is worker concurrency (default **30**). Other knobs (optional env): `HPCPERFSTATS_NULL_DEV_VACUUM_EVERY`, `HPCPERFSTATS_NULL_DEV_VACUUM_PARALLEL` (default `8`), `HPCPERFSTATS_NULL_DEV_STALL_LIMIT` (default `5`).
 
 Optional post-run verify:
 

@@ -1,11 +1,18 @@
-"""User-facing descriptions for job summary (Bokeh) subplot metrics.
+"""
+User-facing descriptions for job summary (Bokeh) subplot metrics.
 
 Keep ``SUMMARY_METRIC_DESCRIPTIONS`` aligned with ``description`` strings in
 ``SUMMARY_PLOT_METRIC_METADATA`` in
-``hpcperfstats/site/frontend/src/utils/variableMetadata.js`` (same keys, same prose).
+``hpcperfstats/site/frontend/src/utils/variableMetadata.js`` (same keys, same
+prose).
 
-Keep ``SUMMARY_METRIC_RESEARCHER_USE`` aligned with ``researcherUse`` in the same
-JS object (HPC / AI / diagnostic reasoning from ``docs/using-the-website-as-a-researcher.md``).
+Keep ``SUMMARY_METRIC_RESEARCHER_USE`` aligned with ``researcherUse`` in the
+same JS object (HPC / AI / diagnostic reasoning from ``docs/using-the-website-
+as-a- researcher.md``).
+
+Attributes:
+  SUMMARY_METRIC_DESCRIPTIONS: Attribute.
+  SUMMARY_METRIC_RESEARCHER_USE: Attribute.
 """
 
 from __future__ import annotations
@@ -284,7 +291,18 @@ SUMMARY_METRIC_RESEARCHER_USE: dict[str, str] = {
 
 
 def description_for_summary_metric(metric: str) -> str:
-  """Return tooltip copy for a summary subplot column name."""
+  """
+  Return tooltip copy for a summary subplot column name.
+  
+  Args:
+    metric (str): String for metric.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> description_for_summary_metric("x")  # doctest: +SKIP
+  """
   key = (metric or "").strip()
   text = SUMMARY_METRIC_DESCRIPTIONS.get(key)
   if text:
@@ -293,6 +311,19 @@ def description_for_summary_metric(metric: str) -> str:
 
 
 def researcher_use_for_summary_metric(metric: str) -> str | None:
-  """Optional researcher-facing guidance (same keys as ``SUMMARY_METRIC_RESEARCHER_USE``)."""
+  """
+  Optional researcher-facing guidance (same keys as.
+  
+    ``SUMMARY_METRIC_RESEARCHER_USE``).
+  
+  Args:
+    metric (str): String for metric.
+  
+  Returns:
+    str | None: One of ``str``, ``None`` depending on inputs/branch.
+  
+  Examples:
+    >>> researcher_use_for_summary_metric("x")  # doctest: +SKIP
+  """
   key = (metric or "").strip()
   return SUMMARY_METRIC_RESEARCHER_USE.get(key)

@@ -1,9 +1,16 @@
-"""Cheap host_data freshness helpers (LATERAL per-host max, site-wide LIMIT 1).
+"""
+Cheap host_data freshness helpers (LATERAL per-host max, site-wide LIMIT 1).
 
 Avoid multi-day ``GROUP BY host, max(time)`` over the hypertable — that path
 scans hundreds of millions of rows on large sites (Admin Monitor hang).
+
+Attributes:
+  HOST_DATA_FRESHNESS_WINDOW: Attribute.
+  HOST_LAST_TIME_LOOKUP_BATCH: Attribute.
 """
 from __future__ import annotations
+
+from typing import Any
 
 from datetime import datetime, timedelta
 
@@ -21,12 +28,27 @@ HOST_LAST_TIME_LOOKUP_BATCH = 64
 HOST_DATA_FRESHNESS_WINDOW = timedelta(hours=3)
 
 
-def latest_sample_time_by_host(hosts, *, batch_size=None):
-    """Map host -> max(host_data.time) for ``hosts``, using bounded batches.
-
+def latest_sample_time_by_host(
+  hosts: Any,
+  *,
+  batch_size: Any | None = None,
+) -> Any:
+    """
+    Map host -> max(host_data.time) for ``hosts``, using bounded batches.
+    
     On PostgreSQL: ``LEFT JOIN LATERAL (... ORDER BY time DESC LIMIT 1)`` so
     each host is an index-backed probe. Non-PostgreSQL: ``Max(time)`` with
     ``host__in`` batches.
+    
+    Args:
+      hosts (Any): Hosts passed to this helper.
+      batch_size (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> latest_sample_time_by_host(None, None)  # doctest: +SKIP
     """
     latest_by_host = {}
     if not hosts:
@@ -75,11 +97,24 @@ def latest_sample_time_by_host(hosts, *, batch_size=None):
     return latest_by_host
 
 
-def latest_sample_time_by_host_in_window(window=None):
-    """Map host -> max(time) for hosts with samples in ``window`` (default 3h).
-
-    Last-resort Admin Monitor path when Redis ``recent_host`` inventory is empty.
+def latest_sample_time_by_host_in_window(window: Any | None = None) -> Any:
+    """
+    Map host -> max(time) for hosts with samples in ``window`` (default 3h).
+    
+    Last-resort Admin Monitor path when Redis ``recent_host`` inventory is
+      empty.
     Never use multi-day (e.g. 8d) windows here.
+    
+    Args:
+      window (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Open return polymorphism from
+      ``latest_sample_time_by_host_in_window``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> latest_sample_time_by_host_in_window(None)  # doctest: +SKIP
     """
     if window is None:
         window = HOST_DATA_FRESHNESS_WINDOW
@@ -99,11 +134,23 @@ def latest_sample_time_by_host_in_window(window=None):
     return latest_by_host
 
 
-def newest_host_data_sample_time(window=None):
-    """Return the newest ``host_data.time`` in ``window``, or ``None``.
-
+def newest_host_data_sample_time(window: Any | None = None) -> Any:
+    """
+    Return the newest ``host_data.time`` in ``window``, or ``None``.
+    
     Uses ``ORDER BY time DESC LIMIT 1`` (chunk-friendly) — not ``max(time)``
     over an unbounded table.
+    
+    Args:
+      window (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Open return polymorphism from ``newest_host_data_sample_time``:
+      concrete type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> newest_host_data_sample_time(None)  # doctest: +SKIP
     """
     if window is None:
         window = HOST_DATA_FRESHNESS_WINDOW
@@ -117,8 +164,19 @@ def newest_host_data_sample_time(window=None):
     )
 
 
-def format_host_data_newest_iso(value):
-    """Serialize a datetime for Admin Monitor Timescale stats, or ``None``."""
+def format_host_data_newest_iso(value: Any) -> Any:
+    """
+    Serialize a datetime for Admin Monitor Timescale stats, or ``None``.
+    
+    Args:
+      value (Any): Value to inspect (typically a numeric scalar).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> format_host_data_newest_iso(None)  # doctest: +SKIP
+    """
     if value is None:
         return None
     if isinstance(value, datetime):

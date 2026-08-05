@@ -1,23 +1,47 @@
-"""OpenAPI schema serializers for drf-spectacular (SPA-facing machine API)."""
+"""
+OpenAPI schema serializers for drf-spectacular (SPA-facing machine API).
+"""
+from __future__ import annotations
+
 from rest_framework import serializers
 
 
 class ErrorDetailSerializer(serializers.Serializer):
+    """
+    Hold ErrorDetailSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     detail = serializers.CharField(required=False)
     error = serializers.CharField(required=False)
     login_url = serializers.CharField(required=False)
 
 
 class BokehJsonItemField(serializers.JSONField):
-    """Opaque Bokeh ``json_item`` document for ``Bokeh.embed.embed_item``.
-
-    Must stay free-form JSON so Orval Zod does not strip ``type`` / ``attributes``
+    """
+    Opaque Bokeh ``json_item`` document for ``Bokeh.embed.embed_item``.
+    
+    Must stay free-form JSON so Orval Zod does not strip ``type`` /
+      ``attributes``
     from ``doc.roots[]``. SPA embed-time validation is ``parseBokehJsonItem``.
     Do not replace with a nested Serializer that only models ``{id}`` roots.
     """
 
 
 class SessionInfoSerializer(serializers.Serializer):
+    """
+    Hold SessionInfoSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     logged_in = serializers.BooleanField()
     username = serializers.CharField()
     is_staff = serializers.BooleanField()
@@ -26,22 +50,58 @@ class SessionInfoSerializer(serializers.Serializer):
 
 
 class UserApiKeySerializer(serializers.Serializer):
+    """
+    Hold UserApiKeySerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     username = serializers.CharField()
     raw_key = serializers.CharField(allow_null=True, required=False)
     key_prefix = serializers.CharField()
 
 
 class DropStaffResponseSerializer(serializers.Serializer):
+    """
+    Hold DropStaffResponseSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     ok = serializers.BooleanField()
     message = serializers.CharField()
     is_staff = serializers.BooleanField()
 
 
 class InvalidateCacheRequestSerializer(serializers.Serializer):
+    """
+    Hold InvalidateCacheRequestSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     page_path = serializers.CharField()
 
 
 class InvalidateCacheResponseSerializer(serializers.Serializer):
+    """
+    Hold InvalidateCacheResponseSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     ok = serializers.BooleanField()
     page_path = serializers.CharField()
     deleted_keys = serializers.IntegerField()
@@ -51,26 +111,48 @@ class InvalidateCacheResponseSerializer(serializers.Serializer):
 
 
 class HomeMetricOptionSerializer(serializers.Serializer):
+    """
+    Hold HomeMetricOptionSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     type = serializers.CharField()
     metric = serializers.CharField()
     units = serializers.CharField()
 
 
 class HomeDateDayPairSerializer(serializers.Serializer):
-    """One [iso_date, day_of_month] pair from home date_list."""
+    """
+    One [iso_date, day_of_month] pair from home date_list.
+    """
 
     date = serializers.CharField()
     day = serializers.CharField()
 
 
 class HomeDateMonthEntrySerializer(serializers.Serializer):
-    """One month bucket: month key plus day pairs (serialized from API tuple)."""
+    """
+    One month bucket: month key plus day pairs (serialized from API tuple).
+    """
 
     month = serializers.CharField()
     days = HomeDateDayPairSerializer(many=True)
 
 
 class HomeOptionsSerializer(serializers.Serializer):
+    """
+    Hold HomeOptionsSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     machine_name = serializers.CharField()
     year_list = serializers.ListField(child=serializers.IntegerField())
     date_list = serializers.ListField(
@@ -86,7 +168,9 @@ class HomeOptionsSerializer(serializers.Serializer):
 
 
 class JobPerformanceSerializer(serializers.Serializer):
-    """Job list performance column from job_list_performance.summarize_performance."""
+    """
+    Job list performance column from job_list_performance.summarize_performance.
+    """
 
     label = serializers.CharField(required=False)
     tone = serializers.CharField(required=False)
@@ -95,6 +179,15 @@ class JobPerformanceSerializer(serializers.Serializer):
 
 
 class JobListEntrySerializer(serializers.Serializer):
+    """
+    Hold JobListEntrySerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     jid = serializers.CharField()
     submit_time = serializers.DateTimeField(allow_null=True, required=False)
     start_time = serializers.DateTimeField(allow_null=True, required=False)
@@ -117,11 +210,29 @@ class JobListEntrySerializer(serializers.Serializer):
 
 
 class JobListAggregatesSerializer(serializers.Serializer):
+    """
+    Hold JobListAggregatesSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     total_node_hours = serializers.FloatField(required=False)
     queue_wait_mean_hours = serializers.FloatField(required=False)
 
 
 class JobListPaginationSerializer(serializers.Serializer):
+    """
+    Hold JobListPaginationSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     page = serializers.IntegerField(required=False)
     num_pages = serializers.IntegerField(required=False)
     has_previous = serializers.BooleanField(required=False)
@@ -131,11 +242,29 @@ class JobListPaginationSerializer(serializers.Serializer):
 
 
 class JobListPerformanceStatusOptionSerializer(serializers.Serializer):
+    """
+    Hold JobListPerformanceStatusOptionSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     sort_rank = serializers.IntegerField()
     label = serializers.CharField()
 
 
 class JobListFilterOptionsTruncatedSerializer(serializers.Serializer):
+    """
+    Hold JobListFilterOptionsTruncatedSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     usernames = serializers.BooleanField(required=False)
     accounts = serializers.BooleanField(required=False)
     queues = serializers.BooleanField(required=False)
@@ -143,6 +272,15 @@ class JobListFilterOptionsTruncatedSerializer(serializers.Serializer):
 
 
 class JobListFilterOptionsSerializer(serializers.Serializer):
+    """
+    Hold JobListFilterOptionsSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     usernames = serializers.ListField(child=serializers.CharField(), required=False)
     accounts = serializers.ListField(child=serializers.CharField(), required=False)
     queues = serializers.ListField(child=serializers.CharField(), required=False)
@@ -152,11 +290,22 @@ class JobListFilterOptionsSerializer(serializers.Serializer):
 
 
 class JobListFilterOptionsResponseSerializer(serializers.Serializer):
+    """
+    Hold JobListFilterOptionsResponseSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     filter_options = JobListFilterOptionsSerializer(required=False, allow_null=True)
 
 
 class JobListHistogramEnvelopeSerializer(serializers.Serializer):
-    """Histogram metadata without embedded Bokeh plot_item payloads."""
+    """
+    Histogram metadata without embedded Bokeh plot_item payloads.
+    """
 
     title = serializers.CharField(required=False, allow_blank=True)
     metric = serializers.CharField(required=False, allow_blank=True)
@@ -165,6 +314,15 @@ class JobListHistogramEnvelopeSerializer(serializers.Serializer):
 
 
 class JobListResponseSerializer(serializers.Serializer):
+    """
+    Hold JobListResponseSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     nj = serializers.IntegerField(required=False)
     job_list = JobListEntrySerializer(many=True, required=False)
     filter_summary = serializers.ListField(child=serializers.CharField(), required=False)
@@ -178,7 +336,9 @@ class JobListResponseSerializer(serializers.Serializer):
 
 
 class JobDetailJobSerializer(JobListEntrySerializer):
-    """Job detail primary job_data row (extends list entry fields)."""
+    """
+    Job detail primary job_data row (extends list entry fields).
+    """
 
     derived_data_status = serializers.CharField(required=False)
     client_url = serializers.CharField(required=False, allow_null=True)
@@ -186,7 +346,9 @@ class JobDetailJobSerializer(JobListEntrySerializer):
 
 
 class JobMetricRowSerializer(serializers.Serializer):
-    """One row from build_job_metrics_display_list (metrics_data catalog + value)."""
+    """
+    One row from build_job_metrics_display_list (metrics_data catalog + value).
+    """
 
     type = serializers.CharField(required=False, allow_blank=True)
     metric = serializers.CharField(required=False, allow_blank=True)
@@ -196,7 +358,9 @@ class JobMetricRowSerializer(serializers.Serializer):
 
 
 class ProcListEntrySerializer(serializers.Serializer):
-    """One proc_data row returned in job_detail proc_list (host_proc KEYS)."""
+    """
+    One proc_data row returned in job_detail proc_list (host_proc KEYS).
+    """
 
     host = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     proc = serializers.CharField(required=False, allow_null=True, allow_blank=True)
@@ -217,7 +381,9 @@ class ProcListEntrySerializer(serializers.Serializer):
 
 
 class StaffArtifactContractSerializer(serializers.Serializer):
-    """Staff Job Detail: runtime vs stored plot/detail artifact schema versions."""
+    """
+    Staff Job Detail: runtime vs stored plot/detail artifact schema versions.
+    """
 
     current_plot = serializers.IntegerField()
     current_detail = serializers.IntegerField()
@@ -227,7 +393,9 @@ class StaffArtifactContractSerializer(serializers.Serializer):
 
 
 class GpuInventoryEntrySerializer(serializers.Serializer):
-    """Per-(host,dev) GPU util/power for Job Detail Resources inventory."""
+    """
+    Per-(host,dev) GPU util/power for Job Detail Resources inventory.
+    """
 
     host = serializers.CharField()
     dev = serializers.CharField()
@@ -239,6 +407,15 @@ class GpuInventoryEntrySerializer(serializers.Serializer):
 
 
 class JobDetailResponseSerializer(serializers.Serializer):
+    """
+    Hold JobDetailResponseSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     job_data = JobDetailJobSerializer(required=False)
     host_list = serializers.ListField(child=serializers.CharField(), required=False)
     metrics_list = serializers.ListField(
@@ -277,7 +454,9 @@ class JobDetailResponseSerializer(serializers.Serializer):
 
 
 class JobPlotsResponseSerializer(serializers.Serializer):
-    """Legacy plot keys returned by job_plots (summary, roofline, GPU roofline)."""
+    """
+    Legacy plot keys returned by job_plots (summary, roofline, GPU roofline).
+    """
 
     mscript = serializers.CharField(required=False, allow_blank=True)
     mdiv = serializers.CharField(required=False, allow_blank=True)
@@ -302,7 +481,9 @@ class JobPlotsResponseSerializer(serializers.Serializer):
 
 
 class JobListHistogramResponseSerializer(serializers.Serializer):
-    """Per-metric histogram envelope from job_list_histograms."""
+    """
+    Per-metric histogram envelope from job_list_histograms.
+    """
 
     group = serializers.CharField(required=False)
     metric = serializers.CharField(required=False, allow_null=True)
@@ -316,7 +497,9 @@ class JobListHistogramResponseSerializer(serializers.Serializer):
 
 
 class JobListHistogramBatchResponseSerializer(serializers.Serializer):
-    """Batch histogram envelope from job_list_histograms_batch."""
+    """
+    Batch histogram envelope from job_list_histograms_batch.
+    """
 
     nj = serializers.IntegerField(required=False)
     histogram_nj = serializers.IntegerField(required=False)
@@ -325,6 +508,15 @@ class JobListHistogramBatchResponseSerializer(serializers.Serializer):
 
 
 class TypeDetailResponseSerializer(serializers.Serializer):
+    """
+    Hold TypeDetailResponseSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     type_name = serializers.CharField(required=False)
     jobid = serializers.CharField(required=False)
     tplot_item = BokehJsonItemField(required=False, allow_null=True)
@@ -335,6 +527,15 @@ class TypeDetailResponseSerializer(serializers.Serializer):
 
 
 class HostPlotResponseSerializer(serializers.Serializer):
+    """
+    Hold HostPlotResponseSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     host = serializers.CharField()
     plot_item = BokehJsonItemField(allow_null=True)
     plot_unavailable_reason = serializers.CharField(allow_null=True, required=False)
@@ -343,13 +544,24 @@ class HostPlotResponseSerializer(serializers.Serializer):
 
 
 class AdminMonitorHostStatSerializer(serializers.Serializer):
+    """
+    Hold AdminMonitorHostStatSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     host = serializers.CharField(required=False, allow_blank=True)
     last_time = serializers.CharField(required=False, allow_null=True)
     age_bucket = serializers.CharField(required=False, allow_blank=True)
 
 
 class AdminMonitorResponseSerializer(serializers.Serializer):
-    """Section keys at top level; only one or a combined bundle is present per request."""
+    """
+    Section keys at top level; only one or a combined bundle is present per.
+    """
 
     host_stats = AdminMonitorHostStatSerializer(many=True, required=False)
     rabbitmq_host_stats = AdminMonitorHostStatSerializer(many=True, required=False)
@@ -360,6 +572,15 @@ class AdminMonitorResponseSerializer(serializers.Serializer):
 
 
 class JobMonitorRowSerializer(serializers.Serializer):
+    """
+    Hold JobMonitorRowSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     username = serializers.CharField(required=False, allow_blank=True)
     total_jobs = serializers.IntegerField(required=False)
     failed_jobs = serializers.IntegerField(required=False)
@@ -369,6 +590,15 @@ class JobMonitorRowSerializer(serializers.Serializer):
 
 
 class JobMonitorResponseSerializer(serializers.Serializer):
+    """
+    Hold JobMonitorResponseSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     window_days = serializers.IntegerField(required=False)
     start_time = serializers.CharField(required=False)
     end_time = serializers.CharField(required=False)
@@ -376,6 +606,15 @@ class JobMonitorResponseSerializer(serializers.Serializer):
 
 
 class JobMonitorGpuRowSerializer(serializers.Serializer):
+    """
+    Hold JobMonitorGpuRowSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     username = serializers.CharField(required=False, allow_blank=True)
     gpu_count_total = serializers.IntegerField(required=False, allow_null=True)
     gpu_active_total = serializers.IntegerField(required=False, allow_null=True)
@@ -384,23 +623,52 @@ class JobMonitorGpuRowSerializer(serializers.Serializer):
 
 
 class JobMonitorGpuResponseSerializer(JobMonitorGpuRowSerializer):
-    """Single-user GPU rollup or batch wrapper with ``results``."""
+    """
+    Single-user GPU rollup or batch wrapper with ``results``.
+    """
 
     results = JobMonitorGpuRowSerializer(many=True, required=False)
 
 
 class SacctIngestResponseSerializer(serializers.Serializer):
+    """
+    Hold SacctIngestResponseSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     ok = serializers.BooleanField(required=False)
     message = serializers.CharField(required=False)
     detail = serializers.CharField(required=False)
 
 
 class PublicClusterMetricBlockSerializer(serializers.Serializer):
+    """
+    Hold PublicClusterMetricBlockSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     title = serializers.CharField(required=False, allow_blank=True)
     bokeh_histogram_json_item = BokehJsonItemField(required=False, allow_null=True)
 
 
 class PublicExpansionFactorHistogramBlockSerializer(serializers.Serializer):
+    """
+    Hold PublicExpansionFactorHistogramBlockSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     scheduler_expansion_factor_daily_means_in_month_count = serializers.IntegerField(
         required=False
     )
@@ -414,6 +682,15 @@ class PublicExpansionFactorHistogramBlockSerializer(serializers.Serializer):
 
 
 class PublicDashboardExpansionFactorSectionSerializer(serializers.Serializer):
+    """
+    Hold PublicDashboardExpansionFactorSectionSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     monthly_period_keys = serializers.ListField(
         child=serializers.CharField(), required=False
     )
@@ -425,10 +702,28 @@ class PublicDashboardExpansionFactorSectionSerializer(serializers.Serializer):
 
 
 class PublicDashboardSectionsSerializer(serializers.Serializer):
+    """
+    Hold PublicDashboardSectionsSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     expansion_factor = PublicDashboardExpansionFactorSectionSerializer(required=False)
 
 
 class PublicClusterDashboardSerializer(serializers.Serializer):
+    """
+    Hold PublicClusterDashboardSerializer state and behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    
+    Subclasses ``Serializer``, extending that type with this class's fields and
+    behavior.
+    """
     status = serializers.CharField(required=False)
     machine_name = serializers.CharField(required=False)
     detail = serializers.CharField(required=False, allow_null=True, allow_blank=True)

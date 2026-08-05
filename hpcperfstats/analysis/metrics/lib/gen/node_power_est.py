@@ -1,12 +1,29 @@
-"""Build per-(host, time) ``node_power_est_w`` using the same rules as SummaryPlot."""
+"""
+Build per-(host, time) ``node_power_est_w`` using the same rules as SummaryPlot.
+"""
+from __future__ import annotations
+
+from typing import Any
 
 import numpy as np
 
 
-def build_node_power_est_dataframe(jt):
-  """Merge power components and return DataFrame with ``node_power_est_w`` (and optional parts).
-
+def build_node_power_est_dataframe(jt: Any) -> Any:
+  """
+  Merge power components and return DataFrame with ``node_power_est_w`` (and.
+  
+    optional parts).
+  
   Lazy-imports summaryplot helpers to avoid circular imports at module load.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> build_node_power_est_dataframe(None)  # doctest: +SKIP
   """
   from hpcperfstats.analysis.metrics.lib.plot import summaryplot as sp
 
@@ -42,8 +59,19 @@ def build_node_power_est_dataframe(jt):
   return sp._add_node_power_est_column(df)
 
 
-def max_node_power_est_w(jt):
-  """Peak ``node_power_est_w`` over all hosts and samples, or None."""
+def max_node_power_est_w(jt: Any) -> Any:
+  """
+  Peak ``node_power_est_w`` over all hosts and samples, or None.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> max_node_power_est_w(None)  # doctest: +SKIP
+  """
   df = build_node_power_est_dataframe(jt)
   if df.empty or "node_power_est_w" not in df.columns:
     return None
@@ -53,8 +81,21 @@ def max_node_power_est_w(jt):
   return float(s.max())
 
 
-def mean_node_power_est_w(jt):
-  """Job-wide mean of ``node_power_est_w`` over samples where it is finite, or None."""
+def mean_node_power_est_w(jt: Any) -> Any:
+  """
+  Job-wide mean of ``node_power_est_w`` over samples where it is finite, or.
+  
+    None.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> mean_node_power_est_w(None)  # doctest: +SKIP
+  """
   df = build_node_power_est_dataframe(jt)
   if df.empty or "node_power_est_w" not in df.columns:
     return None
@@ -64,12 +105,22 @@ def mean_node_power_est_w(jt):
   return float(s.mean())
 
 
-def _has_cpu_power_fragments(df):
-  """True when a CPU power column appears with finite samples.
-
+def _has_cpu_power_fragments(df: Any) -> Any:
+  """
+  True when a CPU power column appears with finite samples.
+  
   GPU power is optional: watt-hours integrate ``node_power_est_w``, which may
   include GPU when present. Module-only estimates without a CPU side fail this
   gate.
+  
+  Args:
+    df (Any): Df passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _has_cpu_power_fragments(None)  # doctest: +SKIP
   """
   cpu_cols = [
       c for c in ("dcg_cpu_power_w", "watts", "amd_pkg_w") if c in df.columns
@@ -77,7 +128,19 @@ def _has_cpu_power_fragments(df):
   if not cpu_cols:
     return False
 
-  def _col_has_finite(col):
+  def _col_has_finite(col: Any) -> Any:
+    """
+    Internal helper to handle col has finite.
+    
+    Args:
+      col (Any): Col passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _col_has_finite(None)  # doctest: +SKIP
+    """
     s = df[col].dropna()
     if s.empty:
       return False
@@ -86,11 +149,23 @@ def _has_cpu_power_fragments(df):
   return bool(any(_col_has_finite(c) for c in cpu_cols))
 
 
-def job_cpu_gpu_watt_hours(jt):
-  """∫ node_power_est_w dt per host (Wh), summed across hosts; None if CPU gate fails.
-
+def job_cpu_gpu_watt_hours(jt: Any) -> Any:
+  """
+  ∫ node_power_est_w dt per host (Wh), summed across hosts; None if CPU gate.
+  
+    fails.
+  
   Requires finite CPU power fragments in the estimate dataframe (GPU optional;
   not module-only without a CPU side). Integrates watts × seconds / 3600.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> job_cpu_gpu_watt_hours(None)  # doctest: +SKIP
   """
   import pandas as pd
 

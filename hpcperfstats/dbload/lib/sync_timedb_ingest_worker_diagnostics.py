@@ -1,5 +1,13 @@
-"""Cross-process ingest worker stage registry for pool stall diagnostics."""
+"""
+Cross-process ingest worker stage registry for pool stall diagnostics.
+
+Attributes:
+  _registry: Attribute.
+  _worker_pool_kind: Attribute.
+"""
 from __future__ import annotations
+
+from typing import Any, Iterator
 
 import contextvars
 import os
@@ -10,16 +18,46 @@ _registry = None
 _worker_pool_kind = contextvars.ContextVar("sync_timedb_worker_pool_kind", default=None)
 
 
-def set_worker_diagnostics_registry(registry):
+def set_worker_diagnostics_registry(registry: Any) -> None:
+  """
+  Set the worker diagnostics registry.
+  
+  Args:
+    registry (Any): Registry passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> set_worker_diagnostics_registry(None)  # doctest: +SKIP
+  """
   global _registry
   _registry = registry
 
 
-def get_worker_diagnostics_registry():
+def get_worker_diagnostics_registry() -> Any:
+  """
+  Return the worker diagnostics registry.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> get_worker_diagnostics_registry()  # doctest: +SKIP
+  """
   return _resolve_registry()
 
 
-def _resolve_registry():
+def _resolve_registry() -> Any:
+  """
+  Internal helper to resolve the registry.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _resolve_registry()  # doctest: +SKIP
+  """
   registry = _registry
   if registry is not None:
     return registry
@@ -31,24 +69,85 @@ def _resolve_registry():
     return None
 
 
-def get_worker_pool_kind():
+def get_worker_pool_kind() -> Any:
+  """
+  Return the worker pool kind.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> get_worker_pool_kind()  # doctest: +SKIP
+  """
   return _worker_pool_kind.get()
 
 
-def set_worker_pool_kind(pool_kind):
+def set_worker_pool_kind(pool_kind: Any) -> Any:
+  """
+  Set the worker pool kind.
+  
+  Args:
+    pool_kind (Any): Pool kind passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> set_worker_pool_kind(None)  # doctest: +SKIP
+  """
   return _worker_pool_kind.set(pool_kind)
 
 
-def reset_worker_pool_kind(token):
+def reset_worker_pool_kind(token: Any) -> None:
+  """
+  Reset worker pool kind.
+  
+  Args:
+    token (Any): Token passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> reset_worker_pool_kind(None)  # doctest: +SKIP
+  """
   _worker_pool_kind.reset(token)
 
 
-def may_run_archive_members_populate_scan():
-  """True only on populate-pool workers."""
+def may_run_archive_members_populate_scan() -> Any:
+  """
+  True only on populate-pool workers.
+  
+  Returns:
+    Any: Open return polymorphism from
+    ``may_run_archive_members_populate_scan``: concrete type depends on inputs
+    and branch (mapping, scalar, handle, or ``None``-like empty).
+  
+  Examples:
+    >>> may_run_archive_members_populate_scan()  # doctest: +SKIP
+  """
   return get_worker_pool_kind() == "populate-pool"
 
 
-def apply_ingest_pool_worker_init(script_name, pool_kind, registry):
+def apply_ingest_pool_worker_init(
+  script_name: Any,
+  pool_kind: Any,
+  registry: Any,
+) -> None:
+  """
+  Apply the ingest pool worker init.
+  
+  Args:
+    script_name (Any): Script name passed to this helper.
+    pool_kind (Any): Pool kind passed to this helper.
+    registry (Any): Registry passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> apply_ingest_pool_worker_init(None, None, None)  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.process_title import apply_pool_worker_process_title
 
   apply_pool_worker_process_title(script_name, pool_kind)
@@ -63,8 +162,29 @@ def apply_ingest_pool_worker_init(script_name, pool_kind, registry):
 
 
 def record_worker_stage(
-    path, stage, *, substage=None, lookup_mode=None, timeout_s=None,
-):
+  path: str,
+  stage: Any,
+  *,
+  substage: Any | None = None,
+  lookup_mode: Any | None = None,
+  timeout_s: Any | None = None,
+) -> None:
+  """
+  Record worker stage.
+  
+  Args:
+    path (str): String for path.
+    stage (Any): Mode or kind token selecting a code path.
+    substage (Any | None): One of ``Any``, ``None``.
+    lookup_mode (Any | None): One of ``Any``, ``None``.
+    timeout_s (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> record_worker_stage("x", None, None, None, None)  # doctest: +SKIP
+  """
   registry = _resolve_registry()
   if registry is None:
     return
@@ -92,7 +212,16 @@ def record_worker_stage(
       pass
 
 
-def clear_worker_stage():
+def clear_worker_stage() -> None:
+  """
+  Clear worker stage.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> clear_worker_stage()  # doctest: +SKIP
+  """
   registry = _resolve_registry()
   if registry is None:
     return
@@ -103,8 +232,20 @@ def clear_worker_stage():
     pass
 
 
-def seed_dispatch_worker_stages(registry, paths):
-  """Supervisor-side placeholders until pool workers record real stages."""
+def seed_dispatch_worker_stages(registry: Any, paths: Any) -> None:
+  """
+  Supervisor-side placeholders until pool workers record real stages.
+  
+  Args:
+    registry (Any): Registry passed to this helper.
+    paths (Any): Iterable of filesystem paths as strings.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> seed_dispatch_worker_stages(None, None)  # doctest: +SKIP
+  """
   if registry is None:
     return
   now = time.monotonic()
@@ -131,8 +272,20 @@ def seed_dispatch_worker_stages(registry, paths):
         pass
 
 
-def clear_dispatch_worker_stages(registry, paths):
-  """Remove supervisor ``dispatch:`` placeholders when imap returns a path."""
+def clear_dispatch_worker_stages(registry: Any, paths: Any) -> None:
+  """
+  Remove supervisor ``dispatch:`` placeholders when imap returns a path.
+  
+  Args:
+    registry (Any): Registry passed to this helper.
+    paths (Any): Iterable of filesystem paths as strings.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> clear_dispatch_worker_stages(None, None)  # doctest: +SKIP
+  """
   if registry is None:
     return
   for path in paths or ():
@@ -145,7 +298,21 @@ def clear_dispatch_worker_stages(registry, paths):
       pass
 
 
-def update_worker_substage(substage, **extra):
+def update_worker_substage(substage: Any, **extra: Any) -> None:
+  """
+  Update the worker substage.
+  
+  Args:
+    substage (Any): Substage passed to this helper.
+    **extra (Any): Extra keyword arguments (``extra``); keys are ``str`` and
+    value types match the wrapped protocol for this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> update_worker_substage(None)  # doctest: +SKIP
+  """
   registry = _resolve_registry()
   if registry is None:
     return
@@ -164,7 +331,19 @@ def update_worker_substage(substage, **extra):
     pass
 
 
-def count_worker_registry_entries(registry):
+def count_worker_registry_entries(registry: Any) -> Any:
+  """
+  Count the worker registry entries.
+  
+  Args:
+    registry (Any): Registry passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> count_worker_registry_entries(None)  # doctest: +SKIP
+  """
   if registry is None:
     return 0
   try:
@@ -174,8 +353,25 @@ def count_worker_registry_entries(registry):
 
 
 def format_worker_stages_snapshot(
-    registry, *, max_entries=16, prefer_paths=None,
-):
+  registry: Any,
+  *,
+  max_entries: int = 16,
+  prefer_paths: Any | None = None,
+) -> Any:
+  """
+  Format the worker stages snapshot.
+  
+  Args:
+    registry (Any): Registry passed to this helper.
+    max_entries (int): Integer value for max entries.
+    prefer_paths (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> format_worker_stages_snapshot(None, 0, None)  # doctest: +SKIP
+  """
   if registry is None:
     return "-"
   now = time.monotonic()
@@ -219,8 +415,19 @@ def format_worker_stages_snapshot(
   return ",".join(parts) if parts else "-"
 
 
-def iter_alive_pool_worker_pids(pool):
-  """Yield string PIDs for alive workers in ``pool``."""
+def iter_alive_pool_worker_pids(pool: Any) -> Iterator[Any]:
+  """
+  Yield string PIDs for alive workers in ``pool``.
+  
+  Args:
+    pool (Any): Live handle (pool, client, or connection).
+  
+  Yields:
+    Iterator[Any]: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> iter_alive_pool_worker_pids(None)  # doctest: +SKIP
+  """
   if pool is None:
     return
   try:
@@ -238,13 +445,27 @@ def iter_alive_pool_worker_pids(pool):
 
 
 def worker_registry_shows_member_match_wait(
-    registry,
-    *,
-    pool=None,
-    alive_pids=None,
-    progress_grace_s=None,
-):
-  """True when an alive worker is in archive_member_lookup redis_wait."""
+  registry: Any,
+  *,
+  pool: Any | None = None,
+  alive_pids: Any | None = None,
+  progress_grace_s: Any | None = None,
+) -> Any:
+  """
+  True when an alive worker is in archive_member_lookup redis_wait.
+  
+  Args:
+    registry (Any): Registry passed to this helper.
+    pool (Any | None): One of ``Any``, ``None``.
+    alive_pids (Any | None): One of ``Any``, ``None``.
+    progress_grace_s (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> worker_registry_shows_member_match_wait(None, None, None, None)
+  """
   if registry is None:
     return False
   import hpcperfstats.dbload.lib.conf_parser as cfg
@@ -295,12 +516,26 @@ def worker_registry_shows_member_match_wait(
   return False
 
 
-def idle_pool_recover_skip_reason_for_registry_wait(paths, registry):
-  """Non-empty reason when pending paths show live redis_wait in the registry.
-
+def idle_pool_recover_skip_reason_for_registry_wait(
+  paths: Any,
+  registry: Any,
+) -> Any:
+  """
+  Non-empty reason when pending paths show live redis_wait in the registry.
+  
   Ghost ``dispatch:`` placeholders are ignored — only real worker PID entries
   whose ``path`` matches a pending normpath count. Skips idle recover/redispatch
   even when ``ingest_tar_hot`` has already cleared.
+  
+  Args:
+    paths (Any): Iterable of filesystem paths as strings.
+    registry (Any): Registry passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> idle_pool_recover_skip_reason_for_registry_wait(None, None)
   """
   if registry is None or not paths:
     return ""
@@ -334,13 +569,29 @@ def idle_pool_recover_skip_reason_for_registry_wait(paths, registry):
 
 
 def worker_registry_shows_recent_progress(
-    registry,
-    *,
-    pool=None,
-    alive_pids=None,
-    progress_grace_s=None,
-):
-  """True when any alive worker has a registry stage younger than its ingest budget."""
+  registry: Any,
+  *,
+  pool: Any | None = None,
+  alive_pids: Any | None = None,
+  progress_grace_s: Any | None = None,
+) -> Any:
+  """
+  True when any alive worker has a registry stage younger than its ingest.
+  
+    budget.
+  
+  Args:
+    registry (Any): Registry passed to this helper.
+    pool (Any | None): One of ``Any``, ``None``.
+    alive_pids (Any | None): One of ``Any``, ``None``.
+    progress_grace_s (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> worker_registry_shows_recent_progress(None, None, None, None)
+  """
   if registry is None:
     return False
   import hpcperfstats.dbload.lib.conf_parser as cfg
@@ -385,7 +636,26 @@ def worker_registry_shows_recent_progress(
   return False
 
 
-def prune_stale_worker_stages(registry, *, alive_pids=None, max_age_s=3600.0):
+def prune_stale_worker_stages(
+  registry: Any,
+  *,
+  alive_pids: Any | None = None,
+  max_age_s: float = 3600.0,
+) -> None:
+  """
+  Prune stale worker stages.
+  
+  Args:
+    registry (Any): Registry passed to this helper.
+    alive_pids (Any | None): One of ``Any``, ``None``.
+    max_age_s (float): Floating-point value for max age s.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> prune_stale_worker_stages(None, None, 0)  # doctest: +SKIP
+  """
   if registry is None:
     return
   now = time.monotonic()

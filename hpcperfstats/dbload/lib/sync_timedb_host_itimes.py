@@ -1,4 +1,22 @@
-"""Shared host_data timestamp probes for sync_timedb ingest and archive gate."""
+"""
+Shared host_data timestamp probes for sync_timedb ingest and archive gate.
+
+Attributes:
+  HOST_ITIMES_SET_OVERFLOW: Attribute.
+  _HOST_ITIMES_CACHE: Attribute.
+  _HOST_ITIMES_CACHE_MAX_ENTRIES: Attribute.
+  _HOST_ITIMES_CACHE_REFRESH_SECONDS: Attribute.
+  _HOST_ITIMES_CHUNK_HOURS: Attribute.
+  _HOST_ITIMES_SET_OVERFLOW: Attribute.
+  _HOST_SECOND_PRESENT_CACHE: Attribute.
+  _HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES: Attribute.
+  _HOST_SECOND_PRESENT_CACHE_TTL_S: Attribute.
+  _ITIMES_TIMEOUT_WARNED: Attribute.
+"""
+from __future__ import annotations
+
+from typing import Any, Iterator
+
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -25,14 +43,42 @@ _ITIMES_TIMEOUT_WARNED = set()
 _HOST_ITIMES_SET_OVERFLOW = HOST_ITIMES_SET_OVERFLOW
 
 
-def reset_host_itimes_caches():
-  """Clear per-process itimes caches between sync_timedb sessions."""
+def reset_host_itimes_caches() -> None:
+  """
+  Clear per-process itimes caches between sync_timedb sessions.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> reset_host_itimes_caches()  # doctest: +SKIP
+  """
   _HOST_ITIMES_CACHE.clear()
   _HOST_SECOND_PRESENT_CACHE.clear()
   _ITIMES_TIMEOUT_WARNED.clear()
 
 
-def _log_itimes_query_bounded_failure(hostname, ts_low, ts_high, exc):
+def _log_itimes_query_bounded_failure(
+  hostname: Any,
+  ts_low: Any,
+  ts_high: Any,
+  exc: Any,
+) -> None:
+  """
+  Internal helper to log the itimes query bounded failure.
+  
+  Args:
+    hostname (Any): Hostname passed to this helper.
+    ts_low (Any): Ts low passed to this helper.
+    ts_high (Any): Ts high passed to this helper.
+    exc (Any): Exception instance being classified or logged.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _log_itimes_query_bounded_failure(None, None, None, None)
+  """
   warn_key = (hostname, int(ts_low.timestamp()), int(ts_high.timestamp()))
   if warn_key in _ITIMES_TIMEOUT_WARNED:
     return
@@ -44,8 +90,20 @@ def _log_itimes_query_bounded_failure(hostname, ts_low, ts_high, exc):
   )
 
 
-def _iter_host_itimes_chunk_bounds(ts_low, ts_high):
-  """Yield ``(chunk_low, chunk_high)`` pairs covering ``[ts_low, ts_high)``."""
+def _iter_host_itimes_chunk_bounds(ts_low: Any, ts_high: Any) -> Iterator[Any]:
+  """
+  Yield ``(chunk_low, chunk_high)`` pairs covering ``[ts_low, ts_high)``.
+  
+  Args:
+    ts_low (Any): Ts low passed to this helper.
+    ts_high (Any): Ts high passed to this helper.
+  
+  Yields:
+    Iterator[Any]: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _iter_host_itimes_chunk_bounds(None, None)  # doctest: +SKIP
+  """
   span = ts_high - ts_low
   if span <= timedelta(hours=_HOST_ITIMES_CHUNK_HOURS):
     yield ts_low, ts_high
@@ -58,8 +116,31 @@ def _iter_host_itimes_chunk_bounds(ts_low, ts_high):
     cur = nxt
 
 
-def _collect_distinct_unix_seconds(hostname, ts_low, ts_high, itimes_set):
-  """Populate ``itimes_set`` from DB; return ``HOST_ITIMES_SET_OVERFLOW`` when over cap."""
+def _collect_distinct_unix_seconds(
+  hostname: Any,
+  ts_low: Any,
+  ts_high: Any,
+  itimes_set: Any,
+) -> Any:
+  """
+  Populate ``itimes_set`` from DB; return ``HOST_ITIMES_SET_OVERFLOW`` when.
+  
+    over.
+  
+    cap.
+  
+  Args:
+    hostname (Any): Hostname passed to this helper.
+    ts_low (Any): Ts low passed to this helper.
+    ts_high (Any): Ts high passed to this helper.
+    itimes_set (Any): Itimes set passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _collect_distinct_unix_seconds(None, None, None, None)  # doctest: +SKIP
+  """
   qs_times = (
       host_data.objects.filter(
           host=hostname,
@@ -81,8 +162,29 @@ def _collect_distinct_unix_seconds(hostname, ts_low, ts_high, itimes_set):
   return None
 
 
-def host_recent_timestamps_cached(hostname, ts_low, ts_high):
-  """Return cached distinct Unix seconds for ``hostname`` in ``[ts_low, ts_high)``."""
+def host_recent_timestamps_cached(
+  hostname: Any,
+  ts_low: Any,
+  ts_high: Any,
+) -> Any:
+  """
+  Return cached distinct Unix seconds for ``hostname`` in ``[ts_low, ts_high)``.
+  
+  Args:
+    hostname (Any): Hostname passed to this helper.
+    ts_low (Any): Ts low passed to this helper.
+    ts_high (Any): Ts high passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    Exception: Raised when ``host_recent_timestamps_cached`` hits a
+    ``Exception`` failure path.
+  
+  Examples:
+    >>> host_recent_timestamps_cached(None, None, None)  # doctest: +SKIP
+  """
   key = (hostname, int(ts_low.timestamp()), int(ts_high.timestamp()))
   now = time.time()
   cached = _HOST_ITIMES_CACHE.get(key)
@@ -114,8 +216,20 @@ def host_recent_timestamps_cached(hostname, ts_low, ts_high):
   return itimes_set
 
 
-def host_timestamp_second_present_in_db(host, unix_second):
-  """Per-(host, second) exists probe when host_itimes cache overflows."""
+def host_timestamp_second_present_in_db(host: Any, unix_second: Any) -> Any:
+  """
+  Per-(host, second) exists probe when host_itimes cache overflows.
+  
+  Args:
+    host (Any): Host passed to this helper.
+    unix_second (Any): Unix second passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> host_timestamp_second_present_in_db(None, None)  # doctest: +SKIP
+  """
   key = (str(host).strip(), int(unix_second))
   now = time.time()
   cached = _HOST_SECOND_PRESENT_CACHE.get(key)
@@ -139,8 +253,25 @@ def host_timestamp_second_present_in_db(host, unix_second):
   return present
 
 
-def host_sampled_timestamp_seconds_all_present(host, unix_seconds):
-  """Return whether every Unix second in ``unix_seconds`` exists for ``host`` in DB."""
+def host_sampled_timestamp_seconds_all_present(
+  host: Any,
+  unix_seconds: int,
+) -> Any:
+  """
+  Return whether every Unix second in ``unix_seconds`` exists for ``host`` in.
+  
+    DB.
+  
+  Args:
+    host (Any): Host passed to this helper.
+    unix_seconds (int): Integer value for unix seconds.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> host_sampled_timestamp_seconds_all_present(None, 0)  # doctest: +SKIP
+  """
   if not unix_seconds:
     return False
   host_key = str(host).strip()

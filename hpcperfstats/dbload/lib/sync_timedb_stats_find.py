@@ -1,10 +1,19 @@
-"""GNU find -printf discovery for sync_timedb raw stats files.
+"""
+GNU find -printf discovery for sync_timedb raw stats files.
 
 Emits path/mtime/size/inode from find itself so discovery does not re-stat those
 fields in Python. Fail-closed when GNU find / -printf is unavailable.
 
 On macOS host tests, prefer Homebrew ``gfind`` (findutils) via PATH order or
 ``HPCPERFSTATS_FIND_BIN`` — do not emulate find.
+
+Attributes:
+  FIND_CURRENT_INODE_PRINTF: Attribute.
+  FIND_PRINTF_FORMAT: Attribute.
+  JID_NEIGHBOR_FILES: Attribute.
+  _FNCTL_LOCK_ENOENT_RE: Attribute.
+  _host_fp_cache: Attribute.
+  _path_fp_cache: Attribute.
 """
 from __future__ import annotations
 
@@ -15,7 +24,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX
 
@@ -37,6 +46,15 @@ _host_fp_cache: Dict[str, Tuple[int, int]] = {}
 
 @dataclass(frozen=True)
 class FindStatsRecord:
+  """
+  Hold FindStatsRecord state and behavior.
+  
+  Attributes:
+    inode: ``inode``.
+    mtime: ``mtime``.
+    path: ``path``.
+    size: ``size``.
+  """
   path: str
   mtime: float
   size: int
@@ -44,26 +62,75 @@ class FindStatsRecord:
 
 
 class FindStatsDiscoveryError(RuntimeError):
-  """Raised when GNU find discovery cannot run (fail-closed)."""
+  """
+  Raised when GNU find discovery cannot run (fail-closed).
+  """
 
 
 def clear_fingerprint_caches() -> None:
+  """
+  Clear fingerprint caches.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> clear_fingerprint_caches()  # doctest: +SKIP
+  """
   _path_fp_cache.clear()
   _host_fp_cache.clear()
 
 
 def lookup_path_fingerprint(path: str) -> Optional[Tuple[int, int]]:
+  """
+  Lookup path fingerprint.
+  
+  Args:
+    path (str): String for path.
+  
+  Returns:
+    Optional[Tuple[int, int]]: Optional[Tuple[int, int]] — the result, or None
+    when unavailable.
+  
+  Examples:
+    >>> lookup_path_fingerprint("x")  # doctest: +SKIP
+  """
   return _path_fp_cache.get(os.path.normpath(path))
 
 
 def lookup_host_dir_fingerprint(host_dir: str) -> Optional[Tuple[int, int]]:
+  """
+  Lookup host dir fingerprint.
+  
+  Args:
+    host_dir (str): String for host dir.
+  
+  Returns:
+    Optional[Tuple[int, int]]: Optional[Tuple[int, int]] — the result, or None
+    when unavailable.
+  
+  Examples:
+    >>> lookup_host_dir_fingerprint("x")  # doctest: +SKIP
+  """
   return _host_fp_cache.get(os.path.normpath(host_dir))
 
 
 def update_fingerprint_caches_from_records(
-    records: Sequence[FindStatsRecord],
+  records: Sequence[FindStatsRecord],
 ) -> None:
-  """Refresh path/host fingerprint caches from find -printf records."""
+  """
+  Refresh path/host fingerprint caches from find -printf records.
+  
+  Args:
+    records (Sequence[FindStatsRecord]): records as
+    ``Sequence[FindStatsRecord]``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> update_fingerprint_caches_from_records([])  # doctest: +SKIP
+  """
   _path_fp_cache.clear()
   host_agg: Dict[str, List[FindStatsRecord]] = {}
   for rec in records:
@@ -79,12 +146,25 @@ def update_fingerprint_caches_from_records(
 
 
 def build_find_stats_argv(
-    archive_dir: str,
-    *,
-    mtime_days: Optional[int] = None,
-    find_bin: str = "find",
+  archive_dir: str,
+  *,
+  mtime_days: Optional[int] = None,
+  find_bin: str = "find",
 ) -> List[str]:
-  """Build GNU find argv for archive stats discovery (-mindepth/maxdepth 2)."""
+  """
+  Build GNU find argv for archive stats discovery (-mindepth/maxdepth 2).
+  
+  Args:
+    archive_dir (str): String for archive dir.
+    mtime_days (Optional[int]): Mtime days, or None when absent.
+    find_bin (str): String for find bin.
+  
+  Returns:
+    List[str]: List[str] produced by this call.
+  
+  Examples:
+    >>> build_find_stats_argv("x", None, "x")  # doctest: +SKIP
+  """
   argv = [
       find_bin,
       archive_dir,
@@ -113,11 +193,23 @@ def build_find_stats_argv(
 
 
 def build_find_current_inode_argv(
-    archive_dir: str,
-    *,
-    find_bin: str = "find",
+  archive_dir: str,
+  *,
+  find_bin: str = "find",
 ) -> List[str]:
-  """Find host ``current`` files and emit ``path\\0inode\\0``."""
+  """
+  Find host ``current`` files and emit ``pathinode``.
+  
+  Args:
+    archive_dir (str): String for archive dir.
+    find_bin (str): String for find bin.
+  
+  Returns:
+    List[str]: List[str] produced by this call.
+  
+  Examples:
+    >>> build_find_current_inode_argv("x", "x")  # doctest: +SKIP
+  """
   return [
       find_bin,
       archive_dir,
@@ -135,7 +227,24 @@ def build_find_current_inode_argv(
 
 
 def parse_find_printf_records(data: bytes) -> List[FindStatsRecord]:
-  """Parse NUL records produced by GNU find ``-printf`` with ``FIND_PRINTF_FORMAT``."""
+  """
+  Parse NUL records produced by GNU find ``-printf`` with.
+  
+    ``FIND_PRINTF_FORMAT``.
+  
+  Args:
+    data (bytes): Data.
+  
+  Returns:
+    List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
+  
+  Raises:
+    FindStatsDiscoveryError: Raised when ``parse_find_printf_records`` hits a
+    ``FindStatsDiscoveryError`` failure path.
+  
+  Examples:
+    >>> parse_find_printf_records(None)  # doctest: +SKIP
+  """
   if not data:
     return []
   parts = data.split(b"\0")
@@ -166,7 +275,22 @@ def parse_find_printf_records(data: bytes) -> List[FindStatsRecord]:
 
 
 def parse_current_inode_records(data: bytes) -> Dict[str, int]:
-  """Map host_dir → inode for ``current`` files (path\\0inode\\0)."""
+  """
+  Map host_dir → inode for ``current`` files (pathinode).
+  
+  Args:
+    data (bytes): Data.
+  
+  Returns:
+    Dict[str, int]: Dict[str, int] produced by this call.
+  
+  Raises:
+    FindStatsDiscoveryError: Raised when ``parse_current_inode_records`` hits
+    a ``FindStatsDiscoveryError`` failure path.
+  
+  Examples:
+    >>> parse_current_inode_records(None)  # doctest: +SKIP
+  """
   if not data:
     return {}
   parts = data.split(b"\0")
@@ -185,6 +309,18 @@ def parse_current_inode_records(data: bytes) -> Dict[str, int]:
 
 
 def _stderr_is_only_fnctl_races(stderr: str) -> bool:
+  """
+  Internal helper to handle stderr is only fnctl races.
+  
+  Args:
+    stderr (str): String for stderr.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _stderr_is_only_fnctl_races("x")  # doctest: +SKIP
+  """
   lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
   if not lines:
     return True
@@ -200,7 +336,22 @@ def _stderr_is_only_fnctl_races(stderr: str) -> bool:
 
 
 def _resolve_find_bin(find_bin: Optional[str] = None) -> str:
-  """Resolve GNU find binary (prefer ``gfind`` on macOS Homebrew)."""
+  """
+  Resolve GNU find binary (prefer ``gfind`` on macOS Homebrew).
+  
+  Args:
+    find_bin (Optional[str]): Find bin, or None when absent.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Raises:
+    FindStatsDiscoveryError: Raised when ``_resolve_find_bin`` hits a
+    ``FindStatsDiscoveryError`` failure path.
+  
+  Examples:
+    >>> _resolve_find_bin(None)  # doctest: +SKIP
+  """
   if find_bin:
     candidate = find_bin
   else:
@@ -231,10 +382,27 @@ def _resolve_find_bin(find_bin: Optional[str] = None) -> str:
 
 
 def _run_find_capture(
-    argv: Sequence[str],
-    *,
-    allow_fnctl_race_exit: bool = True,
+  argv: Sequence[str],
+  *,
+  allow_fnctl_race_exit: bool = True,
 ) -> bytes:
+  """
+  Internal helper to run the find capture.
+  
+  Args:
+    argv (Sequence[str]): Sequence for argv.
+    allow_fnctl_race_exit (bool): Boolean flag for allow fnctl race exit.
+  
+  Returns:
+    bytes: bytes produced by this call.
+  
+  Raises:
+    FindStatsDiscoveryError: Raised when ``_run_find_capture`` hits a
+    ``FindStatsDiscoveryError`` failure path.
+  
+  Examples:
+    >>> _run_find_capture([], True)  # doctest: +SKIP
+  """
   try:
     proc = subprocess.run(
         list(argv),
@@ -268,13 +436,27 @@ def _run_find_capture(
 
 
 def run_find_stats(
-    archive_dir: str,
-    *,
-    mtime_days: Optional[int] = None,
-    find_bin: Optional[str] = None,
-    log_fn: Optional[Callable[..., None]] = None,
+  archive_dir: str,
+  *,
+  mtime_days: Optional[int] = None,
+  find_bin: Optional[str] = None,
+  log_fn: Optional[Callable[..., None]] = None,
 ) -> List[FindStatsRecord]:
-  """Run GNU find and return parsed stats records (fail-closed)."""
+  """
+  Run GNU find and return parsed stats records (fail-closed).
+  
+  Args:
+    archive_dir (str): String for archive dir.
+    mtime_days (Optional[int]): Mtime days, or None when absent.
+    find_bin (Optional[str]): Find bin, or None when absent.
+    log_fn (Optional[Callable[..., None]]): Log fn, or None when absent.
+  
+  Returns:
+    List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
+  
+  Examples:
+    >>> run_find_stats("x", None, None, None)  # doctest: +SKIP
+  """
   if not archive_dir or not os.path.isdir(archive_dir):
     return []
   t0 = time.monotonic()
@@ -299,11 +481,23 @@ def run_find_stats(
 
 
 def load_current_inode_map(
-    archive_dir: str,
-    *,
-    find_bin: Optional[str] = None,
+  archive_dir: str,
+  *,
+  find_bin: Optional[str] = None,
 ) -> Dict[str, int]:
-  """Return host_dir → inode for each host ``current`` file via find."""
+  """
+  Return host_dir → inode for each host ``current`` file via find.
+  
+  Args:
+    archive_dir (str): String for archive dir.
+    find_bin (Optional[str]): Find bin, or None when absent.
+  
+  Returns:
+    Dict[str, int]: Dict[str, int] produced by this call.
+  
+  Examples:
+    >>> load_current_inode_map("x", None)  # doctest: +SKIP
+  """
   if not archive_dir or not os.path.isdir(archive_dir):
     return {}
   bin_path = _resolve_find_bin(find_bin)
@@ -313,19 +507,50 @@ def load_current_inode_map(
 
 
 def _is_lock_name(name: str) -> bool:
+  """
+  Internal helper to check if lock name.
+  
+  Args:
+    name (str): String for name.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _is_lock_name("x")  # doctest: +SKIP
+  """
   return name.endswith(LOCK_SUFFIX) or name.endswith(".lock")
 
 
 def filter_and_sort_find_records(
-    records: Iterable[FindStatsRecord],
-    host_name_ext: str,
-    startdate,
-    enddate,
-    current_inodes: Optional[Dict[str, int]] = None,
-    *,
-    newest_first: bool = False,
+  records: Iterable[FindStatsRecord],
+  host_name_ext: str,
+  startdate: Any,
+  enddate: Any,
+  current_inodes: Optional[Dict[str, int]] = None,
+  *,
+  newest_first: bool = False,
 ) -> List[FindStatsRecord]:
-  """Filter find records by host suffix / locks / active inode / date; sort."""
+  """
+  Filter find records by host suffix / locks / active inode / date; sort.
+  
+  Args:
+    records (Iterable[FindStatsRecord]): Records.
+    host_name_ext (str): String for host name ext.
+    startdate (Any): Time value (``datetime``, ISO string, sentinel, or
+    ``None``).
+    enddate (Any): Time value (``datetime``, ISO string, sentinel, or
+    ``None``).
+    current_inodes (Optional[Dict[str, int]]): Current inodes, or None when
+    absent.
+    newest_first (bool): Boolean flag for newest first.
+  
+  Returns:
+    List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
+  
+  Examples:
+    >>> filter_and_sort_find_records(None, "x", None, None, None, True)
+  """
   suffix = (host_name_ext or "").strip()
   if not suffix:
     return []
@@ -359,7 +584,20 @@ def filter_and_sort_find_records(
       selected.append((rec, sort_epoch))
       continue
 
-    def _in_range(ts):
+    def _in_range(ts: Any) -> Any:
+      """
+      Internal helper to handle in range.
+      
+      Args:
+        ts (Any): Time value (``datetime``, ISO string, sentinel, or
+        ``None``).
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Examples:
+        >>> _in_range(None)  # doctest: +SKIP
+      """
       if ts is None:
         return False
       return not (ts <= startdate - timedelta(days=1) or ts > enddate)
@@ -375,17 +613,37 @@ def filter_and_sort_find_records(
 
 
 def discover_stats_records(
-    archive_dir: str,
-    startdate,
-    enddate,
-    host_name_ext: str,
-    *,
-    mtime_days: Optional[int] = None,
-    newest_first: bool = False,
-    find_bin: Optional[str] = None,
-    log_fn: Optional[Callable[..., None]] = None,
+  archive_dir: str,
+  startdate: Any,
+  enddate: Any,
+  host_name_ext: str,
+  *,
+  mtime_days: Optional[int] = None,
+  newest_first: bool = False,
+  find_bin: Optional[str] = None,
+  log_fn: Optional[Callable[..., None]] = None,
 ) -> List[FindStatsRecord]:
-  """Full discovery pipeline: find → current inode map → filter/sort."""
+  """
+  Full discovery pipeline: find → current inode map → filter/sort.
+  
+  Args:
+    archive_dir (str): String for archive dir.
+    startdate (Any): Time value (``datetime``, ISO string, sentinel, or
+    ``None``).
+    enddate (Any): Time value (``datetime``, ISO string, sentinel, or
+    ``None``).
+    host_name_ext (str): String for host name ext.
+    mtime_days (Optional[int]): Mtime days, or None when absent.
+    newest_first (bool): Boolean flag for newest first.
+    find_bin (Optional[str]): Find bin, or None when absent.
+    log_fn (Optional[Callable[..., None]]): Log fn, or None when absent.
+  
+  Returns:
+    List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
+  
+  Examples:
+    >>> discover_stats_records("x", None, None, "x", None, True, None, None)
+  """
   records = run_find_stats(
       archive_dir,
       mtime_days=mtime_days,
@@ -408,17 +666,31 @@ JID_NEIGHBOR_FILES = 1
 
 
 def expand_sorted_records_with_window_neighbors(
-    sorted_items: Sequence[Tuple[FindStatsRecord, int]],
-    window_start: datetime,
-    window_end: datetime,
-    *,
-    neighbor_files: int = JID_NEIGHBOR_FILES,
+  sorted_items: Sequence[Tuple[FindStatsRecord, int]],
+  window_start: datetime,
+  window_end: datetime,
+  *,
+  neighbor_files: int = JID_NEIGHBOR_FILES,
 ) -> List[FindStatsRecord]:
-  """Keep in-window records plus ±N neighbors from an epoch-sorted host list.
-
+  """
+  Keep in-window records plus ±N neighbors from an epoch-sorted host list.
+  
   ``sorted_items`` must already be sorted ascending by epoch. When the core
   (in-window) set is empty, take the last file before ``window_start`` and the
   first file after ``window_end`` (when present).
+  
+  Args:
+    sorted_items (Sequence[Tuple[FindStatsRecord, int]]): Sequence for sorted
+    items.
+    window_start (datetime): Window start.
+    window_end (datetime): Window end.
+    neighbor_files (int): Integer value for neighbor files.
+  
+  Returns:
+    List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
+  
+  Examples:
+    >>> expand_sorted_records_with_window_neighbors([], None, None, 0)
   """
   if not sorted_items:
     return []
@@ -462,20 +734,36 @@ def expand_sorted_records_with_window_neighbors(
 
 
 def filter_host_scoped_window_records(
-    records: Iterable[FindStatsRecord],
-    host_fqdns: Sequence[str],
-    window_start: datetime,
-    window_end: datetime,
-    current_inodes: Optional[Dict[str, int]] = None,
-    *,
-    neighbor_files: int = JID_NEIGHBOR_FILES,
+  records: Iterable[FindStatsRecord],
+  host_fqdns: Sequence[str],
+  window_start: datetime,
+  window_end: datetime,
+  current_inodes: Optional[Dict[str, int]] = None,
+  *,
+  neighbor_files: int = JID_NEIGHBOR_FILES,
 ) -> List[FindStatsRecord]:
-  """Filter records to allowed hosts; keep padded window plus ±N neighbors.
-
+  """
+  Filter records to allowed hosts; keep padded window plus ±N neighbors.
+  
   Skips locks, ``current*``, dotfiles, and live ``current`` inodes (same as
   continuous sync). Epoch basename is preferred; mtime is the fallback clock.
   Neighbor expansion runs **independently per host** on that host's
   epoch-sorted eligible list.
+  
+  Args:
+    records (Iterable[FindStatsRecord]): Records.
+    host_fqdns (Sequence[str]): Sequence for host fqdns.
+    window_start (datetime): Window start.
+    window_end (datetime): Window end.
+    current_inodes (Optional[Dict[str, int]]): Current inodes, or None when
+    absent.
+    neighbor_files (int): Integer value for neighbor files.
+  
+  Returns:
+    List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
+  
+  Examples:
+    >>> filter_host_scoped_window_records(None, [], None, None, None, 0)
   """
   allow = {
       str(h).strip()
@@ -528,18 +816,33 @@ def filter_host_scoped_window_records(
 
 
 def discover_host_scoped_stats_records(
-    archive_dir: str,
-    host_fqdns: Sequence[str],
-    window_start: datetime,
-    window_end: datetime,
-    *,
-    find_bin: Optional[str] = None,
-    log_fn: Optional[Callable[..., None]] = None,
+  archive_dir: str,
+  host_fqdns: Sequence[str],
+  window_start: datetime,
+  window_end: datetime,
+  *,
+  find_bin: Optional[str] = None,
+  log_fn: Optional[Callable[..., None]] = None,
 ) -> List[FindStatsRecord]:
-  """Discover stats under named host dirs only (no full-archive find).
-
+  """
+  Discover stats under named host dirs only (no full-archive find).
+  
   Runs GNU find per existing ``{archive_dir}/{fqdn}`` directory. Missing host
   dirs are skipped. Does not walk unrelated hosts.
+  
+  Args:
+    archive_dir (str): String for archive dir.
+    host_fqdns (Sequence[str]): Sequence for host fqdns.
+    window_start (datetime): Window start.
+    window_end (datetime): Window end.
+    find_bin (Optional[str]): Find bin, or None when absent.
+    log_fn (Optional[Callable[..., None]]): Log fn, or None when absent.
+  
+  Returns:
+    List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
+  
+  Examples:
+    >>> discover_host_scoped_stats_records("x", [], None, None, None, None)
   """
   if not archive_dir or not os.path.isdir(archive_dir):
     return []
@@ -596,15 +899,31 @@ def discover_host_scoped_stats_records(
 
 
 def collect_host_scoped_stats_paths(
-    archive_dir: str,
-    host_fqdns: Sequence[str],
-    window_start: datetime,
-    window_end: datetime,
-    *,
-    find_bin: Optional[str] = None,
-    log_fn: Optional[Callable[..., None]] = None,
+  archive_dir: str,
+  host_fqdns: Sequence[str],
+  window_start: datetime,
+  window_end: datetime,
+  *,
+  find_bin: Optional[str] = None,
+  log_fn: Optional[Callable[..., None]] = None,
 ) -> List[str]:
-  """Return host-scoped stats paths in padded window plus ±1 file neighbors."""
+  """
+  Return host-scoped stats paths in padded window plus ±1 file neighbors.
+  
+  Args:
+    archive_dir (str): String for archive dir.
+    host_fqdns (Sequence[str]): Sequence for host fqdns.
+    window_start (datetime): Window start.
+    window_end (datetime): Window end.
+    find_bin (Optional[str]): Find bin, or None when absent.
+    log_fn (Optional[Callable[..., None]]): Log fn, or None when absent.
+  
+  Returns:
+    List[str]: List[str] produced by this call.
+  
+  Examples:
+    >>> collect_host_scoped_stats_paths("x", [], None, None, None, None)
+  """
   return [
       rec.path
       for rec in discover_host_scoped_stats_records(

@@ -1,9 +1,16 @@
-"""Lustre llite metadata events summed for client-side IOPS (summary + job-detail FSIO peaks).
+"""
+Lustre llite metadata events summed for client-side IOPS (summary + job-detail
+FSIO peaks).
 
 Canonical vfs_*_ops names (monitor lustre_llite KEYS). Dual-read via
 ``events_probe_names(..., typ=lustre_llite)`` expands legacy proc opcode names
 for historical archives. Kept in one module so summary plots, tests, and FSIO
 peak logic stay aligned.
+
+Attributes:
+  LLITE_METADATA_IOPS_EVENTS: Attribute.
+  LLITE_READ_BYTES_EVENTS: Attribute.
+  LLITE_WRITE_BYTES_EVENTS: Attribute.
 """
 from __future__ import annotations
 

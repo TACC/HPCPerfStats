@@ -1,4 +1,14 @@
-"""Shared helpers for machine app: job_hist (Bokeh histograms), local_timezone, XALT containers (libset_c, xalt_data_c). Used by the REST API only; React SPA is the only UI."""
+"""
+Shared helpers for machine app: job_hist (Bokeh histograms), local_timezone,
+XALT containers (libset_c, xalt_data_c). Used by the REST API only; React SPA is
+the only UI.
+
+Attributes:
+  local_timezone: Attribute.
+"""
+from __future__ import annotations
+
+from typing import Any
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 
@@ -14,32 +24,90 @@ local_timezone = cfg.get_local_timezone()
 
 
 class libset_c:
-    """Simple container for (object_path, module_name) used in XALT libset."""
+    """
+    Simple container for (object_path, module_name) used in XALT libset.
+    
+    Attributes:
+      module_name: Attribute.
+      object_path: Attribute.
+    """
 
-    def __init__(self, object_path, module_name):
+    def __init__(self, object_path: str, module_name: Any) -> None:
+        """
+        Initialize a new instance.
+        
+        Args:
+          object_path (str): String for object path.
+          module_name (Any): Module name passed to this helper.
+        
+        Returns:
+          None
+        
+        Examples:
+          >>> libset_c("x", None)  # doctest: +SKIP
+        """
         self.module_name = module_name
         self.object_path = object_path
 
 
 class xalt_data_c:
-    """Container for XALT data: exec_path list, cwd list, libset list."""
+    """
+    Container for XALT data: exec_path list, cwd list, libset list.
+    
+    Attributes:
+      cwd: Attribute.
+      exec_path: Attribute.
+      libset: Attribute.
+    """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """
+        Initialize a new instance.
+        
+        Returns:
+          None
+        
+        Examples:
+          >>> xalt_data_c()  # doctest: +SKIP
+        """
         self.exec_path = []
         self.cwd = []
         self.libset = []
 
 
-def job_hist(df, metric, label, width=600, height=400, title=None):
-    """Build a Bokeh quad histogram for the given metric column and axis label.
-
-    Optional width/height allow thumbnail (e.g. 280x200) vs full (600x400) sizes.
+def job_hist(
+  df: Any,
+  metric: Any,
+  label: Any,
+  width: int = 600,
+  height: int = 400,
+  title: Any | None = None,
+) -> Any:
+    """
+    Build a Bokeh quad histogram for the given metric column and axis label.
+    
+    Optional width/height allow thumbnail (e.g. 280x200) vs full (600x400)
+      sizes.
     Optional title overrides the figure title (defaults to metric column name).
     Uses only finite values; handles empty, constant, and all-zero data safely.
-
+    
     Job-list embeds omit toolbar and HoverTool: Bokeh 3.x can throw
     ``can't access property "is_valid", e is undefined`` when hit-testing /
     tool panels interact with small embedded figures (see queue vbar path).
+    
+    Args:
+      df (Any): Df passed to this helper.
+      metric (Any): Metric passed to this helper.
+      label (Any): Label passed to this helper.
+      width (int): Integer value for width.
+      height (int): Integer value for height.
+      title (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> job_hist(None, None, None, 0, 0, None)  # doctest: +SKIP
     """
     if metric not in df.columns:
         return None

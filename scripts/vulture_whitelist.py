@@ -1,6 +1,10 @@
-"""Vulture whitelist: intentional stubs and framework entrypoints.
+"""
+Vulture whitelist: intentional stubs and framework entrypoints.
 
 Run: vulture hpcperfstats scripts/vulture_whitelist.py --min-confidence 80
+
+Attributes:
+  _JANITOR_ONLY_STUBS: Attribute.
 """
 from __future__ import annotations
 

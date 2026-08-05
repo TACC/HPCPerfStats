@@ -1,9 +1,56 @@
-"""Redis-backed caching for Django ORM query results.
-
-Use cached_orm() to wrap any callable that performs a read and returns
-a cacheable value (e.g. list of dicts, model instance, DataFrame-serializable).
-Cache keys should be unique per query; timeouts are in seconds.
 """
+Redis-backed caching for Django ORM query results.
+
+Use cached_orm() to wrap any callable that performs a read and returns a
+cacheable value (e.g. list of dicts, model instance, DataFrame-serializable).
+Cache keys should be unique per query; timeouts are in seconds.
+
+Attributes:
+  KEY_ADMIN_CACHE_STATS: Attribute.
+  KEY_ADMIN_HOST_STATS: Attribute.
+  KEY_ADMIN_RMQ_SNAPSHOT: Attribute.
+  KEY_ADMIN_RMQ_STATS: Attribute.
+  KEY_ADMIN_TIMESCALE_STATS: Attribute.
+  KEY_ADMIN_XALT_STATS: Attribute.
+  KEY_AGG_DF: Attribute.
+  KEY_DATES: Attribute.
+  KEY_GPU_AGG: Attribute.
+  KEY_GPU_COUNT: Attribute.
+  KEY_HOST_DATA_DF: Attribute.
+  KEY_HOST_PLOT: Attribute.
+  KEY_HOST_SCHEMA: Attribute.
+  KEY_HOST_TIME_DF: Attribute.
+  KEY_JID_HOST_WINDOW_ROW_COUNT: Attribute.
+  KEY_JOB: Attribute.
+  KEY_JOB_CACHE_VERSION: Attribute.
+  KEY_JOB_DICT: Attribute.
+  KEY_JOB_HOST_LIST: Attribute.
+  KEY_JOB_JID_TABLE_WINDOW: Attribute.
+  KEY_JOB_PLOT_KEYSET: Attribute.
+  KEY_JOB_SCHEMA: Attribute.
+  KEY_LLITE_DELTA: Attribute.
+  KEY_METRICS_DISTINCT: Attribute.
+  KEY_NFS_FSIO: Attribute.
+  KEY_NONSTAFF_ACCOUNTS: Attribute.
+  KEY_PROC_LIST: Attribute.
+  KEY_QUEUES: Attribute.
+  KEY_SITE_NEWEST_JOB_END: Attribute.
+  KEY_STATES: Attribute.
+  KEY_TYPE_DETAIL_AGG: Attribute.
+  KEY_TYPE_DETAIL_HOSTS: Attribute.
+  KEY_TYPE_DETAIL_HOST_TIME: Attribute.
+  KEY_XALT: Attribute.
+  SITE_CACHE_TTL_FRESH_SECONDS: Attribute.
+  SITE_FRESHNESS_WINDOW_DAYS: Attribute.
+  SITE_NEWEST_END_META_TTL_SECONDS: Attribute.
+  TIMEOUT_ADMIN_STATS: Attribute.
+  _CACHE_MISS: Attribute.
+  _INVALID_SITE_NEWEST_END_PROBE: Attribute.
+"""
+from __future__ import annotations
+
+from typing import Any
+
 import hashlib
 import logging
 import os
@@ -34,8 +81,23 @@ KEY_SITE_NEWEST_JOB_END = "site_newest_job_end_v1"
 _INVALID_SITE_NEWEST_END_PROBE = object()
 
 
-def _coerce_site_newest_job_end_time(m):
-  """Normalize DB or cache probe to timezone-aware datetime, or None. _INVALID_* if unusable."""
+def _coerce_site_newest_job_end_time(m: Any) -> Any:
+  """
+  Normalize DB or cache probe to timezone-aware datetime, or None. _INVALID_*.
+  
+    if.
+  
+    unusable.
+  
+  Args:
+    m (Any): M passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _coerce_site_newest_job_end_time(None)  # doctest: +SKIP
+  """
   if m is None:
     return None
   if isinstance(m, datetime):
@@ -62,22 +124,44 @@ def _coerce_site_newest_job_end_time(m):
 
 
 def _cache_debug_enabled() -> bool:
-  """Return True if extra cache debug logging should be enabled."""
+  """
+  Return True if extra cache debug logging should be enabled.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _cache_debug_enabled()  # doctest: +SKIP
+  """
   if getattr(settings, "DEBUG", False):
     return True
   return os.environ.get("HPCPERF_CACHE_DEBUG", "").lower() in ("1", "true", "yes")
 
 
-def cached_orm(cache_key, timeout, query_fn):
-  """Execute query_fn() on cache miss; return cached value on hit.
-
-    query_fn is a callable that takes no arguments and returns the value to cache.
-    The value must be picklable (e.g. list of dicts from .values(), or None).
-    None is stored as a wrapped tuple so we can distinguish "missing key" from "cached None".
-    If the cache backend is unavailable (e.g. Redis down), query_fn() is used and the result is not cached.
-    When DEBUG or HPCPERF_CACHE_DEBUG is enabled, log basic hit/miss and timing
-    information for visibility into heavy ORM/cache usage.
-    """
+def cached_orm(cache_key: Any, timeout: int, query_fn: Any) -> Any:
+  """
+  Execute query_fn() on cache miss; return cached value on hit.
+  
+  query_fn is a callable that takes no arguments and returns the value to cache.
+  The value must be picklable (e.g. list of dicts from .values(), or None).
+  None is stored as a wrapped tuple so we can distinguish "missing key" from
+    "cached None".
+  If the cache backend is unavailable (e.g. Redis down), query_fn() is used and
+    the result is not cached.
+  When DEBUG or HPCPERF_CACHE_DEBUG is enabled, log basic hit/miss and timing
+  information for visibility into heavy ORM/cache usage.
+  
+  Args:
+    cache_key (Any): Cache key passed to this helper.
+    timeout (int): Integer value for timeout.
+    query_fn (Any): Callable invoked by this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> cached_orm(None, 0, None)  # doctest: +SKIP
+  """
   log_debug = _cache_debug_enabled()
   logger = logging.getLogger(__name__)
   start = time.time() if log_debug else None
@@ -122,22 +206,52 @@ def cached_orm(cache_key, timeout, query_fn):
   return value
 
 
-def _unwrap_meta_value(wrapped):
+def _unwrap_meta_value(wrapped: Any) -> Any:
+  """
+  Internal helper to handle unwrap meta value.
+  
+  Args:
+    wrapped (Any): Wrapped passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _unwrap_meta_value(None)  # doctest: +SKIP
+  """
   if isinstance(wrapped, tuple) and len(wrapped) == 1:
     return wrapped[0]
   return wrapped
 
 
-def get_site_newest_job_end_time():
-  """Return max(job_data.end_time) with a short-lived cache; None if no jobs.
-
+def get_site_newest_job_end_time() -> Any:
+  """
+  Return max(job_data.end_time) with a short-lived cache; None if no jobs.
+  
   Values are normalized to timezone-aware datetimes. Cache entries may be legacy
   ints (Unix epoch) or ISO strings depending on serializer — those are accepted.
+  
+  Returns:
+    Any: Open return polymorphism from ``get_site_newest_job_end_time``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> get_site_newest_job_end_time()  # doctest: +SKIP
   """
   try:
     from .models import job_data
 
-    def from_db():
+    def from_db() -> Any:
+      """
+      From db.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Examples:
+        >>> from_db()  # doctest: +SKIP
+      """
       return job_data.objects.aggregate(x=Max("end_time"))["x"]
 
     wrapped = cache.get(KEY_SITE_NEWEST_JOB_END, _CACHE_MISS)
@@ -173,11 +287,23 @@ def get_site_newest_job_end_time():
       return None
 
 
-def get_site_content_cache_timeout():
-  """TTL for workload/reference cache entries: 1h if DB is fresh, else None (LRU only).
-
-    Empty DB (no end_time) uses the fresh TTL so new deployments do not stick forever.
-    """
+def get_site_content_cache_timeout() -> Any:
+  """
+  TTL for workload/reference cache entries: 1h if DB is fresh, else None (LRU.
+  
+    only).
+  
+  Empty DB (no end_time) uses the fresh TTL so new deployments do not stick
+    forever.
+  
+  Returns:
+    Any: Open return polymorphism from ``get_site_content_cache_timeout``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> get_site_content_cache_timeout()  # doctest: +SKIP
+  """
   m = get_site_newest_job_end_time()
   if m is None:
     return SITE_CACHE_TTL_FRESH_SECONDS
@@ -189,8 +315,18 @@ def get_site_content_cache_timeout():
   return None
 
 
-def invalidate_home_options_query_cache():
-  """Drop cached_orm keys and site newest probe used by GET /api/home/ (home_options)."""
+def invalidate_home_options_query_cache() -> None:
+  """
+  Drop cached_orm keys and site newest probe used by GET /api/home/.
+  
+    (home_options).
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> invalidate_home_options_query_cache()  # doctest: +SKIP
+  """
   try:
     cache.delete(KEY_SITE_NEWEST_JOB_END)
     cache.delete(KEY_DATES)
@@ -201,14 +337,31 @@ def invalidate_home_options_query_cache():
     pass
 
 
-def invalidate_after_job_data_ingest(inserted_count, inserted_jids=None):
-  """Drop site freshness probe and home_options reference keys after new job_data rows.
-
-  When *inserted_jids* is provided, only expansion-factor dashboard artifacts for
+def invalidate_after_job_data_ingest(
+  inserted_count: int,
+  inserted_jids: Any | None = None,
+) -> None:
+  """
+  Drop site freshness probe and home_options reference keys after new job_data.
+  
+    rows.
+  
+  When *inserted_jids* is provided, only expansion-factor dashboard artifacts
+    for
   those jobs' calendar periods are marked for rebuild (see
   :func:`invalidate_public_metrics_artifacts_for_jids`). Otherwise falls back
   to marking every prewarmed /pub row stale — avoid that in hot paths where
   *inserted_jids* is knowable (e.g. accounting ingest).
+  
+  Args:
+    inserted_count (int): Integer value for inserted count.
+    inserted_jids (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> invalidate_after_job_data_ingest(0, None)  # doctest: +SKIP
   """
   if inserted_count <= 0:
     return
@@ -227,18 +380,41 @@ def invalidate_after_job_data_ingest(inserted_count, inserted_jids=None):
     pass
 
 
-def make_job_detail_cache_key(jid):
-  """Redis key for cached job_data rows used by job detail (versioned for prefetch shape)."""
+def make_job_detail_cache_key(jid: Any) -> Any:
+  """
+  Redis key for cached job_data rows used by job detail (versioned for prefetch.
+  
+    shape).
+  
+  Args:
+    jid (Any): Jid passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> make_job_detail_cache_key(None)  # doctest: +SKIP
+  """
   return f"{KEY_JOB}:{KEY_JOB_CACHE_VERSION}:{jid}"
 
 
-def ensure_job_metrics_data_prefetched(job):
-  """Always refresh metrics_data_set from DB (Redis may pickle a stale prefetch).
-
+def ensure_job_metrics_data_prefetched(job: Any) -> Any:
+  """
+  Always refresh metrics_data_set from DB (Redis may pickle a stale prefetch).
+  
   Django can pickle ``_prefetched_objects_cache`` into KEY_JOB. Trusting that
   cache after metrics persist left Job Detail Resources (e.g. watt-hours) blank
   while ``metrics_data`` already had values. Drop any pickled prefetch and
   re-query so display lists match the live catalog.
+  
+  Args:
+    job (Any): Job record (Django ``job_data`` or job-like mapping).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> ensure_job_metrics_data_prefetched(None)  # doctest: +SKIP
   """
   if job is None:
     return job
@@ -253,8 +429,20 @@ def ensure_job_metrics_data_prefetched(job):
   return job
 
 
-def cached_non_staff_visible_accounts(username, timeout):
-  """Distinct accounts for jobs owned by username (non-staff list visibility)."""
+def cached_non_staff_visible_accounts(username: Any, timeout: int) -> Any:
+  """
+  Distinct accounts for jobs owned by username (non-staff list visibility).
+  
+  Args:
+    username (Any): Username passed to this helper.
+    timeout (int): Integer value for timeout.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> cached_non_staff_visible_accounts(None, 0)  # doctest: +SKIP
+  """
   username = str(username or "").strip()
   if not username:
     return []
@@ -273,8 +461,22 @@ def cached_non_staff_visible_accounts(username, timeout):
   )
 
 
-def warm_job_cache_entries(job_instances, timeout):
-  """Seed versioned KEY_JOB cache rows from in-memory job_data (e.g. post bulk_create)."""
+def warm_job_cache_entries(job_instances: Any, timeout: int) -> None:
+  """
+  Seed versioned KEY_JOB cache rows from in-memory job_data (e.g. post.
+  
+    bulk_create).
+  
+  Args:
+    job_instances (Any): Job instances passed to this helper.
+    timeout (int): Integer value for timeout.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> warm_job_cache_entries(None, 0)  # doctest: +SKIP
+  """
   if not job_instances:
     return
   try:
@@ -287,8 +489,19 @@ def warm_job_cache_entries(job_instances, timeout):
     pass
 
 
-def invalidate_jid_derived_cache_keys(jids):
-  """Remove per-job aggregate caches after host_data / proc_data ingest."""
+def invalidate_jid_derived_cache_keys(jids: Any) -> None:
+  """
+  Remove per-job aggregate caches after host_data / proc_data ingest.
+  
+  Args:
+    jids (Any): Jids passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> invalidate_jid_derived_cache_keys(None)  # doctest: +SKIP
+  """
   if not jids:
     return
   invalidate_jid_host_window_row_count_cache(jids)
@@ -313,8 +526,18 @@ def invalidate_jid_derived_cache_keys(jids):
     pass
 
 
-def _get_redis_py_client():
-  """Best-effort redis-py client from Django's default cache (for SCAN)."""
+def _get_redis_py_client() -> Any:
+  """
+  Best-effort redis-py client from Django's default cache (for SCAN).
+  
+  Returns:
+    Any: Open return polymorphism from ``_get_redis_py_client``: concrete type
+    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+    empty).
+  
+  Examples:
+    >>> _get_redis_py_client()  # doctest: +SKIP
+  """
   backend = getattr(cache, "_cache", None)
   if backend is None:
     return None
@@ -334,8 +557,19 @@ def _get_redis_py_client():
   return client
 
 
-def invalidate_job_plot_cache_keys_for_jids(jids):
-  """Delete JOB_PLOTS_JSON / JOB_PLOTS_DATA Redis keys for the given jids (SCAN)."""
+def invalidate_job_plot_cache_keys_for_jids(jids: Any) -> None:
+  """
+  Delete JOB_PLOTS_JSON / JOB_PLOTS_DATA Redis keys for the given jids (SCAN).
+  
+  Args:
+    jids (Any): Jids passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> invalidate_job_plot_cache_keys_for_jids(None)  # doctest: +SKIP
+  """
   if not jids:
     return
   client = _get_redis_py_client()
@@ -383,8 +617,16 @@ def invalidate_job_plot_cache_keys_for_jids(jids):
     pass
 
 
-def invalidate_metrics_distinct_cache():
-  """Clear distinct metrics list after metrics_data writes."""
+def invalidate_metrics_distinct_cache() -> None:
+  """
+  Clear distinct metrics list after metrics_data writes.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> invalidate_metrics_distinct_cache()  # doctest: +SKIP
+  """
   try:
     cache.delete(KEY_METRICS_DISTINCT)
   except Exception:
@@ -436,23 +678,50 @@ KEY_JOB_PLOT_KEYSET = "job_plot_keyset"
 TIMEOUT_ADMIN_STATS = 10
 
 
-def make_cache_key(prefix: str, *parts) -> str:
-  """Build a cache key from a prefix and optional parts joined by ':'."""
+def make_cache_key(prefix: str, *parts: Any) -> str:
+  """
+  Build a cache key from a prefix and optional parts joined by ':'.
+  
+  Args:
+    prefix (str): String for prefix.
+    *parts (Any): Extra positional values for ``parts``; element types match
+    the helper's documented protocol.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> make_cache_key("x")  # doctest: +SKIP
+  """
   if not parts:
     return prefix
   return ":".join([prefix] + [str(p) for p in parts])
 
 
 def make_cache_key_bounded(
-    prefix: str,
-    *parts,
-    max_piece_len: int = 56,
-    digest_len: int = 40,
+  prefix: str,
+  *parts: Any,
+  max_piece_len: int = 56,
+  digest_len: int = 40,
 ) -> str:
-  """Like ``make_cache_key`` but replace overly long *parts* with a SHA-256 prefix.
-
+  """
+  Like ``make_cache_key`` but replace overly long *parts* with a SHA-256 prefix.
+  
   Keeps keys under typical Memcached 250-byte limits when *parts* include long
   event-name lists (e.g. aggregate DataFrame cache keys).
+  
+  Args:
+    prefix (str): String for prefix.
+    *parts (Any): Extra positional values for ``parts``; element types match
+    the helper's documented protocol.
+    max_piece_len (int): Integer value for max piece len.
+    digest_len (int): Integer value for digest len.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> make_cache_key_bounded("x", 0, 0)  # doctest: +SKIP
   """
   pieces = [prefix]
   for p in parts:
@@ -463,8 +732,20 @@ def make_cache_key_bounded(
   return ":".join(pieces)
 
 
-def register_job_plot_cache_key(jid, cache_key):
-  """Track per-jid plot cache keys to avoid expensive wildcard scans."""
+def register_job_plot_cache_key(jid: Any, cache_key: Any) -> None:
+  """
+  Track per-jid plot cache keys to avoid expensive wildcard scans.
+  
+  Args:
+    jid (Any): Jid passed to this helper.
+    cache_key (Any): Cache key passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> register_job_plot_cache_key(None, None)  # doctest: +SKIP
+  """
   if not jid or not cache_key:
     return
   client = _get_redis_py_client()
@@ -479,8 +760,19 @@ def register_job_plot_cache_key(jid, cache_key):
 KEY_JID_HOST_WINDOW_ROW_COUNT = "jid_hwrow"
 
 
-def invalidate_jid_host_window_row_count_cache(jids):
-  """Drop cached window row counts for ``jid_table`` large-job gating."""
+def invalidate_jid_host_window_row_count_cache(jids: Any) -> None:
+  """
+  Drop cached window row counts for ``jid_table`` large-job gating.
+  
+  Args:
+    jids (Any): Jids passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> invalidate_jid_host_window_row_count_cache(None)  # doctest: +SKIP
+  """
   if not jids:
     return
   client = _get_redis_py_client()

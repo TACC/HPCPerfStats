@@ -1,6 +1,14 @@
-"""Transient heartbeat so CLI ``backlog`` can exit near an active ``current`` run.
+"""
+Transient heartbeat so CLI ``backlog`` can exit near an active ``current`` run.
 
-Not a persistence-contract artifact — missing/stale/corrupt → fail-open (``backlog`` continues).
+Not a persistence-contract artifact — missing/stale/corrupt → fail-open
+(``backlog`` continues).
+
+Attributes:
+  DEFAULT_MAX_AGE_S: Attribute.
+  HEARTBEAT_BASENAME: Attribute.
+  REDIS_HEARTBEAT_KEY: Attribute.
+  REDIS_HEARTBEAT_TTL_S: Attribute.
 """
 from __future__ import annotations
 
@@ -36,8 +44,23 @@ __all__ = [
 ]
 
 
-def calendar_day_from_stats_path(path, tgz_archive_dir) -> Optional[date]:
-  """Best-effort calendar day for a raw stats path (tar basename day preferred)."""
+def calendar_day_from_stats_path(
+  path: str,
+  tgz_archive_dir: str,
+) -> Optional[date]:
+  """
+  Best-effort calendar day for a raw stats path (tar basename day preferred).
+  
+  Args:
+    path (str): String for path.
+    tgz_archive_dir (str): String for tgz archive dir.
+  
+  Returns:
+    Optional[date]: Optional[date] — the result, or None when unavailable.
+  
+  Examples:
+    >>> calendar_day_from_stats_path("x", "x")  # doctest: +SKIP
+  """
   if not path:
     return None
   tar = daily_tar_path_for_stats_path(path, tgz_archive_dir)
@@ -56,11 +79,23 @@ def calendar_day_from_stats_path(path, tgz_archive_dir) -> Optional[date]:
 
 
 def oldest_active_day_from_paths(
-    paths: Iterable[str],
-    *,
-    daily_archive_dir: Optional[str] = None,
+  paths: Iterable[str],
+  *,
+  daily_archive_dir: Optional[str] = None,
 ) -> Optional[date]:
-  """Min calendar day among ``paths`` (in-flight ∪ chunk), not full pending."""
+  """
+  Min calendar day among ``paths`` (in-flight ∪ chunk), not full pending.
+  
+  Args:
+    paths (Iterable[str]): Paths.
+    daily_archive_dir (Optional[str]): Daily archive dir, or None when absent.
+  
+  Returns:
+    Optional[date]: Optional[date] — the result, or None when unavailable.
+  
+  Examples:
+    >>> oldest_active_day_from_paths(None, None)  # doctest: +SKIP
+  """
   days = []
   for path in paths or ():
     day = calendar_day_from_stats_path(path, daily_archive_dir)
@@ -72,10 +107,34 @@ def oldest_active_day_from_paths(
 
 
 def _heartbeat_sidecar_path(archive_dir: str) -> str:
+  """
+  Internal helper to handle heartbeat sidecar path.
+  
+  Args:
+    archive_dir (str): String for archive dir.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _heartbeat_sidecar_path("x")  # doctest: +SKIP
+  """
   return os.path.join(str(archive_dir), HEARTBEAT_BASENAME)
 
 
-def _coerce_day(value) -> Optional[date]:
+def _coerce_day(value: Any) -> Optional[date]:
+  """
+  Internal helper to coerce the day.
+  
+  Args:
+    value (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    Optional[date]: Optional[date] — the result, or None when unavailable.
+  
+  Examples:
+    >>> _coerce_day(None)  # doctest: +SKIP
+  """
   if value is None:
     return None
   if isinstance(value, date) and not isinstance(value, datetime):
@@ -90,6 +149,18 @@ def _coerce_day(value) -> Optional[date]:
 
 
 def _payload_from_raw(raw: Any) -> Optional[dict]:
+  """
+  Internal helper to handle payload from raw.
+  
+  Args:
+    raw (Any): Raw passed to this helper.
+  
+  Returns:
+    Optional[dict]: Optional[dict] — the result, or None when unavailable.
+  
+  Examples:
+    >>> _payload_from_raw(None)  # doctest: +SKIP
+  """
   if raw is None:
     return None
   if isinstance(raw, (bytes, bytearray)):
@@ -118,6 +189,23 @@ def _payload_from_raw(raw: Any) -> Optional[dict]:
 
 
 def _write_sidecar_atomic(archive_dir: str, payload: dict) -> None:
+  """
+  Internal helper to write the sidecar atomic.
+  
+  Args:
+    archive_dir (str): String for archive dir.
+    payload (dict): Mapping for payload.
+  
+  Returns:
+    None
+  
+  Raises:
+    Exception: Raised when ``_write_sidecar_atomic`` hits a ``Exception``
+    failure path.
+  
+  Examples:
+    >>> _write_sidecar_atomic("x", {})  # doctest: +SKIP
+  """
   os.makedirs(archive_dir, exist_ok=True)
   dest = _heartbeat_sidecar_path(archive_dir)
   parent = archive_dir
@@ -142,17 +230,31 @@ def _write_sidecar_atomic(archive_dir: str, payload: dict) -> None:
 
 
 def publish_current_heartbeat(
-    *,
-    archive_dir: str,
-    active_paths,
-    daily_archive_dir: Optional[str] = None,
-    now: Optional[float] = None,
-    redis_client=None,
+  *,
+  archive_dir: str,
+  active_paths: Any,
+  daily_archive_dir: Optional[str] = None,
+  now: Optional[float] = None,
+  redis_client: Any | None = None,
 ) -> dict:
-  """Publish oldest active calendar day for CLI ``current``.
-
+  """
+  Publish oldest active calendar day for CLI ``current``.
+  
   Prefers Redis when ``redis_client`` is provided; otherwise writes the
   archive-dir sidecar atomically.
+  
+  Args:
+    archive_dir (str): String for archive dir.
+    active_paths (Any): Iterable of filesystem paths as strings.
+    daily_archive_dir (Optional[str]): Daily archive dir, or None when absent.
+    now (Optional[float]): Now, or None when absent.
+    redis_client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    dict: dict produced by this call.
+  
+  Examples:
+    >>> publish_current_heartbeat("x", None, None, None, None)  # doctest: +SKIP
   """
   day = oldest_active_day_from_paths(
       active_paths,
@@ -179,13 +281,27 @@ def publish_current_heartbeat(
 
 
 def read_current_heartbeat(
-    *,
-    archive_dir: str,
-    max_age_s: float = DEFAULT_MAX_AGE_S,
-    now: Optional[float] = None,
-    redis_client=None,
+  *,
+  archive_dir: str,
+  max_age_s: float = DEFAULT_MAX_AGE_S,
+  now: Optional[float] = None,
+  redis_client: Any | None = None,
 ) -> Optional[dict]:
-  """Return a fresh heartbeat dict, or ``None`` if missing/corrupt/stale."""
+  """
+  Return a fresh heartbeat dict, or ``None`` if missing/corrupt/stale.
+  
+  Args:
+    archive_dir (str): String for archive dir.
+    max_age_s (float): Floating-point value for max age s.
+    now (Optional[float]): Now, or None when absent.
+    redis_client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Optional[dict]: Optional[dict] — the result, or None when unavailable.
+  
+  Examples:
+    >>> read_current_heartbeat("x", 0, None, None)  # doctest: +SKIP
+  """
   raw = None
   if redis_client is not None:
     try:
@@ -212,12 +328,27 @@ def read_current_heartbeat(
 
 
 def should_backlog_exit_for_current_proximity(
-    *,
-    next_pending_day,
-    heartbeat,
-    proximity_days: int,
+  *,
+  next_pending_day: Any,
+  heartbeat: Any,
+  proximity_days: int,
 ) -> bool:
-  """True when ``backlog``'s next oldest pending day is within proximity of heartbeat D."""
+  """
+  True when ``backlog``'s next oldest pending day is within proximity of.
+  
+    heartbeat D.
+  
+  Args:
+    next_pending_day (Any): Next pending day passed to this helper.
+    heartbeat (Any): Heartbeat passed to this helper.
+    proximity_days (int): Integer value for proximity days.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> should_backlog_exit_for_current_proximity(None, None, 0)
+  """
   if not heartbeat:
     return False
   pending = _coerce_day(next_pending_day)

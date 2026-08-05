@@ -1,6 +1,29 @@
-"""RabbitMQ listener daemon. Consumes messages from the configured queue and appends payloads to per-host files under the archive directory. Single-instance via file lock.
-
 """
+RabbitMQ listener daemon. Consumes messages from the configured queue and
+appends payloads to per-host files under the archive directory. Single- instance
+via file lock.
+
+Attributes:
+  DEBUG: Attribute.
+  IDLE_CHECK_INTERVAL: Attribute.
+  MESSAGE_WINDOW_SECONDS: Attribute.
+  RECENT_HOST_TTL_SECONDS: Attribute.
+  _idle_monitor_stop_event: Attribute.
+  _idle_thread_started: Attribute.
+  _last_idle_report_time: Attribute.
+  _last_message_time: Attribute.
+  _message_timestamps: Attribute.
+  _recent_host_queue: Attribute.
+  _recent_host_redis_client: Attribute.
+  _recent_host_worker_stop_event: Attribute.
+  _recent_host_worker_thread_started: Attribute.
+  _timestamps_lock: Attribute.
+  _unlink_timestamps: Attribute.
+"""
+from __future__ import annotations
+
+from typing import Any
+
 import os
 import queue
 import signal
@@ -38,10 +61,21 @@ _recent_host_queue = queue.Queue(maxsize=100000)
 _recent_host_redis_client = None
 
 
-def _get_first_timestamp_seconds(file_path, use_lock=True):
-  """Return first unix timestamp seconds found in stats file content.
-
+def _get_first_timestamp_seconds(file_path: str, use_lock: bool = True) -> Any:
+  """
+  Return first unix timestamp seconds found in stats file content.
+  
   Expects a line beginning with digits in the format: "<t> <jid> <host> ...".
+  
+  Args:
+    file_path (str): String for file path.
+    use_lock (bool): Whether to enable use lock.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _get_first_timestamp_seconds("x", True)  # doctest: +SKIP
   """
   try:
     if use_lock:
@@ -73,11 +107,27 @@ def _get_first_timestamp_seconds(file_path, use_lock=True):
   return None
 
 
-def _current_is_hardlinked_to_older_epoch(host_dir, current_path, cutoff_epoch_ts):
-  """Return True if `current_path` shares an inode with an older epoch file.
-
+def _current_is_hardlinked_to_older_epoch(
+  host_dir: str,
+  current_path: str,
+  cutoff_epoch_ts: Any,
+) -> Any:
+  """
+  Return True if `current_path` shares an inode with an older epoch file.
+  
   Older epoch files are numeric filenames whose epoch seconds are strictly
   less than `cutoff_epoch_ts`.
+  
+  Args:
+    host_dir (str): String for host dir.
+    current_path (str): String for current path.
+    cutoff_epoch_ts (Any): Cutoff epoch ts passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _current_is_hardlinked_to_older_epoch("x", "x", None)  # doctest: +SKIP
   """
   try:
     with os.scandir(host_dir) as it:
@@ -105,12 +155,30 @@ def _current_is_hardlinked_to_older_epoch(host_dir, current_path, cutoff_epoch_t
   return False
 
 
-def _ensure_current_hardlinked_to_timestamp(host_dir, current_path):
-  """Hardlink current_path to the epoch seconds of the first timestamp line.
-
+def _ensure_current_hardlinked_to_timestamp(
+  host_dir: str,
+  current_path: str,
+) -> None:
+  """
+  Hardlink current_path to the epoch seconds of the first timestamp line.
+  
   This is a safety fallback for cases where `current` exists but is not yet
   linked to an epoch-named file (i.e. sync_timedb can't reliably detect the
   live segment).
+  
+  Args:
+    host_dir (str): String for host dir.
+    current_path (str): String for current path.
+  
+  Returns:
+    None
+  
+  Raises:
+    RuntimeError: Raised when ``_ensure_current_hardlinked_to_timestamp`` hits
+    a ``RuntimeError`` failure path.
+  
+  Examples:
+    >>> _ensure_current_hardlinked_to_timestamp("x", "x")  # doctest: +SKIP
   """
   # Called from on_message() while holding write lock for current_path.
   first_ts_sec = _get_first_timestamp_seconds(current_path, use_lock=False)
@@ -129,8 +197,18 @@ def _ensure_current_hardlinked_to_timestamp(host_dir, current_path):
   os.link(current_path, link_path)
 
 
-def _get_recent_host_redis_client():
-  """Get or create the Redis client used for recent-host timestamps."""
+def _get_recent_host_redis_client() -> Any:
+  """
+  Get or create the Redis client used for recent-host timestamps.
+  
+  Returns:
+    Any: Open return polymorphism from ``_get_recent_host_redis_client``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> _get_recent_host_redis_client()  # doctest: +SKIP
+  """
   global _recent_host_redis_client
   if _recent_host_redis_client is not None:
     return _recent_host_redis_client
@@ -142,8 +220,20 @@ def _get_recent_host_redis_client():
   return _recent_host_redis_client
 
 
-def _set_recent_host_timestamp(redis_client, host):
-  """Set `recent_host:<fqdn>` to current epoch seconds."""
+def _set_recent_host_timestamp(redis_client: Any, host: Any) -> None:
+  """
+  Set `recent_host:<fqdn>` to current epoch seconds.
+  
+  Args:
+    redis_client (Any): Redis client passed to this helper.
+    host (Any): Host passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _set_recent_host_timestamp(None, None)  # doctest: +SKIP
+  """
   if not host or "." not in host:
     return
   redis_client.set(
@@ -153,8 +243,19 @@ def _set_recent_host_timestamp(redis_client, host):
   )
 
 
-def _enqueue_recent_host_update(host):
-  """Queue a best-effort Redis host timestamp update."""
+def _enqueue_recent_host_update(host: Any) -> None:
+  """
+  Queue a best-effort Redis host timestamp update.
+  
+  Args:
+    host (Any): Host passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _enqueue_recent_host_update(None)  # doctest: +SKIP
+  """
   if not host or "." not in host:
     return
   try:
@@ -164,8 +265,16 @@ def _enqueue_recent_host_update(host):
       log_print("Recent-host Redis queue is full; dropping update for %s" % host)
 
 
-def _recent_host_worker():
-  """Background worker that writes recent-host timestamps to Redis."""
+def _recent_host_worker() -> None:
+  """
+  Background worker that writes recent-host timestamps to Redis.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _recent_host_worker()  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
   set_daemon_thread_title("", script_name="listend.py", role="recent-host-worker")
@@ -186,11 +295,29 @@ def _recent_host_worker():
       _recent_host_queue.task_done()
 
 
-def append_monitor_payload_to_archive(message):
-  """Decode-safe: append one monitor payload string to the per-host archive (same as listend).
-
+def append_monitor_payload_to_archive(message: Any) -> Any:
+  """
+  Decode-safe: append one monitor payload string to the per-host archive (same.
+  
+    as listend).
+  
   Used by the long-running daemon and by ``listend_drain`` integration tests.
   Returns the FQDN host string parsed from the payload (for metrics / logging).
+  
+  Args:
+    message (Any): Message passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    RuntimeError: Raised when ``append_monitor_payload_to_archive`` hits a
+    ``RuntimeError`` failure path.
+    ValueError: Raised when ``append_monitor_payload_to_archive`` hits a
+    ``ValueError`` failure path.
+  
+  Examples:
+    >>> append_monitor_payload_to_archive(None)  # doctest: +SKIP
   """
   if not message:
     raise ValueError("Empty message body")
@@ -269,14 +396,23 @@ def append_monitor_payload_to_archive(message):
   return host
 
 
-def _get_rmq_queue_depth_for_monitor():
-  """Return ``message_count`` for the configured queue.
-
+def _get_rmq_queue_depth_for_monitor() -> Any:
+  """
+  Return ``message_count`` for the configured queue.
+  
   Uses a **separate** short-lived connection. Pika ``BlockingConnection`` and
   its channels are not thread-safe; the idle monitor runs in a background
   thread and must not touch the channel used by ``start_consuming()`` in the
   main thread (that sharing caused ``Channel is closed``, transport state
   errors, and ``IndexError: pop from an empty deque`` in pika).
+  
+  Returns:
+    Any: Open return polymorphism from ``_get_rmq_queue_depth_for_monitor``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> _get_rmq_queue_depth_for_monitor()  # doctest: +SKIP
   """
   parameters = pika.ConnectionParameters(cfg.get_rmq_server())
   connection = None
@@ -303,11 +439,33 @@ def _get_rmq_queue_depth_for_monitor():
         pass
 
 
-def on_message(channel, method_frame, _header_frame, body):
-  """Callback for each message: decode body, determine host, write/append to host's current file and optionally rotate. Acknowledges the message.
-
+def on_message(
+  channel: Any,
+  method_frame: Any,
+  _header_frame: Any,
+  body: Any,
+) -> None:
+  """
+  Callback for each message: decode body, determine host, write/append to.
+  
+    host's.
+  
+    current file and optionally rotate. Acknowledges the message.
+  
   Per-message logging of consumption/queue depth is avoided; instead, a
   background monitor thread reports aggregate rates every 10 minutes.
+  
+  Args:
+    channel (Any): Channel passed to this helper.
+    method_frame (Any): Method frame passed to this helper.
+    _header_frame (Any):  header frame passed to this helper.
+    body (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> on_message(None, None, None, None)  # doctest: +SKIP
   """
   delivery_tag = getattr(method_frame, "delivery_tag", None)
   try:
@@ -335,11 +493,18 @@ def on_message(channel, method_frame, _header_frame, body):
     return
 
 
-def _idle_monitor():
-  """Periodically report messages consumed in the last 10 minutes and queue depth.
-
+def _idle_monitor() -> None:
+  """
+  Periodically report messages consumed in the last 10 minutes and queue depth.
+  
   Runs every IDLE_CHECK_INTERVAL seconds, but only logs once per
   MESSAGE_WINDOW_SECONDS window.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _idle_monitor()  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
@@ -383,7 +548,19 @@ def _idle_monitor():
     _last_idle_report_time = now
 
 
-def main():
+def main() -> None:
+  """
+  Run this module's command-line entrypoint.
+  
+  Returns:
+    None
+  
+  Raises:
+    Exception: Raised when ``main`` hits a ``Exception`` failure path.
+  
+  Examples:
+    >>> main()  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
 
   set_daemon_process_title(name="listend.py", role="main")
@@ -394,7 +571,24 @@ def main():
   sigterm_received = {"value": False}
   connection = None
 
-  def _sigterm_handler(signum, frame):
+  def _sigterm_handler(signum: Any, frame: Any) -> None:
+    """
+    Internal helper to handle sigterm handler.
+    
+    Args:
+      signum (Any): Signum passed to this helper.
+      frame (Any): Frame passed to this helper.
+    
+    Returns:
+      None
+    
+    Raises:
+      SystemExit: Raised when ``_sigterm_handler`` hits a ``SystemExit``
+      failure path.
+    
+    Examples:
+      >>> _sigterm_handler(None, None)  # doctest: +SKIP
+    """
     sigterm_received["value"] = True
     _idle_monitor_stop_event.set()
     raise SystemExit(143)

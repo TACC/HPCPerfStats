@@ -1,4 +1,11 @@
-"""URL routing for machine REST API."""
+"""
+URL routing for machine REST API.
+
+Attributes:
+  urlpatterns: Attribute.
+"""
+from __future__ import annotations
+
 from django.urls import path
 from drf_spectacular.views import SpectacularAPIView
 

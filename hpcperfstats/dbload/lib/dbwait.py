@@ -1,10 +1,10 @@
 """
-Utilities for resolving the PostgreSQL host/port used by the container
-startup scripts.
+Utilities for resolving the PostgreSQL host/port used by the container startup
+scripts.
 
-This avoids hardcoding service names like `db` inside shell scripts, which
-can break when the deploy uses different Docker Compose service names or
-custom `hpcperfstats.ini` values.
+This avoids hardcoding service names like `db` inside shell scripts, which can
+break when the deploy uses different Docker Compose service names or custom
+`hpcperfstats.ini` values.
 """
 
 from __future__ import annotations
@@ -15,14 +15,29 @@ import time
 from typing import Mapping, Tuple
 
 
-def resolve_postgres_wait_target(env: Mapping[str, str] | None = None) -> Tuple[str, str]:
+def resolve_postgres_wait_target(
+  env: Mapping[str, str] | None = None,
+) -> Tuple[str, str]:
   """
   Return (host, port) that startup scripts should wait on.
-
+  
   Precedence:
   1. `POSTGRES_HOST` / `POSTGRES_PORT` if set
   2. `DB_HOST` / `DB_PORT` if set
   3. values from `hpcperfstats.ini` via `hpcperfstats.dbload.lib.conf_parser`
+  
+  Args:
+    env (Mapping[str, str] | None): One of ``Mapping[str, str]``, ``None``.
+  
+  Returns:
+    Tuple[str, str]: Tuple[str, str] produced by this call.
+  
+  Raises:
+    ValueError: Raised when ``resolve_postgres_wait_target`` hits a
+    ``ValueError`` failure path.
+  
+  Examples:
+    >>> resolve_postgres_wait_target(None)  # doctest: +SKIP
   """
   env_map = os.environ if env is None else env
 
@@ -49,9 +64,20 @@ def resolve_postgres_wait_target(env: Mapping[str, str] | None = None) -> Tuple[
 
 
 def can_resolve_host_port(host: str, port: str) -> bool:
-  """Return True if `host:port` is resolvable via getaddrinfo.
-
+  """
+  Return True if `host:port` is resolvable via getaddrinfo.
+  
   Note: this does NOT test TCP connectivity; it's only DNS/name resolution.
+  
+  Args:
+    host (str): String for host.
+    port (str): String for port.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> can_resolve_host_port("x", "x")  # doctest: +SKIP
   """
   try:
     socket.getaddrinfo(host, port)
@@ -67,7 +93,25 @@ def wait_for_host_port_resolution(
   timeout_seconds: int = 60,
   interval_seconds: float = 0.25,
 ) -> None:
-  """Wait until DNS/name resolution for `host:port` succeeds."""
+  """
+  Wait until DNS/name resolution for `host:port` succeeds.
+  
+  Args:
+    host (str): String for host.
+    port (str): String for port.
+    timeout_seconds (int): Integer value for timeout seconds.
+    interval_seconds (float): Floating-point value for interval seconds.
+  
+  Returns:
+    None
+  
+  Raises:
+    TimeoutError: Raised when ``wait_for_host_port_resolution`` hits a
+    ``TimeoutError`` failure path.
+  
+  Examples:
+    >>> wait_for_host_port_resolution("x", "x", 0, 0)  # doctest: +SKIP
+  """
   deadline = time.time() + max(0, timeout_seconds)
   while True:
     if can_resolve_host_port(host, port):

@@ -1,9 +1,13 @@
-"""Emit syslog-ng fragment (``source s_net`` + allowlist filter) from ``hpcperfstats.ini``.
+"""
+Emit syslog-ng fragment (``source s_net`` + allowlist filter) from
+``hpcperfstats.ini``.
 
 Run before ``syslog-ng`` starts in the pipeline container. Writes
 ``get_syslog_generated_config_path()`` (see ``[SYSLOG]`` in the ini).
 """
 from __future__ import annotations
+
+from typing import Any
 
 import os
 import sys
@@ -11,8 +15,22 @@ import sys
 from hpcperfstats.dbload.lib import conf_parser as cfg
 
 
-def render_syslog_ng_generated_text():
-  """Return syslog-ng configuration snippet text."""
+def render_syslog_ng_generated_text() -> Any:
+  """
+  Return syslog-ng configuration snippet text.
+  
+  Returns:
+    Any: Open return polymorphism from ``render_syslog_ng_generated_text``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Raises:
+    RuntimeError: Raised when ``render_syslog_ng_generated_text`` hits a
+    ``RuntimeError`` failure path.
+  
+  Examples:
+    >>> render_syslog_ng_generated_text()  # doctest: +SKIP
+  """
   nets = cfg.get_syslog_allow_from_ipv4_networks()
   use_tcp = cfg.get_syslog_listen_tcp()
   use_udp = cfg.get_syslog_listen_udp()
@@ -44,7 +62,19 @@ def render_syslog_ng_generated_text():
   ) % (inner, mask_expr)
 
 
-def main(argv=None):
+def main(argv: Any | None = None) -> Any:
+  """
+  Run this module's command-line entrypoint.
+  
+  Args:
+    argv (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> main(None)  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.process_title import set_script_process_title
 
   set_script_process_title()

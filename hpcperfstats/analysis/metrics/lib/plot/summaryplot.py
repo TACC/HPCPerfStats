@@ -1,6 +1,28 @@
-"""Summary plot: multi-metric step plots for a job (FLOPS, BW, CPU, etc.) using jid_table aggregate data and Bokeh.
-
 """
+Summary plot: multi-metric step plots for a job (FLOPS, BW, CPU, etc.) using
+jid_table aggregate data and Bokeh.
+
+Attributes:
+  _BYTES_TO_GB: Attribute.
+  _BYTES_TO_GBPS: Attribute.
+  _BYTES_TO_MB: Attribute.
+  _CAS_BW_CONV: Attribute.
+  _CHA_ARC_EVENTS: Attribute.
+  _IB_SUMMARY_ERROR_EVENTS: Attribute.
+  _MAX_SANE_GPU_LINK_GBPS: Attribute.
+  _NET_SUMMARY_ERROR_EVENTS: Attribute.
+  _SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS: Attribute.
+  _SUMMARY_ALLOW_PARTIAL_NULL: Attribute.
+  _SUMMARY_FIRST_WIN_SPECS: Attribute.
+  _SUMMARY_SINGLE_SPECS: Attribute.
+  _SUMMARY_SKIP_PLOT_METRICS: Attribute.
+  _SUMMARY_TENSOR_SPLIT_METRICS: Attribute.
+  log: Attribute.
+"""
+from __future__ import annotations
+
+from typing import Any, Iterator
+
 import hpcperfstats.dbload.lib.conf_parser as cfg
 
 import logging
@@ -81,11 +103,21 @@ from hpcperfstats.analysis.metrics.lib.plot.bokeh_job_detail_help_marker import 
 _SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS = 2
 
 
-def _cycled_d3_category20_palette(n):
-  """Return ``n`` colors from d3 Category20, cycling every 20 hosts.
-
+def _cycled_d3_category20_palette(n: Any) -> Any:
+  """
+  Return ``n`` colors from d3 Category20, cycling every 20 hosts.
+  
   ``factor_cmap`` requires ``len(palette) == len(factors)``; jobs often exceed
   20 nodes (Bokeh W-1008 otherwise maps extras to ``nan_color``).
+  
+  Args:
+    n (Any): N passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _cycled_d3_category20_palette(None)  # doctest: +SKIP
   """
   base = d3["Category20"][20]
   if n <= 0:
@@ -104,8 +136,23 @@ _CHA_ARC_EVENTS = (
     "BYPASS_CHA_IMC_ALL,E",
     "LLC_LOOKUP_WRITE",
 )
-def _summary_type_events_feasible(schema, typ, events):
-  """Return False when schema is known and no requested event exists for typ (skip ORM work)."""
+def _summary_type_events_feasible(schema: Any, typ: Any, events: Any) -> Any:
+  """
+  Return False when schema is known and no requested event exists for typ (skip.
+  
+    ORM work).
+  
+  Args:
+    schema (Any): Schema passed to this helper.
+    typ (Any): Typ passed to this helper.
+    events (Any): Events passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _summary_type_events_feasible(None, None, None)  # doctest: +SKIP
+  """
   if not isinstance(schema, dict) or not schema:
     return True
   if not events:
@@ -119,14 +166,44 @@ def _summary_type_events_feasible(schema, typ, events):
   return False
 
 
-def _empty_agg_df():
+def _empty_agg_df() -> Any:
+  """
+  Internal helper to handle empty agg DataFrame.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _empty_agg_df()  # doctest: +SKIP
+  """
   import pandas as pd
 
   return pd.DataFrame(columns=["host", "time", "sum_val"])
 
 
-def _get_agg_if_feasible(jt, typ, val_col, events, conv):
-  """Like jt.get_aggregate_df with canonical + legacy type/event dual-read."""
+def _get_agg_if_feasible(
+  jt: Any,
+  typ: Any,
+  val_col: Any,
+  events: Any,
+  conv: Any,
+) -> Any:
+  """
+  Like jt.get_aggregate_df with canonical + legacy type/event dual-read.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+    typ (Any): Typ passed to this helper.
+    val_col (Any): Val col passed to this helper.
+    events (Any): Events passed to this helper.
+    conv (Any): Conv passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _get_agg_if_feasible(None, None, None, None, None)  # doctest: +SKIP
+  """
   raw_schema = getattr(jt, "schema", None)
   schema = raw_schema if isinstance(raw_schema, dict) else {}
   if not _summary_type_events_feasible(schema, typ, events):
@@ -141,11 +218,22 @@ def _get_agg_if_feasible(jt, typ, val_col, events, conv):
   return _empty_agg_df()
 
 
-def _continuous_polyline_xy(times, values):
-  """Build x/y lists for a continuous polyline through (time, value) samples.
-
+def _continuous_polyline_xy(times: Any, values: Any) -> Any:
+  """
+  Build x/y lists for a continuous polyline through (time, value) samples.
+  
   NaN values in ``values`` break Bokeh line segments (gaps). Callers that want
   continuous segments across missing samples should drop NaNs before calling.
+  
+  Args:
+    times (Any): Times passed to this helper.
+    values (Any): Values passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _continuous_polyline_xy(None, None)  # doctest: +SKIP
   """
   if times is None or len(times) == 0:
     return [], []
@@ -156,11 +244,22 @@ def _continuous_polyline_xy(times, values):
   return t, v
 
 
-def compute_summary_aggregate_prefetch_pool_size(num_specs):
-  """Return ``ThreadPoolExecutor`` ``max_workers`` for summary aggregate prefetch.
-
-  Capped by ``_SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS`` so nested parallelism does not
+def compute_summary_aggregate_prefetch_pool_size(num_specs: Any) -> Any:
+  """
+  Return ``ThreadPoolExecutor`` ``max_workers`` for summary aggregate prefetch.
+  
+  Capped by ``_SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS`` so nested parallelism
+    does not
   multiply against ``site.machine.api``'s shared executor under ``job_plots``.
+  
+  Args:
+    num_specs (Any): Num specs passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> compute_summary_aggregate_prefetch_pool_size(None)  # doctest: +SKIP
   """
   return max(
     1,
@@ -172,18 +271,45 @@ def compute_summary_aggregate_prefetch_pool_size(num_specs):
   )
 
 
-def _prefetch_single_spec_aggregates(jt, spec_rows):
-  """Parallel fetch for (typ, val, events, conv, name) rows; returns name -> DataFrame.
-
-  Thread count is capped by ``_SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS`` so this path
-  does not multiply against ``api.py``'s shared executor when building summary plots.
+def _prefetch_single_spec_aggregates(jt: Any, spec_rows: Any) -> Any:
+  """
+  Parallel fetch for (typ, val, events, conv, name) rows; returns name ->.
+  
+    DataFrame.
+  
+  Thread count is capped by ``_SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS`` so this
+    path
+  does not multiply against ``api.py``'s shared executor when building summary
+    plots.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+    spec_rows (Any): Spec rows passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _prefetch_single_spec_aggregates(None, None)  # doctest: +SKIP
   """
   import pandas as pd
 
   raw_schema = getattr(jt, "schema", None)
   schema = raw_schema if isinstance(raw_schema, dict) else {}
 
-  def _one(row):
+  def _one(row: Any) -> Any:
+    """
+    Internal helper to handle one.
+    
+    Args:
+      row (Any): Value to inspect (typically a numeric scalar).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _one(None)  # doctest: +SKIP
+    """
     typ, val, events, conv, name = row
     close_old_connections()
     try:
@@ -205,14 +331,38 @@ def _prefetch_single_spec_aggregates(jt, spec_rows):
   return out
 
 
-def _intel_core_tries(events, conv):
-  """(typename, events, conv) rows for Intel PMC and host_cpu_hw."""
+def _intel_core_tries(events: Any, conv: Any) -> Any:
+  """
+  (typename, events, conv) rows for Intel PMC and host_cpu_hw.
+  
+  Args:
+    events (Any): Events passed to this helper.
+    conv (Any): Conv passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _intel_core_tries(None, None)  # doctest: +SKIP
+  """
   ev = list(events)
   return [(t, ev, conv) for t in core_pmc_types_probe_order()]
 
 
-def _grace_fp_scalar_tries(events, conv):
-  """(typename, events, conv) rows for Grace host_cpu_hw scalar FP only."""
+def _grace_fp_scalar_tries(events: Any, conv: Any) -> Any:
+  """
+  (typename, events, conv) rows for Grace host_cpu_hw scalar FP only.
+  
+  Args:
+    events (Any): Events passed to this helper.
+    conv (Any): Conv passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _grace_fp_scalar_tries(None, None)  # doctest: +SKIP
+  """
   ev = list(events)
   return [(t, ev, conv) for t in host_cpu_hw_type_names()]
 
@@ -463,8 +613,19 @@ _SUMMARY_TENSOR_SPLIT_METRICS = (
 )
 
 
-def _summary_has_tensor_split_series(df):
-  """True when any tensor-pipe split column has at least one non-null sample."""
+def _summary_has_tensor_split_series(df: Any) -> Any:
+  """
+  True when any tensor-pipe split column has at least one non-null sample.
+  
+  Args:
+    df (Any): Df passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _summary_has_tensor_split_series(None)  # doctest: +SKIP
+  """
   for name in _SUMMARY_TENSOR_SPLIT_METRICS:
     if name in df.columns and df[name].notna().any():
       return True
@@ -512,8 +673,21 @@ _SUMMARY_FIRST_WIN_SPECS = (
 )
 
 
-def _summary_nv_mem_used_y_range_end(df):
-  """Upper y bound for GPU mem used plot: max(used, total) when total column exists."""
+def _summary_nv_mem_used_y_range_end(df: Any) -> Any:
+  """
+  Upper y bound for GPU mem used plot: max(used, total) when total column.
+  
+    exists.
+  
+  Args:
+    df (Any): Df passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _summary_nv_mem_used_y_range_end(None)  # doctest: +SKIP
+  """
   if "nv_mem_used_mb" not in df.columns or "nv_mem_total_mb" not in df.columns:
     return None
   candidates = []
@@ -529,8 +703,19 @@ def _summary_nv_mem_used_y_range_end(df):
   return 1.1 * max(candidates)
 
 
-def _summary_nv_gpu_util_y_range_end(df):
-  """Upper y bound for GPU util: GPU_count * 100 when GPU count exists."""
+def _summary_nv_gpu_util_y_range_end(df: Any) -> Any:
+  """
+  Upper y bound for GPU util: GPU_count * 100 when GPU count exists.
+  
+  Args:
+    df (Any): Df passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _summary_nv_gpu_util_y_range_end(None)  # doctest: +SKIP
+  """
   if "nv_gpu_util" not in df.columns or "nv_gpu_count" not in df.columns:
     return None
   gpu_count_max = df["nv_gpu_count"].max()
@@ -542,8 +727,18 @@ def _summary_nv_gpu_util_y_range_end(df):
     return None
 
 
-def _summary_intel_imc_bw_tries():
-  """Diagnostic tries: dram CAS pairs then hbm CAS pairs per IMC type."""
+def _summary_intel_imc_bw_tries() -> Any:
+  """
+  Diagnostic tries: dram CAS pairs then hbm CAS pairs per IMC type.
+  
+  Returns:
+    Any: Open return polymorphism from ``_summary_intel_imc_bw_tries``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> _summary_intel_imc_bw_tries()  # doctest: +SKIP
+  """
   tries = []
   for imc_typ in imc_types_probe_order():
     for read_ev, write_ev in dram_cas_read_write_pairs():
@@ -553,8 +748,22 @@ def _summary_intel_imc_bw_tries():
   return tries
 
 
-def _merge_intel_imc_cas_mbw(df, jt):
-  """Fill ``mbw`` from first IMC type with usable dram and/or hbm CAS BW (sum when both)."""
+def _merge_intel_imc_cas_mbw(df: Any, jt: Any) -> Any:
+  """
+  Fill ``mbw`` from first IMC type with usable dram and/or hbm CAS BW (sum when.
+  
+    both).
+  
+  Args:
+    df (Any): Df passed to this helper.
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _merge_intel_imc_cas_mbw(None, None)  # doctest: +SKIP
+  """
   column_name = "mbw"
   for imc_typ in imc_types_probe_order():
     dram_bw = None
@@ -589,8 +798,22 @@ def _merge_intel_imc_cas_mbw(df, jt):
   return df
 
 
-def _merge_amd_df_mbw(df, jt):
-  """Fill ``amd_mbw`` from family DF ``dram_chan*_bytes`` or historical ``MBW_CHANNEL_*``."""
+def _merge_amd_df_mbw(df: Any, jt: Any) -> Any:
+  """
+  Fill ``amd_mbw`` from family DF ``dram_chan*_bytes`` or historical.
+  
+    ``MBW_CHANNEL_*``.
+  
+  Args:
+    df (Any): Df passed to this helper.
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _merge_amd_df_mbw(None, None)  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.monitor_naming.canonical import AMD_DF_STATS_TYPES
   from hpcperfstats.dbload.lib.monitor_naming.resolve import (
       amd_df_bw_event_conv_tries,
@@ -621,8 +844,31 @@ def _merge_amd_df_mbw(df, jt):
   return df
 
 
-def _merge_first_full_coverage(df, jt, column_name, val_col, tries):
-  """Left-merge first (typ, events, conv) whose aggregate has no nulls on base (host, time)."""
+def _merge_first_full_coverage(
+  df: Any,
+  jt: Any,
+  column_name: Any,
+  val_col: Any,
+  tries: Any,
+) -> Any:
+  """
+  Left-merge first (typ, events, conv) whose aggregate has no nulls on base.
+  
+    (host, time).
+  
+  Args:
+    df (Any): Df passed to this helper.
+    jt (Any): Jt passed to this helper.
+    column_name (Any): Column name passed to this helper.
+    val_col (Any): Val col passed to this helper.
+    tries (Any): Tries passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _merge_first_full_coverage(None, None, None, None, None)
+  """
   for typ, events, conv in tries:
     agg = _get_agg_if_feasible(jt, typ, val_col, events, conv)
     if agg.empty or "sum_val" not in agg.columns:
@@ -640,11 +886,27 @@ def _merge_first_full_coverage(df, jt, column_name, val_col, tries):
   return df
 
 
-def _merge_nvidia_gpu_util_column(df, jt):
-  """Left-merge ``nv_gpu_util`` from ``nvidia_gpu`` ``value``: prefer ``gpu_util``, else ``utilization``.
-
-  Matches ``avg_gpuutil`` / job_detail GPU stats: newer monitor emits ``gpu_util``;
+def _merge_nvidia_gpu_util_column(df: Any, jt: Any) -> Any:
+  """
+  Left-merge ``nv_gpu_util`` from ``nvidia_gpu`` ``value``: prefer.
+  
+    ``gpu_util``,.
+  
+    else ``utilization``.
+  
+  Matches ``avg_gpuutil`` / job_detail GPU stats: newer monitor emits
+    ``gpu_util``;
   older archives may only have ``utilization``.
+  
+  Args:
+    df (Any): Df passed to this helper.
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _merge_nvidia_gpu_util_column(None, None)  # doctest: +SKIP
   """
   name = "nv_gpu_util"
   for events in (["gpu_util"], ["utilization"]):
@@ -669,8 +931,22 @@ def _merge_nvidia_gpu_util_column(df, jt):
   return df
 
 
-def _merge_opa_fabric_if_no_ib_ext(df, jt):
-  """When ``host_ib`` bytes are absent, fill ``ibbw`` from Omni-Path (same scaling as ``avg_ibbw`` OPA path)."""
+def _merge_opa_fabric_if_no_ib_ext(df: Any, jt: Any) -> Any:
+  """
+  When ``host_ib`` bytes are absent, fill ``ibbw`` from Omni-Path (same scaling.
+  
+    as ``avg_ibbw`` OPA path).
+  
+  Args:
+    df (Any): Df passed to this helper.
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _merge_opa_fabric_if_no_ib_ext(None, None)  # doctest: +SKIP
+  """
   if "ibbw" in df.columns and df["ibbw"].notna().any():
     return df
   agg = _get_agg_if_feasible(
@@ -692,8 +968,22 @@ def _merge_opa_fabric_if_no_ib_ext(df, jt):
   return merged
 
 
-def _merge_cha_counter_arc_sum(df, jt):
-  """Sum selected Intel CHA ``arc`` counters (all boxes); first matching CHA typename in schema."""
+def _merge_cha_counter_arc_sum(df: Any, jt: Any) -> Any:
+  """
+  Sum selected Intel CHA ``arc`` counters (all boxes); first matching CHA.
+  
+    typename in schema.
+  
+  Args:
+    df (Any): Df passed to this helper.
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _merge_cha_counter_arc_sum(None, None)  # doctest: +SKIP
+  """
   raw_schema = getattr(jt, "schema", None)
   schema = raw_schema if isinstance(raw_schema, dict) else {}
   for cha_typ in CHA_TYPENAME_PRIORITY:
@@ -717,11 +1007,25 @@ def _merge_cha_counter_arc_sum(df, jt):
   return df
 
 
-def _add_node_power_est_column(df):
-  """Estimated on-node power (W): module-only when ``nv_module_power_w`` > 0, else CPU + GPU.
-
-  CPU side: ``dcg_cpu_power_w`` (Grace DCGM) if present, else Intel ``watts``, else ``amd_pkg_w``.
-  GPU side: ``nv_power_w`` (summed per-GPU draw). Does **not** add module + DCGM + per-GPU together.
+def _add_node_power_est_column(df: Any) -> Any:
+  """
+  Estimated on-node power (W): module-only when ``nv_module_power_w`` > 0, else.
+  
+    CPU + GPU.
+  
+  CPU side: ``dcg_cpu_power_w`` (Grace DCGM) if present, else Intel ``watts``,
+    else ``amd_pkg_w``.
+  GPU side: ``nv_power_w`` (summed per-GPU draw). Does **not** add module + DCGM
+    + per-GPU together.
+  
+  Args:
+    df (Any): Df passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _add_node_power_est_column(None)  # doctest: +SKIP
   """
   n = len(df.index)
   out = np.full(n, np.nan, dtype=np.float64)
@@ -771,8 +1075,19 @@ def _add_node_power_est_column(df):
 _MAX_SANE_GPU_LINK_GBPS = 1.0e5
 
 
-def _clamp_summary_gpu_link_rates(df):
-  """NaN-out wrap-class poison on ``nv_gpu_link_gbs`` so Y-range stays sane."""
+def _clamp_summary_gpu_link_rates(df: Any) -> Any:
+  """
+  NaN-out wrap-class poison on ``nv_gpu_link_gbs`` so Y-range stays sane.
+  
+  Args:
+    df (Any): Df passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _clamp_summary_gpu_link_rates(None)  # doctest: +SKIP
+  """
   if df is None or df.empty or "nv_gpu_link_gbs" not in df.columns:
     return df
   s = df["nv_gpu_link_gbs"]
@@ -783,8 +1098,18 @@ def _clamp_summary_gpu_link_rates(df):
   return df
 
 
-def iter_summary_aggregate_attempts():
-  """Flat (typ, val_col, events, name, conv, label) for diagnostics."""
+def iter_summary_aggregate_attempts() -> Iterator[Any]:
+  """
+  Flat (typ, val_col, events, name, conv, label) for diagnostics.
+  
+  Yields:
+    Iterator[Any]: Open return polymorphism from
+    ``iter_summary_aggregate_attempts``: concrete type depends on inputs and
+    branch (mapping, scalar, handle, or ``None``-like empty).
+  
+  Examples:
+    >>> iter_summary_aggregate_attempts()  # doctest: +SKIP
+  """
   for typ, val, events, name, conv, label in _SUMMARY_SINGLE_SPECS:
     if name == "nv_gpu_util":
       yield "nvidia_gpu", "value", ["gpu_util"], name, conv, label
@@ -798,8 +1123,20 @@ def iter_summary_aggregate_attempts():
     yield imc_typ, "arc", events, "mbw", conv, "CPU DRAMBW[GB/s]"
 
 
-def _summary_metric_specs():
-  """Ordered (typ, val, events, name, conv, label) for plot() second pass (plot columns only)."""
+def _summary_metric_specs() -> Any:
+  """
+  Ordered (typ, val, events, name, conv, label) for plot() second pass (plot.
+  
+    columns only).
+  
+  Returns:
+    Any: Open return polymorphism from ``_summary_metric_specs``: concrete
+    type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> _summary_metric_specs()  # doctest: +SKIP
+  """
   out = list(_SUMMARY_SINGLE_SPECS)
   for fw in _SUMMARY_FIRST_WIN_SPECS:
     out.append(("", fw["val_col"], [], fw["name"], 0, fw["label"]))
@@ -810,9 +1147,10 @@ def _summary_metric_specs():
   return out
 
 
-def _summary_plot_order_key(metric_name):
-  """Priority order for summary subplots (ascending).
-
+def _summary_plot_order_key(metric_name: Any) -> Any:
+  """
+  Priority order for summary subplots (ascending).
+  
   Product ordering (each block is contiguous when those metrics exist):
   1) CPU usage
   2) CPU memory (NUMA + DRAM bandwidth)
@@ -824,6 +1162,15 @@ def _summary_plot_order_key(metric_name):
   8) Lustre client (llite): read / write / metadata IOPS
   9) NFS client: read / write / IOPS
   10) Network: InfiniBand/OPA bytes, fabric/compute ratios, OPA quality counters
+  
+  Args:
+    metric_name (Any): Metric name passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _summary_plot_order_key(None)  # doctest: +SKIP
   """
   priority = {
       # --- 1) CPU usage ---
@@ -913,8 +1260,23 @@ _NET_SUMMARY_ERROR_EVENTS = (
 )
 
 
-def _one_error_job_series(jt, typ, event):
-  """Return DataFrame columns ``time``, ``rate`` (job-wide sum of arc per time) or None."""
+def _one_error_job_series(jt: Any, typ: Any, event: Any) -> Any:
+  """
+  Return DataFrame columns ``time``, ``rate`` (job-wide sum of arc per time) or.
+  
+    None.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+    typ (Any): Typ passed to this helper.
+    event (Any): Event passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _one_error_job_series(None, None, None)  # doctest: +SKIP
+  """
   agg = _get_agg_if_feasible(jt, typ, "arc", [event], 1.0)
   if agg.empty or "sum_val" not in agg.columns:
     return None
@@ -928,8 +1290,19 @@ def _one_error_job_series(jt, typ, event):
   return out
 
 
-def _collect_hardware_error_job_series(jt):
-  """List of (legend, time/rate frame) for overlay; may be empty."""
+def _collect_hardware_error_job_series(jt: Any) -> Any:
+  """
+  List of (legend, time/rate frame) for overlay; may be empty.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _collect_hardware_error_job_series(None)  # doctest: +SKIP
+  """
 
   parts = []
   for ev in _IB_SUMMARY_ERROR_EVENTS:
@@ -948,8 +1321,20 @@ def _collect_hardware_error_job_series(jt):
   return parts
 
 
-def plot_hardware_error_rates_figure(jt, x_range):
-  """One figure: job-wide hardware error counter rates [#/s]; None if no data."""
+def plot_hardware_error_rates_figure(jt: Any, x_range: Any) -> Any:
+  """
+  One figure: job-wide hardware error counter rates [#/s]; None if no data.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+    x_range (Any): X range passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> plot_hardware_error_rates_figure(None, None)  # doctest: +SKIP
+  """
   import pandas as pd
 
   series = _collect_hardware_error_job_series(jt)
@@ -1028,32 +1413,62 @@ def plot_hardware_error_rates_figure(jt, x_range):
 
 
 class SummaryPlot():
-  """Builds a grid of Bokeh continuous-line plots (one per metric) from jid_table aggregate DataFrames.
+  """
+  Builds a grid of Bokeh continuous-line plots (one per metric) from jid_table.
+  
+  Attributes:
+    host_list: Attribute.
+    jid: Attribute.
+    jt: Attribute.
+  """
 
+  def __init__(self, jt: Any) -> None:
     """
-
-  def __init__(self, jt):
-    """Store jid, jt, and host_list from the given jid_table (or HostDataProvider).
-
-        """
+    Store jid, jt, and host_list from the given jid_table (or HostDataProvider).
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> SummaryPlot(None)  # doctest: +SKIP
+    """
     self.jid = jt.jid
     self.jt = jt
     self.host_list = jt.host_list
 
   def plot_metric(
-      self,
-      df,
-      metric,
-      label,
-      y_range_end=None,
-      x_range=None,
-      variable_description=None,
-  ):
-    """Create one Bokeh figure with continuous per-host lines and scatter hits.
-
-        Uses one multi_line glyph plus one scatter (HoverTool on data) and a separate
-        HoverTool on a small “?” marker for metric documentation.
-        """
+    self,
+    df: Any,
+    metric: Any,
+    label: Any,
+    y_range_end: Any | None = None,
+    x_range: Any | None = None,
+    variable_description: Any | None = None,
+  ) -> Any:
+    """
+    Create one Bokeh figure with continuous per-host lines and scatter hits.
+    
+    Uses one multi_line glyph plus one scatter (HoverTool on data) and a
+      separate
+    HoverTool on a small “?” marker for metric documentation.
+    
+    Args:
+      df (Any): Df passed to this helper.
+      metric (Any): Metric passed to this helper.
+      label (Any): Label passed to this helper.
+      y_range_end (Any | None): One of ``Any``, ``None``.
+      x_range (Any | None): One of ``Any``, ``None``.
+      variable_description (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> SummaryPlot().plot_metric(None, None, None, None, None, None)
+    """
     s = time.time()
 
     df = df[["time", "host", metric]].copy()
@@ -1151,10 +1566,22 @@ class SummaryPlot():
     log.debug("time to plot %s: %s", metric, time.time() - s)
     return plot
 
-  def plot(self):
-    """Build host_time_df, merge all configured metrics (amd64_pmc, intel_8pmc3, llite, cpu, mem, etc.), and return a gridplot of continuous-line plots.
-
-        """
+  def plot(self) -> Any:
+    """
+    Build host_time_df, merge all configured metrics (amd64_pmc, intel_8pmc3,.
+    
+      llite, cpu, mem, etc.), and return a gridplot of continuous-line plots.
+    
+    Returns:
+      Any: Open return polymorphism from ``plot``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Raises:
+      ValueError: Raised when ``plot`` hits a ``ValueError`` failure path.
+    
+    Examples:
+      >>> SummaryPlot().plot()  # doctest: +SKIP
+    """
     palette = _cycled_d3_category20_palette(len(self.host_list))
     self.hc = {
         hostname: palette[i] for i, hostname in enumerate(self.host_list)
@@ -1277,8 +1704,19 @@ class SummaryPlot():
     return gridplot(plots, ncols=min(2, len(plots)), sizing_mode="stretch_width")
 
 
-def plot_and_reason_summary_from_jid_table(jt):
-  """Build summary plot and return (figure_or_none, unavailable_reason_or_none)."""
+def plot_and_reason_summary_from_jid_table(jt: Any) -> Any:
+  """
+  Build summary plot and return (figure_or_none, unavailable_reason_or_none).
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> plot_and_reason_summary_from_jid_table(None)  # doctest: +SKIP
+  """
   t0 = time.monotonic()
   begin_summary_aggregate_counting()
   try:

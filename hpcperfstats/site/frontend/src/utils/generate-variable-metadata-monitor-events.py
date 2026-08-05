@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""Emit variableMetadataMonitorEvents.ts from HPCPerfStats/monitor schema KEYS macros."""
+"""
+Emit variableMetadataMonitorEvents.ts from HPCPerfStats/monitor schema KEYS
+macros.
+
+Attributes:
+  DESC: Attribute.
+  HISTORICAL_EVENT_NAMES: Attribute.
+  MARKERS: Attribute.
+  MONITOR_SRC: Attribute.
+  OUT: Attribute.
+  REPO: Attribute.
+  RETIRED_EVENT_NAMES: Attribute.
+  SKIP_NAMES: Attribute.
+"""
 from __future__ import annotations
 
 import re
@@ -36,6 +49,18 @@ MARKERS = (
 
 
 def extract_x_keys(lines: list[str]) -> set[str]:
+    """
+    Extract x keys.
+    
+    Args:
+      lines (list[str]): Sequence for lines.
+    
+    Returns:
+      set[str]: set[str] produced by this call.
+    
+    Examples:
+      >>> extract_x_keys([])  # doctest: +SKIP
+    """
     out: set[str] = set()
     for line in lines:
         s = line.strip()
@@ -49,6 +74,19 @@ def extract_x_keys(lines: list[str]) -> set[str]:
 
 
 def macro_block(lines: list[str], start: int) -> list[str]:
+    """
+    Macro block.
+    
+    Args:
+      lines (list[str]): Sequence for lines.
+      start (int): Integer value for start.
+    
+    Returns:
+      list[str]: list[str] produced by this call.
+    
+    Examples:
+      >>> macro_block([], 0)  # doctest: +SKIP
+    """
     block: list[str] = []
     for j in range(start, min(start + 200, len(lines))):
         block.append(lines[j])
@@ -62,6 +100,15 @@ def macro_block(lines: list[str], start: int) -> list[str]:
 
 
 def collect_all_names() -> set[str]:
+    """
+    Collect the all names.
+    
+    Returns:
+      set[str]: set[str] produced by this call.
+    
+    Examples:
+      >>> collect_all_names()  # doctest: +SKIP
+    """
     names: set[str] = set()
     for path in sorted(MONITOR_SRC.glob("*.c")):
         text_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -508,6 +555,18 @@ DESC: dict[str, str] = {
 
 
 def generic(k: str) -> str:
+    """
+    Build a generic metadata entry.
+    
+    Args:
+      k (str): String for k.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> generic("x")  # doctest: +SKIP
+    """
     if re.fullmatch(r"CTL\d+", k):
         return "Performance event select register (programs the paired general-purpose counter)."
     if re.fullmatch(r"CTR\d+", k):
@@ -558,6 +617,15 @@ def generic(k: str) -> str:
 
 
 def main() -> int:
+    """
+    Run this module's command-line entrypoint.
+    
+    Returns:
+      int: int produced by this call.
+    
+    Examples:
+      >>> main()  # doctest: +SKIP
+    """
     if not MONITOR_SRC.is_dir():
         print("monitor/src not found at", MONITOR_SRC, file=sys.stderr)
         return 1

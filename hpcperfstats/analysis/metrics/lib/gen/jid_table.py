@@ -1,6 +1,25 @@
-"""Job-scoped host_data access via Django ORM. Provides jid_table, TypeDetailDataProvider, and HostDataProvider for querying job/host metrics without raw SQL. Uses Redis caching for heavy queries.
-
 """
+Job-scoped host_data access via Django ORM. Provides jid_table,.
+
+TypeDetailDataProvider, and HostDataProvider for querying job/host metrics
+without raw SQL. Uses Redis caching for heavy queries.
+
+Attributes:
+  HOST_DATA_SUM_VAL_ALIAS: ``HOST_DATA_SUM_VAL_ALIAS``.
+  HOST_DATA_TIME_ALIAS: ``HOST_DATA_TIME_ALIAS``.
+  JID_TABLE_HOST_QUERY_BATCH: ``JID_TABLE_HOST_QUERY_BATCH``.
+  TYPE_DETAIL_HOST_QUERY_BATCH: ``TYPE_DETAIL_HOST_QUERY_BATCH``.
+  _STATEMENT_TIMEOUT_ERROR_MARKERS: ``_STATEMENT_TIMEOUT_ERROR_MARKERS``.
+  _logger: ``_logger``.
+  _summary_agg_count: ``_summary_agg_count``.
+  _summary_agg_count_lock: ``_summary_agg_count_lock``.
+  _summary_agg_counting: ``_summary_agg_counting``.
+  local_timezone: ``local_timezone``.
+"""
+from __future__ import annotations
+
+from typing import Any, Iterator
+
 import contextlib
 import hashlib
 import json
@@ -74,21 +93,40 @@ HOST_DATA_TIME_ALIAS = "sample_time"
 
 
 def host_data_sum_val_annotation(
-    column, *, nonnegative_only=False, coalesce_zero=True):
-  """Float-typed ``SUM(column)`` for a per-(host, time) host_data aggregate.
-
-  ``host_data.value``/``arc``/``delta`` are ``RealField``, so pairing ``Sum`` with
+  column: Any,
+  *,
+  nonnegative_only: bool = False,
+  coalesce_zero: bool = True,
+) -> Any:
+  """
+  Float-typed ``SUM(column)`` for a per-(host, time) host_data aggregate.
+  
+  ``host_data.value``/``arc``/``delta`` are ``RealField``, so pairing ``Sum``
+    with
   an integer ``Value(0)`` makes Django refuse to resolve the expression type
-  (``FieldError: Expression contains mixed types: RealField, IntegerField``) when
+  (``FieldError: Expression contains mixed types: RealField, IntegerField``)
+    when
   the query is compiled — the annotation must carry an explicit float
   ``output_field``.
-
+  
   ``coalesce_zero`` keeps parity with pandas ``groupby().sum()``, which returns
   ``0.0`` for a group whose samples are all NULL; pass ``False`` where callers
-  historically saw ``NULL`` (missing) for such groups. ``nonnegative_only`` drops
+  historically saw ``NULL`` (missing) for such groups. ``nonnegative_only``
+    drops
   negative samples (counter resets, bad rollover width) from the sum via an
   aggregate ``FILTER`` so the ``(host, time)`` group still exists, matching
   ``Series.where(s >= 0).sum()``.
+  
+  Args:
+    column (Any): Column passed to this helper.
+    nonnegative_only (bool): Boolean flag for nonnegative only.
+    coalesce_zero (bool): Boolean flag for coalesce zero.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> host_data_sum_val_annotation(None, True, True)  # doctest: +SKIP
   """
   sum_filter = Q(**{"{0}__gte".format(column): 0}) if nonnegative_only else None
   aggregate = Sum(column, filter=sum_filter, output_field=FloatField())
@@ -98,9 +136,15 @@ def host_data_sum_val_annotation(
 
 
 def host_data_sum_val_per_sample_queryset(
-    qs, column, *, nonnegative_only=False, coalesce_zero=True):
-  """One row per (host, sample time) with ``column`` summed by PostgreSQL.
-
+  qs: Any,
+  column: Any,
+  *,
+  nonnegative_only: bool = False,
+  coalesce_zero: bool = True,
+) -> Any:
+  """
+  One row per (host, sample time) with ``column`` summed by PostgreSQL.
+  
   ``host_data.time`` is declared ``primary_key=True`` even though the table is
   unique on (time, host, type, event, dev). PostgreSQL advertises
   ``allows_group_by_selected_pks``, so Django treats every other column as
@@ -108,9 +152,21 @@ def host_data_sum_val_per_sample_queryset(
   ``.values("host", "time").annotate(...)`` — the aggregate then sums across all
   hosts at each timestamp. Grouping on an ``ExpressionWrapper`` keeps the
   timestamp out of that optimization, so GROUP BY stays (host, time).
-
+  
   Rows carry ``HOST_DATA_TIME_ALIAS`` instead of ``time``; use
   ``host_data_restore_time_column`` on the resulting DataFrame.
+  
+  Args:
+    qs (Any): Qs passed to this helper.
+    column (Any): Column passed to this helper.
+    nonnegative_only (bool): Boolean flag for nonnegative only.
+    coalesce_zero (bool): Boolean flag for coalesce zero.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> host_data_sum_val_per_sample_queryset(None, None, True, True)
   """
   return (
       qs.annotate(
@@ -134,8 +190,19 @@ def host_data_sum_val_per_sample_queryset(
   )
 
 
-def host_data_restore_time_column(df):
-  """Rename ``HOST_DATA_TIME_ALIAS`` back to ``time`` on an aggregate DataFrame."""
+def host_data_restore_time_column(df: Any) -> Any:
+  """
+  Rename ``HOST_DATA_TIME_ALIAS`` back to ``time`` on an aggregate DataFrame.
+  
+  Args:
+    df (Any): Df passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> host_data_restore_time_column(None)  # doctest: +SKIP
+  """
   if df is None:
     return df
   if HOST_DATA_TIME_ALIAS in getattr(df, "columns", ()):
@@ -143,22 +210,44 @@ def host_data_restore_time_column(df):
   return df
 
 
-def is_metrics_compute_control_flow_error(exc):
-  """True for wall-clock cancellations that must never be swallowed by a fallback.
-
+def is_metrics_compute_control_flow_error(exc: Any) -> Any:
+  """
+  True for wall-clock cancellations that must never be swallowed by a fallback.
+  
   ``update_metrics`` pool workers bound each job with ``SIGALRM``
-  (``MetricsComputeJobTimeoutError``, a ``TimeoutError``). The alarm is one-shot,
+  (``MetricsComputeJobTimeoutError``, a ``TimeoutError``). The alarm is one-
+    shot,
   so retrying a slower path inside ``except Exception`` runs unbounded.
+  
+  Args:
+    exc (Any): Exception instance being classified or logged.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> is_metrics_compute_control_flow_error(None)  # doctest: +SKIP
   """
   return isinstance(exc, TimeoutError)
 
 
-def _coerce_jid_table_host_query_batch_size(batch_size):
-  """Parse optional per-chunk size for ``host__in`` batching; never raise on bad input.
-
-  Mis-wired call sites or mistaken env/config can pass a hostname string where a
+def _coerce_jid_table_host_query_batch_size(batch_size: int) -> Any:
+  """
+  Parse optional per-chunk size for ``host__in`` batching; never raise on bad.
+  
+    input.
+  
   batch size is expected; ``int("c641-092.vista.tacc.utexas.edu")`` would break
   large-job row counting.
+  
+  Args:
+    batch_size (int): Integer value for batch size.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _coerce_jid_table_host_query_batch_size(0)  # doctest: +SKIP
   """
   default = JID_TABLE_HOST_QUERY_BATCH
   if batch_size is None:
@@ -177,16 +266,39 @@ def _coerce_jid_table_host_query_batch_size(batch_size):
   return n
 
 
-def _listify_acct_hosts(acct_hosts):
-  """Coerce accounting host input to a list of hostname strings.
-
+def _listify_acct_hosts(acct_hosts: Any) -> Any:
+  """
+  Coerce accounting host input to a list of hostname strings.
+  
   ``job_data.host_list`` is normally a list of short names. A buggy import or
-  serializer may store a **single FQDN string** (or comma-separated names) in the
+  serializer may store a **single FQDN string** (or comma-separated names) in
+    the
   column. Using ``list("host.example.com")`` splits into characters, which
   breaks ``host__in`` chunking and can trigger obscure driver errors (including
   ``invalid literal for int()`` on fragments).
+  
+  Args:
+    acct_hosts (Any): Acct hosts passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _listify_acct_hosts(None)  # doctest: +SKIP
   """
-  def _norm_scalar(x):
+  def _norm_scalar(x: Any) -> Any:
+    """
+    Internal helper to handle norm scalar.
+    
+    Args:
+      x (Any): X passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _norm_scalar(None)  # doctest: +SKIP
+    """
     if x is None:
       return []
     if isinstance(x, bytes):
@@ -246,12 +358,23 @@ def _listify_acct_hosts(acct_hosts):
 
 
 @contextlib.contextmanager
-def _pg_relax_statement_timeout_for_large_job_time_sql():
-  """Disable PostgreSQL ``statement_timeout`` for long strided-time sampling SQL.
-
-  ``DISTINCT`` + ``NTILE`` and wide-window ``date_bin`` aggregates can exceed the
+def _pg_relax_statement_timeout_for_large_job_time_sql() -> Iterator[Any]:
+  """
+  Disable PostgreSQL ``statement_timeout`` for long strided-time sampling SQL.
+  
+  ``DISTINCT`` + ``NTILE`` and wide-window ``date_bin`` aggregates can exceed
+    the
   default session limit; restore the configured timeout when the block exits
   (same pattern as metrics batch queries in ``update_metrics``).
+  
+  Yields:
+    Iterator[Any]: Open return polymorphism from
+    ``_pg_relax_statement_timeout_for_large_job_time_sql``: concrete type
+    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+    empty).
+  
+  Examples:
+    >>> _pg_relax_statement_timeout_for_large_job_time_sql()  # doctest: +SKIP
   """
   conn = connections["default"]
   if conn.vendor != "postgresql":
@@ -270,8 +393,23 @@ def _pg_relax_statement_timeout_for_large_job_time_sql():
         cursor.execute("SET statement_timeout = 0")
 
 
-def _iter_acct_host_batches(acct_host_list, batch_size=None):
-  """Yield successive host__in subsets of acct_host_list (stable order)."""
+def _iter_acct_host_batches(
+  acct_host_list: Any,
+  batch_size: Any | None = None,
+) -> Iterator[Any]:
+  """
+  Yield successive host__in subsets of acct_host_list (stable order).
+  
+  Args:
+    acct_host_list (Any): Acct host list passed to this helper.
+    batch_size (Any | None): One of ``Any``, ``None``.
+  
+  Yields:
+    Iterator[Any]: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _iter_acct_host_batches(None, None)  # doctest: +SKIP
+  """
   hosts = _listify_acct_hosts(acct_host_list)
   if not hosts:
     return
@@ -280,8 +418,19 @@ def _iter_acct_host_batches(acct_host_list, batch_size=None):
     yield hosts[i:i + bs]
 
 
-def _is_statement_timeout_error(exc):
-  """True when PostgreSQL canceled the statement due to timeout (splittable)."""
+def _is_statement_timeout_error(exc: Any) -> Any:
+  """
+  True when PostgreSQL canceled the statement due to timeout (splittable).
+  
+  Args:
+    exc (Any): Exception instance being classified or logged.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _is_statement_timeout_error(None)  # doctest: +SKIP
+  """
   if not isinstance(exc, OperationalError):
     return False
   msg = str(exc).lower()
@@ -289,13 +438,35 @@ def _is_statement_timeout_error(exc):
 
 
 def _queryset_to_dataframe_with_host_chunk_retry(
-    host_chunk,
-    build_qs,
-    *,
-    min_hosts=1,
-    max_attempts=2,
-):
-  """Materialize ``build_qs(host_chunk)``; split hosts or retry on statement timeout."""
+  host_chunk: Any,
+  build_qs: Any,
+  *,
+  min_hosts: int = 1,
+  max_attempts: int = 2,
+) -> Any:
+  """
+  Materialize ``build_qs(host_chunk)``; split hosts or retry on statement.
+  
+    timeout.
+  
+  Args:
+    host_chunk (Any): Host chunk passed to this helper.
+    build_qs (Any): Build qs passed to this helper.
+    min_hosts (int): Integer value for min hosts.
+    max_attempts (int): Integer value for max attempts.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    Exception: Raised when ``_queryset_to_dataframe_with_host_chunk_retry``
+    hits a ``Exception`` failure path.
+    last_exc: Raised when ``_queryset_to_dataframe_with_host_chunk_retry``
+    hits a ``last_exc`` failure path.
+  
+  Examples:
+    >>> _queryset_to_dataframe_with_host_chunk_retry(None, None, 0, 0)
+  """
   import pandas as pd
 
   hosts = [str(h) for h in host_chunk if h]
@@ -337,8 +508,25 @@ def _queryset_to_dataframe_with_host_chunk_retry(
   return pd.DataFrame()
 
 
-def _fetch_host_data_values_frames(host_list, build_qs, batch_size=None):
-  """Run chunked ``host__in`` queries with timeout split/retry; concat row frames."""
+def _fetch_host_data_values_frames(
+  host_list: Any,
+  build_qs: Any,
+  batch_size: Any | None = None,
+) -> Any:
+  """
+  Run chunked ``host__in`` queries with timeout split/retry; concat row frames.
+  
+  Args:
+    host_list (Any): Host list passed to this helper.
+    build_qs (Any): Build qs passed to this helper.
+    batch_size (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _fetch_host_data_values_frames(None, None, None)  # doctest: +SKIP
+  """
   import pandas as pd
 
   frames = []
@@ -351,8 +539,20 @@ def _fetch_host_data_values_frames(host_list, build_qs, batch_size=None):
   return pd.concat(frames, ignore_index=True)
 
 
-def _type_detail_group_metric_to_sum_val(df_raw, metric):
-  """Group raw host/time/metric rows into sum_val (pandas aggregate fallback)."""
+def _type_detail_group_metric_to_sum_val(df_raw: Any, metric: Any) -> Any:
+  """
+  Group raw host/time/metric rows into sum_val (pandas aggregate fallback).
+  
+  Args:
+    df_raw (Any): Df raw passed to this helper.
+    metric (Any): Metric passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _type_detail_group_metric_to_sum_val(None, None)  # doctest: +SKIP
+  """
   import pandas as pd
 
   if (
@@ -370,8 +570,19 @@ def _type_detail_group_metric_to_sum_val(df_raw, metric):
   )
 
 
-def _type_detail_concat_sum_val_frames(frames):
-  """Concat SQL-aggregated per-chunk frames (host, time, sum_val)."""
+def _type_detail_concat_sum_val_frames(frames: Any) -> Any:
+  """
+  Concat SQL-aggregated per-chunk frames (host, time, sum_val).
+  
+  Args:
+    frames (Any): Frames passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _type_detail_concat_sum_val_frames(None)  # doctest: +SKIP
+  """
   import pandas as pd
 
   if not frames:
@@ -384,8 +595,19 @@ def _type_detail_concat_sum_val_frames(frames):
   return df.sort_values(["host", "time"]).reset_index(drop=True)
 
 
-def _unwrap_singleton_scalar(value):
-  """Unwrap one-element list/tuple/deque-style wrappers to a scalar."""
+def _unwrap_singleton_scalar(value: Any) -> Any:
+  """
+  Unwrap one-element list/tuple/deque-style wrappers to a scalar.
+  
+  Args:
+    value (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _unwrap_singleton_scalar(None)  # doctest: +SKIP
+  """
   if value is None:
     return None
   cur = value
@@ -413,8 +635,19 @@ def _unwrap_singleton_scalar(value):
   return cur
 
 
-def _normalize_window_bound_datetime(value):
-  """Coerce cache/ORM window bound payloads to a datetime scalar or ``None``."""
+def _normalize_window_bound_datetime(value: Any) -> Any:
+  """
+  Coerce cache/ORM window bound payloads to a datetime scalar or ``None``.
+  
+  Args:
+    value (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _normalize_window_bound_datetime(None)  # doctest: +SKIP
+  """
   cur = _unwrap_singleton_scalar(value)
   if cur is None:
     return None
@@ -429,22 +662,53 @@ def _normalize_window_bound_datetime(value):
   return None
 
 
-def _is_psycopg_connection_desync(exc):
-  """True for errors that warrant a fresh DB connection and one retry."""
+def _is_psycopg_connection_desync(exc: Any) -> Any:
+  """
+  True for errors that warrant a fresh DB connection and one retry.
+  
+  Args:
+    exc (Any): Exception instance being classified or logged.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _is_psycopg_connection_desync(None)  # doctest: +SKIP
+  """
   if isinstance(exc, (InterfaceError, OperationalError)):
     return True
   return "lost synchronization" in str(exc).lower()
 
 
-def _count_host_data_rows_for_window(start, end, acct_hosts):
-  """Total host_data rows in [start, end] for accounting FQDNs.
-
+def _count_host_data_rows_for_window(
+  start: Any,
+  end: Any,
+  acct_hosts: Any,
+) -> Any:
+  """
+  Total host_data rows in [start, end] for accounting FQDNs.
+  
   Always uses chunked ``host__in`` queries. A previous PostgreSQL fast path
   used ``ANY(%s::text[])`` on a shared Django connection and could corrupt the
   psycopg wire protocol (``lost synchronization with server``).
-
+  
   Retries once after :func:`close_old_connections` when the connection is
   desynchronized (same class of errors as raw-SQL / concurrent use).
+  
+  Args:
+    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    acct_hosts (Any): Acct hosts passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    Exception: Raised when ``_count_host_data_rows_for_window`` hits a
+    ``Exception`` failure path.
+  
+  Examples:
+    >>> _count_host_data_rows_for_window(None, None, None)  # doctest: +SKIP
   """
   start_dt = _normalize_window_bound_datetime(start)
   end_dt = _normalize_window_bound_datetime(end)
@@ -477,18 +741,40 @@ def _count_host_data_rows_for_window(start, end, acct_hosts):
       raise
 
 
-def _acct_hosts_cache_fingerprint(acct_hosts):
+def _acct_hosts_cache_fingerprint(acct_hosts: Any) -> Any:
+  """
+  Internal helper to handle accounting hosts cache fingerprint.
+  
+  Args:
+    acct_hosts (Any): Acct hosts passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _acct_hosts_cache_fingerprint(None)  # doctest: +SKIP
+  """
   hosts = _listify_acct_hosts(acct_hosts)
   blob = "\n".join(sorted(hosts))
   return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
 
 
-def _coerce_nonnegative_window_row_count(value):
-  """Parse a cached or computed window row count as a non-negative int.
-
+def _coerce_nonnegative_window_row_count(value: Any) -> Any:
+  """
+  Parse a cached or computed window row count as a non-negative int.
+  
   Some cache serializers (JSON, or upstream bugs) surface a scalar count as a
   one-element sequence (e.g. ``[1_500_000]``). Unwrap shallowly, then ``int()``;
   return ``None`` if the value is not a usable count.
+  
+  Args:
+    value (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _coerce_nonnegative_window_row_count(None)  # doctest: +SKIP
   """
   if value is None:
     return None
@@ -524,8 +810,22 @@ def _coerce_nonnegative_window_row_count(value):
   return n if n >= 0 else None
 
 
-def _safe_positive_int_ttl_seconds(raw_ttl, *, default):
-  """Cache timeout for row-count entries; never raises (misconfig / odd cache types)."""
+def _safe_positive_int_ttl_seconds(raw_ttl: Any, *, default: Any) -> Any:
+  """
+  Cache timeout for row-count entries; never raises (misconfig / odd cache.
+  
+    types).
+  
+  Args:
+    raw_ttl (Any): Raw ttl passed to this helper.
+    default (Any): Default passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _safe_positive_int_ttl_seconds(None, None)  # doctest: +SKIP
+  """
   try:
     n = int(raw_ttl)
   except Exception:
@@ -533,8 +833,20 @@ def _safe_positive_int_ttl_seconds(raw_ttl, *, default):
   return n if n >= 0 else 0
 
 
-def _job_window_iso_pair_for_cache_key(start, end):
-  """Return ``(start_iso, end_iso)`` or ``None`` if bounds are not cache-key safe."""
+def _job_window_iso_pair_for_cache_key(start: Any, end: Any) -> Any:
+  """
+  Return ``(start_iso, end_iso)`` or ``None`` if bounds are not cache-key safe.
+  
+  Args:
+    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _job_window_iso_pair_for_cache_key(None, None)  # doctest: +SKIP
+  """
   start_dt = _normalize_window_bound_datetime(start)
   end_dt = _normalize_window_bound_datetime(end)
   if start_dt is None or end_dt is None:
@@ -545,8 +857,27 @@ def _job_window_iso_pair_for_cache_key(start, end):
     return None
 
 
-def _count_host_data_rows_for_window_cached(jid, start, end, acct_hosts):
-  """Exact window COUNT(*) with optional short Django-cache TTL (see conf_parser)."""
+def _count_host_data_rows_for_window_cached(
+  jid: Any,
+  start: Any,
+  end: Any,
+  acct_hosts: Any,
+) -> Any:
+  """
+  Exact window COUNT(*) with optional short Django-cache TTL (see conf_parser).
+  
+  Args:
+    jid (Any): Jid passed to this helper.
+    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    acct_hosts (Any): Acct hosts passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _count_host_data_rows_for_window_cached(None, None, None, None)
+  """
   default_ttl = 300
   try:
     ttl_raw = cfg.get_large_job_window_row_count_cache_ttl()
@@ -597,14 +928,37 @@ def _count_host_data_rows_for_window_cached(jid, start, end, acct_hosts):
   return coerced_n
 
 
-def _distinct_times_in_window_batched(start, end, acct_hosts, batch_size=None):
-  """UNION of DISTINCT ``host_data.time`` in ``[start, end]`` across hosts.
-
+def _distinct_times_in_window_batched(
+  start: Any,
+  end: Any,
+  acct_hosts: Any,
+  batch_size: Any | None = None,
+) -> Any:
+  """
+  UNION of DISTINCT ``host_data.time`` in ``[start, end]`` across hosts.
+  
   Uses chunked ``host__in`` ORM queries (same batch size as row counts). Raw SQL
-  with ``ANY(%s::text[])`` on Django's shared connection previously corrupted the
+  with ``ANY(%s::text[])`` on Django's shared connection previously corrupted
+    the
   psycopg wire protocol (``lost synchronization with server``).
-
+  
   Retries once after :func:`close_old_connections` on connection desync.
+  
+  Args:
+    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    acct_hosts (Any): Acct hosts passed to this helper.
+    batch_size (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    Exception: Raised when ``_distinct_times_in_window_batched`` hits a
+    ``Exception`` failure path.
+  
+  Examples:
+    >>> _distinct_times_in_window_batched(None, None, None, None)
   """
   if start is None or end is None:
     return []
@@ -636,8 +990,20 @@ def _distinct_times_in_window_batched(start, end, acct_hosts, batch_size=None):
       raise
 
 
-def _ntile_bucket_max_timestamps(sorted_ts, n_buckets):
-  """Replicate ``NTILE(n_buckets) OVER (ORDER BY ts)`` then ``MAX(ts)`` per bucket."""
+def _ntile_bucket_max_timestamps(sorted_ts: Any, n_buckets: Any) -> Any:
+  """
+  Replicate ``NTILE(n_buckets) OVER (ORDER BY ts)`` then ``MAX(ts)`` per bucket.
+  
+  Args:
+    sorted_ts (Any): Sorted ts passed to this helper.
+    n_buckets (Any): N buckets passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _ntile_bucket_max_timestamps(None, None)  # doctest: +SKIP
+  """
   L = len(sorted_ts)
   if L == 0:
     return []
@@ -660,8 +1026,21 @@ def _ntile_bucket_max_timestamps(sorted_ts, n_buckets):
   return out
 
 
-def _date_bin_bucket_maxima(sorted_ts, start, step_sec):
-  """``MAX(ts)`` per ``date_bin(step, ts, start)``-style bucket (sorted input)."""
+def _date_bin_bucket_maxima(sorted_ts: Any, start: Any, step_sec: Any) -> Any:
+  """
+  ``MAX(ts)`` per ``date_bin(step, ts, start)``-style bucket (sorted input).
+  
+  Args:
+    sorted_ts (Any): Sorted ts passed to this helper.
+    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    step_sec (Any): Step sec passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _date_bin_bucket_maxima(None, None, None)  # doctest: +SKIP
+  """
   if not sorted_ts:
     return []
   bins = {}
@@ -674,8 +1053,27 @@ def _date_bin_bucket_maxima(sorted_ts, start, step_sec):
   return [bins[k] for k in sorted(bins)]
 
 
-def _strided_distinct_times_postgresql(start, end, acct_hosts, n_buckets):
-  """Up to n_buckets timestamps, one per NTILE bucket over DISTINCT time (ordered)."""
+def _strided_distinct_times_postgresql(
+  start: Any,
+  end: Any,
+  acct_hosts: Any,
+  n_buckets: Any,
+) -> Any:
+  """
+  Up to n_buckets timestamps, one per NTILE bucket over DISTINCT time (ordered).
+  
+  Args:
+    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    acct_hosts (Any): Acct hosts passed to this helper.
+    n_buckets (Any): N buckets passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _strided_distinct_times_postgresql(None, None, None, None)
+  """
   if not acct_hosts or start is None or end is None or n_buckets < 2:
     return []
   distinct_sorted = _distinct_times_in_window_batched(start, end, acct_hosts)
@@ -685,13 +1083,36 @@ def _strided_distinct_times_postgresql(start, end, acct_hosts, n_buckets):
 
 
 def _strided_distinct_times_date_bin_via_grouped_max_sql(
-    start, end, acct_hosts, n_buckets, batch_size=None,
-):
-  """One ``MAX(time)`` per wall-clock stride bucket, merged across host chunks.
-
+  start: Any,
+  end: Any,
+  acct_hosts: Any,
+  n_buckets: Any,
+  batch_size: Any | None = None,
+) -> Any:
+  """
+  One ``MAX(time)`` per wall-clock stride bucket, merged across host chunks.
+  
   Matches the stride grid used by :func:`_date_bin_bucket_maxima` without
   materializing every distinct ``time`` in Python (which is expensive on very
   large windows).
+  
+  Args:
+    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    acct_hosts (Any): Acct hosts passed to this helper.
+    n_buckets (Any): N buckets passed to this helper.
+    batch_size (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    Exception: Raised when
+    ``_strided_distinct_times_date_bin_via_grouped_max_sql`` hits a
+    ``Exception`` failure path.
+  
+  Examples:
+    >>> _strided_distinct_times_date_bin_via_grouped_max_sql(0)  # doctest: +SKIP
   """
   start_dt = _normalize_window_bound_datetime(start)
   end_dt = _normalize_window_bound_datetime(end)
@@ -761,8 +1182,29 @@ def _strided_distinct_times_date_bin_via_grouped_max_sql(
   return [merged[k] for k in sorted(merged)]
 
 
-def _strided_distinct_times_date_bin_postgresql(start, end, acct_hosts, n_buckets):
-  """Up to ~n_buckets timestamps via date-bin-style buckets (Python, same grid as PG)."""
+def _strided_distinct_times_date_bin_postgresql(
+  start: Any,
+  end: Any,
+  acct_hosts: Any,
+  n_buckets: Any,
+) -> Any:
+  """
+  Up to ~n_buckets timestamps via date-bin-style buckets (Python, same grid as.
+  
+    PG).
+  
+  Args:
+    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    acct_hosts (Any): Acct hosts passed to this helper.
+    n_buckets (Any): N buckets passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _strided_distinct_times_date_bin_postgresql(None, None, None, None)
+  """
   if not acct_hosts or start is None or end is None or n_buckets < 2:
     return []
   span_sec = (end - start).total_seconds()
@@ -786,8 +1228,27 @@ def _strided_distinct_times_date_bin_postgresql(start, end, acct_hosts, n_bucket
   return _date_bin_bucket_maxima(distinct_sorted, start, step_sec)
 
 
-def _strided_distinct_times_for_large_job(start, end, acct_hosts, n_buckets):
-  """Strided sample timestamps: ``date_bin`` when configured, else NTILE path."""
+def _strided_distinct_times_for_large_job(
+  start: Any,
+  end: Any,
+  acct_hosts: Any,
+  n_buckets: Any,
+) -> Any:
+  """
+  Strided sample timestamps: ``date_bin`` when configured, else NTILE path.
+  
+  Args:
+    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    acct_hosts (Any): Acct hosts passed to this helper.
+    n_buckets (Any): N buckets passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _strided_distinct_times_for_large_job(None, None, None, None)
+  """
   if cfg.get_large_job_time_sample_sql_mode() == "date_bin":
     try:
       out = _strided_distinct_times_date_bin_postgresql(
@@ -826,23 +1287,50 @@ _summary_agg_count = 0
 _summary_agg_counting = False
 
 
-def begin_summary_aggregate_counting():
-    """Start counting ``get_aggregate_df`` calls (thread-safe)."""
+def begin_summary_aggregate_counting() -> None:
+    """
+    Start counting ``get_aggregate_df`` calls (thread-safe).
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> begin_summary_aggregate_counting()  # doctest: +SKIP
+    """
     global _summary_agg_counting, _summary_agg_count
     with _summary_agg_count_lock:
         _summary_agg_count = 0
         _summary_agg_counting = True
 
 
-def end_summary_aggregate_counting():
-    """Stop counting and return the number of ``get_aggregate_df`` calls seen."""
+def end_summary_aggregate_counting() -> Any:
+    """
+    Stop counting and return the number of ``get_aggregate_df`` calls seen.
+    
+    Returns:
+      Any: Open return polymorphism from ``end_summary_aggregate_counting``:
+      concrete type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> end_summary_aggregate_counting()  # doctest: +SKIP
+    """
     global _summary_agg_counting, _summary_agg_count
     with _summary_agg_count_lock:
         _summary_agg_counting = False
         return _summary_agg_count
 
 
-def _incr_summary_aggregate_count_if_active():
+def _incr_summary_aggregate_count_if_active() -> None:
+    """
+    Internal helper to handle incr summary aggregate count if active.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _incr_summary_aggregate_count_if_active()  # doctest: +SKIP
+    """
     global _summary_agg_count
     if not _summary_agg_counting:
         return
@@ -851,10 +1339,19 @@ def _incr_summary_aggregate_count_if_active():
             _summary_agg_count += 1
 
 
-def _ensure_tz(dt):
-  """Ensure datetime is timezone-aware in local_timezone for display.
-
-    """
+def _ensure_tz(dt: Any) -> Any:
+  """
+  Ensure datetime is timezone-aware in local_timezone for display.
+  
+  Args:
+    dt (Any): Dt passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _ensure_tz(None)  # doctest: +SKIP
+  """
   if dt is None:
     return None
   if dt.tzinfo is None:
@@ -863,11 +1360,23 @@ def _ensure_tz(dt):
   return dt.astimezone(local_timezone)
 
 
-def _normalize_host_cell_for_host_data(value):
-  """Coerce ``host_data.host`` cell to a hashable hostname string (set/DISTINCT safe).
-
+def _normalize_host_cell_for_host_data(value: Any) -> Any:
+  """
+  Coerce ``host_data.host`` cell to a hashable hostname string (set/DISTINCT.
+  
+    safe).
+  
   Bad payloads occasionally store nested sequences in ``host``; ``set.update``
   on queryset rows then raises ``unhashable type: 'list'``.
+  
+  Args:
+    value (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _normalize_host_cell_for_host_data(None)  # doctest: +SKIP
   """
   if value is None:
     return None
@@ -889,13 +1398,24 @@ def _normalize_host_cell_for_host_data(value):
   return s if s else None
 
 
-def _normalize_job_accounting_host_list(raw):
-  """Coerce ``job_data.host_list`` (ArrayField) to a list of short hostnames.
-
+def _normalize_job_accounting_host_list(raw: Any) -> Any:
+  """
+  Coerce ``job_data.host_list`` (ArrayField) to a list of short hostnames.
+  
   Defensive: corrupted cache/ORM values can surface as a non-list (e.g. a lone
   ``datetime``), which must not be iterated for FQDN construction. A single FQDN
-  string (or comma-separated short names) is accepted like :func:`_listify_acct_hosts`.
+  string (or comma-separated short names) is accepted like
+    :func:`_listify_acct_hosts`.
   Nested list payloads are flattened via :func:`_listify_acct_hosts`.
+  
+  Args:
+    raw (Any): Raw passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _normalize_job_accounting_host_list(None)  # doctest: +SKIP
   """
   if raw is None:
     return []
@@ -908,15 +1428,36 @@ def _normalize_job_accounting_host_list(raw):
   return []
 
 
-def _host_data_suffix():
-  """Normalized host_data domain suffix with one leading dot (or empty)."""
+def _host_data_suffix() -> Any:
+  """
+  Normalized host_data domain suffix with one leading dot (or empty).
+  
+  Returns:
+    Any: Open return polymorphism from ``_host_data_suffix``: concrete type
+    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+    empty).
+  
+  Examples:
+    >>> _host_data_suffix()  # doctest: +SKIP
+  """
   ext = str(cfg.get_host_name_ext() or "").strip()
   ext = ext.lstrip(".")
   return "." + ext if ext else ""
 
 
-def _as_host_data_fqdn(host):
-  """Return host in host_data FQDN form, avoiding duplicate suffix append."""
+def _as_host_data_fqdn(host: Any) -> Any:
+  """
+  Return host in host_data FQDN form, avoiding duplicate suffix append.
+  
+  Args:
+    host (Any): Host passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _as_host_data_fqdn(None)  # doctest: +SKIP
+  """
   host_s = str(host or "").strip()
   if not host_s:
     return ""
@@ -928,8 +1469,19 @@ def _as_host_data_fqdn(host):
   return host_s + suffix
 
 
-def _build_acct_host_fqdns(raw_host_list):
-  """Coerce job_data.host_list to host_data lookup FQDNs."""
+def _build_acct_host_fqdns(raw_host_list: Any) -> Any:
+  """
+  Coerce job_data.host_list to host_data lookup FQDNs.
+  
+  Args:
+    raw_host_list (Any): Raw host list passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _build_acct_host_fqdns(None)  # doctest: +SKIP
+  """
   return [
       fqdn for fqdn in (
           _as_host_data_fqdn(h) for h in _normalize_job_accounting_host_list(raw_host_list)
@@ -938,10 +1490,21 @@ def _build_acct_host_fqdns(raw_host_list):
   ]
 
 
-def _unpack_cached_job_window_row(row):
-  """Return ``(host_list, start_time, end_time)`` from a cached jid row.
-
-  Expects a ``values_list`` tuple of ``(host_list, start_time, end_time)`` (pickle-safe).
+def _unpack_cached_job_window_row(row: Any) -> Any:
+  """
+  Return ``(host_list, start_time, end_time)`` from a cached jid row.
+  
+  Expects a ``values_list`` tuple of ``(host_list, start_time, end_time)``
+    (pickle-safe).
+  
+  Args:
+    row (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _unpack_cached_job_window_row(None)  # doctest: +SKIP
   """
   if row is None:
     return None, None, None
@@ -950,13 +1513,25 @@ def _unpack_cached_job_window_row(row):
   return None, None, None
 
 
-def gpu_acct_window_for_job_data(job):
-  """Return ``(start_time, end_time, acct_host_list)`` for GPU-style host_data queries.
-
+def gpu_acct_window_for_job_data(job: Any) -> Any:
+  """
+  Return ``(start_time, end_time, acct_host_list)`` for GPU-style host_data.
+  
+    queries.
+  
   Uses the same FQDN construction as :class:`jid_table` without distinct-host
   discovery, schema scans, or large-job time sampling (those are expensive and
   unnecessary for rolled-up GPU aggregates that only need accounting hosts and
   the job window).
+  
+  Args:
+    job (Any): Job record (Django ``job_data`` or job-like mapping).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> gpu_acct_window_for_job_data(None)  # doctest: +SKIP
   """
   hl_raw = getattr(job, "host_list", None)
   st = _normalize_window_bound_datetime(getattr(job, "start_time", None))
@@ -970,8 +1545,21 @@ def gpu_acct_window_for_job_data(job):
   return _ensure_tz(st), _ensure_tz(et), acct_host_list
 
 
-def _normalize_host_data_schema_label(value):
-  """Coerce ``host_data.type`` / ``event`` cell to a string safe for pandas ``.unique()``."""
+def _normalize_host_data_schema_label(value: Any) -> Any:
+  """
+  Coerce ``host_data.type`` / ``event`` cell to a string safe for pandas.
+  
+    ``.unique()``.
+  
+  Args:
+    value (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _normalize_host_data_schema_label(None)  # doctest: +SKIP
+  """
   if value is None:
     return None
   if isinstance(value, bytes):
@@ -986,8 +1574,21 @@ def _normalize_host_data_schema_label(value):
   return str(value)
 
 
-def _coerce_jid_table_schema_dataframe(df):
-  """Normalize schema frame so ``type`` / ``event`` are hashable strings (no list cells)."""
+def _coerce_jid_table_schema_dataframe(df: Any) -> Any:
+  """
+  Normalize schema frame so ``type`` / ``event`` are hashable strings (no list.
+  
+    cells).
+  
+  Args:
+    df (Any): Df passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _coerce_jid_table_schema_dataframe(None)  # doctest: +SKIP
+  """
   if df is None or df.empty or "type" not in df.columns:
     return df
   out = df.copy()
@@ -999,14 +1600,37 @@ def _coerce_jid_table_schema_dataframe(df):
 
 
 class jid_table:
-  """Job-scoped view of job_data and host_data using Django ORM. No raw connection or temp tables; all data via ORM.
+  """
+  Job-scoped view of job_data and host_data using Django ORM. No raw connection.
+  
+  Attributes:
+    _base_filter: ``_base_filter``.
+    _large_job_plot_cache_token: ``_large_job_plot_cache_token``.
+    acct_host_list: ``acct_host_list``.
+    end_time: ``end_time``.
+    host_list: ``host_list``.
+    jid: ``jid``.
+    schema: ``schema``.
+    start_time: ``start_time``.
+  """
 
+  def __init__(self, jid: Any) -> None:
     """
-
-  def __init__(self, jid):
-    """Build job-scoped filter from job_data and populate host_list and schema from host_data.
-
-        """
+    Build job-scoped filter from job_data and populate host_list and schema.
+    
+      from.
+    
+      host_data.
+    
+    Args:
+      jid (Any): Jid passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> jid_table(None)  # doctest: +SKIP
+    """
     _logger.debug("Initializing jid_table for job %s", jid)
 
     self.jid = jid
@@ -1057,7 +1681,16 @@ class jid_table:
     # Distinct hosts that actually have host_data in range (cached)
     qtime = time.time()
 
-    def _host_list_fn():
+    def _host_list_fn() -> Any:
+      """
+      Internal helper to handle host list function.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Examples:
+        >>> jid_table()._host_list_fn()  # doctest: +SKIP
+      """
       found = set()
       for host_chunk in _iter_acct_host_batches(self.acct_host_list):
         host_qs = (
@@ -1091,11 +1724,23 @@ class jid_table:
     # Schema: distinct (type, event) for one host (cached)
     etime = time.time()
 
-    def _schema_fn():
-      """Return distinct (type, event) pairs for one host as a DataFrame, using Django ORM only.
-
+    def _schema_fn() -> Any:
+      """
+      Return distinct (type, event) pairs for one host as a DataFrame, using.
+      
+        Django ORM only.
+      
       Uses values_list(...).distinct() to avoid the Django bug that can raise
-      IndexError in values().distinct() when schema and model definitions diverge.
+      IndexError in values().distinct() when schema and model definitions
+        diverge.
+      
+      Returns:
+        Any: Open return polymorphism from ``_schema_fn``: concrete type
+        depends on inputs and branch (mapping, scalar, handle, or
+        ``None``-like empty).
+      
+      Examples:
+        >>> jid_table()._schema_fn()  # doctest: +SKIP
       """
       import pandas as pd
 
@@ -1137,8 +1782,18 @@ class jid_table:
     _logger.debug("jid_table schema time: %.1fs", time.time() - etime)
     self._apply_large_job_time_sampling_if_needed()
 
-  def _host_data_time_filter_kwargs(self):
-    """Time scope for host_data queries: full window or sampled ``time__in``."""
+  def _host_data_time_filter_kwargs(self) -> Any:
+    """
+    Time scope for host_data queries: full window or sampled ``time__in``.
+    
+    Returns:
+      Any: Open return polymorphism from ``_host_data_time_filter_kwargs``:
+      concrete type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> jid_table()._host_data_time_filter_kwargs()  # doctest: +SKIP
+    """
     if not self._base_filter:
       return {}
     if "time__in" in self._base_filter:
@@ -1148,8 +1803,18 @@ class jid_table:
         "time__lte": self._base_filter["time__lte"],
     }
 
-  def _apply_large_job_time_sampling_if_needed(self):
-    """If row count exceeds threshold, restrict queries to NTILE-strided timestamps."""
+  def _apply_large_job_time_sampling_if_needed(self) -> None:
+    """
+    If row count exceeds threshold, restrict queries to NTILE-strided.
+    
+      timestamps.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> jid_table()._apply_large_job_time_sampling_if_needed()  # doctest: +SKIP
+    """
     self._large_job_plot_cache_token = "full"
     if not self.acct_host_list or not self.start_time or not self.end_time:
       return
@@ -1191,10 +1856,22 @@ class jid_table:
         len(sampled),
     )
 
-  def _host_data_qs(self, **extra_filters):
-    """Base host_data queryset for this job (time range + hosts).
-
-        """
+  def _host_data_qs(self, **extra_filters: Any) -> Any:
+    """
+    Base host_data queryset for this job (time range + hosts).
+    
+    Args:
+      **extra_filters (Any): Extra keyword arguments (``extra_filters``); keys
+      are ``str`` and value types match the wrapped protocol for this helper.
+    
+    Returns:
+      Any: Open return polymorphism from ``_host_data_qs``: concrete type
+      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+      empty).
+    
+    Examples:
+      >>> jid_table()._host_data_qs()  # doctest: +SKIP
+    """
     if not self._base_filter:
       return host_data.objects.none()
     tkw = self._host_data_time_filter_kwargs()
@@ -1204,8 +1881,21 @@ class jid_table:
         **extra_filters,
     )
 
-  def _full_host_data_rows_batched(self, cols):
-    """values_list rows for the job window, chunking host__in for large node counts."""
+  def _full_host_data_rows_batched(self, cols: Any) -> Any:
+    """
+    values_list rows for the job window, chunking host__in for large node.
+    
+      counts.
+    
+    Args:
+      cols (Any): Cols passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> jid_table()._full_host_data_rows_batched(None)  # doctest: +SKIP
+    """
     rows = []
     if not self.acct_host_list or not self._base_filter:
       return rows
@@ -1227,11 +1917,28 @@ class jid_table:
         rows.append(tuple(r[:len(cols)]))
     return rows
 
-  def get_host_time_df(self):
-    """DataFrame of (host, time) distinct, ordered by host, time (cached).
-
-        """
-    def _fn():
+  def get_host_time_df(self) -> Any:
+    """
+    DataFrame of (host, time) distinct, ordered by host, time (cached).
+    
+    Returns:
+      Any: Open return polymorphism from ``get_host_time_df``: concrete type
+      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+      empty).
+    
+    Examples:
+      >>> jid_table().get_host_time_df()  # doctest: +SKIP
+    """
+    def _fn() -> Any:
+      """
+      Internal helper to handle function.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Examples:
+        >>> jid_table()._fn()  # doctest: +SKIP
+      """
       import pandas as pd
 
       if not self.acct_host_list:
@@ -1261,9 +1968,34 @@ class jid_table:
     result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     return result if result is not None else queryset_to_dataframe(None)
 
-  def get_aggregate_df(self, typ, val_col, events, conv=1.0):
-    """Aggregate val_col (e.g. 'arc' or 'value') for given type and events. Returns DataFrame with columns host, time, sum_val (sum * conv). Result is cached per (jid, typ, val_col, events).
-        """
+  def get_aggregate_df(
+    self,
+    typ: Any,
+    val_col: Any,
+    events: Any,
+    conv: float = 1.0,
+  ) -> Any:
+    """
+    Aggregate val_col (e.g. 'arc' or 'value') for given type and events.
+    
+      Returns.
+    
+      DataFrame with columns host, time, sum_val (sum * conv). Result is
+        cached
+      per (jid, typ, val_col, events).
+    
+    Args:
+      typ (Any): Typ passed to this helper.
+      val_col (Any): Val col passed to this helper.
+      events (Any): Events passed to this helper.
+      conv (float): Floating-point value for conv.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> jid_table().get_aggregate_df(None, None, None, 0)  # doctest: +SKIP
+    """
     _incr_summary_aggregate_count_if_active()
     probed_events = events_probe_names(events, typ=typ)
     events_key = ":".join(sorted(probed_events))
@@ -1273,7 +2005,16 @@ class jid_table:
         t in _gpu_types for t in type_probe_names(typ)
     )
 
-    def _fn_pandas_groupby():
+    def _fn_pandas_groupby() -> Any:
+      """
+      Internal helper to handle function pandas groupby.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Examples:
+        >>> jid_table()._fn_pandas_groupby()  # doctest: +SKIP
+      """
       hosts = [str(h) for h in self._base_filter.get("host__in") or []]
       import pandas as pd
 
@@ -1327,7 +2068,19 @@ class jid_table:
       df_all["sum_val"] = df_all["sum_val"] * conv
       return df_all
 
-    def _fn():
+    def _fn() -> Any:
+      """
+      Internal helper to handle function.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Raises:
+        Exception: Raised when ``_fn`` hits a ``Exception`` failure path.
+      
+      Examples:
+        >>> jid_table()._fn()  # doctest: +SKIP
+      """
       import pandas as pd
 
       hosts = [str(h) for h in self._base_filter.get("host__in") or []]
@@ -1396,10 +2149,23 @@ class jid_table:
       return result
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
-  def get_full_host_data_df(self, columns=None):
-    """Full host_data for this job as DataFrame (host, time, type, event, value, etc.). Cached when columns is None.
-
-        """
+  def get_full_host_data_df(self, columns: Any | None = None) -> Any:
+    """
+    Full host_data for this job as DataFrame (host, time, type, event, value,.
+    
+      etc.). Cached when columns is None.
+    
+    Args:
+      columns (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Open return polymorphism from ``get_full_host_data_df``: concrete
+      type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> jid_table().get_full_host_data_df(None)  # doctest: +SKIP
+    """
     cols = columns or ["host", "time", "type", "event", "value", "arc", "delta"]
 
     # When specific columns are requested, return a fresh DataFrame without
@@ -1412,7 +2178,16 @@ class jid_table:
       rows = self._full_host_data_rows_batched(cols)
       return pd.DataFrame(rows, columns=cols)
 
-    def _fn():
+    def _fn() -> Any:
+      """
+      Internal helper to handle function.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Examples:
+        >>> jid_table()._fn()  # doctest: +SKIP
+      """
       import pandas as pd
 
       rows = self._full_host_data_rows_batched(cols)
@@ -1423,15 +2198,36 @@ class jid_table:
     result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     return result if result is not None else queryset_to_dataframe(None)
 
-  def get_llite_delta_by_event(self):
-    """Lustre vfs_read_bytes/vfs_write_bytes sum(delta) by event for this job (cached).
-
-    Dual-reads legacy ``read_bytes``/``write_bytes``; returned ``event`` values are
+  def get_llite_delta_by_event(self) -> Any:
+    """
+    Lustre vfs_read_bytes/vfs_write_bytes sum(delta) by event for this job.
+    
+      (cached).
+    
+    Dual-reads legacy ``read_bytes``/``write_bytes``; returned ``event`` values
+      are
     canonicalized to ``vfs_*``.
-        """
+    
+    Returns:
+      Any: Open return polymorphism from ``get_llite_delta_by_event``:
+      concrete type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> jid_table().get_llite_delta_by_event()  # doctest: +SKIP
+    """
     byte_events = ["vfs_read_bytes", "vfs_write_bytes"]
 
-    def _llite_fn():
+    def _llite_fn() -> Any:
+      """
+      Internal helper to handle llite function.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Examples:
+        >>> jid_table()._llite_fn()  # doctest: +SKIP
+      """
       for typ in type_probe_names("lustre_llite"):
         probed = events_probe_names(byte_events, typ=typ)
         qs = (self._host_data_qs(
@@ -1457,18 +2253,39 @@ class jid_table:
     result = cached_orm(key, get_site_content_cache_timeout(), _llite_fn)
     return result if result is not None else queryset_to_dataframe(None)
 
-  def get_nfs_delta_totals_mb(self):
-    """Aggregate NFS client byte counters (monitor type `nfs`) to total read/write MB.
-
-    Uses the same counters as the monitor's `nfs.c` BYTE_KEYS: normal/direct/server
+  def get_nfs_delta_totals_mb(self) -> Any:
+    """
+    Aggregate NFS client byte counters (monitor type `nfs`) to total read/write.
+    
+      MB.
+    
+    Uses the same counters as the monitor's `nfs.c` BYTE_KEYS:
+      normal/direct/server
     read and write. Intended for the job detail File System when Lustre `llite`
     stats are not available.
+    
+    Returns:
+      Any: Open return polymorphism from ``get_nfs_delta_totals_mb``: concrete
+      type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> jid_table().get_nfs_delta_totals_mb()  # doctest: +SKIP
     """
     nfs_read_events = ("normal_read", "direct_read", "server_read")
     nfs_write_events = ("normal_write", "direct_write", "server_write")
     all_events = list(nfs_read_events) + list(nfs_write_events)
 
-    def _nfs_fn():
+    def _nfs_fn() -> Any:
+      """
+      Internal helper to handle nfs function.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Examples:
+        >>> jid_table()._nfs_fn()  # doctest: +SKIP
+      """
       df = queryset_to_dataframe(None)
       for typ in type_probe_names("nfs"):
         qs = (
@@ -1499,25 +2316,63 @@ class jid_table:
     result = cached_orm(key, get_site_content_cache_timeout(), _nfs_fn)
     return result
 
-  def close(self):
-    """No-op; provided for context-manager symmetry.
-
-        """
+  def close(self) -> None:
+    """
+    No-op; provided for context-manager symmetry.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> jid_table().close()  # doctest: +SKIP
+    """
     pass
 
-  def __enter__(self):
-    """Context manager entry; return self."""
+  def __enter__(self) -> Any:
+    """
+    Context manager entry; return self.
+    
+    Returns:
+      Any: Open return polymorphism from ``__enter__``: concrete type depends
+      on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __enter__()  # doctest: +SKIP
+    """
     return self
 
-  def __exit__(self, _exc_type, _exc_val, _exc_tb):
-    """Context manager exit; call close()."""
+  def __exit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> Any:
+    """
+    Context manager exit; call close().
+    
+    Args:
+      _exc_type (Any):  exc type passed to this helper.
+      _exc_val (Any):  exc val passed to this helper.
+      _exc_tb (Any):  exc tb passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> __exit__(None, None, None)  # doctest: +SKIP
+    """
     self.close()
     return False
 
-  def __del__(self):
-    """Destructor; call close() if possible. Prefer using 'with jid_table(...)'
-    for guaranteed cleanup; __del__ is not guaranteed to run (e.g. at interpreter
-    shutdown or with circular refs)."""
+  def __del__(self) -> None:
+    """
+    Destructor; call close() if possible. Prefer using 'with jid_table(...)'.
+    
+    for guaranteed cleanup; __del__ is not guaranteed to run (e.g. at
+      interpreter
+    shutdown or with circular refs).
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> __del__()  # doctest: +SKIP
+    """
     try:
       self.close()
     except Exception:
@@ -1525,24 +2380,72 @@ class jid_table:
 
 
 class TypeDetailDataProvider:
-  """ORM-based provider for type-detail view: host_data scoped by job start/end and accounting host_list (no host_data.jid).
+  """
+  ORM-based provider for type-detail view: host_data scoped by job start/end.
+  
+  and.
+  
+    accounting host_list (no host_data.jid).
+  
+  Attributes:
+    end_time: ``end_time``.
+    host_list: ``host_list``.
+    jid: ``jid``.
+    start_time: ``start_time``.
+    type_name: ``type_name``.
+  """
 
+  def __init__(
+    self,
+    jid: Any,
+    type_name: Any,
+    start_time: Any,
+    end_time: Any,
+    host_list: Any,
+  ) -> None:
     """
-
-  def __init__(self, jid, type_name, start_time, end_time, host_list):
-    """Build base filter for type_name, time range, and optional host_list. ``jid`` is only for cache keys / API identity.
-
-        """
+    Build base filter for type_name, time range, and optional host_list.
+    
+      ``jid``.
+    
+      is only for cache keys / API identity.
+    
+    Args:
+      jid (Any): Jid passed to this helper.
+      type_name (Any): Type name passed to this helper.
+      start_time (Any): Start time passed to this helper.
+      end_time (Any): End time passed to this helper.
+      host_list (Any): Host list passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> TypeDetailDataProvider(None, None, None, None, None)  # doctest: +SKIP
+    """
     self.jid = jid
     self.type_name = type_name
     self.start_time = start_time
     self.end_time = end_time
     self.host_list = list(host_list) if host_list else []
 
-  def _qs(self, **extra):
-    """Base host_data queryset for this provider (type, time range, optional host_list).
-
-        """
+  def _qs(self, **extra: Any) -> Any:
+    """
+    Base host_data queryset for this provider (type, time range, optional.
+    
+      host_list).
+    
+    Args:
+      **extra (Any): Extra keyword arguments (``extra``); keys are ``str`` and
+      value types match the wrapped protocol for this helper.
+    
+    Returns:
+      Any: Open return polymorphism from ``_qs``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> TypeDetailDataProvider()._qs()  # doctest: +SKIP
+    """
     flt = {
         "type": self.type_name,
         "time__gte": self.start_time,
@@ -1552,17 +2455,34 @@ class TypeDetailDataProvider:
       flt["host__in"] = self.host_list
     return host_data.objects.filter(**flt, **extra)
 
-  def get_host_time_df(self):
-    """DataFrame of (host, time) distinct, ordered by host, time (cached).
-
-        """
+  def get_host_time_df(self) -> Any:
+    """
+    DataFrame of (host, time) distinct, ordered by host, time (cached).
+    
+    Returns:
+      Any: Open return polymorphism from ``get_host_time_df``: concrete type
+      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+      empty).
+    
+    Examples:
+      >>> TypeDetailDataProvider().get_host_time_df()  # doctest: +SKIP
+    """
     _st = self.start_time.isoformat() if self.start_time else ""
     _et = self.end_time.isoformat() if self.end_time else ""
     key = make_cache_key(
         KEY_TYPE_DETAIL_HOST_TIME, self.jid, self.type_name, _st, _et
     )
 
-    def _fn():
+    def _fn() -> Any:
+      """
+      Internal helper to handle function.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Examples:
+        >>> TypeDetailDataProvider()._fn()  # doctest: +SKIP
+      """
       import pandas as pd
 
       if (
@@ -1582,7 +2502,19 @@ class TypeDetailDataProvider:
       start_time = self.start_time
       end_time = self.end_time
 
-      def build_qs(host_chunk):
+      def build_qs(host_chunk: Any) -> Any:
+        """
+        Build the queryset.
+        
+        Args:
+          host_chunk (Any): Host chunk passed to this helper.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> TypeDetailDataProvider().build_qs(None)  # doctest: +SKIP
+        """
         return (
             host_data.objects.filter(
                 type=type_name,
@@ -1607,10 +2539,18 @@ class TypeDetailDataProvider:
     result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     return result if result is not None else queryset_to_dataframe(None)
 
-  def get_events_units(self):
-    """List of (event, unit) for one host.
-
-        """
+  def get_events_units(self) -> Any:
+    """
+    List of (event, unit) for one host.
+    
+    Returns:
+      Any: Open return polymorphism from ``get_events_units``: concrete type
+      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+      empty).
+    
+    Examples:
+      >>> TypeDetailDataProvider().get_events_units()  # doctest: +SKIP
+    """
     if not self.host_list:
       return []
     qs = (self._qs(host=self.host_list[0]).values("event", "unit").distinct())
@@ -1619,18 +2559,40 @@ class TypeDetailDataProvider:
       return []
     return list(df[["event", "unit"]].itertuples(index=False, name=None))
 
-  def get_type_list(self):
-    """Return sorted list of distinct type names for the first host.
-
-        """
+  def get_type_list(self) -> Any:
+    """
+    Return sorted list of distinct type names for the first host.
+    
+    Returns:
+      Any: Open return polymorphism from ``get_type_list``: concrete type
+      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+      empty).
+    
+    Examples:
+      >>> TypeDetailDataProvider().get_type_list()  # doctest: +SKIP
+    """
     if not self.host_list:
       return []
     qs = self._qs(host=self.host_list[0]).values_list("type",
                                                       flat=True).distinct()
     return sorted(set(qs))
 
-  def get_aggregate_df(self, event, metric="arc"):
-    """Aggregate metric (e.g. arc) by host and time for the given event; returns DataFrame with sum_val (cached)."""
+  def get_aggregate_df(self, event: Any, metric: str = "arc") -> Any:
+    """
+    Aggregate metric (e.g. arc) by host and time for the given event; returns.
+    
+      DataFrame with sum_val (cached).
+    
+    Args:
+      event (Any): Event passed to this helper.
+      metric (str): String for metric.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> TypeDetailDataProvider().get_aggregate_df(None, "x")  # doctest: +SKIP
+    """
     _ALLOWED_METRICS = ("arc", "value", "delta")
     if metric not in _ALLOWED_METRICS:
       metric = "arc"
@@ -1641,7 +2603,19 @@ class TypeDetailDataProvider:
     )
     import pandas as pd
 
-    def _fn():
+    def _fn() -> Any:
+      """
+      Internal helper to handle function.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Raises:
+        Exception: Raised when ``_fn`` hits a ``Exception`` failure path.
+      
+      Examples:
+        >>> TypeDetailDataProvider()._fn()  # doctest: +SKIP
+      """
       if (
           not self.host_list
           or self.start_time is None
@@ -1660,7 +2634,25 @@ class TypeDetailDataProvider:
             self.host_list,
             TYPE_DETAIL_HOST_QUERY_BATCH,
         ):
-          def build_qs_sql(host_subchunk, ev=event, met=metric):
+          def build_qs_sql(
+            host_subchunk: Any,
+            ev: Any = event,
+            met: Any = metric,
+          ) -> Any:
+            """
+            Build the queryset sql.
+            
+            Args:
+              host_subchunk (Any): Host subchunk passed to this helper.
+              ev (Any): Ev passed to this helper.
+              met (Any): Met passed to this helper.
+            
+            Returns:
+              Any: Value produced by this call (type depends on inputs).
+            
+            Examples:
+              >>> TypeDetailDataProvider().build_qs_sql(None, None, None)
+            """
             return host_data_sum_val_per_sample_queryset(
                 host_data.objects.filter(
                     type=type_name,
@@ -1693,7 +2685,25 @@ class TypeDetailDataProvider:
             exc_info=True,
         )
 
-      def build_qs_raw(host_chunk, ev=event, met=metric):
+      def build_qs_raw(
+        host_chunk: Any,
+        ev: Any = event,
+        met: Any = metric,
+      ) -> Any:
+        """
+        Build the queryset raw.
+        
+        Args:
+          host_chunk (Any): Host chunk passed to this helper.
+          ev (Any): Ev passed to this helper.
+          met (Any): Met passed to this helper.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> TypeDetailDataProvider().build_qs_raw(None, None, None)
+        """
         return (
             host_data.objects.filter(
                 type=type_name,
@@ -1719,14 +2729,34 @@ class TypeDetailDataProvider:
 
 
 class HostDataProvider:
-  """ORM-based provider for host-scoped host_data (one host, time range). Same interface as jid_table for SummaryPlot: jid, host_list, get_host_time_df, get_aggregate_df.
+  """
+  ORM-based provider for host-scoped host_data (one host, time range). Same.
+  
+    interface as jid_table for SummaryPlot: jid, host_list, get_host_time_df,
+    get_aggregate_df.
+  
+  Attributes:
+    _base_filter: ``_base_filter``.
+    host_list: ``host_list``.
+    jid: ``jid``.
+    schema: ``schema``.
+  """
 
+  def __init__(self, host_fqdn: Any, start_time: Any, end_time: Any) -> None:
     """
-
-  def __init__(self, host_fqdn, start_time, end_time):
-    """Build base filter and schema for one host and time range. Schema is cached.
-
-        """
+    Build base filter and schema for one host and time range. Schema is cached.
+    
+    Args:
+      host_fqdn (Any): Host fqdn passed to this helper.
+      start_time (Any): Start time passed to this helper.
+      end_time (Any): End time passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> HostDataProvider(None, None, None)  # doctest: +SKIP
+    """
     self.jid = host_fqdn.split(".")[0].replace("-", "_")
     self.host_list = [host_fqdn]
     self._base_filter = {
@@ -1739,8 +2769,20 @@ class HostDataProvider:
     _et = end_time.isoformat() if end_time else ""
     cache_key = make_cache_key(KEY_HOST_SCHEMA, host_fqdn, _st, _et)
 
-    def _schema_fn():
-      """Return schema dict {type: [events...]} for this host/time range using ORM only."""
+    def _schema_fn() -> Any:
+      """
+      Return schema dict {type: [events...]} for this host/time range using ORM.
+      
+        only.
+      
+      Returns:
+        Any: Open return polymorphism from ``_schema_fn``: concrete type
+        depends on inputs and branch (mapping, scalar, handle, or
+        ``None``-like empty).
+      
+      Examples:
+        >>> HostDataProvider()._schema_fn()  # doctest: +SKIP
+      """
       import pandas as pd
 
       raw_rows = list(
@@ -1769,22 +2811,64 @@ class HostDataProvider:
 
     self.schema = cached_orm(cache_key, get_site_content_cache_timeout(), _schema_fn) or {}
 
-  def _host_data_qs(self, **extra_filters):
-    """Base host_data queryset for this host (time range).
-
-        """
+  def _host_data_qs(self, **extra_filters: Any) -> Any:
+    """
+    Base host_data queryset for this host (time range).
+    
+    Args:
+      **extra_filters (Any): Extra keyword arguments (``extra_filters``); keys
+      are ``str`` and value types match the wrapped protocol for this helper.
+    
+    Returns:
+      Any: Open return polymorphism from ``_host_data_qs``: concrete type
+      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+      empty).
+    
+    Examples:
+      >>> HostDataProvider()._host_data_qs()  # doctest: +SKIP
+    """
     return host_data.objects.filter(**self._base_filter, **extra_filters)
 
-  def get_host_time_df(self):
-    """DataFrame of (host, time) distinct, ordered by host, time.
-
-        """
+  def get_host_time_df(self) -> Any:
+    """
+    DataFrame of (host, time) distinct, ordered by host, time.
+    
+    Returns:
+      Any: Open return polymorphism from ``get_host_time_df``: concrete type
+      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+      empty).
+    
+    Examples:
+      >>> HostDataProvider().get_host_time_df()  # doctest: +SKIP
+    """
     qs = (self._host_data_qs().values("host", "time").distinct().order_by(
         "host", "time"))
     return queryset_to_dataframe(qs)
 
-  def get_aggregate_df(self, typ, val_col, events, conv=1.0):
-    """Aggregate val_col for type and events; returns DataFrame with host, time, sum_val (sum * conv)."""
+  def get_aggregate_df(
+    self,
+    typ: Any,
+    val_col: Any,
+    events: Any,
+    conv: float = 1.0,
+  ) -> Any:
+    """
+    Aggregate val_col for type and events; returns DataFrame with host, time,.
+    
+      sum_val (sum * conv).
+    
+    Args:
+      typ (Any): Typ passed to this helper.
+      val_col (Any): Val col passed to this helper.
+      events (Any): Events passed to this helper.
+      conv (float): Floating-point value for conv.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> HostDataProvider().get_aggregate_df(None, None, None, 0)
+    """
     _incr_summary_aggregate_count_if_active()
     _ALLOWED_METRICS = ("arc", "value", "delta")
     if val_col not in _ALLOWED_METRICS:

@@ -1,4 +1,9 @@
-"""Parse [DEFAULT] server= hostnames from hpcperfstats.ini for the TLS proxy."""
+"""
+Parse [DEFAULT] server= hostnames from hpcperfstats.ini for the TLS proxy.
+
+Attributes:
+  _SERVER_NAME_PART_RE: Attribute.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +15,22 @@ _SERVER_NAME_PART_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9.-]*$")
 
 
 def load_allowed_server_names(ini_path: Path) -> list[str]:
-  """Return trimmed hostnames from ``[DEFAULT] server=`` (comma-separated)."""
+  """
+  Return trimmed hostnames from ``[DEFAULT] server=`` (comma-separated).
+  
+  Args:
+    ini_path (Path): String for ini path.
+  
+  Returns:
+    list[str]: list[str] produced by this call.
+  
+  Raises:
+    ValueError: Raised when ``load_allowed_server_names`` hits a
+    ``ValueError`` failure path.
+  
+  Examples:
+    >>> load_allowed_server_names("x")  # doctest: +SKIP
+  """
   cfg = configparser.ConfigParser(interpolation=configparser.ExtendedInterpolation())
   read_ok = cfg.read(ini_path, encoding="utf-8")
   if not read_ok:

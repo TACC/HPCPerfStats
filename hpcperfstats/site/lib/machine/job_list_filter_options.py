@@ -1,5 +1,13 @@
-"""Distinct header-filter option values scoped to the current job-list selection."""
+"""
+Distinct header-filter option values scoped to the current job-list selection.
+
+Attributes:
+  JOB_LIST_FILTER_OPTIONS_MAX: Attribute.
+  _HEADER_STRING_DIMENSIONS: Attribute.
+"""
 from __future__ import annotations
+
+from typing import Any
 
 from .job_list_performance import PERFORMANCE_STATUS_BY_SORT_RANK, performance_status_label
 from .job_list_state_groups import major_state_options_from_raw
@@ -13,8 +21,25 @@ _HEADER_STRING_DIMENSIONS = (
 )
 
 
-def _distinct_string_values(queryset, orm_field, cap=JOB_LIST_FILTER_OPTIONS_MAX):
-    """Return sorted distinct non-empty string values, capped with truncation flag."""
+def _distinct_string_values(
+  queryset: Any,
+  orm_field: Any,
+  cap: Any = JOB_LIST_FILTER_OPTIONS_MAX,
+) -> Any:
+    """
+    Return sorted distinct non-empty string values, capped with truncation flag.
+    
+    Args:
+      queryset (Any): Queryset passed to this helper.
+      orm_field (Any): Orm field passed to this helper.
+      cap (Any): Cap passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _distinct_string_values(None, None, None)  # doctest: +SKIP
+    """
     qs = (
         queryset.exclude(**{f"{orm_field}__isnull": True})
         .exclude(**{orm_field: ""})
@@ -29,8 +54,19 @@ def _distinct_string_values(queryset, orm_field, cap=JOB_LIST_FILTER_OPTIONS_MAX
     return values, truncated
 
 
-def _distinct_major_state_keys(queryset):
-    """Return major terminal state group keys present in *queryset* (max five)."""
+def _distinct_major_state_keys(queryset: Any) -> Any:
+    """
+    Return major terminal state group keys present in *queryset* (max five).
+    
+    Args:
+      queryset (Any): Queryset passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _distinct_major_state_keys(None)  # doctest: +SKIP
+    """
     raw_states = (
         queryset.exclude(state__isnull=True)
         .exclude(state="")
@@ -40,12 +76,26 @@ def _distinct_major_state_keys(queryset):
     return major_state_options_from_raw(raw_states)
 
 
-def build_job_list_filter_options(request, build_queryset_from_request):
+def build_job_list_filter_options(
+  request: Any,
+  build_queryset_from_request: Any,
+) -> Any:
     """
     Faceted filter options for the job list header toolbar.
-
+    
     For each dimension, options come from the queryset with all active filters
     except that dimension (so chips can be toggled off/on without empty lists).
+    
+    Args:
+      request (Any): Request passed to this helper.
+      build_queryset_from_request (Any): Build queryset from request passed to
+      this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> build_job_list_filter_options(None, None)  # doctest: +SKIP
     """
     truncated = {
         "usernames": False,

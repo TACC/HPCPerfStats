@@ -1,10 +1,27 @@
-"""Canonical section placement contract for hpcperfstats.ini options.
+"""
+Canonical section placement contract for hpcperfstats.ini options.
 
 Used by drift tests to ensure INI_OPTION_REGISTRY and hpcperfstats.ini.example
-stay aligned with the section taxonomy documented in hpcperfstats-ini-format.mdc.
+stay aligned with the section taxonomy documented in hpcperfstats-ini-
+format.mdc.
+
+Attributes:
+  CACHE_OPTIONS: Attribute.
+  DEFAULT_INSTALL_OPTIONS: Attribute.
+  DEFAULT_PINNING_OPTIONS: Attribute.
+  DEFAULT_POSTGRES_OPTIONS: Attribute.
+  EXPLICIT_OPTION_SECTION: Attribute.
+  OAUTH2_OPTIONS: Attribute.
+  PORTAL_WEB_TUNING_OPTIONS: Attribute.
+  RMQ_OPTIONS: Attribute.
+  SECTION_OPTION_PREFIX_RULES: Attribute.
+  SYSLOG_OPTIONS: Attribute.
+  XALT_OPTIONS: Attribute.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 DEFAULT_PINNING_OPTIONS = frozenset({
     "cpuset_pin_min_total_cores",
@@ -95,7 +112,22 @@ EXPLICIT_OPTION_SECTION = {
 
 
 def expected_section(option: str) -> str:
-  """Return the canonical ini section for *option*."""
+  """
+  Return the canonical ini section for *option*.
+  
+  Args:
+    option (str): String for option.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Raises:
+    KeyError: Raised when ``expected_section`` hits a ``KeyError`` failure
+    path.
+  
+  Examples:
+    >>> expected_section("x")  # doctest: +SKIP
+  """
   if option in EXPLICIT_OPTION_SECTION:
     return EXPLICIT_OPTION_SECTION[option]
   if option in DEFAULT_INSTALL_OPTIONS:
@@ -124,8 +156,19 @@ def expected_section(option: str) -> str:
   raise KeyError("no section placement rule for ini option %r" % option)
 
 
-def validate_registry_sections(registry) -> list[str]:
-  """Return human-readable violations when registry section != expected_section."""
+def validate_registry_sections(registry: Any) -> list[str]:
+  """
+  Return human-readable violations when registry section != expected_section.
+  
+  Args:
+    registry (Any): Registry passed to this helper.
+  
+  Returns:
+    list[str]: list[str] produced by this call.
+  
+  Examples:
+    >>> validate_registry_sections(None)  # doctest: +SKIP
+  """
   violations = []
   for entry in registry:
     section, option = entry[0], entry[1]

@@ -1,4 +1,7 @@
-"""Job-plot API view exports."""
+"""
+Job-plot API view exports.
+"""
+from __future__ import annotations
 
 from .api import job_plots
 

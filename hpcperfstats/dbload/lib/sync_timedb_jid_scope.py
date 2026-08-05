@@ -1,7 +1,11 @@
-"""Resolve ``job_data`` scope for ``sync_timedb.py --jid`` ingest-only runs.
+"""
+Resolve ``job_data`` scope for ``sync_timedb.py --jid`` ingest-only runs.
 
 Does not import the analysis metrics ``jid_table`` stack — FQDN suffix rules
 mirror ``jid_table._as_host_data_fqdn`` using ``conf_parser.get_host_name_ext``.
+
+Attributes:
+  JID_WINDOW_PAD: Attribute.
 """
 from __future__ import annotations
 
@@ -16,9 +20,18 @@ JID_WINDOW_PAD = timedelta(hours=1)
 
 @dataclass(frozen=True)
 class JobIngestScope:
-  """Hosts and padded time window for surgical archive ingest.
-
+  """
+  Hosts and padded time window for surgical archive ingest.
+  
   Neighbor ±1 files beyond the pad are applied at host-scoped discover/filter.
+  
+  Attributes:
+    end_time: Attribute.
+    hosts: Attribute.
+    jid: Attribute.
+    start_time: Attribute.
+    window_end: Attribute.
+    window_start: Attribute.
   """
 
   jid: str
@@ -30,16 +43,38 @@ class JobIngestScope:
 
 
 class JobIngestScopeError(ValueError):
-  """Missing job, empty hosts, or invalid timing for ``--jid``."""
+  """
+  Missing job, empty hosts, or invalid timing for ``--jid``.
+  """
 
 
 def _host_data_suffix() -> str:
+  """
+  Internal helper to handle host data suffix.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _host_data_suffix()  # doctest: +SKIP
+  """
   ext = str(cfg.get_host_name_ext() or "").strip().lstrip(".")
   return "." + ext if ext else ""
 
 
 def as_host_data_fqdn(host: object) -> str:
-  """Return host in archive / host_data FQDN form (no duplicate suffix)."""
+  """
+  Return host in archive / host_data FQDN form (no duplicate suffix).
+  
+  Args:
+    host (object): Host.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> as_host_data_fqdn(None)  # doctest: +SKIP
+  """
   host_s = str(host or "").strip()
   if not host_s:
     return ""
@@ -52,7 +87,18 @@ def as_host_data_fqdn(host: object) -> str:
 
 
 def normalize_job_host_list(raw: object) -> List[str]:
-  """Coerce ``job_data.host_list`` (ArrayField or defensive shapes) to short names."""
+  """
+  Coerce ``job_data.host_list`` (ArrayField or defensive shapes) to short names.
+  
+  Args:
+    raw (object): Raw.
+  
+  Returns:
+    List[str]: List[str] produced by this call.
+  
+  Examples:
+    >>> normalize_job_host_list(None)  # doctest: +SKIP
+  """
   if raw is None:
     return []
   if isinstance(raw, datetime):
@@ -75,7 +121,18 @@ def normalize_job_host_list(raw: object) -> List[str]:
 
 
 def build_acct_host_fqdns(raw_host_list: object) -> List[str]:
-  """Build unique FQDN host directory names for archive discovery."""
+  """
+  Build unique FQDN host directory names for archive discovery.
+  
+  Args:
+    raw_host_list (object): Raw host list.
+  
+  Returns:
+    List[str]: List[str] produced by this call.
+  
+  Examples:
+    >>> build_acct_host_fqdns(None)  # doctest: +SKIP
+  """
   seen = set()
   out: List[str] = []
   for h in normalize_job_host_list(raw_host_list):
@@ -88,19 +145,50 @@ def build_acct_host_fqdns(raw_host_list: object) -> List[str]:
 
 
 def _ensure_aware_utc(dt: datetime) -> datetime:
+  """
+  Internal helper to ensure the aware utc.
+  
+  Args:
+    dt (datetime): Dt.
+  
+  Returns:
+    datetime: datetime produced by this call.
+  
+  Examples:
+    >>> _ensure_aware_utc(None)  # doctest: +SKIP
+  """
   if dt.tzinfo is None:
     return dt.replace(tzinfo=timezone.utc)
   return dt.astimezone(timezone.utc)
 
 
 def padded_job_window(
-    start_time: datetime,
-    end_time: Optional[datetime],
-    *,
-    now: Optional[datetime] = None,
-    pad: timedelta = JID_WINDOW_PAD,
+  start_time: datetime,
+  end_time: Optional[datetime],
+  *,
+  now: Optional[datetime] = None,
+  pad: timedelta = JID_WINDOW_PAD,
 ) -> Tuple[datetime, datetime]:
-  """Return ``(start - pad, end + pad)``; null end uses ``now + pad`` as end."""
+  """
+  Return ``(start - pad, end + pad)``; null end uses ``now + pad`` as end.
+  
+  Args:
+    start_time (datetime): Start time.
+    end_time (Optional[datetime]): End time, or None when absent.
+    now (Optional[datetime]): Now, or None when absent.
+    pad (timedelta): Pad.
+  
+  Returns:
+    Tuple[datetime, datetime]: Tuple[datetime, datetime] produced by this
+    call.
+  
+  Raises:
+    JobIngestScopeError: Raised when ``padded_job_window`` hits a
+    ``JobIngestScopeError`` failure path.
+  
+  Examples:
+    >>> padded_job_window(None, None, None, None)  # doctest: +SKIP
+  """
   if start_time is None:
     raise JobIngestScopeError("job start_time is required")
   start = _ensure_aware_utc(start_time)
@@ -115,13 +203,28 @@ def padded_job_window(
 
 
 def resolve_job_ingest_scope(
-    jid: str,
-    *,
-    now: Optional[datetime] = None,
+  jid: str,
+  *,
+  now: Optional[datetime] = None,
 ) -> JobIngestScope:
-  """Load ``job_data`` and return FQDN hosts + ±1h padded window.
-
+  """
+  Load ``job_data`` and return FQDN hosts + ±1h padded window.
+  
   Raises ``JobIngestScopeError`` when the job is missing or has no hosts.
+  
+  Args:
+    jid (str): String for jid.
+    now (Optional[datetime]): Now, or None when absent.
+  
+  Returns:
+    JobIngestScope: JobIngestScope produced by this call.
+  
+  Raises:
+    JobIngestScopeError: Raised when ``resolve_job_ingest_scope`` hits a
+    ``JobIngestScopeError`` failure path.
+  
+  Examples:
+    >>> resolve_job_ingest_scope("x", None)  # doctest: +SKIP
   """
   from hpcperfstats.site.lib.machine.models import job_data
 
@@ -153,15 +256,26 @@ def resolve_job_ingest_scope(
   )
 
 
-def parse_sync_timedb_jid_cli_arg(argv: Optional[Sequence[str]] = None) -> Tuple[
-    Optional[str], Optional[str],
-]:
-  """Parse ``--jid`` / ``--jid=`` from argv.
-
-  Returns ``(jid, error)``:
-  - ``(None, None)`` — not a ``--jid`` invocation
-  - ``(jid, None)`` — one-shot jid ingest
-  - ``(None, message)`` — usage / mutual-exclusion error
+def parse_sync_timedb_jid_cli_arg(
+  argv: Optional[Sequence[str]] = None,
+) -> Tuple[ Optional[str], Optional[str], ]:
+  """
+  Parse ``--jid`` / ``--jid=`` from argv.
+  
+    Returns ``(jid, error)``:
+    - ``(None, None)`` — not a ``--jid`` invocation
+    - ``(jid, None)`` — one-shot jid ingest
+    - ``(None, message)`` — usage / mutual-exclusion error
+  
+  Args:
+    argv (Optional[Sequence[str]]): Argv, or None when absent.
+  
+  Returns:
+    Tuple[ Optional[str], Optional[str], ]: Tuple[ Optional[str],
+    Optional[str], ] produced by this call.
+  
+  Examples:
+    >>> parse_sync_timedb_jid_cli_arg(None)  # doctest: +SKIP
   """
   args = list(argv[1:] if argv else [])
   jid = None

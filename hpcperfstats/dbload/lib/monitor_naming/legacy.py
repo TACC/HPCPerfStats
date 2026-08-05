@@ -1,4 +1,57 @@
-"""Legacy monitor st_name and event keys (historical host_data and old archive ingest)."""
+"""
+Legacy monitor st_name and event keys (historical host_data and old archive
+ingest).
+
+Attributes:
+  EVENT_LEGACY_TO_CANONICAL: Attribute.
+  INGEST_LEGACY_KNL_IMC_TYPE: Attribute.
+  LEGACY_AMD_DF_MBW_CHANNEL_EVENTS: Attribute.
+  LEGACY_AMD_DF_TYPE: Attribute.
+  LEGACY_AMD_PMC_TYPE: Attribute.
+  LEGACY_AMD_RAPL_STATS_TYPES: Attribute.
+  LEGACY_APERF: Attribute.
+  LEGACY_ARM_DRAM_BW_BYTES: Attribute.
+  LEGACY_ARM_EST_FLOPS: Attribute.
+  LEGACY_ARM_IMC_STATS_TYPES: Attribute.
+  LEGACY_ARM_INT16_OPS: Attribute.
+  LEGACY_ARM_INT8_OPS: Attribute.
+  LEGACY_CHA_TYPENAME_PRIORITY: Attribute.
+  LEGACY_DCGM_CPU_POWER_LIMIT_W: Attribute.
+  LEGACY_DCGM_CPU_POWER_UTIL_W: Attribute.
+  LEGACY_DRAM_CAS_READS: Attribute.
+  LEGACY_DRAM_CAS_WRITES: Attribute.
+  LEGACY_FP_OPS_RETIRED: Attribute.
+  LEGACY_HARDWARE_DECODE_TYPES: Attribute.
+  LEGACY_HOST_BLOCK_TYPE: Attribute.
+  LEGACY_HOST_CPU_HW_TYPE: Attribute.
+  LEGACY_HOST_CPU_TYPE: Attribute.
+  LEGACY_HOST_IB_EXT_TYPE: Attribute.
+  LEGACY_HOST_IB_SW_TYPE: Attribute.
+  LEGACY_HOST_LNET_TYPE: Attribute.
+  LEGACY_HOST_MEM_TYPE: Attribute.
+  LEGACY_HOST_NET_TYPE: Attribute.
+  LEGACY_HOST_NFS_TYPE: Attribute.
+  LEGACY_HOST_NUMA_TYPE: Attribute.
+  LEGACY_HOST_OPA_TYPE: Attribute.
+  LEGACY_HOST_ROOFLINE_PEAK_TYPE: Attribute.
+  LEGACY_INSTR_RETIRED: Attribute.
+  LEGACY_INTEL_CORE_PMC_TYPES_ORDERED: Attribute.
+  LEGACY_INTEL_IMC_STATS_TYPES: Attribute.
+  LEGACY_INTEL_RAPL_STATS_TYPES: Attribute.
+  LEGACY_LUSTRE_LLITE_TYPE: Attribute.
+  LEGACY_MEM_FREE: Attribute.
+  LEGACY_MEM_TOTAL: Attribute.
+  LEGACY_MEM_USED: Attribute.
+  LEGACY_MPERF: Attribute.
+  LEGACY_PKG_ENERGY: Attribute.
+  LEGACY_PMC_TYPENAME_PRIORITY: Attribute.
+  LEGACY_TYPENAMES: Attribute.
+  MONITOR_LEGACY_KNL_IMC_TYPE: Attribute.
+  REMOVED_LEGACY_SYMBOLS: Attribute.
+  TYPE_EVENT_LEGACY_TO_CANONICAL: Attribute.
+  TYPE_LEGACY_TO_CANONICAL: Attribute.
+  _REMOVED: Attribute.
+"""
 from __future__ import annotations
 
 from hpcperfstats.dbload.lib.monitor_naming.load_map import (

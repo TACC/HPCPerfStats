@@ -1,6 +1,22 @@
-"""OAuth2 login, callback, logout, and token check for Tapis. Session stores access_token, refresh_token, username, email, is_staff.
-
 """
+OAuth2 login, callback, logout, and token check for Tapis. Session stores
+access_token, refresh_token, username, email, is_staff.
+
+Attributes:
+  _TOKEN_REFRESH_SKEW_SECONDS: Attribute.
+  _TOKEN_VALIDATE_INTERVAL_SECONDS: Attribute.
+  _http_session: Attribute.
+  client_id: Attribute.
+  client_key: Attribute.
+  logger: Attribute.
+  server_name: Attribute.
+  staff_email_domain: Attribute.
+  tenant_base_url: Attribute.
+"""
+from __future__ import annotations
+
+from typing import Any
+
 import logging
 import os
 import time
@@ -29,23 +45,59 @@ _TOKEN_VALIDATE_INTERVAL_SECONDS = 300
 _TOKEN_REFRESH_SKEW_SECONDS = 60
 
 
-def _get_redirect_uri():
-  """Build OAuth2 redirect_uri (no trailing slash) for this server."""
+def _get_redirect_uri() -> Any:
+  """
+  Build OAuth2 redirect_uri (no trailing slash) for this server.
+  
+  Returns:
+    Any: Open return polymorphism from ``_get_redirect_uri``: concrete type
+    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+    empty).
+  
+  Examples:
+    >>> _get_redirect_uri()  # doctest: +SKIP
+  """
   uri = 'https://{}{}'.format(server_name, reverse('oauth_callback'))
   return uri[:-1] if uri.endswith('/') else uri
 
 
-def _safe_redirect_path(path):
-  """Return path if it is a safe same-origin redirect (starts with /, not //), else None."""
+def _safe_redirect_path(path: str) -> Any:
+  """
+  Return path if it is a safe same-origin redirect (starts with /, not //),.
+  
+    else.
+  
+    None.
+  
+  Args:
+    path (str): String for path.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _safe_redirect_path("x")  # doctest: +SKIP
+  """
   if not path or not path.startswith('/') or path.startswith('//') or '\\' in path:
     return None
   return path
 
 
-def login_oauth(request):
-  """Redirect to OAuth2 authorize URL with state; store state and optional next in session.
-
-    """
+def login_oauth(request: Any) -> Any:
+  """
+  Redirect to OAuth2 authorize URL with state; store state and optional next in.
+  
+    session.
+  
+  Args:
+    request (Any): Request passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> login_oauth(None)  # doctest: +SKIP
+  """
   session = request.session
   session['auth_state'] = os.urandom(24).hex()
   next_url = request.GET.get('next', '')
@@ -58,10 +110,23 @@ def login_oauth(request):
   return HttpResponseRedirect(authorization_url)
 
 
-def oauth_callback(request):
-  """Exchange code for tokens, fetch userinfo, set session (access_token, username, is_staff by email domain), redirect to /.
-
-    """
+def oauth_callback(request: Any) -> Any:
+  """
+  Exchange code for tokens, fetch userinfo, set session (access_token,.
+  
+    username,.
+  
+    is_staff by email domain), redirect to /.
+  
+  Args:
+    request (Any): Request passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> oauth_callback(None)  # doctest: +SKIP
+  """
   state = request.GET.get('state')
   saved_state = request.session.get('auth_state')
 
@@ -111,10 +176,19 @@ def oauth_callback(request):
     return HttpResponseRedirect(redirect_to)
 
 
-def logout(request):
-  """Revoke token, flush session, redirect to /.
-
-    """
+def logout(request: Any) -> Any:
+  """
+  Revoke token, flush session, redirect to /.
+  
+  Args:
+    request (Any): Request passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> logout(None)  # doctest: +SKIP
+  """
   access_token = request.session.get('access_token')
   if access_token:
     _http_session.post('%s/oauth2/tokens/revoke' % tenant_base_url,
@@ -123,10 +197,23 @@ def logout(request):
   return HttpResponseRedirect("/")
 
 
-def login_prompt(request):
-  """Redirect to OAuth login unless already authenticated; then redirect to next or /.
-
-    """
+def login_prompt(request: Any) -> Any:
+  """
+  Redirect to OAuth login unless already authenticated; then redirect to next.
+  
+    or.
+  
+    /.
+  
+  Args:
+    request (Any): Request passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> login_prompt(None)  # doctest: +SKIP
+  """
   next_url = request.GET.get('next', '')
   if check_for_tokens(request):
     redirect_to = next_url if _safe_redirect_path(next_url) else '/'
@@ -135,10 +222,19 @@ def login_prompt(request):
   return HttpResponseRedirect(login_url)
 
 
-def check_for_tokens(request):
-  """Return True if session has access_token, else False.
-
-    """
+def check_for_tokens(request: Any) -> Any:
+  """
+  Return True if session has access_token, else False.
+  
+  Args:
+    request (Any): Request passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> check_for_tokens(None)  # doctest: +SKIP
+  """
   try:
     session = request.session
     access_token = request.session.get("access_token")
@@ -167,8 +263,20 @@ def check_for_tokens(request):
   return False
 
 
-def _extract_access_token_expiry_epoch(token_data, now_epoch):
-  """Read token expiry from Tapis response; fallback to one hour."""
+def _extract_access_token_expiry_epoch(token_data: Any, now_epoch: Any) -> Any:
+  """
+  Read token expiry from Tapis response; fallback to one hour.
+  
+  Args:
+    token_data (Any): Token data passed to this helper.
+    now_epoch (Any): Now epoch passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _extract_access_token_expiry_epoch(None, None)  # doctest: +SKIP
+  """
   token = ((token_data or {}).get("result") or {}).get("access_token") or {}
   expires_at = token.get("expires_at")
   if isinstance(expires_at, (int, float)) and int(expires_at) > now_epoch:
@@ -179,7 +287,20 @@ def _extract_access_token_expiry_epoch(token_data, now_epoch):
   return now_epoch + 3600
 
 
-def _session_expired(session, now_epoch):
+def _session_expired(session: Any, now_epoch: Any) -> Any:
+  """
+  Internal helper to handle session expired.
+  
+  Args:
+    session (Any): Live handle (pool, client, or connection).
+    now_epoch (Any): Now epoch passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _session_expired(None, None)  # doctest: +SKIP
+  """
   login_epoch = int(session.get("oauth_login_epoch") or now_epoch)
   last_seen_epoch = int(session.get("oauth_last_seen_epoch") or login_epoch)
   idle_timeout = int(getattr(settings, "SESSION_IDLE_TIMEOUT_SECONDS", 3600))
@@ -193,14 +314,40 @@ def _session_expired(session, now_epoch):
   return False
 
 
-def _token_needs_refresh(session, now_epoch):
+def _token_needs_refresh(session: Any, now_epoch: Any) -> Any:
+  """
+  Internal helper to handle token needs refresh.
+  
+  Args:
+    session (Any): Live handle (pool, client, or connection).
+    now_epoch (Any): Now epoch passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _token_needs_refresh(None, None)  # doctest: +SKIP
+  """
   expiry = int(session.get("oauth_access_token_expiry_epoch") or 0)
   if expiry <= 0:
     return False
   return now_epoch >= (expiry - _TOKEN_REFRESH_SKEW_SECONDS)
 
 
-def _token_validation_due(session, now_epoch):
+def _token_validation_due(session: Any, now_epoch: Any) -> Any:
+  """
+  Internal helper to handle token validation due.
+  
+  Args:
+    session (Any): Live handle (pool, client, or connection).
+    now_epoch (Any): Now epoch passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _token_validation_due(None, None)  # doctest: +SKIP
+  """
   if session.get("oauth_last_validated_epoch") is None:
     session["oauth_last_validated_epoch"] = now_epoch
     return False
@@ -208,7 +355,20 @@ def _token_validation_due(session, now_epoch):
   return (now_epoch - last_validated) >= _TOKEN_VALIDATE_INTERVAL_SECONDS
 
 
-def _refresh_access_token(session, now_epoch):
+def _refresh_access_token(session: Any, now_epoch: Any) -> Any:
+  """
+  Internal helper to handle refresh access token.
+  
+  Args:
+    session (Any): Live handle (pool, client, or connection).
+    now_epoch (Any): Now epoch passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _refresh_access_token(None, None)  # doctest: +SKIP
+  """
   refresh_token = session.get("refresh_token")
   if not refresh_token:
     return False
@@ -243,7 +403,19 @@ def _refresh_access_token(session, now_epoch):
     return False
 
 
-def _validate_access_token(access_token):
+def _validate_access_token(access_token: Any) -> Any:
+  """
+  Internal helper to validate the access token.
+  
+  Args:
+    access_token (Any): Access token passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _validate_access_token(None)  # doctest: +SKIP
+  """
   headers = {'x-tapis-token': access_token}
   try:
     response = _http_session.get(

@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
-"""Sync Slurm accounting (sacct) data into job_data. Reads pipe-delimited files, filters restricted queues and existing jobs, and bulk-inserts or falls back to per-row insert.
-
 """
+Sync Slurm accounting (sacct) data into job_data. Reads pipe-delimited files,
+filters restricted queues and existing jobs, and bulk-inserts or falls back to
+per-row insert.
+
+Attributes:
+  COLUMNS_TO_READ: Attribute.
+  local_timezone: Attribute.
+"""
+from __future__ import annotations
+
+from typing import Any
+
 import io
 import os
 import sys
@@ -34,8 +44,27 @@ from hpcperfstats.site.lib.machine.models import job_data
 local_timezone = dt_timezone.utc
 
 
-def _notify_job_cache_after_acct_ingest(inserted, job_objs=None, inserted_jids=None):
-  """Invalidate site/reference caches; optionally warm KEY_JOB after accounting ingest."""
+def _notify_job_cache_after_acct_ingest(
+  inserted: Any,
+  job_objs: Any | None = None,
+  inserted_jids: Any | None = None,
+) -> None:
+  """
+  Invalidate site/reference caches; optionally warm KEY_JOB after accounting.
+  
+    ingest.
+  
+  Args:
+    inserted (Any): Inserted passed to this helper.
+    job_objs (Any | None): One of ``Any``, ``None``.
+    inserted_jids (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _notify_job_cache_after_acct_ingest(None, None, None)  # doctest: +SKIP
+  """
   try:
     from hpcperfstats.site.lib.machine.cache_utils import (
         get_site_content_cache_timeout,
@@ -60,9 +89,35 @@ COLUMNS_TO_READ = [
 
 
 class AccountingFileShrinkError(Exception):
-  """Incoming sacct payload has fewer lines than the on-disk daily file."""
+  """
+  Incoming sacct payload has fewer lines than the on-disk daily file.
+  
+  Attributes:
+    existing_lines: Attribute.
+    incoming_lines: Attribute.
+    path: Attribute.
+  """
 
-  def __init__(self, path, existing_lines, incoming_lines):
+  def __init__(
+    self,
+    path: str,
+    existing_lines: Any,
+    incoming_lines: Any,
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      path (str): String for path.
+      existing_lines (Any): Existing lines passed to this helper.
+      incoming_lines (Any): Incoming lines passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> AccountingFileShrinkError("x", None, None)  # doctest: +SKIP
+    """
     self.path = path
     self.existing_lines = existing_lines
     self.incoming_lines = incoming_lines
@@ -72,30 +127,79 @@ class AccountingFileShrinkError(Exception):
     )
 
 
-def accounting_daily_file_path(ingest_date):
-  """Return ``{acct_path}/{YYYY-MM-DD}.txt`` for a calendar ingest date."""
+def accounting_daily_file_path(ingest_date: Any) -> Any:
+  """
+  Return ``{acct_path}/{YYYY-MM-DD}.txt`` for a calendar ingest date.
+  
+  Args:
+    ingest_date (Any): Ingest date passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> accounting_daily_file_path(None)  # doctest: +SKIP
+  """
   date_str = ingest_date.strftime("%Y-%m-%d")
   return os.path.join(cfg.get_accounting_path(), "%s.txt" % date_str)
 
 
-def count_accounting_content_lines(content):
-  """Count newline-separated lines in raw sacct text (header + data rows)."""
+def count_accounting_content_lines(content: Any) -> Any:
+  """
+  Count newline-separated lines in raw sacct text (header + data rows).
+  
+  Args:
+    content (Any): Content passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> count_accounting_content_lines(None)  # doctest: +SKIP
+  """
   if isinstance(content, bytes):
     content = content.decode("utf-8", errors="replace")
   return len(content.splitlines())
 
 
-def _read_accounting_file_line_count(path):
+def _read_accounting_file_line_count(path: str) -> Any:
+  """
+  Internal helper to read the accounting file line count.
+  
+  Args:
+    path (str): String for path.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _read_accounting_file_line_count("x")  # doctest: +SKIP
+  """
   with file_read_lock_wait(path):
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
       return len(fh.read().splitlines())
 
 
-def persist_accounting_daily_file(ingest_date, content):
-  """Create or overwrite the daily accounting file with raw sacct POST body.
-
+def persist_accounting_daily_file(ingest_date: Any, content: Any) -> None:
+  """
+  Create or overwrite the daily accounting file with raw sacct POST body.
+  
   Raises AccountingFileShrinkError when the incoming payload has fewer lines
   than the existing file for that date.
+  
+  Args:
+    ingest_date (Any): Ingest date passed to this helper.
+    content (Any): Content passed to this helper.
+  
+  Returns:
+    None
+  
+  Raises:
+    AccountingFileShrinkError: Raised when ``persist_accounting_daily_file``
+    hits a ``AccountingFileShrinkError`` failure path.
+  
+  Examples:
+    >>> persist_accounting_daily_file(None, None)  # doctest: +SKIP
   """
   if isinstance(content, bytes):
     content = content.decode("utf-8", errors="replace")
@@ -114,11 +218,22 @@ def persist_accounting_daily_file(ingest_date, content):
     os.replace(tmp_path, path)
 
 
-def sync_acct_from_content(content, jobs_in_db):
-  """Load accounting data from pipe-delimited string into job_data.
-
+def sync_acct_from_content(content: Any, jobs_in_db: Any) -> Any:
+  """
+  Load accounting data from pipe-delimited string into job_data.
+  
   Same logic as sync_acct but accepts raw sacct output (e.g. from API or
   subprocess). Returns the number of new job_data rows inserted.
+  
+  Args:
+    content (Any): Content passed to this helper.
+    jobs_in_db (Any): Jobs in db passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> sync_acct_from_content(None, None)  # doctest: +SKIP
   """
   if isinstance(content, bytes):
     content = content.decode("utf-8", errors="replace")
@@ -128,17 +243,45 @@ def sync_acct_from_content(content, jobs_in_db):
   return _sync_acct_dataframe(df, jobs_in_db)
 
 
-def sync_acct(acct_file, jobs_in_db):
-  """Load accounting CSV from acct_file into job_data, skipping jobs already in jobs_in_db and those matching restricted_queue_keywords.
-
-    """
+def sync_acct(acct_file: str, jobs_in_db: Any) -> Any:
+  """
+  Load accounting CSV from acct_file into job_data, skipping jobs already in.
+  
+    jobs_in_db and those matching restricted_queue_keywords.
+  
+  Args:
+    acct_file (str): String for acct file.
+    jobs_in_db (Any): Jobs in db passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> sync_acct("x", None)  # doctest: +SKIP
+  """
   with file_read_lock_wait(acct_file):
     with open(acct_file, "r", encoding="utf-8", errors="replace") as f:
       return sync_acct_from_content(f.read(), jobs_in_db)
 
 
-def _sync_acct_dataframe(df, jobs_in_db):
-  """Apply column filter, renames, filters, and insert into job_data. Returns count of new entries."""
+def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
+  """
+  Apply column filter, renames, filters, and insert into job_data. Returns.
+  
+    count.
+  
+    of new entries.
+  
+  Args:
+    df (Any): Df passed to this helper.
+    jobs_in_db (Any): Jobs in db passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _sync_acct_dataframe(None, None)  # doctest: +SKIP
+  """
   columns_to_read = COLUMNS_TO_READ
   # cycle through collumns so we can remove those we don't want to import.
   for c in df:
@@ -246,10 +389,19 @@ def _sync_acct_dataframe(df, jobs_in_db):
   return inserted
 
 
-def _insert_job_data_individually(df):
-  """Fallback: insert job_data rows one by one, skipping duplicates.
-
-    """
+def _insert_job_data_individually(df: Any) -> Any:
+  """
+  Fallback: insert job_data rows one by one, skipping duplicates.
+  
+  Args:
+    df (Any): Df passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _insert_job_data_individually(None)  # doctest: +SKIP
+  """
   inserted = 0
   saved_objs = []
   for row in df.itertuples(index=False):

@@ -1,11 +1,24 @@
-"""Roofline plot: arithmetic intensity vs performance (GFLOP/s) from jid_table FLOPS and memory bandwidth.
-
-Uses the same PMC sources as SummaryPlot (AMD or Intel). Draws the roofline curve and scatter of (AI, perf) points.
-
-AMD path requires amd64_df MBW channels (monitor enables these on AMD family 17h/19h only). Intel memory
-side tries IMC types in INTEL_IMC_STATS_TYPES (SNB through SKX). Intel FLOPS use FP_ARITH when present,
-else SNB/IVB-style SSE/AVX double counter proxies.
 """
+Roofline plot: arithmetic intensity vs performance (GFLOP/s) from jid_table
+FLOPS and memory bandwidth.
+
+Uses the same PMC sources as SummaryPlot (AMD or Intel). Draws the roofline
+curve and scatter of (AI, perf) points.
+
+AMD path requires amd64_df MBW channels (monitor enables these on AMD family
+17h/19h only). Intel memory side tries IMC types in INTEL_IMC_STATS_TYPES (SNB
+through SKX). Intel FLOPS use FP_ARITH when present, else SNB/IVB-style SSE/AVX
+double counter proxies.
+
+Attributes:
+  DEFAULT_PEAK_BW_GB: Attribute.
+  DEFAULT_PEAK_FLOPS_GF: Attribute.
+  ROOFLINE_NOMINAL_PEAKS_INVALID_REASON: Attribute.
+"""
+from __future__ import annotations
+
+from typing import Any
+
 import math
 import numpy
 from bokeh.models import ColumnDataSource, HoverTool
@@ -43,8 +56,22 @@ DEFAULT_PEAK_FLOPS_GF = 1000.0
 DEFAULT_PEAK_BW_GB = 100.0
 
 
-def _nominal_roofline_peaks_valid(peak_flops_gf, peak_bw_gb):
-  """True when nominal peaks are finite and strictly positive (ridge AI is log-scaled)."""
+def _nominal_roofline_peaks_valid(peak_flops_gf: Any, peak_bw_gb: Any) -> Any:
+  """
+  True when nominal peaks are finite and strictly positive (ridge AI is log-.
+  
+    scaled).
+  
+  Args:
+    peak_flops_gf (Any): Peak flops gf passed to this helper.
+    peak_bw_gb (Any): Peak bw gb passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _nominal_roofline_peaks_valid(None, None)  # doctest: +SKIP
+  """
   try:
     pf = float(peak_flops_gf)
     pb = float(peak_bw_gb)
@@ -64,8 +91,18 @@ ROOFLINE_NOMINAL_PEAKS_INVALID_REASON = (
 )
 
 
-def _hover_tooltip_html_roofline_job():
-    """Build HTML hover template with spacing between multi-point hits."""
+def _hover_tooltip_html_roofline_job() -> Any:
+    """
+    Build HTML hover template with spacing between multi-point hits.
+    
+    Returns:
+      Any: Open return polymorphism from ``_hover_tooltip_html_roofline_job``:
+      concrete type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> _hover_tooltip_html_roofline_job()  # doctest: +SKIP
+    """
     return """
     <div style="padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid #d0d7de;">
       <div><strong>Line:</strong> Job</div>
@@ -77,20 +114,69 @@ def _hover_tooltip_html_roofline_job():
   """
 
 
-def _aggregate_arc(jt, typ, events, conv):
-    """Get aggregate df for typ/events from arc deltas."""
+def _aggregate_arc(jt: Any, typ: Any, events: Any, conv: Any) -> Any:
+    """
+    Get aggregate df for typ/events from arc deltas.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      typ (Any): Typ passed to this helper.
+      events (Any): Events passed to this helper.
+      conv (Any): Conv passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _aggregate_arc(None, None, None, None)  # doctest: +SKIP
+    """
     agg = jt.get_aggregate_df(typ, "arc", events, conv)
     return agg, "arc"
 
 
-def _aggregate_value(jt, typ, events, conv):
-    """Get aggregate df for typ/events from value samples."""
+def _aggregate_value(jt: Any, typ: Any, events: Any, conv: Any) -> Any:
+    """
+    Get aggregate df for typ/events from value samples.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      typ (Any): Typ passed to this helper.
+      events (Any): Events passed to this helper.
+      conv (Any): Conv passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _aggregate_value(None, None, None, None)  # doctest: +SKIP
+    """
     agg = jt.get_aggregate_df(typ, "value", events, conv)
     return agg, "value"
 
 
-def _merge_weighted_event_arcs(jt, intel_typ, event_weights, attempts, label):
-    """Sum per-(host,time) arc-derived GF/s for events with different FLOP weights."""
+def _merge_weighted_event_arcs(
+  jt: Any,
+  intel_typ: Any,
+  event_weights: Any,
+  attempts: Any,
+  label: Any,
+) -> Any:
+    """
+    Sum per-(host,time) arc-derived GF/s for events with different FLOP weights.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      intel_typ (Any): Intel typ passed to this helper.
+      event_weights (Any): Event weights passed to this helper.
+      attempts (Any): Attempts passed to this helper.
+      label (Any): Label passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _merge_weighted_event_arcs(None, None, None, None, None)
+    """
     merged = None
     for ev, weight in event_weights:
         agg, src = _aggregate_arc(jt, intel_typ, [ev], 1e-9 * weight)
@@ -119,8 +205,20 @@ def _merge_weighted_event_arcs(jt, intel_typ, event_weights, attempts, label):
     return merged
 
 
-def _intel_fp_arith_flops_gf(jt, attempts):
-    """GFLOP/s from summed FP_ARITH_INST_RETIRED_* on Intel PMC or host_cpu_hw."""
+def _intel_fp_arith_flops_gf(jt: Any, attempts: Any) -> Any:
+    """
+    GFLOP/s from summed FP_ARITH_INST_RETIRED_* on Intel PMC or host_cpu_hw.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      attempts (Any): Attempts passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _intel_fp_arith_flops_gf(None, None)  # doctest: +SKIP
+    """
     fp_events = list(INTEL_FP_ARITH_ALL_EVENTS)
     for core_typ in core_pmc_types_probe_order():
         cand, cand_src = _aggregate_arc(jt, core_typ, fp_events, 1e-9)
@@ -134,8 +232,20 @@ def _intel_fp_arith_flops_gf(jt, attempts):
     return None
 
 
-def _intel_legacy_sse_flops_gf(jt, attempts):
-    """GFLOP/s from SNB/IVB-style SSE/AVX double events when FP_ARITH is absent."""
+def _intel_legacy_sse_flops_gf(jt: Any, attempts: Any) -> Any:
+    """
+    GFLOP/s from SNB/IVB-style SSE/AVX double events when FP_ARITH is absent.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      attempts (Any): Attempts passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _intel_legacy_sse_flops_gf(None, None)  # doctest: +SKIP
+    """
     for core_typ in core_pmc_types_probe_order():
         merged = _merge_weighted_event_arcs(
             jt,
@@ -149,8 +259,22 @@ def _intel_legacy_sse_flops_gf(jt, attempts):
     return None
 
 
-def _intel_imc_bw_gb(jt, attempts):
-    """Memory bandwidth (GB/s): per IMC type, sum usable dram_cas_* and hbm_cas_* (64 B/CAS)."""
+def _intel_imc_bw_gb(jt: Any, attempts: Any) -> Any:
+    """
+    Memory bandwidth (GB/s): per IMC type, sum usable dram_cas_* and hbm_cas_*.
+    
+      (64 B/CAS).
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      attempts (Any): Attempts passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _intel_imc_bw_gb(None, None)  # doctest: +SKIP
+    """
     conv = 64 / (1024 ** 3)
     for imc_typ in imc_types_probe_order():
         dram_bw = None
@@ -183,8 +307,20 @@ def _intel_imc_bw_gb(jt, attempts):
     return None
 
 
-def _arm_dcgm_flops_bw(jt, attempts):
-    """Approximate ARM roofline from host_cpu_hw synthetic counters."""
+def _arm_dcgm_flops_bw(jt: Any, attempts: Any) -> Any:
+    """
+    Approximate ARM roofline from host_cpu_hw synthetic counters.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      attempts (Any): Attempts passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _arm_dcgm_flops_bw(None, None)  # doctest: +SKIP
+    """
     for hw_typ in host_cpu_hw_type_names():
         for flop_ev in arm_est_flops_event_names():
             flops_agg, flops_src = _aggregate_arc(jt, hw_typ, [flop_ev], 1e-9)
@@ -209,8 +345,20 @@ def _arm_dcgm_flops_bw(jt, attempts):
                 ]
                 return flops, bw
     return None, None
-def _arm_imc_bw_gb(jt, attempts):
-    """Memory bandwidth (GB/s) from ARM IMC dram CAS events."""
+def _arm_imc_bw_gb(jt: Any, attempts: Any) -> Any:
+    """
+    Memory bandwidth (GB/s) from ARM IMC dram CAS events.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      attempts (Any): Attempts passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _arm_imc_bw_gb(None, None)  # doctest: +SKIP
+    """
     conv = 64 / (1024 ** 3)
     for imc_typ in arm_imc_types_probe_order():
         for read_ev, write_ev in dram_cas_read_write_pairs():
@@ -225,8 +373,23 @@ def _arm_imc_bw_gb(jt, attempts):
     return None
 
 
-def _get_flops_bw_df_and_reason(jt):
-    """Get (df, reason) where df has host,time,flops_gf,bw_gb or None with detailed reason."""
+def _get_flops_bw_df_and_reason(jt: Any) -> Any:
+    """
+    Get (df, reason) where df has host,time,flops_gf,bw_gb or None with.
+    
+      detailed.
+    
+      reason.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _get_flops_bw_df_and_reason(None)  # doctest: +SKIP
+    """
     base = jt.get_host_time_df()
     if base.empty or not jt.host_list:
         return (None, "No hosts/timestamps found in host_data for this job/time range")
@@ -337,9 +500,28 @@ def _get_flops_bw_df_and_reason(jt):
 
 
 def _build_roofline_figure(
-    df, peak_flops_gf, peak_bw_gb, title, help_plot_key="jobDetailPlot_roofline_cpu"
-):
-    """Render a roofline figure from host,time,flops_gf,bw_gb data."""
+  df: Any,
+  peak_flops_gf: Any,
+  peak_bw_gb: Any,
+  title: Any,
+  help_plot_key: str = "jobDetailPlot_roofline_cpu",
+) -> Any:
+    """
+    Render a roofline figure from host,time,flops_gf,bw_gb data.
+    
+    Args:
+      df (Any): Df passed to this helper.
+      peak_flops_gf (Any): Peak flops gf passed to this helper.
+      peak_bw_gb (Any): Peak bw gb passed to this helper.
+      title (Any): Title passed to this helper.
+      help_plot_key (str): String for help plot key.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _build_roofline_figure(None, None, None, None, "x")  # doctest: +SKIP
+    """
     peak_flops_gf = peak_flops_gf if peak_flops_gf is not None else DEFAULT_PEAK_FLOPS_GF
     peak_bw_gb = peak_bw_gb if peak_bw_gb is not None else DEFAULT_PEAK_BW_GB
     if not _nominal_roofline_peaks_valid(peak_flops_gf, peak_bw_gb):
@@ -458,8 +640,23 @@ def _build_roofline_figure(
     return p
 
 
-def _merge_gpu_flops_bw_on_base(base, flops_agg, bw_agg):
-    """Inner-join FLOPS and BW aggregates onto host/time base; None if unusable or empty."""
+def _merge_gpu_flops_bw_on_base(base: Any, flops_agg: Any, bw_agg: Any) -> Any:
+    """
+    Inner-join FLOPS and BW aggregates onto host/time base; None if unusable or.
+    
+      empty.
+    
+    Args:
+      base (Any): Base passed to this helper.
+      flops_agg (Any): Flops agg passed to this helper.
+      bw_agg (Any): Bw agg passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _merge_gpu_flops_bw_on_base(None, None, None)  # doctest: +SKIP
+    """
     if (
         flops_agg.empty
         or "sum_val" not in flops_agg.columns
@@ -478,17 +675,38 @@ def _merge_gpu_flops_bw_on_base(base, flops_agg, bw_agg):
 
 
 def _try_gpu_roofline_flops_bw_merge(
-    jt,
-    gpu_typ,
-    base,
-    source_tag,
-    aggregate_fn,
-    flops_events,
-    flops_conv,
-    bw_events,
-    bw_conv,
-):
-    """One arc or value attempt for strict GPU roofline; returns (df_or_none, log_line, overlap_miss_or_none)."""
+  jt: Any,
+  gpu_typ: Any,
+  base: Any,
+  source_tag: Any,
+  aggregate_fn: Any,
+  flops_events: Any,
+  flops_conv: Any,
+  bw_events: Any,
+  bw_conv: Any,
+) -> Any:
+    """
+    One arc or value attempt for strict GPU roofline; returns (df_or_none,.
+    
+      log_line, overlap_miss_or_none).
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      gpu_typ (Any): Gpu typ passed to this helper.
+      base (Any): Base passed to this helper.
+      source_tag (Any): Source tag passed to this helper.
+      aggregate_fn (Any): Callable invoked by this helper.
+      flops_events (Any): Flops events passed to this helper.
+      flops_conv (Any): Flops conv passed to this helper.
+      bw_events (Any): Bw events passed to this helper.
+      bw_conv (Any): Bw conv passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _try_gpu_roofline_flops_bw_merge(0)  # doctest: +SKIP
+    """
     flops_agg, flops_src = aggregate_fn(jt, gpu_typ, flops_events, flops_conv)
     bw_agg, bw_src = aggregate_fn(jt, gpu_typ, bw_events, bw_conv)
     log_line = (
@@ -511,8 +729,23 @@ def _try_gpu_roofline_flops_bw_merge(
     return None, log_line, overlap_miss
 
 
-def _get_gpu_flops_bw_df_and_reason(jt):
-    """Get GPU roofline from arc-derived GFLOP/s and PCIe/NvLink GB/s (monitor DCGM PROF bytes)."""
+def _get_gpu_flops_bw_df_and_reason(jt: Any) -> Any:
+    """
+    Get GPU roofline from arc-derived GFLOP/s and PCIe/NvLink GB/s (monitor.
+    
+      DCGM.
+    
+      PROF bytes).
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _get_gpu_flops_bw_df_and_reason(None)  # doctest: +SKIP
+    """
     base = jt.get_host_time_df()
     if base.empty or not jt.host_list:
         return (None, "No hosts/timestamps found in host_data for this job/time range")
@@ -553,8 +786,25 @@ def _get_gpu_flops_bw_df_and_reason(jt):
     )
 
 
-def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
-    """Build CPU/host roofline plot from jid_table."""
+def plot_roofline_from_jid_table(
+  jt: Any,
+  peak_flops_gf: Any | None = None,
+  peak_bw_gb: Any | None = None,
+) -> Any:
+    """
+    Build CPU/host roofline plot from jid_table.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      peak_flops_gf (Any | None): One of ``Any``, ``None``.
+      peak_bw_gb (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> plot_roofline_from_jid_table(None, None, None)  # doctest: +SKIP
+    """
     if not jt.host_list:
         return None
     df, _reason = _get_flops_bw_df_and_reason(jt)
@@ -572,8 +822,25 @@ def plot_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
     )
 
 
-def plot_gpu_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
-    """Build GPU roofline from jid_table (GFLOP/s vs PCIe/NvLink byte-arc GB/s)."""
+def plot_gpu_roofline_from_jid_table(
+  jt: Any,
+  peak_flops_gf: Any | None = None,
+  peak_bw_gb: Any | None = None,
+) -> Any:
+    """
+    Build GPU roofline from jid_table (GFLOP/s vs PCIe/NvLink byte-arc GB/s).
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      peak_flops_gf (Any | None): One of ``Any``, ``None``.
+      peak_bw_gb (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> plot_gpu_roofline_from_jid_table(None, None, None)  # doctest: +SKIP
+    """
     if not jt.host_list:
         return None
     df, _reason = _get_gpu_flops_bw_df_and_reason(jt)
@@ -591,8 +858,25 @@ def plot_gpu_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
     )
 
 
-def plot_and_reason_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
-    """Build roofline plot and return (figure_or_none, unavailable_reason_or_none)."""
+def plot_and_reason_roofline_from_jid_table(
+  jt: Any,
+  peak_flops_gf: Any | None = None,
+  peak_bw_gb: Any | None = None,
+) -> Any:
+    """
+    Build roofline plot and return (figure_or_none, unavailable_reason_or_none).
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      peak_flops_gf (Any | None): One of ``Any``, ``None``.
+      peak_bw_gb (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> plot_and_reason_roofline_from_jid_table(None, None, None)
+    """
     if not jt.host_list:
         return (None, "No hosts found in host_data for this job/time range")
 
@@ -621,8 +905,27 @@ def plot_and_reason_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=N
     return (fig, None)
 
 
-def plot_and_reason_gpu_roofline_from_jid_table(jt, peak_flops_gf=None, peak_bw_gb=None):
-    """Build strict GPU roofline plot and return (figure_or_none, unavailable_reason_or_none)."""
+def plot_and_reason_gpu_roofline_from_jid_table(
+  jt: Any,
+  peak_flops_gf: Any | None = None,
+  peak_bw_gb: Any | None = None,
+) -> Any:
+    """
+    Build strict GPU roofline plot and return (figure_or_none,.
+    
+      unavailable_reason_or_none).
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      peak_flops_gf (Any | None): One of ``Any``, ``None``.
+      peak_bw_gb (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> plot_and_reason_gpu_roofline_from_jid_table(None, None, None)
+    """
     if not jt.host_list:
         return (None, "No hosts found in host_data for this job/time range")
 

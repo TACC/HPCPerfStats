@@ -1,4 +1,28 @@
-"""Django REST Framework API views for machine app. All data via JSON for React SPA."""
+"""
+Django REST Framework API views for machine app. All data via JSON for React
+SPA.
+
+Attributes:
+  HOST_PLOT_MAX_WINDOW_DAYS: Attribute.
+  JOB_HIST_DISPLAY_NAMES: Attribute.
+  JOB_LIST_HISTOGRAM_BATCH_METRICS_DEFAULT: Attribute.
+  JOB_LIST_HISTOGRAM_NO_JOBS_REASON: Attribute.
+  _DETAIL_GPU_METRIC_NAMES: Attribute.
+  _JOB_LIST_API_CACHE_PATHS: Attribute.
+  _JOB_LIST_MACHINE_BROWSE_PREFIXES: Attribute.
+  _JOB_LIST_METRIC_FILTER_OPS_ALLOWED: Attribute.
+  _JOB_LIST_QUERY_FIELD_EXCLUDES_BASE: Attribute.
+  _JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM: Attribute.
+  _JOB_PLOT_INFLIGHT_TTL_SECONDS: Attribute.
+  _job_plot_inflight: Attribute.
+  _job_plots_lock: Attribute.
+  _small_executor: Attribute.
+  logger: Attribute.
+"""
+from __future__ import annotations
+
+from typing import Any, Iterator
+
 import hashlib
 import logging
 import os
@@ -34,14 +58,24 @@ logger = logging.getLogger(__name__)
 
 
 class _JSONResponse(Response):
-    """Response subclass with a json() helper for unit tests.
-
+    """
+    Response subclass with a json() helper for unit tests.
+    
     Django's test client adds a json() method on response objects, but when
     calling views directly (as these tests do) we get the raw DRF Response.
     Providing json() keeps tests readable without changing production behavior.
     """
 
-    def json(self):
+    def json(self) -> Any:
+        """
+        Return the JSON-serializable payload.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _JSONResponse().json()  # doctest: +SKIP
+        """
         return self.data
 
 from .bokeh_plot_layout import _apply_zoom_layout_to_json_item
@@ -157,8 +191,19 @@ _job_plot_inflight = {}
 _JOB_PLOT_INFLIGHT_TTL_SECONDS = 180
 
 
-def site_response_cache_timeout(request):
-    """Per-request TTL for @dynamic_cache_page (site-aware)."""
+def site_response_cache_timeout(request: Any) -> Any:
+    """
+    Per-request TTL for @dynamic_cache_page (site-aware).
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> site_response_cache_timeout(None)  # doctest: +SKIP
+    """
     return get_site_content_cache_timeout()
 
 _JOB_LIST_QUERY_FIELD_EXCLUDES_BASE = ("page", "order_by", "performance_sort_rank", "state")
@@ -168,11 +213,20 @@ JOB_LIST_HISTOGRAM_BATCH_METRICS_DEFAULT = ("runtime", "nhosts", "queue_wait")
 HOST_PLOT_MAX_WINDOW_DAYS = 7
 
 
-def _get_admin_host_stats_statement_timeout_ms():
-    """Statement timeout for Admin Monitor 3h GROUP BY fallback only.
-
+def _get_admin_host_stats_statement_timeout_ms() -> Any:
+    """
+    Statement timeout for Admin Monitor 3h GROUP BY fallback only.
+    
     Primary path uses Redis inventory + LATERAL LIMIT 1 (no long timeout).
     Never floor at 600s — that matched the old 8-day GroupAggregate hang.
+    
+    Returns:
+      Any: Open return polymorphism from
+      ``_get_admin_host_stats_statement_timeout_ms``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> _get_admin_host_stats_statement_timeout_ms()  # doctest: +SKIP
     """
     try:
         default_ms = int(cfg.get_db_statement_timeout_ms())
@@ -183,8 +237,16 @@ def _get_admin_host_stats_statement_timeout_ms():
 
 
 @contextmanager
-def _pg_session_statement_timeout_for_admin_host_stats_query():
-    """Increase statement timeout only while evaluating admin host stats query."""
+def _pg_session_statement_timeout_for_admin_host_stats_query() -> Iterator[Any]:
+    """
+    Increase statement timeout only while evaluating admin host stats query.
+    
+    Yields:
+      Iterator[Any]: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _pg_session_statement_timeout_for_admin_host_stats_query()
+    """
     if connection.vendor != "postgresql":
         yield
         return
@@ -196,15 +258,22 @@ def _pg_session_statement_timeout_for_admin_host_stats_query():
         yield
 
 
-def _collect_future_results_with_deadline(future_to_key, max_wait_seconds):
+def _collect_future_results_with_deadline(
+  future_to_key: Any,
+  max_wait_seconds: int,
+) -> Any:
     """
     Collect completed future results until `max_wait_seconds` elapses.
-
+    
+    Args:
+      future_to_key (Any): Future to key passed to this helper.
+      max_wait_seconds (int): Integer value for max wait seconds.
+    
     Returns:
-      (results_by_key, remaining_keys)
-
-    `results_by_key` contains only keys whose futures completed within the
-    deadline and did not raise.
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _collect_future_results_with_deadline(None, 0)  # doctest: +SKIP
     """
     results_by_key = {}
     remaining_keys = set(future_to_key.values())
@@ -230,13 +299,21 @@ def _collect_future_results_with_deadline(future_to_key, max_wait_seconds):
     return results_by_key, remaining_keys
 
 
-def _evict_stale_inflight_plot_tasks():
-    """Remove stale in-flight plot tasks to bound map growth.
-
+def _evict_stale_inflight_plot_tasks() -> None:
+    """
+    Remove stale in-flight plot tasks to bound map growth.
+    
     Do not evict entries solely because ``future.done()`` is true: ``job_plots``
-    must run ``_finalize_job_plot_future`` first to persist results to the cache.
+    must run ``_finalize_job_plot_future`` first to persist results to the
+      cache.
     Otherwise a plot that finishes after the previous request returns 202 can be
     dropped before the client polls again.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _evict_stale_inflight_plot_tasks()  # doctest: +SKIP
     """
     now = time.monotonic()
     stale_keys = []
@@ -250,7 +327,16 @@ def _evict_stale_inflight_plot_tasks():
     for inflight_key in stale_keys:
         _job_plot_inflight.pop(inflight_key, None)
 
-def _get_small_executor():
+def _get_small_executor() -> Any:
+    """
+    Internal helper to return the small executor.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _get_small_executor()  # doctest: +SKIP
+    """
     global _small_executor
     if _small_executor is None:
         _small_executor = ThreadPoolExecutor(
@@ -259,8 +345,19 @@ def _get_small_executor():
     return _small_executor
 
 
-def _gpu_agg_rows_for_job(j):
-    """host_data GPU util rows for job window; delegates to metrics GPU helper."""
+def _gpu_agg_rows_for_job(j: Any) -> Any:
+    """
+    host_data GPU util rows for job window; delegates to metrics GPU helper.
+    
+    Args:
+      j (Any): Job record (Django ``job_data`` or job-like mapping).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _gpu_agg_rows_for_job(None)  # doctest: +SKIP
+    """
     from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
         gpu_agg_rows_for_job_window,
     )
@@ -276,10 +373,25 @@ _DETAIL_GPU_METRIC_NAMES = (
 )
 
 
-def _gpu_detail_tuple_from_metrics(job):
-    """Return (active, max%, mean%, count) from metrics_data if all four rows exist with values.
-
-    Jobs not yet processed by update_metrics fall back to host_data in _fetch_gpu.
+def _gpu_detail_tuple_from_metrics(job: Any) -> Any:
+    """
+    Return (active, max%, mean%, count) from metrics_data if all four rows.
+    
+      exist.
+    
+      with values.
+    
+    Jobs not yet processed by update_metrics fall back to host_data in
+      _fetch_gpu.
+    
+    Args:
+      job (Any): Job record (Django ``job_data`` or job-like mapping).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _gpu_detail_tuple_from_metrics(None)  # doctest: +SKIP
     """
     by_m = {o.metric: o for o in job.metrics_data_set.all()}
     rows = []
@@ -299,11 +411,34 @@ def _gpu_detail_tuple_from_metrics(job):
         return None
 
 
-def _fsio_dict_from_metrics(job):
-    """Return job_detail-shaped fsio dict from metrics_data (dual NFS+Lustre)."""
+def _fsio_dict_from_metrics(job: Any) -> Any:
+    """
+    Return job_detail-shaped fsio dict from metrics_data (dual NFS+Lustre).
+    
+    Args:
+      job (Any): Job record (Django ``job_data`` or job-like mapping).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _fsio_dict_from_metrics(None)  # doctest: +SKIP
+    """
     by_m = {o.metric: o for o in job.metrics_data_set.all()}
 
-    def _val(metric):
+    def _val(metric: Any) -> Any:
+        """
+        Internal helper to handle val.
+        
+        Args:
+          metric (Any): Metric passed to this helper.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _val(None)  # doctest: +SKIP
+        """
         row = by_m.get(metric)
         if row is None or row.value is None:
             return None
@@ -331,8 +466,29 @@ def _fsio_dict_from_metrics(job):
     return out or None
 
 
-def _compute_job_gpu_stats(job, j, job_cache_timeout, include_gpu_count=True):
-    """Compute per-job GPU stats (host_data); used when metrics_data rows are missing."""
+def _compute_job_gpu_stats(
+  job: Any,
+  j: Any,
+  job_cache_timeout: int,
+  include_gpu_count: bool = True,
+) -> Any:
+    """
+    Compute per-job GPU stats (host_data); used when metrics_data rows are.
+    
+      missing.
+    
+    Args:
+      job (Any): Job record (Django ``job_data`` or job-like mapping).
+      j (Any): Job record (Django ``job_data`` or job-like mapping).
+      job_cache_timeout (int): Integer value for job cache timeout.
+      include_gpu_count (bool): Boolean flag for include gpu count.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _compute_job_gpu_stats(None, None, 0, True)  # doctest: +SKIP
+    """
     from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
         gpu_count_total_for_job_window,
         reduce_gpu_agg_to_util_stats,
@@ -390,7 +546,18 @@ from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
 
 def _age_bucket(age: timedelta) -> str:
-    """Map last-seen age to admin monitor bucket labels (Redis + DB host stats)."""
+    """
+    Map last-seen age to admin monitor bucket labels (Redis + DB host stats).
+    
+    Args:
+      age (timedelta): Age.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> _age_bucket(None)  # doctest: +SKIP
+    """
     thresholds = (
         (timedelta(weeks=1), "gt_week"),
         (timedelta(days=1), "gt_day"),
@@ -403,8 +570,23 @@ def _age_bucket(age: timedelta) -> str:
     return "ok"
 
 
-def _admin_monitor_host_stat_dict(host, last_time, now):
-    """Build one ``host_stats`` row for admin monitor, or ``None`` to skip this host."""
+def _admin_monitor_host_stat_dict(host: Any, last_time: Any, now: Any) -> Any:
+    """
+    Build one ``host_stats`` row for admin monitor, or ``None`` to skip this.
+    
+      host.
+    
+    Args:
+      host (Any): Host passed to this helper.
+      last_time (Any): Last time passed to this helper.
+      now (Any): Now passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _admin_monitor_host_stat_dict(None, None, None)  # doctest: +SKIP
+    """
     host = host or ""
     if not host or last_time is None or "." not in host:
         return None
@@ -416,13 +598,22 @@ def _admin_monitor_host_stat_dict(host, last_time, now):
     }
 
 
-def _format_log_timestamp(ts):
+def _format_log_timestamp(ts: Any) -> Any:
     """
     Format a datetime for client/server log URLs.
-
+    
     Desired format: %Y-%m-%dT%H:%M:%S%:z
     Python's strftime does not support %:z directly, so we build the offset
     manually while preserving any existing tzinfo.
+    
+    Args:
+      ts (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _format_log_timestamp(None)  # doctest: +SKIP
     """
     if isinstance(ts, datetime):
         if ts.tzinfo is None:
@@ -436,12 +627,22 @@ def _format_log_timestamp(ts):
     return str(ts)
 
 
-def _get_api_key_from_request(request):
-    """Extract API key from Authorization or X-API-Key headers.
-
+def _get_api_key_from_request(request: Any) -> Any:
+    """
+    Extract API key from Authorization or X-API-Key headers.
+    
     Supported formats:
     - Authorization: Api-Key <key>
     - X-API-Key header
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _get_api_key_from_request(None)  # doctest: +SKIP
     """
     auth = request.META.get("HTTP_AUTHORIZATION", "")
     if auth:
@@ -456,8 +657,19 @@ def _get_api_key_from_request(request):
     return None
 
 
-def _api_key_valid(key: str):
-    """Return ApiKey instance if key is valid and active, else None."""
+def _api_key_valid(key: str) -> Any:
+    """
+    Return ApiKey instance if key is valid and active, else None.
+    
+    Args:
+      key (str): String for key.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _api_key_valid("x")  # doctest: +SKIP
+    """
     if not key:
         return None
     key_hash = ApiKey.hash_raw_key(key)
@@ -474,8 +686,19 @@ def _api_key_valid(key: str):
     return api_key_obj
 
 
-def _require_auth(request):
-    """Return 401 JSON if not authenticated via OAuth2 session or API key."""
+def _require_auth(request: Any) -> Any:
+    """
+    Return 401 JSON if not authenticated via OAuth2 session or API key.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _require_auth(None)  # doctest: +SKIP
+    """
     if check_for_tokens(request):
         return None
 
@@ -497,8 +720,19 @@ def _require_auth(request):
     )
 
 
-def _require_staff(request):
-    """Return 401/403 Response if not authenticated or not staff; else None."""
+def _require_staff(request: Any) -> Any:
+    """
+    Return 401/403 Response if not authenticated or not staff; else None.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _require_staff(None)  # doctest: +SKIP
+    """
     err = _require_auth(request)
     if err is not None:
         return err
@@ -510,8 +744,19 @@ def _require_staff(request):
     return None
 
 
-def _require_csrf_for_session_post(request):
-    """Return 403 JSON when a browser session POST lacks X-CSRFToken."""
+def _require_csrf_for_session_post(request: Any) -> Any:
+    """
+    Return 403 JSON when a browser session POST lacks X-CSRFToken.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _require_csrf_for_session_post(None)  # doctest: +SKIP
+    """
     django_request = getattr(request, "_request", request)
     if django_request.method not in ("POST", "PUT", "PATCH", "DELETE"):
         return None
@@ -528,8 +773,20 @@ def _require_csrf_for_session_post(request):
     return None
 
 
-def _apply_non_staff_job_visibility(queryset, request):
-    """Restrict non-staff visibility to own jobs and jobs in own-used accounts."""
+def _apply_non_staff_job_visibility(queryset: Any, request: Any) -> Any:
+    """
+    Restrict non-staff visibility to own jobs and jobs in own-used accounts.
+    
+    Args:
+      queryset (Any): Queryset passed to this helper.
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _apply_non_staff_job_visibility(None, None)  # doctest: +SKIP
+    """
     session = getattr(request, "session", None)
     if session is None:
         raw_req = getattr(request, "_request", None)
@@ -552,8 +809,25 @@ def _apply_non_staff_job_visibility(queryset, request):
     return queryset.filter(username=username)
 
 
-def _get_visible_job_or_error_response(request, pk, queryset_builder):
-    """Return (job, None) if visible, else (None, Response)."""
+def _get_visible_job_or_error_response(
+  request: Any,
+  pk: Any,
+  queryset_builder: Any,
+) -> Any:
+    """
+    Return (job, None) if visible, else (None, Response).
+    
+    Args:
+      request (Any): Request passed to this helper.
+      pk (Any): Pk passed to this helper.
+      queryset_builder (Any): Queryset builder passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _get_visible_job_or_error_response(None, None, None)  # doctest: +SKIP
+    """
     site_ttl = get_site_content_cache_timeout()
     job = cached_orm(
         make_job_detail_cache_key(pk),
@@ -574,8 +848,20 @@ def _get_visible_job_or_error_response(request, pk, queryset_builder):
     return job, None
 
 
-def _job_times_as_local(start_time, end_time):
-    """Return start/end as timezone-aware datetimes in local timezone."""
+def _job_times_as_local(start_time: Any, end_time: Any) -> Any:
+    """
+    Return start/end as timezone-aware datetimes in local timezone.
+    
+    Args:
+      start_time (Any): Start time passed to this helper.
+      end_time (Any): End time passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _job_times_as_local(None, None)  # doctest: +SKIP
+    """
     if start_time.tzinfo is None:
         start_time = timezone.make_aware(start_time, dt_timezone.utc)
     if end_time.tzinfo is None:
@@ -583,8 +869,20 @@ def _job_times_as_local(start_time, end_time):
     return start_time.astimezone(local_timezone), end_time.astimezone(local_timezone)
 
 
-def _apply_job_list_metric_filters(queryset, cur_metrics):
-    """Apply derived-metric filters without JOIN row inflation (EXISTS per metric)."""
+def _apply_job_list_metric_filters(queryset: Any, cur_metrics: Any) -> Any:
+    """
+    Apply derived-metric filters without JOIN row inflation (EXISTS per metric).
+    
+    Args:
+      queryset (Any): Queryset passed to this helper.
+      cur_metrics (Any): Cur metrics passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _apply_job_list_metric_filters(None, None)  # doctest: +SKIP
+    """
     for key, val in cur_metrics.items():
         if "__" not in key:
             logger.warning("Ignoring malformed metrics filter key %r", key)
@@ -605,8 +903,23 @@ def _apply_job_list_metric_filters(queryset, cur_metrics):
     return queryset
 
 
-def _apply_job_list_performance_sort_rank_filter(queryset, fields):
-    """Filter annotated queryset by comma-separated performance_sort_rank values."""
+def _apply_job_list_performance_sort_rank_filter(
+  queryset: Any,
+  fields: Any,
+) -> Any:
+    """
+    Filter annotated queryset by comma-separated performance_sort_rank values.
+    
+    Args:
+      queryset (Any): Queryset passed to this helper.
+      fields (Any): Fields passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _apply_job_list_performance_sort_rank_filter(None, None)
+    """
     raw = (fields or {}).get("performance_sort_rank")
     if not raw:
         return queryset
@@ -618,8 +931,20 @@ def _apply_job_list_performance_sort_rank_filter(queryset, fields):
     return queryset.filter(performance_sort_rank__in=ranks)
 
 
-def _apply_job_list_major_state_filter(queryset, fields):
-    """Filter queryset by comma-separated major terminal state group keys."""
+def _apply_job_list_major_state_filter(queryset: Any, fields: Any) -> Any:
+    """
+    Filter queryset by comma-separated major terminal state group keys.
+    
+    Args:
+      queryset (Any): Queryset passed to this helper.
+      fields (Any): Fields passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _apply_job_list_major_state_filter(None, None)  # doctest: +SKIP
+    """
     from .job_list_state_groups import major_state_q, parse_major_state_filter_keys
 
     keys = parse_major_state_filter_keys((fields or {}).get("state"))
@@ -629,12 +954,29 @@ def _apply_job_list_major_state_filter(queryset, fields):
 
 
 def _build_job_list_queryset_from_request(
-    request,
-    extra_excluded_fields=(),
-    annotate_all=False,
-    exclude_header_dimension=None,
-):
-    """Build filtered ordered queryset and parsed filter maps for job list endpoints."""
+  request: Any,
+  extra_excluded_fields: tuple[Any, ...] = (),
+  annotate_all: bool = False,
+  exclude_header_dimension: Any | None = None,
+) -> Any:
+    """
+    Build filtered ordered queryset and parsed filter maps for job list.
+    
+      endpoints.
+    
+    Args:
+      request (Any): Request passed to this helper.
+      extra_excluded_fields (tuple[Any, ...]): Sequence for extra excluded
+      fields.
+      annotate_all (bool): Boolean flag for annotate all.
+      exclude_header_dimension (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _build_job_list_queryset_from_request(None, [], True, None)
+    """
     fields = request.GET.dict()
     fields = {k: v for k, v in fields.items() if v}
     if exclude_header_dimension:
@@ -689,8 +1031,18 @@ def _build_job_list_queryset_from_request(
     return queryset, fields, cur_metrics, order_by
 
 
-def _get_redis_cache_client():
-    """Best-effort unwrap of a redis-py client from Django's cache backend."""
+def _get_redis_cache_client() -> Any:
+    """
+    Best-effort unwrap of a redis-py client from Django's cache backend.
+    
+    Returns:
+      Any: Open return polymorphism from ``_get_redis_cache_client``: concrete
+      type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> _get_redis_cache_client()  # doctest: +SKIP
+    """
     client = getattr(cache, "_cache", None)
     if hasattr(client, "get_client"):
         try:
@@ -707,11 +1059,25 @@ def _get_redis_cache_client():
     return client
 
 
-def _full_page_cache_url_digests_for_request_paths(request, paths):
-    """Return MD5 hex digests of absolute URIs used in Django ``cache_page`` keys.
-
+def _full_page_cache_url_digests_for_request_paths(
+  request: Any,
+  paths: Any,
+) -> Any:
+    """
+    Return MD5 hex digests of absolute URIs used in Django ``cache_page`` keys.
+    
     Matches ``django.utils.cache._generate_cache_key`` / ``get_cache_key`` URL
     hashing (``md5(request.build_absolute_uri().encode("ascii"))``).
+    
+    Args:
+      request (Any): Request passed to this helper.
+      paths (Any): Iterable of filesystem paths as strings.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _full_page_cache_url_digests_for_request_paths(None, None)
     """
     factory = RequestFactory()
     host = request.get_host() or "localhost"
@@ -727,11 +1093,29 @@ def _full_page_cache_url_digests_for_request_paths(request, paths):
     return digests
 
 
-def _delete_django_cache_page_entries_for_request(request, paths):
-    """Delete ``@cache_page`` / ``dynamic_cache_page`` entries via Django's cache API.
-
-    Drops the ``cache_header`` registry entry, then either the ``get_cache_key`` page
-    key or—when the registry is missing—the empty-``Vary`` page key Django would use.
+def _delete_django_cache_page_entries_for_request(
+  request: Any,
+  paths: Any,
+) -> Any:
+    """
+    Delete ``@cache_page`` / ``dynamic_cache_page`` entries via Django's cache.
+    
+      API.
+    
+    Drops the ``cache_header`` registry entry, then either the ``get_cache_key``
+      page
+    key or—when the registry is missing—the empty-``Vary`` page key Django would
+      use.
+    
+    Args:
+      request (Any): Request passed to this helper.
+      paths (Any): Iterable of filesystem paths as strings.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _delete_django_cache_page_entries_for_request(None, None)
     """
     factory = RequestFactory()
     host = request.get_host() or "localhost"
@@ -755,12 +1139,29 @@ def _delete_django_cache_page_entries_for_request(request, paths):
     return deleted
 
 
-def _redis_delete_cache_page_keys_matching_digests(client, digests):
-    """Delete raw Redis keys for ``cache_page`` / ``cache_header`` rows matching URL digests.
-
-    Needed when responses ``Vary`` on headers (e.g. ``Cookie``): each variant has
+def _redis_delete_cache_page_keys_matching_digests(
+  client: Any,
+  digests: Any,
+) -> Any:
+    """
+    Delete raw Redis keys for ``cache_page`` / ``cache_header`` rows matching.
+    
+      URL digests.
+    
+    Needed when responses ``Vary`` on headers (e.g. ``Cookie``): each variant
+      has
     a distinct full key, so ``get_cache_key`` for a single synthetic request is
     not enough. Keys still embed the URL MD5 hex from Django's cache layer.
+    
+    Args:
+      client (Any): Live handle (pool, client, or connection).
+      digests (Any): Digests passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _redis_delete_cache_page_keys_matching_digests(None, None)
     """
     if not digests or client is None or not hasattr(client, "scan_iter"):
         return 0
@@ -794,8 +1195,18 @@ def _redis_delete_cache_page_keys_matching_digests(client, digests):
     return deleted
 
 
-def _get_cache_stats():
-    """Return basic Redis/cache statistics for the HPCPerfStats Monitor."""
+def _get_cache_stats() -> Any:
+    """
+    Return basic Redis/cache statistics for the HPCPerfStats Monitor.
+    
+    Returns:
+      Any: Open return polymorphism from ``_get_cache_stats``: concrete type
+      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+      empty).
+    
+    Examples:
+      >>> _get_cache_stats()  # doctest: +SKIP
+    """
     # First try to return a recently cached snapshot of the Redis stats so that
     # repeated HPCPerfStats Monitor polls do not issue heavy INFO/SCAN calls.
     try:
@@ -911,8 +1322,18 @@ def _get_cache_stats():
     return stats
 
 
-def _get_timescaledb_stats():
-    """Return basic TimescaleDB/PostgreSQL statistics for the HPCPerfStats Monitor."""
+def _get_timescaledb_stats() -> Any:
+    """
+    Return basic TimescaleDB/PostgreSQL statistics for the HPCPerfStats Monitor.
+    
+    Returns:
+      Any: Open return polymorphism from ``_get_timescaledb_stats``: concrete
+      type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> _get_timescaledb_stats()  # doctest: +SKIP
+    """
     try:
         cached_stats = cache.get(KEY_ADMIN_TIMESCALE_STATS)
         if isinstance(cached_stats, dict):
@@ -1092,11 +1513,33 @@ def _get_timescaledb_stats():
     return stats
 
 
-def _list_recent_host_fqdns_from_redis():
-    """FQDNs from Django-cache Redis ``recent_host:*`` keys (listend inventory)."""
+def _list_recent_host_fqdns_from_redis() -> Any:
+    """
+    FQDNs from Django-cache Redis ``recent_host:*`` keys (listend inventory).
+    
+    Returns:
+      Any: Open return polymorphism from
+      ``_list_recent_host_fqdns_from_redis``: concrete type depends on inputs
+      and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> _list_recent_host_fqdns_from_redis()  # doctest: +SKIP
+    """
     hosts = []
 
-    def _decode_key(raw_key):
+    def _decode_key(raw_key: Any) -> Any:
+        """
+        Internal helper to handle decode key.
+        
+        Args:
+          raw_key (Any): Raw key passed to this helper.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _decode_key(None)  # doctest: +SKIP
+        """
         if isinstance(raw_key, bytes):
             return raw_key.decode("utf-8", "replace")
         return str(raw_key)
@@ -1117,17 +1560,27 @@ def _list_recent_host_fqdns_from_redis():
     return hosts
 
 
-def _get_rabbitmq_stats():
-    """Return RabbitMQ statistics for the HPCPerfStats Monitor.
-
-    Uses the RabbitMQ Management HTTP API (default ``http://{rmq_server}:15672``).
+def _get_rabbitmq_stats() -> Any:
+    """
+    Return RabbitMQ statistics for the HPCPerfStats Monitor.
+    
+    Uses the RabbitMQ Management HTTP API (default
+      ``http://{rmq_server}:15672``).
     Credentials/URL can be overridden via environment variables:
       - RABBITMQ_MANAGEMENT_URL
       - RABBITMQ_MANAGEMENT_USER (default: guest)
       - RABBITMQ_MANAGEMENT_PASSWORD (default: guest)
-
+    
     The ~24h publish estimate is derived from deltas of the cumulative publish
     counter between Redis snapshots (``KEY_ADMIN_RMQ_SNAPSHOT``).
+    
+    Returns:
+      Any: Open return polymorphism from ``_get_rabbitmq_stats``: concrete
+      type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> _get_rabbitmq_stats()  # doctest: +SKIP
     """
     try:
         cached_stats = cache.get(KEY_ADMIN_RMQ_STATS)
@@ -1161,7 +1614,20 @@ def _get_rabbitmq_stats():
     queue_url = f"{base_url.rstrip('/')}/api/queues/%2F/{rmq_queue}"
     nodes_url = f"{base_url.rstrip('/')}/api/nodes"
 
-    def _rate_from_details(msg_stats, key):
+    def _rate_from_details(msg_stats: Any, key: Any) -> Any:
+        """
+        Internal helper to handle rate from details.
+        
+        Args:
+          msg_stats (Any): Msg stats passed to this helper.
+          key (Any): Key passed to this helper.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _rate_from_details(None, None)  # doctest: +SKIP
+        """
         details = msg_stats.get(f"{key}_details") or {}
         rate = details.get("rate")
         if rate is None:
@@ -1318,12 +1784,34 @@ def _get_rabbitmq_stats():
     return stats
 
 
-def _get_recent_rabbitmq_host_stats():
-    """Return per-host last-seen timestamps sourced directly from Redis keys."""
+def _get_recent_rabbitmq_host_stats() -> Any:
+    """
+    Return per-host last-seen timestamps sourced directly from Redis keys.
+    
+    Returns:
+      Any: Open return polymorphism from ``_get_recent_rabbitmq_host_stats``:
+      concrete type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> _get_recent_rabbitmq_host_stats()  # doctest: +SKIP
+    """
     now = timezone.now()
     host_stats = []
 
-    def _decode_key(raw_key):
+    def _decode_key(raw_key: Any) -> Any:
+        """
+        Internal helper to handle decode key.
+        
+        Args:
+          raw_key (Any): Raw key passed to this helper.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _decode_key(None)  # doctest: +SKIP
+        """
         if isinstance(raw_key, bytes):
             return raw_key.decode("utf-8", "replace")
         return str(raw_key)
@@ -1363,8 +1851,19 @@ def _get_recent_rabbitmq_host_stats():
 @ensure_csrf_cookie
 @SESSION_SCHEMA
 @api_view(["GET"])
-def session_info(request):
-    """Return current session state for SPA (logged_in, username, is_staff)."""
+def session_info(request: Any) -> Any:
+    """
+    Return current session state for SPA (logged_in, username, is_staff).
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> session_info(None)  # doctest: +SKIP
+    """
     err = _require_auth(request)
     if err is not None:
         return err
@@ -1378,8 +1877,19 @@ def session_info(request):
 
 @USER_API_KEY_SCHEMA
 @api_view(["GET"])
-def user_api_key_status(request):
-    """Return API key visibility for the OAuth session (create key if none exists)."""
+def user_api_key_status(request: Any) -> Any:
+    """
+    Return API key visibility for the OAuth session (create key if none exists).
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> user_api_key_status(None)  # doctest: +SKIP
+    """
     if not check_for_tokens(request):
         return Response(
             {"detail": "Authentication required", "login_url": "/login_prompt"},
@@ -1408,8 +1918,19 @@ def user_api_key_status(request):
 @USER_API_KEY_ROTATE_SCHEMA
 @api_view(["POST"])
 @authentication_classes([SessionAuthentication])
-def user_api_key_rotate(request):
-    """Revoke active keys for this user and return a newly minted raw key."""
+def user_api_key_rotate(request: Any) -> Any:
+    """
+    Revoke active keys for this user and return a newly minted raw key.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> user_api_key_rotate(None)  # doctest: +SKIP
+    """
     csrf_err = _require_csrf_for_session_post(request)
     if csrf_err is not None:
         return csrf_err
@@ -1436,8 +1957,19 @@ def user_api_key_rotate(request):
 
 @DROP_STAFF_SCHEMA
 @api_view(["POST"])
-def drop_staff_for_session(request):
-    """Remove staff access for the current authenticated session only."""
+def drop_staff_for_session(request: Any) -> Any:
+    """
+    Remove staff access for the current authenticated session only.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> drop_staff_for_session(None)  # doctest: +SKIP
+    """
     csrf_err = _require_csrf_for_session_post(request)
     if csrf_err is not None:
         return csrf_err
@@ -1462,17 +1994,31 @@ def drop_staff_for_session(request):
 
 @INVALIDATE_CACHE_SCHEMA
 @api_view(["POST"])
-def invalidate_cache_for_page(request):
-    """Invalidate cache entries associated with the provided page path.
-
-    Deletes Django ``@cache_page`` / ``dynamic_cache_page`` rows via ``cache.delete``
-    (correct key prefix/versioning), then raw Redis ``SCAN`` for keys whose names
+def invalidate_cache_for_page(request: Any) -> Any:
+    """
+    Invalidate cache entries associated with the provided page path.
+    
+    Deletes Django ``@cache_page`` / ``dynamic_cache_page`` rows via
+      ``cache.delete``
+    (correct key prefix/versioning), then raw Redis ``SCAN`` for keys whose
+      names
     embed the same URL MD5 as Django's cache layer (covers ``Vary`` variants).
-
-    For any ``/machine`` or ``/machine/...`` path, also targets ``/api/home/`` and
+    
+    For any ``/machine`` or ``/machine/...`` path, also targets ``/api/home/``
+      and
     drops ``home_options`` ORM cache keys (dates, metrics list, queues, states,
-    site newest job end). Works without a raw Redis client (LocMem): ORM + Django
+    site newest job end). Works without a raw Redis client (LocMem): ORM +
+      Django
     cache deletes still run.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> invalidate_cache_for_page(None)  # doctest: +SKIP
     """
     csrf_err = _require_csrf_for_session_post(request)
     if csrf_err is not None:
@@ -1552,8 +2098,19 @@ def invalidate_cache_for_page(request):
     )
 
 
-def _normalize_home_metrics(metrics):
-    """Ensure home_options metrics rows match HomeMetricOption OpenAPI shape."""
+def _normalize_home_metrics(metrics: Any) -> Any:
+    """
+    Ensure home_options metrics rows match HomeMetricOption OpenAPI shape.
+    
+    Args:
+      metrics (Any): Metrics passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _normalize_home_metrics(None)  # doctest: +SKIP
+    """
     out = []
     for row in metrics or []:
         if not isinstance(row, dict):
@@ -1566,34 +2123,94 @@ def _normalize_home_metrics(metrics):
     return out
 
 
-def _normalize_home_string_list(values):
-    """Coerce truthy queue/state labels to strings for SPA Zod validation."""
+def _normalize_home_string_list(values: Any) -> Any:
+    """
+    Coerce truthy queue/state labels to strings for SPA Zod validation.
+    
+    Args:
+      values (Any): Values passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _normalize_home_string_list(None)  # doctest: +SKIP
+    """
     return [str(v) for v in (values or []) if v]
 
 
 @HOME_OPTIONS_SCHEMA
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
-def home_options(request):
-    """Return options for search form: date_list, metrics, queues, states, machine_name."""
+def home_options(request: Any) -> Any:
+    """
+    Return options for search form: date_list, metrics, queues, states,.
+    
+      machine_name.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> home_options(None)  # doctest: +SKIP
+    """
     err = _require_auth(request)
     if err is not None:
         return err
 
     site_ttl = get_site_content_cache_timeout()
 
-    def _dates_fn():
+    def _dates_fn() -> Any:
+        """
+        Internal helper to handle dates function.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _dates_fn()  # doctest: +SKIP
+        """
         return sorted(job_data.objects.dates("end_time", "day"))
 
-    def _metrics_fn():
+    def _metrics_fn() -> Any:
+        """
+        Internal helper to handle metrics function.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _metrics_fn()  # doctest: +SKIP
+        """
         return job_metrics_catalog_entries()
 
-    def _queues_fn():
+    def _queues_fn() -> Any:
+        """
+        Internal helper to handle queues function.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _queues_fn()  # doctest: +SKIP
+        """
         return list(
             job_data.objects.distinct("queue").values_list("queue", flat=True)
         )
 
-    def _states_fn():
+    def _states_fn() -> Any:
+        """
+        Internal helper to handle states function.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _states_fn()  # doctest: +SKIP
+        """
         return list(
             job_data.objects.exclude(state__contains="CANCELLED by")
             .distinct("state")
@@ -1639,14 +2256,45 @@ def home_options(request):
     })
 
 
-def _queue_histogram_display_label(raw_queue):
-    """Stable label for one queue bucket (Bokeh FactorRange factors must be unique)."""
+def _queue_histogram_display_label(raw_queue: Any) -> Any:
+    """
+    Stable label for one queue bucket (Bokeh FactorRange factors must be.
+    
+      unique).
+    
+    Args:
+      raw_queue (Any): Raw queue passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _queue_histogram_display_label(None)  # doctest: +SKIP
+    """
     s = (raw_queue or "").strip()
     return s if s else "(no queue)"
 
 
-def _merge_queue_bar_rows(rows, *, metric):
-    """Merge ORM rows that map to the same display label (e.g. NULL vs '' → '(no queue)')."""
+def _merge_queue_bar_rows(rows: Any, *, metric: Any) -> Any:
+    """
+    Merge ORM rows that map to the same display label (e.g. NULL vs '' → '(no.
+    
+      queue)').
+    
+    Args:
+      rows (Any): Rows passed to this helper.
+      metric (Any): Metric passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Raises:
+      ValueError: Raised when ``_merge_queue_bar_rows`` hits a ``ValueError``
+      failure path.
+    
+    Examples:
+      >>> _merge_queue_bar_rows(None, None)  # doctest: +SKIP
+    """
     from collections import defaultdict
 
     if metric == "jobs":
@@ -1662,11 +2310,33 @@ def _merge_queue_bar_rows(rows, *, metric):
     return sorted(acc.items(), key=lambda kv: (-kv[1], kv[0]))
 
 
-def _job_list_queue_bar_chart(job_list_qs, width=600, height=400, *, metric="jobs"):
-    """Bokeh vbar of per-queue job count or summed node hours (full filtered job list).
-
-    Retained for unit tests and Playwright Bokeh embed fixtures even though the job
+def _job_list_queue_bar_chart(
+  job_list_qs: Any,
+  width: int = 600,
+  height: int = 400,
+  *,
+  metric: str = "jobs",
+) -> Any:
+    """
+    Bokeh vbar of per-queue job count or summed node hours (full filtered job.
+    
+      list).
+    
+    Retained for unit tests and Playwright Bokeh embed fixtures even though the
+      job
     list API no longer ships queue histograms in responses.
+    
+    Args:
+      job_list_qs (Any): Job list qs passed to this helper.
+      width (int): Integer value for width.
+      height (int): Integer value for height.
+      metric (str): String for metric.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _job_list_queue_bar_chart(None, 0, 0, "x")  # doctest: +SKIP
     """
     from bokeh.models import ColumnDataSource
 
@@ -1750,15 +2420,25 @@ _JOB_LIST_MACHINE_BROWSE_PREFIXES = (
 )
 
 
-def _build_histogram_queryset(request):
+def _build_histogram_queryset(request: Any) -> Any:
     """
     Build the base queryset and metric filters for histogram endpoints.
-
+    
     Returns (job_list_qs, nj, fields, cur_metrics) where:
-    - job_list_qs: filtered queryset ordered by jid (presentation order_by ignored)
+    - job_list_qs: filtered queryset ordered by jid (presentation order_by
+      ignored)
     - nj: count of jobs in queryset
     - fields: normalized/expanded query params dict
     - cur_metrics: dict of metric_name__op -> value (from query params)
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _build_histogram_queryset(None)  # doctest: +SKIP
     """
     try:
         job_list_qs, fields, cur_metrics, _ = _build_job_list_queryset_from_request(
@@ -1776,14 +2456,27 @@ def _build_histogram_queryset(request):
         return job_data.objects.none(), 0, {}, {}
 
 
-def _build_histogram_dataframe(job_list_qs, cur_metrics):
+def _build_histogram_dataframe(job_list_qs: Any, cur_metrics: Any) -> Any:
     """
-    Build the DataFrame and histogram metric list used for metric-based histograms.
-
+    Build the DataFrame and histogram metric list used for metric-based.
+    
+      histograms.
+    
     Returns (df, hist_metrics, jids_ordered) where:
-    - df: pandas DataFrame indexed by jid with metric columns + runtime/nhosts/queue_wait
+    - df: pandas DataFrame indexed by jid with metric columns +
+      runtime/nhosts/queue_wait
     - hist_metrics: list of (metric_name, units_label)
     - jids_ordered: list of jids in deterministic order
+    
+    Args:
+      job_list_qs (Any): Job list qs passed to this helper.
+      cur_metrics (Any): Cur metrics passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _build_histogram_dataframe(None, None)  # doctest: +SKIP
     """
     acc_cols = ["jid", "start_time", "submit_time", "runtime", "nhosts"]
     job_rows = list(job_list_qs.values(*acc_cols))
@@ -1823,8 +2516,19 @@ def _build_histogram_dataframe(job_list_qs, cur_metrics):
     return df, hist_metrics, jids_ordered
 
 
-def _extract_bokeh_doc_root_ids(doc):
-    """Return a set of root ids declared in a Bokeh json_item doc payload."""
+def _extract_bokeh_doc_root_ids(doc: Any) -> Any:
+    """
+    Return a set of root ids declared in a Bokeh json_item doc payload.
+    
+    Args:
+      doc (Any): Doc passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _extract_bokeh_doc_root_ids(None)  # doctest: +SKIP
+    """
     ids = set()
     if not isinstance(doc, dict):
         return ids
@@ -1858,8 +2562,19 @@ def _extract_bokeh_doc_root_ids(doc):
     return ids
 
 
-def _is_valid_bokeh_json_item_payload(payload):
-    """True when json_item has declared root ids and doc/root consistency."""
+def _is_valid_bokeh_json_item_payload(payload: Any) -> Any:
+    """
+    True when json_item has declared root ids and doc/root consistency.
+    
+    Args:
+      payload (Any): Value to inspect (typically a numeric scalar).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _is_valid_bokeh_json_item_payload(None)  # doctest: +SKIP
+    """
     if not isinstance(payload, dict):
         return False
     doc = payload.get("doc")
@@ -1883,8 +2598,19 @@ def _is_valid_bokeh_json_item_payload(payload):
     return True
 
 
-def _sanitize_hist_plot_item(plot):
-    """Convert Bokeh plot to json_item and drop invalid payloads."""
+def _sanitize_hist_plot_item(plot: Any) -> Any:
+    """
+    Convert Bokeh plot to json_item and drop invalid payloads.
+    
+    Args:
+      plot (Any): Plot passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _sanitize_hist_plot_item(None)  # doctest: +SKIP
+    """
     if plot is None:
         return None
     try:
@@ -1894,8 +2620,31 @@ def _sanitize_hist_plot_item(plot):
     return payload if _is_valid_bokeh_json_item_payload(payload) else None
 
 
-def _job_list_metric_hist_pair(df, metric_name, label, display_title, thumb_wh, full_wh):
-    """Return (thumb_figure, full_figure) for one metric via ``job_hist``."""
+def _job_list_metric_hist_pair(
+  df: Any,
+  metric_name: Any,
+  label: Any,
+  display_title: Any,
+  thumb_wh: Any,
+  full_wh: Any,
+) -> Any:
+    """
+    Return (thumb_figure, full_figure) for one metric via ``job_hist``.
+    
+    Args:
+      df (Any): Df passed to this helper.
+      metric_name (Any): Metric name passed to this helper.
+      label (Any): Label passed to this helper.
+      display_title (Any): Display title passed to this helper.
+      thumb_wh (Any): Thumb wh passed to this helper.
+      full_wh (Any): Full wh passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _job_list_metric_hist_pair(None, None, None, None, None, None)
+    """
     tw, th = thumb_wh
     fw, fh = full_wh
     p_thumb = job_hist(
@@ -1907,18 +2656,52 @@ def _job_list_metric_hist_pair(df, metric_name, label, display_title, thumb_wh, 
     return p_thumb, p_full
 
 
-def _histogram_queryset_for_plotting(job_list_qs, nj, sample_size=None):
+def _histogram_queryset_for_plotting(
+  job_list_qs: Any,
+  nj: Any,
+  sample_size: Any | None = None,
+) -> Any:
     """
-    Return (plot_qs, histogram_nj, histogram_sampled) for dataframe materialization.
-
+    Return (plot_qs, histogram_nj, histogram_sampled) for dataframe.
+    
+      materialization.
+    
     Uses the full matching job queryset (no sampling cap).
+    
+    Args:
+      job_list_qs (Any): Job list qs passed to this helper.
+      nj (Any): Nj passed to this helper.
+      sample_size (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _histogram_queryset_for_plotting(None, None, None)  # doctest: +SKIP
     """
     del sample_size  # retained for call-site compatibility
     return job_list_qs, nj, False
 
 
-def _histogram_response_meta(nj, histogram_nj, histogram_sampled):
-    """Shared histogram envelope fields (batch + single metric responses)."""
+def _histogram_response_meta(
+  nj: Any,
+  histogram_nj: Any,
+  histogram_sampled: Any,
+) -> Any:
+    """
+    Shared histogram envelope fields (batch + single metric responses).
+    
+    Args:
+      nj (Any): Nj passed to this helper.
+      histogram_nj (Any): Histogram nj passed to this helper.
+      histogram_sampled (Any): Histogram sampled passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _histogram_response_meta(None, None, None)  # doctest: +SKIP
+    """
     return {
         "nj": nj,
         "histogram_nj": histogram_nj,
@@ -1926,16 +2709,44 @@ def _histogram_response_meta(nj, histogram_nj, histogram_sampled):
     }
 
 
-def _parse_histogram_batch_metric_names(raw_metrics):
-    """Parse comma-separated metric names for batch histogram endpoint."""
+def _parse_histogram_batch_metric_names(raw_metrics: Any) -> Any:
+    """
+    Parse comma-separated metric names for batch histogram endpoint.
+    
+    Args:
+      raw_metrics (Any): Raw metrics passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _parse_histogram_batch_metric_names(None)  # doctest: +SKIP
+    """
     if not raw_metrics:
         return list(JOB_LIST_HISTOGRAM_BATCH_METRICS_DEFAULT)
     names = [part.strip() for part in str(raw_metrics).split(",") if part.strip()]
     return names or list(JOB_LIST_HISTOGRAM_BATCH_METRICS_DEFAULT)
 
 
-def _histogram_metric_unavailable_stub(metric_name, nj, unavailable_reason):
-    """Batch/single histogram envelope when plots are unavailable."""
+def _histogram_metric_unavailable_stub(
+  metric_name: Any,
+  nj: Any,
+  unavailable_reason: Any,
+) -> Any:
+    """
+    Batch/single histogram envelope when plots are unavailable.
+    
+    Args:
+      metric_name (Any): Metric name passed to this helper.
+      nj (Any): Nj passed to this helper.
+      unavailable_reason (Any): Unavailable reason passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _histogram_metric_unavailable_stub(None, None, None)  # doctest: +SKIP
+    """
     display_title = JOB_HIST_DISPLAY_NAMES.get(metric_name, metric_name)
     return {
         "group": "metric",
@@ -1948,8 +2759,27 @@ def _histogram_metric_unavailable_stub(metric_name, nj, unavailable_reason):
     }
 
 
-def _build_histogram_batch_entries(metric_names, nj, plot_qs, cur_metrics):
-    """Return one histogram envelope per requested metric (never omit names)."""
+def _build_histogram_batch_entries(
+  metric_names: Any,
+  nj: Any,
+  plot_qs: Any,
+  cur_metrics: Any,
+) -> Any:
+    """
+    Return one histogram envelope per requested metric (never omit names).
+    
+    Args:
+      metric_names (Any): Metric names passed to this helper.
+      nj (Any): Nj passed to this helper.
+      plot_qs (Any): Plot qs passed to this helper.
+      cur_metrics (Any): Cur metrics passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _build_histogram_batch_entries(None, None, None, None)  # doctest: +SKIP
+    """
     if nj == 0:
         return [
             _histogram_metric_unavailable_stub(
@@ -1975,8 +2805,19 @@ def _build_histogram_batch_entries(metric_names, nj, plot_qs, cur_metrics):
     return histograms
 
 
-def _machine_path_targets_job_list_api_cache(normalized_path):
-    """True when SPA browse routes load GET /api/jobs/ or histogram batch APIs."""
+def _machine_path_targets_job_list_api_cache(normalized_path: str) -> Any:
+    """
+    True when SPA browse routes load GET /api/jobs/ or histogram batch APIs.
+    
+    Args:
+      normalized_path (str): String for normalized path.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _machine_path_targets_job_list_api_cache("x")  # doctest: +SKIP
+    """
     if normalized_path == "/machine/jobs":
         return True
     if normalized_path.startswith("/machine/jobs/"):
@@ -1988,8 +2829,23 @@ def _machine_path_targets_job_list_api_cache(normalized_path):
     )
 
 
-def _expand_path_variants_for_job_list_api_cache(path_variants, normalized_path):
-    """Also purge job list + histogram API cache rows for job browse pages."""
+def _expand_path_variants_for_job_list_api_cache(
+  path_variants: Any,
+  normalized_path: str,
+) -> None:
+    """
+    Also purge job list + histogram API cache rows for job browse pages.
+    
+    Args:
+      path_variants (Any): Path variants passed to this helper.
+      normalized_path (str): String for normalized path.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _expand_path_variants_for_job_list_api_cache(None, "x")
+    """
     if not _machine_path_targets_job_list_api_cache(normalized_path):
         return
     for api_path in _JOB_LIST_API_CACHE_PATHS:
@@ -1998,14 +2854,30 @@ def _expand_path_variants_for_job_list_api_cache(path_variants, normalized_path)
 
 
 def _build_metric_histogram_payload(
-    df,
-    hist_metrics,
-    metric_name,
-    nj,
-    thumb_wh=(280, 200),
-    full_wh=(600, 400),
-):
-    """Build one metric histogram envelope (thumb + full Bokeh json_items)."""
+  df: Any,
+  hist_metrics: Any,
+  metric_name: Any,
+  nj: Any,
+  thumb_wh: tuple[Any, ...] = (280, 200),
+  full_wh: tuple[Any, ...] = (600, 400),
+) -> Any:
+    """
+    Build one metric histogram envelope (thumb + full Bokeh json_items).
+    
+    Args:
+      df (Any): Df passed to this helper.
+      hist_metrics (Any): Hist metrics passed to this helper.
+      metric_name (Any): Metric name passed to this helper.
+      nj (Any): Nj passed to this helper.
+      thumb_wh (tuple[Any, ...]): Sequence for thumb wh.
+      full_wh (tuple[Any, ...]): Sequence for full wh.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _build_metric_histogram_payload(None, None, None, None, [], [])
+    """
     label = None
     for m, lbl in hist_metrics:
         if m == metric_name:
@@ -2042,18 +2914,24 @@ def _build_metric_histogram_payload(
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
-def job_list_histograms(request):
+def job_list_histograms(request: Any) -> Any:
     """
     Return Bokeh histograms for the job list, loaded incrementally.
-
+    
     This endpoint supports per-plot loading for metric histograms. The caller
     must provide a 'group' query parameter:
-
+    
     - group=metric&metric=<name>: return a single metric histogram (thumb and
       full) for the given metric name.
-
-    Example:
-      /api/jobs/histograms/?end_time__date=2024-01-01&group=metric&metric=runtime
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> job_list_histograms(None)  # doctest: +SKIP
     """
     err = _require_auth(request)
     if err is not None:
@@ -2133,11 +3011,21 @@ def job_list_histograms(request):
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
-def job_list_histograms_batch(request):
+def job_list_histograms_batch(request: Any) -> Any:
     """
     Return multiple metric histograms in one response (single dataframe build).
-
-    Query param ``metrics`` is comma-separated (default: runtime,nhosts,queue_wait).
+    
+    Query param ``metrics`` is comma-separated (default:
+      runtime,nhosts,queue_wait).
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> job_list_histograms_batch(None)  # doctest: +SKIP
     """
     err = _require_auth(request)
     if err is not None:
@@ -2151,14 +3039,52 @@ def job_list_histograms_batch(request):
     return _JSONResponse({**hist_meta, "histograms": histograms})
 
 
-def _include_filter_options(request):
-    """When false, job_list skips faceted filter_options queryset work (SPA loads options separately)."""
+def _include_filter_options(request: Any) -> Any:
+    """
+    When false, job_list skips faceted filter_options queryset work (SPA loads.
+    
+      options separately).
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _include_filter_options(None)  # doctest: +SKIP
+    """
     raw = request.GET.get("include_filter_options", "1")
     return str(raw).strip().lower() not in ("0", "false", "no", "off")
 
 
-def _job_list_filter_options_builder():
-    def _options_builder(req, exclude_header_dimension=None):
+def _job_list_filter_options_builder() -> Any:
+    """
+    Internal helper to handle job list filter options builder.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _job_list_filter_options_builder()  # doctest: +SKIP
+    """
+    def _options_builder(
+      req: Any,
+      exclude_header_dimension: Any | None = None,
+    ) -> Any:
+        """
+        Internal helper to handle options builder.
+        
+        Args:
+          req (Any): Req passed to this helper.
+          exclude_header_dimension (Any | None): One of ``Any``, ``None``.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _options_builder(None, None)  # doctest: +SKIP
+        """
         return _build_job_list_queryset_from_request(
             req,
             extra_excluded_fields=_JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM,
@@ -2169,7 +3095,19 @@ def _job_list_filter_options_builder():
     return _options_builder
 
 
-def _resolve_job_list_filter_options(request):
+def _resolve_job_list_filter_options(request: Any) -> Any:
+    """
+    Internal helper to resolve the job list filter options.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _resolve_job_list_filter_options(None)  # doctest: +SKIP
+    """
     try:
         return build_job_list_filter_options(request, _job_list_filter_options_builder())
     except Exception:
@@ -2181,8 +3119,19 @@ def _resolve_job_list_filter_options(request):
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
-def job_list_filter_options_view(request):
-    """Faceted header-filter option values for the current job-list selection."""
+def job_list_filter_options_view(request: Any) -> Any:
+    """
+    Faceted header-filter option values for the current job-list selection.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> job_list_filter_options_view(None)  # doctest: +SKIP
+    """
     err = _require_auth(request)
     if err is not None:
         return err
@@ -2193,8 +3142,21 @@ def job_list_filter_options_view(request):
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
-def job_list(request):
-    """Paginated job list only (histograms via separate job_list_histograms endpoint)."""
+def job_list(request: Any) -> Any:
+    """
+    Paginated job list only (histograms via separate job_list_histograms.
+    
+      endpoint).
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> job_list(None)  # doctest: +SKIP
+    """
     err = _require_auth(request)
     if err is not None:
         return err
@@ -2292,8 +3254,21 @@ def job_list(request):
     })
 
 
-def _parse_job_detail_defer_set(request):
-    """Parse ``defer=xalt,proc,multiprecision``; ``light=1`` implies defer xalt+proc."""
+def _parse_job_detail_defer_set(request: Any) -> Any:
+    """
+    Parse ``defer=xalt,proc,multiprecision``; ``light=1`` implies defer.
+    
+      xalt+proc.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _parse_job_detail_defer_set(None)  # doctest: +SKIP
+    """
     defer_raw = (request.GET.get("defer") or "").strip()
     defer_set = {part.strip().lower() for part in defer_raw.split(",") if part.strip()}
     light_mode = str(request.GET.get("light", "")).lower() in ("1", "true", "yes")
@@ -2305,8 +3280,22 @@ def _parse_job_detail_defer_set(request):
 @JOB_DETAIL_SCHEMA
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
-def job_detail(request, pk):
-    """Single job detail: metadata, host_list, fsio, xalt, schema, URLs (plots via separate job_plots endpoint)."""
+def job_detail(request: Any, pk: Any) -> Any:
+    """
+    Single job detail: metadata, host_list, fsio, xalt, schema, URLs (plots via.
+    
+      separate job_plots endpoint).
+    
+    Args:
+      request (Any): Request passed to this helper.
+      pk (Any): Pk passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> job_detail(None, None)  # doctest: +SKIP
+    """
     err = _require_auth(request)
     if err is not None:
         return err
@@ -2324,10 +3313,28 @@ def job_detail(request, pk):
     host_list = j.acct_host_list
     defer_set = _parse_job_detail_defer_set(request)
 
-    def _fetch_xalt():
+    def _fetch_xalt() -> Any:
+        """
+        Internal helper to fetch the xalt.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _fetch_xalt()  # doctest: +SKIP
+        """
         close_old_connections()
 
-        def _xalt_fn():
+        def _xalt_fn() -> Any:
+            """
+            Internal helper to handle xalt function.
+            
+            Returns:
+              Any: Value produced by this call (type depends on inputs).
+            
+            Examples:
+              >>> _xalt_fn()  # doctest: +SKIP
+            """
             xalt_data = xalt_data_c()
             # XALT can be very large for some jobs. Truncate to keep this
             # endpoint from timing out under proxy/gunicorn limits.
@@ -2403,7 +3410,16 @@ def job_detail(request, pk):
         compute_detail_input_fingerprint(job),
     ) or {}
 
-    def _fetch_proc_list():
+    def _fetch_proc_list() -> Any:
+        """
+        Internal helper to fetch the proc list.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _fetch_proc_list()  # doctest: +SKIP
+        """
         from .models import proc_data
 
         close_old_connections()
@@ -2561,21 +3577,34 @@ def job_detail(request, pk):
 @JOB_PLOTS_SCHEMA
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
-def job_plots(request, pk):
+def job_plots(request: Any, pk: Any) -> Any:
     """
     Job-level plots grouped by shared jid_table input.
-
+    
     Returns Bokeh json_items and availability reasons for:
     - Summary plot
     - Roofline
     - GPU roofline
-
+    
     Query params:
-    - plot: omit or ``all`` for all three; or one of summary_plot, roofline, gpu_roofline.
+    - plot: omit or ``all`` for all three; or one of summary_plot, roofline,
+      gpu_roofline.
     - zoom: ``1`` for zoom layout (single-plot requests only).
-    - progressive: ``1`` with plot=all (no zoom): HTTP 200 with ``status`` partial/ready and
-      only completed plot fields included while others are listed in ``loading_plots``;
+    - progressive: ``1`` with plot=all (no zoom): HTTP 200 with ``status``
+      partial/ready and
+      only completed plot fields included while others are listed in
+        ``loading_plots``;
       avoids 202 while still using one endpoint and shared background tasks.
+    
+    Args:
+      request (Any): Request passed to this helper.
+      pk (Any): Pk passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> job_plots(None, None)  # doctest: +SKIP
     """
     err = _require_auth(request)
     if err is not None:
@@ -2617,13 +3646,35 @@ def job_plots(request, pk):
 
     jt_holder = {"jt": None}
 
-    def _get_jt():
+    def _get_jt() -> Any:
+        """
+        Internal helper to return the jt.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _get_jt()  # doctest: +SKIP
+        """
         if jt_holder["jt"] is None:
             jt_holder["jt"] = jid_table.jid_table(job.jid)
         return jt_holder["jt"]
 
-    def _run_job_plot_fetch(kind):
-        """Build one (json_item, unavailable_reason) tuple from shared plot-kind specs."""
+    def _run_job_plot_fetch(kind: Any) -> Any:
+        """
+        Build one (json_item, unavailable_reason) tuple from shared plot-kind.
+        
+          specs.
+        
+        Args:
+          kind (Any): Mode or kind token selecting a code path.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _run_job_plot_fetch(None)  # doctest: +SKIP
+        """
         spec = JOB_PLOT_KIND_SPECS[kind]
         plot_item, reason = None, None
         close_old_connections()
@@ -2653,12 +3704,42 @@ def job_plots(request, pk):
     fetchers = {kind: partial(_run_job_plot_fetch, kind) for kind in JOB_PLOT_KINDS}
     _job_plots_log = logging.getLogger(__name__)
 
-    def _plot_data_cache_key(kind):
-        # Include plot fingerprint so zoom-mode reuse cannot serve stale payloads.
+    def _plot_data_cache_key(kind: Any) -> Any:
+        """
+        Internal helper to handle plot data cache key.
+        
+        Args:
+          kind (Any): Mode or kind token selecting a code path.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _plot_data_cache_key(None)  # doctest: +SKIP
+        """
         return make_cache_key("JOB_PLOTS_DATA", job.jid, kind, plot_fingerprint)
 
-    def _finalize_job_plot_future(key, inflight_key, future):
-        """If *future* is done, store its result in *cached_results* and caches; clear inflight."""
+    def _finalize_job_plot_future(
+      key: Any,
+      inflight_key: Any,
+      future: Any,
+    ) -> None:
+        """
+        If *future* is done, store its result in *cached_results* and caches;.
+        
+          clear inflight.
+        
+        Args:
+          key (Any): Key passed to this helper.
+          inflight_key (Any): Inflight key passed to this helper.
+          future (Any): Future passed to this helper.
+        
+        Returns:
+          None
+        
+        Examples:
+          >>> _finalize_job_plot_future(None, None, None)  # doctest: +SKIP
+        """
         if not future.done():
             return
         try:
@@ -2898,8 +3979,21 @@ def job_plots(request, pk):
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
-def type_detail(request, jid, type_name):
-    """Type detail: Bokeh json_item (tplot_item), stats_data, schema."""
+def type_detail(request: Any, jid: Any, type_name: Any) -> Any:
+    """
+    Type detail: Bokeh json_item (tplot_item), stats_data, schema.
+    
+    Args:
+      request (Any): Request passed to this helper.
+      jid (Any): Jid passed to this helper.
+      type_name (Any): Type name passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> type_detail(None, None, None)  # doctest: +SKIP
+    """
     err = _require_auth(request)
     if err is not None:
         return err
@@ -2936,8 +4030,21 @@ def type_detail(request, jid, type_name):
 @HOST_PLOT_SCHEMA
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
-def host_plot(request):
-    """Return Bokeh plot_item for a single host and time range (GET host, end_time__gte, end_time__lte)."""
+def host_plot(request: Any) -> Any:
+    """
+    Return Bokeh plot_item for a single host and time range (GET host,.
+    
+      end_time__gte, end_time__lte).
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> host_plot(None)  # doctest: +SKIP
+    """
     err = _require_auth(request)
     if err is not None:
         return err
@@ -2988,7 +4095,16 @@ def host_plot(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    def _host_plot_fn():
+    def _host_plot_fn() -> Any:
+        """
+        Internal helper to handle host plot function.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _host_plot_fn()  # doctest: +SKIP
+        """
         try:
             ht = HostDataProvider(host_fqdn, start_dt, end_dt)
             sp = plots.SummaryPlot(ht)
@@ -3011,12 +4127,29 @@ def host_plot(request):
     })
 
 
-def _get_xalt_jid_coverage(days=3, missing_limit=200, chunk_size=1000):
+def _get_xalt_jid_coverage(
+  days: int = 3,
+  missing_limit: int = 200,
+  chunk_size: int = 1000,
+) -> Any:
     """
-    Staff-only: compute XALT coverage for JIDs in the last `days` in the main DB.
-
+    Staff-only: compute XALT coverage for JIDs in the last `days` in the main.
+    
+      DB.
+    
     Coverage means: does `xalt_run` contain at least one row where
     `job_id == job_data.jid`.
+    
+    Args:
+      days (int): Integer value for days.
+      missing_limit (int): Integer value for missing limit.
+      chunk_size (int): Integer value for chunk size.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _get_xalt_jid_coverage(0, 0, 0)  # doctest: +SKIP
     """
     # If XALT DB isn't configured, return a stable shape for the UI.
     if cfg.get_xalt_user() == "":
@@ -3034,8 +4167,16 @@ def _get_xalt_jid_coverage(days=3, missing_limit=200, chunk_size=1000):
     now = timezone.now()
     since_dt = now - timedelta(days=days)
 
-    def _xalt_fn():
-        # Pull JIDs from the main DB for the time window.
+    def _xalt_fn() -> Any:
+        """
+        Internal helper to handle xalt function.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _xalt_fn()  # doctest: +SKIP
+        """
         jids_qs = (
             job_data.objects.filter(end_time__gte=since_dt)
             .values_list("jid", flat=True)
@@ -3064,7 +4205,21 @@ def _get_xalt_jid_coverage(days=3, missing_limit=200, chunk_size=1000):
         present_counts = {}  # jid -> {runs_total, runs_recent}
         present_set = set()
 
-        def _chunks(seq, size):
+        def _chunks(seq: Any, size: int) -> Iterator[Any]:
+            """
+            Internal helper to handle chunks.
+            
+            Args:
+              seq (Any): Seq passed to this helper.
+              size (int): Integer value for size.
+            
+            Yields:
+              Iterator[Any]: Value produced by this call (type depends on
+              inputs).
+            
+            Examples:
+              >>> _chunks(None, 0)  # doctest: +SKIP
+            """
             for i in range(0, len(seq), size):
                 yield seq[i : i + size]
 
@@ -3165,9 +4320,12 @@ def _get_xalt_jid_coverage(days=3, missing_limit=200, chunk_size=1000):
 @ADMIN_MONITOR_SCHEMA
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
-def admin_monitor(request):
-    """Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis, RabbitMQ, TimescaleDB stats).
-
+def admin_monitor(request: Any) -> Any:
+    """
+    Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis,.
+    
+      RabbitMQ, TimescaleDB stats).
+    
     Supports a lightweight, per-section API via the optional 'section' query
     param:
     - ?section=hosts      -> {"host_stats": [...]}
@@ -3177,19 +4335,42 @@ def admin_monitor(request):
     - ?section=timescaledb -> {"timescaledb_stats": {...}}
     - ?section=xalt      -> {"xalt_stats": {...}}
     - omitted/other       -> {"host_stats": [...], "rabbitmq_host_stats": [...],
-                              "cache_stats": {...}, "rabbitmq_stats": {...},
-                              "timescaledb_stats": {...}, "xalt_stats": {...}}
+                              "cache_stats": {...},
+                                "rabbitmq_stats":
+                                {...},
+                              "timescaledb_stats":
+                                {...}, "xalt_stats":
+                                {...}}
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> admin_monitor(None)  # doctest: +SKIP
     """
     err = _require_staff(request)
     if err is not None:
         return err
 
-    def _host_stats_fn():
-        """Return per-host last_seen timestamps and age buckets for admin monitor.
-
-        Primary: Redis ``recent_host:*`` inventory + LATERAL ``ORDER BY time DESC
+    def _host_stats_fn() -> Any:
+        """
+        Return per-host last_seen timestamps and age buckets for admin monitor.
+        
+        Primary: Redis ``recent_host:*`` inventory + LATERAL ``ORDER BY time
+          DESC
         LIMIT 1`` per host. Fallback when Redis is empty: 3h ``GROUP BY`` Max
         under a short statement timeout (never 8-day aggregate / 600s floor).
+        
+        Returns:
+          Any: Open return polymorphism from ``_host_stats_fn``: concrete type
+          depends on inputs and branch (mapping, scalar, handle, or
+          ``None``-like empty).
+        
+        Examples:
+          >>> _host_stats_fn()  # doctest: +SKIP
         """
         now = timezone.now()
         host_stats_local = []
@@ -3280,12 +4461,13 @@ def admin_monitor(request):
 @dynamic_cache_page(site_response_cache_timeout)
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
-def job_monitor(request):
-    """Staff-only: aggregate job failure statistics per user over a recent window.
-
+def job_monitor(request: Any) -> Any:
+    """
+    Staff-only: aggregate job failure statistics per user over a recent window.
+    
     The window is controlled by the optional ?days=N query parameter (integer).
     N is clamped to [1, 365]. If missing or invalid, defaults to 30 days.
-
+    
     Returns rows of:
     - username
     - total_jobs: number of jobs run
@@ -3294,6 +4476,15 @@ def job_monitor(request):
     GPU fields are intentionally omitted from this initial endpoint so the page
     can render quickly; per-user GPU stats are fetched asynchronously from
     job_monitor_gpu_for_user.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> job_monitor(None)  # doctest: +SKIP
     """
     err = _require_staff(request)
     if err is not None:
@@ -3369,8 +4560,21 @@ def job_monitor(request):
 @JOB_MONITOR_GPU_SCHEMA
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
-def job_monitor_gpu_for_user(request):
-    """Staff-only GPU rollup for Job Monitor (single ``username`` or batch ``usernames``)."""
+def job_monitor_gpu_for_user(request: Any) -> Any:
+    """
+    Staff-only GPU rollup for Job Monitor (single ``username`` or batch.
+    
+      ``usernames``).
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> job_monitor_gpu_for_user(None)  # doctest: +SKIP
+    """
     err = _require_staff(request)
     if err is not None:
         return err
@@ -3404,8 +4608,19 @@ def job_monitor_gpu_for_user(request):
     return Response({"results": results})
 
 
-def _parse_job_monitor_gpu_usernames(request):
-    """Return username list from ``username`` or comma-separated ``usernames``."""
+def _parse_job_monitor_gpu_usernames(request: Any) -> Any:
+    """
+    Return username list from ``username`` or comma-separated ``usernames``.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _parse_job_monitor_gpu_usernames(None)  # doctest: +SKIP
+    """
     batch_raw = (request.GET.get("usernames") or "").strip()
     if batch_raw:
         return [part.strip() for part in batch_raw.split(",") if part.strip()]
@@ -3413,10 +4628,40 @@ def _parse_job_monitor_gpu_usernames(request):
     return [single] if single else []
 
 
-def _compute_job_monitor_gpu_for_username(username, window_days, start_time, site_ttl):
-    """GPU rollup for one user from persisted metrics_data only (no host_data fallback)."""
+def _compute_job_monitor_gpu_for_username(
+  username: Any,
+  window_days: Any,
+  start_time: Any,
+  site_ttl: Any,
+) -> Any:
+    """
+    GPU rollup for one user from persisted metrics_data only (no host_data.
+    
+      fallback).
+    
+    Args:
+      username (Any): Username passed to this helper.
+      window_days (Any): Window days passed to this helper.
+      start_time (Any): Start time passed to this helper.
+      site_ttl (Any): Site ttl passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _compute_job_monitor_gpu_for_username(None, None, None, None)
+    """
 
-    def _compute_user_gpu():
+    def _compute_user_gpu() -> Any:
+        """
+        Internal helper to compute the user gpu.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _compute_user_gpu()  # doctest: +SKIP
+        """
         gpu_count_total = None
         gpu_active_total = None
         md_base = metrics_data.objects.filter(
@@ -3460,13 +4705,27 @@ def _compute_job_monitor_gpu_for_username(username, window_days, start_time, sit
 @SACCT_INGEST_SCHEMA
 @api_view(["POST"])
 @throttle_classes([StaffIngestThrottle])
-def sacct_ingest(request):
-    """Ingest pipe-delimited sacct output into job_data using sync_acct logic.
-
+def sacct_ingest(request: Any) -> Any:
+    """
+    Ingest pipe-delimited sacct output into job_data using sync_acct logic.
+    
     Requires authentication (API key or session) and staff. Request body must be
     raw pipe-delimited sacct output (same format as sacct -P -o ...). Query
     param date=YYYY-MM-DD is required (the date of the data being ingested) to
     compute which jobs are already in the DB.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Raises:
+      Exception: Raised when ``sacct_ingest`` hits a ``Exception`` failure
+      path.
+    
+    Examples:
+      >>> sacct_ingest(None)  # doctest: +SKIP
     """
     csrf_err = _require_csrf_for_session_post(request)
     if csrf_err is not None:

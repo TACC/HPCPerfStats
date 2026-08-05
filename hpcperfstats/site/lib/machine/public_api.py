@@ -1,4 +1,10 @@
-"""Anonymous read-only JSON endpoints for `/pub/` dashboards (pre-warmed artifacts only)."""
+"""
+Anonymous read-only JSON endpoints for `/pub/` dashboards (pre-warmed artifacts
+  only).
+"""
+from __future__ import annotations
+
+from typing import Any
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from rest_framework.permissions import AllowAny
@@ -17,7 +23,9 @@ from hpcperfstats.site.lib.machine.throttles import PublicClusterDashboardThrott
 
 
 class PublicClusterDashboardAggregateView(APIView):
-  """Public cluster dashboard: meta by default; lazy period or full bundle via query params."""
+  """
+  Public cluster dashboard: meta by default; lazy period or full bundle via.
+  """
 
   permission_classes = [AllowAny]
   authentication_classes = []
@@ -27,7 +35,19 @@ class PublicClusterDashboardAggregateView(APIView):
   parser_classes = []
 
   @PUBLIC_CLUSTER_DASHBOARD_SCHEMA
-  def get(self, request):
+  def get(self, request: Any) -> Any:
+    """
+    Return.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> PublicClusterDashboardAggregateView().get(None)  # doctest: +SKIP
+    """
     grouping = (request.GET.get("grouping") or "").strip().lower()
     period = (request.GET.get("period") or "").strip()
     section = (request.GET.get("section") or "").strip().lower()

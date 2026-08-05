@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Host CLI: bulk-invalidate archive membership Redis L2, then restart pipeline.
+"""
+Host CLI: bulk-invalidate archive membership Redis L2, then restart pipeline.
 
 Run from the Compose checkout (directory with ``docker-compose.yaml``). Default
 Redis transport is ``docker compose exec -T redis redis-cli`` (no published
@@ -11,11 +12,17 @@ Requires Python >= 3.12 (project ``requires-python``). When the host default
 
 Examples (from checkout root)::
 
-  python3 scripts/invalidate_archive_members.py --day 2026-06-08 --dry-run
-  python3 scripts/invalidate_archive_members.py --day 2026-06-08
-  python3 scripts/invalidate_archive_members.py --all --yes --no-restart
+python3 scripts/invalidate_archive_members.py --day 2026-06-08 --dry-run python3
+scripts/invalidate_archive_members.py --day 2026-06-08 python3
+scripts/invalidate_archive_members.py --all --yes --no-restart
+
+Attributes:
+  _MIN_PY: Attribute.
+  _REPO_ROOT: Attribute.
 """
 from __future__ import annotations
+
+from typing import Any, Iterator
 
 import argparse
 import os
@@ -27,8 +34,18 @@ _MIN_PY = (3, 12)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _candidate_pythons():
-  """Yield executable paths that may satisfy requires-python >= 3.12."""
+def _candidate_pythons() -> Iterator[Any]:
+  """
+  Yield executable paths that may satisfy requires-python >= 3.12.
+  
+  Yields:
+    Iterator[Any]: Open return polymorphism from ``_candidate_pythons``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> _candidate_pythons()  # doctest: +SKIP
+  """
   seen = set()
   names = (
       _REPO_ROOT / ".venv" / "bin" / "python3",
@@ -48,8 +65,20 @@ def _candidate_pythons():
       yield path
 
 
-def _ensure_python_version():
-  """Re-exec under Python >= 3.12 when the current interpreter is too old."""
+def _ensure_python_version() -> None:
+  """
+  Re-exec under Python >= 3.12 when the current interpreter is too old.
+  
+  Returns:
+    None
+  
+  Raises:
+    SystemExit: Raised when ``_ensure_python_version`` hits a ``SystemExit``
+    failure path.
+  
+  Examples:
+    >>> _ensure_python_version()  # doctest: +SKIP
+  """
   if sys.version_info >= _MIN_PY:
     return
   script = str(Path(__file__).resolve())
@@ -80,7 +109,23 @@ if str(_REPO_ROOT) not in sys.path:
   sys.path.insert(0, str(_REPO_ROOT))
 
 
-def _resolve_compose_dir(explicit):
+def _resolve_compose_dir(explicit: Any) -> Any:
+  """
+  Internal helper to resolve the compose dir.
+  
+  Args:
+    explicit (Any): Explicit passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    SystemExit: Raised when ``_resolve_compose_dir`` hits a ``SystemExit``
+    failure path.
+  
+  Examples:
+    >>> _resolve_compose_dir(None)  # doctest: +SKIP
+  """
   if explicit:
     path = Path(explicit).expanduser().resolve()
   else:
@@ -95,7 +140,16 @@ def _resolve_compose_dir(explicit):
   return path
 
 
-def _build_parser():
+def _build_parser() -> Any:
+  """
+  Internal helper to build the parser.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _build_parser()  # doctest: +SKIP
+  """
   parser = argparse.ArgumentParser(
       description=(
           "Invalidate archive membership Redis L2 (--all or --day), then "
@@ -159,7 +213,19 @@ def _build_parser():
   return parser
 
 
-def _direct_redis_client(url):
+def _direct_redis_client(url: Any) -> Any:
+  """
+  Internal helper to handle direct redis client.
+  
+  Args:
+    url (Any): Url passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _direct_redis_client(None)  # doctest: +SKIP
+  """
   import redis
 
   client = redis.Redis.from_url(url, decode_responses=True)
@@ -167,7 +233,19 @@ def _direct_redis_client(url):
   return client
 
 
-def main(argv=None):
+def main(argv: Any | None = None) -> Any:
+  """
+  Run this module's command-line entrypoint.
+  
+  Args:
+    argv (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> main(None)  # doctest: +SKIP
+  """
   parser = _build_parser()
   args = parser.parse_args(argv)
 

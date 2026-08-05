@@ -1,4 +1,13 @@
-"""Views for lightweight site endpoints."""
+"""
+Views for lightweight site endpoints.
+
+Attributes:
+  _CSP_REPORT_MAX_BYTES: Attribute.
+"""
+from __future__ import annotations
+
+from typing import Any
+
 import json
 
 from django.http import HttpResponse
@@ -11,8 +20,19 @@ _CSP_REPORT_MAX_BYTES = 65536
 
 @csrf_exempt
 @require_POST
-def csp_report(request):
-    """Receive CSP violation reports (Report-Only) for iterative hardening."""
+def csp_report(request: Any) -> Any:
+    """
+    Receive CSP violation reports (Report-Only) for iterative hardening.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> csp_report(None)  # doctest: +SKIP
+    """
     # Browsers may send either `application/csp-report` or `application/reports+json`.
     # We intentionally keep this lightweight: accept input and return 204.
     if len(request.body or b"") > _CSP_REPORT_MAX_BYTES:

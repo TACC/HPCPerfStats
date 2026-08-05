@@ -1,4 +1,13 @@
-"""Background archive janitor: day-debt queue and parallel DAY_CLOSE workers."""
+"""
+Background archive janitor: day-debt queue and parallel DAY_CLOSE workers.
+
+Attributes:
+  _DAY_PIPELINE_KINDS: Attribute.
+  _DEBT_PRIORITY: Attribute.
+  _LEGACY_DAY_PIPELINE_KINDS: Attribute.
+  _LOCK_CLEANUP_TAR_SENTINEL: Attribute.
+  _TICK_WAIT_HEARTBEAT_SECONDS: Attribute.
+"""
 from __future__ import annotations
 
 import heapq
@@ -76,6 +85,13 @@ _TICK_WAIT_HEARTBEAT_SECONDS = 300.0
 
 
 class DebtKind(str, Enum):
+  """
+  Hold DebtKind state and behavior.
+  
+  Subclasses ``str``, extending that type with this class's fields and behavior.
+  
+  Subclasses ``str``, extending that type with this class's fields and behavior.
+  """
   DAY_CLOSE = "day_close"
   SEAL_PRIOR_DAY = "seal_prior_day"
   RAW_REMOVE = "raw_remove"
@@ -102,6 +118,18 @@ _LEGACY_DAY_PIPELINE_KINDS = frozenset({
 
 
 def _is_heavy_maintenance_reason(reason: str) -> bool:
+  """
+  Internal helper to check if heavy maintenance reason.
+  
+  Args:
+    reason (str): String for reason.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _is_heavy_maintenance_reason("x")  # doctest: +SKIP
+  """
   if not reason:
     return False
   if reason == "startup":
@@ -122,6 +150,15 @@ _DEBT_PRIORITY = {
 
 @dataclass(order=True)
 class DayDebt:
+  """
+  Hold DayDebt state and behavior.
+  
+  Attributes:
+    gz_path: ``gz_path``.
+    kind: ``kind``.
+    sort_index: ``sort_index``.
+    tar_path: ``tar_path``.
+  """
   sort_index: tuple
   kind: DebtKind = field(compare=False)
   tar_path: str = field(compare=False)
@@ -129,10 +166,35 @@ class DayDebt:
 
 
 def _debt_sort_key(kind: DebtKind, tar_path: str) -> tuple:
+  """
+  Internal helper to handle debt sort key.
+  
+  Args:
+    kind (DebtKind): Kind.
+    tar_path (str): String for tar path.
+  
+  Returns:
+    tuple: tuple produced by this call.
+  
+  Examples:
+    >>> _debt_sort_key(None, "x")  # doctest: +SKIP
+  """
   return (_DEBT_PRIORITY.get(kind, 99), tar_path)
 
 
 def _tar_to_gz_path(tar_path: str) -> str:
+  """
+  Internal helper to handle tar to gz path.
+  
+  Args:
+    tar_path (str): String for tar path.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _tar_to_gz_path("x")  # doctest: +SKIP
+  """
   zst_path, gz_path = compressed_sibling_paths(tar_path)
   if os.path.isfile(zst_path):
     return zst_path
@@ -141,11 +203,35 @@ def _tar_to_gz_path(tar_path: str) -> str:
   return zst_path
 
 
-def _calendar_date_from_daily_tar(tar_path: str):
+def _calendar_date_from_daily_tar(tar_path: str) -> Any:
+  """
+  Internal helper to handle calendar date from daily tar.
+  
+  Args:
+    tar_path (str): String for tar path.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _calendar_date_from_daily_tar("x")  # doctest: +SKIP
+  """
   return calendar_date_from_daily_tar_path(tar_path)
 
 
 def _normalize_day_pipeline_debt(debt: DayDebt) -> DayDebt:
+  """
+  Internal helper to normalize the day pipeline debt.
+  
+  Args:
+    debt (DayDebt): Debt.
+  
+  Returns:
+    DayDebt: DayDebt produced by this call.
+  
+  Examples:
+    >>> _normalize_day_pipeline_debt(None)  # doctest: +SKIP
+  """
   if debt.kind not in _LEGACY_DAY_PIPELINE_KINDS:
     return debt
   tar_norm = os.path.normpath(debt.tar_path)
@@ -158,36 +244,128 @@ def _normalize_day_pipeline_debt(debt: DayDebt) -> DayDebt:
 
 
 class ArchiveJanitor:
-  """Owns seal/raw/tar cleanup off the ingest supervisor thread."""
+  """
+  Owns seal/raw/tar cleanup off the ingest supervisor thread.
+  
+  Attributes:
+    _accrual_snapshot: Attribute.
+    _accrual_snapshot_lock: Attribute.
+    _allow_tick_chaining: Attribute.
+    _budget_throttled_count: Attribute.
+    _day_close_in_flight: Attribute.
+    _day_close_in_flight_lock: Attribute.
+    _day_close_pool: Attribute.
+    _day_close_pool_size: Attribute.
+    _day_close_role_seq: Attribute.
+    _day_phases: Attribute.
+    _debt_heap: Attribute.
+    _debt_lock: Attribute.
+    _debt_seen: Attribute.
+    _defer_tracker: Attribute.
+    _future: Attribute.
+    _hints_state_lock: Attribute.
+    _maintenance_pass_cached_inputs: Attribute.
+    _maintenance_pass_lock: Attribute.
+    _pending_maintenance_pass_reason: Attribute.
+    _pending_signal: Attribute.
+    _persist_hints_lock: Attribute.
+    _session_executor: Attribute.
+    _tick_depth: Attribute.
+    _tick_remaining_raw_cache: Attribute.
+    _ticks_completed: Attribute.
+    _validated_days: Attribute.
+    archive_data_dir: Attribute.
+    archive_stats_files_fn: Attribute.
+    day_close_enabled: Attribute.
+    day_close_manifest_coordinator: Attribute.
+    day_raw_removal_coordinator: Attribute.
+    get_chunk_day_tokens: Attribute.
+    get_chunk_in_progress: Attribute.
+    get_day_close_allowed: Attribute.
+    get_day_close_candidate_inputs: Attribute.
+    get_delete_disqualified_daily_tars: Attribute.
+    get_disqualified_daily_tars: Attribute.
+    get_idle_seconds: Attribute.
+    get_ingest_pool_in_flight_count: Attribute.
+    get_pending_stats_count: Attribute.
+    get_quarantine_skip_paths: Attribute.
+    get_startup_ingest_gate_cleared: Attribute.
+    get_tree_rss_bytes: Attribute.
+    host_name_ext: Attribute.
+    ingest_ready_fn: Attribute.
+    local_tz: Attribute.
+    log_fn: Attribute.
+    process_title: Attribute.
+    startup_snapshot_coordinator: Attribute.
+    tgz_archive_dir: Attribute.
+  """
 
   def __init__(
-      self,
-      *,
-      archive_data_dir: str,
-      host_name_ext: str,
-      tgz_archive_dir: str,
-      local_tz,
-      log_fn,
-      get_disqualified_daily_tars: Callable[[], Set[str]],
-      get_pending_stats_count: Callable[[], int],
-      get_idle_seconds: Callable[[], float],
-      get_delete_disqualified_daily_tars: Optional[Callable[[], Set[str]]] = None,
-      get_quarantine_skip_paths: Optional[Callable[[], Set[str]]] = None,
-      ingest_ready_fn=None,
-      archive_stats_files_fn=None,
-      day_raw_removal_coordinator=None,
-      day_close_manifest_coordinator=None,
-      get_day_close_candidate_inputs=None,
-      get_tree_rss_bytes=None,
-      startup_snapshot_coordinator=None,
-      get_ingest_pool_in_flight_count=None,
-      get_chunk_in_progress=None,
-      get_chunk_day_tokens=None,
-      get_startup_ingest_gate_cleared=None,
-      get_day_close_allowed=None,
-      process_title: str = "sync_timedb.py",
-      day_close_enabled: bool = True,
-  ):
+    self,
+    *,
+    archive_data_dir: str,
+    host_name_ext: str,
+    tgz_archive_dir: str,
+    local_tz: Any,
+    log_fn: Any,
+    get_disqualified_daily_tars: Callable[[], Set[str]],
+    get_pending_stats_count: Callable[[], int],
+    get_idle_seconds: Callable[[], float],
+    get_delete_disqualified_daily_tars: Optional[Callable[[], Set[str]]] = None,
+    get_quarantine_skip_paths: Optional[Callable[[], Set[str]]] = None,
+    ingest_ready_fn: Any | None = None,
+    archive_stats_files_fn: Any | None = None,
+    day_raw_removal_coordinator: Any | None = None,
+    day_close_manifest_coordinator: Any | None = None,
+    get_day_close_candidate_inputs: Any | None = None,
+    get_tree_rss_bytes: Any | None = None,
+    startup_snapshot_coordinator: Any | None = None,
+    get_ingest_pool_in_flight_count: Any | None = None,
+    get_chunk_in_progress: Any | None = None,
+    get_chunk_day_tokens: Any | None = None,
+    get_startup_ingest_gate_cleared: Any | None = None,
+    get_day_close_allowed: Any | None = None,
+    process_title: str = "sync_timedb.py",
+    day_close_enabled: bool = True,
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      archive_data_dir (str): String for archive data dir.
+      host_name_ext (str): String for host name ext.
+      tgz_archive_dir (str): String for tgz archive dir.
+      local_tz (Any): Local tz passed to this helper.
+      log_fn (Any): Callable invoked by this helper.
+      get_disqualified_daily_tars (Callable[[], Set[str]]): Get disqualified
+      daily tars.
+      get_pending_stats_count (Callable[[], int]): Get pending stats count.
+      get_idle_seconds (Callable[[], float]): Get idle seconds.
+      get_delete_disqualified_daily_tars (Optional[Callable[[], Set[str]]]):
+      Get delete disqualified daily tars, or None when absent.
+      get_quarantine_skip_paths (Optional[Callable[[], Set[str]]]): Get
+      quarantine skip paths, or None when absent.
+      ingest_ready_fn (Any | None): One of ``Any``, ``None``.
+      archive_stats_files_fn (Any | None): One of ``Any``, ``None``.
+      day_raw_removal_coordinator (Any | None): One of ``Any``, ``None``.
+      day_close_manifest_coordinator (Any | None): One of ``Any``, ``None``.
+      get_day_close_candidate_inputs (Any | None): One of ``Any``, ``None``.
+      get_tree_rss_bytes (Any | None): One of ``Any``, ``None``.
+      startup_snapshot_coordinator (Any | None): One of ``Any``, ``None``.
+      get_ingest_pool_in_flight_count (Any | None): One of ``Any``, ``None``.
+      get_chunk_in_progress (Any | None): One of ``Any``, ``None``.
+      get_chunk_day_tokens (Any | None): One of ``Any``, ``None``.
+      get_startup_ingest_gate_cleared (Any | None): One of ``Any``, ``None``.
+      get_day_close_allowed (Any | None): One of ``Any``, ``None``.
+      process_title (str): String for process title.
+      day_close_enabled (bool): Boolean flag for day close enabled.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> __init__(0)  # doctest: +SKIP
+    """
     self.archive_data_dir = archive_data_dir
     self.host_name_ext = host_name_ext
     self.tgz_archive_dir = tgz_archive_dir
@@ -255,19 +433,43 @@ class ArchiveJanitor:
 
     self._load_hints_state()
 
-  def get_accrual_snapshot_for_reconcile(self):
-    """Return accrual snapshot when mapping is present (steady-state reconcile)."""
+  def get_accrual_snapshot_for_reconcile(self) -> Any:
+    """
+    Return accrual snapshot when mapping is present (steady-state reconcile).
+    
+    Returns:
+      Any: Open return polymorphism from
+      ``get_accrual_snapshot_for_reconcile``: concrete type depends on inputs
+      and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> ArchiveJanitor().get_accrual_snapshot_for_reconcile()  # doctest: +SKIP
+    """
     with self._accrual_snapshot_lock:
       snap = self._accrual_snapshot
     if snap is None or not snap.mapping:
       return None
     return snap
 
-  def adopt_published_startup_snapshot(self, snapshot) -> None:
-    """Install a coordinator-published snapshot into accrual without heavy-pass defer.
-
-    Used by post-ingest async snapshot on CLI ``current`` / date-range so accrual
-    lands while ingest chunks continue (``run_heavy_maintenance_pass`` would defer).
+  def adopt_published_startup_snapshot(self, snapshot: Any) -> None:
+    """
+    Install a coordinator-published snapshot into accrual without heavy-pass.
+    
+      defer.
+    
+    Used by post-ingest async snapshot on CLI ``current`` / date-range so
+      accrual
+    lands while ingest chunks continue (``run_heavy_maintenance_pass`` would
+      defer).
+    
+    Args:
+      snapshot (Any): Snapshot passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor().adopt_published_startup_snapshot(None)
     """
     if snapshot is None:
       return
@@ -298,7 +500,16 @@ class ArchiveJanitor:
         flush=True,
     )
 
-  def _load_hints_state(self):
+  def _load_hints_state(self) -> None:
+    """
+    Internal helper to load the hints state.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._load_hints_state()  # doctest: +SKIP
+    """
     prior = load_archive_maint_hints(self.archive_data_dir) or {}
     with self._hints_state_lock:
       self._validated_days.update(
@@ -342,7 +553,25 @@ class ArchiveJanitor:
     if debt_migrated:
       self._persist_hints()
 
-  def _persist_hints(self, *, paths_hint=None, host_dirs_hint=None):
+  def _persist_hints(
+    self,
+    *,
+    paths_hint: Any | None = None,
+    host_dirs_hint: Any | None = None,
+  ) -> None:
+    """
+    Internal helper to handle persist hints.
+    
+    Args:
+      paths_hint (Any | None): One of ``Any``, ``None``.
+      host_dirs_hint (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._persist_hints(None, None)  # doctest: +SKIP
+    """
     with self._persist_hints_lock:
       with self._debt_lock:
         self._trim_heap_to_max_entries_locked()
@@ -362,10 +591,28 @@ class ArchiveJanitor:
       )
 
   def _debt_queue_payload(self) -> list:
+    """
+    Internal helper to handle debt queue payload.
+    
+    Returns:
+      list: list produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._debt_queue_payload()  # doctest: +SKIP
+    """
     with self._debt_lock:
       return self._debt_queue_payload_locked()
 
   def _debt_queue_payload_locked(self) -> list:
+    """
+    Internal helper to handle debt queue payload locked.
+    
+    Returns:
+      list: list produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._debt_queue_payload_locked()  # doctest: +SKIP
+    """
     items = []
     for debt in sorted(self._debt_heap):
       items.append({
@@ -375,8 +622,16 @@ class ArchiveJanitor:
     max_entries = cfg.get_archive_janitor_debt_max_entries()
     return items[:max_entries]
 
-  def _trim_heap_to_max_entries_locked(self):
-    """Evict lowest-priority debts until at/under max (never heappop best)."""
+  def _trim_heap_to_max_entries_locked(self) -> None:
+    """
+    Evict lowest-priority debts until at/under max (never heappop best).
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._trim_heap_to_max_entries_locked()  # doctest: +SKIP
+    """
     max_entries = cfg.get_archive_janitor_debt_max_entries()
     while len(self._debt_heap) > max_entries:
       evicted = max(self._debt_heap, key=lambda d: d.sort_index)
@@ -384,7 +639,16 @@ class ArchiveJanitor:
       heapq.heapify(self._debt_heap)
       self._debt_seen.discard((evicted.kind.value, evicted.tar_path))
 
-  def _evict_lowest_priority_debt_if_full_locked(self):
+  def _evict_lowest_priority_debt_if_full_locked(self) -> None:
+    """
+    Internal helper to handle evict lowest priority debt if full locked.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._evict_lowest_priority_debt_if_full_locked()
+    """
     max_entries = cfg.get_archive_janitor_debt_max_entries()
     if len(self._debt_heap) < max_entries:
       return
@@ -399,7 +663,27 @@ class ArchiveJanitor:
         flush=True,
     )
 
-  def _enqueue_debt(self, kind: DebtKind, tar_path: str, *, persist: bool = True):
+  def _enqueue_debt(
+    self,
+    kind: DebtKind,
+    tar_path: str,
+    *,
+    persist: bool = True,
+  ) -> None:
+    """
+    Internal helper to handle enqueue debt.
+    
+    Args:
+      kind (DebtKind): Kind.
+      tar_path (str): String for tar path.
+      persist (bool): Boolean flag for persist.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._enqueue_debt(None, "x", True)  # doctest: +SKIP
+    """
     with self._debt_lock:
       self._enqueue_debt_locked(kind, tar_path, persist=False)
       if persist:
@@ -408,6 +692,18 @@ class ArchiveJanitor:
       self._persist_hints()
 
   def _day_pipeline_queued_locked(self, tar_norm: str) -> bool:
+    """
+    Internal helper to handle day pipeline queued locked.
+    
+    Args:
+      tar_norm (str): String for tar norm.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor()._day_pipeline_queued_locked("x")  # doctest: +SKIP
+    """
     if (DebtKind.DAY_CLOSE.value, tar_norm) in self._debt_seen:
       return True
     for kind in _LEGACY_DAY_PIPELINE_KINDS:
@@ -415,7 +711,19 @@ class ArchiveJanitor:
         return True
     return False
 
-  def _remove_day_pipeline_debts_for_tar_locked(self, tar_norm: str):
+  def _remove_day_pipeline_debts_for_tar_locked(self, tar_norm: str) -> None:
+    """
+    Internal helper to remove the day pipeline debts for tar locked.
+    
+    Args:
+      tar_norm (str): String for tar norm.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._remove_day_pipeline_debts_for_tar_locked("x")
+    """
     if not self._debt_heap:
       return
     kept = []
@@ -428,7 +736,25 @@ class ArchiveJanitor:
       self._debt_heap = kept
       heapq.heapify(self._debt_heap)
 
-  def _enqueue_day_close_locked(self, tar_path: str, *, persist: bool = True) -> bool:
+  def _enqueue_day_close_locked(
+    self,
+    tar_path: str,
+    *,
+    persist: bool = True,
+  ) -> bool:
+    """
+    Internal helper to handle enqueue day close locked.
+    
+    Args:
+      tar_path (str): String for tar path.
+      persist (bool): Boolean flag for persist.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor()._enqueue_day_close_locked("x", True)  # doctest: +SKIP
+    """
     tar_norm = os.path.normpath(tar_path) if tar_path else tar_path
     if not tar_norm or tar_norm == _LOCK_CLEANUP_TAR_SENTINEL:
       return False
@@ -454,6 +780,19 @@ class ArchiveJanitor:
     return True
 
   def _enqueue_day_close(self, tar_path: str, *, persist: bool = True) -> bool:
+    """
+    Internal helper to handle enqueue day close.
+    
+    Args:
+      tar_path (str): String for tar path.
+      persist (bool): Boolean flag for persist.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor()._enqueue_day_close("x", True)  # doctest: +SKIP
+    """
     if not self.day_close_enabled:
       return False
     with self._debt_lock:
@@ -464,7 +803,27 @@ class ArchiveJanitor:
       self._persist_hints()
     return added
 
-  def _enqueue_debt_locked(self, kind: DebtKind, tar_path: str, *, persist: bool = True):
+  def _enqueue_debt_locked(
+    self,
+    kind: DebtKind,
+    tar_path: str,
+    *,
+    persist: bool = True,
+  ) -> None:
+    """
+    Internal helper to handle enqueue debt locked.
+    
+    Args:
+      kind (DebtKind): Kind.
+      tar_path (str): String for tar path.
+      persist (bool): Boolean flag for persist.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._enqueue_debt_locked(None, "x", True)  # doctest: +SKIP
+    """
     if kind in _DAY_PIPELINE_KINDS:
       self._enqueue_day_close_locked(tar_path, persist=persist)
       return
@@ -485,7 +844,24 @@ class ArchiveJanitor:
     if persist:
       self._trim_heap_to_max_entries_locked()
 
-  def _requeue_unprocessed_work(self, work_items: list, start_index: int):
+  def _requeue_unprocessed_work(
+    self,
+    work_items: list,
+    start_index: int,
+  ) -> None:
+    """
+    Internal helper to handle requeue unprocessed work.
+    
+    Args:
+      work_items (list): Sequence for work items.
+      start_index (int): Integer value for start index.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._requeue_unprocessed_work([], 0)  # doctest: +SKIP
+    """
     if start_index >= len(work_items):
       return
     with self._debt_lock:
@@ -497,19 +873,46 @@ class ArchiveJanitor:
         self._debt_seen.add(key)
 
   def debt_depth(self) -> int:
+    """
+    Debt depth.
+    
+    Returns:
+      int: int produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor().debt_depth()  # doctest: +SKIP
+    """
     with self._debt_lock:
       return len(self._debt_heap)
 
   def day_close_inflight_count(self) -> int:
+    """
+    Day close inflight count.
+    
+    Returns:
+      int: int produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor().day_close_inflight_count()  # doctest: +SKIP
+    """
     with self._day_close_in_flight_lock:
       return len(self._day_close_in_flight)
 
   def has_day_close_work(self) -> bool:
-    """True when debt, day-close workers, or a janitor tick/signal remain.
-
-    Used by the supervisor empty-queue path to stay alive (short poll) instead of
-    sleeping ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` and exiting while cold-path work
+    """
+    True when debt, day-close workers, or a janitor tick/signal remain.
+    
+    Used by the supervisor empty-queue path to stay alive (short poll) instead
+      of
+    sleeping ``EMPTY_QUEUE_RESCAN_SLEEP_SECONDS`` and exiting while cold-path
+      work
     is still outstanding.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor().has_day_close_work()  # doctest: +SKIP
     """
     if self.debt_depth() > 0:
       return True
@@ -523,8 +926,16 @@ class ArchiveJanitor:
       return True
     return False
 
-  def signal_work_available(self):
-    """Schedule a single-flight janitor tick (non-blocking)."""
+  def signal_work_available(self) -> None:
+    """
+    Schedule a single-flight janitor tick (non-blocking).
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor().signal_work_available()  # doctest: +SKIP
+    """
     if self._future is not None and not self._future.done():
       self._pending_signal = True
       return
@@ -533,12 +944,31 @@ class ArchiveJanitor:
     except RuntimeError:
       self._future = None
 
-  def enqueue_startup_debt(self):
-    """Signal janitor work at startup; DAY_CLOSE scheduling is supervisor-driven."""
+  def enqueue_startup_debt(self) -> None:
+    """
+    Signal janitor work at startup; DAY_CLOSE scheduling is supervisor-driven.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor().enqueue_startup_debt()  # doctest: +SKIP
+    """
     self.signal_work_available()
 
-  def signal_scheduled_maintenance_pass(self, *, reason: str):
-    """Queue snapshot+hints+day_close scan on the janitor thread (non-blocking)."""
+  def signal_scheduled_maintenance_pass(self, *, reason: str) -> None:
+    """
+    Queue snapshot+hints+day_close scan on the janitor thread (non-blocking).
+    
+    Args:
+      reason (str): String for reason.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor().signal_scheduled_maintenance_pass("x")
+    """
     with self._maintenance_pass_lock:
       pending = self._pending_maintenance_pass_reason
       if _is_heavy_maintenance_reason(reason):
@@ -547,8 +977,19 @@ class ArchiveJanitor:
         self._pending_maintenance_pass_reason = reason
     self.signal_work_available()
 
-  def run_scheduled_maintenance_pass(self, *, reason: str):
-    """Janitor-thread: light or heavy maintenance depending on ``reason``."""
+  def run_scheduled_maintenance_pass(self, *, reason: str) -> None:
+    """
+    Janitor-thread: light or heavy maintenance depending on ``reason``.
+    
+    Args:
+      reason (str): String for reason.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor().run_scheduled_maintenance_pass("x")  # doctest: +SKIP
+    """
     coord = self.day_close_manifest_coordinator
     if coord is not None:
       recover = getattr(coord, "recover_stale_manifest_entries", None)
@@ -560,7 +1001,15 @@ class ArchiveJanitor:
       self.run_light_maintenance_pass(reason=reason)
 
   def _remaining_raw_from_accrual_only(self) -> dict:
-    """Accrual remaining map only — never builds a full-tree snapshot."""
+    """
+    Accrual remaining map only — never builds a full-tree snapshot.
+    
+    Returns:
+      dict: dict produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._remaining_raw_from_accrual_only()  # doctest: +SKIP
+    """
     with self._accrual_snapshot_lock:
       accrual_snapshot = self._accrual_snapshot
     if accrual_snapshot is None:
@@ -573,8 +1022,19 @@ class ArchiveJanitor:
         allow_full_snapshot=False,
     )
 
-  def run_light_maintenance_pass(self, *, reason: str):
-    """Refresh candidate report from accrual only; no full-tree collect."""
+  def run_light_maintenance_pass(self, *, reason: str) -> None:
+    """
+    Refresh candidate report from accrual only; no full-tree collect.
+    
+    Args:
+      reason (str): String for reason.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor().run_light_maintenance_pass("x")  # doctest: +SKIP
+    """
     if not self.tgz_archive_dir:
       return
     with self._accrual_snapshot_lock:
@@ -601,8 +1061,23 @@ class ArchiveJanitor:
           newly_queued_tars=newly_queued,
       )
 
-  def run_heavy_maintenance_pass(self, *, reason: str):
-    """Janitor-thread: full snapshot refresh (startup adopt or collect)."""
+  def run_heavy_maintenance_pass(self, *, reason: str) -> None:
+    """
+    Janitor-thread: full snapshot refresh (startup adopt or collect).
+    
+    Args:
+      reason (str): String for reason.
+    
+    Returns:
+      None
+    
+    Raises:
+      Exception: Raised when ``run_heavy_maintenance_pass`` hits a
+      ``Exception`` failure path.
+    
+    Examples:
+      >>> ArchiveJanitor().run_heavy_maintenance_pass("x")  # doctest: +SKIP
+    """
     coord = self.startup_snapshot_coordinator
     if not self.tgz_archive_dir:
       if reason == "startup" and coord is not None:
@@ -789,8 +1264,16 @@ class ArchiveJanitor:
       if startup_pass and coord is not None:
         coord.mark_startup_heavy_maintenance_finished()
 
-  def _trim_accrual_snapshot_memory(self):
-    """Release large snapshot lists after hints are persisted on disk."""
+  def _trim_accrual_snapshot_memory(self) -> None:
+    """
+    Release large snapshot lists after hints are persisted on disk.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._trim_accrual_snapshot_memory()  # doctest: +SKIP
+    """
     with self._accrual_snapshot_lock:
       snapshot = self._accrual_snapshot
       if snapshot is None:
@@ -808,16 +1291,39 @@ class ArchiveJanitor:
           flush=True,
       )
 
-  def _calendar_today_local(self):
+  def _calendar_today_local(self) -> Any:
+    """
+    Internal helper to handle calendar today local.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> ArchiveJanitor()._calendar_today_local()  # doctest: +SKIP
+    """
     return datetime.now(self.local_tz).date()
 
   def _day_needs_scheduled_close(
-      self,
-      tar_norm: str,
-      *,
-      remaining_raw_by_gz,
-      disqualified: Set[str],
+    self,
+    tar_norm: str,
+    *,
+    remaining_raw_by_gz: Any,
+    disqualified: Set[str],
   ) -> bool:
+    """
+    Internal helper to handle day needs scheduled close.
+    
+    Args:
+      tar_norm (str): String for tar norm.
+      remaining_raw_by_gz (Any): Remaining raw by gz passed to this helper.
+      disqualified (Set[str]): Sequence for disqualified.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor()._day_needs_scheduled_close("x", None, [])
+    """
     if tar_norm in disqualified:
       return False
     day_date = _calendar_date_from_daily_tar(tar_norm)
@@ -839,8 +1345,19 @@ class ArchiveJanitor:
       return True
     return False
 
-  def enqueue_scheduled_day_close(self, *, reason: str):
-    """Enqueue ``DAY_CLOSE`` for eligible calendar days (startup + every N chunks)."""
+  def enqueue_scheduled_day_close(self, *, reason: str) -> None:
+    """
+    Enqueue ``DAY_CLOSE`` for eligible calendar days (startup + every N chunks).
+    
+    Args:
+      reason (str): String for reason.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor().enqueue_scheduled_day_close("x")  # doctest: +SKIP
+    """
     if not self.tgz_archive_dir or not os.path.isdir(self.tgz_archive_dir):
       return
     disqualified = set(self.get_disqualified_daily_tars())
@@ -902,13 +1419,28 @@ class ArchiveJanitor:
     )
 
   def _enqueue_eligible_day_close(
-      self,
-      tar_norm: str,
-      *,
-      reason: str,
-      disqualified: Optional[Set[str]] = None,
+    self,
+    tar_norm: str,
+    *,
+    reason: str,
+    disqualified: Optional[Set[str]] = None,
   ) -> Tuple[bool, str]:
-    """Enqueue manifest + ``DAY_CLOSE`` debt when checkpoint-complete eligibility passes."""
+    """
+    Enqueue manifest + ``DAY_CLOSE`` debt when checkpoint-complete eligibility.
+    
+      passes.
+    
+    Args:
+      tar_norm (str): String for tar norm.
+      reason (str): String for reason.
+      disqualified (Optional[Set[str]]): Disqualified, or None when absent.
+    
+    Returns:
+      Tuple[bool, str]: Tuple[bool, str] produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._enqueue_eligible_day_close("x", "x", None)
+    """
     if not self.day_close_enabled:
       return False, "day_close_disabled"
     coord = self.day_close_manifest_coordinator
@@ -932,12 +1464,26 @@ class ArchiveJanitor:
     )
 
   def _enqueue_day_close_debt_if_eligible(
-      self,
-      tar_norm: str,
-      *,
-      reason: str,
-      disqualified: Optional[Set[str]] = None,
+    self,
+    tar_norm: str,
+    *,
+    reason: str,
+    disqualified: Optional[Set[str]] = None,
   ) -> Tuple[bool, str]:
+    """
+    Internal helper to handle enqueue day close debt if eligible.
+    
+    Args:
+      tar_norm (str): String for tar norm.
+      reason (str): String for reason.
+      disqualified (Optional[Set[str]]): Disqualified, or None when absent.
+    
+    Returns:
+      Tuple[bool, str]: Tuple[bool, str] produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._enqueue_day_close_debt_if_eligible("x", "x", None)
+    """
     tar_norm = os.path.normpath(tar_norm or "")
     if not tar_norm:
       return False, ""
@@ -980,16 +1526,32 @@ class ArchiveJanitor:
     return True, reason
 
   def get_day_phases_snapshot(self) -> Dict[str, Any]:
+    """
+    Return the day phases snapshot.
+    
+    Returns:
+      Dict[str, Any]: Dict[str, Any] produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor().get_day_phases_snapshot()  # doctest: +SKIP
+    """
     with self._hints_state_lock:
       return dict(self._day_phases)
 
   def _day_close_active_tar_paths(self) -> Set[str]:
-    """Tars that are truly in-progress for classify ``day_close_in_progress``.
-
+    """
+    Tars that are truly in-progress for classify ``day_close_in_progress``.
+    
     Includes live workers, debt-heap ``DAY_CLOSE``, and manifest *worker-slot*
     statuses (queued/submitted/sealing/raw_removal). Excludes ``deferred`` /
     ``waiting_on_ingest`` so handoff-deferred days can classify as
     ``ready_for_enqueue`` and discover can resume after ingest advances.
+    
+    Returns:
+      Set[str]: Set[str] produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._day_close_active_tar_paths()  # doctest: +SKIP
     """
     active = set(self._day_close_live_worker_tar_paths())
     active |= self._debt_heap_tar_paths()
@@ -999,6 +1561,15 @@ class ArchiveJanitor:
     return active
 
   def _day_close_live_worker_tar_paths(self) -> Set[str]:
+    """
+    Internal helper to handle day close live worker tar paths.
+    
+    Returns:
+      Set[str]: Set[str] produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._day_close_live_worker_tar_paths()  # doctest: +SKIP
+    """
     with self._day_close_in_flight_lock:
       return {
           os.path.normpath(debt.tar_path)
@@ -1007,6 +1578,15 @@ class ArchiveJanitor:
       }
 
   def _day_close_worker_occupancy_tar_paths(self) -> Set[str]:
+    """
+    Internal helper to handle day close worker occupancy tar paths.
+    
+    Returns:
+      Set[str]: Set[str] produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._day_close_worker_occupancy_tar_paths()
+    """
     live_workers = self._day_close_live_worker_tar_paths()
     coord = self.day_close_manifest_coordinator
     if coord is not None and hasattr(coord, "active_worker_tar_paths"):
@@ -1015,7 +1595,22 @@ class ArchiveJanitor:
     active |= self._debt_heap_tar_paths()
     return active
 
-  def _format_tick_waiting_tar_paths(self, in_flight: Dict[Any, DayDebt]) -> str:
+  def _format_tick_waiting_tar_paths(
+    self,
+    in_flight: Dict[Any, DayDebt],
+  ) -> str:
+    """
+    Internal helper to format the tick waiting tar paths.
+    
+    Args:
+      in_flight (Dict[Any, DayDebt]): Mapping for in flight.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._format_tick_waiting_tar_paths({})  # doctest: +SKIP
+    """
     paths = sorted(
         {
             os.path.normpath(debt.tar_path)
@@ -1026,10 +1621,23 @@ class ArchiveJanitor:
     return ",".join(paths) if paths else "-"
 
   def _log_tick_waiting_heartbeat(
-      self,
-      in_flight: Dict[Any, DayDebt],
-      last_heartbeat: list,
+    self,
+    in_flight: Dict[Any, DayDebt],
+    last_heartbeat: list,
   ) -> None:
+    """
+    Internal helper to log the tick waiting heartbeat.
+    
+    Args:
+      in_flight (Dict[Any, DayDebt]): Mapping for in flight.
+      last_heartbeat (list): Sequence for last heartbeat.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._log_tick_waiting_heartbeat({}, [])  # doctest: +SKIP
+    """
     if not in_flight or not self.log_fn:
       return
     now = time.monotonic()
@@ -1052,6 +1660,18 @@ class ArchiveJanitor:
       last_heartbeat[0] = now
 
   def _finalize_day_close_manifest(self, tar_norm: str) -> None:
+    """
+    Internal helper to handle finalize day close manifest.
+    
+    Args:
+      tar_norm (str): String for tar norm.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._finalize_day_close_manifest("x")  # doctest: +SKIP
+    """
     coord = self.day_close_manifest_coordinator
     if coord is None:
       return
@@ -1061,12 +1681,26 @@ class ArchiveJanitor:
       pass
 
   def _discover_and_enqueue_ready_day_close(
-      self,
-      *,
-      reason: str,
-      slot_budget: Optional[int] = None,
-      entries=None,
+    self,
+    *,
+    reason: str,
+    slot_budget: Optional[int] = None,
+    entries: Any | None = None,
   ) -> Set[str]:
+    """
+    Internal helper to handle discover and enqueue ready day close.
+    
+    Args:
+      reason (str): String for reason.
+      slot_budget (Optional[int]): Slot budget, or None when absent.
+      entries (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Set[str]: Set[str] produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._discover_and_enqueue_ready_day_close("x", None, None)
+    """
     if not self.day_close_enabled:
       return set()
     if not self.tgz_archive_dir:
@@ -1192,7 +1826,19 @@ class ArchiveJanitor:
     return newly_queued
 
   def enqueue_immediate_day_close(self, tar_path: str, *, reason: str) -> bool:
-    """Enqueue ``DAY_CLOSE`` when ingest checkpoint is complete for the day."""
+    """
+    Enqueue ``DAY_CLOSE`` when ingest checkpoint is complete for the day.
+    
+    Args:
+      tar_path (str): String for tar path.
+      reason (str): String for reason.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor().enqueue_immediate_day_close("x", "x")  # doctest: +SKIP
+    """
     tar_norm = os.path.normpath(tar_path) if tar_path else ""
     if not tar_norm:
       return False
@@ -1209,8 +1855,25 @@ class ArchiveJanitor:
       )
     return submitted
 
-  def enqueue_immediate_day_close_many(self, tar_paths, *, reason: str):
-    """Bulk ``DAY_CLOSE`` enqueue (oldest-first list); one wake signal."""
+  def enqueue_immediate_day_close_many(
+    self,
+    tar_paths: Any,
+    *,
+    reason: str,
+  ) -> None:
+    """
+    Bulk ``DAY_CLOSE`` enqueue (oldest-first list); one wake signal.
+    
+    Args:
+      tar_paths (Any): Iterable of filesystem paths as strings.
+      reason (str): String for reason.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor().enqueue_immediate_day_close_many(None, "x")
+    """
     if not tar_paths:
       return
     disqualified = set(self.get_disqualified_daily_tars())
@@ -1243,12 +1906,30 @@ class ArchiveJanitor:
     self.signal_work_available()
 
   def _heap_has_day_close_work_locked(self) -> bool:
+    """
+    Internal helper to handle heap has day close work locked.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor()._heap_has_day_close_work_locked()  # doctest: +SKIP
+    """
     for debt in self._debt_heap:
       if debt.kind in _DAY_PIPELINE_KINDS:
         return True
     return False
 
   def _run_tick_lock_cleanup(self) -> int:
+    """
+    Internal helper to run the tick lock cleanup.
+    
+    Returns:
+      int: int produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._run_tick_lock_cleanup()  # doctest: +SKIP
+    """
     from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
         day_removal_manifest_dir,
     )
@@ -1272,6 +1953,18 @@ class ArchiveJanitor:
     return removed
 
   def _run_scheduled_archive_lock_cleanup(self, *, reason: str = "") -> int:
+    """
+    Internal helper to run the scheduled archive lock cleanup.
+    
+    Args:
+      reason (str): String for reason.
+    
+    Returns:
+      int: int produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._run_scheduled_archive_lock_cleanup("x")
+    """
     if reason == "startup":
       return self._run_tick_lock_cleanup()
     pending_n = 0
@@ -1294,6 +1987,15 @@ class ArchiveJanitor:
     return removed
 
   def _get_maintenance_pass_candidate_inputs(self) -> Dict[str, Any]:
+    """
+    Internal helper to return the maintenance pass candidate inputs.
+    
+    Returns:
+      Dict[str, Any]: Dict[str, Any] produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._get_maintenance_pass_candidate_inputs()
+    """
     cached = self._maintenance_pass_cached_inputs
     if isinstance(cached, dict):
       return cached
@@ -1307,8 +2009,19 @@ class ArchiveJanitor:
       inputs = {}
     return inputs
 
-  def _consume_dedupe_hints(self, disqualified: Set[str]):
-    """Enqueue ``DAY_CLOSE`` for days flagged by ingest member-cache populate."""
+  def _consume_dedupe_hints(self, disqualified: Set[str]) -> None:
+    """
+    Enqueue ``DAY_CLOSE`` for days flagged by ingest member-cache populate.
+    
+    Args:
+      disqualified (Set[str]): Sequence for disqualified.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._consume_dedupe_hints([])  # doctest: +SKIP
+    """
     try:
       from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
           archive_members_redis_enabled,
@@ -1330,7 +2043,15 @@ class ArchiveJanitor:
       )
 
   def _effective_tick_budget(self) -> float:
-    """Wall-clock budget for one janitor wake (debt burst / idle scale only)."""
+    """
+    Wall-clock budget for one janitor wake (debt burst / idle scale only).
+    
+    Returns:
+      float: float produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._effective_tick_budget()  # doctest: +SKIP
+    """
     budget = float(cfg.get_archive_janitor_budget_seconds())
     if self.debt_depth() >= cfg.get_archive_janitor_debt_high_watermark():
       burst = float(cfg.get_archive_janitor_debt_burst_factor())
@@ -1341,6 +2062,15 @@ class ArchiveJanitor:
     return budget
 
   def _ensure_day_close_pool(self) -> ThreadPoolExecutor:
+    """
+    Internal helper to ensure the day close pool.
+    
+    Returns:
+      ThreadPoolExecutor: ThreadPoolExecutor produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._ensure_day_close_pool()  # doctest: +SKIP
+    """
     size = max(1, int(cfg.get_sync_day_close_max_inflight()))
     if self._day_close_pool is not None and self._day_close_pool_size == size:
       return self._day_close_pool
@@ -1354,12 +2084,29 @@ class ArchiveJanitor:
     return self._day_close_pool
 
   def _day_close_free_slots(self) -> int:
+    """
+    Internal helper to handle day close free slots.
+    
+    Returns:
+      int: int produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._day_close_free_slots()  # doctest: +SKIP
+    """
     with self._day_close_in_flight_lock:
       in_flight = len(self._day_close_in_flight)
     return max(0, max(1, int(cfg.get_sync_day_close_max_inflight())) - in_flight)
 
   def _reap_completed_day_close_futures(self) -> tuple:
-    """Reap done cross-tick day-close futures. Return ``(ok_count, mutated)``."""
+    """
+    Reap done cross-tick day-close futures. Return ``(ok_count, mutated)``.
+    
+    Returns:
+      tuple: tuple produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._reap_completed_day_close_futures()  # doctest: +SKIP
+    """
     with self._day_close_in_flight_lock:
       done_items = [
           (future, debt)
@@ -1397,11 +2144,25 @@ class ArchiveJanitor:
     return ok_count, mutated
 
   def _pop_one_day_close_debt(
-      self,
-      disqualified: Set[str],
-      *,
-      skip_tars: Optional[Set[str]] = None,
+    self,
+    disqualified: Set[str],
+    *,
+    skip_tars: Optional[Set[str]] = None,
   ) -> Optional[DayDebt]:
+    """
+    Internal helper to handle pop one day close debt.
+    
+    Args:
+      disqualified (Set[str]): Sequence for disqualified.
+      skip_tars (Optional[Set[str]]): Skip tars, or None when absent.
+    
+    Returns:
+      Optional[DayDebt]: Optional[DayDebt] — the result, or None when
+      unavailable.
+    
+    Examples:
+      >>> ArchiveJanitor()._pop_one_day_close_debt([], None)  # doctest: +SKIP
+    """
     blocked = set(disqualified)
     if skip_tars:
       blocked |= skip_tars
@@ -1415,20 +2176,44 @@ class ArchiveJanitor:
     return None
 
   def _submit_day_close_debt(
-      self,
-      debt: DayDebt,
-      *,
-      snapshot,
-      validation_cache,
-      disqualified: Set[str],
-  ):
+    self,
+    debt: DayDebt,
+    *,
+    snapshot: Any,
+    validation_cache: Any,
+    disqualified: Set[str],
+  ) -> Any:
+    """
+    Internal helper to handle submit day close debt.
+    
+    Args:
+      debt (DayDebt): Debt.
+      snapshot (Any): Snapshot passed to this helper.
+      validation_cache (Any): Validation cache passed to this helper.
+      disqualified (Set[str]): Sequence for disqualified.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> ArchiveJanitor()._submit_day_close_debt(None, None, None, [])
+    """
     pool = self._ensure_day_close_pool()
     with self._day_close_in_flight_lock:
       self._day_close_role_seq += 1
       role_id = self._day_close_role_seq
     role = "day-close-%d" % (role_id % max(1, self._day_close_pool_size))
 
-    def _run():
+    def _run() -> Any:
+      """
+      Internal helper to run.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Examples:
+        >>> ArchiveJanitor()._run()  # doctest: +SKIP
+      """
       with janitorial_logging():
         set_daemon_thread_title(
             "", script_name=self.process_title, role=role,
@@ -1450,7 +2235,19 @@ class ArchiveJanitor:
     with self._day_close_in_flight_lock:
       self._day_close_in_flight[future] = debt
 
-    def _on_day_close_done(_fut):
+    def _on_day_close_done(_fut: Any) -> None:
+      """
+      Internal helper to handle on day close done.
+      
+      Args:
+        _fut (Any):  fut passed to this helper.
+      
+      Returns:
+        None
+      
+      Examples:
+        >>> ArchiveJanitor()._on_day_close_done(None)  # doctest: +SKIP
+      """
       try:
         self.signal_work_available()
       except Exception:
@@ -1460,6 +2257,15 @@ class ArchiveJanitor:
     return future
 
   def _rss_over_limit(self) -> bool:
+    """
+    Internal helper to handle rss over limit.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor()._rss_over_limit()  # doctest: +SKIP
+    """
     tree_limit_mb = cfg.get_sync_process_tree_rss_limit_mb()
     if tree_limit_mb > 0 and self.get_tree_rss_bytes is not None:
       rss_bytes = int(self.get_tree_rss_bytes())
@@ -1473,7 +2279,24 @@ class ArchiveJanitor:
       return False
     return rss_bytes > int(limit_mb) * 1024 * 1024
 
-  def _pop_eligible_debt_locked(self, disqualified: Set[str], max_days: int) -> list:
+  def _pop_eligible_debt_locked(
+    self,
+    disqualified: Set[str],
+    max_days: int,
+  ) -> list:
+    """
+    Internal helper to handle pop eligible debt locked.
+    
+    Args:
+      disqualified (Set[str]): Sequence for disqualified.
+      max_days (int): Integer value for max days.
+    
+    Returns:
+      list: list produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._pop_eligible_debt_locked([], 0)  # doctest: +SKIP
+    """
     selected = []
     selected_day_tars = set()
     deferred = []
@@ -1505,6 +2328,18 @@ class ArchiveJanitor:
     return selected
 
   def _fresh_remaining_raw_by_gz_for_tar(self, tar_path: str) -> dict:
+    """
+    Internal helper to handle fresh remaining raw by gz for tar.
+    
+    Args:
+      tar_path (str): String for tar path.
+    
+    Returns:
+      dict: dict produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._fresh_remaining_raw_by_gz_for_tar("x")
+    """
     tar_norm = os.path.normpath(tar_path)
     cached = self._tick_remaining_raw_cache.get(tar_norm)
     if cached is not None:
@@ -1526,7 +2361,18 @@ class ArchiveJanitor:
     return fresh
 
   def _blocking_remaining_raw_for_tar(self, tar_path: str) -> dict:
-    """Quarantine-aware remaining-raw map for DECISION gates (not census)."""
+    """
+    Quarantine-aware remaining-raw map for DECISION gates (not census).
+    
+    Args:
+      tar_path (str): String for tar path.
+    
+    Returns:
+      dict: dict produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._blocking_remaining_raw_for_tar("x")  # doctest: +SKIP
+    """
     tar_norm = os.path.normpath(tar_path)
     cached = self._tick_remaining_raw_cache.get(("blocking", tar_norm))
     if cached is not None:
@@ -1537,7 +2383,16 @@ class ArchiveJanitor:
     with self._accrual_snapshot_lock:
       accrual_snapshot = self._accrual_snapshot
 
-    def _snapshot():
+    def _snapshot() -> Any:
+      """
+      Internal helper to handle snapshot.
+      
+      Returns:
+        Any: Value produced by this call (type depends on inputs).
+      
+      Examples:
+        >>> ArchiveJanitor()._snapshot()  # doctest: +SKIP
+      """
       return accrual_snapshot
 
     quarantine_fn = None
@@ -1556,11 +2411,29 @@ class ArchiveJanitor:
     self._tick_remaining_raw_cache[("blocking", tar_norm)] = blocking
     return blocking
 
-  def _run_tick_body(self):
+  def _run_tick_body(self) -> None:
+    """
+    Internal helper to run the tick body.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._run_tick_body()  # doctest: +SKIP
+    """
     with janitorial_logging():
       self._run_tick_body_inner()
 
-  def _run_tick_body_inner(self):
+  def _run_tick_body_inner(self) -> None:
+    """
+    Internal helper to run the tick body inner.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._run_tick_body_inner()  # doctest: +SKIP
+    """
     set_daemon_thread_title(
         "", script_name=self.process_title, role="archive-janitor")
     self._tick_depth += 1
@@ -1689,20 +2562,59 @@ class ArchiveJanitor:
       )
 
       def _budget_ok() -> bool:
+        """
+        Internal helper to check if the budget is ok.
+        
+        Returns:
+          bool: True or False for this check.
+        
+        Examples:
+          >>> ArchiveJanitor()._budget_ok()  # doctest: +SKIP
+        """
         return time.time() < budget_deadline
 
       def _note_deferred_reason(reason: str) -> None:
+        """
+        Internal helper to handle note deferred reason.
+        
+        Args:
+          reason (str): String for reason.
+        
+        Returns:
+          None
+        
+        Examples:
+          >>> ArchiveJanitor()._note_deferred_reason("x")  # doctest: +SKIP
+        """
         nonlocal deferred_preflight_n
         key = reason or "unknown"
         deferred_preflight_n += 1
         deferred_reason_counts[key] = int(deferred_reason_counts.get(key, 0)) + 1
 
       def _write_lock_backoff_skip() -> Set[str]:
+        """
+        Internal helper to write the lock backoff skip.
+        
+        Returns:
+          Set[str]: Set[str] produced by this call.
+        
+        Examples:
+          >>> ArchiveJanitor()._write_lock_backoff_skip()  # doctest: +SKIP
+        """
         return self._defer_tracker.write_lock_backoff_skip_tars(
             self._debt_heap_tar_paths(),
         )
 
       def _fill_free_slots() -> int:
+        """
+        Internal helper to handle fill free slots.
+        
+        Returns:
+          int: int produced by this call.
+        
+        Examples:
+          >>> ArchiveJanitor()._fill_free_slots()  # doctest: +SKIP
+        """
         nonlocal debt_popped, days_started, tick_mutated, disqualified
         nonlocal tick_made_progress, budget_throttled_this_tick
         started = 0
@@ -2014,6 +2926,15 @@ class ArchiveJanitor:
       self._tick_depth = max(0, self._tick_depth - 1)
 
   def _debt_heap_tar_paths(self) -> Set[str]:
+    """
+    Internal helper to handle debt heap tar paths.
+    
+    Returns:
+      Set[str]: Set[str] produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._debt_heap_tar_paths()  # doctest: +SKIP
+    """
     with self._debt_lock:
       return {
           os.path.normpath(debt.tar_path)
@@ -2022,14 +2943,28 @@ class ArchiveJanitor:
       }
 
   def _build_day_close_candidate_entries(
-      self,
-      *,
-      remaining_raw_by_gz=None,
-      newly_queued_tars=None,
-      reason: str = "",
-      inputs=None,
-  ):
-    """Classify day-close candidates once for report and/or discover."""
+    self,
+    *,
+    remaining_raw_by_gz: Any | None = None,
+    newly_queued_tars: Any | None = None,
+    reason: str = "",
+    inputs: Any | None = None,
+  ) -> Any:
+    """
+    Classify day-close candidates once for report and/or discover.
+    
+    Args:
+      remaining_raw_by_gz (Any | None): One of ``Any``, ``None``.
+      newly_queued_tars (Any | None): One of ``Any``, ``None``.
+      reason (str): String for reason.
+      inputs (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _build_day_close_candidate_entries(0)  # doctest: +SKIP
+    """
     if self.get_day_close_candidate_inputs is None and inputs is None:
       return []
     if inputs is None:
@@ -2062,7 +2997,25 @@ class ArchiveJanitor:
         day_raw_removal=self.day_raw_removal_coordinator,
     )
 
-  def _log_day_close_candidate_entries(self, entries, *, reason: str) -> None:
+  def _log_day_close_candidate_entries(
+    self,
+    entries: Any,
+    *,
+    reason: str,
+  ) -> None:
+    """
+    Internal helper to log the day close candidate entries.
+    
+    Args:
+      entries (Any): Entries passed to this helper.
+      reason (str): String for reason.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._log_day_close_candidate_entries(None, "x")
+    """
     log_day_close_candidate_report(
         entries,
         reason=reason,
@@ -2071,12 +3024,26 @@ class ArchiveJanitor:
     )
 
   def _log_day_close_candidate_report(
-      self,
-      *,
-      reason: str,
-      remaining_raw_by_gz=None,
-      newly_queued_tars=None,
+    self,
+    *,
+    reason: str,
+    remaining_raw_by_gz: Any | None = None,
+    newly_queued_tars: Any | None = None,
   ) -> None:
+    """
+    Internal helper to log the day close candidate report.
+    
+    Args:
+      reason (str): String for reason.
+      remaining_raw_by_gz (Any | None): One of ``Any``, ``None``.
+      newly_queued_tars (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor()._log_day_close_candidate_report("x", None, None)
+    """
     if self.get_day_close_candidate_inputs is None:
       return
     entries = self._build_day_close_candidate_entries(
@@ -2087,14 +3054,30 @@ class ArchiveJanitor:
     self._log_day_close_candidate_entries(entries, reason=reason)
 
   def _process_debt_item(
-      self,
-      debt: DayDebt,
-      *,
-      snapshot,
-      validation_cache,
-      disqualified: Set[str],
-      tick_stats=None,
+    self,
+    debt: DayDebt,
+    *,
+    snapshot: Any,
+    validation_cache: Any,
+    disqualified: Set[str],
+    tick_stats: Any | None = None,
   ) -> bool:
+    """
+    Internal helper to process the debt item.
+    
+    Args:
+      debt (DayDebt): Debt.
+      snapshot (Any): Snapshot passed to this helper.
+      validation_cache (Any): Validation cache passed to this helper.
+      disqualified (Set[str]): Sequence for disqualified.
+      tick_stats (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor()._process_debt_item(None, None, None, [], None)
+    """
     if debt.kind == DebtKind.DAY_CLOSE:
       coord = self.day_close_manifest_coordinator
       if coord is not None and coord.is_complete(os.path.normpath(debt.tar_path)):
@@ -2118,9 +3101,31 @@ class ArchiveJanitor:
     return False
 
   def signal_day_close_yield(self, tar_path: str, *, reason: str) -> None:
+    """
+    Signal day close yield.
+    
+    Args:
+      tar_path (str): String for tar path.
+      reason (str): String for reason.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor().signal_day_close_yield("x", "x")  # doctest: +SKIP
+    """
     signal_day_close_yield(tar_path, reason=reason, log_fn=self.log_fn)
 
   def _chunk_day_tokens(self) -> Set[str]:
+    """
+    Internal helper to handle chunk day tokens.
+    
+    Returns:
+      Set[str]: Set[str] produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._chunk_day_tokens()  # doctest: +SKIP
+    """
     try:
       tokens = self.get_chunk_day_tokens() or set()
       return set(tokens)
@@ -2128,13 +3133,29 @@ class ArchiveJanitor:
       return set()
 
   def _check_day_close_defer(
-      self,
-      tar_path: str,
-      *,
-      phase: str,
-      disqualified: Set[str],
-      delete_disqualified: Optional[Set[str]] = None,
+    self,
+    tar_path: str,
+    *,
+    phase: str,
+    disqualified: Set[str],
+    delete_disqualified: Optional[Set[str]] = None,
   ) -> tuple[bool, str]:
+    """
+    Internal helper to check the day close defer.
+    
+    Args:
+      tar_path (str): String for tar path.
+      phase (str): String for phase.
+      disqualified (Set[str]): Sequence for disqualified.
+      delete_disqualified (Optional[Set[str]]): Delete disqualified, or None
+      when absent.
+    
+    Returns:
+      tuple[bool, str]: tuple[bool, str] produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor()._check_day_close_defer("x", "x", [], None)
+    """
     cap_exceeded = self._defer_tracker.defer_cap_exceeded(tar_path)
     defer, reason = daily_tar_janitor_mutation_should_defer(
         tar_path,
@@ -2164,7 +3185,24 @@ class ArchiveJanitor:
     self._defer_tracker.clear_tar(tar_path)
     return False, ""
 
-  def _handle_day_close_yield(self, tar_path: str, exc: DayCloseYieldError) -> bool:
+  def _handle_day_close_yield(
+    self,
+    tar_path: str,
+    exc: DayCloseYieldError,
+  ) -> bool:
+    """
+    Internal helper to handle the day close yield.
+    
+    Args:
+      tar_path (str): String for tar path.
+      exc (DayCloseYieldError): Exc.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor()._handle_day_close_yield("x", None)  # doctest: +SKIP
+    """
     log_janitor_day_close_yield(
         tar_path,
         phase=exc.phase or "",
@@ -2176,26 +3214,66 @@ class ArchiveJanitor:
     self._persist_hints()
     return False
 
-  def _day_phase_name(self, tar_path: str):
+  def _day_phase_name(self, tar_path: str) -> Any:
+    """
+    Internal helper to handle day phase name.
+    
+    Args:
+      tar_path (str): String for tar path.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> ArchiveJanitor()._day_phase_name("x")  # doctest: +SKIP
+    """
     phase = self._day_phases.get(os.path.normpath(tar_path))
     if isinstance(phase, dict):
       return phase.get("phase")
     return phase
 
   def _day_phase_at_least(self, tar_path: str, target: str) -> bool:
+    """
+    Internal helper to handle day phase at least.
+    
+    Args:
+      tar_path (str): String for tar path.
+      target (str): String for target.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor()._day_phase_at_least("x", "x")  # doctest: +SKIP
+    """
     from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
         day_phase_at_least,
     )
     return day_phase_at_least(self._day_phases, tar_path, target)
 
   def _close_one_day(
-      self,
-      tar_path: str,
-      *,
-      snapshot,
-      validation_cache,
-      disqualified: Set[str],
+    self,
+    tar_path: str,
+    *,
+    snapshot: Any,
+    validation_cache: Any,
+    disqualified: Set[str],
   ) -> bool:
+    """
+    Internal helper to close the one day.
+    
+    Args:
+      tar_path (str): String for tar path.
+      snapshot (Any): Snapshot passed to this helper.
+      validation_cache (Any): Validation cache passed to this helper.
+      disqualified (Set[str]): Sequence for disqualified.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor()._close_one_day("x", None, None, [])  # doctest: +SKIP
+    """
     if not self.day_close_enabled:
       return False
     tar_norm = os.path.normpath(tar_path)
@@ -2419,12 +3497,29 @@ class ArchiveJanitor:
     self._finalize_day_close_manifest(tar_norm)
     return True
 
-  def _seal_one_day(self, tar_path: str, *, disqualified: Optional[Set[str]] = None) -> bool:
-    """Seal daily ``.tar`` to ``.tar.zst``.
-
-    Closed-raw on disk is expected after pre-seal verify (delete runs post-seal).
+  def _seal_one_day(
+    self,
+    tar_path: str,
+    *,
+    disqualified: Optional[Set[str]] = None,
+  ) -> bool:
+    """
+    Seal daily ``.tar`` to ``.tar.zst``.
+    
+    Closed-raw on disk is expected after pre-seal verify (delete runs post-
+      seal).
     Do not gate seal on remaining closed-raw; pre-seal/handoff and tar-drop own
     that safety. Calendar-today grace still applies.
+    
+    Args:
+      tar_path (str): String for tar path.
+      disqualified (Optional[Set[str]]): Disqualified, or None when absent.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor()._seal_one_day("x", None)  # doctest: +SKIP
     """
     disqualified = disqualified if disqualified is not None else set()
     defer, _reason = self._check_day_close_defer(
@@ -2484,11 +3579,25 @@ class ArchiveJanitor:
     return False
 
   def _tar_drop_one_day(
-      self,
-      tar_path: str,
-      validation_cache,
-      disqualified: Set[str],
+    self,
+    tar_path: str,
+    validation_cache: Any,
+    disqualified: Set[str],
   ) -> bool:
+    """
+    Internal helper to handle tar drop one day.
+    
+    Args:
+      tar_path (str): String for tar path.
+      validation_cache (Any): Validation cache passed to this helper.
+      disqualified (Set[str]): Sequence for disqualified.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ArchiveJanitor()._tar_drop_one_day("x", None, [])  # doctest: +SKIP
+    """
     zst_path, gz_path = compressed_sibling_paths(tar_path)
     sealed_ok = os.path.isfile(zst_path) or os.path.isfile(gz_path)
     # Delete-path may already have unlinked .tar; sealed-only → complete.
@@ -2556,7 +3665,19 @@ class ArchiveJanitor:
       return True
     return False
 
-  def shutdown(self, wait: bool = True):
+  def shutdown(self, wait: bool = True) -> None:
+    """
+    Shut down this object and release resources.
+    
+    Args:
+      wait (bool): Boolean flag for wait.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveJanitor().shutdown(True)  # doctest: +SKIP
+    """
     self._session_executor.shutdown(wait=wait)
     if self._day_close_pool is not None:
       self._day_close_pool.shutdown(wait=wait)
@@ -2566,7 +3687,15 @@ class ArchiveJanitor:
       self._day_close_in_flight.clear()
 
   def tick_defer_reason(self) -> Optional[str]:
-    """Best-effort reason when debt exists but no tick has completed yet."""
+    """
+    Best-effort reason when debt exists but no tick has completed yet.
+    
+    Returns:
+      Optional[str]: Optional[str] — the result, or None when unavailable.
+    
+    Examples:
+      >>> ArchiveJanitor().tick_defer_reason()  # doctest: +SKIP
+    """
     if self._tick_depth > 0:
       return "tick_in_progress"
     with self._maintenance_pass_lock:
@@ -2582,6 +3711,15 @@ class ArchiveJanitor:
     return "debt_pending"
 
   def stats(self) -> Dict[str, Any]:
+    """
+    Return statistics for this object.
+    
+    Returns:
+      Dict[str, Any]: Dict[str, Any] produced by this call.
+    
+    Examples:
+      >>> ArchiveJanitor().stats()  # doctest: +SKIP
+    """
     defer_reason = self.tick_defer_reason()
     return {
         "janitor_debt_depth": self.debt_depth(),

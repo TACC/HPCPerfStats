@@ -1,7 +1,14 @@
 #!/usr/bin/env python
-"""XALT data enrichment script. Uses Django ORM for xalt DB (run, join_run_object, lib). Note: Current job_data has no exe, exec_path, cwd, threads or a link to Libraries. XALT run data is still queried in views. This script optionally iterates by date and logs xalt runs for jobs.
-
 """
+XALT data enrichment script. Uses Django ORM for xalt DB (run, join_run_object,
+lib). Note: Current job_data has no exe, exec_path, cwd, threads or a link to
+Libraries. XALT run data is still queried in views. This script optionally
+iterates by date and logs xalt runs for jobs.
+"""
+from __future__ import annotations
+
+from typing import Any
+
 import sys
 from datetime import datetime
 
@@ -15,8 +22,25 @@ from hpcperfstats.site.lib.machine.models import job_data
 from hpcperfstats.site.xalt.models import run
 
 
-def run_update_xalt_for_range(start, end, log_fn=log_print):
-  """Iterate job_data by end date and log XALT exec_path lines (for operators)."""
+def run_update_xalt_for_range(
+  start: Any,
+  end: Any,
+  log_fn: Any = log_print,
+) -> None:
+  """
+  Iterate job_data by end date and log XALT exec_path lines (for operators).
+  
+  Args:
+    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
+    log_fn (Any): Callable invoked by this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> run_update_xalt_for_range(None, None, None)  # doctest: +SKIP
+  """
   for date in daterange(start, end, inclusive_end=True):
     directory = date.strftime("%Y-%m-%d")
     log_fn(directory)
@@ -32,7 +56,19 @@ def run_update_xalt_for_range(start, end, log_fn=log_print):
         log_fn("  jid=%s exec_path=%s" % (jid, r.exec_path))
 
 
-def main(argv=None):
+def main(argv: Any | None = None) -> None:
+  """
+  Run this module's command-line entrypoint.
+  
+  Args:
+    argv (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> main(None)  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.process_title import set_script_process_title
 
   set_script_process_title()

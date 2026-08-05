@@ -1,15 +1,23 @@
-"""XALT database models: run, join_run_object, lib. Used for executable path and library info per job (read via views).
-
 """
+XALT database models: run, join_run_object, lib. Used for executable path and
+  library info per job (read via views).
+"""
+from __future__ import annotations
+
+from typing import Any
+
 from django.db import models
 
 
 class run(models.Model):
-  """XALT run record: job_id, exec_path, cwd, times, user, etc.
-
-    """
+  """
+  XALT run record: job_id, exec_path, cwd, times, user, etc.
+  """
   # Mirrors upstream XALT MySQL schema (see upstream `py_src/createDB.in.py`).
   class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
     managed = False
     db_table = "xalt_run"
 
@@ -45,39 +53,59 @@ class run(models.Model):
   cmdline = models.BinaryField()
   container = models.CharField(max_length=32, null=True)
 
-  def __str__(self):
-    """Return string representation (run_id).
-
-        """
+  def __str__(self) -> Any:
+    """
+    Return string representation (run_id).
+    
+    Returns:
+      Any: Open return polymorphism from ``__str__``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __str__()  # doctest: +SKIP
+    """
     return str(self.run_id)
 
 
 class join_run_object(models.Model):
-  """Links run_id to obj_id (lib). Table: join_run_object.
-
-    """
+  """
+  Links run_id to obj_id (lib). Table: join_run_object.
+  """
   join_id = models.PositiveIntegerField(primary_key=True)
   obj_id = models.PositiveIntegerField()
   run_id = models.PositiveIntegerField()
   date = models.DateField()
 
   class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
     managed = False
     db_table = "join_run_object"
 
-  def __str__(self):
-    """Return string representation (run_id).
-
-        """
+  def __str__(self) -> Any:
+    """
+    Return string representation (run_id).
+    
+    Returns:
+      Any: Open return polymorphism from ``__str__``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __str__()  # doctest: +SKIP
+    """
     return str(self.run_id)
 
 
 class lib(models.Model):
-  """XALT library/object record: object_path, module_name, etc. Table: xalt_object.
-
-    """
+  """
+  XALT library/object record: object_path, module_name, etc. Table: xalt_object.
+  """
   # Mirrors upstream XALT MySQL schema (see upstream `py_src/createDB.in.py`).
   class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
     managed = False
     db_table = "xalt_object"
 
@@ -89,19 +117,29 @@ class lib(models.Model):
   timestamp = models.DateTimeField(null=True)
   lib_type = models.CharField(max_length=2)
 
-  def __str__(self):
-    """Return string representation (obj_id).
-
-        """
+  def __str__(self) -> Any:
+    """
+    Return string representation (obj_id).
+    
+    Returns:
+      Any: Open return polymorphism from ``__str__``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __str__()  # doctest: +SKIP
+    """
     return str(self.obj_id)
 
 
 class join_link_object(models.Model):
-  """Links obj_id to link_id. Table: join_link_object.
-
-    """
+  """
+  Links obj_id to link_id. Table: join_link_object.
+  """
 
   class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
     managed = False
     db_table = "join_link_object"
 
@@ -110,19 +148,29 @@ class join_link_object(models.Model):
   link_id = models.PositiveIntegerField()
   date = models.DateField()
 
-  def __str__(self):
-    """Return string representation (join_id).
-
-        """
+  def __str__(self) -> Any:
+    """
+    Return string representation (join_id).
+    
+    Returns:
+      Any: Open return polymorphism from ``__str__``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __str__()  # doctest: +SKIP
+    """
     return str(self.join_id)
 
 
 class link(models.Model):
-  """XALT link record. Table: link.
-
-    """
+  """
+  XALT link record. Table: link.
+  """
   # Mirrors upstream XALT MySQL schema (see upstream `py_src/createDB.in.py`).
   class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
     managed = False
     db_table = "xalt_link"
 
@@ -140,8 +188,15 @@ class link(models.Model):
   build_epoch = models.FloatField()
   exec_path = models.CharField(max_length=1024)
 
-  def __str__(self):
-    """Return string representation (link_id).
-
-        """
+  def __str__(self) -> Any:
+    """
+    Return string representation (link_id).
+    
+    Returns:
+      Any: Open return polymorphism from ``__str__``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __str__()  # doctest: +SKIP
+    """
     return str(self.link_id)

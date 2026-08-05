@@ -1,5 +1,9 @@
-"""Shared dbload ORM row builders (bulk vs fallback use the same field mapping)."""
+"""
+Shared dbload ORM row builders (bulk vs fallback use the same field mapping).
+"""
 from __future__ import annotations
+
+from typing import Any
 
 import pandas as pd
 
@@ -7,8 +11,19 @@ from hpcperfstats.dbload.lib.date_utils import to_pydatetime_or_none
 from hpcperfstats.site.lib.machine.models import host_data, job_data
 
 
-def _dev_str_from_stats_row(row) -> str:
-  """Monitor device id for ``host_data.dev``; missing/NaN → ``''`` (not NULL)."""
+def _dev_str_from_stats_row(row: Any) -> str:
+  """
+  Monitor device id for ``host_data.dev``; missing/NaN → ``''`` (not NULL).
+  
+  Args:
+    row (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _dev_str_from_stats_row(None)  # doctest: +SKIP
+  """
   dev_val = getattr(row, "dev", None)
   if dev_val is None or (isinstance(dev_val, float) and pd.isna(dev_val)):
     return ""
@@ -20,8 +35,19 @@ def _dev_str_from_stats_row(row) -> str:
   return s
 
 
-def host_data_instance_from_stats_row(row) -> host_data:
-  """Build an unsaved ``host_data`` from a stats DataFrame row (namedtuple)."""
+def host_data_instance_from_stats_row(row: Any) -> host_data:
+  """
+  Build an unsaved ``host_data`` from a stats DataFrame row (namedtuple).
+  
+  Args:
+    row (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    host_data: host_data produced by this call.
+  
+  Examples:
+    >>> host_data_instance_from_stats_row(None)  # doctest: +SKIP
+  """
   jid_val = getattr(row, "jid", None)
   if pd.notna(jid_val) and str(jid_val) != "-":
     jid_str = str(jid_val)
@@ -41,8 +67,19 @@ def host_data_instance_from_stats_row(row) -> host_data:
   )
 
 
-def job_data_instance_from_acct_row(row) -> job_data:
-  """Build an unsaved ``job_data`` from an accounting DataFrame row (namedtuple)."""
+def job_data_instance_from_acct_row(row: Any) -> job_data:
+  """
+  Build an unsaved ``job_data`` from an accounting DataFrame row (namedtuple).
+  
+  Args:
+    row (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    job_data: job_data produced by this call.
+  
+  Examples:
+    >>> job_data_instance_from_acct_row(None)  # doctest: +SKIP
+  """
   return job_data(
       jid=str(row.jid),
       username=row.username,

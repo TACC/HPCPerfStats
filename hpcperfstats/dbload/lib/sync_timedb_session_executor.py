@@ -1,4 +1,10 @@
-"""Session-static and ephemeral thread pools for sync_timedb background roles."""
+"""
+Session-static and ephemeral thread pools for sync_timedb background roles.
+
+Attributes:
+  R: Attribute.
+  T: Attribute.
+"""
 
 from __future__ import annotations
 
@@ -14,16 +20,40 @@ R = TypeVar("R")
 
 
 class SessionSingleFlightExecutor:
-  """Eager max_workers=1 ThreadPoolExecutor for supervisor background roles."""
+  """
+  Eager max_workers=1 ThreadPoolExecutor for supervisor background roles.
+  
+  Attributes:
+    _executor: Attribute.
+    enabled: Attribute.
+    process_title: Attribute.
+    thread_name_prefix: Attribute.
+    thread_role: Attribute.
+  """
 
   def __init__(
-      self,
-      *,
-      thread_name_prefix: str,
-      process_title: str,
-      thread_role: str,
-      enabled: bool = True,
-  ):
+    self,
+    *,
+    thread_name_prefix: str,
+    process_title: str,
+    thread_role: str,
+    enabled: bool = True,
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      thread_name_prefix (str): String for thread name prefix.
+      process_title (str): String for process title.
+      thread_role (str): String for thread role.
+      enabled (bool): Boolean flag for enabled.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> SessionSingleFlightExecutor("x", "x", "x", True)  # doctest: +SKIP
+    """
     self.thread_name_prefix = thread_name_prefix
     self.process_title = process_title
     self.thread_role = thread_role
@@ -37,9 +67,38 @@ class SessionSingleFlightExecutor:
 
   @property
   def is_active(self) -> bool:
+    """
+    Return True if active.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> SessionSingleFlightExecutor().is_active()  # doctest: +SKIP
+    """
     return self._executor is not None
 
-  def submit(self, fn: Callable[..., R], *args: Any, **kwargs: Any):
+  def submit(self, fn: Callable[..., R], *args: Any, **kwargs: Any) -> Any:
+    """
+    Submit work to this executor.
+    
+    Args:
+      fn (Callable[..., R]): Fn.
+      *args (Any): Extra positional arguments; unused unless the callee
+      documents a specific leftover protocol.
+      **kwargs (Any): Extra keyword arguments forwarded to the wrapped API;
+      keys and value types match that callee's signature.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Raises:
+      RuntimeError: Raised when ``submit`` hits a ``RuntimeError`` failure
+      path.
+    
+    Examples:
+      >>> SessionSingleFlightExecutor().submit(None)  # doctest: +SKIP
+    """
     if self._executor is None:
       raise RuntimeError(
           "SessionSingleFlightExecutor is disabled or not initialized "
@@ -47,6 +106,15 @@ class SessionSingleFlightExecutor:
       )
 
     def _run() -> R:
+      """
+      Internal helper to run.
+      
+      Returns:
+        R: R produced by this call.
+      
+      Examples:
+        >>> SessionSingleFlightExecutor()._run()  # doctest: +SKIP
+      """
       set_daemon_thread_title(
           "",
           script_name=self.process_title,
@@ -61,23 +129,51 @@ class SessionSingleFlightExecutor:
     return self._executor.submit(_run)
 
   def shutdown(self, wait: bool = True) -> None:
+    """
+    Shut down this object and release resources.
+    
+    Args:
+      wait (bool): Boolean flag for wait.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> SessionSingleFlightExecutor().shutdown(True)  # doctest: +SKIP
+    """
     if self._executor is None:
       return
     self._executor.shutdown(wait=wait)
 
 
 def iter_bounded_thread_pool(
-    items: Iterable[T],
-    worker_fn: Callable[[T], R],
-    *,
-    max_workers: int,
-    thread_role: Optional[str] = None,
-    process_title: str = "sync_timedb.py",
+  items: Iterable[T],
+  worker_fn: Callable[[T], R],
+  *,
+  max_workers: int,
+  thread_role: Optional[str] = None,
+  process_title: str = "sync_timedb.py",
 ) -> Iterator[Tuple[T, Optional[R], Optional[BaseException]]]:
-  """Run ``worker_fn(item)`` with bounded parallelism.
-
+  """
+  Run ``worker_fn(item)`` with bounded parallelism.
+  
   Yields ``(item, result, error)`` per completed task. ``error`` is set when the
   worker raised; ``result`` is set on success.
+  
+  Args:
+    items (Iterable[T]): Items.
+    worker_fn (Callable[[T], R]): Worker fn.
+    max_workers (int): Integer value for max workers.
+    thread_role (Optional[str]): Thread role, or None when absent.
+    process_title (str): String for process title.
+  
+  Yields:
+    Iterator[Tuple[T, Optional[R], Optional[BaseException]]]:
+    Iterator[Tuple[T, Optional[R], Optional[BaseException]]] produced by this
+    call.
+  
+  Examples:
+    >>> iter_bounded_thread_pool(None, None, 0, None, "x")  # doctest: +SKIP
   """
   item_list = list(items)
   if not item_list:
@@ -98,6 +194,18 @@ def iter_bounded_thread_pool(
     return
 
   def _task(item: T) -> R:
+    """
+    Internal helper to handle task.
+    
+    Args:
+      item (T): Item.
+    
+    Returns:
+      R: R produced by this call.
+    
+    Examples:
+      >>> _task(None)  # doctest: +SKIP
+    """
     if thread_role:
       set_daemon_thread_title(
           "",
@@ -119,14 +227,30 @@ def iter_bounded_thread_pool(
 
 
 def run_bounded_thread_pool(
-    items: Iterable[T],
-    worker_fn: Callable[[T], R],
-    *,
-    max_workers: int,
-    thread_role: Optional[str] = None,
-    process_title: str = "sync_timedb.py",
+  items: Iterable[T],
+  worker_fn: Callable[[T], R],
+  *,
+  max_workers: int,
+  thread_role: Optional[str] = None,
+  process_title: str = "sync_timedb.py",
 ) -> list[Tuple[T, Optional[R], Optional[BaseException]]]:
-  """Collect ``iter_bounded_thread_pool`` results in completion order."""
+  """
+  Collect ``iter_bounded_thread_pool`` results in completion order.
+  
+  Args:
+    items (Iterable[T]): Items.
+    worker_fn (Callable[[T], R]): Worker fn.
+    max_workers (int): Integer value for max workers.
+    thread_role (Optional[str]): Thread role, or None when absent.
+    process_title (str): String for process title.
+  
+  Returns:
+    list[Tuple[T, Optional[R], Optional[BaseException]]]: list[Tuple[T,
+    Optional[R], Optional[BaseException]]] produced by this call.
+  
+  Examples:
+    >>> run_bounded_thread_pool(None, None, 0, None, "x")  # doctest: +SKIP
+  """
   return list(
       iter_bounded_thread_pool(
           items,

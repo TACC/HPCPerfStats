@@ -1,23 +1,34 @@
-"""Nominal CPU roofline peaks (GFLOP/s, GB/s) keyed by monitor ``host_data.type`` names.
+"""
+Nominal CPU roofline peaks (GFLOP/s, GB/s) keyed by monitor ``host_data.type``
+names.
 
-These values are **order-of-magnitude theoretical peaks** for roofline visualization only.
-They are **not** guaranteed to match any specific SKU, socket count, or turbo state.
+These values are **order-of-magnitude theoretical peaks** for roofline
+visualization only. They are **not** guaranteed to match any specific SKU,
+socket count, or turbo state.
 
 **Method (high level)**
 
-- **Intel:** Rows follow canonical IMC typenames in host_data. Numbers target **typical
-  dual-socket** scalable for ``intel_x86_uncore_imc_skx`` / ``icx`` / ``spr``; retired
-  SNB→BDW canonical names remain for historical ``host_data`` via legacy probe order.
+- **Intel:** Rows follow canonical IMC typenames in host_data. Numbers target
+  **typical dual-socket** scalable for ``intel_x86_uncore_imc_skx`` / ``icx`` /
+  ``spr``; retired SNB→BDW canonical names remain for historical ``host_data``
+  via legacy probe order.
 - **AMD:** Monitor does not encode Zen generation in ``host_data.type``; see
-  ``amd64_epyc_2s_default`` and named Zen1–Zen5 rows for documentation/overrides.
-- **NVIDIA Grace:** Single-die vs Grace Superchip (two CPU dies) per NVIDIA public
-  summaries.
+  ``amd64_epyc_2s_default`` and named Zen1–Zen5 rows for
+  documentation/overrides.
+- **NVIDIA Grace:** Single-die vs Grace Superchip (two CPU dies) per NVIDIA
+  public summaries.
 
-If inference returns ``(None, None)``, :mod:`hpcperfstats.analysis.metrics.lib.plot.roofline` keeps
-using its built-in numeric defaults.
+If inference returns ``(None, None)``,
+:mod:`hpcperfstats.analysis.metrics.lib.plot.roofline` keeps using its built-in
+numeric defaults.
 
 When ``host_roofline_peak`` is present, CPU memory roof bandwidth sums
-``cpu_peak_dram_bw_bytes_per_s`` (DDR) and ``cpu_peak_hbm_bw_bytes_per_s`` (HBM when > 0).
+``cpu_peak_dram_bw_bytes_per_s`` (DDR) and ``cpu_peak_hbm_bw_bytes_per_s`` (HBM
+when > 0).
+
+Attributes:
+  ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS: Attribute.
+  _BYTES_TO_GB: Attribute.
 """
 from __future__ import annotations
 
@@ -58,12 +69,27 @@ ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS: Dict[str, Tuple[float, float]] = {
 
 
 def _max_converted_sum_val(
-    jt: Any,
-    event: str,
-    conv: float,
-    *,
-    type_name: str = HOST_ROOFLINE_PEAK_TYPE,
+  jt: Any,
+  event: str,
+  conv: float,
+  *,
+  type_name: str = HOST_ROOFLINE_PEAK_TYPE,
 ) -> Optional[float]:
+  """
+  Internal helper to handle max converted sum val.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+    event (str): String for event.
+    conv (float): Floating-point value for conv.
+    type_name (str): String for type name.
+  
+  Returns:
+    Optional[float]: Optional[float] — the result, or None when unavailable.
+  
+  Examples:
+    >>> _max_converted_sum_val(None, "x", 0, "x")  # doctest: +SKIP
+  """
   for value_column in ("value", "arc"):
     for peak_typ in host_roofline_peak_type_names():
       try:
@@ -86,7 +112,20 @@ _BYTES_TO_GB = 1 / (1024 ** 3)
 
 
 def _cpu_peak_memory_bw_gb_from_host_data(jt: Any) -> Optional[float]:
-  """DDR + HBM peak bytes/s from host_roofline_peak (HBM omitted when absent or zero)."""
+  """
+  DDR + HBM peak bytes/s from host_roofline_peak (HBM omitted when absent or.
+  
+    zero).
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Optional[float]: Optional[float] — the result, or None when unavailable.
+  
+  Examples:
+    >>> _cpu_peak_memory_bw_gb_from_host_data(None)  # doctest: +SKIP
+  """
   peak_dram_gb = _max_converted_sum_val(
       jt, "cpu_peak_dram_bw_bytes_per_s", _BYTES_TO_GB
   )
@@ -103,7 +142,22 @@ def _cpu_peak_memory_bw_gb_from_host_data(jt: Any) -> Optional[float]:
   return float(total)
 
 
-def _infer_cpu_roofline_peak_from_host_data(jt: Any) -> Tuple[Optional[float], Optional[float]]:
+def _infer_cpu_roofline_peak_from_host_data(
+  jt: Any,
+) -> Tuple[Optional[float], Optional[float]]:
+  """
+  Internal helper to handle infer cpu roofline peak from host data.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Tuple[Optional[float], Optional[float]]: Tuple[Optional[float],
+    Optional[float]] produced by this call.
+  
+  Examples:
+    >>> _infer_cpu_roofline_peak_from_host_data(None)  # doctest: +SKIP
+  """
   schema = getattr(jt, "schema", None)
   if not isinstance(schema, dict):
     return (None, None)
@@ -124,7 +178,22 @@ def _infer_cpu_roofline_peak_from_host_data(jt: Any) -> Tuple[Optional[float], O
   return (peak_flops_gf, peak_bw_gb)
 
 
-def infer_gpu_roofline_peak_flops_and_bw_gbps(jt: Any) -> Tuple[Optional[float], Optional[float]]:
+def infer_gpu_roofline_peak_flops_and_bw_gbps(
+  jt: Any,
+) -> Tuple[Optional[float], Optional[float]]:
+  """
+  Infer gpu roofline peak flops and bandwidth gbps.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Tuple[Optional[float], Optional[float]]: Tuple[Optional[float],
+    Optional[float]] produced by this call.
+  
+  Examples:
+    >>> infer_gpu_roofline_peak_flops_and_bw_gbps(None)  # doctest: +SKIP
+  """
   schema = getattr(jt, "schema", None)
   if not isinstance(schema, dict):
     return (None, None)
@@ -147,7 +216,22 @@ def infer_gpu_roofline_peak_flops_and_bw_gbps(jt: Any) -> Tuple[Optional[float],
   return (peak_flops_gf, peak_bw_gb)
 
 
-def infer_cpu_roofline_peak_flops_and_bw_gbps(jt: Any) -> Tuple[Optional[float], Optional[float]]:
+def infer_cpu_roofline_peak_flops_and_bw_gbps(
+  jt: Any,
+) -> Tuple[Optional[float], Optional[float]]:
+  """
+  Infer cpu roofline peak flops and bandwidth gbps.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Tuple[Optional[float], Optional[float]]: Tuple[Optional[float],
+    Optional[float]] produced by this call.
+  
+  Examples:
+    >>> infer_cpu_roofline_peak_flops_and_bw_gbps(None)  # doctest: +SKIP
+  """
   host_inferred = _infer_cpu_roofline_peak_from_host_data(jt)
   if host_inferred != (None, None):
     return host_inferred
@@ -178,4 +262,17 @@ def infer_cpu_roofline_peak_flops_and_bw_gbps(jt: Any) -> Tuple[Optional[float],
 
 
 def lookup_roofline_cpu_peaks(key: str) -> Optional[Tuple[float, float]]:
+  """
+  Lookup roofline cpu peaks.
+  
+  Args:
+    key (str): String for key.
+  
+  Returns:
+    Optional[Tuple[float, float]]: Optional[Tuple[float, float]] — the result,
+    or None when unavailable.
+  
+  Examples:
+    >>> lookup_roofline_cpu_peaks("x")  # doctest: +SKIP
+  """
   return ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS.get(canonical_type_name(key))

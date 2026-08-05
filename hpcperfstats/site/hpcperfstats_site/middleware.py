@@ -1,9 +1,22 @@
-"""Profiling middleware: add ?prof to a URL to profile the view (DEBUG only).
+"""
+Profiling middleware: add ?prof to a URL to profile the view (DEBUG only).
 
 Optional query params:
 - sort: pstats sort key (default "time")
 - count: number of rows to show (default 100)
+
+Attributes:
+  DEFAULT_COOP: Attribute.
+  DEFAULT_CSP: Attribute.
+  DEFAULT_CSP_REPORT_ONLY: Attribute.
+  DEFAULT_CSP_STRICT: Attribute.
+  DEFAULT_PERMISSIONS_POLICY: Attribute.
+  _BOKEH_RELAXED_CSP_PREFIXES: Attribute.
 """
+from __future__ import annotations
+
+from typing import Any
+
 import cProfile
 import io
 import pstats
@@ -81,7 +94,18 @@ _BOKEH_RELAXED_CSP_PREFIXES = (
 
 
 def _csp_for_request(request: HttpRequest) -> str:
-  """Return enforced CSP for this path (strict on login/public shells)."""
+  """
+  Return enforced CSP for this path (strict on login/public shells).
+  
+  Args:
+    request (HttpRequest): Request.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _csp_for_request(None)  # doctest: +SKIP
+  """
   path = request.path or ""
   if path.startswith("/login_prompt") or path == "/pub/" or path.startswith("/pub/"):
     return DEFAULT_CSP_STRICT
@@ -93,21 +117,63 @@ def _csp_for_request(request: HttpRequest) -> str:
 
 
 class ProfileMiddleware:
-  """Simple profiling middleware for Django views (Django 3+/6+ style).
-
+  """
+  Simple profiling middleware for Django views (Django 3+/6+ style).
+  
   Activated only when:
   - settings.DEBUG is True, and
   - the incoming request has a ?prof query parameter.
+  
+  Attributes:
+    get_response: Attribute.
   """
 
-  def __init__(self, get_response):
+  def __init__(self, get_response: Any) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      get_response (Any): Get response passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ProfileMiddleware(None)  # doctest: +SKIP
+    """
     self.get_response = get_response
 
   def _enabled(self, request: HttpRequest) -> bool:
-    """Return True if profiling is enabled for this request."""
+    """
+    Return True if profiling is enabled for this request.
+    
+    Args:
+      request (HttpRequest): Request.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> ProfileMiddleware()._enabled(None)  # doctest: +SKIP
+    """
     return bool(settings.DEBUG and "prof" in request.GET)
 
   def __call__(self, request: HttpRequest) -> HttpResponse:
+    """
+    Invoke this object as a callable.
+    
+    Args:
+      request (HttpRequest): Request.
+    
+    Returns:
+      HttpResponse: HttpResponse produced by this call.
+    
+    Raises:
+      Exception: Raised when ``__call__`` hits a ``Exception`` failure path.
+    
+    Examples:
+      >>> __call__(None)  # doctest: +SKIP
+    """
     if not self._enabled(request):
       return self.get_response(request)
 
@@ -133,18 +199,46 @@ class ProfileMiddleware:
 
 
 class DefaultCacheControlMiddleware:
-  """Apply a consistent default cache policy.
-
+  """
+  Apply a consistent default cache policy.
+  
   nginx currently overrides `Cache-Control` for all proxied requests. By moving
   the default behavior into Django, responses from gunicorn (direct or behind
   nginx) stay consistent, while views can still opt-in by explicitly setting
   `Cache-Control`.
+  
+  Attributes:
+    get_response: Attribute.
   """
 
-  def __init__(self, get_response):
+  def __init__(self, get_response: Any) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      get_response (Any): Get response passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> DefaultCacheControlMiddleware(None)  # doctest: +SKIP
+    """
     self.get_response = get_response
 
   def __call__(self, request: HttpRequest) -> HttpResponse:
+    """
+    Invoke this object as a callable.
+    
+    Args:
+      request (HttpRequest): Request.
+    
+    Returns:
+      HttpResponse: HttpResponse produced by this call.
+    
+    Examples:
+      >>> __call__(None)  # doctest: +SKIP
+    """
     response = self.get_response(request)
     # If a view (or Django itself, e.g. some static handlers) has already set
     # Cache-Control, respect that decision.
@@ -154,16 +248,44 @@ class DefaultCacheControlMiddleware:
 
 
 class DefaultSecurityHeadersMiddleware:
-  """Apply security headers that Django doesn't emit by default.
-
+  """
+  Apply security headers that Django doesn't emit by default.
+  
   Keep response header creation centralized in Django so behavior is consistent
   whether responses are served directly by gunicorn or behind a proxy.
+  
+  Attributes:
+    get_response: Attribute.
   """
 
-  def __init__(self, get_response):
+  def __init__(self, get_response: Any) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      get_response (Any): Get response passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> DefaultSecurityHeadersMiddleware(None)  # doctest: +SKIP
+    """
     self.get_response = get_response
 
   def __call__(self, request: HttpRequest) -> HttpResponse:
+    """
+    Invoke this object as a callable.
+    
+    Args:
+      request (HttpRequest): Request.
+    
+    Returns:
+      HttpResponse: HttpResponse produced by this call.
+    
+    Examples:
+      >>> __call__(None)  # doctest: +SKIP
+    """
     response = self.get_response(request)
 
     # Only set if not already explicitly set by a view.

@@ -1,5 +1,9 @@
-"""SIGALRM suspend helpers for ingest workers waiting on Redis populate."""
+"""
+SIGALRM suspend helpers for ingest workers waiting on Redis populate.
+"""
 from __future__ import annotations
+
+from typing import Any, Iterator
 
 import signal
 import time
@@ -12,8 +16,18 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
 
 
 @contextmanager
-def suspend_ingest_sigalrm_for_populate_wait():
-  """Disarm per-file SIGALRM during Redis populate wait; extend deadline on exit."""
+def suspend_ingest_sigalrm_for_populate_wait() -> Iterator[Any]:
+  """
+  Disarm per-file SIGALRM during Redis populate wait; extend deadline on exit.
+  
+  Yields:
+    Iterator[Any]: Open return polymorphism from
+    ``suspend_ingest_sigalrm_for_populate_wait``: concrete type depends on
+    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+  
+  Examples:
+    >>> suspend_ingest_sigalrm_for_populate_wait()  # doctest: +SKIP
+  """
   deadline = get_ingest_task_deadline_monotonic()
   if deadline is None or not hasattr(signal, "SIGALRM"):
     yield
@@ -42,8 +56,23 @@ def suspend_ingest_sigalrm_for_populate_wait():
 
 
 @contextmanager
-def populate_wait_ingest_sigalrm_guard(*, respect_ingest_deadline):
-  """No-op unless populate wait ignores per-file ingest deadline."""
+def populate_wait_ingest_sigalrm_guard(
+  *,
+  respect_ingest_deadline: Any,
+) -> Iterator[Any]:
+  """
+  No-op unless populate wait ignores per-file ingest deadline.
+  
+  Args:
+    respect_ingest_deadline (Any): Respect ingest deadline passed to this
+    helper.
+  
+  Yields:
+    Iterator[Any]: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> populate_wait_ingest_sigalrm_guard(None)  # doctest: +SKIP
+  """
   if respect_ingest_deadline:
     yield
     return

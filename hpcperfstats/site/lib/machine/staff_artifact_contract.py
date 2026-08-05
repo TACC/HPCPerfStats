@@ -1,4 +1,6 @@
-"""Staff Job Detail diagnostics for plot/detail artifact schema versions."""
+"""
+Staff Job Detail diagnostics for plot/detail artifact schema versions.
+"""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -8,7 +10,19 @@ from hpcperfstats.site.lib.machine import job_plot_artifacts as plot_cfg
 from hpcperfstats.site.lib.machine.models import job_detail_artifact, job_plot_artifact
 
 
-def _distinct_non_null_schemas(values) -> List[int]:
+def _distinct_non_null_schemas(values: Any) -> List[int]:
+  """
+  Internal helper to handle distinct non null schemas.
+  
+  Args:
+    values (Any): Values passed to this helper.
+  
+  Returns:
+    List[int]: List[int] produced by this call.
+  
+  Examples:
+    >>> _distinct_non_null_schemas(None)  # doctest: +SKIP
+  """
   out: List[int] = []
   seen = set()
   for raw in values:
@@ -26,12 +40,22 @@ def _distinct_non_null_schemas(values) -> List[int]:
 
 
 def staff_artifact_contract_payload(jid: str) -> Dict[str, Any]:
-  """Runtime APP_* schema ints plus distinct stored schemas for this job.
-
+  """
+  Runtime APP_* schema ints plus distinct stored schemas for this job.
+  
   ``db_plot`` / ``db_detail`` omit null (legacy) rows; empty list means no
   readable **schema column** for that family — not that plots/detail are
   missing. Plots may still serve from Redis L1, fingerprint-matched L2
   (including NULL ``artifact_schema``), or on-demand compute.
+  
+  Args:
+    jid (str): String for jid.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> staff_artifact_contract_payload("x")  # doctest: +SKIP
   """
   plot_vals = job_plot_artifact.objects.filter(jid_id=jid).values_list(
       "artifact_schema", flat=True

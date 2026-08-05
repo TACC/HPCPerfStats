@@ -1,29 +1,81 @@
 #!/usr/bin/env python
-"""Update metrics_data for jobs ending on each day in a date range.
+"""
+Update metrics_data for jobs ending on each day in a date range.
 
 Filters by runtime, optionally skips jobs that already have a full metrics
 catalog (one row per metric with either a numeric value or no_data_reason),
-matching persisted job-plot fingerprints for all plot kinds, and current
-job-detail / type-detail artifact fingerprints (PostgreSQL only for the
-latter two). Runs Metrics().run(jobs_list). With no CLI date arguments,
-processes the last seven calendar days through today.
+matching persisted job-plot fingerprints for all plot kinds, and current job-
+detail / type-detail artifact fingerprints (PostgreSQL only for the latter two).
+Runs Metrics().run(jobs_list). With no CLI date arguments, processes the last
+seven calendar days through today.
 
 One-shot operator path: ``update_metrics.py --jid <JID>`` (also ``--jid=<JID>``)
 invalidates Redis/DB plot+detail artifacts and per-jid derived caches for that
 job, recalculates metrics plus job-detail / multiprecision and plot artifacts
-via ``_compute_and_prewarm_jid``, then exits (no date-range scheduler, no
-post-run sleep). Exit **0** on success, **1** on missing job / compute failure
-/ bad argv. Do not combine ``--jid`` with positional date arguments.
+via ``_compute_and_prewarm_jid``, then exits (no date-range scheduler, no post-
+run sleep). Exit **0** on success, **1** on missing job / compute failure / bad
+argv. Do not combine ``--jid`` with positional date arguments.
 
-Processing order: **newest calendar day first**, and within each day **newest job
-first** (``end_time`` descending, then ``jid`` descending as a stable tiebreaker).
+Processing order: **newest calendar day first**, and within each day **newest
+job first** (``end_time`` descending, then ``jid`` descending as a stable
+tiebreaker).
 
 The global scheduler (**``update_metrics_for_dates``**) first finishes all
 `/pub/` expansion-factor aggregate artifacts using a metrics-sized process pool
 (one calendar month or one calendar year per worker task), then resets worker
 processes and begins job readiness checks plus ``Metrics.run`` batches.
 
+Attributes:
+  CHUNK_SIZE: Attribute.
+  COMPUTE_BATCH_ABSOLUTE_MAX: Attribute.
+  COMPUTE_BATCH_DOWNSHIFT_FACTOR: Attribute.
+  COMPUTE_BATCH_MIN_CAP: Attribute.
+  COMPUTE_BATCH_UPSHIFT_STEP: Attribute.
+  COMPUTE_BATCH_WORKER_MULTIPLIER: Attribute.
+  CONSUMER_STALL_EXIT_REASONS: Attribute.
+  DEBUG: Attribute.
+  DEFAULT_METRICS_RANGE_DAYS: Attribute.
+  DOCUMENTED_SCHEDULER_STALL_REASONS: Attribute.
+  GC_COLLECT_EVERY_N_CHUNKS: Attribute.
+  GLOBAL_SCHEDULER_BATCH_SIZE: Attribute.
+  LAST_UPDATE_METRICS_DIAGNOSTICS: Attribute.
+  METRICS_SCHEDULER_STALL_EXIT_CODE: Attribute.
+  PREWARM_DRAIN_MAX_WALL_SECONDS: Attribute.
+  PREWARM_FINISH_MAX_WALL_SECONDS: Attribute.
+  PREWARM_FINISH_WAIT_SLICE_SECONDS: Attribute.
+  PREWARM_FUTURE_RESULT_TIMEOUT_SECONDS: Attribute.
+  PUBLIC_EF_PHASE_NO_PROGRESS_TIMEOUT_SECONDS: Attribute.
+  PUBLIC_EF_PHASE_POLL_TIMEOUT_SECONDS: Attribute.
+  READINESS_PROBE_TARGET_FAST_SUCCESS_S: Attribute.
+  READINESS_PROBE_TARGET_MIN: Attribute.
+  READINESS_PROBE_TARGET_STEP: Attribute.
+  RESCAN_FETCH_LIMIT: Attribute.
+  RESCAN_IDLE_INTERVAL_MAX_SECONDS: Attribute.
+  RESCAN_INTERVAL_SECONDS: Attribute.
+  RESCAN_SEEN_MIN_CAP: Attribute.
+  RESCAN_SEEN_MULTIPLIER: Attribute.
+  STALL_EXIT_AFTER_SECONDS: Attribute.
+  STALL_RECOVERY_MAX_WALL_SECONDS: Attribute.
+  STALL_RECOVERY_PER_JID_POLL_TIMEOUT_SECONDS: Attribute.
+  STALL_RECOVERY_PER_JID_TIMEOUT_SECONDS: Attribute.
+  STALL_WARNING_EVERY_PASSES: Attribute.
+  STRICT_CHECK_BATCH_MIN: Attribute.
+  STRICT_CHECK_BATCH_STEP: Attribute.
+  STRICT_CHECK_COOLDOWN_SECONDS: Attribute.
+  STRICT_CHECK_FAST_SUCCESS_S: Attribute.
+  STRICT_READINESS_DB_LOCK_TIMEOUT_MS: Attribute.
+  STRICT_READINESS_DB_TIMEOUT_MS: Attribute.
+  TELEMETRY_SAMPLE_LIMIT: Attribute.
+  UPDATE_METRICS_PROCESS_TITLE: Attribute.
+  _COVERAGE_DEFER_LOGGED: Attribute.
+  _COVERAGE_DEFER_LOGGED_CAP: Attribute.
+  _COVERAGE_MARGIN_WARN_CAP_SECONDS: Attribute.
+  _COVERAGE_MARGIN_WARN_LOGGED: Attribute.
 """
+from __future__ import annotations
+
+from typing import Any, Iterator
+
 import contextlib
 import functools
 import gc
@@ -182,19 +234,55 @@ METRICS_SCHEDULER_STALL_EXIT_CODE = 1
 
 
 class MetricsSchedulerStallExit(BaseException):
-  """Scheduler hit ``STALL_EXIT_AFTER_SECONDS`` with no ready progress; restart."""
+  """
+  Scheduler hit ``STALL_EXIT_AFTER_SECONDS`` with no ready progress; restart.
+  
+  Attributes:
+    stall_reason: Attribute.
+  """
 
   exit_code = METRICS_SCHEDULER_STALL_EXIT_CODE
 
-  def __init__(self, *, stall_reason=None):
+  def __init__(self, *, stall_reason: Any | None = None) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      stall_reason (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> MetricsSchedulerStallExit(None)  # doctest: +SKIP
+    """
     self.stall_reason = stall_reason or "unknown"
     super().__init__(
         "metrics scheduler stalled ({0})".format(self.stall_reason)
     )
 
 
-def _maybe_trigger_consumer_stall_exit(stats, consumer_stall_since, scheduler_shared_lock):
-  """Set ``stall_exit_triggered`` when compute-stage stall persists with zero processed."""
+def _maybe_trigger_consumer_stall_exit(
+  stats: Any,
+  consumer_stall_since: Any,
+  scheduler_shared_lock: Any,
+) -> Any:
+  """
+  Set ``stall_exit_triggered`` when compute-stage stall persists with zero.
+  
+    processed.
+  
+  Args:
+    stats (Any): Stats passed to this helper.
+    consumer_stall_since (Any): Consumer stall since passed to this helper.
+    scheduler_shared_lock (Any): Scheduler shared lock passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _maybe_trigger_consumer_stall_exit(None, None, None)  # doctest: +SKIP
+  """
   if consumer_stall_since is None:
     return False
   if time.monotonic() - consumer_stall_since < STALL_EXIT_AFTER_SECONDS:
@@ -209,8 +297,20 @@ def _maybe_trigger_consumer_stall_exit(stats, consumer_stall_since, scheduler_sh
   return True
 
 
-def _job_window_runtime_seconds(start_time, end_time):
-  """Return job accounting-window length in seconds, or None if not computable."""
+def _job_window_runtime_seconds(start_time: Any, end_time: Any) -> Any:
+  """
+  Return job accounting-window length in seconds, or None if not computable.
+  
+  Args:
+    start_time (Any): Start time passed to this helper.
+    end_time (Any): End time passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _job_window_runtime_seconds(None, None)  # doctest: +SKIP
+  """
   if start_time is None or end_time is None:
     return None
   try:
@@ -219,8 +319,19 @@ def _job_window_runtime_seconds(start_time, end_time):
     return None
 
 
-def _effective_prewarm_drain_batch_budget_s(n_successful):
-  """Scaled time budget for draining async prewarm after each metrics batch."""
+def _effective_prewarm_drain_batch_budget_s(n_successful: Any) -> Any:
+  """
+  Scaled time budget for draining async prewarm after each metrics batch.
+  
+  Args:
+    n_successful (Any): N successful passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _effective_prewarm_drain_batch_budget_s(None)  # doctest: +SKIP
+  """
   n = max(0, int(n_successful))
   base = float(cfg.get_metrics_prewarm_drain_batch_budget_s())
   per_job = float(cfg.get_metrics_prewarm_drain_per_job_s())
@@ -231,8 +342,21 @@ def _effective_prewarm_drain_batch_budget_s(n_successful):
   return max(0.0, min(ceiling, raw))
 
 
-def _batch_window_cost_pair_for_ref(ref):
-  """Return (sum_budget_delta, per_job_runtime_for_max_cap) for cost-aware batching."""
+def _batch_window_cost_pair_for_ref(ref: Any) -> Any:
+  """
+  Return (sum_budget_delta, per_job_runtime_for_max_cap) for cost-aware.
+  
+    batching.
+  
+  Args:
+    ref (Any): Ref passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _batch_window_cost_pair_for_ref(None)  # doctest: +SKIP
+  """
   if bool(getattr(ref, "artifact_only", False)):
     return 0.0, 0.0
   rt = getattr(ref, "runtime_s", None)
@@ -243,8 +367,24 @@ def _batch_window_cost_pair_for_ref(ref):
   return rt, rt
 
 
-def _pop_candidates_for_compute_batch_locked(ready_queue, cap):
-  """Pop up to ``cap`` candidates using optional window / per-job runtime caps (0 = off)."""
+def _pop_candidates_for_compute_batch_locked(ready_queue: Any, cap: Any) -> Any:
+  """
+  Pop up to ``cap`` candidates using optional window / per-job runtime caps (0.
+  
+    =.
+  
+    off).
+  
+  Args:
+    ready_queue (Any): Ready queue passed to this helper.
+    cap (Any): Cap passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _pop_candidates_for_compute_batch_locked(None, None)  # doctest: +SKIP
+  """
   max_window = float(cfg.get_metrics_compute_batch_max_window_s())
   max_single = float(cfg.get_metrics_compute_batch_max_single_job_s())
   out = []
@@ -271,8 +411,19 @@ def _pop_candidates_for_compute_batch_locked(ready_queue, cap):
   return out
 
 
-def _chunk_rows_to_candidate_refs(rows):
-  """Map queryset ``values_list`` rows to candidate refs (supports test stubs)."""
+def _chunk_rows_to_candidate_refs(rows: Any) -> Any:
+  """
+  Map queryset ``values_list`` rows to candidate refs (supports test stubs).
+  
+  Args:
+    rows (Any): Rows passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _chunk_rows_to_candidate_refs(None)  # doctest: +SKIP
+  """
   if not rows:
     return []
   first = rows[0]
@@ -303,8 +454,27 @@ def _chunk_rows_to_candidate_refs(rows):
   return refs
 
 
-def _add_bounded_seen_jid(seen_set, seen_order, jid, cap):
-  """Insert jid into seen structures, evicting oldest entries past cap."""
+def _add_bounded_seen_jid(
+  seen_set: Any,
+  seen_order: Any,
+  jid: Any,
+  cap: Any,
+) -> Any:
+  """
+  Insert jid into seen structures, evicting oldest entries past cap.
+  
+  Args:
+    seen_set (Any): Seen set passed to this helper.
+    seen_order (Any): Seen order passed to this helper.
+    jid (Any): Jid passed to this helper.
+    cap (Any): Cap passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _add_bounded_seen_jid(None, None, None, None)  # doctest: +SKIP
+  """
   if jid in seen_set:
     return False
   seen_set.add(jid)
@@ -316,15 +486,40 @@ def _add_bounded_seen_jid(seen_set, seen_order, jid, cap):
   return True
 
 
-def _merge_deferred_retry_at(existing_retry_at, candidate_retry_at):
-  """Choose retry timestamp without pushing an existing defer farther out."""
+def _merge_deferred_retry_at(
+  existing_retry_at: Any,
+  candidate_retry_at: Any,
+) -> Any:
+  """
+  Choose retry timestamp without pushing an existing defer farther out.
+  
+  Args:
+    existing_retry_at (Any): Existing retry at passed to this helper.
+    candidate_retry_at (Any): Candidate retry at passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _merge_deferred_retry_at(None, None)  # doctest: +SKIP
+  """
   if existing_retry_at is None:
     return float(candidate_retry_at)
   return min(float(existing_retry_at), float(candidate_retry_at))
 
 
-def _new_jid_telemetry():
-  """Default per-jid telemetry counters for scheduler diagnostics."""
+def _new_jid_telemetry() -> Any:
+  """
+  Default per-jid telemetry counters for scheduler diagnostics.
+  
+  Returns:
+    Any: Open return polymorphism from ``_new_jid_telemetry``: concrete type
+    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+    empty).
+  
+  Examples:
+    >>> _new_jid_telemetry()  # doctest: +SKIP
+  """
   return {
       "detail_gpu_metrics_reused": 0,
       "detail_fsio_metrics_reused": 0,
@@ -338,8 +533,18 @@ def _new_jid_telemetry():
   }
 
 
-def _new_scheduler_stats():
-  """Default scheduler counters (reused for retry resets)."""
+def _new_scheduler_stats() -> Any:
+  """
+  Default scheduler counters (reused for retry resets).
+  
+  Returns:
+    Any: Open return polymorphism from ``_new_scheduler_stats``: concrete type
+    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+    empty).
+  
+  Examples:
+    >>> _new_scheduler_stats()  # doctest: +SKIP
+  """
   return {
       "processed": 0,
       "failed": 0,
@@ -378,8 +583,20 @@ def _new_scheduler_stats():
   }
 
 
-def _log_exception_details(prefix, exc):
-  """Emit one-line-per-frame diagnostics for collectors that drop multiline logs."""
+def _log_exception_details(prefix: Any, exc: Any) -> None:
+  """
+  Emit one-line-per-frame diagnostics for collectors that drop multiline logs.
+  
+  Args:
+    prefix (Any): Prefix passed to this helper.
+    exc (Any): Exception instance being classified or logged.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _log_exception_details(None, None)  # doctest: +SKIP
+  """
   log_print(
       "{0}: exception_type={1} exception_repr={2!r}".format(
           prefix, type(exc).__name__, exc
@@ -410,16 +627,33 @@ def _log_exception_details(prefix, exc):
 
 
 def _handle_strict_readiness_db_error(
-    *,
-    stats,
-    strict_check_state,
-    elapsed_s,
-    batch_size_seen,
-    exc,
-    strict_check_cooldown_until=None,
-    cooldown_jids=None,
-):
-  """Update counters/batch-size for strict-readiness DB failures and log once."""
+  *,
+  stats: Any,
+  strict_check_state: Any,
+  elapsed_s: Any,
+  batch_size_seen: Any,
+  exc: Any,
+  strict_check_cooldown_until: Any | None = None,
+  cooldown_jids: Any | None = None,
+) -> None:
+  """
+  Update counters/batch-size for strict-readiness DB failures and log once.
+  
+  Args:
+    stats (Any): Stats passed to this helper.
+    strict_check_state (Any): Strict check state passed to this helper.
+    elapsed_s (Any): Elapsed s passed to this helper.
+    batch_size_seen (Any): Batch size seen passed to this helper.
+    exc (Any): Exception instance being classified or logged.
+    strict_check_cooldown_until (Any | None): One of ``Any``, ``None``.
+    cooldown_jids (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _handle_strict_readiness_db_error(0)  # doctest: +SKIP
+  """
   stats["strict_check_timeouts"] += 1
   stats["readiness_error_chunks"] += 1
   strict_check_state["batch_size"] = _adjust_strict_check_batch_size(
@@ -442,9 +676,24 @@ def _handle_strict_readiness_db_error(
 
 
 class _PhaseTimer:
-  """Collect per-phase wall-clock timings for pipeline reporting."""
+  """
+  Collect per-phase wall-clock timings for pipeline reporting.
+  
+  Attributes:
+    _lock: Attribute.
+    _totals: Attribute.
+  """
 
-  def __init__(self):
+  def __init__(self) -> None:
+    """
+    Initialize a new instance.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _PhaseTimer()  # doctest: +SKIP
+    """
     self._lock = threading.Lock()
     self._totals = {
         "candidate_sql_s": 0.0,
@@ -455,7 +704,19 @@ class _PhaseTimer:
     }
 
   @contextlib.contextmanager
-  def phase(self, key):
+  def phase(self, key: Any) -> Iterator[Any]:
+    """
+    Return the current phase for this object.
+    
+    Args:
+      key (Any): Key passed to this helper.
+    
+    Yields:
+      Iterator[Any]: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _PhaseTimer().phase(None)  # doctest: +SKIP
+    """
     t0 = time.monotonic()
     try:
       yield
@@ -464,21 +725,60 @@ class _PhaseTimer:
       with self._lock:
         self._totals[key] = self._totals.get(key, 0.0) + elapsed
 
-  def totals(self):
+  def totals(self) -> Any:
+    """
+    Totals for this object.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _PhaseTimer().totals()  # doctest: +SKIP
+    """
     with self._lock:
       return dict(self._totals)
 
 
 class _PrewarmPipeline:
-  """Required prewarm stage with bounded backlog and retries.
-
+  """
+  Required prewarm stage with bounded backlog and retries.
+  
   ``submit`` / ``drain_some`` mutate ``_pending`` and ``_created_at``; call only
   from the owning thread (metrics scheduler main thread) unless guarded.
   ``run_for_jid`` is safe from concurrent scheduler compute threads (counters
   under ``_counters_lock``).
+  
+  Attributes:
+    _attempts: Attribute.
+    _backlog_cap: Attribute.
+    _backpressure_events: Attribute.
+    _backpressure_wait_s: Attribute.
+    _counters_lock: Attribute.
+    _created_at: Attribute.
+    _done: Attribute.
+    _evicted_pending_jobs: Attribute.
+    _executor: Attribute.
+    _failed: Attribute.
+    _inline_fallback_jobs: Attribute.
+    _lag_samples: Attribute.
+    _last_backpressure_log_at: Attribute.
+    _mode: Attribute.
+    _pending: Attribute.
+    _pending_jids: Attribute.
+    _pending_lock: Attribute.
+    _workers: Attribute.
   """
 
-  def __init__(self):
+  def __init__(self) -> None:
+    """
+    Initialize a new instance.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _PrewarmPipeline()  # doctest: +SKIP
+    """
     self._mode = cfg.get_metrics_plot_prewarm_mode()
     self._workers = cfg.get_metrics_prewarm_workers()
     self._attempts = cfg.get_metrics_prewarm_retry_attempts()
@@ -500,8 +800,22 @@ class _PrewarmPipeline:
     if self._mode == "pipeline_required":
       self._executor = ThreadPoolExecutor(max_workers=self._workers)
 
-  def _persist_detail_plot_elapsed(self, jid, shared_context):
-    """Run job-detail then job-plot persistence; return wall times ``(detail_s, plots_s)``."""
+  def _persist_detail_plot_elapsed(self, jid: Any, shared_context: Any) -> Any:
+    """
+    Run job-detail then job-plot persistence; return wall times ``(detail_s,.
+    
+      plots_s)``.
+    
+    Args:
+      jid (Any): Jid passed to this helper.
+      shared_context (Any): Shared context passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _PrewarmPipeline()._persist_detail_plot_elapsed(None, None)
+    """
     close_old_connections()
     t0 = time.monotonic()
     try:
@@ -517,7 +831,22 @@ class _PrewarmPipeline:
     plots_s = time.monotonic() - t1
     return detail_s, plots_s
 
-  def _run_one(self, jid):
+  def _run_one(self, jid: Any) -> None:
+    """
+    Internal helper to run the one.
+    
+    Args:
+      jid (Any): Jid passed to this helper.
+    
+    Returns:
+      None
+    
+    Raises:
+      last_exc: Raised when ``_run_one`` hits a ``last_exc`` failure path.
+    
+    Examples:
+      >>> _PrewarmPipeline()._run_one(None)  # doctest: +SKIP
+    """
     from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
     set_daemon_thread_title(
@@ -534,13 +863,24 @@ class _PrewarmPipeline:
         last_exc = exc
     raise last_exc
 
-  def run_for_jid(self, jid, shared_context=None):
-    """Run detail+plot prewarm synchronously for one jid.
-
+  def run_for_jid(self, jid: Any, shared_context: Any | None = None) -> Any:
+    """
+    Run detail+plot prewarm synchronously for one jid.
+    
     Returns a dict with wall-clock seconds: ``detail_s``, ``plots_s`` (when the
     dict ``shared_context`` path is used), ``prewarm_total_s`` (detail+plots or
     the whole ``_run_one`` wall time when ``shared_context`` is not a dict), and
     ``undivided`` (True when only ``prewarm_total_s`` is meaningful).
+    
+    Args:
+      jid (Any): Jid passed to this helper.
+      shared_context (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _PrewarmPipeline().run_for_jid(None, None)  # doctest: +SKIP
     """
     if isinstance(shared_context, dict):
       detail_s, plots_s = self._persist_detail_plot_elapsed(jid, shared_context)
@@ -563,7 +903,19 @@ class _PrewarmPipeline:
       self._done += 1
     return timing
 
-  def _oldest_pending_age_locked(self, now=None):
+  def _oldest_pending_age_locked(self, now: Any | None = None) -> Any:
+    """
+    Internal helper to handle oldest pending age locked.
+    
+    Args:
+      now (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _PrewarmPipeline()._oldest_pending_age_locked(None)  # doctest: +SKIP
+    """
     if not self._pending:
       return 0.0
     if now is None:
@@ -577,7 +929,29 @@ class _PrewarmPipeline:
       return 0.0
     return max(0.0, now - oldest_start)
 
-  def _maybe_log_backpressure(self, *, jid, pending, oldest_age_s, action):
+  def _maybe_log_backpressure(
+    self,
+    *,
+    jid: Any,
+    pending: Any,
+    oldest_age_s: Any,
+    action: Any,
+  ) -> None:
+    """
+    Internal helper to handle maybe log backpressure.
+    
+    Args:
+      jid (Any): Jid passed to this helper.
+      pending (Any): Pending passed to this helper.
+      oldest_age_s (Any): Oldest age s passed to this helper.
+      action (Any): Action passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _PrewarmPipeline()._maybe_log_backpressure(None, None, None, None)
+    """
     now = time.monotonic()
     if action == "drain_wait" and ((now - self._last_backpressure_log_at) < 5.0):
       return
@@ -594,7 +968,19 @@ class _PrewarmPipeline:
         flush=True,
     )
 
-  def _run_inline_fallback(self, jid):
+  def _run_inline_fallback(self, jid: Any) -> None:
+    """
+    Internal helper to run the inline fallback.
+    
+    Args:
+      jid (Any): Jid passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _PrewarmPipeline()._run_inline_fallback(None)  # doctest: +SKIP
+    """
     try:
       self._run_one(jid)
       with self._counters_lock:
@@ -604,8 +990,18 @@ class _PrewarmPipeline:
         self._failed += 1
       log_print("plot artifact prewarm failed: {0}".format(exc))
 
-  def _evict_oldest_pending_locked(self):
-    """Cancel the oldest async prewarm task to make room (never blocks scheduler)."""
+  def _evict_oldest_pending_locked(self) -> Any:
+    """
+    Cancel the oldest async prewarm task to make room (never blocks scheduler).
+    
+    Returns:
+      Any: Open return polymorphism from ``_evict_oldest_pending_locked``:
+      concrete type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> _PrewarmPipeline()._evict_oldest_pending_locked()  # doctest: +SKIP
+    """
     if not self._pending:
       return None
     oldest_fut = None
@@ -631,7 +1027,19 @@ class _PrewarmPipeline:
       self._evicted_pending_jobs += 1
     return evicted_jid
 
-  def submit(self, jid):
+  def submit(self, jid: Any) -> None:
+    """
+    Submit work to this executor.
+    
+    Args:
+      jid (Any): Jid passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _PrewarmPipeline().submit(None)  # doctest: +SKIP
+    """
     if self._mode == "inline":
       self._run_one(jid)
       with self._counters_lock:
@@ -682,14 +1090,41 @@ class _PrewarmPipeline:
       self._pending_jids[fut] = jid
       self._pending.add(fut)
 
-  def has_pending(self):
-    """True when async prewarm tasks are still running (``pipeline_required``)."""
+  def has_pending(self) -> Any:
+    """
+    True when async prewarm tasks are still running (``pipeline_required``).
+    
+    Returns:
+      Any: Open return polymorphism from ``has_pending``: concrete type
+      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+      empty).
+    
+    Examples:
+      >>> _PrewarmPipeline().has_pending()  # doctest: +SKIP
+    """
     if self._mode == "inline" or self._executor is None:
       return False
     with self._pending_lock:
       return bool(self._pending)
 
-  def drain_some(self, force=False, wait_timeout_s=0.0):
+  def drain_some(
+    self,
+    force: bool = False,
+    wait_timeout_s: float = 0.0,
+  ) -> None:
+    """
+    Drain the some.
+    
+    Args:
+      force (bool): Boolean flag for force.
+      wait_timeout_s (float): Floating-point value for wait timeout s.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _PrewarmPipeline().drain_some(True, 0)  # doctest: +SKIP
+    """
     if self._mode == "inline" or not self._pending:
       return
     with self._pending_lock:
@@ -724,7 +1159,16 @@ class _PrewarmPipeline:
           self._failed += 1
         log_print("plot artifact prewarm failed: {0}".format(exc))
 
-  def finish(self):
+  def finish(self) -> None:
+    """
+    Finish processing and finalize state.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _PrewarmPipeline().finish()  # doctest: +SKIP
+    """
     if self._mode == "inline":
       return
     started = time.monotonic()
@@ -763,7 +1207,16 @@ class _PrewarmPipeline:
       )
     self._executor.shutdown(wait=False, cancel_futures=True)
 
-  def stats(self):
+  def stats(self) -> Any:
+    """
+    Return statistics for this object.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _PrewarmPipeline().stats()  # doctest: +SKIP
+    """
     with self._pending_lock:
       backlog_jobs = len(self._pending)
       oldest_pending_age_s = self._oldest_pending_age_locked()
@@ -793,9 +1246,41 @@ class _PrewarmPipeline:
 
 
 class _CompletionReporter:
-  """Background heartbeat reporter for recent completion throughput."""
+  """
+  Background heartbeat reporter for recent completion throughput.
+  
+  Attributes:
+    _completed_events: Attribute.
+    _completed_total: Attribute.
+    _extra_stats_getter: Attribute.
+    _last_synced_completed_total: Attribute.
+    _lock: Attribute.
+    _readiness_error_events: Attribute.
+    _readiness_error_total: Attribute.
+    _report_interval_s: Attribute.
+    _stop: Attribute.
+    _thread: Attribute.
+    _window_s: Attribute.
+  """
 
-  def __init__(self, report_interval_s=3600, window_s=3600):
+  def __init__(
+    self,
+    report_interval_s: int = 3600,
+    window_s: int = 3600,
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      report_interval_s (int): Integer value for report interval s.
+      window_s (int): Integer value for window s.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _CompletionReporter(0, 0)  # doctest: +SKIP
+    """
     self._report_interval_s = max(5, int(report_interval_s))
     self._window_s = max(60, int(window_s))
     self._lock = threading.Lock()
@@ -808,7 +1293,16 @@ class _CompletionReporter:
     self._thread = None
     self._extra_stats_getter = None
 
-  def start(self):
+  def start(self) -> None:
+    """
+    Start background work for this object.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _CompletionReporter().start()  # doctest: +SKIP
+    """
     if self._thread is not None:
       return
     self._thread = threading.Thread(
@@ -818,12 +1312,33 @@ class _CompletionReporter:
     )
     self._thread.start()
 
-  def stop(self):
+  def stop(self) -> None:
+    """
+    Stop background work for this object.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _CompletionReporter().stop()  # doctest: +SKIP
+    """
     self._stop.set()
     if self._thread is not None:
       self._thread.join(timeout=self._report_interval_s + 1)
 
-  def _prune_locked(self, now):
+  def _prune_locked(self, now: Any) -> None:
+    """
+    Internal helper to handle prune locked.
+    
+    Args:
+      now (Any): Now passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _CompletionReporter()._prune_locked(None)  # doctest: +SKIP
+    """
     cutoff = now - self._window_s
     while self._completed_events and self._completed_events[0][0] < cutoff:
       self._completed_events.popleft()
@@ -833,7 +1348,19 @@ class _CompletionReporter:
     ):
       self._readiness_error_events.popleft()
 
-  def record_completed(self, count):
+  def record_completed(self, count: int) -> None:
+    """
+    Record completed.
+    
+    Args:
+      count (int): Integer value for count.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _CompletionReporter().record_completed(0)  # doctest: +SKIP
+    """
     if count <= 0:
       return
     now = time.monotonic()
@@ -842,13 +1369,34 @@ class _CompletionReporter:
       self._completed_total += int(count)
       self._prune_locked(now)
 
-  def completed_in_window(self):
+  def completed_in_window(self) -> Any:
+    """
+    Completed in window.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _CompletionReporter().completed_in_window()  # doctest: +SKIP
+    """
     now = time.monotonic()
     with self._lock:
       self._prune_locked(now)
       return sum(c for _, c in self._completed_events)
 
-  def record_readiness_error_chunk(self, count=1):
+  def record_readiness_error_chunk(self, count: int = 1) -> None:
+    """
+    Record readiness error chunk.
+    
+    Args:
+      count (int): Integer value for count.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _CompletionReporter().record_readiness_error_chunk(0)  # doctest: +SKIP
+    """
     if count <= 0:
       return
     now = time.monotonic()
@@ -857,18 +1405,47 @@ class _CompletionReporter:
       self._readiness_error_total += int(count)
       self._prune_locked(now)
 
-  def readiness_errors_in_window(self):
+  def readiness_errors_in_window(self) -> Any:
+    """
+    Readiness errors in window.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _CompletionReporter().readiness_errors_in_window()  # doctest: +SKIP
+    """
     now = time.monotonic()
     with self._lock:
       self._prune_locked(now)
       return sum(c for _, c in self._readiness_error_events)
 
-  def completed_total(self):
+  def completed_total(self) -> Any:
+    """
+    Completed total.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _CompletionReporter().completed_total()  # doctest: +SKIP
+    """
     with self._lock:
       return self._completed_total
 
-  def sync_completed_total(self, total):
-    """Synchronize reporter totals from scheduler's authoritative processed count."""
+  def sync_completed_total(self, total: Any) -> None:
+    """
+    Synchronize reporter totals from scheduler's authoritative processed count.
+    
+    Args:
+      total (Any): Total passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _CompletionReporter().sync_completed_total(None)  # doctest: +SKIP
+    """
     now = time.monotonic()
     with self._lock:
       current = max(0, int(total))
@@ -884,11 +1461,29 @@ class _CompletionReporter:
         self._prune_locked(now)
       self._last_synced_completed_total = current
 
-  def readiness_errors_total(self):
+  def readiness_errors_total(self) -> Any:
+    """
+    Readiness errors total.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _CompletionReporter().readiness_errors_total()  # doctest: +SKIP
+    """
     with self._lock:
       return self._readiness_error_total
 
-  def _run(self):
+  def _run(self) -> None:
+    """
+    Internal helper to run.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _CompletionReporter()._run()  # doctest: +SKIP
+    """
     from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
     set_daemon_thread_title(
@@ -959,19 +1554,43 @@ class _CompletionReporter:
           flush=True,
       )
 
-  def set_extra_stats_getter(self, getter):
+  def set_extra_stats_getter(self, getter: Any) -> None:
+    """
+    Set the extra stats getter.
+    
+    Args:
+      getter (Any): Getter passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _CompletionReporter().set_extra_stats_getter(None)  # doctest: +SKIP
+    """
     self._extra_stats_getter = getter
 
 
 @contextlib.contextmanager
-def _pg_session_statement_timeout_for_metrics_batch():
-  """Temporarily disable PostgreSQL ``statement_timeout`` for long metrics batch queries.
-
-  ``_jobs_queryset`` annotated scans (metrics subqueries, live distinct-time counts,
+def _pg_session_statement_timeout_for_metrics_batch() -> Iterator[Any]:
+  """
+  Temporarily disable PostgreSQL ``statement_timeout`` for long metrics batch.
+  
+    queries.
+  
+  ``_jobs_queryset`` annotated scans (metrics subqueries, live distinct-time
+    counts,
   and PostgreSQL-only plot/detail fingerprint probes)
   can exceed the default session ``statement_timeout`` (often 2 minutes). Keyset
   pagination must not fall back to offset slicing on timeout — that repeats the
   same expensive SQL. Restore the configured timeout when the block exits.
+  
+  Yields:
+    Iterator[Any]: Open return polymorphism from
+    ``_pg_session_statement_timeout_for_metrics_batch``: concrete type depends
+    on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+  
+  Examples:
+    >>> _pg_session_statement_timeout_for_metrics_batch()  # doctest: +SKIP
   """
   conn = connections["default"]
   if conn.vendor != "postgresql":
@@ -993,14 +1612,34 @@ def _pg_session_statement_timeout_for_metrics_batch():
       pass
 
 
-def _today_datetime():
-  """Local now for default date-range bounds (monkeypatch in tests)."""
+def _today_datetime() -> Any:
+  """
+  Local now for default date-range bounds (monkeypatch in tests).
+  
+  Returns:
+    Any: Open return polymorphism from ``_today_datetime``: concrete type
+    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+    empty).
+  
+  Examples:
+    >>> _today_datetime()  # doctest: +SKIP
+  """
   return datetime.today()
 
 
 @contextlib.contextmanager
-def _pg_local_readiness_timeouts():
-  """Apply bounded DB and lock timeouts to strict-readiness probes."""
+def _pg_local_readiness_timeouts() -> Iterator[Any]:
+  """
+  Apply bounded DB and lock timeouts to strict-readiness probes.
+  
+  Yields:
+    Iterator[Any]: Open return polymorphism from
+    ``_pg_local_readiness_timeouts``: concrete type depends on inputs and
+    branch (mapping, scalar, handle, or ``None``-like empty).
+  
+  Examples:
+    >>> _pg_local_readiness_timeouts()  # doctest: +SKIP
+  """
   conn = connections["default"]
   if conn.vendor != "postgresql":
     yield
@@ -1020,21 +1659,53 @@ def _pg_local_readiness_timeouts():
     yield
 
 
-def _metrics_telemetry_enabled():
-  """Opt-in per-jid telemetry for compose-backed tuning runs."""
+def _metrics_telemetry_enabled() -> Any:
+  """
+  Opt-in per-jid telemetry for compose-backed tuning runs.
+  
+  Returns:
+    Any: Open return polymorphism from ``_metrics_telemetry_enabled``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> _metrics_telemetry_enabled()  # doctest: +SKIP
+  """
   v = os.environ.get("HPCPERFSTATS_METRICS_TELEMETRY", "").strip().lower()
   return v in ("1", "true", "yes", "on")
 
 
-def _default_metrics_date_range():
-  """Return (start, end) datetimes at local midnight: inclusive last N days through today."""
+def _default_metrics_date_range() -> Any:
+  """
+  Return (start, end) datetimes at local midnight: inclusive last N days.
+  
+    through.
+  
+    today.
+  
+  Returns:
+    Any: Open return polymorphism from ``_default_metrics_date_range``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> _default_metrics_date_range()  # doctest: +SKIP
+  """
   end = datetime.combine(_today_datetime().date(), datetime.min.time())
   start = end - timedelta(days=DEFAULT_METRICS_RANGE_DAYS - 1)
   return start, end
 
 
-def _shutdown_db_best_effort():
-  """Close DB connections without failing shutdown."""
+def _shutdown_db_best_effort() -> None:
+  """
+  Close DB connections without failing shutdown.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _shutdown_db_best_effort()  # doctest: +SKIP
+  """
   try:
     close_old_connections()
     connections.close_all()
@@ -1042,18 +1713,41 @@ def _shutdown_db_best_effort():
     pass
 
 
-def _install_sigterm_handler(exit_code=143):
-  """Install SIGTERM handler that requests shutdown.
-
+def _install_sigterm_handler(exit_code: int = 143) -> Any:
+  """
+  Install SIGTERM handler that requests shutdown.
+  
   Important: do not raise `SystemExit` from inside the signal handler. Raising
   exceptions from signal delivery can interrupt GC/finalizers and lead to noisy
   "Exception ignored in: ..." tracebacks during interpreter teardown.
+  
+  Args:
+    exit_code (int): Integer value for exit code.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _install_sigterm_handler(0)  # doctest: +SKIP
   """
   sigterm_received = [False]
 
   previous_handler = signal.getsignal(signal.SIGTERM)
 
-  def _sigterm_handler(signum, frame):
+  def _sigterm_handler(signum: Any, frame: Any) -> None:
+    """
+    Internal helper to handle sigterm handler.
+    
+    Args:
+      signum (Any): Signum passed to this helper.
+      frame (Any): Frame passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _sigterm_handler(None, None)  # doctest: +SKIP
+    """
     sigterm_received[0] = True
     shutdown_requested[0] = True
     # Request a graceful stop; the main loops check `shutdown_requested`.
@@ -1063,33 +1757,76 @@ def _install_sigterm_handler(exit_code=143):
   return previous_handler, sigterm_received, _sigterm_handler
 
 
-def _notify_parent_if_sigterm(sigterm_received):
-  """Send SIGCHLD back to parent when SIGTERM triggered."""
+def _notify_parent_if_sigterm(sigterm_received: Any) -> None:
+  """
+  Send SIGCHLD back to parent when SIGTERM triggered.
+  
+  Args:
+    sigterm_received (Any): Sigterm received passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _notify_parent_if_sigterm(None)  # doctest: +SKIP
+  """
   if sigterm_received and sigterm_received[0]:
     send_sigchld_to_parent()
 
 
 @functools.lru_cache(maxsize=1)
-def _expected_job_metrics_row_count():
-  """Catalog row count; metrics definitions are fixed for the process lifetime."""
+def _expected_job_metrics_row_count() -> Any:
+  """
+  Catalog row count; metrics definitions are fixed for the process lifetime.
+  
+  Returns:
+    Any: Open return polymorphism from ``_expected_job_metrics_row_count``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> _expected_job_metrics_row_count()  # doctest: +SKIP
+  """
   return expected_job_metric_row_count()
 
 
 @functools.lru_cache(maxsize=1)
-def _host_name_suffix():
-  """FQDN suffix used by host_data host names."""
+def _host_name_suffix() -> Any:
+  """
+  FQDN suffix used by host_data host names.
+  
+  Returns:
+    Any: Open return polymorphism from ``_host_name_suffix``: concrete type
+    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+    empty).
+  
+  Examples:
+    >>> _host_name_suffix()  # doctest: +SKIP
+  """
   return "." + cfg.get_host_name_ext()
 
 
-def _end_time_calendar_day_half_open_bounds(sched_date):
-  """Return ``[start, end)`` aware datetimes for jobs whose ``end_time`` is that calendar day.
-
+def _end_time_calendar_day_half_open_bounds(sched_date: Any) -> Any:
+  """
+  Return ``[start, end)`` aware datetimes for jobs whose ``end_time`` is that.
+  
+    calendar day.
+  
   Mirrors ``DateTimeField`` ``__date`` lookup semantics in the default timezone
   while keeping a plain range on ``end_time`` so btree indexes apply.
-
+  
   Naive ``datetime`` values use their ``.date()`` component (same as the prior
   ``end_time__date=sched_date.date()`` filter). Timezone-aware values use
   ``localtime`` so the calendar day matches the active/default zone.
+  
+  Args:
+    sched_date (Any): Sched date passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _end_time_calendar_day_half_open_bounds(None)  # doctest: +SKIP
   """
   if isinstance(sched_date, datetime):
     if django_timezone.is_naive(sched_date):
@@ -1105,8 +1842,23 @@ def _end_time_calendar_day_half_open_bounds(sched_date):
   return start, end
 
 
-def _jobs_queryset(date, min_time, rerun):
-  """Jobs ending on ``date`` with runtime >= min_time, newest first (end_time, jid)."""
+def _jobs_queryset(date: Any, min_time: Any, rerun: Any) -> Any:
+  """
+  Jobs ending on ``date`` with runtime >= min_time, newest first (end_time,.
+  
+    jid).
+  
+  Args:
+    date (Any): Date passed to this helper.
+    min_time (Any): Min time passed to this helper.
+    rerun (Any): Rerun passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _jobs_queryset(None, None, None)  # doctest: +SKIP
+  """
   day_lo, day_hi = _end_time_calendar_day_half_open_bounds(date)
   qs = job_data.objects.filter(
       end_time__gte=day_lo,
@@ -1230,17 +1982,28 @@ def _jobs_queryset(date, min_time, rerun):
   return annotated.filter(need_metrics | artifact_only).order_by("-end_time", "-jid")
 
 
-def _iter_chunked_pks(queryset, chunk_size):
-  """Yield (pk_list, total_so_far) in bounded chunks via queryset slicing.
-
+def _iter_chunked_pks(queryset: Any, chunk_size: int) -> Iterator[Any]:
+  """
+  Yield (pk_list, total_so_far) in bounded chunks via queryset slicing.
+  
   We intentionally avoid a long-lived streaming cursor here because the caller
   performs additional ORM queries while iterating chunks. On PostgreSQL, mixing
   a still-open server-side cursor with nested queries on the same connection can
   trigger protocol desynchronisation errors.
-
+  
   For Django QuerySets ordered by ``-end_time, -jid`` we use keyset pagination
   to avoid large OFFSET scans during big backfills. For non-ORM/fake query-like
   objects (e.g. unit-test stubs), we transparently fall back to offset slicing.
+  
+  Args:
+    queryset (Any): Queryset passed to this helper.
+    chunk_size (int): Integer value for chunk size.
+  
+  Yields:
+    Iterator[Any]: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _iter_chunked_pks(None, 0)  # doctest: +SKIP
   """
   total = 0
   # Primary path: keyset pagination for real ORM querysets only (test doubles use offset).
@@ -1292,12 +2055,28 @@ def _iter_chunked_pks(queryset, chunk_size):
 
 
 def _candidate_ref(
-    jid,
-    artifact_only=False,
-    runtime_s=None,
-    telemetry_first_time=None,
-    telemetry_last_time=None,
-):
+  jid: Any,
+  artifact_only: bool = False,
+  runtime_s: Any | None = None,
+  telemetry_first_time: Any | None = None,
+  telemetry_last_time: Any | None = None,
+) -> Any:
+  """
+  Internal helper to handle candidate ref.
+  
+  Args:
+    jid (Any): Jid passed to this helper.
+    artifact_only (bool): Boolean flag for artifact only.
+    runtime_s (Any | None): One of ``Any``, ``None``.
+    telemetry_first_time (Any | None): One of ``Any``, ``None``.
+    telemetry_last_time (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _candidate_ref(None, True, None, None, None)  # doctest: +SKIP
+  """
   ns = SimpleNamespace(jid=jid, artifact_only=bool(artifact_only))
   if runtime_s is not None:
     ns.runtime_s = float(runtime_s)
@@ -1308,12 +2087,22 @@ def _candidate_ref(
   return ns
 
 
-def _job_refs_from_jids(jids):
-  """Return lightweight job references that only carry jid + artifact-only state.
-
+def _job_refs_from_jids(jids: Any) -> Any:
+  """
+  Return lightweight job references that only carry jid + artifact-only state.
+  
   metrics.Metrics().run() only requires ``job.jid``. Using tiny objects instead
   of ORM model instances avoids per-chunk model allocation and a redundant DB
   round-trip, which lowers memory usage and query pressure for large backfills.
+  
+  Args:
+    jids (Any): Jids passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _job_refs_from_jids(None)  # doctest: +SKIP
   """
   refs = []
   for item in jids:
@@ -1333,8 +2122,23 @@ def _job_refs_from_jids(jids):
   return refs
 
 
-def _attach_telemetry_bounds_to_candidate(candidate, bounds_by_jid):
-  """Set precomputed in-window bounds on a candidate ref when available."""
+def _attach_telemetry_bounds_to_candidate(
+  candidate: Any,
+  bounds_by_jid: Any,
+) -> Any:
+  """
+  Set precomputed in-window bounds on a candidate ref when available.
+  
+  Args:
+    candidate (Any): Candidate passed to this helper.
+    bounds_by_jid (Any): Bounds by jid passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _attach_telemetry_bounds_to_candidate(None, None)  # doctest: +SKIP
+  """
   bounds = bounds_by_jid.get(candidate.jid)
   if not bounds:
     return candidate
@@ -1346,8 +2150,19 @@ def _attach_telemetry_bounds_to_candidate(candidate, bounds_by_jid):
   return candidate
 
 
-def _fqdn_hosts_for_job(job_row):
-  """Return job host_list as FQDN hostnames used by host_data."""
+def _fqdn_hosts_for_job(job_row: Any) -> Any:
+  """
+  Return job host_list as FQDN hostnames used by host_data.
+  
+  Args:
+    job_row (Any): Job row passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _fqdn_hosts_for_job(None)  # doctest: +SKIP
+  """
   suffix = _host_name_suffix()
   hosts = []
   for host in (job_row.get("host_list") or []):
@@ -1362,8 +2177,16 @@ _COVERAGE_DEFER_LOGGED = set()
 _COVERAGE_DEFER_LOGGED_CAP = 10000
 
 
-def reset_metrics_coverage_defer_log_session():
-  """Clear once-per-session coverage defer logs (scheduler startup)."""
+def reset_metrics_coverage_defer_log_session() -> None:
+  """
+  Clear once-per-session coverage defer logs (scheduler startup).
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> reset_metrics_coverage_defer_log_session()  # doctest: +SKIP
+  """
   global _COVERAGE_MARGIN_WARN_LOGGED
   _COVERAGE_DEFER_LOGGED.clear()
   _COVERAGE_MARGIN_WARN_LOGGED = False
@@ -1373,8 +2196,22 @@ _COVERAGE_MARGIN_WARN_LOGGED = False
 _COVERAGE_MARGIN_WARN_CAP_SECONDS = 86400.0 * 7
 
 
-def _datetimes_mixed_naive_aware(*values):
-  """Return True when any non-null datetimes disagree on aware vs naive."""
+def _datetimes_mixed_naive_aware(*values: Any) -> Any:
+  """
+  Return True when any non-null datetimes disagree on aware vs naive.
+  
+  Args:
+    *values (Any): Variadic positional values for ``values``; element types
+    match the helper's documented protocol.
+  
+  Returns:
+    Any: Open return polymorphism from ``_datetimes_mixed_naive_aware``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> _datetimes_mixed_naive_aware()  # doctest: +SKIP
+  """
   flags = []
   for value in values:
     if value is None:
@@ -1384,15 +2221,31 @@ def _datetimes_mixed_naive_aware(*values):
 
 
 def evaluate_job_window_coverage_ready(
-    start_time,
-    end_time,
-    first_in_window,
-    last_in_window,
-    *,
-    start_margin_s=None,
-    end_margin_s=None,
-):
-  """Return ``(ready, reason)`` for dual-edge in-window coverage (job aggregate)."""
+  start_time: Any,
+  end_time: Any,
+  first_in_window: Any,
+  last_in_window: Any,
+  *,
+  start_margin_s: Any | None = None,
+  end_margin_s: Any | None = None,
+) -> Any:
+  """
+  Return ``(ready, reason)`` for dual-edge in-window coverage (job aggregate).
+  
+  Args:
+    start_time (Any): Start time passed to this helper.
+    end_time (Any): End time passed to this helper.
+    first_in_window (Any): First in window passed to this helper.
+    last_in_window (Any): Last in window passed to this helper.
+    start_margin_s (Any | None): One of ``Any``, ``None``.
+    end_margin_s (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> evaluate_job_window_coverage_ready(None, None, None, None, None, None)
+  """
   if start_margin_s is None:
     start_margin_s = float(cfg.get_metrics_readiness_start_margin_seconds())
   else:
@@ -1440,7 +2293,20 @@ def evaluate_job_window_coverage_ready(
   return reason["start_ok"] and reason["end_ok"], reason
 
 
-def _log_metrics_deferred_coverage_once(jid, reason):
+def _log_metrics_deferred_coverage_once(jid: Any, reason: Any) -> None:
+  """
+  Internal helper to log the metrics deferred coverage once.
+  
+  Args:
+    jid (Any): Jid passed to this helper.
+    reason (Any): Reason passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _log_metrics_deferred_coverage_once(None, None)  # doctest: +SKIP
+  """
   if jid in _COVERAGE_DEFER_LOGGED:
     return
   if len(_COVERAGE_DEFER_LOGGED) >= _COVERAGE_DEFER_LOGGED_CAP:
@@ -1462,17 +2328,37 @@ def _log_metrics_deferred_coverage_once(jid, reason):
 
 
 def _maybe_persist_window_coverage_gate_failure(
-    jid,
-    start_time,
-    end_time,
-    min_t,
-    max_t,
-    *,
-    reason=None,
-    stats=None,
-    scheduler_shared_lock=None,
-):
-  """Persist insufficient catalog when window-coverage gate fails (start or end edge)."""
+  jid: Any,
+  start_time: Any,
+  end_time: Any,
+  min_t: Any,
+  max_t: Any,
+  *,
+  reason: Any | None = None,
+  stats: Any | None = None,
+  scheduler_shared_lock: Any | None = None,
+) -> Any:
+  """
+  Persist insufficient catalog when window-coverage gate fails (start or end.
+  
+    edge).
+  
+  Args:
+    jid (Any): Jid passed to this helper.
+    start_time (Any): Start time passed to this helper.
+    end_time (Any): End time passed to this helper.
+    min_t (Any): Min t passed to this helper.
+    max_t (Any): Max t passed to this helper.
+    reason (Any | None): One of ``Any``, ``None``.
+    stats (Any | None): One of ``Any``, ``None``.
+    scheduler_shared_lock (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _maybe_persist_window_coverage_gate_failure(0)  # doctest: +SKIP
+  """
   if not cfg.get_metrics_readiness_require_window_coverage():
     return False
   if start_time is None or end_time is None:
@@ -1501,7 +2387,25 @@ def _maybe_persist_window_coverage_gate_failure(
   return wrote
 
 
-def _legacy_all_hosts_sample_after_end(end_time, hosts, latest_by_host):
+def _legacy_all_hosts_sample_after_end(
+  end_time: Any,
+  hosts: Any,
+  latest_by_host: Any,
+) -> Any:
+  """
+  Internal helper to handle legacy all hosts sample after end.
+  
+  Args:
+    end_time (Any): End time passed to this helper.
+    hosts (Any): Hosts passed to this helper.
+    latest_by_host (Any): Latest by host passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _legacy_all_hosts_sample_after_end(None, None, None)  # doctest: +SKIP
+  """
   if end_time is None or not hosts:
     return False
   return all(
@@ -1510,8 +2414,25 @@ def _legacy_all_hosts_sample_after_end(end_time, hosts, latest_by_host):
   )
 
 
-def _aggregate_bounds_from_host_map(hosts, host_min, host_max):
-  """Combine per-host in-window bounds into one ``(min_time, max_time)``."""
+def _aggregate_bounds_from_host_map(
+  hosts: Any,
+  host_min: Any,
+  host_max: Any,
+) -> Any:
+  """
+  Combine per-host in-window bounds into one ``(min_time, max_time)``.
+  
+  Args:
+    hosts (Any): Hosts passed to this helper.
+    host_min (Any): Host min passed to this helper.
+    host_max (Any): Host max passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _aggregate_bounds_from_host_map(None, None, None)  # doctest: +SKIP
+  """
   min_time = None
   max_time = None
   for host in hosts:
@@ -1524,8 +2445,25 @@ def _aggregate_bounds_from_host_map(hosts, host_min, host_max):
   return min_time, max_time
 
 
-def _in_window_per_host_bounds(hosts, start_time, end_time):
-  """Return ``(host_min_map, host_max_map)`` for ``hosts`` in ``[start, end]``."""
+def _in_window_per_host_bounds(
+  hosts: Any,
+  start_time: Any,
+  end_time: Any,
+) -> Any:
+  """
+  Return ``(host_min_map, host_max_map)`` for ``hosts`` in ``[start, end]``.
+  
+  Args:
+    hosts (Any): Hosts passed to this helper.
+    start_time (Any): Start time passed to this helper.
+    end_time (Any): End time passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _in_window_per_host_bounds(None, None, None)  # doctest: +SKIP
+  """
   host_min = {}
   host_max = {}
   if not hosts or start_time is None or end_time is None:
@@ -1552,16 +2490,44 @@ def _in_window_per_host_bounds(hosts, start_time, end_time):
   return host_min, host_max
 
 
-def _in_window_min_max_for_hosts(hosts, start_time, end_time):
-  """Return ``(min_time, max_time)`` for host_data in ``[start_time, end_time]``."""
+def _in_window_min_max_for_hosts(
+  hosts: Any,
+  start_time: Any,
+  end_time: Any,
+) -> Any:
+  """
+  Return ``(min_time, max_time)`` for host_data in ``[start_time, end_time]``.
+  
+  Args:
+    hosts (Any): Hosts passed to this helper.
+    start_time (Any): Start time passed to this helper.
+    end_time (Any): End time passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _in_window_min_max_for_hosts(None, None, None)  # doctest: +SKIP
+  """
   if not hosts or start_time is None or end_time is None:
     return None, None
   host_min, host_max = _in_window_per_host_bounds(hosts, start_time, end_time)
   return _aggregate_bounds_from_host_map(hosts, host_min, host_max)
 
 
-def _in_window_min_max_by_job_rows_reference(jobs):
-  """Reference per-job loop (tests); prefer :func:`_in_window_min_max_by_job_rows`."""
+def _in_window_min_max_by_job_rows_reference(jobs: Any) -> Any:
+  """
+  Reference per-job loop (tests); prefer :func:`_in_window_min_max_by_job_rows`.
+  
+  Args:
+    jobs (Any): Jobs passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _in_window_min_max_by_job_rows_reference(None)  # doctest: +SKIP
+  """
   bounds = {}
   for row in jobs:
     jid = row["jid"]
@@ -1573,8 +2539,19 @@ def _in_window_min_max_by_job_rows_reference(jobs):
   return bounds
 
 
-def _in_window_min_max_by_job_rows(jobs):
-  """Map jid -> ``(min_time, max_time)`` using batched host aggregates per window."""
+def _in_window_min_max_by_job_rows(jobs: Any) -> Any:
+  """
+  Map jid -> ``(min_time, max_time)`` using batched host aggregates per window.
+  
+  Args:
+    jobs (Any): Jobs passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _in_window_min_max_by_job_rows(None)  # doctest: +SKIP
+  """
   bounds = {}
   if not jobs:
     return bounds
@@ -1602,20 +2579,45 @@ def _in_window_min_max_by_job_rows(jobs):
   return bounds
 
 
-def _ready_jids_from_job_rows(jobs):
-  """Return ready jids from pre-fetched job rows (jid/start/end/host_list)."""
+def _ready_jids_from_job_rows(jobs: Any) -> Any:
+  """
+  Return ready jids from pre-fetched job rows (jid/start/end/host_list).
+  
+  Args:
+    jobs (Any): Jobs passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _ready_jids_from_job_rows(None)  # doctest: +SKIP
+  """
   ready, _bounds = _ready_jids_and_bounds_from_job_rows(jobs)
   return ready
 
 
 def _ready_jids_and_bounds_from_job_rows(
-    jobs,
-    *,
-    precomputed_bounds_by_jid=None,
-    stats=None,
-    scheduler_shared_lock=None,
-):
-  """Return ``(ready_jids, bounds_by_jid)`` for pre-fetched job rows."""
+  jobs: Any,
+  *,
+  precomputed_bounds_by_jid: Any | None = None,
+  stats: Any | None = None,
+  scheduler_shared_lock: Any | None = None,
+) -> Any:
+  """
+  Return ``(ready_jids, bounds_by_jid)`` for pre-fetched job rows.
+  
+  Args:
+    jobs (Any): Jobs passed to this helper.
+    precomputed_bounds_by_jid (Any | None): One of ``Any``, ``None``.
+    stats (Any | None): One of ``Any``, ``None``.
+    scheduler_shared_lock (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _ready_jids_and_bounds_from_job_rows(None, None, None, None)
+  """
   if not jobs:
     return [], {}
 
@@ -1680,8 +2682,19 @@ def _ready_jids_and_bounds_from_job_rows(
   return ready, bounds_by_jid
 
 
-def _filter_jids_with_samples_after_end(jids):
-  """Keep jids that pass readiness (window coverage or legacy post-end per host)."""
+def _filter_jids_with_samples_after_end(jids: Any) -> Any:
+  """
+  Keep jids that pass readiness (window coverage or legacy post-end per host).
+  
+  Args:
+    jids (Any): Jids passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _filter_jids_with_samples_after_end(None)  # doctest: +SKIP
+  """
   if not jids:
     return []
 
@@ -1695,12 +2708,25 @@ def _filter_jids_with_samples_after_end(jids):
 
 
 def _filter_jids_with_samples_after_end_and_bounds(
-    jids,
-    *,
-    stats=None,
-    scheduler_shared_lock=None,
-):
-  """Like :func:`_filter_jids_with_samples_after_end` but also return bounds map."""
+  jids: Any,
+  *,
+  stats: Any | None = None,
+  scheduler_shared_lock: Any | None = None,
+) -> Any:
+  """
+  Like :func:`_filter_jids_with_samples_after_end` but also return bounds map.
+  
+  Args:
+    jids (Any): Jids passed to this helper.
+    stats (Any | None): One of ``Any``, ``None``.
+    scheduler_shared_lock (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _filter_jids_with_samples_after_end_and_bounds(None, None, None)
+  """
   if not jids:
     return [], {}
 
@@ -1717,15 +2743,31 @@ def _filter_jids_with_samples_after_end_and_bounds(
 
 
 def _strict_host_list_coverage_bucket(
-    start_time,
-    end_time,
-    min_in_window,
-    max_in_window,
-    *,
-    start_margin_s=None,
-    end_margin_s=None,
-):
-  """Classify host_list-scoped in-window bounds (canonical strict/proxy semantics)."""
+  start_time: Any,
+  end_time: Any,
+  min_in_window: Any,
+  max_in_window: Any,
+  *,
+  start_margin_s: Any | None = None,
+  end_margin_s: Any | None = None,
+) -> Any:
+  """
+  Classify host_list-scoped in-window bounds (canonical strict/proxy semantics).
+  
+  Args:
+    start_time (Any): Start time passed to this helper.
+    end_time (Any): End time passed to this helper.
+    min_in_window (Any): Min in window passed to this helper.
+    max_in_window (Any): Max in window passed to this helper.
+    start_margin_s (Any | None): One of ``Any``, ``None``.
+    end_margin_s (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _strict_host_list_coverage_bucket(None, None, None, None, None, None)
+  """
   if start_time is None or end_time is None:
     return "unknown"
   if min_in_window is None and max_in_window is None:
@@ -1743,17 +2785,47 @@ def _strict_host_list_coverage_bucket(
   return "unknown"
 
 
-def _proxy_window_coverage_bucket(start_time, end_time, min_in_window, max_in_window):
-  """Reject when host_list in-window min/max proves coverage failure."""
+def _proxy_window_coverage_bucket(
+  start_time: Any,
+  end_time: Any,
+  min_in_window: Any,
+  max_in_window: Any,
+) -> Any:
+  """
+  Reject when host_list in-window min/max proves coverage failure.
+  
+  Args:
+    start_time (Any): Start time passed to this helper.
+    end_time (Any): End time passed to this helper.
+    min_in_window (Any): Min in window passed to this helper.
+    max_in_window (Any): Max in window passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _proxy_window_coverage_bucket(None, None, None, None)  # doctest: +SKIP
+  """
   return _strict_host_list_coverage_bucket(
       start_time, end_time, min_in_window, max_in_window)
 
 
-def _proxy_readiness_has_any_and_post_end(end_time, max_time):
-  """Return ``(has_any_jid, has_post_end)`` matching legacy ``Exists`` semantics.
-
+def _proxy_readiness_has_any_and_post_end(end_time: Any, max_time: Any) -> Any:
+  """
+  Return ``(has_any_jid, has_post_end)`` matching legacy ``Exists`` semantics.
+  
   ``has_any_jid``: any ``host_data`` row for the jid exists.
   ``has_post_end``: ``end_time`` is set and some row has ``time > end_time``.
+  
+  Args:
+    end_time (Any): End time passed to this helper.
+    max_time (Any): Max time passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _proxy_readiness_has_any_and_post_end(None, None)  # doctest: +SKIP
   """
   has_any = max_time is not None
   has_post = (
@@ -1764,11 +2836,22 @@ def _proxy_readiness_has_any_and_post_end(end_time, max_time):
   return has_any, has_post
 
 
-def _proxy_readiness_bucket(end_time, max_time):
-  """Return ``'reject'`` or ``'unknown'`` for one jid's proxy inputs.
-
+def _proxy_readiness_bucket(end_time: Any, max_time: Any) -> Any:
+  """
+  Return ``'reject'`` or ``'unknown'`` for one jid's proxy inputs.
+  
   Matches the per-jid branch of :func:`_proxy_reject_not_ready_jids` using
   ``end_time`` and ``Max(time)`` for that jid.
+  
+  Args:
+    end_time (Any): End time passed to this helper.
+    max_time (Any): Max time passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _proxy_readiness_bucket(None, None)  # doctest: +SKIP
   """
   has_any_jid, has_post_end = _proxy_readiness_has_any_and_post_end(end_time, max_time)
   if has_any_jid and (not has_post_end):
@@ -1776,12 +2859,24 @@ def _proxy_readiness_bucket(end_time, max_time):
   return "unknown"
 
 
-def _proxy_readiness_for_jid(jid):
-  """ORM proxy for one jid: same semantics as bulk :func:`_proxy_reject_not_ready_jids`.
-
+def _proxy_readiness_for_jid(jid: Any) -> Any:
+  """
+  ORM proxy for one jid: same semantics as bulk.
+  
+    :func:`_proxy_reject_not_ready_jids`.
+  
   Returns ``'reject'`` when host_list-scoped in-window data proves not-ready, or
   ``'unknown'`` when the strict host_list probe must decide (including
   non-PostgreSQL, where bulk code treats every jid as unknown).
+  
+  Args:
+    jid (Any): Jid passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _proxy_readiness_for_jid(None)  # doctest: +SKIP
   """
   if connections["default"].vendor != "postgresql":
     return "unknown"
@@ -1810,15 +2905,29 @@ def _proxy_readiness_for_jid(jid):
   return _proxy_readiness_bucket(end_time, max_time)
 
 
-def _proxy_reject_not_ready_jids(jids):
-  """Cheap jid-level prefilter: reject only when host_list in-window data proves not-ready.
-
-  Uses the same host_list + window aggregate as strict readiness (not ``host_data.jid``).
-  When ingest does not tag ``host_data.jid``, or jid-scoped rows lag host_list samples,
+def _proxy_reject_not_ready_jids(jids: Any) -> Any:
+  """
+  Cheap jid-level prefilter: reject only when host_list in-window data proves.
+  
+    not-ready.
+  
+  Uses the same host_list + window aggregate as strict readiness (not
+    ``host_data.jid``).
+  When ingest does not tag ``host_data.jid``, or jid-scoped rows lag host_list
+    samples,
   keep the jid in the ``unknown`` set and let the full readiness probe decide.
-
+  
   Uses bounded ``jid__in`` batches and batched host aggregates (no correlated
   ``Exists`` per row) to avoid PostgreSQL ``statement_timeout`` on large chunks.
+  
+  Args:
+    jids (Any): Jids passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _proxy_reject_not_ready_jids(None)  # doctest: +SKIP
   """
   if not jids:
     return set(), []
@@ -1874,8 +2983,29 @@ def _proxy_reject_not_ready_jids(jids):
   return reject, unknown
 
 
-def _adjust_readiness_probe_target(current_target, had_error, elapsed_s, produced_ready, max_target):
-  """Adaptive target size for per-pass readiness probes."""
+def _adjust_readiness_probe_target(
+  current_target: Any,
+  had_error: Any,
+  elapsed_s: Any,
+  produced_ready: Any,
+  max_target: Any,
+) -> Any:
+  """
+  Adaptive target size for per-pass readiness probes.
+  
+  Args:
+    current_target (Any): Current target passed to this helper.
+    had_error (Any): Had error passed to this helper.
+    elapsed_s (Any): Elapsed s passed to this helper.
+    produced_ready (Any): Produced ready passed to this helper.
+    max_target (Any): Max target passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _adjust_readiness_probe_target(None, None, None, None, None)
+  """
   target = max(READINESS_PROBE_TARGET_MIN, int(current_target))
   if had_error:
     return max(READINESS_PROBE_TARGET_MIN, target // 2)
@@ -1884,7 +3014,27 @@ def _adjust_readiness_probe_target(current_target, had_error, elapsed_s, produce
   return target
 
 
-def _adjust_strict_check_batch_size(current_size, had_timeout, latency_s, max_size):
+def _adjust_strict_check_batch_size(
+  current_size: int,
+  had_timeout: int,
+  latency_s: Any,
+  max_size: int,
+) -> Any:
+  """
+  Internal helper to handle adjust strict check batch size.
+  
+  Args:
+    current_size (int): Integer value for current size.
+    had_timeout (int): Integer value for had timeout.
+    latency_s (Any): Latency s passed to this helper.
+    max_size (int): Integer value for max size.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _adjust_strict_check_batch_size(0, 0, None, 0)  # doctest: +SKIP
+  """
   size = max(STRICT_CHECK_BATCH_MIN, int(current_size))
   if had_timeout:
     return max(STRICT_CHECK_BATCH_MIN, size // 2)
@@ -1893,15 +3043,46 @@ def _adjust_strict_check_batch_size(current_size, had_timeout, latency_s, max_si
   return size
 
 
-def _iter_subbatches(values, batch_size):
+def _iter_subbatches(values: Any, batch_size: int) -> Iterator[Any]:
+  """
+  Internal helper to iterate over the subbatches.
+  
+  Args:
+    values (Any): Values passed to this helper.
+    batch_size (int): Integer value for batch size.
+  
+  Yields:
+    Iterator[Any]: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _iter_subbatches(None, 0)  # doctest: +SKIP
+  """
   step = max(1, int(batch_size))
   for i in range(0, len(values), step):
     yield values[i:i + step]
 
 
 @contextlib.contextmanager
-def _temporary_metrics_run_timeouts(*, poll_timeout_s=None, stall_timeout_s=None):
-  """Temporarily override Metrics.run poll/stall timeout env vars."""
+def _temporary_metrics_run_timeouts(
+  *,
+  poll_timeout_s: Any | None = None,
+  stall_timeout_s: Any | None = None,
+) -> Iterator[Any]:
+  """
+  Temporarily override Metrics.run poll/stall timeout env vars.
+  
+  Args:
+    poll_timeout_s (Any | None): One of ``Any``, ``None``.
+    stall_timeout_s (Any | None): One of ``Any``, ``None``.
+  
+  Yields:
+    Iterator[Any]: Open return polymorphism from
+    ``_temporary_metrics_run_timeouts``: concrete type depends on inputs and
+    branch (mapping, scalar, handle, or ``None``-like empty).
+  
+  Examples:
+    >>> _temporary_metrics_run_timeouts(None, None)  # doctest: +SKIP
+  """
   poll_key = "HPCPERFSTATS_METRICS_RUN_POLL_TIMEOUT_S"
   stall_key = "HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S"
   prev_poll = os.environ.get(poll_key)
@@ -1923,18 +3104,50 @@ def _temporary_metrics_run_timeouts(*, poll_timeout_s=None, stall_timeout_s=None
       os.environ[stall_key] = prev_stall
 
 
-def update_metrics(date, rerun=False):
-  """Compute and persist metrics for all jobs ending on date (runtime >= min_time).
-
-  If not rerun, skip jobs that already have the full metrics catalog (each metric
+def update_metrics(date: Any, rerun: bool = False) -> Any:
+  """
+  Compute and persist metrics for all jobs ending on date (runtime >= min_time).
+  
+  If not rerun, skip jobs that already have the full metrics catalog (each
+    metric
   has a value or no_data_reason). Uses metrics.Metrics().run(jobs_list).
-
+  
   Memory-optimized: filters in DB, processes in chunks, no full-list cache.
+  
+  Args:
+    date (Any): Date passed to this helper.
+    rerun (bool): Boolean flag for rerun.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> update_metrics(None, True)  # doctest: +SKIP
   """
   return update_metrics_for_dates([date], rerun=rerun)
 
 
-def _build_date_chunk_iterators(dates, min_time, rerun, phase_timer):
+def _build_date_chunk_iterators(
+  dates: Any,
+  min_time: Any,
+  rerun: Any,
+  phase_timer: Any,
+) -> Any:
+  """
+  Internal helper to build the date chunk iterators.
+  
+  Args:
+    dates (Any): Dates passed to this helper.
+    min_time (Any): Min time passed to this helper.
+    rerun (Any): Rerun passed to this helper.
+    phase_timer (Any): Phase timer passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _build_date_chunk_iterators(None, None, None, None)  # doctest: +SKIP
+  """
   date_states = []
   for d in dates:
     with phase_timer.phase("candidate_sql_s"):
@@ -1949,27 +3162,61 @@ def _build_date_chunk_iterators(dates, min_time, rerun, phase_timer):
 
 
 def _fill_ready_queue(
-    date_states,
-    ready_queue,
-    mode,
-    prefetch_chunks,
-    phase_timer,
-    stats,
-    strict_check_state,
-    strict_check_cooldown_until,
-    rr_cursor,
-    scheduler_shared_lock,
-    on_not_ready_jid=None,
-    on_candidate_jid=None,
-):
-  """Fill ``ready_queue`` from date iterators and strict readiness.
-
-  ``on_not_ready_jid`` when provided is called as ``(jid, candidate=None)`` where
+  date_states: Any,
+  ready_queue: Any,
+  mode: Any,
+  prefetch_chunks: Any,
+  phase_timer: Any,
+  stats: Any,
+  strict_check_state: Any,
+  strict_check_cooldown_until: Any,
+  rr_cursor: Any,
+  scheduler_shared_lock: Any,
+  on_not_ready_jid: Any | None = None,
+  on_candidate_jid: Any | None = None,
+) -> None:
+  """
+  Fill ``ready_queue`` from date iterators and strict readiness.
+  
+  ``on_not_ready_jid`` when provided is called as ``(jid, candidate=None)``
+    where
   ``candidate`` is the scheduler ref object when known (for deferred metadata).
+  
+  Args:
+    date_states (Any): Date states passed to this helper.
+    ready_queue (Any): Ready queue passed to this helper.
+    mode (Any): Mode or kind token selecting a code path.
+    prefetch_chunks (Any): Prefetch chunks passed to this helper.
+    phase_timer (Any): Phase timer passed to this helper.
+    stats (Any): Stats passed to this helper.
+    strict_check_state (Any): Strict check state passed to this helper.
+    strict_check_cooldown_until (Any): Strict check cooldown until passed to
+    this helper.
+    rr_cursor (Any): Rr cursor passed to this helper.
+    scheduler_shared_lock (Any): Scheduler shared lock passed to this helper.
+    on_not_ready_jid (Any | None): One of ``Any``, ``None``.
+    on_candidate_jid (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _fill_ready_queue(0)  # doctest: +SKIP
   """
 
-  def _resume_or_next_pk_chunk(state):
-    """Return ``(pk_list_or_none, is_new_iter_chunk)``."""
+  def _resume_or_next_pk_chunk(state: Any) -> Any:
+    """
+    Return ``(pk_list_or_none, is_new_iter_chunk)``.
+    
+    Args:
+      state (Any): State passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _resume_or_next_pk_chunk(None)  # doctest: +SKIP
+    """
     tail = state.get("pending_tail")
     if tail:
       state["pending_tail"] = None
@@ -1980,8 +3227,22 @@ def _fill_ready_queue(
     except StopIteration:
       return None, True
 
-  def _strict_ready_record_latency(latency_s, n_calls):
-    """Update rolling strict-check latency and adaptive batch size (``n_calls`` DB calls)."""
+  def _strict_ready_record_latency(latency_s: Any, n_calls: Any) -> None:
+    """
+    Update rolling strict-check latency and adaptive batch size (``n_calls`` DB.
+    
+      calls).
+    
+    Args:
+      latency_s (Any): Latency s passed to this helper.
+      n_calls (Any): N calls passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _strict_ready_record_latency(None, None)  # doctest: +SKIP
+    """
     with scheduler_shared_lock:
       prev = stats["strict_check_avg_latency_ms"]
       per_ms = (latency_s / max(1, n_calls)) * 1000.0
@@ -1999,8 +3260,25 @@ def _fill_ready_queue(
       )
       stats["strict_batch_size_current"] = strict_check_state["batch_size"]
 
-  def _strict_ready_fallback_one(jid, candidate_by_jid=None):
-    """Single-jid strict readiness after batch failure (same semantics as legacy path)."""
+  def _strict_ready_fallback_one(
+    jid: Any,
+    candidate_by_jid: Any | None = None,
+  ) -> Any:
+    """
+    Single-jid strict readiness after batch failure (same semantics as legacy.
+    
+      path).
+    
+    Args:
+      jid (Any): Jid passed to this helper.
+      candidate_by_jid (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _strict_ready_fallback_one(None, None)  # doctest: +SKIP
+    """
     with scheduler_shared_lock:
       if strict_check_cooldown_until.get(jid, 0.0) > time.monotonic():
         return None
@@ -2026,14 +3304,27 @@ def _fill_ready_queue(
     candidate = lookup.get(ready_jid, _candidate_ref(ready_jid))
     return _attach_telemetry_bounds_to_candidate(candidate, bounds_by_jid)
 
-  def _process_pk_chunk(state, pk_chunk):
-    """Process ``pk_chunk`` in order; set ``pending_tail`` if prefetch fills mid-chunk.
-
+  def _process_pk_chunk(state: Any, pk_chunk: Any) -> Any:
+    """
+    Process ``pk_chunk`` in order; set ``pending_tail`` if prefetch fills mid-.
+    
+      chunk.
+    
     Returns ``True`` when ``len(ready_queue) >= prefetch_chunks`` and the caller
     should stop scheduling more readiness work in this invocation.
-
+    
     Uses batched proxy rejection and batched strict readiness probes to avoid
     per-jid round-trips on the producer thread.
+    
+    Args:
+      state (Any): State passed to this helper.
+      pk_chunk (Any): Pk chunk passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _process_pk_chunk(None, None)  # doctest: +SKIP
     """
     ordered = [
         candidate if hasattr(candidate, "jid") else _candidate_ref(candidate)
@@ -2263,22 +3554,50 @@ def _fill_ready_queue(
 
 
 def _start_candidate_rescan_thread(
-    *,
-    dates,
-    min_time,
-    rerun,
-    rescan_candidate_jids,
-    rescan_seen_jids,
-    rescan_seen_order,
-    rescan_seen_cap,
-    rescan_lock,
-    stop_event,
-):
-  """Start background thread that periodically discovers newly eligible jobs."""
+  *,
+  dates: Any,
+  min_time: Any,
+  rerun: Any,
+  rescan_candidate_jids: Any,
+  rescan_seen_jids: Any,
+  rescan_seen_order: Any,
+  rescan_seen_cap: Any,
+  rescan_lock: Any,
+  stop_event: Any,
+) -> Any:
+  """
+  Start background thread that periodically discovers newly eligible jobs.
+  
+  Args:
+    dates (Any): Dates passed to this helper.
+    min_time (Any): Min time passed to this helper.
+    rerun (Any): Rerun passed to this helper.
+    rescan_candidate_jids (Any): Rescan candidate jids passed to this helper.
+    rescan_seen_jids (Any): Rescan seen jids passed to this helper.
+    rescan_seen_order (Any): Rescan seen order passed to this helper.
+    rescan_seen_cap (Any): Rescan seen cap passed to this helper.
+    rescan_lock (Any): Rescan lock passed to this helper.
+    stop_event (Any): Stop event passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _start_candidate_rescan_thread(0)  # doctest: +SKIP
+  """
   if not dates:
     return None
 
-  def _rescan_loop():
+  def _rescan_loop() -> None:
+    """
+    Internal helper to handle rescan loop.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _rescan_loop()  # doctest: +SKIP
+    """
     from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
     set_daemon_thread_title(
@@ -2352,11 +3671,38 @@ def _start_candidate_rescan_thread(
   return thread
 
 
-def _run_public_ef_artifacts_parallel_phase(shared_pool, phase_timer):
-  """Build /pub EF artifacts on the metrics pool before any job compute."""
+def _run_public_ef_artifacts_parallel_phase(
+  shared_pool: Any,
+  phase_timer: Any,
+) -> Any:
+  """
+  Build /pub EF artifacts on the metrics pool before any job compute.
+  
+  Args:
+    shared_pool (Any): Shared pool passed to this helper.
+    phase_timer (Any): Phase timer passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _run_public_ef_artifacts_parallel_phase(None, None)  # doctest: +SKIP
+  """
   last_progress_log = {"at": 0.0}
 
-  def _progress_update(snapshot):
+  def _progress_update(snapshot: Any) -> None:
+    """
+    Internal helper to handle progress update.
+    
+    Args:
+      snapshot (Any): Snapshot passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _progress_update(None)  # doctest: +SKIP
+    """
     now = time.monotonic()
     if (now - last_progress_log["at"]) < PUBLIC_EF_PHASE_POLL_TIMEOUT_SECONDS:
       return
@@ -2402,12 +3748,22 @@ def _run_public_ef_artifacts_parallel_phase(shared_pool, phase_timer):
   return pub_stats
 
 
-def _reset_metrics_pool_after_public_phase(metrics_manager):
-  """Recreate worker processes after /pub phase before job metrics.
-
+def _reset_metrics_pool_after_public_phase(metrics_manager: Any) -> None:
+  """
+  Recreate worker processes after /pub phase before job metrics.
+  
   Public EF workers and job-metrics workers both use ORM-heavy paths. Recreating
   the pool between phases avoids carrying any mixed server-cursor/session state
   into the first metrics batch.
+  
+  Args:
+    metrics_manager (Any): Metrics manager passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _reset_metrics_pool_after_public_phase(None)  # doctest: +SKIP
   """
   resetter = getattr(metrics_manager, "reset_pool_hard", None)
   if callable(resetter):
@@ -2421,28 +3777,67 @@ def _reset_metrics_pool_after_public_phase(metrics_manager):
 
 
 def _start_readiness_producer(
-    *,
-    date_states,
-    ready_queue,
-    ready_queue_lock,
-    producer_done,
-    scheduler_mode,
-    prefetch_ready_cap,
-    readiness_probe_target,
-    strict_check_state,
-    strict_check_cooldown_until,
-    phase_timer,
-    stats,
-    completion_reporter,
-    scheduler_shared_lock,
-    rescan_candidate_jids,
-    rescan_seen_jids,
-    rescan_seen_order,
-    rescan_seen_cap,
-    rescan_lock,
-):
-  """Start background producer that fills ready_queue from readiness checks."""
-  def _producer_loop():
+  *,
+  date_states: Any,
+  ready_queue: Any,
+  ready_queue_lock: Any,
+  producer_done: Any,
+  scheduler_mode: Any,
+  prefetch_ready_cap: Any,
+  readiness_probe_target: Any,
+  strict_check_state: Any,
+  strict_check_cooldown_until: Any,
+  phase_timer: Any,
+  stats: Any,
+  completion_reporter: Any,
+  scheduler_shared_lock: Any,
+  rescan_candidate_jids: Any,
+  rescan_seen_jids: Any,
+  rescan_seen_order: Any,
+  rescan_seen_cap: Any,
+  rescan_lock: Any,
+) -> Any:
+  """
+  Start background producer that fills ready_queue from readiness checks.
+  
+  Args:
+    date_states (Any): Date states passed to this helper.
+    ready_queue (Any): Ready queue passed to this helper.
+    ready_queue_lock (Any): Ready queue lock passed to this helper.
+    producer_done (Any): Producer done passed to this helper.
+    scheduler_mode (Any): Scheduler mode passed to this helper.
+    prefetch_ready_cap (Any): Prefetch ready cap passed to this helper.
+    readiness_probe_target (Any): Readiness probe target passed to this
+    helper.
+    strict_check_state (Any): Strict check state passed to this helper.
+    strict_check_cooldown_until (Any): Strict check cooldown until passed to
+    this helper.
+    phase_timer (Any): Phase timer passed to this helper.
+    stats (Any): Stats passed to this helper.
+    completion_reporter (Any): Completion reporter passed to this helper.
+    scheduler_shared_lock (Any): Scheduler shared lock passed to this helper.
+    rescan_candidate_jids (Any): Rescan candidate jids passed to this helper.
+    rescan_seen_jids (Any): Rescan seen jids passed to this helper.
+    rescan_seen_order (Any): Rescan seen order passed to this helper.
+    rescan_seen_cap (Any): Rescan seen cap passed to this helper.
+    rescan_lock (Any): Rescan lock passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _start_readiness_producer(0)  # doctest: +SKIP
+  """
+  def _producer_loop() -> None:
+    """
+    Internal helper to handle producer loop.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _producer_loop()  # doctest: +SKIP
+    """
     from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
     set_daemon_thread_title(
@@ -2457,7 +3852,19 @@ def _start_readiness_producer(
     last_processed_total = 0
     last_progress_at = time.monotonic()
 
-    def _remember_candidate(candidate):
+    def _remember_candidate(candidate: Any) -> None:
+      """
+      Internal helper to handle remember candidate.
+      
+      Args:
+        candidate (Any): Candidate passed to this helper.
+      
+      Returns:
+        None
+      
+      Examples:
+        >>> _remember_candidate(None)  # doctest: +SKIP
+      """
       jid = getattr(candidate, "jid", candidate)
       ao = getattr(candidate, "artifact_only", False)
       rt = getattr(candidate, "runtime_s", None)
@@ -2478,7 +3885,20 @@ def _start_readiness_producer(
       if rt is not None:
         meta["runtime_s"] = float(rt)
 
-    def _defer_not_ready_jid(jid, runtime_s=None):
+    def _defer_not_ready_jid(jid: Any, runtime_s: Any | None = None) -> None:
+      """
+      Internal helper to handle defer not ready job id.
+      
+      Args:
+        jid (Any): Jid passed to this helper.
+        runtime_s (Any | None): One of ``Any``, ``None``.
+      
+      Returns:
+        None
+      
+      Examples:
+        >>> _defer_not_ready_jid(None, None)  # doctest: +SKIP
+      """
       now = time.monotonic()
       meta = deferred_meta.setdefault(
           jid,
@@ -2524,7 +3944,20 @@ def _start_readiness_producer(
         local_ready = deque()
         deferred_hits = []
 
-        def _defer_hit(jid, candidate=None):
+        def _defer_hit(jid: Any, candidate: Any | None = None) -> None:
+          """
+          Internal helper to handle defer hit.
+          
+          Args:
+            jid (Any): Jid passed to this helper.
+            candidate (Any | None): One of ``Any``, ``None``.
+          
+          Returns:
+            None
+          
+          Examples:
+            >>> _defer_hit(None, None)  # doctest: +SKIP
+          """
           rt = getattr(candidate, "runtime_s", None) if candidate is not None else None
           deferred_hits.append((jid, rt))
 
@@ -2675,8 +4108,25 @@ def _start_readiness_producer(
   return producer
 
 
-def _compute_metrics_batch(metrics_manager, job_refs, shared_pool):
-  """Run metrics per-jid and return (succeeded_jids, failed_count)."""
+def _compute_metrics_batch(
+  metrics_manager: Any,
+  job_refs: Any,
+  shared_pool: Any,
+) -> Any:
+  """
+  Run metrics per-jid and return (succeeded_jids, failed_count).
+  
+  Args:
+    metrics_manager (Any): Metrics manager passed to this helper.
+    job_refs (Any): Job refs passed to this helper.
+    shared_pool (Any): Shared pool passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _compute_metrics_batch(None, None, None)  # doctest: +SKIP
+  """
   if not job_refs:
     return [], 0
   succeeded = []
@@ -2700,24 +4150,44 @@ def _compute_metrics_batch(metrics_manager, job_refs, shared_pool):
 
 @dataclass
 class PerJidComputeContext:
-  """Shared per-jid context for the compute + artifact pipeline."""
+  """
+  Shared per-jid context for the compute + artifact pipeline.
+  
+  Attributes:
+    artifact_context: Attribute.
+    jid: Attribute.
+  """
   jid: str
   artifact_context: dict = field(default_factory=dict)
 
 
 def _compute_and_prewarm_jid(
-    metrics_manager,
-    prewarm_pipeline,
-    job_ref,
-    shared_pool,
-    metrics_run_lock=None,
-):
-  """Compute metrics and immediately prewarm detail/plot artifacts for one jid.
-
+  metrics_manager: Any,
+  prewarm_pipeline: Any,
+  job_ref: Any,
+  shared_pool: Any,
+  metrics_run_lock: Any | None = None,
+) -> Any:
+  """
+  Compute metrics and immediately prewarm detail/plot artifacts for one jid.
+  
   When ``metrics_run_lock`` is set (concurrent scheduler threads), only
   ``metrics_manager.run`` is taken under the lock: ``multiprocessing.Pool.imap``
   from multiple threads on one pool is unsafe; ``prewarm_pipeline.run_for_jid``
   runs outside the lock so prewarm can overlap other jobs' metrics phases.
+  
+  Args:
+    metrics_manager (Any): Metrics manager passed to this helper.
+    prewarm_pipeline (Any): Prewarm pipeline passed to this helper.
+    job_ref (Any): Job ref passed to this helper.
+    shared_pool (Any): Shared pool passed to this helper.
+    metrics_run_lock (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _compute_and_prewarm_jid(None, None, None, None, None)  # doctest: +SKIP
   """
   context = PerJidComputeContext(jid=job_ref.jid)
   telemetry = _new_jid_telemetry()
@@ -2852,26 +4322,57 @@ def _compute_and_prewarm_jid(
   }
 
 
-def _empty_jid_outcome_telemetry():
-  """Telemetry dict shape expected by the scheduler consumer."""
+def _empty_jid_outcome_telemetry() -> Any:
+  """
+  Telemetry dict shape expected by the scheduler consumer.
+  
+  Returns:
+    Any: Open return polymorphism from ``_empty_jid_outcome_telemetry``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> _empty_jid_outcome_telemetry()  # doctest: +SKIP
+  """
   return _new_jid_telemetry()
 
 
 def _scheduler_jid_outcome(
-    *,
-    ok,
-    jid,
-    metrics_s,
-    prewarm_s,
-    telemetry,
-    batch_exception=False,
-    fallback_failed=False,
-    failure_kind=None,
-    error_type=None,
-    error_message=None,
-    persist_s=0.0,
-):
-  """Canonical scheduler-facing per-jid outcome dict."""
+  *,
+  ok: Any,
+  jid: Any,
+  metrics_s: Any,
+  prewarm_s: Any,
+  telemetry: Any,
+  batch_exception: bool = False,
+  fallback_failed: bool = False,
+  failure_kind: Any | None = None,
+  error_type: Any | None = None,
+  error_message: Any | None = None,
+  persist_s: float = 0.0,
+) -> Any:
+  """
+  Canonical scheduler-facing per-jid outcome dict.
+  
+  Args:
+    ok (Any): Ok passed to this helper.
+    jid (Any): Jid passed to this helper.
+    metrics_s (Any): Metrics s passed to this helper.
+    prewarm_s (Any): Prewarm s passed to this helper.
+    telemetry (Any): Telemetry passed to this helper.
+    batch_exception (bool): Boolean flag for batch exception.
+    fallback_failed (bool): Boolean flag for fallback failed.
+    failure_kind (Any | None): One of ``Any``, ``None``.
+    error_type (Any | None): One of ``Any``, ``None``.
+    error_message (Any | None): One of ``Any``, ``None``.
+    persist_s (float): Floating-point value for persist s.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _scheduler_jid_outcome(0)  # doctest: +SKIP
+  """
   return {
       "ok": bool(ok),
       "jid": jid,
@@ -2888,25 +4389,40 @@ def _scheduler_jid_outcome(
 
 
 def _compute_jid_outcomes_batch(
-    job_refs,
-    metrics_manager,
-    prewarm_pipeline,
-    shared_pool,
-    batch_timing=None,
-):
-  """Run one batched ``Metrics.run`` then optional prewarm (submit/drain).
-
+  job_refs: Any,
+  metrics_manager: Any,
+  prewarm_pipeline: Any,
+  shared_pool: Any,
+  batch_timing: Any | None = None,
+) -> Any:
+  """
+  Run one batched ``Metrics.run`` then optional prewarm (submit/drain).
+  
   Returns outcome dicts sorted by ``jid`` for stable counters/telemetry.
-
+  
   A single ``Metrics.run(job_refs, …)`` saturates the process pool; prewarm
   uses ``_PrewarmPipeline.submit`` + ``drain_some`` when ``pipeline_required``,
-  or runs inline when configured. Set ``[PIPELINE] metrics_scheduler_skip_prewarm``
+  or runs inline when configured. Set ``[PIPELINE]
+    metrics_scheduler_skip_prewarm``
   (or env ``HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM``) to skip **plot**
   persistence for catch-up runs; **job_detail / multiprecision** artifacts are
   still persisted inline so Job Detail GPU/Mix surfaces are not left empty.
-
+  
   When ``batch_timing`` is a dict, it is populated with ``metrics_wall_s``,
   ``prewarm_wall_s``, and ``batch_wall_s`` for scheduler watchdogs.
+  
+  Args:
+    job_refs (Any): Job refs passed to this helper.
+    metrics_manager (Any): Metrics manager passed to this helper.
+    prewarm_pipeline (Any): Prewarm pipeline passed to this helper.
+    shared_pool (Any): Shared pool passed to this helper.
+    batch_timing (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _compute_jid_outcomes_batch(None, None, None, None, None)
   """
   if not job_refs:
     return []
@@ -3243,8 +4759,20 @@ def _compute_jid_outcomes_batch(
   ]
 
 
-def update_metrics_for_dates(dates, rerun=False):
-  """Global scheduler across dates to keep workers saturated."""
+def update_metrics_for_dates(dates: Any, rerun: bool = False) -> None:
+  """
+  Global scheduler across dates to keep workers saturated.
+  
+  Args:
+    dates (Any): Dates passed to this helper.
+    rerun (bool): Boolean flag for rerun.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> update_metrics_for_dates(None, True)  # doctest: +SKIP
+  """
   global LAST_UPDATE_METRICS_DIAGNOSTICS
   LAST_UPDATE_METRICS_DIAGNOSTICS = None
   close_old_connections()
@@ -3256,7 +4784,20 @@ def update_metrics_for_dates(dates, rerun=False):
   prefetch_chunks = cfg.get_metrics_scheduler_prefetch_chunks()
   stats = _new_scheduler_stats()
 
-  def _run():
+  def _run() -> None:
+    """
+    Internal helper to run.
+    
+    Returns:
+      None
+    
+    Raises:
+      scheduled_stall_exit: Raised when ``_run`` hits a
+      ``scheduled_stall_exit`` failure path.
+    
+    Examples:
+      >>> _run()  # doctest: +SKIP
+    """
     nonlocal phase_timer, stats
     # ``run_with_db_retry`` may invoke ``_run`` again; reset diagnostics per attempt
     # so retries report one scheduler pass, not cumulative counters.
@@ -3290,7 +4831,16 @@ def update_metrics_for_dates(dates, rerun=False):
       scheduler_shared_lock = threading.Lock()
       completion_reporter = _CompletionReporter()
 
-      def _extra_stats_snapshot():
+      def _extra_stats_snapshot() -> Any:
+        """
+        Internal helper to handle extra stats snapshot.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> _extra_stats_snapshot()  # doctest: +SKIP
+        """
         prewarm_snapshot = prewarm_pipeline.stats()
         with scheduler_shared_lock:
           return {
@@ -3894,13 +5444,23 @@ def update_metrics_for_dates(dates, rerun=False):
   )
 
 
-def _parse_jid_cli_arg(argv):
-  """Parse ``--jid`` / ``--jid=`` from argv.
-
+def _parse_jid_cli_arg(argv: Any) -> Any:
+  """
+  Parse ``--jid`` / ``--jid=`` from argv.
+  
   Returns ``(jid, error)``:
   - ``(None, None)`` — not a ``--jid`` invocation (use date-range path).
   - ``(jid, None)`` — one-shot recalculate for ``jid``.
   - ``(None, message)`` — usage / mutual-exclusion error (caller exits 1).
+  
+  Args:
+    argv (Any): CLI argument list (``sys.argv``-like).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _parse_jid_cli_arg(None)  # doctest: +SKIP
   """
   args = list(argv[1:]) if argv else []
   jid = None
@@ -3932,14 +5492,24 @@ def _parse_jid_cli_arg(argv):
   return jid, None
 
 
-def _invalidate_caches_before_one_jid_recalc(jid):
-  """Drop Redis + durable artifacts so --jid rebuilds are visible on the frontend.
-
+def _invalidate_caches_before_one_jid_recalc(jid: Any) -> None:
+  """
+  Drop Redis + durable artifacts so --jid rebuilds are visible on the frontend.
+  
   Deletes job-plot Redis keys, ``job_plot_artifact`` / ``job_detail_artifact``
   rows, public-metrics artifacts for the jid, per-jid derived Redis keys
   (GPU agg, jid_table window, …), and the versioned job-detail ``KEY_JOB``
   entry. Runs before ``_compute_and_prewarm_jid`` so fingerprint-matched
   artifact skips cannot keep stale payloads after a formula/code change.
+  
+  Args:
+    jid (Any): Jid passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _invalidate_caches_before_one_jid_recalc(None)  # doctest: +SKIP
   """
   from hpcperfstats.site.lib.machine.cache_utils import (
       invalidate_jid_derived_cache_keys,
@@ -3956,8 +5526,19 @@ def _invalidate_caches_before_one_jid_recalc(jid):
     pass
 
 
-def _main_one_jid(jid):
-  """Recalculate metrics + detail/plot artifacts for one jid; return exit code."""
+def _main_one_jid(jid: Any) -> Any:
+  """
+  Recalculate metrics + detail/plot artifacts for one jid; return exit code.
+  
+  Args:
+    jid (Any): Jid passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _main_one_jid(None)  # doctest: +SKIP
+  """
   if not job_data.objects.filter(jid=jid).exists():
     log_print(
         "update_metrics --jid: job_data not found jid={0}".format(jid),
@@ -4017,26 +5598,38 @@ def _main_one_jid(jid):
   return 0 if ok else 1
 
 
-def main(argv=None, sleep_after=None):
-  """Entry point for updating metrics_data for a date or date range.
-
+def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
+  """
+  Entry point for updating metrics_data for a date or date range.
+  
   When invoked as a script, argv defaults to sys.argv. Management commands
   can pass a custom argv list (e.g. parsed from options).
-
+  
   ``--jid <JID>`` / ``--jid=<JID>`` recalculates one job (metrics + detail +
   plots) and returns exit code **0**/**1** without entering the date-range
   scheduler or post-run sleep.
-
+  
   If ``sleep_after`` is true, the function sleeps 60s at the end (legacy
   supervisor loop). Default is true when ``sleep_after`` is omitted.
   Environment variable ``HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER`` can
   override the default: ``0``/``no``/``false`` disable sleep and
   ``1``/``yes``/``true`` enable it.
-
+  
   Dates in the parsed range are processed **newest day first**; see module
   docstring for per-day job order.
-
+  
   Returns an integer process exit code (**0** success, **1** one-shot failure).
+  
+  Args:
+    argv (Any | None): One of ``Any``, ``None``.
+    sleep_after (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Open return polymorphism from ``main``: concrete type depends on
+    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+  
+  Examples:
+    >>> main(None, None)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
 

@@ -1,0 +1,81 @@
+---
+description: Full Google/Napoleon docstring surface plus signature type hints; inventory gate must stay green
+alwaysApply: false
+globs: hpcperfstats/**/*.py,scripts/**/*.py,services-conf/**/*.py
+---
+
+# Python Docstring And Typing Contract
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Applies to **in-scope** Python in the HPCPerfStats checkout and the sibling **`hpcperfstats-tools`** package (same standard; tools lives at `<workspace_root>/hpcperfstats-tools/`).
+
+## In scope
+
+- `hpcperfstats/**/*.py` except `**/tests/**`, `test_*.py`, `conftest.py`, `**/migrations/**`
+- Top-level package daemons under `hpcperfstats/` (`listend.py`, etc.)
+- `scripts/**/*.py`, `services-conf/**/*.py`
+- `hpcperfstats-tools/hpcperfstats_tools/**/*.py`
+- **Nested functions** inside in-scope defs (full surface)
+- Trivial dunders may use a short summary but must still pass the gate (including **Examples**)
+
+## Out of scope (inventory must list with `excluded_reason`)
+
+`monitor/**`, tests, migrations, `cursor-hooks/**`, `test_runs/**`, packaging metadata, `docs/**` scratch — never silently skip.
+
+## Required shape
+
+### Every in-scope def (including nested / properties / dunders)
+
+1. **Signature annotations** on every parameter except `self`/`cls`, and a **return annotation** (`-> None` when appropriate). Prefer `from __future__ import annotations`.
+2. **Google-style docstring** with:
+   - **Behavior summary** — must describe what the def does; **forbidden** to echo only the identifier (`handle.`, `__str__ dunder.`, `Command.`).
+   - **`Args:`** for every documentable param as `name (type): description`
+   - **`Returns:`** (or **`Yields:`** for generators) with type + description, or exactly **`None`**
+   - **`Raises:`** when AST finds a named (or bare) `raise` — one entry per exception type
+   - **`Examples:`** on **every** def — at least one `>>>` doctest prompt with **real usage** (concrete args, CLI comment + call, or constructor). Use `# doctest: +SKIP` only when the example needs live DB/Redis/daemons; **forbidden** as the sole content: `>>> name(...)  # doctest: +SKIP` or `>>> ...  # doctest: +SKIP`
+   - **Line length** — wrap to Ruff ``line-length`` (**80** HPCPerfStats, **88** tools)
+3. **Polymorphism** — document unions/optionals/open ``Any`` variants and real `*args`/`**kwargs` protocols (framework contract or keys read in the body). **Forbidden deferrals:** "see callers", "see return sites", "call site(s)", "by call site", "vary by call site", "depending on call-site", "Keyword-arg polymorphism", "Variadic positional polymorphism".
+4. **No upgrade-helper AI slop** — forbidden templates include "Internal helper for …", "Compute or apply …", "… type." class stubs, "Value/Open/… polymorphism", "Result of ``name`` as ``Type``.", and Args of the form "`name` as ``Type``.". Prefer human prose (e.g. "Internal helper to check if the DataFrame is usable.").
+5. **Subclass / override** — when a class subclasses another (or a method overrides a parent/framework hook), document **what the superclass / overridden API does**, then what this leaf adds or changes (e.g. Django `BaseCommand` / `handle`).
+6. **Signature line length** — wrap over-long `def` headers.
+7. **No behavior changes** when adding hints/docs.
+
+### Modules
+
+- Module docstring **summary required**.
+- **`Attributes:`** required for every module-level assigned name (including `_private`; skip `__dunder__` names).
+
+### Classes
+
+- Class docstring **behavior summary required** (not `ClassName.` alone). Django `Meta` may say it configures the enclosing model.
+- When subclassing, name the superclass and its role, then this class's delta.
+- **`Attributes:`** on the **class** docstring lists every instance attribute assigned in `__init__`/`__new__` (including `_private`) and class-body annotated fields. Do not duplicate the full list on `__init__`.
+
+### Properties
+
+- Document on the **getter** only (Napoleon); setters need no separate docstring when the getter covers set behavior.
+
+## Inventory gate (hard fail)
+
+- Script: `scripts/python_def_inventory.py` (`--write`, `--check`)
+- Extra quality issues: `summary_echoes_name`, `summary_ai_slop`, `examples_placeholder_skip`, `args_as_ann_slop`, extended `forbidden_doc_phrase:*`
+- Committed snapshot: `docs/python_def_inventory.json`
+- Bulk helper: `scripts/python_def_docstring_upgrade.py --force-docs --apply` (must not reintroduce call-site / ellipsis-placeholder boilerplate)
+- Pytest: `hpcperfstats/tests/test_python_def_inventory_gate.py`
+- Tools mirror: `hpcperfstats-tools/tests/test_python_def_inventory_gate.py`
+- Pre-commit hook: `python-def-inventory-check`
+
+```bash
+../.venv/bin/python3 scripts/python_def_inventory.py --check
+../.venv/bin/python3 scripts/python_def_inventory.py --write docs/python_def_inventory.json
+```
+
+Do **not** weaken the checker to make a PR green.
+
+## Overlap
+
+- **`django-python-cursor-rules.mdc`** — general Django/Python style; this rule owns docstring/hint coverage.
+- **`test-first-discipline.mdc`** / **`testing-best-practices.mdc`** — gate tests for the inventory.
+- **`testing-doc-sync.mdc`** — keep `docs/TESTING.md` aligned with gate commands.
+- **`workspace-layout-and-python-env.mdc`** — host `.venv` interpreter; tools sibling checkout path.

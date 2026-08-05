@@ -1,10 +1,16 @@
-"""ORM GPU aggregates for job-detail and metrics_data (shared with API).
+"""
+ORM GPU aggregates for job-detail and metrics_data (shared with API).
 
 Uses the same reduction rules as historical ``api._compute_job_gpu_stats``:
 chunked ``host__in``, util aggregates by vendor precedence, then ``gpu_count``.
 
-Vendor precedence for summary fields: ``nvidia_gpu`` → ``amd_gpu`` → ``intel_gpu``
-(no mixed-vendor merge for a single field). DCGM blank-family samples are rejected.
+Vendor precedence for summary fields: ``nvidia_gpu`` → ``amd_gpu`` →
+``intel_gpu`` (no mixed-vendor merge for a single field). DCGM blank-family
+samples are rejected.
+
+Attributes:
+  GPU_TYPE_PRECEDENCE: ``GPU_TYPE_PRECEDENCE``.
+  _GPU_UTIL_EVENTS: ``_GPU_UTIL_EVENTS``.
 """
 from __future__ import annotations
 
@@ -20,15 +26,36 @@ GPU_TYPE_PRECEDENCE: tuple[str, ...] = ("nvidia_gpu", "amd_gpu", "intel_gpu")
 _GPU_UTIL_EVENTS = ("gpu_util", "utilization")
 
 
-def _blank_excluded_value_q(field: str = "value"):
-  """ORM kwargs / Q fragment: exclude DCGM FP64 blank family (covers INT64 blanks)."""
+def _blank_excluded_value_q(field: str = "value") -> Any:
+  """
+  ORM kwargs / Q fragment: exclude DCGM FP64 blank family (covers INT64 blanks).
+  
+  Args:
+    field (str): String for field.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _blank_excluded_value_q("x")  # doctest: +SKIP
+  """
   return {f"{field}__lt": DCGM_FP64_BLANK}
 
 
-def gpu_agg_rows_for_job_window(j) -> List[dict]:
-  """Per-(host, dev, event) Count/Max/Avg for GPU util in the job window.
-
+def gpu_agg_rows_for_job_window(j: Any) -> List[dict]:
+  """
+  Per-(host, dev, event) Count/Max/Avg for GPU util in the job window.
+  
   Uses the first vendor in ``GPU_TYPE_PRECEDENCE`` that has util rows.
+  
+  Args:
+    j (Any): Job record (Django ``job_data`` or job-like mapping).
+  
+  Returns:
+    List[dict]: List[dict] produced by this call.
+  
+  Examples:
+    >>> gpu_agg_rows_for_job_window(None)  # doctest: +SKIP
   """
   hosts = getattr(j, "acct_host_list", None) or []
   for gpu_typ in GPU_TYPE_PRECEDENCE:
@@ -55,8 +82,19 @@ def gpu_agg_rows_for_job_window(j) -> List[dict]:
   return []
 
 
-def gpu_count_total_for_job_window(j) -> Optional[int]:
-  """Sum over hosts of max(gpu_count) in window (nvidia → amd → intel)."""
+def gpu_count_total_for_job_window(j: Any) -> Optional[int]:
+  """
+  Sum over hosts of max(gpu_count) in window (nvidia → amd → intel).
+  
+  Args:
+    j (Any): Job record (Django ``job_data`` or job-like mapping).
+  
+  Returns:
+    Optional[int]: Optional[int] — the result, or None when unavailable.
+  
+  Examples:
+    >>> gpu_count_total_for_job_window(None)  # doctest: +SKIP
+  """
   hosts = getattr(j, "acct_host_list", None) or []
   if not hosts:
     return None
@@ -93,10 +131,21 @@ def gpu_count_total_for_job_window(j) -> Optional[int]:
   return None
 
 
-def gpu_inventory_for_job_window(j) -> List[dict]:
-  """Per-(host, dev) util max/mean (+ optional power peak) for Resources inventory.
-
-  Uses the first vendor in ``GPU_TYPE_PRECEDENCE`` that has device-level util rows.
+def gpu_inventory_for_job_window(j: Any) -> List[dict]:
+  """
+  Per-(host, dev) util max/mean (+ optional power peak) for Resources inventory.
+  
+  Uses the first vendor in ``GPU_TYPE_PRECEDENCE`` that has device-level util
+    rows.
+  
+  Args:
+    j (Any): Job record (Django ``job_data`` or job-like mapping).
+  
+  Returns:
+    List[dict]: List[dict] produced by this call.
+  
+  Examples:
+    >>> gpu_inventory_for_job_window(None)  # doctest: +SKIP
   """
   hosts = getattr(j, "acct_host_list", None) or []
   if not hosts:
@@ -184,9 +233,22 @@ def gpu_inventory_for_job_window(j) -> List[dict]:
 
 
 def reduce_gpu_agg_to_util_stats(
-    agg: Any,
+  agg: Any,
 ) -> Tuple[Optional[int], Optional[float], Optional[float]]:
-  """From cached ORM aggregate rows (list of dict) to active/max/mean."""
+  """
+  From cached ORM aggregate rows (list of dict) to active/max/mean.
+  
+  Args:
+    agg (Any): Agg passed to this helper.
+  
+  Returns:
+    Tuple[Optional[int], Optional[float], Optional[float]]:
+    Tuple[Optional[int], Optional[float], Optional[float]] produced by this
+    call.
+  
+  Examples:
+    >>> reduce_gpu_agg_to_util_stats(None)  # doctest: +SKIP
+  """
   gpu_active: Optional[int] = None
   gpu_max: Optional[float] = None
   gpu_mean: Optional[float] = None
@@ -237,13 +299,23 @@ def reduce_gpu_agg_to_util_stats(
   return gpu_active, gpu_max, gpu_mean
 
 
-def compute_job_gpu_summary_tuple(j) -> Tuple[
-    Optional[int],
-    Optional[float],
-    Optional[float],
-    Optional[int],
-]:
-  """Fresh host_data reads: (gpu_active, gpu_util_max, gpu_util_mean, gpu_count)."""
+def compute_job_gpu_summary_tuple(
+  j: Any,
+) -> Tuple[ Optional[int], Optional[float], Optional[float], Optional[int], ]:
+  """
+  Fresh host_data reads: (gpu_active, gpu_util_max, gpu_util_mean, gpu_count).
+  
+  Args:
+    j (Any): Job record (Django ``job_data`` or job-like mapping).
+  
+  Returns:
+    Tuple[ Optional[int], Optional[float], Optional[float], Optional[int], ]:
+    Tuple[ Optional[int], Optional[float], Optional[float], Optional[int], ]
+    produced by this call.
+  
+  Examples:
+    >>> compute_job_gpu_summary_tuple(None)  # doctest: +SKIP
+  """
   try:
     agg_list = gpu_agg_rows_for_job_window(j)
     gpu_active, gpu_max, gpu_mean = reduce_gpu_agg_to_util_stats(agg_list)

@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""One-shot migration: legacy daily ``YYYY-MM-DD.tar.gz`` -> canonical ``.tar.zst``.
+"""
+One-shot migration: legacy daily ``YYYY-MM-DD.tar.gz`` -> canonical
+``.tar.zst``.
 
 Uses the same archive helpers as ``sync_timedb`` (safe decompress, atomic seal,
 member-equivalence gzip drop, ``*.fnctl.lock`` advisory locks). Days with
 contended locks are skipped when ``--lock-timeout`` is 0 (default); re-run after
 ``sync_timedb`` is quiet.
 
-Environment:
-  HPCPERFSTATS_INI  Path to site config (default search includes
-                    /home/hpcperfstats/hpcperfstats.ini).
-  Bootstraps Django via ensure_django() before remaining-raw / ORM gates.
+Environment: HPCPERFSTATS_INI  Path to site config (default search includes
+/home/hpcperfstats/hpcperfstats.ini). Bootstraps Django via ensure_django()
+before remaining-raw / ORM gates.
 
-Examples:
-  HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini \\
-    python scripts/migrate_daily_archive_gz_to_zst.py --dry-run
-
-  python scripts/migrate_daily_archive_gz_to_zst.py --verbose --limit 10
+Attributes:
+  _ROOT: Attribute.
 """
 from __future__ import annotations
+
+from typing import Any
 
 import argparse
 import os
@@ -30,7 +30,23 @@ if _ROOT not in sys.path:
   sys.path.insert(0, _ROOT)
 
 
-def _parse_since(value):
+def _parse_since(value: Any) -> Any:
+  """
+  Internal helper to parse the since.
+  
+  Args:
+    value (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    argparse.ArgumentTypeError: Raised when ``_parse_since`` hits a
+    ``argparse.ArgumentTypeError`` failure path.
+  
+  Examples:
+    >>> _parse_since(None)  # doctest: +SKIP
+  """
   try:
     return datetime.strptime(value, "%Y-%m-%d").date()
   except ValueError as exc:
@@ -39,7 +55,16 @@ def _parse_since(value):
     ) from exc
 
 
-def _build_arg_parser():
+def _build_arg_parser() -> Any:
+  """
+  Internal helper to build the arg parser.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _build_arg_parser()  # doctest: +SKIP
+  """
   parser = argparse.ArgumentParser(
       description=(
           "Migrate legacy daily .tar.gz archives to .tar.zst in daily_archive_dir."
@@ -122,7 +147,19 @@ def _build_arg_parser():
   return parser
 
 
-def main(argv=None):
+def main(argv: Any | None = None) -> Any:
+  """
+  Run this module's command-line entrypoint.
+  
+  Args:
+    argv (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> main(None)  # doctest: +SKIP
+  """
   args = _build_arg_parser().parse_args(argv)
   if args.ini:
     os.environ["HPCPERFSTATS_INI"] = args.ini

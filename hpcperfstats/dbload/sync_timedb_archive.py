@@ -1,21 +1,33 @@
 #!/usr/bin/env python3
-"""Load stats from sealed daily archives (``.tar.zst`` / legacy ``.tar.gz``) into the database.
+"""
+Load stats from sealed daily archives (``.tar.zst`` / legacy ``.tar.gz``) into
+the database.
 
-Operator backfill tool: reads **only** sealed archives via in-memory zstd→tar streaming.
-Uncompressed ``YYYY-MM-DD.tar`` is never opened; unsealed days are skipped.
+Operator backfill tool: reads **only** sealed archives via in-memory zstd→tar
+streaming. Uncompressed ``YYYY-MM-DD.tar`` is never opened; unsealed days are
+skipped.
 
-CLI (explicit dates required):
-  sync_timedb_archive.py YYYY-MM-DD              # single sealed day
-  sync_timedb_archive.py YYYY-MM-DD YYYY-MM-DD   # inclusive range
-  sync_timedb_archive.py backlog                     # all sealed days under daily_archive_dir
-  sync_timedb_archive.py /path/to/day.tar.zst    # explicit sealed path(s)
+CLI (explicit dates required): sync_timedb_archive.py YYYY-MM-DD              #
+single sealed day sync_timedb_archive.py YYYY-MM-DD YYYY-MM-DD   # inclusive
+range sync_timedb_archive.py backlog                     # all sealed days under
+daily_archive_dir sync_timedb_archive.py /path/to/day.tar.zst    # explicit
+sealed path(s)
 
-Ingest uses Django ORM bulk paths via ``sync_timedb.add_stats_file_to_db``. Heavy
-``sync_timedb`` / DB driver imports are deferred until a worker writes.
+Ingest uses Django ORM bulk paths via ``sync_timedb.add_stats_file_to_db``.
+Heavy ``sync_timedb`` / DB driver imports are deferred until a worker writes.
 
 ``sync_timedb_archive_helpers`` transitively imports numpy/pandas; BLAS/OpenMP
 thread caps are applied before those imports (override via env).
+
+Attributes:
+  SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE: Attribute.
+  _DATE_ARG_RE: Attribute.
+  _USAGE: Attribute.
 """
+from __future__ import annotations
+
+from typing import Any, Iterator
+
 import multiprocessing
 import os
 import re
@@ -24,8 +36,16 @@ import sys
 from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
 
 
-def _configure_blas_thread_env():
-  """Cap BLAS/OpenMP worker threads before numpy is first imported."""
+def _configure_blas_thread_env() -> None:
+  """
+  Cap BLAS/OpenMP worker threads before numpy is first imported.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _configure_blas_thread_env()  # doctest: +SKIP
+  """
   configure_blas_thread_env()
 
 
@@ -78,12 +98,40 @@ _USAGE = (
 )
 
 
-def _archive_worker_process_count():
-  """Archive ingest pool size (default 2); matches ``get_sync_archive_pool_processes``."""
+def _archive_worker_process_count() -> Any:
+  """
+  Archive ingest pool size (default 2); matches.
+  
+    ``get_sync_archive_pool_processes``.
+  
+  Returns:
+    Any: Open return polymorphism from ``_archive_worker_process_count``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> _archive_worker_process_count()  # doctest: +SKIP
+  """
   return cfg.get_sync_archive_pool_processes()
 
 
-def _log_archive_ingest_startup(sealed_days, skipped_tar_only):
+def _log_archive_ingest_startup(
+  sealed_days: Any,
+  skipped_tar_only: Any,
+) -> None:
+  """
+  Internal helper to log the archive ingest startup.
+  
+  Args:
+    sealed_days (Any): Sealed days passed to this helper.
+    skipped_tar_only (Any): Skipped tar only passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _log_archive_ingest_startup(None, None)  # doctest: +SKIP
+  """
   log_print(
       "sync_timedb_archive: pool_processes=%d zstd_threads=%s "
       "ionice=c%s-n%s nice=%s sealed_days=%d skipped_tar_only=%d "
@@ -102,11 +150,26 @@ def _log_archive_ingest_startup(sealed_days, skipped_tar_only):
   )
 
 
-def parse_sync_timedb_archive_argv(argv):
-  """Parse argv into ``(mode, startdate, enddate, path_args)``.
-
+def parse_sync_timedb_archive_argv(argv: Any) -> Any:
+  """
+  Parse argv into ``(mode, startdate, enddate, path_args)``.
+  
   ``mode`` is ``'date'`` or ``'paths'``. For ``'date'``, ``startdate`` is
-  ``datetime`` or ``'backlog'``; ``enddate`` is ``datetime`` or ``None`` (all/range).
+  ``datetime`` or ``'backlog'``; ``enddate`` is ``datetime`` or ``None``
+    (all/range).
+  
+  Args:
+    argv (Any): CLI argument list (``sys.argv``-like).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    SystemExit: Raised when ``parse_sync_timedb_archive_argv`` hits a
+    ``SystemExit`` failure path.
+  
+  Examples:
+    >>> parse_sync_timedb_archive_argv(None)  # doctest: +SKIP
   """
   if len(argv) < 2:
     raise SystemExit(_USAGE)
@@ -146,7 +209,29 @@ def parse_sync_timedb_archive_argv(argv):
   return "paths", None, None, args
 
 
-def _resolve_sealed_paths_from_argv(mode, startdate, enddate, path_args):
+def _resolve_sealed_paths_from_argv(
+  mode: Any,
+  startdate: Any,
+  enddate: Any,
+  path_args: Any,
+) -> Any:
+  """
+  Internal helper to resolve the sealed paths from argv.
+  
+  Args:
+    mode (Any): Mode or kind token selecting a code path.
+    startdate (Any): Time value (``datetime``, ISO string, sentinel, or
+    ``None``).
+    enddate (Any): Time value (``datetime``, ISO string, sentinel, or
+    ``None``).
+    path_args (Any): Path args passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _resolve_sealed_paths_from_argv(None, None, None, None)
+  """
   daily_dir = cfg.get_daily_archive_dir_path()
   if mode == "date":
     sealed_paths, skipped = collect_sealed_daily_archive_paths_in_range(
@@ -166,8 +251,24 @@ def _resolve_sealed_paths_from_argv(mode, startdate, enddate, path_args):
   return sealed_paths, skipped
 
 
-def _process_stream_archive(lock, sealed_path):
-  """Stream one sealed archive and ingest each member via path-only spool."""
+def _process_stream_archive(lock: Any, sealed_path: str) -> None:
+  """
+  Stream one sealed archive and ingest each member via path-only spool.
+  
+  Args:
+    lock (Any): Lock object used to serialize access.
+    sealed_path (str): String for sealed path.
+  
+  Returns:
+    None
+  
+  Raises:
+    Exception: Raised when ``_process_stream_archive`` hits a ``Exception``
+    failure path.
+  
+  Examples:
+    >>> _process_stream_archive(None, "x")  # doctest: +SKIP
+  """
   _configure_blas_thread_env()
   log_print("streaming sealed archive %s" % sealed_path, flush=True)
   add_stats = None
@@ -234,21 +335,46 @@ def _process_stream_archive(lock, sealed_path):
     clear_sealed_archive_ingest_progress()
 
 
-def _process_stream_archive_task(task_args):
-  """Ingest one sealed archive; ``task_args`` is ``(lock, sealed_path)``.
-
+def _process_stream_archive_task(task_args: Any) -> Any:
+  """
+  Ingest one sealed archive; ``task_args`` is ``(lock, sealed_path)``.
+  
   Module scope for ``multiprocessing`` spawn pickling.
   Returns ``sealed_path`` so the supervisor can clear dispatch placeholders.
+  
+  Args:
+    task_args (Any): Task payload for a worker (tuple/list per this helper's
+    protocol).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _process_stream_archive_task(None)  # doctest: +SKIP
   """
   lock, sealed_path = task_args
   _process_stream_archive(lock, sealed_path)
   return sealed_path
 
 
-def _iter_stream_tasks_chunked(sealed_paths, chunk_size=None):
-  """Yield bounded chunks of ``(STREAM_ARCHIVE_TASK, sealed_path)`` tasks.
-
+def _iter_stream_tasks_chunked(
+  sealed_paths: Any,
+  chunk_size: Any | None = None,
+) -> Iterator[Any]:
+  """
+  Yield bounded chunks of ``(STREAM_ARCHIVE_TASK, sealed_path)`` tasks.
+  
   Legacy helper for tests; main backfill uses sliding-window dispatch instead.
+  
+  Args:
+    sealed_paths (Any): Iterable of filesystem paths as strings.
+    chunk_size (Any | None): One of ``Any``, ``None``.
+  
+  Yields:
+    Iterator[Any]: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _iter_stream_tasks_chunked(None, None)  # doctest: +SKIP
   """
   if chunk_size is None:
     chunk_size = cfg.get_sync_timedb_archive_max_concurrent_sealed_days()
@@ -258,27 +384,80 @@ def _iter_stream_tasks_chunked(sealed_paths, chunk_size=None):
     yield tasks[off : off + chunk_size]
 
 
-def _sealed_paths_from_locked_tasks(tasks_locked):
+def _sealed_paths_from_locked_tasks(tasks_locked: Any) -> Any:
+  """
+  Internal helper to handle sealed paths from locked tasks.
+  
+  Args:
+    tasks_locked (Any): Task payload for a worker (tuple/list per this
+    helper's protocol).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _sealed_paths_from_locked_tasks(None)  # doctest: +SKIP
+  """
   return [str(sealed_path) for _lock, sealed_path in (tasks_locked or ())]
 
 
-def _sealed_paths_from_chunk_locked(chunk_locked):
+def _sealed_paths_from_chunk_locked(chunk_locked: Any) -> Any:
+  """
+  Internal helper to handle sealed paths from chunk locked.
+  
+  Args:
+    chunk_locked (Any): Chunk locked passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _sealed_paths_from_chunk_locked(None)  # doctest: +SKIP
+  """
   return _sealed_paths_from_locked_tasks(chunk_locked)
 
 
-def _stall_abort_polls_for_sealed_locked_tasks(tasks_locked):
+def _stall_abort_polls_for_sealed_locked_tasks(tasks_locked: Any) -> Any:
+  """
+  Internal helper to handle stall abort polls for sealed locked tasks.
+  
+  Args:
+    tasks_locked (Any): Task payload for a worker (tuple/list per this
+    helper's protocol).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _stall_abort_polls_for_sealed_locked_tasks(None)  # doctest: +SKIP
+  """
   return stall_abort_polls_for_sealed_archives(
       _sealed_paths_from_locked_tasks(tasks_locked),
   )
 
 
 def _update_archive_sliding_window_stall_diagnostics(
-    stall_diagnostics,
-    in_flight_tasks,
-    max_inflight,
-    *,
-    log_budget=False,
-):
+  stall_diagnostics: Any,
+  in_flight_tasks: Any,
+  max_inflight: Any,
+  *,
+  log_budget: bool = False,
+) -> Any:
+  """
+  Internal helper to update the archive sliding window stall diagnostics.
+  
+  Args:
+    stall_diagnostics (Any): Stall diagnostics passed to this helper.
+    in_flight_tasks (Any): In flight tasks passed to this helper.
+    max_inflight (Any): Max inflight passed to this helper.
+    log_budget (bool): Boolean flag for log budget.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _update_archive_sliding_window_stall_diagnostics(None, None, None, True)
+  """
   sealed_paths = _sealed_paths_from_locked_tasks(in_flight_tasks)
   poll_s = float(cfg.get_sync_pool_poll_timeout_s())
   batch_max_s = max_sealed_archive_ingest_budget_for_paths(sealed_paths)
@@ -307,16 +486,38 @@ def _update_archive_sliding_window_stall_diagnostics(
 
 
 def _process_sealed_tasks_sliding_window(
-    pool,
-    worker,
-    tasks_locked,
-    on_result,
-    *,
-    stall_diagnostics=None,
-    stall_poll_state=None,
-    worker_registry=None,
-):
-  """Process sealed days with sliding-window pool dispatch (refill on completion)."""
+  pool: Any,
+  worker: Any,
+  tasks_locked: Any,
+  on_result: Any,
+  *,
+  stall_diagnostics: Any | None = None,
+  stall_poll_state: Any | None = None,
+  worker_registry: Any | None = None,
+) -> None:
+  """
+  Process sealed days with sliding-window pool dispatch (refill on completion).
+  
+  Args:
+    pool (Any): Live handle (pool, client, or connection).
+    worker (Any): Callable invoked by this helper.
+    tasks_locked (Any): Task payload for a worker (tuple/list per this
+    helper's protocol).
+    on_result (Any): On result passed to this helper.
+    stall_diagnostics (Any | None): One of ``Any``, ``None``.
+    stall_poll_state (Any | None): One of ``Any``, ``None``.
+    worker_registry (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    None
+  
+  Raises:
+    Exception: Raised when ``_process_sealed_tasks_sliding_window`` hits a
+    ``Exception`` failure path.
+  
+  Examples:
+    >>> _process_sealed_tasks_sliding_window(0)  # doctest: +SKIP
+  """
   if not tasks_locked:
     return
   from hpcperfstats.dbload.sync_timedb import (
@@ -353,10 +554,31 @@ def _process_sealed_tasks_sliding_window(
   seed_dispatch_worker_stages(worker_registry, all_sealed_paths)
   in_flight_holder = {"paths": []}
 
-  def _in_flight_sample():
+  def _in_flight_sample() -> Any:
+    """
+    Internal helper to handle in flight sample.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _in_flight_sample()  # doctest: +SKIP
+    """
     return list(in_flight_holder["paths"])
 
-  def _on_in_flight_change(in_flight_tasks):
+  def _on_in_flight_change(in_flight_tasks: Any) -> None:
+    """
+    Internal helper to handle on in flight change.
+    
+    Args:
+      in_flight_tasks (Any): In flight tasks passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _on_in_flight_change(None)  # doctest: +SKIP
+    """
     in_flight_holder["paths"] = _sealed_paths_from_locked_tasks(in_flight_tasks)
     _update_archive_sliding_window_stall_diagnostics(
         stall_diagnostics,
@@ -429,16 +651,33 @@ def _process_sealed_tasks_sliding_window(
 
 
 def _process_task_chunk_interruptibly(
-    pool,
-    worker,
-    chunk_locked,
-    on_result,
-    *,
-    stall_diagnostics=None,
-    stall_poll_state=None,
-    worker_registry=None,
-):
-  """Backward-compatible alias for tests; delegates to sliding-window dispatch."""
+  pool: Any,
+  worker: Any,
+  chunk_locked: Any,
+  on_result: Any,
+  *,
+  stall_diagnostics: Any | None = None,
+  stall_poll_state: Any | None = None,
+  worker_registry: Any | None = None,
+) -> Any:
+  """
+  Backward-compatible alias for tests; delegates to sliding-window dispatch.
+  
+  Args:
+    pool (Any): Live handle (pool, client, or connection).
+    worker (Any): Callable invoked by this helper.
+    chunk_locked (Any): Chunk locked passed to this helper.
+    on_result (Any): On result passed to this helper.
+    stall_diagnostics (Any | None): One of ``Any``, ``None``.
+    stall_poll_state (Any | None): One of ``Any``, ``None``.
+    worker_registry (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _process_task_chunk_interruptibly(0)  # doctest: +SKIP
+  """
   return _process_sealed_tasks_sliding_window(
       pool,
       worker,

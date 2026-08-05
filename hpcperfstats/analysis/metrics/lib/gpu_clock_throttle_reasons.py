@@ -1,9 +1,15 @@
-"""Decode DCGM GPU clock throttle / clock event reason bitmasks.
+"""
+Decode DCGM GPU clock throttle / clock event reason bitmasks.
 
 Mirrors ``dcgm_fields.h`` ``DCGM_CLOCKS_THROTTLE_REASON_*`` and the SPA helper
 ``gpuClockThrottleReasons.ts``. Display-only; persisted metrics stay numeric.
 
-Blank-family and no-known-bit garbage masks return ``""`` (never ``unknown (0x…)``).
+Blank-family and no-known-bit garbage masks return ``""`` (never ``unknown
+(0x…)``).
+
+Attributes:
+  DCGM_CLOCK_THROTTLE_REASON_FLAGS: ``DCGM_CLOCK_THROTTLE_REASON_FLAGS``.
+  _KNOWN_BITS_MASK: ``_KNOWN_BITS_MASK``.
 """
 
 from __future__ import annotations
@@ -28,10 +34,20 @@ for _bit, _ in DCGM_CLOCK_THROTTLE_REASON_FLAGS:
 
 
 def format_gpu_clock_throttle_reasons(mask: float | int | None) -> str:
-  """Format a DCGM clock-throttle bitmask as comma-separated flag names.
-
+  """
+  Format a DCGM clock-throttle bitmask as comma-separated flag names.
+  
   Returns ``""`` for missing / non-finite / zero / blank / no-known-bit masks.
   Known bits only — residual garbage hex is never shown.
+  
+  Args:
+    mask (float | int | None): One of ``float``, ``int``, ``None``.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> format_gpu_clock_throttle_reasons(None)  # doctest: +SKIP
   """
   if mask is None:
     return ""

@@ -1,4 +1,24 @@
-"""Persist and load gzip-compressed derived payloads for job_detail/type_detail."""
+"""
+Persist and load gzip-compressed derived payloads for job_detail/type_detail.
+
+Attributes:
+  APP_DETAIL_ARTIFACT_SCHEMA_VERSION: Attribute.
+  ARTIFACT_KIND_JOB_DETAIL: Attribute.
+  ARTIFACT_KIND_MULTIPRECISION_MIX: Attribute.
+  ARTIFACT_KIND_TYPE_DETAIL: Attribute.
+  PAYLOAD_ENCODING_GZIP_JSON: Attribute.
+  _CPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON: Attribute.
+  _CPU_PRECISION_LABEL_ORDER: Attribute.
+  _CPU_PRECISION_METRIC_TO_LABEL: Attribute.
+  _FSIO_FINGERPRINT_METRIC_NAMES: Attribute.
+  _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON: Attribute.
+  _GPU_PRECISION_LABEL_ORDER: Attribute.
+  _GPU_PRECISION_METRIC_TO_LABEL: Attribute.
+  _GPU_TENSOR_SPLIT_METRICS: Attribute.
+  _MULTIPRECISION_PIE_RADIUS: Attribute.
+  _MULTIPRECISION_PLOT_RANGE: Attribute.
+  logger: Attribute.
+"""
 from __future__ import annotations
 
 import gzip
@@ -65,7 +85,18 @@ _FSIO_FINGERPRINT_METRIC_NAMES = tuple(
 
 
 def _fsio_metrics_fingerprint_map(job: job_data) -> Dict[str, str]:
-  """Stable text map of detail_fsio_* values for detail artifact fingerprints."""
+  """
+  Stable text map of detail_fsio_* values for detail artifact fingerprints.
+  
+  Args:
+    job (job_data): Job.
+  
+  Returns:
+    Dict[str, str]: Dict[str, str] produced by this call.
+  
+  Examples:
+    >>> _fsio_metrics_fingerprint_map(None)  # doctest: +SKIP
+  """
   by_m: Dict[str, Any] = {}
   try:
     for row in getattr(job, "metrics_data_set").all():
@@ -86,17 +117,61 @@ def _fsio_metrics_fingerprint_map(job: job_data) -> Dict[str, str]:
 
 
 def _compress_payload(payload: Dict[str, Any]) -> tuple[bytes, str]:
+  """
+  Internal helper to handle compress payload.
+  
+  Args:
+    payload (Dict[str, Any]): Mapping for payload.
+  
+  Returns:
+    tuple[bytes, str]: tuple[bytes, str] produced by this call.
+  
+  Examples:
+    >>> _compress_payload({})  # doctest: +SKIP
+  """
   raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
   return gzip.compress(raw, compresslevel=6), PAYLOAD_ENCODING_GZIP_JSON
 
 
-def _decompress_payload(payload_compressed: bytes, payload_encoding: str) -> Dict[str, Any]:
+def _decompress_payload(
+  payload_compressed: bytes,
+  payload_encoding: str,
+) -> Dict[str, Any]:
+  """
+  Internal helper to handle decompress payload.
+  
+  Args:
+    payload_compressed (bytes): Payload compressed.
+    payload_encoding (str): String for payload encoding.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Raises:
+    ValueError: Raised when ``_decompress_payload`` hits a ``ValueError``
+    failure path.
+  
+  Examples:
+    >>> _decompress_payload(None, "x")  # doctest: +SKIP
+  """
   if payload_encoding != PAYLOAD_ENCODING_GZIP_JSON:
     raise ValueError("Unsupported detail payload encoding: {!r}".format(payload_encoding))
   return json.loads(gzip.decompress(payload_compressed).decode("utf-8"))
 
 
 def compute_detail_input_fingerprint(job: job_data) -> str:
+  """
+  Compute the detail input fingerprint.
+  
+  Args:
+    job (job_data): Job.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> compute_detail_input_fingerprint(None)  # doctest: +SKIP
+  """
   job_state = getattr(job, "_state", None)
   if (
       connection.vendor == "postgresql"
@@ -118,6 +193,18 @@ def compute_detail_input_fingerprint(job: job_data) -> str:
       return sql_fp
 
   def _safe_text(v: Any) -> str:
+    """
+    Internal helper to handle safe text.
+    
+    Args:
+      v (Any): V passed to this helper.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> _safe_text(None)  # doctest: +SKIP
+    """
     try:
       if v is None:
         return ""
@@ -147,12 +234,28 @@ def compute_detail_input_fingerprint(job: job_data) -> str:
 
 
 def upsert_job_detail_artifact(
-    jid: str,
-    artifact_kind: str,
-    artifact_scope: str,
-    input_fingerprint: str,
-    payload: Dict[str, Any],
+  jid: str,
+  artifact_kind: str,
+  artifact_scope: str,
+  input_fingerprint: str,
+  payload: Dict[str, Any],
 ) -> None:
+  """
+  Upsert job detail artifact.
+  
+  Args:
+    jid (str): String for jid.
+    artifact_kind (str): String for artifact kind.
+    artifact_scope (str): String for artifact scope.
+    input_fingerprint (str): String for input fingerprint.
+    payload (Dict[str, Any]): Mapping for payload.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> upsert_job_detail_artifact("x", "x", "x", "x", {})  # doctest: +SKIP
+  """
   compressed, encoding = _compress_payload(payload)
   job_detail_artifact.objects.bulk_create(
       [
@@ -178,11 +281,27 @@ def upsert_job_detail_artifact(
 
 
 def load_job_detail_artifact(
-    jid: str,
-    artifact_kind: str,
-    artifact_scope: str,
-    input_fingerprint: str,
+  jid: str,
+  artifact_kind: str,
+  artifact_scope: str,
+  input_fingerprint: str,
 ) -> Optional[Dict[str, Any]]:
+  """
+  Load the job detail artifact.
+  
+  Args:
+    jid (str): String for jid.
+    artifact_kind (str): String for artifact kind.
+    artifact_scope (str): String for artifact scope.
+    input_fingerprint (str): String for input fingerprint.
+  
+  Returns:
+    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] — the result, or None
+    when unavailable.
+  
+  Examples:
+    >>> load_job_detail_artifact("x", "x", "x", "x")  # doctest: +SKIP
+  """
   row = (
       job_detail_artifact.objects.filter(
           jid_id=jid,
@@ -208,6 +327,18 @@ def load_job_detail_artifact(
 
 
 def _gpu_detail_from_jid_table(jt: Any) -> Dict[str, Any]:
+  """
+  Internal helper to handle gpu detail from job id table.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> _gpu_detail_from_jid_table(None)  # doctest: +SKIP
+  """
   rows = gpu_agg_rows_for_job_window(jt)
   inventory = gpu_inventory_for_job_window(jt)
   if not rows and not inventory:
@@ -229,6 +360,19 @@ def _gpu_detail_from_jid_table(jt: Any) -> Dict[str, Any]:
 
 
 def _metric_value_map(job: job_data) -> Dict[str, Optional[float]]:
+  """
+  Internal helper to handle metric value map.
+  
+  Args:
+    job (job_data): Job.
+  
+  Returns:
+    Dict[str, Optional[float]]: Dict[str, Optional[float]] produced by this
+    call.
+  
+  Examples:
+    >>> _metric_value_map(None)  # doctest: +SKIP
+  """
   out: Dict[str, Optional[float]] = {}
   for row in getattr(job, "metrics_data_set").all():
     out[row.metric] = None if row.value is None else float(row.value)
@@ -236,10 +380,24 @@ def _metric_value_map(job: job_data) -> Dict[str, Optional[float]]:
 
 
 def _load_existing_type_detail_scope_set(
-    jid: str,
-    input_fingerprint: str,
-    type_names: list[str],
+  jid: str,
+  input_fingerprint: str,
+  type_names: list[str],
 ) -> set[str]:
+  """
+  Internal helper to load the existing type detail scope set.
+  
+  Args:
+    jid (str): String for jid.
+    input_fingerprint (str): String for input fingerprint.
+    type_names (list[str]): Sequence for type names.
+  
+  Returns:
+    set[str]: set[str] produced by this call.
+  
+  Examples:
+    >>> _load_existing_type_detail_scope_set("x", "x", [])  # doctest: +SKIP
+  """
   if not type_names:
     return set()
   rows = (
@@ -254,7 +412,22 @@ def _load_existing_type_detail_scope_set(
   return {scope for scope, payload in rows if payload}
 
 
-def _gpu_detail_from_metric_values(metric_values: Dict[str, Optional[float]]) -> Optional[Dict[str, Any]]:
+def _gpu_detail_from_metric_values(
+  metric_values: Dict[str, Optional[float]],
+) -> Optional[Dict[str, Any]]:
+  """
+  Internal helper to handle gpu detail from metric values.
+  
+  Args:
+    metric_values (Dict[str, Optional[float]]): Mapping for metric values.
+  
+  Returns:
+    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] — the result, or None
+    when unavailable.
+  
+  Examples:
+    >>> _gpu_detail_from_metric_values({})  # doctest: +SKIP
+  """
   required = (
       "detail_gpu_active",
       "detail_gpu_util_max",
@@ -320,24 +493,63 @@ _MULTIPRECISION_PLOT_RANGE = 1.05
 
 
 def _ordered_precision_labels(
-    labels: list[str],
-    label_order: tuple[str, ...],
+  labels: list[str],
+  label_order: tuple[str, ...],
 ) -> list[str]:
+  """
+  Internal helper to handle ordered precision labels.
+  
+  Args:
+    labels (list[str]): Sequence for labels.
+    label_order (tuple[str, ...]): Sequence for label order.
+  
+  Returns:
+    list[str]: list[str] produced by this call.
+  
+  Examples:
+    >>> _ordered_precision_labels([], [])  # doctest: +SKIP
+  """
   order_idx = {name: idx for idx, name in enumerate(label_order)}
   return sorted(labels, key=lambda name: order_idx.get(name, len(label_order)))
 
 
 def _category10_palette_for_factors(factors: list[str]) -> list[str]:
+  """
+  Internal helper to handle category10 palette for factors.
+  
+  Args:
+    factors (list[str]): Sequence for factors.
+  
+  Returns:
+    list[str]: list[str] produced by this call.
+  
+  Examples:
+    >>> _category10_palette_for_factors([])  # doctest: +SKIP
+  """
   base = d3["Category10"][10]
   return [base[i % len(base)] for i in range(len(factors))]
 
 
 def _precision_mix_from_metric_values(
-    metric_values: Dict[str, Optional[float]],
-    metric_to_label: Dict[str, str],
-    *,
-    skip_metrics: Optional[set[str]] = None,
+  metric_values: Dict[str, Optional[float]],
+  metric_to_label: Dict[str, str],
+  *,
+  skip_metrics: Optional[set[str]] = None,
 ) -> Dict[str, float]:
+  """
+  Internal helper to handle precision mix from metric values.
+  
+  Args:
+    metric_values (Dict[str, Optional[float]]): Mapping for metric values.
+    metric_to_label (Dict[str, str]): Mapping for metric to label.
+    skip_metrics (Optional[set[str]]): Skip metrics, or None when absent.
+  
+  Returns:
+    Dict[str, float]: Dict[str, float] produced by this call.
+  
+  Examples:
+    >>> _precision_mix_from_metric_values({}, {}, None)  # doctest: +SKIP
+  """
   skip = skip_metrics or set()
   out: Dict[str, float] = {}
   for metric_name, label in metric_to_label.items():
@@ -353,9 +565,20 @@ def _precision_mix_from_metric_values(
 
 
 def _gpu_precision_mix_from_metric_values(
-    metric_values: Dict[str, Optional[float]],
+  metric_values: Dict[str, Optional[float]],
 ) -> Dict[str, float]:
-  """Prefer tensor IMMA/HMMA/DFMA splits over lumped ``avg_tensor_active``."""
+  """
+  Prefer tensor IMMA/HMMA/DFMA splits over lumped ``avg_tensor_active``.
+  
+  Args:
+    metric_values (Dict[str, Optional[float]]): Mapping for metric values.
+  
+  Returns:
+    Dict[str, float]: Dict[str, float] produced by this call.
+  
+  Examples:
+    >>> _gpu_precision_mix_from_metric_values({})  # doctest: +SKIP
+  """
   skip: set[str] = set()
   for split_metric in _GPU_TENSOR_SPLIT_METRICS:
     try:
@@ -370,13 +593,30 @@ def _gpu_precision_mix_from_metric_values(
 
 
 def _pie_item_from_precision_mix(
-    *,
-    precision_mix: Dict[str, float],
-    title: str,
-    empty_reason: str,
-    help_plot_key: str,
-    label_order: tuple[str, ...],
+  *,
+  precision_mix: Dict[str, float],
+  title: str,
+  empty_reason: str,
+  help_plot_key: str,
+  label_order: tuple[str, ...],
 ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+  """
+  Internal helper to handle pie item from precision mix.
+  
+  Args:
+    precision_mix (Dict[str, float]): Mapping for precision mix.
+    title (str): String for title.
+    empty_reason (str): String for empty reason.
+    help_plot_key (str): String for help plot key.
+    label_order (tuple[str, ...]): Sequence for label order.
+  
+  Returns:
+    tuple[Optional[Dict[str, Any]], Optional[str]]: tuple[Optional[Dict[str,
+    Any]], Optional[str]] produced by this call.
+  
+  Examples:
+    >>> _pie_item_from_precision_mix({}, "x", "x", "x", [])  # doctest: +SKIP
+  """
   if not precision_mix:
     return None, empty_reason
   total = sum(float(v) for v in precision_mix.values() if float(v) > 0.0)
@@ -458,8 +698,20 @@ def _pie_item_from_precision_mix(
 
 
 def _multiprecision_mix_payload(
-    metric_values: Dict[str, Optional[float]],
+  metric_values: Dict[str, Optional[float]],
 ) -> Dict[str, Any]:
+  """
+  Internal helper to handle multiprecision mix payload.
+  
+  Args:
+    metric_values (Dict[str, Optional[float]]): Mapping for metric values.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> _multiprecision_mix_payload({})  # doctest: +SKIP
+  """
   cpu_mix = _precision_mix_from_metric_values(
       metric_values, _CPU_PRECISION_METRIC_TO_LABEL
   )
@@ -487,13 +739,24 @@ def _multiprecision_mix_payload(
 
 
 def _fsio_from_metric_values(
-    metric_values: Dict[str, Optional[float]]
+  metric_values: Dict[str, Optional[float]],
 ) -> tuple[Optional[Dict[str, Any]], bool]:
-  """Build dual NFS+Lustre fsio dict from metrics.
-
+  """
+  Build dual NFS+Lustre fsio dict from metrics.
+  
   Returns ``({}, False)`` when catalog keys exist but all values are null so
   host_data fallback can still run. Returns ``(None, False)`` when no FSIO
   catalog keys are present in ``metric_values``.
+  
+  Args:
+    metric_values (Dict[str, Optional[float]]): Mapping for metric values.
+  
+  Returns:
+    tuple[Optional[Dict[str, Any]], bool]: tuple[Optional[Dict[str, Any]],
+    bool] produced by this call.
+  
+  Examples:
+    >>> _fsio_from_metric_values({})  # doctest: +SKIP
   """
   fsio_metrics = {name for name, _t, _u in fsio_job_detail_catalog()}
   if not fsio_metrics.intersection(metric_values.keys()):
@@ -527,8 +790,23 @@ def _fsio_from_metric_values(
   return out, True
 
 
-def persist_job_detail_artifacts_for_jid(jid: str, context: Optional[Dict[str, Any]] = None) -> None:
-  """Prewarm derived payloads for user-facing API paths."""
+def persist_job_detail_artifacts_for_jid(
+  jid: str,
+  context: Optional[Dict[str, Any]] = None,
+) -> None:
+  """
+  Prewarm derived payloads for user-facing API paths.
+  
+  Args:
+    jid (str): String for jid.
+    context (Optional[Dict[str, Any]]): Context, or None when absent.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> persist_job_detail_artifacts_for_jid("x", None)  # doctest: +SKIP
+  """
   shared = context if isinstance(context, dict) else {}
   telemetry = shared.get("_telemetry") if isinstance(shared.get("_telemetry"), dict) else None
   job = shared.get("job")

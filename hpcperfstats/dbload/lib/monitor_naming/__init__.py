@@ -1,4 +1,8 @@
-"""Monitor st_name and event naming: canonical (new monitor), legacy (historical host_data), resolve (dual-read)."""
+"""
+Monitor st_name and event naming: canonical (new monitor), legacy (historical
+  host_data), resolve (dual-read).
+"""
+from __future__ import annotations
 
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
     AMD_DF_STATS_TYPES,

@@ -1,9 +1,15 @@
-"""Durable zero-host (proc-only / stats_rows=0) ingest marks for archive/delete gate.
+"""
+Durable zero-host (proc-only / stats_rows=0) ingest marks for archive/delete
+gate.
 
 When a closed stats file successfully ingests with no new ``host_data`` rows,
 ``proc_data`` cannot prove head/tail Unix seconds (no ``time`` column). Archive
 and raw-delete readiness therefore ORs the classic host_data head+tail gate with
 a fingerprint mark under ``archive_dir``.
+
+Attributes:
+  LogFn: Attribute.
+  ZERO_HOST_INGEST_MARK_SCHEMA_VERSION: Attribute.
 """
 from __future__ import annotations
 
@@ -23,7 +29,18 @@ LogFn = Optional[Callable[..., Any]]
 
 
 def path_fingerprint_key(path: str) -> str | None:
-  """Return ``path|mtime|size`` fingerprint, or ``None`` if the path is missing."""
+  """
+  Return ``path|mtime|size`` fingerprint, or ``None`` if the path is missing.
+  
+  Args:
+    path (str): String for path.
+  
+  Returns:
+    str | None: One of ``str``, ``None`` depending on inputs/branch.
+  
+  Examples:
+    >>> path_fingerprint_key("x")  # doctest: +SKIP
+  """
   try:
     st = os.stat(path)
   except OSError:
@@ -32,16 +49,49 @@ def path_fingerprint_key(path: str) -> str | None:
 
 
 def zero_host_ingest_mark_path(archive_data_dir: str) -> str:
+  """
+  Zero host ingest mark path.
+  
+  Args:
+    archive_data_dir (str): String for archive data dir.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> zero_host_ingest_mark_path("x")  # doctest: +SKIP
+  """
   return artifact_path(archive_data_dir, "zero_host_ingest_mark")
 
 
 def _default_archive_dir() -> str:
+  """
+  Internal helper to handle default archive dir.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _default_archive_dir()  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib import conf_parser as cfg
 
   return str(cfg.get_archive_dir_path() or "")
 
 
 def _load_entries(mark_path: str) -> dict:
+  """
+  Internal helper to load the entries.
+  
+  Args:
+    mark_path (str): String for mark path.
+  
+  Returns:
+    dict: dict produced by this call.
+  
+  Examples:
+    >>> _load_entries("x")  # doctest: +SKIP
+  """
   raw = load_persistence_document(
       mark_path,
       "zero_host_ingest_mark",
@@ -56,6 +106,19 @@ def _load_entries(mark_path: str) -> dict:
 
 
 def _save_entries(mark_path: str, entries: dict) -> None:
+  """
+  Internal helper to save the entries.
+  
+  Args:
+    mark_path (str): String for mark path.
+    entries (dict): Mapping for entries.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _save_entries("x", {})  # doctest: +SKIP
+  """
   save_persistence_document(
       mark_path,
       "zero_host_ingest_mark",
@@ -67,11 +130,23 @@ def _save_entries(mark_path: str, entries: dict) -> None:
 
 
 def has_zero_host_ingest_mark(
-    path: str,
-    *,
-    archive_data_dir: str | None = None,
+  path: str,
+  *,
+  archive_data_dir: str | None = None,
 ) -> bool:
-  """True when a durable mark exists for this path fingerprint."""
+  """
+  True when a durable mark exists for this path fingerprint.
+  
+  Args:
+    path (str): String for path.
+    archive_data_dir (str | None): One of ``str``, ``None``.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> has_zero_host_ingest_mark("x", None)  # doctest: +SKIP
+  """
   key = path_fingerprint_key(path)
   if key is None:
     return False
@@ -86,12 +161,27 @@ def has_zero_host_ingest_mark(
 
 
 def record_zero_host_ingest_mark(
-    path: str,
-    *,
-    archive_data_dir: str | None = None,
-    log_fn: LogFn = None,
+  path: str,
+  *,
+  archive_data_dir: str | None = None,
+  log_fn: LogFn = None,
 ) -> bool:
-  """Record a durable mark for a successful zero-host-row ingest. Return True if stored."""
+  """
+  Record a durable mark for a successful zero-host-row ingest. Return True if.
+  
+    stored.
+  
+  Args:
+    path (str): String for path.
+    archive_data_dir (str | None): One of ``str``, ``None``.
+    log_fn (LogFn): Log fn.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> record_zero_host_ingest_mark("x", None, None)  # doctest: +SKIP
+  """
   key = path_fingerprint_key(path)
   if key is None:
     return False
@@ -126,12 +216,27 @@ def record_zero_host_ingest_mark(
 
 
 def clear_zero_host_ingest_marks(
-    paths: Iterable[str],
-    *,
-    archive_data_dir: str | None = None,
-    log_fn: LogFn = None,
+  paths: Iterable[str],
+  *,
+  archive_data_dir: str | None = None,
+  log_fn: LogFn = None,
 ) -> int:
-  """Clear marks for the given paths (any fingerprint keys matching path). Return count removed."""
+  """
+  Clear marks for the given paths (any fingerprint keys matching path). Return.
+  
+    count removed.
+  
+  Args:
+    paths (Iterable[str]): Paths.
+    archive_data_dir (str | None): One of ``str``, ``None``.
+    log_fn (LogFn): Log fn.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> clear_zero_host_ingest_marks(None, None, None)  # doctest: +SKIP
+  """
   path_set = {os.path.normpath(p) for p in (paths or ()) if p}
   if not path_set:
     return 0
@@ -169,20 +274,38 @@ def clear_zero_host_ingest_marks(
 
 
 def maybe_record_zero_host_ingest_mark_from_outcome(
-    path: str,
-    *,
-    ingest_ok: bool,
-    outcome: str | None,
-    stats_rows: int | None,
-    stats_rows_parsed: int | None = None,
-    log_fn: LogFn = None,
-    archive_data_dir: str | None = None,
+  path: str,
+  *,
+  ingest_ok: bool,
+  outcome: str | None,
+  stats_rows: int | None,
+  stats_rows_parsed: int | None = None,
+  log_fn: LogFn = None,
+  archive_data_dir: str | None = None,
 ) -> bool:
-  """Record mark when ingest succeeded with zero host rows (proc-only / empty stats).
-
+  """
+  Record mark when ingest succeeded with zero host rows (proc-only / empty.
+  
+    stats).
+  
   Gate on **parsed** stats records when provided. Post-collapse / post-write row
   counts must not certify archive readiness (RC-0: resumed streaming could drop
   all hardware rows then mark the file deletable).
+  
+  Args:
+    path (str): String for path.
+    ingest_ok (bool): Boolean flag for ingest ok.
+    outcome (str | None): One of ``str``, ``None``.
+    stats_rows (int | None): One of ``int``, ``None``.
+    stats_rows_parsed (int | None): One of ``int``, ``None``.
+    log_fn (LogFn): Log fn.
+    archive_data_dir (str | None): One of ``str``, ``None``.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> maybe_record_zero_host_ingest_mark_from_outcome(0)  # doctest: +SKIP
   """
   if not ingest_ok:
     return False

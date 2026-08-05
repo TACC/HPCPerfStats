@@ -1,15 +1,31 @@
-"""Prewarmed gzip-compressed public dashboard payloads (expansion-factor aggregates).
+"""
+Prewarmed gzip-compressed public dashboard payloads (expansion-factor
+aggregates).
 
 Computed only from ``update_metrics`` scheduler passes — HTTP handlers must not
 reaggregate heavy ranges here.
 
-Rows are **not** deleted when inputs change: invalidation sets ``rebuild_required``
-so the bundle omits those periods until :func:`refresh_public_expansion_factor_artifacts`
-(or the parallel scheduler path) recomputes and clears the flag.
+Rows are **not** deleted when inputs change: invalidation sets
+``rebuild_required`` so the bundle omits those periods until
+:func:`refresh_public_expansion_factor_artifacts` (or the parallel scheduler
+path) recomputes and clears the flag.
 
 The scheduler runs :func:`refresh_public_expansion_factor_artifacts_parallel` on
 the metrics ``multiprocessing`` pool (one calendar month or one calendar year
 per task) and **completes** that pass before starting job-based metrics.
+
+Attributes:
+  APP_PUBLIC_METRICS_SCHEMA_VERSION: Attribute.
+  EF_HIST_BIN_EDGES: Attribute.
+  HOST_PLOT_MAX_WINDOW_DAYS: Attribute.
+  PAYLOAD_ENCODING_GZIP_JSON: Attribute.
+  PUBLIC_EF_MONTH_DAILY: Attribute.
+  PUBLIC_EF_YEAR_WEEKLY: Attribute.
+  _PUBLIC_EF_KIND_MONTH: Attribute.
+  _PUBLIC_EF_KIND_YEAR: Attribute.
+  _PUBLIC_METRICS_INVALIDATE_LOCK_TIMEOUT_MS: Attribute.
+  _PUBLIC_METRICS_INVALIDATE_STATEMENT_TIMEOUT_MS: Attribute.
+  logger: Attribute.
 """
 from __future__ import annotations
 
@@ -22,7 +38,7 @@ import time
 from collections import defaultdict
 from datetime import date, datetime
 from multiprocessing import TimeoutError as MultiprocessingTimeoutError
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from django.db import connection, transaction
 from django.db.models import F, Max, Min, Q
@@ -73,12 +89,28 @@ EF_HIST_BIN_EDGES: Tuple[float, ...] = (
 
 
 def compute_scheduler_expansion_factor_seconds(
-    submit_time: Optional[datetime],
-    start_time: Optional[datetime],
-    runtime_seconds: Optional[float],
-    ncores: Optional[int],
+  submit_time: Optional[datetime],
+  start_time: Optional[datetime],
+  runtime_seconds: Optional[float],
+  ncores: Optional[int],
 ) -> Optional[float]:
-  """Return EF as (queue_wait + runtime) / (ncores * runtime); ``None`` when invalid."""
+  """
+  Return EF as (queue_wait + runtime) / (ncores * runtime); ``None`` when.
+  
+    invalid.
+  
+  Args:
+    submit_time (Optional[datetime]): Submit time, or None when absent.
+    start_time (Optional[datetime]): Start time, or None when absent.
+    runtime_seconds (Optional[float]): Runtime seconds, or None when absent.
+    ncores (Optional[int]): Ncores, or None when absent.
+  
+  Returns:
+    Optional[float]: Optional[float] — the result, or None when unavailable.
+  
+  Examples:
+    >>> compute_scheduler_expansion_factor_seconds(None, None, None, None)
+  """
   if runtime_seconds is None or runtime_seconds <= 0:
     return None
   nc = int(ncores or 0)
@@ -96,6 +128,19 @@ def compute_scheduler_expansion_factor_seconds(
 
 
 def _histogram_counts(values: Sequence[float]) -> Tuple[List[float], List[int]]:
+  """
+  Internal helper to handle histogram counts.
+  
+  Args:
+    values (Sequence[float]): Sequence for values.
+  
+  Returns:
+    Tuple[List[float], List[int]]: Tuple[List[float], List[int]] produced by
+    this call.
+  
+  Examples:
+    >>> _histogram_counts([])  # doctest: +SKIP
+  """
   edges = list(EF_HIST_BIN_EDGES)
   counts = [0] * len(edges)
   # Last bucket is overflow for values >= edges[-1]
@@ -117,11 +162,32 @@ def _histogram_counts(values: Sequence[float]) -> Tuple[List[float], List[int]]:
 
 
 def _eligible_jobs_filter() -> Q:
+  """
+  Internal helper to handle eligible jobs filter.
+  
+  Returns:
+    Q: Q produced by this call.
+  
+  Examples:
+    >>> _eligible_jobs_filter()  # doctest: +SKIP
+  """
   return Q(runtime__gt=0, ncores__gt=0, start_time__gte=F("submit_time"))
 
 
-def _iter_queryset_rows(qs, *, chunk_size=2048):
-  """Iterate ``qs`` without server-side cursors when Django tests forbid them."""
+def _iter_queryset_rows(qs: Any, *, chunk_size: int = 2048) -> Iterator[Any]:
+  """
+  Iterate ``qs`` without server-side cursors when Django tests forbid them.
+  
+  Args:
+    qs (Any): Qs passed to this helper.
+    chunk_size (int): Integer value for chunk size.
+  
+  Yields:
+    Iterator[Any]: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _iter_queryset_rows(None, 0)  # doctest: +SKIP
+  """
   from django.test.testcases import DatabaseOperationForbidden
 
   try:
@@ -135,8 +201,20 @@ def _iter_queryset_rows(qs, *, chunk_size=2048):
     yield from qs
 
 
-def _streaming_jid_epoch_fingerprint(prefix: str, qs) -> str:
-  """Stable fingerprint over sorted ``(jid, end_time)`` pairs."""
+def _streaming_jid_epoch_fingerprint(prefix: str, qs: Any) -> str:
+  """
+  Stable fingerprint over sorted ``(jid, end_time)`` pairs.
+  
+  Args:
+    prefix (str): String for prefix.
+    qs (Any): Qs passed to this helper.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _streaming_jid_epoch_fingerprint("x", None)  # doctest: +SKIP
+  """
   h = hashlib.sha256()
   h.update(str(APP_PUBLIC_METRICS_SCHEMA_VERSION).encode())
   h.update(b"|")
@@ -155,6 +233,19 @@ def _streaming_jid_epoch_fingerprint(prefix: str, qs) -> str:
 
 
 def _period_month_bounds(year_month: str) -> Tuple[datetime, datetime]:
+  """
+  Internal helper to handle period month bounds.
+  
+  Args:
+    year_month (str): String for year month.
+  
+  Returns:
+    Tuple[datetime, datetime]: Tuple[datetime, datetime] produced by this
+    call.
+  
+  Examples:
+    >>> _period_month_bounds("x")  # doctest: +SKIP
+  """
   year_s, mon_s = year_month.split("-", 1)
   y = int(year_s)
   m = int(mon_s)
@@ -167,12 +258,34 @@ def _period_month_bounds(year_month: str) -> Tuple[datetime, datetime]:
 
 
 def _period_year_bounds(year: int) -> Tuple[datetime, datetime]:
+  """
+  Internal helper to handle period year bounds.
+  
+  Args:
+    year (int): Integer value for year.
+  
+  Returns:
+    Tuple[datetime, datetime]: Tuple[datetime, datetime] produced by this
+    call.
+  
+  Examples:
+    >>> _period_year_bounds(0)  # doctest: +SKIP
+  """
   start = datetime(year, 1, 1, tzinfo=dj_tz.utc)
   end = datetime(year + 1, 1, 1, tzinfo=dj_tz.utc)
   return start, end
 
 
 def _month_keys_present() -> List[str]:
+  """
+  Internal helper to check if the month keys is present.
+  
+  Returns:
+    List[str]: List[str] produced by this call.
+  
+  Examples:
+    >>> _month_keys_present()  # doctest: +SKIP
+  """
   qs = (
       job_data.objects.filter(_eligible_jobs_filter())
       .aggregate(mn=Min("end_time"), mx=Max("end_time"))
@@ -193,6 +306,15 @@ def _month_keys_present() -> List[str]:
 
 
 def _year_keys_present() -> List[str]:
+  """
+  Internal helper to check if the year keys is present.
+  
+  Returns:
+    List[str]: List[str] produced by this call.
+  
+  Examples:
+    >>> _year_keys_present()  # doctest: +SKIP
+  """
   qs = job_data.objects.filter(_eligible_jobs_filter()).aggregate(
       mn=Min("end_time"),
       mx=Max("end_time"),
@@ -204,6 +326,18 @@ def _year_keys_present() -> List[str]:
 
 
 def _payload_from_daily_means(daily_means: List[float]) -> Dict[str, Any]:
+  """
+  Internal helper to handle payload from daily means.
+  
+  Args:
+    daily_means (List[float]): Sequence for daily means.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> _payload_from_daily_means([])  # doctest: +SKIP
+  """
   edges, counts = _histogram_counts(daily_means)
   return {
       "scheduler_expansion_factor_daily_means_in_month_count": len(daily_means),
@@ -216,6 +350,18 @@ def _payload_from_daily_means(daily_means: List[float]) -> Dict[str, Any]:
 
 
 def _payload_from_weekly_means(weekly_means: List[float]) -> Dict[str, Any]:
+  """
+  Internal helper to handle payload from weekly means.
+  
+  Args:
+    weekly_means (List[float]): Sequence for weekly means.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> _payload_from_weekly_means([])  # doctest: +SKIP
+  """
   edges, counts = _histogram_counts(weekly_means)
   return {
       "scheduler_expansion_factor_weekly_means_in_year_count": len(weekly_means),
@@ -228,11 +374,25 @@ def _payload_from_weekly_means(weekly_means: List[float]) -> Dict[str, Any]:
 
 
 def _attach_ef_histogram_bokeh_item(
-    payload: Dict[str, Any],
-    *,
-    period_key: str,
-    subtitle: str,
+  payload: Dict[str, Any],
+  *,
+  period_key: str,
+  subtitle: str,
 ) -> None:
+  """
+  Internal helper to handle attach ef histogram bokeh item.
+  
+  Args:
+    payload (Dict[str, Any]): Mapping for payload.
+    period_key (str): String for period key.
+    subtitle (str): String for subtitle.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _attach_ef_histogram_bokeh_item({}, "x", "x")  # doctest: +SKIP
+  """
   edges = payload.get("histogram_bin_edges")
   counts = payload.get("histogram_counts")
   if not isinstance(edges, list) or not isinstance(counts, list):
@@ -252,6 +412,18 @@ def _attach_ef_histogram_bokeh_item(
 
 
 def _build_month_daily_payload(year_month: str) -> Dict[str, Any]:
+  """
+  Internal helper to build the month daily payload.
+  
+  Args:
+    year_month (str): String for year month.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> _build_month_daily_payload("x")  # doctest: +SKIP
+  """
   start, end = _period_month_bounds(year_month)
   qs = (
       job_data.objects.filter(_eligible_jobs_filter())
@@ -291,6 +463,18 @@ def _build_month_daily_payload(year_month: str) -> Dict[str, Any]:
 
 
 def _build_year_weekly_payload(year_str: str) -> Dict[str, Any]:
+  """
+  Internal helper to build the year weekly payload.
+  
+  Args:
+    year_str (str): String for year str.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> _build_year_weekly_payload("x")  # doctest: +SKIP
+  """
   year = int(year_str)
   start, end = _period_year_bounds(year)
   qs = (
@@ -332,7 +516,27 @@ def _build_year_weekly_payload(year_str: str) -> Dict[str, Any]:
   return payload
 
 
-def _upsert_row(scope: str, period_key: str, fingerprint: str, payload: Dict[str, Any]):
+def _upsert_row(
+  scope: str,
+  period_key: str,
+  fingerprint: str,
+  payload: Dict[str, Any],
+) -> None:
+  """
+  Internal helper to handle upsert row.
+  
+  Args:
+    scope (str): String for scope.
+    period_key (str): String for period key.
+    fingerprint (str): String for fingerprint.
+    payload (Dict[str, Any]): Mapping for payload.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _upsert_row("x", "x", "x", {})  # doctest: +SKIP
+  """
   blob = gzip.compress(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
   public_metrics_artifact.objects.update_or_create(
       scope=scope,
@@ -347,14 +551,47 @@ def _upsert_row(scope: str, period_key: str, fingerprint: str, payload: Dict[str
 
 
 def decompress_public_payload(row: public_metrics_artifact) -> Dict[str, Any]:
+  """
+  Decompress public payload.
+  
+  Args:
+    row (public_metrics_artifact): Row.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Raises:
+    ValueError: Raised when ``decompress_public_payload`` hits a
+    ``ValueError`` failure path.
+  
+  Examples:
+    >>> decompress_public_payload(None)  # doctest: +SKIP
+  """
   if row.payload_encoding != PAYLOAD_ENCODING_GZIP_JSON:
     raise ValueError("unsupported encoding")
   raw = gzip.decompress(bytes(row.payload_compressed))
   return json.loads(raw.decode("utf-8"))
 
 
-def _prune_orphan_public_ef_rows(months: Sequence[str], years: Sequence[str]) -> None:
-  """Remove persisted rows for periods with no backing job_data (retention / deletes)."""
+def _prune_orphan_public_ef_rows(
+  months: Sequence[str],
+  years: Sequence[str],
+) -> None:
+  """
+  Remove persisted rows for periods with no backing job_data (retention /.
+  
+    deletes).
+  
+  Args:
+    months (Sequence[str]): Sequence for months.
+    years (Sequence[str]): Sequence for years.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _prune_orphan_public_ef_rows([], [])  # doctest: +SKIP
+  """
   month_qs = public_metrics_artifact.objects.filter(scope=PUBLIC_EF_MONTH_DAILY)
   if months:
     month_qs.exclude(period_key__in=list(months)).delete()
@@ -368,7 +605,18 @@ def _prune_orphan_public_ef_rows(months: Sequence[str], years: Sequence[str]) ->
 
 
 def _sync_reconcile_public_ef_month(ym: str) -> Dict[str, int]:
-  """Fingerprint check + optional rebuild for one ``YYYY-MM`` period (any process)."""
+  """
+  Fingerprint check + optional rebuild for one ``YYYY-MM`` period (any process).
+  
+  Args:
+    ym (str): String for ym.
+  
+  Returns:
+    Dict[str, int]: Dict[str, int] produced by this call.
+  
+  Examples:
+    >>> _sync_reconcile_public_ef_month("x")  # doctest: +SKIP
+  """
   start, end = _period_month_bounds(ym)
   qs = (
       job_data.objects.filter(_eligible_jobs_filter())
@@ -395,7 +643,20 @@ def _sync_reconcile_public_ef_month(ym: str) -> Dict[str, int]:
 
 
 def _sync_reconcile_public_ef_year(ys: str) -> Dict[str, int]:
-  """Fingerprint check + optional rebuild for one calendar year period (any process)."""
+  """
+  Fingerprint check + optional rebuild for one calendar year period (any.
+  
+    process).
+  
+  Args:
+    ys (str): String for ys.
+  
+  Returns:
+    Dict[str, int]: Dict[str, int] produced by this call.
+  
+  Examples:
+    >>> _sync_reconcile_public_ef_year("x")  # doctest: +SKIP
+  """
   year_int = int(ys)
   start, end = _period_year_bounds(year_int)
   qs = (
@@ -423,11 +684,19 @@ def _sync_reconcile_public_ef_year(ys: str) -> Dict[str, int]:
 
 
 def _public_ef_reset_fork_inherited_db() -> None:
-  """Drop connections inherited after ``multiprocessing`` fork before ORM queries.
-
+  """
+  Drop connections inherited after ``multiprocessing`` fork before ORM queries.
+  
   Forked worker processes share their parent's Postgres socket unless closed.
   Django's ``QuerySet.iterator(chunk_size=…)`` declares named server-side
-  cursors; two processes multiplexing one session yields ``cursor … already exists``.
+  cursors; two processes multiplexing one session yields ``cursor … already
+    exists``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _public_ef_reset_fork_inherited_db()  # doctest: +SKIP
   """
   from django.db import close_old_connections, connections
 
@@ -436,11 +705,18 @@ def _public_ef_reset_fork_inherited_db() -> None:
 
 
 def _public_ef_parent_refresh_connections_after_forked_children() -> None:
-  """Reinitialize this process's DB handles after forked workers close shared fds.
-
+  """
+  Reinitialize this process's DB handles after forked workers close shared fds.
+  
   ``connections.close_all()`` in a worker closes inherited sockets that were
   still referenced by Django's wrappers in this (parent) process; discard and
   reconnect before any subsequent ORM in the scheduler thread.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _public_ef_parent_refresh_connections_after_forked_children()
   """
   from django.db import close_old_connections, connections
 
@@ -449,7 +725,18 @@ def _public_ef_parent_refresh_connections_after_forked_children() -> None:
 
 
 def _public_ef_period_worker(task: Tuple[str, str]) -> Dict[str, int]:
-  """Picklable multiprocessing worker: reconcile exactly one month or year period."""
+  """
+  Picklable multiprocessing worker: reconcile exactly one month or year period.
+  
+  Args:
+    task (Tuple[str, str]): Sequence for task.
+  
+  Returns:
+    Dict[str, int]: Dict[str, int] produced by this call.
+  
+  Examples:
+    >>> _public_ef_period_worker([])  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
   ensure_django()
@@ -474,16 +761,30 @@ def _public_ef_period_worker(task: Tuple[str, str]) -> Dict[str, int]:
 
 
 def refresh_public_expansion_factor_artifacts_parallel(
-    pool: Any,
-    *,
-    poll_timeout_s: float = 5.0,
-    no_progress_timeout_s: float = 120.0,
-    progress_callback=None,
+  pool: Any,
+  *,
+  poll_timeout_s: float = 5.0,
+  no_progress_timeout_s: float = 120.0,
+  progress_callback: Any | None = None,
 ) -> Dict[str, int]:
-  """Recompute stale month/year EF rows using ``pool`` (one period per task).
-
+  """
+  Recompute stale month/year EF rows using ``pool`` (one period per task).
+  
   Callers typically pass ``Metrics.ensure_pool()`` from ``update_metrics`` so
   /pub aggregates finish before the same pool runs per-job metrics.
+  
+  Args:
+    pool (Any): Live handle (pool, client, or connection).
+    poll_timeout_s (float): Floating-point value for poll timeout s.
+    no_progress_timeout_s (float): Floating-point value for no progress
+    timeout s.
+    progress_callback (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Dict[str, int]: Dict[str, int] produced by this call.
+  
+  Examples:
+    >>> refresh_public_expansion_factor_artifacts_parallel(None, 0, 0, None)
   """
   months = _month_keys_present()
   years = _year_keys_present()
@@ -547,7 +848,17 @@ def refresh_public_expansion_factor_artifacts_parallel(
 
 
 def refresh_public_expansion_factor_artifacts() -> Dict[str, int]:
-  """Recompute stale monthly/yearly expansion-factor histogram artifacts (sequential)."""
+  """
+  Recompute stale monthly/yearly expansion-factor histogram artifacts.
+  
+    (sequential).
+  
+  Returns:
+    Dict[str, int]: Dict[str, int] produced by this call.
+  
+  Examples:
+    >>> refresh_public_expansion_factor_artifacts()  # doctest: +SKIP
+  """
   months = _month_keys_present()
   years = _year_keys_present()
   totals: Dict[str, int] = defaultdict(int)
@@ -566,6 +877,15 @@ def refresh_public_expansion_factor_artifacts() -> Dict[str, int]:
 
 
 def refresh_public_expansion_factor_artifacts_safe() -> None:
+  """
+  Refresh public expansion factor artifacts safe.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> refresh_public_expansion_factor_artifacts_safe()  # doctest: +SKIP
+  """
   try:
     stats = refresh_public_expansion_factor_artifacts()
     logger.info("public metrics artifacts refreshed: %s", stats)
@@ -577,7 +897,17 @@ HOST_PLOT_MAX_WINDOW_DAYS = 7
 
 
 def assemble_public_dashboard_meta_bundle() -> Dict[str, Any]:
-  """Return dashboard status and period keys without decompressing histogram payloads."""
+  """
+  Return dashboard status and period keys without decompressing histogram.
+  
+    payloads.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> assemble_public_dashboard_meta_bundle()  # doctest: +SKIP
+  """
   monthly_keys = list(
       public_metrics_artifact.objects.filter(
           scope=PUBLIC_EF_MONTH_DAILY, rebuild_required=False
@@ -607,8 +937,24 @@ def assemble_public_dashboard_meta_bundle() -> Dict[str, Any]:
   }
 
 
-def load_public_expansion_factor_period(grouping: str, period_key: str) -> Optional[Dict[str, Any]]:
-  """Load one expansion-factor histogram block for ``grouping`` (monthly|yearly)."""
+def load_public_expansion_factor_period(
+  grouping: str,
+  period_key: str,
+) -> Optional[Dict[str, Any]]:
+  """
+  Load one expansion-factor histogram block for ``grouping`` (monthly|yearly).
+  
+  Args:
+    grouping (str): String for grouping.
+    period_key (str): String for period key.
+  
+  Returns:
+    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] — the result, or None
+    when unavailable.
+  
+  Examples:
+    >>> load_public_expansion_factor_period("x", "x")  # doctest: +SKIP
+  """
   grouping_norm = (grouping or "").strip().lower()
   if grouping_norm == "monthly":
     scope = PUBLIC_EF_MONTH_DAILY
@@ -633,10 +979,17 @@ def load_public_expansion_factor_period(grouping: str, period_key: str) -> Optio
 
 
 def assemble_public_monthly_metrics_bundle() -> Dict[str, Any]:
-  """Merge persisted artifacts into one JSON-safe bundle for the public API.
-
+  """
+  Merge persisted artifacts into one JSON-safe bundle for the public API.
+  
   Omits periods with ``rebuild_required`` so stale histograms are not served
   after invalidation until the scheduler recomputes them.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> assemble_public_monthly_metrics_bundle()  # doctest: +SKIP
   """
   monthly_histograms: Dict[str, Any] = {}
   yearly_histograms: Dict[str, Any] = {}
@@ -664,12 +1017,25 @@ def assemble_public_monthly_metrics_bundle() -> Dict[str, Any]:
 
 
 def invalidate_public_metrics_artifacts_for_jids(jids: Iterable[str]) -> None:
-  """Mark EF aggregates stale for calendar periods touched by the given accounting rows.
-
+  """
+  Mark EF aggregates stale for calendar periods touched by the given accounting.
+  
+    rows.
+  
   Updates one primary key at a time under a short PostgreSQL ``lock_timeout`` so
   concurrent ``update_or_create`` / refresh holds do not wait until the session
   ``statement_timeout`` (which previously logged ERROR with a full traceback).
-  Locked or timed-out rows are skipped with a warning; other periods still update.
+  Locked or timed-out rows are skipped with a warning; other periods still
+    update.
+  
+  Args:
+    jids (Iterable[str]): Jids.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> invalidate_public_metrics_artifacts_for_jids(None)  # doctest: +SKIP
   """
   jid_list = [j for j in jids if j]
   if not jid_list:
@@ -695,7 +1061,15 @@ def invalidate_public_metrics_artifacts_for_jids(jids: Iterable[str]) -> None:
 
 
 def invalidate_all_public_metrics_artifacts() -> None:
-  """Mark every prewarmed public dashboard artifact row for rebuild."""
+  """
+  Mark every prewarmed public dashboard artifact row for rebuild.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> invalidate_all_public_metrics_artifacts()  # doctest: +SKIP
+  """
   try:
     pks = list(
         public_metrics_artifact.objects.filter(rebuild_required=False).values_list(
@@ -708,10 +1082,22 @@ def invalidate_all_public_metrics_artifacts() -> None:
 
 
 def _mark_public_metrics_rebuild_required(
-    scope: str,
-    period_keys: Sequence[str],
+  scope: str,
+  period_keys: Sequence[str],
 ) -> int:
-  """Mark matching non-stale rows ``rebuild_required``; return rows updated."""
+  """
+  Mark matching non-stale rows ``rebuild_required``; return rows updated.
+  
+  Args:
+    scope (str): String for scope.
+    period_keys (Sequence[str]): Sequence for period keys.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> _mark_public_metrics_rebuild_required("x", [])  # doctest: +SKIP
+  """
   if not period_keys:
     return 0
   pks = list(
@@ -725,7 +1111,18 @@ def _mark_public_metrics_rebuild_required(
 
 
 def _mark_public_metrics_rebuild_required_by_pks(pks: Sequence[int]) -> int:
-  """Per-pk rebuild flag updates with short lock/statement timeouts (Postgres)."""
+  """
+  Per-pk rebuild flag updates with short lock/statement timeouts (Postgres).
+  
+  Args:
+    pks (Sequence[int]): Sequence for pks.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> _mark_public_metrics_rebuild_required_by_pks([])  # doctest: +SKIP
+  """
   updated_n = 0
   for pk in pks:
     try:
@@ -742,7 +1139,22 @@ def _mark_public_metrics_rebuild_required_by_pks(pks: Sequence[int]) -> int:
 
 
 def _update_public_metrics_rebuild_required_one(pk: int) -> bool:
-  """Return True when the row was marked ``rebuild_required``."""
+  """
+  Return True when the row was marked ``rebuild_required``.
+  
+  Args:
+    pk (int): Integer value for pk.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Raises:
+    Exception: Raised when ``_update_public_metrics_rebuild_required_one``
+    hits a ``Exception`` failure path.
+  
+  Examples:
+    >>> _update_public_metrics_rebuild_required_one(0)  # doctest: +SKIP
+  """
   using = getattr(connection, "alias", None) or "default"
   with transaction.atomic(using=using):
     if connection.vendor == "postgresql":

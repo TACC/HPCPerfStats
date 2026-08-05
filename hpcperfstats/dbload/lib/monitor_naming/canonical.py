@@ -1,4 +1,57 @@
-"""Canonical monitor st_name and event keys (current hpcperfstatsd emission)."""
+"""
+Canonical monitor st_name and event keys (current hpcperfstatsd emission).
+
+Attributes:
+  AMD_DF_STATS_TYPES: Attribute.
+  AMD_DF_TYPE: Attribute.
+  AMD_PMC_TYPE: Attribute.
+  AMD_RAPL_STATS_TYPES: Attribute.
+  APERF: Attribute.
+  ARM_DRAM_BW_BYTES: Attribute.
+  ARM_EST_FLOPS: Attribute.
+  ARM_IMC_STATS_TYPES: Attribute.
+  ARM_INT16_OPS: Attribute.
+  ARM_INT8_OPS: Attribute.
+  CHA_TYPENAME_PRIORITY: Attribute.
+  DCGM_CPU_POWER_LIMIT_W: Attribute.
+  DCGM_CPU_POWER_UTIL_W: Attribute.
+  DRAM_CAS_READS: Attribute.
+  DRAM_CAS_WRITES: Attribute.
+  DRAM_CHAN_BYTES_EVENTS: Attribute.
+  FP_OPS_RETIRED: Attribute.
+  GRACE_FP_ARITH_SCALAR_DOUBLE: Attribute.
+  GRACE_FP_ARITH_SCALAR_SINGLE: Attribute.
+  HBM_CAS_READS: Attribute.
+  HBM_CAS_WRITES: Attribute.
+  HOST_BLOCK_TYPE: Attribute.
+  HOST_CPU_HW_TYPE: Attribute.
+  HOST_CPU_TYPE: Attribute.
+  HOST_IB_EXT_TYPE: Attribute.
+  HOST_IB_TYPE: Attribute.
+  HOST_LNET_TYPE: Attribute.
+  HOST_MEM_TYPE: Attribute.
+  HOST_NET_TYPE: Attribute.
+  HOST_NFS_TYPE: Attribute.
+  HOST_NUMA_TYPE: Attribute.
+  HOST_OPA_TYPE: Attribute.
+  HOST_ROOFLINE_PEAK_TYPE: Attribute.
+  INSTR_RETIRED: Attribute.
+  INTEL_CORE_PMC_TYPES_ORDERED: Attribute.
+  INTEL_FP_ARITH_ALL_EVENTS: Attribute.
+  INTEL_FP_ARITH_DOUBLE_EVENTS: Attribute.
+  INTEL_FP_ARITH_SINGLE_EVENTS: Attribute.
+  INTEL_IMC_STATS_TYPES: Attribute.
+  INTEL_LEGACY_SSE_FLOP_EVENTS: Attribute.
+  INTEL_RAPL_STATS_TYPES: Attribute.
+  LUSTRE_LLITE_TYPE: Attribute.
+  MEM_FREE: Attribute.
+  MEM_TOTAL: Attribute.
+  MEM_USED: Attribute.
+  MPERF: Attribute.
+  PKG_ENERGY: Attribute.
+  PMC_TYPENAME_PRIORITY: Attribute.
+  _PMC_FREQ_BY_TYPENAME: Attribute.
+"""
 from __future__ import annotations
 
 # Intel IMC types exposing dram_cas_* (and on SPR also hbm_cas_*) for measured BW.
@@ -124,6 +177,18 @@ _PMC_FREQ_BY_TYPENAME = {
 
 
 def pmc_freq_for_typename(typename: str | None) -> float:
+    """
+    Pmc freq for typename.
+    
+    Args:
+      typename (str | None): One of ``str``, ``None``.
+    
+    Returns:
+      float: float produced by this call.
+    
+    Examples:
+      >>> pmc_freq_for_typename(None)  # doctest: +SKIP
+    """
     if not typename:
         return 2.7
     return _PMC_FREQ_BY_TYPENAME.get(typename, 2.7)

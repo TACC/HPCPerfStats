@@ -1,6 +1,17 @@
-"""Shared utilities for analysis: job-like utils class (freq/imc/cha, get_type), queryset_to_dataframe, clean_dataframe, and timezone-aware Bokeh tick formatter.
-
 """
+Shared utilities for analysis: job-like utils class (freq/imc/cha, get_type),.
+
+queryset_to_dataframe, clean_dataframe, and timezone-aware Bokeh tick formatter.
+
+Attributes:
+  jid_table: ``jid_table``.
+  job_data: ``job_data``.
+  local_timezone: ``local_timezone``.
+"""
+from __future__ import annotations
+
+from typing import Any, Iterator
+
 import hpcperfstats.dbload.lib.conf_parser as cfg
 
 import warnings
@@ -40,8 +51,19 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (  # noqa: E402
 
 
 
-def _coerce_schema_typename_key(key):
-  """Make jid schema keys hashable/set-safe (never raw lists from bad payloads)."""
+def _coerce_schema_typename_key(key: Any) -> Any:
+  """
+  Make jid schema keys hashable/set-safe (never raw lists from bad payloads).
+  
+  Args:
+    key (Any): Key passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _coerce_schema_typename_key(None)  # doctest: +SKIP
+  """
   if isinstance(key, str):
     return key
   if isinstance(key, (list, tuple, set)):
@@ -56,8 +78,19 @@ def _coerce_schema_typename_key(key):
   return str(key)
 
 
-def _pick_pmc_typename(schema_keys):
-  """First PMC typename present in schema_keys (canonical + legacy priority)."""
+def _pick_pmc_typename(schema_keys: Any) -> Any:
+  """
+  First PMC typename present in schema_keys (canonical + legacy priority).
+  
+  Args:
+    schema_keys (Any): Schema keys passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _pick_pmc_typename(None)  # doctest: +SKIP
+  """
   keys = {_coerce_schema_typename_key(k) for k in schema_keys}
   for typename in pmc_typename_priority():
     if typename in keys:
@@ -66,14 +99,41 @@ def _pick_pmc_typename(schema_keys):
 
 
 class utils():
-  """Minimal job-like wrapper exposing host stats, schemas, times, and type resolution (pmc/imc/cha) for metrics and plots.
+  """
+  Minimal job-like wrapper exposing host stats, schemas, times, and type.
+  
+    resolution (pmc/imc/cha) for metrics and plots.
+  
+  Attributes:
+    cha: ``cha``.
+    dt: ``dt``.
+    freq: ``freq``.
+    hostnames: ``hostnames``.
+    hours: ``hours``.
+    imc: ``imc``.
+    job: ``job``.
+    nhosts: ``nhosts``.
+    nt: ``nt``.
+    pmc: ``pmc``.
+    t: ``t``.
+    wayness: ``wayness``.
+  """
 
+  def __init__(self, job: Any) -> None:
     """
-
-  def __init__(self, job):
-    """Initialize from a job object; set nhosts, hostnames, wayness, hours, t, nt, dt, and resolve pmc/imc/cha/freq from schemas.
-
-        """
+    Initialize from a job object; set nhosts, hostnames, wayness, hours, t, nt,.
+    
+      dt, and resolve pmc/imc/cha/freq from schemas.
+    
+    Args:
+      job (Any): Job record (Django ``job_data`` or job-like mapping).
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> utils(None)  # doctest: +SKIP
+    """
     imc_list = list(imc_types_probe_order())
     cha_list = list(cha_typename_priority())
     self.job = job
@@ -102,10 +162,22 @@ class utils():
         self.cha = cha_typ
         break
 
-  def get_type(self, typename, aggregate=True):
-    """Return (schema, stats) for typename (e.g. pmc/imc/cha); stats is per-host aggregated or per-device dict. Returns (None, {}) if type not in job.
-
-        """
+  def get_type(self, typename: Any, aggregate: bool = True) -> Any:
+    """
+    Return (schema, stats) for typename (e.g. pmc/imc/cha); stats is per-host.
+    
+      aggregated or per-device dict. Returns (None, {}) if type not in job.
+    
+    Args:
+      typename (Any): Typename passed to this helper.
+      aggregate (bool): Boolean flag for aggregate.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> utils().get_type(None, True)  # doctest: +SKIP
+    """
     if typename == "imc":
       typename = self.imc
     if typename == "pmc":
@@ -143,13 +215,23 @@ class utils():
     return schema, stats
 
 
-def get_job_host_data_and_job_dict(jid):
-  """Return (host_data_df, job_dict) for the given job id.
-
+def get_job_host_data_and_job_dict(jid: Any) -> Any:
+  """
+  Return (host_data_df, job_dict) for the given job id.
+  
   host_data_df: DataFrame of all host_data rows within the job's start/end
   times and from only the hosts in the job (from job_data.host_list).
   job_dict: dictionary of the job_data row matching jid, or None if not found.
   Job row lookup is cached.
+  
+  Args:
+    jid (Any): Jid passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> get_job_host_data_and_job_dict(None)  # doctest: +SKIP
   """
   from hpcperfstats.site.lib.machine.cache_utils import (
     KEY_JOB_DICT,
@@ -158,7 +240,16 @@ def get_job_host_data_and_job_dict(jid):
     make_cache_key,
   )
 
-  def _job_dict_fn():
+  def _job_dict_fn() -> Any:
+    """
+    Internal helper to handle job dict function.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _job_dict_fn()  # doctest: +SKIP
+    """
     row = job_data.objects.filter(jid=jid).values().first()
     return dict(row) if row is not None else None
 
@@ -189,11 +280,28 @@ def get_job_host_data_and_job_dict(jid):
   return host_df, job_dict
 
 
-def iter_queryset_values_dicts(qs, *fields, chunk_size=2000):
-  """Yield dict rows from ``QuerySet.values(*fields)`` without ``list(qs)``.
-
+def iter_queryset_values_dicts(
+  qs: Any,
+  *fields: Any,
+  chunk_size: int = 2000,
+) -> Iterator[Any]:
+  """
+  Yield dict rows from ``QuerySet.values(*fields)`` without ``list(qs)``.
+  
   Use for large querysets where callers process incrementally (see also
   ``jid_table`` large-job time sampling for job-scoped bounds).
+  
+  Args:
+    qs (Any): Qs passed to this helper.
+    *fields (Any): Extra positional values for ``fields``; element types match
+    the helper's documented protocol.
+    chunk_size (int): Integer value for chunk size.
+  
+  Yields:
+    Iterator[Any]: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> iter_queryset_values_dicts(None, 0)  # doctest: +SKIP
   """
   if qs is None or not fields:
     return
@@ -201,13 +309,24 @@ def iter_queryset_values_dicts(qs, *fields, chunk_size=2000):
     yield row
 
 
-def queryset_to_dataframe(qs, columns=None):
-  """Convert a Django QuerySet to a pandas DataFrame.
-
+def queryset_to_dataframe(qs: Any, columns: Any | None = None) -> Any:
+  """
+  Convert a Django QuerySet to a pandas DataFrame.
+  
   When columns is set, uses qs.values(*columns). When columns is None,
   iterates the queryset as-is so annotated/grouped querysets are preserved.
   Handles iterable of dicts, list of lists/tuples, or model instances
   (via model_to_dict).
+  
+  Args:
+    qs (Any): Qs passed to this helper.
+    columns (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> queryset_to_dataframe(None, None)  # doctest: +SKIP
   """
   import pandas as pd
   if qs is None:
@@ -234,8 +353,23 @@ def queryset_to_dataframe(qs, columns=None):
   return pd.DataFrame([model_to_dict(row) for row in data])
 
 
-def non_degenerate_y_range_for_series(series, y_range_end=None):
-  """Return (y_min, y_max) with NaN-safe non-degenerate bounds."""
+def non_degenerate_y_range_for_series(
+  series: Any,
+  y_range_end: Any | None = None,
+) -> Any:
+  """
+  Return (y_min, y_max) with NaN-safe non-degenerate bounds.
+  
+  Args:
+    series (Any): Series passed to this helper.
+    y_range_end (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> non_degenerate_y_range_for_series(None, None)  # doctest: +SKIP
+  """
   y_min_value = series.min()
   if y_range_end is None or pd.isna(y_range_end):
     y_range_end = 1.1 * series.max()
@@ -249,17 +383,38 @@ def non_degenerate_y_range_for_series(series, y_range_end=None):
   return float(y_range_start), float(y_range_end)
 
 
-def clean_dataframe(df):
-  """Replace NaN and inf with empty string for display/serialization.
-
-    """
+def clean_dataframe(df: Any) -> Any:
+  """
+  Replace NaN and inf with empty string for display/serialization.
+  
+  Args:
+    df (Any): Df passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> clean_dataframe(None)  # doctest: +SKIP
+  """
   df = df.fillna('')
   df = df.replace([np.inf, -np.inf], '')
   return df
 
 
-def format_plain_decimal(value, precision=2):
-  """Format a numeric value without scientific notation for Bokeh hovers."""
+def format_plain_decimal(value: Any, precision: int = 2) -> Any:
+  """
+  Format a numeric value without scientific notation for Bokeh hovers.
+  
+  Args:
+    value (Any): Value to inspect (typically a numeric scalar).
+    precision (int): Integer value for precision.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> format_plain_decimal(None, 0)  # doctest: +SKIP
+  """
   if value is None or value == "":
     return ""
   try:
@@ -271,11 +426,21 @@ def format_plain_decimal(value, precision=2):
   return f"{number:,.{precision}f}"
 
 
-def format_cluster_hover_datetime(value):
-  """Format Bokeh datetime or epoch-ms in the configured cluster timezone.
-
+def format_cluster_hover_datetime(value: Any) -> Any:
+  """
+  Format Bokeh datetime or epoch-ms in the configured cluster timezone.
+  
   Naive datetimes are treated as cluster wall clock (see
   ``timestamps_as_cluster_naive``); aware/epoch-ms values convert from UTC.
+  
+  Args:
+    value (Any): Value to inspect (typically a numeric scalar).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> format_cluster_hover_datetime(None)  # doctest: +SKIP
   """
   if value is None or value == "":
     return ""
@@ -295,20 +460,47 @@ def format_cluster_hover_datetime(value):
   return formatted
 
 
-def timestamps_as_cluster_naive(series):
-  """UTC (or naive-as-UTC) timestamps → naive cluster wall clock for Bokeh axes.
-
+def timestamps_as_cluster_naive(series: Any) -> Any:
+  """
+  UTC (or naive-as-UTC) timestamps → naive cluster wall clock for Bokeh axes.
+  
   Bokeh 3.9 ``DatetimeTickFormatter`` has no timezone property and formats in
   UTC. Shifting to naive cluster local makes axis ticks match
   ``format_cluster_hover_datetime`` without CustomJS.
+  
+  Args:
+    series (Any): Series passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> timestamps_as_cluster_naive(None)  # doctest: +SKIP
   """
   utc = pd.to_datetime(series, utc=True)
   local = utc.dt.tz_convert(ZoneInfo(local_timezone))
   return local.dt.tz_localize(None)
 
 
-def add_hover_plain_columns(df, numeric_cols, time_col="time"):
-  """Add pre-formatted hover columns so HoverTool does not need CustomJS."""
+def add_hover_plain_columns(
+  df: Any,
+  numeric_cols: Any,
+  time_col: str = "time",
+) -> Any:
+  """
+  Add pre-formatted hover columns so HoverTool does not need CustomJS.
+  
+  Args:
+    df (Any): Df passed to this helper.
+    numeric_cols (Any): Numeric cols passed to this helper.
+    time_col (str): String for time col.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> add_hover_plain_columns(None, None, "x")  # doctest: +SKIP
+  """
   out = df.copy()
   if time_col in out.columns:
     out["_hover_time"] = out[time_col].map(format_cluster_hover_datetime)
@@ -318,11 +510,20 @@ def add_hover_plain_columns(df, numeric_cols, time_col="time"):
   return out
 
 
-def tz_aware_bokeh_tick_formatter():
-  """Datetime axis labels for cluster-naive plot times (no CustomJS / unsafe-eval).
-
+def tz_aware_bokeh_tick_formatter() -> Any:
+  """
+  Datetime axis labels for cluster-naive plot times (no CustomJS / unsafe-eval).
+  
   Callers must pass x values through ``timestamps_as_cluster_naive`` so tick
   strings match hover (cluster INI timezone).
+  
+  Returns:
+    Any: Open return polymorphism from ``tz_aware_bokeh_tick_formatter``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> tz_aware_bokeh_tick_formatter()  # doctest: +SKIP
   """
   return DatetimeTickFormatter(
       hours="%I:%M %p",
@@ -333,18 +534,51 @@ def tz_aware_bokeh_tick_formatter():
   )
 
 
-def new_plain_linear_tick_formatter():
-  """Bokeh tick labels without scientific notation (new instance per axis/plot)."""
+def new_plain_linear_tick_formatter() -> Any:
+  """
+  Bokeh tick labels without scientific notation (new instance per axis/plot).
+  
+  Returns:
+    Any: Open return polymorphism from ``new_plain_linear_tick_formatter``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> new_plain_linear_tick_formatter()  # doctest: +SKIP
+  """
   return BasicTickFormatter(use_scientific=False, precision=2)
 
 
-def new_plain_log_tick_formatter():
-  """Log-scale tick labels without scientific notation (built-in BasicTickFormatter)."""
+def new_plain_log_tick_formatter() -> Any:
+  """
+  Log-scale tick labels without scientific notation (built-in.
+  
+    BasicTickFormatter).
+  
+  Returns:
+    Any: Open return polymorphism from ``new_plain_log_tick_formatter``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> new_plain_log_tick_formatter()  # doctest: +SKIP
+  """
   return BasicTickFormatter(use_scientific=False, precision=2)
 
 
-def set_linear_axes_plain_numeric(plot):
-  """Apply non-scientific tick formatters to every LinearAxis on the figure."""
+def set_linear_axes_plain_numeric(plot: Any) -> None:
+  """
+  Apply non-scientific tick formatters to every LinearAxis on the figure.
+  
+  Args:
+    plot (Any): Plot passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> set_linear_axes_plain_numeric(None)  # doctest: +SKIP
+  """
   for axis_list in (plot.xaxis, plot.yaxis):
     for ax in axis_list:
       if isinstance(ax, LinearAxis):

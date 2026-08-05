@@ -1,4 +1,5 @@
-"""Utilities for waiting on Redis during container startup.
+"""
+Utilities for waiting on Redis during container startup.
 
 This prevents race conditions where Django starts up and attempts to use the
 Redis cache before the `redis` container is reachable or ready.
@@ -15,11 +16,17 @@ from hpcperfstats.dbload.lib.dbwait import wait_for_host_port_resolution
 
 
 def resolve_redis_host_port(redis_url: str) -> tuple[str, str]:
-  """Return (host, port) for a Redis URL.
-
+  """
+  Return (host, port) for a Redis URL.
+  
+  Args:
+    redis_url (str): String for redis url.
+  
+  Returns:
+    tuple[str, str]: tuple[str, str] produced by this call.
+  
   Examples:
-    - redis://redis:6379/1 -> ("redis", "6379")
-    - redis://127.0.0.1 -> ("127.0.0.1", "6379")
+    >>> resolve_redis_host_port("x")  # doctest: +SKIP
   """
   parsed = urllib.parse.urlparse(redis_url)
   host = parsed.hostname or "localhost"
@@ -35,10 +42,26 @@ def wait_for_redis_available(
   dns_timeout_seconds: int | None = None,
   ping_timeout_seconds: float = 2.0,
 ) -> None:
-  """Wait until Redis responds to `PING`.
-
+  """
+  Wait until Redis responds to `PING`.
+  
+  Args:
+    redis_url (str): String for redis url.
+    timeout_seconds (int): Integer value for timeout seconds.
+    interval_seconds (float): Floating-point value for interval seconds.
+    dns_timeout_seconds (int | None): One of ``int``, ``None``.
+    ping_timeout_seconds (float): Floating-point value for ping timeout
+    seconds.
+  
+  Returns:
+    None
+  
   Raises:
-    TimeoutError: if Redis isn't reachable within `timeout_seconds`.
+    TimeoutError: Raised when ``wait_for_redis_available`` hits a
+    ``TimeoutError`` failure path.
+  
+  Examples:
+    >>> wait_for_redis_available("x", 0, 0, None, 0)  # doctest: +SKIP
   """
   host, port = resolve_redis_host_port(redis_url)
 

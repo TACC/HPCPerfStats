@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Write nginx snippet ``hps-proxy-allowed-hosts.inc`` from hpcperfstats.ini."""
+"""
+Write nginx snippet ``hps-proxy-allowed-hosts.inc`` from hpcperfstats.ini.
+
+Attributes:
+  GENERATED_HEADER: Attribute.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +20,19 @@ GENERATED_HEADER = (
 
 
 def write_allowed_hosts_include(*, ini_path: Path, out_path: Path) -> None:
+  """
+  Write the allowed hosts include.
+  
+  Args:
+    ini_path (Path): String for ini path.
+    out_path (Path): String for out path.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> write_allowed_hosts_include("x", "x")  # doctest: +SKIP
+  """
   names = load_allowed_server_names(ini_path)
   line = f"server_name {' '.join(names)};\n"
   out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -22,6 +40,18 @@ def write_allowed_hosts_include(*, ini_path: Path, out_path: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+  """
+  Run this module's command-line entrypoint.
+  
+  Args:
+    argv (list[str] | None): One of ``list[str]``, ``None``.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> main(None)  # doctest: +SKIP
+  """
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--ini", type=Path, required=True)
   parser.add_argument("--out", type=Path, required=True)

@@ -1,5 +1,23 @@
-"""Legacy stats-file decode: CTL/CTR/FIXED_CTR and hex eventmaps for historical archives."""
+"""
+Legacy stats-file decode: CTL/CTR/FIXED_CTR and hex eventmaps for historical
+archives.
+
+Attributes:
+  EVENTMAPS_BY_TYPE: Attribute.
+  _LEGACY_KNL_TYPE_NORMALIZE: Attribute.
+  amd64_df_eventmap: Attribute.
+  amd64_pmc_eventmap: Attribute.
+  intel_8pmc3_eventmap: Attribute.
+  intel_bdw_imc_eventmap: Attribute.
+  intel_hsw_imc_eventmap: Attribute.
+  intel_ivb_imc_eventmap: Attribute.
+  intel_knl_mc_dclk_eventmap: Attribute.
+  intel_skx_imc_eventmap: Attribute.
+  intel_snb_imc_eventmap: Attribute.
+"""
 from __future__ import annotations
+
+from typing import Any
 
 from hpcperfstats.dbload.lib.monitor_naming.legacy import (
     INGEST_LEGACY_KNL_IMC_TYPE,
@@ -90,8 +108,27 @@ _LEGACY_KNL_TYPE_NORMALIZE = {
 }
 
 
-def map_hardware_counter_vals(typ, schema_events, vals, eventmap):
-    """Map CTL/CTR/FIXED_CTR schema rows to legacy event names via hex eventmap."""
+def map_hardware_counter_vals(
+  typ: Any,
+  schema_events: Any,
+  vals: Any,
+  eventmap: Any,
+) -> Any:
+    """
+    Map CTL/CTR/FIXED_CTR schema rows to legacy event names via hex eventmap.
+    
+    Args:
+      typ (Any): Typ passed to this helper.
+      schema_events (Any): Schema events passed to this helper.
+      vals (Any): Vals passed to this helper.
+      eventmap (Any): Eventmap passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> map_hardware_counter_vals(None, None, None, None)  # doctest: +SKIP
+    """
     n = {}
     rm_idx = []
     schema_mod = []
@@ -115,12 +152,38 @@ def map_hardware_counter_vals(typ, schema_events, vals, eventmap):
 
 
 def legacy_output_type(typ: str) -> str:
-    """Normalize legacy typename for host_data (KNL dclk bucket)."""
+    """
+    Normalize legacy typename for host_data (KNL dclk bucket).
+    
+    Args:
+      typ (str): String for typ.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> legacy_output_type("x")  # doctest: +SKIP
+    """
     return _LEGACY_KNL_TYPE_NORMALIZE.get(typ, typ)
 
 
 def decode_counter_line(typ: str, schema: dict, vals: list) -> dict | None:
-    """Return event->value dict for a legacy hardware-counter line, or None to skip."""
+    """
+    Return event->value dict for a legacy hardware-counter line, or None to.
+    
+      skip.
+    
+    Args:
+      typ (str): String for typ.
+      schema (dict): Mapping for schema.
+      vals (list): Sequence for vals.
+    
+    Returns:
+      dict | None: One of ``dict``, ``None`` depending on inputs/branch.
+    
+    Examples:
+      >>> decode_counter_line("x", {}, [])  # doctest: +SKIP
+    """
     if typ not in EVENTMAPS_BY_TYPE or typ not in schema:
         return None
     eventmap = EVENTMAPS_BY_TYPE[typ]

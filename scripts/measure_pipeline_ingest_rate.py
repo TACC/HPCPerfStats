@@ -1,31 +1,56 @@
 #!/usr/bin/env python3
-"""Measure listend vs sync_timedb rates from pipeline logs.
+"""
+Measure listend vs sync_timedb rates from pipeline logs.
 
 Reads pipeline container logs (stdin, --log-file, or --fetch-compose) and prints
 only summary outcome lines to stdout. Errors and caveats go to stderr.
 
 Backlog fields (backlog_at_start / backlog_latest / drained / empirical ETA) use
 **on-disk pending census only**:
-  - ``pending rescan done pending=N`` (uncapped before queue cap; optional
-    historical ``sync_timedb:`` / ``ingest:`` body prefixes)
-  - ``Pending stats file list truncated pending=N max=M`` (uncapped N at truncate)
+- ``pending rescan done pending=N`` (uncapped before queue cap; optional
+  historical ``sync_timedb:`` / ``ingest:`` body prefixes)
+- ``Pending stats file list truncated pending=N max=M`` (uncapped N at truncate)
 
 Do **not** mix those with ``Throughput telemetry … backlog=N``, which is capped
-in-memory ``len(pending_stats_files)`` (≤ sync_ingest_queue_max_size, often 2000).
-Queue occupancy is reported separately as ingest_queue_depth_*.
+in-memory ``len(pending_stats_files)`` (≤ sync_ingest_queue_max_size, often
+2000). Queue occupancy is reported separately as ingest_queue_depth_*.
 
-The measurement window starts at **ingest start** by default (last
-``startup ingest gate cleared; ingest may begin``), not supervisor/startup
-maintenance. Use ``--include-startup`` to measure from the first timestamped
-line. Fallback when no gate line is present: last ``chunk imap start``.
+The measurement window starts at **ingest start** by default (last ``startup
+ingest gate cleared; ingest may begin``), not supervisor/startup maintenance.
+Use ``--include-startup`` to measure from the first timestamped line. Fallback
+when no gate line is present: last ``chunk imap start``.
 
 ``estimated_finish_local`` is log_end (or now) plus the first usable ETA among
 empirical / full_ingest / archive_done, formatted in the host local timezone
-(``YYYY-MM-DD HH:MM:SS ±HHMM``). ``estimated_finish_basis`` names which ETA was used.
+(``YYYY-MM-DD HH:MM:SS ±HHMM``). ``estimated_finish_basis`` names which ETA was
+used.
 
-Usage (from HPCPerfStats/):
-  docker compose -f docker-compose.app.yaml logs --timestamps pipeline 2>&1 | python3 scripts/measure_pipeline_ingest_rate.py
-  python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-full.log
+Usage (from HPCPerfStats/)::
+
+  docker compose -f docker-compose.app.yaml logs --timestamps pipeline \\
+    2>&1 | python3 scripts/measure_pipeline_ingest_rate.py
+  python3 scripts/measure_pipeline_ingest_rate.py \\
+    --log-file /tmp/pipeline-full.log
+
+Attributes:
+  EVEN_RATIO_TOLERANCE: Attribute.
+  LISTEND_REPORT_WINDOW_MINUTES: Attribute.
+  _ANSI_ESCAPE_RE: Attribute.
+  _ARCHIVE_FINALIZE_RE: Attribute.
+  _BOOT_MARKERS: Attribute.
+  _CHUNK_IMMEDIATE_RE: Attribute.
+  _FULL_INGEST_RE: Attribute.
+  _INGEST_START_FALLBACK_MARKERS: Attribute.
+  _LISTEND_UNLINKS_RE: Attribute.
+  _LOG_TS_CONTAINER_FIRST_RE: Attribute.
+  _LOG_TS_CONTAINER_PIPE_RE: Attribute.
+  _LOG_TS_LEADING_RE: Attribute.
+  _LOG_TS_PIPE_RE: Attribute.
+  _PENDING_RESCAN_RE: Attribute.
+  _PENDING_TRUNCATE_RE: Attribute.
+  _QUEUE_SATURATION_DISK_FACTOR: Attribute.
+  _RFC3339_TS: Attribute.
+  _THROUGHPUT_BACKLOG_RE: Attribute.
 """
 
 from __future__ import annotations
@@ -97,6 +122,21 @@ LISTEND_REPORT_WINDOW_MINUTES = 10.0
 
 @dataclass
 class LogMetrics:
+    """
+    Hold LogMetrics state and behavior.
+    
+    Attributes:
+      archive_finalize_sum: ``archive_finalize_sum``.
+      archive_immediate_sum: ``archive_immediate_sum``.
+      backlog_disk_samples: ``backlog_disk_samples``.
+      backlog_throughput_samples: ``backlog_throughput_samples``.
+      first_ts: ``first_ts``.
+      full_ingest_count: ``full_ingest_count``.
+      last_ts: ``last_ts``.
+      listend_unlink_sum: ``listend_unlink_sum``.
+      timestamped_lines: ``timestamped_lines``.
+      truncate_max_samples: ``truncate_max_samples``.
+    """
     listend_unlink_sum: int = 0
     full_ingest_count: int = 0
     archive_immediate_sum: int = 0
@@ -113,12 +153,32 @@ class LogMetrics:
 
     @property
     def backlog_rescan_samples(self) -> list[tuple[datetime, int]]:
-        """Alias kept for older tests/callers; same as disk samples."""
+        """
+        Alias kept for older tests/callers; same as disk samples.
+        
+        Returns:
+          list[tuple[datetime, int]]: list[tuple[datetime, int]] produced by
+          this call.
+        
+        Examples:
+          >>> LogMetrics().backlog_rescan_samples()  # doctest: +SKIP
+        """
         return self.backlog_disk_samples
 
 
 def _normalize_iso_timestamp(text: str) -> str:
-    """Truncate nanosecond fractions for Python <3.11 fromisoformat compatibility."""
+    """
+    Truncate nanosecond fractions for Python <3.11 fromisoformat compatibility.
+    
+    Args:
+      text (str): String for text.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> _normalize_iso_timestamp("x")  # doctest: +SKIP
+    """
     match = re.match(
         r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(.*)$",
         text,
@@ -132,6 +192,19 @@ def _normalize_iso_timestamp(text: str) -> str:
 
 
 def _parse_log_timestamp(raw: str) -> Optional[datetime]:
+    """
+    Internal helper to parse the log timestamp.
+    
+    Args:
+      raw (str): String for raw.
+    
+    Returns:
+      Optional[datetime]: Optional[datetime] — the result, or None when
+      unavailable.
+    
+    Examples:
+      >>> _parse_log_timestamp("x")  # doctest: +SKIP
+    """
     text = (raw or "").strip()
     if not text:
         return None
@@ -150,12 +223,37 @@ def _parse_log_timestamp(raw: str) -> Optional[datetime]:
 
 
 def _normalize_log_line(line: str) -> str:
+    """
+    Internal helper to normalize the log line.
+    
+    Args:
+      line (str): String for line.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> _normalize_log_line("x")  # doctest: +SKIP
+    """
     text = line.rstrip("\r\n")
     text = _ANSI_ESCAPE_RE.sub("", text)
     return text.lstrip()
 
 
 def _strip_log_prefix(line: str) -> tuple[Optional[datetime], str]:
+    """
+    Internal helper to handle strip log prefix.
+    
+    Args:
+      line (str): String for line.
+    
+    Returns:
+      tuple[Optional[datetime], str]: tuple[Optional[datetime], str] produced
+      by this call.
+    
+    Examples:
+      >>> _strip_log_prefix("x")  # doctest: +SKIP
+    """
     text = _normalize_log_line(line)
     for pattern in (
         _LOG_TS_PIPE_RE,
@@ -170,6 +268,19 @@ def _strip_log_prefix(line: str) -> tuple[Optional[datetime], str]:
 
 
 def _record_timestamp(metrics: LogMetrics, ts: Optional[datetime]) -> None:
+    """
+    Internal helper to handle record timestamp.
+    
+    Args:
+      metrics (LogMetrics): Metrics.
+      ts (Optional[datetime]): Ts, or None when absent.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _record_timestamp(None, None)  # doctest: +SKIP
+    """
     if ts is None:
         return
     metrics.timestamped_lines += 1
@@ -180,10 +291,20 @@ def _record_timestamp(metrics: LogMetrics, ts: Optional[datetime]) -> None:
 
 
 def _find_ingest_start_cutoff(lines: Iterable[str]) -> Optional[int]:
-    """Return index of last ingest-start marker line (inclusive), or None.
-
+    """
+    Return index of last ingest-start marker line (inclusive), or None.
+    
     Prefer ``startup ingest gate cleared`` so later catch-up ``pending rescan
     done`` lines do not shrink the window. Fall back to ``chunk imap start``.
+    
+    Args:
+      lines (Iterable[str]): Lines.
+    
+    Returns:
+      Optional[int]: Optional[int] — the result, or None when unavailable.
+    
+    Examples:
+      >>> _find_ingest_start_cutoff(None)  # doctest: +SKIP
     """
     last_gate: Optional[int] = None
     last_fallback: Optional[int] = None
@@ -199,17 +320,44 @@ def _find_ingest_start_cutoff(lines: Iterable[str]) -> Optional[int]:
 
 
 def _find_boot_cutoff(lines: Iterable[str]) -> Optional[int]:
-    """Alias for :func:`_find_ingest_start_cutoff` (historical name)."""
+    """
+    Alias for :func:`_find_ingest_start_cutoff` (historical name).
+    
+    Args:
+      lines (Iterable[str]): Lines.
+    
+    Returns:
+      Optional[int]: Optional[int] — the result, or None when unavailable.
+    
+    Examples:
+      >>> _find_boot_cutoff(None)  # doctest: +SKIP
+    """
     return _find_ingest_start_cutoff(lines)
 
 
 def _iter_filtered_lines(
-    lines: Iterable[str],
-    *,
-    since_minutes: Optional[float],
-    exclude_startup: bool,
-    reference_end: Optional[datetime] = None,
+  lines: Iterable[str],
+  *,
+  since_minutes: Optional[float],
+  exclude_startup: bool,
+  reference_end: Optional[datetime] = None,
 ) -> Iterator[tuple[Optional[datetime], str]]:
+    """
+    Internal helper to iterate over the filtered lines.
+    
+    Args:
+      lines (Iterable[str]): Lines.
+      since_minutes (Optional[float]): Since minutes, or None when absent.
+      exclude_startup (bool): Boolean flag for exclude startup.
+      reference_end (Optional[datetime]): Reference end, or None when absent.
+    
+    Yields:
+      Iterator[tuple[Optional[datetime], str]]:
+      Iterator[tuple[Optional[datetime], str]] produced by this call.
+    
+    Examples:
+      >>> _iter_filtered_lines(None, None, True, None)  # doctest: +SKIP
+    """
     materialized = list(lines)
     start_idx = 0
     if exclude_startup:
@@ -238,12 +386,27 @@ def _iter_filtered_lines(
 
 
 def parse_log_lines(
-    lines: Iterable[str],
-    *,
-    since_minutes: Optional[float] = None,
-    exclude_startup: bool = True,
-    boot_only: Optional[bool] = None,
+  lines: Iterable[str],
+  *,
+  since_minutes: Optional[float] = None,
+  exclude_startup: bool = True,
+  boot_only: Optional[bool] = None,
 ) -> LogMetrics:
+    """
+    Parse the log lines.
+    
+    Args:
+      lines (Iterable[str]): Lines.
+      since_minutes (Optional[float]): Since minutes, or None when absent.
+      exclude_startup (bool): Boolean flag for exclude startup.
+      boot_only (Optional[bool]): Boot only, or None when absent.
+    
+    Returns:
+      LogMetrics: LogMetrics produced by this call.
+    
+    Examples:
+      >>> parse_log_lines(None, None, True, None)  # doctest: +SKIP
+    """
     if boot_only is not None:
         exclude_startup = bool(boot_only)
     metrics = LogMetrics()
@@ -289,12 +452,27 @@ def parse_log_lines(
 
 
 def _report_count_from_unlink_sum(
-    lines: Iterable[str],
-    *,
-    since_minutes: Optional[float] = None,
-    exclude_startup: bool = True,
-    boot_only: Optional[bool] = None,
+  lines: Iterable[str],
+  *,
+  since_minutes: Optional[float] = None,
+  exclude_startup: bool = True,
+  boot_only: Optional[bool] = None,
 ) -> int:
+    """
+    Internal helper to handle report count from unlink sum.
+    
+    Args:
+      lines (Iterable[str]): Lines.
+      since_minutes (Optional[float]): Since minutes, or None when absent.
+      exclude_startup (bool): Boolean flag for exclude startup.
+      boot_only (Optional[bool]): Boot only, or None when absent.
+    
+    Returns:
+      int: int produced by this call.
+    
+    Examples:
+      >>> _report_count_from_unlink_sum(None, None, True, None)  # doctest: +SKIP
+    """
     if boot_only is not None:
         exclude_startup = bool(boot_only)
     count = 0
@@ -309,13 +487,29 @@ def _report_count_from_unlink_sum(
 
 
 def resolve_window_minutes(
-    metrics: LogMetrics,
-    *,
-    lines: Optional[Iterable[str]] = None,
-    since_minutes: Optional[float] = None,
-    exclude_startup: bool = True,
-    boot_only: Optional[bool] = None,
+  metrics: LogMetrics,
+  *,
+  lines: Optional[Iterable[str]] = None,
+  since_minutes: Optional[float] = None,
+  exclude_startup: bool = True,
+  boot_only: Optional[bool] = None,
 ) -> float:
+    """
+    Resolve the window minutes.
+    
+    Args:
+      metrics (LogMetrics): Metrics.
+      lines (Optional[Iterable[str]]): Lines, or None when absent.
+      since_minutes (Optional[float]): Since minutes, or None when absent.
+      exclude_startup (bool): Boolean flag for exclude startup.
+      boot_only (Optional[bool]): Boot only, or None when absent.
+    
+    Returns:
+      float: float produced by this call.
+    
+    Examples:
+      >>> resolve_window_minutes(None, None, None, True, None)  # doctest: +SKIP
+    """
     if boot_only is not None:
         exclude_startup = bool(boot_only)
     if since_minutes is not None and since_minutes > 0:
@@ -336,36 +530,110 @@ def resolve_window_minutes(
 
 
 def _backlog_at_start(metrics: LogMetrics) -> Optional[int]:
-    """First uncapped on-disk pending sample (rescan or truncate)."""
+    """
+    First uncapped on-disk pending sample (rescan or truncate).
+    
+    Args:
+      metrics (LogMetrics): Metrics.
+    
+    Returns:
+      Optional[int]: Optional[int] — the result, or None when unavailable.
+    
+    Examples:
+      >>> _backlog_at_start(None)  # doctest: +SKIP
+    """
     if metrics.backlog_disk_samples:
         return metrics.backlog_disk_samples[0][1]
     return None
 
 
 def _backlog_latest(metrics: LogMetrics) -> Optional[int]:
-    """Latest uncapped on-disk pending sample (rescan or truncate)."""
+    """
+    Latest uncapped on-disk pending sample (rescan or truncate).
+    
+    Args:
+      metrics (LogMetrics): Metrics.
+    
+    Returns:
+      Optional[int]: Optional[int] — the result, or None when unavailable.
+    
+    Examples:
+      >>> _backlog_latest(None)  # doctest: +SKIP
+    """
     if metrics.backlog_disk_samples:
         return metrics.backlog_disk_samples[-1][1]
     return None
 
 
 def _disk_sample_count(metrics: LogMetrics) -> int:
+    """
+    Internal helper to handle disk sample count.
+    
+    Args:
+      metrics (LogMetrics): Metrics.
+    
+    Returns:
+      int: int produced by this call.
+    
+    Examples:
+      >>> _disk_sample_count(None)  # doctest: +SKIP
+    """
     return len(metrics.backlog_disk_samples)
 
 
 def _queue_depth_at_start(metrics: LogMetrics) -> Optional[int]:
+    """
+    Internal helper to handle queue depth at start.
+    
+    Args:
+      metrics (LogMetrics): Metrics.
+    
+    Returns:
+      Optional[int]: Optional[int] — the result, or None when unavailable.
+    
+    Examples:
+      >>> _queue_depth_at_start(None)  # doctest: +SKIP
+    """
     if metrics.backlog_throughput_samples:
         return metrics.backlog_throughput_samples[0][1]
     return None
 
 
 def _queue_depth_latest(metrics: LogMetrics) -> Optional[int]:
+    """
+    Internal helper to handle queue depth latest.
+    
+    Args:
+      metrics (LogMetrics): Metrics.
+    
+    Returns:
+      Optional[int]: Optional[int] — the result, or None when unavailable.
+    
+    Examples:
+      >>> _queue_depth_latest(None)  # doctest: +SKIP
+    """
     if metrics.backlog_throughput_samples:
         return metrics.backlog_throughput_samples[-1][1]
     return None
 
 
-def _ratio_and_verdict(listend_rate: float, sync_rate: float) -> tuple[str, str]:
+def _ratio_and_verdict(
+  listend_rate: float,
+  sync_rate: float,
+) -> tuple[str, str]:
+    """
+    Internal helper to handle ratio and verdict.
+    
+    Args:
+      listend_rate (float): Floating-point value for listend rate.
+      sync_rate (float): Floating-point value for sync rate.
+    
+    Returns:
+      tuple[str, str]: tuple[str, str] produced by this call.
+    
+    Examples:
+      >>> _ratio_and_verdict(0, 0)  # doctest: +SKIP
+    """
     if sync_rate <= 0:
         if listend_rate <= 0:
             return "N/A", "N/A"
@@ -381,6 +649,19 @@ def _ratio_and_verdict(listend_rate: float, sync_rate: float) -> tuple[str, str]
 
 
 def _eta_hours(backlog: Optional[int], drain_per_min: float) -> str:
+    """
+    Internal helper to handle eta hours.
+    
+    Args:
+      backlog (Optional[int]): Backlog, or None when absent.
+      drain_per_min (float): Floating-point value for drain per min.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> _eta_hours(None, 0)  # doctest: +SKIP
+    """
     if backlog is None or backlog <= 0:
         return "0"
     if drain_per_min <= 0:
@@ -389,21 +670,70 @@ def _eta_hours(backlog: Optional[int], drain_per_min: float) -> str:
 
 
 def _fmt_rate(value: float) -> str:
+    """
+    Internal helper to handle fmt rate.
+    
+    Args:
+      value (float): Floating-point value for value.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> _fmt_rate(0)  # doctest: +SKIP
+    """
     return f"{value:.4f}"
 
 
 def _fmt_optional_int(value: Optional[int]) -> str:
+    """
+    Internal helper to handle fmt optional int.
+    
+    Args:
+      value (Optional[int]): Value, or None when absent.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> _fmt_optional_int(None)  # doctest: +SKIP
+    """
     return "N/A" if value is None else str(value)
 
 
 def _fmt_ts(value: Optional[datetime]) -> str:
+    """
+    Internal helper to handle fmt ts.
+    
+    Args:
+      value (Optional[datetime]): Value, or None when absent.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> _fmt_ts(None)  # doctest: +SKIP
+    """
     if value is None:
         return "N/A"
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _fmt_local_ts(value: Optional[datetime]) -> str:
-    """Format as local date and time with numeric UTC offset (e.g. 2026-07-10 14:32:15 -0500)."""
+    """
+    Format as local date and time with numeric UTC offset (e.g. 2026-07-10.
+    
+      14:32:15 -0500).
+    
+    Args:
+      value (Optional[datetime]): Value, or None when absent.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> _fmt_local_ts(None)  # doctest: +SKIP
+    """
     if value is None:
         return "N/A"
     local = value.astimezone()
@@ -411,6 +741,18 @@ def _fmt_local_ts(value: Optional[datetime]) -> str:
 
 
 def _parse_eta_hours(text: str) -> Optional[float]:
+    """
+    Internal helper to parse the eta hours.
+    
+    Args:
+      text (str): String for text.
+    
+    Returns:
+      Optional[float]: Optional[float] — the result, or None when unavailable.
+    
+    Examples:
+      >>> _parse_eta_hours("x")  # doctest: +SKIP
+    """
     if text in ("N/A", ""):
         return None
     try:
@@ -420,16 +762,30 @@ def _parse_eta_hours(text: str) -> Optional[float]:
 
 
 def _estimated_finish_local(
-    log_end: Optional[datetime],
-    *,
-    eta_empirical: str,
-    eta_full_ingest: str,
-    eta_archive_done: str,
+  log_end: Optional[datetime],
+  *,
+  eta_empirical: str,
+  eta_full_ingest: str,
+  eta_archive_done: str,
 ) -> tuple[str, str]:
-    """Return (local finish stamp, eta field name) from the first usable ETA.
-
-    Preference: empirical drain, then full ingest net rate, then archive-done net rate.
+    """
+    Return (local finish stamp, eta field name) from the first usable ETA.
+    
+    Preference: empirical drain, then full ingest net rate, then archive-done
+      net rate.
     Anchor is log_end when present, otherwise current UTC.
+    
+    Args:
+      log_end (Optional[datetime]): Log end, or None when absent.
+      eta_empirical (str): String for eta empirical.
+      eta_full_ingest (str): String for eta full ingest.
+      eta_archive_done (str): String for eta archive done.
+    
+    Returns:
+      tuple[str, str]: tuple[str, str] produced by this call.
+    
+    Examples:
+      >>> _estimated_finish_local(None, "x", "x", "x")  # doctest: +SKIP
     """
     base = log_end if log_end is not None else datetime.now(timezone.utc)
     for basis, eta_s in (
@@ -446,10 +802,27 @@ def _estimated_finish_local(
 
 
 def build_outcomes(
-    metrics: LogMetrics,
-    *,
-    window_minutes: float,
+  metrics: LogMetrics,
+  *,
+  window_minutes: float,
 ) -> dict[str, str]:
+    """
+    Build the outcomes.
+    
+    Args:
+      metrics (LogMetrics): Metrics.
+      window_minutes (float): Floating-point value for window minutes.
+    
+    Returns:
+      dict[str, str]: dict[str, str] produced by this call.
+    
+    Raises:
+      ValueError: Raised when ``build_outcomes`` hits a ``ValueError`` failure
+      path.
+    
+    Examples:
+      >>> build_outcomes(None, 0)  # doctest: +SKIP
+    """
     if window_minutes < 1.0:
         raise ValueError("insufficient log window for rate calculation")
 
@@ -531,6 +904,19 @@ def build_outcomes(
 
 
 def emit_warnings(metrics: LogMetrics, window_minutes: float) -> None:
+    """
+    Emit warnings.
+    
+    Args:
+      metrics (LogMetrics): Metrics.
+      window_minutes (float): Floating-point value for window minutes.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> emit_warnings(None, 0)  # doctest: +SKIP
+    """
     if metrics.timestamped_lines == 0:
         print(
             "WARN: no timestamped log lines; rates use listend-report window fallback",
@@ -580,6 +966,18 @@ def emit_warnings(metrics: LogMetrics, window_minutes: float) -> None:
 
 
 def format_stdout(outcomes: dict[str, str]) -> str:
+    """
+    Format the stdout.
+    
+    Args:
+      outcomes (dict[str, str]): Mapping for outcomes.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> format_stdout({})  # doctest: +SKIP
+    """
     order = (
         "window_minutes",
         "listend_closed_per_min",
@@ -611,12 +1009,31 @@ def format_stdout(outcomes: dict[str, str]) -> str:
 
 
 def analyze_lines(
-    lines: Iterable[str],
-    *,
-    since_minutes: Optional[float] = None,
-    exclude_startup: bool = True,
-    boot_only: Optional[bool] = None,
+  lines: Iterable[str],
+  *,
+  since_minutes: Optional[float] = None,
+  exclude_startup: bool = True,
+  boot_only: Optional[bool] = None,
 ) -> dict[str, str]:
+    """
+    Analyze lines.
+    
+    Args:
+      lines (Iterable[str]): Lines.
+      since_minutes (Optional[float]): Since minutes, or None when absent.
+      exclude_startup (bool): Boolean flag for exclude startup.
+      boot_only (Optional[bool]): Boot only, or None when absent.
+    
+    Returns:
+      dict[str, str]: dict[str, str] produced by this call.
+    
+    Raises:
+      ValueError: Raised when ``analyze_lines`` hits a ``ValueError`` failure
+      path.
+    
+    Examples:
+      >>> analyze_lines(None, None, True, None)  # doctest: +SKIP
+    """
     if boot_only is not None:
         exclude_startup = bool(boot_only)
     line_list = list(lines)
@@ -641,6 +1058,22 @@ def analyze_lines(
 
 
 def _fetch_compose_logs(compose_argv: list[str]) -> list[str]:
+    """
+    Internal helper to fetch the compose logs.
+    
+    Args:
+      compose_argv (list[str]): Sequence for compose argv.
+    
+    Returns:
+      list[str]: list[str] produced by this call.
+    
+    Raises:
+      RuntimeError: Raised when ``_fetch_compose_logs`` hits a
+      ``RuntimeError`` failure path.
+    
+    Examples:
+      >>> _fetch_compose_logs([])  # doctest: +SKIP
+    """
     cmd = compose_argv + ["logs", "--timestamps", "pipeline"]
     proc = subprocess.run(
         cmd,
@@ -657,6 +1090,18 @@ def _fetch_compose_logs(compose_argv: list[str]) -> list[str]:
 
 
 def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    """
+    Internal helper to parse the args.
+    
+    Args:
+      argv (Optional[list[str]]): Argv, or None when absent.
+    
+    Returns:
+      argparse.Namespace: argparse.Namespace produced by this call.
+    
+    Examples:
+      >>> _parse_args(None)  # doctest: +SKIP
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     src = parser.add_mutually_exclusive_group()
     src.add_argument(
@@ -713,6 +1158,18 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 
 def _read_input_lines(args: argparse.Namespace) -> list[str]:
+    """
+    Internal helper to read the input lines.
+    
+    Args:
+      args (argparse.Namespace): Args.
+    
+    Returns:
+      list[str]: list[str] produced by this call.
+    
+    Examples:
+      >>> _read_input_lines(None)  # doctest: +SKIP
+    """
     if args.fetch_compose:
         compose_argv = args.compose_cmd.split()
         if args.compose_project:
@@ -727,6 +1184,18 @@ def _read_input_lines(args: argparse.Namespace) -> list[str]:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    """
+    Run this module's command-line entrypoint.
+    
+    Args:
+      argv (Optional[list[str]]): Argv, or None when absent.
+    
+    Returns:
+      int: int produced by this call.
+    
+    Examples:
+      >>> main(None)  # doctest: +SKIP
+    """
     args = _parse_args(argv)
     try:
         lines = _read_input_lines(args)

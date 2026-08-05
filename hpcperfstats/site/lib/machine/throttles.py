@@ -1,4 +1,9 @@
-"""DRF throttles for authenticated and expensive machine API routes."""
+"""
+DRF throttles for authenticated and expensive machine API routes.
+"""
+from __future__ import annotations
+
+from typing import Any
 
 import hashlib
 
@@ -8,6 +13,22 @@ from rest_framework.throttling import ScopedRateThrottle, SimpleRateThrottle
 
 
 def _scope_throttle_rate(scope: str) -> str:
+    """
+    Internal helper to handle scope throttle rate.
+    
+    Args:
+      scope (str): String for scope.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Raises:
+      ImproperlyConfigured: Raised when ``_scope_throttle_rate`` hits a
+      ``ImproperlyConfigured`` failure path.
+    
+    Examples:
+      >>> _scope_throttle_rate("x")  # doctest: +SKIP
+    """
     try:
         return api_settings.DEFAULT_THROTTLE_RATES[scope]
     except KeyError:
@@ -16,7 +37,19 @@ def _scope_throttle_rate(scope: str) -> str:
         )
 
 
-def _request_api_key_fingerprint(request):
+def _request_api_key_fingerprint(request: Any) -> Any:
+    """
+    Internal helper to handle request api key fingerprint.
+    
+    Args:
+      request (Any): Request passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _request_api_key_fingerprint(None)  # doctest: +SKIP
+    """
     auth = request.META.get("HTTP_AUTHORIZATION", "")
     if auth:
         parts = auth.strip().split(None, 1)
@@ -29,12 +62,43 @@ def _request_api_key_fingerprint(request):
 
 
 class AuthenticatedUserOrApiKeyThrottle(SimpleRateThrottle):
+    """
+    Hold AuthenticatedUserOrApiKeyThrottle state and behavior.
+    
+    Subclasses ``SimpleRateThrottle``, extending that type with this class's
+    fields and behavior.
+    
+    Subclasses ``SimpleRateThrottle``, extending that type with this class's
+    fields and behavior.
+    """
     scope = "authenticated_user_or_api_key"
 
-    def get_rate(self):
+    def get_rate(self) -> Any:
+        """
+        Return the rate.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> AuthenticatedUserOrApiKeyThrottle().get_rate()  # doctest: +SKIP
+        """
         return _scope_throttle_rate(self.scope)
 
-    def get_cache_key(self, request, view):
+    def get_cache_key(self, request: Any, view: Any) -> Any:
+        """
+        Return the cache key.
+        
+        Args:
+          request (Any): Request passed to this helper.
+          view (Any): View passed to this helper.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> AuthenticatedUserOrApiKeyThrottle().get_cache_key(None, None)
+        """
         if not getattr(request, "session", None):
             return None
         username = (request.session.get("username") or "").strip()
@@ -49,12 +113,43 @@ class AuthenticatedUserOrApiKeyThrottle(SimpleRateThrottle):
 
 
 class ExpensiveReadThrottle(SimpleRateThrottle):
+    """
+    Hold ExpensiveReadThrottle state and behavior.
+    
+    Subclasses ``SimpleRateThrottle``, extending that type with this class's
+    fields and behavior.
+    
+    Subclasses ``SimpleRateThrottle``, extending that type with this class's
+    fields and behavior.
+    """
     scope = "expensive_read"
 
-    def get_rate(self):
+    def get_rate(self) -> Any:
+        """
+        Return the rate.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> ExpensiveReadThrottle().get_rate()  # doctest: +SKIP
+        """
         return _scope_throttle_rate(self.scope)
 
-    def get_cache_key(self, request, view):
+    def get_cache_key(self, request: Any, view: Any) -> Any:
+        """
+        Return the cache key.
+        
+        Args:
+          request (Any): Request passed to this helper.
+          view (Any): View passed to this helper.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> ExpensiveReadThrottle().get_cache_key(None, None)  # doctest: +SKIP
+        """
         ident = self.get_ident(request)
         if not ident:
             return None
@@ -62,12 +157,43 @@ class ExpensiveReadThrottle(SimpleRateThrottle):
 
 
 class StaffIngestThrottle(SimpleRateThrottle):
+    """
+    Hold StaffIngestThrottle state and behavior.
+    
+    Subclasses ``SimpleRateThrottle``, extending that type with this class's
+    fields and behavior.
+    
+    Subclasses ``SimpleRateThrottle``, extending that type with this class's
+    fields and behavior.
+    """
     scope = "staff_ingest"
 
-    def get_rate(self):
+    def get_rate(self) -> Any:
+        """
+        Return the rate.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> StaffIngestThrottle().get_rate()  # doctest: +SKIP
+        """
         return _scope_throttle_rate(self.scope)
 
-    def get_cache_key(self, request, view):
+    def get_cache_key(self, request: Any, view: Any) -> Any:
+        """
+        Return the cache key.
+        
+        Args:
+          request (Any): Request passed to this helper.
+          view (Any): View passed to this helper.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> StaffIngestThrottle().get_cache_key(None, None)  # doctest: +SKIP
+        """
         if not getattr(request, "session", None):
             return None
         username = (request.session.get("username") or "").strip()
@@ -77,11 +203,26 @@ class StaffIngestThrottle(SimpleRateThrottle):
 
 
 class PublicClusterDashboardThrottle(ScopedRateThrottle):
-    """Anonymous throttle for ``/api/pub/**`` cluster dashboard JSON (see ``public_api.py``)."""
+    """
+    Anonymous throttle for ``/api/pub/**`` cluster dashboard JSON (see.
+    """
 
     scope = "public_cluster_dashboard"
 
-    def get_cache_key(self, request, view):
+    def get_cache_key(self, request: Any, view: Any) -> Any:
+        """
+        Return the cache key.
+        
+        Args:
+          request (Any): Request passed to this helper.
+          view (Any): View passed to this helper.
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> PublicClusterDashboardThrottle().get_cache_key(None, None)
+        """
         ident = self.get_ident(request)
         if not ident:
             return None

@@ -1,3 +1,72 @@
+"""
+settings.
+
+Attributes:
+  ADMINS: Attribute.
+  CACHES: Attribute.
+  CORS_ALLOWED_ORIGINS: Attribute.
+  CORS_ALLOW_CREDENTIALS: Attribute.
+  CSRF_COOKIE_SAMESITE: Attribute.
+  CSRF_COOKIE_SECURE: Attribute.
+  CSRF_TRUSTED_ORIGINS: Attribute.
+  DATABASES: Attribute.
+  DEBUG: Attribute.
+  DEFAULT_AUTO_FIELD: Attribute.
+  DIR: Attribute.
+  INSTALLED_APPS: Attribute.
+  INTERNAL_IPS: Attribute.
+  JOB_PLOT_REDIS_MAX_BYTES: Attribute.
+  LANGUAGE_CODE: Attribute.
+  LOGGING: Attribute.
+  MANAGERS: Attribute.
+  MEDIA_ROOT: Attribute.
+  MEDIA_URL: Attribute.
+  MESSAGE_TAGS: Attribute.
+  MIDDLEWARE: Attribute.
+  OPENBLAS_NUM_THREADS: Attribute.
+  REST_FRAMEWORK: Attribute.
+  ROOT_URLCONF: Attribute.
+  SACCT_INGEST_MAX_BODY_BYTES: Attribute.
+  SECRET_KEY: Attribute.
+  SECURE_CONTENT_TYPE_NOSNIFF: Attribute.
+  SECURE_HSTS_INCLUDE_SUBDOMAINS: Attribute.
+  SECURE_HSTS_PRELOAD: Attribute.
+  SECURE_HSTS_SECONDS: Attribute.
+  SECURE_PROXY_SSL_HEADER: Attribute.
+  SECURE_REFERRER_POLICY: Attribute.
+  SESSION_ABSOLUTE_TIMEOUT_SECONDS: Attribute.
+  SESSION_COOKIE_AGE: Attribute.
+  SESSION_COOKIE_HTTPONLY: Attribute.
+  SESSION_COOKIE_SAMESITE: Attribute.
+  SESSION_COOKIE_SECURE: Attribute.
+  SESSION_ENGINE: Attribute.
+  SESSION_IDLE_TIMEOUT_SECONDS: Attribute.
+  SESSION_SAVE_EVERY_REQUEST: Attribute.
+  SESSION_SERIALIZER: Attribute.
+  SITE_ID: Attribute.
+  SPECTACULAR_SETTINGS: Attribute.
+  STATICFILES_DIRS: Attribute.
+  STATICFILES_FINDERS: Attribute.
+  STATIC_ROOT: Attribute.
+  STATIC_URL: Attribute.
+  TEMPLATES: Attribute.
+  TIME_ZONE: Attribute.
+  USE_I18N: Attribute.
+  USE_TZ: Attribute.
+  WSGI_APPLICATION: Attribute.
+  X_FRAME_OPTIONS: Attribute.
+  _ALLOWED: Attribute.
+  _db_conn_max_age: Attribute.
+  _default_db: Attribute.
+  _default_engine: Attribute.
+  _static_dir: Attribute.
+  _use_live_redis_cache: Attribute.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
 # Django settings for hpcperfstats_site project. Database, auth, templates, static, and app config from conf_parser and env.
 #
 import os
@@ -31,8 +100,20 @@ SECRET_KEY = os.environ.get("SECRET_KEY") or cfg.get_secret_key()
 DEBUG = cfg.get_debug()
 
 
-def _env_int(name, default):
-    """Read integer env var with safe fallback."""
+def _env_int(name: Any, default: Any) -> Any:
+    """
+    Read integer env var with safe fallback.
+    
+    Args:
+      name (Any): Name passed to this helper.
+      default (Any): Default passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _env_int(None, None)  # doctest: +SKIP
+    """
     raw = os.environ.get(name)
     if raw is None:
         return default
@@ -42,8 +123,18 @@ def _env_int(name, default):
         return default
 
 
-def _parse_cors_allowed_origins():
-    """Resolve CORS origins from env, then ``hpcperfstats.ini``, then dev defaults."""
+def _parse_cors_allowed_origins() -> Any:
+    """
+    Resolve CORS origins from env, then ``hpcperfstats.ini``, then dev defaults.
+    
+    Returns:
+      Any: Open return polymorphism from ``_parse_cors_allowed_origins``:
+      concrete type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> _parse_cors_allowed_origins()  # doctest: +SKIP
+    """
     env_origins = (os.environ.get("CORS_ALLOWED_ORIGINS") or "").strip()
     if env_origins:
         return [o.strip() for o in env_origins.split(",") if o.strip()]
@@ -58,8 +149,23 @@ def _parse_cors_allowed_origins():
     return []
 
 
-def _validate_cors_allowed_origins(origins):
-    """Fail fast in production when CORS origins are missing or dev-only."""
+def _validate_cors_allowed_origins(origins: Any) -> None:
+    """
+    Fail fast in production when CORS origins are missing or dev-only.
+    
+    Args:
+      origins (Any): Origins passed to this helper.
+    
+    Returns:
+      None
+    
+    Raises:
+      ValueError: Raised when ``_validate_cors_allowed_origins`` hits a
+      ``ValueError`` failure path.
+    
+    Examples:
+      >>> _validate_cors_allowed_origins(None)  # doctest: +SKIP
+    """
     if DEBUG or _is_non_http_management_command():
         return
     if not origins:
@@ -75,8 +181,18 @@ def _validate_cors_allowed_origins(origins):
         )
 
 
-def _is_non_http_management_command():
-    """Return True when Django loads for CLI helpers that never serve browsers."""
+def _is_non_http_management_command() -> Any:
+    """
+    Return True when Django loads for CLI helpers that never serve browsers.
+    
+    Returns:
+      Any: Open return polymorphism from ``_is_non_http_management_command``:
+      concrete type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> _is_non_http_management_command()  # doctest: +SKIP
+    """
     argv = sys.argv
     # Many builds collapse argv for stdin / ``-c`` (e.g. ``['-']``, ``['']``, ``['-c']`` alone).
     if len(argv) == 1:
@@ -345,8 +461,20 @@ _use_live_redis_cache = os.environ.get(
 ).strip().lower() in ("1", "yes", "true")
 
 
-def _running_under_pytest():
-    """Detect pytest including ``python -m pytest`` (argv does not end with ``pytest``)."""
+def _running_under_pytest() -> Any:
+    """
+    Detect pytest including ``python -m pytest`` (argv does not end with.
+    
+      ``pytest``).
+    
+    Returns:
+      Any: Open return polymorphism from ``_running_under_pytest``: concrete
+      type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> _running_under_pytest()  # doctest: +SKIP
+    """
     if "pytest" in sys.argv:
         return True
     prog = os.path.basename(str(sys.argv[0] or ""))

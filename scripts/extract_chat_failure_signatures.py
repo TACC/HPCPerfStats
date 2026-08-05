@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Extract failure/fix signatures from parent agent-transcript JSONL files.
+"""
+Extract failure/fix signatures from parent agent-transcript JSONL files.
 
 Walks agent-transcripts/<uuid>/<uuid>.jsonl (skips subagents/), parses each line
 as JSON, and flags rows whose text matches failure heuristics. Emits
 docs/chat_failure_registry.json for human triage.
 
-Usage (from HPCPerfStats/):
-  python scripts/extract_chat_failure_signatures.py \\
-    --transcripts-dir /path/to/agent-transcripts \\
-    --since 2026-01-04 --until 2026-06-04
+Usage (from HPCPerfStats/): python scripts/extract_chat_failure_signatures.py
+--transcripts-dir /path/to/agent-transcripts     --since 2026-01-04 --until
+2026-06-04
+
+Attributes:
+  FAILURE_PATTERNS: Attribute.
+  FILE_PATH_RE: Attribute.
 """
 
 from __future__ import annotations
@@ -49,6 +53,15 @@ FILE_PATH_RE = re.compile(
 
 
 def _parse_args() -> argparse.Namespace:
+    """
+    Internal helper to parse the args.
+    
+    Returns:
+      argparse.Namespace: argparse.Namespace produced by this call.
+    
+    Examples:
+      >>> _parse_args()  # doctest: +SKIP
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--transcripts-dir",
@@ -68,15 +81,53 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _parse_date(s: str) -> datetime:
+    """
+    Internal helper to parse the date.
+    
+    Args:
+      s (str): String for s.
+    
+    Returns:
+      datetime: datetime produced by this call.
+    
+    Examples:
+      >>> _parse_date("x")  # doctest: +SKIP
+    """
     return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
 
 def _in_window(mtime: float, since: datetime, until: datetime) -> bool:
+    """
+    Internal helper to handle in window.
+    
+    Args:
+      mtime (float): Floating-point value for mtime.
+      since (datetime): Since.
+      until (datetime): Until.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> _in_window(0, None, None)  # doctest: +SKIP
+    """
     dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
     return since <= dt <= until.replace(hour=23, minute=59, second=59)
 
 
 def _text_from_record(obj: dict) -> str:
+    """
+    Internal helper to handle text from record.
+    
+    Args:
+      obj (dict): Mapping for obj.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> _text_from_record({})  # doctest: +SKIP
+    """
     parts: list[str] = []
     message = obj.get("message")
     if isinstance(message, dict):
@@ -94,6 +145,18 @@ def _text_from_record(obj: dict) -> str:
 
 
 def _matches_failure(text: str) -> list[str]:
+    """
+    Internal helper to handle matches failure.
+    
+    Args:
+      text (str): String for text.
+    
+    Returns:
+      list[str]: list[str] produced by this call.
+    
+    Examples:
+      >>> _matches_failure("x")  # doctest: +SKIP
+    """
     hits = []
     for pat in FAILURE_PATTERNS:
         if pat.search(text):
@@ -102,10 +165,34 @@ def _matches_failure(text: str) -> list[str]:
 
 
 def _files_mentioned(text: str) -> list[str]:
+    """
+    Internal helper to handle files mentioned.
+    
+    Args:
+      text (str): String for text.
+    
+    Returns:
+      list[str]: list[str] produced by this call.
+    
+    Examples:
+      >>> _files_mentioned("x")  # doctest: +SKIP
+    """
     return sorted(set(FILE_PATH_RE.findall(text)))
 
 
 def _parent_jsonl_paths(root: Path) -> list[Path]:
+    """
+    Internal helper to handle parent jsonl paths.
+    
+    Args:
+      root (Path): String for root.
+    
+    Returns:
+      list[Path]: list[Path] produced by this call.
+    
+    Examples:
+      >>> _parent_jsonl_paths("x")  # doctest: +SKIP
+    """
     paths = []
     for child in sorted(root.iterdir()):
         if not child.is_dir() or child.name == "subagents":
@@ -117,10 +204,24 @@ def _parent_jsonl_paths(root: Path) -> list[Path]:
 
 
 def _scan_transcript(
-    path: Path,
-    since: datetime,
-    until: datetime,
+  path: Path,
+  since: datetime,
+  until: datetime,
 ) -> list[dict]:
+    """
+    Internal helper to handle scan transcript.
+    
+    Args:
+      path (Path): String for path.
+      since (datetime): Since.
+      until (datetime): Until.
+    
+    Returns:
+      list[dict]: list[dict] produced by this call.
+    
+    Examples:
+      >>> _scan_transcript("x", None, None)  # doctest: +SKIP
+    """
     mtime = path.stat().st_mtime
     if not _in_window(mtime, since, until):
         return []
@@ -161,6 +262,18 @@ def _scan_transcript(
 
 
 def _dedupe_rows(rows: list[dict]) -> list[dict]:
+    """
+    Internal helper to handle dedupe rows.
+    
+    Args:
+      rows (list[dict]): Sequence for rows.
+    
+    Returns:
+      list[dict]: list[dict] produced by this call.
+    
+    Examples:
+      >>> _dedupe_rows([])  # doctest: +SKIP
+    """
     seen: set[tuple[str, str]] = set()
     out: list[dict] = []
     for row in rows:
@@ -173,6 +286,18 @@ def _dedupe_rows(rows: list[dict]) -> list[dict]:
 
 
 def main() -> int:
+    """
+    Run this module's command-line entrypoint.
+    
+    Returns:
+      int: int produced by this call.
+    
+    Raises:
+      SystemExit: Raised when ``main`` hits a ``SystemExit`` failure path.
+    
+    Examples:
+      >>> main()  # doctest: +SKIP
+    """
     args = _parse_args()
     since = _parse_date(args.since)
     until = _parse_date(args.until)

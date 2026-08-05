@@ -1,9 +1,13 @@
-"""Short UI labels for job-level metrics in the Job detail table.
+"""
+Short UI labels for job-level metrics in the Job detail table.
 
-Keys must match ``job_metrics_catalog_entries()`` in ``metrics.py``.
-Mirror of ``hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.js``.
-Long-form help text lives in the SPA ``variableMetadata.js`` (tooltips).
-Units appear only in the bracket suffix from API metrics_list, not in these labels.
+Keys must match ``job_metrics_catalog_entries()`` in ``metrics.py``. Mirror of
+``hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.js``. Long-form
+help text lives in the SPA ``variableMetadata.js`` (tooltips). Units appear only
+in the bracket suffix from API metrics_list, not in these labels.
+
+Attributes:
+  JOB_METRIC_SHORT_LABELS: ``JOB_METRIC_SHORT_LABELS``.
 """
 
 from __future__ import annotations
@@ -74,8 +78,19 @@ JOB_METRIC_SHORT_LABELS: dict[str, str] = {
 }
 
 
-def job_has_gpu_for_watt_hours_label(gpu_count) -> bool:
-    """True when job GPU count is a positive number (watt-hours title wording)."""
+def job_has_gpu_for_watt_hours_label(gpu_count: int) -> bool:
+    """
+    True when job GPU count is a positive number (watt-hours title wording).
+    
+    Args:
+      gpu_count (int): Integer value for gpu count.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> job_has_gpu_for_watt_hours_label(0)  # doctest: +SKIP
+    """
     if gpu_count is None or gpu_count == "":
         return False
     try:
@@ -85,14 +100,36 @@ def job_has_gpu_for_watt_hours_label(gpu_count) -> bool:
 
 
 def get_job_watt_hours_short_label(has_gpu: bool) -> str:
-    """Metrics-table short label: omit +GPU when the job has no GPUs."""
+    """
+    Metrics-table short label: omit +GPU when the job has no GPUs.
+    
+    Args:
+      has_gpu (bool): Whether to enable has gpu.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> get_job_watt_hours_short_label(True)  # doctest: +SKIP
+    """
     if has_gpu:
         return "CPU+GPU watt-hours for job"
     return "CPU watt-hours for job"
 
 
 def get_job_watt_hours_resources_title(has_gpu: bool) -> str:
-    """Resources card title: omit +GPU when the job has no GPUs."""
+    """
+    Resources card title: omit +GPU when the job has no GPUs.
+    
+    Args:
+      has_gpu (bool): Whether to enable has gpu.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> get_job_watt_hours_resources_title(True)  # doctest: +SKIP
+    """
     if has_gpu:
         return "CPU+GPU Watt Hours for Job"
     return "CPU Watt Hours for Job"

@@ -1,10 +1,18 @@
-"""Archive maintenance snapshot, hints, and parallel head metadata discovery.
+"""
+Archive maintenance snapshot, hints, and parallel head metadata discovery.
 
-Path hints in ``.sync_archive_maint_hints.json`` are a performance cache keyed on
-``(mtime, size)`` per raw stats file (see ``_path_fingerprint``). In-place content
-changes that leave metadata unchanged are not detected; correctness is restored
-when mtime/size drift, the host-dir fingerprint changes, or head metadata is
-re-read on a cache miss.
+Path hints in ``.sync_archive_maint_hints.json`` are a performance cache keyed
+on ``(mtime, size)`` per raw stats file (see ``_path_fingerprint``). In-place
+content changes that leave metadata unchanged are not detected; correctness is
+restored when mtime/size drift, the host-dir fingerprint changes, or head
+metadata is re-read on a cache miss.
+
+Attributes:
+  SYNC_ARCHIVE_MAINT_HINTS_BASENAME: Attribute.
+  _ARCHIVE_METADATA_PROGRESS_EVERY_N: Attribute.
+  _ARCHIVE_METADATA_PROGRESS_INTERVAL_S: Attribute.
+  _ARCHIVE_METADATA_PROGRESS_MIN_PATHS: Attribute.
+  _MAINT_HINTS_VERSION: Attribute.
 """
 from __future__ import annotations
 
@@ -38,7 +46,19 @@ _ARCHIVE_METADATA_PROGRESS_INTERVAL_S = 60.0
 
 @dataclass
 class ArchiveMaintenanceSnapshot:
-  """One discovery pass worth of archive maintenance inputs."""
+  """
+  One discovery pass worth of archive maintenance inputs.
+  
+  Attributes:
+    closed_paths: Attribute.
+    first_timestamp_by_path: Attribute.
+    gate_identities_by_path: Attribute.
+    head_identity_by_path: Attribute.
+    head_read_stats: Attribute.
+    mapping: Attribute.
+    ready_paths: Attribute.
+    remaining_raw_by_gz: Attribute.
+  """
 
   closed_paths: list
   first_timestamp_by_path: Dict[str, str] = field(default_factory=dict)
@@ -53,11 +73,36 @@ class ArchiveMaintenanceSnapshot:
 
 
 def maint_hints_path(archive_data_dir: str) -> str:
+  """
+  Maint hints path.
+  
+  Args:
+    archive_data_dir (str): String for archive data dir.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> maint_hints_path("x")  # doctest: +SKIP
+  """
   return os.path.join(archive_data_dir, SYNC_ARCHIVE_MAINT_HINTS_BASENAME)
 
 
 def _get_archive_discovery_worker_count(total_tasks: int) -> int:
-  """Parallel head/sampled metadata reads; sole cap is ``get_sync_pool_process_cap()``."""
+  """
+  Parallel head/sampled metadata reads; sole cap is.
+  
+    ``get_sync_pool_process_cap()``.
+  
+  Args:
+    total_tasks (int): Integer value for total tasks.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> _get_archive_discovery_worker_count(0)  # doctest: +SKIP
+  """
   if total_tasks <= 0:
     return 1
   configured = max(1, int(cfg.get_sync_pool_process_cap()))
@@ -65,15 +110,33 @@ def _get_archive_discovery_worker_count(total_tasks: int) -> int:
 
 
 def _maybe_log_parallel_task_progress(
-    *,
-    prefix: str,
-    total: int,
-    done: int,
-    errors: int,
-    started_mono: float,
-    last_progress_mono: float,
-    log_fn,
+  *,
+  prefix: str,
+  total: int,
+  done: int,
+  errors: int,
+  started_mono: float,
+  last_progress_mono: float,
+  log_fn: Any,
 ) -> float:
+  """
+  Internal helper to handle maybe log parallel task progress.
+  
+  Args:
+    prefix (str): String for prefix.
+    total (int): Integer value for total.
+    done (int): Integer value for done.
+    errors (int): Integer value for errors.
+    started_mono (float): Floating-point value for started mono.
+    last_progress_mono (float): Floating-point value for last progress mono.
+    log_fn (Any): Callable invoked by this helper.
+  
+  Returns:
+    float: float produced by this call.
+  
+  Examples:
+    >>> _maybe_log_parallel_task_progress("x", 0, 0, 0, 0, 0, None)
+  """
   if total < _ARCHIVE_METADATA_PROGRESS_MIN_PATHS or log_fn is None:
     return last_progress_mono
   if done >= total:
@@ -93,7 +156,19 @@ def _maybe_log_parallel_task_progress(
 
 
 def _path_fingerprint(path: str) -> Optional[Tuple[int, int]]:
-  """Return ``(mtime, size)`` hint key; prefers last find ``-printf`` cache."""
+  """
+  Return ``(mtime, size)`` hint key; prefers last find ``-printf`` cache.
+  
+  Args:
+    path (str): String for path.
+  
+  Returns:
+    Optional[Tuple[int, int]]: Optional[Tuple[int, int]] — the result, or None
+    when unavailable.
+  
+  Examples:
+    >>> _path_fingerprint("x")  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.sync_timedb_stats_find import lookup_path_fingerprint
 
   cached = lookup_path_fingerprint(path)
@@ -107,7 +182,19 @@ def _path_fingerprint(path: str) -> Optional[Tuple[int, int]]:
 
 
 def _host_dir_fingerprint(host_dir: str) -> Optional[Tuple[int, int]]:
-  """Return ``(mtime, file_count)``; prefers last find ``-printf`` cache."""
+  """
+  Return ``(mtime, file_count)``; prefers last find ``-printf`` cache.
+  
+  Args:
+    host_dir (str): String for host dir.
+  
+  Returns:
+    Optional[Tuple[int, int]]: Optional[Tuple[int, int]] — the result, or None
+    when unavailable.
+  
+  Examples:
+    >>> _host_dir_fingerprint("x")  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
       lookup_host_dir_fingerprint,
   )
@@ -127,6 +214,19 @@ def _host_dir_fingerprint(host_dir: str) -> Optional[Tuple[int, int]]:
 
 
 def load_archive_maint_hints(archive_data_dir: str) -> Optional[Dict[str, Any]]:
+  """
+  Load the archive maint hints.
+  
+  Args:
+    archive_data_dir (str): String for archive data dir.
+  
+  Returns:
+    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] — the result, or None
+    when unavailable.
+  
+  Examples:
+    >>> load_archive_maint_hints("x")  # doctest: +SKIP
+  """
   if not cfg.get_sync_archive_maint_hints():
     return None
   from hpcperfstats.dbload.lib.sync_timedb_persistence import load_persistence_document
@@ -141,7 +241,19 @@ def load_archive_maint_hints(archive_data_dir: str) -> Optional[Dict[str, Any]]:
   return data
 
 
-def _daily_tar_hint_identity(tar_path: str):
+def _daily_tar_hint_identity(tar_path: str) -> Any:
+  """
+  Internal helper to handle daily tar hint identity.
+  
+  Args:
+    tar_path (str): String for tar path.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _daily_tar_hint_identity("x")  # doctest: +SKIP
+  """
   if not tar_path or not os.path.isfile(tar_path):
     return None
   try:
@@ -151,8 +263,21 @@ def _daily_tar_hint_identity(tar_path: str):
     return None
 
 
-def prune_validated_days_hints(validated_days: Dict[str, Any]) -> Dict[str, Any]:
-  """Drop validated-day entries when sealed or sibling tar identity changed."""
+def prune_validated_days_hints(
+  validated_days: Dict[str, Any],
+) -> Dict[str, Any]:
+  """
+  Drop validated-day entries when sealed or sibling tar identity changed.
+  
+  Args:
+    validated_days (Dict[str, Any]): Mapping for validated days.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> prune_validated_days_hints({})  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       _archive_file_identity,
       daily_tar_path_from_compressed,
@@ -183,10 +308,20 @@ def prune_validated_days_hints(validated_days: Dict[str, Any]) -> Dict[str, Any]
 
 
 def prune_day_phases_hints(day_phases: Dict[str, Any]) -> Dict[str, Any]:
-  """Drop day-phase entries when the daily ``.tar`` fingerprint changed.
-
+  """
+  Drop day-phase entries when the daily ``.tar`` fingerprint changed.
+  
   Sealed-only ``tar_dropped`` (or ``sealed``) phases with no sibling ``.tar``
   are retained so persistence resets / prune do not rediscover finished days.
+  
+  Args:
+    day_phases (Dict[str, Any]): Mapping for day phases.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> prune_day_phases_hints({})  # doctest: +SKIP
   """
   pruned: Dict[str, Any] = {}
   for tar_path, value in (day_phases or {}).items():
@@ -218,8 +353,20 @@ def prune_day_phases_hints(day_phases: Dict[str, Any]) -> Dict[str, Any]:
   return pruned
 
 
-def day_phase_hint_entry(tar_path: str, phase: str):
-  """Build a hint entry with sibling ``.tar`` fingerprint for invalidation."""
+def day_phase_hint_entry(tar_path: str, phase: str) -> Any:
+  """
+  Build a hint entry with sibling ``.tar`` fingerprint for invalidation.
+  
+  Args:
+    tar_path (str): String for tar path.
+    phase (str): String for phase.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> day_phase_hint_entry("x", "x")  # doctest: +SKIP
+  """
   tar_identity = _daily_tar_hint_identity(tar_path)
   if tar_identity is None:
     return phase
@@ -231,6 +378,18 @@ def day_phase_hint_entry(tar_path: str, phase: str):
 
 
 def _prune_hints_paths(hints_paths: Dict[str, Any]) -> Dict[str, Any]:
+  """
+  Internal helper to handle prune hints paths.
+  
+  Args:
+    hints_paths (Dict[str, Any]): Mapping for hints paths.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> _prune_hints_paths({})  # doctest: +SKIP
+  """
   pruned = {}
   for path, entry in (hints_paths or {}).items():
     if not isinstance(entry, dict):
@@ -248,14 +407,31 @@ def _prune_hints_paths(hints_paths: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def save_archive_maint_hints(
-    archive_data_dir: str,
-    *,
-    host_dirs: Dict[str, Dict[str, int]],
-    paths: Dict[str, Dict[str, Any]],
-    validated_days: Dict[str, Dict[str, Any]],
-    day_phases: Optional[Dict[str, str]] = None,
-    debt_queue: Optional[list] = None,
+  archive_data_dir: str,
+  *,
+  host_dirs: Dict[str, Dict[str, int]],
+  paths: Dict[str, Dict[str, Any]],
+  validated_days: Dict[str, Dict[str, Any]],
+  day_phases: Optional[Dict[str, str]] = None,
+  debt_queue: Optional[list] = None,
 ) -> None:
+  """
+  Save the archive maint hints.
+  
+  Args:
+    archive_data_dir (str): String for archive data dir.
+    host_dirs (Dict[str, Dict[str, int]]): Mapping for host dirs.
+    paths (Dict[str, Dict[str, Any]]): Mapping for paths.
+    validated_days (Dict[str, Dict[str, Any]]): Mapping for validated days.
+    day_phases (Optional[Dict[str, str]]): Day phases, or None when absent.
+    debt_queue (Optional[list]): Debt queue, or None when absent.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> save_archive_maint_hints("x", {}, {}, {}, None, None)  # doctest: +SKIP
+  """
   if not cfg.get_sync_archive_maint_hints():
     return
   path = maint_hints_path(archive_data_dir)
@@ -273,19 +449,30 @@ def save_archive_maint_hints(
 
 
 def _split_paths_by_hints(
-    closed_paths: list,
-    hints_data: Optional[Dict[str, Any]],
-) -> Tuple[
-    Dict[str, str],
-    Dict[str, Tuple[str, int]],
-    list,
-    Dict[str, Dict[str, int]],
-]:
-  """Return (first_ts, head_identity, needs_read, host_dirs_fingerprints).
-
-  Reuses stored path hints only when host-dir and per-path ``(mtime, size)``
-  fingerprints still match (content-only edits with stable metadata are not
-  invalidated here).
+  closed_paths: list,
+  hints_data: Optional[Dict[str, Any]],
+) -> (
+  Tuple[ Dict[str, str], Dict[str, Tuple[str, int]], list, Dict[str, Dict[str,
+  int]], ]
+):
+  """
+  Return (first_ts, head_identity, needs_read, host_dirs_fingerprints).
+  
+    Reuses stored path hints only when host-dir and per-path ``(mtime, size)``
+    fingerprints still match (content-only edits with stable metadata are not
+    invalidated here).
+  
+  Args:
+    closed_paths (list): Sequence for closed paths.
+    hints_data (Optional[Dict[str, Any]]): Hints data, or None when absent.
+  
+  Returns:
+    Tuple[ Dict[str, str], Dict[str, Tuple[str, int]], list, Dict[str,
+    Dict[str, int]], ]: Tuple[ Dict[str, str], Dict[str, Tuple[str, int]],
+    list, Dict[str, Dict[str, int]], ] produced by this call.
+  
+  Examples:
+    >>> _split_paths_by_hints([], None)  # doctest: +SKIP
   """
   first_ts: Dict[str, str] = {}
   head_identity: Dict[str, Tuple[str, int]] = {}
@@ -330,7 +517,22 @@ def _split_paths_by_hints(
   return first_ts, head_identity, needs_read, host_dirs
 
 
-def _read_head_metadata_one(path: str) -> Tuple[str, Optional[str], Optional[str], Optional[int]]:
+def _read_head_metadata_one(
+  path: str,
+) -> Tuple[str, Optional[str], Optional[str], Optional[int]]:
+  """
+  Internal helper to read the head metadata one.
+  
+  Args:
+    path (str): String for path.
+  
+  Returns:
+    Tuple[str, Optional[str], Optional[str], Optional[int]]: Tuple[str,
+    Optional[str], Optional[str], Optional[int]] produced by this call.
+  
+  Examples:
+    >>> _read_head_metadata_one("x")  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
   set_daemon_thread_title("", script_name="sync_timedb.py", role="archive-discovery")
@@ -345,7 +547,22 @@ def _read_head_metadata_one(path: str) -> Tuple[str, Optional[str], Optional[str
   return path, first_ts, str(host).strip(), unix_second
 
 
-def _read_tail_metadata_one(path: str) -> Tuple[str, Optional[str], Optional[int]]:
+def _read_tail_metadata_one(
+  path: str,
+) -> Tuple[str, Optional[str], Optional[int]]:
+  """
+  Internal helper to read the tail metadata one.
+  
+  Args:
+    path (str): String for path.
+  
+  Returns:
+    Tuple[str, Optional[str], Optional[int]]: Tuple[str, Optional[str],
+    Optional[int]] produced by this call.
+  
+  Examples:
+    >>> _read_tail_metadata_one("x")  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
   set_daemon_thread_title("", script_name="sync_timedb.py", role="archive-discovery")
@@ -359,12 +576,27 @@ def _read_tail_metadata_one(path: str) -> Tuple[str, Optional[str], Optional[int
 
 
 def collect_gate_identities_for_paths(
-    paths,
-    head_identity_by_path: Dict[str, Tuple[str, int]],
-    *,
-    log_fn=log_print,
+  paths: Any,
+  head_identity_by_path: Dict[str, Tuple[str, int]],
+  *,
+  log_fn: Any = log_print,
 ) -> Tuple[Dict[str, Dict[str, Set[int]]], Dict[str, int]]:
-  """Build per-path head+tail host→seconds maps; parallel EOF-backward tail reads."""
+  """
+  Build per-path head+tail host→seconds maps; parallel EOF-backward tail reads.
+  
+  Args:
+    paths (Any): Iterable of filesystem paths as strings.
+    head_identity_by_path (Dict[str, Tuple[str, int]]): Mapping for head
+    identity by path.
+    log_fn (Any): Callable invoked by this helper.
+  
+  Returns:
+    Tuple[Dict[str, Dict[str, Set[int]]], Dict[str, int]]: Tuple[Dict[str,
+    Dict[str, Set[int]]], Dict[str, int]] produced by this call.
+  
+  Examples:
+    >>> collect_gate_identities_for_paths(None, {}, None)  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
       head_tail_identity_as_gate_identities,
   )
@@ -456,12 +688,29 @@ def collect_gate_identities_for_paths(
 
 
 def collect_head_metadata_for_paths(
-    paths,
-    *,
-    hints_data=None,
-    log_fn=log_print,
+  paths: Any,
+  *,
+  hints_data: Any | None = None,
+  log_fn: Any = log_print,
 ) -> Tuple[Dict[str, str], Dict[str, Tuple[str, int]], Dict[str, int]]:
-  """Build first_timestamp and head_identity maps; parallel read for ``needs_read``."""
+  """
+  Build first_timestamp and head_identity maps; parallel read for.
+  
+    ``needs_read``.
+  
+  Args:
+    paths (Any): Iterable of filesystem paths as strings.
+    hints_data (Any | None): One of ``Any``, ``None``.
+    log_fn (Any): Callable invoked by this helper.
+  
+  Returns:
+    Tuple[Dict[str, str], Dict[str, Tuple[str, int]], Dict[str, int]]:
+    Tuple[Dict[str, str], Dict[str, Tuple[str, int]], Dict[str, int]] produced
+    by this call.
+  
+  Examples:
+    >>> collect_head_metadata_for_paths(None, None, None)  # doctest: +SKIP
+  """
   first_ts_hinted, head_hinted, needs_read, _host_dirs = _split_paths_by_hints(
       list(paths), hints_data)
   first_timestamp_by_path = dict(first_ts_hinted)
@@ -551,7 +800,21 @@ def collect_head_metadata_for_paths(
   return first_timestamp_by_path, head_identity_by_path, stats
 
 
-def remaining_raw_by_gz_from_mapping(mapping: Dict[str, list]) -> Dict[str, list]:
+def remaining_raw_by_gz_from_mapping(
+  mapping: Dict[str, list],
+) -> Dict[str, list]:
+  """
+  Remaining raw by gz from mapping.
+  
+  Args:
+    mapping (Dict[str, list]): Mapping for mapping.
+  
+  Returns:
+    Dict[str, list]: Dict[str, list] produced by this call.
+  
+  Examples:
+    >>> remaining_raw_by_gz_from_mapping({})  # doctest: +SKIP
+  """
   return {
       normalize_daily_compressed_path(archive_path): list(stats_paths)
       for archive_path, stats_paths in mapping.items()
@@ -560,14 +823,30 @@ def remaining_raw_by_gz_from_mapping(mapping: Dict[str, list]) -> Dict[str, list
 
 
 def build_archive_maintenance_snapshot(
-    archive_data_dir: str,
-    host_name_ext: str,
-    tgz_archive_dir: str,
-    *,
-    build_ready_set=True,
-    log_fn=log_print,
+  archive_data_dir: str,
+  host_name_ext: str,
+  tgz_archive_dir: str,
+  *,
+  build_ready_set: bool = True,
+  log_fn: Any = log_print,
 ) -> ArchiveMaintenanceSnapshot:
-  """One collect pass, head+tail gate metadata, mapping, optional ready set."""
+  """
+  One collect pass, head+tail gate metadata, mapping, optional ready set.
+  
+  Args:
+    archive_data_dir (str): String for archive data dir.
+    host_name_ext (str): String for host name ext.
+    tgz_archive_dir (str): String for tgz archive dir.
+    build_ready_set (bool): Boolean flag for build ready set.
+    log_fn (Any): Callable invoked by this helper.
+  
+  Returns:
+    ArchiveMaintenanceSnapshot: ArchiveMaintenanceSnapshot produced by this
+    call.
+  
+  Examples:
+    >>> build_archive_maintenance_snapshot("x", "x", "x", True, None)
+  """
   # CLI/scripts (e.g. migrate_daily_archive_gz_to_zst) may call this without
   # a prior django.setup(); ingest_readiness imports host_data models.
   from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
@@ -657,7 +936,22 @@ def build_archive_maintenance_snapshot(
   )
 
 
-def snapshot_host_dirs_from_paths(closed_paths: list) -> Dict[str, Dict[str, int]]:
+def snapshot_host_dirs_from_paths(
+  closed_paths: list,
+) -> Dict[str, Dict[str, int]]:
+  """
+  Snapshot host dirs from paths.
+  
+  Args:
+    closed_paths (list): Sequence for closed paths.
+  
+  Returns:
+    Dict[str, Dict[str, int]]: Dict[str, Dict[str, int]] produced by this
+    call.
+  
+  Examples:
+    >>> snapshot_host_dirs_from_paths([])  # doctest: +SKIP
+  """
   host_dirs: Dict[str, Dict[str, int]] = {}
   seen = set()
   for path in closed_paths:
@@ -672,10 +966,27 @@ def snapshot_host_dirs_from_paths(closed_paths: list) -> Dict[str, Dict[str, int
 
 
 def snapshot_paths_hint_entries(
-    closed_paths: list,
-    first_timestamp_by_path: Dict[str, str],
-    head_identity_by_path: Dict[str, Tuple[str, int]],
+  closed_paths: list,
+  first_timestamp_by_path: Dict[str, str],
+  head_identity_by_path: Dict[str, Tuple[str, int]],
 ) -> Dict[str, Dict[str, Any]]:
+  """
+  Snapshot paths hint entries.
+  
+  Args:
+    closed_paths (list): Sequence for closed paths.
+    first_timestamp_by_path (Dict[str, str]): Mapping for first timestamp by
+    path.
+    head_identity_by_path (Dict[str, Tuple[str, int]]): Mapping for head
+    identity by path.
+  
+  Returns:
+    Dict[str, Dict[str, Any]]: Dict[str, Dict[str, Any]] produced by this
+    call.
+  
+  Examples:
+    >>> snapshot_paths_hint_entries([], {}, {})  # doctest: +SKIP
+  """
   entries: Dict[str, Dict[str, Any]] = {}
   for path in closed_paths:
     first_ts = first_timestamp_by_path.get(path)
@@ -697,7 +1008,24 @@ def snapshot_paths_hint_entries(
   return entries
 
 
-def log_archive_maintenance_snapshot_summary(snapshot: ArchiveMaintenanceSnapshot, *, log_fn=log_print):
+def log_archive_maintenance_snapshot_summary(
+  snapshot: ArchiveMaintenanceSnapshot,
+  *,
+  log_fn: Any = log_print,
+) -> None:
+  """
+  Log the archive maintenance snapshot summary.
+  
+  Args:
+    snapshot (ArchiveMaintenanceSnapshot): Snapshot.
+    log_fn (Any): Callable invoked by this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> log_archive_maintenance_snapshot_summary(None, None)  # doctest: +SKIP
+  """
   if not log_fn:
     return
   days = len(snapshot.mapping)

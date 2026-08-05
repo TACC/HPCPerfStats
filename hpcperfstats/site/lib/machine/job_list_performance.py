@@ -1,17 +1,28 @@
-"""Job list performance column: classify metrics coverage for display and sort order.
+"""
+Job list performance column: classify metrics coverage for display and sort
+order.
 
-sort_rank semantics (designation identity for filters / API ``performance.sort_rank``):
-  0 — Summary available (at least one metrics_data row with non-null value).
-  1 — Not summarized yet (no metrics_data rows; runtime null or >= SHORT threshold).
-  2 — Monitoring gaps (rows exist, all values null, distinct_time_count >= 5).
-  3 — Job too short or too few samples (rows, all null, 0 < distinct_time_count < 5).
-  4 — Not summarized yet (UI label; rows, all null, distinct_time_count null or <= 0).
-  5 — Too short to measure (no metrics_data rows; runtime < SHORT threshold).
+sort_rank semantics (designation identity for filters / API
+``performance.sort_rank``): 0 — Summary available (at least one metrics_data row
+with non-null value). 1 — Not summarized yet (no metrics_data rows; runtime null
+or >= SHORT threshold). 2 — Monitoring gaps (rows exist, all values null,
+distinct_time_count >= 5). 3 — Job too short or too few samples (rows, all null,
+0 < distinct_time_count < 5). 4 — Not summarized yet (UI label; rows, all null,
+distinct_time_count null or <= 0). 5 — Too short to measure (no metrics_data
+rows; runtime < SHORT threshold).
 
-``performance_sort_group`` collapses designation ranks 1 and 4 into one primary sort
-bucket (group 1). Public ``order_by=performance_sort_rank`` orders by that group.
+``performance_sort_group`` collapses designation ranks 1 and 4 into one primary
+sort bucket (group 1). Public ``order_by=performance_sort_rank`` orders by that
+group.
+
+Attributes:
+  MONITORING_GAPS_MIN_DISTINCT_TIMES: Attribute.
+  PERFORMANCE_STATUS_BY_SORT_RANK: Attribute.
+  SHORT_RUNTIME_NO_METRICS_SECONDS: Attribute.
 """
 from __future__ import annotations
+
+from typing import Any
 
 from django.db.models import Case, Count, Exists, F, IntegerField, OuterRef, Q, Value, When
 
@@ -34,8 +45,19 @@ PERFORMANCE_STATUS_BY_SORT_RANK = (
 )
 
 
-def performance_status_label(sort_rank):
-    """Return display label for a performance_sort_rank integer."""
+def performance_status_label(sort_rank: Any) -> Any:
+    """
+    Return display label for a performance_sort_rank integer.
+    
+    Args:
+      sort_rank (Any): Sort rank passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> performance_status_label(None)  # doctest: +SKIP
+    """
     for rank, label in PERFORMANCE_STATUS_BY_SORT_RANK:
         if rank == sort_rank:
             return label
@@ -43,18 +65,43 @@ def performance_status_label(sort_rank):
 
 
 def summarize_performance(
-    *,
-    has_metrics_row: bool,
-    metrics_value_count: int,
-    distinct_time_count: int | None,
-    runtime: float | None,
+  *,
+  has_metrics_row: bool,
+  metrics_value_count: int,
+  distinct_time_count: int | None,
+  runtime: float | None,
 ) -> dict:
-    """Return display dict for the job list performance column.
-
+    """
+    Return display dict for the job list performance column.
+    
     Keys: label, tone, aria_label, sort_rank (int).
+    
+    Args:
+      has_metrics_row (bool): Whether to enable has metrics row.
+      metrics_value_count (int): Integer value for metrics value count.
+      distinct_time_count (int | None): One of ``int``, ``None``.
+      runtime (float | None): One of ``float``, ``None``.
+    
+    Returns:
+      dict: dict produced by this call.
+    
+    Examples:
+      >>> summarize_performance(True, 0, None, None)  # doctest: +SKIP
     """
 
     def aria_label_for(text: str) -> str:
+        """
+        Aria label for.
+        
+        Args:
+          text (str): String for text.
+        
+        Returns:
+          str: str produced by this call.
+        
+        Examples:
+          >>> aria_label_for("x")  # doctest: +SKIP
+        """
         return f"Performance: {text}"
 
     if metrics_value_count > 0:
@@ -108,8 +155,21 @@ def summarize_performance(
     }
 
 
-def annotate_job_list_performance_fields(queryset):
-    """Add has_metrics_data, metrics_value_count, performance_sort_rank, performance_sort_group."""
+def annotate_job_list_performance_fields(queryset: Any) -> Any:
+    """
+    Add has_metrics_data, metrics_value_count, performance_sort_rank,.
+    
+      performance_sort_group.
+    
+    Args:
+      queryset (Any): Queryset passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> annotate_job_list_performance_fields(None)  # doctest: +SKIP
+    """
     md_exists = Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
     mcount = Count(
         "metrics_data_set",

@@ -1,4 +1,11 @@
-"""DRF serializers for machine app API. Job list/detail, HPCPerfStats Monitor, and form options."""
+"""
+DRF serializers for machine app API. Job list/detail, HPCPerfStats Monitor, and
+  form options.
+"""
+from __future__ import annotations
+
+from typing import Any
+
 from rest_framework import serializers
 
 from .job_list_performance import summarize_performance
@@ -6,13 +13,18 @@ from .models import job_data, metrics_data
 
 
 class JobListSerializer(serializers.ModelSerializer):
-    """Minimal job fields for list views."""
+    """
+    Minimal job fields for list views.
+    """
 
     performance = serializers.SerializerMethodField()
     color = serializers.SerializerMethodField()
     sample_count = serializers.SerializerMethodField()
 
     class Meta:
+        """
+        Django model metadata for the enclosing model.
+        """
         model = job_data
         fields = [
             "jid",
@@ -36,8 +48,21 @@ class JobListSerializer(serializers.ModelSerializer):
             "color",
         ]
 
-    def get_performance(self, obj):
-        """Structured performance column: labels, tone, sort_rank (see job_list_performance)."""
+    def get_performance(self, obj: Any) -> Any:
+        """
+        Structured performance column: labels, tone, sort_rank (see.
+        
+          job_list_performance).
+        
+        Args:
+          obj (Any): Value to inspect (typically a numeric scalar).
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> JobListSerializer().get_performance(None)  # doctest: +SKIP
+        """
         has_row = getattr(obj, "has_metrics_data", None)
         if has_row is None:
             has_row = obj.metrics_data_set.exists()
@@ -51,18 +76,45 @@ class JobListSerializer(serializers.ModelSerializer):
             runtime=obj.runtime,
         )
 
-    def get_color(self, obj):
-        """Return hex color for the job's state (completed/failed/other)."""
+    def get_color(self, obj: Any) -> Any:
+        """
+        Return hex color for the job's state (completed/failed/other).
+        
+        Args:
+          obj (Any): Value to inspect (typically a numeric scalar).
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> JobListSerializer().get_color(None)  # doctest: +SKIP
+        """
         return obj.color()
 
-    def get_sample_count(self, obj):
-        """Expose metrics sample count used by staff job-list troubleshooting."""
+    def get_sample_count(self, obj: Any) -> Any:
+        """
+        Expose metrics sample count used by staff job-list troubleshooting.
+        
+        Args:
+          obj (Any): Value to inspect (typically a numeric scalar).
+        
+        Returns:
+          Any: Value produced by this call (type depends on inputs).
+        
+        Examples:
+          >>> JobListSerializer().get_sample_count(None)  # doctest: +SKIP
+        """
         return obj.metrics_distinct_time_count
 
 
 class MetricsDataSerializer(serializers.ModelSerializer):
-    """Metrics data fields (type, metric, units, value) for embedding in job detail."""
+    """
+    Metrics data fields (type, metric, units, value) for embedding in job.
+    """
 
     class Meta:
+        """
+        Django model metadata for the enclosing model.
+        """
         model = metrics_data
         fields = ["type", "metric", "units", "value"]

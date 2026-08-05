@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""Test runner for hpcperfstats. Runs pytest over the package.
+"""
+Test runner for hpcperfstats. Runs pytest over the package.
 
 Use --no-django for unit tests only; Django tests need PostgreSQL and
 HPCPERFSTATS_INI.
+
+Attributes:
+  _root: Attribute.
 """
+from __future__ import annotations
+
+from typing import Any
+
 import os
 import sys
 
@@ -14,8 +22,17 @@ if _root not in sys.path:
   sys.path.insert(0, _root)
 
 
-def main():
-  """Run pytest with optional --no-django; return exit code from pytest.main."""
+def main() -> Any:
+  """
+  Run pytest with optional --no-django; return exit code from pytest.main.
+  
+  Returns:
+    Any: Open return polymorphism from ``main``: concrete type depends on
+    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+  
+  Examples:
+    >>> main()  # doctest: +SKIP
+  """
   import pytest
   args = list(sys.argv[1:])
   if "--no-django" in args:

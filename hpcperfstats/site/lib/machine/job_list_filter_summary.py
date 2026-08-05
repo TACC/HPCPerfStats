@@ -1,4 +1,10 @@
-"""Human-readable job list titles and filter summaries for extended search."""
+"""
+Human-readable job list titles and filter summaries for extended search.
+"""
+from __future__ import annotations
+
+from typing import Any
+
 from .job_list_performance import performance_status_label
 from .job_list_state_groups import major_state_label, parse_major_state_filter_keys
 from .query_utils import (
@@ -7,7 +13,19 @@ from .query_utils import (
 )
 
 
-def _metric_lines_from_fields(fields):
+def _metric_lines_from_fields(fields: Any) -> Any:
+    """
+    Internal helper to handle metric lines from fields.
+    
+    Args:
+      fields (Any): Fields passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _metric_lines_from_fields(None)  # doctest: +SKIP
+    """
     lines = []
     for key, value in sorted(fields.items()):
         if not key.startswith("metrics_") or value in (None, ""):
@@ -21,7 +39,20 @@ def _metric_lines_from_fields(fields):
     return lines
 
 
-def _multi_value_summary_line(label, raw):
+def _multi_value_summary_line(label: Any, raw: Any) -> Any:
+    """
+    Internal helper to handle multi value summary line.
+    
+    Args:
+      label (Any): Label passed to this helper.
+      raw (Any): Raw passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _multi_value_summary_line(None, None)  # doctest: +SKIP
+    """
     values = parse_job_list_multi_value_field(raw)
     if not values:
         return None
@@ -30,11 +61,21 @@ def _multi_value_summary_line(label, raw):
     return f"{label}: {', '.join(values)}"
 
 
-def build_job_list_qname_and_filter_summary(fields):
+def build_job_list_qname_and_filter_summary(fields: Any) -> Any:
     """
     Return (qname, filter_summary) for job_list API responses.
-
-    filter_summary is a list of short human-readable filter lines (may be empty).
+    
+    filter_summary is a list of short human-readable filter lines (may be
+      empty).
+    
+    Args:
+      fields (Any): Fields passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> build_job_list_qname_and_filter_summary(None)  # doctest: +SKIP
     """
     lines = []
     queue_line = _multi_value_summary_line("Queue", fields.get("queue"))

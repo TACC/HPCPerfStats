@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
-"""Type-detail plot: Bokeh continuous-line plots per event for a given type (e.g. llite, cpu).
+"""
+Type-detail plot: Bokeh continuous-line plots per event for a given type (e.g.
+llite, cpu).
 
 Uses TypeDetailDataProvider. Layout matches Summary: stretch_width figures in a
 2-column ``gridplot``.
+
+Attributes:
+  log: Attribute.
 """
+from __future__ import annotations
+
+from typing import Any
+
 import logging
 import time
 
@@ -36,21 +45,46 @@ from hpcperfstats.analysis.metrics.lib.plot.job_detail_bokeh_plot_descriptions i
 
 
 class DevPlot:
-  """Type-detail plot using an ORM data provider (TypeDetailDataProvider).
+  """
+  Type-detail plot using an ORM data provider (TypeDetailDataProvider).
+  
+  Attributes:
+    data_provider: Attribute.
+    host_list: Attribute.
+  """
 
+  def __init__(self, data_provider: Any, host_list: Any) -> None:
     """
-
-  def __init__(self, data_provider, host_list):
-    """Store data provider and host list for plotting.
-
-        """
+    Store data provider and host list for plotting.
+    
+    Args:
+      data_provider (Any): Data provider passed to this helper.
+      host_list (Any): Host list passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> DevPlot(None, None)  # doctest: +SKIP
+    """
     self.data_provider = data_provider
     self.host_list = host_list
 
-  def plot_metric(self, df, event, unit=None):
-    """Create one Bokeh figure with continuous lines per host for the given event.
-
-        """
+  def plot_metric(self, df: Any, event: Any, unit: Any | None = None) -> Any:
+    """
+    Create one Bokeh figure with continuous lines per host for the given event.
+    
+    Args:
+      df (Any): Df passed to this helper.
+      event (Any): Event passed to this helper.
+      unit (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> DevPlot().plot_metric(None, None, None)  # doctest: +SKIP
+    """
     s = time.time()
 
     df = df[["time", "host", event]].copy()
@@ -118,10 +152,19 @@ class DevPlot:
     log.debug("time to plot %s: %s", event, time.time() - s)
     return plot
 
-  def plot(self):
-    """Build host_time_df, merge aggregate per event, and return (df, 2-col gridplot).
-
-        """
+  def plot(self) -> Any:
+    """
+    Build host_time_df, merge aggregate per event, and return (df, 2-col.
+    
+      gridplot).
+    
+    Returns:
+      Any: Open return polymorphism from ``plot``: concrete type depends on
+      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> DevPlot().plot()  # doctest: +SKIP
+    """
     self.hc = {}
     colors = d3["Category20"][20]
     for i, hostname in enumerate(self.host_list):

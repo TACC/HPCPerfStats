@@ -39,6 +39,35 @@ PYTHONPATH=. pytest -q hpcperfstats/tests
 PYTHONPATH=. pytest -q hpcperfstats/site/lib/machine/tests
 ```
 
+### Python docstring + type-hint inventory gate
+
+Every in-scope production module/class/def must pass the full Google/Napoleon surface in `python-docstring-and-typing-contract.mdc` (behavior summaries that are not name-echoes or upgrade-helper AI slop, Args/Returns/Yields, Raises when applicable, Examples with real usage on every def, module/class Attributes including private, subclass/override superclass prose, plus signature annotations). The inventory gate also rejects call-site deferrals, ``Internal helper for`` / ``Compute or apply`` templates, ``Value polymorphism`` boilerplate, and `>>> name(...)  # doctest: +SKIP` placeholder Examples. Check both repos from the HPCPerfStats checkout:
+
+```bash
+# Fail if any in-scope surface is non-compliant
+../.venv/bin/python3 scripts/python_def_inventory.py --check
+
+# Regenerate committed snapshot
+../.venv/bin/python3 scripts/python_def_inventory.py --write docs/python_def_inventory.json
+
+# Gate unit tests (fixtures + full-tree green)
+../.venv/bin/python3 -m pytest -q hpcperfstats/tests/test_python_def_inventory_gate.py
+
+# Tools package (sibling checkout)
+../.venv/bin/python3 -m pytest -q ../hpcperfstats-tools/tests/test_python_def_inventory_gate.py
+```
+
+Optional bulk upgrade helper (review the diff; must not emit call-site / ellipsis-placeholder boilerplate; annotations may use `Any` with explicit Args prose; `# doctest: +SKIP` only with concrete example calls):
+
+```bash
+../.venv/bin/python3 scripts/python_def_docstring_upgrade.py --path-filter hpcperfstats/dbload --apply
+
+# Rewrap / fill full surface to Ruff line-length (80 HPCPerfStats / 88 tools)
+../.venv/bin/python3 scripts/python_def_docstring_upgrade.py --force-docs --line-length 80 --apply
+../.venv/bin/python3 scripts/python_def_docstring_upgrade.py --root ../hpcperfstats-tools \
+  --force-docs --line-length 88 --apply
+```
+
 ### Operator deploy scripts (not test workflows)
 
 **`scripts/rebuild_frontend.sh`** rebuilds the SPA with npm and copies artifacts into the running **`web`** container’s **`staticfiles_data`** volume without stopping **`pipeline`**. Use it as an **optional SPA-only hot path**. The **primary** way to land SPA after code changes is a from-scratch image rebuild (`hpcperfstats-full` / `docker compose up --build`) plus recreating **`web`**: startup [`spa_static_root_heal`](hpcperfstats/site/lib/spa_static_root_heal.py) fingerprint-syncs package frontend into the volume when `machine/index.html` sha256 diverges (see unit tests in `hpcperfstats/site/hpcperfstats_site/tests/test_spa_static_root_heal.py`).

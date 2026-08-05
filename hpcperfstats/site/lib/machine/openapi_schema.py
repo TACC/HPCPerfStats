@@ -1,18 +1,66 @@
-"""Apply drf-spectacular ``@extend_schema`` metadata to machine API views."""
+"""
+Apply drf-spectacular ``@extend_schema`` metadata to machine API views.
+
+Attributes:
+  ADMIN_MONITOR_SCHEMA: Attribute.
+  DROP_STAFF_SCHEMA: Attribute.
+  HOME_OPTIONS_SCHEMA: Attribute.
+  HOST_PLOT_SCHEMA: Attribute.
+  INVALIDATE_CACHE_SCHEMA: Attribute.
+  JOB_DETAIL_SCHEMA: Attribute.
+  JOB_LIST_FILTER_OPTIONS_SCHEMA: Attribute.
+  JOB_LIST_HISTOGRAMS_BATCH_SCHEMA: Attribute.
+  JOB_LIST_HISTOGRAMS_SCHEMA: Attribute.
+  JOB_LIST_SCHEMA: Attribute.
+  JOB_MONITOR_GPU_SCHEMA: Attribute.
+  JOB_MONITOR_SCHEMA: Attribute.
+  JOB_PLOTS_SCHEMA: Attribute.
+  PUBLIC_CLUSTER_DASHBOARD_SCHEMA: Attribute.
+  SACCT_INGEST_SCHEMA: Attribute.
+  SESSION_SCHEMA: Attribute.
+  TYPE_DETAIL_SCHEMA: Attribute.
+  USER_API_KEY_ROTATE_SCHEMA: Attribute.
+  USER_API_KEY_SCHEMA: Attribute.
+"""
+from __future__ import annotations
+
+from typing import Any
+
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 
 from . import openapi_serializers as os
 
 
-def _auth_responses():
+def _auth_responses() -> Any:
+    """
+    Internal helper to handle auth responses.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _auth_responses()  # doctest: +SKIP
+    """
     return {
         401: OpenApiResponse(response=os.ErrorDetailSerializer, description="Authentication required"),
         403: OpenApiResponse(response=os.ErrorDetailSerializer, description="Forbidden"),
     }
 
 
-def _common_error_responses():
-    """Document frequent non-success statuses (envelope unchanged: error/detail keys)."""
+def _common_error_responses() -> Any:
+    """
+    Document frequent non-success statuses (envelope unchanged: error/detail.
+    
+      keys).
+    
+    Returns:
+      Any: Open return polymorphism from ``_common_error_responses``: concrete
+      type depends on inputs and branch (mapping, scalar, handle, or
+      ``None``-like empty).
+    
+    Examples:
+      >>> _common_error_responses()  # doctest: +SKIP
+    """
     return {
         404: OpenApiResponse(response=os.ErrorDetailSerializer, description="Not found"),
         409: OpenApiResponse(response=os.ErrorDetailSerializer, description="Conflict"),
@@ -22,7 +70,16 @@ def _common_error_responses():
     }
 
 
-def _async_loading_responses():
+def _async_loading_responses() -> Any:
+    """
+    Internal helper to handle async loading responses.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _async_loading_responses()  # doctest: +SKIP
+    """
     return {
         202: OpenApiResponse(
             response=os.JobPlotsResponseSerializer,

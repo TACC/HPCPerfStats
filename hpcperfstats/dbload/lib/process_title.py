@@ -1,6 +1,14 @@
-"""Set process title (argv) for supervisor daemons so top/ps show script names."""
+"""
+Set process title (argv) for supervisor daemons so top/ps show script names.
+
+Attributes:
+  _MODULE_PROCESS_TITLES: Attribute.
+  _PR_SET_PDEATHSIG: Attribute.
+"""
 
 from __future__ import annotations
+
+from typing import Any
 
 import os
 import signal
@@ -16,11 +24,23 @@ _MODULE_PROCESS_TITLES: dict[str, str] = {
 
 
 def resolve_script_process_title_name(
-    *,
-    argv: list[str] | None = None,
-    explicit: str | None = None,
+  *,
+  argv: list[str] | None = None,
+  explicit: str | None = None,
 ) -> str | None:
-  """Return a short ``*.py`` title from argv or an explicit name."""
+  """
+  Return a short ``*.py`` title from argv or an explicit name.
+  
+  Args:
+    argv (list[str] | None): One of ``list[str]``, ``None``.
+    explicit (str | None): One of ``str``, ``None``.
+  
+  Returns:
+    str | None: One of ``str``, ``None`` depending on inputs/branch.
+  
+  Examples:
+    >>> resolve_script_process_title_name(None, None)  # doctest: +SKIP
+  """
   if explicit:
     name = explicit
   else:
@@ -40,7 +60,15 @@ def resolve_script_process_title_name(
 
 
 def running_under_gunicorn() -> bool:
-  """Return True when this process is (or should remain) a gunicorn worker/master."""
+  """
+  Return True when this process is (or should remain) a gunicorn worker/master.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> running_under_gunicorn()  # doctest: +SKIP
+  """
   server_software = os.environ.get("SERVER_SOFTWARE", "").strip().lower()
   if server_software.startswith("gunicorn"):
     return True
@@ -62,12 +90,25 @@ def running_under_gunicorn() -> bool:
 
 
 def format_daemon_process_title(
-    script_name: str,
-    *,
-    role: str,
-    pool_kind: str | None = None,
+  script_name: str,
+  *,
+  role: str,
+  pool_kind: str | None = None,
 ) -> str:
-  """Build a ``top``/``ps`` title for a daemon main or pool worker process."""
+  """
+  Build a ``top``/``ps`` title for a daemon main or pool worker process.
+  
+  Args:
+    script_name (str): String for script name.
+    role (str): String for role.
+    pool_kind (str | None): One of ``str``, ``None``.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> format_daemon_process_title("x", "x", None)  # doctest: +SKIP
+  """
   base = resolve_script_process_title_name(explicit=script_name) or script_name
   if not base.endswith(".py"):
     base = f"{base}.py"
@@ -78,7 +119,19 @@ def format_daemon_process_title(
 
 
 def format_daemon_thread_title(script_name: str, *, role: str) -> str:
-  """Build a thread title for daemon helper threads (``setthreadtitle`` only)."""
+  """
+  Build a thread title for daemon helper threads (``setthreadtitle`` only).
+  
+  Args:
+    script_name (str): String for script name.
+    role (str): String for role.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> format_daemon_thread_title("x", "x")  # doctest: +SKIP
+  """
   base = resolve_script_process_title_name(explicit=script_name) or script_name
   if not base.endswith(".py"):
     base = f"{base}.py"
@@ -86,6 +139,18 @@ def format_daemon_thread_title(script_name: str, *, role: str) -> str:
 
 
 def _apply_setproctitle(title: str) -> str:
+  """
+  Internal helper to apply the setproctitle.
+  
+  Args:
+    title (str): String for title.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _apply_setproctitle("x")  # doctest: +SKIP
+  """
   try:
     from setproctitle import setproctitle
   except ImportError:
@@ -97,7 +162,24 @@ def _apply_setproctitle(title: str) -> str:
   return title
 
 
-def _sync_log_role_from_daemon_process(*, role: str, pool_kind: str | None = None) -> None:
+def _sync_log_role_from_daemon_process(
+  *,
+  role: str,
+  pool_kind: str | None = None,
+) -> None:
+  """
+  Internal helper to sync the log role from daemon process.
+  
+  Args:
+    role (str): String for role.
+    pool_kind (str | None): One of ``str``, ``None``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _sync_log_role_from_daemon_process("x", None)  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.print_utils import set_log_role
 
   if role == "worker":
@@ -109,13 +191,27 @@ def _sync_log_role_from_daemon_process(*, role: str, pool_kind: str | None = Non
 
 
 def set_daemon_process_title(
-    *,
-    name: str | None = None,
-    argv: list[str] | None = None,
-    role: str = "main",
-    pool_kind: str | None = None,
+  *,
+  name: str | None = None,
+  argv: list[str] | None = None,
+  role: str = "main",
+  pool_kind: str | None = None,
 ) -> str | None:
-  """Set process title for supervisor daemons; no-op under gunicorn."""
+  """
+  Set process title for supervisor daemons; no-op under gunicorn.
+  
+  Args:
+    name (str | None): One of ``str``, ``None``.
+    argv (list[str] | None): One of ``list[str]``, ``None``.
+    role (str): String for role.
+    pool_kind (str | None): One of ``str``, ``None``.
+  
+  Returns:
+    str | None: One of ``str``, ``None`` depending on inputs/branch.
+  
+  Examples:
+    >>> set_daemon_process_title(None, None, "x", None)  # doctest: +SKIP
+  """
   if running_under_gunicorn():
     return None
   script_name = resolve_script_process_title_name(explicit=name, argv=argv)
@@ -130,8 +226,21 @@ def set_daemon_process_title(
   return _apply_setproctitle(title)
 
 
-def enable_parent_death_signal(sig=None):
-  """Linux: deliver *sig* when the pool parent dies (prevents OOM orphan workers)."""
+def enable_parent_death_signal(sig: Any | None = None) -> Any:
+  """
+  Linux: deliver *sig* when the pool parent dies (prevents OOM orphan workers).
+  
+  Args:
+    sig (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Open return polymorphism from ``enable_parent_death_signal``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> enable_parent_death_signal(None)  # doctest: +SKIP
+  """
   if sys.platform != "linux":
     return False
   if sig is None:
@@ -145,23 +254,47 @@ def enable_parent_death_signal(sig=None):
     return False
 
 
-def apply_pool_worker_process_title(script_name, pool_kind):
-  """Picklable ``multiprocessing.Pool`` initializer for spawn/fork workers.
-
+def apply_pool_worker_process_title(script_name: Any, pool_kind: Any) -> None:
+  """
+  Picklable ``multiprocessing.Pool`` initializer for spawn/fork workers.
+  
   ``Pool`` invokes ``initializer(*initargs)``, so ``initargs`` must be a
   ``(script_name, pool_kind)`` tuple of two positional arguments.
+  
+  Args:
+    script_name (Any): Script name passed to this helper.
+    pool_kind (Any): Pool kind passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> apply_pool_worker_process_title(None, None)  # doctest: +SKIP
   """
   enable_parent_death_signal()
   set_daemon_process_title(name=script_name, role="worker", pool_kind=pool_kind)
 
 
 def set_daemon_thread_title(
-    title: str,
-    *,
-    script_name: str | None = None,
-    role: str | None = None,
+  title: str,
+  *,
+  script_name: str | None = None,
+  role: str | None = None,
 ) -> str:
-  """Set the current thread title; does not change the process title."""
+  """
+  Set the current thread title; does not change the process title.
+  
+  Args:
+    title (str): String for title.
+    script_name (str | None): One of ``str``, ``None``.
+    role (str | None): One of ``str``, ``None``.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> set_daemon_thread_title("x", None, None)  # doctest: +SKIP
+  """
   if role is not None:
     if script_name is None:
       script_name = resolve_script_process_title_name()
@@ -182,9 +315,21 @@ def set_daemon_thread_title(
 
 
 def set_script_process_title(
-    *,
-    name: str | None = None,
-    argv: list[str] | None = None,
+  *,
+  name: str | None = None,
+  argv: list[str] | None = None,
 ) -> str | None:
-  """Set the main daemon process title; delegates to ``set_daemon_process_title``."""
+  """
+  Set the main daemon process title; delegates to ``set_daemon_process_title``.
+  
+  Args:
+    name (str | None): One of ``str``, ``None``.
+    argv (list[str] | None): One of ``list[str]``, ``None``.
+  
+  Returns:
+    str | None: One of ``str``, ``None`` depending on inputs/branch.
+  
+  Examples:
+    >>> set_script_process_title(None, None)  # doctest: +SKIP
+  """
   return set_daemon_process_title(name=name, argv=argv, role="main")

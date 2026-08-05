@@ -1,7 +1,9 @@
-"""Server-side Bokeh histograms serialized as ``json_item`` for public dashboard payloads.
+"""
+Server-side Bokeh histograms serialized as ``json_item`` for public dashboard
+payloads.
 
-Built during ``refresh_public_expansion_factor_artifacts`` only; HTTP handlers merge
-artifacts without touching Bokeh.
+Built during ``refresh_public_expansion_factor_artifacts`` only; HTTP handlers
+merge artifacts without touching Bokeh.
 """
 from __future__ import annotations
 
@@ -17,7 +19,18 @@ from hpcperfstats.analysis.metrics.lib.gen.utils import set_linear_axes_plain_nu
 
 
 def _format_edge_plain(x: float) -> str:
-  # Avoid scientific notation in bin labels (repo policy for user-visible numbers).
+  """
+  Internal helper to format the edge plain.
+  
+  Args:
+    x (float): Floating-point value for x.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _format_edge_plain(0)  # doctest: +SKIP
+  """
   if x == int(x) and abs(x) < 1e12:
     return str(int(x))
   s = f"{float(x):.6f}".rstrip("0").rstrip(".")
@@ -25,13 +38,32 @@ def _format_edge_plain(x: float) -> str:
 
 
 def build_public_expansion_factor_histogram_json_item(
-    *,
-    period_key: str,
-    period_kind: str,
-    edges: Sequence[float],
-    counts: Sequence[int],
+  *,
+  period_key: str,
+  period_kind: str,
+  edges: Sequence[float],
+  counts: Sequence[int],
 ) -> Optional[Dict[str, Any]]:
-  """Return a Bokeh ``json_item`` dict for the expansion-factor count histogram, or ``None``."""
+  """
+  Return a Bokeh ``json_item`` dict for the expansion-factor count histogram,.
+  
+    or.
+  
+    ``None``.
+  
+  Args:
+    period_key (str): String for period key.
+    period_kind (str): String for period kind.
+    edges (Sequence[float]): Sequence for edges.
+    counts (Sequence[int]): Sequence for counts.
+  
+  Returns:
+    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] — the result, or None
+    when unavailable.
+  
+  Examples:
+    >>> build_public_expansion_factor_histogram_json_item("x", "x", [], [])
+  """
   if len(edges) < 2:
     return None
   if len(counts) != len(edges):

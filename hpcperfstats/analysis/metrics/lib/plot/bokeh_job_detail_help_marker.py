@@ -1,8 +1,9 @@
-"""Shared Bokeh help marker (blue ``?`` + HTML hover) for Job Detail figures.
+"""
+Shared Bokeh help marker (blue ``?`` + HTML hover) for Job Detail figures.
 
 Uses a **screen-space** Label for the glyph so it does not compete with data
-coordinates, and an invisible **rect** hit target sized in **screen pixels** with
-its center placed just inside the data-area corner (linear or log ranges).
+coordinates, and an invisible **rect** hit target sized in **screen pixels**
+with its center placed just inside the data-area corner (linear or log ranges).
 """
 
 from __future__ import annotations
@@ -14,7 +15,19 @@ from typing import Any, Optional
 from bokeh.models import ColumnDataSource, HoverTool, Label, LogScale
 
 
-def _span_x_numeric(plot: Any):
+def _span_x_numeric(plot: Any) -> Any:
+  """
+  Internal helper to handle span x numeric.
+  
+  Args:
+    plot (Any): Plot passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _span_x_numeric(None)  # doctest: +SKIP
+  """
   xs, xe = plot.x_range.start, plot.x_range.end
   span = xe - xs
   if hasattr(span, "total_seconds"):
@@ -33,7 +46,19 @@ def _span_x_numeric(plot: Any):
   return xs, xe, span
 
 
-def _span_y_numeric(plot: Any):
+def _span_y_numeric(plot: Any) -> Any:
+  """
+  Internal helper to handle span y numeric.
+  
+  Args:
+    plot (Any): Plot passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _span_y_numeric(None)  # doctest: +SKIP
+  """
   ys, ye = plot.y_range.start, plot.y_range.end
   span = ye - ys
   if span == 0.0:
@@ -41,8 +66,25 @@ def _span_y_numeric(plot: Any):
   return ys, ye, span
 
 
-def _corner_hit_xy(plot: Any, frac_x: float = 0.05, frac_y: float = 0.12):
-  """Return (hx, hy) in **data** coordinates near the top-right for hover hit."""
+def _corner_hit_xy(
+  plot: Any,
+  frac_x: float = 0.05,
+  frac_y: float = 0.12,
+) -> Any:
+  """
+  Return (hx, hy) in **data** coordinates near the top-right for hover hit.
+  
+  Args:
+    plot (Any): Plot passed to this helper.
+    frac_x (float): Floating-point value for frac x.
+    frac_y (float): Floating-point value for frac y.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _corner_hit_xy(None, 0, 0)  # doctest: +SKIP
+  """
   xs, xe, span_x = _span_x_numeric(plot)
   ys, ye, span_y = _span_y_numeric(plot)
   x_scale = getattr(plot, "x_scale", None)
@@ -65,11 +107,26 @@ def _corner_hit_xy(plot: Any, frac_x: float = 0.05, frac_y: float = 0.12):
 
 
 def add_job_detail_bokeh_help_marker(
-    plot: Any,
-    description: str,
-    researcher_use: Optional[str] = None,
+  plot: Any,
+  description: str,
+  researcher_use: Optional[str] = None,
 ) -> None:
-  """Add a top-right ``?`` with HTML hover; safe to call with empty ``description``."""
+  """
+  Add a top-right ``?`` with HTML hover; safe to call with empty.
+  
+    ``description``.
+  
+  Args:
+    plot (Any): Plot passed to this helper.
+    description (str): String for description.
+    researcher_use (Optional[str]): Researcher use, or None when absent.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> add_job_detail_bokeh_help_marker(None, "x", None)  # doctest: +SKIP
+  """
   if not description or not str(description).strip():
     return
   desc_str = str(description).strip()

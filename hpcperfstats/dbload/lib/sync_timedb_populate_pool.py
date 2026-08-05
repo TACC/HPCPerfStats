@@ -1,5 +1,12 @@
-"""Dedicated populate-pool workers for Redis L2 sealed/tar member streaming."""
+"""
+Dedicated populate-pool workers for Redis L2 sealed/tar member streaming.
+
+Attributes:
+  _POPULATE_POOL_CONTROLLER: Attribute.
+"""
 from __future__ import annotations
+
+from typing import Any
 
 import multiprocessing
 import time
@@ -18,35 +25,105 @@ from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
 _POPULATE_POOL_CONTROLLER = None
 
 
-def get_populate_pool_controller():
+def get_populate_pool_controller() -> Any:
+  """
+  Return the populate pool controller.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> get_populate_pool_controller()  # doctest: +SKIP
+  """
   return _POPULATE_POOL_CONTROLLER
 
 
-def set_populate_pool_controller(controller):
+def set_populate_pool_controller(controller: Any) -> None:
+  """
+  Set the populate pool controller.
+  
+  Args:
+    controller (Any): Controller passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> set_populate_pool_controller(None)  # doctest: +SKIP
+  """
   global _POPULATE_POOL_CONTROLLER
   _POPULATE_POOL_CONTROLLER = controller
 
 
-def reset_populate_pool_controller_for_tests():
+def reset_populate_pool_controller_for_tests() -> None:
+  """
+  Reset populate pool controller for tests.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> reset_populate_pool_controller_for_tests()  # doctest: +SKIP
+  """
   global _POPULATE_POOL_CONTROLLER
   _POPULATE_POOL_CONTROLLER = None
 
 
 class PopulatePoolController:
-  """Spawn workers that BRPOP Redis populate jobs (separate from ingest-pool)."""
+  """
+  Spawn workers that BRPOP Redis populate jobs (separate from ingest-pool).
+  
+  Attributes:
+    _ctx: Attribute.
+    _processes: Attribute.
+    _registry: Attribute.
+    _script_name: Attribute.
+    _shutdown: Attribute.
+  """
 
-  def __init__(self):
+  def __init__(self) -> None:
+    """
+    Initialize a new instance.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> PopulatePoolController()  # doctest: +SKIP
+    """
     self._shutdown = None
     self._processes = []
     self._script_name = None
     self._registry = None
     self._ctx = None
 
-  def is_running(self):
-    """True when at least one populate-pool worker process is alive."""
+  def is_running(self) -> Any:
+    """
+    True when at least one populate-pool worker process is alive.
+    
+    Returns:
+      Any: Open return polymorphism from ``is_running``: concrete type depends
+      on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> PopulatePoolController().is_running()  # doctest: +SKIP
+    """
     return any(proc.is_alive() for proc in self._processes)
 
-  def start(self, *, script_name, registry):
+  def start(self, *, script_name: Any, registry: Any) -> None:
+    """
+    Start background work for this object.
+    
+    Args:
+      script_name (Any): Script name passed to this helper.
+      registry (Any): Registry passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> PopulatePoolController().start(None, None)  # doctest: +SKIP
+    """
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         archive_members_redis_enabled,
     )
@@ -66,7 +143,19 @@ class PopulatePoolController:
         flush=True,
     )
 
-  def _spawn_one(self, index):
+  def _spawn_one(self, index: int) -> Any:
+    """
+    Internal helper to handle spawn one.
+    
+    Args:
+      index (int): Integer value for index.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> PopulatePoolController()._spawn_one(0)  # doctest: +SKIP
+    """
     proc = self._ctx.Process(
         target=_populate_pool_worker_entry,
         args=(self._script_name, self._registry, self._shutdown),
@@ -77,7 +166,19 @@ class PopulatePoolController:
     self._processes.append(proc)
     return proc
 
-  def stop(self, *, force=False):
+  def stop(self, *, force: bool = False) -> None:
+    """
+    Stop background work for this object.
+    
+    Args:
+      force (bool): Boolean flag for force.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> PopulatePoolController().stop(True)  # doctest: +SKIP
+    """
     if self._shutdown is not None:
       self._shutdown.set()
     for proc in self._processes:
@@ -101,8 +202,18 @@ class PopulatePoolController:
     self._registry = None
     self._ctx = None
 
-  def reap_and_restart(self):
-    """Join dead workers and replace them up to the configured pool size."""
+  def reap_and_restart(self) -> Any:
+    """
+    Join dead workers and replace them up to the configured pool size.
+    
+    Returns:
+      Any: Open return polymorphism from ``reap_and_restart``: concrete type
+      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+      empty).
+    
+    Examples:
+      >>> PopulatePoolController().reap_and_restart()  # doctest: +SKIP
+    """
     if self._shutdown is None or self._ctx is None:
       return
     if self._shutdown.is_set():
@@ -135,7 +246,25 @@ class PopulatePoolController:
     return restarted
 
 
-def _populate_pool_worker_entry(script_name, registry, shutdown):
+def _populate_pool_worker_entry(
+  script_name: Any,
+  registry: Any,
+  shutdown: Any,
+) -> None:
+  """
+  Internal helper to populate the pool worker entry.
+  
+  Args:
+    script_name (Any): Script name passed to this helper.
+    registry (Any): Registry passed to this helper.
+    shutdown (Any): Shutdown passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _populate_pool_worker_entry(None, None, None)  # doctest: +SKIP
+  """
   apply_ingest_pool_worker_init(script_name, "populate-pool", registry)
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       archive_members_populate_queue_brpop,
@@ -179,7 +308,19 @@ def _populate_pool_worker_entry(script_name, registry, shutdown):
       time.sleep(0)
 
 
-def shutdown_populate_pool_controller(*, force=False):
+def shutdown_populate_pool_controller(*, force: bool = False) -> None:
+  """
+  Shutdown populate pool controller.
+  
+  Args:
+    force (bool): Boolean flag for force.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> shutdown_populate_pool_controller(True)  # doctest: +SKIP
+  """
   controller = get_populate_pool_controller()
   if controller is not None:
     controller.stop(force=force)

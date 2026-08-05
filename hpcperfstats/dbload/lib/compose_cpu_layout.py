@@ -1,7 +1,10 @@
-"""Linear CPU range layout for Docker Compose ``cpuset`` (db/web-first, pipeline last).
+"""
+Linear CPU range layout for Docker Compose ``cpuset`` (db/web-first, pipeline
+last).
 
 Used by ``scripts/apply_compose_cpu_pinning.py``. Independent of NUMA sysfs;
-``proxy`` uses the same cpuset string as ``web`` (allowed overlap between containers).
+``proxy`` uses the same cpuset string as ``web`` (allowed overlap between
+containers).
 """
 from __future__ import annotations
 
@@ -9,7 +12,23 @@ from typing import Dict
 
 
 def _cpuset_range(lo: int, hi: int) -> str:
-  """Inclusive integer range as Linux cpuset string."""
+  """
+  Inclusive integer range as Linux cpuset string.
+  
+  Args:
+    lo (int): Integer value for lo.
+    hi (int): Integer value for hi.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Raises:
+    ValueError: Raised when ``_cpuset_range`` hits a ``ValueError`` failure
+    path.
+  
+  Examples:
+    >>> _cpuset_range(0, 0)  # doctest: +SKIP
+  """
   if lo > hi:
     raise ValueError("invalid range")
   if lo == hi:
@@ -18,11 +37,27 @@ def _cpuset_range(lo: int, hi: int) -> str:
 
 
 def partition_responsive_cpusets(total_cpus: int) -> Dict[str, str]:
-  """Partition ``0 .. total_cpus-1`` (proxy duplicates web).
-
-  Allocates **db** and **web** first, then optional **redis** / **rabbitmq** slices,
+  """
+  Partition ``0 .. total_cpus-1`` (proxy duplicates web).
+  
+  Allocates **db** and **web** first, then optional **redis** / **rabbitmq**
+    slices,
   then **pipeline** for the remainder. If redis or rabbitmq count is zero, that
-  service reuses the **pipeline** cpuset (overlap is allowed between containers).
+  service reuses the **pipeline** cpuset (overlap is allowed between
+    containers).
+  
+  Args:
+    total_cpus (int): Integer value for total cpus.
+  
+  Returns:
+    Dict[str, str]: Dict[str, str] produced by this call.
+  
+  Raises:
+    ValueError: Raised when ``partition_responsive_cpusets`` hits a
+    ``ValueError`` failure path.
+  
+  Examples:
+    >>> partition_responsive_cpusets(0)  # doctest: +SKIP
   """
   n = total_cpus
   if n < 1:
@@ -79,6 +114,18 @@ def partition_responsive_cpusets(total_cpus: int) -> Dict[str, str]:
   cur = 0
 
   def take(count: int) -> str:
+    """
+    Take the next item from this partition.
+    
+    Args:
+      count (int): Integer value for count.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> take(0)  # doctest: +SKIP
+    """
     nonlocal cur
     s = _cpuset_range(cur, cur + count - 1)
     cur += count

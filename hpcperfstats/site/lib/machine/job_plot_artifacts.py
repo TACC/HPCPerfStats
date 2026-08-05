@@ -1,4 +1,18 @@
-"""Persist and load gzip-compressed Bokeh json_item rows for job_plots (+ update_metrics prewarm)."""
+"""
+Persist and load gzip-compressed Bokeh json_item rows for job_plots (+
+update_metrics prewarm).
+
+Attributes:
+  APP_PLOT_ARTIFACT_SCHEMA_VERSION: Attribute.
+  COMMON_PLOT_AGGREGATE_BUNDLE: Attribute.
+  JOB_PLOT_JSON_KEYS: Attribute.
+  JOB_PLOT_KINDS: Attribute.
+  JOB_PLOT_KIND_SPECS: Attribute.
+  JOB_PLOT_LAYOUT_NORMAL: Attribute.
+  JOB_PLOT_LAYOUT_ZOOM_V3: Attribute.
+  PAYLOAD_ENCODING_GZIP_JSON: Attribute.
+  logger: Attribute.
+"""
 from __future__ import annotations
 
 import gzip
@@ -29,6 +43,23 @@ from .models import job_data, job_plot_artifact
 logger = logging.getLogger(__name__)
 
 class JobPlotKindSpec(NamedTuple):
+  """
+  Hold JobPlotKindSpec state and behavior.
+  
+  Subclasses ``NamedTuple``, extending that type with this class's fields and
+  behavior.
+  
+  Subclasses ``NamedTuple``, extending that type with this class's fields and
+  behavior.
+  
+  Attributes:
+    empty_fallback: ``empty_fallback``.
+    json_item_key: ``json_item_key``.
+    log_fail_action: ``log_fail_action``.
+    plot_fn: ``plot_fn``.
+    unavailable_reason_key: ``unavailable_reason_key``.
+    wall_time: ``wall_time``.
+  """
   plot_fn: Any
   empty_fallback: str
   json_item_key: str
@@ -103,11 +134,31 @@ COMMON_PLOT_AGGREGATE_BUNDLE: Tuple[Tuple[str, str, Tuple[str, ...], float], ...
 
 
 def get_job_plot_redis_max_bytes() -> int:
+  """
+  Return the job plot redis max bytes.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> get_job_plot_redis_max_bytes()  # doctest: +SKIP
+  """
   return int(getattr(settings, "JOB_PLOT_REDIS_MAX_BYTES", 512 * 1024))
 
 
-def _utc_iso_for_plot_fingerprint(dt) -> str:
-  """UTC ISO string matching PlotArtifactInputFingerprintHex SQL (US + OF)."""
+def _utc_iso_for_plot_fingerprint(dt: Any) -> str:
+  """
+  UTC ISO string matching PlotArtifactInputFingerprintHex SQL (US + OF).
+  
+  Args:
+    dt (Any): Dt passed to this helper.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _utc_iso_for_plot_fingerprint(None)  # doctest: +SKIP
+  """
   if dt is None:
     return ""
   if dj_tz.is_naive(dt):
@@ -118,7 +169,20 @@ def _utc_iso_for_plot_fingerprint(dt) -> str:
 
 
 def get_live_distinct_time_count_for_jid(jid: str) -> int:
-  """Live per-job distinct sample times (PostgreSQL); else metrics_distinct_time_count."""
+  """
+  Live per-job distinct sample times (PostgreSQL); else.
+  
+    metrics_distinct_time_count.
+  
+  Args:
+    jid (str): String for jid.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> get_live_distinct_time_count_for_jid("x")  # doctest: +SKIP
+  """
   if connection.vendor != "postgresql":
     v = (
         job_data.objects.filter(jid=jid)
@@ -141,7 +205,24 @@ def get_live_distinct_time_count_for_jid(jid: str) -> int:
   return int(v) if v is not None else 0
 
 
-def compute_plot_input_fingerprint(job: job_data, live_distinct_time_count: int) -> str:
+def compute_plot_input_fingerprint(
+  job: job_data,
+  live_distinct_time_count: int,
+) -> str:
+  """
+  Compute the plot input fingerprint.
+  
+  Args:
+    job (job_data): Job.
+    live_distinct_time_count (int): Integer value for live distinct time
+    count.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> compute_plot_input_fingerprint(None, 0)  # doctest: +SKIP
+  """
   if connection.vendor == "postgresql":
     suffix = "." + cfg.get_host_name_ext()
     from hpcperfstats.site.lib.machine.artifact_readiness_expressions import (
@@ -172,18 +253,46 @@ def compute_plot_input_fingerprint(job: job_data, live_distinct_time_count: int)
 
 
 def json_item_to_compressed_payload(
-    plot_item: Dict[str, Any],
+  plot_item: Dict[str, Any],
 ) -> Tuple[bytes, bytes, str]:
-  """Return UTF-8 JSON bytes, gzip-compressed blob, and encoding name."""
+  """
+  Return UTF-8 JSON bytes, gzip-compressed blob, and encoding name.
+  
+  Args:
+    plot_item (Dict[str, Any]): Mapping for plot item.
+  
+  Returns:
+    Tuple[bytes, bytes, str]: Tuple[bytes, bytes, str] produced by this call.
+  
+  Examples:
+    >>> json_item_to_compressed_payload({})  # doctest: +SKIP
+  """
   raw_utf8 = json.dumps(plot_item, separators=(",", ":")).encode("utf-8")
   compressed = gzip.compress(raw_utf8, compresslevel=6)
   return raw_utf8, compressed, PAYLOAD_ENCODING_GZIP_JSON
 
 
 def decompress_plot_item_dict(
-    payload_compressed: bytes,
-    payload_encoding: str,
+  payload_compressed: bytes,
+  payload_encoding: str,
 ) -> Dict[str, Any]:
+  """
+  Decompress plot item dict.
+  
+  Args:
+    payload_compressed (bytes): Payload compressed.
+    payload_encoding (str): String for payload encoding.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Raises:
+    ValueError: Raised when ``decompress_plot_item_dict`` hits a
+    ``ValueError`` failure path.
+  
+  Examples:
+    >>> decompress_plot_item_dict(None, "x")  # doctest: +SKIP
+  """
   if payload_encoding != PAYLOAD_ENCODING_GZIP_JSON:
     raise ValueError("Unsupported plot payload_encoding: {!r}".format(payload_encoding))
   raw = gzip.decompress(payload_compressed)
@@ -191,18 +300,44 @@ def decompress_plot_item_dict(
 
 
 def _plot_artifact_storage_payload(
-    plot_item: Optional[Dict[str, Any]],
-    unavailable_reason: Optional[str],
+  plot_item: Optional[Dict[str, Any]],
+  unavailable_reason: Optional[str],
 ) -> Dict[str, Any]:
-  """Canonical stored payload for plot artifacts, including fresh unavailable rows."""
+  """
+  Canonical stored payload for plot artifacts, including fresh unavailable rows.
+  
+  Args:
+    plot_item (Optional[Dict[str, Any]]): Plot item, or None when absent.
+    unavailable_reason (Optional[str]): Unavailable reason, or None when
+    absent.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> _plot_artifact_storage_payload(None, None)  # doctest: +SKIP
+  """
   return {
       "plot_item": plot_item,
       "unavailable_reason": unavailable_reason,
   }
 
 
-def _normalize_loaded_plot_artifact_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-  """Decode legacy raw-json-item rows and new explicit unavailable-state rows."""
+def _normalize_loaded_plot_artifact_payload(
+  payload: Dict[str, Any],
+) -> Dict[str, Any]:
+  """
+  Decode legacy raw-json-item rows and new explicit unavailable-state rows.
+  
+  Args:
+    payload (Dict[str, Any]): Mapping for payload.
+  
+  Returns:
+    Dict[str, Any]: Dict[str, Any] produced by this call.
+  
+  Examples:
+    >>> _normalize_loaded_plot_artifact_payload({})  # doctest: +SKIP
+  """
   if isinstance(payload, dict) and (
       "plot_item" in payload or "unavailable_reason" in payload
   ):
@@ -217,12 +352,28 @@ def _normalize_loaded_plot_artifact_payload(payload: Dict[str, Any]) -> Dict[str
 
 
 def upsert_job_plot_artifact(
-    jid: str,
-    plot_kind: str,
-    layout: str,
-    input_fingerprint: str,
-    plot_item: Dict[str, Any],
+  jid: str,
+  plot_kind: str,
+  layout: str,
+  input_fingerprint: str,
+  plot_item: Dict[str, Any],
 ) -> None:
+  """
+  Upsert job plot artifact.
+  
+  Args:
+    jid (str): String for jid.
+    plot_kind (str): String for plot kind.
+    layout (str): String for layout.
+    input_fingerprint (str): String for input fingerprint.
+    plot_item (Dict[str, Any]): Mapping for plot item.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> upsert_job_plot_artifact("x", "x", "x", "x", {})  # doctest: +SKIP
+  """
   payload = _plot_artifact_storage_payload(plot_item, None)
   _raw_utf8, compressed, enc = json_item_to_compressed_payload(payload)
   job_plot_artifact.objects.bulk_create(
@@ -247,9 +398,21 @@ def upsert_job_plot_artifact(
 
 
 def upsert_job_plot_artifact_batch(
-    rows: Sequence[Tuple[str, str, str, str, Dict[str, Any]]],
+  rows: Sequence[Tuple[str, str, str, str, Dict[str, Any]]],
 ) -> None:
-  """Bulk upsert multiple plot artifacts in one DB round-trip."""
+  """
+  Bulk upsert multiple plot artifacts in one DB round-trip.
+  
+  Args:
+    rows (Sequence[Tuple[str, str, str, str, Dict[str, Any]]]): rows as
+    ``Sequence[Tuple[str, str, str, str, Dict[str, Any]]]``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> upsert_job_plot_artifact_batch([])  # doctest: +SKIP
+  """
   if not rows:
     return
   objs = []
@@ -286,7 +449,26 @@ def upsert_job_plot_artifact_batch(
   )
 
 
-def _load_row(jid: str, plot_kind: str, layout: str) -> Optional[job_plot_artifact]:
+def _load_row(
+  jid: str,
+  plot_kind: str,
+  layout: str,
+) -> Optional[job_plot_artifact]:
+  """
+  Internal helper to load the row.
+  
+  Args:
+    jid (str): String for jid.
+    plot_kind (str): String for plot kind.
+    layout (str): String for layout.
+  
+  Returns:
+    Optional[job_plot_artifact]: Optional[job_plot_artifact] — the result, or
+    None when unavailable.
+  
+  Examples:
+    >>> _load_row("x", "x", "x")  # doctest: +SKIP
+  """
   return (
       job_plot_artifact.objects.filter(
           jid_id=jid,
@@ -302,7 +484,24 @@ def _load_row(jid: str, plot_kind: str, layout: str) -> Optional[job_plot_artifa
   )
 
 
-def _load_rows_map(jid: str, layouts: Sequence[str]) -> Dict[Tuple[str, str], job_plot_artifact]:
+def _load_rows_map(
+  jid: str,
+  layouts: Sequence[str],
+) -> Dict[Tuple[str, str], job_plot_artifact]:
+  """
+  Internal helper to load the rows map.
+  
+  Args:
+    jid (str): String for jid.
+    layouts (Sequence[str]): Sequence for layouts.
+  
+  Returns:
+    Dict[Tuple[str, str], job_plot_artifact]: Dict[Tuple[str, str],
+    job_plot_artifact] produced by this call.
+  
+  Examples:
+    >>> _load_rows_map("x", [])  # doctest: +SKIP
+  """
   rows = (
       job_plot_artifact.objects.filter(
           jid_id=jid,
@@ -315,27 +514,97 @@ def _load_rows_map(jid: str, layouts: Sequence[str]) -> Dict[Tuple[str, str], jo
 
 
 class _JtMemoProxy:
-  """Per-call memo wrapper for jid_table aggregate/dataframe reads."""
+  """
+  Per-call memo wrapper for jid_table aggregate/dataframe reads.
+  
+  Attributes:
+    _aggregate_cache: Attribute.
+    _host_time_df: Attribute.
+    _jt: Attribute.
+    _telemetry: Attribute.
+  """
 
-  def __init__(self, jt: Any, telemetry: Optional[Dict[str, int]] = None):
+  def __init__(
+    self,
+    jt: Any,
+    telemetry: Optional[Dict[str, int]] = None,
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      jt (Any): Jt passed to this helper.
+      telemetry (Optional[Dict[str, int]]): Telemetry, or None when absent.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _JtMemoProxy(None, None)  # doctest: +SKIP
+    """
     self._jt = jt
     self._host_time_df = None
     self._aggregate_cache: Dict[Tuple[str, str, Tuple[str, ...], float], Any] = {}
     self._telemetry = telemetry if isinstance(telemetry, dict) else None
 
-  def __getattr__(self, name):
+  def __getattr__(self, name: Any) -> Any:
+    """
+    Internal helper to handle getattr.
+    
+    Args:
+      name (Any): Name passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> __getattr__(None)  # doctest: +SKIP
+    """
     return getattr(self._jt, name)
 
-  def _normalize_events(self, events):
+  def _normalize_events(self, events: Any) -> Any:
+    """
+    Internal helper to normalize the events.
+    
+    Args:
+      events (Any): Events passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _JtMemoProxy()._normalize_events(None)  # doctest: +SKIP
+    """
     return tuple(sorted(str(e) for e in (events or ())))
 
-  def _normalize_conv(self, conv):
+  def _normalize_conv(self, conv: Any) -> Any:
+    """
+    Internal helper to normalize the conv.
+    
+    Args:
+      conv (Any): Conv passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _JtMemoProxy()._normalize_conv(None)  # doctest: +SKIP
+    """
     try:
       return round(float(conv), 12)
     except Exception:
       return conv
 
-  def get_host_time_df(self):
+  def get_host_time_df(self) -> Any:
+    """
+    Return the host time DataFrame.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _JtMemoProxy().get_host_time_df()  # doctest: +SKIP
+    """
     if self._host_time_df is None:
       self._host_time_df = self._jt.get_host_time_df()
     elif self._telemetry is not None:
@@ -344,7 +613,28 @@ class _JtMemoProxy:
       ) + 1
     return self._host_time_df.copy()
 
-  def get_aggregate_df(self, typ, metric_column, events, conv):
+  def get_aggregate_df(
+    self,
+    typ: Any,
+    metric_column: Any,
+    events: Any,
+    conv: Any,
+  ) -> Any:
+    """
+    Return the aggregate DataFrame.
+    
+    Args:
+      typ (Any): Typ passed to this helper.
+      metric_column (Any): Metric column passed to this helper.
+      events (Any): Events passed to this helper.
+      conv (Any): Conv passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> _JtMemoProxy().get_aggregate_df(None, None, None, None)
+    """
     key = (
         str(typ),
         str(metric_column),
@@ -364,20 +654,48 @@ class _JtMemoProxy:
     return self._aggregate_cache[key].copy()
 
   def prefetch_aggregate_bundle(
-      self,
-      specs: Sequence[Tuple[str, str, Sequence[str], float]],
+    self,
+    specs: Sequence[Tuple[str, str, Sequence[str], float]],
   ) -> None:
+    """
+    Prefetch aggregate bundle.
+    
+    Args:
+      specs (Sequence[Tuple[str, str, Sequence[str], float]]): Sequence for
+      specs.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _JtMemoProxy().prefetch_aggregate_bundle([])  # doctest: +SKIP
+    """
     for typ, metric_column, events, conv in specs:
       self.get_aggregate_df(typ, metric_column, events, conv)
 
 
 def load_cached_job_plot_entry(
-    jid: str,
-    plot_kind: str,
-    layout_key: str,
-    fingerprint: str,
+  jid: str,
+  plot_kind: str,
+  layout_key: str,
+  fingerprint: str,
 ) -> Optional[Dict[str, Any]]:
-  """Return {'plot_item': dict, 'unavailable_reason': None} or None if miss/stale."""
+  """
+  Return {'plot_item': dict, 'unavailable_reason': None} or None if miss/stale.
+  
+  Args:
+    jid (str): String for jid.
+    plot_kind (str): String for plot kind.
+    layout_key (str): String for layout key.
+    fingerprint (str): String for fingerprint.
+  
+  Returns:
+    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] — the result, or None
+    when unavailable.
+  
+  Examples:
+    >>> load_cached_job_plot_entry("x", "x", "x", "x")  # doctest: +SKIP
+  """
   row = _load_row(jid, plot_kind, layout_key)
   if (
       row
@@ -427,10 +745,25 @@ def load_cached_job_plot_entry(
 
 
 def compute_plot_item_for_kind(
-    j: Any,
-    plot_kind: str,
-    zoom_mode: bool,
+  j: Any,
+  plot_kind: str,
+  zoom_mode: bool,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+  """
+  Compute the plot item for kind.
+  
+  Args:
+    j (Any): Job record (Django ``job_data`` or job-like mapping).
+    plot_kind (str): String for plot kind.
+    zoom_mode (bool): Boolean flag for zoom mode.
+  
+  Returns:
+    Tuple[Optional[Dict[str, Any]], Optional[str]]: Tuple[Optional[Dict[str,
+    Any]], Optional[str]] produced by this call.
+  
+  Examples:
+    >>> compute_plot_item_for_kind(None, "x", True)  # doctest: +SKIP
+  """
   spec = JOB_PLOT_KIND_SPECS.get(plot_kind)
   if not spec:
     return None, "Unknown plot kind"
@@ -443,11 +776,24 @@ def compute_plot_item_for_kind(
 
 
 def persist_job_plot_artifacts_for_jid(
-    jid: str,
-    layouts: Optional[Sequence[str]] = None,
-    context: Optional[Dict[str, Any]] = None,
+  jid: str,
+  layouts: Optional[Sequence[str]] = None,
+  context: Optional[Dict[str, Any]] = None,
 ) -> None:
-  """Build and store artifacts for each plot kind (used by update_metrics prewarm)."""
+  """
+  Build and store artifacts for each plot kind (used by update_metrics prewarm).
+  
+  Args:
+    jid (str): String for jid.
+    layouts (Optional[Sequence[str]]): Layouts, or None when absent.
+    context (Optional[Dict[str, Any]]): Context, or None when absent.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> persist_job_plot_artifacts_for_jid("x", None, None)  # doctest: +SKIP
+  """
   if layouts is None:
     layouts = (JOB_PLOT_LAYOUT_NORMAL,)
   shared = context if isinstance(context, dict) else {}

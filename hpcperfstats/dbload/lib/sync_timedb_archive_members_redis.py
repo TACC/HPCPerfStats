@@ -1,4 +1,45 @@
-"""Redis L2 for daily archive member maps (single-flight populate, incremental HASH)."""
+"""
+Redis L2 for daily archive member maps (single-flight populate, incremental
+HASH).
+
+Attributes:
+  _APPEND_INFLIGHT_DEFER_LOG_STATE: Attribute.
+  _ARCHIVE_APPEND_INFLIGHT_PREFIX: Attribute.
+  _COMPLETE_PREFIX: Attribute.
+  _DAILY_TAR_RESTORE_PREFIX: Attribute.
+  _DAY_SKIP_PREFIX: Attribute.
+  _DEDUPE_HINT_PREFIX: Attribute.
+  _DEGRADED_PREFIX: Attribute.
+  _EMPTY_RECOVER_DEFER_LOG_PREFIX: Attribute.
+  _EMPTY_RECOVER_DEFER_LOG_REDIS_TTL_S: Attribute.
+  _EMPTY_RECOVER_DEFER_LOG_STATE: Attribute.
+  _HASH_PREFIX: Attribute.
+  _IDENTITY_DRIFT_LOG_INTERVAL_S: Attribute.
+  _IDENTITY_DRIFT_LOG_STATE: Attribute.
+  _INGEST_TAR_HOT_PREFIX: Attribute.
+  _INVALIDATE_PENDING_PREFIX: Attribute.
+  _KEY_PREFIX: Attribute.
+  _LOCK_PREFIX: Attribute.
+  _POPULATE_PREFER_INGEST_HOT_REASONS: Attribute.
+  _POPULATE_PREFER_REASON_RANK: Attribute.
+  _POPULATE_QUEUED_PREFIX: Attribute.
+  _POPULATE_QUEUED_TTL_SECONDS: Attribute.
+  _POPULATE_QUEUE_KEY: Attribute.
+  _POPULATE_QUEUE_PREFER_PEEK_N: Attribute.
+  _POPULATE_RECOVER_PREFIX: Attribute.
+  _POPULATE_RECOVER_TTL_S: Attribute.
+  _PROGRESS_SUFFIX: Attribute.
+  _REDIS_CLIENT: Attribute.
+  _REDIS_CLIENT_URL: Attribute.
+  _SELF_INGEST_TAR_HOT_REASONS: Attribute.
+  _STALE_INCOMPLETE_LOG_INTERVAL_S: Attribute.
+  _STALE_INCOMPLETE_LOG_PREFIX: Attribute.
+  _STALE_INCOMPLETE_LOG_REDIS_TTL_S: Attribute.
+  _STALE_INCOMPLETE_LOG_STATE: Attribute.
+  _archive_pre_append_member_lookup: Attribute.
+  _ingest_task_deadline_monotonic: Attribute.
+  _ingest_task_effective_timeout_s: Attribute.
+"""
 from __future__ import annotations
 
 import contextvars
@@ -10,7 +51,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import date as date_cls
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.dbload.lib.print_utils import log_print
@@ -69,19 +110,36 @@ _REDIS_CLIENT_URL = None
 
 
 class ArchiveMembersRedisUnavailableError(RuntimeError):
-  """Raised when Redis L2 archive member cache contract cannot be satisfied."""
+  """
+  Raised when Redis L2 archive member cache contract cannot be satisfied.
+  """
 
 
 class ArchiveMembersRedisConnectionError(ArchiveMembersRedisUnavailableError):
-  """Raised when Redis ping or command I/O fails."""
+  """
+  Raised when Redis ping or command I/O fails.
+  """
 
 
 class ArchiveMembersPopulateStalledError(ArchiveMembersRedisUnavailableError):
-  """Raised when populate lock is held but shows no progress within stall limits."""
+  """
+  Raised when populate lock is held but shows no progress within stall limits.
+  """
 
 
-def is_transient_fnctl_populate_unavailable(exc) -> bool:
-  """True when *exc* is a transient fnctl read-lock timeout during populate."""
+def is_transient_fnctl_populate_unavailable(exc: Any) -> bool:
+  """
+  True when *exc* is a transient fnctl read-lock timeout during populate.
+  
+  Args:
+    exc (Any): Exception instance being classified or logged.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> is_transient_fnctl_populate_unavailable(None)  # doctest: +SKIP
+  """
   if not isinstance(exc, ArchiveMembersRedisUnavailableError):
     return False
   if isinstance(exc, (ArchiveMembersRedisConnectionError, ArchiveMembersPopulateStalledError)):
@@ -92,12 +150,24 @@ def is_transient_fnctl_populate_unavailable(exc) -> bool:
   return "timed out waiting" in msg and "fnctl.lock" in msg
 
 
-def is_populate_pool_unavailable_error(exc) -> bool:
-  """True when *exc* is populate-pool-down refuse-stream (recoverable, not L2 fatal).
-
+def is_populate_pool_unavailable_error(exc: Any) -> bool:
+  """
+  True when *exc* is populate-pool-down refuse-stream (recoverable, not L2.
+  
+    fatal).
+  
   Spawn ingest/archive workers never share MainThread's PopulatePoolController
   global; they must enqueue Redis populate jobs and wait. A refuse-stream raise
   must not map to immediate ``sys.exit(1)``.
+  
+  Args:
+    exc (Any): Exception instance being classified or logged.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> is_populate_pool_unavailable_error(None)  # doctest: +SKIP
   """
   if not isinstance(exc, ArchiveMembersRedisUnavailableError):
     return False
@@ -108,7 +178,9 @@ def is_populate_pool_unavailable_error(exc) -> bool:
 
 
 class IngestArchiveLookupBudgetExceededError(TimeoutError):
-  """Raised when Redis archive duplicate-check exceeds ingest per-file budget."""
+  """
+  Raised when Redis archive duplicate-check exceeds ingest per-file budget.
+  """
 
 
 _ingest_task_deadline_monotonic = contextvars.ContextVar(
@@ -122,21 +194,64 @@ _ingest_task_effective_timeout_s = contextvars.ContextVar(
 )
 
 
-def set_ingest_task_deadline_monotonic(deadline):
-  """Set monotonic deadline for ingest worker archive lookups (ContextVar)."""
+def set_ingest_task_deadline_monotonic(deadline: Any) -> Any:
+  """
+  Set monotonic deadline for ingest worker archive lookups (ContextVar).
+  
+  Args:
+    deadline (Any): Deadline passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> set_ingest_task_deadline_monotonic(None)  # doctest: +SKIP
+  """
   return _ingest_task_deadline_monotonic.set(deadline)
 
 
-def reset_ingest_task_deadline_monotonic(token):
+def reset_ingest_task_deadline_monotonic(token: Any) -> None:
+  """
+  Reset ingest task deadline monotonic.
+  
+  Args:
+    token (Any): Token passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> reset_ingest_task_deadline_monotonic(None)  # doctest: +SKIP
+  """
   _ingest_task_deadline_monotonic.reset(token)
 
 
-def get_ingest_task_deadline_monotonic():
+def get_ingest_task_deadline_monotonic() -> Any:
+  """
+  Return the ingest task deadline monotonic.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> get_ingest_task_deadline_monotonic()  # doctest: +SKIP
+  """
   return _ingest_task_deadline_monotonic.get()
 
 
-def extend_ingest_task_deadline_monotonic(delta_seconds):
-  """Extend active ingest worker deadline by populate-wait wall time."""
+def extend_ingest_task_deadline_monotonic(delta_seconds: int) -> None:
+  """
+  Extend active ingest worker deadline by populate-wait wall time.
+  
+  Args:
+    delta_seconds (int): Integer value for delta seconds.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> extend_ingest_task_deadline_monotonic(0)  # doctest: +SKIP
+  """
   delta_seconds = float(delta_seconds)
   if delta_seconds <= 0.0:
     return
@@ -146,20 +261,66 @@ def extend_ingest_task_deadline_monotonic(delta_seconds):
   _ingest_task_deadline_monotonic.set(float(deadline) + delta_seconds)
 
 
-def set_ingest_task_effective_timeout_s(timeout_s):
-  """Resolved per-file ingest budget for this worker task (ContextVar)."""
+def set_ingest_task_effective_timeout_s(timeout_s: Any) -> Any:
+  """
+  Resolved per-file ingest budget for this worker task (ContextVar).
+  
+  Args:
+    timeout_s (Any): Timeout s passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> set_ingest_task_effective_timeout_s(None)  # doctest: +SKIP
+  """
   return _ingest_task_effective_timeout_s.set(timeout_s)
 
 
-def reset_ingest_task_effective_timeout_s(token):
+def reset_ingest_task_effective_timeout_s(token: Any) -> None:
+  """
+  Reset ingest task effective timeout s.
+  
+  Args:
+    token (Any): Token passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> reset_ingest_task_effective_timeout_s(None)  # doctest: +SKIP
+  """
   _ingest_task_effective_timeout_s.reset(token)
 
 
-def get_ingest_task_effective_timeout_s():
+def get_ingest_task_effective_timeout_s() -> Any:
+  """
+  Return the ingest task effective timeout s.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> get_ingest_task_effective_timeout_s()  # doctest: +SKIP
+  """
   return _ingest_task_effective_timeout_s.get()
 
 
-def _raise_if_ingest_deadline_exceeded():
+def _raise_if_ingest_deadline_exceeded() -> None:
+  """
+  Internal helper to handle raise if ingest deadline exceeded.
+  
+  Returns:
+    None
+  
+  Raises:
+    IngestArchiveLookupBudgetExceededError: Raised when
+    ``_raise_if_ingest_deadline_exceeded`` hits a
+    ``IngestArchiveLookupBudgetExceededError`` failure path.
+  
+  Examples:
+    >>> _raise_if_ingest_deadline_exceeded()  # doctest: +SKIP
+  """
   deadline = get_ingest_task_deadline_monotonic()
   if deadline is not None and time.monotonic() >= float(deadline):
     raise IngestArchiveLookupBudgetExceededError(
@@ -168,15 +329,59 @@ def _raise_if_ingest_deadline_exceeded():
     )
 
 
-def _raise_if_ingest_deadline_exceeded_when_enabled(respect_ingest_deadline):
+def _raise_if_ingest_deadline_exceeded_when_enabled(
+  respect_ingest_deadline: Any,
+) -> None:
+  """
+  Internal helper to handle raise if ingest deadline exceeded when enabled.
+  
+  Args:
+    respect_ingest_deadline (Any): Respect ingest deadline passed to this
+    helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _raise_if_ingest_deadline_exceeded_when_enabled(None)  # doctest: +SKIP
+  """
   if respect_ingest_deadline:
     _raise_if_ingest_deadline_exceeded()
 
 
 class ArchiveDayIngestSkipError(RuntimeError):
-  """Sealed daily archive unreadable; ingest skips tar-append checks for the day."""
+  """
+  Sealed daily archive unreadable; ingest skips tar-append checks for the day.
+  
+  Attributes:
+    day_token: Attribute.
+    detail: Attribute.
+    kind: Attribute.
+    sealed_path: Attribute.
+  """
 
-  def __init__(self, day_token, sealed_path, kind, detail):
+  def __init__(
+    self,
+    day_token: Any,
+    sealed_path: str,
+    kind: Any,
+    detail: Any,
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      day_token (Any): Day token passed to this helper.
+      sealed_path (str): String for sealed path.
+      kind (Any): Mode or kind token selecting a code path.
+      detail (Any): Detail passed to this helper.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ArchiveDayIngestSkipError(None, "x", None, None)  # doctest: +SKIP
+    """
     self.day_token = day_token
     self.sealed_path = sealed_path
     self.kind = kind
@@ -189,6 +394,17 @@ class ArchiveDayIngestSkipError(RuntimeError):
 
 @dataclass(frozen=True)
 class ArchiveMembersRedisKeys:
+  """
+  Hold ArchiveMembersRedisKeys state and behavior.
+  
+  Attributes:
+    complete_key: ``complete_key``.
+    day_token: ``day_token``.
+    dedupe_hint_key: ``dedupe_hint_key``.
+    hash_key: ``hash_key``.
+    invalidate_pending_key: ``invalidate_pending_key``.
+    lock_key: ``lock_key``.
+  """
   day_token: str
   hash_key: str
   complete_key: str
@@ -198,29 +414,88 @@ class ArchiveMembersRedisKeys:
 
   @property
   def progress_key(self) -> str:
+    """
+    Progress key.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> ArchiveMembersRedisKeys().progress_key()  # doctest: +SKIP
+    """
     return "%s%s" % (self.hash_key, _PROGRESS_SUFFIX)
 
   @property
   def degraded_key(self) -> str:
+    """
+    Degraded key.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> ArchiveMembersRedisKeys().degraded_key()  # doctest: +SKIP
+    """
     return "%s:%s" % (_DEGRADED_PREFIX, self.day_token)
 
   @property
   def day_skip_key(self) -> str:
+    """
+    Day skip key.
+    
+    Returns:
+      str: str produced by this call.
+    
+    Examples:
+      >>> ArchiveMembersRedisKeys().day_skip_key()  # doctest: +SKIP
+    """
     return "%s:%s" % (_DAY_SKIP_PREFIX, self.day_token)
 
 
 def archive_members_redis_enabled() -> bool:
+  """
+  Archive the members redis enabled.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> archive_members_redis_enabled()  # doctest: +SKIP
+  """
   return cfg.get_sync_archive_members_redis_enabled()
 
 
-def _identity_pair(identity) -> tuple:
+def _identity_pair(identity: Any) -> tuple:
+  """
+  Internal helper to handle identity pair.
+  
+  Args:
+    identity (Any): Identity passed to this helper.
+  
+  Returns:
+    tuple: tuple produced by this call.
+  
+  Examples:
+    >>> _identity_pair(None)  # doctest: +SKIP
+  """
   if identity is None:
     return ("none", "none")
   return (str(int(identity[0])), str(int(identity[1])))
 
 
-def build_archive_members_redis_keys(cache_key) -> ArchiveMembersRedisKeys:
-  """Build Redis keys from ``_daily_archive_members_cache_key`` tuple."""
+def build_archive_members_redis_keys(cache_key: Any) -> ArchiveMembersRedisKeys:
+  """
+  Build Redis keys from ``_daily_archive_members_cache_key`` tuple.
+  
+  Args:
+    cache_key (Any): Cache key passed to this helper.
+  
+  Returns:
+    ArchiveMembersRedisKeys: ArchiveMembersRedisKeys produced by this call.
+  
+  Examples:
+    >>> build_archive_members_redis_keys(None)  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       calendar_date_from_daily_tar_path,
       daily_tar_path_from_compressed,
@@ -244,40 +519,127 @@ def build_archive_members_redis_keys(cache_key) -> ArchiveMembersRedisKeys:
 
 
 def _redis_ttl_seconds() -> int:
+  """
+  Internal helper to handle redis ttl seconds.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> _redis_ttl_seconds()  # doctest: +SKIP
+  """
   return cfg.get_sync_archive_members_redis_ttl_seconds()
 
 
 def _populate_lock_seconds() -> int:
+  """
+  Internal helper to populate the lock seconds.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> _populate_lock_seconds()  # doctest: +SKIP
+  """
   return cfg.get_sync_archive_members_redis_populate_lock_seconds()
 
 
 def _populate_stall_seconds() -> int:
+  """
+  Internal helper to populate the stall seconds.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> _populate_stall_seconds()  # doctest: +SKIP
+  """
   return cfg.get_sync_archive_members_redis_populate_stall_seconds()
 
 
 def _populate_heartbeat_seconds() -> float:
-  """Derived progress heartbeat interval (no separate ini key)."""
+  """
+  Derived progress heartbeat interval (no separate ini key).
+  
+  Returns:
+    float: float produced by this call.
+  
+  Examples:
+    >>> _populate_heartbeat_seconds()  # doctest: +SKIP
+  """
   return float(max(5, min(30, _populate_stall_seconds() // 4)))
 
 
 def _populate_max_seconds() -> int:
+  """
+  Internal helper to populate the max seconds.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> _populate_max_seconds()  # doctest: +SKIP
+  """
   return cfg.get_sync_archive_members_redis_populate_max_seconds()
 
 
 def _wait_poll_seconds() -> float:
+  """
+  Internal helper to wait for the poll seconds.
+  
+  Returns:
+    float: float produced by this call.
+  
+  Examples:
+    >>> _wait_poll_seconds()  # doctest: +SKIP
+  """
   return cfg.get_sync_archive_members_redis_wait_poll_seconds()
 
 
 def _hset_batch_size() -> int:
+  """
+  Internal helper to handle hset batch size.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> _hset_batch_size()  # doctest: +SKIP
+  """
   return cfg.get_sync_archive_members_redis_hset_batch_size()
 
 
 def _max_payload_bytes() -> int:
+  """
+  Internal helper to handle max payload bytes.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> _max_payload_bytes()  # doctest: +SKIP
+  """
   return cfg.get_sync_archive_members_redis_max_payload_bytes()
 
 
-def get_archive_members_redis_client(*, required: bool = True):
-  """Return a shared ``redis.Redis`` client (decode_responses=True)."""
+def get_archive_members_redis_client(*, required: bool = True) -> Any:
+  """
+  Return a shared ``redis.Redis`` client (decode_responses=True).
+  
+  Args:
+    required (bool): Boolean flag for required.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    ArchiveMembersRedisConnectionError: Raised when
+    ``get_archive_members_redis_client`` hits a
+    ``ArchiveMembersRedisConnectionError`` failure path.
+  
+  Examples:
+    >>> get_archive_members_redis_client(True)  # doctest: +SKIP
+  """
   global _REDIS_CLIENT, _REDIS_CLIENT_URL
   if not archive_members_redis_enabled():
     return None
@@ -307,8 +669,16 @@ def get_archive_members_redis_client(*, required: bool = True):
   return client
 
 
-def reset_archive_members_redis_client_for_tests():
-  """Clear module-level client cache (unit tests)."""
+def reset_archive_members_redis_client_for_tests() -> None:
+  """
+  Clear module-level client cache (unit tests).
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> reset_archive_members_redis_client_for_tests()  # doctest: +SKIP
+  """
   global _REDIS_CLIENT, _REDIS_CLIENT_URL
   _REDIS_CLIENT = None
   _REDIS_CLIENT_URL = None
@@ -318,8 +688,23 @@ def reset_archive_members_redis_client_for_tests():
   _APPEND_INFLIGHT_DEFER_LOG_STATE.clear()
 
 
-def verify_archive_members_redis_startup():
-  """Fail closed at supervisor startup when Redis L2 is enabled."""
+def verify_archive_members_redis_startup() -> None:
+  """
+  Fail closed at supervisor startup when Redis L2 is enabled.
+  
+  Returns:
+    None
+  
+  Raises:
+    ArchiveMembersRedisConnectionError: Raised when
+    ``verify_archive_members_redis_startup`` hits a
+    ``ArchiveMembersRedisConnectionError`` failure path.
+    Exception: Raised when ``verify_archive_members_redis_startup`` hits a
+    ``Exception`` failure path.
+  
+  Examples:
+    >>> verify_archive_members_redis_startup()  # doctest: +SKIP
+  """
   if not archive_members_redis_enabled():
     return
   client = get_archive_members_redis_client(required=True)
@@ -341,14 +726,43 @@ def verify_archive_members_redis_startup():
     ) from exc
 
 
-def _apply_ttl(client, keys: ArchiveMembersRedisKeys):
+def _apply_ttl(client: Any, keys: ArchiveMembersRedisKeys) -> None:
+  """
+  Internal helper to apply the ttl.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _apply_ttl(None, None)  # doctest: +SKIP
+  """
   ttl = _redis_ttl_seconds()
   if ttl > 0:
     client.expire(keys.hash_key, ttl)
     client.expire(keys.complete_key, ttl)
 
 
-def _hgetall_members(client, keys: ArchiveMembersRedisKeys) -> Optional[dict]:
+def _hgetall_members(
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+) -> Optional[dict]:
+  """
+  Internal helper to handle hgetall members.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    Optional[dict]: Optional[dict] — the result, or None when unavailable.
+  
+  Examples:
+    >>> _hgetall_members(None, None)  # doctest: +SKIP
+  """
   if client.get(keys.complete_key) != "1":
     return None
   raw = client.hgetall(keys.hash_key)
@@ -357,19 +771,64 @@ def _hgetall_members(client, keys: ArchiveMembersRedisKeys) -> Optional[dict]:
   return {name: int(size) for name, size in raw.items()}
 
 
-def _hash_member_count(client, keys: ArchiveMembersRedisKeys) -> int:
+def _hash_member_count(client: Any, keys: ArchiveMembersRedisKeys) -> int:
+  """
+  Internal helper to handle hash member count.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> _hash_member_count(None, None)  # doctest: +SKIP
+  """
   try:
     return int(client.hlen(keys.hash_key))
   except Exception:
     return len(client.hgetall(keys.hash_key))
 
 
-def _touch_populate_progress(client, keys: ArchiveMembersRedisKeys):
+def _touch_populate_progress(
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+) -> None:
+  """
+  Internal helper to handle touch populate progress.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _touch_populate_progress(None, None)  # doctest: +SKIP
+  """
   ttl = _redis_ttl_seconds()
   client.set(keys.progress_key, str(time.time()), ex=ttl if ttl > 0 else None)
 
 
-def _read_populate_progress_ts(client, keys: ArchiveMembersRedisKeys) -> Optional[float]:
+def _read_populate_progress_ts(
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+) -> Optional[float]:
+  """
+  Internal helper to read the populate progress ts.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    Optional[float]: Optional[float] — the result, or None when unavailable.
+  
+  Examples:
+    >>> _read_populate_progress_ts(None, None)  # doctest: +SKIP
+  """
   raw = client.get(keys.progress_key)
   if raw is None:
     return None
@@ -379,17 +838,54 @@ def _read_populate_progress_ts(client, keys: ArchiveMembersRedisKeys) -> Optiona
     return None
 
 
-def _renew_populate_lock(client, keys: ArchiveMembersRedisKeys):
+def _renew_populate_lock(client: Any, keys: ArchiveMembersRedisKeys) -> None:
+  """
+  Internal helper to handle renew populate lock.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _renew_populate_lock(None, None)  # doctest: +SKIP
+  """
   ttl = _populate_lock_seconds()
   if ttl > 0:
     client.expire(keys.lock_key, ttl)
 
 
 def _encode_populate_lock_value(token: str) -> str:
+  """
+  Internal helper to handle encode populate lock value.
+  
+  Args:
+    token (str): String for token.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _encode_populate_lock_value("x")  # doctest: +SKIP
+  """
   return "%s:%d" % (token, os.getpid())
 
 
-def _parse_populate_lock_owner_pid(lock_value) -> Optional[int]:
+def _parse_populate_lock_owner_pid(lock_value: Any) -> Optional[int]:
+  """
+  Internal helper to parse the populate lock owner pid.
+  
+  Args:
+    lock_value (Any): Lock value passed to this helper.
+  
+  Returns:
+    Optional[int]: Optional[int] — the result, or None when unavailable.
+  
+  Examples:
+    >>> _parse_populate_lock_owner_pid(None)  # doctest: +SKIP
+  """
   if not lock_value:
     return None
   text = str(lock_value)
@@ -403,7 +899,18 @@ def _parse_populate_lock_owner_pid(lock_value) -> Optional[int]:
 
 
 def _process_is_zombie(pid: int) -> bool:
-  """Return True when ``pid`` exists as a zombie (state Z in ``/proc``)."""
+  """
+  Return True when ``pid`` exists as a zombie (state Z in ``/proc``).
+  
+  Args:
+    pid (int): Integer value for pid.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _process_is_zombie(0)  # doctest: +SKIP
+  """
   try:
     with open("/proc/%d/stat" % int(pid), "r", encoding="ascii") as proc_stat:
       stat_line = proc_stat.read()
@@ -416,6 +923,18 @@ def _process_is_zombie(pid: int) -> bool:
 
 
 def _process_is_alive(pid: int) -> bool:
+  """
+  Internal helper to process the is alive.
+  
+  Args:
+    pid (int): Integer value for pid.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _process_is_alive(0)  # doctest: +SKIP
+  """
   try:
     os.kill(pid, 0)
   except ProcessLookupError:
@@ -429,7 +948,24 @@ def _process_is_alive(pid: int) -> bool:
   return True
 
 
-def _verify_redis_ping_or_raise(client):
+def _verify_redis_ping_or_raise(client: Any) -> None:
+  """
+  Internal helper to handle verify redis ping or raise.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+  
+  Returns:
+    None
+  
+  Raises:
+    ArchiveMembersRedisConnectionError: Raised when
+    ``_verify_redis_ping_or_raise`` hits a
+    ``ArchiveMembersRedisConnectionError`` failure path.
+  
+  Examples:
+    >>> _verify_redis_ping_or_raise(None)  # doctest: +SKIP
+  """
   try:
     client.ping()
   except Exception as exc:
@@ -440,10 +976,25 @@ def _verify_redis_ping_or_raise(client):
 
 
 def _maybe_populate_heartbeat(
-    client,
-    keys: ArchiveMembersRedisKeys,
-    last_heartbeat_monotonic,
-):
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+  last_heartbeat_monotonic: Any,
+) -> Any:
+  """
+  Internal helper to handle maybe populate heartbeat.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+    last_heartbeat_monotonic (Any): Last heartbeat monotonic passed to this
+    helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _maybe_populate_heartbeat(None, None, None)  # doctest: +SKIP
+  """
   now = time.monotonic()
   if now - last_heartbeat_monotonic < _populate_heartbeat_seconds():
     return last_heartbeat_monotonic
@@ -459,10 +1010,35 @@ def _maybe_populate_heartbeat(
   return now
 
 
-def _start_populate_heartbeat(client, keys: ArchiveMembersRedisKeys):
+def _start_populate_heartbeat(
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+) -> Any:
+  """
+  Internal helper to start the populate heartbeat.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _start_populate_heartbeat(None, None)  # doctest: +SKIP
+  """
   stop = threading.Event()
 
-  def _loop():
+  def _loop() -> None:
+    """
+    Internal helper to handle loop.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _loop()  # doctest: +SKIP
+    """
     while not stop.wait(_populate_heartbeat_seconds()):
       if stop.is_set():
         return
@@ -480,12 +1056,41 @@ def _start_populate_heartbeat(client, keys: ArchiveMembersRedisKeys):
   return stop, thread
 
 
-def _stop_populate_heartbeat(stop, thread):
+def _stop_populate_heartbeat(stop: Any, thread: Any) -> None:
+  """
+  Internal helper to stop the populate heartbeat.
+  
+  Args:
+    stop (Any): Stop passed to this helper.
+    thread (Any): Thread passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _stop_populate_heartbeat(None, None)  # doctest: +SKIP
+  """
   stop.set()
   thread.join(timeout=max(1.0, _populate_heartbeat_seconds() * 2))
 
 
-def populate_degraded_is_set(keys: ArchiveMembersRedisKeys, client=None) -> bool:
+def populate_degraded_is_set(
+  keys: ArchiveMembersRedisKeys,
+  client: Any | None = None,
+) -> bool:
+  """
+  Populate the degraded is set.
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> populate_degraded_is_set(None, None)  # doctest: +SKIP
+  """
   if keys.day_token == "unknown":
     return False
   if client is None:
@@ -495,7 +1100,20 @@ def populate_degraded_is_set(keys: ArchiveMembersRedisKeys, client=None) -> bool
   return bool(client.get(keys.degraded_key))
 
 
-def _set_populate_degraded(client, keys: ArchiveMembersRedisKeys):
+def _set_populate_degraded(client: Any, keys: ArchiveMembersRedisKeys) -> None:
+  """
+  Internal helper to set the populate degraded.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _set_populate_degraded(None, None)  # doctest: +SKIP
+  """
   if keys.day_token == "unknown":
     return
   ttl = _redis_ttl_seconds()
@@ -503,16 +1121,44 @@ def _set_populate_degraded(client, keys: ArchiveMembersRedisKeys):
 
 
 def _encode_day_skip_value(kind: str, detail: str) -> str:
+  """
+  Internal helper to handle encode day skip value.
+  
+  Args:
+    kind (str): String for kind.
+    detail (str): String for detail.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _encode_day_skip_value("x", "x")  # doctest: +SKIP
+  """
   safe_detail = (detail or "").replace(":", ";")[:500]
   return "%s:%s" % (kind, safe_detail)
 
 
 def set_archive_day_ingest_skip(
-    client,
-    keys: ArchiveMembersRedisKeys,
-    kind: str,
-    detail: str,
-):
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+  kind: str,
+  detail: str,
+) -> None:
+  """
+  Set the archive day ingest skip.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+    kind (str): String for kind.
+    detail (str): String for detail.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> set_archive_day_ingest_skip(None, None, "x", "x")  # doctest: +SKIP
+  """
   if keys.day_token == "unknown":
     return
   ttl = _redis_ttl_seconds()
@@ -523,17 +1169,45 @@ def set_archive_day_ingest_skip(
   )
 
 
-def clear_archive_day_ingest_skip(client, keys: ArchiveMembersRedisKeys):
-  """Remove sticky day skip after tar repair (Fix D)."""
+def clear_archive_day_ingest_skip(
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+) -> None:
+  """
+  Remove sticky day skip after tar repair (Fix D).
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> clear_archive_day_ingest_skip(None, None)  # doctest: +SKIP
+  """
   if keys.day_token == "unknown":
     return
   client.delete(keys.day_skip_key)
 
 
 def get_archive_day_ingest_skip(
-    keys: ArchiveMembersRedisKeys,
-    client=None,
+  keys: ArchiveMembersRedisKeys,
+  client: Any | None = None,
 ) -> Optional[tuple]:
+  """
+  Return the archive day ingest skip.
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Optional[tuple]: Optional[tuple] — the result, or None when unavailable.
+  
+  Examples:
+    >>> get_archive_day_ingest_skip(None, None)  # doctest: +SKIP
+  """
   if keys.day_token == "unknown":
     return None
   if client is None:
@@ -550,10 +1224,25 @@ def get_archive_day_ingest_skip(
 
 
 def archive_day_ingest_skip_error_from_redis(
-    keys: ArchiveMembersRedisKeys,
-    sealed_path: str,
-    client=None,
+  keys: ArchiveMembersRedisKeys,
+  sealed_path: str,
+  client: Any | None = None,
 ) -> Optional[ArchiveDayIngestSkipError]:
+  """
+  Archive the day ingest skip error from redis.
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    sealed_path (str): String for sealed path.
+    client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Optional[ArchiveDayIngestSkipError]: Optional[ArchiveDayIngestSkipError] —
+    the result, or None when unavailable.
+  
+  Examples:
+    >>> archive_day_ingest_skip_error_from_redis(None, "x", None)
+  """
   skip = get_archive_day_ingest_skip(keys, client=client)
   if skip is None:
     return None
@@ -562,10 +1251,28 @@ def archive_day_ingest_skip_error_from_redis(
 
 
 def _raise_if_archive_day_ingest_skip(
-    keys: ArchiveMembersRedisKeys,
-    sealed_path: str,
-    client,
-):
+  keys: ArchiveMembersRedisKeys,
+  sealed_path: str,
+  client: Any,
+) -> None:
+  """
+  Internal helper to handle raise if archive day ingest skip.
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    sealed_path (str): String for sealed path.
+    client (Any): Live handle (pool, client, or connection).
+  
+  Returns:
+    None
+  
+  Raises:
+    skip_exc: Raised when ``_raise_if_archive_day_ingest_skip`` hits a
+    ``skip_exc`` failure path.
+  
+  Examples:
+    >>> _raise_if_archive_day_ingest_skip(None, "x", None)  # doctest: +SKIP
+  """
   skip_exc = archive_day_ingest_skip_error_from_redis(
       keys, sealed_path, client=client,
   )
@@ -574,7 +1281,18 @@ def _raise_if_archive_day_ingest_skip(
 
 
 def redis_lookup_full_members(keys: ArchiveMembersRedisKeys) -> Optional[dict]:
-  """Return member map when ``complete=1``, else ``None``."""
+  """
+  Return member map when ``complete=1``, else ``None``.
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    Optional[dict]: Optional[dict] — the result, or None when unavailable.
+  
+  Examples:
+    >>> redis_lookup_full_members(None)  # doctest: +SKIP
+  """
   if not archive_members_redis_enabled():
     return None
   client = get_archive_members_redis_client(required=True)
@@ -582,17 +1300,31 @@ def redis_lookup_full_members(keys: ArchiveMembersRedisKeys) -> Optional[dict]:
 
 
 def redis_member_match_when_warm(
-    keys: ArchiveMembersRedisKeys,
-    member_name: str,
-    expected_size,
-    *,
-    client=None,
+  keys: ArchiveMembersRedisKeys,
+  member_name: str,
+  expected_size: int,
+  *,
+  client: Any | None = None,
 ) -> Optional[bool]:
-  """Point ``HGET`` duplicate-check when Redis L2 is fully warm.
-
-  Returns ``None`` when the HASH is not warm (caller uses populate / sealed path).
+  """
+  Point ``HGET`` duplicate-check when Redis L2 is fully warm.
+  
+  Returns ``None`` when the HASH is not warm (caller uses populate / sealed
+    path).
   When warm, returns ``True``/``False`` using the same size semantics as
   ``_member_match_via_redis_or_sealed_point`` for a single ``HGET``.
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    member_name (str): String for member name.
+    expected_size (int): Integer value for expected size.
+    client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Optional[bool]: Optional[bool] — the result, or None when unavailable.
+  
+  Examples:
+    >>> redis_member_match_when_warm(None, "x", 0, None)  # doctest: +SKIP
   """
   if not archive_members_redis_enabled():
     return None
@@ -614,14 +1346,25 @@ def redis_member_match_when_warm(
 
 
 def redis_members_cache_is_fully_warm(
-    keys: ArchiveMembersRedisKeys,
-    *,
-    client=None,
+  keys: ArchiveMembersRedisKeys,
+  *,
+  client: Any | None = None,
 ) -> bool:
-  """True only when Redis reports ``complete=1`` with a non-empty member HASH.
-
+  """
+  True only when Redis reports ``complete=1`` with a non-empty member HASH.
+  
   ``complete=1`` with an empty HASH is treated as **not warm** so supervisor
   prewarm re-populates stale or partial cache entries before ingest workers run.
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> redis_members_cache_is_fully_warm(None, None)  # doctest: +SKIP
   """
   if not archive_members_redis_enabled():
     return False
@@ -633,11 +1376,23 @@ def redis_members_cache_is_fully_warm(
 
 
 def redis_members_populate_is_orphaned_incomplete(
-    keys: ArchiveMembersRedisKeys,
-    *,
-    client=None,
+  keys: ArchiveMembersRedisKeys,
+  *,
+  client: Any | None = None,
 ) -> bool:
-  """True when a partial HASH remains without ``complete=1`` and no populate lock."""
+  """
+  True when a partial HASH remains without ``complete=1`` and no populate lock.
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> redis_members_populate_is_orphaned_incomplete(None, None)
+  """
   if not archive_members_redis_enabled():
     return False
   if client is None:
@@ -652,12 +1407,25 @@ def redis_members_populate_is_orphaned_incomplete(
 
 
 def maybe_clear_orphan_incomplete_archive_members_redis(
-    keys: ArchiveMembersRedisKeys,
-    *,
-    client=None,
-    log_fn=log_print,
+  keys: ArchiveMembersRedisKeys,
+  *,
+  client: Any | None = None,
+  log_fn: Any = log_print,
 ) -> bool:
-  """Drop a partial populate HASH so the next single-flight scan can restart."""
+  """
+  Drop a partial populate HASH so the next single-flight scan can restart.
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    client (Any | None): One of ``Any``, ``None``.
+    log_fn (Any): Callable invoked by this helper.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> maybe_clear_orphan_incomplete_archive_members_redis(None, None, None)
+  """
   if not redis_members_populate_is_orphaned_incomplete(keys, client=client):
     return False
   if client is None:
@@ -679,8 +1447,23 @@ def maybe_clear_orphan_incomplete_archive_members_redis(
   return True
 
 
-def _incomplete_state_keys_present(client, keys: ArchiveMembersRedisKeys) -> bool:
-  """True when any incomplete populate key exists (hash/complete/progress/…)."""
+def _incomplete_state_keys_present(
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+) -> bool:
+  """
+  True when any incomplete populate key exists (hash/complete/progress/…).
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _incomplete_state_keys_present(None, None)  # doctest: +SKIP
+  """
   for key in (
       keys.hash_key,
       keys.complete_key,
@@ -694,22 +1477,69 @@ def _incomplete_state_keys_present(client, keys: ArchiveMembersRedisKeys) -> boo
 
 
 def _stale_incomplete_log_redis_key(day_token: str) -> str:
+  """
+  Internal helper to handle stale incomplete log redis key.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _stale_incomplete_log_redis_key("x")  # doctest: +SKIP
+  """
   return "%s:%s" % (_STALE_INCOMPLETE_LOG_PREFIX, day_token)
 
 
 def _empty_recover_defer_log_redis_key(day_token: str) -> str:
+  """
+  Internal helper to handle empty recover defer log redis key.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _empty_recover_defer_log_redis_key("x")  # doctest: +SKIP
+  """
   return "%s:%s" % (_EMPTY_RECOVER_DEFER_LOG_PREFIX, day_token)
 
 
 def _populate_recover_redis_key(day_token: str) -> str:
+  """
+  Internal helper to populate the recover redis key.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _populate_recover_redis_key("x")  # doctest: +SKIP
+  """
   return "%s:%s" % (_POPULATE_RECOVER_PREFIX, day_token)
 
 
-def _try_acquire_populate_recovery_gate(client, day_token: str) -> bool:
-  """Single-flight clear+re-enqueue after orphan/degraded/incomplete recovery.
-
+def _try_acquire_populate_recovery_gate(client: Any, day_token: str) -> bool:
+  """
+  Single-flight clear+re-enqueue after orphan/degraded/incomplete recovery.
+  
   Returns True for the recovery leader (or when day_token is unknown / Redis
   SET fails open so recovery still progresses).
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    day_token (str): String for day token.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _try_acquire_populate_recovery_gate(None, "x")  # doctest: +SKIP
   """
   if not day_token or day_token == "unknown":
     return True
@@ -727,17 +1557,30 @@ def _try_acquire_populate_recovery_gate(client, day_token: str) -> bool:
 
 
 def clear_stale_incomplete_archive_members_redis(
-    keys: ArchiveMembersRedisKeys,
-    *,
-    client=None,
-    log_fn=log_print,
+  keys: ArchiveMembersRedisKeys,
+  *,
+  client: Any | None = None,
+  log_fn: Any = log_print,
 ) -> bool:
-  """Clear incomplete populate state even when HASH is empty (hlen=0).
-
+  """
+  Clear incomplete populate state even when HASH is empty (hlen=0).
+  
   Used after lock release without ``complete=1`` so a new single-flight can
-  acquire the lock (degraded must be cleared for ``_try_acquire_populate_lock``).
+  acquire the lock (degraded must be cleared for
+    ``_try_acquire_populate_lock``).
   No-ops silently when no incomplete keys are present (avoids WARN stampede
   after orphan wipe).
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    client (Any | None): One of ``Any``, ``None``.
+    log_fn (Any): Callable invoked by this helper.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> clear_stale_incomplete_archive_members_redis(None, None, None)
   """
   if client is None:
     client = get_archive_members_redis_client(required=True)
@@ -770,7 +1613,25 @@ def clear_stale_incomplete_archive_members_redis(
   return True
 
 
-def _release_populate_lock(client, keys: ArchiveMembersRedisKeys, lock_value: str):
+def _release_populate_lock(
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+  lock_value: str,
+) -> None:
+  """
+  Internal helper to handle release populate lock.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+    lock_value (str): String for lock value.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _release_populate_lock(None, None, "x")  # doctest: +SKIP
+  """
   script = (
       "if redis.call('get', KEYS[1]) == ARGV[1] then "
       "return redis.call('del', KEYS[1]) else return 0 end"
@@ -782,8 +1643,20 @@ def _release_populate_lock(client, keys: ArchiveMembersRedisKeys, lock_value: st
   client.delete(keys.progress_key)
 
 
-def _populate_lock_is_held(client, keys: ArchiveMembersRedisKeys) -> bool:
-  """True when another populate winner holds ``lock_key``."""
+def _populate_lock_is_held(client: Any, keys: ArchiveMembersRedisKeys) -> bool:
+  """
+  True when another populate winner holds ``lock_key``.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _populate_lock_is_held(None, None)  # doctest: +SKIP
+  """
   lock_value = client.get(keys.lock_key)
   if not lock_value:
     return False
@@ -796,7 +1669,23 @@ def _populate_lock_is_held(client, keys: ArchiveMembersRedisKeys) -> bool:
   return pid is not None
 
 
-def _try_acquire_populate_lock(client, keys: ArchiveMembersRedisKeys) -> Optional[str]:
+def _try_acquire_populate_lock(
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+) -> Optional[str]:
+  """
+  Internal helper to handle try acquire populate lock.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    Optional[str]: Optional[str] — the result, or None when unavailable.
+  
+  Examples:
+    >>> _try_acquire_populate_lock(None, None)  # doctest: +SKIP
+  """
   if populate_degraded_is_set(keys, client=client):
     return None
   token = secrets.token_hex(16)
@@ -815,12 +1704,27 @@ def _try_acquire_populate_lock(client, keys: ArchiveMembersRedisKeys) -> Optiona
 
 
 def _flush_hset_batch(
-    client,
-    keys: ArchiveMembersRedisKeys,
-    batch: dict,
-    *,
-    lock_value=None,
-):
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+  batch: dict,
+  *,
+  lock_value: Any | None = None,
+) -> None:
+  """
+  Internal helper to handle flush hset batch.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+    batch (dict): Mapping for batch.
+    lock_value (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _flush_hset_batch(None, None, {}, None)  # doctest: +SKIP
+  """
   if not batch:
     return
   pipe = client.pipeline()
@@ -836,16 +1740,43 @@ def _flush_hset_batch(
 
 
 def _estimate_hash_bytes(member_count: int) -> int:
+  """
+  Internal helper to handle estimate hash bytes.
+  
+  Args:
+    member_count (int): Integer value for member count.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> _estimate_hash_bytes(0)  # doctest: +SKIP
+  """
   return member_count * 128
 
 
 def _populate_progress_seen(
-    client,
-    keys: ArchiveMembersRedisKeys,
-    *,
-    last_progress_ts,
-    last_hlen,
-):
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+  *,
+  last_progress_ts: Any,
+  last_hlen: Any,
+) -> Any:
+  """
+  Internal helper to populate the progress seen.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+    last_progress_ts (Any): Last progress ts passed to this helper.
+    last_hlen (Any): Last hlen passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _populate_progress_seen(None, None, None, None)  # doctest: +SKIP
+  """
   progress_ts = _read_populate_progress_ts(client, keys)
   hlen = _hash_member_count(client, keys)
   if progress_ts is not None and progress_ts != last_progress_ts:
@@ -856,13 +1787,28 @@ def _populate_progress_seen(
 
 
 def _release_stale_populate_lock_if_owner_dead(
-    client,
-    keys: ArchiveMembersRedisKeys,
-    *,
-    last_progress_monotonic,
-    require_stall: bool = True,
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+  *,
+  last_progress_monotonic: Any,
+  require_stall: bool = True,
 ) -> bool:
-  """Release a populate lock when the owner PID is dead after stall window."""
+  """
+  Release a populate lock when the owner PID is dead after stall window.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+    last_progress_monotonic (Any): Last progress monotonic passed to this
+    helper.
+    require_stall (bool): Boolean flag for require stall.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _release_stale_populate_lock_if_owner_dead(None, None, None, True)
+  """
   if not client.exists(keys.lock_key):
     return False
   if require_stall and (time.monotonic() - last_progress_monotonic) < float(
@@ -887,15 +1833,37 @@ def _release_stale_populate_lock_if_owner_dead(
 
 
 def _check_populate_wait_limits(
-    client,
-    keys: ArchiveMembersRedisKeys,
-    *,
-    started_monotonic,
-    last_progress_monotonic,
-    sealed_path="",
-    respect_ingest_deadline=True,
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+  *,
+  started_monotonic: Any,
+  last_progress_monotonic: Any,
+  sealed_path: str = "",
+  respect_ingest_deadline: bool = True,
 ) -> bool:
-  """Return True when a stale populate lock was released for retry."""
+  """
+  Return True when a stale populate lock was released for retry.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+    started_monotonic (Any): Started monotonic passed to this helper.
+    last_progress_monotonic (Any): Last progress monotonic passed to this
+    helper.
+    sealed_path (str): String for sealed path.
+    respect_ingest_deadline (bool): Boolean flag for respect ingest deadline.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Raises:
+    ArchiveMembersPopulateStalledError: Raised when
+    ``_check_populate_wait_limits`` hits a
+    ``ArchiveMembersPopulateStalledError`` failure path.
+  
+  Examples:
+    >>> _check_populate_wait_limits(None, None, None, None, "x", True)
+  """
   _raise_if_ingest_deadline_exceeded_when_enabled(respect_ingest_deadline)
   _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
   max_seconds = _populate_max_seconds()
@@ -962,13 +1930,35 @@ def _check_populate_wait_limits(
 
 
 def _extend_populate_acquire_deadline() -> float:
+  """
+  Internal helper to handle extend populate acquire deadline.
+  
+  Returns:
+    float: float produced by this call.
+  
+  Examples:
+    >>> _extend_populate_acquire_deadline()  # doctest: +SKIP
+  """
   return time.monotonic() + float(_populate_lock_seconds())
 
 
 def _populate_lock_timeout_diagnostics(
-    client,
-    keys: ArchiveMembersRedisKeys,
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
 ) -> dict:
+  """
+  Internal helper to populate the lock timeout diagnostics.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    dict: dict produced by this call.
+  
+  Examples:
+    >>> _populate_lock_timeout_diagnostics(None, None)  # doctest: +SKIP
+  """
   day_token = keys.day_token if keys.day_token != "unknown" else ""
   lock_raw = client.get(keys.lock_key)
   owner_pid = _parse_populate_lock_owner_pid(lock_raw)
@@ -995,9 +1985,23 @@ def _populate_lock_timeout_diagnostics(
 
 
 def _maybe_recover_orphan_incomplete_on_populate_lock_timeout(
-    client,
-    keys: ArchiveMembersRedisKeys,
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
 ) -> None:
+  """
+  Internal helper to handle maybe recover orphan incomplete on populate lock
+  timeout.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _maybe_recover_orphan_incomplete_on_populate_lock_timeout(None, None)
+  """
   if client.get(keys.complete_key) == "1" or client.exists(keys.lock_key):
     return
   if _hash_member_count(client, keys) == 0:
@@ -1007,9 +2011,27 @@ def _maybe_recover_orphan_incomplete_on_populate_lock_timeout(
 
 
 def _raise_populate_lock_acquire_timeout(
-    client,
-    keys: ArchiveMembersRedisKeys,
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
 ) -> None:
+  """
+  Internal helper to handle raise populate lock acquire timeout.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+  
+  Returns:
+    None
+  
+  Raises:
+    ArchiveMembersRedisUnavailableError: Raised when
+    ``_raise_populate_lock_acquire_timeout`` hits a
+    ``ArchiveMembersRedisUnavailableError`` failure path.
+  
+  Examples:
+    >>> _raise_populate_lock_acquire_timeout(None, None)  # doctest: +SKIP
+  """
   diag = _populate_lock_timeout_diagnostics(client, keys)
   _maybe_recover_orphan_incomplete_on_populate_lock_timeout(client, keys)
   log_print(
@@ -1035,33 +2057,92 @@ def _raise_populate_lock_acquire_timeout(
 
 
 def archive_pre_append_member_lookup_active() -> bool:
+  """
+  Archive the pre append member lookup active.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> archive_pre_append_member_lookup_active()  # doctest: +SKIP
+  """
   return bool(_archive_pre_append_member_lookup.get())
 
 
 class archive_pre_append_member_lookup_context:
-  """Allow archive-pool pre-append member lookup during own append_inflight."""
+  """
+  Allow archive-pool pre-append member lookup during own append_inflight.
+  """
 
-  def __enter__(self):
+  def __enter__(self) -> Any:
+    """
+    Enter the runtime context for this object.
+    
+    Returns:
+      Any: Open return polymorphism from ``__enter__``: concrete type depends
+      on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __enter__()  # doctest: +SKIP
+    """
     self._token = _archive_pre_append_member_lookup.set(True)
     return self
 
-  def __exit__(self, _exc_type, _exc, _tb):
+  def __exit__(self, _exc_type: Any, _exc: Any, _tb: Any) -> Any:
+    """
+    Exit the runtime context for this object.
+    
+    Args:
+      _exc_type (Any):  exc type passed to this helper.
+      _exc (Any):  exc passed to this helper.
+      _tb (Any):  tb passed to this helper.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> __exit__(None, None, None)  # doctest: +SKIP
+    """
     _archive_pre_append_member_lookup.reset(self._token)
     return False
 
 
 def populate_archive_members_redis(
-    keys: ArchiveMembersRedisKeys,
-    scan_fn: Callable[[Callable[[str, int], None]], tuple],
-    *,
-    sealed_path=None,
-    source_decision=None,
-    scanning_mutable_tar: bool = False,
+  keys: ArchiveMembersRedisKeys,
+  scan_fn: Callable[[Callable[[str, int], None]], tuple],
+  *,
+  sealed_path: Any | None = None,
+  source_decision: Any | None = None,
+  scanning_mutable_tar: bool = False,
 ) -> dict:
-  """Single-flight populate: ``scan_fn(on_member)`` returns ``(readable, saw_duplicates)`` or
+  """
+  Single-flight populate: ``scan_fn(on_member)`` returns ``(readable,.
+  
+    saw_duplicates)`` or.
+  
   ``(readable, saw_duplicates, stream_error)``.
-
+  
   Member sizes are collected via ``on_member`` callbacks during the scan.
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    scan_fn (Callable[[Callable[[str, int], None]], tuple]): Scan fn.
+    sealed_path (Any | None): One of ``Any``, ``None``.
+    source_decision (Any | None): One of ``Any``, ``None``.
+    scanning_mutable_tar (bool): Boolean flag for scanning mutable tar.
+  
+  Returns:
+    dict: dict produced by this call.
+  
+  Raises:
+    ArchiveMembersPopulateStalledError: Raised when
+    ``populate_archive_members_redis`` hits a
+    ``ArchiveMembersPopulateStalledError`` failure path.
+    Exception: Raised when ``populate_archive_members_redis`` hits a
+    ``Exception`` failure path.
+  
+  Examples:
+    >>> populate_archive_members_redis(None, None, None, None, True)
   """
   client = get_archive_members_redis_client(required=True)
   started_monotonic = time.monotonic()
@@ -1141,7 +2222,24 @@ def populate_archive_members_redis(
     populate_failed = False
     last_heartbeat_monotonic = time.monotonic()
 
-    def _on_member(name: str, size: int):
+    def _on_member(name: str, size: int) -> None:
+      """
+      Internal helper to handle on member.
+      
+      Args:
+        name (str): String for name.
+        size (int): Integer value for size.
+      
+      Returns:
+        None
+      
+      Raises:
+        ArchiveMembersRedisUnavailableError: Raised when ``_on_member`` hits a
+        ``ArchiveMembersRedisUnavailableError`` failure path.
+      
+      Examples:
+        >>> _on_member("x", 0)  # doctest: +SKIP
+      """
       nonlocal saw_duplicates, last_heartbeat_monotonic
       last_heartbeat_monotonic = _maybe_populate_heartbeat(
           client, keys, last_heartbeat_monotonic,
@@ -1214,15 +2312,31 @@ def populate_archive_members_redis(
 
 
 def wait_for_member_match(
-    keys: ArchiveMembersRedisKeys,
-    member_name: str,
-    expected_size: int,
-    *,
-    sealed_path="",
-    respect_ingest_deadline=True,
-    canonical="",
+  keys: ArchiveMembersRedisKeys,
+  member_name: str,
+  expected_size: int,
+  *,
+  sealed_path: str = "",
+  respect_ingest_deadline: bool = True,
+  canonical: str = "",
 ) -> bool:
-  """Wait for populate completion or incremental HASH hit; stall if no progress."""
+  """
+  Wait for populate completion or incremental HASH hit; stall if no progress.
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    member_name (str): String for member name.
+    expected_size (int): Integer value for expected size.
+    sealed_path (str): String for sealed path.
+    respect_ingest_deadline (bool): Boolean flag for respect ingest deadline.
+    canonical (str): String for canonical.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> wait_for_member_match(None, "x", 0, "x", True, "x")  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
       populate_wait_ingest_sigalrm_guard,
   )
@@ -1312,6 +2426,18 @@ def wait_for_member_match(
 
 
 def _resolve_keys_for_canonical(canonical: str) -> ArchiveMembersRedisKeys:
+  """
+  Internal helper to resolve the keys for canonical.
+  
+  Args:
+    canonical (str): String for canonical.
+  
+  Returns:
+    ArchiveMembersRedisKeys: ArchiveMembersRedisKeys produced by this call.
+  
+  Examples:
+    >>> _resolve_keys_for_canonical("x")  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       _daily_archive_members_cache_key,
       normalize_daily_compressed_path,
@@ -1322,22 +2448,41 @@ def _resolve_keys_for_canonical(canonical: str) -> ArchiveMembersRedisKeys:
 
 
 def _rate_limited_day_info_log(
-    state_dict: Dict[str, Dict[str, float]],
-    day_token: str,
-    message: str,
-    *,
-    interval_s: float,
-    log_fn=None,
-    client=None,
-    redis_key_fn: Optional[Callable[[str], str]] = None,
-    redis_ttl_s: float = 0.0,
-    skip_unknown_day: bool = True,
+  state_dict: Dict[str, Dict[str, float]],
+  day_token: str,
+  message: str,
+  *,
+  interval_s: float,
+  log_fn: Any | None = None,
+  client: Any | None = None,
+  redis_key_fn: Optional[Callable[[str], str]] = None,
+  redis_ttl_s: float = 0.0,
+  skip_unknown_day: bool = True,
 ) -> None:
-  """Emit *message* at most once per *interval_s* per day (optional Redis NX).
-
+  """
+  Emit *message* at most once per *interval_s* per day (optional Redis NX).
+  
   When *redis_key_fn* is set, a cluster-wide ``SET NX EX`` gate suppresses peers
   in other processes. Redis errors fail open to process-local rate-limiting.
   Appends `` suppressed_n=N`` when prior calls were suppressed in-process.
+  
+  Args:
+    state_dict (Dict[str, Dict[str, float]]): Mapping for state dict.
+    day_token (str): String for day token.
+    message (str): String for message.
+    interval_s (float): Floating-point value for interval s.
+    log_fn (Any | None): One of ``Any``, ``None``.
+    client (Any | None): One of ``Any``, ``None``.
+    redis_key_fn (Optional[Callable[[str], str]]): Redis key fn, or None when
+    absent.
+    redis_ttl_s (float): Floating-point value for redis ttl s.
+    skip_unknown_day (bool): Whether to enable skip unknown day.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _rate_limited_day_info_log({}, "x", "x", 0, None, None, None, 0, True)
   """
   if log_fn is None:
     log_fn = log_print
@@ -1383,13 +2528,27 @@ def _rate_limited_day_info_log(
 
 
 def _log_stale_incomplete_if_allowed(
-    day_token: str,
-    message: str,
-    *,
-    log_fn=None,
-    client=None,
+  day_token: str,
+  message: str,
+  *,
+  log_fn: Any | None = None,
+  client: Any | None = None,
 ) -> None:
-  """Rate-limit stale incomplete WARNs cluster-wide (Redis NX) + process-local."""
+  """
+  Rate-limit stale incomplete WARNs cluster-wide (Redis NX) + process-local.
+  
+  Args:
+    day_token (str): String for day token.
+    message (str): String for message.
+    log_fn (Any | None): One of ``Any``, ``None``.
+    client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _log_stale_incomplete_if_allowed("x", "x", None, None)  # doctest: +SKIP
+  """
   _rate_limited_day_info_log(
       _STALE_INCOMPLETE_LOG_STATE,
       day_token,
@@ -1403,8 +2562,25 @@ def _log_stale_incomplete_if_allowed(
   )
 
 
-def _log_identity_drift_if_allowed(day_token: str, from_key: str, to_key: str) -> None:
-  """Rate-limit identity_drift logs to once per calendar day per interval."""
+def _log_identity_drift_if_allowed(
+  day_token: str,
+  from_key: str,
+  to_key: str,
+) -> None:
+  """
+  Rate-limit identity_drift logs to once per calendar day per interval.
+  
+  Args:
+    day_token (str): String for day token.
+    from_key (str): String for from key.
+    to_key (str): String for to key.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _log_identity_drift_if_allowed("x", "x", "x")  # doctest: +SKIP
+  """
   _rate_limited_day_info_log(
       _IDENTITY_DRIFT_LOG_STATE,
       day_token,
@@ -1415,7 +2591,18 @@ def _log_identity_drift_if_allowed(day_token: str, from_key: str, to_key: str) -
 
 
 def _log_append_inflight_defer_if_allowed(day_token: str) -> None:
-  """Rate-limit archive_append_inflight defer logs to once per calendar day."""
+  """
+  Rate-limit archive_append_inflight defer logs to once per calendar day.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _log_append_inflight_defer_if_allowed("x")  # doctest: +SKIP
+  """
   _rate_limited_day_info_log(
       _APPEND_INFLIGHT_DEFER_LOG_STATE,
       day_token,
@@ -1424,8 +2611,24 @@ def _log_append_inflight_defer_if_allowed(day_token: str) -> None:
   )
 
 
-def _log_empty_recover_deferred_if_allowed(day_token: str, *, client=None) -> None:
-  """Rate-limit RC-ER empty-recover deferred INFO (process-local + Redis NX)."""
+def _log_empty_recover_deferred_if_allowed(
+  day_token: str,
+  *,
+  client: Any | None = None,
+) -> None:
+  """
+  Rate-limit RC-ER empty-recover deferred INFO (process-local + Redis NX).
+  
+  Args:
+    day_token (str): String for day token.
+    client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _log_empty_recover_deferred_if_allowed("x", None)  # doctest: +SKIP
+  """
   _rate_limited_day_info_log(
       _EMPTY_RECOVER_DEFER_LOG_STATE,
       day_token,
@@ -1439,12 +2642,27 @@ def _log_empty_recover_deferred_if_allowed(day_token: str, *, client=None) -> No
 
 
 def _maybe_reresolve_warm_members(
-    client,
-    keys: ArchiveMembersRedisKeys,
-    *,
-    canonical="",
-):
-  """Return members when *canonical* identity is fully warm (may differ from *keys*)."""
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+  *,
+  canonical: str = "",
+) -> Any:
+  """
+  Return members when *canonical* identity is fully warm (may differ from.
+  
+    *keys*).
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+    canonical (str): String for canonical.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _maybe_reresolve_warm_members(None, None, "x")  # doctest: +SKIP
+  """
   if not canonical:
     return None, keys
   try:
@@ -1465,14 +2683,26 @@ def _maybe_reresolve_warm_members(
 
 
 def _recover_populate_wait_after_stale_lock(
-    client,
-    keys: ArchiveMembersRedisKeys,
-    *,
-    canonical="",
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+  *,
+  canonical: str = "",
 ) -> bool:
-  """Re-enqueue populate after incomplete lock release when *canonical* is known.
-
+  """
+  Re-enqueue populate after incomplete lock release when *canonical* is known.
+  
   Returns True only when enqueue succeeded (caller may reset stall clock).
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+    canonical (str): String for canonical.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _recover_populate_wait_after_stale_lock(None, None, "x")
   """
   if not canonical:
     return False
@@ -1488,18 +2718,36 @@ def _recover_populate_wait_after_stale_lock(
 
 
 def wait_for_complete_members(
-    keys: ArchiveMembersRedisKeys,
-    *,
-    sealed_path="",
-    respect_ingest_deadline=True,
-    canonical="",
+  keys: ArchiveMembersRedisKeys,
+  *,
+  sealed_path: str = "",
+  respect_ingest_deadline: bool = True,
+  canonical: str = "",
 ) -> dict:
-  """Block until ``complete=1`` and return full member map.
-
+  """
+  Block until ``complete=1`` and return full member map.
+  
   When *canonical* is set, each poll re-resolves the on-disk archive identity so
   concurrent tar append (identity drift T1→T2) can succeed when the current key
   is warm. Incomplete-after-lock-release recovers by clearing stale state and
   re-enqueuing until ``populate_max_seconds``.
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    sealed_path (str): String for sealed path.
+    respect_ingest_deadline (bool): Boolean flag for respect ingest deadline.
+    canonical (str): String for canonical.
+  
+  Returns:
+    dict: dict produced by this call.
+  
+  Raises:
+    ArchiveMembersPopulateStalledError: Raised when
+    ``wait_for_complete_members`` hits a
+    ``ArchiveMembersPopulateStalledError`` failure path.
+  
+  Examples:
+    >>> wait_for_complete_members(None, "x", True, "x")  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
       populate_wait_ingest_sigalrm_guard,
@@ -1593,10 +2841,22 @@ def wait_for_complete_members(
 
 
 def describe_archive_members_populate_redis_for_day(
-    day_token: str,
-    tgz_archive_dir: str,
+  day_token: str,
+  tgz_archive_dir: str,
 ) -> str:
-  """One-line Redis populate snapshot for operator stall diagnostics."""
+  """
+  One-line Redis populate snapshot for operator stall diagnostics.
+  
+  Args:
+    day_token (str): String for day token.
+    tgz_archive_dir (str): String for tgz archive dir.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> describe_archive_members_populate_redis_for_day("x", "x")
+  """
   if not archive_members_redis_enabled() or not day_token or not tgz_archive_dir:
     return "redis_populate=disabled"
   try:
@@ -1634,15 +2894,27 @@ def describe_archive_members_populate_redis_for_day(
 
 
 def archive_members_populate_shows_progress_for_day(
-    day_token: str,
-    tgz_archive_dir: str,
-    *,
-    progress_state=None,
+  day_token: str,
+  tgz_archive_dir: str,
+  *,
+  progress_state: Any | None = None,
 ) -> bool:
-  """True when Redis shows an active populate for ``day_token``.
-
+  """
+  True when Redis shows an active populate for ``day_token``.
+  
   Defers supervisor imap stall abort while a populate lock is held and
   ``complete != 1``, even when progress timestamps are briefly stale.
+  
+  Args:
+    day_token (str): String for day token.
+    tgz_archive_dir (str): String for tgz archive dir.
+    progress_state (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> archive_members_populate_shows_progress_for_day("x", "x", None)
   """
   if not archive_members_redis_enabled() or not day_token or not tgz_archive_dir:
     return False
@@ -1686,12 +2958,30 @@ def archive_members_populate_shows_progress_for_day(
 
 
 def store_complete_members_in_redis(
-    keys: ArchiveMembersRedisKeys,
-    members: dict,
-    *,
-    saw_duplicates: bool = False,
-):
-  """Write a full member map (e.g. after plain ``.tar`` read)."""
+  keys: ArchiveMembersRedisKeys,
+  members: dict,
+  *,
+  saw_duplicates: bool = False,
+) -> None:
+  """
+  Write a full member map (e.g. after plain ``.tar`` read).
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    members (dict): Mapping for members.
+    saw_duplicates (bool): Boolean flag for saw duplicates.
+  
+  Returns:
+    None
+  
+  Raises:
+    ArchiveMembersRedisUnavailableError: Raised when
+    ``store_complete_members_in_redis`` hits a
+    ``ArchiveMembersRedisUnavailableError`` failure path.
+  
+  Examples:
+    >>> store_complete_members_in_redis(None, {}, True)  # doctest: +SKIP
+  """
   client = get_archive_members_redis_client(required=True)
   if _estimate_hash_bytes(len(members)) > _max_payload_bytes():
     raise ArchiveMembersRedisUnavailableError(
@@ -1711,15 +3001,30 @@ def store_complete_members_in_redis(
 
 
 def merge_appended_members_into_redis(
-    cache_key,
-    member_map,
-    *,
-    saw_duplicates=False,
-):
-  """HSET appended tar members without clearing the Redis L2 map (``tar_append`` path).
-
+  cache_key: Any,
+  member_map: Any,
+  *,
+  saw_duplicates: bool = False,
+) -> Any:
+  """
+  HSET appended tar members without clearing the Redis L2 map (``tar_append``.
+  
+    path).
+  
   Returns ``True`` when Redis L2 is enabled and merge succeeded; ``False`` when
-  disabled or ``member_map`` is empty (caller may fall back to full invalidation).
+  disabled or ``member_map`` is empty (caller may fall back to full
+    invalidation).
+  
+  Args:
+    cache_key (Any): Cache key passed to this helper.
+    member_map (Any): Member map passed to this helper.
+    saw_duplicates (bool): Boolean flag for saw duplicates.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> merge_appended_members_into_redis(None, None, True)  # doctest: +SKIP
   """
   if not member_map:
     return False
@@ -1751,8 +3056,19 @@ def merge_appended_members_into_redis(
   return True
 
 
-def invalidate_archive_members_redis(cache_key):
-  """Delete Redis L2 keys for a daily archive identity."""
+def invalidate_archive_members_redis(cache_key: Any) -> None:
+  """
+  Delete Redis L2 keys for a daily archive identity.
+  
+  Args:
+    cache_key (Any): Cache key passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> invalidate_archive_members_redis(None)  # doctest: +SKIP
+  """
   if not archive_members_redis_enabled():
     return
   try:
@@ -1784,16 +3100,29 @@ def invalidate_archive_members_redis(cache_key):
 
 
 def invalidate_archive_members_redis_bulk(
-    *,
-    day_tokens=None,
-    dry_run: bool = False,
-    client=None,
-):
-  """Bulk-clear archive membership Redis L2 (operator recovery).
-
+  *,
+  day_tokens: Any | None = None,
+  dry_run: bool = False,
+  client: Any | None = None,
+) -> Any:
+  """
+  Bulk-clear archive membership Redis L2 (operator recovery).
+  
   Thin wrapper: resolves a Redis client when omitted, then delegates to
-  :func:`hpcperfstats.dbload.lib.invalidate_archive_members_ops.invalidate_archive_members_redis_bulk`
+  :func:`hpcperfstats.dbload.lib.invalidate_archive_members_ops.invalidate_archi
+    ve_members_redis_bulk`
   (stdlib-safe for the host CLI; no ``print_utils`` import on that path).
+  
+  Args:
+    day_tokens (Any | None): One of ``Any``, ``None``.
+    dry_run (bool): Boolean flag for dry run.
+    client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> invalidate_archive_members_redis_bulk(None, True, None)
   """
   from hpcperfstats.dbload.lib import invalidate_archive_members_ops as ops
 
@@ -1809,8 +3138,19 @@ def invalidate_archive_members_redis_bulk(
   )
 
 
-def list_dedupe_hint_day_tokens(client=None) -> list:
-  """Return calendar day tokens with active dedupe hints."""
+def list_dedupe_hint_day_tokens(client: Any | None = None) -> list:
+  """
+  Return calendar day tokens with active dedupe hints.
+  
+  Args:
+    client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    list: list produced by this call.
+  
+  Examples:
+    >>> list_dedupe_hint_day_tokens(None)  # doctest: +SKIP
+  """
   if client is None:
     if not archive_members_redis_enabled():
       return []
@@ -1826,7 +3166,20 @@ def list_dedupe_hint_day_tokens(client=None) -> list:
   return sorted(set(days))
 
 
-def clear_dedupe_hint(day_token: str, client=None):
+def clear_dedupe_hint(day_token: str, client: Any | None = None) -> None:
+  """
+  Clear dedupe hint.
+  
+  Args:
+    day_token (str): String for day token.
+    client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> clear_dedupe_hint("x", None)  # doctest: +SKIP
+  """
   if not day_token or day_token == "unknown":
     return
   if client is None:
@@ -1838,7 +3191,20 @@ def clear_dedupe_hint(day_token: str, client=None):
   client.delete("%s:%s" % (_DEDUPE_HINT_PREFIX, day_token))
 
 
-def dedupe_hint_is_set(day_token: str, client=None) -> bool:
+def dedupe_hint_is_set(day_token: str, client: Any | None = None) -> bool:
+  """
+  Dedupe hint is set.
+  
+  Args:
+    day_token (str): String for day token.
+    client (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> dedupe_hint_is_set("x", None)  # doctest: +SKIP
+  """
   if not day_token or day_token == "unknown":
     return False
   if client is None:
@@ -1851,15 +3217,53 @@ def dedupe_hint_is_set(day_token: str, client=None) -> bool:
 
 
 def _ingest_tar_hot_key(day_token: str) -> str:
+  """
+  Internal helper to ingest the tar hot key.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _ingest_tar_hot_key("x")  # doctest: +SKIP
+  """
   return "%s:%s" % (_INGEST_TAR_HOT_PREFIX, day_token)
 
 
 def _daily_tar_restore_key(day_token: str) -> str:
+  """
+  Internal helper to handle daily tar restore key.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _daily_tar_restore_key("x")  # doctest: +SKIP
+  """
   return "%s:%s" % (_DAILY_TAR_RESTORE_PREFIX, day_token)
 
 
 def set_ingest_tar_hot(day_token: str, *, reason: str = "populate") -> None:
-  """Reserve ingest hot path for ``day_token`` before fnctl read (TTL = populate max)."""
+  """
+  Reserve ingest hot path for ``day_token`` before fnctl read (TTL = populate.
+  
+    max).
+  
+  Args:
+    day_token (str): String for day token.
+    reason (str): String for reason.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> set_ingest_tar_hot("x", "x")  # doctest: +SKIP
+  """
   if not day_token or day_token == "unknown":
     return
   if not archive_members_redis_enabled():
@@ -1875,6 +3279,18 @@ def set_ingest_tar_hot(day_token: str, *, reason: str = "populate") -> None:
 
 
 def clear_ingest_tar_hot(day_token: str) -> None:
+  """
+  Clear ingest tar hot.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> clear_ingest_tar_hot("x")  # doctest: +SKIP
+  """
   if not day_token or day_token == "unknown":
     return
   if not archive_members_redis_enabled():
@@ -1886,6 +3302,18 @@ def clear_ingest_tar_hot(day_token: str) -> None:
 
 
 def ingest_tar_hot_for_day(day_token: str) -> bool:
+  """
+  Ingest the tar hot for day.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> ingest_tar_hot_for_day("x")  # doctest: +SKIP
+  """
   if not day_token or not archive_members_redis_enabled():
     return False
   client = get_archive_members_redis_client(required=False)
@@ -1904,7 +3332,18 @@ _SELF_INGEST_TAR_HOT_REASONS = frozenset({
 
 
 def ingest_tar_hot_reason_for_day(day_token: str) -> str:
-  """Return Redis ``ingest_tar_hot`` reason string, or empty when unset."""
+  """
+  Return Redis ``ingest_tar_hot`` reason string, or empty when unset.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> ingest_tar_hot_reason_for_day("x")  # doctest: +SKIP
+  """
   if not day_token or not archive_members_redis_enabled():
     return ""
   client = get_archive_members_redis_client(required=False)
@@ -1915,7 +3354,18 @@ def ingest_tar_hot_reason_for_day(day_token: str) -> str:
 
 
 def ingest_tar_hot_is_self_populate_only(day_token: str) -> bool:
-  """True when hot is set solely by populate wait/enqueue/prewarm (not append)."""
+  """
+  True when hot is set solely by populate wait/enqueue/prewarm (not append).
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> ingest_tar_hot_is_self_populate_only("x")  # doctest: +SKIP
+  """
   if not day_token or not ingest_tar_hot_for_day(day_token):
     return False
   if archive_append_inflight_for_day(day_token):
@@ -1925,7 +3375,18 @@ def ingest_tar_hot_is_self_populate_only(day_token: str) -> bool:
 
 
 def _calendar_day_hint_from_stats_path(path: str) -> str:
-  """Best-effort calendar day from a raw stats path basename epoch."""
+  """
+  Best-effort calendar day from a raw stats path basename epoch.
+  
+  Args:
+    path (str): String for path.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _calendar_day_hint_from_stats_path("x")  # doctest: +SKIP
+  """
   if not path:
     return ""
   base = os.path.basename(str(path))
@@ -1941,8 +3402,23 @@ def _calendar_day_hint_from_stats_path(path: str) -> str:
     return ""
 
 
-def _calendar_days_for_idle_skip_path(path: str, tgz_archive_dir: str = "") -> list:
-  """Calendar days to check for idle-skip for one pending path (not global)."""
+def _calendar_days_for_idle_skip_path(
+  path: str,
+  tgz_archive_dir: str = "",
+) -> list:
+  """
+  Calendar days to check for idle-skip for one pending path (not global).
+  
+  Args:
+    path (str): String for path.
+    tgz_archive_dir (str): String for tgz archive dir.
+  
+  Returns:
+    list: list produced by this call.
+  
+  Examples:
+    >>> _calendar_days_for_idle_skip_path("x", "x")  # doctest: +SKIP
+  """
   days = []
   seen = set()
   day = _calendar_day_hint_from_stats_path(path)
@@ -1968,19 +3444,30 @@ def _calendar_days_for_idle_skip_path(path: str, tgz_archive_dir: str = "") -> l
 
 
 def idle_pool_recover_skip_reason_for_paths(
-    paths,
-    tgz_archive_dir: str = "",
+  paths: Any,
+  tgz_archive_dir: str = "",
 ) -> str:
-  """Non-empty reason when idle-pool recover/ghost fatal should be skipped.
-
+  """
+  Non-empty reason when idle-pool recover/ghost fatal should be skipped.
+  
   Workers blocked in ``populate_wait`` look wchan-idle while ``pending_async``
   still holds live work — recovering within ``IDLE_POOL_RECOVER_WALL_S`` causes
   false-positive exit 124.
-
+  
   Only calendar days derived from **pending paths** (filename epoch and, when
   ``tgz_archive_dir`` is set, tar-aligned derive) are checked. Unrelated days
   with ``ingest_tar_hot`` (e.g. day-close June while July is pending) must not
   skip recover/redispatch for the pending work.
+  
+  Args:
+    paths (Any): Iterable of filesystem paths as strings.
+    tgz_archive_dir (str): String for tgz archive dir.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> idle_pool_recover_skip_reason_for_paths(None, "x")  # doctest: +SKIP
   """
   for path in paths or ():
     for day in _calendar_days_for_idle_skip_path(path, tgz_archive_dir):
@@ -1995,11 +3482,39 @@ def idle_pool_recover_skip_reason_for_paths(
 
 
 def _archive_append_inflight_key(day_token: str) -> str:
+  """
+  Internal helper to archive the append inflight key.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _archive_append_inflight_key("x")  # doctest: +SKIP
+  """
   return "%s:%s" % (_ARCHIVE_APPEND_INFLIGHT_PREFIX, day_token)
 
 
-def set_archive_append_inflight(day_token: str, *, reason: str = "archive_job") -> None:
-  """Signal archive-pool append job in flight for a calendar day."""
+def set_archive_append_inflight(
+  day_token: str,
+  *,
+  reason: str = "archive_job",
+) -> None:
+  """
+  Signal archive-pool append job in flight for a calendar day.
+  
+  Args:
+    day_token (str): String for day token.
+    reason (str): String for reason.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> set_archive_append_inflight("x", "x")  # doctest: +SKIP
+  """
   if not day_token or day_token == "unknown":
     return
   if not archive_members_redis_enabled():
@@ -2015,6 +3530,18 @@ def set_archive_append_inflight(day_token: str, *, reason: str = "archive_job") 
 
 
 def clear_archive_append_inflight(day_token: str) -> None:
+  """
+  Clear archive append inflight.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> clear_archive_append_inflight("x")  # doctest: +SKIP
+  """
   if not day_token or day_token == "unknown":
     return
   if not archive_members_redis_enabled():
@@ -2026,6 +3553,18 @@ def clear_archive_append_inflight(day_token: str) -> None:
 
 
 def archive_append_inflight_for_day(day_token: str) -> bool:
+  """
+  Archive the append inflight for day.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> archive_append_inflight_for_day("x")  # doctest: +SKIP
+  """
   if not day_token or not archive_members_redis_enabled():
     return False
   client = get_archive_members_redis_client(required=False)
@@ -2035,18 +3574,32 @@ def archive_append_inflight_for_day(day_token: str) -> bool:
 
 
 def _populate_scan_should_defer(
-    keys: ArchiveMembersRedisKeys,
-    sealed_path,
-    *,
-    scanning_mutable_tar: bool = False,
+  keys: ArchiveMembersRedisKeys,
+  sealed_path: str,
+  *,
+  scanning_mutable_tar: bool = False,
 ) -> bool:
-  """Defer mutable-tar populate while archive-pool append is in flight.
-
-  ``ingest_tar_hot`` is for janitor yield (``sync-timedb-hot-path-janitor-lock-priority``),
+  """
+  Defer mutable-tar populate while archive-pool append is in flight.
+  
+  ``ingest_tar_hot`` is for janitor yield (``sync-timedb-hot-path-janitor-lock-
+    priority``),
   not for blocking the populate winner that set the flag during chunk prewarm.
-
-  Dirty-tar scans defer on ``archive_append_inflight`` even when a sealed sibling
+  
+  Dirty-tar scans defer on ``archive_append_inflight`` even when a sealed
+    sibling
   path string is known — do not start a losing mutable-tar scan under append.
+  
+  Args:
+    keys (ArchiveMembersRedisKeys): Keys.
+    sealed_path (str): String for sealed path.
+    scanning_mutable_tar (bool): Boolean flag for scanning mutable tar.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _populate_scan_should_defer(None, "x", True)  # doctest: +SKIP
   """
   day_token = keys.day_token
   if not day_token or day_token == "unknown":
@@ -2063,7 +3616,15 @@ def _populate_scan_should_defer(
 
 
 def _daily_tar_restore_lease_seconds() -> int:
-  """Lease TTL for exclusive sealed→tar restore (renewed while decompressing)."""
+  """
+  Lease TTL for exclusive sealed→tar restore (renewed while decompressing).
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> _daily_tar_restore_lease_seconds()  # doctest: +SKIP
+  """
   try:
     return max(60, int(cfg.get_sync_daily_tar_restore_lease_seconds()))
   except Exception:
@@ -2071,16 +3632,28 @@ def _daily_tar_restore_lease_seconds() -> int:
 
 
 def try_acquire_daily_tar_restore(
-    day_token: str,
-    *,
-    reason: str,
-    caller: str,
+  day_token: str,
+  *,
+  reason: str,
+  caller: str,
 ) -> str:
-  """Exclusive ``SET NX EX`` lease for materializing ``{day}.tar`` from sealed.
-
+  """
+  Exclusive ``SET NX EX`` lease for materializing ``{day}.tar`` from sealed.
+  
   Returns the owner lease value on success, or ``""`` when another owner holds
   the key / Redis is unavailable / day token is empty. Callers must only touch
   ``{day}.tar.decomp.tmp`` when this returns a non-empty lease value.
+  
+  Args:
+    day_token (str): String for day token.
+    reason (str): String for reason.
+    caller (str): String for caller.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> try_acquire_daily_tar_restore("x", "x", "x")  # doctest: +SKIP
   """
   if not day_token or day_token == "unknown":
     return ""
@@ -2113,7 +3686,19 @@ def try_acquire_daily_tar_restore(
 
 
 def renew_daily_tar_restore_lease(day_token: str, lease_value: str) -> bool:
-  """Refresh EXPIRE on the restore lease when still owned by ``lease_value``."""
+  """
+  Refresh EXPIRE on the restore lease when still owned by ``lease_value``.
+  
+  Args:
+    day_token (str): String for day token.
+    lease_value (str): String for lease value.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> renew_daily_tar_restore_lease("x", "x")  # doctest: +SKIP
+  """
   if not day_token or not lease_value:
     return False
   if not archive_members_redis_enabled():
@@ -2148,15 +3733,26 @@ def renew_daily_tar_restore_lease(day_token: str, lease_value: str) -> bool:
 
 
 def set_daily_tar_restore_in_progress(
-    day_token: str,
-    *,
-    reason: str,
-    caller: str,
+  day_token: str,
+  *,
+  reason: str,
+  caller: str,
 ) -> str:
-  """Acquire exclusive restore lease; return owner token or ``""`` on conflict.
-
-  Prefer ``try_acquire_daily_tar_restore`` at new call sites. This wrapper
+  """
+  Acquire exclusive restore lease; return owner token or ``""`` on conflict.
+  
   remains for tests and older callers; it never overwrites an existing lease.
+  
+  Args:
+    day_token (str): String for day token.
+    reason (str): String for reason.
+    caller (str): String for caller.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> set_daily_tar_restore_in_progress("x", "x", "x")  # doctest: +SKIP
   """
   return try_acquire_daily_tar_restore(
       day_token,
@@ -2166,13 +3762,27 @@ def set_daily_tar_restore_in_progress(
 
 
 def clear_daily_tar_restore_in_progress(
-    day_token: str,
-    *,
-    token: str = "",
-    ok: bool = True,
-    reason: str = "",
+  day_token: str,
+  *,
+  token: str = "",
+  ok: bool = True,
+  reason: str = "",
 ) -> None:
-  """Compare-and-del restore lease. Non-owner / empty token is a no-op."""
+  """
+  Compare-and-del restore lease. Non-owner / empty token is a no-op.
+  
+  Args:
+    day_token (str): String for day token.
+    token (str): String for token.
+    ok (bool): Boolean flag for ok.
+    reason (str): String for reason.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> clear_daily_tar_restore_in_progress("x", "x", True, "x")
+  """
   if not day_token or day_token == "unknown":
     return
   cleared = False
@@ -2223,6 +3833,18 @@ def clear_daily_tar_restore_in_progress(
 
 
 def daily_tar_restore_in_progress_for_day(day_token: str) -> bool:
+  """
+  Daily tar restore in progress for day.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> daily_tar_restore_in_progress_for_day("x")  # doctest: +SKIP
+  """
   if not day_token or not archive_members_redis_enabled():
     return False
   client = get_archive_members_redis_client(required=False)
@@ -2232,6 +3854,18 @@ def daily_tar_restore_in_progress_for_day(day_token: str) -> bool:
 
 
 def daily_tar_restore_reason_for_day(day_token: str) -> str:
+  """
+  Daily tar restore reason for day.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> daily_tar_restore_reason_for_day("x")  # doctest: +SKIP
+  """
   if not day_token or not archive_members_redis_enabled():
     return ""
   client = get_archive_members_redis_client(required=False)
@@ -2243,8 +3877,24 @@ def daily_tar_restore_reason_for_day(day_token: str) -> str:
   return str(raw).split(":", 1)[0]
 
 
-def wait_for_daily_tar_restore_before_populate(tar_path: str, *, log_fn=log_print) -> None:
-  """Block populate fnctl read while daily tar restore is in progress for this day."""
+def wait_for_daily_tar_restore_before_populate(
+  tar_path: str,
+  *,
+  log_fn: Any = log_print,
+) -> None:
+  """
+  Block populate fnctl read while daily tar restore is in progress for this day.
+  
+  Args:
+    tar_path (str): String for tar path.
+    log_fn (Any): Callable invoked by this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> wait_for_daily_tar_restore_before_populate("x", None)  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       calendar_date_from_daily_tar_path,
   )
@@ -2273,11 +3923,34 @@ def wait_for_daily_tar_restore_before_populate(tar_path: str, *, log_fn=log_prin
 
 
 def _populate_queued_key(day_token: str) -> str:
+  """
+  Internal helper to populate the queued key.
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _populate_queued_key("x")  # doctest: +SKIP
+  """
   return "%s:%s" % (_POPULATE_QUEUED_PREFIX, day_token)
 
 
 def clear_populate_queued(day_token: str) -> None:
-  """Clear the per-day populate enqueue NX key (claim / completion / failure)."""
+  """
+  Clear the per-day populate enqueue NX key (claim / completion / failure).
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> clear_populate_queued("x")  # doctest: +SKIP
+  """
   if not day_token or day_token == "unknown":
     return
   if not archive_members_redis_enabled():
@@ -2291,8 +3964,23 @@ def clear_populate_queued(day_token: str) -> None:
     pass
 
 
-def enqueue_archive_members_populate(canonical_path, day_token):
-  """Enqueue one calendar day for populate-pool workers (deduped per day)."""
+def enqueue_archive_members_populate(
+  canonical_path: str,
+  day_token: Any,
+) -> Any:
+  """
+  Enqueue one calendar day for populate-pool workers (deduped per day).
+  
+  Args:
+    canonical_path (str): String for canonical path.
+    day_token (Any): Day token passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> enqueue_archive_members_populate("x", None)  # doctest: +SKIP
+  """
   if not day_token or day_token == "unknown":
     return False
   set_ingest_tar_hot(day_token, reason="populate_enqueue")
@@ -2308,7 +3996,19 @@ def enqueue_archive_members_populate(canonical_path, day_token):
   return True
 
 
-def _parse_populate_queue_job(raw):
+def _parse_populate_queue_job(raw: Any) -> Any:
+  """
+  Internal helper to parse the populate queue job.
+  
+  Args:
+    raw (Any): Raw passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _parse_populate_queue_job(None)  # doctest: +SKIP
+  """
   try:
     job = json.loads(raw)
   except (TypeError, ValueError):
@@ -2319,7 +4019,18 @@ def _parse_populate_queue_job(raw):
 
 
 def _populate_prefer_reason_rank(day_token: str) -> int:
-  """Return prefer rank for a day (0 = not ingest-hot / cold day-close)."""
+  """
+  Return prefer rank for a day (0 = not ingest-hot / cold day-close).
+  
+  Args:
+    day_token (str): String for day token.
+  
+  Returns:
+    int: int produced by this call.
+  
+  Examples:
+    >>> _populate_prefer_reason_rank("x")  # doctest: +SKIP
+  """
   if not day_token:
     return 0
   reason = ingest_tar_hot_reason_for_day(day_token)
@@ -2328,12 +4039,27 @@ def _populate_prefer_reason_rank(day_token: str) -> int:
   return int(_POPULATE_PREFER_REASON_RANK.get(reason, 0))
 
 
-def _try_pop_populate_prefer_ingest_hot(client, *, peek_n=None):
-  """Pop highest-rank ingest-hot job within a bounded FIFO peek, or None.
-
+def _try_pop_populate_prefer_ingest_hot(
+  client: Any,
+  *,
+  peek_n: Any | None = None,
+) -> Any:
+  """
+  Pop highest-rank ingest-hot job within a bounded FIFO peek, or None.
+  
   LPUSH + BRPOP is oldest-first. Day-close cold jobs share this queue with
   chunk prewarm; prefer ``chunk_prewarm`` / ``populate_wait`` over bare
   ``populate_enqueue``, and any ingest-hot over days with no hot key.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    peek_n (Any | None): One of ``Any``, ``None``.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _try_pop_populate_prefer_ingest_hot(None, None)  # doctest: +SKIP
   """
   peek_n = max(1, int(peek_n if peek_n is not None else _POPULATE_QUEUE_PREFER_PEEK_N))
   lrange = getattr(client, "lrange", None)
@@ -2373,8 +4099,19 @@ def _try_pop_populate_prefer_ingest_hot(client, *, peek_n=None):
   return best_job
 
 
-def _claim_populate_queue_job(job):
-  """Clear populate_queued NX when a job is claimed from the queue."""
+def _claim_populate_queue_job(job: Any) -> Any:
+  """
+  Clear populate_queued NX when a job is claimed from the queue.
+  
+  Args:
+    job (Any): Job record (Django ``job_data`` or job-like mapping).
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _claim_populate_queue_job(None)  # doctest: +SKIP
+  """
   if not isinstance(job, dict):
     return job
   day_token = str(job.get("day_token") or "")
@@ -2383,15 +4120,25 @@ def _claim_populate_queue_job(job):
   return job
 
 
-def archive_members_populate_queue_brpop(*, timeout_s=1.0):
-  """Blocking pop for populate-pool worker; returns job dict or None.
-
+def archive_members_populate_queue_brpop(*, timeout_s: float = 1.0) -> Any:
+  """
+  Blocking pop for populate-pool worker; returns job dict or None.
+  
   Prefers ingest-hot calendar days (``chunk_prewarm`` / ``populate_wait`` over
   ``populate_enqueue``) within a bounded peek so day-close cold populate cannot
   indefinitely starve July chunk prewarm on the shared FIFO queue.
-
+  
   Clears ``populate_queued`` NX on successful claim so a dead populate worker
   cannot strand re-enqueue for the NX TTL (~1h).
+  
+  Args:
+    timeout_s (float): Floating-point value for timeout s.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> archive_members_populate_queue_brpop(0)  # doctest: +SKIP
   """
   client = get_archive_members_redis_client(required=True)
   preferred = _try_pop_populate_prefer_ingest_hot(client)
@@ -2406,8 +4153,18 @@ def archive_members_populate_queue_brpop(*, timeout_s=1.0):
   return _claim_populate_queue_job(_parse_populate_queue_job(raw))
 
 
-def _ensure_populate_pool_running_for_enqueue():
-  """Best-effort MainThread ensure/restart before enqueue (no-op in spawn workers)."""
+def _ensure_populate_pool_running_for_enqueue() -> Any:
+  """
+  Best-effort MainThread ensure/restart before enqueue (no-op in spawn workers).
+  
+  Returns:
+    Any: Open return polymorphism from
+    ``_ensure_populate_pool_running_for_enqueue``: concrete type depends on
+    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+  
+  Examples:
+    >>> _ensure_populate_pool_running_for_enqueue()  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
       get_populate_pool_controller,
   )
@@ -2426,15 +4183,29 @@ def _ensure_populate_pool_running_for_enqueue():
   return controller
 
 
-def _enqueue_or_run_archive_members_populate(canonical, day_token):
-  """Enqueue populate-pool work, or run inline only when not ingest/archive pool.
-
+def _enqueue_or_run_archive_members_populate(
+  canonical: Any,
+  day_token: Any,
+) -> None:
+  """
+  Enqueue populate-pool work, or run inline only when not ingest/archive pool.
+  
   Ingest-pool and archive-pool must never fall through to
   ``execute_archive_members_populate_for_canonical`` (sealed stream under
   SIGALRM). Spawn workers do not share MainThread's PopulatePoolController
   global — they always enqueue to Redis and wait; MainThread populate-pool
   workers BRPOP. When MainThread's controller is down, ensure/restart then
   enqueue; only fall back to inline execute when pool kind is unset (tests).
+  
+  Args:
+    canonical (Any): Canonical passed to this helper.
+    day_token (Any): Day token passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _enqueue_or_run_archive_members_populate(None, None)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       execute_archive_members_populate_for_canonical,
@@ -2458,12 +4229,27 @@ def _enqueue_or_run_archive_members_populate(canonical, day_token):
 
 
 def request_archive_members_populate_and_wait(
-    archive_compressed_path,
-):
-  """Wait for warm Redis member map; enqueue populate-pool work when cold.
-
+  archive_compressed_path: str,
+) -> Any:
+  """
+  Wait for warm Redis member map; enqueue populate-pool work when cold.
+  
   Ingest/archive pool callers must use this instead of running sealed streams
   locally. Populate wait paths ignore per-file ingest deadlines.
+  
+  Args:
+    archive_compressed_path (str): String for archive compressed path.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Raises:
+    ArchiveMembersRedisUnavailableError: Raised when
+    ``request_archive_members_populate_and_wait`` hits a
+    ``ArchiveMembersRedisUnavailableError`` failure path.
+  
+  Examples:
+    >>> request_archive_members_populate_and_wait("x")  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       _daily_archive_members_cache_key,

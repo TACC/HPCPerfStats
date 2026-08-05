@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Drain the configured RabbitMQ queue once into the archive (non-daemon).
+"""
+Drain the configured RabbitMQ queue once into the archive (non-daemon).
 
 Uses the same archive write path as ``listend.py`` but ``basic_get`` loops until
 the queue is empty, then exits. Intended for tests and one-shot backfills; does
 not take ``listend_lock``.
 """
+from __future__ import annotations
+
+from typing import Any
+
 import sys
 
 import pika
@@ -14,8 +19,18 @@ from hpcperfstats.listend import append_monitor_payload_to_archive
 from hpcperfstats.dbload.lib.print_utils import log_print
 
 
-def drain_queue_to_archive():
-  """Pull all messages from ``cfg.get_rmq_queue()`` and append each to archive."""
+def drain_queue_to_archive() -> Any:
+  """
+  Pull all messages from ``cfg.get_rmq_queue()`` and append each to archive.
+  
+  Returns:
+    Any: Open return polymorphism from ``drain_queue_to_archive``: concrete
+    type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> drain_queue_to_archive()  # doctest: +SKIP
+  """
   parameters = pika.ConnectionParameters(cfg.get_rmq_server())
   connection = pika.BlockingConnection(parameters)
   channel = connection.channel()
@@ -50,7 +65,16 @@ def drain_queue_to_archive():
   return drained
 
 
-def main():
+def main() -> None:
+  """
+  Run this module's command-line entrypoint.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> main()  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.process_title import set_script_process_title
 
   set_script_process_title()

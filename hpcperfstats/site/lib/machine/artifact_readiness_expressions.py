@@ -1,4 +1,5 @@
-"""PostgreSQL SQL expressions matching persisted artifact input fingerprints.
+"""
+PostgreSQL SQL expressions matching persisted artifact input fingerprints.
 
 Used by ``update_metrics._jobs_queryset`` to include jobs whose metrics are
 complete but plot or job-detail artifacts are missing or stale (fingerprint
@@ -6,6 +7,8 @@ mismatch). Must stay aligned with ``compute_plot_input_fingerprint`` and
 ``compute_detail_input_fingerprint``.
 """
 from __future__ import annotations
+
+from typing import Any
 
 import bokeh
 from django.db.models import CharField, IntegerField
@@ -20,11 +23,38 @@ from hpcperfstats.site.lib.machine.models import job_data, job_detail_artifact
 
 
 class PlotArtifactInputFingerprintHex(Expression):
-  """``encode(sha256(convert_to(canonical_json, 'UTF8'))), 'hex')`` for the outer ``job_data`` row."""
+  """
+  ``encode(sha256(convert_to(canonical_json, 'UTF8'))), 'hex')`` for the outer.
+  
+  Attributes:
+    _live_expr: Attribute.
+    host_suffix: Attribute.
+    outer_model: Attribute.
+  """
 
   allowed_default = True
 
-  def __init__(self, host_suffix: str, *, outer_model=None, output_field=None):
+  def __init__(
+    self,
+    host_suffix: str,
+    *,
+    outer_model: Any | None = None,
+    output_field: Any | None = None,
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      host_suffix (str): String for host suffix.
+      outer_model (Any | None): One of ``Any``, ``None``.
+      output_field (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> PlotArtifactInputFingerprintHex("x", None, None)  # doctest: +SKIP
+    """
     if output_field is None:
       output_field = CharField(max_length=64)
     super().__init__(output_field=output_field)
@@ -34,20 +64,55 @@ class PlotArtifactInputFingerprintHex(Expression):
         host_suffix, outer_model=self.outer_model
     )
 
-  def __repr__(self):
+  def __repr__(self) -> Any:
+    """
+    Return the official string representation.
+    
+    Returns:
+      Any: Open return polymorphism from ``__repr__``: concrete type depends
+      on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __repr__()  # doctest: +SKIP
+    """
     return "{}({!r})".format(self.__class__.__name__, self.host_suffix)
 
-  def get_group_by_cols(self):
+  def get_group_by_cols(self) -> Any:
+    """
+    Return the group by cols.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> PlotArtifactInputFingerprintHex().get_group_by_cols()  # doctest: +SKIP
+    """
     return [self]
 
   def resolve_expression(
-      self,
-      query=None,
-      allow_joins=True,
-      reuse=None,
-      summarize=False,
-      for_save=False,
-  ):
+    self,
+    query: Any | None = None,
+    allow_joins: bool = True,
+    reuse: Any | None = None,
+    summarize: bool = False,
+    for_save: bool = False,
+  ) -> Any:
+    """
+    Resolve the expression.
+    
+    Args:
+      query (Any | None): One of ``Any``, ``None``.
+      allow_joins (bool): Boolean flag for allow joins.
+      reuse (Any | None): One of ``Any``, ``None``.
+      summarize (bool): Boolean flag for summarize.
+      for_save (bool): Boolean flag for for save.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> resolve_expression(0)  # doctest: +SKIP
+    """
     if query.model:
       sql_lower = self._resolve_hint_sql().lower()
       for parent in query.model._meta.all_parents:
@@ -61,7 +126,16 @@ class PlotArtifactInputFingerprintHex(Expression):
         query, allow_joins, reuse, summarize, for_save
     )
 
-  def _resolve_hint_sql(self):
+  def _resolve_hint_sql(self) -> Any:
+    """
+    Internal helper to resolve the hint sql.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> PlotArtifactInputFingerprintHex()._resolve_hint_sql()  # doctest: +SKIP
+    """
     meta = self.outer_model._meta
     return " ".join(
         meta.get_field(name).column
@@ -76,7 +150,24 @@ class PlotArtifactInputFingerprintHex(Expression):
         )
     )
 
-  def as_sql(self, compiler, connection):
+  def as_sql(self, compiler: Any, connection: Any) -> Any:
+    """
+    As sql.
+    
+    Args:
+      compiler (Any): Compiler passed to this helper.
+      connection (Any): Live handle (pool, client, or connection).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Raises:
+      NotImplementedError: Raised when ``as_sql`` hits a
+      ``NotImplementedError`` failure path.
+    
+    Examples:
+      >>> PlotArtifactInputFingerprintHex().as_sql(None, None)  # doctest: +SKIP
+    """
     if connection.vendor != "postgresql":
       raise NotImplementedError(
           "{} requires PostgreSQL (got {!r})".format(
@@ -127,30 +218,88 @@ class PlotArtifactInputFingerprintHex(Expression):
 
 
 class DetailArtifactInputFingerprintHex(Expression):
-  """SHA256 hex for detail artifacts (``compute_detail_input_fingerprint``)."""
+  """
+  SHA256 hex for detail artifacts (``compute_detail_input_fingerprint``).
+  
+  Attributes:
+    outer_model: Attribute.
+  """
 
   allowed_default = True
 
-  def __init__(self, *, outer_model=None, output_field=None):
+  def __init__(
+    self,
+    *,
+    outer_model: Any | None = None,
+    output_field: Any | None = None,
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      outer_model (Any | None): One of ``Any``, ``None``.
+      output_field (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> DetailArtifactInputFingerprintHex(None, None)  # doctest: +SKIP
+    """
     if output_field is None:
       output_field = CharField(max_length=64)
     super().__init__(output_field=output_field)
     self.outer_model = outer_model or job_data
 
-  def __repr__(self):
+  def __repr__(self) -> Any:
+    """
+    Return the official string representation.
+    
+    Returns:
+      Any: Open return polymorphism from ``__repr__``: concrete type depends
+      on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __repr__()  # doctest: +SKIP
+    """
     return "{}()".format(self.__class__.__name__)
 
-  def get_group_by_cols(self):
+  def get_group_by_cols(self) -> Any:
+    """
+    Return the group by cols.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> DetailArtifactInputFingerprintHex().get_group_by_cols()
+    """
     return [self]
 
   def resolve_expression(
-      self,
-      query=None,
-      allow_joins=True,
-      reuse=None,
-      summarize=False,
-      for_save=False,
-  ):
+    self,
+    query: Any | None = None,
+    allow_joins: bool = True,
+    reuse: Any | None = None,
+    summarize: bool = False,
+    for_save: bool = False,
+  ) -> Any:
+    """
+    Resolve the expression.
+    
+    Args:
+      query (Any | None): One of ``Any``, ``None``.
+      allow_joins (bool): Boolean flag for allow joins.
+      reuse (Any | None): One of ``Any``, ``None``.
+      summarize (bool): Boolean flag for summarize.
+      for_save (bool): Boolean flag for for save.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> resolve_expression(0)  # doctest: +SKIP
+    """
     if query.model:
       sql_lower = self._resolve_hint_sql().lower()
       for parent in query.model._meta.all_parents:
@@ -164,7 +313,16 @@ class DetailArtifactInputFingerprintHex(Expression):
         query, allow_joins, reuse, summarize, for_save
     )
 
-  def _resolve_hint_sql(self):
+  def _resolve_hint_sql(self) -> Any:
+    """
+    Internal helper to resolve the hint sql.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> DetailArtifactInputFingerprintHex()._resolve_hint_sql()
+    """
     meta = self.outer_model._meta
     return " ".join(
         meta.get_field(name).column
@@ -176,7 +334,24 @@ class DetailArtifactInputFingerprintHex(Expression):
         )
     )
 
-  def as_sql(self, compiler, connection):
+  def as_sql(self, compiler: Any, connection: Any) -> Any:
+    """
+    As sql.
+    
+    Args:
+      compiler (Any): Compiler passed to this helper.
+      connection (Any): Live handle (pool, client, or connection).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Raises:
+      NotImplementedError: Raised when ``as_sql`` hits a
+      ``NotImplementedError`` failure path.
+    
+    Examples:
+      >>> DetailArtifactInputFingerprintHex().as_sql(None, None)  # doctest: +SKIP
+    """
     if connection.vendor != "postgresql":
       raise NotImplementedError(
           "{} requires PostgreSQL (got {!r})".format(
@@ -225,30 +400,88 @@ class DetailArtifactInputFingerprintHex(Expression):
 
 
 class HostDataSchemaKeyCount(Expression):
-  """Scalar: number of keys in ``job_data.host_data_schema_json`` (PostgreSQL ``jsonb``)."""
+  """
+  Scalar: number of keys in ``job_data.host_data_schema_json`` (PostgreSQL.
+  
+  Attributes:
+    outer_model: Attribute.
+  """
 
   allowed_default = True
 
-  def __init__(self, *, outer_model=None, output_field=None):
+  def __init__(
+    self,
+    *,
+    outer_model: Any | None = None,
+    output_field: Any | None = None,
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      outer_model (Any | None): One of ``Any``, ``None``.
+      output_field (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> HostDataSchemaKeyCount(None, None)  # doctest: +SKIP
+    """
     if output_field is None:
       output_field = IntegerField()
     super().__init__(output_field=output_field)
     self.outer_model = outer_model or job_data
 
-  def __repr__(self):
+  def __repr__(self) -> Any:
+    """
+    Return the official string representation.
+    
+    Returns:
+      Any: Open return polymorphism from ``__repr__``: concrete type depends
+      on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __repr__()  # doctest: +SKIP
+    """
     return "{}()".format(self.__class__.__name__)
 
-  def get_group_by_cols(self):
+  def get_group_by_cols(self) -> Any:
+    """
+    Return the group by cols.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> HostDataSchemaKeyCount().get_group_by_cols()  # doctest: +SKIP
+    """
     return [self]
 
   def resolve_expression(
-      self,
-      query=None,
-      allow_joins=True,
-      reuse=None,
-      summarize=False,
-      for_save=False,
-  ):
+    self,
+    query: Any | None = None,
+    allow_joins: bool = True,
+    reuse: Any | None = None,
+    summarize: bool = False,
+    for_save: bool = False,
+  ) -> Any:
+    """
+    Resolve the expression.
+    
+    Args:
+      query (Any | None): One of ``Any``, ``None``.
+      allow_joins (bool): Boolean flag for allow joins.
+      reuse (Any | None): One of ``Any``, ``None``.
+      summarize (bool): Boolean flag for summarize.
+      for_save (bool): Boolean flag for for save.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> resolve_expression(0)  # doctest: +SKIP
+    """
     if query.model:
       query.resolve_ref(
           "host_data_schema_json", allow_joins, reuse, summarize
@@ -257,7 +490,24 @@ class HostDataSchemaKeyCount(Expression):
         query, allow_joins, reuse, summarize, for_save
     )
 
-  def as_sql(self, compiler, connection):
+  def as_sql(self, compiler: Any, connection: Any) -> Any:
+    """
+    As sql.
+    
+    Args:
+      compiler (Any): Compiler passed to this helper.
+      connection (Any): Live handle (pool, client, or connection).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Raises:
+      NotImplementedError: Raised when ``as_sql`` hits a
+      ``NotImplementedError`` failure path.
+    
+    Examples:
+      >>> HostDataSchemaKeyCount().as_sql(None, None)  # doctest: +SKIP
+    """
     if connection.vendor != "postgresql":
       raise NotImplementedError(
           "{} requires PostgreSQL (got {!r})".format(
@@ -275,30 +525,88 @@ class HostDataSchemaKeyCount(Expression):
 
 
 class TypeDetailFreshFingerprintRowCount(Expression):
-  """Count ``type_detail`` rows whose scope is in the job schema and FP matches."""
+  """
+  Count ``type_detail`` rows whose scope is in the job schema and FP matches.
+  
+  Attributes:
+    outer_model: Attribute.
+  """
 
   allowed_default = True
 
-  def __init__(self, *, outer_model=None, output_field=None):
+  def __init__(
+    self,
+    *,
+    outer_model: Any | None = None,
+    output_field: Any | None = None,
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      outer_model (Any | None): One of ``Any``, ``None``.
+      output_field (Any | None): One of ``Any``, ``None``.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> TypeDetailFreshFingerprintRowCount(None, None)  # doctest: +SKIP
+    """
     if output_field is None:
       output_field = IntegerField()
     super().__init__(output_field=output_field)
     self.outer_model = outer_model or job_data
 
-  def __repr__(self):
+  def __repr__(self) -> Any:
+    """
+    Return the official string representation.
+    
+    Returns:
+      Any: Open return polymorphism from ``__repr__``: concrete type depends
+      on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+    
+    Examples:
+      >>> __repr__()  # doctest: +SKIP
+    """
     return "{}()".format(self.__class__.__name__)
 
-  def get_group_by_cols(self):
+  def get_group_by_cols(self) -> Any:
+    """
+    Return the group by cols.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> TypeDetailFreshFingerprintRowCount().get_group_by_cols()
+    """
     return [self]
 
   def resolve_expression(
-      self,
-      query=None,
-      allow_joins=True,
-      reuse=None,
-      summarize=False,
-      for_save=False,
-  ):
+    self,
+    query: Any | None = None,
+    allow_joins: bool = True,
+    reuse: Any | None = None,
+    summarize: bool = False,
+    for_save: bool = False,
+  ) -> Any:
+    """
+    Resolve the expression.
+    
+    Args:
+      query (Any | None): One of ``Any``, ``None``.
+      allow_joins (bool): Boolean flag for allow joins.
+      reuse (Any | None): One of ``Any``, ``None``.
+      summarize (bool): Boolean flag for summarize.
+      for_save (bool): Boolean flag for for save.
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Examples:
+      >>> resolve_expression(0)  # doctest: +SKIP
+    """
     if query.model:
       for name in (
           "jid",
@@ -312,7 +620,24 @@ class TypeDetailFreshFingerprintRowCount(Expression):
         query, allow_joins, reuse, summarize, for_save
     )
 
-  def as_sql(self, compiler, connection):
+  def as_sql(self, compiler: Any, connection: Any) -> Any:
+    """
+    As sql.
+    
+    Args:
+      compiler (Any): Compiler passed to this helper.
+      connection (Any): Live handle (pool, client, or connection).
+    
+    Returns:
+      Any: Value produced by this call (type depends on inputs).
+    
+    Raises:
+      NotImplementedError: Raised when ``as_sql`` hits a
+      ``NotImplementedError`` failure path.
+    
+    Examples:
+      >>> TypeDetailFreshFingerprintRowCount().as_sql(None, None)
+    """
     if connection.vendor != "postgresql":
       raise NotImplementedError(
           "{} requires PostgreSQL (got {!r})".format(

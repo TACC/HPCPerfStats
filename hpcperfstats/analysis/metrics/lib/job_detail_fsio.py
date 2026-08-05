@@ -1,4 +1,23 @@
-"""Job-detail FSIO totals (Lustre llite vs NFS) for metrics_data; mirrors job_detail artifact ``fsio``."""
+"""
+Job-detail FSIO totals (Lustre llite vs NFS) for metrics_data; mirrors.
+
+job_detail artifact ``fsio``.
+
+Attributes:
+  NO_FSIO_LLITE_DATA: ``NO_FSIO_LLITE_DATA``.
+  NO_FSIO_LLITE_PEAK_IOPS: ``NO_FSIO_LLITE_PEAK_IOPS``.
+  NO_FSIO_LLITE_PEAK_MB_S: ``NO_FSIO_LLITE_PEAK_MB_S``.
+  NO_FSIO_NFS_DATA: ``NO_FSIO_NFS_DATA``.
+  NO_FSIO_NFS_PEAK_IOPS: ``NO_FSIO_NFS_PEAK_IOPS``.
+  NO_FSIO_NFS_PEAK_MB_S: ``NO_FSIO_NFS_PEAK_MB_S``.
+  NO_FSIO_NFS_WHEN_LLITE: ``NO_FSIO_NFS_WHEN_LLITE``.
+  _BYTES_TO_MB: ``_BYTES_TO_MB``.
+  _FSIO_METRICS: ``_FSIO_METRICS``.
+  _NFS_IOPS_EVENTS: ``_NFS_IOPS_EVENTS``.
+  _NFS_READ_EVENTS: ``_NFS_READ_EVENTS``.
+  _NFS_WRITE_EVENTS: ``_NFS_WRITE_EVENTS``.
+  logger: ``logger``.
+"""
 from __future__ import annotations
 
 import logging
@@ -43,17 +62,42 @@ _FSIO_METRICS: Tuple[Tuple[str, str, str], ...] = (
 
 
 def fsio_job_detail_catalog() -> Tuple[Tuple[str, str, str], ...]:
-  """(metric, type, units) for catalog and compute_metrics."""
+  """
+  (metric, type, units) for catalog and compute_metrics.
+  
+  Returns:
+    Tuple[Tuple[str, str, str], ...]: Tuple[Tuple[str, str, str], ...]
+    produced by this call.
+  
+  Examples:
+    >>> fsio_job_detail_catalog()  # doctest: +SKIP
+  """
   return _FSIO_METRICS
 
 
 def _max_job_wide_combined_read_write_mb_s(
-    jt: Any,
-    typ: str,
-    read_events: Tuple[str, ...],
-    write_events: Tuple[str, ...],
+  jt: Any,
+  typ: str,
+  read_events: Tuple[str, ...],
+  write_events: Tuple[str, ...],
 ) -> Optional[float]:
-  """Peak aggregate client MB/s: max over time of (read_mb/s + write_mb/s), summed across hosts."""
+  """
+  Peak aggregate client MB/s: max over time of (read_mb/s + write_mb/s), summed.
+  
+    across hosts.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+    typ (str): String for typ.
+    read_events (Tuple[str, ...]): Sequence for read events.
+    write_events (Tuple[str, ...]): Sequence for write events.
+  
+  Returns:
+    Optional[float]: Optional[float] — the result, or None when unavailable.
+  
+  Examples:
+    >>> _max_job_wide_combined_read_write_mb_s(None, "x", [], [])
+  """
   try:
     rdf = jt.get_aggregate_df(typ, "arc", list(read_events), conv=_BYTES_TO_MB)
     wdf = jt.get_aggregate_df(typ, "arc", list(write_events), conv=_BYTES_TO_MB)
@@ -87,12 +131,28 @@ def _max_job_wide_combined_read_write_mb_s(
 
 
 def _max_job_wide_arc_sum(
-    jt: Any,
-    typ: str,
-    events: Tuple[str, ...],
-    conv: float = 1.0,
+  jt: Any,
+  typ: str,
+  events: Tuple[str, ...],
+  conv: float = 1.0,
 ) -> Optional[float]:
-  """Peak aggregate IOPS-style rate: max over time of sum(arc) across hosts for ``events``."""
+  """
+  Peak aggregate IOPS-style rate: max over time of sum(arc) across hosts for.
+  
+    ``events``.
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+    typ (str): String for typ.
+    events (Tuple[str, ...]): Sequence for events.
+    conv (float): Floating-point value for conv.
+  
+  Returns:
+    Optional[float]: Optional[float] — the result, or None when unavailable.
+  
+  Examples:
+    >>> _max_job_wide_arc_sum(None, "x", [], 0)  # doctest: +SKIP
+  """
   try:
     df = jt.get_aggregate_df(typ, "arc", list(events), conv=conv)
   except Exception:
@@ -110,7 +170,20 @@ def _max_job_wide_arc_sum(
 
 
 def compute_job_detail_fsio_metric_rows(jt: Any) -> List[Dict[str, Any]]:
-  """Build metrics_data-shaped dicts from ``jid_table`` (dual NFS + Lustre when both present)."""
+  """
+  Build metrics_data-shaped dicts from ``jid_table`` (dual NFS + Lustre when.
+  
+    both present).
+  
+  Args:
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    List[Dict[str, Any]]: List[Dict[str, Any]] produced by this call.
+  
+  Examples:
+    >>> compute_job_detail_fsio_metric_rows(None)  # doctest: +SKIP
+  """
   llite_read: Optional[float] = None
   llite_write: Optional[float] = None
   try:
@@ -197,7 +270,29 @@ def compute_job_detail_fsio_metric_rows(jt: Any) -> List[Dict[str, Any]]:
   return rows
 
 
-def _row(metric: str, row_type: str, units: str, val: Optional[float], reason: Optional[str]):
+def _row(
+  metric: str,
+  row_type: str,
+  units: str,
+  val: Optional[float],
+  reason: Optional[str],
+) -> Any:
+  """
+  Internal helper to handle row.
+  
+  Args:
+    metric (str): String for metric.
+    row_type (str): String for row type.
+    units (str): String for units.
+    val (Optional[float]): Val, or None when absent.
+    reason (Optional[str]): Reason, or None when absent.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _row("x", "x", "x", None, None)  # doctest: +SKIP
+  """
   return {
       "type": row_type,
       "metric": metric,
@@ -208,7 +303,21 @@ def _row(metric: str, row_type: str, units: str, val: Optional[float], reason: O
 
 
 def extend_fsio_payload_lists_with_peaks(fsio: Dict[str, Any], jt: Any) -> None:
-  """Mutate ``fsio`` ``llite`` / ``nfs`` lists from legacy length-2 to ``[r,w,peak_mb_s,peak_iops]``."""
+  """
+  Mutate ``fsio`` ``llite`` / ``nfs`` lists from legacy length-2 to.
+  
+    ``[r,w,peak_mb_s,peak_iops]``.
+  
+  Args:
+    fsio (Dict[str, Any]): Mapping for fsio.
+    jt (Any): Jt passed to this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> extend_fsio_payload_lists_with_peaks({}, None)  # doctest: +SKIP
+  """
   specs: Tuple[Tuple[str, Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]], ...] = (
       ("llite", LLITE_READ_BYTES_EVENTS, LLITE_WRITE_BYTES_EVENTS, LLITE_METADATA_IOPS_EVENTS),
       ("nfs", _NFS_READ_EVENTS, _NFS_WRITE_EVENTS, _NFS_IOPS_EVENTS),

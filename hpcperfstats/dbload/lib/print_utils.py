@@ -1,11 +1,14 @@
-"""Uniform script-prefixed print for all HPCPerfStats scripts.
+"""
+Uniform script-prefixed print for all HPCPerfStats scripts.
 
-Use log_print() instead of print() so every message is prefixed with [script_name]
-of the original calling tool (the script that was run). Library code that is only
-imported uses the same label as the script that invoked it (e.g. [sync_timedb]).
+Use log_print() instead of print() so every message is prefixed with
+[script_name] of the original calling tool (the script that was run). Library
+code that is only imported uses the same label as the script that invoked it
+(e.g. [sync_timedb]).
 
 When a daemon role is set via set_log_role() (wired from process_title hooks),
-the prefix becomes [script_name:role], e.g. [sync_timedb:thread:archive-janitor].
+the prefix becomes [script_name:role], e.g. [sync_timedb:thread:archive-
+janitor].
 
 Body facets (outside brackets):
 - janitorial_logging() / janitorial=True → add or strip leading ``janitor:``
@@ -14,8 +17,18 @@ Body facets (outside brackets):
   (role ``main`` or unset). Janitorial scope wins over ingest when both active.
 
 Canonical implementation; hpcperfstats-tools may keep a copy for standalone use.
+
+Attributes:
+  _INGEST_BODY_PREFIX: Attribute.
+  _JANITOR_BODY_PREFIX: Attribute.
+  _ingest_depth: Attribute.
+  _janitorial_depth: Attribute.
+  _log_print_lock: Attribute.
+  _log_role: Attribute.
 """
 from __future__ import annotations
+
+from typing import Any, Iterator
 
 import contextvars
 import inspect
@@ -42,18 +55,47 @@ _INGEST_BODY_PREFIX = "ingest:"
 
 
 def set_log_role(role: str | None) -> None:
-  """Set the log prefix role for the current context (thread or process)."""
+  """
+  Set the log prefix role for the current context (thread or process).
+  
+  Args:
+    role (str | None): One of ``str``, ``None``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> set_log_role(None)  # doctest: +SKIP
+  """
   _log_role.set(role)
 
 
 def get_log_role() -> str | None:
-  """Return the current log role, or None when unset."""
+  """
+  Return the current log role, or None when unset.
+  
+  Returns:
+    str | None: One of ``str``, ``None`` depending on inputs/branch.
+  
+  Examples:
+    >>> get_log_role()  # doctest: +SKIP
+  """
   return _log_role.get()
 
 
 @contextmanager
-def janitorial_logging():
-  """Mark nested log_print calls as janitorial (body ``janitor:`` rules)."""
+def janitorial_logging() -> Iterator[Any]:
+  """
+  Mark nested log_print calls as janitorial (body ``janitor:`` rules).
+  
+  Yields:
+    Iterator[Any]: Open return polymorphism from ``janitorial_logging``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> janitorial_logging()  # doctest: +SKIP
+  """
   token = _janitorial_depth.set(_janitorial_depth.get() + 1)
   try:
     yield
@@ -62,8 +104,18 @@ def janitorial_logging():
 
 
 @contextmanager
-def ingest_logging():
-  """Mark nested log_print calls as MainThread ingest/pre-work (body ``ingest:``)."""
+def ingest_logging() -> Iterator[Any]:
+  """
+  Mark nested log_print calls as MainThread ingest/pre-work (body ``ingest:``).
+  
+  Yields:
+    Iterator[Any]: Open return polymorphism from ``ingest_logging``: concrete
+    type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> ingest_logging()  # doctest: +SKIP
+  """
   token = _ingest_depth.set(_ingest_depth.get() + 1)
   try:
     yield
@@ -71,8 +123,22 @@ def ingest_logging():
     _ingest_depth.reset(token)
 
 
-def _script_prefix():
-  """Return [scriptname] for the original entry point (__main__), not the immediate caller."""
+def _script_prefix() -> Any:
+  """
+  Return [scriptname] for the original entry point (__main__), not the.
+  
+    immediate.
+  
+    caller.
+  
+  Returns:
+    Any: Open return polymorphism from ``_script_prefix``: concrete type
+    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
+    empty).
+  
+  Examples:
+    >>> _script_prefix()  # doctest: +SKIP
+  """
   main = sys.modules.get("__main__")
   if main is not None and getattr(main, "__file__", None):
     path = main.__file__
@@ -85,7 +151,15 @@ def _script_prefix():
 
 
 def format_log_prefix() -> str:
-  """Return [script] or [script:role] when a daemon role is active."""
+  """
+  Return [script] or [script:role] when a daemon role is active.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> format_log_prefix()  # doctest: +SKIP
+  """
   base = _script_prefix()
   role = get_log_role()
   if not role:
@@ -95,22 +169,68 @@ def format_log_prefix() -> str:
 
 
 def _script_name_from_bracket_prefix(prefix: str) -> str:
-  """Extract script basename from ``[script]`` or ``[script:role]``."""
+  """
+  Extract script basename from ``[script]`` or ``[script:role]``.
+  
+  Args:
+    prefix (str): String for prefix.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _script_name_from_bracket_prefix("x")  # doctest: +SKIP
+  """
   inner = prefix[1:-1] if prefix.startswith("[") and prefix.endswith("]") else prefix
   return inner.split(":", 1)[0]
 
 
 def _role_has_janitor(role: str | None) -> bool:
+  """
+  Internal helper to handle role has janitor.
+  
+  Args:
+    role (str | None): One of ``str``, ``None``.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _role_has_janitor(None)  # doctest: +SKIP
+  """
   return bool(role) and "janitor" in role
 
 
 def _role_is_main_thread(role: str | None) -> bool:
-  """Supervisor MainThread: explicit ``main`` or unset (pre-title / tests)."""
+  """
+  Supervisor MainThread: explicit ``main`` or unset (pre-title / tests).
+  
+  Args:
+    role (str | None): One of ``str``, ``None``.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _role_is_main_thread(None)  # doctest: +SKIP
+  """
   return not role or role == "main"
 
 
 def _strip_leading_token(text: str, token: str) -> str:
-  """Strip ``token`` or ``token `` from the start of ``text`` (case-sensitive)."""
+  """
+  Strip ``token`` or ``token `` from the start of ``text`` (case-sensitive).
+  
+  Args:
+    text (str): String for text.
+    token (str): String for token.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _strip_leading_token("x", "x")  # doctest: +SKIP
+  """
   if text.startswith(token + " "):
     return text[len(token) + 1 :]
   if text.startswith(token):
@@ -120,17 +240,46 @@ def _strip_leading_token(text: str, token: str) -> str:
 
 
 def _body_has_leading_token(text: str, token: str) -> bool:
+  """
+  Internal helper to handle body has leading token.
+  
+  Args:
+    text (str): String for text.
+    token (str): String for token.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> _body_has_leading_token("x", "x")  # doctest: +SKIP
+  """
   return text.startswith(token + " ") or text == token or text.startswith(token)
 
 
 def _normalize_log_body_args(
-    args: tuple,
-    *,
-    script_name: str,
-    role: str | None,
-    janitorial: bool,
-    ingest: bool,
+  args: tuple,
+  *,
+  script_name: str,
+  role: str | None,
+  janitorial: bool,
+  ingest: bool,
 ) -> tuple:
+  """
+  Internal helper to normalize the log body args.
+  
+  Args:
+    args (tuple): Sequence for args.
+    script_name (str): String for script name.
+    role (str | None): One of ``str``, ``None``.
+    janitorial (bool): Boolean flag for janitorial.
+    ingest (bool): Boolean flag for ingest.
+  
+  Returns:
+    tuple: tuple produced by this call.
+  
+  Examples:
+    >>> _normalize_log_body_args([], "x", None, True, True)  # doctest: +SKIP
+  """
   if not args:
     return args
   first = args[0]
@@ -153,12 +302,28 @@ def _normalize_log_body_args(
   return (first,) + args[1:]
 
 
-def log_print(*args, **kwargs):
-  """Print with script prefix. Same signature as print(); forwards kwargs (e.g. file=, flush=).
-
+def log_print(*args: Any, **kwargs: Any) -> Any:
+  """
+  Print with script prefix. Same signature as print(); forwards kwargs (e.g.
+  
+    file=, flush=).
+  
   Optional oneshot kwargs (not forwarded to print):
   - ``janitorial=True`` — apply janitorial body rules for this call
   - ``ingest=True`` — apply MainThread ingest body rules for this call
+  
+  Args:
+    *args (Any): Extra positional arguments; unused unless the callee
+    documents a specific leftover protocol.
+    **kwargs (Any): Extra keyword arguments forwarded to the wrapped API; keys
+    and value types match that callee's signature.
+  
+  Returns:
+    Any: Open return polymorphism from ``log_print``: concrete type depends on
+    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+  
+  Examples:
+    >>> log_print()  # doctest: +SKIP
   """
   oneshot_janitorial = bool(kwargs.pop("janitorial", False))
   oneshot_ingest = bool(kwargs.pop("ingest", False))

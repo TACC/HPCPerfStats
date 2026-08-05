@@ -62,5 +62,6 @@ You are an expert in Python, Django, and scalable web application development.
   Python Rules
    - For **host-side** Python/pip/pytest, use **only** the virtualenv at the **Cursor workspace root**: `<workspace_root>/.venv/bin/python3` (not `.venv/bin/python` — see **`workspace-layout-and-python-env.mdc`**). Do not create disposable venvs under `/tmp` or elsewhere unless the user explicitly requests it.
    - **`pip install -e` / compose / pytest cwd** for the Django package: the inner git directory `HPCPerfStats/` (contains `pyproject.toml` and `docker-compose.yaml`), not the workspace root alone.
+   - **Docstrings + signature type hints** for every in-scope module/class/`def` — full Google/Napoleon surface (Args/Returns/Yields, Raises, Examples, Attributes including private) plus inventory gate — see **`python-docstring-and-typing-contract.mdc`**.
 
   Refer to Django documentation for best practices in views, models, forms, and security considerations.

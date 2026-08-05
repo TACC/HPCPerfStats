@@ -1,7 +1,14 @@
-"""User-facing help text for Job Detail Bokeh figures (roofline, multiprecision, overlays).
+"""
+User-facing help text for Job Detail Bokeh figures (roofline, multiprecision,
+overlays).
 
-Keep ``JOB_DETAIL_BOKEH_HELP`` aligned with ``JOB_DETAIL_BOKEH_PLOT_METADATA`` in
-``hpcperfstats/site/frontend/src/utils/variableMetadata.js`` (same keys, same prose).
+Keep ``JOB_DETAIL_BOKEH_HELP`` aligned with ``JOB_DETAIL_BOKEH_PLOT_METADATA``
+in ``hpcperfstats/site/frontend/src/utils/variableMetadata.js`` (same keys, same
+prose).
+
+Attributes:
+  HelpPair: Attribute.
+  JOB_DETAIL_BOKEH_HELP: Attribute.
 """
 
 from __future__ import annotations
@@ -72,7 +79,18 @@ JOB_DETAIL_BOKEH_HELP: Dict[str, HelpPair] = {
 
 
 def description_for_job_detail_bokeh_plot(plot_key: str) -> str:
-  """Return primary help text for ``plot_key`` or a short fallback."""
+  """
+  Return primary help text for ``plot_key`` or a short fallback.
+  
+  Args:
+    plot_key (str): String for plot key.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> description_for_job_detail_bokeh_plot("x")  # doctest: +SKIP
+  """
   pair = JOB_DETAIL_BOKEH_HELP.get(plot_key)
   if pair is None:
     return ""
@@ -80,7 +98,18 @@ def description_for_job_detail_bokeh_plot(plot_key: str) -> str:
 
 
 def researcher_use_for_job_detail_bokeh_plot(plot_key: str) -> Optional[str]:
-  """Return optional researcher-use line for ``plot_key``."""
+  """
+  Return optional researcher-use line for ``plot_key``.
+  
+  Args:
+    plot_key (str): String for plot key.
+  
+  Returns:
+    Optional[str]: Optional[str] — the result, or None when unavailable.
+  
+  Examples:
+    >>> researcher_use_for_job_detail_bokeh_plot("x")  # doctest: +SKIP
+  """
   pair = JOB_DETAIL_BOKEH_HELP.get(plot_key)
   if pair is None:
     return None

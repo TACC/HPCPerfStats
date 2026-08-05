@@ -1,10 +1,22 @@
-"""Cooperative defer/yield between ingest hot path and janitor day-close mutations."""
+"""
+Cooperative defer/yield between ingest hot path and janitor day-close mutations.
+
+Attributes:
+  DAY_CLOSE_YIELD_POLL_SECONDS: Attribute.
+  JANITOR_DEFER_CAP_TICKS: Attribute.
+  JANITOR_DEFER_CAP_WALL_SECONDS: Attribute.
+  WRITE_LOCK_BACKOFF_BASE_S: Attribute.
+  WRITE_LOCK_BACKOFF_MAX_S: Attribute.
+  _yield_events: Attribute.
+  _yield_lock: Attribute.
+  _yield_reasons: Attribute.
+"""
 from __future__ import annotations
 
 import os
 import threading
 import time
-from typing import Optional, Set
+from typing import Any, Optional, Set
 
 from hpcperfstats.dbload.lib.print_utils import log_print
 
@@ -19,9 +31,36 @@ WRITE_LOCK_BACKOFF_MAX_S = 300.0
 
 
 class DayCloseYieldError(Exception):
-  """Raised when janitor aborts a long mutation cooperatively for ingest."""
+  """
+  Raised when janitor aborts a long mutation cooperatively for ingest.
+  
+  Attributes:
+    phase: Attribute.
+    reason: Attribute.
+    tar_path: Attribute.
+  """
 
-  def __init__(self, tar_path: str, *, phase: str = "", reason: str = ""):
+  def __init__(
+    self,
+    tar_path: str,
+    *,
+    phase: str = "",
+    reason: str = "",
+  ) -> None:
+    """
+    Initialize a new instance.
+    
+    Args:
+      tar_path (str): String for tar path.
+      phase (str): String for phase.
+      reason (str): String for reason.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> DayCloseYieldError("x", "x", "x")  # doctest: +SKIP
+    """
     self.tar_path = os.path.normpath(tar_path or "")
     self.phase = phase or ""
     self.reason = reason or ""
@@ -37,11 +76,41 @@ _yield_reasons: dict[str, str] = {}
 
 
 def _tar_norm(tar_path: str) -> str:
+  """
+  Internal helper to handle tar norm.
+  
+  Args:
+    tar_path (str): String for tar path.
+  
+  Returns:
+    str: str produced by this call.
+  
+  Examples:
+    >>> _tar_norm("x")  # doctest: +SKIP
+  """
   return os.path.normpath(tar_path or "")
 
 
-def signal_day_close_yield(tar_path: str, *, reason: str, log_fn=log_print) -> None:
-  """Non-blocking hint for day-close worker to yield (janitor-first race)."""
+def signal_day_close_yield(
+  tar_path: str,
+  *,
+  reason: str,
+  log_fn: Any = log_print,
+) -> None:
+  """
+  Non-blocking hint for day-close worker to yield (janitor-first race).
+  
+  Args:
+    tar_path (str): String for tar path.
+    reason (str): String for reason.
+    log_fn (Any): Callable invoked by this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> signal_day_close_yield("x", "x", None)  # doctest: +SKIP
+  """
   tar_norm = _tar_norm(tar_path)
   if not tar_norm:
     return
@@ -58,6 +127,18 @@ def signal_day_close_yield(tar_path: str, *, reason: str, log_fn=log_print) -> N
 
 
 def clear_day_close_yield(tar_path: str) -> None:
+  """
+  Clear day close yield.
+  
+  Args:
+    tar_path (str): String for tar path.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> clear_day_close_yield("x")  # doctest: +SKIP
+  """
   tar_norm = _tar_norm(tar_path)
   if not tar_norm:
     return
@@ -67,6 +148,18 @@ def clear_day_close_yield(tar_path: str) -> None:
 
 
 def day_close_yield_event_set(tar_path: str) -> bool:
+  """
+  Day close yield event set.
+  
+  Args:
+    tar_path (str): String for tar path.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> day_close_yield_event_set("x")  # doctest: +SKIP
+  """
   tar_norm = _tar_norm(tar_path)
   if not tar_norm:
     return False
@@ -76,11 +169,23 @@ def day_close_yield_event_set(tar_path: str) -> bool:
 
 
 def _hot_path_contention_reasons(
-    tar_path: str,
-    *,
-    tgz_archive_dir: str = "",
+  tar_path: str,
+  *,
+  tgz_archive_dir: str = "",
 ) -> tuple[bool, str]:
-  """Shared ingest-hot checks for yield and janitor defer (pre-flight subset)."""
+  """
+  Shared ingest-hot checks for yield and janitor defer (pre-flight subset).
+  
+  Args:
+    tar_path (str): String for tar path.
+    tgz_archive_dir (str): String for tgz archive dir.
+  
+  Returns:
+    tuple[bool, str]: tuple[bool, str] produced by this call.
+  
+  Examples:
+    >>> _hot_path_contention_reasons("x", "x")  # doctest: +SKIP
+  """
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       calendar_date_from_daily_tar_path,
   )
@@ -110,12 +215,25 @@ def _hot_path_contention_reasons(
 
 
 def day_close_yield_requested(
-    tar_path: str,
-    *,
-    tgz_archive_dir: str = "",
-    phase: str = "",
+  tar_path: str,
+  *,
+  tgz_archive_dir: str = "",
+  phase: str = "",
 ) -> tuple[bool, str]:
-  """True when ingest hot signals require cooperative yield mid-mutation."""
+  """
+  True when ingest hot signals require cooperative yield mid-mutation.
+  
+  Args:
+    tar_path (str): String for tar path.
+    tgz_archive_dir (str): String for tgz archive dir.
+    phase (str): String for phase.
+  
+  Returns:
+    tuple[bool, str]: tuple[bool, str] produced by this call.
+  
+  Examples:
+    >>> day_close_yield_requested("x", "x", "x")  # doctest: +SKIP
+  """
   return _hot_path_contention_reasons(
       tar_path,
       tgz_archive_dir=tgz_archive_dir,
@@ -123,17 +241,47 @@ def day_close_yield_requested(
 
 
 def should_poll_day_close_yield(last_poll_monotonic: float) -> bool:
+  """
+  Return True if poll day close yield.
+  
+  Args:
+    last_poll_monotonic (float): Floating-point value for last poll monotonic.
+  
+  Returns:
+    bool: True or False for this check.
+  
+  Examples:
+    >>> should_poll_day_close_yield(0)  # doctest: +SKIP
+  """
   return (time.monotonic() - last_poll_monotonic) >= DAY_CLOSE_YIELD_POLL_SECONDS
 
 
 def check_day_close_yield_or_continue(
-    tar_path: str,
-    *,
-    last_poll_monotonic: float,
-    tgz_archive_dir: str = "",
-    phase: str = "",
+  tar_path: str,
+  *,
+  last_poll_monotonic: float,
+  tgz_archive_dir: str = "",
+  phase: str = "",
 ) -> tuple[float, bool]:
-  """Return updated poll time; True if caller should raise DayCloseYieldError."""
+  """
+  Return updated poll time; True if caller should raise DayCloseYieldError.
+  
+  Args:
+    tar_path (str): String for tar path.
+    last_poll_monotonic (float): Floating-point value for last poll monotonic.
+    tgz_archive_dir (str): String for tgz archive dir.
+    phase (str): String for phase.
+  
+  Returns:
+    tuple[float, bool]: tuple[float, bool] produced by this call.
+  
+  Raises:
+    DayCloseYieldError: Raised when ``check_day_close_yield_or_continue`` hits
+    a ``DayCloseYieldError`` failure path.
+  
+  Examples:
+    >>> check_day_close_yield_or_continue("x", 0, "x", "x")  # doctest: +SKIP
+  """
   if not should_poll_day_close_yield(last_poll_monotonic):
     return last_poll_monotonic, False
   requested, reason = day_close_yield_requested(
@@ -147,20 +295,39 @@ def check_day_close_yield_or_continue(
 
 
 def daily_tar_janitor_mutation_should_defer(
-    tar_path: str,
-    *,
-    tgz_archive_dir: str,
-    disqualified_daily_tars: Set[str],
-    delete_disqualified_daily_tars: Optional[Set[str]] = None,
-    phase: str = "",
-    defer_cap_exceeded: bool = False,
-    chunk_in_progress: bool = False,
-    chunk_day_tokens: Optional[Set[str]] = None,
+  tar_path: str,
+  *,
+  tgz_archive_dir: str,
+  disqualified_daily_tars: Set[str],
+  delete_disqualified_daily_tars: Optional[Set[str]] = None,
+  phase: str = "",
+  defer_cap_exceeded: bool = False,
+  chunk_in_progress: bool = False,
+  chunk_day_tokens: Optional[Set[str]] = None,
 ) -> tuple[bool, str]:
-  """Pre-flight: janitor cold path should skip write and re-enqueue day-close.
-
+  """
+  Pre-flight: janitor cold path should skip write and re-enqueue day-close.
+  
   ``defer_cap_exceeded`` stops aging forever but must **not** skip write-lock /
   hot / populate / restore checks (F5). When those are clear, cap may proceed.
+  
+  Args:
+    tar_path (str): String for tar path.
+    tgz_archive_dir (str): String for tgz archive dir.
+    disqualified_daily_tars (Set[str]): Sequence for disqualified daily tars.
+    delete_disqualified_daily_tars (Optional[Set[str]]): Delete disqualified
+    daily tars, or None when absent.
+    phase (str): String for phase.
+    defer_cap_exceeded (bool): Boolean flag for defer cap exceeded.
+    chunk_in_progress (bool): Boolean flag for chunk in progress.
+    chunk_day_tokens (Optional[Set[str]]): Chunk day tokens, or None when
+    absent.
+  
+  Returns:
+    tuple[bool, str]: tuple[bool, str] produced by this call.
+  
+  Examples:
+    >>> daily_tar_janitor_mutation_should_defer(0)  # doctest: +SKIP
   """
   del defer_cap_exceeded  # aging handled by caller; still run safety checks
   from hpcperfstats.dbload.lib.file_locking import try_file_write_lock
@@ -200,12 +367,27 @@ def daily_tar_janitor_mutation_should_defer(
 
 
 def log_janitor_day_close_defer(
-    tar_path: str,
-    *,
-    phase: str,
-    reason: str,
-    log_fn=log_print,
+  tar_path: str,
+  *,
+  phase: str,
+  reason: str,
+  log_fn: Any = log_print,
 ) -> None:
+  """
+  Log the janitor day close defer.
+  
+  Args:
+    tar_path (str): String for tar path.
+    phase (str): String for phase.
+    reason (str): String for reason.
+    log_fn (Any): Callable invoked by this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> log_janitor_day_close_defer("x", "x", "x", None)  # doctest: +SKIP
+  """
   if log_fn:
     log_fn(
         "janitor: day_close defer tar=%s phase=%s reason=%s"
@@ -215,12 +397,27 @@ def log_janitor_day_close_defer(
 
 
 def log_janitor_day_close_yield(
-    tar_path: str,
-    *,
-    phase: str,
-    reason: str,
-    log_fn=log_print,
+  tar_path: str,
+  *,
+  phase: str,
+  reason: str,
+  log_fn: Any = log_print,
 ) -> None:
+  """
+  Log the janitor day close yield.
+  
+  Args:
+    tar_path (str): String for tar path.
+    phase (str): String for phase.
+    reason (str): String for reason.
+    log_fn (Any): Callable invoked by this helper.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> log_janitor_day_close_yield("x", "x", "x", None)  # doctest: +SKIP
+  """
   if log_fn:
     log_fn(
         "janitor: day_close yield tar=%s phase=%s reason=%s"
@@ -230,13 +427,41 @@ def log_janitor_day_close_yield(
 
 
 class JanitorDeferTracker:
-  """Per-tar defer streak for starvation cap (in-memory on ArchiveJanitor)."""
+  """
+  Per-tar defer streak for starvation cap (in-memory on ArchiveJanitor).
+  
+  Attributes:
+    _by_tar: Attribute.
+    _lock: Attribute.
+  """
 
-  def __init__(self):
+  def __init__(self) -> None:
+    """
+    Initialize a new instance.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> JanitorDeferTracker()  # doctest: +SKIP
+    """
     self._lock = threading.Lock()
     self._by_tar: dict[str, dict] = {}
 
   def record_defer(self, tar_path: str, *, reason: str = "") -> None:
+    """
+    Record defer.
+    
+    Args:
+      tar_path (str): String for tar path.
+      reason (str): String for reason.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> JanitorDeferTracker().record_defer("x", "x")  # doctest: +SKIP
+    """
     tar_norm = _tar_norm(tar_path)
     if not tar_norm:
       return
@@ -261,12 +486,24 @@ class JanitorDeferTracker:
         entry["write_lock_until"] = now + float(delay)
 
   def write_lock_backoff_active(
-      self,
-      tar_path: str,
-      *,
-      now: Optional[float] = None,
+    self,
+    tar_path: str,
+    *,
+    now: Optional[float] = None,
   ) -> bool:
-    """True while sticky write_lock_contended backoff has not expired."""
+    """
+    True while sticky write_lock_contended backoff has not expired.
+    
+    Args:
+      tar_path (str): String for tar path.
+      now (Optional[float]): Now, or None when absent.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> JanitorDeferTracker().write_lock_backoff_active("x", None)
+    """
     tar_norm = _tar_norm(tar_path)
     if not tar_norm:
       return False
@@ -279,12 +516,24 @@ class JanitorDeferTracker:
       return until > clock
 
   def write_lock_backoff_skip_tars(
-      self,
-      tar_paths,
-      *,
-      now: Optional[float] = None,
+    self,
+    tar_paths: Any,
+    *,
+    now: Optional[float] = None,
   ) -> Set[str]:
-    """Subset of ``tar_paths`` still inside write_lock sticky backoff."""
+    """
+    Subset of ``tar_paths`` still inside write_lock sticky backoff.
+    
+    Args:
+      tar_paths (Any): Iterable of filesystem paths as strings.
+      now (Optional[float]): Now, or None when absent.
+    
+    Returns:
+      Set[str]: Set[str] produced by this call.
+    
+    Examples:
+      >>> JanitorDeferTracker().write_lock_backoff_skip_tars(None, None)
+    """
     clock = time.time() if now is None else float(now)
     skipped: Set[str] = set()
     for tar_path in tar_paths or ():
@@ -293,6 +542,18 @@ class JanitorDeferTracker:
     return skipped
 
   def defer_cap_exceeded(self, tar_path: str) -> bool:
+    """
+    Defer cap exceeded.
+    
+    Args:
+      tar_path (str): String for tar path.
+    
+    Returns:
+      bool: True or False for this check.
+    
+    Examples:
+      >>> JanitorDeferTracker().defer_cap_exceeded("x")  # doctest: +SKIP
+    """
     tar_norm = _tar_norm(tar_path)
     if not tar_norm:
       return False
@@ -309,6 +570,18 @@ class JanitorDeferTracker:
       return False
 
   def clear_tar(self, tar_path: str) -> None:
+    """
+    Clear tar.
+    
+    Args:
+      tar_path (str): String for tar path.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> JanitorDeferTracker().clear_tar("x")  # doctest: +SKIP
+    """
     tar_norm = _tar_norm(tar_path)
     with self._lock:
       self._by_tar.pop(tar_norm, None)
