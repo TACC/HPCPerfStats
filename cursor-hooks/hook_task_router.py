@@ -439,6 +439,20 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "host_data_read_boundary",
+        "patterns": [
+            "hpcperfstats/site/lib/machine/api.py",
+            "hpcperfstats/site/lib/machine/job_plot_artifacts.py",
+            "hpcperfstats/site/lib/machine/job_detail_artifacts.py",
+            "hpcperfstats/site/lib/machine/artifact_readiness_expressions.py",
+            "hpcperfstats/cursor-rules/host-data-read-boundary.mdc",
+        ],
+        "rules": [
+            "host-data-read-boundary.mdc",
+            "job-plot-artifacts-caching.mdc",
+        ],
+    },
+    {
         "id": "bokeh_plots",
         "patterns": [
             "hpcperfstats/site/lib/machine/bokeh_plot_layout.py",
@@ -449,6 +463,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "job-plot-artifacts-caching.mdc",
+            "host-data-read-boundary.mdc",
             "bokeh-layout-surface-split.mdc",
             "no-scientific-notation-web.mdc",
             "job-detail-bokeh-plot-help.mdc",
@@ -472,6 +487,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         "rules": [
             "job-detail-bokeh-plot-help.mdc",
             "job-plot-artifacts-caching.mdc",
+            "host-data-read-boundary.mdc",
             "variable-metadata-cross-source-sync.mdc",
         ],
     },

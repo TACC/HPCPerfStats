@@ -154,8 +154,6 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # metrics_plot_prewarm_mode = pipeline_required
 
 # Skip job detail/plot prewarm after metrics for catch-up (default no).
-# metrics_scheduler_skip_prewarm = no
-
 # Thread workers for plot prewarm stage (default 4).
 # metrics_prewarm_workers = 4
 

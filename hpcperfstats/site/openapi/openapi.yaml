@@ -213,9 +213,11 @@ paths:
     get:
       operationId: host_plot_retrieve
       description: |-
-        Return Bokeh plot_item for a single host and time range (GET host,.
+        Return Bokeh plot_item for a single host and time range (GET host,
+        end_time__gte, end_time__lte).
 
-          end_time__gte, end_time__lte).
+        Documented ``host_data`` exception: authenticated users (not staff-only).
+        Uses a longer session ``statement_timeout`` for large windows.
 
         Args:
           request (Any): Request passed to this helper.
@@ -664,22 +666,18 @@ paths:
     get:
       operationId: jobs_plots_retrieve
       description: |-
-        Job-level plots grouped by shared jid_table input.
+        Job-level plots from Redis L1 / ``job_plot_artifact`` L2 only.
 
-        Returns Bokeh json_items and availability reasons for:
-        - Summary plot
-        - Roofline
-        - GPU roofline
+        No request-time ``jid_table`` / ``host_data`` compute. Fingerprint uses
+        persisted ``metrics_distinct_time_count`` only. Null ``plot_item`` with
+        ``unavailable_reason`` on a fingerprint hit is terminal unavailable.
 
         Query params:
         - plot: omit or ``all`` for all three; or one of summary_plot, roofline,
           gpu_roofline.
         - zoom: ``1`` for zoom layout (single-plot requests only).
         - progressive: ``1`` with plot=all (no zoom): HTTP 200 with ``status``
-          partial/ready and
-          only completed plot fields included while others are listed in
-            ``loading_plots``;
-          avoids 202 while still using one endpoint and shared background tasks.
+          partial/ready while missing kinds are listed in ``loading_plots``.
 
         Args:
           request (Any): Request passed to this helper.
@@ -2470,8 +2468,6 @@ components:
           type: array
           items:
             type: integer
-        note:
-          type: string
       required:
       - current_detail
       - current_plot

@@ -82,9 +82,9 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   staff_artifact_contract: {
     description:
-      "Staff-only diagnostic: current plot and detail artifact schema versions compiled into this deployment, plus the distinct non-null artifact_schema values stored on this job’s job_plot_artifact and job_detail_artifact rows. Fingerprints still decide cache hits; schema ints are for operators comparing code vs DB after a bump.",
+      "Staff-only diagnostic: current plot and detail artifact schema versions compiled into this deployment, plus the distinct non-null artifact_schema values stored on this job’s job_plot_artifact and job_detail_artifact rows. Fingerprints still decide cache hits; schema ints are for operators comparing code vs DB after a bump. DB lists distinct non-null artifact_schema values only. Empty/none does not mean plots are missing — Redis, legacy NULL-schema rows, or prewarmed artifacts may still serve payloads.",
     researcherUse:
-      "When current and DB differ, plots or detail payloads may still be stale until recomputed; empty DB lists mean no rows or only legacy null schema columns.",
+      "When current and DB differ, plots or detail payloads may still be stale until prewarm recomputes them; empty DB lists mean no non-null schema columns (Redis or legacy null-schema rows may still serve payloads).",
   },
 
   // ===== Job-level derived metrics (hpcperfstats/analysis/metrics/lib/metrics.py catalog) =====

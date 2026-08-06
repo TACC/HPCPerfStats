@@ -876,10 +876,6 @@ export default function JobDetail() {
                         {formatArtifactSchemaList(staffArtifactContract.db_plot)}, detail{" "}
                         {formatArtifactSchemaList(staffArtifactContract.db_detail)}
                       </div>
-                      <div className="text-muted-foreground text-xs mt-1">
-                        {staffArtifactContract.note ||
-                          "Stored schema none means no non-null artifact_schema values — plots may still come from Redis, legacy rows, or on-demand compute."}
-                      </div>
                     </div>
                   ) : null}
                 </div>
@@ -1530,6 +1526,10 @@ export default function JobDetail() {
             )}
           </TabsContent>
           <TabsContent value="device" id="job-detail-panel-device" className="mt-0">
+            <p className="mb-3 text-sm text-muted-foreground" role="note">
+              Large jobs with many samples may take a long time to load. Please report any
+              timeouts to support.
+            </p>
             <div className="text-center text-md-start">
               {detailsLoading ? (
                 <p className="text-muted-foreground mb-0" role="status">

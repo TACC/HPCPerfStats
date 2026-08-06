@@ -422,9 +422,7 @@ class TestJobDetailView:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api.jid_table, "jid_table", return_value=jt
-        ), patch.object(api, "load_job_detail_artifact", return_value={"fsio": {}}), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={"fsio": {}}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
@@ -451,8 +449,6 @@ class TestJobDetailView:
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api.jid_table, "jid_table", return_value=jt
-        ), patch.object(
             api, "load_job_detail_artifact", return_value={}
         ), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
@@ -510,8 +506,6 @@ class TestJobPlotsView:
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=5
-        ), patch.object(
             api, "compute_plot_input_fingerprint", return_value="fp"
         ), patch.object(api.cache, "get", side_effect=_cache_get), patch.object(
             api, "load_cached_job_plot_entry", return_value=None
@@ -544,8 +538,6 @@ class TestJobPlotsView:
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=5
-        ), patch.object(
             api, "compute_plot_input_fingerprint", return_value="fp"
         ), patch.object(api.cache, "get", side_effect=_cache_get), patch.object(
             api, "load_cached_job_plot_entry", return_value=None
@@ -633,9 +625,7 @@ class TestJobPlotsReadyAndLoading:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
             api.cache, "get", side_effect=_cache_get
         ), patch.object(api, "load_cached_job_plot_entry", return_value=None):
             response = api.job_plots(request, "j1")
@@ -654,9 +644,7 @@ class TestJobPlotsReadyAndLoading:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
             api.cache, "get", side_effect=lambda key, default=None: default
         ), patch.object(api, "load_cached_job_plot_entry", return_value=None), patch.object(
             api, "_get_small_executor"
@@ -834,9 +822,7 @@ class TestJobPlotsL2FinalizeAndZoom:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
             api.cache, "get", side_effect=_plots_cache_get_factory()
         ), patch.object(api, "load_cached_job_plot_entry", return_value=l2_entry), patch.object(
             api.cache, "set"
@@ -846,8 +832,7 @@ class TestJobPlotsL2FinalizeAndZoom:
         assert response.data["plot_item"] == l2_item
         assert mock_set.call_count >= 1
 
-    def test_finalize_completed_future_via_compute_plot_item_for_kind(self):
-        from concurrent.futures import Future
+    def test_l2_null_plot_item_is_terminal_ready(self):
         from hpcperfstats.site.lib.machine import api
 
         request = RequestFactory().get(
@@ -855,32 +840,26 @@ class TestJobPlotsL2FinalizeAndZoom:
         )
         request.session = {"username": "u", "is_staff": True}
         job = MagicMock(jid="j1")
-        plot_payload = {"doc": {"roots": {"root_ids": ["r1"]}}, "root_id": "r1"}
-        api._job_plot_inflight.clear()
-
-        class _Exec:
-            def submit(self, fn):
-                fut = Future()
-                fut.set_result((plot_payload, None))
-                return fut
+        reason = "Missing roofline counters in host_data"
+        l2_entry = {"plot_item": None, "unavailable_reason": reason}
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
-            api.cache, "get", side_effect=_plots_cache_get_factory()
-        ), patch.object(api, "load_cached_job_plot_entry", return_value=None), patch.object(
-            api, "_get_small_executor", return_value=_Exec()
+            api, "compute_plot_input_fingerprint", return_value="fp"
         ), patch.object(
-            api, "compute_plot_item_for_kind", return_value=(plot_payload, None)
-        ), patch.object(api.jid_table, "jid_table", return_value=MagicMock()):
+            api.cache, "get", side_effect=_plots_cache_get_factory()
+        ), patch.object(api, "load_cached_job_plot_entry", return_value=l2_entry), patch.object(
+            api, "_get_small_executor"
+        ) as mock_exec:
             response = api.job_plots(request, "j1")
         assert response.status_code == 200
         assert response.data["status"] == "ready"
-        assert response.data["plot_item"] == plot_payload
+        assert response.data["plot_item"] is None
+        assert response.data["unavailable_reason"] == reason
+        mock_exec.assert_not_called()
 
-    def test_stale_generic_l1_reason_triggers_refetch(self):
+    def test_generic_l1_unavailable_reason_is_terminal(self):
         from hpcperfstats.analysis.metrics.lib.plot import MSG_NO_METRIC_DATA
         from hpcperfstats.site.lib.machine import api
 
@@ -890,8 +869,6 @@ class TestJobPlotsL2FinalizeAndZoom:
         request.session = {"username": "u", "is_staff": True}
         job = MagicMock(jid="j1")
         stale = {"plot_item": None, "unavailable_reason": MSG_NO_METRIC_DATA}
-        pending = MagicMock()
-        pending.done.return_value = False
 
         def _cache_get(key, default=None):
             key_s = str(key)
@@ -902,16 +879,15 @@ class TestJobPlotsL2FinalizeAndZoom:
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
-            api.cache, "get", side_effect=_cache_get
-        ), patch.object(api, "load_cached_job_plot_entry", return_value=None), patch.object(
-            api, "_get_small_executor"
-        ) as mock_exec:
-            mock_exec.return_value.submit.return_value = pending
+            api, "compute_plot_input_fingerprint", return_value="fp"
+        ), patch.object(api.cache, "get", side_effect=_cache_get), patch.object(
+            api, "load_cached_job_plot_entry", return_value=None
+        ), patch.object(api, "_get_small_executor") as mock_exec:
             response = api.job_plots(request, "j1")
-        assert response.status_code == 202
-        mock_exec.return_value.submit.assert_called()
+        assert response.status_code == 200
+        assert response.data["status"] == "ready"
+        assert response.data["unavailable_reason"] == MSG_NO_METRIC_DATA
+        mock_exec.assert_not_called()
 
     def test_zoom_mode_reuses_cached_plot_data(self):
         from hpcperfstats.site.lib.machine import api
@@ -925,9 +901,7 @@ class TestJobPlotsL2FinalizeAndZoom:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
             api.cache, "get",
             side_effect=_plots_cache_get_factory(data_keys=("roofline",)),
         ), patch.object(api, "load_cached_job_plot_entry", return_value=None), patch.object(
@@ -994,9 +968,7 @@ class TestJobDetailXaltFetch:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api.jid_table, "jid_table", return_value=jt
-        ), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
@@ -1040,9 +1012,7 @@ class TestJobDetailXaltFetch:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api.jid_table, "jid_table", return_value=jt
-        ), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
@@ -1109,18 +1079,13 @@ class TestJobMonitorAggregates:
 
 
 class TestJobMonitorGpuFallbackBranches:
-    def test_fallback_accumulates_gpu_stats_per_job(self):
+    def test_empty_metrics_does_not_call_host_data_gpu_helpers(self):
         from hpcperfstats.site.lib.machine import api
 
         request = RequestFactory().get(
             "/api/job_monitor/gpu/", {"username": "bob", "days": "7"}
         )
         request.session = {"is_staff": True}
-        job = MagicMock(jid="j1")
-
-        class _JobQs:
-            def only(self, *_fields):
-                return [job]
 
         class _MdChain:
             def filter(self, **_kwargs):
@@ -1137,33 +1102,21 @@ class TestJobMonitorGpuFallbackBranches:
         ), patch.object(
             api, "cached_orm", side_effect=lambda _k, _t, fn: fn()
         ), patch.object(api.metrics_data.objects, "filter", return_value=_MdChain()), patch.object(
-            api.job_data.objects, "filter", return_value=_JobQs()
-        ), patch.object(
-            api.jid_table, "gpu_acct_window_for_job_data", return_value=(
-                datetime(2024, 1, 1, tzinfo=dt_timezone.utc),
-                datetime(2024, 1, 2, tzinfo=dt_timezone.utc),
-                ["n1"],
-            )
-        ), patch.object(
-            api, "_compute_job_gpu_stats", return_value=(3, None, None, 8)
-        ):
+            api, "_compute_job_gpu_stats"
+        ) as mock_compute:
             response = api.job_monitor_gpu_for_user(request)
         assert response.status_code == 200
-        assert response.data["gpu_active_total"] == 3
-        assert response.data["has_data"] is True
+        assert response.data["has_data"] is False
+        assert response.data["gpu_active_total"] is None
+        mock_compute.assert_not_called()
 
-    def test_fallback_skips_jobs_that_raise(self):
+    def test_empty_metrics_reports_no_data(self):
         from hpcperfstats.site.lib.machine import api
 
         request = RequestFactory().get(
             "/api/job_monitor/gpu/", {"username": "bob"}
         )
         request.session = {"is_staff": True}
-        job = MagicMock(jid="j1")
-
-        class _JobQs:
-            def only(self, *_fields):
-                return [job]
 
         class _MdChain:
             def filter(self, **_kwargs):
@@ -1172,25 +1125,21 @@ class TestJobMonitorGpuFallbackBranches:
             def exists(self):
                 return False
 
+            def aggregate(self, **_kwargs):
+                return {"s": None}
+
         with patch.object(api, "_require_staff", return_value=None), patch.object(
             api, "get_site_content_cache_timeout", return_value=60
         ), patch.object(
             api, "cached_orm", side_effect=lambda _k, _t, fn: fn()
-        ), patch.object(api.metrics_data.objects, "filter", return_value=_MdChain()), patch.object(
-            api.job_data.objects, "filter", return_value=_JobQs()
-        ), patch.object(
-            api.jid_table,
-            "gpu_acct_window_for_job_data",
-            side_effect=RuntimeError("bad window"),
-        ):
+        ), patch.object(api.metrics_data.objects, "filter", return_value=_MdChain()):
             response = api.job_monitor_gpu_for_user(request)
         assert response.status_code == 200
         assert response.data["has_data"] is False
 
 
 class TestJobPlotsFetchErrors:
-    def test_compute_plot_item_failure_sets_unavailable_reason(self):
-        from concurrent.futures import Future
+    def test_artifact_miss_returns_loading_without_executor(self):
         from hpcperfstats.site.lib.machine import api
 
         request = RequestFactory().get(
@@ -1198,31 +1147,22 @@ class TestJobPlotsFetchErrors:
         )
         request.session = {"username": "u", "is_staff": True}
         job = MagicMock(jid="j1")
-        api._job_plot_inflight.clear()
-
-        class _Exec:
-            def submit(self, fn):
-                fut = Future()
-                fut.set_result(fn())
-                return fut
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
+            api, "compute_plot_input_fingerprint", return_value="fp"
+        ), patch.object(
             api.cache, "get", side_effect=_plots_cache_get_factory()
         ), patch.object(api, "load_cached_job_plot_entry", return_value=None), patch.object(
-            api, "_get_small_executor", return_value=_Exec()
-        ), patch.object(
-            api, "compute_plot_item_for_kind", side_effect=RuntimeError("plot boom")
-        ), patch.object(api.jid_table, "jid_table", return_value=MagicMock()):
+            api, "_get_small_executor"
+        ) as mock_exec:
             response = api.job_plots(request, "j1")
-        assert response.status_code == 200
-        assert response.data["unavailable_reason"] == "plot boom"
+        assert response.status_code == 202
+        assert response.data["status"] == "loading"
+        mock_exec.assert_not_called()
 
-    def test_finalize_cache_set_failure_still_returns_ready(self):
-        from concurrent.futures import Future
+    def test_l2_cache_set_failure_still_returns_ready(self):
         from hpcperfstats.site.lib.machine import api
 
         request = RequestFactory().get(
@@ -1231,22 +1171,15 @@ class TestJobPlotsFetchErrors:
         request.session = {"username": "u", "is_staff": True}
         job = MagicMock(jid="j1")
         plot_payload = {"doc": {"roots": {"root_ids": ["g1"]}}, "root_id": "g1"}
-
-        class _Exec:
-            def submit(self, fn):
-                fut = Future()
-                fut.set_result((plot_payload, None))
-                return fut
+        l2_entry = {"plot_item": plot_payload, "unavailable_reason": None}
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
-            api.cache, "get", side_effect=_plots_cache_get_factory()
-        ), patch.object(api, "load_cached_job_plot_entry", return_value=None), patch.object(
-            api, "_get_small_executor", return_value=_Exec()
+            api, "compute_plot_input_fingerprint", return_value="fp"
         ), patch.object(
+            api.cache, "get", side_effect=_plots_cache_get_factory()
+        ), patch.object(api, "load_cached_job_plot_entry", return_value=l2_entry), patch.object(
             api.cache, "set", side_effect=_cache_set_fail_job_plots_only
         ), patch.object(api, "register_job_plot_cache_key"):
             response = api.job_plots(request, "j1")
@@ -1262,7 +1195,8 @@ class TestHostPlotBuildCallback:
             "/api/host_plot/",
             {
                 "host": "n1.example.com",
-                "end_time__gte": "2024-06-01T12:00:00Z",
+                "end_time__gte": "2026-08-01T12:00:00Z",
+                "end_time__lte": "2026-08-01T13:00:00Z",
             },
         )
         request.session = {"is_staff": True}
@@ -1287,7 +1221,7 @@ class TestHostPlotBuildCallback:
             "/api/host_plot/",
             {
                 "host": "n1.example.com",
-                "end_time__gte": "2024-06-01T12:00:00Z",
+                "end_time__gte": "2026-08-04T12:00:00Z",
                 "end_time__lte": "not-a-date",
             },
         )
@@ -1302,33 +1236,26 @@ class TestHostPlotBuildCallback:
 
 
 class TestJobPlotsCoverageClosure:
-    def test_future_result_exception_sets_unavailable(self):
-        from concurrent.futures import Future
+    def test_artifact_miss_does_not_use_live_compute(self):
         from hpcperfstats.site.lib.machine import api
 
         request = RequestFactory().get("/api/jobs/j1/plots/", {"plot": "roofline"})
         request.session = {"username": "u", "is_staff": True}
         job = MagicMock(jid="j1")
-        api._job_plot_inflight.clear()
-
-        class _Exec:
-            def submit(self, fn):
-                fut = Future()
-                fut.set_exception(RuntimeError("task failed"))
-                return fut
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
+            api, "compute_plot_input_fingerprint", return_value="fp"
+        ), patch.object(
             api.cache, "get", side_effect=_plots_cache_get_factory()
         ), patch.object(api, "load_cached_job_plot_entry", return_value=None), patch.object(
-            api, "_get_small_executor", return_value=_Exec()
-        ), patch.object(api, "register_job_plot_cache_key"):
+            api, "_get_small_executor"
+        ) as mock_exec:
             response = api.job_plots(request, "j1")
-        assert response.status_code == 200
-        assert response.data["unavailable_reason"] == "task failed"
+        assert response.status_code == 202
+        assert response.data["status"] == "loading"
+        mock_exec.assert_not_called()
 
     def test_l2_hydrate_json_and_data_cache_set_failures(self):
         from hpcperfstats.site.lib.machine import api
@@ -1349,9 +1276,7 @@ class TestJobPlotsCoverageClosure:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
             api.cache, "get", side_effect=_plots_cache_get_factory()
         ), patch.object(api, "load_cached_job_plot_entry", return_value=l2_entry), patch.object(
             api.cache, "set", side_effect=_set_fail
@@ -1379,9 +1304,7 @@ class TestJobPlotsCoverageClosure:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
             api.cache,
             "get",
             side_effect=_plots_cache_get_factory(data_keys=("roofline",)),
@@ -1397,39 +1320,28 @@ class TestJobPlotsCoverageClosure:
 
         from hpcperfstats.site.lib.machine import api
 
-        api._job_plot_inflight.clear()
         request = RequestFactory().get("/api/jobs/j1/plots/", {"progressive": "1"})
         request.session = {"username": "u", "is_staff": True}
         fake_job = SimpleNamespace(jid="j1")
-        futures = [Future() for _ in range(3)]
-        for fut in futures:
-            fut.set_result(({"ok": True}, None))
-
-        class _FakeExecutor:
-            def submit(self, fn):
-                return futures.pop(0)
 
         def _cache_get(key, default=None):
-            if "throttle" in str(key).lower():
-                return default
-            return None
+            if "JOB_PLOTS_JSON" in str(key):
+                return {"plot_item": {"ok": True}, "unavailable_reason": None}
+            return default
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(fake_job, None)
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(
             api, "compute_plot_input_fingerprint", return_value="fp"
-        ), patch.object(
-            api.cache, "get", side_effect=_cache_get
-        ), patch.object(api, "load_cached_job_plot_entry", return_value=None), patch.object(
-            api.jid_table, "jid_table", return_value=SimpleNamespace()
-        ), patch.object(api, "_get_small_executor", return_value=_FakeExecutor()):
+        ), patch.object(api.cache, "get", side_effect=_cache_get), patch.object(
+            api, "load_cached_job_plot_entry", return_value=None
+        ), patch.object(api, "_get_small_executor") as mock_exec:
             response = api.job_plots(request, "j1")
         assert response.status_code == 200
         assert response.data.get("status") == "ready"
         assert response.data.get("progressive") is True
         assert response.data.get("loading_plots") == []
+        mock_exec.assert_not_called()
 
     def test_auth_error_returns_early(self):
         from hpcperfstats.site.lib.machine import api
@@ -1457,9 +1369,7 @@ class TestJobDetailCoverageClosure:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api.jid_table, "jid_table", return_value=jt
-        ), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
@@ -1482,7 +1392,6 @@ class TestJobDetailCoverageClosure:
         job.start_time = datetime(2024, 1, 1, tzinfo=dt_timezone.utc)
         job.end_time = datetime(2024, 1, 2, tzinfo=dt_timezone.utc)
         job.metrics_distinct_time_count = 1
-        jt = MagicMock(acct_host_list=[], start_time=job.start_time, end_time=job.end_time)
         run_row = MagicMock(run_id=1, exec_path="/opt/bin/app", cwd="/work")
         join_missing = MagicMock(run_id=1, obj_id=100)
         join_dup = MagicMock(run_id=1, obj_id=101)
@@ -1518,9 +1427,7 @@ class TestJobDetailCoverageClosure:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api.jid_table, "jid_table", return_value=jt
-        ), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
@@ -1548,7 +1455,6 @@ class TestJobDetailCoverageClosure:
         job.start_time = datetime(2024, 1, 1, tzinfo=dt_timezone.utc)
         job.end_time = datetime(2024, 1, 2, tzinfo=dt_timezone.utc)
         job.metrics_distinct_time_count = 1
-        jt = MagicMock(acct_host_list=[], start_time=job.start_time, end_time=job.end_time)
         run_row = MagicMock(run_id=1, exec_path="/opt/bin/app", cwd="/work")
         join_row = MagicMock(run_id=1, obj_id=101)
         lib_row = MagicMock(obj_id=101, object_path="/lib/n.so", module_name=None)
@@ -1577,9 +1483,7 @@ class TestJobDetailCoverageClosure:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api.jid_table, "jid_table", return_value=jt
-        ), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
@@ -1607,7 +1511,6 @@ class TestJobDetailCoverageClosure:
         job = MagicMock(jid="j1")
         job.start_time = datetime(2024, 1, 1, tzinfo=dt_timezone.utc)
         job.end_time = datetime(2024, 1, 2, tzinfo=dt_timezone.utc)
-        jt = MagicMock(acct_host_list=[], start_time=job.start_time, end_time=job.end_time)
 
         class _Exec:
             def submit(self, fn):
@@ -1615,9 +1518,7 @@ class TestJobDetailCoverageClosure:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api.jid_table, "jid_table", return_value=jt
-        ), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
@@ -1760,7 +1661,7 @@ class TestTypeDetailAndHostPlotClosure:
             response = api.type_detail(request, "j1", "cpu")
         assert response.status_code == 404
 
-    def test_host_plot_staff_only_and_bad_start_time(self):
+    def test_host_plot_allows_non_staff_and_bad_start_time(self):
         from hpcperfstats.site.lib.machine import api
 
         request = RequestFactory().get(
@@ -1768,17 +1669,13 @@ class TestTypeDetailAndHostPlotClosure:
             {"host": "n1.example.com", "end_time__gte": "not-a-date"},
         )
         request.session = {"username": "u", "is_staff": False}
-        with patch.object(api, "_require_auth", return_value=None):
-            response = api.host_plot(request)
-        assert response.status_code == 403
-
-        request.session = {"is_staff": True}
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "get_site_content_cache_timeout", return_value=60
-        ), patch.object(api, "cached_orm", return_value=None):
+        ), patch.object(api, "cached_orm", return_value=None) as mock_cached:
             response = api.host_plot(request)
         assert response.status_code == 200
         assert response.data["plot_item"] is None
+        mock_cached.assert_called_once()
 
     def test_host_plot_naive_datetimes_aware(self):
         from hpcperfstats.site.lib.machine import api
@@ -1787,8 +1684,8 @@ class TestTypeDetailAndHostPlotClosure:
             "/api/host_plot/",
             {
                 "host": "n1.example.com",
-                "end_time__gte": "2024-06-01T12:00:00",
-                "end_time__lte": "2024-06-02T12:00:00",
+                "end_time__gte": "2026-08-01T12:00:00",
+                "end_time__lte": "2026-08-02T12:00:00",
             },
         )
         request.session = {"is_staff": True}
@@ -1817,7 +1714,6 @@ class TestJobDetailRemainingKeysClosure:
         job = MagicMock(jid="j1")
         job.start_time = datetime(2024, 1, 1, tzinfo=dt_timezone.utc)
         job.end_time = datetime(2024, 1, 2, tzinfo=dt_timezone.utc)
-        jt = MagicMock(acct_host_list=[], start_time=job.start_time, end_time=job.end_time)
 
         class _Exec:
             def submit(self, fn):
@@ -1825,9 +1721,7 @@ class TestJobDetailRemainingKeysClosure:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
-        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api.jid_table, "jid_table", return_value=jt
-        ), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
@@ -1851,8 +1745,8 @@ class TestHostPlotJsonItemClosure:
             "/api/host_plot/",
             {
                 "host": "n1.example.com",
-                "end_time__gte": "2024-06-01T12:00:00Z",
-                "end_time__lte": "2024-06-02T12:00:00Z",
+                "end_time__gte": "2026-08-01T12:00:00Z",
+                "end_time__lte": "2026-08-02T12:00:00Z",
             },
         )
         request.session = {"is_staff": True}

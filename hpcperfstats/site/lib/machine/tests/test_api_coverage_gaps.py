@@ -5,6 +5,7 @@ ORM is mocked where views would otherwise query. LocMem cache avoids Redis
 during ``@dynamic_cache_page`` wrapping.
 """
 
+from contextlib import contextmanager
 from datetime import datetime, timezone as dt_timezone
 from unittest.mock import MagicMock, patch
 
@@ -179,8 +180,8 @@ class TestHostPlotApi:
         "/api/host_plot/",
         {
             "host": "n1.example.com",
-            "end_time__gte": "2024-06-01T12:00:00Z",
-            "end_time__lte": "now()",
+            "end_time__gte": "2026-08-01T12:00:00Z",
+            "end_time__lte": "2026-08-01T13:00:00Z",
         },
     )
     request.session = {"is_staff": True}
@@ -192,6 +193,46 @@ class TestHostPlotApi:
     assert response.status_code == 200
     assert response.data["plot_item"] == fake_item
     assert response.data["host"] == "n1.example.com"
+
+  def test_host_plot_builder_uses_extended_statement_timeout(self):
+    from hpcperfstats.site.lib.machine import api
+
+    factory = APIRequestFactory()
+    request = factory.get(
+        "/api/host_plot/",
+        {
+            "host": "n1.example.com",
+            "end_time__gte": "2026-08-01T12:00:00Z",
+            "end_time__lte": "2026-08-01T13:00:00Z",
+        },
+    )
+    request.session = {"username": "u", "is_staff": False}
+    seen = {"timeout": False}
+
+    @contextmanager
+    def _fake_timeout(*_a, **_k):
+      seen["timeout"] = True
+      yield
+
+    def _cached_orm(_key, _ttl, fn):
+      # Exercise the real host_plot builder body (timeout + host_data path).
+      return fn()
+
+    with patch.object(api, "_require_auth", return_value=None), patch.object(
+        api, "get_site_content_cache_timeout", return_value=60
+    ), patch.object(api, "_pg_host_plot_statement_timeout", _fake_timeout), patch.object(
+        api, "HostDataProvider", return_value=MagicMock()
+    ), patch.object(
+        api.plots,
+        "SummaryPlot",
+        return_value=MagicMock(plot=MagicMock(return_value=MagicMock(name="plot"))),
+    ), patch.object(api, "json_item", return_value={"ok": True}), patch.object(
+        api, "cached_orm", side_effect=_cached_orm
+    ):
+      response = api.host_plot(request)
+    assert response.status_code == 200
+    assert seen["timeout"] is True
+    assert response.data["plot_item"] == {"ok": True}
 
 
 class TestJobMonitorApi:
@@ -302,8 +343,8 @@ class TestJobMonitorGpuForUserApi:
     assert response.data["gpu_active_percentage"] == 25.0
     assert response.data["has_data"] is True
 
-  def test_fallback_skips_gpu_count_query_for_job_monitor_gpu(self):
-    """Fallback path must not run per-job gpu_count host_data query."""
+  def test_empty_metrics_has_no_host_data_fallback(self):
+    """Job monitor GPU is metrics_data-only (no jid_table / host_data fallback)."""
     from hpcperfstats.site.lib.machine import api
 
     class _EmptyMetricChain:
@@ -323,24 +364,6 @@ class TestJobMonitorGpuForUserApi:
     class _MD:
       objects = _MDObjects()
 
-    class _JobObjects:
-      def filter(self, **_kwargs):
-        class _Qs:
-          def only(self, *_fields):
-            return [
-                MagicMock(
-                    jid="j1",
-                    start_time=datetime(2026, 1, 1, tzinfo=dt_timezone.utc),
-                    end_time=datetime(2026, 1, 1, 1, tzinfo=dt_timezone.utc),
-                    host_list=["n1"],
-                )
-            ]
-
-        return _Qs()
-
-    class _JD:
-      objects = _JobObjects()
-
     factory = APIRequestFactory()
     request = factory.get("/api/job_monitor/gpu/", {"username": "alice"})
 
@@ -349,28 +372,14 @@ class TestJobMonitorGpuForUserApi:
     ), patch.object(
         api, "cached_orm", side_effect=lambda _k, _t, fn: fn()
     ), patch.object(api, "metrics_data", _MD), patch.object(
-        api, "job_data", _JD
-    ), patch.object(
-        api.jid_table,
-        "gpu_acct_window_for_job_data",
-        return_value=(
-            datetime(2026, 1, 1, tzinfo=dt_timezone.utc),
-            datetime(2026, 1, 1, 1, tzinfo=dt_timezone.utc),
-            ["n1.example.com"],
-        ),
-    ), patch.object(
-        api,
-        "_compute_job_gpu_stats",
-        return_value=(1, None, None, None),
+        api, "_compute_job_gpu_stats"
     ) as mock_compute:
       response = api.job_monitor_gpu_for_user(request)
 
     assert response.status_code == 200
-    assert response.data["gpu_active_total"] == 1
-    assert response.data["gpu_count_total"] is None
-    assert response.data["has_data"] is True
-    mock_compute.assert_called_once()
-    assert mock_compute.call_args.kwargs.get("include_gpu_count") is False
+    assert response.data["has_data"] is False
+    assert response.data["gpu_active_total"] is None
+    mock_compute.assert_not_called()
 
 
 class TestSacctIngestApi:
@@ -613,9 +622,7 @@ class TestJobDetailApi:
     jt.end_time = job.end_time
     with patch.object(api, "_require_auth", return_value=None), patch.object(
         api, "_get_visible_job_or_error_response", return_value=(job, None)
-    ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-        api.jid_table, "jid_table", return_value=jt
-    ), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
+    ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
         api, "compute_detail_input_fingerprint", return_value="fp"
     ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
         api, "JobListSerializer"
@@ -668,9 +675,7 @@ class TestJobPlotsApi:
 
     with patch.object(api, "_require_auth", return_value=None), patch.object(
         api, "_get_visible_job_or_error_response", return_value=(job, None)
-    ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-        api, "get_live_distinct_time_count_for_jid", return_value=1
-    ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
+    ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
         api.cache, "get", side_effect=_cache_get
     ), patch.object(api, "load_cached_job_plot_entry", return_value=None), patch.object(
         api, "_get_small_executor"

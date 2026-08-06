@@ -1,4 +1,4 @@
-from concurrent.futures import Future
+"""job_plots artifact-only loading/ready contracts (no live host_data compute)."""
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -12,16 +12,12 @@ pytestmark = pytest.mark.django_db(databases=[])
 def _patch_plot_fingerprint_dependencies(monkeypatch):
   """Avoid DB access for fingerprint/L2 probes in databases=[] tests."""
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.api.get_live_distinct_time_count_for_jid",
-      lambda _jid: 0,
-  )
-  monkeypatch.setattr(
       "hpcperfstats.site.lib.machine.api.compute_plot_input_fingerprint",
-      lambda _job, _live_distinct: "testfp",
+      lambda _job, *_a, **_k: "testfp",
   )
   monkeypatch.setattr(
       "hpcperfstats.site.lib.machine.api.load_cached_job_plot_entry",
-      lambda _jid, _plot_kind, _layout_key, _fingerprint: None,
+      lambda *_a, **_k: None,
   )
 
 
@@ -35,36 +31,22 @@ def _patch_allow_job_visibility():
   )
 
 
-def test_job_plots_returns_loading_while_background_tasks_are_pending():
+def test_job_plots_returns_loading_when_artifacts_missing():
   from hpcperfstats.site.lib.machine import api
 
-  api._job_plot_inflight.clear()
   factory = RequestFactory()
   request = factory.get("/api/jobs/2945017/plots/")
   request.session = {"username": "alice", "is_staff": True}
 
   fake_job = SimpleNamespace(jid=2945017)
 
-  class _FakeExecutor:
-    def submit(self, fn):
-      # Keep task submission shape realistic while avoiding real thread work.
-      fut = Future()
-      return fut
-
   with _patch_allow_job_visibility(), patch(
       "hpcperfstats.site.lib.machine.api._require_auth", return_value=None
   ), patch(
       "hpcperfstats.site.lib.machine.api.cached_orm", return_value=fake_job
   ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache, patch(
-      "hpcperfstats.site.lib.machine.api.jid_table.jid_table",
-      return_value=SimpleNamespace(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api._get_small_executor",
-      return_value=_FakeExecutor(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.logging.getLogger",
-      return_value=MagicMock(),
-  ):
+      "hpcperfstats.site.lib.machine.api._get_small_executor"
+  ) as mock_exec:
     mock_cache.get.return_value = None
     response = api.job_plots(request, 2945017)
 
@@ -72,82 +54,37 @@ def test_job_plots_returns_loading_while_background_tasks_are_pending():
   payload = response.data
   assert payload["status"] == "loading"
   assert payload["retry_after_seconds"] == 2
+  mock_exec.assert_not_called()
 
 
-def test_evict_stale_inflight_plot_tasks_removes_hung_entries():
+def test_job_plots_returns_full_payload_from_l1_cache():
   from hpcperfstats.site.lib.machine import api
 
-  api._job_plot_inflight.clear()
-  stale_future = Future()
-  done_future = Future()
-  done_future.set_result(("ok", None))
-  api._job_plot_inflight[("j1", "summary_plot", "normal")] = {
-      "future": stale_future,
-      "created_at": 10.0,
-  }
-  api._job_plot_inflight[("j2", "gpu_roofline", "normal")] = {
-      "future": done_future,
-      "created_at": 20.0,
-  }
-  api._job_plot_inflight[("j3", "roofline", "normal")] = {
-      "future": Future(),
-      "created_at": 300.0,
-  }
-
-  with patch("hpcperfstats.site.lib.machine.api.time.monotonic", return_value=400.0):
-    api._evict_stale_inflight_plot_tasks()
-
-  assert ("j1", "summary_plot", "normal") not in api._job_plot_inflight
-  assert ("j2", "gpu_roofline", "normal") not in api._job_plot_inflight
-  assert ("j3", "roofline", "normal") in api._job_plot_inflight
-
-
-def test_job_plots_returns_full_payload_after_loading_state():
-  from hpcperfstats.site.lib.machine import api
-
-  api._job_plot_inflight.clear()
   factory = RequestFactory()
   request = factory.get("/api/jobs/2945017/plots/")
   request.session = {"username": "alice", "is_staff": True}
 
   fake_job = SimpleNamespace(jid=2945017)
-  summary_future = Future()
-  roofline_future = Future()
-  gpu_roofline_future = Future()
-  submitted_futures = [summary_future, roofline_future, gpu_roofline_future]
 
-  class _FakeExecutor:
-    def submit(self, fn):
-      return submitted_futures.pop(0)
+  def _cache_get(cache_key, default=None):
+    if "summary_plot" in str(cache_key):
+      return {"plot_item": {"kind": "summary"}, "unavailable_reason": None}
+    if "gpu_roofline" in str(cache_key):
+      return {"plot_item": {"kind": "gpu_roofline"}, "unavailable_reason": None}
+    if "roofline" in str(cache_key):
+      return {"plot_item": {"kind": "roofline"}, "unavailable_reason": None}
+    return default
 
   with _patch_allow_job_visibility(), patch(
       "hpcperfstats.site.lib.machine.api._require_auth", return_value=None
   ), patch(
       "hpcperfstats.site.lib.machine.api.cached_orm", return_value=fake_job
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache, patch(
-      "hpcperfstats.site.lib.machine.api.jid_table.jid_table",
-      return_value=SimpleNamespace(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api._get_small_executor",
-      return_value=_FakeExecutor(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.logging.getLogger",
-      return_value=MagicMock(),
-  ):
-    mock_cache.get.return_value = None
+  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache:
+    mock_cache.get.side_effect = _cache_get
+    response = api.job_plots(request, 2945017)
 
-    first_response = api.job_plots(request, 2945017)
-    assert first_response.status_code == 202
-    assert first_response.data["status"] == "loading"
-
-    summary_future.set_result(({"kind": "summary"}, None))
-    roofline_future.set_result(({"kind": "roofline"}, None))
-    gpu_roofline_future.set_result(({"kind": "gpu_roofline"}, None))
-
-    second_response = api.job_plots(request, 2945017)
-
-  assert second_response.status_code == 200
-  payload = second_response.data
+  assert response.status_code == 200
+  payload = response.data
   assert payload["mplot_item"] == {"kind": "summary"}
   assert payload["rplot_item"] == {"kind": "roofline"}
   assert payload["grplot_item"] == {"kind": "gpu_roofline"}
@@ -156,235 +93,76 @@ def test_job_plots_returns_full_payload_after_loading_state():
   assert payload["grplot_unavailable_reason"] is None
 
 
-def test_job_plots_supports_per_plot_loading_and_ready_states():
+def test_job_plots_supports_per_plot_ready_from_l1():
   from hpcperfstats.site.lib.machine import api
 
-  api._job_plot_inflight.clear()
   factory = RequestFactory()
   request = factory.get("/api/jobs/2945017/plots/?plot=summary_plot")
   request.session = {"username": "alice", "is_staff": True}
 
   fake_job = SimpleNamespace(jid=2945017)
-  summary_future = Future()
-
-  class _FakeExecutor:
-    def submit(self, fn):
-      return summary_future
 
   with _patch_allow_job_visibility(), patch(
       "hpcperfstats.site.lib.machine.api._require_auth", return_value=None
   ), patch(
       "hpcperfstats.site.lib.machine.api.cached_orm", return_value=fake_job
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache, patch(
-      "hpcperfstats.site.lib.machine.api.jid_table.jid_table",
-      return_value=SimpleNamespace(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api._get_small_executor",
-      return_value=_FakeExecutor(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.logging.getLogger",
-      return_value=MagicMock(),
-  ):
-    mock_cache.get.return_value = None
+  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache:
+    mock_cache.get.return_value = {
+        "plot_item": {"kind": "summary"},
+        "unavailable_reason": None,
+    }
+    response = api.job_plots(request, 2945017)
 
-    loading_response = api.job_plots(request, 2945017)
-    assert loading_response.status_code == 202
-    assert loading_response.data["status"] == "loading"
-    assert loading_response.data["loading_plots"] == ["summary_plot"]
-
-    summary_future.set_result(({"kind": "summary"}, None))
-    ready_response = api.job_plots(request, 2945017)
-
-  assert ready_response.status_code == 200
-  assert ready_response.data["status"] == "ready"
-  assert ready_response.data["plot"] == "summary_plot"
-  assert ready_response.data["plot_item"] == {"kind": "summary"}
-  assert ready_response.data["unavailable_reason"] is None
+  assert response.status_code == 200
+  assert response.data["status"] == "ready"
+  assert response.data["plot"] == "summary_plot"
+  assert response.data["plot_item"] == {"kind": "summary"}
+  assert response.data["unavailable_reason"] is None
 
 
-def test_job_plots_refreshes_stale_cached_generic_roofline_reason():
+def test_job_plots_null_l1_entry_is_terminal_ready():
+  """Null plot_item + reason on L1/L2 hit must not return loading."""
   from hpcperfstats.site.lib.machine import api
 
-  api._job_plot_inflight.clear()
   factory = RequestFactory()
   request = factory.get("/api/jobs/2945017/plots/")
   request.session = {"username": "alice", "is_staff": True}
 
   fake_job = SimpleNamespace(jid=2945017)
-  roofline_future = Future()
+  reason = "Missing roofline counters in host_data"
 
-  class _FakeExecutor:
-    def submit(self, fn):
-      return roofline_future
-
-  def _cache_get(cache_key):
-    if "summary_plot" in cache_key:
+  def _cache_get(cache_key, default=None):
+    key = str(cache_key)
+    if "summary_plot" in key:
       return {"plot_item": {"kind": "summary"}, "unavailable_reason": None}
-    if "gpu_roofline" in cache_key:
+    if "gpu_roofline" in key:
       return {"plot_item": {"kind": "gpu_roofline"}, "unavailable_reason": None}
-    if "roofline" in cache_key:
-      return {
-          "plot_item": None,
-          "unavailable_reason": "No FLOPS/memory bandwidth data available for roofline.",
-      }
-    return None
+    if "roofline" in key:
+      return {"plot_item": None, "unavailable_reason": reason}
+    return default
 
   with _patch_allow_job_visibility(), patch(
       "hpcperfstats.site.lib.machine.api._require_auth", return_value=None
   ), patch(
       "hpcperfstats.site.lib.machine.api.cached_orm", return_value=fake_job
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache, patch(
-      "hpcperfstats.site.lib.machine.api.jid_table.jid_table",
-      return_value=SimpleNamespace(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api._get_small_executor",
-      return_value=_FakeExecutor(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.logging.getLogger",
-      return_value=MagicMock(),
-  ):
+  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache:
     mock_cache.get.side_effect = _cache_get
+    response = api.job_plots(request, 2945017)
 
-    first_response = api.job_plots(request, 2945017)
-    assert first_response.status_code == 202
-    assert first_response.data["loading_plots"] == ["roofline"]
-
-    roofline_future.set_result((None, "Missing roofline counters in host_data"))
-    second_response = api.job_plots(request, 2945017)
-
-  assert second_response.status_code == 200
-  assert second_response.data["rplot_item"] is None
-  assert second_response.data["rplot_unavailable_reason"] == "Missing roofline counters in host_data"
+  assert response.status_code == 200
+  assert response.data["rplot_item"] is None
+  assert response.data["rplot_unavailable_reason"] == reason
 
 
-def test_job_plots_refreshes_stale_cached_generic_summary_reason():
+def test_job_plots_progressive_returns_200_partial_when_artifacts_missing():
+  """progressive=1 returns 200 partial JSON (not 202) when artifacts are not ready."""
   from hpcperfstats.site.lib.machine import api
 
-  api._job_plot_inflight.clear()
-  factory = RequestFactory()
-  request = factory.get("/api/jobs/2945017/plots/")
-  request.session = {"username": "alice", "is_staff": True}
-
-  fake_job = SimpleNamespace(jid=2945017)
-  summary_future = Future()
-
-  class _FakeExecutor:
-    def submit(self, fn):
-      return summary_future
-
-  def _cache_get(cache_key):
-    if "summary_plot" in cache_key:
-      return {
-          "plot_item": None,
-          "unavailable_reason": "No metric data available for this job.",
-      }
-    if "gpu_roofline" in cache_key:
-      return {"plot_item": {"kind": "gpu_roofline"}, "unavailable_reason": None}
-    if "roofline" in cache_key:
-      return {"plot_item": {"kind": "roofline"}, "unavailable_reason": None}
-    return None
-
-  with _patch_allow_job_visibility(), patch(
-      "hpcperfstats.site.lib.machine.api._require_auth", return_value=None
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.cached_orm", return_value=fake_job
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache, patch(
-      "hpcperfstats.site.lib.machine.api.jid_table.jid_table",
-      return_value=SimpleNamespace(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api._get_small_executor",
-      return_value=_FakeExecutor(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.logging.getLogger",
-      return_value=MagicMock(),
-  ):
-    mock_cache.get.side_effect = _cache_get
-
-    first_response = api.job_plots(request, 2945017)
-    assert first_response.status_code == 202
-    assert first_response.data["loading_plots"] == ["summary_plot"]
-
-    summary_future.set_result((None, "Missing summary counters in host_data"))
-    second_response = api.job_plots(request, 2945017)
-
-  assert second_response.status_code == 200
-  assert second_response.data["mplot_item"] is None
-  assert second_response.data["mplot_unavailable_reason"] == "Missing summary counters in host_data"
-
-
-def test_job_plots_refreshes_stale_cached_generic_gpu_roofline_reason():
-  from hpcperfstats.site.lib.machine import api
-
-  api._job_plot_inflight.clear()
-  factory = RequestFactory()
-  request = factory.get("/api/jobs/2945017/plots/")
-  request.session = {"username": "alice", "is_staff": True}
-
-  fake_job = SimpleNamespace(jid=2945017)
-  gpu_roofline_future = Future()
-
-  class _FakeExecutor:
-    def submit(self, fn):
-      return gpu_roofline_future
-
-  def _cache_get(cache_key):
-    if "summary_plot" in cache_key:
-      return {"plot_item": {"kind": "summary"}, "unavailable_reason": None}
-    if "gpu_roofline" in cache_key:
-      return {
-          "plot_item": None,
-          "unavailable_reason": "No FLOPS/memory bandwidth data available for roofline.",
-      }
-    if "roofline" in cache_key:
-      return {"plot_item": {"kind": "roofline"}, "unavailable_reason": None}
-    return None
-
-  with _patch_allow_job_visibility(), patch(
-      "hpcperfstats.site.lib.machine.api._require_auth", return_value=None
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.cached_orm", return_value=fake_job
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache, patch(
-      "hpcperfstats.site.lib.machine.api.jid_table.jid_table",
-      return_value=SimpleNamespace(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api._get_small_executor",
-      return_value=_FakeExecutor(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.logging.getLogger",
-      return_value=MagicMock(),
-  ):
-    mock_cache.get.side_effect = _cache_get
-
-    first_response = api.job_plots(request, 2945017)
-    assert first_response.status_code == 202
-    assert first_response.data["loading_plots"] == ["gpu_roofline"]
-
-    gpu_roofline_future.set_result((None, "Missing strict GPU roofline counters in host_data"))
-    second_response = api.job_plots(request, 2945017)
-
-  assert second_response.status_code == 200
-  assert second_response.data["grplot_item"] is None
-  assert (
-      second_response.data["grplot_unavailable_reason"]
-      == "Missing strict GPU roofline counters in host_data"
-  )
-
-
-def test_job_plots_progressive_returns_200_partial_while_tasks_pending():
-  """progressive=1 returns 200 partial JSON (not 202) when plots are still running."""
-  from hpcperfstats.site.lib.machine import api
-
-  api._job_plot_inflight.clear()
   factory = RequestFactory()
   request = factory.get("/api/jobs/2945017/plots/?progressive=1")
   request.session = {"username": "alice", "is_staff": True}
 
   fake_job = SimpleNamespace(jid=2945017)
-
-  class _FakeExecutor:
-    def submit(self, fn):
-      fut = Future()
-      return fut
 
   vis_qs = MagicMock()
   vis_qs.exists.return_value = True
@@ -394,15 +172,8 @@ def test_job_plots_progressive_returns_200_partial_while_tasks_pending():
       "hpcperfstats.site.lib.machine.api._apply_non_staff_job_visibility",
       return_value=vis_qs,
   ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache, patch(
-      "hpcperfstats.site.lib.machine.api.jid_table.jid_table",
-      return_value=SimpleNamespace(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api._get_small_executor",
-      return_value=_FakeExecutor(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.logging.getLogger",
-      return_value=MagicMock(),
-  ):
+      "hpcperfstats.site.lib.machine.api._get_small_executor"
+  ) as mock_exec:
     mock_cache.get.return_value = None
     response = api.job_plots(request, 2945017)
 
@@ -416,27 +187,23 @@ def test_job_plots_progressive_returns_200_partial_while_tasks_pending():
       "gpu_roofline",
   }
   assert "mplot_item" not in payload
+  mock_exec.assert_not_called()
 
 
 def test_job_plots_progressive_partial_includes_completed_plot_fields():
   """progressive partial responses embed finished plots and omit keys still loading."""
   from hpcperfstats.site.lib.machine import api
 
-  api._job_plot_inflight.clear()
   factory = RequestFactory()
   request = factory.get("/api/jobs/2945017/plots/?progressive=1")
   request.session = {"username": "alice", "is_staff": True}
 
   fake_job = SimpleNamespace(jid=2945017)
-  summary_future = Future()
-  summary_future.set_result(({"kind": "summary"}, None))
-  roof_future = Future()
-  gpu_future = Future()
-  queue = iter([summary_future, roof_future, gpu_future])
 
-  class _FakeExecutor:
-    def submit(self, fn):
-      return next(queue)
+  def _cache_get(cache_key, default=None):
+    if "summary_plot" in str(cache_key):
+      return {"plot_item": {"kind": "summary"}, "unavailable_reason": None}
+    return default
 
   vis_qs = MagicMock()
   vis_qs.exists.return_value = True
@@ -445,17 +212,8 @@ def test_job_plots_progressive_partial_includes_completed_plot_fields():
   ), patch(
       "hpcperfstats.site.lib.machine.api._apply_non_staff_job_visibility",
       return_value=vis_qs,
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache, patch(
-      "hpcperfstats.site.lib.machine.api.jid_table.jid_table",
-      return_value=SimpleNamespace(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api._get_small_executor",
-      return_value=_FakeExecutor(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.logging.getLogger",
-      return_value=MagicMock(),
-  ):
-    mock_cache.get.return_value = None
+  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache:
+    mock_cache.get.side_effect = _cache_get
     response = api.job_plots(request, 2945017)
 
   assert response.status_code == 200
@@ -473,19 +231,14 @@ def test_job_plots_progressive_final_payload_includes_ready_metadata():
   """When all plots are ready, progressive=1 adds status/loading_plots to the batch body."""
   from hpcperfstats.site.lib.machine import api
 
-  api._job_plot_inflight.clear()
   factory = RequestFactory()
   request = factory.get("/api/jobs/2945017/plots/?progressive=1")
   request.session = {"username": "alice", "is_staff": True}
 
   fake_job = SimpleNamespace(jid=2945017)
-  futures = [Future() for _ in range(3)]
-  for fut in futures:
-    fut.set_result(({"ok": True}, None))
 
-  class _FakeExecutor:
-    def submit(self, fn):
-      return futures.pop(0)
+  def _cache_get(cache_key, default=None):
+    return {"plot_item": {"ok": True}, "unavailable_reason": None}
 
   vis_qs = MagicMock()
   vis_qs.exists.return_value = True
@@ -494,17 +247,8 @@ def test_job_plots_progressive_final_payload_includes_ready_metadata():
   ), patch(
       "hpcperfstats.site.lib.machine.api._apply_non_staff_job_visibility",
       return_value=vis_qs,
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache, patch(
-      "hpcperfstats.site.lib.machine.api.jid_table.jid_table",
-      return_value=SimpleNamespace(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api._get_small_executor",
-      return_value=_FakeExecutor(),
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.logging.getLogger",
-      return_value=MagicMock(),
-  ):
-    mock_cache.get.return_value = None
+  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache:
+    mock_cache.get.side_effect = _cache_get
     response = api.job_plots(request, 2945017)
 
   assert response.status_code == 200
@@ -576,4 +320,3 @@ def test_apply_zoom_layout_to_json_item_does_not_mutate_document_config():
   assert "sizing_mode" not in cfg_attrs
   assert "width_policy" not in cfg_attrs
   assert "height_policy" not in cfg_attrs
-

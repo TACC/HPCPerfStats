@@ -76,7 +76,7 @@ Sum of `phase_totals` keys: **~0.34343 s**.
 ## Success criteria (next iteration)
 
 - Repeat diagnosis after infra or pool tuning: target **higher `jobs_per_min`** at the **same seed env** and dates, or **lower `metrics_compute_s` per processed job** when comparing before/after (same cohort).
-- For backlog catch-up, measure again with **`metrics_scheduler_skip_prewarm`** aligned to operational policy (not necessarily the diagnosis test default).
+- For backlog catch-up, measure again with always-on plot/detail prewarm (``metrics_scheduler_skip_prewarm`` was removed; prewarm always runs after successful metrics).
 
 ## Sweep results (this implementation pass)
 

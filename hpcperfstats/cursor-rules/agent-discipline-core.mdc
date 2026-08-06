@@ -59,7 +59,8 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | Trigger paths | Read these rules |
 |---------------|------------------|
 | `hpcperfstats/**/*.py` (excl. tests/migrations), `scripts/**/*.py`, `services-conf/**/*.py` | `python-docstring-and-typing-contract.mdc` |
-| `hpcperfstats/site/lib/machine/api.py`, serializers, models | `django-python-cursor-rules.mdc`, `end-to-end-feature-wiring-contract.mdc` |
+| `hpcperfstats/site/lib/machine/api.py`, serializers, models | `django-python-cursor-rules.mdc`, `end-to-end-feature-wiring-contract.mdc`, `host-data-read-boundary.mdc` |
+| `job_plot_artifacts.py`, `job_detail_artifacts.py`, `artifact_readiness_expressions.py`, Job Detail plots / host_plot | `host-data-read-boundary.mdc`, `job-plot-artifacts-caching.mdc` |
 | `hpcperfstats/site/lib/machine/job_list_filter_summary.py` | `design-focused-spa-ux.mdc` |
 | API routes, status bands, auth | `api-breaking-change-contract.mdc`, `pipeline-endpoint-matrix-drift-guard.mdc` |
 | Migrations | `django-migration-numbering.mdc`, `startup-migration-bounded-work.mdc` |
@@ -77,7 +78,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `hpcperfstats/site/lib/machine/tests/test_*openapi_wire_contract*.py` | `openapi-spa-wire-validation-contract.mdc` |
 | `hpcperfstats/site/frontend/src/utils/variableMetadata*.ts`, `generate-variable-metadata-monitor-events.py`, `docs/MONITOR_VARIABLES.md`, `docs/regenerate_monitor_variables_catalog.py` | `variable-metadata-cross-source-sync.mdc`, `variable-metadata-monitor-contract.mdc` |
 | Job Detail, Extended Search, metadata | `search-metric-artifact-sync.mdc`, `variable-metadata-cross-source-sync.mdc`, `variable-metadata-monitor-contract.mdc`, `researcher-job-detail-doc-sync.mdc`, `job-detail-analysis-tab-consistency.mdc`, `gpu-host-data-source-priority.mdc` |
-| Plots / Bokeh embed | `job-plot-artifacts-caching.mdc`, `bokeh-layout-surface-split.mdc`, `no-scientific-notation-web.mdc`, `job-detail-bokeh-plot-help.mdc` |
+| Plots / Bokeh embed | `job-plot-artifacts-caching.mdc`, `host-data-read-boundary.mdc`, `bokeh-layout-surface-split.mdc`, `no-scientific-notation-web.mdc`, `job-detail-bokeh-plot-help.mdc` |
 | `bokeh_job_detail_help_marker.py`, `job_detail_bokeh_plot_descriptions.py`, `summary_metric_descriptions.py`, `summaryplot.py`, `roofline.py`, `job_detail_artifacts.py`, `job_plot_artifacts.py`, Job Detail Bokeh help / Summary metric prose | `job-detail-bokeh-plot-help.mdc`, `job-plot-artifacts-caching.mdc`, `variable-metadata-cross-source-sync.mdc` |
 | `@bokeh/bokehjs` / `bokeh==` pins, `test_bokeh*.py`, Bokeh fixture regen | `bokeh-version-and-vendor-patch-upgrade.mdc` |
 | Frontend jest-axe / Playwright axe (`axe-test-utils`, page shell tests) | `frontend-a11y-regression.mdc` |

@@ -135,10 +135,6 @@ JOB_DETAIL_WIRE_STAFF_ARTIFACT_CONTRACT = {
         "current_detail": 8,
         "db_plot": [10, 11],
         "db_detail": [],
-        "note": (
-            "DB lists distinct non-null artifact_schema values only. "
-            "Empty/none does not mean plots are missing."
-        ),
     },
 }
 

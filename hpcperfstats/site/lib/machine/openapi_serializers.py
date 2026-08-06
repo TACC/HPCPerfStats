@@ -389,7 +389,6 @@ class StaffArtifactContractSerializer(serializers.Serializer):
     current_detail = serializers.IntegerField()
     db_plot = serializers.ListField(child=serializers.IntegerField())
     db_detail = serializers.ListField(child=serializers.IntegerField())
-    note = serializers.CharField(required=False, allow_blank=True)
 
 
 class GpuInventoryEntrySerializer(serializers.Serializer):

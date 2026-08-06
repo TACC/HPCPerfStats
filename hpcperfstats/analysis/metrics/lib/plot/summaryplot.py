@@ -289,6 +289,12 @@ def _prefetch_single_spec_aggregates(jt: Any, spec_rows: Any) -> Any:
   Returns:
     Any: Value produced by this call (type depends on inputs).
   
+  Raises:
+    RuntimeError: Re-raised when pool submit fails for a reason other than
+      interpreter/ThreadPool shutdown (those fall back to serial prefetch).
+    Exception: Propagated from worker futures (``fut.result()``) when aggregate
+      fetch fails for a subplot row.
+  
   Examples:
     >>> _prefetch_single_spec_aggregates(None, None)  # doctest: +SKIP
   """
@@ -323,11 +329,36 @@ def _prefetch_single_spec_aggregates(jt: Any, spec_rows: Any) -> Any:
   if not spec_rows:
     return out
   max_workers = compute_summary_aggregate_prefetch_pool_size(len(spec_rows))
-  with ThreadPoolExecutor(max_workers=max_workers) as pool:
-    futures = [pool.submit(_one, row) for row in spec_rows]
-    for fut in as_completed(futures):
-      name, df = fut.result()
-      out[name] = df
+
+  def _run_serial() -> dict:
+    """
+    Fetch each aggregate row sequentially when the thread pool cannot start.
+
+    Returns:
+      dict: Mapping of subplot name to aggregate DataFrame.
+
+    Examples:
+      >>> _run_serial()  # doctest: +SKIP
+    """
+    serial = {}
+    for row in spec_rows:
+      name, df = _one(row)
+      serial[name] = df
+    return serial
+
+  try:
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+      futures = [pool.submit(_one, row) for row in spec_rows]
+      for fut in as_completed(futures):
+        name, df = fut.result()
+        out[name] = df
+  except RuntimeError as exc:
+    # Nested under a dying metrics/prewarm pool: do not poison artifacts.
+    if "interpreter shutdown" in str(exc).lower() or "cannot schedule new futures" in str(
+        exc
+    ).lower():
+      return _run_serial()
+    raise
   return out
 
 

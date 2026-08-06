@@ -14,9 +14,6 @@ import bokeh
 from django.db.models import CharField, IntegerField
 from django.db.models.expressions import Expression
 
-from hpcperfstats.analysis.metrics.lib.live_host_sample_count import (
-    live_distinct_host_time_count_expression,
-)
 from hpcperfstats.site.lib.machine import job_detail_artifacts as detail_cfg
 from hpcperfstats.site.lib.machine import job_plot_artifacts as plot_cfg
 from hpcperfstats.site.lib.machine.models import job_data, job_detail_artifact
@@ -24,10 +21,12 @@ from hpcperfstats.site.lib.machine.models import job_data, job_detail_artifact
 
 class PlotArtifactInputFingerprintHex(Expression):
   """
-  ``encode(sha256(convert_to(canonical_json, 'UTF8'))), 'hex')`` for the outer.
+  ``encode(sha256(convert_to(canonical_json, 'UTF8'))), 'hex')`` for plot.
+
+  ``live_distinct`` in the canonical JSON is ``COALESCE(metrics_distinct_time_count, 0)``
+  (persisted only — no request-time ``host_data`` COUNT).
   
   Attributes:
-    _live_expr: Attribute.
     host_suffix: Attribute.
     outer_model: Attribute.
   """
@@ -45,7 +44,7 @@ class PlotArtifactInputFingerprintHex(Expression):
     Initialize a new instance.
     
     Args:
-      host_suffix (str): String for host suffix.
+      host_suffix (str): String for host suffix (unused; kept for signature parity).
       outer_model (Any | None): One of ``Any``, ``None``.
       output_field (Any | None): One of ``Any``, ``None``.
     
@@ -60,9 +59,6 @@ class PlotArtifactInputFingerprintHex(Expression):
     super().__init__(output_field=output_field)
     self.host_suffix = host_suffix
     self.outer_model = outer_model or job_data
-    self._live_expr = live_distinct_host_time_count_expression(
-        host_suffix, outer_model=self.outer_model
-    )
 
   def __repr__(self) -> Any:
     """
@@ -174,7 +170,6 @@ class PlotArtifactInputFingerprintHex(Expression):
               self.__class__.__name__, connection.vendor
           )
       )
-    live_sql, live_params = self._live_expr.as_sql(compiler, connection)
     ops = connection.ops
     jt = ops.quote_name(self.outer_model._meta.db_table)
     st = ops.quote_name("start_time")
@@ -198,13 +193,15 @@ class PlotArtifactInputFingerprintHex(Expression):
     st_iso = iso_ts.format(tbl=jt, col=st)
     tft_iso = iso_ts.format(tbl=jt, col=tft)
     tlt_iso = iso_ts.format(tbl=jt, col=tlt)
+    # live_distinct key kept for wire compatibility; value is persisted mdc only.
+    mdc_num = f"COALESCE({jt}.{mdc}, 0)"
     inner = (
         f"'{{\"artifact_schema\":' || %s::text || "
         f"',\"bokeh\":' || to_json(%s::text)::text || "
         f"',\"et\":' || {et_iso} || "
         f"',\"hosts\":' || {hosts_json} || "
         f"',\"jid\":' || to_json(trim(both from {jt}.{jcol}::text))::text || "
-        f"',\"live_distinct\":' || ({live_sql})::text || "
+        f"',\"live_distinct\":' || ({mdc_num})::text || "
         f"',\"mdc\":' || (CASE WHEN {jt}.{mdc} IS NULL THEN 'null' "
         f"ELSE {jt}.{mdc}::text END) || "
         f"',\"st\":' || {st_iso} || "
@@ -213,7 +210,6 @@ class PlotArtifactInputFingerprintHex(Expression):
     )
     sql = "encode(sha256(convert_to(({})::text, 'UTF8')), 'hex')".format(inner)
     params = [plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION, bokeh.__version__]
-    params.extend(live_params)
     return sql, params
 
 

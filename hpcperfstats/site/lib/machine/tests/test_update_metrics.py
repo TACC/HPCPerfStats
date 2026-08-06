@@ -534,7 +534,6 @@ def test_job_refs_from_jids_are_lightweight():
 def test_update_metrics_uses_lightweight_job_refs(monkeypatch):
   """update_metrics should not re-query job_data rows per chunk."""
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
   monkeypatch.setattr(update_metrics, "_start_readiness_producer", _enqueue_chunks_from_date_states)
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
   monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
@@ -580,7 +579,6 @@ def test_update_metrics_uses_lightweight_job_refs(monkeypatch):
 def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
   """Jobs without host latest sample strictly after end_time are skipped."""
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
   monkeypatch.setattr(update_metrics, "_start_readiness_producer", _enqueue_chunks_from_date_states)
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
   monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
@@ -622,7 +620,6 @@ def test_update_metrics_skips_jobs_without_post_end_host_samples(monkeypatch):
 def test_update_metrics_reuses_shared_pool_per_date(monkeypatch):
   """update_metrics should initialize one shared pool and reuse it per jid run."""
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
   monkeypatch.setattr(update_metrics, "_start_readiness_producer", _enqueue_chunks_from_date_states)
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
   monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *args, **kwargs: object())
@@ -918,7 +915,6 @@ def test_filter_jids_readiness_query_orders_by_jid(monkeypatch):
 @pytest.mark.machine_unit_mock
 def test_compute_jid_outcomes_batch_calls_metrics_run_once(monkeypatch):
   """``Metrics.run`` receives the full dequeue batch in one call (pool saturation)."""
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
   batches = []
 
   class _M:
@@ -944,17 +940,8 @@ def test_compute_jid_outcomes_batch_calls_metrics_run_once(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
-def test_compute_jid_outcomes_batch_skip_prewarm_skips_plot_submit(monkeypatch):
-  """skip_prewarm skips plot pipeline submit but still persists job-detail artifacts."""
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
-  detail_jids = []
-
-  def _persist(jid, context=None):
-    del context
-    detail_jids.append(jid)
-
-  monkeypatch.setattr(update_metrics, "persist_job_detail_artifacts_for_jid", _persist)
-
+def test_compute_jid_outcomes_batch_always_submits_prewarm(monkeypatch):
+  """Successful jids always get plot prewarm submit (no skip-prewarm escape hatch)."""
   class _M:
     def ensure_pool(self, pool_kind="metrics-pool"):
       return None
@@ -971,29 +958,21 @@ def test_compute_jid_outcomes_batch_skip_prewarm_skips_plot_submit(monkeypatch):
       } for ref in job_refs]
 
   pipe = MagicMock()
+  pipe.has_pending.return_value = False
   out = update_metrics._compute_jid_outcomes_batch(
       [SimpleNamespace(jid="only", artifact_only=False)],
       _M(),
       pipe,
       None,
   )
-  pipe.submit.assert_not_called()
-  assert detail_jids == ["only"]
+  pipe.submit.assert_called_once_with("only")
   assert [d["jid"] for d in out] == ["only"]
   assert out[0]["ok"] is True
 
 
 @pytest.mark.machine_unit_mock
-def test_compute_jid_outcomes_batch_skip_prewarm_persists_artifact_only(monkeypatch):
-  """artifact_only + skip_prewarm must still write detail artifacts (no Metrics.run)."""
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
-  detail_jids = []
-  monkeypatch.setattr(
-      update_metrics,
-      "persist_job_detail_artifacts_for_jid",
-      lambda jid, context=None: detail_jids.append(jid),
-  )
-
+def test_compute_jid_outcomes_batch_artifact_only_submits_prewarm(monkeypatch):
+  """artifact_only refs get prewarm submit without Metrics.run."""
   class _M:
     def ensure_pool(self, pool_kind="metrics-pool"):
       return None
@@ -1002,22 +981,20 @@ def test_compute_jid_outcomes_batch_skip_prewarm_persists_artifact_only(monkeypa
       raise AssertionError("artifact_only must not call Metrics.run")
 
   pipe = MagicMock()
+  pipe.has_pending.return_value = False
   out = update_metrics._compute_jid_outcomes_batch(
       [SimpleNamespace(jid="art-only", artifact_only=True)],
       _M(),
       pipe,
       None,
   )
-  pipe.submit.assert_not_called()
-  assert detail_jids == ["art-only"]
+  pipe.submit.assert_called_once_with("art-only")
   assert out[0]["ok"] is True
   assert out[0]["jid"] == "art-only"
 
 
 @pytest.mark.machine_unit_mock
 def test_compute_jid_outcomes_batch_prewarm_submits_each_jid(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: False)
-
   class _M:
     def ensure_pool(self, pool_kind="metrics-pool"):
       return None
@@ -1047,8 +1024,6 @@ def test_compute_jid_outcomes_batch_prewarm_submits_each_jid(monkeypatch):
 
 @pytest.mark.machine_unit_mock
 def test_compute_jid_outcomes_batch_skips_prewarm_for_explicit_failed_outcomes(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: False)
-
   class _M:
     def ensure_pool(self, pool_kind="metrics-pool"):
       return None
@@ -1102,7 +1077,6 @@ def test_compute_jid_outcomes_batch_skips_prewarm_for_explicit_failed_outcomes(m
 
 @pytest.mark.machine_unit_mock
 def test_compute_jid_outcomes_batch_prewarm_drain_budget_defers_backlog(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: False)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_s", lambda: 0.0)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_per_job_s", lambda: 0.0)
 
@@ -1173,8 +1147,6 @@ def test_effective_prewarm_drain_budget_scales_with_successful_count(monkeypatch
 
 @pytest.mark.machine_unit_mock
 def test_compute_jid_outcomes_batch_skips_metrics_run_for_artifact_only_candidates(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: False)
-
   calls = []
 
   class _M:
@@ -1228,7 +1200,6 @@ def test_compute_jid_outcomes_batch_skips_metrics_run_for_artifact_only_candidat
 
 @pytest.mark.machine_unit_mock
 def test_compute_jid_outcomes_batch_falls_back_per_jid_after_batch_failure(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
   calls = []
 
   class _M:
@@ -1265,7 +1236,6 @@ def test_compute_jid_outcomes_batch_falls_back_per_jid_after_batch_failure(monke
 
 @pytest.mark.machine_unit_mock
 def test_compute_jid_outcomes_batch_stall_recovery_budget_marks_remaining_failed(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
   monkeypatch.setattr(update_metrics, "STALL_RECOVERY_MAX_WALL_SECONDS", 0.0)
   calls = []
 
@@ -2503,7 +2473,6 @@ def test_update_metrics_for_dates_rescan_picks_up_new_mid_run_jid(monkeypatch):
     return _DoneProducer()
 
   monkeypatch.setattr(update_metrics, "_start_readiness_producer", _producer_enqueue_initial)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_skip_prewarm", lambda: True)
   monkeypatch.setattr(
       update_metrics,
       "refresh_public_expansion_factor_artifacts_parallel",

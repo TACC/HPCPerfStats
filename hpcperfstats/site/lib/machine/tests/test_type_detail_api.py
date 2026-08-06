@@ -117,14 +117,24 @@ def test_type_detail_response_omits_legacy_tscript_tdiv():
 
 
 @pytest.mark.django_db(databases=[])
-def test_host_plot_forbidden_for_non_staff():
+def test_host_plot_allows_non_staff_authenticated_users():
   from hpcperfstats.site.lib.machine import api
 
   factory = RequestFactory()
-  request = factory.get("/api/host_plot/?host=h1&end_time__gte=2025-01-01T00:00:00Z")
+  request = factory.get(
+      "/api/host_plot/",
+      {
+          "host": "h1",
+          "end_time__gte": "2026-08-01T00:00:00Z",
+          "end_time__lte": "2026-08-01T12:00:00Z",
+      },
+  )
   request.session = {"username": "u1", "is_staff": False}
 
-  with patch.object(api, "_require_auth", return_value=None):
+  with patch.object(api, "_require_auth", return_value=None), patch.object(
+      api, "get_site_content_cache_timeout", return_value=60
+  ), patch.object(api, "cached_orm", return_value={"type": "object"}):
     response = api.host_plot(request)
 
-  assert response.status_code == 403
+  assert response.status_code == 200
+  assert response.data["plot_item"] == {"type": "object"}

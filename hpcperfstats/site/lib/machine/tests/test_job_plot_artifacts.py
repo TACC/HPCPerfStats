@@ -228,6 +228,8 @@ def test_load_cached_job_plot_entry_returns_none_on_corrupt_payload():
 
 @pytest.mark.django_db
 def test_upsert_job_plot_artifact_batch_updates_existing_row():
+  from hpcperfstats.site.lib.machine import job_plot_artifacts as plot_cfg
+
   now = timezone.now()
   j = job_data.objects.create(
       jid="batch1",
@@ -402,6 +404,49 @@ def test_persist_job_plot_artifacts_marks_plot_exceptions_unavailable(monkeypatc
   assert entry is not None
   assert entry["plot_item"] is None
   assert entry["unavailable_reason"] == "Plot generation failed during artifact prewarm."
+
+
+@pytest.mark.django_db
+def test_persist_job_plot_artifacts_skips_interpreter_shutdown_poison(monkeypatch):
+  """Do not upsert L2 rows whose reason is ThreadPool/interpreter-shutdown poison."""
+  now = timezone.now()
+  job = job_data.objects.create(
+      jid="plotpoison1",
+      submit_time=now,
+      start_time=now,
+      end_time=now,
+      username="u1",
+      host_list=["n1"],
+      metrics_distinct_time_count=1,
+  )
+
+  class _FakeJt:
+    host_list = ["n1"]
+    acct_host_list = ["n1"]
+
+    def get_host_time_df(self):
+      import pandas as pd
+      return pd.DataFrame({"host": ["n1"], "time": [now]})
+
+    def get_aggregate_df(self, _typ, _metric_column, _events, _conv):
+      import pandas as pd
+      return pd.DataFrame({"host": ["n1"], "time": [now], "sum_val": [0.0]})
+
+  monkeypatch.setattr(
+      "hpcperfstats.site.lib.machine.job_plot_artifacts.jid_table.jid_table",
+      lambda jid: _FakeJt(),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.site.lib.machine.job_plot_artifacts.compute_plot_item_for_kind",
+      lambda _jt, _kind, _zoom_mode: (
+          None,
+          "cannot schedule new futures after interpreter shutdown",
+      ),
+  )
+
+  persist_job_plot_artifacts_for_jid(job.jid)
+
+  assert job_plot_artifact.objects.filter(jid_id=job.jid).count() == 0
 
 
 @pytest.mark.django_db

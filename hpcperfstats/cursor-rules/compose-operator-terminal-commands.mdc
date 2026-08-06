@@ -307,6 +307,15 @@ There is **no** `Job` class in `hpcperfstats.site.lib.machine.models`. The accou
 |----|-------|
 | `.values("artifact_kind", "artifact_schema", "artifact_scope", "input_fingerprint")` | `.values("schema_version", "fingerprint")` |
 
+### Anti-pattern — inventing `job_plot_artifact.artifact_kind` / `load_job_plot_artifact`
+
+`job_plot_artifact` uses **`plot_kind`** + **`layout`** (not detail’s `artifact_kind` / `artifact_scope`). Load helpers: **`load_cached_job_plot_entry`**. Selecting `artifact_kind` raises **`FieldError`**; importing `load_job_plot_artifact` raises **`ImportError`** (hpcperfstats04, 2026-08-05).
+
+| Do | Don't |
+|----|-------|
+| `.values("plot_kind", "layout", "artifact_schema", "input_fingerprint")` | `.values("artifact_kind", "artifact_scope", …)` |
+| `load_cached_job_plot_entry(jid, kind, layout, fp)` | `load_job_plot_artifact(...)` |
+
 ### Anti-pattern — `job_data.host_list` is `text[]`, not a CSV string
 
 `job_data.host_list` is Django **`ArrayField`** → Postgres **`text[]`**. Operator SQL that does `trim(host_list)` / `string_to_array(host_list, ',')` fails with **`function pg_catalog.btrim(text[]) does not exist`** (hpcperfstats03, 2026-07-23).

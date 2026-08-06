@@ -32,7 +32,6 @@ Environment (optional; forwarded into the web container):
   HPCPERFSTATS_UM_DIAG_SMALL_HOSTS / HPCPERFSTATS_UM_DIAG_SMALL_STEPS   (default 10 x 15 = 150 rows)
   HPCPERFSTATS_UM_DIAG_LARGE_HOSTS / HPCPERFSTATS_UM_DIAG_LARGE_STEPS   (default 25 x 32 = 800 rows)
   METRICS_POOL_PROCESS_CAP   (override metrics pool cap for diagnosis sweeps)
-  HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM   (default unset in workflow; test sets 1 for speed)
   HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS (test sets 1)
 
 See docs/TESTING.md (update_metrics diagnosis section).
@@ -151,7 +150,6 @@ compose_run_inner_script tests/run_update_metrics_diagnosis_inner.sh \
   -e HPCPERFSTATS_UM_DIAG_LARGE_HOSTS \
   -e HPCPERFSTATS_UM_DIAG_LARGE_STEPS \
   -e METRICS_POOL_PROCESS_CAP \
-  -e HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM \
   -e HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS \
   -e HPCPERFSTATS_UM_DIAG_JSON_OUT \
   -v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args:ro"

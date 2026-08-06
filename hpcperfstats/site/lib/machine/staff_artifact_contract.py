@@ -45,8 +45,8 @@ def staff_artifact_contract_payload(jid: str) -> Dict[str, Any]:
   
   ``db_plot`` / ``db_detail`` omit null (legacy) rows; empty list means no
   readable **schema column** for that family — not that plots/detail are
-  missing. Plots may still serve from Redis L1, fingerprint-matched L2
-  (including NULL ``artifact_schema``), or on-demand compute.
+  missing. Plots may still serve from Redis L1 or fingerprint-matched L2
+  (including NULL ``artifact_schema``).
   
   Args:
     jid (str): String for jid.
@@ -68,9 +68,4 @@ def staff_artifact_contract_payload(jid: str) -> Dict[str, Any]:
       "current_detail": detail_cfg.APP_DETAIL_ARTIFACT_SCHEMA_VERSION,
       "db_plot": _distinct_non_null_schemas(plot_vals),
       "db_detail": _distinct_non_null_schemas(detail_vals),
-      "note": (
-          "DB lists distinct non-null artifact_schema values only. "
-          "Empty/none does not mean plots are missing — Redis, legacy "
-          "NULL-schema rows, or on-demand compute may still serve payloads."
-      ),
   }

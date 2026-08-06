@@ -207,15 +207,18 @@ def get_live_distinct_time_count_for_jid(jid: str) -> int:
 
 def compute_plot_input_fingerprint(
   job: job_data,
-  live_distinct_time_count: int,
+  live_distinct_time_count: int | None = None,
 ) -> str:
   """
   Compute the plot input fingerprint.
   
+  Uses persisted ``metrics_distinct_time_count`` only (no live ``host_data``
+  COUNT). ``live_distinct_time_count`` is ignored when provided (legacy
+  signature compatibility); both JSON keys use the persisted count.
+  
   Args:
     job (job_data): Job.
-    live_distinct_time_count (int): Integer value for live distinct time
-    count.
+    live_distinct_time_count (int | None): Ignored; kept for signature parity.
   
   Returns:
     str: str produced by this call.
@@ -223,6 +226,7 @@ def compute_plot_input_fingerprint(
   Examples:
     >>> compute_plot_input_fingerprint(None, 0)  # doctest: +SKIP
   """
+  del live_distinct_time_count  # website/pipeline must not live-COUNT host_data
   if connection.vendor == "postgresql":
     suffix = "." + cfg.get_host_name_ext()
     from hpcperfstats.site.lib.machine.artifact_readiness_expressions import (
@@ -236,14 +240,16 @@ def compute_plot_input_fingerprint(
         .get()
     )
   hl = sorted(str(h) for h in (job.host_list or []) if str(h).strip())
+  mdc = job.metrics_distinct_time_count
+  mdc_int = int(mdc) if mdc is not None else 0
   payload = {
       "artifact_schema": APP_PLOT_ARTIFACT_SCHEMA_VERSION,
       "bokeh": bokeh.__version__,
       "et": _utc_iso_for_plot_fingerprint(job.end_time),
       "hosts": hl,
       "jid": str(job.jid).strip(),
-      "live_distinct": int(live_distinct_time_count),
-      "mdc": job.metrics_distinct_time_count,
+      "live_distinct": mdc_int,
+      "mdc": mdc,
       "st": _utc_iso_for_plot_fingerprint(job.start_time),
       "tft": _utc_iso_for_plot_fingerprint(job.telemetry_first_time),
       "tlt": _utc_iso_for_plot_fingerprint(job.telemetry_last_time),
@@ -775,6 +781,31 @@ def compute_plot_item_for_kind(
   return json_item(plot_json), None
 
 
+def _is_prewarm_pool_poison_message(message: Optional[str]) -> bool:
+  """
+  True when *message* is a ThreadPool/interpreter-shutdown poison string.
+
+  Those must not be persisted as terminal ``unavailable_reason`` artifacts.
+
+  Args:
+    message (Optional[str]): Candidate unavailable_reason or exception text.
+
+  Returns:
+    bool: True when the message should not be upserted as L2 unavailable.
+
+  Examples:
+    >>> _is_prewarm_pool_poison_message("interpreter shutdown")
+    True
+  """
+  if not message:
+    return False
+  text = str(message).lower()
+  return (
+      "cannot schedule new futures after interpreter shutdown" in text
+      or "interpreter shutdown" in text
+  )
+
+
 def persist_job_plot_artifacts_for_jid(
   jid: str,
   layouts: Optional[Sequence[str]] = None,
@@ -806,8 +837,7 @@ def persist_job_plot_artifacts_for_jid(
     return
   fp = shared.get("plot_fingerprint")
   if fp is None:
-    live = get_live_distinct_time_count_for_jid(jid)
-    fp = compute_plot_input_fingerprint(job, live)
+    fp = compute_plot_input_fingerprint(job)
     shared["plot_fingerprint"] = fp
   jt = shared.get("jt")
   if jt is None:
@@ -847,7 +877,7 @@ def persist_job_plot_artifacts_for_jid(
         continue
       try:
         plot_item, reason = compute_plot_item_for_kind(plot_jt, kind, zoom_mode)
-      except Exception:
+      except Exception as exc:
         logger.warning(
             "plot prewarm failed jid=%s kind=%s layout=%s",
             jid,
@@ -855,8 +885,18 @@ def persist_job_plot_artifacts_for_jid(
             layout,
             exc_info=True,
         )
+        if _is_prewarm_pool_poison_message(str(exc)):
+          continue
         plot_item = None
         reason = "Plot generation failed during artifact prewarm."
+      if _is_prewarm_pool_poison_message(reason):
+        logger.warning(
+            "plot prewarm skipped poison unavailable_reason jid=%s kind=%s layout=%s",
+            jid,
+            kind,
+            layout,
+        )
+        continue
       write_rows.append((
           jid,
           kind,

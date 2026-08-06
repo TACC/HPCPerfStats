@@ -228,7 +228,6 @@ describe("JobDetail", () => {
         current_detail: 8,
         db_plot: [10, 11],
         db_detail: [],
-        note: "Empty/none does not mean plots are missing — Redis may still serve payloads.",
       },
     } });
 
@@ -243,8 +242,8 @@ describe("JobDetail", () => {
       screen.getByText("Stored schema column: plot 10–11, detail none"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/does not mean plots are missing/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/does not mean plots are missing/i),
+    ).not.toBeInTheDocument();
   });
 
   it("does not show Sample Count table for non-staff", async () => {
@@ -970,6 +969,21 @@ describe("JobDetail", () => {
       "tab",
       "device",
     );
+  });
+
+  it("shows large-job load notice at the top of the Device data tab", async () => {
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
+    renderJobDetail("12345");
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Device data" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Device data" }));
+    expect(
+      screen.getByText(
+        /Large jobs with many samples may take a long time to load\. Please report any timeouts to support\./i,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("formats avg_cpuusage as job-total out of ncores", async () => {

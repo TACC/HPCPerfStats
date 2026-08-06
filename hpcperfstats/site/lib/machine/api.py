@@ -4,6 +4,7 @@ SPA.
 
 Attributes:
   HOST_PLOT_MAX_WINDOW_DAYS: Attribute.
+  HOST_PLOT_STATEMENT_TIMEOUT_MS: Attribute.
   JOB_HIST_DISPLAY_NAMES: Attribute.
   JOB_LIST_HISTOGRAM_BATCH_METRICS_DEFAULT: Attribute.
   JOB_LIST_HISTOGRAM_NO_JOBS_REASON: Attribute.
@@ -29,7 +30,6 @@ import os
 import threading
 import time
 from contextlib import contextmanager
-from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timedelta, timezone as dt_timezone
 
@@ -129,13 +129,10 @@ from .cache_utils import (
 )
 from .job_plot_artifacts import (
     JOB_PLOT_JSON_KEYS,
-    JOB_PLOT_KIND_SPECS,
     JOB_PLOT_KINDS,
     JOB_PLOT_LAYOUT_NORMAL,
     JOB_PLOT_LAYOUT_ZOOM_V3,
-    compute_plot_item_for_kind,
     compute_plot_input_fingerprint,
-    get_live_distinct_time_count_for_jid,
     load_cached_job_plot_entry,
 )
 from .job_detail_artifacts import (
@@ -211,6 +208,34 @@ _JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM = ("group", "metric", "metrics", "_hist
 _JOB_LIST_METRIC_FILTER_OPS_ALLOWED = frozenset({"gte", "lte"})
 JOB_LIST_HISTOGRAM_BATCH_METRICS_DEFAULT = ("runtime", "nhosts", "queue_wait")
 HOST_PLOT_MAX_WINDOW_DAYS = 7
+# Longer than default portal statement_timeout for rare large host windows.
+HOST_PLOT_STATEMENT_TIMEOUT_MS = 300000
+
+
+@contextmanager
+def _pg_host_plot_statement_timeout(
+  timeout_ms: int = HOST_PLOT_STATEMENT_TIMEOUT_MS,
+) -> Iterator[Any]:
+  """
+  Raise PostgreSQL session statement_timeout for host_plot host_data work.
+
+  Args:
+    timeout_ms (int): Statement timeout in milliseconds for the LOCAL SET.
+
+  Yields:
+    Iterator[Any]: Open transaction with LOCAL statement_timeout set.
+
+  Examples:
+    >>> with _pg_host_plot_statement_timeout():  # doctest: +SKIP
+    ...     pass
+  """
+  if connection.vendor != "postgresql":
+    yield
+    return
+  with transaction.atomic():
+    with connection.cursor() as cursor:
+      cursor.execute("SET LOCAL statement_timeout = %s", [int(timeout_ms)])
+    yield
 
 
 def _get_admin_host_stats_statement_timeout_ms() -> Any:
@@ -347,14 +372,16 @@ def _get_small_executor() -> Any:
 
 def _gpu_agg_rows_for_job(j: Any) -> Any:
     """
-    host_data GPU util rows for job window; delegates to metrics GPU helper.
-    
+    host_data GPU util rows for job window (test / non-request helper only).
+
+    Must not be wired to user-facing Job Detail (artifact-only GPU path).
+
     Args:
       j (Any): Job record (Django ``job_data`` or job-like mapping).
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> _gpu_agg_rows_for_job(None)  # doctest: +SKIP
     """
@@ -381,8 +408,8 @@ def _gpu_detail_tuple_from_metrics(job: Any) -> Any:
     
       with values.
     
-    Jobs not yet processed by update_metrics fall back to host_data in
-      _fetch_gpu.
+    Jobs not yet processed by update_metrics return ``None`` (Job Detail
+    uses artifacts, not a host_data fallback).
     
     Args:
       job (Any): Job record (Django ``job_data`` or job-like mapping).
@@ -473,19 +500,19 @@ def _compute_job_gpu_stats(
   include_gpu_count: bool = True,
 ) -> Any:
     """
-    Compute per-job GPU stats (host_data); used when metrics_data rows are.
-    
-      missing.
-    
+    Compute per-job GPU stats from host_data (test / non-request helper only).
+
+    Must not be wired to user-facing Job Detail (artifact-only GPU path).
+
     Args:
       job (Any): Job record (Django ``job_data`` or job-like mapping).
       j (Any): Job record (Django ``job_data`` or job-like mapping).
       job_cache_timeout (int): Integer value for job cache timeout.
       include_gpu_count (bool): Boolean flag for include gpu count.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> _compute_job_gpu_stats(None, None, 0, True)  # doctest: +SKIP
     """
@@ -539,7 +566,6 @@ from django.db.models import (
 )
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 
-import hpcperfstats.analysis.metrics.lib.gen.jid_table as jid_table
 from hpcperfstats.analysis.metrics.lib.gen.jid_table import HostDataProvider
 import hpcperfstats.analysis.metrics.lib.plot as plots
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
@@ -3309,8 +3335,8 @@ def job_detail(request: Any, pk: Any) -> Any:
     if err is not None:
         return err
 
-    j = jid_table.jid_table(job.jid)
-    host_list = j.acct_host_list
+    # Artifact / job_data only — do not construct jid_table (host_data) here.
+    host_list = list(job.host_list or [])
     defer_set = _parse_job_detail_defer_set(request)
 
     def _fetch_xalt() -> Any:
@@ -3523,8 +3549,8 @@ def job_detail(request: Any, pk: Any) -> Any:
         hoststring = urlstring
     serverstring = urlstring + "%20mds*%20OR%20%20oss*"
 
-    earliest_ts = _format_log_timestamp(j.start_time)
-    latest_ts = _format_log_timestamp(j.end_time)
+    earliest_ts = _format_log_timestamp(job.start_time)
+    latest_ts = _format_log_timestamp(job.end_time)
 
     hoststring += (
         "&earliest=" + earliest_ts
@@ -3579,30 +3605,26 @@ def job_detail(request: Any, pk: Any) -> Any:
 @throttle_classes([ExpensiveReadThrottle])
 def job_plots(request: Any, pk: Any) -> Any:
     """
-    Job-level plots grouped by shared jid_table input.
-    
-    Returns Bokeh json_items and availability reasons for:
-    - Summary plot
-    - Roofline
-    - GPU roofline
-    
+    Job-level plots from Redis L1 / ``job_plot_artifact`` L2 only.
+
+    No request-time ``jid_table`` / ``host_data`` compute. Fingerprint uses
+    persisted ``metrics_distinct_time_count`` only. Null ``plot_item`` with
+    ``unavailable_reason`` on a fingerprint hit is terminal unavailable.
+
     Query params:
     - plot: omit or ``all`` for all three; or one of summary_plot, roofline,
       gpu_roofline.
     - zoom: ``1`` for zoom layout (single-plot requests only).
     - progressive: ``1`` with plot=all (no zoom): HTTP 200 with ``status``
-      partial/ready and
-      only completed plot fields included while others are listed in
-        ``loading_plots``;
-      avoids 202 while still using one endpoint and shared background tasks.
-    
+      partial/ready while missing kinds are listed in ``loading_plots``.
+
     Args:
       request (Any): Request passed to this helper.
       pk (Any): Pk passed to this helper.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> job_plots(None, None)  # doctest: +SKIP
     """
@@ -3640,159 +3662,24 @@ def job_plots(request: Any, pk: Any) -> Any:
         and str(request.GET.get("progressive", "")).lower() in ("1", "true", "yes")
     )
 
-    live_dc = get_live_distinct_time_count_for_jid(job.jid)
-    plot_fingerprint = compute_plot_input_fingerprint(job, live_dc)
+    plot_fingerprint = compute_plot_input_fingerprint(job)
     l2_layout = JOB_PLOT_LAYOUT_ZOOM_V3 if zoom_mode else JOB_PLOT_LAYOUT_NORMAL
-
-    jt_holder = {"jt": None}
-
-    def _get_jt() -> Any:
-        """
-        Internal helper to return the jt.
-        
-        Returns:
-          Any: Value produced by this call (type depends on inputs).
-        
-        Examples:
-          >>> _get_jt()  # doctest: +SKIP
-        """
-        if jt_holder["jt"] is None:
-            jt_holder["jt"] = jid_table.jid_table(job.jid)
-        return jt_holder["jt"]
-
-    def _run_job_plot_fetch(kind: Any) -> Any:
-        """
-        Build one (json_item, unavailable_reason) tuple from shared plot-kind.
-        
-          specs.
-        
-        Args:
-          kind (Any): Mode or kind token selecting a code path.
-        
-        Returns:
-          Any: Value produced by this call (type depends on inputs).
-        
-        Examples:
-          >>> _run_job_plot_fetch(None)  # doctest: +SKIP
-        """
-        spec = JOB_PLOT_KIND_SPECS[kind]
-        plot_item, reason = None, None
-        close_old_connections()
-        wall_t0 = time.monotonic() if spec.wall_time else None
-        try:
-            try:
-                plot_item, reason = compute_plot_item_for_kind(_get_jt(), kind, zoom_mode)
-            except Exception as e:
-                logging.getLogger(__name__).warning(
-                    "Failed to %s for jid %s: %s",
-                    spec.log_fail_action,
-                    job.jid,
-                    e,
-                    exc_info=True,
-                )
-                reason = str(e)
-            return (plot_item, reason)
-        finally:
-            if spec.wall_time:
-                logging.getLogger(__name__).debug(
-                    "job_plots summary_plot jid=%s wall_s=%.3f",
-                    job.jid,
-                    time.monotonic() - wall_t0,
-                )
-            close_old_connections()
-
-    fetchers = {kind: partial(_run_job_plot_fetch, kind) for kind in JOB_PLOT_KINDS}
     _job_plots_log = logging.getLogger(__name__)
 
     def _plot_data_cache_key(kind: Any) -> Any:
         """
         Internal helper to handle plot data cache key.
-        
+
         Args:
           kind (Any): Mode or kind token selecting a code path.
-        
+
         Returns:
           Any: Value produced by this call (type depends on inputs).
-        
+
         Examples:
           >>> _plot_data_cache_key(None)  # doctest: +SKIP
         """
         return make_cache_key("JOB_PLOTS_DATA", job.jid, kind, plot_fingerprint)
-
-    def _finalize_job_plot_future(
-      key: Any,
-      inflight_key: Any,
-      future: Any,
-    ) -> None:
-        """
-        If *future* is done, store its result in *cached_results* and caches;.
-        
-          clear inflight.
-        
-        Args:
-          key (Any): Key passed to this helper.
-          inflight_key (Any): Inflight key passed to this helper.
-          future (Any): Future passed to this helper.
-        
-        Returns:
-          None
-        
-        Examples:
-          >>> _finalize_job_plot_future(None, None, None)  # doctest: +SKIP
-        """
-        if not future.done():
-            return
-        try:
-            try:
-                plot_item, unavailable_reason = future.result()
-                cached_results[key] = {
-                    "plot_item": plot_item,
-                    "unavailable_reason": unavailable_reason,
-                }
-                size_key = "zoom_v3" if zoom_mode else "normal"
-                cache_key = make_cache_key(
-                    "JOB_PLOTS_JSON",
-                    job.jid,
-                    key,
-                    size_key,
-                    plot_fingerprint,
-                )
-                try:
-                    cache.set(cache_key, cached_results[key], timeout=job_cache_timeout)
-                    register_job_plot_cache_key(job.jid, cache_key)
-                except Exception as e:
-                    _job_plots_log.warning(
-                        "job_plots L1 set failed jid=%s key=%s: %s",
-                        job.jid,
-                        key,
-                        e,
-                        exc_info=True,
-                    )
-                if plot_item is not None:
-                    try:
-                        data_cache_key = _plot_data_cache_key(key)
-                        cache.set(data_cache_key, plot_item, timeout=job_cache_timeout)
-                        register_job_plot_cache_key(job.jid, data_cache_key)
-                    except Exception as e:
-                        _job_plots_log.warning(
-                            "job_plots L1 data set failed jid=%s key=%s: %s",
-                            job.jid,
-                            key,
-                            e,
-                            exc_info=True,
-                        )
-            except Exception as e:
-                _job_plots_log.warning(
-                    "job_plots task failed for jid=%s key=%s: %s",
-                    job.jid,
-                    key,
-                    e,
-                    exc_info=True,
-                )
-                cached_results[key] = {"plot_item": None, "unavailable_reason": str(e)}
-        finally:
-            with _job_plots_lock:
-                _job_plot_inflight.pop(inflight_key, None)
 
     requested_keys = (
         [plot_kind]
@@ -3800,7 +3687,7 @@ def job_plots(request: Any, pk: Any) -> Any:
         else list(JOB_PLOT_KINDS)
     )
 
-    # Cache each plot separately so clients can poll each plot independently.
+    # Artifact-only: L1 then L2. Null plot_item + reason is a warm hit.
     cached_results = {}
     missing_keys = []
     for key in requested_keys:
@@ -3813,24 +3700,15 @@ def job_plots(request: Any, pk: Any) -> Any:
             plot_fingerprint,
         )
         cached_entry = cache.get(cache_key)
-        spec = JOB_PLOT_KIND_SPECS[key]
-        stale_generic_reason = (
-            isinstance(cached_entry, dict)
-            and cached_entry.get("plot_item") is None
-            and cached_entry.get("unavailable_reason") == spec.empty_fallback
-        )
-        if stale_generic_reason:
-            missing_keys.append(key)
-            continue
         if isinstance(cached_entry, dict):
             cached_results[key] = cached_entry
             continue
         l2_entry = load_cached_job_plot_entry(
             job.jid, key, l2_layout, plot_fingerprint
         )
-        if l2_entry is not None and isinstance(l2_entry.get("plot_item"), dict):
+        if l2_entry is not None and isinstance(l2_entry, dict):
             cached_results[key] = {
-                "plot_item": l2_entry["plot_item"],
+                "plot_item": l2_entry.get("plot_item"),
                 "unavailable_reason": l2_entry.get("unavailable_reason"),
             }
             try:
@@ -3844,12 +3722,13 @@ def job_plots(request: Any, pk: Any) -> Any:
                     e,
                     exc_info=True,
                 )
-            if cached_results[key]["plot_item"] is not None:
+            pi = cached_results[key]["plot_item"]
+            if isinstance(pi, dict):
                 try:
                     data_cache_key = _plot_data_cache_key(key)
                     cache.set(
                         data_cache_key,
-                        cached_results[key]["plot_item"],
+                        pi,
                         timeout=job_cache_timeout,
                     )
                     register_job_plot_cache_key(job.jid, data_cache_key)
@@ -3864,8 +3743,7 @@ def job_plots(request: Any, pk: Any) -> Any:
             continue
         missing_keys.append(key)
 
-    # Reuse cached plot data payload (size-independent) to build zoom plot JSON
-    # without recomputing expensive aggregates.
+    # Zoom: reuse size-independent L1 data payload when present (no live compute).
     if zoom_mode and missing_keys:
         still_missing = []
         for key in missing_keys:
@@ -3880,48 +3758,15 @@ def job_plots(request: Any, pk: Any) -> Any:
                 still_missing.append(key)
         missing_keys = still_missing
 
-    for key in missing_keys:
-        inflight_key = (job.jid, key, "zoom_v3" if zoom_mode else "normal")
-        with _job_plots_lock:
-            _evict_stale_inflight_plot_tasks()
-            inflight_meta = _job_plot_inflight.get(inflight_key) or {}
-            future = inflight_meta.get("future")
-            if future is None:
-                executor = _get_small_executor()
-                future = executor.submit(fetchers[key])
-                _job_plot_inflight[inflight_key] = {
-                    "future": future,
-                    "created_at": time.monotonic(),
-                }
-        _finalize_job_plot_future(key, inflight_key, future)
-
-    # Harvest completions that finish shortly after submit so one request can often
-    # return the full payload (avoids an extra client poll round).
-    pending_meta = {}
-    for key in requested_keys:
-        if key in cached_results:
-            continue
-        inflight_key = (job.jid, key, "zoom_v3" if zoom_mode else "normal")
-        with _job_plots_lock:
-            meta = _job_plot_inflight.get(inflight_key) or {}
-            fut = meta.get("future")
-        if fut is not None:
-            pending_meta[fut] = (key, inflight_key)
-    _harvest_timeout_s = 0.55 if progressive else 0.4
-    if pending_meta:
-        try:
-            for fut in as_completed(pending_meta.keys(), timeout=_harvest_timeout_s):
-                k, ik = pending_meta[fut]
-                _finalize_job_plot_future(k, ik, fut)
-        except FuturesTimeoutError:
-            pass
-
-    still_loading = [key for key in requested_keys if key not in cached_results]
+    still_loading = list(missing_keys)
     if still_loading:
         if progressive:
             body = {
                 "status": "partial",
-                "detail": "Some plots are still being generated. Retry this request shortly.",
+                "detail": (
+                    "Some plot artifacts are not ready yet. "
+                    "Retry after update_metrics prewarm completes."
+                ),
                 "retry_after_seconds": 2,
                 "loading_plots": still_loading,
                 "progressive": True,
@@ -3936,7 +3781,10 @@ def job_plots(request: Any, pk: Any) -> Any:
         return Response(
             {
                 "status": "loading",
-                "detail": "Requested plots are still being generated. Retry this request shortly.",
+                "detail": (
+                    "Requested plot artifacts are not ready yet. "
+                    "Retry after update_metrics prewarm completes."
+                ),
                 "retry_after_seconds": 2,
                 "loading_plots": still_loading,
             },
@@ -4032,27 +3880,24 @@ def type_detail(request: Any, jid: Any, type_name: Any) -> Any:
 @throttle_classes([ExpensiveReadThrottle])
 def host_plot(request: Any) -> Any:
     """
-    Return Bokeh plot_item for a single host and time range (GET host,.
-    
-      end_time__gte, end_time__lte).
-    
+    Return Bokeh plot_item for a single host and time range (GET host,
+    end_time__gte, end_time__lte).
+
+    Documented ``host_data`` exception: authenticated users (not staff-only).
+    Uses a longer session ``statement_timeout`` for large windows.
+
     Args:
       request (Any): Request passed to this helper.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> host_plot(None)  # doctest: +SKIP
     """
     err = _require_auth(request)
     if err is not None:
         return err
-    if not request.session.get("is_staff", False):
-        return Response(
-            {"error": "host_plot is restricted to admin-only access."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
 
     site_ttl = get_site_content_cache_timeout()
 
@@ -4098,18 +3943,19 @@ def host_plot(request: Any) -> Any:
     def _host_plot_fn() -> Any:
         """
         Internal helper to handle host plot function.
-        
+
         Returns:
           Any: Value produced by this call (type depends on inputs).
-        
+
         Examples:
           >>> _host_plot_fn()  # doctest: +SKIP
         """
         try:
-            ht = HostDataProvider(host_fqdn, start_dt, end_dt)
-            sp = plots.SummaryPlot(ht)
-            plot = sp.plot()
-            return json_item(plot)
+            with _pg_host_plot_statement_timeout():
+                ht = HostDataProvider(host_fqdn, start_dt, end_dt)
+                sp = plots.SummaryPlot(ht)
+                plot = sp.plot()
+                return json_item(plot)
         except Exception:
             return None
 

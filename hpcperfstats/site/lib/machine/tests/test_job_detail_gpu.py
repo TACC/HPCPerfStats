@@ -314,7 +314,6 @@ def test_job_detail_gpu_from_metrics_data_skips_host_data_cache():
           api, "_apply_non_staff_job_visibility", return_value=vis
       ),
       patch.object(api, "get_site_content_cache_timeout", return_value=3600),
-      patch.object(api.jid_table, "jid_table", return_value=mock_j),
       patch.object(api, "build_job_metrics_display_list", return_value=[]),
       patch.object(api.cfg, "get_xalt_user", return_value=""),
       patch.object(api.cfg, "get_host_name_ext", return_value=""),

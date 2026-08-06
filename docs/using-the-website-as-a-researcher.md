@@ -220,6 +220,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 
 - Diagnostic use: confirms which counter families/events were actually collected for this job.
 - Recommendation: use this tab to confirm expected telemetry families when interpreting plots/metrics.
+- Note: large jobs with many samples may take a long time to load; report timeouts to support.
 
 ---
 

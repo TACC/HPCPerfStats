@@ -89,7 +89,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "metrics_scheduler_prefetch_chunks"),
     ("PIPELINE", "metrics_scheduler_ready_queue_target"),
     ("PIPELINE", "metrics_plot_prewarm_mode"),
-    ("PIPELINE", "metrics_scheduler_skip_prewarm"),
     ("PIPELINE", "metrics_prewarm_workers"),
     ("PIPELINE", "metrics_prewarm_backlog_cap"),
     ("PIPELINE", "metrics_prewarm_backpressure_wait_s"),
@@ -278,7 +277,6 @@ INI_OPTION_DEFAULTS = {
     'metrics_scheduler_prefetch_chunks': '8',
     'metrics_scheduler_ready_queue_target': '2000',
     'metrics_plot_prewarm_mode': 'pipeline_required',
-    'metrics_scheduler_skip_prewarm': 'no',
     'metrics_prewarm_workers': '4',
     'metrics_prewarm_backlog_cap': '32',
     'metrics_prewarm_backpressure_wait_s': '0.25',
@@ -2550,29 +2548,6 @@ def get_metrics_plot_prewarm_mode() -> Any:
   if mode in ("inline", "pipeline_required"):
     return mode
   return "pipeline_required"
-
-
-def get_metrics_scheduler_skip_prewarm() -> Any:
-  """
-  When true, ``update_metrics`` persists metrics but skips job detail/plot.
-  
-    prewarm.
-  
-  Returns:
-    Any: Open return polymorphism from ``get_metrics_scheduler_skip_prewarm``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_metrics_scheduler_skip_prewarm()  # doctest: +SKIP
-  """
-  env = os.environ.get("HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM", "").strip()
-  if env:
-    return _parse_bool(env)
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _pipeline_get("metrics_scheduler_skip_prewarm"),
-  )
 
 
 def get_metrics_per_jid_phase_diagnostics_enabled() -> Any:
@@ -4869,7 +4844,6 @@ _SYNC_TIMEDB_CONFIG_AUDIT_ENV_KEYS = (
     "HPCPERFSTATS_METRICS_RUN_POLL_TIMEOUT_S",
     "HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S",
     "HPCPERFSTATS_METRICS_SCHEDULER_MODE",
-    "HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM",
     "HPCPERFSTATS_PIPELINE_OVERLAP_MODE",
     "HPCPERFSTATS_SYNC_ARCHIVE_VALIDATION_MAX_WORKERS",
     "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED",

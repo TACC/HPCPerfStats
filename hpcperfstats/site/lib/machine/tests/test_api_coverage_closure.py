@@ -1065,10 +1065,8 @@ class TestRemainingHelperLinesClosure:
         with patch.object(api, "cache", _Cache()):
             assert api._get_recent_rabbitmq_host_stats() == []
 
-    def test_job_plots_harvest_timeout(self):
+    def test_job_plots_progressive_miss_returns_partial_without_executor(self):
         from types import SimpleNamespace
-
-        from concurrent.futures import TimeoutError as FuturesTimeoutError
 
         from hpcperfstats.site.lib.machine import api
 
@@ -1076,38 +1074,23 @@ class TestRemainingHelperLinesClosure:
         request = RequestFactory().get("/api/jobs/j1/plots/", {"progressive": "1"})
         request.session = {"username": "u", "is_staff": True}
         fake_job = SimpleNamespace(jid="j1")
-        pending = Future()
-
-        class _FakeExecutor:
-            def submit(self, fn):
-                return pending
 
         def _cache_get(key, default=None):
             if "throttle" in str(key).lower():
                 return default
             return None
 
-        def _fake_as_completed(futures, timeout=None):
-            pending_list = list(futures)
-            if pending_list:
-                yield pending_list[0]
-            raise FuturesTimeoutError()
-
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(fake_job, None)
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
-            api.cache, "get", side_effect=_cache_get
-        ), patch.object(api, "load_cached_job_plot_entry", return_value=None), patch.object(
-            api.jid_table, "jid_table", return_value=SimpleNamespace()
-        ), patch.object(api, "_get_small_executor", return_value=_FakeExecutor()), patch(
-            "hpcperfstats.site.lib.machine.api.as_completed",
-            side_effect=_fake_as_completed,
-        ):
+            api, "compute_plot_input_fingerprint", return_value="fp"
+        ), patch.object(api.cache, "get", side_effect=_cache_get), patch.object(
+            api, "load_cached_job_plot_entry", return_value=None
+        ), patch.object(api, "_get_small_executor") as mock_exec:
             response = api.job_plots(request, "j1")
         assert response.status_code == 200
         assert response.data["status"] == "partial"
+        mock_exec.assert_not_called()
 
     def test_job_plots_zoom_missing_plot_data_still_fetches(self):
         from types import SimpleNamespace
@@ -1120,12 +1103,6 @@ class TestRemainingHelperLinesClosure:
         )
         request.session = {"username": "u", "is_staff": True}
         fake_job = SimpleNamespace(jid="j1")
-        done = Future()
-        done.set_result(({"zoomed": True}, None))
-
-        class _FakeExecutor:
-            def submit(self, fn):
-                return done
 
         def _cache_get(key, default=None):
             key_s = str(key)
@@ -1138,16 +1115,14 @@ class TestRemainingHelperLinesClosure:
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(fake_job, None)
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
-            api, "get_live_distinct_time_count_for_jid", return_value=1
-        ), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
-            api.cache, "get", side_effect=_cache_get
-        ), patch.object(
+            api, "compute_plot_input_fingerprint", return_value="fp"
+        ), patch.object(api.cache, "get", side_effect=_cache_get), patch.object(
             api, "load_cached_job_plot_entry", return_value=None
-        ), patch.object(
-            api.jid_table, "jid_table", return_value=SimpleNamespace()
-        ), patch.object(api, "_get_small_executor", return_value=_FakeExecutor()):
+        ), patch.object(api, "_get_small_executor") as mock_exec:
             response = api.job_plots(request, "j1")
-        assert response.status_code == 200
+        assert response.status_code == 202
+        assert response.data["status"] == "loading"
+        mock_exec.assert_not_called()
 
     def test_xalt_blank_job_id_skipped_in_coverage(self):
         from hpcperfstats.site.lib.machine import api

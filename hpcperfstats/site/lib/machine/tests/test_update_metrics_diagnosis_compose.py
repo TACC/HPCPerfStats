@@ -50,8 +50,6 @@ def test_update_metrics_diagnosis_compose_records_phases(monkeypatch, tmp_path):
         "Run: tests/run_update_metrics_diagnosis_workflow.sh"
     )
   monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
-  # Prewarm is validated elsewhere; this test gates readiness+metrics throughput signals.
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM", "1")
 
   from hpcperfstats.site.lib.machine.tests.update_metrics_diagnosis_seed import (
       seed_update_metrics_diagnosis_jobs,
@@ -111,7 +109,6 @@ def test_update_metrics_compose_parent_persist_lock_timeout_surfaces_in_diagnost
         "Run: tests/run_update_metrics_diagnosis_workflow.sh"
     )
   monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_SCHEDULER_SKIP_PREWARM", "1")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_PERSIST_LOCK_TIMEOUT_MS", "1000")
   monkeypatch.setenv("HPCPERFSTATS_METRICS_PERSIST_STATEMENT_TIMEOUT_MS", "5000")
   monkeypatch.setattr(
