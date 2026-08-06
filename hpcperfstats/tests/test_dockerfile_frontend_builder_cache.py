@@ -28,6 +28,8 @@ def test_frontend_builder_does_not_copy_entire_repo():
   assert "COPY --chown=node:node . ." not in stage
   assert "npm ci" in stage
   assert "npm run build:prod" in stage
+  assert re.search(r"ARG NPM_VERSION=", stage)
+  assert re.search(r'npm install -g ["\']npm@\$\{NPM_VERSION\}["\']', stage)
   assert re.search(
       r"COPY --chown=node:node hpcperfstats/site/frontend/package\.json",
       stage,
@@ -38,11 +40,24 @@ def test_frontend_builder_does_not_copy_entire_repo():
       stage,
   )
 
+  npm_upgrade_pos = stage.index("npm install -g")
   npm_ci_pos = stage.index("npm ci")
   build_pos = stage.index("npm run build:prod")
   frontend_copy_pos = stage.rindex("hpcperfstats/site/frontend/")
+  assert npm_upgrade_pos < npm_ci_pos
   assert npm_ci_pos < build_pos
   assert frontend_copy_pos < build_pos
+
+
+def test_frontend_package_json_allowscripts_covers_esbuild():
+  """npm 12 blocks dependency install scripts unless allowScripts opts in."""
+  import json
+
+  package_json = json.loads(
+      (_repo_root() / "hpcperfstats/site/frontend/package.json").read_text(encoding="utf-8"),
+  )
+  allow = package_json.get("allowScripts") or {}
+  assert allow.get("esbuild@0.28.1") is True
 
 
 def test_build_prod_runs_write_site_identity_hook():

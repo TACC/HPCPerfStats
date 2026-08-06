@@ -85,5 +85,8 @@
     "postcss": "^8.5.25",
     "sharp": "^0.35.3",
     "undici": "^8.10.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
   }
 }

@@ -36,6 +36,8 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 
 ### npm audit (frontend)
 
+**2026-08-05:** Docker `frontend-builder` upgrades to **npm 12.0.2** before `npm ci` (stock Node 26 image still ships npm 11). npm 12 blocks dependency lifecycle scripts unless listed in `package.json` `allowScripts` (currently pinned `esbuild@0.28.1` only). Aligns with Shai-Hulud / install-time worm defenses.
+
 **2026-08-03:** 0 vulnerabilities (686 packages audited). Pin refresh raised direct floors (`next@^16.3.0`, `@bokeh/bokehjs@3.9.2`, etc.) and added/raised **`overrides`** for `hono@^4.13.0`, `ip-address@^10.4.0`, `undici@^7.29.0` (plus existing transitive floors). `npm install`, `npm audit`, `typecheck:all`, and Vitest (584) verified. Log: [`test_runs/dependency_pin_refresh_2026-08-03.md`](../test_runs/dependency_pin_refresh_2026-08-03.md).
 
 **2026-07-26:** 0 vulnerabilities (690 packages audited). Remediation for GitHub Dependabot open alerts: direct **`next@^16.2.11`** (lock **16.2.12**) plus **`overrides`** floors — `dompurify@^3.4.12`, `postcss@^8.5.18`, `brace-expansion@^5.0.8`, `fast-uri@^3.1.4`, `sharp@^0.35.0`, `@hono/node-server@^2.0.5` (with existing `esbuild` / `js-yaml` / `lodash`). `npm ci`, `npm audit`, `typecheck:all`, and Vitest (562) verified. Log: [`test_runs/dependabot_npm_security_2026-07-26.md`](../test_runs/dependabot_npm_security_2026-07-26.md).
