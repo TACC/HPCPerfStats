@@ -10,6 +10,7 @@ types:
   proc: host_proc
   vfs: host_vfs
   nfs: host_nfs
+  beegfs: beegfs_client
   sysv_shm: host_sysv_shm
   tmpfs: host_tmpfs
   cpu_counter_metrics: host_cpu_hw
@@ -60,6 +61,7 @@ events:
   ACT_COUNT: dram_act_count
   APERF: aperf
   ARM_EST_FLOPS: arm_est_flops
+  ARM_DRAM_BW_BYTES: arm_dram_bw_bytes
   ARM_INT8_OPS: arm_int8_ops
   ARM_INT16_OPS: arm_int16_ops
   Active: active

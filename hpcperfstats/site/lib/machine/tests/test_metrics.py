@@ -498,13 +498,14 @@ def test_job_metrics_catalog_includes_avg_arm_int_ops():
 
 @pytest.mark.machine_unit_mock
 def test_job_arc_avg_mbw_arm_counter_fallback():
-  """avg_mbw falls back to host_cpu_hw ARM_DRAM_BW_BYTES when IMC rows are absent."""
+  """avg_mbw falls back to host_cpu_hw arm_dram_bw_bytes when IMC rows are absent."""
+  from hpcperfstats.dbload.lib.monitor_naming.resolve import arm_dram_bw_event_names
+
+  dram_events = list(arm_dram_bw_event_names())
 
   def fake_job_arc(self, jt, **kw):
     ev = list(kw.get("events") or [])
-    if kw.get("typename") in ("host_cpu_hw", "cpu_counter_metrics") and ev == [
-        "ARM_DRAM_BW_BYTES"
-    ]:
+    if kw.get("typename") in ("host_cpu_hw", "cpu_counter_metrics") and ev == dram_events:
       return 6.5
     return None
 

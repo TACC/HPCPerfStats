@@ -210,7 +210,13 @@ DESC: dict[str, str] = {
     "DF_CTR2": "AMD Data Fabric performance counter 2.",
     "DF_CTR3": "AMD Data Fabric performance counter 3.",
     "ARM_EST_FLOPS": "Synthetic cumulative floating-point work estimate for ARM/DCGM-backed paths (monitor-derived).",
-    "ARM_DRAM_BW_BYTES": "Synthetic cumulative DRAM byte traffic estimate for ARM/DCGM-backed paths (monitor-derived).",
+    "ARM_DRAM_BW_BYTES": (
+        "Legacy alias for arm_dram_bw_bytes (synthetic DRAM byte traffic)."
+    ),
+    "arm_dram_bw_bytes": (
+        "Synthetic cumulative DRAM byte traffic estimate for ARM/DCGM-backed paths "
+        "(monitor-derived)."
+    ),
     "DCGM_CPU_POWER_UTIL_W": "Per-socket CPU power draw from DCGM on Grace/superchip hosts (watts; replicated per logical CPU in that socket).",
     "DCGM_CPU_POWER_LIMIT_W": "Per-socket CPU power limit from DCGM when exposed (watts).",
     "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE": "Intel PMU: scalar double-precision floating-point arithmetic instructions retired (Intel SDM).",

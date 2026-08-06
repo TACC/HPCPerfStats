@@ -138,7 +138,8 @@ ARM_INT16_OPS = "arm_int16_ops"
 # Grace host_cpu_hw PAPI scalars (lowercase; Intel FP_ARITH_* stay uppercase).
 GRACE_FP_ARITH_SCALAR_DOUBLE = "fp_arith_inst_retired_scalar_double"
 GRACE_FP_ARITH_SCALAR_SINGLE = "fp_arith_inst_retired_scalar_single"
-ARM_DRAM_BW_BYTES = "ARM_DRAM_BW_BYTES"
+# Monitor KEY (cpu_counter_metrics.h); uppercase form is legacy-only dual-read.
+ARM_DRAM_BW_BYTES = "arm_dram_bw_bytes"
 
 MEM_TOTAL = "mem_total"
 MEM_USED = "mem_used"

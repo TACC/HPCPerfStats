@@ -606,6 +606,24 @@ def arm_est_flops_event_names() -> tuple[str, ...]:
     return _names_canonical_then_legacy(canon.ARM_EST_FLOPS, leg.LEGACY_ARM_EST_FLOPS)
 
 
+def arm_dram_bw_event_names() -> tuple[str, ...]:
+    """
+    ARM/DCGM synthetic DRAM byte traffic event names (canonical then legacy).
+
+    Live monitor KEY is ``arm_dram_bw_bytes``; historical analysis strings used
+    ``ARM_DRAM_BW_BYTES``.
+
+    Returns:
+      tuple[str, ...]: Probe order for ``host_data.event``.
+
+    Examples:
+      >>> arm_dram_bw_event_names()  # doctest: +SKIP
+    """
+    return _names_canonical_then_legacy(
+        canon.ARM_DRAM_BW_BYTES, leg.LEGACY_ARM_DRAM_BW_BYTES
+    )
+
+
 def arm_int8_ops_event_names() -> tuple[str, ...]:
     """
     Arm int8 ops event names.

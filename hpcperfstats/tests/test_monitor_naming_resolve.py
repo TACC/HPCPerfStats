@@ -34,6 +34,7 @@ def test_type_probe_names_canonical_then_legacy():
 
 def test_arm_int_ops_event_names_dual_read():
   from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+      arm_dram_bw_event_names,
       arm_int16_ops_event_names,
       arm_int8_ops_event_names,
       grace_fp_scalar_double_event_names,
@@ -44,6 +45,8 @@ def test_arm_int_ops_event_names_dual_read():
   assert "ARM_INT8_OPS" in arm_int8_ops_event_names()
   assert arm_int16_ops_event_names()[0] == "arm_int16_ops"
   assert "ARM_INT16_OPS" in arm_int16_ops_event_names()
+  assert arm_dram_bw_event_names()[0] == "arm_dram_bw_bytes"
+  assert "ARM_DRAM_BW_BYTES" in arm_dram_bw_event_names()
   assert grace_fp_scalar_double_event_names() == (
       "fp_arith_inst_retired_scalar_double",
   )

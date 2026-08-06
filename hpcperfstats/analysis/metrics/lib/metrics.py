@@ -81,6 +81,7 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     event_probe_names_for_type,
     amd_df_type_names,
     amd_pmc_type_names,
+    arm_dram_bw_event_names,
     arm_est_flops_event_names,
     arm_imc_types_probe_order,
     arm_int16_ops_event_names,
@@ -3352,7 +3353,7 @@ class Metrics():
       v = self.job_arc(
           jt,
           typename=hw_typ,
-          events=["ARM_DRAM_BW_BYTES"],
+          events=list(arm_dram_bw_event_names()),
           conv=1 / (1024 ** 3),
           units="GB/s",
           cache=cache,

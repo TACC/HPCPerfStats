@@ -39,6 +39,7 @@ from hpcperfstats.dbload.lib.monitor_naming.canonical import (
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
     amd_df_type_names,
     amd_pmc_type_names,
+    arm_dram_bw_event_names,
     arm_est_flops_event_names,
     arm_imc_types_probe_order,
     core_pmc_types_probe_order,
@@ -354,7 +355,7 @@ def _arm_dcgm_flops_bw(jt: Any, attempts: Any) -> Any:
         for flop_ev in arm_est_flops_event_names():
             flops_agg, flops_src = _aggregate_arc(jt, hw_typ, [flop_ev], 1e-9)
             bw_agg, bw_src = _aggregate_arc(
-                jt, hw_typ, ["ARM_DRAM_BW_BYTES"], 1 / (1024 ** 3)
+                jt, hw_typ, list(arm_dram_bw_event_names()), 1 / (1024 ** 3)
             )
             attempts.append(
                 f"arm_dcgm:{hw_typ} rows(flops={len(flops_agg.index)}, "
@@ -853,6 +854,27 @@ def _try_gpu_roofline_axis_attempt(
     return (df, None, bw_axis)
   if miss:
     missing_reasons.append(miss)
+
+  # Estimated FLOP/s rate (same family as gpu_mem_bw_bytes_rate) when the
+  # cumulative gpu_flops arc is absent from host_data.
+  rate_tag = f"{source_tag}_flops_rate"
+  df, line, miss = _try_gpu_roofline_flops_bw_merge(
+      jt,
+      gpu_typ,
+      base,
+      rate_tag,
+      _aggregate_value,
+      ["gpu_flops_rate"],
+      1e-9,
+      bw_fn,
+      list(bw_events),
+      _GPU_BYTES_TO_GIB,
+  )
+  attempts.append(line)
+  if df is not None:
+    return (df, None, bw_axis)
+  if miss:
+    missing_reasons.append(miss)
   return None
 
 
@@ -862,7 +884,8 @@ def _get_gpu_flops_bw_df_and_reason(
     """
     Build GPU roofline samples: prefer memory BW, else PCIe/NVLink/Xe Link.
 
-    Prefer ``gpu_mem_bw_bytes_rate`` (value; same estimated rate Summary uses)
+    Prefer ``gpu_flops`` arc, else ``gpu_flops_rate`` (value). Prefer
+    ``gpu_mem_bw_bytes_rate`` (value; same estimated rate Summary uses)
     when usable overlapping samples exist on ``nvidia_gpu`` then ``amd_gpu``.
     Otherwise try link bytes: ``gpu_io_link_total_bytes``, then NVIDIA
     directional PCIe/NVLink arcs, then Intel PCIe+Xe Link (when FLOPS exist).
@@ -959,8 +982,8 @@ def _get_gpu_flops_bw_df_and_reason(
     return (
         None,
         "Missing strict GPU roofline counters in host_data "
-        "(need gpu_flops plus gpu_mem_bw_bytes_rate or PCIe/NVLink/Xe Link "
-        "bytes on nvidia_gpu, amd_gpu, or intel_gpu). "
+        "(need gpu_flops or gpu_flops_rate plus gpu_mem_bw_bytes_rate or "
+        "PCIe/NVLink/Xe Link bytes on nvidia_gpu, amd_gpu, or intel_gpu). "
         f"Attempted: {detail}",
         None,
     )

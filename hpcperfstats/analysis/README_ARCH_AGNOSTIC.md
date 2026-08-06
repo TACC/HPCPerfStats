@@ -30,14 +30,14 @@ Typenames must match the **shipped** monitor `st_name` values for new ingest. Hi
 - **Optional true-roof contract**: `host_roofline_peak` events (`cpu_peak_fp64_flops_per_s`, `cpu_peak_dram_bw_bytes_per_s`, `cpu_peak_hbm_bw_bytes_per_s`, GPU peaks) when present. CPU memory roof bandwidth sums DDR and HBM peaks when HBM is positive.
 - **Intel**: One table row per canonical IMC typename in `INTEL_IMC_STATS_TYPES` (live: `intel_x86_uncore_imc_skx` / `_icx` / `_spr`).
 - **AMD**: family DF + `host_cpu_hw` (or historical `amd_x86_pmc` + bare/`amd64_df`) → `amd64_epyc_2s_default` peak row.
-- **ARM Grace-class**: `arm_aarch64_imc` and/or `host_cpu_hw` synthetic counters (`arm_est_flops`, `ARM_DRAM_BW_BYTES`). Precision split uses Grace scalar FP (`fp_arith_inst_retired_scalar_*`) for `avg_flops64b`/`32b` when Intel FP_ARITH is absent; INT ops (`arm_int8_ops` / `arm_int16_ops`) feed `avg_arm_int*_ops` and the CPU Multiprecision Mix pie (not folded into `arm_est_flops`).
+- **ARM Grace-class**: `arm_aarch64_imc` and/or `host_cpu_hw` synthetic counters (`arm_est_flops`, `arm_dram_bw_bytes`; dual-read legacy `ARM_DRAM_BW_BYTES`). Precision split uses Grace scalar FP (`fp_arith_inst_retired_scalar_*`) for `avg_flops64b`/`32b` when Intel FP_ARITH is absent; INT ops (`arm_int8_ops` / `arm_int16_ops`) feed `avg_arm_int*_ops` and the CPU Multiprecision Mix pie (not folded into `arm_est_flops`).
 - **Cursor rule**: `hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc`.
 
 ## GPU (NVIDIA, AMD)
 
 - **`avg_gpuutil`**: Prefers `nvidia_gpu` `gpu_util`, then `utilization`, then `amd_gpu` `gpu_util`.
 - **Summary plot (NVIDIA DCGM)**: Tensor/SM/FP pipe activity, power, HBM BW rate, link `arc` bytes; **`amd_gpu`** when GPUPerfAPI is active.
-- **GPU roofline**: Prefer measured `gpu_mem_bw_bytes_rate` (estimated mem BW) on `nvidia_gpu` then `amd_gpu`; else PCIe/NVLink (`gpu_io_link_total_bytes` or directional bytes) or Intel PCIe+Xe Link when FLOPS exist. Titles and peak preference follow the chosen axis (Memory BW vs PCIe/NvLink).
+- **GPU roofline**: Prefer measured `gpu_mem_bw_bytes_rate` (estimated mem BW) on `nvidia_gpu` then `amd_gpu`; else PCIe/NVLink (`gpu_io_link_total_bytes` or directional bytes) or Intel PCIe+Xe Link when FLOPS exist. FLOPS prefer `gpu_flops` arc, else `gpu_flops_rate` (value). Titles and peak preference follow the chosen axis (Memory BW vs PCIe/NvLink).
 - **Job metrics**: Node power estimate (`max_node_power_est_w`, `avg_node_power_est_w`) merges Intel/AMD RAPL (`intel_x86_rapl` / `amd_x86_rapl`, `pkg_energy`), Grace `host_cpu_hw` `dcgm_cpu_power_util_w`, and NVIDIA `power_usage` / `module_power_usage`.
 - **Ingest**: `sync_timedb_parsing` clusters `host_cpu_hw` DCGM power rows and max-reduces multi-GPU module power.
 

@@ -219,10 +219,13 @@ def test_roofline_succeeds_with_cpu_counter_metrics_flops_and_imc_bw():
 
 
 def test_roofline_succeeds_with_arm_dcgm_approx_metrics():
-  """ARM fallback uses cpu_counter_metrics ARM_EST_FLOPS + ARM_DRAM_BW_BYTES."""
+  """ARM fallback uses host_cpu_hw arm_est_flops + arm_dram_bw_bytes."""
+  from hpcperfstats.dbload.lib.monitor_naming.resolve import arm_dram_bw_event_names
+
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  dram_events = list(arm_dram_bw_event_names())
 
   def get_aggregate_df(typ, val_col, events, conv=1.0):
     del conv
@@ -232,7 +235,41 @@ def test_roofline_succeeds_with_arm_dcgm_approx_metrics():
       return pd.DataFrame(
           [("n1.cluster", t0, 6.0)], columns=["host", "time", "sum_val"]
       )
-    if typ == "cpu_counter_metrics" and list(events) == ["ARM_DRAM_BW_BYTES"]:
+    if typ == "cpu_counter_metrics" and list(events) == dram_events:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"]
+      )
+    return empty
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.get_host_time_df.return_value = base
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+
+  fig, reason = plot_and_reason_roofline_from_jid_table(jt)
+  assert fig is not None
+  assert reason is None
+
+
+def test_roofline_succeeds_with_arm_dcgm_lowercase_dram_bw_only():
+  """Live monitor KEY arm_dram_bw_bytes (no uppercase) still pairs with FLOPS."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if val_col != "arc":
+      return empty
+    if typ in ("host_cpu_hw", "cpu_counter_metrics") and list(events) == [
+        "arm_est_flops"
+    ]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 6.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ in ("host_cpu_hw", "cpu_counter_metrics") and "arm_dram_bw_bytes" in list(
+        events
+    ):
       return pd.DataFrame(
           [("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"]
       )
@@ -317,6 +354,35 @@ def test_gpu_roofline_prefers_mem_bw_when_both_mem_and_link_present():
       )
     if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_io_link_total_bytes"]:
       return pd.DataFrame([("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"])
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt.get_aggregate_df.side_effect = get_aggregate_df
+  fig, reason, bw_axis = plot_and_reason_gpu_roofline_from_jid_table(jt)
+  assert fig is not None
+  assert reason is None
+  assert bw_axis == GPU_ROOFLINE_BW_AXIS_MEMORY
+  assert fig.title.text == GPU_ROOFLINE_TITLE_MEMORY
+
+
+def test_gpu_roofline_uses_flops_rate_when_gpu_flops_arc_absent():
+  """Horizon-style: gpu_flops_rate + mem BW without cumulative gpu_flops arc."""
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt([("n1.cluster", t0)], {})
+
+  def get_aggregate_df(typ, val_col, events, conv=1.0):
+    del conv
+    if typ == "nvidia_gpu" and val_col == "value" and list(events) == ["gpu_flops_rate"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 20.0e9)],
+          columns=["host", "time", "sum_val"],
+      )
+    if typ == "nvidia_gpu" and val_col == "value" and list(events) == [
+        "gpu_mem_bw_bytes_rate"
+    ]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 5.0 * (1024**3))],
+          columns=["host", "time", "sum_val"],
+      )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
   jt.get_aggregate_df.side_effect = get_aggregate_df
