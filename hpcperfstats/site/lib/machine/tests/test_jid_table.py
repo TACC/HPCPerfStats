@@ -558,12 +558,15 @@ def test_jid_table_get_aggregate_df_pandas_fallback_uses_fetch_frames():
   def fail_sql(_host_chunk, _build_qs, **_kwargs):
     raise OperationalError("canceling statement due to statement timeout")
 
-  def fake_fetch(host_list, build_qs, batch_size=None):
+  def fake_fetch(host_list, build_qs, batch_size=None, **_kwargs):
     fetch_batches.append(batch_size)
     rows = []
     for h in host_list:
-      # Drive build_qs so DCGM/filter wiring still runs.
-      _ = build_qs([h])
+      # Drive build_qs so DCGM/filter wiring still runs (host[, time_filter]).
+      try:
+        _ = build_qs([h], {"time__gte": datetime(2024, 6, 1, tzinfo=timezone.utc)})
+      except TypeError:
+        _ = build_qs([h])
       rows.append(
           {
               "host": h,
@@ -1256,3 +1259,122 @@ def test_type_detail_get_aggregate_df_sql_fast_path(monkeypatch):
   assert len(filter_calls) == 1
   assert filter_calls[0]["event"] == "ldlm_cancel"
   assert out["sum_val"].tolist() == [3.0, 5.0]
+
+
+def test_resolve_plot_aggregate_time_bucket_count_design_capacity_5000():
+  """Design 5000×48×60: budget/hosts caps buckets (not full 2048 times)."""
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      _resolve_plot_aggregate_time_bucket_count,
+  )
+
+  with patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_time_buckets",
+      lambda: 2048,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg."
+      "get_plot_aggregate_max_host_time_points",
+      lambda: 1_000_000,
+  ):
+    # 5000 hosts → floor(1e6/5000)=200 (14.4M host-sample design capacity).
+    assert _resolve_plot_aggregate_time_bucket_count(5000) == 200
+
+
+def test_iter_aggregate_time_filter_chunks_wall_and_time_in():
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      _iter_aggregate_time_filter_chunks,
+  )
+
+  start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+  end = datetime(2024, 1, 1, 3, tzinfo=timezone.utc)
+  chunks = list(
+      _iter_aggregate_time_filter_chunks(
+          {"time__gte": start, "time__lte": end},
+          3600,
+      )
+  )
+  assert len(chunks) == 3
+  times = [
+      datetime(2024, 1, 1, i, tzinfo=timezone.utc) for i in range(5)
+  ]
+  tin = list(
+      _iter_aggregate_time_filter_chunks({"time__in": times}, 120)
+  )
+  # slice_s=120 → 2 timestamps per chunk
+  assert len(tin) == 3
+  assert len(tin[0]["time__in"]) == 2
+
+
+def test_split_time_filter_for_timeout_bisects_time_in():
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      _split_time_filter_for_timeout,
+  )
+
+  times = list(range(4))
+  left, right = _split_time_filter_for_timeout({"time__in": times})
+  assert left["time__in"] == [0, 1]
+  assert right["time__in"] == [2, 3]
+  assert _split_time_filter_for_timeout({"time__in": [1]}) is None
+
+
+def test_assemble_sum_val_parts_bounded_single_part_skips_concat():
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      _assemble_sum_val_parts_bounded,
+  )
+
+  df = pd.DataFrame(
+      {
+          "host": ["a", "b"],
+          "time": [
+              datetime(2024, 1, 1, tzinfo=timezone.utc),
+              datetime(2024, 1, 1, tzinfo=timezone.utc),
+          ],
+          "sum_val": [1.0, 2.0],
+      }
+  )
+  with patch("pandas.concat", side_effect=AssertionError("no concat")):
+    out = _assemble_sum_val_parts_bounded([df], 2.0, 100)
+  assert list(out["sum_val"]) == [2.0, 4.0]
+
+
+def test_apply_large_job_sampling_uses_host_sample_budget(monkeypatch):
+  """5000×48×60 estimate must sample even when COUNT(*) is below 1.5M threshold."""
+  from hpcperfstats.analysis.metrics.lib.gen import jid_table as jt_mod
+
+  inst = jt_mod.jid_table.__new__(jt_mod.jid_table)
+  inst.jid = "jid-design-cap"
+  inst.acct_host_list = [f"n{i}" for i in range(5000)]
+  inst.start_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+  inst.end_time = datetime(2024, 1, 3, tzinfo=timezone.utc)  # 48h
+  inst._base_filter = {
+      "host__in": inst.acct_host_list,
+      "time__gte": inst.start_time,
+      "time__lte": inst.end_time,
+  }
+  from datetime import timedelta as _td
+  sampled_times = [
+      inst.start_time + _td(minutes=i * 15)
+      for i in range(200)
+  ]
+  monkeypatch.setattr(
+      jt_mod.cfg,
+      "get_plot_aggregate_max_host_time_points",
+      lambda: 1_000_000,
+  )
+  monkeypatch.setattr(jt_mod.cfg, "get_large_job_time_buckets", lambda: 2048)
+  monkeypatch.setattr(
+      jt_mod.cfg, "get_large_job_host_data_row_threshold", lambda: 1_500_000
+  )
+  monkeypatch.setattr(
+      jt_mod,
+      "_count_host_data_rows_for_window_cached",
+      lambda *_a, **_k: 1000,
+  )
+  monkeypatch.setattr(
+      jt_mod,
+      "_strided_distinct_times_for_large_job",
+      lambda *_a, **_k: sampled_times,
+  )
+  jt_mod.jid_table._apply_large_job_time_sampling_if_needed(inst)
+  assert "time__in" in inst._base_filter
+  assert len(inst._base_filter["time__in"]) == 200
+  assert inst._large_job_plot_cache_token == "lb200"

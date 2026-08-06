@@ -175,6 +175,12 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Prewarm retry attempts per plot task (default 2).
 # metrics_prewarm_retry_attempts = 2
 
+# Plot aggregate SQL time-slice seconds (default 3600); design 5000x48x60.
+# metrics_plot_aggregate_time_slice_s = 3600
+
+# Max host×time rows per plot aggregate DF (default 1000000); not 14.4M.
+# metrics_plot_aggregate_max_host_time_points = 1000000
+
 # imap_unordered poll timeout in Metrics.run seconds (default 5).
 # metrics_run_poll_timeout_s = 5
 

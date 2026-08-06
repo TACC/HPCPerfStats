@@ -855,15 +855,18 @@ def persist_job_plot_artifacts_for_jid(
 ) -> None:
   """
   Build and store artifacts for each plot kind (used by update_metrics prewarm).
-  
+
+  When every kind/layout already has a fingerprint-matching L2 payload, returns
+  without constructing ``jid_table`` or prefetching aggregates.
+
   Args:
     jid (str): String for jid.
     layouts (Optional[Sequence[str]]): Layouts, or None when absent.
     context (Optional[Dict[str, Any]]): Context, or None when absent.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> persist_job_plot_artifacts_for_jid("x", None, None)  # doctest: +SKIP
   """
@@ -881,6 +884,33 @@ def persist_job_plot_artifacts_for_jid(
   if fp is None:
     fp = compute_plot_input_fingerprint(job)
     shared["plot_fingerprint"] = fp
+  existing = shared.get("existing_plot_rows")
+  if existing is None:
+    if telemetry is not None:
+      telemetry["plot_row_lookup_queries"] = int(
+          telemetry.get("plot_row_lookup_queries", 0)
+      ) + 1
+    existing = _load_rows_map(jid, layouts)
+    if telemetry is not None:
+      telemetry["plot_row_lookup_hits"] = int(
+          telemetry.get("plot_row_lookup_hits", 0)
+      ) + len(existing)
+    shared["existing_plot_rows"] = existing
+  need_build = False
+  for kind in JOB_PLOT_KINDS:
+    for layout in layouts:
+      row = existing.get((kind, layout))
+      if not (
+          row
+          and row.input_fingerprint == fp
+          and row.payload_compressed
+      ):
+        need_build = True
+        break
+    if need_build:
+      break
+  if not need_build:
+    return
   jt = shared.get("jt")
   if jt is None:
     jt = jid_table.jid_table(jid)
@@ -894,18 +924,6 @@ def persist_job_plot_artifacts_for_jid(
       # Plot builders still probe independently; bundle prefetch is best-effort.
       pass
     shared["plot_jt"] = plot_jt
-  existing = shared.get("existing_plot_rows")
-  if existing is None:
-    if telemetry is not None:
-      telemetry["plot_row_lookup_queries"] = int(
-          telemetry.get("plot_row_lookup_queries", 0)
-      ) + 1
-    existing = _load_rows_map(jid, layouts)
-    if telemetry is not None:
-      telemetry["plot_row_lookup_hits"] = int(
-          telemetry.get("plot_row_lookup_hits", 0)
-      ) + len(existing)
-    shared["existing_plot_rows"] = existing
   write_rows = []
   for kind in JOB_PLOT_KINDS:
     for layout in layouts:

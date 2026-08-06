@@ -96,6 +96,8 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "metrics_prewarm_drain_batch_budget_max_s"),
     ("PIPELINE", "metrics_prewarm_drain_per_job_s"),
     ("PIPELINE", "metrics_prewarm_retry_attempts"),
+    ("PIPELINE", "metrics_plot_aggregate_time_slice_s"),
+    ("PIPELINE", "metrics_plot_aggregate_max_host_time_points"),
     ("PIPELINE", "metrics_run_poll_timeout_s"),
     ("PIPELINE", "metrics_run_stall_timeout_s"),
     ("PIPELINE", "metrics_run_per_job_timeout_s"),
@@ -284,6 +286,10 @@ INI_OPTION_DEFAULTS = {
     'metrics_prewarm_drain_batch_budget_max_s': '60.0',
     'metrics_prewarm_drain_per_job_s': '0.5',
     'metrics_prewarm_retry_attempts': '2',
+    # Host×time SQL chunk wall seconds (1h @ 1-min sample); design 5000×48×60.
+    'metrics_plot_aggregate_time_slice_s': '3600',
+    # Max host×time rows materialised per plot aggregate DF (not 14.4M).
+    'metrics_plot_aggregate_max_host_time_points': '1000000',
     'metrics_run_poll_timeout_s': '5',
     'metrics_run_stall_timeout_s': '900',
     'metrics_run_per_job_timeout_s': '0',
@@ -4073,6 +4079,67 @@ def get_metrics_prewarm_retry_attempts() -> Any:
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("metrics_prewarm_retry_attempts"))
+
+
+def get_metrics_plot_aggregate_time_slice_s() -> Any:
+  """
+  Wall-clock seconds per plot-aggregate SQL time chunk (default 3600).
+
+  Design capacity ``5000×48×60`` host-samples uses one-hour slices at 1-min
+  cadence so each statement_timeout covers a bounded host×time chunk.
+  Env ``HPCPERFSTATS_METRICS_PLOT_AGGREGATE_TIME_SLICE_S`` overrides INI.
+
+  Returns:
+    Any: Positive integer seconds (minimum 60).
+
+  Examples:
+    >>> get_metrics_plot_aggregate_time_slice_s()  # doctest: +SKIP
+  """
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_PLOT_AGGREGATE_TIME_SLICE_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(60, int(env))
+    except (TypeError, ValueError, OverflowError):
+      return 3600
+  _ensure_cfg_loaded()
+  try:
+    return max(60, _pipeline_getint("metrics_plot_aggregate_time_slice_s"))
+  except (TypeError, ValueError, OverflowError):
+    return 3600
+
+
+def get_plot_aggregate_max_host_time_points() -> Any:
+  """
+  Max host×time rows one plot aggregate DataFrame may materialise.
+
+  Caps memory for design capacity ``5000×48×60`` (14.4M samples): adaptive
+  large-job time buckets use ``floor(budget / n_hosts)``. Default 1_000_000.
+  Env ``HPCPERFSTATS_PLOT_AGGREGATE_MAX_HOST_TIME_POINTS`` overrides INI.
+
+  Returns:
+    Any: Positive integer row budget (minimum 1000).
+
+  Examples:
+    >>> get_plot_aggregate_max_host_time_points()  # doctest: +SKIP
+  """
+  env = os.environ.get(
+      "HPCPERFSTATS_PLOT_AGGREGATE_MAX_HOST_TIME_POINTS", ""
+  ).strip()
+  if env:
+    try:
+      return max(1000, int(env))
+    except (TypeError, ValueError, OverflowError):
+      return 1_000_000
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        1000,
+        _pipeline_getint("metrics_plot_aggregate_max_host_time_points"),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 1_000_000
 
 
 def get_metrics_proxy_reject_jid_batch_size() -> Any:

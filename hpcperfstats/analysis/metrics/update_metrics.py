@@ -854,13 +854,18 @@ class _PrewarmPipeline:
         script_name=UPDATE_METRICS_PROCESS_TITLE,
         role="prewarm-pool",
     )
+    from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
+        serial_summary_aggregate_prefetch_context,
+    )
+
     last_exc = None
-    for _ in range(max(1, self._attempts)):
-      try:
-        self._persist_detail_plot_elapsed(jid, {})
-        return
-      except Exception as exc:
-        last_exc = exc
+    with serial_summary_aggregate_prefetch_context():
+      for _ in range(max(1, self._attempts)):
+        try:
+          self._persist_detail_plot_elapsed(jid, {})
+          return
+        except Exception as exc:
+          last_exc = exc
     raise last_exc
 
   def run_for_jid(self, jid: Any, shared_context: Any | None = None) -> Any:
@@ -883,7 +888,12 @@ class _PrewarmPipeline:
       >>> _PrewarmPipeline().run_for_jid(None, None)  # doctest: +SKIP
     """
     if isinstance(shared_context, dict):
-      detail_s, plots_s = self._persist_detail_plot_elapsed(jid, shared_context)
+      from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
+          serial_summary_aggregate_prefetch_context,
+      )
+
+      with serial_summary_aggregate_prefetch_context():
+        detail_s, plots_s = self._persist_detail_plot_elapsed(jid, shared_context)
       timing = {
           "detail_s": detail_s,
           "plots_s": plots_s,
@@ -992,13 +1002,15 @@ class _PrewarmPipeline:
 
   def _evict_oldest_pending_locked(self) -> Any:
     """
-    Cancel the oldest async prewarm task to make room (never blocks scheduler).
-    
+    Cancel the oldest *not-started* prewarm future to free a backlog slot.
+
+    Running futures are never evicted (``Future.cancel()`` is a no-op once
+    running and dropping them orphans work). Returns ``None`` when every
+    pending future is already running or done.
+
     Returns:
-      Any: Open return polymorphism from ``_evict_oldest_pending_locked``:
-      concrete type depends on inputs and branch (mapping, scalar, handle, or
-      ``None``-like empty).
-    
+      Any: Evicted jid string, or ``None`` when nothing cancellable.
+
     Examples:
       >>> _PrewarmPipeline()._evict_oldest_pending_locked()  # doctest: +SKIP
     """
@@ -1007,6 +1019,11 @@ class _PrewarmPipeline:
     oldest_fut = None
     oldest_start = None
     for fut in self._pending:
+      try:
+        if fut.done() or fut.running():
+          continue
+      except Exception:
+        continue
       start = self._created_at.get(fut)
       if start is None:
         continue
@@ -1068,6 +1085,19 @@ class _PrewarmPipeline:
           oldest_age_s = self._oldest_pending_age_locked()
         with self._counters_lock:
           self._backpressure_events += 1
+        if evicted_jid is None:
+          self._maybe_log_backpressure(
+              jid=jid,
+              pending=pending_now,
+              oldest_age_s=oldest_age_s,
+              action="defer_submit",
+          )
+          log_print(
+              "plot artifact prewarm defer submit jid={0} "
+              "(backlog full; all futures running)".format(jid),
+              flush=True,
+          )
+          return
         self._maybe_log_backpressure(
             jid=jid,
             pending=pending_now,
@@ -1161,11 +1191,15 @@ class _PrewarmPipeline:
 
   def finish(self) -> None:
     """
-    Finish processing and finalize state.
-    
+    Drain async prewarm; never cancel running futures on soft wall expiry.
+
+    After ``PREWARM_FINISH_MAX_WALL_SECONDS``, only queued (not-started)
+    futures are cancelled. In-flight work continues until complete so
+    chunk-linear aggregates are not orphaned mid-job.
+
     Returns:
       None
-    
+
     Examples:
       >>> _PrewarmPipeline().finish()  # doctest: +SKIP
     """
@@ -1173,6 +1207,7 @@ class _PrewarmPipeline:
       return
     started = time.monotonic()
     deadline = started + PREWARM_FINISH_MAX_WALL_SECONDS
+    soft_wall_logged = False
     while True:
       with self._pending_lock:
         has_pending = bool(self._pending)
@@ -1182,30 +1217,51 @@ class _PrewarmPipeline:
       if remaining_s <= 0.0:
         with self._pending_lock:
           oldest_age_s = self._oldest_pending_age_locked()
-          timed_out_count = len(self._pending)
+          cancelled = 0
           for fut in list(self._pending):
-            fut.cancel()
+            try:
+              is_running = fut.running() and not fut.done()
+            except Exception:
+              is_running = False
+            if is_running:
+              continue
+            try:
+              fut.cancel()
+            except Exception:
+              pass
             self._created_at.pop(fut, None)
             self._pending_jids.pop(fut, None)
-          self._pending = set()
-          self._pending_jids = {}
-        with self._counters_lock:
-          self._failed += timed_out_count
-        log_print(
-            "plot artifact prewarm finish timeout after {0:.1f}s; cancelling pending={1} "
-            "oldest_pending_age_s={2:.3f}".format(
-                time.monotonic() - started,
-                timed_out_count,
-                oldest_age_s,
-            ),
-            flush=True,
+            self._pending.discard(fut)
+            cancelled += 1
+          still_running = len(self._pending)
+        if cancelled:
+          with self._counters_lock:
+            self._failed += cancelled
+        if not soft_wall_logged:
+          log_print(
+              "plot artifact prewarm finish soft wall after {0:.1f}s; "
+              "cancelled_not_started={1} still_running={2} "
+              "oldest_pending_age_s={3:.3f}".format(
+                  time.monotonic() - started,
+                  cancelled,
+                  still_running,
+                  oldest_age_s,
+              ),
+              flush=True,
+          )
+          soft_wall_logged = True
+        if still_running <= 0:
+          break
+        self.drain_some(
+            force=True,
+            wait_timeout_s=PREWARM_FINISH_WAIT_SLICE_SECONDS,
         )
-        break
+        continue
       self.drain_some(
           force=True,
           wait_timeout_s=min(PREWARM_FINISH_WAIT_SLICE_SECONDS, remaining_s),
       )
-    self._executor.shutdown(wait=False, cancel_futures=True)
+    self._executor.shutdown(wait=False, cancel_futures=False)
 
   def stats(self) -> Any:
     """

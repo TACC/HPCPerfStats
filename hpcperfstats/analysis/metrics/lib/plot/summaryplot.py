@@ -11,6 +11,7 @@ Attributes:
   _IB_SUMMARY_ERROR_EVENTS: Attribute.
   _MAX_SANE_GPU_LINK_GBPS: Attribute.
   _NET_SUMMARY_ERROR_EVENTS: Attribute.
+  _SERIAL_SUMMARY_AGGREGATE_PREFETCH: Attribute.
   _SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS: Attribute.
   _SUMMARY_ALLOW_PARTIAL_NULL: Attribute.
   _SUMMARY_FIRST_WIN_SPECS: Attribute.
@@ -23,6 +24,8 @@ from __future__ import annotations
 
 from typing import Any, Iterator
 
+import contextlib
+import contextvars
 import hpcperfstats.dbload.lib.conf_parser as cfg
 
 import logging
@@ -101,6 +104,53 @@ from hpcperfstats.analysis.metrics.lib.plot.bokeh_job_detail_help_marker import 
 # Hard cap for nested aggregate prefetch threads (see job_plots + api ThreadPoolExecutor).
 # Keeps DB connection and work_mem spikes bounded when summaryplot runs inside a worker thread.
 _SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS = 2
+
+# When True (plot/detail prewarm threads), fetch aggregates serially so peak RSS
+# stays ~one host×time grid (design capacity 5000×48×60).
+_SERIAL_SUMMARY_AGGREGATE_PREFETCH = contextvars.ContextVar(
+    "hps_serial_summary_aggregate_prefetch",
+    default=False,
+)
+
+
+def set_serial_summary_aggregate_prefetch(enabled: bool) -> Any:
+  """
+  Enable or disable serial summary aggregate prefetch for this context.
+
+  Used by plot-artifact prewarm so nested ThreadPools do not multiply memory.
+
+  Args:
+    enabled (bool): True to force serial ``get_aggregate_df`` prefetch.
+
+  Returns:
+    Any: ContextVar reset token for ``ContextVar.reset``.
+
+  Examples:
+    >>> tok = set_serial_summary_aggregate_prefetch(True)
+    >>> _SERIAL_SUMMARY_AGGREGATE_PREFETCH.get()
+    True
+    >>> _SERIAL_SUMMARY_AGGREGATE_PREFETCH.reset(tok)
+  """
+  return _SERIAL_SUMMARY_AGGREGATE_PREFETCH.set(bool(enabled))
+
+
+@contextlib.contextmanager
+def serial_summary_aggregate_prefetch_context() -> Iterator[None]:
+  """
+  Force serial summary aggregate prefetch for the duration of the block.
+
+  Yields:
+    None
+
+  Examples:
+    >>> with serial_summary_aggregate_prefetch_context():
+    ...     assert _SERIAL_SUMMARY_AGGREGATE_PREFETCH.get() is True
+  """
+  token = _SERIAL_SUMMARY_AGGREGATE_PREFETCH.set(True)
+  try:
+    yield
+  finally:
+    _SERIAL_SUMMARY_AGGREGATE_PREFETCH.reset(token)
 
 
 def _cycled_d3_category20_palette(n: Any) -> Any:
@@ -328,7 +378,6 @@ def _prefetch_single_spec_aggregates(jt: Any, spec_rows: Any) -> Any:
   out = {}
   if not spec_rows:
     return out
-  max_workers = compute_summary_aggregate_prefetch_pool_size(len(spec_rows))
 
   def _run_serial() -> dict:
     """
@@ -345,6 +394,10 @@ def _prefetch_single_spec_aggregates(jt: Any, spec_rows: Any) -> Any:
       name, df = _one(row)
       serial[name] = df
     return serial
+
+  if _SERIAL_SUMMARY_AGGREGATE_PREFETCH.get():
+    return _run_serial()
+  max_workers = compute_summary_aggregate_prefetch_pool_size(len(spec_rows))
 
   try:
     with ThreadPoolExecutor(max_workers=max_workers) as pool:

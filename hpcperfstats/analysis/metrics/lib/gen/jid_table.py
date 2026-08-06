@@ -28,6 +28,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime
+from datetime import timedelta
 from datetime import timezone as dt_utc
 
 from django.core.cache import cache
@@ -437,35 +438,222 @@ def _is_statement_timeout_error(exc: Any) -> Any:
   return any(marker in msg for marker in _STATEMENT_TIMEOUT_ERROR_MARKERS)
 
 
+def _estimate_one_min_samples_for_window(start_time: Any, end_time: Any) -> int:
+  """
+  Estimate 1-minute sample count for a job window (design cadence).
+
+  Args:
+    start_time (Any): Job window start datetime.
+    end_time (Any): Job window end datetime.
+
+  Returns:
+    int: At least 1 estimated sample.
+
+  Examples:
+    >>> from datetime import datetime, timezone
+    >>> a = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    >>> b = datetime(2024, 1, 1, 1, tzinfo=timezone.utc)
+    >>> _estimate_one_min_samples_for_window(a, b)
+    60
+  """
+  try:
+    span_s = float((end_time - start_time).total_seconds())
+  except Exception:
+    return 1
+  if not (span_s > 0):
+    return 1
+  return max(1, int((span_s + 59.0) // 60.0))
+
+
+def _resolve_plot_aggregate_time_bucket_count(n_hosts: int) -> int:
+  """
+  Choose large-job time bucket count so hosts×times stays under the row budget.
+
+  Design capacity ``5000×48×60`` uses ``floor(budget / n_hosts)`` (e.g. 200 at
+  5000 hosts with a 1M-row budget), never more than configured buckets.
+
+  Args:
+    n_hosts (int): Number of hosts on the job.
+
+  Returns:
+    int: Bucket count (minimum 32).
+
+  Examples:
+    >>> _resolve_plot_aggregate_time_bucket_count(5000)  # doctest: +SKIP
+  """
+  configured = int(cfg.get_large_job_time_buckets())
+  budget = int(cfg.get_plot_aggregate_max_host_time_points())
+  hosts = max(1, int(n_hosts or 1))
+  by_budget = max(32, budget // hosts)
+  return max(32, min(configured, by_budget))
+
+
+def _iter_aggregate_time_filter_chunks(
+  tkw: Any,
+  slice_s: int,
+) -> Iterator[Any]:
+  """
+  Yield time-filter dicts that partition ``tkw`` into wall-clock slices.
+
+  Args:
+    tkw (Any): Base time kwargs (``time__in`` or ``time__gte``/``time__lte``).
+    slice_s (int): Target wall-clock seconds per chunk (minimum 60).
+
+  Yields:
+    Any: Dict suitable for ``host_data.objects.filter(**chunk)``.
+
+  Examples:
+    >>> list(_iter_aggregate_time_filter_chunks({"time__in": []}, 3600))
+    []
+  """
+  slice_s = max(60, int(slice_s or 3600))
+  if not isinstance(tkw, dict) or not tkw:
+    return
+  if "time__in" in tkw:
+    times = list(tkw.get("time__in") or [])
+    if not times:
+      return
+    chunk_n = max(1, int(slice_s // 60))
+    for i in range(0, len(times), chunk_n):
+      yield {"time__in": times[i : i + chunk_n]}
+    return
+  gte = tkw.get("time__gte")
+  lte = tkw.get("time__lte")
+  if gte is None or lte is None:
+    yield dict(tkw)
+    return
+  cur = gte
+  while cur < lte:
+    nxt = cur + timedelta(seconds=slice_s)
+    if nxt >= lte:
+      yield {"time__gte": cur, "time__lte": lte}
+      break
+    yield {"time__gte": cur, "time__lt": nxt}
+    cur = nxt
+
+
+def _split_time_filter_for_timeout(time_filter: Any) -> Any:
+  """
+  Bisect a time filter for statement_timeout retry (host size already 1).
+
+  Args:
+    time_filter (Any): ``time__in`` list or ``time__gte``/``time__lte`` window.
+
+  Returns:
+    Any: ``(left, right)`` filter dicts, or ``None`` when too small to split.
+
+  Examples:
+    >>> _split_time_filter_for_timeout({"time__in": [1]}) is None
+    True
+  """
+  if not isinstance(time_filter, dict):
+    return None
+  if "time__in" in time_filter:
+    times = list(time_filter.get("time__in") or [])
+    if len(times) < 2:
+      return None
+    mid = max(1, len(times) // 2)
+    return (
+        {"time__in": times[:mid]},
+        {"time__in": times[mid:]},
+    )
+  gte = time_filter.get("time__gte")
+  lte = time_filter.get("time__lte")
+  if lte is None:
+    lte = time_filter.get("time__lt")
+  if gte is None or lte is None:
+    return None
+  try:
+    span_s = float((lte - gte).total_seconds())
+  except Exception:
+    return None
+  if span_s < 120.0:
+    return None
+  mid = gte + timedelta(seconds=span_s / 2.0)
+  return (
+      {"time__gte": gte, "time__lte": mid},
+      {"time__gt": mid, "time__lte": lte},
+  )
+
+
+def _assemble_sum_val_parts_bounded(
+  parts: Any,
+  conv: float,
+  max_rows: int,
+) -> Any:
+  """
+  Build one host/time/sum_val DataFrame from chunk parts without a mega-concat.
+
+  Parts must already be capped so total rows ≤ ``max_rows``. A single part is
+  returned without ``pd.concat``; multiple parts are concatenated once.
+
+  Args:
+    parts (Any): Sequence of non-empty DataFrames with host/time/sum_val.
+    conv (float): Multiplier applied to ``sum_val``.
+    max_rows (int): Hard row budget (safety truncate).
+
+  Returns:
+    Any: Sorted DataFrame with columns host, time, sum_val.
+
+  Examples:
+    >>> _assemble_sum_val_parts_bounded([], 1.0, 10)  # doctest: +SKIP
+  """
+  import pandas as pd
+
+  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  if not parts:
+    return empty
+  budget = max(1, int(max_rows or 1))
+  if len(parts) == 1:
+    df = parts[0]
+  else:
+    df = pd.concat(parts, ignore_index=True)
+  if df is None or df.empty or "sum_val" not in df.columns:
+    return empty
+  if not {"host", "time"}.issubset(df.columns):
+    return empty
+  if len(df.index) > budget:
+    df = df.iloc[:budget].copy()
+  df = (
+      df.groupby(["host", "time"], as_index=False)["sum_val"]
+      .sum()
+      .sort_values(["host", "time"])
+  )
+  df["sum_val"] = df["sum_val"].astype("float64") * float(conv)
+  return df.reset_index(drop=True)
+
+
 def _queryset_to_dataframe_with_host_chunk_retry(
   host_chunk: Any,
   build_qs: Any,
   *,
   min_hosts: int = 1,
   max_attempts: int = 2,
+  time_filter: Any | None = None,
 ) -> Any:
   """
-  Materialize ``build_qs(host_chunk)``; split hosts or retry on statement.
-  
-    timeout.
-  
+  Materialize ``build_qs``; on statement timeout split hosts then time.
+
+  When ``time_filter`` is set, calls ``build_qs(hosts, time_filter)``; else
+  ``build_qs(hosts)`` for legacy TypeDetail / aggregate callers.
+
   Args:
-    host_chunk (Any): Host chunk passed to this helper.
-    build_qs (Any): Build qs passed to this helper.
-    min_hosts (int): Integer value for min hosts.
-    max_attempts (int): Integer value for max attempts.
-  
+    host_chunk (Any): Hostnames for this ``host__in`` slice.
+    build_qs (Any): Callable returning a Django queryset for the chunk.
+    min_hosts (int): Stop host bisect at this size.
+    max_attempts (int): Retries when a minimal chunk still times out.
+    time_filter (Any | None): Optional time kwargs for this SQL chunk.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: DataFrame for the chunk (possibly empty).
+
   Raises:
-    Exception: Raised when ``_queryset_to_dataframe_with_host_chunk_retry``
-    hits a ``Exception`` failure path.
-    last_exc: Raised when ``_queryset_to_dataframe_with_host_chunk_retry``
-    hits a ``last_exc`` failure path.
-  
+    Exception: Non-timeout DB errors, or timeout after splits are exhausted.
+    last_exc: Re-raised when a statement_timeout remains after host/time
+      splits and ``max_attempts`` are exhausted.
+
   Examples:
-    >>> _queryset_to_dataframe_with_host_chunk_retry(None, None, 0, 0)
+    >>> _queryset_to_dataframe_with_host_chunk_retry([], lambda h: None)
   """
   import pandas as pd
 
@@ -473,10 +661,31 @@ def _queryset_to_dataframe_with_host_chunk_retry(
   if not hosts:
     return pd.DataFrame()
   last_exc = None
+  tf = time_filter
+
+  def _run(hosts_list: Any, tf_cur: Any) -> Any:
+    """
+    Execute ``build_qs`` for one host/time slice.
+
+    Args:
+      hosts_list (Any): Hostnames for this attempt.
+      tf_cur (Any): Time filter dict or None.
+
+    Returns:
+      Any: DataFrame from ``queryset_to_dataframe``.
+
+    Examples:
+      >>> True
+      True
+    """
+    close_old_connections()
+    if tf_cur is not None:
+      return queryset_to_dataframe(build_qs(hosts_list, tf_cur))
+    return queryset_to_dataframe(build_qs(hosts_list))
+
   for attempt in range(max_attempts):
     try:
-      close_old_connections()
-      return queryset_to_dataframe(build_qs(hosts))
+      return _run(hosts, tf)
     except OperationalError as exc:
       last_exc = exc
       if not _is_statement_timeout_error(exc):
@@ -488,12 +697,36 @@ def _queryset_to_dataframe_with_host_chunk_retry(
             build_qs,
             min_hosts=min_hosts,
             max_attempts=max_attempts,
+            time_filter=tf,
         )
         right = _queryset_to_dataframe_with_host_chunk_retry(
             hosts[mid:],
             build_qs,
             min_hosts=min_hosts,
             max_attempts=max_attempts,
+            time_filter=tf,
+        )
+        if left.empty:
+          return right
+        if right.empty:
+          return left
+        return pd.concat([left, right], ignore_index=True)
+      split = _split_time_filter_for_timeout(tf) if tf is not None else None
+      if split is not None:
+        left_tf, right_tf = split
+        left = _queryset_to_dataframe_with_host_chunk_retry(
+            hosts,
+            build_qs,
+            min_hosts=min_hosts,
+            max_attempts=max_attempts,
+            time_filter=left_tf,
+        )
+        right = _queryset_to_dataframe_with_host_chunk_retry(
+            hosts,
+            build_qs,
+            min_hosts=min_hosts,
+            max_attempts=max_attempts,
+            time_filter=right_tf,
         )
         if left.empty:
           return right
@@ -512,31 +745,66 @@ def _fetch_host_data_values_frames(
   host_list: Any,
   build_qs: Any,
   batch_size: Any | None = None,
+  *,
+  max_rows: Any | None = None,
+  time_filter_chunks: Any | None = None,
 ) -> Any:
   """
-  Run chunked ``host__in`` queries with timeout split/retry; concat row frames.
-  
+  Run chunked host (and optional time) queries; assemble under a row budget.
+
   Args:
-    host_list (Any): Host list passed to this helper.
-    build_qs (Any): Build qs passed to this helper.
-    batch_size (Any | None): One of ``Any``, ``None``.
-  
+    host_list (Any): Hostnames for the job window.
+    build_qs (Any): ``build_qs(hosts)`` or ``build_qs(hosts, time_filter)``.
+    batch_size (Any | None): Host batch size override.
+    max_rows (Any | None): Cap on materialised rows (default plot budget).
+    time_filter_chunks (Any | None): Iterable of time-filter dicts; when
+      ``None``, uses legacy ``build_qs(hosts)`` only.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: Concatenated (budget-capped) DataFrame of raw values rows.
+
   Examples:
-    >>> _fetch_host_data_values_frames(None, None, None)  # doctest: +SKIP
+    >>> _fetch_host_data_values_frames([], lambda h: None)  # doctest: +SKIP
   """
   import pandas as pd
 
-  frames = []
-  for host_chunk in _iter_acct_host_batches(host_list, batch_size):
-    chunk_df = _queryset_to_dataframe_with_host_chunk_retry(host_chunk, build_qs)
-    if chunk_df is not None and not chunk_df.empty:
-      frames.append(chunk_df)
-  if not frames:
+  budget = int(
+      max_rows
+      if max_rows is not None
+      else cfg.get_plot_aggregate_max_host_time_points()
+  )
+  budget = max(1, budget)
+  chunks = list(time_filter_chunks) if time_filter_chunks is not None else [None]
+  parts: list[Any] = []
+  nrows = 0
+  for tf in chunks:
+    if nrows >= budget:
+      break
+    for host_chunk in _iter_acct_host_batches(host_list, batch_size):
+      if nrows >= budget:
+        break
+      if tf is None:
+        chunk_df = _queryset_to_dataframe_with_host_chunk_retry(
+            host_chunk, build_qs
+        )
+      else:
+        chunk_df = _queryset_to_dataframe_with_host_chunk_retry(
+            host_chunk,
+            build_qs,
+            time_filter=tf,
+        )
+      if chunk_df is None or chunk_df.empty:
+        continue
+      remaining = budget - nrows
+      if len(chunk_df.index) > remaining:
+        chunk_df = chunk_df.iloc[:remaining].copy()
+      parts.append(chunk_df)
+      nrows += len(chunk_df.index)
+  if not parts:
     return pd.DataFrame()
-  return pd.concat(frames, ignore_index=True)
+  if len(parts) == 1:
+    return parts[0]
+  return pd.concat(parts, ignore_index=True)
 
 
 def _type_detail_group_metric_to_sum_val(df_raw: Any, metric: Any) -> Any:
@@ -1805,33 +2073,46 @@ class jid_table:
 
   def _apply_large_job_time_sampling_if_needed(self) -> None:
     """
-    If row count exceeds threshold, restrict queries to NTILE-strided.
-    
-      timestamps.
-    
+    Thin time axis when raw rows or hosts×samples exceed the plot memory budget.
+
+    Activates when ``COUNT(*)`` exceeds the large-job threshold **or** when
+    ``n_hosts × estimated_1min_samples`` exceeds
+    ``get_plot_aggregate_max_host_time_points()`` (design ``5000×48×60``).
+    Bucket count is ``min(configured, floor(budget / n_hosts))``.
+
     Returns:
       None
-    
+
     Examples:
       >>> jid_table()._apply_large_job_time_sampling_if_needed()  # doctest: +SKIP
     """
     self._large_job_plot_cache_token = "full"
     if not self.acct_host_list or not self.start_time or not self.end_time:
       return
+    n_hosts = len(self.acct_host_list)
+    budget = int(cfg.get_plot_aggregate_max_host_time_points())
+    est_samples = _estimate_one_min_samples_for_window(
+        self.start_time, self.end_time
+    )
+    need_sampling = (n_hosts * est_samples) > budget
+    n = None
     threshold = cfg.get_large_job_host_data_row_threshold()
     try:
       n = _count_host_data_rows_for_window_cached(
           self.jid, self.start_time, self.end_time, self.acct_host_list)
+      if n > threshold:
+        need_sampling = True
     except Exception as exc:
       _logger.warning(
           "jid_table large-job row count failed jid=%s: %s",
           self.jid,
           exc,
       )
+      if not need_sampling:
+        return
+    if not need_sampling:
       return
-    if n <= threshold:
-      return
-    n_buckets = cfg.get_large_job_time_buckets()
+    n_buckets = _resolve_plot_aggregate_time_bucket_count(n_hosts)
     try:
       sampled = _strided_distinct_times_for_large_job(
           self.start_time, self.end_time, self.acct_host_list, n_buckets)
@@ -1850,10 +2131,14 @@ class jid_table:
     }
     self._large_job_plot_cache_token = "lb{}".format(len(sampled))
     _logger.info(
-        "jid_table large-job time sampling jid=%s rows~%s bucket_times=%s",
+        "jid_table large-job time sampling jid=%s hosts=%s budget=%s "
+        "rows~%s bucket_times=%s est_host_samples=%s",
         self.jid,
-        n,
+        n_hosts,
+        budget,
+        n if n is not None else "n/a",
         len(sampled),
+        n_hosts * est_samples,
     )
 
   def _host_data_qs(self, **extra_filters: Any) -> Any:
@@ -1944,8 +2229,12 @@ class jid_table:
       if not self.acct_host_list:
         return pd.DataFrame(columns=["host", "time"])
       tkw = self._host_data_time_filter_kwargs()
-      frames = []
+      budget = int(cfg.get_plot_aggregate_max_host_time_points())
+      parts: list[Any] = []
+      nrows = 0
       for host_chunk in _iter_acct_host_batches(self.acct_host_list):
+        if nrows >= budget:
+          break
         qs = (
             host_data.objects.filter(
                 host__in=host_chunk,
@@ -1955,10 +2244,17 @@ class jid_table:
             .distinct()
             .order_by("host", "time")
         )
-        frames.append(queryset_to_dataframe(qs))
-      if not frames:
+        chunk = queryset_to_dataframe(qs)
+        if chunk is None or chunk.empty:
+          continue
+        remaining = budget - nrows
+        if len(chunk.index) > remaining:
+          chunk = chunk.iloc[:remaining].copy()
+        parts.append(chunk)
+        nrows += len(chunk.index)
+      if not parts:
         return pd.DataFrame(columns=["host", "time"])
-      out = pd.concat(frames, ignore_index=True)
+      out = parts[0] if len(parts) == 1 else pd.concat(parts, ignore_index=True)
       if out.empty or not {"host", "time"}.issubset(out.columns):
         return pd.DataFrame(columns=["host", "time"])
       return out.sort_values(["host", "time"]).reset_index(drop=True)
@@ -2009,13 +2305,12 @@ class jid_table:
       """
       Aggregate via raw host_data rows when SQL SUM is unavailable.
 
-      Uses host-chunk timeout split/retry (same contract as TypeDetail).
+      Uses host×time chunking with timeout split/retry and a row budget.
 
       Returns:
         Any: DataFrame with host, time, sum_val columns (possibly empty).
 
       Examples:
-        >>> # Called from get_aggregate_df fallback after SQL failure
         >>> True
         True
       """
@@ -2031,30 +2326,33 @@ class jid_table:
           if reject_dcgm_blank
           else JID_TABLE_HOST_QUERY_BATCH
       )
-      frames = []
+      slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+      max_rows = int(cfg.get_plot_aggregate_max_host_time_points())
+      time_chunks = list(_iter_aggregate_time_filter_chunks(tkw, slice_s))
       for candidate_typ in type_probe_names(typ):
         def build_qs_raw(
           host_chunk: Any,
+          tf: Any,
           ct: Any = candidate_typ,
         ) -> Any:
           """
-          Build raw-row values queryset for one host sub-chunk.
+          Build raw-row values queryset for one host×time sub-chunk.
 
           Args:
             host_chunk (Any): Hostnames for this ``host__in`` slice.
+            tf (Any): Time-filter kwargs for this slice.
             ct (Any): Candidate ``host_data.type`` string.
 
           Returns:
             Any: Django values queryset (host, time, val_col).
 
           Examples:
-            >>> # Wired into _fetch_host_data_values_frames
             >>> True
             True
           """
           qs = host_data.objects.filter(
               host__in=host_chunk,
-              **tkw,
+              **tf,
               type=ct,
               event__in=probed_events,
           )
@@ -2066,6 +2364,8 @@ class jid_table:
             hosts,
             build_qs_raw,
             batch_size=host_batch,
+            max_rows=max_rows,
+            time_filter_chunks=time_chunks,
         )
         if (
             df_raw is None
@@ -2080,24 +2380,15 @@ class jid_table:
             .sum()
             .rename(columns={val_col: "sum_val"})
         )
-        frames.append(df_grouped)
-        break
-      if not frames:
-        return pd.DataFrame(columns=["host", "time", "sum_val"])
-      df_all = pd.concat(frames, ignore_index=True)
-      df_all = (
-          df_all.groupby(["host", "time"], as_index=False)["sum_val"]
-          .sum()
-          .sort_values(["host", "time"])
-      )
-      df_all["sum_val"] = df_all["sum_val"] * conv
-      return df_all
+        return _assemble_sum_val_parts_bounded([df_grouped], conv, max_rows)
+      return pd.DataFrame(columns=["host", "time", "sum_val"])
 
     def _fn() -> Any:
       """
       Prefer SQL SUM per sample; fall back to raw-row groupby on failure.
 
-      Host chunks use timeout split/retry; GPU types use a smaller batch.
+      Host×time chunks use portal statement_timeout with split/retry; GPU types
+      use a smaller host batch. Materialised rows stay under the plot budget.
 
       Returns:
         Any: DataFrame with host, time, sum_val columns (possibly empty).
@@ -2106,7 +2397,6 @@ class jid_table:
         Exception: Control-flow timeouts (SIGALRM) are re-raised.
 
       Examples:
-        >>> # Invoked via cached_orm inside get_aggregate_df
         >>> True
         True
       """
@@ -2125,65 +2415,74 @@ class jid_table:
           if reject_dcgm_blank
           else JID_TABLE_HOST_QUERY_BATCH
       )
+      slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+      max_rows = int(cfg.get_plot_aggregate_max_host_time_points())
 
       try:
         tkw = self._host_data_time_filter_kwargs()
-        frames = []
-        for host_chunk in _iter_acct_host_batches(hosts, host_batch):
-          chunk_frames = []
-          for candidate_typ in type_probe_names(typ):
-            def build_qs_sql(
-              host_subchunk: Any,
-              ct: Any = candidate_typ,
-            ) -> Any:
-              """
-              Build SQL SUM-per-sample queryset for one host sub-chunk.
-
-              Args:
-                host_subchunk (Any): Hostnames for this ``host__in`` slice.
-                ct (Any): Candidate ``host_data.type`` string.
-
-              Returns:
-                Any: Aggregated Django queryset (host, sample_time, sum_val).
-
-              Examples:
-                >>> # Wired into _queryset_to_dataframe_with_host_chunk_retry
-                >>> True
-                True
-              """
-              qs_base = host_data.objects.filter(
-                  host__in=host_subchunk,
-                  **tkw,
-                  type=ct,
-                  event__in=probed_events,
-              )
-              if reject_dcgm_blank:
-                qs_base = qs_base.filter(**{f"{val_col}__lt": DCGM_FP64_BLANK})
-              return host_data_sum_val_per_sample_queryset(qs_base, val_col)
-
-            df_chunk = host_data_restore_time_column(
-                _queryset_to_dataframe_with_host_chunk_retry(
-                    host_chunk,
-                    build_qs_sql,
-                )
-            )
-            if not df_chunk.empty and "sum_val" in df_chunk.columns:
-              chunk_frames.append(df_chunk)
+        time_chunks = list(_iter_aggregate_time_filter_chunks(tkw, slice_s))
+        parts: list[Any] = []
+        nrows = 0
+        for tf in time_chunks:
+          if nrows >= max_rows:
+            break
+          for host_chunk in _iter_acct_host_batches(hosts, host_batch):
+            if nrows >= max_rows:
               break
-          if chunk_frames:
-            frames.append(chunk_frames[0])
-        if not frames:
+            chunk_df = None
+            for candidate_typ in type_probe_names(typ):
+              def build_qs_sql(
+                host_subchunk: Any,
+                tf_cur: Any,
+                ct: Any = candidate_typ,
+              ) -> Any:
+                """
+                Build SQL SUM-per-sample queryset for one host×time sub-chunk.
+
+                Args:
+                  host_subchunk (Any): Hostnames for this ``host__in`` slice.
+                  tf_cur (Any): Time-filter kwargs for this slice.
+                  ct (Any): Candidate ``host_data.type`` string.
+
+                Returns:
+                  Any: Aggregated Django queryset (host, sample_time, sum_val).
+
+                Examples:
+                  >>> True
+                  True
+                """
+                qs_base = host_data.objects.filter(
+                    host__in=host_subchunk,
+                    **tf_cur,
+                    type=ct,
+                    event__in=probed_events,
+                )
+                if reject_dcgm_blank:
+                  qs_base = qs_base.filter(
+                      **{f"{val_col}__lt": DCGM_FP64_BLANK}
+                  )
+                return host_data_sum_val_per_sample_queryset(qs_base, val_col)
+
+              df_try = host_data_restore_time_column(
+                  _queryset_to_dataframe_with_host_chunk_retry(
+                      host_chunk,
+                      build_qs_sql,
+                      time_filter=tf,
+                  )
+              )
+              if not df_try.empty and "sum_val" in df_try.columns:
+                chunk_df = df_try
+                break
+            if chunk_df is None or chunk_df.empty:
+              continue
+            remaining = max_rows - nrows
+            if len(chunk_df.index) > remaining:
+              chunk_df = chunk_df.iloc[:remaining].copy()
+            parts.append(chunk_df)
+            nrows += len(chunk_df.index)
+        if not parts:
           return pd.DataFrame(columns=["host", "time", "sum_val"])
-        df_sql = pd.concat(frames, ignore_index=True)
-        if df_sql.empty or "sum_val" not in df_sql.columns:
-          return pd.DataFrame(columns=["host", "time", "sum_val"])
-        df_sql = (
-            df_sql.groupby(["host", "time"], as_index=False)["sum_val"]
-            .sum()
-            .sort_values(["host", "time"])
-        )
-        df_sql["sum_val"] = df_sql["sum_val"].astype("float64") * conv
-        return df_sql
+        return _assemble_sum_val_parts_bounded(parts, conv, max_rows)
       except Exception as exc:
         if is_metrics_compute_control_flow_error(exc):
           raise

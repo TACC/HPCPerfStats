@@ -534,3 +534,34 @@ def test_jt_memo_proxy_telemetry_counts_hits():
   assert telemetry["plot_jt_memo_host_time_hits"] == 1
   assert telemetry["plot_jt_memo_aggregate_misses"] == 2
   assert telemetry["plot_jt_memo_aggregate_hits"] == 2
+
+
+@pytest.mark.machine_unit_mock
+def test_persist_job_plot_artifacts_skips_jid_table_when_warm(monkeypatch):
+  """Warm L2 for all kinds must not construct jid_table / prefetch."""
+  from hpcperfstats.site.lib.machine import job_plot_artifacts as jpa
+  from types import SimpleNamespace
+
+  layouts = (jpa.JOB_PLOT_LAYOUT_NORMAL,)
+  fp = "fp-warm"
+  existing = {
+      (kind, jpa.JOB_PLOT_LAYOUT_NORMAL): SimpleNamespace(
+          input_fingerprint=fp,
+          payload_compressed=b"gz",
+      )
+      for kind in jpa.JOB_PLOT_KINDS
+  }
+  shared = {
+      "job": SimpleNamespace(jid="warmskip1"),
+      "plot_fingerprint": fp,
+      "existing_plot_rows": existing,
+  }
+  calls = {"jt": 0}
+
+  def boom(*_a, **_k):
+    calls["jt"] += 1
+    raise AssertionError("jid_table must not be constructed when warm")
+
+  monkeypatch.setattr(jpa.jid_table, "jid_table", boom)
+  jpa.persist_job_plot_artifacts_for_jid("warmskip1", layouts=layouts, context=shared)
+  assert calls["jt"] == 0

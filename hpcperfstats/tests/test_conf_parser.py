@@ -810,6 +810,23 @@ def test_large_job_numeric_env_invalid_falls_back_to_defaults(temp_ini, monkeypa
   assert cfg.get_large_job_window_row_count_cache_ttl() == 300
 
 
+def test_plot_aggregate_chunk_budget_defaults_and_env(temp_ini, monkeypatch):
+  """Plot aggregate time-slice and host×time budget (design 5000×48×60)."""
+  monkeypatch.delenv("HPCPERFSTATS_METRICS_PLOT_AGGREGATE_TIME_SLICE_S", raising=False)
+  monkeypatch.delenv("HPCPERFSTATS_PLOT_AGGREGATE_MAX_HOST_TIME_POINTS", raising=False)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_metrics_plot_aggregate_time_slice_s() == 3600
+  assert cfg.get_plot_aggregate_max_host_time_points() == 1_000_000
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_PLOT_AGGREGATE_TIME_SLICE_S", "1800")
+  monkeypatch.setenv("HPCPERFSTATS_PLOT_AGGREGATE_MAX_HOST_TIME_POINTS", "500000")
+  assert cfg.get_metrics_plot_aggregate_time_slice_s() == 1800
+  assert cfg.get_plot_aggregate_max_host_time_points() == 500000
+
+
 def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
