@@ -205,6 +205,95 @@ describe("JobDetail", () => {
     expect(violations.filter((v) => v.id !== "aria-valid-attr-value")).toEqual([]);
   });
 
+  it("renders a Print button after job detail loads", async () => {
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^print$/i })).toBeInTheDocument();
+    });
+  });
+
+  it("force-mounts in-scope plot panels during print prep even on Metrics tab", async () => {
+    const loadDetailWithoutDeferParts = vi.fn();
+    setJobDetailQueryMock({
+      data: minimalJobDetailResponse,
+      loadDetailWithoutDeferParts,
+    });
+    setJobPlotsQueryMock({
+      plots: plotsStateFromBatchResponse({
+        ...minimalBatchPlotsResponse,
+        mplot_unavailable_reason: "Missing summary",
+        rplot_unavailable_reason: "Missing CPU roofline",
+        grplot_unavailable_reason: "Missing GPU roofline",
+      }),
+      plotsLoading: false,
+    });
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^print$/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("heading", { name: "Summary plot", level: 3 })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^print$/i }));
+
+    await waitFor(() => {
+      expect(document.querySelector("[data-job-detail-print='1']")).toBeTruthy();
+      // In-scope inactive tab panels stay [hidden] for a11y; print CSS unhides them.
+      expect(
+        screen.getByRole("heading", { name: "Summary plot", level: 3, hidden: true }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "CPU Roofline", level: 3, hidden: true }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "CPU Multiprecision Mix", level: 3, hidden: true }),
+      ).toBeInTheDocument();
+      expect(document.querySelector("#job-detail-panel-plot-summary")).toBeTruthy();
+      expect(document.querySelector("#job-detail-panel-multiprecision-mix")).toBeTruthy();
+    });
+    expect(loadDetailWithoutDeferParts).toHaveBeenCalledWith(["xalt", "proc"]);
+    expect(document.querySelector("#job-detail-panel-processes")).not.toBeInTheDocument();
+    expect(document.querySelector("#job-detail-panel-device")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(printSpy).toHaveBeenCalled();
+    });
+    printSpy.mockRestore();
+  });
+
+  it("calls window.print after readiness and restores layout on afterprint", async () => {
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
+    setJobPlotsQueryMock({
+      plots: plotsStateFromBatchResponse({
+        ...minimalBatchPlotsResponse,
+        mplot_unavailable_reason: "Missing summary",
+        rplot_unavailable_reason: "Missing CPU roofline",
+        grplot_unavailable_reason: "Missing GPU roofline",
+      }),
+      plotsLoading: false,
+    });
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^print$/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^print$/i }));
+
+    await waitFor(() => {
+      expect(printSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(document.querySelector("[data-job-detail-print='1']")).toBeTruthy();
+
+    fireEvent(window, new Event("afterprint"));
+
+    await waitFor(() => {
+      expect(document.querySelector("[data-job-detail-print='1']")).toBeNull();
+    });
+    expect(screen.queryByText("Preparing print…")).not.toBeInTheDocument();
+    printSpy.mockRestore();
+  });
+
   it("shows Sample Count for staff when API includes staff_metrics_distinct_time_count", async () => {
     setJobDetailQueryMock({ data: {
       ...minimalJobDetailResponse,

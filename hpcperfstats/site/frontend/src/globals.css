@@ -154,3 +154,65 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+
+/* Job Detail print prep: show in-scope tab panels (override Base UI [hidden]) so Bokeh can measure. */
+[data-job-detail-print="1"] .job-detail-print-scoped-panel {
+  display: block !important;
+  visibility: visible !important;
+  height: auto !important;
+  overflow: visible !important;
+  margin-top: 1rem;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+[data-job-detail-print="1"] .job-detail-print-out-of-scope {
+  display: none !important;
+}
+
+.job-detail-print-only {
+  display: none;
+}
+
+@media print {
+  header[role="navigation"],
+  #extended-search-collapse,
+  [data-testid="extended-search-backdrop"],
+  .job-detail-print-button,
+  .job-detail-analysis-tablist,
+  .job-detail-print-hide,
+  [data-job-detail-print="1"] .job-detail-print-out-of-scope {
+    display: none !important;
+  }
+
+  .job-detail-print-only {
+    display: block !important;
+  }
+
+  [data-job-detail-print="1"] .job-detail-print-scoped-panel {
+    display: block !important;
+    visibility: visible !important;
+    height: auto !important;
+    overflow: visible !important;
+    margin-top: 1rem;
+    page-break-before: auto;
+    break-inside: avoid-page;
+  }
+
+  [data-job-detail-print="1"] .job-detail-metrics-section,
+  [data-job-detail-print="1"] .job-detail-resources-card,
+  [data-job-detail-print="1"] #job-detail-glance,
+  [data-job-detail-print="1"] .job-detail-scheduling-details {
+    break-inside: avoid;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  #main-content {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+}

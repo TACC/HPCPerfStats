@@ -37,6 +37,17 @@ Follow neighboring tabs for typography (**`h3`** subsection headings), **`text-m
 - Wrap Resources blocks in **`Card`** chrome in order **Watt hours → GPU Information → Shared File Systems → Client/Server logs**.
 - **GPU Information:** aggregate stats are the main surface; **GPU inventory** is a default-**closed** `Collapsible` under the aggregates.
 
+## Print layout
+
+Job Detail **Print** uses the browser print dialog (`window.print` → Save as PDF). Do **not** add CDN or npm PDF libraries (`jspdf` / `html2canvas`).
+
+- **In-scope surfaces:** Job overview, Full scheduling record, Resources, Metrics, Summary plot, Roofline, Multiprecision Mix.
+- **Out of scope:** Processes, Execution and hosts, Device data (mark with **`job-detail-print-out-of-scope`**; do not `keepMounted` for print).
+- **Prep:** set **`data-job-detail-print="1"`** on the page wrapper; force-load multiprecision + plots; **`keepMounted`** + mount in-scope **`PlotPanel`**s even when the active tab differs; open scheduling / GPU inventory collapsibles; disable Bokeh viewport defer during prep so embeds can measure.
+- **CSS:** screen + `@media print` rules in **`globals.css`** keyed off **`[data-job-detail-print]`** (override Base UI **`[hidden]`** on in-scope panels with `display: block !important`; hide chrome, tablist, Print button, out-of-scope panels).
+- **Cleanup:** `afterprint` (plus a safety timeout) clears print layout so normal tab lazy-mount resumes.
+- **Tests:** **`JobDetail.test.tsx`** + **`job-detail-print.ts`** helpers; researcher doc per **`researcher-job-detail-doc-sync.mdc`**.
+
 ## Documentation
 
 When user-visible plot-tab behavior or semantics change, update **`docs/using-the-website-as-a-researcher.md`** per **`researcher-job-detail-doc-sync.mdc`**.
@@ -47,3 +58,4 @@ When user-visible plot-tab behavior or semantics change, update **`docs/using-th
 - **`bokeh-layout-surface-split.mdc`** — **`BokehEmbed`** contract and layout defaults.
 - **`react-next-ts-cursor-rule.mdc`** — SPA patterns for touched frontend files.
 - **`web-pages-e2e-test-maintenance.mdc`** — Playwright/static HTML behavior updates.
+- **`no-cdn-in-production.mdc`** — Print must stay browser-native (no CDN PDF stacks).

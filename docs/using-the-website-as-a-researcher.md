@@ -39,6 +39,7 @@ This document is ordered so the **most decision-relevant ideas come first**. Dee
 
 - **Breadcrumbs** at the top link back to your filtered job list (when you arrived from search) and show where you are in the site. Use them instead of the browser back button when you want to return to the same filter context.
 - **Shareable analysis tabs**: Job data tabs (Summary plot, Roofline, Multiprecision Mix, and related analysis panels) sync to the URL as `?tab=…` so you can bookmark or share a link that opens the same tab. If a plot or metric panel fails to load on first try, the page offers **retry** actions for that section without reloading the whole job.
+- **Print**: Use the **Print** button next to the job title to prepare a printable snapshot (Job overview, Full scheduling record, Resources, Metrics, Summary plot, Roofline, and Multiprecision Mix). The browser print dialog opens so you can **Save as PDF** or print on paper—useful for tickets, design reviews, and offline sharing. Processes, Execution and hosts, and Device data are not included in that snapshot.
 
 1. **Read Job overview first** (status, runtime, queue, cores/nodes, user/project, start/end). This frames the run before touching telemetry.
 2. **Open the Summary plot tab** in **Job data**. It is the fastest way to see phase changes and node-to-node divergence across CPU, memory, I/O<sup>[11](#ref-11)</sup>, network, and GPU signals.
@@ -77,6 +78,7 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 
 | Panel / tab                     | Content                                                                                           | Diagnostic use                                                                                                                                                 |
 | ------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Print**                       | Browser print / Save as PDF of overview, scheduling, Resources, Metrics, Summary, Roofline, Multiprecision Mix | Capture a triage packet for support tickets or offline review without copying each tab by hand. |
 | **Job overview**                | Compact high-value fields (jid, status, runtime, queue, user/project, cores/nodes, start/end)    | Fast triage before deeper telemetry checks.                                                                                                                    |
 | **Full scheduling record**      | Expanded accounting table with all core scheduler columns                                          | Audit exact scheduler/accounting values and formatting without leaving the page.                                                                               |
 | **Resources**                   | Rounded Cards in order: watt-hours (when present) → **GPU Information** (aggregate stats as the main line; per-(host,dev) inventory behind a collapsed control) → **Shared File Systems** (`fsio`) → Client/Server log links last. GPU precedence NVIDIA → AMD → Intel PVC. | Validate energy, GPU allocation vs activity (expand inventory for device rows), I/O<sup>[11](#ref-11)</sup> volume, then jump to external logs. |
@@ -324,5 +326,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-07-31 | Resources GPU inventory: one row per device when ingest stores `dev`; legacy empty-`dev` jobs show node-aggregate note (not “per GPU”). |
 | 2026-07-31 | Resources/Metrics Card chrome: Watt hours → GPU Information (inventory collapsed) → Shared File Systems → logs; Metrics subsections in Cards. |
 | 2026-08-05 | GPU Roofline prefers estimated memory bandwidth when present (title Memory BW); otherwise PCIe/NvLink (or Xe Link) with matching title and peak roof. |
+| 2026-08-05 | Job Detail **Print** button: prepares overview/Resources/Metrics/Summary/Roofline/Multiprecision Mix for the browser print dialog (Save as PDF). |
 
 
