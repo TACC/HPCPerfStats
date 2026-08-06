@@ -9,33 +9,12 @@ export const JOB_DETAIL_PRINT_READY_TIMEOUT_MS = 20_000;
 /** Safety clear of print layout if afterprint never fires. */
 export const JOB_DETAIL_PRINT_AFTERPRINT_FALLBACK_MS = 60_000;
 
-export const JOB_DETAIL_PRINT_SCOPED_PANEL_IDS = [
-  "job-detail-panel-metrics",
-  "job-detail-panel-plot-summary",
-  "job-detail-panel-plot-roofline",
-  "job-detail-panel-multiprecision-mix",
-] as const;
-
-export const JOB_DETAIL_PRINT_OUT_OF_SCOPE_PANEL_IDS = [
-  "job-detail-panel-processes",
-  "job-detail-panel-exec-hosts",
-  "job-detail-panel-device",
-] as const;
-
 export type JobDetailPrintPlotKey =
   | "summary_plot"
   | "roofline"
   | "gpu_roofline"
   | "multiprecision_cpu"
   | "multiprecision_gpu";
-
-export const JOB_DETAIL_PRINT_PLOT_KEYS: readonly JobDetailPrintPlotKey[] = [
-  "summary_plot",
-  "roofline",
-  "gpu_roofline",
-  "multiprecision_cpu",
-  "multiprecision_gpu",
-] as const;
 
 /** A print-scoped plot is settled when not loading and either unavailable or embed-ready. */
 export function isPrintScopedPlotSettled(opts: {
