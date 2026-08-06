@@ -36,7 +36,7 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 
 ### npm audit (frontend)
 
-**2026-08-05:** Docker `frontend-builder` upgrades to **npm 12.0.2** before `npm ci` (stock Node 26 image still ships npm 11). npm 12 blocks dependency lifecycle scripts unless listed in `package.json` `allowScripts` (currently pinned `esbuild@0.28.1` only). Aligns with Shai-Hulud / install-time worm defenses.
+**2026-08-05:** Docker `frontend-builder` upgrades to **npm 12.0.2** before `npm ci` (stock Node 26 image still ships npm 11). npm 12 blocks dependency lifecycle scripts unless listed in `package.json` `allowScripts` (currently pinned `esbuild@0.28.1` only). Aligns with Shai-Hulud / install-time worm defenses. Same day: reverted accidental `js-yaml@^5` override to **`4.3.1`** (Orval default-import breakage in `build:prod`).
 
 **2026-08-03:** 0 vulnerabilities (686 packages audited). Pin refresh raised direct floors (`next@^16.3.0`, `@bokeh/bokehjs@3.9.2`, etc.) and added/raised **`overrides`** for `hono@^4.13.0`, `ip-address@^10.4.0`, `undici@^7.29.0` (plus existing transitive floors). `npm install`, `npm audit`, `typecheck:all`, and Vitest (584) verified. Log: [`test_runs/dependency_pin_refresh_2026-08-03.md`](../test_runs/dependency_pin_refresh_2026-08-03.md).
 
@@ -49,7 +49,7 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 | Override | Reason |
 |----------|--------|
 | `dompurify@^3.4.13` | GHSA-c2j3-45gr-mqc4 custom-element sanitize bypass; prior XSS / IN_PLACE advisories (`@bokeh/bokehjs`) |
-| `js-yaml@^4.3.1` | GHSA-h67p-54hq-rp68 merge-key DoS (`orval` codegen) |
+| `js-yaml@4.3.1` | GHSA-h67p-54hq-rp68 merge-key DoS (`orval` codegen). **Stay on 4.x** — Orval uses `import … from "js-yaml"`; js-yaml 5 has no default export and breaks `npm run generate:api` / Docker `build:prod`. |
 | `esbuild@^0.28.1` | GHSA-gv7w-rqvm-qjhr, GHSA-g7r4-m6w7-qqqr (Orval + Vitest/Vite tree) |
 | `postcss@^8.5.25` | GHSA-r28c-9q8g-f849 source map path traversal (Next nested postcss) |
 | `lodash@^4.18.1` | GHSA-r5fr-rjxr-66jc, GHSA-f23m-r3pf-42rh (`@stoplight/spectral-functions` via Orval) |

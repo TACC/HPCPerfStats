@@ -60,6 +60,21 @@ def test_frontend_package_json_allowscripts_covers_esbuild():
   assert allow.get("esbuild@0.28.1") is True
 
 
+def test_js_yaml_override_stays_on_v4_for_orval_default_import():
+  """Orval does `import jsYaml from "js-yaml"`; js-yaml 5 has no default export."""
+  import json
+  import re
+
+  package_json = json.loads(
+      (_repo_root() / "hpcperfstats/site/frontend/package.json").read_text(encoding="utf-8"),
+  )
+  override = (package_json.get("overrides") or {}).get("js-yaml")
+  assert override is not None, "js-yaml override required (GHSA-h67p-54hq-rp68 floor)"
+  assert re.fullmatch(r"\^?4\.\d+\.\d+", override), (
+      f"js-yaml override must stay on 4.x for Orval ESM default import; got {override!r}"
+  )
+
+
 def test_build_prod_runs_write_site_identity_hook():
   """build:prod must generate gitignored site-identity.ts (Docker uses build:prod, not build)."""
   import json
