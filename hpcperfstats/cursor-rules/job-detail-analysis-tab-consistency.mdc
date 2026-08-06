@@ -31,6 +31,7 @@ Follow neighboring tabs for typography (**`h3`** subsection headings), **`text-m
 - **CPU** includes host CPU/PMC/IMC/DF/RAPL/CHA plus **`host_mem` / `host_numa`**; GPU includes `nvidia_gpu` / `amd_gpu` / **`intel_gpu`** / `gpu`; Network includes IB/OPA/Ethernet/LNET (`host_ib`, `host_opa`, `host_net`, `net`, `host_lnet`, `lnet`).
 - **Always show Network** (empty body: muted **Data not available.**). **Hide** empty GPU, File System, and Misc headings.
 - Preserve post-merge display order within each section (including combined DP/SP vector-width row under CPU). Two-column tables stay **per section**.
+- **Value cells wrap** (`whitespace-normal` / `break-words`) so long metric values and staff `no_data_reason` text do not force a horizontal scrollbar; label/`th` column stays nowrap. Do not change shared `Table`/`TableCell` defaults for other Job Detail tables.
 
 ### Resources section Cards
 

@@ -63,6 +63,15 @@ import {
 const JOB_DETAIL_COMPACT_TABLE_CLASS =
   "border text-sm [&_td]:px-[0.45rem] [&_td]:py-[0.2rem] [&_td]:align-middle [&_td]:leading-[1.3] [&_th]:px-[0.45rem] [&_th]:py-[0.2rem] [&_th]:align-middle [&_th]:leading-[1.3]";
 
+/** Metrics tables only: wrap value cells so long text does not force horizontal scroll. */
+const JOB_DETAIL_METRICS_TABLE_CLASS = cn(
+  JOB_DETAIL_COMPACT_TABLE_CLASS,
+  "job-detail-metrics-table mb-0 w-full [&_td]:min-w-0 [&_td]:whitespace-normal [&_td]:break-words [&_td]:[overflow-wrap:anywhere]",
+);
+
+const JOB_DETAIL_METRICS_VALUE_CELL_CLASS =
+  "min-w-0 whitespace-normal break-words [overflow-wrap:anywhere]";
+
 /** Format distinct stored artifact schema ints for staff diagnostics. */
 export function formatArtifactSchemaList(values: number[] | undefined | null): string {
   if (!values || values.length === 0) return "none";
@@ -860,7 +869,12 @@ export default function JobDetail() {
             }
           />
         </TableHead>
-        <TableCell className={obj.value != null && obj.value !== "" ? "" : "text-muted-foreground"}>
+        <TableCell
+          className={cn(
+            JOB_DETAIL_METRICS_VALUE_CELL_CLASS,
+            obj.value != null && obj.value !== "" ? "" : "text-muted-foreground",
+          )}
+        >
           {formatJobMetricCell(obj, isStaff, job.ncores, gpuCountForMetrics)}
         </TableCell>
       </TableRow>
@@ -878,7 +892,7 @@ export default function JobDetail() {
     const right = rows.filter((_, index) => index % 2 === 1);
     if (right.length === 0) {
       return (
-        <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "job-detail-metrics-table mb-0 w-full")}>
+        <Table className={JOB_DETAIL_METRICS_TABLE_CLASS}>
           <TableCaption className="sr-only">
             Job-level {sectionId} metrics for job {job.jid}
           </TableCaption>
@@ -889,7 +903,7 @@ export default function JobDetail() {
     return (
       <div className="job-detail-metrics-two-col grid gap-3 lg:grid-cols-2">
         <div>
-          <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "job-detail-metrics-table mb-0 w-full")}>
+          <Table className={JOB_DETAIL_METRICS_TABLE_CLASS}>
             <TableCaption className="sr-only">
               Job-level {sectionId} metrics for job {job.jid} (column 1)
             </TableCaption>
@@ -897,7 +911,7 @@ export default function JobDetail() {
           </Table>
         </div>
         <div>
-          <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "job-detail-metrics-table mb-0 w-full")}>
+          <Table className={JOB_DETAIL_METRICS_TABLE_CLASS}>
             <TableCaption className="sr-only">
               Job-level {sectionId} metrics for job {job.jid} (column 2)
             </TableCaption>

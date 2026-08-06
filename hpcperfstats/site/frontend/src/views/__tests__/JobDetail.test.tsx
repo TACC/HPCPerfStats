@@ -672,6 +672,40 @@ describe("JobDetail", () => {
     });
   });
 
+  it("wraps long metrics value cells so tables do not force horizontal scroll", async () => {
+    const longReason =
+      "No usable PMC telemetry for average CPU frequency across all sampled hosts during the job window";
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        metrics_list: [
+          {
+            metric: "avg_freq",
+            type: "pmc",
+            units: "GHz",
+            value: null,
+            no_data_reason: longReason,
+          },
+        ],
+      },
+    });
+
+    const { container } = renderJobDetail("12345", { is_staff: true });
+
+    await waitFor(() => {
+      expect(screen.getByText(longReason)).toBeInTheDocument();
+    });
+
+    const metricsTable = container.querySelector(".job-detail-metrics-table");
+    expect(metricsTable).not.toBeNull();
+    const valueCell = screen.getByText(longReason).closest("td");
+    expect(valueCell).not.toBeNull();
+    expect(metricsTable?.contains(valueCell)).toBe(true);
+    expect(valueCell?.className).toMatch(/whitespace-normal/);
+    expect(valueCell?.className).toMatch(/break-words/);
+    expect(valueCell?.className).toMatch(/overflow-wrap:anywhere|\[overflow-wrap:anywhere\]/);
+  });
+
   it("shows generic no-data text for non-staff when metric value is missing", async () => {
     const detailWithMetricMessage = {
       ...minimalJobDetailResponse,
