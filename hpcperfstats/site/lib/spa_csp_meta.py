@@ -20,10 +20,13 @@ import re
 from pathlib import Path
 
 INLINE_SCRIPT_RE = re.compile(
-    r"<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)</script>",
+    r"<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)</script\b[^>]*>",
     re.IGNORECASE,
 )
-INLINE_STYLE_RE = re.compile(r"<style\b[^>]*>([\s\S]*?)</style>", re.IGNORECASE)
+INLINE_STYLE_RE = re.compile(
+    r"<style\b[^>]*>([\s\S]*?)</style\b[^>]*>",
+    re.IGNORECASE,
+)
 STYLE_ATTR_RE = re.compile(r"\sstyle\s*=\s*(['\"])([\s\S]*?)\1", re.IGNORECASE)
 CSP_META_RE = re.compile(
     r"<meta\s+http-equiv=(['\"])Content-Security-Policy\1[^>]*>\s*",

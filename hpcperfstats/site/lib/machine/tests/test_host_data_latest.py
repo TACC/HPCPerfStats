@@ -137,7 +137,7 @@ def test_latest_sample_time_by_host_in_window_uses_short_window(monkeypatch):
   )
 
   out = host_data_latest.latest_sample_time_by_host_in_window()
-  assert "n1.example.org" in out
+  assert set(out.keys()) == {"n1.example.org"}
   time_gte = captured["filter"]["time__gte"]
   assert fixed_now - time_gte == timedelta(hours=3)
   # Must not be an 8-day window.

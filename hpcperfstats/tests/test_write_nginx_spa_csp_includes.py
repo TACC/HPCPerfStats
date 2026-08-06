@@ -123,3 +123,24 @@ def test_cli_module_loads():
   mod = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(mod)
   assert mod._load_spa_csp_meta() is not None
+
+
+def test_extract_inline_csp_hashes_forgiving_script_end_tag():
+  """Browsers accept ``</script attrs>``; CSP hashing must match that body too."""
+  from hpcperfstats.site.lib.spa_csp_meta import extract_inline_csp_hashes_from_html
+
+  body = 'self.__next_f.push([1,"x"])'
+  expected = sha256_csp_hash(body)
+  normal = extract_inline_csp_hashes_from_html(
+      f"<html><body><script>{body}</script></body></html>"
+  )
+  forgiving = extract_inline_csp_hashes_from_html(
+      f'<html><body><script>{body}</script unused="">'
+      f"</body></html>"
+  )
+  spaced = extract_inline_csp_hashes_from_html(
+      f"<html><body><script>{body}</script ></body></html>"
+  )
+  assert normal["script_hashes"] == [expected]
+  assert forgiving["script_hashes"] == [expected]
+  assert spaced["script_hashes"] == [expected]
