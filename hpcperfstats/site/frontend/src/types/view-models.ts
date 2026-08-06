@@ -33,6 +33,8 @@ export type JobPlotStateEntry = {
   loading: boolean;
   plotItem: BokehJsonItem | null;
   unavailableReason: string | null;
+  /** GPU roofline measured-axis mode from ``grplot_bw_axis``. */
+  bwAxis?: "memory_bw" | "pcie_nvlink" | null;
 };
 
 export type JobPlotsState = Record<string, JobPlotStateEntry>;

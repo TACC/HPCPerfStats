@@ -37,6 +37,7 @@ Typenames must match the **shipped** monitor `st_name` values for new ingest. Hi
 
 - **`avg_gpuutil`**: Prefers `nvidia_gpu` `gpu_util`, then `utilization`, then `amd_gpu` `gpu_util`.
 - **Summary plot (NVIDIA DCGM)**: Tensor/SM/FP pipe activity, power, HBM BW rate, link `arc` bytes; **`amd_gpu`** when GPUPerfAPI is active.
+- **GPU roofline**: Prefer measured `gpu_mem_bw_bytes_rate` (estimated mem BW) on `nvidia_gpu` then `amd_gpu`; else PCIe/NVLink (`gpu_io_link_total_bytes` or directional bytes) or Intel PCIe+Xe Link when FLOPS exist. Titles and peak preference follow the chosen axis (Memory BW vs PCIe/NvLink).
 - **Job metrics**: Node power estimate (`max_node_power_est_w`, `avg_node_power_est_w`) merges Intel/AMD RAPL (`intel_x86_rapl` / `amd_x86_rapl`, `pkg_energy`), Grace `host_cpu_hw` `dcgm_cpu_power_util_w`, and NVIDIA `power_usage` / `module_power_usage`.
 - **Ingest**: `sync_timedb_parsing` clusters `host_cpu_hw` DCGM power rows and max-reduces multi-GPU module power.
 

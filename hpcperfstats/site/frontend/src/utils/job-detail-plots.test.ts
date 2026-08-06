@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   createEmptyJobPlotsState,
+  gpuRooflinePlotName,
   jobPlotEntryEqual,
   mergeProgressiveJobPlotsState,
 } from "./job-detail-plots";
+
+describe("gpuRooflinePlotName", () => {
+  it("maps memory_bw and pcie_nvlink to panel titles", () => {
+    expect(gpuRooflinePlotName("memory_bw")).toBe("GPU Roofline (Memory BW)");
+    expect(gpuRooflinePlotName("pcie_nvlink")).toBe("GPU Roofline (PCIe/NvLink)");
+    expect(gpuRooflinePlotName(null)).toBe("GPU Roofline");
+  });
+});
 
 describe("jobPlotEntryEqual", () => {
   it("treats identical semantic json_item fingerprints as equal when refs differ", () => {

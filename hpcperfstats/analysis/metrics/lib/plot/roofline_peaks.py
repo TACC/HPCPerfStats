@@ -180,17 +180,24 @@ def _infer_cpu_roofline_peak_from_host_data(
 
 def infer_gpu_roofline_peak_flops_and_bw_gbps(
   jt: Any,
+  bw_axis: Optional[str] = None,
 ) -> Tuple[Optional[float], Optional[float]]:
   """
-  Infer gpu roofline peak flops and bandwidth gbps.
-  
+  Infer GPU roofline peak FLOPS and bandwidth (GiB/s) from host_roofline_peak.
+
+  Peak bandwidth preference follows the measured axis when *bw_axis* is set:
+  ``memory_bw`` prefers ``gpu_peak_mem_bw_bytes_per_s`` then IO-link peak;
+  ``pcie_nvlink`` (and default/None) prefers IO-link peak then mem peak.
+
   Args:
-    jt (Any): Jt passed to this helper.
-  
+    jt (Any): Job ``jid_table`` with schema and aggregates.
+    bw_axis (Optional[str]): Measured-axis mode (``memory_bw`` /
+    ``pcie_nvlink``), or None for link-first default.
+
   Returns:
-    Tuple[Optional[float], Optional[float]]: Tuple[Optional[float],
-    Optional[float]] produced by this call.
-  
+    Tuple[Optional[float], Optional[float]]: ``(peak_gflop_s, peak_bw_gib_s)``
+    or ``(None, None)`` when peaks are missing or non-positive.
+
   Examples:
     >>> infer_gpu_roofline_peak_flops_and_bw_gbps(None)  # doctest: +SKIP
   """
@@ -201,9 +208,16 @@ def infer_gpu_roofline_peak_flops_and_bw_gbps(
     return (None, None)
 
   peak_flops_gf = _max_converted_sum_val(jt, "gpu_peak_fp64_flops_per_s", 1e-9)
-  peak_bw_gb = _max_converted_sum_val(jt, "gpu_peak_io_link_bw_bytes_per_s", 1 / (1024 ** 3))
-  if peak_bw_gb is None:
-    peak_bw_gb = _max_converted_sum_val(jt, "gpu_peak_mem_bw_bytes_per_s", 1 / (1024 ** 3))
+  mem_bw = _max_converted_sum_val(
+      jt, "gpu_peak_mem_bw_bytes_per_s", 1 / (1024 ** 3)
+  )
+  io_bw = _max_converted_sum_val(
+      jt, "gpu_peak_io_link_bw_bytes_per_s", 1 / (1024 ** 3)
+  )
+  if bw_axis == "memory_bw":
+    peak_bw_gb = mem_bw if mem_bw is not None else io_bw
+  else:
+    peak_bw_gb = io_bw if io_bw is not None else mem_bw
   if peak_flops_gf is None or peak_bw_gb is None:
     return (None, None)
   if not (

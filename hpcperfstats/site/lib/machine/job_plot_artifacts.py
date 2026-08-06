@@ -102,7 +102,7 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 
 # Bump when plot artifact semantics change (independent of Bokeh version).
 # See hpcperfstats/cursor-rules/job-plot-artifacts-caching.mdc and machine/tests/test_job_plot_artifacts.py.
-APP_PLOT_ARTIFACT_SCHEMA_VERSION = 14
+APP_PLOT_ARTIFACT_SCHEMA_VERSION = 15
 
 JOB_PLOT_JSON_KEYS: Dict[str, Tuple[str, str]] = {
     kind: (spec.json_item_key, spec.unavailable_reason_key)
@@ -129,7 +129,24 @@ COMMON_PLOT_AGGREGATE_BUNDLE: Tuple[Tuple[str, str, Tuple[str, ...], float], ...
         2 / (1024 ** 3),
     ),
     ("nvidia_gpu", "arc", ("gpu_flops",), 1e-9),
+    (
+        "nvidia_gpu",
+        "value",
+        ("gpu_mem_bw_bytes_rate",),
+        1 / (1024 ** 3),
+    ),
     ("nvidia_gpu", "arc", ("gpu_io_link_total_bytes",), 1 / (1024 ** 3)),
+    (
+        "nvidia_gpu",
+        "arc",
+        (
+            "gpu_pcie_tx_bytes",
+            "gpu_pcie_rx_bytes",
+            "gpu_nvlink_tx_bytes",
+            "gpu_nvlink_rx_bytes",
+        ),
+        1 / (1024 ** 3),
+    ),
 )
 
 
@@ -308,25 +325,33 @@ def decompress_plot_item_dict(
 def _plot_artifact_storage_payload(
   plot_item: Optional[Dict[str, Any]],
   unavailable_reason: Optional[str],
+  bw_axis: Optional[str] = None,
 ) -> Dict[str, Any]:
   """
   Canonical stored payload for plot artifacts, including fresh unavailable rows.
-  
+
   Args:
     plot_item (Optional[Dict[str, Any]]): Plot item, or None when absent.
     unavailable_reason (Optional[str]): Unavailable reason, or None when
-    absent.
-  
+        absent.
+    bw_axis (Optional[str]): GPU roofline bandwidth axis mode
+        (``memory_bw`` / ``pcie_nvlink``), or None for other kinds.
+
   Returns:
-    Dict[str, Any]: Dict[str, Any] produced by this call.
-  
+    Dict[str, Any]: Envelope with ``plot_item``, ``unavailable_reason``, and
+    optional ``bw_axis``.
+
   Examples:
-    >>> _plot_artifact_storage_payload(None, None)  # doctest: +SKIP
+    >>> _plot_artifact_storage_payload(None, "missing")["unavailable_reason"]
+    'missing'
   """
-  return {
+  payload: Dict[str, Any] = {
       "plot_item": plot_item,
       "unavailable_reason": unavailable_reason,
   }
+  if bw_axis is not None:
+    payload["bw_axis"] = bw_axis
+  return payload
 
 
 def _normalize_loaded_plot_artifact_payload(
@@ -334,23 +359,27 @@ def _normalize_loaded_plot_artifact_payload(
 ) -> Dict[str, Any]:
   """
   Decode legacy raw-json-item rows and new explicit unavailable-state rows.
-  
+
   Args:
     payload (Dict[str, Any]): Mapping for payload.
-  
+
   Returns:
-    Dict[str, Any]: Dict[str, Any] produced by this call.
-  
+    Dict[str, Any]: Normalized envelope with optional ``bw_axis``.
+
   Examples:
-    >>> _normalize_loaded_plot_artifact_payload({})  # doctest: +SKIP
+    >>> _normalize_loaded_plot_artifact_payload({"plot_item": None})["plot_item"] is None
+    True
   """
   if isinstance(payload, dict) and (
       "plot_item" in payload or "unavailable_reason" in payload
   ):
-    return {
+    out: Dict[str, Any] = {
         "plot_item": payload.get("plot_item"),
         "unavailable_reason": payload.get("unavailable_reason"),
     }
+    if payload.get("bw_axis") is not None:
+      out["bw_axis"] = payload.get("bw_axis")
+    return out
   return {
       "plot_item": payload,
       "unavailable_reason": None,
@@ -739,7 +768,13 @@ def load_cached_job_plot_entry(
         if item.get("plot_item") is None:
           return item
         zoomed = _apply_zoom_layout_to_json_item(item["plot_item"])
-        return {"plot_item": zoomed, "unavailable_reason": item.get("unavailable_reason")}
+        zoom_out: Dict[str, Any] = {
+            "plot_item": zoomed,
+            "unavailable_reason": item.get("unavailable_reason"),
+        }
+        if item.get("bw_axis") is not None:
+          zoom_out["bw_axis"] = item.get("bw_axis")
+        return zoom_out
       except Exception:
         logger.warning(
             "Failed zoom layout from stored normal plot jid=%s kind=%s",
@@ -754,31 +789,38 @@ def compute_plot_item_for_kind(
   j: Any,
   plot_kind: str,
   zoom_mode: bool,
-) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
   """
-  Compute the plot item for kind.
-  
+  Compute a Bokeh ``json_item`` (or unavailable reason) for one plot kind.
+
   Args:
-    j (Any): Job record (Django ``job_data`` or job-like mapping).
-    plot_kind (str): String for plot kind.
-    zoom_mode (bool): Boolean flag for zoom mode.
-  
+    j (Any): Job ``jid_table`` / plot proxy passed to the kind builder.
+    plot_kind (str): One of ``JOB_PLOT_KINDS``.
+    zoom_mode (bool): When True, apply zoom layout before serializing.
+
   Returns:
-    Tuple[Optional[Dict[str, Any]], Optional[str]]: Tuple[Optional[Dict[str,
-    Any]], Optional[str]] produced by this call.
-  
+    Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
+    ``(plot_item, unavailable_reason, bw_axis)``. *bw_axis* is set only for
+    GPU roofline (``memory_bw`` / ``pcie_nvlink``).
+
   Examples:
-    >>> compute_plot_item_for_kind(None, "x", True)  # doctest: +SKIP
+    >>> compute_plot_item_for_kind(None, "unknown", False)[1]
+    'Unknown plot kind'
   """
   spec = JOB_PLOT_KIND_SPECS.get(plot_kind)
   if not spec:
-    return None, "Unknown plot kind"
-  plot_json, plot_reason = spec.plot_fn(j)
+    return None, "Unknown plot kind", None
+  result = spec.plot_fn(j)
+  bw_axis: Optional[str] = None
+  if isinstance(result, tuple) and len(result) == 3:
+    plot_json, plot_reason, bw_axis = result
+  else:
+    plot_json, plot_reason = result[0], result[1]
   if plot_json is None:
-    return None, plot_reason or spec.empty_fallback
+    return None, plot_reason or spec.empty_fallback, bw_axis
   if zoom_mode:
     _apply_zoom_layout_to_bokeh_model(plot_json)
-  return json_item(plot_json), None
+  return json_item(plot_json), None, bw_axis
 
 
 def _is_prewarm_pool_poison_message(message: Optional[str]) -> bool:
@@ -876,7 +918,9 @@ def persist_job_plot_artifacts_for_jid(
       ):
         continue
       try:
-        plot_item, reason = compute_plot_item_for_kind(plot_jt, kind, zoom_mode)
+        plot_item, reason, bw_axis = compute_plot_item_for_kind(
+            plot_jt, kind, zoom_mode
+        )
       except Exception as exc:
         logger.warning(
             "plot prewarm failed jid=%s kind=%s layout=%s",
@@ -889,6 +933,7 @@ def persist_job_plot_artifacts_for_jid(
           continue
         plot_item = None
         reason = "Plot generation failed during artifact prewarm."
+        bw_axis = None
       if _is_prewarm_pool_poison_message(reason):
         logger.warning(
             "plot prewarm skipped poison unavailable_reason jid=%s kind=%s layout=%s",
@@ -902,7 +947,7 @@ def persist_job_plot_artifacts_for_jid(
           kind,
           layout,
           fp,
-          _plot_artifact_storage_payload(plot_item, reason),
+          _plot_artifact_storage_payload(plot_item, reason, bw_axis=bw_axis),
       ))
   if not write_rows:
     return

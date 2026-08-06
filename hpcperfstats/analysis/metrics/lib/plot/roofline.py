@@ -11,13 +11,20 @@ through SKX). Intel FLOPS use FP_ARITH when present, else SNB/IVB-style SSE/AVX
 double counter proxies.
 
 Attributes:
-  DEFAULT_PEAK_BW_GB: Attribute.
-  DEFAULT_PEAK_FLOPS_GF: Attribute.
-  ROOFLINE_NOMINAL_PEAKS_INVALID_REASON: Attribute.
+  DEFAULT_PEAK_BW_GB: Default nominal peak bandwidth (GB/s).
+  DEFAULT_PEAK_FLOPS_GF: Default nominal peak FLOPS (GFLOP/s).
+  GPU_ROOFLINE_BW_AXIS_LINK: Measured-axis mode for PCIe/NVLink/Xe Link.
+  GPU_ROOFLINE_BW_AXIS_MEMORY: Measured-axis mode for GPU memory BW.
+  GPU_ROOFLINE_TITLE_LINK: Bokeh/SPA title when link BW is used.
+  GPU_ROOFLINE_TITLE_MEMORY: Bokeh/SPA title when memory BW is used.
+  ROOFLINE_NOMINAL_PEAKS_INVALID_REASON: Unavailable reason for bad peaks.
+  _GPU_BYTES_TO_GIB: Bytes/s to GiB/s conversion shared by mem + link axes.
+  _INTEL_GPU_LINK_EVENTS: Intel PCIe + Xe Link cumulative byte events.
+  _NVIDIA_GPU_LINK_DIRECTIONAL_EVENTS: NVIDIA per-direction link byte events.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional, Tuple
 
 import math
 import numpy
@@ -54,6 +61,28 @@ from hpcperfstats.analysis.metrics.lib.plot.roofline_peaks import (
 # Default peak specs (GFLOP/s and GB/s) when not in config; ridge = peak_flops / peak_bw
 DEFAULT_PEAK_FLOPS_GF = 1000.0
 DEFAULT_PEAK_BW_GB = 100.0
+
+# GPU roofline measured-axis modes and user-facing titles.
+GPU_ROOFLINE_BW_AXIS_MEMORY = "memory_bw"
+GPU_ROOFLINE_BW_AXIS_LINK = "pcie_nvlink"
+GPU_ROOFLINE_TITLE_MEMORY = "GPU Roofline (Memory BW)"
+GPU_ROOFLINE_TITLE_LINK = "GPU Roofline (PCIe/NvLink)"
+
+# Match link-arc and host_roofline_peak conversions (GiB/s, not decimal GB/s).
+_GPU_BYTES_TO_GIB = 1 / (1024**3)
+
+_NVIDIA_GPU_LINK_DIRECTIONAL_EVENTS = (
+    "gpu_pcie_tx_bytes",
+    "gpu_pcie_rx_bytes",
+    "gpu_nvlink_tx_bytes",
+    "gpu_nvlink_rx_bytes",
+)
+_INTEL_GPU_LINK_EVENTS = (
+    "gpu_pcie_tx_bytes",
+    "gpu_pcie_rx_bytes",
+    "gpu_xe_link_tx_bytes",
+    "gpu_xe_link_rx_bytes",
+)
 
 
 def _nominal_roofline_peaks_valid(peak_flops_gf: Any, peak_bw_gb: Any) -> Any:
@@ -674,47 +703,80 @@ def _merge_gpu_flops_bw_on_base(base: Any, flops_agg: Any, bw_agg: Any) -> Any:
     return df if not df.empty else None
 
 
+def _gpu_roofline_df_has_usable_bw(df: Any) -> bool:
+    """
+    True when *df* has at least one finite positive ``bw_gb`` sample.
+
+    Args:
+      df (Any): Merged FLOPS/BW frame, or None.
+
+    Returns:
+      bool: Whether the frame can drive a roofline scatter.
+
+    Examples:
+      >>> import pandas as pd
+      >>> _gpu_roofline_df_has_usable_bw(
+      ...     pd.DataFrame({"bw_gb": [0.0, 1.5], "flops_gf": [1.0, 2.0]})
+      ... )
+      True
+    """
+    if df is None or getattr(df, "empty", True):
+        return False
+    if "bw_gb" not in df.columns:
+        return False
+    bw = df["bw_gb"]
+    return bool(((bw > 0) & numpy.isfinite(bw)).any())
+
+
 def _try_gpu_roofline_flops_bw_merge(
   jt: Any,
   gpu_typ: Any,
   base: Any,
   source_tag: Any,
-  aggregate_fn: Any,
+  flops_aggregate_fn: Any,
   flops_events: Any,
   flops_conv: Any,
+  bw_aggregate_fn: Any,
   bw_events: Any,
   bw_conv: Any,
-) -> Any:
+) -> Tuple[Any, str, Optional[str]]:
     """
-    One arc or value attempt for strict GPU roofline; returns (df_or_none,.
-    
-      log_line, overlap_miss_or_none).
-    
+    One FLOPS+BW attempt for GPU roofline.
+
     Args:
-      jt (Any): Jt passed to this helper.
-      gpu_typ (Any): Gpu typ passed to this helper.
-      base (Any): Base passed to this helper.
-      source_tag (Any): Source tag passed to this helper.
-      aggregate_fn (Any): Callable invoked by this helper.
-      flops_events (Any): Flops events passed to this helper.
-      flops_conv (Any): Flops conv passed to this helper.
-      bw_events (Any): Bw events passed to this helper.
-      bw_conv (Any): Bw conv passed to this helper.
-    
+      jt (Any): Job ``jid_table`` with aggregate helpers.
+      gpu_typ (Any): ``host_data.type`` (for example ``nvidia_gpu``).
+      base (Any): Host/time base DataFrame.
+      source_tag (Any): Short label for attempt logs (for example ``mem_value``).
+      flops_aggregate_fn (Any): Arc/value aggregator for FLOPS events.
+      flops_events (Any): FLOPS event name list.
+      flops_conv (Any): Multiplier applied to FLOPS aggregates.
+      bw_aggregate_fn (Any): Arc/value aggregator for bandwidth events.
+      bw_events (Any): Bandwidth event name list.
+      bw_conv (Any): Multiplier applied to bandwidth aggregates.
+
     Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
+      Tuple[Any, str, Optional[str]]: ``(df_or_none, log_line,
+      overlap_miss_or_none)``.
+
     Examples:
-      >>> _try_gpu_roofline_flops_bw_merge(0)  # doctest: +SKIP
+      >>> _try_gpu_roofline_flops_bw_merge(  # doctest: +SKIP
+      ...     None, "nvidia_gpu", None, "mem_value",
+      ...     _aggregate_arc, ["gpu_flops"], 1e-9,
+      ...     _aggregate_value, ["gpu_mem_bw_bytes_rate"], _GPU_BYTES_TO_GIB,
+      ... )
     """
-    flops_agg, flops_src = aggregate_fn(jt, gpu_typ, flops_events, flops_conv)
-    bw_agg, bw_src = aggregate_fn(jt, gpu_typ, bw_events, bw_conv)
+    flops_agg, flops_src = flops_aggregate_fn(
+        jt, gpu_typ, flops_events, flops_conv
+    )
+    bw_agg, bw_src = bw_aggregate_fn(jt, gpu_typ, bw_events, bw_conv)
     log_line = (
-        f"{gpu_typ}:{source_tag} rows(flops={len(flops_agg.index)}, bw={len(bw_agg.index)}) "
+        f"{gpu_typ}:{source_tag} "
+        f"rows(flops={len(flops_agg.index)}, bw={len(bw_agg.index)}) "
         f"src(flops={flops_src}, bw={bw_src})"
     )
     df = _merge_gpu_flops_bw_on_base(base, flops_agg, bw_agg)
-    if df is not None:
+    if df is not None and _gpu_roofline_df_has_usable_bw(df):
         return df, log_line, None
     overlap_miss = None
     if (
@@ -723,67 +785,204 @@ def _try_gpu_roofline_flops_bw_merge(
         and not bw_agg.empty
         and "sum_val" in bw_agg.columns
     ):
-        overlap_miss = (
-            f"{gpu_typ}: counters found in {source_tag} but no overlapping host/time samples"
-        )
+        if df is not None and not _gpu_roofline_df_has_usable_bw(df):
+            overlap_miss = (
+                f"{gpu_typ}: {source_tag} overlapped but BW samples were "
+                "non-positive"
+            )
+        else:
+            overlap_miss = (
+                f"{gpu_typ}: counters found in {source_tag} but no overlapping "
+                "host/time samples"
+            )
     return None, log_line, overlap_miss
 
 
-def _get_gpu_flops_bw_df_and_reason(jt: Any) -> Any:
+def _try_gpu_roofline_axis_attempt(
+  jt: Any,
+  base: Any,
+  attempts: list[str],
+  missing_reasons: list[str],
+  gpu_typ: str,
+  source_tag: str,
+  flops_fn: Any,
+  bw_fn: Any,
+  bw_events: Any,
+  bw_axis: str,
+) -> Optional[Tuple[Any, Optional[str], Optional[str]]]:
+  """
+  Run one FLOPS+BW probe and record attempt/miss logs.
+
+  Args:
+    jt (Any): Job ``jid_table`` with aggregate helpers.
+    base (Any): Host/time base DataFrame.
+    attempts (list[str]): Mutable list of attempt log lines.
+    missing_reasons (list[str]): Mutable list of overlap/miss reasons.
+    gpu_typ (str): ``host_data.type`` name.
+    source_tag (str): Short label for attempt logs.
+    flops_fn (Any): FLOPS aggregator (``_aggregate_arc`` / ``_aggregate_value``).
+    bw_fn (Any): Bandwidth aggregator.
+    bw_events (Any): Bandwidth event name sequence.
+    bw_axis (str): ``memory_bw`` or ``pcie_nvlink`` when this attempt wins.
+
+  Returns:
+    Optional[Tuple[Any, Optional[str], Optional[str]]]: Success triple
+    ``(df, None, bw_axis)``, or None to continue probing.
+
+  Examples:
+    >>> _try_gpu_roofline_axis_attempt(  # doctest: +SKIP
+    ...     None, None, [], [], "nvidia_gpu", "mem_value",
+    ...     _aggregate_arc, _aggregate_value, ["gpu_mem_bw_bytes_rate"],
+    ...     GPU_ROOFLINE_BW_AXIS_MEMORY,
+    ... )
+  """
+  df, line, miss = _try_gpu_roofline_flops_bw_merge(
+      jt,
+      gpu_typ,
+      base,
+      source_tag,
+      flops_fn,
+      ["gpu_flops"],
+      1e-9,
+      bw_fn,
+      list(bw_events),
+      _GPU_BYTES_TO_GIB,
+  )
+  attempts.append(line)
+  if df is not None:
+    return (df, None, bw_axis)
+  if miss:
+    missing_reasons.append(miss)
+  return None
+
+
+def _get_gpu_flops_bw_df_and_reason(
+  jt: Any,
+) -> Tuple[Any, Optional[str], Optional[str]]:
     """
-    Get GPU roofline from arc-derived GFLOP/s and PCIe/NvLink GB/s (monitor.
-    
-      DCGM.
-    
-      PROF bytes).
-    
+    Build GPU roofline samples: prefer memory BW, else PCIe/NVLink/Xe Link.
+
+    Prefer ``gpu_mem_bw_bytes_rate`` (value; same estimated rate Summary uses)
+    when usable overlapping samples exist on ``nvidia_gpu`` then ``amd_gpu``.
+    Otherwise try link bytes: ``gpu_io_link_total_bytes``, then NVIDIA
+    directional PCIe/NVLink arcs, then Intel PCIe+Xe Link (when FLOPS exist).
+    Bandwidth and peaks use GiB/s via ``_GPU_BYTES_TO_GIB``.
+
     Args:
-      jt (Any): Jt passed to this helper.
-    
+      jt (Any): Job ``jid_table`` with host list and aggregates.
+
     Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
+      Tuple[Any, Optional[str], Optional[str]]: ``(df_or_none,
+      unavailable_reason_or_none, bw_axis_or_none)`` where *bw_axis* is
+      ``memory_bw`` or ``pcie_nvlink``.
+
     Examples:
       >>> _get_gpu_flops_bw_df_and_reason(None)  # doctest: +SKIP
     """
     base = jt.get_host_time_df()
     if base.empty or not jt.host_list:
-        return (None, "No hosts/timestamps found in host_data for this job/time range")
+        return (
+            None,
+            "No hosts/timestamps found in host_data for this job/time range",
+            None,
+        )
 
-    attempts = []
-    missing_reasons = []
-    # Bandwidth axis uses ``gpu_io_link_total_bytes`` (cumulative DCGM PROF PCIe+NvLink
-    # byte counters), not framebuffer proxy rates. FLOPS axis uses integrated ``gpu_flops``.
-    # amd_gpu does not yet emit link bytes; nvidia_gpu only.
-    _gpu_roofline_branches = (
-        (
-            "arc",
+    attempts: list[str] = []
+    missing_reasons: list[str] = []
+
+    # 1) Memory BW estimate (nvidia then amd). AMD has no link fallback.
+    for gpu_typ in ("nvidia_gpu", "amd_gpu"):
+        hit = _try_gpu_roofline_axis_attempt(
+            jt,
+            base,
+            attempts,
+            missing_reasons,
+            gpu_typ,
+            "mem_value",
             _aggregate_arc,
-            ["gpu_flops"],
-            1e-9,
-            ["gpu_io_link_total_bytes"],
-            1 / (1024**3),
-        ),
-    )
+            _aggregate_value,
+            ["gpu_mem_bw_bytes_rate"],
+            GPU_ROOFLINE_BW_AXIS_MEMORY,
+        )
+        if hit is not None:
+            return hit
 
-    for gpu_typ in ("nvidia_gpu",):
-        for tag, agg_fn, fe, fc, be, bc in _gpu_roofline_branches:
-            df, line, miss = _try_gpu_roofline_flops_bw_merge(
-                jt, gpu_typ, base, tag, agg_fn, fe, fc, be, bc
-            )
-            attempts.append(line)
-            if df is not None:
-                return (df, None)
-            if miss:
-                missing_reasons.append(miss)
+    # 2) NVIDIA aggregate PROF PCIe+NVLink bytes.
+    hit = _try_gpu_roofline_axis_attempt(
+        jt,
+        base,
+        attempts,
+        missing_reasons,
+        "nvidia_gpu",
+        "link_arc_total",
+        _aggregate_arc,
+        _aggregate_arc,
+        ["gpu_io_link_total_bytes"],
+        GPU_ROOFLINE_BW_AXIS_LINK,
+    )
+    if hit is not None:
+        return hit
+
+    # 3) NVIDIA directional link bytes (archives / missing aggregate key).
+    hit = _try_gpu_roofline_axis_attempt(
+        jt,
+        base,
+        attempts,
+        missing_reasons,
+        "nvidia_gpu",
+        "link_arc_directional",
+        _aggregate_arc,
+        _aggregate_arc,
+        _NVIDIA_GPU_LINK_DIRECTIONAL_EVENTS,
+        GPU_ROOFLINE_BW_AXIS_LINK,
+    )
+    if hit is not None:
+        return hit
+
+    # 4) Intel PCIe + Xe Link when FLOPS also exist on intel_gpu.
+    hit = _try_gpu_roofline_axis_attempt(
+        jt,
+        base,
+        attempts,
+        missing_reasons,
+        "intel_gpu",
+        "link_arc_intel",
+        _aggregate_arc,
+        _aggregate_arc,
+        _INTEL_GPU_LINK_EVENTS,
+        GPU_ROOFLINE_BW_AXIS_LINK,
+    )
+    if hit is not None:
+        return hit
 
     detail = "; ".join(missing_reasons) if missing_reasons else "; ".join(attempts)
     return (
         None,
         "Missing strict GPU roofline counters in host_data "
-        "(need nvidia_gpu arc for gpu_flops and gpu_io_link_total_bytes). "
+        "(need gpu_flops plus gpu_mem_bw_bytes_rate or PCIe/NVLink/Xe Link "
+        "bytes on nvidia_gpu, amd_gpu, or intel_gpu). "
         f"Attempted: {detail}",
+        None,
     )
+
+
+def _gpu_roofline_title_for_axis(bw_axis: Optional[str]) -> str:
+    """
+    Return the Bokeh figure title for the selected GPU bandwidth axis.
+
+    Args:
+      bw_axis (Optional[str]): ``memory_bw``, ``pcie_nvlink``, or None.
+
+    Returns:
+      str: User-facing GPU roofline title.
+
+    Examples:
+      >>> _gpu_roofline_title_for_axis(GPU_ROOFLINE_BW_AXIS_MEMORY)
+      'GPU Roofline (Memory BW)'
+    """
+    if bw_axis == GPU_ROOFLINE_BW_AXIS_MEMORY:
+        return GPU_ROOFLINE_TITLE_MEMORY
+    return GPU_ROOFLINE_TITLE_LINK
 
 
 def plot_roofline_from_jid_table(
@@ -828,32 +1027,32 @@ def plot_gpu_roofline_from_jid_table(
   peak_bw_gb: Any | None = None,
 ) -> Any:
     """
-    Build GPU roofline from jid_table (GFLOP/s vs PCIe/NvLink byte-arc GB/s).
-    
+    Build GPU roofline from jid_table (memory BW preferred, else PCIe/NvLink).
+
     Args:
-      jt (Any): Jt passed to this helper.
-      peak_flops_gf (Any | None): One of ``Any``, ``None``.
-      peak_bw_gb (Any | None): One of ``Any``, ``None``.
-    
+      jt (Any): Job ``jid_table`` with host list and aggregates.
+      peak_flops_gf (Any | None): Explicit peak GFLOP/s, or inferred.
+      peak_bw_gb (Any | None): Explicit peak GB/s, or inferred for *bw_axis*.
+
     Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
+      Any: Bokeh figure, or None when samples are missing.
+
     Examples:
-      >>> plot_gpu_roofline_from_jid_table(None, None, None)  # doctest: +SKIP
+      >>> plot_gpu_roofline_from_jid_table(None)  # doctest: +SKIP
     """
     if not jt.host_list:
         return None
-    df, _reason = _get_gpu_flops_bw_df_and_reason(jt)
+    df, _reason, bw_axis = _get_gpu_flops_bw_df_and_reason(jt)
     if df is None or df.empty:
         return None
-    inf_f, inf_b = infer_gpu_roofline_peak_flops_and_bw_gbps(jt)
+    inf_f, inf_b = infer_gpu_roofline_peak_flops_and_bw_gbps(jt, bw_axis=bw_axis)
     use_peak_flops = peak_flops_gf if peak_flops_gf is not None else inf_f
     use_peak_bw = peak_bw_gb if peak_bw_gb is not None else inf_b
     return _build_roofline_figure(
         df,
         peak_flops_gf=use_peak_flops,
         peak_bw_gb=use_peak_bw,
-        title="GPU Roofline (job, PCIe/NvLink bytes)",
+        title=_gpu_roofline_title_for_axis(bw_axis),
         help_plot_key="jobDetailPlot_roofline_gpu",
     )
 
@@ -909,31 +1108,30 @@ def plot_and_reason_gpu_roofline_from_jid_table(
   jt: Any,
   peak_flops_gf: Any | None = None,
   peak_bw_gb: Any | None = None,
-) -> Any:
+) -> Tuple[Any, Optional[str], Optional[str]]:
     """
-    Build strict GPU roofline plot and return (figure_or_none,.
-    
-      unavailable_reason_or_none).
-    
+    Build GPU roofline and return figure, reason, and bandwidth axis mode.
+
     Args:
-      jt (Any): Jt passed to this helper.
-      peak_flops_gf (Any | None): One of ``Any``, ``None``.
-      peak_bw_gb (Any | None): One of ``Any``, ``None``.
-    
+      jt (Any): Job ``jid_table`` with host list and aggregates.
+      peak_flops_gf (Any | None): Explicit peak GFLOP/s, or inferred.
+      peak_bw_gb (Any | None): Explicit peak GB/s, or inferred for *bw_axis*.
+
     Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
+      Tuple[Any, Optional[str], Optional[str]]: ``(figure_or_none,
+      unavailable_reason_or_none, bw_axis_or_none)``.
+
     Examples:
-      >>> plot_and_reason_gpu_roofline_from_jid_table(None, None, None)
+      >>> plot_and_reason_gpu_roofline_from_jid_table(None)  # doctest: +SKIP
     """
     if not jt.host_list:
-        return (None, "No hosts found in host_data for this job/time range")
+        return (None, "No hosts found in host_data for this job/time range", None)
 
-    df, reason = _get_gpu_flops_bw_df_and_reason(jt)
+    df, reason, bw_axis = _get_gpu_flops_bw_df_and_reason(jt)
     if df is None or df.empty:
-        return (None, reason)
+        return (None, reason, None)
 
-    inf_f, inf_b = infer_gpu_roofline_peak_flops_and_bw_gbps(jt)
+    inf_f, inf_b = infer_gpu_roofline_peak_flops_and_bw_gbps(jt, bw_axis=bw_axis)
     use_peak_flops = peak_flops_gf if peak_flops_gf is not None else inf_f
     use_peak_bw = peak_bw_gb if peak_bw_gb is not None else inf_b
     eff_flops = (
@@ -941,14 +1139,18 @@ def plot_and_reason_gpu_roofline_from_jid_table(
     )
     eff_bw = use_peak_bw if use_peak_bw is not None else DEFAULT_PEAK_BW_GB
     if not _nominal_roofline_peaks_valid(eff_flops, eff_bw):
-        return (None, ROOFLINE_NOMINAL_PEAKS_INVALID_REASON)
+        return (None, ROOFLINE_NOMINAL_PEAKS_INVALID_REASON, bw_axis)
     fig = _build_roofline_figure(
         df,
         peak_flops_gf=use_peak_flops,
         peak_bw_gb=use_peak_bw,
-        title="GPU Roofline (job, PCIe/NvLink bytes)",
+        title=_gpu_roofline_title_for_axis(bw_axis),
         help_plot_key="jobDetailPlot_roofline_gpu",
     )
     if fig is None:
-        return (None, reason or "No valid GPU roofline points after AI/perf filtering")
-    return (fig, None)
+        return (
+            None,
+            reason or "No valid GPU roofline points after AI/perf filtering",
+            bw_axis,
+        )
+    return (fig, None, bw_axis)

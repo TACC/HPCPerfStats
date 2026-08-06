@@ -4,6 +4,8 @@ import { fingerprintBokehJsonItem } from "@/utils/fingerprint-bokeh-json-item";
 
 export type JobPlotConfigKey = "summary_plot" | "roofline" | "gpu_roofline";
 
+export type GpuRooflineBwAxis = "memory_bw" | "pcie_nvlink";
+
 type PlotBatchFields = { item: string; reason: string };
 
 export const JOB_PLOT_CONFIGS = [
@@ -23,7 +25,7 @@ export const JOB_PLOT_CONFIGS = [
     key: "gpu_roofline" as const,
     panelKey: "roofline-gpu" as const,
     idPrefix: "job-gpu-roofline",
-    plotName: "GPU Roofline (PCIe/NvLink)",
+    plotName: "GPU Roofline",
   },
 ] as const;
 
@@ -33,12 +35,36 @@ const JOB_PLOTS_BATCH_FIELDS: Record<JobPlotConfigKey, PlotBatchFields> = {
   gpu_roofline: { item: "grplot_item", reason: "grplot_unavailable_reason" },
 };
 
+/** Map API ``grplot_bw_axis`` to the Job Detail panel title. */
+export function gpuRooflinePlotName(bwAxis: unknown): string {
+  if (bwAxis === "memory_bw") return "GPU Roofline (Memory BW)";
+  if (bwAxis === "pcie_nvlink") return "GPU Roofline (PCIe/NvLink)";
+  return "GPU Roofline";
+}
+
+function plotEntryFromBatchFields(
+  resp: JobPlotBatchResponse,
+  fields: PlotBatchFields,
+  key: JobPlotConfigKey,
+): JobPlotsState[string] {
+  const entry: JobPlotsState[string] = {
+    loading: false,
+    plotItem: (resp[fields.item] as BokehJsonItem | null | undefined) ?? null,
+    unavailableReason: (resp[fields.reason] as string | null | undefined) ?? null,
+  };
+  if (key === "gpu_roofline") {
+    entry.bwAxis = (resp.grplot_bw_axis as GpuRooflineBwAxis | null | undefined) ?? null;
+  }
+  return entry;
+}
+
 export function createEmptyJobPlotsState(loading: boolean): JobPlotsState {
   return JOB_PLOT_CONFIGS.reduce<JobPlotsState>((acc, config) => {
     acc[config.key] = {
       loading,
       plotItem: null,
       unavailableReason: null,
+      ...(config.key === "gpu_roofline" ? { bwAxis: null } : {}),
     };
     return acc;
   }, {});
@@ -47,11 +73,7 @@ export function createEmptyJobPlotsState(loading: boolean): JobPlotsState {
 export function plotsStateFromBatchResponse(resp: JobPlotBatchResponse): JobPlotsState {
   return JOB_PLOT_CONFIGS.reduce<JobPlotsState>((acc, config) => {
     const fields = JOB_PLOTS_BATCH_FIELDS[config.key];
-    acc[config.key] = {
-      loading: false,
-      plotItem: (resp[fields.item] as BokehJsonItem | null | undefined) ?? null,
-      unavailableReason: (resp[fields.reason] as string | null | undefined) ?? null,
-    };
+    acc[config.key] = plotEntryFromBatchFields(resp, fields, config.key);
     return acc;
   }, {});
 }
@@ -68,21 +90,21 @@ export function mergeProgressiveJobPlotsState(
       loading: true,
       plotItem: null,
       unavailableReason: null,
+      ...(config.key === "gpu_roofline" ? { bwAxis: null } : {}),
     };
     if (loadingSet.has(config.key)) {
       acc[config.key] = {
         loading: true,
         plotItem: previous.plotItem,
         unavailableReason: previous.unavailableReason,
+        ...(config.key === "gpu_roofline"
+          ? { bwAxis: previous.bwAxis ?? null }
+          : {}),
       };
       return acc;
     }
     if (Object.hasOwn(resp, fields.item)) {
-      acc[config.key] = {
-        loading: false,
-        plotItem: (resp[fields.item] as BokehJsonItem | null | undefined) ?? null,
-        unavailableReason: (resp[fields.reason] as string | null | undefined) ?? null,
-      };
+      acc[config.key] = plotEntryFromBatchFields(resp, fields, config.key);
       return acc;
     }
     // Kind absent from loading_plots and missing item field: do not re-spin completed slots.
@@ -117,6 +139,7 @@ export function jobPlotEntryEqual(
   if (p === q) return true;
   if (!p || !q) return false;
   if (p.loading !== q.loading || p.unavailableReason !== q.unavailableReason) return false;
+  if ((p.bwAxis ?? null) !== (q.bwAxis ?? null)) return false;
   if (p.plotItem === q.plotItem) return true;
   if (p.plotItem == null && q.plotItem == null) return true;
   if (p.plotItem == null || q.plotItem == null) return false;

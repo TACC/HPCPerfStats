@@ -126,6 +126,27 @@ def test_infer_gpu_roofline_prefers_io_link_over_mem_bw_when_both_exist():
   assert bw == pytest.approx(1000.0)
 
 
+def test_infer_gpu_roofline_memory_axis_prefers_mem_peak_over_io():
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = _make_jt(
+      {"host_roofline_peak": []},
+      {
+          ("host_roofline_peak", "value", ("gpu_peak_fp64_flops_per_s",)): [
+              ("n1.cluster", t0, 4_000_000_000_000.0),
+          ],
+          ("host_roofline_peak", "value", ("gpu_peak_io_link_bw_bytes_per_s",)): [
+              ("n1.cluster", t0, 1_073_741_824_000.0),
+          ],
+          ("host_roofline_peak", "value", ("gpu_peak_mem_bw_bytes_per_s",)): [
+              ("n1.cluster", t0, 2_147_483_648_000.0),
+          ],
+      },
+  )
+  gf, bw = infer_gpu_roofline_peak_flops_and_bw_gbps(jt, bw_axis="memory_bw")
+  assert gf == pytest.approx(4000.0)
+  assert bw == pytest.approx(2000.0)
+
+
 def test_infer_gpu_roofline_uses_mem_bw_when_io_link_peak_missing():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = _make_jt(

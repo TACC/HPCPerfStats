@@ -469,6 +469,11 @@ class JobPlotsResponseSerializer(serializers.Serializer):
     grdiv = serializers.CharField(required=False, allow_blank=True)
     grplot_item = BokehJsonItemField(required=False, allow_null=True)
     grplot_unavailable_reason = serializers.CharField(required=False, allow_null=True)
+    grplot_bw_axis = serializers.ChoiceField(
+        choices=["memory_bw", "pcie_nvlink"],
+        required=False,
+        allow_null=True,
+    )
     status = serializers.CharField(required=False)
     detail = serializers.CharField(required=False)
     retry_after_seconds = serializers.IntegerField(required=False)

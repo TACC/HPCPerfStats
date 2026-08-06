@@ -296,6 +296,7 @@ export const WIRE_AUDIT_CASES: WireAuditCase[] = [
       rplot_unavailable_reason: null,
       grplot_item: null,
       grplot_unavailable_reason: null,
+      grplot_bw_axis: null,
       status: "ready",
     },
   },

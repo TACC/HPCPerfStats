@@ -86,6 +86,7 @@ const minimalBatchPlotsResponse = {
   grdiv: "",
   grplot_item: null,
   grplot_unavailable_reason: null,
+  grplot_bw_axis: null,
 };
 
 function batchPlotsResponseWithRoots() {

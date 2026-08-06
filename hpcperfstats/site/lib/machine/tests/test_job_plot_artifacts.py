@@ -92,7 +92,7 @@ def test_fingerprint_changes_when_telemetry_first_time_moves():
 def test_app_plot_artifact_schema_version_bumped_for_telemetry_bounds():
   from hpcperfstats.site.lib.machine import job_plot_artifacts as plot_cfg
 
-  assert plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION == 14
+  assert plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION == 15
 
 
 @pytest.mark.django_db
@@ -342,7 +342,7 @@ def test_persist_job_plot_artifacts_persists_fresh_unavailable_rows(monkeypatch)
   )
   monkeypatch.setattr(
       "hpcperfstats.site.lib.machine.job_plot_artifacts.compute_plot_item_for_kind",
-      lambda _jt, _kind, _zoom_mode: (None, "No plot data for this job."),
+      lambda _jt, _kind, _zoom_mode: (None, "No plot data for this job.", None),
   )
 
   persist_job_plot_artifacts_for_jid(job.jid)
@@ -441,6 +441,7 @@ def test_persist_job_plot_artifacts_skips_interpreter_shutdown_poison(monkeypatc
       lambda _jt, _kind, _zoom_mode: (
           None,
           "cannot schedule new futures after interpreter shutdown",
+          None,
       ),
   )
 
@@ -490,7 +491,7 @@ def test_persist_job_plot_artifacts_reuses_context_rows_map(monkeypatch):
   )
   monkeypatch.setattr(
       "hpcperfstats.site.lib.machine.job_plot_artifacts.compute_plot_item_for_kind",
-      lambda j, kind, zoom_mode: ({"k": kind, "z": zoom_mode}, None),
+      lambda j, kind, zoom_mode: ({"k": kind, "z": zoom_mode}, None, None),
   )
   monkeypatch.setattr(
       "hpcperfstats.site.lib.machine.job_plot_artifacts.upsert_job_plot_artifact_batch",

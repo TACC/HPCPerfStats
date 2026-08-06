@@ -49,7 +49,7 @@ import {
 } from "../utils/sync-tab-search-param";
 import { useMachineRouteParams } from "../hooks/use-machine-route-params";
 import { replaceTabInHistory } from "../utils/replace-tab-history";
-import { JOB_PLOT_CONFIGS } from "@/utils/job-detail-plots";
+import { JOB_PLOT_CONFIGS, gpuRooflinePlotName } from "@/utils/job-detail-plots";
 
 const JOB_DETAIL_COMPACT_TABLE_CLASS =
   "border text-sm [&_td]:px-[0.45rem] [&_td]:py-[0.2rem] [&_td]:align-middle [&_td]:leading-[1.3] [&_th]:px-[0.45rem] [&_th]:py-[0.2rem] [&_th]:align-middle [&_th]:leading-[1.3]";
@@ -642,7 +642,10 @@ export default function JobDetail() {
     item: plots?.[config.key]?.plotItem ?? null,
     isLoading: !!plots?.[config.key]?.loading,
     id: `${config.idPrefix}-${pk}`,
-    plotName: config.plotName,
+    plotName:
+      config.key === "gpu_roofline"
+        ? gpuRooflinePlotName(plots?.[config.key]?.bwAxis)
+        : config.plotName,
     unavailableReason: plots?.[config.key]?.unavailableReason ?? null,
   }));
 

@@ -1,7 +1,7 @@
 # Using HPCPerfStats on the Web — Guide for Researchers and HPC Users
 
 
-This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-06-05.
+This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-08-05.
 
 
 This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections.
@@ -82,7 +82,7 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 | **Resources**                   | Rounded Cards in order: watt-hours (when present) → **GPU Information** (aggregate stats as the main line; per-(host,dev) inventory behind a collapsed control) → **Shared File Systems** (`fsio`) → Client/Server log links last. GPU precedence NVIDIA → AMD → Intel PVC. | Validate energy, GPU allocation vs activity (expand inventory for device rows), I/O<sup>[11](#ref-11)</sup> volume, then jump to external logs. |
 | **Metrics (tab)**               | Job-level metrics catalog (`metrics_list`) in rounded Cards per subsection **CPU → GPU → File System → Network → Misc** by monitor/catalog `type` (Memory/NUMA under CPU; IB/OPA/Ethernet/LNET under Network). Empty GPU/File System/Misc omitted; **Network** always appears (empty body: Data not available.) | Faster subsystem triage—scan CPU vs fabric vs GPU scalars without scrolling a flat list. |
 | **Summary plot (tab)**          | Host-level timeline plot with CPU, memory/NUMA<sup>[4](#ref-4)</sup>/DRAM, fabric/filesystem, GPU, and node-power traces | Best first visual scan for phase changes, host outliers, and cross-signal coupling (for example GPU drops while fabric spikes).                              |
-| **Roofline (tab)**              | CPU roofline and GPU roofline (PCIe/NVLink<sup>[7](#ref-7)</sup>)                                                        | Distinguish compute-limited vs bandwidth/link-limited behavior and prioritize the right optimization work.                                                     |
+| **Roofline (tab)**              | CPU roofline and GPU roofline (Memory BW when available, else PCIe/NVLink<sup>[7](#ref-7)</sup>)                                                        | Distinguish compute-limited vs bandwidth/link-limited behavior and prioritize the right optimization work.                                                     |
 | **Multiprecision Mix (tab)**    | CPU and GPU precision-activity panels over time                                                    | Verify whether the run is using expected mixed-precision paths<sup>[6](#ref-6)</sup> and detect precision mix drift across runs or code versions.                                         |
 | **Processes (tab)**             | Process name first; expandable groups of hosts with average RSS/HWM/Size/Threads on the group header | Confirm what actually executed and its memory footprint (wrappers, launch depth, wrong env, etc.). |
 | **Execution and hosts (tab)**   | XALT execution path/cwd/libset and host list                                                       | Environment drift, module/library mismatches, and host-level forensics.                                                                                       |
@@ -191,11 +191,11 @@ This section covers job-detail surfaces beyond scalar metrics.
 ### 6.2 Roofline tab (CPU + GPU)
 
 - Diagnostic use: distinguish compute-ceiling vs bandwidth/link-ceiling regimes in the roofline model<sup>[1](#ref-1)</sup>.
-- Recommendation: use `avg_flops`<sup>[3](#ref-3)</sup>, `avg_mbw`, `max_gpu_link_gbps`, and fabric ratios to validate roofline reading.
+- Recommendation: use `avg_flops`<sup>[3](#ref-3)</sup>, `avg_mbw`, `avg_gpu_mem_bw_gbps`, `max_gpu_link_gbps`, and fabric ratios to validate roofline reading.
 - CPU vs GPU regime quick read:
   - **CPU roofline**: if points sit near the sloped bandwidth line, the phase is memory-bandwidth limited (data movement dominates); if points approach the flat top line, compute throughput dominates.
-  - **GPU roofline**: apply the same logic, but include device-memory and interconnect effects; low arithmetic intensity<sup>[2](#ref-2)</sup> phases are often HBM or link limited, while high-intensity phases can become tensor/core compute limited.
-  - **Interconnect context**: GPU scaling limits can reflect PCIe or NVLink behavior<sup>[7](#ref-7)</sup>, not just kernel math throughput.
+  - **GPU roofline**: the plot title shows which bandwidth axis was used — **GPU Roofline (Memory BW)** when estimated GPU memory bandwidth samples are present (same family of signal as Summary HBM BW), otherwise **GPU Roofline (PCIe/NvLink)** from interconnect byte rates. Apply the same compute vs bandwidth logic; low arithmetic intensity<sup>[2](#ref-2)</sup> phases are often HBM- or link-limited depending on that title, while high-intensity phases can become tensor/core compute limited.
+  - **Interconnect context**: GPU scaling limits can reflect PCIe or NVLink behavior<sup>[7](#ref-7)</sup>, not just kernel math throughput — especially when the PCIe/NvLink title is shown.
   - **What to do with this**: memory/link-limited phases usually benefit from locality, data-layout, batching, or communication changes; compute-limited phases usually benefit from kernel efficiency, vector/tensor usage, and occupancy improvements.
 
 ### 6.3 Multiprecision Mix tab (CPU and GPU)
@@ -323,5 +323,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-07-30 | Metrics tab: source subsections CPU → GPU → File System → Network → Misc; Memory/NUMA under CPU; always-show Network; hide empty GPU/FS/Misc. |
 | 2026-07-31 | Resources GPU inventory: one row per device when ingest stores `dev`; legacy empty-`dev` jobs show node-aggregate note (not “per GPU”). |
 | 2026-07-31 | Resources/Metrics Card chrome: Watt hours → GPU Information (inventory collapsed) → Shared File Systems → logs; Metrics subsections in Cards. |
+| 2026-08-05 | GPU Roofline prefers estimated memory bandwidth when present (title Memory BW); otherwise PCIe/NvLink (or Xe Link) with matching title and peak roof. |
 
 

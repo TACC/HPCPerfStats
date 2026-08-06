@@ -207,6 +207,7 @@ describe("parse-api-response", () => {
       rplot_unavailable_reason: "no data",
       grplot_item: null,
       grplot_unavailable_reason: null,
+      grplot_bw_axis: null,
       status: "ready",
     };
     expect(parseApiResponse("GET", "/api/jobs/123/plots/", wire)).toEqual(wire);

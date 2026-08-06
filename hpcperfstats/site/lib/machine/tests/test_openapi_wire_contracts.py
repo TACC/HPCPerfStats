@@ -192,6 +192,7 @@ JOB_PLOTS_WIRE = {
     "grdiv": "",
     "grplot_item": VALID_BOKEH_JSON_ITEM,
     "grplot_unavailable_reason": None,
+    "grplot_bw_axis": None,
     "status": "ready",
     "progressive": True,
     "loading_plots": [],

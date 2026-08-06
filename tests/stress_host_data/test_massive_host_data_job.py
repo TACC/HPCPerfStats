@@ -274,7 +274,7 @@ def test_massive_host_data_stress_full_pipeline():
       ):
         for kind in JOB_PLOT_KINDS:
           t_pl = time.perf_counter()
-          item, reason = compute_plot_item_for_kind(jt2, kind, zoom)
+          item, reason, _bw_axis = compute_plot_item_for_kind(jt2, kind, zoom)
           elapsed = time.perf_counter() - t_pl
           profiler.record_phase(
               "manual_plot",

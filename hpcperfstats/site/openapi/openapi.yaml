@@ -2222,6 +2222,12 @@ components:
         grplot_unavailable_reason:
           type: string
           nullable: true
+        grplot_bw_axis:
+          type: string
+          nullable: true
+          enum:
+          - memory_bw
+          - pcie_nvlink
         status:
           type: string
         detail:

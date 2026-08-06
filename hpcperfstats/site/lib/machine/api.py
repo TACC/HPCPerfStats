@@ -3710,6 +3710,7 @@ def job_plots(request: Any, pk: Any) -> Any:
             cached_results[key] = {
                 "plot_item": l2_entry.get("plot_item"),
                 "unavailable_reason": l2_entry.get("unavailable_reason"),
+                "bw_axis": l2_entry.get("bw_axis"),
             }
             try:
                 cache.set(cache_key, cached_results[key], timeout=job_cache_timeout)
@@ -3728,7 +3729,10 @@ def job_plots(request: Any, pk: Any) -> Any:
                     data_cache_key = _plot_data_cache_key(key)
                     cache.set(
                         data_cache_key,
-                        pi,
+                        {
+                            "plot_item": pi,
+                            "bw_axis": cached_results[key].get("bw_axis"),
+                        },
                         timeout=job_cache_timeout,
                     )
                     register_job_plot_cache_key(job.jid, data_cache_key)
@@ -3749,7 +3753,18 @@ def job_plots(request: Any, pk: Any) -> Any:
         for key in missing_keys:
             data_cache_key = _plot_data_cache_key(key)
             cached_plot_data = cache.get(data_cache_key)
-            if isinstance(cached_plot_data, dict):
+            if isinstance(cached_plot_data, dict) and "plot_item" in cached_plot_data:
+                raw_item = cached_plot_data.get("plot_item")
+                if not isinstance(raw_item, dict):
+                    still_missing.append(key)
+                    continue
+                cached_results[key] = {
+                    "plot_item": _apply_zoom_layout_to_json_item(raw_item),
+                    "unavailable_reason": None,
+                    "bw_axis": cached_plot_data.get("bw_axis"),
+                }
+            elif isinstance(cached_plot_data, dict):
+                # Legacy L1 data cache stored bare json_item (no envelope).
                 cached_results[key] = {
                     "plot_item": _apply_zoom_layout_to_json_item(cached_plot_data),
                     "unavailable_reason": None,
@@ -3777,6 +3792,8 @@ def job_plots(request: Any, pk: Any) -> Any:
                 item_key, reason_key = JOB_PLOT_JSON_KEYS[key]
                 body[item_key] = cached_results[key]["plot_item"]
                 body[reason_key] = cached_results[key]["unavailable_reason"]
+                if key == "gpu_roofline":
+                    body["grplot_bw_axis"] = cached_results[key].get("bw_axis")
             return Response(body, status=status.HTTP_200_OK)
         return Response(
             {
@@ -3793,14 +3810,15 @@ def job_plots(request: Any, pk: Any) -> Any:
 
     if plot_kind != "all":
         entry = cached_results[plot_kind]
-        return Response(
-            {
-                "status": "ready",
-                "plot": plot_kind,
-                "plot_item": entry["plot_item"],
-                "unavailable_reason": entry["unavailable_reason"],
-            }
-        )
+        body = {
+            "status": "ready",
+            "plot": plot_kind,
+            "plot_item": entry["plot_item"],
+            "unavailable_reason": entry["unavailable_reason"],
+        }
+        if plot_kind == "gpu_roofline":
+            body["grplot_bw_axis"] = entry.get("bw_axis")
+        return Response(body)
 
     payload = {
         "mscript": "",
@@ -3815,6 +3833,7 @@ def job_plots(request: Any, pk: Any) -> Any:
         "grdiv": "",
         "grplot_item": cached_results["gpu_roofline"]["plot_item"],
         "grplot_unavailable_reason": cached_results["gpu_roofline"]["unavailable_reason"],
+        "grplot_bw_axis": cached_results["gpu_roofline"].get("bw_axis"),
     }
     if progressive:
         payload["status"] = "ready"

@@ -27,12 +27,14 @@ JOB_DETAIL_BOKEH_HELP: Dict[str, HelpPair] = {
         "the ridge show compute-bound phases.",
     ),
     "jobDetailPlot_roofline_gpu": (
-        "GPU roofline: each point is one host and time sample from NVIDIA DCGM-style "
-        "telemetry. Horizontal axis is arithmetic intensity (GPU GFLOP/s divided by "
-        "PCIe plus NVLink byte rate in GB/s). Vertical axis is GPU GFLOP/s. The navy "
-        "curve is the theoretical roof for this job using inferred GPU peaks.",
-        "Use this to see whether the job is communication-limited versus GPU compute "
-        "relative to the link roof.",
+        "GPU roofline: each point is one host and time sample. Horizontal axis is "
+        "arithmetic intensity (GPU GFLOP/s divided by GB/s). When usable "
+        "gpu_mem_bw_bytes_rate samples exist, bandwidth is the monitor's estimated "
+        "GPU memory bandwidth (same source as Summary HBM BW); otherwise it is "
+        "PCIe plus NVLink (or Intel Xe Link) byte rate. Vertical axis is GPU "
+        "GFLOP/s. The navy curve uses inferred peaks matched to that bandwidth axis.",
+        "Use Memory BW mode for device-memory-bound phases and PCIe/NvLink mode for "
+        "interconnect-limited phases relative to the matching roof.",
     ),
     "jobDetailPlot_multiprecision_cpu": (
         "CPU multiprecision mix: wedge areas show each width's share of busy arithmetic "
