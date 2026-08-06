@@ -388,30 +388,81 @@ def _proc_data_row_kwargs(row: Any) -> Any:
 
 def _dedupe_proc_objs_keep_last(proc_objs: list) -> list:
   """
-  Collapse duplicate ``(jid, host, proc)`` rows so one bulk_create upsert is.
-  
-    safe.
-  
+  Collapse duplicate ``(jid, host, proc)`` rows for one bulk_create upsert.
+
   Postgres rejects ``ON CONFLICT DO UPDATE`` when the same unique key appears
-  twice in a single statement ("cannot affect row a second time"). Multi-sample
-  batches routinely repeat the same process across timestamps; keep the latest.
-  
+  twice in a single statement. Later samples last-write non-peak fields;
+  ``vm_stk`` / ``vm_exe`` / ``vm_lib`` take GREATEST across the batch.
+
   Args:
-    proc_objs (list): Sequence for proc objs.
-  
+    proc_objs (list): Sequence of ``proc_data`` instances (or namespaces).
+
   Returns:
-    list: list produced by this call.
-  
+    list: One object per unique key.
+
   Examples:
-    >>> _dedupe_proc_objs_keep_last([])  # doctest: +SKIP
+    >>> _dedupe_proc_objs_keep_last([])
+    []
   """
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+      apply_proc_peak_attrs_from_earlier,
+  )
+
   if len(proc_objs) <= 1:
     return list(proc_objs)
-  by_key = {}
+  by_key: dict = {}
   for obj in proc_objs:
-    key = (getattr(obj, "jid", None), getattr(obj, "host", None), getattr(obj, "proc", None))
+    key = (
+        getattr(obj, "jid", None),
+        getattr(obj, "host", None),
+        getattr(obj, "proc", None),
+    )
+    if key in by_key:
+      apply_proc_peak_attrs_from_earlier(by_key[key], obj)
     by_key[key] = obj
   return list(by_key.values())
+
+
+def _peak_merge_proc_chunk_with_existing(chunk: list) -> list:
+  """
+  Raise peak fields on ``chunk`` from matching ``proc_data`` DB rows.
+
+  Args:
+    chunk (list): ``proc_data`` instances for one bulk_create.
+
+  Returns:
+    list: Same chunk list (objs mutated when DB peers exist).
+
+  Examples:
+    >>> _peak_merge_proc_chunk_with_existing([])
+    []
+  """
+  if not chunk:
+    return chunk
+  from django.db.models import Q
+
+  from hpcperfstats.site.lib.machine.models import proc_data
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+      HOST_PROC_PEAK_KEYS,
+      apply_proc_peak_attrs_from_earlier,
+  )
+
+  q = Q()
+  for obj in chunk:
+    q |= Q(jid=obj.jid, host=obj.host, proc=obj.proc)
+  existing = {
+      (row.jid, row.host, row.proc): row
+      for row in proc_data.objects.filter(q).only(
+          "jid", "host", "proc", *HOST_PROC_PEAK_KEYS
+      )
+  }
+  if not existing:
+    return chunk
+  for obj in chunk:
+    prior = existing.get((obj.jid, obj.host, obj.proc))
+    if prior is not None:
+      apply_proc_peak_attrs_from_earlier(prior, obj)
+  return chunk
 
 
 def _flush_orm_batch(host_objs: list, proc_objs: list) -> None:
@@ -453,6 +504,7 @@ def _flush_orm_batch(host_objs: list, proc_objs: list) -> None:
       chunk = proc_objs[i : i + batch_size]
       if not chunk:
         continue
+      chunk = _peak_merge_proc_chunk_with_existing(chunk)
       proc_data.objects.bulk_create(
           chunk,
           update_conflicts=True,

@@ -416,7 +416,9 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     EVENTMAPS_BY_TYPE,
     HOST_PROC_KEYS,
+    HOST_PROC_PEAK_KEYS,
     DeltaCarryState,
+    apply_proc_peak_attrs_from_earlier,
     build_stats_dataframes,
     compute_deltas_and_arc,
     compute_deltas_and_arc_chunk,
@@ -4815,6 +4817,7 @@ def _write_stats_payload_to_db(
         proc_objs = [
             proc_data(**_proc_data_row_kwargs(row)) for row in batch
         ]
+        proc_objs = _peak_merge_proc_objs_with_existing(proc_objs)
         with _held_ingest_write_lock(write_lock, stats_file, "proc"):
           _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
           proc_data.objects.bulk_create(
@@ -6727,6 +6730,45 @@ def _proc_field_or_none(row: Any, name: Any) -> Any:
 _PROC_DATA_UPDATE_FIELDS = ("device",) + HOST_PROC_KEYS
 
 
+def _peak_merge_proc_objs_with_existing(proc_objs: list) -> list:
+  """
+  Raise ``vm_stk`` / ``vm_exe`` / ``vm_lib`` from existing ``proc_data`` rows.
+
+  Incoming objs keep last-write for other KEYS; peak fields use GREATEST with
+  any matching DB row so lower later samples cannot drop stored highs.
+
+  Args:
+    proc_objs (list): ``proc_data`` instances about to be upserted.
+
+  Returns:
+    list: Same list (objs mutated in place when a DB peer exists).
+
+  Examples:
+    >>> _peak_merge_proc_objs_with_existing([])
+    []
+  """
+  if not proc_objs:
+    return proc_objs
+  from django.db.models import Q
+
+  q = Q()
+  for obj in proc_objs:
+    q |= Q(jid=obj.jid, host=obj.host, proc=obj.proc)
+  existing = {
+      (row.jid, row.host, row.proc): row
+      for row in proc_data.objects.filter(q).only(
+          "jid", "host", "proc", *HOST_PROC_PEAK_KEYS
+      )
+  }
+  if not existing:
+    return proc_objs
+  for obj in proc_objs:
+    prior = existing.get((obj.jid, obj.host, obj.proc))
+    if prior is not None:
+      apply_proc_peak_attrs_from_earlier(prior, obj)
+  return proc_objs
+
+
 def _proc_data_row_kwargs(row: Any) -> Any:
   """
   Build kwargs for proc_data create/update from a parsed DataFrame row.
@@ -6778,6 +6820,19 @@ def _insert_proc_data_individually(proc_stats_df: Any) -> None:
       >>> _save_proc_row(None)  # doctest: +SKIP
     """
     kwargs = _proc_data_row_kwargs(row)
+    try:
+      prior = proc_data.objects.only(
+          "jid", "host", "proc", *HOST_PROC_PEAK_KEYS
+      ).get(jid=kwargs["jid"], host=kwargs["host"], proc=kwargs["proc"])
+    except proc_data.DoesNotExist:
+      prior = None
+    if prior is not None:
+      peak_holder = types.SimpleNamespace(
+          **{k: kwargs.get(k) for k in HOST_PROC_PEAK_KEYS}
+      )
+      apply_proc_peak_attrs_from_earlier(prior, peak_holder)
+      for key in HOST_PROC_PEAK_KEYS:
+        kwargs[key] = getattr(peak_holder, key)
     defaults = {k: kwargs[k] for k in _PROC_DATA_UPDATE_FIELDS}
     proc_data.objects.update_or_create(
         jid=kwargs["jid"],

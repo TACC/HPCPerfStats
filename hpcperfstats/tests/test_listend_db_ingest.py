@@ -272,13 +272,22 @@ def test_dedupe_proc_objs_keep_last_for_upsert_batch():
 
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi
 
-  first = SimpleNamespace(jid="1", host="h", proc="bash", vm_rss=1)
-  second = SimpleNamespace(jid="1", host="h", proc="bash", vm_rss=99)
-  other = SimpleNamespace(jid="1", host="h", proc="python", vm_rss=5)
+  first = SimpleNamespace(
+      jid="1", host="h", proc="bash", vm_rss=1, vm_stk=100, vm_exe=10, vm_lib=5
+  )
+  second = SimpleNamespace(
+      jid="1", host="h", proc="bash", vm_rss=99, vm_stk=40, vm_exe=20, vm_lib=1
+  )
+  other = SimpleNamespace(
+      jid="1", host="h", proc="python", vm_rss=5, vm_stk=1, vm_exe=1, vm_lib=1
+  )
   out = ldi._dedupe_proc_objs_keep_last([first, other, second])
   assert len(out) == 2
   by_proc = {o.proc: o for o in out}
   assert by_proc["bash"].vm_rss == 99
+  assert by_proc["bash"].vm_stk == 100
+  assert by_proc["bash"].vm_exe == 20
+  assert by_proc["bash"].vm_lib == 5
   assert by_proc["python"].vm_rss == 5
 
 
@@ -293,6 +302,12 @@ def test_flush_orm_batch_dedupes_proc_before_bulk_create(monkeypatch):
   class _FakeManager:
     def bulk_create(self, objs, **kwargs):
       captured.setdefault("calls", []).append((list(objs), kwargs))
+
+    def filter(self, *args, **kwargs):
+      return self
+
+    def only(self, *args, **kwargs):
+      return []
 
   class _FakeModel:
     objects = _FakeManager()

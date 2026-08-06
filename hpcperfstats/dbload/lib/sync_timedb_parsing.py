@@ -5,6 +5,7 @@ unit tests.
 Attributes:
   EVENTMAPS_BY_TYPE: Attribute.
   HOST_PROC_KEYS: Attribute.
+  HOST_PROC_PEAK_KEYS: Attribute.
   STREAM_PARSE_LINE_BATCH: Attribute.
   _ARC_GROUP_COLS: Attribute.
   _COLLAPSE_GROUP_COLS: Attribute.
@@ -86,6 +87,163 @@ HOST_PROC_KEYS = (
     "vm_swap",
     "threads",
 )
+
+# Instantaneous gauges retained as high-water marks across samples / upserts.
+# Kernel VmPeak/VmHWM are already peaks for a PID — last-write only for those.
+HOST_PROC_PEAK_KEYS = frozenset({"vm_stk", "vm_exe", "vm_lib"})
+
+
+def schema_key_basename(token: str) -> str:
+  """
+  Strip monitor schema option suffixes (``,U=kB``, ``,E``, …).
+
+  Args:
+    token (str): Full schema entry from a ``!host_proc`` line (or bare key).
+
+  Returns:
+    str: Key basename before the first comma (empty string when ``token`` empty).
+
+  Examples:
+    >>> schema_key_basename("vm_peak,U=kB")
+    'vm_peak'
+    >>> schema_key_basename("uid")
+    'uid'
+    >>> schema_key_basename("vm_rss,E,U=kB")
+    'vm_rss'
+  """
+  if not token:
+    return ""
+  return token.split(",", 1)[0]
+
+
+def _nullable_int_max(left: Any, right: Any) -> Any:
+  """
+  Return the greater of two nullable integer-like values.
+
+  Args:
+    left (Any): First candidate (``None`` or int-like).
+    right (Any): Second candidate (``None`` or int-like).
+
+  Returns:
+    Any: ``None`` when both missing; otherwise the max of convertible ints,
+    or the sole non-``None`` side when the other cannot convert.
+
+  Examples:
+    >>> _nullable_int_max(None, 5)
+    5
+    >>> _nullable_int_max(10, 3)
+    10
+    >>> _nullable_int_max(None, None) is None
+    True
+  """
+  left_ok: int | None
+  right_ok: int | None
+  try:
+    left_ok = None if left is None else int(left)
+  except (TypeError, ValueError):
+    left_ok = None
+  try:
+    right_ok = None if right is None else int(right)
+  except (TypeError, ValueError):
+    right_ok = None
+  if left_ok is None:
+    return right_ok
+  if right_ok is None:
+    return left_ok
+  return max(left_ok, right_ok)
+
+
+def merge_proc_row_dicts(
+    earlier: dict[str, Any],
+    later: dict[str, Any],
+) -> dict[str, Any]:
+  """
+  Merge two host_proc row dicts for the same ``(jid, host, proc)``.
+
+  Non-peak fields take ``later`` (last-write). Peak keys
+  (``HOST_PROC_PEAK_KEYS``) take the max of non-null values.
+
+  Args:
+    earlier (dict[str, Any]): Prior sample for the unique key.
+    later (dict[str, Any]): Newer sample (last-write source).
+
+  Returns:
+    dict[str, Any]: Merged row (new dict); peak fields are GREATEST.
+
+  Examples:
+    >>> merge_proc_row_dicts(
+    ...     {"vm_stk": 100, "vm_peak": 900, "threads": 1},
+    ...     {"vm_stk": 50, "vm_peak": 800, "threads": 4},
+    ... )["vm_stk"]
+    100
+    >>> merge_proc_row_dicts(
+    ...     {"vm_stk": 100, "vm_peak": 900, "threads": 1},
+    ...     {"vm_stk": 50, "vm_peak": 800, "threads": 4},
+    ... )["vm_peak"]
+    800
+  """
+  out = dict(earlier)
+  out.update(later)
+  for key in HOST_PROC_PEAK_KEYS:
+    out[key] = _nullable_int_max(earlier.get(key), later.get(key))
+  return out
+
+
+def dedupe_proc_stats_peak_merge(
+    proc_stats_list: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+  """
+  Collapse duplicate ``(jid, host, proc)`` rows with peak-aware merge.
+
+  Args:
+    proc_stats_list (list[dict[str, Any]]): Parsed host_proc rows in time order.
+
+  Returns:
+    list[dict[str, Any]]: One row per unique key; peaks retained across samples.
+
+  Examples:
+    >>> rows = dedupe_proc_stats_peak_merge([
+    ...     {"jid": "j", "host": "h", "proc": "p", "vm_stk": 9, "threads": 1},
+    ...     {"jid": "j", "host": "h", "proc": "p", "vm_stk": 3, "threads": 8},
+    ... ])
+    >>> rows[0]["vm_stk"], rows[0]["threads"]
+    (9, 8)
+  """
+  by_key: dict[tuple[Any, Any, Any], dict[str, Any]] = {}
+  for row in proc_stats_list:
+    key = (row.get("jid"), row.get("host"), row.get("proc"))
+    if key in by_key:
+      by_key[key] = merge_proc_row_dicts(by_key[key], row)
+    else:
+      by_key[key] = dict(row)
+  return list(by_key.values())
+
+
+def apply_proc_peak_attrs_from_earlier(earlier: Any, later: Any) -> Any:
+  """
+  Copy GREATEST peak attrs from ``earlier`` onto ``later`` (ORM or namespace).
+
+  Args:
+    earlier (Any): Prior object with optional ``vm_stk`` / ``vm_exe`` / ``vm_lib``.
+    later (Any): Incoming object mutated in place (last-write for other fields).
+
+  Returns:
+    Any: The ``later`` object after peak fields are raised when needed.
+
+  Examples:
+    >>> from types import SimpleNamespace
+    >>> a = SimpleNamespace(vm_stk=10, vm_exe=1, vm_lib=2)
+    >>> b = SimpleNamespace(vm_stk=3, vm_exe=9, vm_lib=None)
+    >>> apply_proc_peak_attrs_from_earlier(a, b).vm_stk
+    10
+    >>> b.vm_exe
+    9
+  """
+  for key in HOST_PROC_PEAK_KEYS:
+    cur = getattr(later, key, None)
+    prev = getattr(earlier, key, None)
+    setattr(later, key, _nullable_int_max(prev, cur))
+  return later
 
 # Back-compat re-export for callers/tests that referenced legacy eventmaps.
 EVENTMAPS_BY_TYPE = legacy_parsing.EVENTMAPS_BY_TYPE
@@ -1282,13 +1440,14 @@ class IncrementalStatsParser:
           if i >= len(vals):
             break
           raw = vals[i]
+          bare = schema_key_basename(key)
           try:
-            vals_by_key[key] = int(raw)
+            vals_by_key[bare] = int(raw)
           except (TypeError, ValueError):
             try:
-              vals_by_key[key] = int(float(raw))
+              vals_by_key[bare] = int(float(raw))
             except (TypeError, ValueError):
-              vals_by_key[key] = None
+              vals_by_key[bare] = None
         row = {
             **self.line_ctx["tags2"],
             "proc": proc_name,
@@ -1472,10 +1631,11 @@ def build_stats_dataframes(stats_list: Any, proc_stats_list: Any) -> Any:
   """
   proc_stats_df = DataFrame.from_records(proc_stats_list)
   if not proc_stats_df.empty:
-    # Later samples for the same (jid, host, proc) keep richer KEYS values.
-    proc_stats_df = proc_stats_df.drop_duplicates(
-        subset=["jid", "host", "proc"], keep="last"
+    # Peak-merge duplicate (jid, host, proc): GREATEST for vm_stk/exe/lib.
+    merged = dedupe_proc_stats_peak_merge(
+        proc_stats_df.to_dict(orient="records")
     )
+    proc_stats_df = DataFrame.from_records(merged)
   stats_df = DataFrame.from_records(stats_list)
   return stats_df, proc_stats_df
 

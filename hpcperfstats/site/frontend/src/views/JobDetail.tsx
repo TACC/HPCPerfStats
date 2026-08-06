@@ -33,6 +33,11 @@ import { cn } from "@/lib/utils";
 import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { formatGpuClockThrottleReasons } from "../utils/gpuClockThrottleReasons";
+import {
+  PROC_AVG_KEYS,
+  buildProcTable,
+  type ProcListEntry,
+} from "../utils/proc-table";
 import { isSafeHttpUrl } from "../utils/safe-external-url";
 import { useSession } from "../session-context";
 import { VariableInfoLabel } from "../components/VariableInfoLabel";
@@ -300,123 +305,6 @@ function buildMetricsDisplayList(metrics: JobMetricDisplayRow[]): JobMetricDispl
     out.push(row);
   }
   return out;
-}
-
-type ProcListObject = {
-  host?: string | number | null;
-  proc?: string | number | null;
-  device?: string | number | null;
-  uid?: string | number | null;
-  vm_rss?: string | number | null;
-  vm_hwm?: string | number | null;
-  vm_size?: string | number | null;
-  threads?: string | number | null;
-};
-
-type ProcListEntry = string | ProcListObject;
-
-const PROC_TABLE_COLUMNS: ReadonlyArray<{ key: keyof ProcListObject; label: string }> = [
-  { key: "proc", label: "Process" },
-  { key: "host", label: "Host" },
-  { key: "uid", label: "UID" },
-  { key: "vm_rss", label: "RSS (kB)" },
-  { key: "vm_hwm", label: "HWM (kB)" },
-  { key: "vm_size", label: "Size (kB)" },
-  { key: "threads", label: "Threads" },
-];
-
-const PROC_AVG_KEYS = ["vm_rss", "vm_hwm", "vm_size", "threads"] as const;
-
-function cellText(value: string | number | null | undefined): string {
-  if (value == null || value === "") return "";
-  return String(value);
-}
-
-function meanNumericTexts(values: string[]): string {
-  const nums = values
-    .map((v) => Number(v))
-    .filter((n) => Number.isFinite(n));
-  if (nums.length === 0) return "";
-  const mean = nums.reduce((a, b) => a + b, 0) / nums.length;
-  return formatDecimalStandard(mean);
-}
-
-type ProcTableGroup = {
-  proc: string;
-  hostCount: number;
-  averages: Record<string, string>;
-  rows: Array<Record<string, string>>;
-};
-
-function buildProcTable(procList: ProcListEntry[]): {
-  columns: Array<{ key: string; label: string }>;
-  groups: ProcTableGroup[];
-  /** Flat rows for legacy string-only lists. */
-  rows: Array<Record<string, string>>;
-  legacyOnly: boolean;
-} {
-  const legacyOnly = procList.every((entry) => typeof entry === "string");
-  if (legacyOnly) {
-    return {
-      columns: [{ key: "proc", label: "Process" }],
-      groups: [],
-      rows: procList.map((entry) => ({ proc: String(entry) })),
-      legacyOnly: true,
-    };
-  }
-
-  const rows = procList.map((entry) => {
-    if (typeof entry === "string") {
-      return { proc: entry };
-    }
-    const row: Record<string, string> = {};
-    for (const col of PROC_TABLE_COLUMNS) {
-      const text = cellText(entry[col.key]);
-      if (text) row[col.key] = text;
-    }
-    if (!row.proc && entry.device != null && String(entry.device) !== "") {
-      row.proc = String(entry.device);
-    }
-    return row;
-  });
-
-  const columns = PROC_TABLE_COLUMNS.filter((col) =>
-    rows.some((row) => row[col.key] != null && row[col.key] !== ""),
-  ).map((col) => ({ key: col.key, label: col.label }));
-
-  if (columns.length === 0) {
-    return {
-      columns: [{ key: "proc", label: "Process" }],
-      groups: [],
-      rows: rows.map((row) => ({ proc: row.proc || "" })),
-      legacyOnly: true,
-    };
-  }
-
-  const byProc = new Map<string, Array<Record<string, string>>>();
-  for (const row of rows) {
-    const name = row.proc || "(unnamed)";
-    const list = byProc.get(name) || [];
-    list.push(row);
-    byProc.set(name, list);
-  }
-  const groups: ProcTableGroup[] = Array.from(byProc.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([proc, groupRows]) => {
-      const averages: Record<string, string> = {};
-      for (const key of PROC_AVG_KEYS) {
-        if (!columns.some((c) => c.key === key)) continue;
-        averages[key] = meanNumericTexts(groupRows.map((r) => r[key] || ""));
-      }
-      return {
-        proc,
-        hostCount: groupRows.length,
-        averages,
-        rows: groupRows,
-      };
-    });
-
-  return { columns, groups, rows: [], legacyOnly: false };
 }
 
 function resolveGpuCountForDisplay(
@@ -840,7 +728,10 @@ export default function JobDetail() {
   const wattHoursMetric = (metrics_list || []).find(
     (m) => m.metric === "job_cpu_gpu_watt_hours" && m.value != null,
   );
-  const procTable = buildProcTable((proc_list || []) as ProcListEntry[]);
+  const procTable = buildProcTable(
+    (proc_list || []) as ProcListEntry[],
+    formatDecimalStandard,
+  );
 
   function metricTableRows(list: JobMetricDisplayRow[]): ReactNode {
     return list.map((obj) => (
@@ -1647,13 +1538,17 @@ export default function JobDetail() {
                         group.averages[key] ? (
                           <span key={key} className="text-muted-foreground">
                             avg{" "}
-                            {key === "vm_rss"
-                              ? "RSS"
+                            {key === "vm_peak"
+                              ? "Peak VM"
                               : key === "vm_hwm"
                                 ? "HWM"
-                                : key === "vm_size"
-                                  ? "Size"
-                                  : "Threads"}
+                                : key === "vm_stk"
+                                  ? "Stack"
+                                  : key === "vm_exe"
+                                    ? "Text"
+                                    : key === "vm_lib"
+                                      ? "Libs"
+                                      : "Threads"}
                             : {group.averages[key]}
                             {key === "threads" ? "" : " kB"}
                           </span>

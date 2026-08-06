@@ -1233,18 +1233,22 @@ describe("JobDetail", () => {
             host: "c001",
             proc: "streams_2.exe",
             uid: 1001,
-            vm_rss: 2048,
+            vm_peak: 8192,
             vm_hwm: 4096,
-            vm_size: 8192,
+            vm_stk: 128,
+            vm_exe: 256,
+            vm_lib: 512,
             threads: 4,
           },
           {
             host: "c002",
             proc: "streams_2.exe",
             uid: 1001,
-            vm_rss: 1024,
+            vm_peak: 4096,
             vm_hwm: 2048,
-            vm_size: 4096,
+            vm_stk: 64,
+            vm_exe: 128,
+            vm_lib: 256,
             threads: 2,
           },
         ],
@@ -1254,7 +1258,8 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByText("streams_2.exe")).toBeInTheDocument();
       expect(screen.getByText(/2(?:\.00)? hosts/i)).toBeInTheDocument();
-      expect(screen.getByText(/avg RSS/i)).toBeInTheDocument();
+      expect(screen.getByText(/avg HWM/i)).toBeInTheDocument();
+      expect(screen.getByText(/avg Peak VM/i)).toBeInTheDocument();
     });
   });
 

@@ -333,6 +333,31 @@ def test_parse_stats_lines_host_proc_schema_keys():
   assert row["threads"] == 8
 
 
+def test_parse_stats_lines_host_proc_schema_keys_with_unit_suffixes():
+  """Regression jid 1778: production !host_proc uses vm_peak,U=kB tokens."""
+  keys = (
+      "uid vm_peak,U=kB vm_size,U=kB vm_lck,U=kB vm_hwm,U=kB vm_rss,U=kB "
+      "vm_data,U=kB vm_stk,U=kB vm_exe,U=kB vm_lib,U=kB vm_pte,U=kB "
+      "vm_swap,U=kB threads"
+  )
+  lines = [
+      f"!host_proc {keys}\n",
+      "1709123456 job1 cn001\n",
+      "host_proc python/4242/0-7/0 1001 9000 8000 0 7000 6000 5000 4000 3000 2000 1000 500 8\n",
+  ]
+  _stats, proc_list = parse_stats_lines(lines, start_idx=0)
+  assert len(proc_list) == 1
+  row = proc_list[0]
+  assert row["uid"] == 1001
+  assert row["vm_peak"] == 9000
+  assert row["vm_hwm"] == 7000
+  assert row["vm_rss"] == 6000
+  assert row["vm_stk"] == 4000
+  assert row["vm_exe"] == 3000
+  assert row["vm_lib"] == 2000
+  assert row["threads"] == 8
+
+
 def test_parse_stats_lines_excluded_type():
   """Excluded type is skipped."""
   lines = [
@@ -376,20 +401,47 @@ def test_build_stats_dataframes_empty():
 
 
 def test_build_stats_dataframes_dedupe_proc():
-  """Duplicate (jid, host, proc) keep=last so richer later samples win."""
+  """Duplicate (jid, host, proc): last-write non-peak; GREATEST vm_stk/exe/lib."""
   stats_list = [
       {"time": 1.0, "host": "h", "type": "cpu", "dev": "0", "event": "a", "value": 1.0, "wid": 64, "mult": 1, "unit": "#"},
   ]
   proc_list = [
-      {"jid": "j", "host": "h", "proc": "p", "device": "p/1/0/0", "vm_rss": 10, "threads": 1},
-      {"jid": "j", "host": "h", "proc": "p", "device": "p/1/0/0", "vm_rss": 99, "threads": 4},
+      {
+          "jid": "j",
+          "host": "h",
+          "proc": "p",
+          "device": "p/1/0/0",
+          "vm_rss": 10,
+          "vm_peak": 900,
+          "vm_stk": 100,
+          "vm_exe": 50,
+          "vm_lib": 20,
+          "threads": 1,
+      },
+      {
+          "jid": "j",
+          "host": "h",
+          "proc": "p",
+          "device": "p/2/0/0",
+          "vm_rss": 99,
+          "vm_peak": 800,
+          "vm_stk": 40,
+          "vm_exe": 60,
+          "vm_lib": 10,
+          "threads": 4,
+      },
   ]
   stats_df, proc_df = build_stats_dataframes(stats_list, proc_list)
   assert len(stats_df) == 1
   assert len(proc_df) == 1
   assert proc_df.iloc[0]["proc"] == "p"
   assert int(proc_df.iloc[0]["vm_rss"]) == 99
+  assert int(proc_df.iloc[0]["vm_peak"]) == 800
   assert int(proc_df.iloc[0]["threads"]) == 4
+  assert int(proc_df.iloc[0]["vm_stk"]) == 100
+  assert int(proc_df.iloc[0]["vm_exe"]) == 60
+  assert int(proc_df.iloc[0]["vm_lib"]) == 20
+  assert proc_df.iloc[0]["device"] == "p/2/0/0"
 
 
 def test_build_stats_dataframes_records():
