@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { vi, afterEach, describe, expect, it } from "vitest";
 import BokehEmbed from "./BokehEmbed";
 import { SessionContext } from "../session-context";
@@ -123,6 +124,34 @@ describe("BokehEmbed", () => {
     await waitFor(() => expect(embedItem).toHaveBeenCalled());
     await waitFor(() => expect(onReady).toHaveBeenCalledWith(true));
     expect(doc.idle.disconnect).toHaveBeenCalled();
+  });
+
+  it("does not re-embed when onPlotReadyChange triggers parent setState", async () => {
+    const embedItem = vi.fn(() => Promise.resolve(embedViewsWithIdleDoc()));
+    window.Bokeh = { embed: { embed_item: embedItem } };
+    const readyCalls: boolean[] = [];
+
+    function Parent() {
+      const [, setReady] = useState(false);
+      return (
+        <BokehEmbed
+          item={VALID_BOKEH_JSON_ITEM}
+          id="bokeh-callback-flicker"
+          plotName="Flicker"
+          onPlotReadyChange={(ready) => {
+            readyCalls.push(ready);
+            setReady(ready);
+          }}
+        />
+      );
+    }
+
+    renderBokehEmbed(<Parent />);
+    await waitFor(() => expect(embedItem).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(readyCalls).toContain(true));
+    await drainBokehResizeBroadcasts();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(embedItem).toHaveBeenCalledTimes(1);
   });
 
   it("uses embedMinHeightPx for plot slot minHeight while placeholder is shown", async () => {

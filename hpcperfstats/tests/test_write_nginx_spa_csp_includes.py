@@ -42,7 +42,8 @@ def test_inject_csp_meta_covers_inline_script_hash(tmp_path: Path):
   assert "unsafe-inline" not in html.split("script-src")[1].split(";")[0]
   pub_html = (pub / "index.html").read_text(encoding="utf-8")
   assert "style-src 'self' 'unsafe-inline'" in pub_html
-  assert "unsafe-eval" not in pub_html
+  assert "unsafe-eval" in pub_html
+  assert "unsafe-inline" not in pub_html.split("script-src")[1].split(";")[0]
 
 
 def test_build_csp_policy_bokeh_style_inline_omits_style_hashes():
@@ -89,8 +90,9 @@ def test_write_spa_csp_includes_writes_only_to_out_dir(tmp_path: Path):
   assert "style-src 'self' 'unsafe-inline'" in machine_text
   assert "style-src 'self' 'unsafe-inline'" in pub_text
   assert "unsafe-eval" in machine_text
-  assert "unsafe-eval" not in pub_text
+  assert "unsafe-eval" in pub_text
   assert "'unsafe-hashes'" not in machine_text
+  assert "unsafe-inline" not in pub_text.split("script-src ")[1].split(";")[0]
 
 
 def test_inject_replaces_prior_meta():

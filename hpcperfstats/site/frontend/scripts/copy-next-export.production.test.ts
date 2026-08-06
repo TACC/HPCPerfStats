@@ -116,7 +116,7 @@ describe("copy-next-export production mode", () => {
 
     const pubHtml = fs.readFileSync(path.join(targetDir, "pub", "index.html"), "utf8");
     expect(pubHtml).toContain("style-src 'self' 'unsafe-inline'");
-    expect(pubHtml).not.toContain("unsafe-eval");
+    expect(pubHtml).toContain("unsafe-eval");
 
     const machineInc = fs.readFileSync(
       path.join(tmpRoot, "edge_nginx", "nginx-csp-machine.inc"),
@@ -130,7 +130,7 @@ describe("copy-next-export production mode", () => {
     expect(machineInc).toContain("style-src 'self' 'unsafe-inline'");
     expect(machineInc).toContain("unsafe-eval");
     expect(pubInc).toContain("style-src 'self' 'unsafe-inline'");
-    expect(pubInc).not.toContain("unsafe-eval");
+    expect(pubInc).toContain("unsafe-eval");
 
     const scriptHash = sha256CspHash(scriptBody);
     const styleHash = sha256CspHash(styleBody);
@@ -142,7 +142,9 @@ describe("copy-next-export production mode", () => {
     // script-src must never allow unsafe-inline
     const machineScriptSrc = machineInc.split("script-src ")[1].split(";")[0];
     expect(machineScriptSrc).not.toContain("unsafe-inline");
-
+    const pubScriptSrc = pubInc.split("script-src ")[1].split(";")[0];
+    expect(pubScriptSrc).not.toContain("unsafe-inline");
+    expect(pubScriptSrc).toContain("unsafe-eval");
     const recomputed = collectInlineCspHashes(path.join(targetDir, "machine"));
     expect(recomputed.scriptHashes).toContain(scriptHash);
     expect(recomputed.styleHashes).toContain(styleHash);

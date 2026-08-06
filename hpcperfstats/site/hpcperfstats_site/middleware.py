@@ -10,7 +10,7 @@ Attributes:
   DEFAULT_CSP: Bokeh-relaxed HTML CSP (self scripts/styles + unsafe-eval; no unsafe-inline).
   DEFAULT_CSP_NO_ACTIVE: CSP for redirects, JSON, and empty non-HTML responses.
   DEFAULT_CSP_REPORT_ONLY: Report-only CSP used to stage further tightening.
-  DEFAULT_CSP_STRICT: Strict HTML CSP without unsafe-eval for login/public shells.
+  DEFAULT_CSP_STRICT: Strict HTML CSP without unsafe-eval for login shells.
   DEFAULT_PERMISSIONS_POLICY: Permissions-Policy value applied by DefaultSecurityHeadersMiddleware.
   _BOKEH_RELAXED_CSP_PREFIXES: Path prefixes that keep Bokeh unsafe-eval for HTML responses.
   _REDIRECT_STATUSES: HTTP redirect status codes treated as no-active-content responses.
@@ -49,14 +49,14 @@ DEFAULT_CSP = (
   "img-src 'self' data:; "
   "font-src 'self' data:; "
   "style-src 'self'; "
-  # Bokeh embed on /machine/* may still require unsafe-eval until all CustomJS is gone.
+  # Bokeh embed on /machine/* and /pub/* may still require unsafe-eval.
   "script-src 'self' 'unsafe-eval'; "
   "connect-src 'self'; "
   "upgrade-insecure-requests; "
   "report-uri /csp-report/;"
 )
 
-# Strict CSP without unsafe-eval for non-Bokeh HTML shells (login, public dashboards).
+# Strict CSP without unsafe-eval for non-Bokeh HTML shells (login).
 DEFAULT_CSP_STRICT = (
   "default-src 'self'; "
   "base-uri 'self'; "
@@ -107,6 +107,7 @@ DEFAULT_CSP_REPORT_ONLY = (
 # Paths that embed Bokeh and keep relaxed script-src (unsafe-eval) for HTML documents.
 _BOKEH_RELAXED_CSP_PREFIXES = (
   "/machine/",
+  "/pub/",
   "/api/jobs/",
   "/api/host_plot/",
 )
@@ -165,7 +166,7 @@ def _csp_for_request(request: HttpRequest, response: HttpResponse) -> str:
   if response.status_code in _REDIRECT_STATUSES or not _response_is_html(response):
     return DEFAULT_CSP_NO_ACTIVE
   path = request.path or ""
-  if path.startswith("/login_prompt") or path == "/pub/" or path.startswith("/pub/"):
+  if path.startswith("/login_prompt"):
     return DEFAULT_CSP_STRICT
   if any(path.startswith(prefix) for prefix in _BOKEH_RELAXED_CSP_PREFIXES):
     return DEFAULT_CSP

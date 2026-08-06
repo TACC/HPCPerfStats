@@ -363,11 +363,16 @@ export default function BokehEmbed({
   const [errorDetailsOpen, setErrorDetailsOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
   const errorDetailsPanelId = `${id}-plot-error-details`;
+  // Keep callback identity out of remount/embed effect deps — parents often pass
+  // inline onPlotReadyChange that setState on ready and would otherwise loop
+  // dispose → re-embed_item (Job Detail flicker).
+  const onPlotReadyChangeRef = useRef(onPlotReadyChange);
+  onPlotReadyChangeRef.current = onPlotReadyChange;
   const failEmbed = useCallback((reason: string) => {
     setFailureReason(reason);
     setLoadFailed(true);
-    if (onPlotReadyChange) onPlotReadyChange(false);
-  }, [onPlotReadyChange]);
+    onPlotReadyChangeRef.current?.(false);
+  }, []);
 
   const hasData = !!item;
   const showPlaceholder = !hasData || !plotReady || loadFailed;
@@ -385,8 +390,8 @@ export default function BokehEmbed({
     setFailureReason(null);
     setErrorDetailsOpen(false);
     setCopyStatus("");
-    if (onPlotReadyChange) onPlotReadyChange(false);
-  }, [item, id, onPlotReadyChange]);
+    onPlotReadyChangeRef.current?.(false);
+  }, [item, id]);
 
   useLayoutEffect(() => {
     if (!item) {
@@ -496,7 +501,7 @@ export default function BokehEmbed({
                         });
                       }
                       setPlotReady(true);
-                      if (onPlotReadyChange) onPlotReadyChange(true);
+                      onPlotReadyChangeRef.current?.(true);
                     }
                     if (typeof requestAnimationFrame === "function") {
                       requestAnimationFrame(() => requestAnimationFrame(markPlotReady));
@@ -546,7 +551,6 @@ export default function BokehEmbed({
   }, [
     item,
     id,
-    onPlotReadyChange,
     maximizeMode,
     viewportAllowsEmbed,
     effectiveSettleMs,
@@ -562,8 +566,8 @@ export default function BokehEmbed({
     setLoadFailed(false);
     setFailureReason(null);
     setErrorDetailsOpen(false);
-    if (onPlotReadyChange) onPlotReadyChange(false);
-  }, [embedAllowed, onPlotReadyChange]);
+    onPlotReadyChangeRef.current?.(false);
+  }, [embedAllowed]);
 
   useEffect(() => {
     if (!plotReady || !maximizeMode || previewMode) return;

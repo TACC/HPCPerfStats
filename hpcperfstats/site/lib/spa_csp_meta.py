@@ -146,7 +146,7 @@ def build_csp_policy(
     script_hashes (list[str] | None): Quoted ``'sha256-…'`` tokens for scripts.
     style_hashes (list[str] | None): Quoted hashes for ``<style>`` bodies.
     style_attr_hashes (list[str] | None): Quoted hashes for ``style="…"`` attrs.
-    allow_unsafe_eval (bool): When True, append ``'unsafe-eval'`` (machine/Bokeh).
+    allow_unsafe_eval (bool): When True, append ``'unsafe-eval'`` (machine/pub Bokeh).
     allow_bokeh_style_inline (bool): When True, use ``style-src 'self'
       'unsafe-inline'`` and omit style hashes (CSP3 ignores ``unsafe-inline``
       when hashes are present). Required for BokehJS runtime ``<style>`` tags.
@@ -203,7 +203,7 @@ def build_nginx_csp_include(
     script_hashes (list[str] | None): Quoted ``'sha256-…'`` tokens for scripts.
     style_hashes (list[str] | None): Quoted hashes for ``<style>`` bodies.
     style_attr_hashes (list[str] | None): Quoted hashes for ``style="…"`` attrs.
-    allow_unsafe_eval (bool): When True, append ``'unsafe-eval'`` (machine/Bokeh).
+    allow_unsafe_eval (bool): When True, append ``'unsafe-eval'`` (machine/pub Bokeh).
     allow_bokeh_style_inline (bool): When True, Bokeh-safe ``style-src`` without
       style hashes (see ``build_csp_policy``).
 
@@ -255,11 +255,11 @@ def inject_csp_meta_into_frontend_tree(frontend_root: Path) -> int:
   """
   Embed per-document CSP meta into every SPA HTML file under ``frontend_root``.
 
-  Machine-tree pages allow Bokeh ``unsafe-eval``; other paths do not.
-  Machine and pub trees allow ``style-src 'unsafe-inline'`` for BokehJS
-  runtime ``<style>`` injection (script hashes remain). Policy script hashes
-  match that file's inline scripts so SPA heal cannot leave a stale nginx
-  header blocking the page.
+  Machine and pub SPA trees allow Bokeh ``unsafe-eval`` and
+  ``style-src 'unsafe-inline'`` for BokehJS embeds (script hashes remain;
+  no ``script-src 'unsafe-inline'``). Policy script hashes match that file's
+  inline scripts so SPA heal cannot leave a stale nginx header blocking
+  the page.
 
   Args:
     frontend_root (Path): Public SPA export root (``STATIC_ROOT/frontend``).
@@ -282,8 +282,13 @@ def inject_csp_meta_into_frontend_tree(frontend_root: Path) -> int:
       rel = path.relative_to(frontend_root).as_posix()
     except ValueError:
       rel = path.name
-    allow_eval = rel == "machine" or rel.startswith("machine/")
-    allow_bokeh_style = allow_eval or rel == "pub" or rel.startswith("pub/")
+    allow_eval = (
+        rel == "machine"
+        or rel.startswith("machine/")
+        or rel == "pub"
+        or rel.startswith("pub/")
+    )
+    allow_bokeh_style = allow_eval
     policy = build_csp_policy(
         **hashes,
         allow_unsafe_eval=allow_eval,
@@ -340,7 +345,7 @@ def write_spa_csp_includes(
   pub_out.write_text(
       build_nginx_csp_include(
           **pub_hashes,
-          allow_unsafe_eval=False,
+          allow_unsafe_eval=True,
           allow_bokeh_style_inline=True,
       ),
       encoding="utf-8",

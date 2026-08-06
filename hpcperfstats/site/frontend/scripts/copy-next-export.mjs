@@ -216,9 +216,12 @@ export function injectCspMetaIntoFrontendTree(frontendRoot) {
       const withoutMeta = raw.replace(CSP_META_RE, "");
       const hashes = extractInlineCspHashesFromHtml(withoutMeta);
       const rel = path.relative(frontendRoot, full).split(path.sep).join("/");
-      const allowUnsafeEval = rel === "machine" || rel.startsWith("machine/");
-      const allowBokehStyleInline =
-        allowUnsafeEval || rel === "pub" || rel.startsWith("pub/");
+      const allowUnsafeEval =
+        rel === "machine" ||
+        rel.startsWith("machine/") ||
+        rel === "pub" ||
+        rel.startsWith("pub/");
+      const allowBokehStyleInline = allowUnsafeEval;
       const policy = buildCspPolicy({
         ...hashes,
         allowUnsafeEval,
@@ -255,7 +258,7 @@ export function writeNginxCspIncludes(htmlRoot, outDir = htmlRoot) {
     path.join(outDir, "nginx-csp-pub.inc"),
     buildNginxCspInclude({
       ...pubHashes,
-      allowUnsafeEval: false,
+      allowUnsafeEval: true,
       allowBokehStyleInline: true,
     }),
     "utf8",
