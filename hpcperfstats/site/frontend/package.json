@@ -25,7 +25,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@base-ui/react": "^1.6.0",
+    "@base-ui/react": "^1.7.0",
     "@bokeh/bokehjs": "3.9.2",
     "@fontsource/inter": "^5.3.0",
     "@hookform/resolvers": "^5.7.1",
@@ -50,20 +50,20 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@orval/zod": "^8.23.0",
-    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/jest-dom": "7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.3",
     "@types/node": "^26.1.2",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
-    "@vitejs/plugin-react": "^6.0.3",
+    "@vitejs/plugin-react": "^6.0.5",
     "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-unused-imports": "^4.4.1",
     "globals": "^17.9.0",
-    "jest-axe": "^10.0.0",
-    "jsdom": "^29.1.1",
+    "jest-axe": "^11.0.0",
+    "jsdom": "^30.0.1",
     "knip": "^6.31.0",
     "orval": "^8.23.0",
     "typescript": "^6.0.3",
@@ -72,17 +72,18 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
-    "@hono/node-server": "^2.0.12",
+    "@babel/core": "^8.0.1",
+    "@hono/node-server": "^2.1.0",
     "brace-expansion": "^5.0.9",
     "dompurify": "^3.4.13",
     "esbuild": "^0.28.1",
-    "fast-uri": "^3.1.5",
+    "fast-uri": "^4.1.2",
     "hono": "^4.13.0",
     "ip-address": "^10.4.0",
-    "js-yaml": "^4.3.1",
+    "js-yaml": "^5.2.3",
     "lodash": "^4.18.1",
     "postcss": "^8.5.25",
     "sharp": "^0.35.3",
-    "undici": "^7.29.0"
+    "undici": "^8.10.0"
   }
 }

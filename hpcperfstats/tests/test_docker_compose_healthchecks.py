@@ -109,7 +109,7 @@ def test_proxy_dockerfile_pins_nginx_and_brotli_to_same_edge_version():
   assert match is not None, "proxy.Dockerfile must pin NGINX_EDGE_VERSION"
   pinned = match.group(1)
   # Current Alpine edge main (x86_64) nginx + nginx-mod-http-brotli; bump both ARG and this assert.
-  assert pinned == "1.30.4-r2"
+  assert pinned == "1.30.4-r3"
   assert "nginx=${NGINX_EDGE_VERSION}" in dockerfile
   assert "nginx-mod-http-brotli=${NGINX_EDGE_VERSION}" in dockerfile
   assert "ALPINE_EDGE_MAIN=" in dockerfile
