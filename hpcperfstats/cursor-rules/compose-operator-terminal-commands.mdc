@@ -273,6 +273,23 @@ Compression sizes are **functions**, not views: `hypertable_compression_stats('h
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT pg_size_pretty(sum(before_compression_total_bytes)) AS before_compression, pg_size_pretty(sum(after_compression_total_bytes)) AS after_compression, round(sum(before_compression_total_bytes)::numeric / NULLIF(sum(after_compression_total_bytes), 0), 1) AS compression_ratio, pg_size_pretty(sum(before_compression_total_bytes) - sum(after_compression_total_bytes)) AS extra_space_needed_to_decompress FROM hypertable_compression_stats('host_data');"
 ```
 
+### Anti-pattern — inventing `conf_parser.get_metrics_pool`
+
+`hpcperfstats.dbload.lib.conf_parser` has **no** `get_metrics_pool()`. Operator `cfg.get_metrics_pool()` raises **`AttributeError`** (hpcperfstats04 2026-08-06). Use **`get_metrics_pool_process_count()`** and/or **`get_metrics_pool_process_cap()`**. Do **not** chain `python3 -c … && docker compose logs …` when the Python can fail — empty exit short-circuits and **drops the log paste**.
+
+| Do | Don't |
+|----|-------|
+| `print(cfg.get_metrics_pool_process_count())` | `cfg.get_metrics_pool()` |
+| Separate host-side `logs … \| grep` block | `python … && logs …` after a fallible one-liner |
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as cfg
+print(\"metrics_pool_process_count\", cfg.get_metrics_pool_process_count())
+print(\"metrics_pool_process_cap\", cfg.get_metrics_pool_process_cap())
+"'
+```
+
 ### Anti-pattern — inventing `job_data.metrics_complete`
 
 `job_data` has **no** `metrics_complete` field. Operator ORM `.values("metrics_complete")` raises **`FieldError: Cannot resolve keyword 'metrics_complete'`** (hpcperfstats03, 2026-07-23). Use **`metrics_distinct_time_count`** (and related telemetry fields) for metrics readiness.

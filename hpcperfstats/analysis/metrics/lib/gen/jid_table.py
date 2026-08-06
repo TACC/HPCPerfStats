@@ -576,6 +576,317 @@ def _split_time_filter_for_timeout(time_filter: Any) -> Any:
   )
 
 
+def _iter_host_time_query_chunks(
+  hosts: Any,
+  time_filter: Any,
+  *,
+  batch_size: Any | None = None,
+  slice_s: Any | None = None,
+) -> Iterator[Any]:
+  """
+  Yield ``(host_chunk, time_kw)`` over host batches × wall-clock time slices.
+
+  Args:
+    hosts (Any): Accounting host FQDNs for ``host__in``.
+    time_filter (Any): Base time kwargs (``time__in`` or gte/lte window).
+    batch_size (Any | None): Hosts per chunk (default ``JID_TABLE_HOST_QUERY_BATCH``).
+    slice_s (Any | None): Seconds per time slice; default from INI
+      ``metrics_plot_aggregate_time_slice_s``.
+
+  Yields:
+    Iterator[Any]: ``(host_chunk, time_kw)`` pairs.
+
+  Examples:
+    >>> list(_iter_host_time_query_chunks([], {}))
+    []
+  """
+  host_list = _listify_acct_hosts(hosts)
+  if not host_list:
+    return
+  if slice_s is None:
+    slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+  tkw = dict(time_filter) if isinstance(time_filter, dict) else {}
+  time_chunks = list(_iter_aggregate_time_filter_chunks(tkw, int(slice_s)))
+  if not time_chunks:
+    time_chunks = [tkw] if tkw else [{}]
+  for tf in time_chunks:
+    for host_chunk in _iter_acct_host_batches(host_list, batch_size):
+      yield host_chunk, tf
+
+
+def _run_with_host_time_timeout_retry(
+  hosts: Any,
+  time_filter: Any,
+  run: Any,
+  merge: Any,
+  *,
+  min_hosts: int = 1,
+  max_attempts: int = 2,
+  empty: Any = None,
+) -> Any:
+  """
+  Run ``run(hosts, time_filter)``; on statement timeout bisect hosts then time.
+
+  Args:
+    hosts (Any): Hostnames for this attempt.
+    time_filter (Any): Time kwargs or ``None`` (legacy callers).
+    run (Any): Callable ``(hosts_list, time_filter) -> T``.
+    merge (Any): Callable ``(left, right) -> T`` after a split.
+    min_hosts (int): Stop host bisect at this size.
+    max_attempts (int): Retries when a minimal chunk still times out.
+    empty (Any): Value when ``hosts`` is empty (default ``[]``).
+
+  Returns:
+    Any: Value from ``run`` or merged host/time splits.
+
+  Raises:
+    Exception: Non-timeout errors, or timeout after splits are exhausted.
+    last_exc: Re-raised when a statement_timeout remains after host/time
+      splits and ``max_attempts`` are exhausted.
+
+  Examples:
+    >>> _run_with_host_time_timeout_retry([], None, lambda h, t: [], lambda a, b: a + b)
+    []
+  """
+  host_list = [str(h) for h in (hosts or []) if h]
+  if not host_list:
+    return [] if empty is None else empty
+  last_exc = None
+  tf = time_filter
+  for attempt in range(max_attempts):
+    try:
+      close_old_connections()
+      return run(host_list, tf)
+    except OperationalError as exc:
+      last_exc = exc
+      if not _is_statement_timeout_error(exc):
+        raise
+      if len(host_list) > min_hosts:
+        mid = max(1, len(host_list) // 2)
+        left = _run_with_host_time_timeout_retry(
+            host_list[:mid],
+            tf,
+            run,
+            merge,
+            min_hosts=min_hosts,
+            max_attempts=max_attempts,
+            empty=empty,
+        )
+        right = _run_with_host_time_timeout_retry(
+            host_list[mid:],
+            tf,
+            run,
+            merge,
+            min_hosts=min_hosts,
+            max_attempts=max_attempts,
+            empty=empty,
+        )
+        return merge(left, right)
+      split = _split_time_filter_for_timeout(tf) if tf is not None else None
+      if split is not None:
+        left_tf, right_tf = split
+        left = _run_with_host_time_timeout_retry(
+            host_list,
+            left_tf,
+            run,
+            merge,
+            min_hosts=min_hosts,
+            max_attempts=max_attempts,
+            empty=empty,
+        )
+        right = _run_with_host_time_timeout_retry(
+            host_list,
+            right_tf,
+            run,
+            merge,
+            min_hosts=min_hosts,
+            max_attempts=max_attempts,
+            empty=empty,
+        )
+        return merge(left, right)
+      if attempt + 1 >= max_attempts:
+        raise
+      close_old_connections()
+  if last_exc is not None:
+    raise last_exc
+  return [] if empty is None else empty
+
+
+def _fold_sum_by_key(rows: Any, key_fields: Any, sum_field: str) -> Any:
+  """
+  Merge dict rows sharing ``key_fields`` by summing ``sum_field``.
+
+  Args:
+    rows (Any): Iterable of dict-like ORM annotate rows.
+    key_fields (Any): Sequence of key column names.
+    sum_field (str): Numeric field to sum.
+
+  Returns:
+    Any: List of folded dict rows.
+
+  Examples:
+    >>> _fold_sum_by_key(
+    ...     [{"event": "a", "delta_sum": 1}, {"event": "a", "delta_sum": 2}],
+    ...     ("event",),
+    ...     "delta_sum",
+    ... )
+    [{'event': 'a', 'delta_sum': 3.0}]
+  """
+  keys = tuple(key_fields)
+  acc: dict = {}
+  for r in rows or []:
+    if not isinstance(r, dict):
+      continue
+    key = tuple(r.get(k) for k in keys)
+    cur = acc.get(key)
+    if cur is None:
+      acc[key] = dict(r)
+      continue
+    try:
+      cur[sum_field] = float(cur.get(sum_field) or 0) + float(
+          r.get(sum_field) or 0
+      )
+    except (TypeError, ValueError):
+      pass
+  return list(acc.values())
+
+
+def _fold_max_by_key(rows: Any, key_fields: Any, max_field: str) -> Any:
+  """
+  Merge dict rows sharing ``key_fields`` by taking max of ``max_field``.
+
+  Args:
+    rows (Any): Iterable of dict-like ORM annotate rows.
+    key_fields (Any): Sequence of key column names.
+    max_field (str): Numeric field to maximize.
+
+  Returns:
+    Any: List of folded dict rows.
+
+  Examples:
+    >>> _fold_max_by_key(
+    ...     [{"host": "h1", "mv": 1}, {"host": "h1", "mv": 3}],
+    ...     ("host",),
+    ...     "mv",
+    ... )
+    [{'host': 'h1', 'mv': 3.0}]
+  """
+  keys = tuple(key_fields)
+  acc: dict = {}
+  for r in rows or []:
+    if not isinstance(r, dict):
+      continue
+    key = tuple(str(r.get(k) or "") for k in keys)
+    cur = acc.get(key)
+    if cur is None:
+      acc[key] = dict(r)
+      continue
+    try:
+      v_new = float(r.get(max_field))
+      v_old = float(cur.get(max_field))
+    except (TypeError, ValueError):
+      continue
+    if v_new > v_old:
+      cur[max_field] = v_new
+  return list(acc.values())
+
+
+def _fold_count_max_avg_rows(
+  rows: Any,
+  key_fields: Any,
+  *,
+  cnt_field: str = "cnt",
+  max_field: str = "vmax",
+  avg_field: str = "vmean",
+) -> Any:
+  """
+  Fold Count/Max/Avg annotate rows across host×time chunks.
+
+  ``cnt`` sums; ``max_field`` takes max; ``avg_field`` is count-weighted.
+
+  Args:
+    rows (Any): Iterable of dict rows with cnt/max/avg fields.
+    key_fields (Any): Grouping keys (e.g. host, dev, event).
+    cnt_field (str): Count column name.
+    max_field (str): Max column name.
+    avg_field (str): Mean column name.
+
+  Returns:
+    Any: List of folded dict rows.
+
+  Examples:
+    >>> _fold_count_max_avg_rows(
+    ...     [
+    ...         {"host": "h", "dev": "0", "event": "gpu_util",
+    ...          "cnt": 2, "vmax": 10.0, "vmean": 4.0},
+    ...         {"host": "h", "dev": "0", "event": "gpu_util",
+    ...          "cnt": 2, "vmax": 20.0, "vmean": 8.0},
+    ...     ],
+    ...     ("host", "dev", "event"),
+    ... )
+    [{'host': 'h', 'dev': '0', 'event': 'gpu_util', 'cnt': 4,
+      'vmax': 20.0, 'vmean': 6.0}]
+  """
+  keys = tuple(key_fields)
+  acc: dict = {}
+  for r in rows or []:
+    if not isinstance(r, dict):
+      continue
+    key = tuple(str(r.get(k) or "") for k in keys)
+    cur = acc.get(key)
+    if cur is None:
+      acc[key] = dict(r)
+      continue
+    try:
+      c1 = int(cur.get(cnt_field) or 0)
+      c2 = int(r.get(cnt_field) or 0)
+    except (TypeError, ValueError):
+      c1, c2 = 0, 0
+    try:
+      vmax1 = float(cur.get(max_field)) if cur.get(max_field) is not None else None
+      vmax2 = float(r.get(max_field)) if r.get(max_field) is not None else None
+    except (TypeError, ValueError):
+      vmax1, vmax2 = cur.get(max_field), r.get(max_field)
+    if vmax1 is None:
+      cur[max_field] = vmax2
+    elif vmax2 is not None and float(vmax2) > float(vmax1):
+      cur[max_field] = vmax2
+    m1 = cur.get(avg_field)
+    m2 = r.get(avg_field)
+    try:
+      m1f = float(m1) if m1 is not None else None
+      m2f = float(m2) if m2 is not None else None
+    except (TypeError, ValueError):
+      m1f, m2f = None, None
+    total_c = c1 + c2
+    if total_c > 0 and m1f is not None and m2f is not None:
+      cur[avg_field] = (m1f * c1 + m2f * c2) / float(total_c)
+    elif m2f is not None and c1 == 0:
+      cur[avg_field] = m2f
+    elif m1f is None and m2f is not None:
+      cur[avg_field] = m2f
+    cur[cnt_field] = total_c
+  return list(acc.values())
+
+
+def _merge_list_results(left: Any, right: Any) -> Any:
+  """
+  Concatenate two list-like query results (timeout-split merge).
+
+  Args:
+    left (Any): First chunk (list-like or empty).
+    right (Any): Second chunk (list-like or empty).
+
+  Returns:
+    Any: Concatenated list of rows from ``left`` then ``right``.
+
+  Examples:
+    >>> _merge_list_results([1], [2])
+    [1, 2]
+  """
+  return list(left or []) + list(right or [])
+
+
 def _assemble_sum_val_parts_bounded(
   parts: Any,
   conv: float,
@@ -657,13 +968,9 @@ def _queryset_to_dataframe_with_host_chunk_retry(
   """
   import pandas as pd
 
-  hosts = [str(h) for h in host_chunk if h]
-  if not hosts:
-    return pd.DataFrame()
-  last_exc = None
-  tf = time_filter
+  empty = pd.DataFrame()
 
-  def _run(hosts_list: Any, tf_cur: Any) -> Any:
+  def run(hosts_list: Any, tf_cur: Any) -> Any:
     """
     Execute ``build_qs`` for one host/time slice.
 
@@ -678,67 +985,40 @@ def _queryset_to_dataframe_with_host_chunk_retry(
       >>> True
       True
     """
-    close_old_connections()
     if tf_cur is not None:
       return queryset_to_dataframe(build_qs(hosts_list, tf_cur))
     return queryset_to_dataframe(build_qs(hosts_list))
 
-  for attempt in range(max_attempts):
-    try:
-      return _run(hosts, tf)
-    except OperationalError as exc:
-      last_exc = exc
-      if not _is_statement_timeout_error(exc):
-        raise
-      if len(hosts) > min_hosts:
-        mid = max(1, len(hosts) // 2)
-        left = _queryset_to_dataframe_with_host_chunk_retry(
-            hosts[:mid],
-            build_qs,
-            min_hosts=min_hosts,
-            max_attempts=max_attempts,
-            time_filter=tf,
-        )
-        right = _queryset_to_dataframe_with_host_chunk_retry(
-            hosts[mid:],
-            build_qs,
-            min_hosts=min_hosts,
-            max_attempts=max_attempts,
-            time_filter=tf,
-        )
-        if left.empty:
-          return right
-        if right.empty:
-          return left
-        return pd.concat([left, right], ignore_index=True)
-      split = _split_time_filter_for_timeout(tf) if tf is not None else None
-      if split is not None:
-        left_tf, right_tf = split
-        left = _queryset_to_dataframe_with_host_chunk_retry(
-            hosts,
-            build_qs,
-            min_hosts=min_hosts,
-            max_attempts=max_attempts,
-            time_filter=left_tf,
-        )
-        right = _queryset_to_dataframe_with_host_chunk_retry(
-            hosts,
-            build_qs,
-            min_hosts=min_hosts,
-            max_attempts=max_attempts,
-            time_filter=right_tf,
-        )
-        if left.empty:
-          return right
-        if right.empty:
-          return left
-        return pd.concat([left, right], ignore_index=True)
-      if attempt + 1 >= max_attempts:
-        raise
-      close_old_connections()
-  if last_exc is not None:
-    raise last_exc
-  return pd.DataFrame()
+  def merge(left: Any, right: Any) -> Any:
+    """
+    Concatenate two DataFrame chunks.
+
+    Args:
+      left (Any): Left chunk.
+      right (Any): Right chunk.
+
+    Returns:
+      Any: Merged DataFrame.
+
+    Examples:
+      >>> True
+      True
+    """
+    if left is None or getattr(left, "empty", True):
+      return right if right is not None else empty
+    if right is None or getattr(right, "empty", True):
+      return left
+    return pd.concat([left, right], ignore_index=True)
+
+  return _run_with_host_time_timeout_retry(
+      host_chunk,
+      time_filter,
+      run,
+      merge,
+      min_hosts=min_hosts,
+      max_attempts=max_attempts,
+      empty=empty,
+  )
 
 
 def _fetch_host_data_values_frames(
@@ -2168,9 +2448,7 @@ class jid_table:
 
   def _full_host_data_rows_batched(self, cols: Any) -> Any:
     """
-    values_list rows for the job window, chunking host__in for large node.
-    
-      counts.
+    values_list rows for the job window, chunking host×time with timeout split.
     
     Args:
       cols (Any): Cols passed to this helper.
@@ -2181,25 +2459,62 @@ class jid_table:
     Examples:
       >>> jid_table()._full_host_data_rows_batched(None)  # doctest: +SKIP
     """
-    rows = []
+    from hpcperfstats.analysis.metrics.lib.metrics import METRICS_HOST_QUERY_BATCH
+
+    rows: list = []
     if not self.acct_host_list or not self._base_filter:
       return rows
     tkw = self._host_data_time_filter_kwargs()
-    for host_chunk in _iter_acct_host_batches(self.acct_host_list):
+    ncol = len(cols)
+    slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+
+    def run(hosts_list: Any, tf_cur: Any) -> Any:
+      """
+      Materialize one host×time values_list chunk.
+
+      Args:
+        hosts_list (Any): Hostnames for this attempt.
+        tf_cur (Any): Time filter dict.
+
+      Returns:
+        Any: List of truncated tuples.
+
+      Examples:
+        >>> True
+        True
+      """
       qs = (
           host_data.objects.filter(
-              host__in=host_chunk,
-              **tkw,
+              host__in=hosts_list,
+              **(tf_cur or {}),
           )
           .values_list(*cols)
           .order_by("host", "time")
       )
+      out = []
       for r in qs:
         if not isinstance(r, (list, tuple)):
           continue
-        if len(r) < len(cols):
+        if len(r) < ncol:
           continue
-        rows.append(tuple(r[:len(cols)]))
+        out.append(tuple(r[:ncol]))
+      return out
+
+    for host_chunk, tf in _iter_host_time_query_chunks(
+        self.acct_host_list,
+        tkw,
+        batch_size=METRICS_HOST_QUERY_BATCH,
+        slice_s=slice_s,
+    ):
+      rows.extend(
+          _run_with_host_time_timeout_retry(
+              host_chunk,
+              tf,
+              run,
+              _merge_list_results,
+              empty=[],
+          )
+      )
     return rows
 
   def get_host_time_df(self) -> Any:
@@ -2575,6 +2890,8 @@ class jid_table:
     Examples:
       >>> jid_table().get_llite_delta_by_event()  # doctest: +SKIP
     """
+    from hpcperfstats.analysis.metrics.lib.metrics import METRICS_HOST_QUERY_BATCH
+
     byte_events = ["vfs_read_bytes", "vfs_write_bytes"]
 
     def _llite_fn() -> Any:
@@ -2587,24 +2904,82 @@ class jid_table:
       Examples:
         >>> jid_table()._llite_fn()  # doctest: +SKIP
       """
+      import pandas as pd
+
+      if not self.acct_host_list or not self._base_filter:
+        return queryset_to_dataframe(None)
+      tkw = self._host_data_time_filter_kwargs()
+      slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
       for typ in type_probe_names("lustre_llite"):
         probed = events_probe_names(byte_events, typ=typ)
-        qs = (self._host_data_qs(
-            type=typ,
-            event__in=probed,
-        ).values("event").annotate(delta_sum=Sum("delta")).order_by("event"))
-        df = queryset_to_dataframe(qs)
-        if not df.empty:
-          if "event" in df.columns:
-            df = df.copy()
-            df["event"] = df["event"].map(
-                lambda e: canonical_event_name_for_type(typ, str(e)))
-            df = (
-                df.groupby("event", as_index=False)["delta_sum"]
-                .sum()
-                .sort_values("event")
-            )
-          return df
+
+        def run(
+            hosts_list: Any,
+            tf_cur: Any,
+            _typ: Any = typ,
+            _probed: Any = probed,
+        ) -> Any:
+          """
+          SUM(delta) by event for one host×time chunk.
+
+          Args:
+            hosts_list (Any): Hostnames for this attempt.
+            tf_cur (Any): Time filter dict.
+            _typ (Any): Bound Lustre type name.
+            _probed (Any): Bound event name list.
+
+          Returns:
+            Any: List of annotate dicts.
+
+          Examples:
+            >>> True
+            True
+          """
+          qs = (
+              host_data.objects.filter(
+                  host__in=hosts_list,
+                  **(tf_cur or {}),
+                  type=_typ,
+                  event__in=_probed,
+              )
+              .values("event")
+              .annotate(delta_sum=Sum("delta"))
+              .order_by("event")
+          )
+          return list(qs)
+
+        all_rows: list = []
+        for host_chunk, tf in _iter_host_time_query_chunks(
+            self.acct_host_list,
+            tkw,
+            batch_size=METRICS_HOST_QUERY_BATCH,
+            slice_s=slice_s,
+        ):
+          all_rows.extend(
+              _run_with_host_time_timeout_retry(
+                  host_chunk,
+                  tf,
+                  run,
+                  _merge_list_results,
+                  empty=[],
+              )
+          )
+        all_rows = _fold_sum_by_key(all_rows, ("event",), "delta_sum")
+        if not all_rows:
+          continue
+        df = pd.DataFrame(all_rows)
+        if df.empty:
+          continue
+        if "event" in df.columns:
+          df = df.copy()
+          df["event"] = df["event"].map(
+              lambda e: canonical_event_name_for_type(typ, str(e)))
+          df = (
+              df.groupby("event", as_index=False)["delta_sum"]
+              .sum()
+              .sort_values("event")
+          )
+        return df
       return queryset_to_dataframe(None)
 
     key = make_cache_key(
@@ -2631,6 +3006,8 @@ class jid_table:
     Examples:
       >>> jid_table().get_nfs_delta_totals_mb()  # doctest: +SKIP
     """
+    from hpcperfstats.analysis.metrics.lib.metrics import METRICS_HOST_QUERY_BATCH
+
     nfs_read_events = ("normal_read", "direct_read", "server_read")
     nfs_write_events = ("normal_write", "direct_write", "server_write")
     all_events = list(nfs_read_events) + list(nfs_write_events)
@@ -2645,23 +3022,72 @@ class jid_table:
       Examples:
         >>> jid_table()._nfs_fn()  # doctest: +SKIP
       """
-      df = queryset_to_dataframe(None)
+      if not self.acct_host_list or not self._base_filter:
+        return None
+      tkw = self._host_data_time_filter_kwargs()
+      slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+      all_rows: list = []
       for typ in type_probe_names("nfs"):
-        qs = (
-            self._host_data_qs(
-                type=typ,
-                event__in=all_events,
-            ).values("event").annotate(delta_sum=Sum("delta")).order_by("event"))
-        df = queryset_to_dataframe(qs)
-        if not df.empty:
+
+        def run(hosts_list: Any, tf_cur: Any, _typ: Any = typ) -> Any:
+          """
+          SUM(delta) by NFS event for one host×time chunk.
+
+          Args:
+            hosts_list (Any): Hostnames for this attempt.
+            tf_cur (Any): Time filter dict.
+            _typ (Any): Bound NFS type name.
+
+          Returns:
+            Any: List of annotate dicts.
+
+          Examples:
+            >>> True
+            True
+          """
+          qs = (
+              host_data.objects.filter(
+                  host__in=hosts_list,
+                  **(tf_cur or {}),
+                  type=_typ,
+                  event__in=all_events,
+              )
+              .values("event")
+              .annotate(delta_sum=Sum("delta"))
+              .order_by("event")
+          )
+          return list(qs)
+
+        typ_rows: list = []
+        for host_chunk, tf in _iter_host_time_query_chunks(
+            self.acct_host_list,
+            tkw,
+            batch_size=METRICS_HOST_QUERY_BATCH,
+            slice_s=slice_s,
+        ):
+          typ_rows.extend(
+              _run_with_host_time_timeout_retry(
+                  host_chunk,
+                  tf,
+                  run,
+                  _merge_list_results,
+                  empty=[],
+              )
+          )
+        typ_rows = _fold_sum_by_key(typ_rows, ("event",), "delta_sum")
+        if typ_rows:
+          all_rows = typ_rows
           break
-      if df.empty or "delta_sum" not in df.columns:
+      if not all_rows:
         return None
       read_total = 0.0
       write_total = 0.0
-      for _, row in df.iterrows():
+      for row in all_rows:
         ev = row.get("event")
-        ds = float(row.get("delta_sum") or 0)
+        try:
+          ds = float(row.get("delta_sum") or 0)
+        except (TypeError, ValueError):
+          ds = 0.0
         if ev in nfs_read_events:
           read_total += ds
         elif ev in nfs_write_events:

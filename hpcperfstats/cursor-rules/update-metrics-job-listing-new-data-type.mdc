@@ -28,4 +28,5 @@ Whenever you add **extra persisted or prewarmed computation** for a job that run
 ## Overlap
 
 - Complements **`end-to-end-feature-wiring-contract.mdc`** (multi-layer wiring) and **`job-plot-artifacts-caching.mdc`** / **`runtime-resource-and-metrics-safety.mdc`** (artifacts, invalidation, metrics safety).
+- Complements **`update-metrics-batch-resilience.mdc`** — listing/staleness gate is separate from the **host×time chunk + timeout-split** law for every new `host_data` ORM path on the compute worker.
 - Complements **`every-error-regression-test.mdc`** and **`test-first-discipline.mdc`** for selector + fingerprint tests.

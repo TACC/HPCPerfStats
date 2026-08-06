@@ -689,7 +689,16 @@ def test_jid_table_get_llite_delta_by_event_cache_set_failure_still_returns_df()
   inst = jid_table.__new__(jid_table)
   inst.jid = "jid-llite-set-fail"
   inst._large_job_plot_cache_token = "full"
-  inst._host_data_qs = lambda **extra: FakeQs()
+  inst.acct_host_list = ["h1.example.com"]
+  inst._base_filter = {
+      "host__in": ["h1.example.com"],
+      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
+      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+  }
+  inst._host_data_time_filter_kwargs = lambda: {
+      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
+      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+  }
 
   mock_cache = MagicMock()
   mock_cache.get.side_effect = lambda key, default=None: default
@@ -700,7 +709,11 @@ def test_jid_table_get_llite_delta_by_event_cache_set_failure_still_returns_df()
         "hpcperfstats.analysis.metrics.lib.gen.jid_table.get_site_content_cache_timeout",
         return_value=60,
     ):
-      df = jid_table.get_llite_delta_by_event(inst)
+      with patch(
+          "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data"
+      ) as hd:
+        hd.objects.filter.return_value = FakeQs()
+        df = jid_table.get_llite_delta_by_event(inst)
 
   assert isinstance(df, pd.DataFrame)
   assert not df.empty
@@ -730,7 +743,16 @@ def test_jid_table_get_nfs_delta_totals_mb_cache_set_failure_still_returns_list(
   inst = jid_table.__new__(jid_table)
   inst.jid = "jid-nfs-set-fail"
   inst._large_job_plot_cache_token = "full"
-  inst._host_data_qs = lambda **extra: FakeQs()
+  inst.acct_host_list = ["h1.example.com"]
+  inst._base_filter = {
+      "host__in": ["h1.example.com"],
+      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
+      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+  }
+  inst._host_data_time_filter_kwargs = lambda: {
+      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
+      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+  }
 
   mock_cache = MagicMock()
   mock_cache.get.side_effect = lambda key, default=None: default
@@ -741,7 +763,11 @@ def test_jid_table_get_nfs_delta_totals_mb_cache_set_failure_still_returns_list(
         "hpcperfstats.analysis.metrics.lib.gen.jid_table.get_site_content_cache_timeout",
         return_value=60,
     ):
-      out = jid_table.get_nfs_delta_totals_mb(inst)
+      with patch(
+          "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data"
+      ) as hd:
+        hd.objects.filter.return_value = FakeQs()
+        out = jid_table.get_nfs_delta_totals_mb(inst)
 
   assert out == [2.0, 1.0]
   mock_cache.set.assert_called()
@@ -1378,3 +1404,180 @@ def test_apply_large_job_sampling_uses_host_sample_budget(monkeypatch):
   assert "time__in" in inst._base_filter
   assert len(inst._base_filter["time__in"]) == 200
   assert inst._large_job_plot_cache_token == "lb200"
+
+
+def test_iter_host_time_query_chunks_nests_host_and_time():
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      _iter_host_time_query_chunks,
+  )
+
+  hosts = ["h{0}.example.com".format(i) for i in range(5)]
+  tkw = {
+      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
+      "time__lte": datetime(2024, 1, 1, 2, tzinfo=timezone.utc),
+  }
+  pairs = list(
+      _iter_host_time_query_chunks(hosts, tkw, batch_size=2, slice_s=3600)
+  )
+  # 2 time hours × ceil(5/2)=3 host batches
+  assert len(pairs) == 6
+  assert pairs[0][0] == ["h0.example.com", "h1.example.com"]
+  assert "time__gte" in pairs[0][1]
+
+
+def test_run_with_host_time_timeout_retry_splits_hosts(monkeypatch):
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      _merge_list_results,
+      _run_with_host_time_timeout_retry,
+  )
+
+  hosts = ["h{0}.example.com".format(i) for i in range(4)]
+  seen = []
+
+  def run(hosts_list, tf_cur):
+    seen.append(list(hosts_list))
+    if len(hosts_list) == 4:
+      raise OperationalError("canceling statement due to statement timeout")
+    return list(hosts_list)
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.close_old_connections",
+      lambda: None,
+  )
+  out = _run_with_host_time_timeout_retry(
+      hosts, {"time__gte": 1}, run, _merge_list_results, empty=[]
+  )
+  assert seen[0] == hosts
+  assert sorted(out) == sorted(hosts)
+
+
+def test_run_with_host_time_timeout_retry_splits_time(monkeypatch):
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      _merge_list_results,
+      _run_with_host_time_timeout_retry,
+  )
+
+  hosts = ["h0.example.com"]
+  tkw = {
+      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
+      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+  }
+  calls = []
+
+  def run(hosts_list, tf_cur):
+    calls.append(dict(tf_cur or {}))
+    if "time__lte" in (tf_cur or {}) and "time__gt" not in (tf_cur or {}):
+      # full window or first half that still has large span may timeout once
+      if len(calls) == 1:
+        raise OperationalError("canceling statement due to statement timeout")
+    return [1]
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.close_old_connections",
+      lambda: None,
+  )
+  out = _run_with_host_time_timeout_retry(
+      hosts, tkw, run, _merge_list_results, empty=[]
+  )
+  assert out == [1, 1]
+  assert len(calls) >= 3
+
+
+def test_fold_sum_by_key_and_count_max_avg():
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      _fold_count_max_avg_rows,
+      _fold_sum_by_key,
+  )
+
+  summed = _fold_sum_by_key(
+      [
+          {"event": "a", "delta_sum": 1},
+          {"event": "a", "delta_sum": 2},
+          {"event": "b", "delta_sum": 4},
+      ],
+      ("event",),
+      "delta_sum",
+  )
+  by_ev = {r["event"]: r["delta_sum"] for r in summed}
+  assert by_ev == {"a": 3.0, "b": 4.0}
+
+  folded = _fold_count_max_avg_rows(
+      [
+          {
+              "host": "h",
+              "dev": "0",
+              "event": "gpu_util",
+              "cnt": 2,
+              "vmax": 10.0,
+              "vmean": 4.0,
+          },
+          {
+              "host": "h",
+              "dev": "0",
+              "event": "gpu_util",
+              "cnt": 2,
+              "vmax": 20.0,
+              "vmean": 8.0,
+          },
+      ],
+      ("host", "dev", "event"),
+  )
+  assert len(folded) == 1
+  assert folded[0]["cnt"] == 4
+  assert folded[0]["vmax"] == 20.0
+  assert folded[0]["vmean"] == 6.0
+
+
+def test_full_host_data_rows_batched_uses_metrics_host_batch_and_time_slices(
+    monkeypatch,
+):
+  """Regression: ~48-host jobs must not issue one full-window values_list."""
+  from hpcperfstats.analysis.metrics.lib.gen import jid_table as jt_mod
+  from hpcperfstats.analysis.metrics.lib.metrics import METRICS_HOST_QUERY_BATCH
+
+  hosts = ["h{0}.example.com".format(i) for i in range(20)]
+  inst = jt_mod.jid_table.__new__(jt_mod.jid_table)
+  inst.acct_host_list = hosts
+  inst._base_filter = {
+      "host__in": hosts,
+      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
+      "time__lte": datetime(2024, 1, 1, 2, tzinfo=timezone.utc),
+  }
+  seen_host_lens = []
+  seen_tfs = []
+
+  class FakeQs:
+    def __init__(self, host_in, tkw):
+      self._host_in = list(host_in)
+      self._tkw = dict(tkw)
+
+    def values_list(self, *cols):
+      return self
+
+    def order_by(self, *args):
+      return self
+
+    def __iter__(self):
+      return iter([])
+
+  def fake_filter(**kwargs):
+    host_in = kwargs.get("host__in") or []
+    seen_host_lens.append(len(host_in))
+    seen_tfs.append(
+        {k: v for k, v in kwargs.items() if k.startswith("time__")}
+    )
+    return FakeQs(host_in, kwargs)
+
+  monkeypatch.setattr(
+      jt_mod.cfg, "get_metrics_plot_aggregate_time_slice_s", lambda: 3600
+  )
+  monkeypatch.setattr(jt_mod, "close_old_connections", lambda: None)
+  monkeypatch.setattr(jt_mod.host_data.objects, "filter", fake_filter)
+  out = inst._full_host_data_rows_batched(
+      ["host", "time", "type", "event", "value", "arc"]
+  )
+  assert out == []
+  assert seen_host_lens
+  assert max(seen_host_lens) <= METRICS_HOST_QUERY_BATCH
+  # 2 hour window / 3600s → ≥2 time slices × ceil(20/16)=2 host batches
+  assert len(seen_host_lens) >= 4

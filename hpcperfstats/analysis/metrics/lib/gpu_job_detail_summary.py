@@ -2,7 +2,8 @@
 ORM GPU aggregates for job-detail and metrics_data (shared with API).
 
 Uses the same reduction rules as historical ``api._compute_job_gpu_stats``:
-chunked ``host__in``, util aggregates by vendor precedence, then ``gpu_count``.
+host×time chunked ``host__in``, util aggregates by vendor precedence, then
+``gpu_count``.
 
 Vendor precedence for summary fields: ``nvidia_gpu`` → ``amd_gpu`` →
 ``intel_gpu`` (no mixed-vendor merge for a single field). DCGM blank-family
@@ -19,6 +20,7 @@ from typing import Any, List, Optional, Tuple
 from django.db.models import Avg, Count, Max
 
 from hpcperfstats.analysis.metrics.lib.gen import jid_table as jid_table_mod
+from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK, is_dcgm_numeric_blank
 from hpcperfstats.site.lib.machine.models import host_data
 
@@ -42,6 +44,116 @@ def _blank_excluded_value_q(field: str = "value") -> Any:
   return {f"{field}__lt": DCGM_FP64_BLANK}
 
 
+def _job_window_time_filter(j: Any) -> Any:
+  """
+  Build ``time__gte`` / ``time__lte`` kwargs for a job-like object.
+
+  Args:
+    j (Any): Job with ``start_time`` / ``end_time``.
+
+  Returns:
+    Any: Time filter dict.
+
+  Examples:
+    >>> _job_window_time_filter(None)  # doctest: +SKIP
+  """
+  return {"time__gte": j.start_time, "time__lte": j.end_time}
+
+
+def _collect_gpu_annotate_rows(
+  hosts: Any,
+  tkw: Any,
+  *,
+  gpu_typ: str,
+  events: Any,
+  group_fields: Any,
+  annotate_kwargs: Any,
+) -> List[dict]:
+  """
+  Host×time chunked annotate query with statement_timeout split/retry.
+
+  Args:
+    hosts (Any): Accounting hosts.
+    tkw (Any): Base time filter.
+    gpu_typ (str): ``host_data.type`` (nvidia/amd/intel).
+    events (Any): Event name or list for ``event`` / ``event__in``.
+    group_fields (Any): ``.values(...)`` grouping fields.
+    annotate_kwargs (Any): Annotate kwargs (Count/Max/Avg).
+
+  Returns:
+    List[dict]: Folded annotate rows across chunks.
+
+  Examples:
+    >>> _collect_gpu_annotate_rows([], {}, gpu_typ="nvidia_gpu",
+    ...     events=["gpu_util"], group_fields=["host"], annotate_kwargs={})
+    []
+  """
+  slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+  batch = jid_table_mod.TYPE_DETAIL_HOST_QUERY_BATCH
+  event_filter: dict
+  if isinstance(events, (list, tuple)):
+    event_filter = {"event__in": list(events)}
+  else:
+    event_filter = {"event": events}
+  group = list(group_fields)
+
+  def run(hosts_list: Any, tf_cur: Any) -> Any:
+    """
+    Run one annotate chunk.
+
+    Args:
+      hosts_list (Any): Hostnames for this attempt.
+      tf_cur (Any): Time filter dict.
+
+    Returns:
+      Any: List of annotate dicts.
+
+    Examples:
+      >>> True
+      True
+    """
+    qs = (
+        host_data.objects.filter(
+            type=gpu_typ,
+            host__in=hosts_list,
+            **_blank_excluded_value_q("value"),
+            **event_filter,
+            **(tf_cur or {}),
+        )
+        .values(*group)
+        .annotate(**annotate_kwargs)
+    )
+    return list(qs)
+
+  all_rows: List[dict] = []
+  for host_chunk, tf in jid_table_mod._iter_host_time_query_chunks(
+      hosts,
+      tkw,
+      batch_size=batch,
+      slice_s=slice_s,
+  ):
+    all_rows.extend(
+        jid_table_mod._run_with_host_time_timeout_retry(
+            host_chunk,
+            tf,
+            run,
+            jid_table_mod._merge_list_results,
+            empty=[],
+        )
+    )
+  if not all_rows:
+    return []
+  if "cnt" in annotate_kwargs and (
+      "vmax" in annotate_kwargs or "vmean" in annotate_kwargs
+  ):
+    return jid_table_mod._fold_count_max_avg_rows(all_rows, group)
+  if "mv" in annotate_kwargs:
+    return jid_table_mod._fold_max_by_key(all_rows, group, "mv")
+  if "pmax" in annotate_kwargs:
+    return jid_table_mod._fold_max_by_key(all_rows, group, "pmax")
+  return all_rows
+
+
 def gpu_agg_rows_for_job_window(j: Any) -> List[dict]:
   """
   Per-(host, dev, event) Count/Max/Avg for GPU util in the job window.
@@ -58,25 +170,22 @@ def gpu_agg_rows_for_job_window(j: Any) -> List[dict]:
     >>> gpu_agg_rows_for_job_window(None)  # doctest: +SKIP
   """
   hosts = getattr(j, "acct_host_list", None) or []
+  if not hosts:
+    return []
+  tkw = _job_window_time_filter(j)
   for gpu_typ in GPU_TYPE_PRECEDENCE:
-    out: List[dict] = []
-    for chunk in jid_table_mod._iter_acct_host_batches(hosts):
-      out.extend(
-          host_data.objects.filter(
-              type=gpu_typ,
-              event__in=list(_GPU_UTIL_EVENTS),
-              time__gte=j.start_time,
-              time__lte=j.end_time,
-              host__in=chunk,
-              **_blank_excluded_value_q("value"),
-          )
-          .values("host", "dev", "event")
-          .annotate(
-              cnt=Count("time"),
-              vmax=Max("value"),
-              vmean=Avg("value"),
-          )
-      )
+    out = _collect_gpu_annotate_rows(
+        hosts,
+        tkw,
+        gpu_typ=gpu_typ,
+        events=list(_GPU_UTIL_EVENTS),
+        group_fields=["host", "dev", "event"],
+        annotate_kwargs={
+            "cnt": Count("time"),
+            "vmax": Max("value"),
+            "vmean": Avg("value"),
+        },
+    )
     if out:
       return out
   return []
@@ -98,23 +207,16 @@ def gpu_count_total_for_job_window(j: Any) -> Optional[int]:
   hosts = getattr(j, "acct_host_list", None) or []
   if not hosts:
     return None
+  tkw = _job_window_time_filter(j)
   for gpu_typ in GPU_TYPE_PRECEDENCE:
-    rows: List[dict] = []
-    for chunk in jid_table_mod._iter_acct_host_batches(hosts):
-      rows.extend(
-          list(
-              host_data.objects.filter(
-                  type=gpu_typ,
-                  event="gpu_count",
-                  time__gte=j.start_time,
-                  time__lte=j.end_time,
-                  host__in=chunk,
-                  **_blank_excluded_value_q("value"),
-              )
-              .values("host")
-              .annotate(mv=Max("value"))
-          )
-      )
+    rows = _collect_gpu_annotate_rows(
+        hosts,
+        tkw,
+        gpu_typ=gpu_typ,
+        events="gpu_count",
+        group_fields=["host"],
+        annotate_kwargs={"mv": Max("value")},
+    )
     if not rows:
       continue
     total = 0
@@ -150,49 +252,37 @@ def gpu_inventory_for_job_window(j: Any) -> List[dict]:
   hosts = getattr(j, "acct_host_list", None) or []
   if not hosts:
     return []
+  tkw = _job_window_time_filter(j)
   for gpu_typ in GPU_TYPE_PRECEDENCE:
-    util_rows: List[dict] = []
-    power_rows: List[dict] = []
-    for chunk in jid_table_mod._iter_acct_host_batches(hosts):
-      util_rows.extend(
-          list(
-              host_data.objects.filter(
-                  type=gpu_typ,
-                  event__in=list(_GPU_UTIL_EVENTS),
-                  time__gte=j.start_time,
-                  time__lte=j.end_time,
-                  host__in=chunk,
-                  **_blank_excluded_value_q("value"),
-              )
-              .values("host", "dev", "event")
-              .annotate(
-                  cnt=Count("time"),
-                  vmax=Max("value"),
-                  vmean=Avg("value"),
-              )
-          )
-      )
-      power_rows.extend(
-          list(
-              host_data.objects.filter(
-                  type=gpu_typ,
-                  event="power_usage",
-                  time__gte=j.start_time,
-                  time__lte=j.end_time,
-                  host__in=chunk,
-                  **_blank_excluded_value_q("value"),
-              )
-              .values("host", "dev")
-              .annotate(pmax=Max("value"))
-          )
-      )
+    util_rows = _collect_gpu_annotate_rows(
+        hosts,
+        tkw,
+        gpu_typ=gpu_typ,
+        events=list(_GPU_UTIL_EVENTS),
+        group_fields=["host", "dev", "event"],
+        annotate_kwargs={
+            "cnt": Count("time"),
+            "vmax": Max("value"),
+            "vmean": Avg("value"),
+        },
+    )
     if not util_rows:
       continue
+    power_rows = _collect_gpu_annotate_rows(
+        hosts,
+        tkw,
+        gpu_typ=gpu_typ,
+        events="power_usage",
+        group_fields=["host", "dev"],
+        annotate_kwargs={"pmax": Max("value")},
+    )
     per_device: dict = {}
     for r in util_rows:
       key = (str(r.get("host") or ""), str(r.get("dev") or ""))
       event = str(r.get("event") or "")
-      slot = per_device.setdefault(key, {"host": key[0], "dev": key[1], "type": gpu_typ})
+      slot = per_device.setdefault(
+          key, {"host": key[0], "dev": key[1], "type": gpu_typ}
+      )
       if event == "gpu_util" or (
           event == "utilization" and "util_max" not in slot
       ):

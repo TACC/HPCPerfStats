@@ -1237,15 +1237,74 @@ def _in_window_telemetry_bounds_for_job(job: Any) -> Any:
     hosts.append(h if "." in h else (h + suffix))
   if not hosts or start_time is None or end_time is None:
     return None, None
-  agg = (
-      host_data.objects.filter(
-          host__in=hosts,
-          time__gte=start_time,
-          time__lte=end_time,
-      )
-      .aggregate(mn=Min("time"), mx=Max("time"))
-  )
-  return agg.get("mn"), agg.get("mx")
+  tkw = {"time__gte": start_time, "time__lte": end_time}
+  slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+  overall_mn = None
+  overall_mx = None
+
+  def run(hosts_list: Any, tf_cur: Any) -> Any:
+    """
+    Min/Max telemetry time for one host×time chunk.
+
+    Args:
+      hosts_list (Any): Hostnames for this attempt.
+      tf_cur (Any): Time filter dict.
+
+    Returns:
+      Any: Aggregate dict with ``mn`` / ``mx``.
+
+    Examples:
+      >>> True
+      True
+    """
+    return (
+        host_data.objects.filter(
+            host__in=hosts_list,
+            **(tf_cur or {}),
+        ).aggregate(mn=Min("time"), mx=Max("time"))
+    )
+
+  def merge(left: Any, right: Any) -> Any:
+    """
+    Merge two Min/Max aggregate dicts.
+
+    Args:
+      left (Any): Left aggregate.
+      right (Any): Right aggregate.
+
+    Returns:
+      Any: Combined ``mn`` / ``mx`` dict.
+
+    Examples:
+      >>> True
+      True
+    """
+    left = left or {}
+    right = right or {}
+    mn_vals = [v for v in (left.get("mn"), right.get("mn")) if v is not None]
+    mx_vals = [v for v in (left.get("mx"), right.get("mx")) if v is not None]
+    return {
+        "mn": min(mn_vals) if mn_vals else None,
+        "mx": max(mx_vals) if mx_vals else None,
+    }
+
+  for host_chunk, tf in jid_table._iter_host_time_query_chunks(
+      hosts,
+      tkw,
+      batch_size=METRICS_HOST_QUERY_BATCH,
+      slice_s=slice_s,
+  ):
+    part = jid_table._run_with_host_time_timeout_retry(
+        host_chunk,
+        tf,
+        run,
+        merge,
+        empty={"mn": None, "mx": None},
+    )
+    folded = merge({"mn": overall_mn, "mx": overall_mx}, part)
+    overall_mn = folded.get("mn")
+    overall_mx = folded.get("mx")
+  return overall_mn, overall_mx
 
 
 class _JobForMetrics:

@@ -15,10 +15,27 @@ When changing `hpcperfstats/analysis/metrics/lib/metrics.py` (`Metrics.run`, `_u
 - **Per-job wall clock:** `_run_compute_metrics_timed` uses `SIGALRM` / `setitimer` with `_resolve_metrics_run_per_job_timeout_s()` (INI `metrics_run_per_job_timeout_s`, env `HPCPERFSTATS_METRICS_RUN_PER_JOB_TIMEOUT_S`; `0` → `metrics_run_stall_timeout_s`). Timeout → `MetricsComputeJobTimeoutError` → `worker_compute_error`.
 - **Worker session `statement_timeout`:** wrap compute in `_pg_session_statement_timeout_for_metrics_worker()` using `[PIPELINE] metrics_worker_statement_timeout_ms` (default **120000**; env `HPCPERFSTATS_METRICS_WORKER_STATEMENT_TIMEOUT_MS`; **`0`** disables for the compute window). Do **not** rely on global `[PORTAL] db_statement_timeout_ms` alone for multi-host `host_data` compute without chunk-on-timeout — naked 120s cancel caused `worker_db_error` skips. Default **0** left workers stuck in `list(qs)` until the 900s SIGALRM (`MetricsComputeJobTimeoutError` in `job_arc` / `_job_arc_avg_flops`). Restore is best-effort (swallow closed-connection errors).
 - **Metric row fetches:** `_host_data_metric_rows_batched` uses **`METRICS_HOST_QUERY_BATCH` (16)** and `_host_data_metric_rows_with_host_chunk_retry` splits further on statement timeout (reuse `jid_table._is_statement_timeout_error`) so ~48-host jobs stay bounded.
+- **Full-frame host_data (`_JobForMetrics` / `get_full_host_data_df`):** `_full_host_data_rows_batched` must use `_iter_host_time_query_chunks` + `_run_with_host_time_timeout_retry` with **`METRICS_HOST_QUERY_BATCH` (16)** and `metrics_plot_aggregate_time_slice_s` — do **not** host-batch only over the full accounting window (production signature: `SELECT host,time,type,event,value,arc … ORDER BY 1,2` → `worker_db_error` / statement timeout, e.g. jid 1776).
+- **FSIO / telemetry bounds:** `get_llite_delta_by_event` / `get_nfs_delta_totals_mb` and `_in_window_telemetry_bounds_for_job` must use the same host×time helpers (fold SUM / min-of-mins / max-of-maxes). Forbidden: naked `_host_data_qs` multi-host `Sum(delta)` or one `host__in=all` Min/Max over the full window.
+- **GPU summary (`gpu_job_detail_summary`):** `gpu_agg_rows_for_job_window` / `gpu_count_total_for_job_window` / `gpu_inventory_for_job_window` use **`TYPE_DETAIL_HOST_QUERY_BATCH` (8)** + time slices + timeout split; fold Count/Max/Avg with count-weighted means (`_fold_count_max_avg_rows`). Keep vendor precedence and DCGM blank exclusion.
 - **Job plot aggregates:** `jid_table.get_aggregate_df` (summary/roofline/job_plots) must use the **same host-chunk-on-timeout contract** as TypeDetail: `_queryset_to_dataframe_with_host_chunk_retry` on the SQL SUM path and `_fetch_host_data_values_frames` on the raw-row pandas fallback. GPU types (`nvidia_gpu` / `amd_gpu` / `intel_gpu`) use **`TYPE_DETAIL_HOST_QUERY_BATCH` (8)** — do **not** fall back to a naked 64-host raw scan after statement timeout (production signature: `get_aggregate_df SQL aggregate failed … nvidia_gpu … statement timeout; falling back to raw-row pandas groupby` → never-returning summary/roofline). Do **not** “fix” by raising global `db_statement_timeout_ms` alone.
 - **Design capacity `5000×48×60` host-samples (14.4M):** plot aggregates chunk by **host batch × time slice** (`metrics_plot_aggregate_time_slice_s`, default 3600). Portal `statement_timeout` is the **per-chunk** budget — do **not** `SET statement_timeout=0` for an entire prewarm/job session. On timeout, bisect hosts then time. Materialised host×time rows are capped by **`metrics_plot_aggregate_max_host_time_points`** (default 1e6); large-job sampling uses `min(configured_buckets, floor(budget/n_hosts))` and also activates when `n_hosts × estimated_1min_samples > budget`. **Never** `pd.concat` the full 14.4M-row grid; stream/fold chunks then assemble once under the budget. Time scales ~linearly with total host-samples; memory is bounded separately. Prewarm: never evict/cancel **running** futures; defer submit when the backlog is all running; warm L2 skip before `jid_table`; serial summary aggregate prefetch under prewarm (`serial_summary_aggregate_prefetch_context`).
 - **Schema-gated simple metrics:** `job_arc` / `job_value_mean` / avg CPU usage host_data probes must call `_metric_type_events_feasible(jt.schema, …)` (SummaryPlot pattern) so cascading `_job_arc_avg_flops` / `_mbw` vendor probes do not scan impossible types.
 - **`DatabaseUnavailableExit`:** still re-raise for shutdown.
+
+## New host_data metric / ORM path (law)
+
+Any new `compute_metric`, detail/summary helper, or `host_data` read on the **update_metrics / prewarm / job-detail compute** path that filters by job hosts + time **must**:
+
+1. Use `_iter_host_time_query_chunks` + `_run_with_host_time_timeout_retry` in `jid_table.py` (or an existing thin wrapper: `_queryset_to_dataframe_with_host_chunk_retry`, `_host_data_metric_rows_*`, `_collect_gpu_annotate_rows`).
+2. Choose batch size: **16** default (`METRICS_HOST_QUERY_BATCH`); **8** for GPU types (`TYPE_DETAIL_HOST_QUERY_BATCH`).
+3. Slice time with `get_metrics_plot_aggregate_time_slice_s()` unless the query is already a single-host lookup.
+4. Fold chunk results correctly (SUM / max-of-maxes / count-weighted Avg — never naive mean-of-means).
+5. Add a same-task regression test that asserts chunking or timeout split for the new path.
+
+**Forbidden:** naked `host_data.objects.filter(host__in=all_hosts, time__gte=…, time__lte=…)` over the full accounting window; “fix” by raising `db_statement_timeout_ms` or disabling worker `statement_timeout` alone.
+
+Shared helpers (prefer these over copying bisect loops): `_iter_host_time_query_chunks`, `_run_with_host_time_timeout_retry`, `_fold_sum_by_key`, `_fold_max_by_key`, `_fold_count_max_avg_rows`, `_merge_list_results`.
 
 ## Numeric edge cases in `compute_metric`
 
@@ -42,6 +59,8 @@ When changing `hpcperfstats/analysis/metrics/lib/metrics.py` (`Metrics.run`, `_u
 ## Tests (same task)
 
 - `hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py` — `_unwrap`, stall partial return, per-job timeout, host-chunk retry, schema-gated `job_arc`, `METRICS_HOST_QUERY_BATCH`.
+- `hpcperfstats/site/lib/machine/tests/test_jid_table.py` — `_iter_host_time_query_chunks`, `_run_with_host_time_timeout_retry`, fold helpers, `_full_host_data_rows_batched` host×time batching.
+- `hpcperfstats/analysis/metrics/tests/test_gpu_job_detail_summary.py` — GPU summary uses `TYPE_DETAIL_HOST_QUERY_BATCH` + host×time helpers.
 - `hpcperfstats/analysis/metrics/tests/test_time_imbalance.py` — O(n) prefix parity vs quadratic reference; large-`nt` wall budget.
 - `hpcperfstats/site/lib/machine/tests/test_metrics.py` — NaN/`_finite_amax` regressions for affected metrics; host batch / schema gate (compose).
 - `hpcperfstats/site/lib/machine/tests/test_update_metrics.py` — stall exit propagation and statement-timeout restore on closed connections.
@@ -52,3 +71,5 @@ When changing `hpcperfstats/analysis/metrics/lib/metrics.py` (`Metrics.run`, `_u
 - **`runtime-resource-and-metrics-safety.mdc`** — pool labels, DB connection hygiene in workers.
 - **`bugfix-and-perf-change-playbook.mdc`** — root-cause-first on stall audits; tune `metrics_run_stall_timeout_s` / batch caps before disabling watchdogs.
 - **`every-error-regression-test.mdc`** — regression test for each new failure signature.
+- **`update-metrics-job-listing-new-data-type.mdc`** — candidate listing for new persisted types; does not replace the host×time query law above.
+- **`gpu-host-data-source-priority.mdc`** — vendor precedence / DCGM blanks for GPU summary fields.
