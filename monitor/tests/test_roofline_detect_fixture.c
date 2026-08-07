@@ -2,9 +2,11 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "cpuid.h"
 #include "roofline_hw_peak_detect.h"
+#include "roofline_hw_peak_identity.h"
 
 int nr_cpus = 8;
 int n_pmcs = 0;
@@ -24,6 +26,8 @@ static void test_skip_probe_uses_nr_cpus_fixture(void)
   assert(cache.cpu_hbm_bw == 0ULL);
   assert(cache.gpu_flops == 0ULL);
   assert(cache.gpu_mem_bw == 0ULL);
+  assert(cache.cpu_source == ROOFLINE_CPU_PEAK_SOURCE_PROBED);
+  assert(cache.gpu_source == ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN);
 }
 
 static void test_null_cache_is_noop(void)

@@ -668,6 +668,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "HPCPerfStats/monitor/src/ib_mad.c",
             "HPCPerfStats/monitor/src/nvidia_gpu.c",
             "HPCPerfStats/monitor/src/roofline_hw_peak.c",
+            "HPCPerfStats/monitor/src/roofline_hw_peak_detect.c",
             "monitor/configure.ac",
             "monitor/**/*.am",
             "monitor/src/monitor.c",
@@ -679,9 +680,22 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
             "monitor/src/ib_mad.c",
             "monitor/src/nvidia_gpu.c",
             "monitor/src/roofline_hw_peak.c",
+            "monitor/src/roofline_hw_peak_detect.c",
         ],
         "rules": [
             "monitor-debug-vs-symbols.mdc",
+        ],
+    },
+    {
+        "id": "monitor_roofline_peak_detect",
+        "patterns": [
+            "HPCPerfStats/monitor/src/roofline_hw_peak*",
+            "HPCPerfStats/monitor/tests/test_roofline*",
+            "monitor/src/roofline_hw_peak*",
+            "monitor/tests/test_roofline*",
+        ],
+        "rules": [
+            "monitor-roofline-peak-detect.mdc",
         ],
     },
     {

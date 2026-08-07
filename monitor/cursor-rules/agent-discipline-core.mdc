@@ -57,6 +57,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | Shm message correctness scripts, slug goldens | `monitor-shm-message-correctness.mdc` |
 | Collector device enumeration (`net.c`, `mem.c`, …) or `host_live_probes.py` | `monitor-shm-validation-probe-parity.mdc` |
 | `HPCPerfStats/monitor/src/beegfs*`, `tests/test_beegfs*`, `tests/fixtures/beegfs/**` | `monitor-beegfs-procfs.mdc` |
+| `HPCPerfStats/monitor/src/roofline_hw_peak*`, `tests/test_roofline*` | `monitor-roofline-peak-detect.mdc` |
 
 ### Emit contract, RabbitMQ, schema
 

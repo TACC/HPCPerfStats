@@ -28,6 +28,7 @@ Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 - **`monitor-consumer-side-plan.mdc`** — secondary consumer plan when emit changes need ingest work
 - **`monitor-shm-validation-probe-parity.mdc`** — collector `dev` enumeration must match `host_live_probes.py`
 - **`monitor-beegfs-procfs.mdc`** — BeeGFS client detect + bounded `beegfs-ctl` (never `Sum:`); capacity via `statvfs`
+- **`monitor-roofline-peak-detect.mdc`** — `host_roofline_peak` NVML/smi/DRM/EDAC gaps + allowlisted GB200/Grace identity
 - **`monitor-xpum-integration.mdc`** — Intel PVC / XPU Manager (`intel_gpu`, vendored headers, libxpum dlopen)
 - **`monitor-papi-integration.mdc`** — aarch64 DCGM+PAPI hybrid: PAPI SP/DP FLOPs, cycles, int8/int16 ops on `host_cpu_hw`
 - **`monitor-amd-epyc-likwid.mdc`** — Intel + EPYC LIKWID-only core/DF/RAPL; no MSR / gpr4/8 fallback; family DF `st_name`s

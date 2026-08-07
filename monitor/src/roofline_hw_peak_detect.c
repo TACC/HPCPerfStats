@@ -10,6 +10,7 @@
 #include "stats.h"
 #include "host_edac_mem_topology.h"
 #include "roofline_hw_peak_detect.h"
+#include "roofline_hw_peak_identity.h"
 
 static unsigned long long clamp_rate(double v)
 {
@@ -305,47 +306,31 @@ static void detect_gpu_peaks_from_sysfs(double *flops, double *mem_bw, double *i
   (void)flops;
 }
 
-static double nvidia_fp64_ratio_from_cc(int major, int minor, const char *name)
+static unsigned int detect_cpu_part_from_proc(void)
 {
-  (void)name;
-  if (major >= 9)
-    return 0.5;
-  if (major == 8)
-    return (minor == 0) ? 0.5 : (1.0 / 64.0);
-  if (major == 7)
-    return (minor == 0) ? 0.5 : (1.0 / 32.0);
-  if (major == 6)
-    return (minor == 0) ? 0.5 : (1.0 / 32.0);
-  return 1.0 / 32.0;
-}
+  FILE *f = fopen("/proc/cpuinfo", "re");
+  char line[256];
+  unsigned int part = 0;
 
-static int nvidia_cuda_cores_per_sm(int major, int minor, const char *name)
-{
-  if (major >= 9)
-    return 128;
-  if (major == 8) {
-    if (minor == 0)
-      return 64;
-    if (minor == 6 || minor == 7 || minor == 9)
-      return 128;
-    return 128;
+  if (f == NULL)
+    return 0;
+  while (fgets(line, sizeof(line), f) != NULL) {
+    if (strncmp(line, "CPU part", 8) == 0) {
+      char *p = strchr(line, ':');
+      if (p != NULL) {
+        part = (unsigned int)strtoul(p + 1, NULL, 0);
+        break;
+      }
+    }
   }
-  if (major == 7)
-    return 64;
-  if (major == 6)
-    return (minor == 0) ? 64 : 128;
-  if (major == 5)
-    return 128;
-  if (major == 3)
-    return 192;
-  if (name != NULL && strstr(name, "Tesla K80") != NULL)
-    return 192;
-  return 128;
+  fclose(f);
+  return part;
 }
 
+/* Confirmed fields on Horizon: name,clocks.max.sm,compute_cap (+ SM-count identity). */
 static double detect_nvidia_fp64_peak_via_nvidia_smi(void)
 {
-  FILE *fp = popen("nvidia-smi --query-gpu=name,cuda.cores,clocks.max.sm,compute_cap "
+  FILE *fp = popen("nvidia-smi --query-gpu=name,clocks.max.sm,compute_cap "
                    "--format=csv,noheader,nounits 2>/dev/null",
                    "r");
   char line[768];
@@ -356,40 +341,66 @@ static double detect_nvidia_fp64_peak_via_nvidia_smi(void)
 
   while (fgets(line, sizeof(line), fp) != NULL) {
     char name[256];
-    int cores = 0;
     double sm_mhz = 0.0;
     int maj = 0, min = 0;
-    char *s = line;
-    char *comma1, *comma2, *comma3;
+    int sm_count;
+    int cores_per_sm;
     double ratio;
 
-    comma1 = strchr(s, ',');
-    if (comma1 == NULL)
+    if (roofline_parse_smi_flops_line(line, name, sizeof(name), &sm_mhz, &maj, &min) != 0)
       continue;
-    comma2 = strchr(comma1 + 1, ',');
-    if (comma2 == NULL)
+    sm_count = roofline_nvidia_sm_count_from_name(name);
+    if (sm_count <= 0)
       continue;
-    comma3 = strchr(comma2 + 1, ',');
-    if (comma3 == NULL)
-      continue;
-
-    {
-      size_t n = (size_t)(comma1 - s);
-      if (n >= sizeof(name))
-        n = sizeof(name) - 1;
-      memcpy(name, s, n);
-      name[n] = '\0';
-    }
-    cores = (int)strtol(comma1 + 1, NULL, 10);
-    sm_mhz = strtod(comma2 + 1, NULL);
-    if (sscanf(comma3 + 1, " %d.%d", &maj, &min) != 2)
-      maj = min = 0;
-    ratio = nvidia_fp64_ratio_from_cc(maj, min, name);
-    if (cores > 0 && sm_mhz > 0.0)
-      total += (double)cores * (sm_mhz * 1.0e6) * 2.0 * ratio;
+    cores_per_sm = roofline_nvidia_cuda_cores_per_sm(maj, min, name);
+    ratio = roofline_nvidia_fp64_ratio_from_cc(maj, min, name);
+    total += roofline_nvidia_fp64_flops_from_sm(sm_count, cores_per_sm, sm_mhz, ratio);
   }
   pclose(fp);
   return total;
+}
+
+/* When DRM PCIe/mem attrs are empty: PCIe gen×width + allowlisted HBM peak × GPU count. */
+static void detect_nvidia_mem_io_via_smi(double *mem_bw, double *io_bw, int *used_identity_mem)
+{
+  FILE *fp;
+  char line[768];
+
+  if (mem_bw == NULL || io_bw == NULL)
+    return;
+  if (used_identity_mem != NULL)
+    *used_identity_mem = 0;
+
+  fp = popen("nvidia-smi --query-gpu=name,memory.total,clocks.max.memory,"
+             "pcie.link.gen.max,pcie.link.width.max "
+             "--format=csv,noheader,nounits 2>/dev/null",
+             "r");
+  if (fp == NULL)
+    return;
+
+  while (fgets(line, sizeof(line), fp) != NULL) {
+    char name[256];
+    double mem_mib = 0.0, mem_mhz = 0.0;
+    int gen = 0, width = 0;
+    double hbm;
+    double lane;
+
+    if (roofline_parse_smi_mem_pcie_line(line, name, sizeof(name), &mem_mib, &mem_mhz, &gen,
+                                         &width) != 0)
+      continue;
+    (void)mem_mib;
+    (void)mem_mhz;
+    lane = roofline_pcie_gen_lane_bytes_per_s(gen);
+    if (lane > 0.0 && width > 0)
+      *io_bw += lane * (double)width;
+    hbm = roofline_nvidia_hbm_bw_from_name(name);
+    if (hbm > 0.0) {
+      *mem_bw += hbm;
+      if (used_identity_mem != NULL)
+        *used_identity_mem = 1;
+    }
+  }
+  pclose(fp);
 }
 
 static double detect_nvidia_fp64_peak_via_nvml(void)
@@ -474,9 +485,10 @@ static double detect_nvidia_fp64_peak_via_nvml(void)
     if (p_nvmlDeviceGetMaxClockInfo(dev, NVML_CLOCK_SM, &sm_mhz) != NVML_SUCCESS)
       continue;
 
-    cores_per_sm = nvidia_cuda_cores_per_sm(cc_major, cc_minor, name);
-    fp64_ratio = nvidia_fp64_ratio_from_cc(cc_major, cc_minor, name);
-    total += (double)sm_count * (double)cores_per_sm * (double)sm_mhz * 1.0e6 * 2.0 * fp64_ratio;
+    cores_per_sm = roofline_nvidia_cuda_cores_per_sm(cc_major, cc_minor, name);
+    fp64_ratio = roofline_nvidia_fp64_ratio_from_cc(cc_major, cc_minor, name);
+    total +=
+        roofline_nvidia_fp64_flops_from_sm((int)sm_count, cores_per_sm, (double)sm_mhz, fp64_ratio);
   }
 
   p_nvmlShutdown();
@@ -540,21 +552,34 @@ static double detect_amd_fp64_peak_via_rocminfo(void)
   return total;
 }
 
-static double detect_gpu_fp64_peak_vendor_runtime(void)
+static double detect_gpu_fp64_peak_vendor_runtime(unsigned long long *src_out)
 {
   double flops = detect_nvidia_fp64_peak_via_nvml();
-  if (flops > 0.0)
+  if (flops > 0.0) {
+    if (src_out != NULL)
+      *src_out = ROOFLINE_GPU_PEAK_SOURCE_VENDOR_NVML;
     return flops;
+  }
+#ifdef DEBUG
+  {
+    static int logged_nvml_fail;
+    if (!logged_nvml_fail) {
+      logged_nvml_fail = 1;
+      fprintf(stderr, "host_roofline_peak: NVML FP64 peak init/query failed or zero; trying smi\n");
+    }
+  }
+#endif
   flops = detect_nvidia_fp64_peak_via_nvidia_smi();
-  if (flops > 0.0)
+  if (flops > 0.0) {
+    if (src_out != NULL)
+      *src_out = ROOFLINE_GPU_PEAK_SOURCE_VENDOR_SMI;
     return flops;
-  return detect_amd_fp64_peak_via_rocminfo();
+  }
+  flops = detect_amd_fp64_peak_via_rocminfo();
+  if (flops > 0.0 && src_out != NULL)
+    *src_out = ROOFLINE_GPU_PEAK_SOURCE_VENDOR_SMI;
+  return flops;
 }
-
-enum {
-  ROOFLINE_GPU_PEAK_SOURCE_PROBED = 1,
-  ROOFLINE_GPU_PEAK_SOURCE_VENDOR_RUNTIME = 2,
-};
 
 void roofline_hw_peak_detect_fill_cache(struct roofline_cached_peaks *cache)
 {
@@ -564,7 +589,9 @@ void roofline_hw_peak_detect_fill_cache(struct roofline_cached_peaks *cache)
   double gpu_flops = 0.0;
   double gpu_mem_bw = 0.0;
   double gpu_io_bw = 0.0;
-  unsigned long long gpu_source = ROOFLINE_GPU_PEAK_SOURCE_PROBED;
+  unsigned long long gpu_source = ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN;
+  unsigned long long cpu_source = ROOFLINE_CPU_PEAK_SOURCE_FAIL_OPEN;
+  int used_identity_mem = 0;
 
   if (cache == NULL)
     return;
@@ -572,14 +599,41 @@ void roofline_hw_peak_detect_fill_cache(struct roofline_cached_peaks *cache)
     cpu_flops = (nr_cpus > 0) ? (double)nr_cpus * 1.0e9 : 1.0e9;
     cpu_bw = 1.0e9;
     cpu_hbm_bw = 0.0;
+    cpu_source = ROOFLINE_CPU_PEAK_SOURCE_PROBED;
   } else {
     cpu_flops = detect_cpu_peak_flops_per_s();
     detect_cpu_peak_edac_bw_bytes_per_s(&cpu_bw, &cpu_hbm_bw);
+    if (cpu_bw > 0.0 || cpu_hbm_bw > 0.0 || cpu_flops > 0.0)
+      cpu_source = ROOFLINE_CPU_PEAK_SOURCE_PROBED;
+    if (cpu_bw <= 0.0) {
+      double grace_bw = roofline_grace_dram_bw_from_cpu_part(detect_cpu_part_from_proc());
+      if (grace_bw > 0.0) {
+        cpu_bw = grace_bw;
+        cpu_source = ROOFLINE_CPU_PEAK_SOURCE_IDENTITY;
+      }
+    }
     detect_gpu_peaks_from_sysfs(&gpu_flops, &gpu_mem_bw, &gpu_io_bw);
+    if (gpu_mem_bw > 0.0 || gpu_io_bw > 0.0)
+      gpu_source = ROOFLINE_GPU_PEAK_SOURCE_PROBED;
     if (gpu_flops <= 0.0) {
-      gpu_flops = detect_gpu_fp64_peak_vendor_runtime();
-      if (gpu_flops > 0.0)
-        gpu_source = ROOFLINE_GPU_PEAK_SOURCE_VENDOR_RUNTIME;
+      unsigned long long vendor_src = ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN;
+      gpu_flops = detect_gpu_fp64_peak_vendor_runtime(&vendor_src);
+      if (gpu_flops > 0.0 && gpu_source == ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN)
+        gpu_source = vendor_src;
+    }
+    if (gpu_mem_bw <= 0.0 || gpu_io_bw <= 0.0) {
+      double smi_mem = 0.0;
+      double smi_io = 0.0;
+      detect_nvidia_mem_io_via_smi(&smi_mem, &smi_io, &used_identity_mem);
+      if (gpu_mem_bw <= 0.0 && smi_mem > 0.0)
+        gpu_mem_bw = smi_mem;
+      if (gpu_io_bw <= 0.0 && smi_io > 0.0) {
+        gpu_io_bw = smi_io;
+        if (gpu_source == ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN)
+          gpu_source = ROOFLINE_GPU_PEAK_SOURCE_VENDOR_SMI;
+      }
+      if (used_identity_mem && gpu_source == ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN)
+        gpu_source = ROOFLINE_GPU_PEAK_SOURCE_IDENTITY;
     }
   }
   cache->cpu_flops = clamp_rate(cpu_flops);
@@ -589,5 +643,6 @@ void roofline_hw_peak_detect_fill_cache(struct roofline_cached_peaks *cache)
   cache->gpu_mem_bw = clamp_rate(gpu_mem_bw);
   cache->gpu_io_bw = clamp_rate(gpu_io_bw);
   cache->gpu_source = gpu_source;
+  cache->cpu_source = cpu_source;
   cache->initialized = 1;
 }

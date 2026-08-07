@@ -74,6 +74,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_roofline_hw_peak_schema.c` | Roofline peak schema contract strings |
 | `test_roofline_hw_peak_changeover.c` | Roofline changeover / mode gating with `HPCPERFSTATS_SKIP_HW_PROBE` |
 | `test_roofline_detect_fixture.c` | `roofline_hw_peak_detect_fill_cache` fixture when `HPCPERFSTATS_SKIP_HW_PROBE=1` |
+| `test_roofline_hw_peak_identity.c` | GB200/Grace identity tables + Horizon smi CSV parsers |
 | `test_daemonize.c` | `daemonize()` double-fork and PID lock file (subprocess tests) |
 | `test_nfs_schema_subset.c` | NFS collector schema tokens vs. `nfs.c` |
 | `test_metric_profiler.c` | Metric profiler aggregation/report smoke test (enabled and disabled builds) |

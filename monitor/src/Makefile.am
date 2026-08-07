@@ -101,6 +101,7 @@ hpcperfstatsd_SOURCES = \
 	metric_profiler.h \
 	metric_profiler.c \
 	roofline_hw_peak.h \
+	roofline_hw_peak_identity.h \
 	string1.h \
 	trace.h \
 	stats_sink.h \
@@ -173,6 +174,8 @@ TYPES 	= \
 	roofline_hw_peak.c \
 	roofline_hw_peak_detect.c \
 	roofline_hw_peak_detect.h \
+	roofline_hw_peak_identity.c \
+	roofline_hw_peak_identity.h \
 	host_edac_mem_topology.c \
 	host_edac_mem_topology.h \
 	proc.c \

@@ -8,7 +8,6 @@
 #include "roofline_hw_peak_detect.h"
 
 enum {
-  CPU_PEAK_SOURCE_PROBED = 1,
   PEAK_CALC_VERSION_V2 = 2,
 };
 
@@ -117,7 +116,7 @@ static void roofline_hw_peak_collect(struct stats_type *type)
   stats_set(stats, "gpu_peak_fp64_flops_per_s", g_roofline_cache.gpu_flops);
   stats_set(stats, "gpu_peak_mem_bw_bytes_per_s", g_roofline_cache.gpu_mem_bw);
   stats_set(stats, "gpu_peak_io_link_bw_bytes_per_s", g_roofline_cache.gpu_io_bw);
-  stats_set(stats, "cpu_peak_source", CPU_PEAK_SOURCE_PROBED);
+  stats_set(stats, "cpu_peak_source", g_roofline_cache.cpu_source);
   stats_set(stats, "gpu_peak_source", g_roofline_cache.gpu_source);
   stats_set(stats, "peak_calc_version", PEAK_CALC_VERSION_V2);
 }

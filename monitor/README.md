@@ -153,6 +153,60 @@ collect uses **`perfmon_readGroupCounters(groupId)`** (not
 `activeGroup` and would otherwise leave `host_cpu_hw` stuck at zeros.
 `host_roofline_peak` adds
 `cpu_peak_hbm_bw_bytes_per_s` (EDAC HBM/DDR split, `peak_calc_version` 2).
+
+**Peak source enums:**
+
+`gpu_peak_source`:
+
+| Value | Meaning |
+|------:|---------|
+| 0 | Fail-open (unknown / zero) |
+| 1 | Probed (DRM sysfs) |
+| 2 | Vendor NVML (GPU FLOPS) |
+| 3 | Vendor `nvidia-smi` (FLOPS / PCIe IO) |
+| 4 | GPU identity table (allowlisted HBM peak by name) |
+
+`cpu_peak_source`:
+
+| Value | Meaning |
+|------:|---------|
+| 0 | Fail-open |
+| 1 | Probed (EDAC / procfs) |
+| 2 | Identity table (Grace CPU part `0xd4f` LPDDR5X) |
+
+**Horizon / GB200 + Grace constants** (datasheet; allowlisted only — no soft invent):
+
+| Identity | Peak key | Value |
+|----------|----------|------:|
+| GPU name contains `GB200` / `B200` | `gpu_peak_mem_bw_bytes_per_s` per GPU | `8e12` B/s (HBM3e) |
+| GPU name `GB200` / `B200` | SM count for smi FLOPS fallback | `148` |
+| CPU part `0xd4f` (Grace) | `cpu_peak_dram_bw_bytes_per_s` | `512e9` B/s (LPDDR5X) |
+
+FLOPS path: NVML-first (SM count + SM clock); smi fallback uses confirmed fields
+`name,clocks.max.sm,compute_cap` plus the SM identity table — **never** invalid
+`cuda.cores` / `multiprocessor.count` on this driver stack. When DRM mem/PCIe
+attrs are empty, IO BW comes from smi PCIe gen×width; mem BW from the GB200
+HBM table. When EDAC speeds are missing, Grace DRAM uses the CPU-part table.
+CPU FLOPS remain procfs/cpufreq.
+
+**Verify peaks by host + time** (never `jid` alone on `host_data`), e.g.:
+
+```sql
+WITH j AS (
+  SELECT host_list[1] AS host0,
+         COALESCE(telemetry_first_time, start_time) AS t0,
+         COALESCE(telemetry_last_time, end_time) AS t1
+  FROM job_data WHERE jid = '<jid>'
+)
+SELECT hd.event, COUNT(*) AS n, MIN(hd.value) AS vmin, MAX(hd.value) AS vmax
+FROM host_data hd CROSS JOIN j
+WHERE hd.host = j.host0
+  AND hd.time >= j.t0 AND hd.time <= j.t1
+  AND hd.type IN ('host_roofline_peak', 'roofline_hw_peak')
+  AND hd.event LIKE '%peak%'
+GROUP BY 1 ORDER BY 1;
+```
+
 **Consumer follow-up (analysis):** roofline/mbw still probe `dram_cas_*` only;
 HBM-primary SPR needs `hbm_cas_*` pairs in analysis (see plan
 `spr-imc-mbox-nan`).
