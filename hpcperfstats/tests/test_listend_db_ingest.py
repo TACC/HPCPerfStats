@@ -273,10 +273,26 @@ def test_dedupe_proc_objs_keep_last_for_upsert_batch():
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi
 
   first = SimpleNamespace(
-      jid="1", host="h", proc="bash", vm_rss=1, vm_stk=100, vm_exe=10, vm_lib=5
+      jid="1",
+      host="h",
+      proc="bash",
+      vm_rss=1,
+      vm_peak=9000,
+      vm_hwm=7000,
+      vm_stk=100,
+      vm_exe=10,
+      vm_lib=5,
   )
   second = SimpleNamespace(
-      jid="1", host="h", proc="bash", vm_rss=99, vm_stk=40, vm_exe=20, vm_lib=1
+      jid="1",
+      host="h",
+      proc="bash",
+      vm_rss=99,
+      vm_peak=0,
+      vm_hwm=100,
+      vm_stk=40,
+      vm_exe=20,
+      vm_lib=1,
   )
   other = SimpleNamespace(
       jid="1", host="h", proc="python", vm_rss=5, vm_stk=1, vm_exe=1, vm_lib=1
@@ -285,6 +301,8 @@ def test_dedupe_proc_objs_keep_last_for_upsert_batch():
   assert len(out) == 2
   by_proc = {o.proc: o for o in out}
   assert by_proc["bash"].vm_rss == 99
+  assert by_proc["bash"].vm_peak == 9000
+  assert by_proc["bash"].vm_hwm == 7000
   assert by_proc["bash"].vm_stk == 100
   assert by_proc["bash"].vm_exe == 20
   assert by_proc["bash"].vm_lib == 5

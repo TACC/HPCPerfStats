@@ -88,9 +88,17 @@ HOST_PROC_KEYS = (
     "threads",
 )
 
-# Instantaneous gauges retained as high-water marks across samples / upserts.
-# Kernel VmPeak/VmHWM are already peaks for a PID — last-write only for those.
-HOST_PROC_PEAK_KEYS = frozenset({"vm_stk", "vm_exe", "vm_lib"})
+# Instantaneous gauges and kernel peaks retained as high-water marks across
+# samples / upserts for the same ``(jid, host, proc)`` name. Includes kernel
+# VmPeak/VmHWM so a later zero or lower sample (or new PID same name) cannot
+# erase the job-level high water.
+HOST_PROC_PEAK_KEYS = frozenset({
+    "vm_peak",
+    "vm_hwm",
+    "vm_stk",
+    "vm_exe",
+    "vm_lib",
+})
 
 
 def schema_key_basename(token: str) -> str:
@@ -180,7 +188,12 @@ def merge_proc_row_dicts(
     ...     {"vm_stk": 100, "vm_peak": 900, "threads": 1},
     ...     {"vm_stk": 50, "vm_peak": 800, "threads": 4},
     ... )["vm_peak"]
-    800
+    900
+    >>> merge_proc_row_dicts(
+    ...     {"vm_hwm": 7000, "threads": 1},
+    ...     {"vm_hwm": 0, "threads": 4},
+    ... )["vm_hwm"]
+    7000
   """
   out = dict(earlier)
   out.update(later)
@@ -224,7 +237,8 @@ def apply_proc_peak_attrs_from_earlier(earlier: Any, later: Any) -> Any:
   Copy GREATEST peak attrs from ``earlier`` onto ``later`` (ORM or namespace).
 
   Args:
-    earlier (Any): Prior object with optional ``vm_stk`` / ``vm_exe`` / ``vm_lib``.
+    earlier (Any): Prior object with optional peak KEYS attrs
+      (``vm_peak`` / ``vm_hwm`` / ``vm_stk`` / ``vm_exe`` / ``vm_lib``).
     later (Any): Incoming object mutated in place (last-write for other fields).
 
   Returns:
@@ -232,9 +246,13 @@ def apply_proc_peak_attrs_from_earlier(earlier: Any, later: Any) -> Any:
 
   Examples:
     >>> from types import SimpleNamespace
-    >>> a = SimpleNamespace(vm_stk=10, vm_exe=1, vm_lib=2)
-    >>> b = SimpleNamespace(vm_stk=3, vm_exe=9, vm_lib=None)
-    >>> apply_proc_peak_attrs_from_earlier(a, b).vm_stk
+    >>> a = SimpleNamespace(vm_peak=9000, vm_hwm=7000, vm_stk=10, vm_exe=1, vm_lib=2)
+    >>> b = SimpleNamespace(vm_peak=0, vm_hwm=100, vm_stk=3, vm_exe=9, vm_lib=None)
+    >>> apply_proc_peak_attrs_from_earlier(a, b).vm_peak
+    9000
+    >>> b.vm_hwm
+    7000
+    >>> b.vm_stk
     10
     >>> b.vm_exe
     9
@@ -1429,12 +1447,23 @@ class IncrementalStatsParser:
       if typ in ("proc", "host_proc"):
         # device = full monitor token (name/pid/cmask/mmask); proc = name only.
         proc_name = dev.split("/")[0]
-        schema_keys = (
+        full_schema_keys = (
             self.schema.get(typ)
             or self.schema.get("host_proc")
             or self.schema.get("proc")
             or list(HOST_PROC_KEYS)
         )
+        tier_marker = None
+        if vals and vals[0] in _TIER_MARKERS:
+          tier_marker = vals[0]
+          vals = vals[1:]
+        if tier_marker == "@fast":
+          schema_keys = self.schema_fast.get(typ) or _fast_schema_keys(
+              full_schema_keys
+          )
+        else:
+          # ``@full`` or legacy lines without a tier marker use the full KEYS.
+          schema_keys = full_schema_keys
         vals_by_key = {}
         for i, key in enumerate(schema_keys):
           if i >= len(vals):
@@ -1454,6 +1483,7 @@ class IncrementalStatsParser:
             "device": dev,
         }
         for key in HOST_PROC_KEYS:
+          # Omitted slow-tier keys on ``@fast`` stay None (never invent 0).
           row[key] = vals_by_key.get(key)
         self.proc_stats.append(row)
         return

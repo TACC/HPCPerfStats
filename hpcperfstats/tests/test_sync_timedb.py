@@ -358,6 +358,85 @@ def test_parse_stats_lines_host_proc_schema_keys_with_unit_suffixes():
   assert row["threads"] == 8
 
 
+def test_parse_stats_lines_host_proc_at_full_production_shape():
+  """hs04: @full must not be consumed as uid (was all-null / threads=0)."""
+  keys = (
+      "uid,R=S vm_peak,U=kB vm_size,U=kB vm_lck,U=kB,R=S vm_hwm,U=kB,R=S "
+      "vm_rss,U=kB vm_data,U=kB vm_stk,U=kB vm_exe,U=kB vm_lib,U=kB "
+      "vm_pte,U=kB,R=S vm_swap,U=kB threads"
+  )
+  lines = [
+      f"!host_proc {keys}\n",
+      "1709123456 job1 cn001\n",
+      "host_proc polkitd/499505/0-143/0-2,10,18,26 @full "
+      "114 374080 308544 0 9920 9920 35200 192 128 9920 448 0 4\n",
+  ]
+  _stats, proc_list = parse_stats_lines(lines, start_idx=0)
+  assert len(proc_list) == 1
+  row = proc_list[0]
+  assert row["proc"] == "polkitd"
+  assert row["device"] == "polkitd/499505/0-143/0-2,10,18,26"
+  assert row["uid"] == 114
+  assert row["vm_peak"] == 374080
+  assert row["vm_size"] == 308544
+  assert row["vm_lck"] == 0
+  assert row["vm_hwm"] == 9920
+  assert row["vm_rss"] == 9920
+  assert row["vm_data"] == 35200
+  assert row["vm_stk"] == 192
+  assert row["vm_exe"] == 128
+  assert row["vm_lib"] == 9920
+  assert row["vm_pte"] == 448
+  assert row["vm_swap"] == 0
+  assert row["threads"] == 4
+
+
+def test_parse_stats_lines_host_proc_at_fast_omits_slow_keys():
+  """@fast maps schema_fast only; slow KEYS stay None (never invent 0)."""
+  keys = (
+      "uid,R=S vm_peak,U=kB vm_size,U=kB vm_lck,U=kB,R=S vm_hwm,U=kB,R=S "
+      "vm_rss,U=kB vm_data,U=kB vm_stk,U=kB vm_exe,U=kB vm_lib,U=kB "
+      "vm_pte,U=kB,R=S vm_swap,U=kB threads"
+  )
+  # Fast KEYS: vm_peak vm_size vm_rss vm_data vm_stk vm_exe vm_lib vm_swap threads
+  lines = [
+      f"!host_proc {keys}\n",
+      "1709123456 job1 cn001\n",
+      "host_proc python/1/0/0 @fast "
+      "9000 8000 6000 5000 4000 3000 2000 500 8\n",
+  ]
+  _stats, proc_list = parse_stats_lines(lines, start_idx=0)
+  assert len(proc_list) == 1
+  row = proc_list[0]
+  assert row["uid"] is None
+  assert row["vm_lck"] is None
+  assert row["vm_hwm"] is None
+  assert row["vm_pte"] is None
+  assert row["vm_peak"] == 9000
+  assert row["vm_size"] == 8000
+  assert row["vm_rss"] == 6000
+  assert row["vm_data"] == 5000
+  assert row["vm_stk"] == 4000
+  assert row["vm_exe"] == 3000
+  assert row["vm_lib"] == 2000
+  assert row["vm_swap"] == 500
+  assert row["threads"] == 8
+
+
+def test_merge_proc_row_dicts_greatest_peak_and_hwm():
+  """vm_peak/vm_hwm use GREATEST so later 0 cannot erase job-level high water."""
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import merge_proc_row_dicts
+
+  merged = merge_proc_row_dicts(
+      {"vm_peak": 9000, "vm_hwm": 7000, "vm_stk": 100, "threads": 1},
+      {"vm_peak": 0, "vm_hwm": 100, "vm_stk": 40, "threads": 8},
+  )
+  assert merged["vm_peak"] == 9000
+  assert merged["vm_hwm"] == 7000
+  assert merged["vm_stk"] == 100
+  assert merged["threads"] == 8
+
+
 def test_parse_stats_lines_excluded_type():
   """Excluded type is skipped."""
   lines = [
@@ -401,7 +480,7 @@ def test_build_stats_dataframes_empty():
 
 
 def test_build_stats_dataframes_dedupe_proc():
-  """Duplicate (jid, host, proc): last-write non-peak; GREATEST vm_stk/exe/lib."""
+  """Duplicate (jid, host, proc): last-write non-peak; GREATEST peak KEYS."""
   stats_list = [
       {"time": 1.0, "host": "h", "type": "cpu", "dev": "0", "event": "a", "value": 1.0, "wid": 64, "mult": 1, "unit": "#"},
   ]
@@ -413,6 +492,7 @@ def test_build_stats_dataframes_dedupe_proc():
           "device": "p/1/0/0",
           "vm_rss": 10,
           "vm_peak": 900,
+          "vm_hwm": 700,
           "vm_stk": 100,
           "vm_exe": 50,
           "vm_lib": 20,
@@ -425,6 +505,7 @@ def test_build_stats_dataframes_dedupe_proc():
           "device": "p/2/0/0",
           "vm_rss": 99,
           "vm_peak": 800,
+          "vm_hwm": 0,
           "vm_stk": 40,
           "vm_exe": 60,
           "vm_lib": 10,
@@ -436,7 +517,8 @@ def test_build_stats_dataframes_dedupe_proc():
   assert len(proc_df) == 1
   assert proc_df.iloc[0]["proc"] == "p"
   assert int(proc_df.iloc[0]["vm_rss"]) == 99
-  assert int(proc_df.iloc[0]["vm_peak"]) == 800
+  assert int(proc_df.iloc[0]["vm_peak"]) == 900
+  assert int(proc_df.iloc[0]["vm_hwm"]) == 700
   assert int(proc_df.iloc[0]["threads"]) == 4
   assert int(proc_df.iloc[0]["vm_stk"]) == 100
   assert int(proc_df.iloc[0]["vm_exe"]) == 60

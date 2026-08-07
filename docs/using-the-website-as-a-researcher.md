@@ -86,7 +86,7 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 | **Summary plot (tab)**          | Host-level timeline plot with CPU, memory/NUMA<sup>[4](#ref-4)</sup>/DRAM, fabric/filesystem, GPU, and node-power traces | Best first visual scan for phase changes, host outliers, and cross-signal coupling (for example GPU drops while fabric spikes).                              |
 | **Roofline (tab)**              | CPU roofline and GPU roofline (Memory BW when available, else PCIe/NVLink<sup>[7](#ref-7)</sup>)                                                        | Distinguish compute-limited vs bandwidth/link-limited behavior and prioritize the right optimization work.                                                     |
 | **Multiprecision Mix (tab)**    | CPU and GPU precision-activity panels over time                                                    | Verify whether the run is using expected mixed-precision paths<sup>[6](#ref-6)</sup> and detect precision mix drift across runs or code versions.                                         |
-| **Processes (tab)**             | Process name first; expandable groups of hosts with average Peak VM/HWM/Stack/Text/Libs/Threads on the group header | Confirm what actually executed and its memory footprint (wrappers, launch depth, wrong env, etc.). |
+| **Processes (tab)**             | Process name first; expandable groups of hosts with average Peak VM/HWM/Stack/Text/Libs/Threads on the group header. Peak VM/HWM (and Stack/Text/Libs) are **job-level high water** for that process name (ingest keeps the max across samples). | Confirm what actually executed and its memory footprint (wrappers, launch depth, wrong env, etc.). |
 | **Execution and hosts (tab)**   | XALT execution path/cwd/libset and host list                                                       | Environment drift, module/library mismatches, and host-level forensics.                                                                                       |
 | **Device data (tab)**           | Device type names and recorded performance events, with links to type-detail pages                  | Discover collected counter families and drill into per-type analysis.                                                                                          |
 
@@ -326,6 +326,7 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-07-31 | Resources GPU inventory: one row per device when ingest stores `dev`; legacy empty-`dev` jobs show node-aggregate note (not “per GPU”). |
 | 2026-07-31 | Resources/Metrics Card chrome: Watt hours → GPU Information (inventory collapsed) → Shared File Systems → logs; Metrics subsections in Cards. |
 | 2026-08-06 | Processes tab columns: Peak VM, HWM, Stack, Text, Libs, Threads (dropped RSS/Size from visible set). |
+| 2026-08-07 | Processes Peak VM/HWM (and Stack/Text/Libs) documented as job-level high water via ingest GREATEST across samples. |
 | 2026-08-05 | GPU Roofline prefers estimated memory bandwidth when present (title Memory BW); otherwise PCIe/NvLink (or Xe Link) with matching title and peak roof. |
 | 2026-08-05 | Job Detail **Print** button: prepares overview/Resources/Metrics/Summary/Roofline/Multiprecision Mix for the browser print dialog (Save as PDF). |
 
