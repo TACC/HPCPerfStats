@@ -10,10 +10,11 @@ include:
   - docker-compose.cpu-pinning.app.yaml
 
 # Container stdout/stderr for `docker compose logs` (not host syslog/journald).
+# Use json-file (not Docker-only ``local``) so Podman accept the driver too.
 # max-size: rotate each file at 100 MiB; max-file: keep this many rotated files
 # per container (~300 MiB cap with max-file: "3").
 x-logging: &hpc-logging
-  driver: local
+  driver: json-file
   options:
     max-size: "100m"
     max-file: "3"

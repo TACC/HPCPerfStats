@@ -20,11 +20,11 @@ def test_docker_compose_has_healthchecks_for_core_services():
   assert "rabbitmq-diagnostics" in content
 
 
-def test_docker_compose_local_logging_rotated():
-  """Stdout logging is file-backed for compose logs, not host syslog."""
+def test_docker_compose_json_file_logging_rotated():
+  """Stdout logging is file-backed for compose logs (Podman-safe, not journald)."""
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.yaml").read_text()
-  assert "driver: local" in content
+  assert "driver: json-file" in content
   assert 'max-size: "100m"' in content
   assert 'max-file: "3"' in content
   for service in ["web", "pipeline", "redis", "proxy", "db", "rabbitmq"]:
