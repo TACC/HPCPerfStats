@@ -67,6 +67,21 @@
 #define SPR_HBM_ONLY_EVENTS HBM16_EVENTS
 #define SPR_DDR_HBM_EVENTS MBOX12_IMC_EVENTS "," HBM16_EVENTS
 
+/* GNR/SRF LIKWID tables rename CAS to CAS_COUNT_SCH0_* (no plain CAS_COUNT_RD). */
+#define MBOX12_SCH0_IMC_EVENTS                                                                     \
+  "CAS_COUNT_SCH0_RD:MBOX0C0,CAS_COUNT_SCH0_WR:MBOX0C1,"                                           \
+  "CAS_COUNT_SCH0_RD:MBOX1C0,CAS_COUNT_SCH0_WR:MBOX1C1,"                                           \
+  "CAS_COUNT_SCH0_RD:MBOX2C0,CAS_COUNT_SCH0_WR:MBOX2C1,"                                           \
+  "CAS_COUNT_SCH0_RD:MBOX3C0,CAS_COUNT_SCH0_WR:MBOX3C1,"                                           \
+  "CAS_COUNT_SCH0_RD:MBOX4C0,CAS_COUNT_SCH0_WR:MBOX4C1,"                                           \
+  "CAS_COUNT_SCH0_RD:MBOX5C0,CAS_COUNT_SCH0_WR:MBOX5C1,"                                           \
+  "CAS_COUNT_SCH0_RD:MBOX6C0,CAS_COUNT_SCH0_WR:MBOX6C1,"                                           \
+  "CAS_COUNT_SCH0_RD:MBOX7C0,CAS_COUNT_SCH0_WR:MBOX7C1,"                                           \
+  "CAS_COUNT_SCH0_RD:MBOX8C0,CAS_COUNT_SCH0_WR:MBOX8C1,"                                           \
+  "CAS_COUNT_SCH0_RD:MBOX9C0,CAS_COUNT_SCH0_WR:MBOX9C1,"                                           \
+  "CAS_COUNT_SCH0_RD:MBOX10C0,CAS_COUNT_SCH0_WR:MBOX10C1,"                                         \
+  "CAS_COUNT_SCH0_RD:MBOX11C0,CAS_COUNT_SCH0_WR:MBOX11C1"
+
 #define CHA_SKX_CBOX_EVENTS                                                                        \
   "LLC_LOOKUP_DATA_READ:CBOX0C0,LLC_LOOKUP_DATA_READ:CBOX1C0,"                                     \
   "LLC_LOOKUP_DATA_READ:CBOX2C0,LLC_LOOKUP_DATA_READ:CBOX3C0,"                                     \
@@ -96,6 +111,9 @@ static const char *const profile_events[LIKWID_UNCORE_PROFILE_COUNT] = {
     [LIKWID_UNCORE_PROFILE_IMC_SKX] = MBOX6_IMC_EVENTS,
     [LIKWID_UNCORE_PROFILE_IMC_ICX] = MDEV4_ICX_EVENTS,
     [LIKWID_UNCORE_PROFILE_IMC_SPR] = SPR_DDR_HBM_EVENTS,
+    [LIKWID_UNCORE_PROFILE_IMC_EMR] = SPR_DDR_HBM_EVENTS,
+    [LIKWID_UNCORE_PROFILE_IMC_GNR] = MBOX12_SCH0_IMC_EVENTS,
+    [LIKWID_UNCORE_PROFILE_IMC_SRF] = MBOX12_SCH0_IMC_EVENTS,
     [LIKWID_UNCORE_PROFILE_CHA_SKX] = CHA_SKX_CBOX_EVENTS,
     [LIKWID_UNCORE_PROFILE_DF_ROME] = DF_ROME_EVENTS,
     [LIKWID_UNCORE_PROFILE_DF_MILAN] = DF_MILAN_EVENTS,
@@ -113,6 +131,12 @@ int likwid_uncore_profile_matches_processor(likwid_uncore_profile_t profile, pro
     return intel_processor_is_icx(p);
   case LIKWID_UNCORE_PROFILE_IMC_SPR:
     return intel_processor_is_spr(p);
+  case LIKWID_UNCORE_PROFILE_IMC_EMR:
+    return intel_processor_is_emr(p);
+  case LIKWID_UNCORE_PROFILE_IMC_GNR:
+    return intel_processor_is_gnr(p);
+  case LIKWID_UNCORE_PROFILE_IMC_SRF:
+    return intel_processor_is_srf(p);
   case LIKWID_UNCORE_PROFILE_DF_ROME:
     return amd_processor_is_rome(p);
   case LIKWID_UNCORE_PROFILE_DF_MILAN:
@@ -344,6 +368,9 @@ int likwid_uncore_profile_map_counter(likwid_uncore_profile_t profile, const cha
   case LIKWID_UNCORE_PROFILE_IMC_SKX:
   case LIKWID_UNCORE_PROFILE_IMC_ICX:
   case LIKWID_UNCORE_PROFILE_IMC_SPR:
+  case LIKWID_UNCORE_PROFILE_IMC_EMR:
+  case LIKWID_UNCORE_PROFILE_IMC_GNR:
+  case LIKWID_UNCORE_PROFILE_IMC_SRF:
     return map_mbox_hbm_mdev(counter_name, dev_out, dev_len, key_out);
   case LIKWID_UNCORE_PROFILE_DF_ROME:
   case LIKWID_UNCORE_PROFILE_DF_MILAN:

@@ -5,11 +5,19 @@
 
 static void test_profile_processor_match(void)
 {
+  assert(likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_SKX, SKYLAKE_X));
   assert(likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_SKX, CASCADE_LAKE));
+  assert(likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_CHA_SKX, SKYLAKE_X));
   assert(likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_CHA_SKX, CASCADE_LAKE));
   assert(likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_ICX, ICELAKE_SERVER));
   assert(likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_SPR, SAPPHIRE_RAPIDS));
+  assert(likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_EMR, EMERALD_RAPIDS));
+  assert(likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_GNR, GRANITE_RAPIDS));
+  assert(likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_SRF, SIERRA_FOREST));
   assert(!likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_SKX, SKYLAKE));
+  assert(!likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_SPR, EMERALD_RAPIDS));
+  assert(!likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_EMR, SAPPHIRE_RAPIDS));
+  assert(!likwid_uncore_profile_matches_processor(LIKWID_UNCORE_PROFILE_IMC_GNR, SIERRA_FOREST));
 }
 
 static void test_counter_map(void)
@@ -96,6 +104,19 @@ static void test_eventset_nonempty(void)
   assert(strstr(icx, "MDEV0C0 DDR_READ") == NULL);
   assert(strstr(cha, "LLC_LOOKUP_DATA_READ:CBOX0C0") != NULL);
   assert(strstr(cha, "CBOX0C0 LLC_LOOKUP") == NULL);
+
+  /* EMR reuses SPR CAS_COUNT_RD; GNR/SRF require SCH0 names. */
+  assert(strstr(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_EMR),
+                "CAS_COUNT_RD:MBOX0C0") != NULL);
+  assert(strstr(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_EMR),
+                "CAS_COUNT_SCH0_RD") == NULL);
+  assert(strstr(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_GNR),
+                "CAS_COUNT_SCH0_RD:MBOX0C0") != NULL);
+  assert(strstr(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_GNR),
+                "CAS_COUNT_RD:MBOX") == NULL);
+  assert(strstr(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_SRF),
+                "CAS_COUNT_SCH0_WR:MBOX11C1") != NULL);
+  assert(strstr(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_GNR), "MBOX12C0") == NULL);
 }
 
 static void assert_eventset_colon_tokens(const char *events)
@@ -129,6 +150,9 @@ static void test_eventset_colon_format(void)
   assert_eventset_colon_tokens(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_SKX));
   assert_eventset_colon_tokens(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_ICX));
   assert_eventset_colon_tokens(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_SPR));
+  assert_eventset_colon_tokens(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_EMR));
+  assert_eventset_colon_tokens(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_GNR));
+  assert_eventset_colon_tokens(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_IMC_SRF));
   assert_eventset_colon_tokens(likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_CHA_SKX));
   assert_eventset_colon_tokens(likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_DDR_ONLY));
   assert_eventset_colon_tokens(likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_HBM_ONLY));

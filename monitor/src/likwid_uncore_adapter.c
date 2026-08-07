@@ -94,14 +94,16 @@ static int likwid_uncore_try_eventset(const char *events, int *group_out, const 
   return 0;
 }
 
-static int likwid_uncore_spr_enable(int group, const char *label, int index)
+static int likwid_uncore_spr_enable(likwid_uncore_profile_t profile, int group, const char *label,
+                                    int index, const char *st_name)
 {
-  g_profile_group[LIKWID_UNCORE_PROFILE_IMC_SPR] = group;
-  g_profile_ready[LIKWID_UNCORE_PROFILE_IMC_SPR] = 1;
-  monitor_log_info("intel_x86_uncore_imc_spr: enabled with eventset %s (index %d)\n", label, index);
+  const char *name = st_name != NULL ? st_name : "intel_x86_uncore_imc";
+
+  g_profile_group[profile] = group;
+  g_profile_ready[profile] = 1;
+  monitor_log_info("%s: enabled with eventset %s (index %d)\n", name, label, index);
   if (index > 0)
-    monitor_log_warn("intel_x86_uncore_imc_spr: using LIKWID fallback eventset %s (index %d)\n",
-                     label, index);
+    monitor_log_warn("%s: using LIKWID fallback eventset %s (index %d)\n", name, label, index);
   return 0;
 }
 
@@ -137,7 +139,7 @@ static int likwid_uncore_spr_mbox_results_ok(int group)
   return n_ok > 0 ? 0 : -1;
 }
 
-static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
+static int likwid_uncore_adapter_begin_spr(struct stats_type *type, likwid_uncore_profile_t profile)
 {
   likwid_spr_imc_eventset_t order[3];
   int hbm_sizes[3];
@@ -151,8 +153,10 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
   int i;
   int total_tries;
   int try_idx = 0;
+  const char *st_name =
+      type != NULL && type->st_name != NULL ? type->st_name : "intel_x86_uncore_imc";
 
-  if (g_profile_ready[LIKWID_UNCORE_PROFILE_IMC_SPR])
+  if (g_profile_ready[profile])
     return 0;
 
   (void)host_edac_scan_mem_classes(&has_ddr, &has_hbm);
@@ -161,9 +165,9 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
   n_hbm =
       likwid_spr_imc_hbm_ladder_sizes(hbm_sizes, (int)(sizeof(hbm_sizes) / sizeof(hbm_sizes[0])));
   total_tries = n_order + n_hbm;
-  monitor_log_info("intel_x86_uncore_imc_spr: EDAC has_ddr=%d has_hbm=%d; trying %d eventset(s), "
+  monitor_log_info("%s: EDAC has_ddr=%d has_hbm=%d; trying %d eventset(s), "
                    "primary %s (+ %d HBM ladder)\n",
-                   has_ddr, has_hbm, total_tries,
+                   st_name, has_ddr, has_hbm, total_tries,
                    n_order > 0 ? likwid_spr_imc_eventset_variant_name(order[0]) : "none", n_hbm);
 
   for (i = 0; i < n_order; i++) {
@@ -189,13 +193,13 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
           likwid_uncore_restore_stderr(saved_stderr, null_fd);
           quiet = 0;
         }
-        return likwid_uncore_spr_enable(group, label, try_idx);
+        return likwid_uncore_spr_enable(profile, group, label, try_idx, st_name);
       }
       fail_step = "mboxResults";
       fail_errno = 0;
-      monitor_log_warn("intel_x86_uncore_imc_spr: eventset %s failed at %s "
+      monitor_log_warn("%s: eventset %s failed at %s "
                        "(all MBOX results non-finite)\n",
-                       label, fail_step);
+                       st_name, label, fail_step);
       if (quiet) {
         likwid_uncore_restore_stderr(saved_stderr, null_fd);
         saved_stderr = -1;
@@ -211,7 +215,7 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
       null_fd = -1;
       quiet = 0;
     }
-    monitor_log_warn("intel_x86_uncore_imc_spr: eventset %s failed at %s (errno=%d)\n", label,
+    monitor_log_warn("%s: eventset %s failed at %s (errno=%d)\n", st_name, label,
                      fail_step != NULL ? fail_step : "unknown", fail_errno);
     try_idx++;
   }
@@ -240,7 +244,7 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
         likwid_uncore_restore_stderr(saved_stderr, null_fd);
         quiet = 0;
       }
-      return likwid_uncore_spr_enable(group, label, try_idx);
+      return likwid_uncore_spr_enable(profile, group, label, try_idx, st_name);
     }
     if (quiet) {
       likwid_uncore_restore_stderr(saved_stderr, null_fd);
@@ -248,16 +252,16 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type)
       null_fd = -1;
       quiet = 0;
     }
-    monitor_log_warn("intel_x86_uncore_imc_spr: eventset %s failed at %s (errno=%d)\n", label,
+    monitor_log_warn("%s: eventset %s failed at %s (errno=%d)\n", st_name, label,
                      fail_step != NULL ? fail_step : "unknown", fail_errno);
     try_idx++;
   }
 
   if (quiet)
     likwid_uncore_restore_stderr(saved_stderr, null_fd);
-  monitor_log_error("intel_x86_uncore_imc_spr: all LIKWID eventset variants failed "
+  monitor_log_error("%s: all LIKWID eventset variants failed "
                     "(has_ddr=%d has_hbm=%d); disabling type\n",
-                    has_ddr, has_hbm);
+                    st_name, has_ddr, has_hbm);
   type->st_enabled = 0;
   return -1;
 }
@@ -284,8 +288,8 @@ int likwid_uncore_adapter_begin(struct stats_type *type, likwid_uncore_profile_t
     goto disable;
   }
 
-  if (profile == LIKWID_UNCORE_PROFILE_IMC_SPR)
-    return likwid_uncore_adapter_begin_spr(type);
+  if (profile == LIKWID_UNCORE_PROFILE_IMC_SPR || profile == LIKWID_UNCORE_PROFILE_IMC_EMR)
+    return likwid_uncore_adapter_begin_spr(type, profile);
 
   events = likwid_uncore_profile_eventset(profile);
   if (events == NULL || events[0] == '\0')

@@ -69,10 +69,19 @@ static const char *intel_icx_eventset(void)
 
 static const char *intel_spr_eventset(int n_pmcs)
 {
-  /* SPR: use ICX-validated LIKWID names. SKX-era MEM_LOAD_UOPS_RETIRED_*
+  /* SPR/EMR/GNR: use ICX-validated LIKWID names. SKX-era MEM_LOAD_UOPS_RETIRED_*
    * are missing on SPR in LIKWID 5.5.x; extra FP PMCs often hit "in use". */
   (void)n_pmcs;
   return intel_icx_eventset();
+}
+
+static const char *intel_srf_eventset(void)
+{
+  /* Sierra Forest (Atom-server): LIKWID exposes MEM_LOAD_UOPS_RETIRED_* but not
+   * L1D_REPLACEMENT; LLC hit is L3_HIT (not LLC_HIT). */
+  return "INSTR_RETIRED_ANY:FIXC0,CPU_CLK_UNHALTED_CORE:FIXC1,CPU_CLK_UNHALTED_REF:FIXC2,"
+         "MEM_LOAD_UOPS_RETIRED_L1_HIT:PMC0,MEM_LOAD_UOPS_RETIRED_L2_HIT:PMC1,"
+         "MEM_LOAD_UOPS_RETIRED_L3_HIT:PMC2";
 }
 
 const char *likwid_arch_eventset_for_processor(processor_t p, int n_pmcs)
@@ -86,8 +95,13 @@ const char *likwid_arch_eventset_for_processor(processor_t p, int n_pmcs)
   case ICELAKE_SERVER:
     return intel_icx_eventset();
   case SAPPHIRE_RAPIDS:
+  case EMERALD_RAPIDS:
+  case GRANITE_RAPIDS:
     return intel_spr_eventset(n_pmcs);
+  case SIERRA_FOREST:
+    return intel_srf_eventset();
   case SKYLAKE:
+  case SKYLAKE_X:
   case CASCADE_LAKE:
   case NEHALEM:
   case WESTMERE:

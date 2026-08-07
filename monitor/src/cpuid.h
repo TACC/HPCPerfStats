@@ -15,13 +15,17 @@ typedef enum {
   IVYBRIDGE,
   HASWELL,
   BROADWELL,
-  SKYLAKE,
-  CASCADE_LAKE,
+  SKYLAKE,      /* client 06_4e / 06_5e */
+  SKYLAKE_X,    /* server 06_55 stepping < 5 (LIKWID skylakeX) */
+  CASCADE_LAKE, /* server 06_55 stepping >= 5 (LIKWID CLX; Cooper Lake) */
   ICELAKE_SERVER,
-  SAPPHIRE_RAPIDS
+  SAPPHIRE_RAPIDS,
+  EMERALD_RAPIDS,
+  GRANITE_RAPIDS,
+  SIERRA_FOREST
 } processor_t;
 
-// Return 1 for true and 0 for false
+/* Return 1 for true and 0 for false */
 int percore_signature(processor_t p, char *cpu, int *nr_events);
 processor_t signature(int *n_pmcs);
 int cpuid_read_cpu_topology(char *cpu, int *pkg, int *core, int *smt, int *nr_core);

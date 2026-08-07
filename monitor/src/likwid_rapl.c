@@ -39,9 +39,13 @@ int likwid_rapl_is_supported_intel_processor(void)
 {
   switch (processor) {
   case SKYLAKE:
+  case SKYLAKE_X:
   case CASCADE_LAKE:
   case ICELAKE_SERVER:
   case SAPPHIRE_RAPIDS:
+  case EMERALD_RAPIDS:
+  case GRANITE_RAPIDS:
+  case SIERRA_FOREST:
     return 1;
   default:
     return 0;

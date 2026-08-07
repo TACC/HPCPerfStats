@@ -21,7 +21,7 @@ alwaysApply: false
 
 ## Law
 
-- **Intel** (`host_cpu_hw` on SKX/ICX/SPR) and **EPYC** Rome/Milan/Genoa/Turin core + DF + RAPL go through **LIKWID** only.
+- **Intel** (`host_cpu_hw` on SKX/CLX/ICX/SPR/EMR/GNR/SRF) and **EPYC** Rome/Milan/Genoa/Turin core + DF + RAPL go through **LIKWID** only.
 - If LIKWID init/setup fails, **disable** `host_cpu_hw` (and DF on EPYC) — **no MSR fallback**, no `fallback_fill`, no `msr_io` core PMC path.
 - Do **not** reintroduce `intel_x86_pmc_gpr4` / `intel_x86_pmc_gpr8`, `intel_4pmc3` / `intel_8pmc3`, `msr_io`, or AMD `amd64_pmc` / native MSR `amd64_df` / emit `amd_x86_pmc` or bare `amd_x86_uncore_df`.
 - DF `st_name`s are family-named: `amd_x86_uncore_df_{rome,milan,genoa,turin}` (IMC pattern).

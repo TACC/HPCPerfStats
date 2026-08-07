@@ -21,7 +21,7 @@ EPYC-only CPUID allowlists live in `amd_cpuid_match.c` (Naples / Ryzen models ou
 
 ## Intel `host_cpu_hw` — LIKWID only (no MSR / no gpr*)
 
-On SKX / ICX / SPR, LIKWID owns core PMCs. **Deleted:** `intel_4pmc3` /
+On SKX / CLX / ICX / SPR / EMR / GNR / SRF, LIKWID owns core PMCs. **Deleted:** `intel_4pmc3` /
 `intel_8pmc3` (`intel_x86_pmc_gpr4` / `gpr8`), `msr_io`, and `fallback_fill`.
 If LIKWID setup fails, `host_cpu_hw` is **disabled** (same fail-closed policy
 as EPYC). Util/clock columns in `host_cpu_hw` stay 0 (Grace/DCGM only). FIXC
@@ -31,8 +31,9 @@ the row includes `@full`; FIXC are `$10–$12`.
 
 ## Supported Intel generations (SKX+)
 
-Intel uncore collectors and LIKWID uncore profiles target **Skylake-X / Cascade
-Lake**, **Ice Lake server**, and **Sapphire Rapids** only.
+Intel LIKWID collectors target server generations from **Skylake-X** through
+**Sierra Forest** (pinned LIKWID 5.5.2rc2): SKX, CLX, ICX, SPR, EMR, GNR, SRF.
+CHA uncore remains SKX-era only (`intel_x86_uncore_cha_skx`).
 
 **Retired (no longer classified or registered):** Sandybridge, Ivybridge,
 Haswell, Broadwell — including `intel_x86_pcu` MSR PCU and all
@@ -42,26 +43,40 @@ Haswell, Broadwell — including `intel_x86_pcu` MSR PCU and all
 
 | `processor_t` | CPUID signature |
 |---------------|-----------------|
-| `CASCADE_LAKE` | `06_55` |
 | `SKYLAKE` (client) | `06_4e`, `06_5e` |
+| `SKYLAKE_X` | `06_55` stepping &lt; 5 (LIKWID `skylakeX`) |
+| `CASCADE_LAKE` (CLX; Cooper Lake) | `06_55` stepping ≥ 5 (LIKWID `CLX`) |
 | `ICELAKE_SERVER` | `06_6a`, `06_6c` |
 | `SAPPHIRE_RAPIDS` | `06_8f` |
+| `EMERALD_RAPIDS` | `06_cf` |
+| `GRANITE_RAPIDS` | `06_ad` |
+| `SIERRA_FOREST` | `06_af` |
 
 Signatures for SNB/IVB/HSW/BDW (`06_2a`, `06_3a`, `06_3c`, `06_3d`, …) return
-unsupported (`processor_t`-1).
+unsupported (`processor_t`-1). Diamond Rapids and later are out of scope until
+LIKWID pin adds them.
 
 ## Collector mapping
 
 | `st_name` | LIKWID profile | Notes |
 |-----------|----------------|-------|
 | `host_cpu_hw` | `likwid_arch_eventset_for_processor()` | LIKWID-only; no MSR / gpr* fallback |
+| `intel_x86_rapl` | LIKWID RAPL (`likwid_rapl.c`) | Intel-only begin (`likwid_rapl_is_supported_intel_processor`) |
+| `amd_x86_rapl` | LIKWID RAPL (`likwid_rapl.c`) | AMD Zen-only begin (`likwid_rapl_is_supported_amd_processor`) |
+| `intel_x86_uncore_imc_skx` | `IMC_SKX` (`MBOX*` CAS) | SKX + CLX server |
+| `intel_x86_uncore_imc_icx` | `IMC_ICX` (`MDEV*` DDR bytes) | Ice Lake server |
+| `intel_x86_uncore_imc_spr` | `IMC_SPR` (`MBOX*` + `HBM*` CAS) | DDR and HBM on same type |
+| `intel_x86_uncore_imc_emr` | `IMC_EMR` (SPR event ladder) | Emerald Rapids |
+| `intel_x86_uncore_imc_gnr` | `IMC_GNR` (`CAS_COUNT_SCH0_*`) | Granite Rapids |
+| `intel_x86_uncore_imc_srf` | `IMC_SRF` (`CAS_COUNT_SCH0_*`) | Sierra Forest |
+| `intel_x86_uncore_cha_skx` | `CHA_SKX` (`CBOX*` LLC events) | Trimmed CBOX subset from `skylakeX/CACHES.txt` |
 
 `host_cpu_hw` LIKWID notes:
 
 - LIKWID returns **UPPERCASE** event names (`INSTR_RETIRED_ANY`, …). Adapter maps them to schema snake_case via `likwid_pmc_schema_map.c` before `stats_set`; FIXC* is matched case-insensitively. Skip LIKWID invalid sentinel `1ULL<<63`.
-- **Sapphire Rapids** eventset matches ICX (`MEM_INST_RETIRED_ALL_*` + `L1D_REPLACEMENT` + FIXC0–2). Do not use SKX-era `MEM_LOAD_UOPS_RETIRED_*` (missing in LIKWID for SPR).
-| `intel_x86_rapl` | LIKWID RAPL (`likwid_rapl.c`) | Intel-only begin (`likwid_rapl_is_supported_intel_processor`) |
-| `amd_x86_rapl` | LIKWID RAPL (`likwid_rapl.c`) | AMD Zen-only begin (`likwid_rapl_is_supported_amd_processor`) |
+- **Sapphire Rapids / Emerald Rapids / Granite Rapids** core eventset matches ICX (`MEM_INST_RETIRED_ALL_*` + `L1D_REPLACEMENT` + FIXC0–2). Do not use SKX-era `MEM_LOAD_UOPS_RETIRED_*` (missing in LIKWID for SPR).
+- **Sierra Forest** uses Atom-server names (`MEM_LOAD_UOPS_RETIRED_L{1,2,3}_HIT` + FIXC); no `L1D_REPLACEMENT` in LIKWID SRF tables.
+- **GNR/SRF IMC** must use `CAS_COUNT_SCH0_RD`/`WR` (not SPR `CAS_COUNT_RD`).
 
 RAPL notes:
 
@@ -73,10 +88,6 @@ RAPL notes:
 - AMD core eventset uses **`LS_DISPATCH_ALL`** (LIKWID Zen umask); bare `LS_DISPATCH` fails `perfmon_addEventSet` and silently used to disable `host_cpu_hw`.
 - **`LIKWID_FORCE`:** privileged host daemon defaults `LIKWID_FORCE=1` via `likwid_pmc_adapter_ensure_force_env()` before `HPMinit` (same effect as `likwid-perfctr -f`). Without force, LIKWID refuses in-use PMC0–PMC3 (`addEventSet` −22). Opt out with `LIKWID_FORCE=0`. Quiet setup (`HPCPERFSTATS_LIKWID_SETUP_QUIET`, default on) retries failed add/setup/start once with stderr restored so “in use” lines reach the journal.
 - `host_cpu_hw` begin failures log init vs eventset step and the event string (`likwid_backend_begin` / `likwid_pmc_adapter_setup_events`).
-| `intel_x86_uncore_imc_skx` | `IMC_SKX` (`MBOX*` CAS) | Cascade Lake / SKX server |
-| `intel_x86_uncore_imc_icx` | `IMC_ICX` (`MDEV*` DDR bytes) | Ice Lake server |
-| `intel_x86_uncore_imc_spr` | `IMC_SPR` (`MBOX*` + `HBM*` CAS) | DDR and HBM on same type |
-| `intel_x86_uncore_cha_skx` | `CHA_SKX` (`CBOX*` LLC events) | Trimmed CBOX subset from `skylakeX/CACHES.txt` |
 
 Counter-name → device/key mapping is exercised by `test_likwid_uncore_adapter.c`
 via `likwid_uncore_adapter_emit_counter()`.

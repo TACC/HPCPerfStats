@@ -14,6 +14,9 @@ extern struct stats_type intel_skx_cha_stats_type;
 extern struct stats_type intel_skx_imc_stats_type;
 extern struct stats_type intel_icx_imc_stats_type;
 extern struct stats_type intel_spr_imc_stats_type;
+extern struct stats_type intel_emr_imc_stats_type;
+extern struct stats_type intel_gnr_imc_stats_type;
+extern struct stats_type intel_srf_imc_stats_type;
 #endif
 
 #if defined(MONITOR_WITH_AMD_GPU)
@@ -99,9 +102,12 @@ struct stats_type *const stats_type_table[] = {
 #if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
     &intel_rapl_stats_type,
     &intel_skx_cha_stats_type,
-    &intel_skx_imc_stats_type,
+    &intel_emr_imc_stats_type,
+    &intel_gnr_imc_stats_type,
     &intel_icx_imc_stats_type,
+    &intel_skx_imc_stats_type,
     &intel_spr_imc_stats_type,
+    &intel_srf_imc_stats_type,
 #endif
 #if defined(MONITOR_WITH_INTEL_GPU)
     &intel_gpu_stats_type,

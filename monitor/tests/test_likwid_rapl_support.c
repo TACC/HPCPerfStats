@@ -32,6 +32,18 @@ int main(void)
   assert(likwid_rapl_is_supported_intel_processor() == 1);
   assert(likwid_rapl_collect_path() == LIKWID_RAPL_PATH_INTEL);
 
+  processor = SKYLAKE_X;
+  assert(likwid_rapl_is_supported_intel_processor() == 1);
+  processor = CASCADE_LAKE;
+  assert(likwid_rapl_is_supported_intel_processor() == 1);
+  processor = EMERALD_RAPIDS;
+  assert(likwid_rapl_is_supported_intel_processor() == 1);
+  processor = GRANITE_RAPIDS;
+  assert(likwid_rapl_is_supported_intel_processor() == 1);
+  processor = SIERRA_FOREST;
+  assert(likwid_rapl_is_supported_intel_processor() == 1);
+  assert(likwid_rapl_collect_path() == LIKWID_RAPL_PATH_INTEL);
+
   printf("test_likwid_rapl_support passed\n");
   return 0;
 }

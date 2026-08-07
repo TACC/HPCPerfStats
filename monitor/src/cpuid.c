@@ -39,8 +39,9 @@ processor_t signature(int *n_pmcs)
   int extended_model = (eax & 0xF0000) >> 12;
   int family_code = (eax & 0xF00) >> 8;
   int extended_family_code = (eax & 0xFF00000) >> 16;
+  int stepping = (int)(eax & 0xF);
   snprintf(sig, sizeof(sig), "%02x_%x", extended_family_code | family_code, extended_model | model);
-  TRACE("sig %s\n", sig);
+  TRACE("sig %s stepping %d\n", sig, stepping);
 
   /* Determine Processor Family and Model */
   if (strncmp(vendor, "GenuineIntel", 12) == 0) {
@@ -48,9 +49,9 @@ processor_t signature(int *n_pmcs)
     *n_pmcs = (eax >> 8) & 0xFF;
     TRACE("Number of PMCs = %d\n", *n_pmcs);
 
-    rc = intel_cpuid_sig_to_processor(vendor, sig);
+    rc = intel_cpuid_sig_to_processor(vendor, sig, stepping);
     if (rc != (processor_t)-1) {
-      TRACE("Intel processor sig %s -> %d\n", sig, (int)rc);
+      TRACE("Intel processor sig %s stepping %d -> %d\n", sig, stepping, (int)rc);
       return rc;
     }
   } else if (strncmp(vendor, "AuthenticAMD", 12) == 0) {

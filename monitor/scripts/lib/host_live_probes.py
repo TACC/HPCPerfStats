@@ -488,8 +488,16 @@ def default_devices_for_type(type_name: str) -> list[str] | None:
     if type_name == "intel_gpu":
         devs = probe_intel_gpu_devices()
         return devs if devs else None
-    if type_name == "intel_x86_uncore_imc_spr":
+    if type_name in (
+        "intel_x86_uncore_imc_spr",
+        "intel_x86_uncore_imc_emr",
+    ):
         return probe_spr_imc_devices()
+    if type_name in (
+        "intel_x86_uncore_imc_gnr",
+        "intel_x86_uncore_imc_srf",
+    ):
+        return _spr_imc_mbox_devices()
     if type_name == "amd_gpu":
         return ["0"]
     if type_name in (

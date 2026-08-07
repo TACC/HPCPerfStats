@@ -198,8 +198,11 @@ TYPES 	+= \
 	amd64_rapl.c \
 	intel_rapl.c \
 	amd_x86_uncore_df.c \
+	intel_emr_imc.c \
+	intel_gnr_imc.c \
 	intel_icx_imc.c \
 	intel_spr_imc.c \
+	intel_srf_imc.c \
 	intel_skx_cha.c \
 	intel_skx_imc.c
 hpcperfstatsd_SOURCES += \
@@ -254,6 +257,9 @@ hpcperfstatsd_SOURCES += \
 	intel_skx_imc.h \
 	intel_icx_imc.h \
 	intel_spr_imc.h \
+	intel_emr_imc.h \
+	intel_gnr_imc.h \
+	intel_srf_imc.h \
 	amd_x86_uncore_df.h \
 	amd_cpuid_match.h \
 	amd_cpuid_match.c \

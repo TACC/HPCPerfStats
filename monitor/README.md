@@ -119,7 +119,7 @@ If LIKWID setup fails, `host_cpu_hw` is disabled (no MSR fallback).
 `amd_x86_uncore_df_{rome,milan,genoa,turin}`, RAPL via `amd_x86_rapl`. Legacy
 `amd_x86_pmc` / `amd_x86_uncore_df` MSR collectors are **removed** (no MSR fallback).
 
-**`host_cpu_hw` on Intel LIKWID (SKX / ICX / SPR):** Leading util / clock /
+**`host_cpu_hw` on Intel LIKWID (SKX → SRF):** Leading util / clock /
 DCGM-style columns stay **0** by design (those keys are filled only on the
 Grace DCGM/PAPI backend). Core FIXC fields (`instr_retired_any`,
 `cycles_unhalted_core`, `cycles_unhalted_ref`, and mirrored
@@ -130,27 +130,29 @@ census-zero CPU (`taskset -c N bash -c 'while true; do :; done'`) and re-check
 FIXC. With `@full` tier tokens, census awk must use **CPU = `$2`**, FIXC =
 **`$10 $11 $12`**.
 
-**Uncore collectors (IMC/CHA)** target SKX+ server parts only: Cascade Lake
-(`06_55`), Ice Lake server (`06_6a`/`06_6c`), and Sapphire Rapids (`06_8f`).
-Sandybridge, Ivybridge, Haswell, and Broadwell are no longer classified or
-registered (`intel_x86_pcu` and pre-SKX uncore types removed). SPR exposes DDR
-and HBM uncore keys (`dram_*`, `hbm_*`); SPR IMC LIKWID eventsets use **MBOX0–11**
-only (LIKWID 5.5 Sapphire Rapids counter table — not MBOX12–15), always try
-DDR+HBM first then DDR-only then HBM-only, then an HBM channel-count ladder
-(16→8→4→1). After setup, if every MBOX result is non-finite (LIKWID `NaN`),
-that try is rejected and the ladder continues (often enabling HBM-only).
-Collect drops non-finite / out-of-range LIKWID doubles so they are never
-cast to `9223372036854775808` (`2^63`). EDAC `has_ddr`/`has_hbm` are logged
-only. Uncore custom event
-strings use LIKWID **`EVENT:COUNTER`** form (e.g. `CAS_COUNT_RD:MBOX0C0`);
-space-separated counter-first tokens are rejected by `perfmon_addEventSet`
-as named performance groups. When core PMC and uncore IMC share one LIKWID
-session, collect uses **`perfmon_readGroupCounters(groupId)`** (not
+**Uncore collectors (IMC/CHA)** target SKX+ server parts through Sierra Forest
+(LIKWID 5.5.2rc2): Skylake-X (`06_55` stepping &lt; 5), Cascade Lake / CLX
+(`06_55` stepping ≥ 5), Ice Lake server (`06_6a`/`06_6c`), Sapphire Rapids
+(`06_8f`), Emerald Rapids (`06_cf`), Granite Rapids (`06_ad`), and Sierra Forest
+(`06_af`). Sandybridge, Ivybridge, Haswell, and Broadwell are no longer
+classified or registered (`intel_x86_pcu` and pre-SKX uncore types removed).
+SPR/EMR expose DDR and HBM uncore keys (`dram_*`, `hbm_*`); SPR/EMR IMC LIKWID
+eventsets use **MBOX0–11** only (LIKWID 5.5 Sapphire Rapids counter table —
+not MBOX12–15), always try DDR+HBM first then DDR-only then HBM-only, then an
+HBM channel-count ladder (16→8→4→1). GNR/SRF IMC use `CAS_COUNT_SCH0_*` on
+MBOX0–11 (not SPR `CAS_COUNT_RD`). After setup, if every MBOX result is
+non-finite (LIKWID `NaN`), that try is rejected and the ladder continues
+(often enabling HBM-only). Collect drops non-finite / out-of-range LIKWID
+doubles so they are never cast to `9223372036854775808` (`2^63`). EDAC
+`has_ddr`/`has_hbm` are logged only. Uncore custom event strings use LIKWID
+**`EVENT:COUNTER`** form (e.g. `CAS_COUNT_RD:MBOX0C0`); space-separated
+counter-first tokens are rejected by `perfmon_addEventSet` as named
+performance groups. When core PMC and uncore IMC share one LIKWID session,
+collect uses **`perfmon_readGroupCounters(groupId)`** (not
 `perfmon_readCounters()`), because setup of a later group steals
 `activeGroup` and would otherwise leave `host_cpu_hw` stuck at zeros.
 `host_roofline_peak` adds
 `cpu_peak_hbm_bw_bytes_per_s` (EDAC HBM/DDR split, `peak_calc_version` 2).
-
 **Consumer follow-up (analysis):** roofline/mbw still probe `dram_cas_*` only;
 HBM-primary SPR needs `hbm_cas_*` pairs in analysis (see plan
 `spr-imc-mbox-nan`).

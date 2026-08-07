@@ -1,7 +1,7 @@
 #include <string.h>
 #include "intel_cpuid_match.h"
 
-processor_t intel_cpuid_sig_to_processor(const char *vendor, const char *sig)
+processor_t intel_cpuid_sig_to_processor(const char *vendor, const char *sig, int stepping)
 {
   if (vendor == NULL || sig == NULL)
     return (processor_t)-1;
@@ -20,14 +20,27 @@ processor_t intel_cpuid_sig_to_processor(const char *vendor, const char *sig)
   if (strncmp(sig, "06_4e", 5) == 0 || strncmp(sig, "06_5e", 5) == 0)
     return SKYLAKE;
 
-  if (strncmp(sig, "06_55", 5) == 0)
+  /* LIKWID: SKYLAKEX model 0x55 — stepping < 5 is SKX, else CLX (and Cooper Lake). */
+  if (strncmp(sig, "06_55", 5) == 0) {
+    if (stepping < 5)
+      return SKYLAKE_X;
     return CASCADE_LAKE;
+  }
 
   if (strncmp(sig, "06_6a", 5) == 0 || strncmp(sig, "06_6c", 5) == 0)
     return ICELAKE_SERVER;
 
   if (strncmp(sig, "06_8f", 5) == 0)
     return SAPPHIRE_RAPIDS;
+
+  if (strncmp(sig, "06_cf", 5) == 0)
+    return EMERALD_RAPIDS;
+
+  if (strncmp(sig, "06_ad", 5) == 0)
+    return GRANITE_RAPIDS;
+
+  if (strncmp(sig, "06_af", 5) == 0)
+    return SIERRA_FOREST;
 
   return (processor_t)-1;
 }
