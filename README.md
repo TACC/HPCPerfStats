@@ -402,7 +402,9 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    sudo docker compose up --build -d
    ```
 
-   View logs:
+   View logs (`docker-compose.yaml` uses the **`local`** logging driver with
+   **`max-size: 100m`** and **`max-file: 3`** so stdout stays available to
+   Compose and does not flood host syslog/journald):
 
    ```bash
    sudo docker compose logs

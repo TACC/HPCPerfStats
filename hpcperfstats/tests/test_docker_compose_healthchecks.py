@@ -20,6 +20,18 @@ def test_docker_compose_has_healthchecks_for_core_services():
   assert "rabbitmq-diagnostics" in content
 
 
+def test_docker_compose_local_logging_rotated():
+  """Stdout logging is file-backed for compose logs, not host syslog."""
+  repo_root = Path(__file__).resolve().parents[2]
+  content = (repo_root / "docker-compose.yaml").read_text()
+  assert "driver: local" in content
+  assert 'max-size: "100m"' in content
+  assert 'max-file: "3"' in content
+  for service in ["web", "pipeline", "redis", "proxy", "db", "rabbitmq"]:
+    assert f"{service}:" in content
+  assert content.count("logging: *hpc-logging") == 6
+
+
 def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
   """Regression: keep argv/healthcheck tests as YAML block lists, not flow [...]."""
   repo_root = Path(__file__).resolve().parents[2]

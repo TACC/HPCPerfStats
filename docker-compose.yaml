@@ -9,14 +9,28 @@ include:
   - docker-compose.cpu-pinning.infra.yaml
   - docker-compose.cpu-pinning.app.yaml
 
+# Container stdout/stderr for `docker compose logs` (not host syslog/journald).
+# max-size: rotate each file at 100 MiB; max-file: keep this many rotated files
+# per container (~300 MiB cap with max-file: "3").
+x-logging: &hpc-logging
+  driver: local
+  options:
+    max-size: "100m"
+    max-file: "3"
+
 services:
   web:
+    logging: *hpc-logging
     volumes:
       - staticfiles_data:/home/hpcperfstats/staticfiles
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
 
+  pipeline:
+    logging: *hpc-logging
+
   redis:
     image: redis:8.10.0-alpine3.23
+    logging: *hpc-logging
     command:
       - redis-server
       - --appendonly
@@ -48,6 +62,7 @@ services:
       dockerfile: services-conf/proxy.Dockerfile
     image: hpcperfstats-proxy
     restart: always
+    logging: *hpc-logging
     depends_on:
       web:
         condition: service_started
@@ -85,6 +100,7 @@ services:
 
   db:
     image: timescale/timescaledb:2.28.3-pg15
+    logging: *hpc-logging
     # Default container /dev/shm is 64MiB; Postgres dynamic shared memory exhausts it easily
     # under parallel workers. Keep shm_size generous for max_connections=500 + modest parallelism.
     #
@@ -159,6 +175,7 @@ services:
     # Management plugin (HTTP API on 15672) for Admin Monitor stats.
     image: rabbitmq:4.3.4-management-alpine
     restart: always
+    logging: *hpc-logging
     environment:
       - RABBITMQ_DEFAULT_USER=guest
       - RABBITMQ_DEFAULT_PASS=guest
@@ -195,4 +212,3 @@ volumes:
 networks:
   hpcperfstats_net:
     name: hpcperfstats_net
-
