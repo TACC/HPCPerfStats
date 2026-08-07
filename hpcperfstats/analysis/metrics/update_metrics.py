@@ -89,7 +89,7 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
-from concurrent.futures import CancelledError, FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
 ensure_django()
@@ -738,13 +738,15 @@ class _PhaseTimer:
 
 class _PrewarmPipeline:
   """
-  Required prewarm stage with bounded backlog and retries.
-  
-  ``submit`` / ``drain_some`` mutate ``_pending`` and ``_created_at``; call only
-  from the owning thread (metrics scheduler main thread) unless guarded.
-  ``run_for_jid`` is safe from concurrent scheduler compute threads (counters
-  under ``_counters_lock``).
-  
+  Sliding prewarm pool: at most ``_workers`` in-flight futures, overflow in
+  ``_waiting``, newest-first promotion when a slot frees. Never
+  ``Future.cancel``.
+
+  ``submit`` / ``drain_some`` / ``finish`` mutate ``_pending``, ``_waiting``,
+  and ``_created_at``; call only from the owning thread (metrics scheduler
+  main thread) unless guarded. ``run_for_jid`` is safe from concurrent
+  scheduler compute threads (counters under ``_counters_lock``).
+
   Attributes:
     _attempts: Attribute.
     _backlog_cap: Attribute.
@@ -763,16 +765,17 @@ class _PrewarmPipeline:
     _pending: Attribute.
     _pending_jids: Attribute.
     _pending_lock: Attribute.
+    _waiting: Attribute.
     _workers: Attribute.
   """
 
   def __init__(self) -> None:
     """
     Initialize a new instance.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _PrewarmPipeline()  # doctest: +SKIP
     """
@@ -786,6 +789,7 @@ class _PrewarmPipeline:
     self._executor = None
     self._pending = set()
     self._pending_jids = {}
+    self._waiting: list[tuple[float, Any]] = []
     self._done = 0
     self._failed = 0
     self._backpressure_events = 0
@@ -910,20 +914,34 @@ class _PrewarmPipeline:
       self._done += 1
     return timing
 
+  def _backlog_size_locked(self) -> int:
+    """
+    Return waiters plus in-flight futures (caller holds ``_pending_lock``).
+
+    Returns:
+      int: Total backlog size under the current lock.
+
+    Examples:
+      >>> pipe = _PrewarmPipeline()  # doctest: +SKIP
+      >>> pipe._backlog_size_locked()  # doctest: +SKIP
+    """
+    return len(self._waiting) + len(self._pending)
+
   def _oldest_pending_age_locked(self, now: Any | None = None) -> Any:
     """
-    Internal helper to handle oldest pending age locked.
-    
+    Oldest age among in-flight futures and wait-queue entries (seconds).
+
     Args:
-      now (Any | None): One of ``Any``, ``None``.
-    
+      now (Any | None): Optional monotonic timestamp; defaults to
+        ``time.monotonic()``.
+
     Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
+      Any: Non-negative float age in seconds, or ``0.0`` when empty.
+
     Examples:
       >>> _PrewarmPipeline()._oldest_pending_age_locked(None)  # doctest: +SKIP
     """
-    if not self._pending:
+    if not self._pending and not self._waiting:
       return 0.0
     if now is None:
       now = time.monotonic()
@@ -932,9 +950,50 @@ class _PrewarmPipeline:
       start = self._created_at.get(fut, now)
       if oldest_start is None or start < oldest_start:
         oldest_start = start
+    for start, _jid in self._waiting:
+      if oldest_start is None or start < oldest_start:
+        oldest_start = start
     if oldest_start is None:
       return 0.0
     return max(0.0, now - oldest_start)
+
+  def _start_one_locked(self, jid: Any, created_at: float) -> None:
+    """
+    Submit one jid onto the executor (caller holds ``_pending_lock``).
+
+    Args:
+      jid (Any): Job id to prewarm.
+      created_at (float): Monotonic enqueue time for lag accounting.
+
+    Returns:
+      None
+
+    Examples:
+      >>> pipe = _PrewarmPipeline()  # doctest: +SKIP
+      >>> pipe._start_one_locked("j1", 1.0)  # doctest: +SKIP
+    """
+    fut = self._executor.submit(self._run_one, jid)
+    self._created_at[fut] = created_at
+    self._pending_jids[fut] = jid
+    self._pending.add(fut)
+
+  def _promote_waiting_locked(self) -> None:
+    """
+    Fill free worker slots from ``_waiting``, newest ``created_at`` first.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _PrewarmPipeline()._promote_waiting_locked()  # doctest: +SKIP
+    """
+    while self._waiting and len(self._pending) < self._workers:
+      newest_idx = max(
+          range(len(self._waiting)),
+          key=lambda i: self._waiting[i][0],
+      )
+      created_at, jid = self._waiting.pop(newest_idx)
+      self._start_one_locked(jid, created_at)
 
   def _maybe_log_backpressure(
     self,
@@ -945,19 +1004,21 @@ class _PrewarmPipeline:
     action: Any,
   ) -> None:
     """
-    Internal helper to handle maybe log backpressure.
-    
+    Rate-limit backlog pressure log lines for drain/defer actions.
+
     Args:
-      jid (Any): Jid passed to this helper.
-      pending (Any): Pending passed to this helper.
-      oldest_age_s (Any): Oldest age s passed to this helper.
-      action (Any): Action passed to this helper.
-    
+      jid (Any): Incoming job id under pressure.
+      pending (Any): Current wait+inflight backlog size.
+      oldest_age_s (Any): Oldest pending/waiting age in seconds.
+      action (Any): Pressure action label (``drain_wait``, ``defer_submit``).
+
     Returns:
       None
-    
+
     Examples:
-      >>> _PrewarmPipeline()._maybe_log_backpressure(None, None, None, None)
+      >>> _PrewarmPipeline()._maybe_log_backpressure(
+      ...     jid="j1", pending=1, oldest_age_s=0.0, action="defer_submit"
+      ... )  # doctest: +SKIP
     """
     now = time.monotonic()
     if action == "drain_wait" and ((now - self._last_backpressure_log_at) < 5.0):
@@ -977,14 +1038,14 @@ class _PrewarmPipeline:
 
   def _run_inline_fallback(self, jid: Any) -> None:
     """
-    Internal helper to run the inline fallback.
-    
+    Run prewarm inline and update done/failed counters.
+
     Args:
-      jid (Any): Jid passed to this helper.
-    
+      jid (Any): Job id to prewarm synchronously.
+
     Returns:
       None
-    
+
     Examples:
       >>> _PrewarmPipeline()._run_inline_fallback(None)  # doctest: +SKIP
     """
@@ -997,60 +1058,19 @@ class _PrewarmPipeline:
         self._failed += 1
       log_print("plot artifact prewarm failed: {0}".format(exc))
 
-  def _evict_oldest_pending_locked(self) -> Any:
-    """
-    Cancel the oldest *not-started* prewarm future to free a backlog slot.
-
-    Running futures are never evicted (``Future.cancel()`` is a no-op once
-    running and dropping them orphans work). Returns ``None`` when every
-    pending future is already running or done.
-
-    Returns:
-      Any: Evicted jid string, or ``None`` when nothing cancellable.
-
-    Examples:
-      >>> _PrewarmPipeline()._evict_oldest_pending_locked()  # doctest: +SKIP
-    """
-    if not self._pending:
-      return None
-    oldest_fut = None
-    oldest_start = None
-    for fut in self._pending:
-      try:
-        if fut.done() or fut.running():
-          continue
-      except Exception:
-        continue
-      start = self._created_at.get(fut)
-      if start is None:
-        continue
-      if oldest_start is None or start < oldest_start:
-        oldest_start = start
-        oldest_fut = fut
-    if oldest_fut is None:
-      return None
-    evicted_jid = self._pending_jids.pop(oldest_fut, None)
-    self._pending.discard(oldest_fut)
-    self._created_at.pop(oldest_fut, None)
-    try:
-      oldest_fut.cancel()
-    except Exception:
-      pass
-    with self._counters_lock:
-      self._failed += 1
-      self._evicted_pending_jobs += 1
-    return evicted_jid
-
   def submit(self, jid: Any) -> None:
     """
-    Submit work to this executor.
-    
+    Enqueue prewarm: start immediately, wait-queue, or defer at cap.
+
+    Never cancels in-flight or waiting work. Prefer newest waiters when a
+    worker slot frees (via ``drain_some`` / ``_promote_waiting_locked``).
+
     Args:
-      jid (Any): Jid passed to this helper.
-    
+      jid (Any): Job id to prewarm.
+
     Returns:
       None
-    
+
     Examples:
       >>> _PrewarmPipeline().submit(None)  # doctest: +SKIP
     """
@@ -1060,7 +1080,7 @@ class _PrewarmPipeline:
         self._done += 1
       return
     with self._pending_lock:
-      pending_now = len(self._pending)
+      pending_now = self._backlog_size_locked()
       oldest_age_s = self._oldest_pending_age_locked()
     if pending_now >= self._backlog_cap:
       with self._counters_lock:
@@ -1073,66 +1093,46 @@ class _PrewarmPipeline:
       )
       self.drain_some(wait_timeout_s=self._backpressure_wait_s)
       with self._pending_lock:
-        pending_now = len(self._pending)
+        pending_now = self._backlog_size_locked()
         oldest_age_s = self._oldest_pending_age_locked()
       if pending_now >= self._backlog_cap:
-        with self._pending_lock:
-          evicted_jid = self._evict_oldest_pending_locked()
-          pending_now = len(self._pending)
-          oldest_age_s = self._oldest_pending_age_locked()
         with self._counters_lock:
           self._backpressure_events += 1
-        if evicted_jid is None:
-          self._maybe_log_backpressure(
-              jid=jid,
-              pending=pending_now,
-              oldest_age_s=oldest_age_s,
-              action="defer_submit",
-          )
-          log_print(
-              "plot artifact prewarm defer submit jid={0} "
-              "(backlog full; all futures running)".format(jid),
-              flush=True,
-          )
-          return
         self._maybe_log_backpressure(
             jid=jid,
             pending=pending_now,
             oldest_age_s=oldest_age_s,
-            action="evict_oldest",
+            action="defer_submit",
         )
-        if evicted_jid is not None:
-          log_print(
-              "plot artifact prewarm evicted oldest pending jid={0} for jid={1}".format(
-                  evicted_jid,
-                  jid,
-              ),
-              flush=True,
-          )
-    with self._pending_lock:
-      if len(self._pending) >= self._backlog_cap:
+        log_print(
+            "plot artifact prewarm defer submit jid={0} "
+            "(backlog full after drain)".format(jid),
+            flush=True,
+        )
         return
-      fut = self._executor.submit(self._run_one, jid)
-      self._created_at[fut] = time.monotonic()
-      self._pending_jids[fut] = jid
-      self._pending.add(fut)
+    with self._pending_lock:
+      if self._backlog_size_locked() >= self._backlog_cap:
+        return
+      created_at = time.monotonic()
+      if len(self._pending) < self._workers:
+        self._start_one_locked(jid, created_at)
+      else:
+        self._waiting.append((created_at, jid))
 
   def has_pending(self) -> Any:
     """
-    True when async prewarm tasks are still running (``pipeline_required``).
-    
+    True when in-flight futures or wait-queue entries remain.
+
     Returns:
-      Any: Open return polymorphism from ``has_pending``: concrete type
-      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-      empty).
-    
+      Any: Boolean true when async prewarm work is outstanding.
+
     Examples:
       >>> _PrewarmPipeline().has_pending()  # doctest: +SKIP
     """
     if self._mode == "inline" or self._executor is None:
       return False
     with self._pending_lock:
-      return bool(self._pending)
+      return bool(self._pending) or bool(self._waiting)
 
   def drain_some(
     self,
@@ -1140,22 +1140,25 @@ class _PrewarmPipeline:
     wait_timeout_s: float = 0.0,
   ) -> None:
     """
-    Drain the some.
-    
+    Collect completed in-flight futures and promote newest waiters.
+
     Args:
-      force (bool): Boolean flag for force.
-      wait_timeout_s (float): Floating-point value for wait timeout s.
-    
+      force (bool): When True with zero timeout, skip waiting on futures.
+      wait_timeout_s (float): Seconds to wait for the first completion.
+
     Returns:
       None
-    
+
     Examples:
       >>> _PrewarmPipeline().drain_some(True, 0)  # doctest: +SKIP
     """
-    if self._mode == "inline" or not self._pending:
+    if self._mode == "inline":
       return
     with self._pending_lock:
+      if not self._pending and not self._waiting:
+        return
       if not self._pending:
+        self._promote_waiting_locked()
         return
       timeout_s = max(0.0, float(wait_timeout_s or 0.0))
       if timeout_s > 0.0 or not force:
@@ -1177,22 +1180,20 @@ class _PrewarmPipeline:
         fut.result()
         with self._counters_lock:
           self._done += 1
-      except CancelledError:
-        with self._counters_lock:
-          self._failed += 1
-        log_print("plot artifact prewarm cancelled", flush=True)
       except Exception as exc:
         with self._counters_lock:
           self._failed += 1
         log_print("plot artifact prewarm failed: {0}".format(exc))
+    with self._pending_lock:
+      self._promote_waiting_locked()
 
   def finish(self) -> None:
     """
-    Drain async prewarm; never cancel running futures on soft wall expiry.
+    Drain async prewarm; soft wall drops ``_waiting`` only (no cancel).
 
-    After ``PREWARM_FINISH_MAX_WALL_SECONDS``, only queued (not-started)
-    futures are cancelled. In-flight work continues until complete so
-    chunk-linear aggregates are not orphaned mid-job.
+    After ``PREWARM_FINISH_MAX_WALL_SECONDS``, abandon wait-queue jids and
+    continue waiting for in-flight work so chunk-linear aggregates are not
+    orphaned mid-job. Never calls ``Future.cancel``.
 
     Returns:
       None
@@ -1207,40 +1208,26 @@ class _PrewarmPipeline:
     soft_wall_logged = False
     while True:
       with self._pending_lock:
-        has_pending = bool(self._pending)
-      if not has_pending:
+        has_work = bool(self._pending) or bool(self._waiting)
+      if not has_work:
         break
       remaining_s = max(0.0, deadline - time.monotonic())
       if remaining_s <= 0.0:
         with self._pending_lock:
           oldest_age_s = self._oldest_pending_age_locked()
-          cancelled = 0
-          for fut in list(self._pending):
-            try:
-              is_running = fut.running() and not fut.done()
-            except Exception:
-              is_running = False
-            if is_running:
-              continue
-            try:
-              fut.cancel()
-            except Exception:
-              pass
-            self._created_at.pop(fut, None)
-            self._pending_jids.pop(fut, None)
-            self._pending.discard(fut)
-            cancelled += 1
+          dropped_waiting = len(self._waiting)
+          self._waiting.clear()
           still_running = len(self._pending)
-        if cancelled:
+        if dropped_waiting:
           with self._counters_lock:
-            self._failed += cancelled
+            self._failed += dropped_waiting
         if not soft_wall_logged:
           log_print(
               "plot artifact prewarm finish soft wall after {0:.1f}s; "
-              "cancelled_not_started={1} still_running={2} "
+              "dropped_waiting={1} still_running={2} "
               "oldest_pending_age_s={3:.3f}".format(
                   time.monotonic() - started,
-                  cancelled,
+                  dropped_waiting,
                   still_running,
                   oldest_age_s,
               ),
@@ -1262,16 +1249,16 @@ class _PrewarmPipeline:
 
   def stats(self) -> Any:
     """
-    Return statistics for this object.
-    
+    Return prewarm backlog and success telemetry counters.
+
     Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
+      Any: Dict of ``prewarm_*`` stats keys for batch logging.
+
     Examples:
       >>> _PrewarmPipeline().stats()  # doctest: +SKIP
     """
     with self._pending_lock:
-      backlog_jobs = len(self._pending)
+      backlog_jobs = self._backlog_size_locked()
       oldest_pending_age_s = self._oldest_pending_age_locked()
     with self._counters_lock:
       done = self._done

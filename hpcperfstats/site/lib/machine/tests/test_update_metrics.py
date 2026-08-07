@@ -3180,20 +3180,6 @@ def test_prewarm_pipeline_finish_uses_global_timeout(monkeypatch):
   monkeypatch.setattr(update_metrics, "PREWARM_FINISH_MAX_WALL_SECONDS", 1.0)
   monkeypatch.setattr(update_metrics, "PREWARM_FINISH_WAIT_SLICE_SECONDS", 0.25)
 
-  class _PendingFuture:
-    def __init__(self):
-      self.cancel_calls = 0
-
-    def done(self):
-      return False
-
-    def running(self):
-      return False
-
-    def cancel(self):
-      self.cancel_calls += 1
-      return True
-
   class _FakeExecutor:
     def __init__(self):
       self.shutdown_calls = []
@@ -3202,9 +3188,7 @@ def test_prewarm_pipeline_finish_uses_global_timeout(monkeypatch):
       self.shutdown_calls.append((wait, cancel_futures))
 
   pipeline = update_metrics._PrewarmPipeline()
-  fut = _PendingFuture()
-  pipeline._pending.add(fut)
-  pipeline._created_at[fut] = 0.0
+  pipeline._waiting = [(0.0, "jid-waiting")]
   pipeline._executor = _FakeExecutor()
   drain_calls = []
   monkeypatch.setattr(
@@ -3218,41 +3202,36 @@ def test_prewarm_pipeline_finish_uses_global_timeout(monkeypatch):
   pipeline.finish()
 
   assert drain_calls == [(True, 0.25)]
-  assert fut.cancel_calls == 1
+  assert pipeline._waiting == []
   assert pipeline._failed == 1
   assert pipeline._executor.shutdown_calls == [(False, False)]
 
 
 @pytest.mark.machine_unit_mock
-def test_prewarm_pipeline_submit_evicts_oldest_instead_of_inline_fallback(monkeypatch):
+def test_prewarm_pipeline_submit_defers_when_backlog_full_with_waiters(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 2)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.0)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
 
-  class _PendingFuture:
+  class _RunningFuture:
     def __init__(self, jid):
       self.jid = jid
-      self.cancelled = False
 
     def done(self):
       return False
 
     def running(self):
-      return False
-
-    def cancel(self):
-      self.cancelled = True
       return True
 
   pipeline = update_metrics._PrewarmPipeline()
-  stale = _PendingFuture("jid-stale")
-  pipeline._pending.add(stale)
-  pipeline._pending_jids[stale] = "jid-stale"
-  pipeline._created_at[stale] = 10.0
+  running = _RunningFuture("jid-running")
+  pipeline._pending.add(running)
+  pipeline._pending_jids[running] = "jid-running"
+  pipeline._created_at[running] = 10.0
+  pipeline._waiting = [(15.0, "jid-waiting")]
   drain_calls = []
-  inline_jids = []
   submitted = []
   logs = []
   monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 20.0)
@@ -3261,11 +3240,10 @@ def test_prewarm_pipeline_submit_evicts_oldest_instead_of_inline_fallback(monkey
       "drain_some",
       lambda force=False, wait_timeout_s=0.0: drain_calls.append((force, wait_timeout_s)),
   )
-  monkeypatch.setattr(pipeline, "_run_inline_fallback", lambda jid: inline_jids.append(jid))
   monkeypatch.setattr(
       pipeline._executor,
       "submit",
-      lambda fn, jid: submitted.append(jid) or _PendingFuture(jid),
+      lambda fn, jid: submitted.append(jid) or _RunningFuture(jid),
   )
   monkeypatch.setattr(update_metrics, "log_print", lambda msg, **kwargs: logs.append(msg))
 
@@ -3273,17 +3251,58 @@ def test_prewarm_pipeline_submit_evicts_oldest_instead_of_inline_fallback(monkey
 
   stats = pipeline.stats()
   assert drain_calls == [(False, 0.0)]
-  assert inline_jids == []
-  assert stale.cancelled is True
-  assert submitted == ["jid-backpressure"]
+  assert submitted == []
+  assert pipeline._waiting == [(15.0, "jid-waiting")]
+  assert running in pipeline._pending
   assert stats["prewarm_backpressure_events"] == 2
-  assert stats["prewarm_evicted_pending_jobs"] == 1
-  assert stats["prewarm_backlog_jobs"] == 1
-  assert stats["prewarm_oldest_pending_age_s"] == 0.0
-  assert any("action=evict_oldest" in msg for msg in logs)
+  assert stats["prewarm_evicted_pending_jobs"] == 0
+  assert stats["prewarm_backlog_jobs"] == 2
+  assert any("action=defer_submit" in msg for msg in logs)
+  assert any("defer submit" in msg for msg in logs)
+  assert not any("evict" in msg for msg in logs)
   pipeline._executor.shutdown(wait=True)
 
 
+@pytest.mark.machine_unit_mock
+def test_prewarm_pipeline_promotes_newest_waiting_on_slot_free(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 4)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.25)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
+
+  pipeline = update_metrics._PrewarmPipeline()
+  done_fut = Future()
+  done_fut.set_result(None)
+  pipeline._pending.add(done_fut)
+  pipeline._pending_jids[done_fut] = "jid-done"
+  pipeline._created_at[done_fut] = 5.0
+  pipeline._waiting = [(10.0, "jid-old"), (20.0, "jid-new")]
+  submitted = []
+
+  class _StartedFuture:
+    def done(self):
+      return False
+
+    def running(self):
+      return True
+
+  monkeypatch.setattr(
+      pipeline._executor,
+      "submit",
+      lambda fn, jid: submitted.append(jid) or _StartedFuture(),
+  )
+
+  pipeline.drain_some(force=True)
+
+  assert submitted == ["jid-new"]
+  assert pipeline._waiting == [(10.0, "jid-old")]
+  assert len(pipeline._pending) == 1
+  assert pipeline._done == 1
+  pipeline._executor.shutdown(wait=True)
+
+
+@pytest.mark.machine_unit_mock
 def test_prewarm_pipeline_run_for_jid_shares_context(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
@@ -4190,7 +4209,6 @@ def test_prewarm_pipeline_finish_does_not_cancel_running(monkeypatch):
 
   class _RunningThenDone:
     def __init__(self):
-      self.cancel_calls = 0
       self._done = False
 
     def done(self):
@@ -4198,10 +4216,6 @@ def test_prewarm_pipeline_finish_does_not_cancel_running(monkeypatch):
 
     def running(self):
       return not self._done
-
-    def cancel(self):
-      self.cancel_calls += 1
-      return False
 
   class _FakeExecutor:
     def __init__(self):
@@ -4214,8 +4228,10 @@ def test_prewarm_pipeline_finish_does_not_cancel_running(monkeypatch):
   fut = _RunningThenDone()
   pipeline._pending.add(fut)
   pipeline._created_at[fut] = 0.0
+  pipeline._waiting = [(0.5, "jid-waiting")]
   pipeline._executor = _FakeExecutor()
   drain_n = {"n": 0}
+  logs = []
 
   def _drain(**_k):
     drain_n["n"] += 1
@@ -4224,10 +4240,14 @@ def test_prewarm_pipeline_finish_does_not_cancel_running(monkeypatch):
       pipeline._pending.discard(fut)
 
   monkeypatch.setattr(pipeline, "drain_some", _drain)
+  monkeypatch.setattr(update_metrics, "log_print", lambda msg, **kwargs: logs.append(msg))
   times = iter([0.0, 0.5, 1.1, 1.2, 1.3, 1.4, 1.5])
   monkeypatch.setattr(update_metrics.time, "monotonic", lambda: next(times, 2.0))
 
   pipeline.finish()
 
-  assert fut.cancel_calls == 0
+  assert pipeline._waiting == []
+  assert pipeline._failed == 1
+  assert any("dropped_waiting=1" in msg for msg in logs)
+  assert not any("cancel" in msg.lower() for msg in logs)
   assert pipeline._executor.shutdown_calls == [(False, False)]
