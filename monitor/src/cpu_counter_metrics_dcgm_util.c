@@ -1,7 +1,47 @@
-/* Pure DCGM CPU util math (no libdcgm runtime). */
+/* Pure DCGM util math / blank sentinels (no libdcgm runtime). */
 #include <limits.h>
 
 #include "cpu_counter_metrics_dcgm_util.h"
+
+/* Match third_party/nvidia-dcgm/dcgm_structs.h DCGM_FP64_BLANK / IS_BLANK. */
+#define DCGM_CPU_FP64_BLANK 140737488355328.0
+/* Match third_party/nvidia-dcgm/dcgm_structs.h DCGM_INT64_BLANK / IS_BLANK. */
+#define DCGM_CPU_INT64_BLANK 0x7ffffffffffffff0LL
+
+int dcgm_fp64_value_is_blank(double v)
+{
+  return (v >= DCGM_CPU_FP64_BLANK) ? 1 : 0;
+}
+
+int dcgm_int64_value_is_blank(long long v)
+{
+  return (v >= DCGM_CPU_INT64_BLANK) ? 1 : 0;
+}
+
+unsigned long long dcgm_watts_dbl_to_ull(double v)
+{
+  if (dcgm_fp64_value_is_blank(v) || v <= 0.0)
+    return 0ULL;
+  if (v >= (double)ULLONG_MAX)
+    return ULLONG_MAX;
+  return (unsigned long long)(v + 0.5);
+}
+
+int dcgm_host_cpu_hw_collect_active(int dcgm_ready, int papi_ready, int util_bufs_ok)
+{
+  return (dcgm_ready || papi_ready || util_bufs_ok) ? 1 : 0;
+}
+
+int dcgm_backend_retry_due(time_t now, time_t retry_after)
+{
+  if (retry_after <= 0)
+    return 1;
+  if (now <= 0)
+    return 0;
+  return (now >= retry_after) ? 1 : 0;
+}
+
+#ifdef MONITOR_CPU_BACKEND_DCGM
 
 double dcgm_clamp_percent(double v)
 {
@@ -80,33 +120,4 @@ int dcgm_count_unique_sorted_ints(const int *sorted, int n)
   return nu;
 }
 
-/* Match third_party/nvidia-dcgm/dcgm_structs.h DCGM_FP64_BLANK / IS_BLANK. */
-#define DCGM_CPU_FP64_BLANK 140737488355328.0
-
-int dcgm_fp64_value_is_blank(double v)
-{
-  return (v >= DCGM_CPU_FP64_BLANK) ? 1 : 0;
-}
-
-unsigned long long dcgm_watts_dbl_to_ull(double v)
-{
-  if (dcgm_fp64_value_is_blank(v) || v <= 0.0)
-    return 0ULL;
-  if (v >= (double)ULLONG_MAX)
-    return ULLONG_MAX;
-  return (unsigned long long)(v + 0.5);
-}
-
-int dcgm_host_cpu_hw_collect_active(int dcgm_ready, int papi_ready, int util_bufs_ok)
-{
-  return (dcgm_ready || papi_ready || util_bufs_ok) ? 1 : 0;
-}
-
-int dcgm_backend_retry_due(time_t now, time_t retry_after)
-{
-  if (retry_after <= 0)
-    return 1;
-  if (now <= 0)
-    return 0;
-  return (now >= retry_after) ? 1 : 0;
-}
+#endif /* MONITOR_CPU_BACKEND_DCGM */

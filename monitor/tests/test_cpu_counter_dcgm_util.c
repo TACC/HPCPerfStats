@@ -132,6 +132,19 @@ static void test_watts_dbl_to_ull(void)
   assert(dcgm_watts_dbl_to_ull(140737488355330.0) == 0ULL);
 }
 
+static void test_int64_blank(void)
+{
+  /* Match DCGM_INT64_BLANK / NOT_FOUND / NOT_SUPPORTED / NOT_PERMISSIONED. */
+  assert(dcgm_int64_value_is_blank(0x7ffffffffffffff0LL));
+  assert(dcgm_int64_value_is_blank(0x7ffffffffffffff1LL));
+  assert(dcgm_int64_value_is_blank(0x7ffffffffffffff2LL));
+  assert(dcgm_int64_value_is_blank(0x7ffffffffffffff3LL));
+  assert(!dcgm_int64_value_is_blank(0LL));
+  assert(!dcgm_int64_value_is_blank(100LL));
+  assert(!dcgm_int64_value_is_blank(75LL));
+  assert(!dcgm_int64_value_is_blank(-1LL));
+}
+
 static void test_host_cpu_hw_collect_active(void)
 {
   /* After DCGM soft-fail: PAPI and/or util bufs must still allow collect. */
@@ -158,6 +171,7 @@ int main(void)
   test_sample_from_jiffy_diff();
   test_count_unique_sorted_ints();
   test_watts_dbl_to_ull();
+  test_int64_blank();
   test_host_cpu_hw_collect_active();
   test_backend_retry_due();
   printf("test_cpu_counter_dcgm_util passed\n");

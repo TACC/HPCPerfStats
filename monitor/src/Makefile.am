@@ -340,7 +340,8 @@ TYPES += \
 	nvidia_gpu.c \
 	nvidia_gpu_dcgm_watch.c \
 	nvidia_gpu_dcgm_watch.h \
-	nvidia_gpu_dcgm_compat.h
+	nvidia_gpu_dcgm_compat.h \
+	nvidia_gpu_dcgm_field.c
 if GPU_DLOPEN
 hpcperfstatsd_SOURCES += \
 	dcgm_gpu_dyn.c \
@@ -350,7 +351,14 @@ endif
 hpcperfstatsd_SOURCES += \
 	nvidia_gpu.h \
 	nvidia_gpu_estimate.c \
-	nvidia_gpu_estimate.h
+	nvidia_gpu_estimate.h \
+	nvidia_gpu_dcgm_field.h
+if CPU_BACKEND_DCGM
+else
+hpcperfstatsd_SOURCES += \
+	cpu_counter_metrics_dcgm_util.c \
+	cpu_counter_metrics_dcgm_util.h
+endif
 endif
 
 if AMD_GPU

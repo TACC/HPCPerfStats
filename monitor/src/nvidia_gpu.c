@@ -12,6 +12,7 @@
 #include "dcgm_gpu_api.h"
 #include "dcgm_session.h"
 #include "nvidia_gpu.h"
+#include "nvidia_gpu_dcgm_field.h"
 #include "nvidia_gpu_estimate.h"
 #include "monitor_log.h"
 #include "stats.h"
@@ -44,46 +45,6 @@ static unsigned long long clamp_double_to_ull(double v)
 static unsigned long long ull_add_sat(unsigned long long a, unsigned long long b)
 {
   return (ULLONG_MAX - a < b) ? ULLONG_MAX : (a + b);
-}
-
-static int bounded_ratio(double v, double *out)
-{
-  if (v >= 0.0 && v <= 1.0) {
-    *out = v;
-    return 0;
-  }
-  return -1;
-}
-
-/*
- * DCGM reports PROF byte fields as int64 or fp64 depending on build; normalize to uint64 for deltas.
- */
-static void dcgm_field_value_watts(const dcgmFieldValue_v1 *v, double *out)
-{
-  if (v->fieldType == DCGM_FT_DOUBLE) {
-    *out = v->value.dbl;
-    return;
-  }
-  if (v->fieldType == DCGM_FT_INT64)
-    *out = (double)v->value.i64;
-  else
-    *out = 0.0;
-}
-
-static void dcgm_field_value_u64(const dcgmFieldValue_v1 *v, uint64_t *out)
-{
-  if (v->fieldType == DCGM_FT_DOUBLE) {
-    *out = clamp_double_to_ull(v->value.dbl);
-    return;
-  }
-  if (v->fieldType == DCGM_FT_INT64) {
-    if (v->value.i64 <= 0)
-      *out = 0;
-    else
-      *out = (uint64_t)v->value.i64;
-    return;
-  }
-  *out = 0;
 }
 
 static void nvidia_gpu_io_link_accumulate(unsigned int gid, const dcgm_data_t *row)
@@ -127,82 +88,83 @@ static int list_field_values(unsigned int gpu_id, dcgmFieldValue_v1 *values, int
       continue;
     switch (values[i].fieldId) {
     case DCGM_FI_DEV_GPU_TEMP:
-      data[gpu_id].temperature = values[i].value.i64;
+      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].temperature);
       break;
     case DCGM_FI_DEV_POWER_USAGE:
-      dcgm_field_value_watts(&values[i], &data[gpu_id].power_usage);
+      nvidia_gpu_dcgm_field_watts(&values[i], &data[gpu_id].power_usage);
       break;
     case DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT:
-      dcgm_field_value_watts(&values[i], &data[gpu_id].sysio_power_usage);
+      nvidia_gpu_dcgm_field_watts(&values[i], &data[gpu_id].sysio_power_usage);
       break;
     case DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT:
-      dcgm_field_value_watts(&values[i], &data[gpu_id].module_power_usage);
+      nvidia_gpu_dcgm_field_watts(&values[i], &data[gpu_id].module_power_usage);
       break;
     case DCGM_FI_DEV_GPU_UTIL:
-      data[gpu_id].gpu_util = values[i].value.i64;
+      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].gpu_util);
       break;
     case DCGM_FI_DEV_MEM_COPY_UTIL:
-      data[gpu_id].mem_util = values[i].value.i64;
+      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].mem_util);
       break;
     case DCGM_FI_DEV_FB_TOTAL:
-      data[gpu_id].fb_total_mb = values[i].value.i64;
+      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].fb_total_mb);
       break;
     case DCGM_FI_DEV_FB_USED:
-      data[gpu_id].fb_used_mb = values[i].value.i64;
+      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].fb_used_mb);
       break;
     case DCGM_FI_DEV_FB_FREE:
-      data[gpu_id].fb_free_mb = values[i].value.i64;
+      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].fb_free_mb);
       break;
     case DCGM_FI_DEV_SM_CLOCK:
-      data[gpu_id].sm_clock = values[i].value.i64;
+      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].sm_clock);
       break;
     case DCGM_FI_DEV_PCIE_REPLAY_COUNTER:
-      data[gpu_id].pcie_replay_counter = values[i].value.i64;
+      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].pcie_replay_counter);
       break;
     case DCGM_FI_PROF_DRAM_ACTIVE:
-      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].dram_active);
+      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].dram_active);
       break;
     case DCGM_FI_PROF_SM_ACTIVE:
-      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].sm_active);
+      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].sm_active);
       break;
     case DCGM_FI_PROF_SM_OCCUPANCY:
-      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].sm_occupancy);
+      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].sm_occupancy);
       break;
     case DCGM_FI_PROF_PIPE_FP64_ACTIVE:
-      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].fp64_active);
+      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].fp64_active);
       break;
     case DCGM_FI_PROF_PIPE_FP32_ACTIVE:
-      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].fp32_active);
+      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].fp32_active);
       break;
     case DCGM_FI_PROF_PIPE_FP16_ACTIVE:
-      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].fp16_active);
+      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].fp16_active);
       break;
     case DCGM_FI_PROF_PIPE_TENSOR_ACTIVE:
-      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_active);
+      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].tensor_active);
       break;
     case DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE:
-      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_imma_active);
+      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].tensor_imma_active);
       break;
     case DCGM_FI_PROF_PIPE_TENSOR_HMMA_ACTIVE:
-      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_hmma_active);
+      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].tensor_hmma_active);
       break;
     case DCGM_FI_PROF_PIPE_TENSOR_DFMA_ACTIVE:
-      (void)bounded_ratio(values[i].value.dbl, &data[gpu_id].tensor_dfma_active);
+      (void)nvidia_gpu_dcgm_field_ratio(values[i].value.dbl, &data[gpu_id].tensor_dfma_active);
       break;
     case DCGM_FI_DEV_CLOCK_THROTTLE_REASONS:
-      data[gpu_id].clocks_event_reasons = values[i].value.i64;
+      (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64,
+                                            &data[gpu_id].clocks_event_reasons);
       break;
     case DCGM_FI_PROF_PCIE_TX_BYTES:
-      dcgm_field_value_u64(&values[i], &data[gpu_id].prof_pcie_tx_bytes);
+      nvidia_gpu_dcgm_field_u64(&values[i], &data[gpu_id].prof_pcie_tx_bytes);
       break;
     case DCGM_FI_PROF_PCIE_RX_BYTES:
-      dcgm_field_value_u64(&values[i], &data[gpu_id].prof_pcie_rx_bytes);
+      nvidia_gpu_dcgm_field_u64(&values[i], &data[gpu_id].prof_pcie_rx_bytes);
       break;
     case DCGM_FI_PROF_NVLINK_TX_BYTES:
-      dcgm_field_value_u64(&values[i], &data[gpu_id].prof_nvlink_tx_bytes);
+      nvidia_gpu_dcgm_field_u64(&values[i], &data[gpu_id].prof_nvlink_tx_bytes);
       break;
     case DCGM_FI_PROF_NVLINK_RX_BYTES:
-      dcgm_field_value_u64(&values[i], &data[gpu_id].prof_nvlink_rx_bytes);
+      nvidia_gpu_dcgm_field_u64(&values[i], &data[gpu_id].prof_nvlink_rx_bytes);
       break;
     default:
       break;
