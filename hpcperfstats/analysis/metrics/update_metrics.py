@@ -150,7 +150,6 @@ from hpcperfstats.site.lib.machine.models import (
     metrics_data,
 )
 from hpcperfstats.site.lib.machine.host_data_latest import (
-    HOST_LAST_TIME_LOOKUP_BATCH,
     latest_sample_time_by_host as _latest_sample_time_by_host,
 )
 from hpcperfstats.site.lib.machine.public_metrics_artifacts import (
@@ -166,8 +165,6 @@ LAST_UPDATE_METRICS_DIAGNOSTICS = None
 
 # Process jobs in chunks to bound memory; full job rows are not all held at once.
 CHUNK_SIZE = 500
-
-# HOST_LAST_TIME_LOOKUP_BATCH imported from host_data_latest (LATERAL batches).
 
 # Running a full GC every chunk is expensive on large backfills; amortize it.
 GC_COLLECT_EVERY_N_CHUNKS = 20
@@ -2508,41 +2505,102 @@ def _in_window_per_host_bounds(
 ) -> Any:
   """
   Return ``(host_min_map, host_max_map)`` for ``hosts`` in ``[start, end]``.
-  
+
+  Uses host×time chunking with timeout split/retry so a multi-day window of
+  ~48 hosts cannot burn a single statement_timeout.
+
   Args:
-    hosts (Any): Hosts passed to this helper.
-    start_time (Any): Start time passed to this helper.
-    end_time (Any): End time passed to this helper.
-  
+    hosts (Any): Hostnames to probe.
+    start_time (Any): Inclusive window start.
+    end_time (Any): Inclusive window end.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: Pair of dicts ``host -> min(time)`` and ``host -> max(time)``.
+
   Examples:
     >>> _in_window_per_host_bounds(None, None, None)  # doctest: +SKIP
   """
+  from hpcperfstats.analysis.metrics.lib import metrics as metrics_lib
+  from hpcperfstats.analysis.metrics.lib.gen import jid_table as jid_table_mod
+  from hpcperfstats.dbload.lib import conf_parser as cfg
+
   host_min = {}
   host_max = {}
   if not hosts or start_time is None or end_time is None:
     return host_min, host_max
   host_list = sorted(set(hosts))
-  batch = max(1, int(HOST_LAST_TIME_LOOKUP_BATCH))
-  for i in range(0, len(host_list), batch):
-    chunk = host_list[i:i + batch]
+  tkw = {"time__gte": start_time, "time__lte": end_time}
+  slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+  batch = metrics_lib.METRICS_HOST_QUERY_BATCH
+
+  def run(hosts_list: Any, tf_cur: Any) -> Any:
+    """
+    Per-host Min/Max time for one host×time chunk.
+
+    Args:
+      hosts_list (Any): Hostnames for this attempt.
+      tf_cur (Any): Time filter dict.
+
+    Returns:
+      Any: List of annotate dicts with ``host``, ``mn``, ``mx``.
+
+    Examples:
+      >>> True
+      True
+    """
     qs = (
         host_data.objects.filter(
-            host__in=chunk,
-            time__gte=start_time,
-            time__lte=end_time,
+            host__in=hosts_list,
+            **(tf_cur or {}),
         )
         .values("host")
         .annotate(mn=Min("time"), mx=Max("time"))
     )
-    for row in qs:
-      host = row.get("host")
-      if row.get("mn") is not None:
-        host_min[host] = row["mn"]
-      if row.get("mx") is not None:
-        host_max[host] = row["mx"]
+    return list(qs)
+
+  def merge(left: Any, right: Any) -> Any:
+    """
+    Concatenate two lists of per-host Min/Max rows.
+
+    Args:
+      left (Any): Left chunk rows.
+      right (Any): Right chunk rows.
+
+    Returns:
+      Any: Combined list.
+
+    Examples:
+      >>> True
+      True
+    """
+    return jid_table_mod._merge_list_results(left, right)
+
+  rows: list = []
+  for host_chunk, tf in jid_table_mod._iter_host_time_query_chunks(
+      host_list,
+      tkw,
+      batch_size=batch,
+      slice_s=slice_s,
+  ):
+    rows.extend(
+        jid_table_mod._run_with_host_time_timeout_retry(
+            host_chunk,
+            tf,
+            run,
+            merge,
+            empty=[],
+        )
+    )
+  for row in rows:
+    host = row.get("host")
+    if host is None:
+      continue
+    if row.get("mn") is not None:
+      prev = host_min.get(host)
+      host_min[host] = row["mn"] if prev is None else min(prev, row["mn"])
+    if row.get("mx") is not None:
+      prev = host_max.get(host)
+      host_max[host] = row["mx"] if prev is None else max(prev, row["mx"])
   return host_min, host_max
 
 

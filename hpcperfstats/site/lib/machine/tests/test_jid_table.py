@@ -1280,6 +1280,10 @@ def test_type_detail_get_aggregate_df_sql_fast_path(monkeypatch):
   with patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
       lambda _k, _ttl, fn: fn(),
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg."
+      "get_metrics_plot_aggregate_time_slice_s",
+      lambda: 86400 * 7,
   ):
     out = provider.get_aggregate_df("ldlm_cancel", metric="arc")
   assert len(filter_calls) == 1
@@ -1581,3 +1585,175 @@ def test_full_host_data_rows_batched_uses_metrics_host_batch_and_time_slices(
   assert max(seen_host_lens) <= METRICS_HOST_QUERY_BATCH
   # 2 hour window / 3600s → ≥2 time slices × ceil(20/16)=2 host batches
   assert len(seen_host_lens) >= 4
+
+
+def test_jid_table_host_query_batch_matches_metrics_batch():
+  """Drift gate: plot default host batch must stay aligned with metrics law."""
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      JID_TABLE_HOST_QUERY_BATCH,
+  )
+  from hpcperfstats.analysis.metrics.lib.metrics import METRICS_HOST_QUERY_BATCH
+
+  assert JID_TABLE_HOST_QUERY_BATCH == 16
+  assert JID_TABLE_HOST_QUERY_BATCH == METRICS_HOST_QUERY_BATCH
+  assert JID_TABLE_HOST_QUERY_BATCH != 64
+
+
+def test_aggregate_df_host_batch_dense_nfs_read_write_iops():
+  """NFS Summary triples (read/write/iops) must start at batch 8, not 64/16."""
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      TYPE_DETAIL_HOST_QUERY_BATCH,
+      _aggregate_df_host_batch,
+  )
+
+  assert (
+      _aggregate_df_host_batch(
+          "host_nfs",
+          ["normal_read", "direct_read", "server_read"],
+          reject_dcgm_blank=False,
+      )
+      == TYPE_DETAIL_HOST_QUERY_BATCH
+  )
+  assert (
+      _aggregate_df_host_batch(
+          "nfs",
+          ["normal_write", "direct_write", "server_write"],
+          reject_dcgm_blank=False,
+      )
+      == TYPE_DETAIL_HOST_QUERY_BATCH
+  )
+  assert (
+      _aggregate_df_host_batch(
+          "nfs",
+          ["READ_ops", "read_ops", "WRITE_ops", "write_ops"],
+          reject_dcgm_blank=False,
+      )
+      == TYPE_DETAIL_HOST_QUERY_BATCH
+  )
+  assert (
+      _aggregate_df_host_batch(
+          "host_cpu",
+          ["user"],
+          reject_dcgm_blank=False,
+      )
+      == JID_TABLE_HOST_QUERY_BATCH
+  )
+  assert (
+      _aggregate_df_host_batch(
+          "nvidia_gpu",
+          ["gpu_util"],
+          reject_dcgm_blank=True,
+      )
+      == TYPE_DETAIL_HOST_QUERY_BATCH
+  )
+
+
+def test_get_aggregate_df_nfs_first_host_chunk_is_eight(monkeypatch):
+  """48-host NFS read SUM must not issue host__in of all 48 on first attempt."""
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      TYPE_DETAIL_HOST_QUERY_BATCH,
+  )
+
+  inst = jid_table.__new__(jid_table)
+  inst.jid = "jid-nfs-batch8"
+  inst._large_job_plot_cache_token = "full"
+  hosts = [f"c101-{i:03d}.horizon.tacc.utexas.edu" for i in range(1, 49)]
+  inst._base_filter = {
+      "host__in": hosts,
+      "time__gte": datetime(2026, 8, 5, 0, 33, 33, tzinfo=timezone.utc),
+      "time__lte": datetime(2026, 8, 5, 1, 33, 33, tzinfo=timezone.utc),
+  }
+  # Align with production: one hour window uses one 3600s slice.
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg."
+      "get_metrics_plot_aggregate_time_slice_s",
+      lambda: 3600,
+  )
+  first_host_lens = []
+
+  def capture_retry(host_chunk, build_qs, **kwargs):
+    first_host_lens.append(len([str(h) for h in host_chunk if h]))
+    return pd.DataFrame(
+        {
+            "host": [list(host_chunk)[0]],
+            "time": [datetime(2026, 8, 5, 1, tzinfo=timezone.utc)],
+            "sum_val": [1.0],
+        }
+    )
+
+  with patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table."
+      "_queryset_to_dataframe_with_host_chunk_retry",
+      capture_retry,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
+      lambda _key, _timeout, query_fn: query_fn(),
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table."
+      "host_data_sum_val_per_sample_queryset",
+      lambda qs, _col: qs,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table."
+      "host_data_restore_time_column",
+      lambda df: df,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data",
+  ):
+    out = jid_table.get_aggregate_df(
+        inst,
+        "nfs",
+        "arc",
+        ["normal_read", "direct_read", "server_read"],
+    )
+
+  assert first_host_lens, "expected SQL host chunks"
+  assert max(first_host_lens) <= TYPE_DETAIL_HOST_QUERY_BATCH
+  assert first_host_lens[0] == TYPE_DETAIL_HOST_QUERY_BATCH
+  assert not out.empty
+
+
+def test_type_detail_get_host_time_df_uses_time_slices(monkeypatch):
+  """TypeDetail host/time distinct must nest wall-clock slices, not full window."""
+  st = datetime(2024, 6, 1, tzinfo=timezone.utc)
+  et = datetime(2024, 6, 1, 2, tzinfo=timezone.utc)
+  provider = TypeDetailDataProvider(
+      jid="j-ht",
+      type_name="mdc",
+      start_time=st,
+      end_time=et,
+      host_list=["n1.example.com", "n2.example.com"],
+  )
+  seen = {"time_chunks": 0}
+
+  def fake_fetch(host_list, build_qs, batch_size=None, **kwargs):
+    tfc = kwargs.get("time_filter_chunks")
+    seen["time_chunks"] = len(list(tfc or []))
+    seen["batch_size"] = batch_size
+    return pd.DataFrame(
+        {
+            "host": ["n1.example.com"],
+            "time": [st],
+        }
+    )
+
+  monkeypatch.setattr(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg."
+      "get_metrics_plot_aggregate_time_slice_s",
+      lambda: 3600,
+  )
+  with patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table."
+      "_fetch_host_data_values_frames",
+      fake_fetch,
+  ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
+      lambda _k, _ttl, fn: fn(),
+  ):
+    out = provider.get_host_time_df()
+
+  assert seen["time_chunks"] >= 2
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      TYPE_DETAIL_HOST_QUERY_BATCH,
+  )
+  assert seen["batch_size"] == TYPE_DETAIL_HOST_QUERY_BATCH
+  assert not out.empty

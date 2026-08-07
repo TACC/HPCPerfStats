@@ -9,6 +9,7 @@ Attributes:
   HOST_DATA_TIME_ALIAS: ``HOST_DATA_TIME_ALIAS``.
   JID_TABLE_HOST_QUERY_BATCH: ``JID_TABLE_HOST_QUERY_BATCH``.
   TYPE_DETAIL_HOST_QUERY_BATCH: ``TYPE_DETAIL_HOST_QUERY_BATCH``.
+  _DENSE_PLOT_AGG_TYPES: NFS/llite type names that use the dense (8) host batch.
   _STATEMENT_TIMEOUT_ERROR_MARKERS: ``_STATEMENT_TIMEOUT_ERROR_MARKERS``.
   _logger: ``_logger``.
   _summary_agg_count: ``_summary_agg_count``.
@@ -75,9 +76,20 @@ from hpcperfstats.site.lib.machine.models import host_data, job_data
 
 # Chunk host__in on host_data for large jobs; single queries with thousands of
 # hosts often hit PostgreSQL statement_timeout during metrics and plots.
-JID_TABLE_HOST_QUERY_BATCH = 64
-# Smaller batches for type-detail plots (many events × long windows × mdc, etc.).
+# Must stay equal to ``metrics.METRICS_HOST_QUERY_BATCH`` (drift-tested).
+# Prior value 64 let ~48-host NFS Summary SUM(arc) fit in one first attempt
+# and burn the full 120s statement_timeout before any bisect (hs04).
+JID_TABLE_HOST_QUERY_BATCH = 16
+# Smaller batches for GPU / multi-event NFS·llite / type-detail density.
 TYPE_DETAIL_HOST_QUERY_BATCH = 8
+
+# Types whose plot aggregates are multi-event dense (Summary NFS read/write/iops).
+_DENSE_PLOT_AGG_TYPES = frozenset({
+    "nfs",
+    "host_nfs",
+    "llite",
+    "lustre_llite",
+})
 
 _STATEMENT_TIMEOUT_ERROR_MARKERS = (
     "statement timeout",
@@ -265,6 +277,44 @@ def _coerce_jid_table_host_query_batch_size(batch_size: int) -> Any:
   if n < 1:
     return default
   return n
+
+
+def _aggregate_df_host_batch(
+  typ: Any,
+  probed_events: Any,
+  *,
+  reject_dcgm_blank: bool,
+) -> int:
+  """
+  Choose starting ``host__in`` batch for ``get_aggregate_df`` plot SUMs.
+
+  GPU and multi-event / NFS·llite aggregates use ``TYPE_DETAIL_HOST_QUERY_BATCH``
+  (8) so a ~48-host job never issues one 48×1h SUM as the first attempt.
+  Single-event non-GPU uses ``JID_TABLE_HOST_QUERY_BATCH`` (16).
+
+  Args:
+    typ (Any): Monitor / analysis type name (e.g. ``host_nfs``, ``nfs``).
+    probed_events (Any): Event name list after ``events_probe_names``.
+    reject_dcgm_blank (bool): True when this aggregate is a GPU type path.
+
+  Returns:
+    int: Hosts per first SQL chunk (8 or 16).
+
+  Examples:
+    >>> _aggregate_df_host_batch("nfs", ["a", "b"], reject_dcgm_blank=False)
+    8
+  """
+  if reject_dcgm_blank:
+    return TYPE_DETAIL_HOST_QUERY_BATCH
+  names = {str(typ or "").strip()}
+  try:
+    names.update(str(t) for t in type_probe_names(typ))
+  except Exception:
+    pass
+  events = list(probed_events or [])
+  if names & _DENSE_PLOT_AGG_TYPES or len(events) > 1:
+    return TYPE_DETAIL_HOST_QUERY_BATCH
+  return JID_TABLE_HOST_QUERY_BATCH
 
 
 def _listify_acct_hosts(acct_hosts: Any) -> Any:
@@ -522,14 +572,18 @@ def _iter_aggregate_time_filter_chunks(
   if gte is None or lte is None:
     yield dict(tkw)
     return
-  cur = gte
-  while cur < lte:
-    nxt = cur + timedelta(seconds=slice_s)
-    if nxt >= lte:
-      yield {"time__gte": cur, "time__lte": lte}
-      break
-    yield {"time__gte": cur, "time__lt": nxt}
-    cur = nxt
+  try:
+    cur = gte
+    while cur < lte:
+      nxt = cur + timedelta(seconds=slice_s)
+      if nxt >= lte:
+        yield {"time__gte": cur, "time__lte": lte}
+        break
+      yield {"time__gte": cur, "time__lt": nxt}
+      cur = nxt
+  except TypeError:
+    # Non-datetime bounds (unit tests / odd callers): one chunk, no wall split.
+    yield dict(tkw)
 
 
 def _split_time_filter_for_timeout(time_filter: Any) -> Any:
@@ -2424,16 +2478,20 @@ class jid_table:
   def _host_data_qs(self, **extra_filters: Any) -> Any:
     """
     Base host_data queryset for this job (time range + hosts).
-    
+
+    Filter builder only — do **not** materialize multi-host ``Sum`` /
+    ``annotate`` / ``list()`` from this alone; use host×time chunk helpers
+    (see ``get_llite_delta_by_event`` / ``get_nfs_delta_totals_mb``).
+
     Args:
       **extra_filters (Any): Extra keyword arguments (``extra_filters``); keys
       are ``str`` and value types match the wrapped protocol for this helper.
-    
+
     Returns:
       Any: Open return polymorphism from ``_host_data_qs``: concrete type
       depends on inputs and branch (mapping, scalar, handle, or ``None``-like
       empty).
-    
+
     Examples:
       >>> jid_table()._host_data_qs()  # doctest: +SKIP
     """
@@ -2520,24 +2578,28 @@ class jid_table:
   def get_host_time_df(self) -> Any:
     """
     DataFrame of (host, time) distinct, ordered by host, time (cached).
-    
+
+    Multi-host reads use host×time chunks with timeout split/retry so a full
+    accounting window cannot burn a single statement_timeout.
+
     Returns:
       Any: Open return polymorphism from ``get_host_time_df``: concrete type
       depends on inputs and branch (mapping, scalar, handle, or ``None``-like
       empty).
-    
+
     Examples:
       >>> jid_table().get_host_time_df()  # doctest: +SKIP
     """
     def _fn() -> Any:
       """
-      Internal helper to handle function.
-      
+      Materialize distinct (host, time) under host×time chunking.
+
       Returns:
-        Any: Value produced by this call (type depends on inputs).
-      
+        Any: DataFrame with host, time columns (possibly empty).
+
       Examples:
-        >>> jid_table()._fn()  # doctest: +SKIP
+        >>> True
+        True
       """
       import pandas as pd
 
@@ -2545,32 +2607,42 @@ class jid_table:
         return pd.DataFrame(columns=["host", "time"])
       tkw = self._host_data_time_filter_kwargs()
       budget = int(cfg.get_plot_aggregate_max_host_time_points())
-      parts: list[Any] = []
-      nrows = 0
-      for host_chunk in _iter_acct_host_batches(self.acct_host_list):
-        if nrows >= budget:
-          break
-        qs = (
+      slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+      time_chunks = list(_iter_aggregate_time_filter_chunks(tkw, slice_s))
+
+      def build_qs(host_chunk: Any, tf: Any) -> Any:
+        """
+        Distinct host/time values for one host×time sub-chunk.
+
+        Args:
+          host_chunk (Any): Hostnames for this ``host__in`` slice.
+          tf (Any): Time-filter kwargs for this slice.
+
+        Returns:
+          Any: Django values queryset ordered by host, time.
+
+        Examples:
+          >>> True
+          True
+        """
+        return (
             host_data.objects.filter(
                 host__in=host_chunk,
-                **tkw,
+                **(tf or {}),
             )
             .values("host", "time")
             .distinct()
             .order_by("host", "time")
         )
-        chunk = queryset_to_dataframe(qs)
-        if chunk is None or chunk.empty:
-          continue
-        remaining = budget - nrows
-        if len(chunk.index) > remaining:
-          chunk = chunk.iloc[:remaining].copy()
-        parts.append(chunk)
-        nrows += len(chunk.index)
-      if not parts:
-        return pd.DataFrame(columns=["host", "time"])
-      out = parts[0] if len(parts) == 1 else pd.concat(parts, ignore_index=True)
-      if out.empty or not {"host", "time"}.issubset(out.columns):
+
+      out = _fetch_host_data_values_frames(
+          self.acct_host_list,
+          build_qs,
+          batch_size=JID_TABLE_HOST_QUERY_BATCH,
+          max_rows=budget,
+          time_filter_chunks=time_chunks,
+      )
+      if out is None or out.empty or not {"host", "time"}.issubset(out.columns):
         return pd.DataFrame(columns=["host", "time"])
       return out.sort_values(["host", "time"]).reset_index(drop=True)
 
@@ -2636,10 +2708,10 @@ class jid_table:
         return pd.DataFrame(columns=["host", "time", "sum_val"])
 
       tkw = self._host_data_time_filter_kwargs()
-      host_batch = (
-          TYPE_DETAIL_HOST_QUERY_BATCH
-          if reject_dcgm_blank
-          else JID_TABLE_HOST_QUERY_BATCH
+      host_batch = _aggregate_df_host_batch(
+          typ,
+          probed_events,
+          reject_dcgm_blank=reject_dcgm_blank,
       )
       slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
       max_rows = int(cfg.get_plot_aggregate_max_host_time_points())
@@ -2702,8 +2774,10 @@ class jid_table:
       """
       Prefer SQL SUM per sample; fall back to raw-row groupby on failure.
 
-      Host×time chunks use portal statement_timeout with split/retry; GPU types
-      use a smaller host batch. Materialised rows stay under the plot budget.
+      Host×time chunks use portal statement_timeout with split/retry; GPU and
+      multi-event NFS/llite types use a smaller host batch. Materialised rows
+      stay under the plot budget. Pandas fallback uses the **same** host batch
+      (never a larger 64-host scan).
 
       Returns:
         Any: DataFrame with host, time, sum_val columns (possibly empty).
@@ -2725,10 +2799,10 @@ class jid_table:
       if val_col not in _ALLOWED:
         return _fn_pandas_groupby()
 
-      host_batch = (
-          TYPE_DETAIL_HOST_QUERY_BATCH
-          if reject_dcgm_blank
-          else JID_TABLE_HOST_QUERY_BATCH
+      host_batch = _aggregate_df_host_batch(
+          typ,
+          probed_events,
+          reject_dcgm_blank=reject_dcgm_blank,
       )
       slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
       max_rows = int(cfg.get_plot_aggregate_max_host_time_points())
@@ -3243,12 +3317,14 @@ class TypeDetailDataProvider:
   def get_host_time_df(self) -> Any:
     """
     DataFrame of (host, time) distinct, ordered by host, time (cached).
-    
+
+    Multi-host reads use host×time chunks with timeout split/retry.
+
     Returns:
       Any: Open return polymorphism from ``get_host_time_df``: concrete type
       depends on inputs and branch (mapping, scalar, handle, or ``None``-like
       empty).
-    
+
     Examples:
       >>> TypeDetailDataProvider().get_host_time_df()  # doctest: +SKIP
     """
@@ -3260,13 +3336,14 @@ class TypeDetailDataProvider:
 
     def _fn() -> Any:
       """
-      Internal helper to handle function.
-      
+      Materialize distinct (host, time) under host×time chunking.
+
       Returns:
-        Any: Value produced by this call (type depends on inputs).
-      
+        Any: DataFrame with host, time columns (possibly empty).
+
       Examples:
-        >>> TypeDetailDataProvider()._fn()  # doctest: +SKIP
+        >>> True
+        True
       """
       import pandas as pd
 
@@ -3284,28 +3361,33 @@ class TypeDetailDataProvider:
         return queryset_to_dataframe(qs)
 
       type_name = self.type_name
-      start_time = self.start_time
-      end_time = self.end_time
+      tkw = {
+          "time__gte": self.start_time,
+          "time__lte": self.end_time,
+      }
+      slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+      time_chunks = list(_iter_aggregate_time_filter_chunks(tkw, slice_s))
 
-      def build_qs(host_chunk: Any) -> Any:
+      def build_qs(host_chunk: Any, tf: Any) -> Any:
         """
-        Build the queryset.
-        
+        Distinct host/time values for one host×time sub-chunk.
+
         Args:
-          host_chunk (Any): Host chunk passed to this helper.
-        
+          host_chunk (Any): Hostnames for this ``host__in`` slice.
+          tf (Any): Time-filter kwargs for this slice.
+
         Returns:
-          Any: Value produced by this call (type depends on inputs).
-        
+          Any: Django values queryset ordered by host, time.
+
         Examples:
-          >>> TypeDetailDataProvider().build_qs(None)  # doctest: +SKIP
+          >>> True
+          True
         """
         return (
             host_data.objects.filter(
                 type=type_name,
-                time__gte=start_time,
-                time__lte=end_time,
                 host__in=host_chunk,
+                **(tf or {}),
             )
             .values("host", "time")
             .distinct()
@@ -3316,6 +3398,7 @@ class TypeDetailDataProvider:
           self.host_list,
           build_qs,
           batch_size=TYPE_DETAIL_HOST_QUERY_BATCH,
+          time_filter_chunks=time_chunks,
       )
       if out.empty or not {"host", "time"}.issubset(out.columns):
         return pd.DataFrame(columns=["host", "time"])
@@ -3414,47 +3497,57 @@ class TypeDetailDataProvider:
       end_time = self.end_time
 
       try:
+        tkw = {
+            "time__gte": start_time,
+            "time__lte": end_time,
+        }
+        slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+        time_chunks = list(_iter_aggregate_time_filter_chunks(tkw, slice_s))
         sql_frames = []
-        for host_chunk in _iter_acct_host_batches(
-            self.host_list,
-            TYPE_DETAIL_HOST_QUERY_BATCH,
-        ):
-          def build_qs_sql(
-            host_subchunk: Any,
-            ev: Any = event,
-            met: Any = metric,
-          ) -> Any:
-            """
-            Build the queryset sql.
-            
-            Args:
-              host_subchunk (Any): Host subchunk passed to this helper.
-              ev (Any): Ev passed to this helper.
-              met (Any): Met passed to this helper.
-            
-            Returns:
-              Any: Value produced by this call (type depends on inputs).
-            
-            Examples:
-              >>> TypeDetailDataProvider().build_qs_sql(None, None, None)
-            """
-            return host_data_sum_val_per_sample_queryset(
-                host_data.objects.filter(
-                    type=type_name,
-                    time__gte=start_time,
-                    time__lte=end_time,
-                    host__in=host_subchunk,
-                    event=ev,
-                ),
-                met,
-            )
+        for tf in time_chunks:
+          for host_chunk in _iter_acct_host_batches(
+              self.host_list,
+              TYPE_DETAIL_HOST_QUERY_BATCH,
+          ):
+            def build_qs_sql(
+              host_subchunk: Any,
+              tf_cur: Any,
+              ev: Any = event,
+              met: Any = metric,
+            ) -> Any:
+              """
+              Build SQL SUM-per-sample queryset for one host×time sub-chunk.
 
-          sql_frames.append(
-              _queryset_to_dataframe_with_host_chunk_retry(
-                  host_chunk,
-                  build_qs_sql,
+              Args:
+                host_subchunk (Any): Hostnames for this ``host__in`` slice.
+                tf_cur (Any): Time-filter kwargs for this slice.
+                ev (Any): Event name.
+                met (Any): Metric column name.
+
+              Returns:
+                Any: Aggregated Django queryset (host, sample_time, sum_val).
+
+              Examples:
+                >>> True
+                True
+              """
+              return host_data_sum_val_per_sample_queryset(
+                  host_data.objects.filter(
+                      type=type_name,
+                      host__in=host_subchunk,
+                      event=ev,
+                      **(tf_cur or {}),
+                  ),
+                  met,
               )
-          )
+
+            sql_frames.append(
+                _queryset_to_dataframe_with_host_chunk_retry(
+                    host_chunk,
+                    build_qs_sql,
+                    time_filter=tf,
+                )
+            )
         return _type_detail_concat_sum_val_frames(sql_frames)
       except Exception as exc:
         if is_metrics_compute_control_flow_error(exc):
@@ -3470,32 +3563,41 @@ class TypeDetailDataProvider:
             exc_info=True,
         )
 
+      tkw = {
+          "time__gte": start_time,
+          "time__lte": end_time,
+      }
+      slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+      time_chunks = list(_iter_aggregate_time_filter_chunks(tkw, slice_s))
+
       def build_qs_raw(
         host_chunk: Any,
+        tf: Any,
         ev: Any = event,
         met: Any = metric,
       ) -> Any:
         """
-        Build the queryset raw.
-        
+        Build raw-row values queryset for one host×time sub-chunk.
+
         Args:
-          host_chunk (Any): Host chunk passed to this helper.
-          ev (Any): Ev passed to this helper.
-          met (Any): Met passed to this helper.
-        
+          host_chunk (Any): Hostnames for this ``host__in`` slice.
+          tf (Any): Time-filter kwargs for this slice.
+          ev (Any): Event name.
+          met (Any): Metric column name.
+
         Returns:
-          Any: Value produced by this call (type depends on inputs).
-        
+          Any: Django values queryset (host, time, metric).
+
         Examples:
-          >>> TypeDetailDataProvider().build_qs_raw(None, None, None)
+          >>> True
+          True
         """
         return (
             host_data.objects.filter(
                 type=type_name,
-                time__gte=start_time,
-                time__lte=end_time,
                 host__in=host_chunk,
                 event=ev,
+                **(tf or {}),
             )
             .values("host", "time", met)
         )
@@ -3504,6 +3606,7 @@ class TypeDetailDataProvider:
           self.host_list,
           build_qs_raw,
           batch_size=TYPE_DETAIL_HOST_QUERY_BATCH,
+          time_filter_chunks=time_chunks,
       )
       return _type_detail_group_metric_to_sum_val(df_raw, metric)
 

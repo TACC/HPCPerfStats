@@ -2178,9 +2178,10 @@ def _host_data_metric_rows_with_host_chunk_retry(
   return []
 
 
-# Prefer smaller host__in chunks than jid_table's 64 so ~48-host jobs issue
-# several bounded queries; pairs with metrics_worker_statement_timeout_ms so
-# chunk-on-timeout split can fire before the 900s SIGALRM.
+# Prefer host×time chunks sized like jid_table's default (16) so ~48-host jobs
+# issue several bounded queries; pairs with metrics_worker_statement_timeout_ms
+# so chunk-on-timeout split can fire before the 900s SIGALRM. Must stay equal to
+# ``jid_table.JID_TABLE_HOST_QUERY_BATCH`` (drift-tested).
 METRICS_HOST_QUERY_BATCH = 16
 
 
@@ -2196,31 +2197,31 @@ def _host_data_metric_rows_batched(
   nonnegative_only: bool = False,
 ) -> Any:
   """
-  Fetch host_data rows for metrics bucketing; chunk ``host__in`` for bounded.
-  
-    SQL.
-  
+  Fetch host_data rows for metrics bucketing via host×time chunks.
+
   Rows are always ``{host, time, <metric_column>}``. With ``sum_per_sample`` the
   value is the per-sample total across events and devices, summed by PostgreSQL;
-  host chunks are disjoint and each chunk groups per (host, time), so rows stay
-  unique per (host, time) and callers can skip a pandas groupby.
-  
+  host×time chunks are disjoint and each chunk groups per (host, time), so rows
+  stay unique per (host, time) and callers can skip a pandas groupby.
+
   Args:
-    tkw (Any): Tkw passed to this helper.
-    hosts (Any): Hosts passed to this helper.
-    typename (Any): Typename passed to this helper.
-    events (Any): Events passed to this helper.
-    metric_column (Any): Metric column passed to this helper.
-    rows_cache (Any | None): One of ``Any``, ``None``.
-    sum_per_sample (bool): Boolean flag for sum per sample.
-    nonnegative_only (bool): Boolean flag for nonnegative only.
-  
+    tkw (Any): Time-filter kwargs for the job window.
+    hosts (Any): Hostnames for this job.
+    typename (Any): ``host_data.type`` string.
+    events (Any): Event name(s) for the metric probe.
+    metric_column (Any): Column name (``arc`` / ``value`` / ``delta``).
+    rows_cache (Any | None): Optional dict cache keyed by probe identity.
+    sum_per_sample (bool): When True, SQL-SUM per (host, sample time).
+    nonnegative_only (bool): When True, SUM only nonnegative samples.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: List of row dicts (possibly empty).
+
   Examples:
     >>> _host_data_metric_rows_batched(0)  # doctest: +SKIP
   """
+  from hpcperfstats.dbload.lib import conf_parser as cfg
+
   host_list = list(hosts)
   if not host_list:
     return []
@@ -2239,18 +2240,47 @@ def _host_data_metric_rows_batched(
   batch = jid_table._coerce_jid_table_host_query_batch_size(
       METRICS_HOST_QUERY_BATCH)
   ev = _flatten_event_names_for_host_data_query(events, typ=typename)
-  rows = []
-  for i in range(0, len(host_list), batch):
-    chunk = host_list[i:i + batch]
+  slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+  rows: list = []
+
+  def run(hosts_list: Any, tf_cur: Any) -> Any:
+    """
+    Materialize metric rows for one host×time chunk.
+
+    Args:
+      hosts_list (Any): Hostnames for this attempt.
+      tf_cur (Any): Time filter dict.
+
+    Returns:
+      Any: List of row dicts.
+
+    Examples:
+      >>> True
+      True
+    """
+    return _host_data_metric_rows_with_host_chunk_retry(
+        hosts_list,
+        tf_cur or {},
+        typename,
+        ev,
+        metric_column,
+        sum_per_sample=sum_per_sample,
+        nonnegative_only=nonnegative_only,
+    )
+
+  for host_chunk, tf in jid_table._iter_host_time_query_chunks(
+      host_list,
+      tkw,
+      batch_size=batch,
+      slice_s=slice_s,
+  ):
     rows.extend(
-        _host_data_metric_rows_with_host_chunk_retry(
-            chunk,
-            tkw,
-            typename,
-            ev,
-            metric_column,
-            sum_per_sample=sum_per_sample,
-            nonnegative_only=nonnegative_only,
+        jid_table._run_with_host_time_timeout_retry(
+            host_chunk,
+            tf,
+            run,
+            jid_table._merge_list_results,
+            empty=[],
         )
     )
   if rows_cache is not None and cache_key is not None:
