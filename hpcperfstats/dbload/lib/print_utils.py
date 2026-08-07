@@ -302,31 +302,44 @@ def _normalize_log_body_args(
   return (first,) + args[1:]
 
 
-def log_print(*args: Any, **kwargs: Any) -> Any:
+def log_print(*args: Any, **kwargs: Any) -> None:
   """
-  Print with script prefix. Same signature as print(); forwards kwargs (e.g.
-  
-    file=, flush=).
-  
-  Optional oneshot kwargs (not forwarded to print):
+  Print with script prefix using one ``write()`` of the full line.
+
+  Accepts the same keyword surface as ``print`` (``sep``, ``end``, ``file``,
+  ``flush``). Podman ``json-file``/``k8s-file`` treats each ``write()`` as a
+  separate log event and prefixes it for ``compose logs``; CPython ``print``
+  writes prefix, separator, body, and newline separately, which mashs lines.
+  This helper joins once and writes the complete record (including ``end``).
+
+  Optional oneshot kwargs (not forwarded to the stream):
   - ``janitorial=True`` — apply janitorial body rules for this call
   - ``ingest=True`` — apply MainThread ingest body rules for this call
-  
+
   Args:
-    *args (Any): Extra positional arguments; unused unless the callee
-    documents a specific leftover protocol.
-    **kwargs (Any): Extra keyword arguments forwarded to the wrapped API; keys
-    and value types match that callee's signature.
-  
+    *args (Any): Message fragments joined with ``sep`` after the script
+      prefix (same positional contract as ``print``).
+    **kwargs (Any): ``sep`` (str), ``end`` (str), ``file`` (text stream),
+      ``flush`` (bool), plus oneshot ``janitorial`` / ``ingest`` (bool).
+
   Returns:
-    Any: Open return polymorphism from ``log_print``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    None
+
+  Raises:
+    TypeError: When an unsupported keyword is passed.
+
   Examples:
-    >>> log_print()  # doctest: +SKIP
+    >>> log_print("ready")  # doctest: +SKIP
   """
   oneshot_janitorial = bool(kwargs.pop("janitorial", False))
   oneshot_ingest = bool(kwargs.pop("ingest", False))
+  sep = kwargs.pop("sep", " ")
+  end = kwargs.pop("end", "\n")
+  file = kwargs.pop("file", None)
+  flush = bool(kwargs.pop("flush", False))
+  if kwargs:
+    unexpected = ", ".join(sorted(kwargs))
+    raise TypeError(f"log_print() got unexpected keyword arguments: {unexpected}")
   prefix = format_log_prefix()
   script_name = _script_name_from_bracket_prefix(prefix)
   role = get_log_role()
@@ -339,5 +352,9 @@ def log_print(*args: Any, **kwargs: Any) -> Any:
       janitorial=janitorial,
       ingest=ingest,
   )
+  stream = sys.stdout if file is None else file
+  line = sep.join(str(part) for part in (prefix, *args)) + end
   with _log_print_lock:
-    return print(prefix, *args, **kwargs)
+    stream.write(line)
+    if flush:
+      stream.flush()
