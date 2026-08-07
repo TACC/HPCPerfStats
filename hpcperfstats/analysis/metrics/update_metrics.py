@@ -41,7 +41,7 @@ Attributes:
   LAST_UPDATE_METRICS_DIAGNOSTICS: Attribute.
   METRICS_SCHEDULER_STALL_EXIT_CODE: Attribute.
   PREWARM_DRAIN_MAX_WALL_SECONDS: Attribute.
-  PREWARM_FINISH_MAX_WALL_SECONDS: Attribute.
+  PREWARM_FINISH_PROCESSING_UPDATES_LOG_SECONDS: Attribute.
   PREWARM_FINISH_WAIT_SLICE_SECONDS: Attribute.
   PREWARM_FUTURE_RESULT_TIMEOUT_SECONDS: Attribute.
   PUBLIC_EF_PHASE_NO_PROGRESS_TIMEOUT_SECONDS: Attribute.
@@ -211,7 +211,7 @@ STALL_RECOVERY_PER_JID_POLL_TIMEOUT_SECONDS = 2.0
 STALL_RECOVERY_MAX_WALL_SECONDS = 300.0
 PREWARM_FUTURE_RESULT_TIMEOUT_SECONDS = 60.0
 PREWARM_DRAIN_MAX_WALL_SECONDS = 300.0
-PREWARM_FINISH_MAX_WALL_SECONDS = 300.0
+PREWARM_FINISH_PROCESSING_UPDATES_LOG_SECONDS = 300.0
 PREWARM_FINISH_WAIT_SLICE_SECONDS = 0.25
 PUBLIC_EF_PHASE_POLL_TIMEOUT_SECONDS = float(
     os.environ.get("HPCPERFSTATS_PUBLIC_EF_PHASE_POLL_TIMEOUT_S", "5.0")
@@ -1189,11 +1189,11 @@ class _PrewarmPipeline:
 
   def finish(self) -> None:
     """
-    Drain async prewarm; soft wall drops ``_waiting`` only (no cancel).
+    Drain async prewarm until empty or shutdown; never cancel futures.
 
-    After ``PREWARM_FINISH_MAX_WALL_SECONDS``, abandon wait-queue jids and
-    continue waiting for in-flight work so chunk-linear aggregates are not
-    orphaned mid-job. Never calls ``Future.cancel``.
+    After ``metrics_prewarm_processing_updates_log_s``, log progress once
+    and keep draining. Drop ``_waiting`` only when ``shutdown_requested``;
+    then wait for in-flight work. Never calls ``Future.cancel``.
 
     Returns:
       None
@@ -1204,15 +1204,14 @@ class _PrewarmPipeline:
     if self._mode == "inline":
       return
     started = time.monotonic()
-    deadline = started + PREWARM_FINISH_MAX_WALL_SECONDS
-    soft_wall_logged = False
+    log_after_s = float(cfg.get_metrics_prewarm_processing_updates_log_s())
+    processing_updates_logged = False
     while True:
       with self._pending_lock:
         has_work = bool(self._pending) or bool(self._waiting)
       if not has_work:
         break
-      remaining_s = max(0.0, deadline - time.monotonic())
-      if remaining_s <= 0.0:
+      if shutdown_requested[0]:
         with self._pending_lock:
           oldest_age_s = self._oldest_pending_age_locked()
           dropped_waiting = len(self._waiting)
@@ -1221,19 +1220,16 @@ class _PrewarmPipeline:
         if dropped_waiting:
           with self._counters_lock:
             self._failed += dropped_waiting
-        if not soft_wall_logged:
           log_print(
-              "plot artifact prewarm finish soft wall after {0:.1f}s; "
-              "dropped_waiting={1} still_running={2} "
-              "oldest_pending_age_s={3:.3f}".format(
-                  time.monotonic() - started,
+              "plot artifact prewarm finish shutdown; "
+              "dropped_waiting={0} still_running={1} "
+              "oldest_pending_age_s={2:.3f}".format(
                   dropped_waiting,
                   still_running,
                   oldest_age_s,
               ),
               flush=True,
           )
-          soft_wall_logged = True
         if still_running <= 0:
           break
         self.drain_some(
@@ -1241,9 +1237,27 @@ class _PrewarmPipeline:
             wait_timeout_s=PREWARM_FINISH_WAIT_SLICE_SECONDS,
         )
         continue
+      elapsed_s = time.monotonic() - started
+      if not processing_updates_logged and elapsed_s >= log_after_s:
+        with self._pending_lock:
+          waiting_n = len(self._waiting)
+          still_running = len(self._pending)
+          oldest_age_s = self._oldest_pending_age_locked()
+        log_print(
+            "plot artifact prewarm processing updates after {0:.1f}s; "
+            "waiting={1} still_running={2} "
+            "oldest_pending_age_s={3:.3f}".format(
+                elapsed_s,
+                waiting_n,
+                still_running,
+                oldest_age_s,
+            ),
+            flush=True,
+        )
+        processing_updates_logged = True
       self.drain_some(
           force=True,
-          wait_timeout_s=min(PREWARM_FINISH_WAIT_SLICE_SECONDS, remaining_s),
+          wait_timeout_s=PREWARM_FINISH_WAIT_SLICE_SECONDS,
       )
     self._executor.shutdown(wait=False, cancel_futures=False)
 

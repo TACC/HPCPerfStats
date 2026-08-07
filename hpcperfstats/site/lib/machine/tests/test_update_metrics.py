@@ -3171,14 +3171,17 @@ def test_prewarm_pipeline_drain_some_force_leaves_unfinished_future_pending(monk
 
 
 @pytest.mark.machine_unit_mock
-def test_prewarm_pipeline_finish_uses_global_timeout(monkeypatch):
+def test_prewarm_pipeline_finish_processing_updates_keeps_waiting(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 4)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.25)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
-  monkeypatch.setattr(update_metrics, "PREWARM_FINISH_MAX_WALL_SECONDS", 1.0)
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_metrics_prewarm_processing_updates_log_s", lambda: 1.0
+  )
   monkeypatch.setattr(update_metrics, "PREWARM_FINISH_WAIT_SLICE_SECONDS", 0.25)
+  update_metrics.shutdown_requested[0] = False
 
   class _FakeExecutor:
     def __init__(self):
@@ -3191,19 +3194,75 @@ def test_prewarm_pipeline_finish_uses_global_timeout(monkeypatch):
   pipeline._waiting = [(0.0, "jid-waiting")]
   pipeline._executor = _FakeExecutor()
   drain_calls = []
+  logs = []
+
+  def _drain(force=False, wait_timeout_s=0.0):
+    drain_calls.append((force, wait_timeout_s))
+    # Keep waiters until after the processing-updates log, then complete.
+    if len(drain_calls) >= 2:
+      pipeline._waiting.clear()
+
+  monkeypatch.setattr(pipeline, "drain_some", _drain)
+  monkeypatch.setattr(update_metrics, "log_print", lambda msg, **kwargs: logs.append(msg))
+  times = iter([0.0, 0.5, 1.1, 1.2, 1.3, 1.4])
+  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: next(times, 2.0))
+
+  pipeline.finish()
+
+  assert len(drain_calls) >= 2
+  assert all(call == (True, 0.25) for call in drain_calls)
+  assert pipeline._waiting == []
+  assert pipeline._failed == 0
+  assert any("processing updates" in msg for msg in logs)
+  assert not any("soft wall" in msg for msg in logs)
+  assert not any("dropped_waiting" in msg for msg in logs)
+  assert pipeline._executor.shutdown_calls == [(False, False)]
+  update_metrics.shutdown_requested[0] = False
+
+
+@pytest.mark.machine_unit_mock
+def test_prewarm_pipeline_finish_shutdown_drops_waiting(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 4)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.25)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_metrics_prewarm_processing_updates_log_s", lambda: 300.0
+  )
+  monkeypatch.setattr(update_metrics, "PREWARM_FINISH_WAIT_SLICE_SECONDS", 0.25)
+  update_metrics.shutdown_requested[0] = True
+
+  class _FakeExecutor:
+    def __init__(self):
+      self.shutdown_calls = []
+
+    def shutdown(self, wait=False, cancel_futures=True):
+      self.shutdown_calls.append((wait, cancel_futures))
+
+  pipeline = update_metrics._PrewarmPipeline()
+  pipeline._waiting = [(0.0, "jid-waiting")]
+  pipeline._executor = _FakeExecutor()
+  drain_calls = []
+  logs = []
   monkeypatch.setattr(
       pipeline,
       "drain_some",
       lambda force=False, wait_timeout_s=0.0: drain_calls.append((force, wait_timeout_s)),
   )
-  times = iter([0.0, 0.5, 1.1, 1.1, 1.1])
-  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: next(times))
+  monkeypatch.setattr(update_metrics, "log_print", lambda msg, **kwargs: logs.append(msg))
+  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 0.0)
 
-  pipeline.finish()
+  try:
+    pipeline.finish()
+  finally:
+    update_metrics.shutdown_requested[0] = False
 
-  assert drain_calls == [(True, 0.25)]
   assert pipeline._waiting == []
   assert pipeline._failed == 1
+  assert drain_calls == []
+  assert any("finish shutdown" in msg and "dropped_waiting=1" in msg for msg in logs)
+  assert not any("soft wall" in msg for msg in logs)
   assert pipeline._executor.shutdown_calls == [(False, False)]
 
 
@@ -4204,8 +4263,11 @@ def test_prewarm_pipeline_finish_does_not_cancel_running(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 4)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.25)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
-  monkeypatch.setattr(update_metrics, "PREWARM_FINISH_MAX_WALL_SECONDS", 1.0)
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_metrics_prewarm_processing_updates_log_s", lambda: 1.0
+  )
   monkeypatch.setattr(update_metrics, "PREWARM_FINISH_WAIT_SLICE_SECONDS", 0.25)
+  update_metrics.shutdown_requested[0] = False
 
   class _RunningThenDone:
     def __init__(self):
@@ -4235,9 +4297,11 @@ def test_prewarm_pipeline_finish_does_not_cancel_running(monkeypatch):
 
   def _drain(**_k):
     drain_n["n"] += 1
+    # After processing-updates log, keep waiters briefly then finish in-flight.
     if drain_n["n"] >= 2:
       fut._done = True
       pipeline._pending.discard(fut)
+      pipeline._waiting.clear()
 
   monkeypatch.setattr(pipeline, "drain_some", _drain)
   monkeypatch.setattr(update_metrics, "log_print", lambda msg, **kwargs: logs.append(msg))
@@ -4247,7 +4311,8 @@ def test_prewarm_pipeline_finish_does_not_cancel_running(monkeypatch):
   pipeline.finish()
 
   assert pipeline._waiting == []
-  assert pipeline._failed == 1
-  assert any("dropped_waiting=1" in msg for msg in logs)
+  assert pipeline._failed == 0
+  assert any("processing updates" in msg for msg in logs)
+  assert not any("dropped_waiting" in msg for msg in logs)
   assert not any("cancel" in msg.lower() for msg in logs)
   assert pipeline._executor.shutdown_calls == [(False, False)]

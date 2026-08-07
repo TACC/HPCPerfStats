@@ -95,6 +95,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "metrics_prewarm_drain_batch_budget_s"),
     ("PIPELINE", "metrics_prewarm_drain_batch_budget_max_s"),
     ("PIPELINE", "metrics_prewarm_drain_per_job_s"),
+    ("PIPELINE", "metrics_prewarm_processing_updates_log_s"),
     ("PIPELINE", "metrics_prewarm_retry_attempts"),
     ("PIPELINE", "metrics_plot_aggregate_time_slice_s"),
     ("PIPELINE", "metrics_plot_aggregate_max_host_time_points"),
@@ -279,12 +280,13 @@ INI_OPTION_DEFAULTS = {
     'metrics_scheduler_prefetch_chunks': '8',
     'metrics_scheduler_ready_queue_target': '2000',
     'metrics_plot_prewarm_mode': 'pipeline_required',
-    'metrics_prewarm_workers': '4',
-    'metrics_prewarm_backlog_cap': '32',
+    'metrics_prewarm_workers': '8',
+    'metrics_prewarm_backlog_cap': '128',
     'metrics_prewarm_backpressure_wait_s': '0.25',
     'metrics_prewarm_drain_batch_budget_s': '2.0',
-    'metrics_prewarm_drain_batch_budget_max_s': '60.0',
+    'metrics_prewarm_drain_batch_budget_max_s': '180.0',
     'metrics_prewarm_drain_per_job_s': '0.5',
+    'metrics_prewarm_processing_updates_log_s': '300.0',
     'metrics_prewarm_retry_attempts': '2',
     # Host×time SQL chunk wall seconds (1h @ 1-min sample); design 5000×48×60.
     'metrics_plot_aggregate_time_slice_s': '3600',
@@ -2608,7 +2610,7 @@ def get_metrics_prewarm_backlog_cap() -> Any:
     try:
       return max(1, int(env))
     except (TypeError, ValueError, OverflowError):
-      return 32
+      return 128
   _ensure_cfg_loaded()
   try:
     return max(
@@ -2616,7 +2618,7 @@ def get_metrics_prewarm_backlog_cap() -> Any:
         int(_pipeline_get("metrics_prewarm_backlog_cap")),
     )
   except (TypeError, ValueError, OverflowError):
-    return 32
+    return 128
 
 
 def get_metrics_prewarm_backpressure_wait_s() -> Any:
@@ -2701,7 +2703,7 @@ def get_metrics_prewarm_drain_batch_budget_max_s() -> Any:
     try:
       return max(0.0, float(env))
     except (TypeError, ValueError, OverflowError):
-      return 60.0
+      return 180.0
   _ensure_cfg_loaded()
   try:
     return max(
@@ -2709,7 +2711,39 @@ def get_metrics_prewarm_drain_batch_budget_max_s() -> Any:
         _pipeline_getfloat("metrics_prewarm_drain_batch_budget_max_s"),
     )
   except (TypeError, ValueError, OverflowError):
-    return 60.0
+    return 180.0
+
+
+def get_metrics_prewarm_processing_updates_log_s() -> Any:
+  """
+  Seconds into ``finish()`` before logging a processing-updates progress line.
+
+  Env ``HPCPERFSTATS_METRICS_PREWARM_PROCESSING_UPDATES_LOG_S`` overrides INI
+  ``metrics_prewarm_processing_updates_log_s``. Log only; does not abandon
+  waiters. Default 300.0.
+
+  Returns:
+    Any: Non-negative float seconds.
+
+  Examples:
+    >>> get_metrics_prewarm_processing_updates_log_s()  # doctest: +SKIP
+  """
+  env = os.environ.get(
+      "HPCPERFSTATS_METRICS_PREWARM_PROCESSING_UPDATES_LOG_S", ""
+  ).strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 300.0
+  _ensure_cfg_loaded()
+  try:
+    return max(
+        0.0,
+        _pipeline_getfloat("metrics_prewarm_processing_updates_log_s"),
+    )
+  except (TypeError, ValueError, OverflowError):
+    return 300.0
 
 
 def get_metrics_prewarm_drain_per_job_s() -> Any:

@@ -154,11 +154,11 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # metrics_plot_prewarm_mode = pipeline_required
 
 # Skip job detail/plot prewarm after metrics for catch-up (default no).
-# Thread workers for plot prewarm stage (default 4).
-# metrics_prewarm_workers = 4
+# Thread workers for plot prewarm stage (default 8).
+# metrics_prewarm_workers = 8
 
-# Max queued async prewarm jobs before backpressure (default 32).
-# metrics_prewarm_backlog_cap = 32
+# Max queued async prewarm jobs before backpressure (default 128).
+# metrics_prewarm_backlog_cap = 128
 
 # Seconds to wait for async prewarm slot before inline fallback (default 0.25).
 # metrics_prewarm_backpressure_wait_s = 0.25
@@ -166,11 +166,14 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Base seconds to drain prewarm after each metrics batch (default 2.0).
 # metrics_prewarm_drain_batch_budget_s = 2.0
 
-# Ceiling for scaled prewarm drain budget seconds (default 60).
-# metrics_prewarm_drain_batch_budget_max_s = 60
+# Ceiling for scaled prewarm drain budget seconds (default 180).
+# metrics_prewarm_drain_batch_budget_max_s = 180
 
 # Extra drain seconds per successful jid in batch (default 0.5).
 # metrics_prewarm_drain_per_job_s = 0.5
+
+# Seconds into prewarm finish before processing-updates progress log (default 300).
+# metrics_prewarm_processing_updates_log_s = 300
 
 # Prewarm retry attempts per plot task (default 2).
 # metrics_prewarm_retry_attempts = 2

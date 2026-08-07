@@ -601,8 +601,8 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_scheduler_prefetch_chunks() == 8
   assert cfg.get_metrics_scheduler_ready_queue_target() == 2000
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
-  assert cfg.get_metrics_prewarm_workers() == 4
-  assert cfg.get_metrics_prewarm_backlog_cap() == 32
+  assert cfg.get_metrics_prewarm_workers() == 8
+  assert cfg.get_metrics_prewarm_backlog_cap() == 128
   assert cfg.get_metrics_prewarm_backpressure_wait_s() == 0.25
   assert cfg.get_metrics_run_poll_timeout_s() == 5.0
   assert cfg.get_metrics_run_stall_timeout_s() == 900.0
@@ -613,8 +613,9 @@ def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
   assert cfg.get_metrics_prewarm_retry_attempts() == 2
   assert cfg.get_metrics_proxy_reject_jid_batch_size() == 48
   assert cfg.get_metrics_prewarm_drain_batch_budget_s() == 2.0
-  assert cfg.get_metrics_prewarm_drain_batch_budget_max_s() == 60.0
+  assert cfg.get_metrics_prewarm_drain_batch_budget_max_s() == 180.0
   assert cfg.get_metrics_prewarm_drain_per_job_s() == 0.5
+  assert cfg.get_metrics_prewarm_processing_updates_log_s() == 300.0
   assert cfg.get_metrics_compute_batch_max_window_s() == 0.0
   assert cfg.get_metrics_compute_batch_max_single_job_s() == 0.0
   assert cfg.get_metrics_compute_batch_unknown_runtime_s() == 172800.0
