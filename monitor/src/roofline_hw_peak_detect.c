@@ -360,14 +360,20 @@ static double detect_nvidia_fp64_peak_via_nvidia_smi(void)
   return total;
 }
 
-/* When DRM PCIe/mem attrs are empty: PCIe gen×width + allowlisted HBM peak × GPU count. */
-static void detect_nvidia_mem_io_via_smi(double *mem_bw, double *io_bw, int *used_identity_mem)
+/*
+ * SMI mem/PCIe: allowlisted HBM × GPU count, PCIe gen×width, and GH200 C2C sum.
+ * c2c_bw is separate so detect can prefer C2C over misleading DRM PCIe x1.
+ */
+static void detect_nvidia_mem_io_via_smi(double *mem_bw, double *io_bw, double *c2c_bw,
+                                         int *used_identity_mem)
 {
   FILE *fp;
   char line[768];
 
   if (mem_bw == NULL || io_bw == NULL)
     return;
+  if (c2c_bw != NULL)
+    *c2c_bw = 0.0;
   if (used_identity_mem != NULL)
     *used_identity_mem = 0;
 
@@ -383,22 +389,25 @@ static void detect_nvidia_mem_io_via_smi(double *mem_bw, double *io_bw, int *use
     double mem_mib = 0.0, mem_mhz = 0.0;
     int gen = 0, width = 0;
     double hbm;
+    double c2c;
     double lane;
 
     if (roofline_parse_smi_mem_pcie_line(line, name, sizeof(name), &mem_mib, &mem_mhz, &gen,
                                          &width) != 0)
       continue;
-    (void)mem_mib;
     (void)mem_mhz;
     lane = roofline_pcie_gen_lane_bytes_per_s(gen);
     if (lane > 0.0 && width > 0)
       *io_bw += lane * (double)width;
-    hbm = roofline_nvidia_hbm_bw_from_name(name);
+    hbm = roofline_nvidia_hbm_bw_from_name_mem(name, mem_mib);
     if (hbm > 0.0) {
       *mem_bw += hbm;
       if (used_identity_mem != NULL)
         *used_identity_mem = 1;
     }
+    c2c = roofline_nvidia_c2c_bw_from_name(name);
+    if (c2c > 0.0 && c2c_bw != NULL)
+      *c2c_bw += c2c;
   }
   pclose(fp);
 }
@@ -618,19 +627,30 @@ void roofline_hw_peak_detect_fill_cache(struct roofline_cached_peaks *cache)
     if (gpu_flops <= 0.0) {
       unsigned long long vendor_src = ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN;
       gpu_flops = detect_gpu_fp64_peak_vendor_runtime(&vendor_src);
-      if (gpu_flops > 0.0 && gpu_source == ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN)
+      if (gpu_flops > 0.0 && vendor_src != ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN &&
+          (gpu_source == ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN ||
+           gpu_source == ROOFLINE_GPU_PEAK_SOURCE_PROBED))
         gpu_source = vendor_src;
     }
-    if (gpu_mem_bw <= 0.0 || gpu_io_bw <= 0.0) {
+    {
       double smi_mem = 0.0;
       double smi_io = 0.0;
-      detect_nvidia_mem_io_via_smi(&smi_mem, &smi_io, &used_identity_mem);
+      double smi_c2c = 0.0;
+
+      detect_nvidia_mem_io_via_smi(&smi_mem, &smi_io, &smi_c2c, &used_identity_mem);
       if (gpu_mem_bw <= 0.0 && smi_mem > 0.0)
         gpu_mem_bw = smi_mem;
       if (gpu_io_bw <= 0.0 && smi_io > 0.0) {
         gpu_io_bw = smi_io;
         if (gpu_source == ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN)
           gpu_source = ROOFLINE_GPU_PEAK_SOURCE_VENDOR_SMI;
+      }
+      /* GH200: published C2C beats misleading DRM/smi PCIe x1. */
+      if (smi_c2c > gpu_io_bw) {
+        gpu_io_bw = smi_c2c;
+        if (gpu_source == ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN ||
+            gpu_source == ROOFLINE_GPU_PEAK_SOURCE_PROBED)
+          gpu_source = ROOFLINE_GPU_PEAK_SOURCE_IDENTITY;
       }
       if (used_identity_mem && gpu_source == ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN)
         gpu_source = ROOFLINE_GPU_PEAK_SOURCE_IDENTITY;

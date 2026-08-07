@@ -53,17 +53,38 @@ int roofline_nvidia_sm_count_from_name(const char *name)
 {
   if (name == NULL)
     return 0;
+  if (strstr(name, "GH200") != NULL)
+    return ROOFLINE_GH200_SM_COUNT;
   if (strstr(name, "GB200") != NULL || strstr(name, "B200") != NULL)
     return ROOFLINE_GB200_SM_COUNT;
   return 0;
 }
 
-double roofline_nvidia_hbm_bw_from_name(const char *name)
+double roofline_nvidia_hbm_bw_from_name_mem(const char *name, double mem_total_mib)
 {
   if (name == NULL)
     return 0.0;
+  if (strstr(name, "GH200") != NULL) {
+    if (mem_total_mib >= ROOFLINE_GH200_HBM3E_MEM_MIB_MIN)
+      return ROOFLINE_GH200_HBM3E_BW_BYTES_PER_S;
+    return ROOFLINE_GH200_HBM_BW_BYTES_PER_S;
+  }
   if (strstr(name, "GB200") != NULL || strstr(name, "B200") != NULL)
     return ROOFLINE_GB200_HBM_BW_BYTES_PER_S;
+  return 0.0;
+}
+
+double roofline_nvidia_hbm_bw_from_name(const char *name)
+{
+  return roofline_nvidia_hbm_bw_from_name_mem(name, 0.0);
+}
+
+double roofline_nvidia_c2c_bw_from_name(const char *name)
+{
+  if (name == NULL)
+    return 0.0;
+  if (strstr(name, "GH200") != NULL)
+    return ROOFLINE_GH200_C2C_BW_BYTES_PER_S;
   return 0.0;
 }
 

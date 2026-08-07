@@ -6,7 +6,12 @@
 /* Published peaks (NVIDIA datasheet); allowlisted identity only — no soft invent. */
 #define ROOFLINE_GB200_HBM_BW_BYTES_PER_S 8000000000000.0 /* 8 TB/s HBM3e per GPU */
 #define ROOFLINE_GB200_SM_COUNT 148
-#define ROOFLINE_GRACE_DRAM_BW_BYTES_PER_S 512000000000.0 /* 512 GB/s LPDDR5X */
+#define ROOFLINE_GH200_SM_COUNT 132
+#define ROOFLINE_GH200_HBM_BW_BYTES_PER_S 4000000000000.0   /* 4 TB/s HBM3 */
+#define ROOFLINE_GH200_HBM3E_BW_BYTES_PER_S 4900000000000.0 /* 4.9 TB/s HBM3e */
+#define ROOFLINE_GH200_HBM3E_MEM_MIB_MIN 140000.0           /* ~144 GiB class */
+#define ROOFLINE_GH200_C2C_BW_BYTES_PER_S 900000000000.0    /* NVLink-C2C bidirectional */
+#define ROOFLINE_GRACE_DRAM_BW_BYTES_PER_S 512000000000.0   /* 512 GB/s LPDDR5X */
 #define ROOFLINE_GRACE_CPU_PART 0xd4f
 
 /* GPU peak source enum (emitted as gpu_peak_source). */
@@ -27,6 +32,9 @@ enum {
 
 int roofline_nvidia_sm_count_from_name(const char *name);
 double roofline_nvidia_hbm_bw_from_name(const char *name);
+/* HBM class for GH200 uses memory.total MiB (≥140000 → HBM3e); GB200 ignores mem. */
+double roofline_nvidia_hbm_bw_from_name_mem(const char *name, double mem_total_mib);
+double roofline_nvidia_c2c_bw_from_name(const char *name);
 double roofline_grace_dram_bw_from_cpu_part(unsigned int cpu_part);
 double roofline_pcie_gen_lane_bytes_per_s(int gen);
 

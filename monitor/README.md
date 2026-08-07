@@ -174,20 +174,26 @@ collect uses **`perfmon_readGroupCounters(groupId)`** (not
 | 1 | Probed (EDAC / procfs) |
 | 2 | Identity table (Grace CPU part `0xd4f` LPDDR5X) |
 
-**Horizon / GB200 + Grace constants** (datasheet; allowlisted only — no soft invent):
+**Horizon / Vista GPU + Grace constants** (datasheet; allowlisted only — no soft invent):
 
 | Identity | Peak key | Value |
 |----------|----------|------:|
 | GPU name contains `GB200` / `B200` | `gpu_peak_mem_bw_bytes_per_s` per GPU | `8e12` B/s (HBM3e) |
 | GPU name `GB200` / `B200` | SM count for smi FLOPS fallback | `148` |
+| GPU name contains `GH200` | SM count for smi FLOPS fallback | `132` |
+| GPU name `GH200`, `memory.total` &lt; 140000 MiB | `gpu_peak_mem_bw_bytes_per_s` per GPU | `4e12` B/s (HBM3; Vista `97871`) |
+| GPU name `GH200`, `memory.total` ≥ 140000 MiB | `gpu_peak_mem_bw_bytes_per_s` per GPU | `4.9e12` B/s (HBM3e) |
+| GPU name contains `GH200` | `gpu_peak_io_link_bw_bytes_per_s` per GPU | `900e9` B/s (NVLink-C2C) |
 | CPU part `0xd4f` (Grace) | `cpu_peak_dram_bw_bytes_per_s` | `512e9` B/s (LPDDR5X) |
 
 FLOPS path: NVML-first (SM count + SM clock); smi fallback uses confirmed fields
 `name,clocks.max.sm,compute_cap` plus the SM identity table — **never** invalid
-`cuda.cores` / `multiprocessor.count` on this driver stack. When DRM mem/PCIe
-attrs are empty, IO BW comes from smi PCIe gen×width; mem BW from the GB200
-HBM table. When EDAC speeds are missing, Grace DRAM uses the CPU-part table.
-CPU FLOPS remain procfs/cpufreq.
+`cuda.cores` / `multiprocessor.count` on this driver stack. When DRM mem attrs are
+empty, mem BW uses allowlisted HBM tables (GB200 / GH200). For **GH200**, DRM may
+expose misleading **PCIe x1** while C2C is the real CPU–GPU link — published C2C
+replaces weaker PCIe-derived IO. Do **not** infer HBM3e from marketing substrings
+like `120GB` in the product name; use smi `memory.total`. When EDAC speeds are
+missing, Grace DRAM uses the CPU-part table. CPU FLOPS remain procfs/cpufreq.
 
 **Verify peaks by host + time** (never `jid` alone on `host_data`), e.g.:
 
