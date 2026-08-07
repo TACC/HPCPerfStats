@@ -35,10 +35,7 @@ from hpcperfstats.dbload.lib.date_utils import (
 from hpcperfstats.dbload.lib.io_helpers import job_data_instance_from_acct_row
 from hpcperfstats.dbload.lib.file_locking import file_read_lock_wait, file_write_lock
 from hpcperfstats.dbload.lib.print_utils import log_print
-from hpcperfstats.dbload.lib.shutdown_utils import (
-    shutdown_requested,
-    sleep_until_shutdown,
-)
+from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 from hpcperfstats.site.lib.machine.models import job_data
 
 local_timezone = dt_timezone.utc
@@ -467,6 +464,6 @@ if __name__ == "__main__":
   # Close DB connections before long sleep to avoid idle connections.
   close_old_connections()
   connections.close_all()
-  sleep_until_shutdown(900)
-  if shutdown_requested[0]:
-    sys.exit(143)
+  # Since this is no longer part of the main workflow we don't need this sleep
+  # as it was to wait for the supervisord restart.
+  #sleep_until_shutdown(900)
