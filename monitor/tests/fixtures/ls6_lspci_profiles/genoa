@@ -1,0 +1,132 @@
+00:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14a4 (rev 01)
+00:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Device 149e (rev 01)
+00:00.3 Generic system peripheral [0807]: Advanced Micro Devices, Inc. [AMD] Device 14a6
+00:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+00:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+00:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+00:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+00:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+00:05.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14aa (rev 01)
+00:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+00:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14a7 (rev 01)
+00:14.0 SMBus: Advanced Micro Devices, Inc. [AMD] FCH SMBus Controller (rev 71)
+00:14.3 ISA bridge: Advanced Micro Devices, Inc. [AMD] FCH LPC Bridge (rev 51)
+00:18.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14ad
+00:18.1 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14ae
+00:18.2 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14af
+00:18.3 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14b0
+00:18.4 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14b1
+00:18.5 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14b2
+00:18.6 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14b3
+00:18.7 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14b4
+00:19.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14ad
+00:19.1 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14ae
+00:19.2 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14af
+00:19.3 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14b0
+00:19.4 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14b1
+00:19.5 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14b2
+00:19.6 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14b3
+00:19.7 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14b4
+01:00.0 Non-Volatile memory controller: Marvell Technology Group Ltd. 88NR2241 Non-Volatile memory controller (rev 20)
+02:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Device 14ac (rev 01)
+02:00.1 System peripheral: Advanced Micro Devices, Inc. [AMD] Device 14dc
+02:00.4 USB controller: Advanced Micro Devices, Inc. [AMD] Device 14c9 (rev da)
+02:00.5 Encryption controller: Advanced Micro Devices, Inc. [AMD] Genoa CCP/PSP 4.0 Device
+20:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14a4 (rev 01)
+20:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Device 149e (rev 01)
+20:00.3 Generic system peripheral [0807]: Advanced Micro Devices, Inc. [AMD] Device 14a6
+20:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+20:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+20:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+20:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+20:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+20:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+20:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14a7 (rev 01)
+21:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Device 14ac (rev 01)
+21:00.1 System peripheral: Advanced Micro Devices, Inc. [AMD] Device 14dc
+40:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14a4 (rev 01)
+40:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Device 149e (rev 01)
+40:00.3 Generic system peripheral [0807]: Advanced Micro Devices, Inc. [AMD] Device 14a6
+40:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+40:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+40:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+40:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+40:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+40:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+40:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14a7 (rev 01)
+41:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Device 14ac (rev 01)
+41:00.1 System peripheral: Advanced Micro Devices, Inc. [AMD] Device 14dc
+60:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14a4 (rev 01)
+60:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Device 149e (rev 01)
+60:00.3 Generic system peripheral [0807]: Advanced Micro Devices, Inc. [AMD] Device 14a6
+60:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+60:01.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14ab (rev 01)
+60:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+60:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+60:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+60:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+60:05.2 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14aa (rev 01)
+60:05.3 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14aa (rev 01)
+60:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+60:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14a7 (rev 01)
+60:07.2 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14a7 (rev 01)
+61:00.0 PCI bridge: PLDA PCI Express Bridge (rev 02)
+62:00.0 VGA compatible controller: Matrox Electronics Systems Ltd. Integrated Matrox G200eW3 Graphics Controller (rev 04)
+63:00.0 Ethernet controller: Broadcom Inc. and subsidiaries NetXtreme BCM5720 Gigabit Ethernet PCIe
+63:00.1 Ethernet controller: Broadcom Inc. and subsidiaries NetXtreme BCM5720 Gigabit Ethernet PCIe
+64:00.0 Infiniband controller: Mellanox Technologies MT28908 Family [ConnectX-6]
+65:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Device 14ac (rev 01)
+65:00.1 System peripheral: Advanced Micro Devices, Inc. [AMD] Device 14dc
+65:00.4 USB controller: Advanced Micro Devices, Inc. [AMD] Device 14c9 (rev da)
+66:00.0 SATA controller: Advanced Micro Devices, Inc. [AMD] FCH SATA Controller [AHCI mode] (rev 91)
+80:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14a4 (rev 01)
+80:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Device 149e (rev 01)
+80:00.3 Generic system peripheral [0807]: Advanced Micro Devices, Inc. [AMD] Device 14a6
+80:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+80:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+80:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+80:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+80:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+80:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+80:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14a7 (rev 01)
+81:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Device 14ac (rev 01)
+81:00.1 System peripheral: Advanced Micro Devices, Inc. [AMD] Device 14dc
+81:00.5 Encryption controller: Advanced Micro Devices, Inc. [AMD] Genoa CCP/PSP 4.0 Device
+a0:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14a4 (rev 01)
+a0:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Device 149e (rev 01)
+a0:00.3 Generic system peripheral [0807]: Advanced Micro Devices, Inc. [AMD] Device 14a6
+a0:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+a0:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+a0:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+a0:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+a0:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+a0:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+a0:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14a7 (rev 01)
+a1:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Device 14ac (rev 01)
+a1:00.1 System peripheral: Advanced Micro Devices, Inc. [AMD] Device 14dc
+c0:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14a4 (rev 01)
+c0:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Device 149e (rev 01)
+c0:00.3 Generic system peripheral [0807]: Advanced Micro Devices, Inc. [AMD] Device 14a6
+c0:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+c0:01.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14ab (rev 01)
+c0:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+c0:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+c0:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+c0:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+c0:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+c0:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14a7 (rev 01)
+c1:00.0 Serial Attached SCSI controller: Broadcom / LSI Fusion-MPT 12GSAS/PCIe Secure SAS38xx
+c2:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Device 14ac (rev 01)
+c2:00.1 System peripheral: Advanced Micro Devices, Inc. [AMD] Device 14dc
+e0:00.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 14a4 (rev 01)
+e0:00.2 IOMMU: Advanced Micro Devices, Inc. [AMD] Device 149e (rev 01)
+e0:00.3 Generic system peripheral [0807]: Advanced Micro Devices, Inc. [AMD] Device 14a6
+e0:01.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+e0:02.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+e0:03.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+e0:04.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+e0:05.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+e0:07.0 Host bridge: Advanced Micro Devices, Inc. [AMD] Device 149f (rev 01)
+e0:07.1 PCI bridge: Advanced Micro Devices, Inc. [AMD] Device 14a7 (rev 01)
+e1:00.0 Non-Essential Instrumentation [1300]: Advanced Micro Devices, Inc. [AMD] Device 14ac (rev 01)
+e1:00.1 System peripheral: Advanced Micro Devices, Inc. [AMD] Device 14dc
