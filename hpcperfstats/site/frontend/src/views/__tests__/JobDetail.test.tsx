@@ -1787,16 +1787,25 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByText("streams_2.exe")).toBeInTheDocument();
       expect(screen.getByText(/2(?:\.00)? hosts/i)).toBeInTheDocument();
-      expect(screen.getByText(/avg HWM/i)).toBeInTheDocument();
-      expect(screen.getByText(/avg Peak VM/i)).toBeInTheDocument();
+      expect(screen.getByText(/avg HWM: 3\.00 MB/i)).toBeInTheDocument();
+      expect(screen.getByText(/avg Peak VM: 6\.00 MB/i)).toBeInTheDocument();
+      expect(screen.queryByText(/\bkB\b/i)).not.toBeInTheDocument();
     });
     // Expand host table so columnheaders mount (closed Collapsible omits them).
     fireEvent.click(screen.getByText("streams_2.exe"));
     await waitFor(() => {
       expect(screen.getByRole("columnheader", { name: /^Host$/i })).toBeInTheDocument();
       expect(
+        screen.getByRole("columnheader", { name: /^Peak VM \(MB\)$/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("columnheader", { name: /^HWM \(MB\)$/i }),
+      ).toBeInTheDocument();
+      expect(
         screen.queryByRole("columnheader", { name: /^UID$/i }),
       ).not.toBeInTheDocument();
+      expect(screen.getByRole("cell", { name: "8.00" })).toBeInTheDocument();
+      expect(screen.getAllByRole("cell", { name: "4.00" }).length).toBeGreaterThanOrEqual(1);
     });
   });
 

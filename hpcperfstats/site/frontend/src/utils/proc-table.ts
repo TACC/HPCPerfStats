@@ -17,17 +17,30 @@ export type ProcListObject = {
 
 export type ProcListEntry = string | ProcListObject;
 
+/** Monitor/API host_proc memory fields are in kB (`U=kB`); UI shows MB. */
+export const PROC_MEMORY_KB_KEYS = [
+  "vm_peak",
+  "vm_hwm",
+  "vm_stk",
+  "vm_exe",
+  "vm_lib",
+] as const;
+
+export type ProcMemoryKbKey = (typeof PROC_MEMORY_KB_KEYS)[number];
+
+const PROC_MEMORY_KB_KEY_SET = new Set<string>(PROC_MEMORY_KB_KEYS);
+
 export const PROC_TABLE_COLUMNS: ReadonlyArray<{
   key: keyof ProcListObject;
   label: string;
 }> = [
   { key: "proc", label: "Process" },
   { key: "host", label: "Host" },
-  { key: "vm_peak", label: "Peak VM (kB)" },
-  { key: "vm_hwm", label: "HWM (kB)" },
-  { key: "vm_stk", label: "Stack (kB)" },
-  { key: "vm_exe", label: "Text (kB)" },
-  { key: "vm_lib", label: "Libs (kB)" },
+  { key: "vm_peak", label: "Peak VM (MB)" },
+  { key: "vm_hwm", label: "HWM (MB)" },
+  { key: "vm_stk", label: "Stack (MB)" },
+  { key: "vm_exe", label: "Text (MB)" },
+  { key: "vm_lib", label: "Libs (MB)" },
   { key: "threads", label: "Threads" },
 ];
 
@@ -43,6 +56,18 @@ export const PROC_AVG_KEYS = [
 export function cellText(value: string | number | null | undefined): string {
   if (value == null || value === "") return "";
   return String(value);
+}
+
+/** Convert monitor kB to display MB (1024 kB = 1 MB). */
+export function kbToMbDisplay(
+  value: string | number | null | undefined,
+  formatDecimal: (n: number) => string,
+): string {
+  const text = cellText(value);
+  if (text === "") return "";
+  const n = Number(text);
+  if (!Number.isFinite(n)) return text;
+  return formatDecimal(n / 1024);
 }
 
 /** Mean of numeric cell texts; blank strings are skipped (not treated as 0). */
@@ -92,7 +117,10 @@ export function buildProcTable(
     }
     const row: Record<string, string> = {};
     for (const col of PROC_TABLE_COLUMNS) {
-      const text = cellText(entry[col.key]);
+      const raw = entry[col.key];
+      const text = PROC_MEMORY_KB_KEY_SET.has(col.key)
+        ? kbToMbDisplay(raw, formatDecimal)
+        : cellText(raw);
       if (text) row[col.key] = text;
     }
     if (!row.proc && entry.device != null && String(entry.device) !== "") {

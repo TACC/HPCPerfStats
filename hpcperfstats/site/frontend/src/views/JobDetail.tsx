@@ -1860,7 +1860,7 @@ export default function JobDetail() {
                                       ? "Libs"
                                       : "Threads"}
                             : {group.averages[key]}
-                            {key === "threads" ? "" : " kB"}
+                            {key === "threads" ? "" : " MB"}
                           </span>
                         ) : null,
                       )}
