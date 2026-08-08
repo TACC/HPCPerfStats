@@ -23,6 +23,7 @@ alwaysApply: false
 - **Opt-out:** pass `deferEmbedUntilVisible={false}` only for exceptional cases (e.g. hidden iframe / print).
 - **Popover / dialog plots:** `HistogramThumbnails` gates the full-size embed until the popover plot container has layout (see same component). Do not mount `BokehEmbed` into a zero-size dialog subtree.
 - **Global `ResizeObserver` patch:** `patch-resize-observer-for-bokeh.js` (applied from `main.jsx` / `bokehInit.js` before loading Bokeh) defers **all** browser resize callbacks used by Bokeh 3.9 with **three** `requestAnimationFrame` hops plus `setTimeout(0)`, so `after_resize` does not run while axis `ranges` are still undefined.
+- **Shadow DOM (Bokeh 3.x):** every `DOMComponentView` attaches an **open** `shadowRoot`; `CanvasView` appends `canvas.bk-layer` into its own shadow root. Any code that reads plot **pixels** or canvas geometry (Job Detail print capture in `job-detail-print-snapshot.ts`) **must** traverse `shadowRoot` — plain `querySelectorAll("canvas")` finds nothing.
 
 ## Bokeh version bumps
 

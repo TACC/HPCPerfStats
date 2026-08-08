@@ -631,7 +631,8 @@ export default function JobDetail() {
     if (printIncludesPlotsRef.current && pk) {
       const snaps = captureJobDetailPrintBokehSnapshots(pk);
       setPrintPlotSnapshots(snaps);
-      disposeJobDetailPrintBokehTargets(pk);
+      // Dispose only captured targets; keep live embeds when capture missed canvases.
+      disposeJobDetailPrintBokehTargets(pk, Object.keys(snaps));
     } else {
       setPrintPlotSnapshots({});
     }
@@ -1039,14 +1040,13 @@ export default function JobDetail() {
     const panel = plotPanels.find((p) => p.key === config.panelKey);
     if (!panel) return null;
 
-    // Print: hide unavailable / failed plots (no error chrome in the PDF).
+    // Print: hide unavailable plots; snapshot → img; capture miss → keep live embed.
     if (printLayoutActive && printIncludesPlots) {
       if (panel.unavailableReason || !panel.item) {
         return null;
       }
       const snap = printPlotSnapshots[panel.id];
-      if (printSnapshotsReady) {
-        if (!snap) return null;
+      if (printSnapshotsReady && snap) {
         return (
           <div key={config.key} className="mb-3 w-full min-w-0 box-border">
             <h3 className="text-base font-medium">{panel.plotName}</h3>
@@ -1669,8 +1669,12 @@ export default function JobDetail() {
                     (!!mpCpuReasonForPanel || !mpCpuItemForPanel);
                   const cpuSnap = printPlotSnapshots[cpuId];
                   if (hideCpuPrint) return null;
-                  if (printLayoutActive && printIncludesPlots && printSnapshotsReady) {
-                    if (!cpuSnap) return null;
+                  if (
+                    printLayoutActive &&
+                    printIncludesPlots &&
+                    printSnapshotsReady &&
+                    cpuSnap
+                  ) {
                     return (
                       <div className="mb-3 w-full min-w-0 box-border">
                         <h3 className="text-base font-medium">CPU Multiprecision Mix</h3>
@@ -1724,8 +1728,12 @@ export default function JobDetail() {
                     (!!mpGpuReasonForPanel || !mpGpuItemForPanel);
                   const gpuSnap = printPlotSnapshots[gpuId];
                   if (hideGpuPrint) return null;
-                  if (printLayoutActive && printIncludesPlots && printSnapshotsReady) {
-                    if (!gpuSnap) return null;
+                  if (
+                    printLayoutActive &&
+                    printIncludesPlots &&
+                    printSnapshotsReady &&
+                    gpuSnap
+                  ) {
                     return (
                       <div className="mb-3 w-full min-w-0 box-border">
                         <h3 className="text-base font-medium">GPU Multiprecision Mix</h3>

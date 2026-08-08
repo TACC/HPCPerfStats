@@ -2,6 +2,10 @@
  * Capture Job Detail print-scoped Bokeh canvases as PNG data URLs for React-owned
  * ``<img>`` rendering before ``window.print`` (avoids print-dialog canvas OOM and
  * React wiping imperative DOM). Native canvas only — no html2canvas / jspdf.
+ *
+ * Bokeh 3.x nests ``canvas.bk-layer`` inside open shadow roots
+ * (``DOMComponentView.attachShadow`` + ``CanvasView.shadow_el``), so capture must
+ * traverse ``shadowRoot`` — plain ``querySelectorAll("canvas")`` finds nothing.
  */
 
 type BokehIndexedView = {
@@ -41,13 +45,34 @@ export function disposeBokehViewsForTarget(targetEl: HTMLElement | null): void {
 }
 
 /**
+ * Collect canvases under ``root``, descending into open shadow roots (Bokeh 3.x).
+ * Returns canvases in document order (depth-first, light children after each host's shadow).
+ */
+export function collectBokehCanvases(root: Element): HTMLCanvasElement[] {
+  const out: HTMLCanvasElement[] = [];
+  const visit = (node: Element | ShadowRoot): void => {
+    for (const child of Array.from(node.children)) {
+      if (child instanceof HTMLCanvasElement) {
+        out.push(child);
+      }
+      if (child.shadowRoot) {
+        visit(child.shadowRoot);
+      }
+      visit(child);
+    }
+  };
+  visit(root);
+  return out;
+}
+
+/**
  * Composite visible canvases under ``targetEl`` into a PNG data URL.
  * Does **not** mutate ``targetEl`` (React owns the embed node).
  *
  * @returns data URL, or null when there is nothing to capture.
  */
 export function captureBokehTargetDataUrl(targetEl: HTMLElement): string | null {
-  const canvases = Array.from(targetEl.querySelectorAll("canvas")).filter(
+  const canvases = collectBokehCanvases(targetEl).filter(
     (c) => c.width > 0 && c.height > 0,
   );
   if (canvases.length === 0) {
@@ -115,10 +140,21 @@ export function captureJobDetailPrintBokehSnapshots(pk: string): Record<string, 
   return out;
 }
 
-/** Dispose live Bokeh views and clear embed targets after React has switched to imgs. */
-export function disposeJobDetailPrintBokehTargets(pk: string): void {
+/**
+ * Dispose live Bokeh views and clear embed targets that were successfully captured.
+ * When ``capturedIds`` is omitted, dispose every print-scoped target for ``pk``.
+ * Uncaptured targets keep their live embeds so print can still show the chart.
+ */
+export function disposeJobDetailPrintBokehTargets(
+  pk: string,
+  capturedIds?: Iterable<string>,
+): void {
   if (!pk || typeof document === "undefined") return;
-  for (const id of jobDetailPrintBokehTargetIds(pk)) {
+  const ids =
+    capturedIds == null
+      ? jobDetailPrintBokehTargetIds(pk)
+      : Array.from(capturedIds);
+  for (const id of ids) {
     const el = document.getElementById(id);
     if (!el) continue;
     disposeBokehViewsForTarget(el);

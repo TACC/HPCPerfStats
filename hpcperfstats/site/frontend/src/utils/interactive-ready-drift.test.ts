@@ -123,6 +123,13 @@ describe("interactive-ready drift guard", () => {
     expect(jobDetail).toMatch(/captureJobDetailPrintBokehSnapshots/);
     expect(jobDetail).toMatch(/printPlotSnapshots/);
     expect(jobDetail).toMatch(/job-detail-print-plot-snapshot/);
+    expect(jobDetail).toMatch(/disposeJobDetailPrintBokehTargets\(pk, Object\.keys\(snaps\)\)/);
+    const snapshotHelper = readFileSync(
+      join(SRC_ROOT, "utils/job-detail-print-snapshot.ts"),
+      "utf8",
+    );
+    expect(snapshotHelper).toMatch(/collectBokehCanvases/);
+    expect(snapshotHelper).toMatch(/shadowRoot/);
     const globalsCss = readFileSync(join(SRC_ROOT, "globals.css"), "utf8");
     expect(globalsCss).toMatch(
       /\[data-job-detail-print="1"\] \[data-testid="variable-info-help"\]/,
@@ -136,6 +143,7 @@ describe("interactive-ready drift guard", () => {
     expect(designRule).toMatch(/previewMode/);
     expect(designRule).toMatch(/React state/);
     expect(designRule).toMatch(/VariableInfoLabel/);
+    expect(designRule).toMatch(/shadowRoot|shadow root/i);
   });
 
   it("JobList histogram thumbs use previewMode; Enlarge path does not", () => {

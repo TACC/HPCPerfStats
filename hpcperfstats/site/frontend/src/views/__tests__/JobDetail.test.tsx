@@ -329,11 +329,56 @@ describe("JobDetail", () => {
       expect(printSpy).toHaveBeenCalled();
     });
     expect(captureJobDetailPrintBokehSnapshots).toHaveBeenCalledWith("12345");
-    expect(disposeJobDetailPrintBokehTargets).toHaveBeenCalledWith("12345");
+    expect(disposeJobDetailPrintBokehTargets).toHaveBeenCalledWith(
+      "12345",
+      expect.arrayContaining([
+        "job-mscript-12345",
+        "job-roofline-12345",
+        "job-gpu-roofline-12345",
+        "job-multiprecision-cpu-12345",
+        "job-multiprecision-gpu-12345",
+      ]),
+    );
     expect(document.querySelectorAll("img.job-detail-print-plot-snapshot").length).toBeGreaterThan(
       0,
     );
     expect(screen.getByRole("heading", { name: "Summary plot", level: 3 })).toBeInTheDocument();
+    printSpy.mockRestore();
+  });
+
+  it("keeps live plot embeds when capture returns no snapshots", async () => {
+    printTestFlags.settleAllPrintPlots = true;
+    vi.mocked(captureJobDetailPrintBokehSnapshots).mockReturnValue({});
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        multiprecision_cpu_plot_item: VALID_BOKEH_JSON_ITEM,
+        multiprecision_cpu_unavailable_reason: null,
+        multiprecision_gpu_plot_item: VALID_BOKEH_JSON_ITEM,
+        multiprecision_gpu_unavailable_reason: null,
+      },
+    });
+    setJobPlotsQueryMock({
+      plots: plotsStateFromBatchResponse(batchPlotsResponseWithRoots()),
+      plotsLoading: false,
+    });
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^print$/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^print$/i }));
+    await waitFor(() => {
+      expect(printSpy).toHaveBeenCalled();
+    });
+    expect(disposeJobDetailPrintBokehTargets).toHaveBeenCalledWith("12345", []);
+    expect(document.querySelectorAll("img.job-detail-print-plot-snapshot").length).toBe(0);
+    expect(screen.getByRole("heading", { name: "Summary plot", level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "CPU Roofline", level: 3 })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "CPU Multiprecision Mix", level: 3 }),
+    ).toBeInTheDocument();
+    expect(document.querySelector("#job-mscript-12345")).toBeTruthy();
     printSpy.mockRestore();
   });
 
