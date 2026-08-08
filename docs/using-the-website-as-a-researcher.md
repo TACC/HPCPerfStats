@@ -1,7 +1,7 @@
 # Using HPCPerfStats on the Web — Guide for Researchers and HPC Users
 
 
-This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-08-05.
+This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-08-07.
 
 
 This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections.
@@ -39,7 +39,7 @@ This document is ordered so the **most decision-relevant ideas come first**. Dee
 
 - **Breadcrumbs** at the top link back to your filtered job list (when you arrived from search) and show where you are in the site. Use them instead of the browser back button when you want to return to the same filter context.
 - **Shareable analysis tabs**: Job data tabs (Summary plot, Roofline, Multiprecision Mix, and related analysis panels) sync to the URL as `?tab=…` so you can bookmark or share a link that opens the same tab. Those three plot tabs load only when Performance Data is **Metrics & Plots available**; otherwise the tab shows **Plots not yet completed.** (still preparing) or **No plots available for this job** (too short / too few samples). Metrics and other non-plot tabs never show plot loading banners. If a plot panel fails to load after it is ready, the page offers **retry** for that section without reloading the whole job.
-- **Print**: Use the **Print** button next to the job title to prepare a printable snapshot (Job overview, Full scheduling record, Resources, Metrics, Summary plot, Roofline, and Multiprecision Mix). The browser print dialog opens so you can **Save as PDF** or print on paper—useful for tickets, design reviews, and offline sharing. Processes, Execution and hosts, and Device data are not included in that snapshot.
+- **Print**: Use the **Print** button next to the breadcrumbs to prepare a printable snapshot (Job overview, Resources, Metrics, Summary plot, Roofline, and Multiprecision Mix). The browser print dialog opens so you can **Save as PDF** or print on paper—useful for tickets, design reviews, and offline sharing. Processes, Execution and hosts, and Device data are not included in that snapshot.
 
 1. **Read Job overview first** (status, runtime, queue, cores/nodes, user/project, start/end). This frames the run before touching telemetry.
 2. **Open the Summary plot tab** in **Job data**. It is the fastest way to see phase changes and node-to-node divergence across CPU, memory, I/O<sup>[11](#ref-11)</sup>, network, and GPU signals.
@@ -78,9 +78,8 @@ These fields come from batch accounting (e.g. Slurm) and define the **official**
 
 | Panel / tab                     | Content                                                                                           | Diagnostic use                                                                                                                                                 |
 | ------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Print**                       | Browser print / Save as PDF of overview, scheduling, Resources, Metrics, Summary, Roofline, Multiprecision Mix | Capture a triage packet for support tickets or offline review without copying each tab by hand. |
+| **Print**                       | Browser print / Save as PDF of overview, Resources, Metrics, Summary, Roofline, Multiprecision Mix | Capture a triage packet for support tickets or offline review without copying each tab by hand. |
 | **Job overview**                | Compact high-value fields (jid, status, runtime, queue, user/project, cores/nodes, start/end)    | Fast triage before deeper telemetry checks.                                                                                                                    |
-| **Full scheduling record**      | Expanded accounting table with all core scheduler columns                                          | Audit exact scheduler/accounting values and formatting without leaving the page.                                                                               |
 | **Resources**                   | Rounded Cards in order: watt-hours (when present) → **GPU Information** (aggregate stats as the main line; per-(host,dev) inventory behind a collapsed control) → **Shared File Systems** (`fsio`) → Client/Server log links last. GPU precedence NVIDIA → AMD → Intel PVC. | Validate energy, GPU allocation vs activity (expand inventory for device rows), I/O<sup>[11](#ref-11)</sup> volume, then jump to external logs. |
 | **Metrics (tab)**               | Job-level metrics catalog (`metrics_list`) in rounded Cards per subsection **CPU → GPU → File System → Network → Misc** by monitor/catalog `type` (Memory/NUMA under CPU; IB/OPA/Ethernet/LNET under Network). Empty GPU/File System/Misc omitted; **Network** always appears (empty body: Data not available.) | Faster subsystem triage—scan CPU vs fabric vs GPU scalars without scrolling a flat list. |
 | **Summary plot (tab)**          | Host-level timeline plot with CPU, memory/NUMA<sup>[4](#ref-4)</sup>/DRAM, fabric/filesystem, GPU, and node-power traces | Best first visual scan for phase changes, host outliers, and cross-signal coupling (for example GPU drops while fabric spikes).                              |
@@ -163,7 +162,7 @@ On the page, rows are grouped under source subsections in fixed order **CPU → 
 | `avg_node_power_est_w` | Mean estimated node power | Mean estimated node power | Energy-to-solution comparisons across runs/configurations. |
 | `max_gpu_link_gbps` | Peak GPU PCIe and NVLink data rate | Peak GPU link bandwidth (PCIe/NVLink aggregate path) | Host-device/device-device transfer pressure indicator. |
 | `max_gpu_clock_event_reasons` | Peak GPU clock throttling reasons | DCGM clock-event bitmask (Job Detail shows decoded flag names; API/search stay numeric) | Named flags (power cap, thermal, sync boost, …) explain why clocks were limited; correlate with power/temp traces. |
-| `mem_hwm` | Peak process resident memory (high water mark) | High-water memory estimate (MemUsed-Slab-FilePages) | Compare with node RAM for host OOM risk<sup>[14](#ref-14)</sup>. |
+| `mem_hwm` | Peak process resident memory (high water mark) | High-water memory estimate from host memory telemetry (used − slab − file pages), in GiB | Compare with node RAM for host OOM risk<sup>[14](#ref-14)</sup>. |
 | `node_imbalance` | CPU utilization imbalance across nodes | Node-level CPU rate imbalance | High values indicate decomposition/rank imbalance. |
 | `time_imbalance` | CPU rate imbalance over job timeline | Temporal CPU imbalance across job timeline | Flags long underutilized windows or phase imbalance over time. |
 | `flops_node_imbalance` | Floating-point rate imbalance across nodes | Node-level FLOP rate imbalance | Compute work unevenly distributed across nodes. |
@@ -330,5 +329,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-08-05 | GPU Roofline prefers estimated memory bandwidth when present (title Memory BW); otherwise PCIe/NvLink (or Xe Link) with matching title and peak roof. |
 | 2026-08-05 | Job Detail **Print** button: prepares overview/Resources/Metrics/Summary/Roofline/Multiprecision Mix for the browser print dialog (Save as PDF). |
 | 2026-08-07 | Job Detail plot tabs (Summary, Roofline, Multiprecision Mix) wait for Performance Data **Metrics & Plots available**; plot-tab messages **Plots not yet completed.** / **No plots available for this job**. |
+| 2026-08-07 | Job Detail: removed page h1 and **Full scheduling record**; **Print** sits beside breadcrumbs. `mem_hwm` reads canonical `host_mem` snake_case events (KB→GiB). |
 
 

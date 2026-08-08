@@ -208,8 +208,7 @@
 
   [data-job-detail-print="1"] .job-detail-metrics-section,
   [data-job-detail-print="1"] .job-detail-resources-card,
-  [data-job-detail-print="1"] #job-detail-glance,
-  [data-job-detail-print="1"] .job-detail-scheduling-details {
+  [data-job-detail-print="1"] #job-detail-glance {
     break-inside: avoid;
   }
 

@@ -203,7 +203,7 @@ describe("JobDetail", () => {
     setJobDetailQueryMock({ data: minimalJobDetailResponse });
     const view = renderJobDetail("12345");
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /job 12345/i })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
     await waitFor(() => {
       expect(screen.getAllByRole("tabpanel").length).toBeGreaterThan(0);
@@ -219,6 +219,18 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /^print$/i })).toBeInTheDocument();
     });
+  });
+
+  it("omits Job h1 and Full scheduling record; Print stays by breadcrumbs", async () => {
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^print$/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("heading", { name: "Job 12345" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Full scheduling record")).not.toBeInTheDocument();
+    expect(screen.getByText("Job 12345")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
   });
 
   it("force-mounts and unhides in-scope plot panels during print prep even on Metrics tab", async () => {
@@ -488,7 +500,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345", { is_staff: true });
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
     expect(screen.getByText("Sample Count")).toBeInTheDocument();
     expect(screen.getByText("1,250.00")).toBeInTheDocument();
@@ -509,7 +521,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345", { is_staff: true });
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
     expect(screen.getByText("Artifact schema")).toBeInTheDocument();
     expect(screen.getByText("Runtime schema: plot 11, detail 8")).toBeInTheDocument();
@@ -536,7 +548,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345", { is_staff: false });
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
     expect(screen.queryByText("Sample Count")).not.toBeInTheDocument();
     expect(screen.queryByText("Artifact schema")).not.toBeInTheDocument();
@@ -561,7 +573,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
     expect(screen.getAllByText("testjob").length).toBeGreaterThanOrEqual(1);
     expect(useJobPlotsQuery).toHaveBeenCalledWith("12345", false);
@@ -590,7 +602,7 @@ describe("JobDetail", () => {
     const { container } = renderJobDetail("12345");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
 
     expect(container.querySelector(".col-sm-20")).toBeNull();
@@ -614,7 +626,7 @@ describe("JobDetail", () => {
 
     const { container } = renderJobDetail("12345");
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
     expect(screen.getByRole("heading", { name: "CPU", level: 3 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Network", level: 3 })).toBeInTheDocument();
@@ -661,7 +673,7 @@ describe("JobDetail", () => {
 
     const { container } = renderJobDetail("12345");
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
 
     const tables = container.querySelectorAll(
@@ -754,7 +766,7 @@ describe("JobDetail", () => {
 
     renderJobDetail("12345");
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
 
     const sectionHeadings = screen
@@ -851,7 +863,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345", { is_staff: true });
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
     await waitFor(() => {
       expect(
@@ -914,7 +926,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345", { is_staff: false });
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
     await waitFor(() => {
       expect(screen.getAllByText("Data not available.").length).toBeGreaterThan(0);
@@ -934,7 +946,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345", { is_staff: false }, "tab=summary");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
     expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
   });
@@ -949,7 +961,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345", { is_staff: false }, "tab=summary");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
     expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
   });
@@ -1112,7 +1124,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
     expect(screen.getByText("Total GPUs allocated:")).toBeInTheDocument();
     expect(screen.getByText("4.00")).toBeInTheDocument();
@@ -1657,7 +1669,7 @@ describe("JobDetail", () => {
     renderJobDetail("12345", { is_staff: false }, "tab=device");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /job 12345/i })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
     expect(screen.queryByLabelText("Loading job detail")).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Device data" })).toHaveAttribute(

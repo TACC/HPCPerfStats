@@ -35,7 +35,6 @@ in the same task.
 2. **Surface-level coverage**
    - Document every current Job Detail surface/tab:
      - Job overview
-     - Full scheduling record
      - Resources
      - Metrics
      - Summary plot

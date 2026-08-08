@@ -436,7 +436,6 @@ export default function JobDetail() {
   const [printIncludesPlots, setPrintIncludesPlots] = useState(false);
   const [printPreparing, setPrintPreparing] = useState(false);
   const [printNoDataOpen, setPrintNoDataOpen] = useState(false);
-  const [schedulingDetailsOpen, setSchedulingDetailsOpen] = useState(false);
   const [gpuInventoryOpen, setGpuInventoryOpen] = useState(false);
   const [printEmbedReady, setPrintEmbedReady] = useState<
     Partial<Record<JobDetailPrintPlotKey, boolean>>
@@ -588,7 +587,6 @@ export default function JobDetail() {
     printOpenedRef.current = false;
     printPrepStartedAtRef.current = Date.now();
     setPrintEmbedReady({});
-    setSchedulingDetailsOpen(true);
     setGpuInventoryOpen(true);
     setPrintIncludesPlots(action === "print_with_plots");
     setPrintLayoutActive(true);
@@ -951,19 +949,18 @@ export default function JobDetail() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <PageBreadcrumbs
-        items={[
-          { label: "Browse", to: "/machine/" },
-          { label: `Job ${job.jid}` },
-        ]}
-      />
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Job {job.jid}</h1>
+        <PageBreadcrumbs
+          items={[
+            { label: "Browse", to: "/machine/" },
+            { label: `Job ${job.jid}` },
+          ]}
+        />
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="job-detail-print-button"
+          className="job-detail-print-button shrink-0"
           onClick={startPrintPrep}
           disabled={printPreparing || printLayoutActive}
           aria-busy={printPreparing || undefined}
@@ -1099,105 +1096,6 @@ export default function JobDetail() {
             </div>
           </CardContent>
         </Card>
-      </section>
-
-      <section id="job-detail-scheduling" className="mb-4" aria-labelledby="job-detail-scheduling-heading">
-        <h2 id="job-detail-scheduling-heading" className="sr-only">
-          Full scheduling record
-        </h2>
-        <Collapsible
-          className="job-detail-scheduling-details rounded-lg border px-3 py-2"
-          open={schedulingDetailsOpen}
-          onOpenChange={setSchedulingDetailsOpen}
-        >
-          <CollapsibleTrigger className="cursor-pointer text-left font-semibold">
-            Full scheduling record
-            <span className="text-sm font-normal text-muted-foreground"> — all accounting columns</span>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-          <Table className={cn(JOB_DETAIL_COMPACT_TABLE_CLASS, "mt-2")}>
-              <TableCaption className="sr-only">
-                Full scheduling record for job {job.jid}
-              </TableCaption>
-              <TableHeader>
-                <TableRow>
-                  <TableHead scope="col">
-                    <VariableInfoLabel variableName="jid" labelText="Job ID" enableHelp />
-                  </TableHead>
-                  <TableHead scope="col">
-                    <VariableInfoLabel variableName="username" labelText="user" enableHelp />
-                  </TableHead>
-                  <TableHead scope="col">
-                    <VariableInfoLabel variableName="account" labelText="project" enableHelp />
-                  </TableHead>
-                  <TableHead scope="col">
-                    <VariableInfoLabel variableName="start_time" labelText="start time" enableHelp />
-                  </TableHead>
-                  <TableHead scope="col">
-                    <VariableInfoLabel variableName="end_time" labelText="end time" enableHelp />
-                  </TableHead>
-                  <TableHead scope="col">
-                    <VariableInfoLabel variableName="runtime" labelText="run time (s)" enableHelp />
-                  </TableHead>
-                  <TableHead scope="col">
-                    <VariableInfoLabel variableName="timelimit" labelText="requested time (s)" enableHelp />
-                  </TableHead>
-                  <TableHead scope="col">
-                    <VariableInfoLabel variableName="queue" labelText="queue" enableHelp />
-                  </TableHead>
-                  <TableHead scope="col">
-                    <VariableInfoLabel variableName="jobname" labelText="name" enableHelp />
-                  </TableHead>
-                  <TableHead scope="col">
-                    <VariableInfoLabel variableName="state" labelText="status" enableHelp />
-                  </TableHead>
-                  <TableHead scope="col">
-                    <VariableInfoLabel variableName="ncores" labelText="ncores" enableHelp />
-                  </TableHead>
-                  <TableHead scope="col">
-                    <VariableInfoLabel variableName="nhosts" labelText="nnodes" enableHelp />
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow>
-                  <TableCell>
-                    <TextLink href={`/machine/job/${job.jid}/`}>{job.jid}</TextLink>
-                  </TableCell>
-                  <TableCell>
-                    {renderJobEntityLink(
-                      job.username,
-                      `/machine/username/${encodeURIComponent(String(job.username ?? ""))}/`,
-                      "Unknown"
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {renderJobEntityLink(
-                      job.account,
-                      `/machine/account/${encodeURIComponent(String(job.account ?? ""))}/`,
-                      "None"
-                    )}
-                  </TableCell>
-                  <TableCell>{formatDateTime(job.start_time)}</TableCell>
-                  <TableCell>{formatDateTime(job.end_time)}</TableCell>
-                  <TableCell>{formatDecimalStandard(job.runtime)}</TableCell>
-                  <TableCell>{formatDecimalStandard(job.timelimit)}</TableCell>
-                  <TableCell>
-                    {renderJobEntityLink(
-                      job.queue,
-                      `/machine/queue/${encodeURIComponent(String(job.queue ?? ""))}/`,
-                      ""
-                    )}
-                  </TableCell>
-                  <TableCell>{job.jobname}</TableCell>
-                  <TableCell>{job.state}</TableCell>
-                  <TableCell>{formatDecimalStandard(job.ncores)}</TableCell>
-                  <TableCell>{formatDecimalStandard(job.nhosts)}</TableCell>
-                </TableRow>
-              </TableBody>
-          </Table>
-          </CollapsibleContent>
-        </Collapsible>
       </section>
 
       <section id="job-detail-resources" className="mb-4" aria-labelledby="job-detail-resources-heading">

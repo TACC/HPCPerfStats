@@ -4710,38 +4710,47 @@ class max_packetrate():
 # may miss high water marks in between.
 class mem_hwm():
   """
-  Memory high-water mark (GiB) from mem MemUsed - Slab - FilePages.
+  Memory high-water mark (GiB) from host_mem/mem used − slab − file pages.
+
+  Monitor emits KB (``mem_used`` / ``slab`` / ``file_pages``); dual-read also
+  accepts legacy PascalCase event names. Peak KB is scaled by ``1024**2``
+  (Summary-aligned), not treated as bytes.
   """
 
   def compute_metric(self, u: Any) -> Any:
     """
-    Compute the metric.
+    Peak (MemUsed − Slab − FilePages) over hosts, in GiB.
     
     Args:
-      u (Any): U passed to this helper.
+      u (Any): Job utils view with ``get_type`` for ``host_mem`` / ``mem``.
     
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: ``(value_or_None, HOST_MEM_TYPE, 'GiB')``.
     
     Examples:
       >>> mem_hwm().compute_metric(None)  # doctest: +SKIP
     """
     max_memusage = 0.0
     typename = HOST_MEM_TYPE
-    schema, _stats = u.get_type(typename)
-    if schema is None or not _schema_has_events(
-        schema, "MemUsed", "Slab", "FilePages"):
+    schema, _stats, resolved_typ = resolve_get_type(
+        u, type_probe_names(typename))
+    typ = resolved_typ or typename
+    if schema is None or not _schema_has_events_for_type(
+        schema, typ, "MemUsed", "Slab", "FilePages"):
       return None, typename, 'GiB'
+    mem_i = _schema_event_index(schema, typ, "MemUsed")
+    slab_i = _schema_event_index(schema, typ, "Slab")
+    file_i = _schema_event_index(schema, typ, "FilePages")
     for hostname, stats in _stats.items():
-      mem_arr = (stats[:, schema["MemUsed"].index] -
-                 stats[:, schema["Slab"].index] -
-                 stats[:, schema["FilePages"].index])
+      mem_arr = (
+          stats[:, mem_i] - stats[:, slab_i] - stats[:, file_i])
       peak = _finite_amax(mem_arr)
       if peak is not None:
         max_memusage = max(max_memusage, peak)
     if max_memusage == 0:
       return None, typename, 'GiB'
-    value = max_memusage / (2.**30)
+    # Monitor host_mem values are KB (see Summary mem_used scale).
+    value = max_memusage / (1024.0 ** 2)
     return value, typename, 'GiB'
 
 
