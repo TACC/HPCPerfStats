@@ -1,0 +1,40 @@
+0000:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0000:01:00.0 Infiniband controller: Mellanox Technologies CX8 Family [ConnectX-8]
+0002:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0002:01:00.0 Infiniband controller: Mellanox Technologies CX8 Family [ConnectX-8]
+0005:00:00.0 PCI bridge: NVIDIA Corporation Device 22b8
+0005:01:00.0 PCI bridge: Pericom Semiconductor Device c008 (rev 0f)
+0005:02:01.0 PCI bridge: Pericom Semiconductor Device c008 (rev 06)
+0005:02:02.0 PCI bridge: Pericom Semiconductor Device c008 (rev 06)
+0005:02:03.0 PCI bridge: Pericom Semiconductor Device c008 (rev 06)
+0005:02:04.0 PCI bridge: Pericom Semiconductor Device c008 (rev 06)
+0005:02:05.0 PCI bridge: Pericom Semiconductor Device c008 (rev 06)
+0005:02:06.0 PCI bridge: Pericom Semiconductor Device c008 (rev 06)
+0005:02:07.0 PCI bridge: Pericom Semiconductor Device c008 (rev 06)
+0005:06:00.0 PCI bridge: Pericom Semiconductor Device b304 (rev 01)
+0005:07:01.0 PCI bridge: Pericom Semiconductor Device b304 (rev 01)
+0005:07:02.0 PCI bridge: Pericom Semiconductor Device b304 (rev 01)
+0005:08:00.0 PCI bridge: PLDA PCI Express Bridge (rev 02)
+0005:09:00.0 VGA compatible controller: Matrox Electronics Systems Ltd. Integrated Matrox G200eW3 Graphics Controller (rev 08)
+0005:09:01.0 Unassigned class [ff00]: Winbond Electronics Corp Device 0850 (rev 08)
+0005:09:02.0 Unassigned class [ff00]: Winbond Electronics Corp Device 0850 (rev 08)
+0005:0a:00.0 USB controller: Renesas Electronics Corp. uPD720201 USB 3.0 Host Controller (rev 03)
+0005:0b:00.0 USB controller: Renesas Electronics Corp. uPD720201 USB 3.0 Host Controller (rev 03)
+0006:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0006:01:00.0 Ethernet controller: Mellanox Technologies MT2894 Family [ConnectX-6 Lx]
+0006:01:00.1 Ethernet controller: Mellanox Technologies MT2894 Family [ConnectX-6 Lx]
+0008:00:00.0 PCI bridge: NVIDIA Corporation Device 22b1
+0008:01:00.0 3D controller: NVIDIA Corporation GB100 [HGX GB200] (rev a1)
+0009:00:00.0 PCI bridge: NVIDIA Corporation Device 22b1
+0009:01:00.0 3D controller: NVIDIA Corporation GB100 [HGX GB200] (rev a1)
+0010:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0010:01:00.0 Infiniband controller: Mellanox Technologies CX8 Family [ConnectX-8]
+0012:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0012:01:00.0 Infiniband controller: Mellanox Technologies CX8 Family [ConnectX-8]
+0015:00:00.0 PCI bridge: NVIDIA Corporation Device 22b8
+0015:01:00.0 Non-Volatile memory controller: SK hynix PE9010 Series NVMe Solid State Drives
+0016:00:00.0 PCI bridge: NVIDIA Corporation Device 22b2
+0018:00:00.0 PCI bridge: NVIDIA Corporation Device 22b1
+0018:01:00.0 3D controller: NVIDIA Corporation GB100 [HGX GB200] (rev a1)
+0019:00:00.0 PCI bridge: NVIDIA Corporation Device 22b1
+0019:01:00.0 3D controller: NVIDIA Corporation GB100 [HGX GB200] (rev a1)

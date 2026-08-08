@@ -52,7 +52,7 @@ resolve_python() {
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") --profile <skx|icx|spr|h100|pvc|amd-rtx> [options]
+Usage: $(basename "$0") --profile <skx|clx|icx|spr|h100|pvc|amd-rtx> [options]
 
 Validate DEBUG shm for one Stampede3 queue profile using the shared fleet
 capability slug. Vista profiles (gg/gh) are rejected here (future path).
@@ -105,7 +105,7 @@ main() {
   fi
 
   case "${profile}" in
-  skx | icx | spr | h100 | pvc | amd-rtx) ;;
+  skx | clx | icx | spr | h100 | pvc | amd-rtx) ;;
   gg | gh)
     echo "ERROR: profile ${profile} is Vista; use a future Vista validate wrapper / --system vista" >&2
     return 2

@@ -145,12 +145,38 @@ static void test_emit_when_ready_no_defer(void)
   test_stats_stub_unbind();
 }
 
+static void test_skip_process_name_deny_list(void)
+{
+  assert(proc_status_skip_process_name(NULL) == 1);
+  assert(proc_status_skip_process_name("bash") == 1);
+  assert(proc_status_skip_process_name("ssh") == 1);
+  assert(proc_status_skip_process_name("sshd") == 1);
+  assert(proc_status_skip_process_name("sshd-session") == 1);
+  assert(proc_status_skip_process_name("metacity") == 1);
+  assert(proc_status_skip_process_name("(sd-pam)") == 1);
+  assert(proc_status_skip_process_name("chronyd") == 1);
+  assert(proc_status_skip_process_name("fwupdmgr") == 1);
+  assert(proc_status_skip_process_name("munged") == 1);
+  assert(proc_status_skip_process_name("systemd") == 1);
+  assert(proc_status_skip_process_name("polkitd") == 1);
+  /* Kernel truncates nvidia-persistenced to 15 chars in Name:. */
+  assert(proc_status_skip_process_name("nvidia-persiste") == 1);
+  assert(proc_status_skip_process_name("nv-hostengine") == 1);
+  assert(proc_status_skip_process_name("sssd_kcm") == 1);
+  assert(proc_status_skip_process_name("nvidia-smi") == 1);
+
+  assert(proc_status_skip_process_name("my_app") == 0);
+  assert(proc_status_skip_process_name("sd-pam") == 0);
+  assert(proc_status_skip_process_name("nvidia-persistenced") == 0);
+}
+
 int main(void)
 {
   test_pending_push_flush();
   test_pending_cap();
   test_realistic_status_order();
   test_emit_when_ready_no_defer();
+  test_skip_process_name_deny_list();
   printf("test_proc_status_order passed\n");
   return 0;
 }

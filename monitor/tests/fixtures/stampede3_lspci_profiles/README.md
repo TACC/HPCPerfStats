@@ -6,6 +6,7 @@ shm validate profile identity (`--profile` / `tacc_system_profiles.py`).
 | File | Queue / class |
 |------|----------------|
 | `skx` | Sky Lake-E + OPA100 |
+| `clx` | Cascade Lake (Sky Lake-E lspci) + CX6 IB + CX5 Eth; no NVIDIA |
 | `icx` | Ice Lake + OPA100 |
 | `spr` | SPR-class + Cornelis CN5000 |
 | `h100` | H100 + ConnectX-7 + OPA |

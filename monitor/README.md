@@ -39,7 +39,7 @@ Configure selects sources via Automake conditionals; use **`./configure --help`*
 
 ### Stampede3 one-build RPM
 
-One x86_64 RPM covers all Stampede3 LSPCI profiles (skx/icx/spr/h100/pvc/amd-rtx) after PVC + OPA collectors land:
+One x86_64 RPM covers all Stampede3 LSPCI profiles (skx/clx/icx/spr/h100/pvc/amd-rtx) after PVC + OPA collectors land:
 
 ```bash
 cd HPCPerfStats/monitor
@@ -51,16 +51,17 @@ rpmbuild -ba --define "_topdir ${PWD}/rpmbuild" "${PWD}/rpmbuild/SPECS/hpcperfst
 | Queue | Collectors (when hardware/libs present) | Runtime libs for full fidelity |
 |-------|------------------------------------------|--------------------------------|
 | skx / icx / spr | `host_opa` (sysfs); CPU/LIKWID | `liboib_utils` optional (MAD) |
+| clx | `host_ib` (CX6); CPU/LIKWID; no NVIDIA | `libibmad` optional |
 | h100 | `nvidia_gpu` + `host_ib` + `host_opa` | `libdcgm`, `libibmad`; `liboib_utils` optional |
 | pvc | `intel_gpu` + `host_opa` | `libxpum` / xpumanager; `liboib_utils` optional |
 | amd-rtx | NVIDIA Blackwell + IB + OPA + AMD CPU (not `amd_gpu`) | `libdcgm`, `libibmad`; `liboib_utils` optional |
 
 Fleet matrix (opt-in via `prepare_rpmbuild_stampede3.sh`: `HPCS_BUNDLE_FLEET=stampede3` and/or `scripts/fleet/stampede3.force` created for that dist only — never commit the force file; default `prepare_rpmbuild_dirs.sh` does not ship it): `--enable-ib-mad-dlopen`, `--enable-opa-mad-dlopen`, `--disable-amd-gpu`, `--enable-intel-gpu` when vendored XPUM headers exist. Binary `NEEDED` must not list `libibmad` / `liboib_utils`. On aarch64, default prepares do not auto-enable intel-gpu from vendored headers alone (`HPCS_BUNDLE_ENABLE_INTEL_GPU=1` or Stampede3 fleet required).
 
-**Per-queue shm validate (one binary × six profiles):** after installing the same DEBUG fleet RPM/binary on a node of each queue class, run:
+**Per-queue shm validate (one binary × Stampede3 profiles):** after installing the same DEBUG fleet RPM/binary on a node of each queue class, run:
 
 ```bash
-# On each of skx, icx, spr, h100, pvc, amd-rtx (same CAPS_JSON / fleet slug):
+# On each of skx, clx, icx, spr, h100, pvc, amd-rtx (same CAPS_JSON / fleet slug):
 ./scripts/validate_stampede3_profile.sh --profile h100
 ```
 
@@ -70,6 +71,10 @@ LSPCI dumps live under `tests/fixtures/stampede3_lspci_profiles/` (in git).
 
 **Vista LSPCI fixtures (future validate):** `tests/fixtures/vista_lspci_profiles/{gg,gh}`
 are vendored for a future Vista path; the Stampede3 wrapper rejects `gg`/`gh`.
+
+**Horizon / Lonestar6 LSPCI fixtures (inventory):** `tests/fixtures/horizon_lspci_profiles/gb`
+(GB200 / HGX) and `tests/fixtures/ls6_lspci_profiles/{genoa,a100}` are vendored for
+roofline / fleet inventory; not wired into Stampede3 shm validate profiles.
 
 ### Intel Data Center GPU / PVC (`intel_gpu`)
 

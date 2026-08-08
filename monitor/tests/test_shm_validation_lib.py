@@ -1017,7 +1017,7 @@ class TaccSystemProfilesTests(unittest.TestCase):
     def test_fixture_dirs_complete(self) -> None:
         self.assertEqual(
             stampede3_profiles(),
-            frozenset({"skx", "icx", "spr", "h100", "pvc", "amd-rtx"}),
+            frozenset({"skx", "clx", "icx", "spr", "h100", "pvc", "amd-rtx"}),
         )
         self.assertEqual(vista_profiles(), frozenset({"gg", "gh"}))
 

@@ -77,3 +77,35 @@ void proc_status_emit_or_defer_kv(struct stats *stats, struct proc_status_pendin
   else
     (void)proc_status_pending_push(p, key, val);
 }
+
+int proc_status_skip_process_name(const char *name)
+{
+  /* Exact match on /proc/<pid>/status Name: (kernel TASK_COMM_LEN, ≤15 chars). */
+  static const char *const deny[] = {
+      "bash",
+      "ssh",
+      "sshd",
+      "sshd-session",
+      "metacity",
+      "(sd-pam)",
+      "chronyd",
+      "fwupdmgr",
+      "munged",
+      "systemd",
+      "polkitd",
+      /* nvidia-persistenced truncated by kernel to 15 chars */
+      "nvidia-persiste",
+      "nv-hostengine",
+      "sssd_kcm",
+      "nvidia-smi",
+  };
+  size_t i;
+
+  if (name == NULL)
+    return 1;
+  for (i = 0; i < sizeof(deny) / sizeof(deny[0]); i++) {
+    if (strcmp(name, deny[i]) == 0)
+      return 1;
+  }
+  return 0;
+}

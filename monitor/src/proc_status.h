@@ -34,4 +34,10 @@ void proc_status_pending_flush(struct proc_status_pending *p, struct stats *stat
 void proc_status_emit_or_defer_kv(struct stats *stats, struct proc_status_pending *p,
                                   const char *key_with_colon, const char *rest);
 
+/*
+ * Return 1 if /proc/<pid>/status Name: should be omitted from host_proc.
+ * Matches kernel TASK_COMM_LEN names (max 15 chars), e.g. nvidia-persiste.
+ */
+int proc_status_skip_process_name(const char *name);
+
 #endif

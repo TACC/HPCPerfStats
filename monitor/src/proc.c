@@ -59,14 +59,6 @@ static int proc_collect_skip_active(void)
   return 1;
 }
 
-static int proc_status_skip_process_name(const char *name)
-{
-  if (name == NULL)
-    return 1;
-  return !strcmp(name, "bash") || !strcmp(name, "ssh") || !strcmp(name, "sshd") ||
-         !strcmp(name, "metacity");
-}
-
 static int proc_status_copy_field(char *dst, size_t dst_size, const char *src)
 {
   int n;
