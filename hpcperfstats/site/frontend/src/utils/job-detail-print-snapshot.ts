@@ -1,7 +1,7 @@
 /**
- * Rasterize Job Detail print-scoped Bokeh canvases to static images and dispose
- * live Bokeh views before ``window.print`` (avoids print-dialog canvas memory blowups).
- * Native canvas only — no html2canvas / jspdf.
+ * Capture Job Detail print-scoped Bokeh canvases as PNG data URLs for React-owned
+ * ``<img>`` rendering before ``window.print`` (avoids print-dialog canvas OOM and
+ * React wiping imperative DOM). Native canvas only — no html2canvas / jspdf.
  */
 
 type BokehIndexedView = {
@@ -17,6 +17,10 @@ export const JOB_DETAIL_PRINT_BOKEH_ID_PREFIXES = [
   "job-multiprecision-cpu",
   "job-multiprecision-gpu",
 ] as const;
+
+/** Tiny PNG used when the environment cannot rasterize (e.g. jsdom). */
+export const PRINT_SNAPSHOT_FALLBACK_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 export function jobDetailPrintBokehTargetIds(pk: string): string[] {
   return JOB_DETAIL_PRINT_BOKEH_ID_PREFIXES.map((prefix) => `${prefix}-${pk}`);
@@ -37,22 +41,17 @@ export function disposeBokehViewsForTarget(targetEl: HTMLElement | null): void {
 }
 
 /**
- * Composite visible canvases under ``targetEl`` into one PNG ``<img>``, dispose
- * Bokeh views, and replace target children with that image.
+ * Composite visible canvases under ``targetEl`` into a PNG data URL.
+ * Does **not** mutate ``targetEl`` (React owns the embed node).
  *
- * @returns true when an image was written; false when there was nothing to snapshot.
+ * @returns data URL, or null when there is nothing to capture.
  */
-export function snapshotBokehTargetToStaticImage(targetEl: HTMLElement): boolean {
+export function captureBokehTargetDataUrl(targetEl: HTMLElement): string | null {
   const canvases = Array.from(targetEl.querySelectorAll("canvas")).filter(
     (c) => c.width > 0 && c.height > 0,
   );
   if (canvases.length === 0) {
-    disposeBokehViewsForTarget(targetEl);
-    const bkRoot = targetEl.querySelector(".bk-root");
-    if (bkRoot) {
-      targetEl.innerHTML = "";
-    }
-    return false;
+    return null;
   }
 
   const targetRect = targetEl.getBoundingClientRect();
@@ -80,8 +79,7 @@ export function snapshotBokehTargetToStaticImage(targetEl: HTMLElement): boolean
   out.height = Math.ceil(cssH * dpr);
   const ctx = out.getContext("2d");
   if (!ctx) {
-    disposeBokehViewsForTarget(targetEl);
-    return false;
+    return null;
   }
   ctx.scale(dpr, dpr);
   for (const layer of layers) {
@@ -98,30 +96,32 @@ export function snapshotBokehTargetToStaticImage(targetEl: HTMLElement): boolean
   } catch {
     dataUrl = null;
   }
-  // jsdom lacks canvas rasterization; fall back to a tiny valid PNG so print still
-  // disposes live Bokeh views (production browsers return a real data URL).
   if (!dataUrl || !dataUrl.startsWith("data:image/")) {
-    dataUrl =
-      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    return PRINT_SNAPSHOT_FALLBACK_PNG;
   }
-
-  disposeBokehViewsForTarget(targetEl);
-  targetEl.innerHTML = "";
-  const img = document.createElement("img");
-  img.src = dataUrl;
-  img.alt = "Plot snapshot for print";
-  img.className = "job-detail-print-plot-snapshot w-full h-auto max-w-full";
-  img.width = cssW;
-  img.height = cssH;
-  targetEl.appendChild(img);
-  return true;
+  return dataUrl;
 }
 
-/** Snapshot every Job Detail print-scoped Bokeh embed target for ``pk``. */
-export function snapshotJobDetailPrintBokehTargets(pk: string): void {
+/** Capture every existing print-scoped Bokeh target for ``pk`` (id → dataUrl). */
+export function captureJobDetailPrintBokehSnapshots(pk: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!pk || typeof document === "undefined") return out;
+  for (const id of jobDetailPrintBokehTargetIds(pk)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const dataUrl = captureBokehTargetDataUrl(el);
+    if (dataUrl) out[id] = dataUrl;
+  }
+  return out;
+}
+
+/** Dispose live Bokeh views and clear embed targets after React has switched to imgs. */
+export function disposeJobDetailPrintBokehTargets(pk: string): void {
   if (!pk || typeof document === "undefined") return;
   for (const id of jobDetailPrintBokehTargetIds(pk)) {
     const el = document.getElementById(id);
-    if (el) snapshotBokehTargetToStaticImage(el);
+    if (!el) continue;
+    disposeBokehViewsForTarget(el);
+    el.innerHTML = "";
   }
 }

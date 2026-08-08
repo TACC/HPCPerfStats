@@ -176,6 +176,15 @@
   display: none !important;
 }
 
+/* Print: hide VariableInfoLabel ? help and open help popovers (keep label text). */
+[data-job-detail-print="1"] [data-testid="variable-info-help"],
+[data-job-detail-print="1"] [data-testid="variable-info-tooltip"],
+[data-job-detail-print="1"] [data-testid="variable-info-close"],
+[data-job-detail-print="1"] .variable-info-tooltip,
+[data-job-detail-print="1"] .bokeh-plot-unavailable {
+  display: none !important;
+}
+
 .job-detail-print-only {
   display: none;
 }
@@ -188,7 +197,12 @@
   .job-detail-analysis-tablist,
   .job-detail-print-hide,
   [data-job-detail-print="1"] .job-detail-print-out-of-scope,
-  [data-job-detail-print="1"][data-job-detail-print-plots="0"] .job-detail-print-plots-rank0-only {
+  [data-job-detail-print="1"][data-job-detail-print-plots="0"] .job-detail-print-plots-rank0-only,
+  [data-job-detail-print="1"] [data-testid="variable-info-help"],
+  [data-job-detail-print="1"] [data-testid="variable-info-tooltip"],
+  [data-job-detail-print="1"] [data-testid="variable-info-close"],
+  [data-job-detail-print="1"] .variable-info-tooltip,
+  [data-job-detail-print="1"] .bokeh-plot-unavailable {
     display: none !important;
   }
 

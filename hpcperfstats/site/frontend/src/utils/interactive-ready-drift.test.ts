@@ -114,19 +114,28 @@ describe("interactive-ready drift guard", () => {
     expect(embed).toMatch(/prepareBokehJsonItemForEmbed/);
   });
 
-  it("Job Detail rank-0 print freezes plots, uses previewMode, and snapshots before print", () => {
+  it("Job Detail rank-0 print freezes plots, uses previewMode, and React-owned snapshots", () => {
     const jobDetail = readFileSync(join(SRC_ROOT, "views/JobDetail.tsx"), "utf8");
     expect(jobDetail).toMatch(/previewMode=\{printMountsPlotPanels/);
     expect(jobDetail).toMatch(/PRINT_EMBED_STAGGER/);
     expect(jobDetail).toMatch(/mergePrintPlotsFreeze/);
     expect(jobDetail).toMatch(/mergePrintMultiprecisionFreeze/);
-    expect(jobDetail).toMatch(/snapshotJobDetailPrintBokehTargets/);
+    expect(jobDetail).toMatch(/captureJobDetailPrintBokehSnapshots/);
+    expect(jobDetail).toMatch(/printPlotSnapshots/);
+    expect(jobDetail).toMatch(/job-detail-print-plot-snapshot/);
+    const globalsCss = readFileSync(join(SRC_ROOT, "globals.css"), "utf8");
+    expect(globalsCss).toMatch(
+      /\[data-job-detail-print="1"\] \[data-testid="variable-info-help"\]/,
+    );
+    expect(globalsCss).toMatch(/bokeh-plot-unavailable/);
+    expect(globalsCss).toMatch(/display:\s*none\s*!important/);
     const designRule = readFileSync(
       join(SRC_ROOT, "../../../cursor-rules/design-focused-spa-ux.mdc"),
       "utf8",
     );
     expect(designRule).toMatch(/previewMode/);
-    expect(designRule).toMatch(/snapshot canvases/);
+    expect(designRule).toMatch(/React state/);
+    expect(designRule).toMatch(/VariableInfoLabel/);
   });
 
   it("JobList histogram thumbs use previewMode; Enlarge path does not", () => {

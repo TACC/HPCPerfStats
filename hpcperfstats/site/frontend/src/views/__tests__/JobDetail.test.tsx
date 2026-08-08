@@ -17,7 +17,13 @@ import {
   plotsStateFromBatchResponse,
 } from "@/utils/job-detail-plots";
 import { replaceTabInHistory } from "@/utils/replace-tab-history";
-import { snapshotJobDetailPrintBokehTargets } from "@/utils/job-detail-print-snapshot";
+import {
+  captureJobDetailPrintBokehSnapshots,
+  disposeJobDetailPrintBokehTargets,
+} from "@/utils/job-detail-print-snapshot";
+
+/** When true, print readiness treats every scoped plot as settled (jsdom has no Bokeh layout). */
+const printTestFlags = vi.hoisted(() => ({ settleAllPrintPlots: false }));
 
 vi.mock("@/utils/replace-tab-history", () => ({
   replaceTabInHistory: vi.fn(),
@@ -35,8 +41,34 @@ vi.mock("../../bokehInit", () => ({
   ensureBokehLoaded: vi.fn(() => Promise.resolve(globalThis.window?.Bokeh)),
 }));
 
+vi.mock("@/utils/job-detail-print", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/utils/job-detail-print")>();
+  return {
+    ...actual,
+    isPrintScopedPlotSettled: (
+      opts: Parameters<typeof actual.isPrintScopedPlotSettled>[0],
+    ) =>
+      printTestFlags.settleAllPrintPlots
+        ? !opts.loading
+        : actual.isPrintScopedPlotSettled(opts),
+  };
+});
+
 vi.mock("@/utils/job-detail-print-snapshot", () => ({
-  snapshotJobDetailPrintBokehTargets: vi.fn(),
+  captureJobDetailPrintBokehSnapshots: vi.fn(() => ({
+    "job-mscript-12345":
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "job-roofline-12345":
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  })),
+  disposeJobDetailPrintBokehTargets: vi.fn(),
+  jobDetailPrintBokehTargetIds: (pk: string) => [
+    `job-mscript-${pk}`,
+    `job-roofline-${pk}`,
+    `job-gpu-roofline-${pk}`,
+    `job-multiprecision-cpu-${pk}`,
+    `job-multiprecision-gpu-${pk}`,
+  ],
 }));
 
 const performanceReady = {
@@ -171,14 +203,17 @@ describe("JobDetail", () => {
   beforeEach(() => {
     setJobDetailQueryMock({ data: minimalJobDetailResponse });
     mockAllPlotCallsReady();
-    vi.mocked(snapshotJobDetailPrintBokehTargets).mockClear();
+    vi.mocked(captureJobDetailPrintBokehSnapshots).mockClear();
+    vi.mocked(disposeJobDetailPrintBokehTargets).mockClear();
   });
 
   afterEach(() => {
+    printTestFlags.settleAllPrintPlots = false;
     vi.restoreAllMocks();
     vi.mocked(useJobDetailQuery).mockReset();
     vi.mocked(useJobPlotsQuery).mockReset();
-    vi.mocked(snapshotJobDetailPrintBokehTargets).mockClear();
+    vi.mocked(captureJobDetailPrintBokehSnapshots).mockClear();
+    vi.mocked(disposeJobDetailPrintBokehTargets).mockClear();
     delete window.Bokeh;
   });
 
@@ -241,18 +276,29 @@ describe("JobDetail", () => {
   });
 
   it("force-mounts and unhides in-scope plot panels during print prep even on Metrics tab", async () => {
+    printTestFlags.settleAllPrintPlots = true;
     const loadDetailWithoutDeferParts = vi.fn();
+    const tinyPng =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    vi.mocked(captureJobDetailPrintBokehSnapshots).mockReturnValue({
+      "job-mscript-12345": tinyPng,
+      "job-roofline-12345": tinyPng,
+      "job-gpu-roofline-12345": tinyPng,
+      "job-multiprecision-cpu-12345": tinyPng,
+      "job-multiprecision-gpu-12345": tinyPng,
+    });
     setJobDetailQueryMock({
-      data: minimalJobDetailResponse,
+      data: {
+        ...minimalJobDetailResponse,
+        multiprecision_cpu_plot_item: VALID_BOKEH_JSON_ITEM,
+        multiprecision_cpu_unavailable_reason: null,
+        multiprecision_gpu_plot_item: VALID_BOKEH_JSON_ITEM,
+        multiprecision_gpu_unavailable_reason: null,
+      },
       loadDetailWithoutDeferParts,
     });
     setJobPlotsQueryMock({
-      plots: plotsStateFromBatchResponse({
-        ...minimalBatchPlotsResponse,
-        mplot_unavailable_reason: "Missing summary",
-        rplot_unavailable_reason: "Missing CPU roofline",
-        grplot_unavailable_reason: "Missing GPU roofline",
-      }),
+      plots: plotsStateFromBatchResponse(batchPlotsResponseWithRoots()),
       plotsLoading: false,
     });
     const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
@@ -267,11 +313,6 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(document.querySelector("[data-job-detail-print='1']")).toBeTruthy();
       expect(document.querySelector("[data-job-detail-print-plots='1']")).toBeTruthy();
-      expect(screen.getByRole("heading", { name: "Summary plot", level: 3 })).toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: "CPU Roofline", level: 3 })).toBeInTheDocument();
-      expect(
-        screen.getByRole("heading", { name: "CPU Multiprecision Mix", level: 3 }),
-      ).toBeInTheDocument();
       const summaryPanel = document.querySelector("#job-detail-panel-plot-summary");
       const metricsPanel = document.querySelector("#job-detail-panel-metrics");
       const mpPanel = document.querySelector("#job-detail-panel-multiprecision-mix");
@@ -287,7 +328,39 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(printSpy).toHaveBeenCalled();
     });
-    expect(snapshotJobDetailPrintBokehTargets).toHaveBeenCalledWith("12345");
+    expect(captureJobDetailPrintBokehSnapshots).toHaveBeenCalledWith("12345");
+    expect(disposeJobDetailPrintBokehTargets).toHaveBeenCalledWith("12345");
+    expect(document.querySelectorAll("img.job-detail-print-plot-snapshot").length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.getByRole("heading", { name: "Summary plot", level: 3 })).toBeInTheDocument();
+    printSpy.mockRestore();
+  });
+
+  it("hides unavailable plot blocks under print layout", async () => {
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
+    setJobPlotsQueryMock({
+      plots: plotsStateFromBatchResponse({
+        ...minimalBatchPlotsResponse,
+        mplot_unavailable_reason: "Missing summary",
+        rplot_unavailable_reason: "Missing CPU roofline",
+        grplot_unavailable_reason: "Missing GPU roofline",
+      }),
+      plotsLoading: false,
+    });
+    vi.mocked(captureJobDetailPrintBokehSnapshots).mockReturnValue({});
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^print$/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^print$/i }));
+    await waitFor(() => {
+      expect(document.querySelector("[data-job-detail-print='1']")).toBeTruthy();
+      expect(printSpy).toHaveBeenCalled();
+    });
+    expect(screen.queryByRole("heading", { name: "Summary plot", level: 3 })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Unavailable/i)).not.toBeInTheDocument();
     printSpy.mockRestore();
   });
 

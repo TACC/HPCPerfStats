@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  captureBokehTargetDataUrl,
+  captureJobDetailPrintBokehSnapshots,
   disposeBokehViewsForTarget,
+  disposeJobDetailPrintBokehTargets,
   jobDetailPrintBokehTargetIds,
-  snapshotBokehTargetToStaticImage,
-  snapshotJobDetailPrintBokehTargets,
+  PRINT_SNAPSHOT_FALLBACK_PNG,
 } from "./job-detail-print-snapshot";
 
 describe("jobDetailPrintBokehTargetIds", () => {
@@ -18,14 +20,12 @@ describe("jobDetailPrintBokehTargetIds", () => {
   });
 });
 
-describe("snapshotBokehTargetToStaticImage", () => {
+describe("captureBokehTargetDataUrl", () => {
   afterEach(() => {
     document.body.innerHTML = "";
-    // @ts-expect-error test cleanup
-    delete window.Bokeh;
   });
 
-  it("replaces canvases with a static img and disposes Bokeh views", () => {
+  it("returns a data URL without mutating the embed target", () => {
     const target = document.createElement("div");
     target.id = "job-mscript-1";
     const bk = document.createElement("div");
@@ -41,27 +41,51 @@ describe("snapshotBokehTargetToStaticImage", () => {
     target.appendChild(bk);
     document.body.appendChild(target);
 
-    const remove = vi.fn();
-    const viewEl = document.createElement("div");
-    bk.appendChild(viewEl);
-    window.Bokeh = {
-      index: {
-        v1: { el: viewEl, remove },
-      },
-    } as unknown as typeof window.Bokeh;
-
-    const ok = snapshotBokehTargetToStaticImage(target);
-    expect(ok).toBe(true);
-    expect(remove).toHaveBeenCalled();
-    expect(target.querySelector(".bk-root")).toBeNull();
-    expect(target.querySelectorAll("canvas").length).toBe(0);
-    const img = target.querySelector("img.job-detail-print-plot-snapshot");
-    expect(img).toBeTruthy();
-    expect((img as HTMLImageElement).src).toMatch(/^data:image\/png/);
+    const dataUrl = captureBokehTargetDataUrl(target);
+    expect(dataUrl).toMatch(/^data:image\/png/);
+    expect(target.querySelector(".bk-root")).toBeTruthy();
+    expect(target.querySelector("canvas")).toBeTruthy();
+    expect(target.querySelector("img")).toBeNull();
   });
 
-  it("disposes and clears bk-root when no canvases", () => {
+  it("returns null when there are no canvases", () => {
     const target = document.createElement("div");
+    target.appendChild(document.createElement("div")).className = "bk-root";
+    expect(captureBokehTargetDataUrl(target)).toBeNull();
+  });
+});
+
+describe("captureJobDetailPrintBokehSnapshots", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("maps existing targets to data URLs without injecting imgs", () => {
+    const target = document.createElement("div");
+    target.id = "job-roofline-42";
+    const canvas = document.createElement("canvas");
+    canvas.width = 10;
+    canvas.height = 10;
+    target.appendChild(canvas);
+    document.body.appendChild(target);
+
+    const snaps = captureJobDetailPrintBokehSnapshots("42");
+    expect(snaps["job-roofline-42"]).toMatch(/^data:image\/png/);
+    expect(snaps["job-roofline-42"]).toBe(PRINT_SNAPSHOT_FALLBACK_PNG);
+    expect(target.querySelector("img")).toBeNull();
+  });
+});
+
+describe("disposeJobDetailPrintBokehTargets", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    // @ts-expect-error test cleanup
+    delete window.Bokeh;
+  });
+
+  it("disposes Bokeh views and clears the target", () => {
+    const target = document.createElement("div");
+    target.id = "job-mscript-7";
     const bk = document.createElement("div");
     bk.className = "bk-root";
     target.appendChild(bk);
@@ -71,28 +95,9 @@ describe("snapshotBokehTargetToStaticImage", () => {
       index: { v1: { el: bk, remove } },
     } as unknown as typeof window.Bokeh;
 
-    expect(snapshotBokehTargetToStaticImage(target)).toBe(false);
+    disposeJobDetailPrintBokehTargets("7");
     expect(remove).toHaveBeenCalled();
     expect(target.innerHTML).toBe("");
-  });
-});
-
-describe("snapshotJobDetailPrintBokehTargets", () => {
-  afterEach(() => {
-    document.body.innerHTML = "";
-  });
-
-  it("snapshots only existing targets for pk", () => {
-    const target = document.createElement("div");
-    target.id = "job-roofline-42";
-    const canvas = document.createElement("canvas");
-    canvas.width = 10;
-    canvas.height = 10;
-    target.appendChild(canvas);
-    document.body.appendChild(target);
-
-    snapshotJobDetailPrintBokehTargets("42");
-    expect(target.querySelector("img.job-detail-print-plot-snapshot")).toBeTruthy();
   });
 });
 
