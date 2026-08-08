@@ -1235,6 +1235,65 @@ describe("JobDetail", () => {
     expect(useJobPlotsQuery).toHaveBeenCalledWith("12345", false);
   });
 
+  it("centers standalone tab status messages with bottom padding", async () => {
+    const tabStatus = (text: string) =>
+      screen.getByText(text, { selector: "p.tab-status-message" });
+
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        job_data: {
+          ...minimalJobDetailResponse.job_data,
+          performance: {
+            label: "Metrics available",
+            tone: "warning",
+            aria_label: "Metrics available",
+            sort_rank: 1,
+          },
+        },
+      },
+    });
+    setJobPlotsQueryMock({ plotsLoading: false });
+
+    renderJobDetail("12345", { is_staff: false }, "tab=summary");
+
+    await waitFor(() => {
+      expect(tabStatus("Plots not yet completed.")).toBeInTheDocument();
+    });
+    const gate = tabStatus("Plots not yet completed.");
+    expect(gate).toHaveAttribute("role", "status");
+    expect(gate).toHaveClass("tab-status-message", "text-center", "pb-16");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Metrics" }));
+    await waitFor(() => {
+      expect(tabStatus("Data not available.")).toBeInTheDocument();
+    });
+    expect(tabStatus("Data not available.")).toHaveClass(
+      "tab-status-message",
+      "text-center",
+      "pb-16",
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Processes" }));
+    await waitFor(() => {
+      expect(tabStatus("Data not available.")).toBeInTheDocument();
+    });
+    expect(tabStatus("Data not available.")).toHaveClass(
+      "tab-status-message",
+      "text-center",
+      "pb-16",
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Device data" }));
+    await waitFor(() => {
+      expect(tabStatus("Data not available.")).toBeInTheDocument();
+    });
+    const deviceEmpty = tabStatus("Data not available.");
+    expect(deviceEmpty).toHaveAttribute("role", "status");
+    expect(deviceEmpty).toHaveClass("tab-status-message", "text-center", "pb-16");
+    expect(document.querySelector(".text-md-start")).toBeNull();
+  });
+
   it("shows GPU count from monitor when utilization stats are absent", async () => {
     const detailGpuCountOnly = {
       ...minimalJobDetailResponse,

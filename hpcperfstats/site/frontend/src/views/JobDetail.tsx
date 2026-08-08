@@ -14,6 +14,7 @@ import type {
 } from "@/types/view-models";
 import BannerErrorMessage from "../components/BannerErrorMessage";
 import BokehEmbed from "../components/BokehEmbed";
+import TabStatusMessage from "../components/TabStatusMessage";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -1517,9 +1518,7 @@ export default function JobDetail() {
           >
             <h2 className="job-detail-print-only mb-2 text-lg font-medium">Summary plot</h2>
             {plotGateMessage ? (
-              <p className="mb-2 text-sm text-muted-foreground" role="status">
-                {plotGateMessage}
-              </p>
+              <TabStatusMessage role="status">{plotGateMessage}</TabStatusMessage>
             ) : (
               <>
                 {plotsLoading ? (
@@ -1564,9 +1563,7 @@ export default function JobDetail() {
           >
             <h2 className="job-detail-print-only mb-2 text-lg font-medium">Roofline</h2>
             {plotGateMessage ? (
-              <p className="mb-2 text-sm text-muted-foreground" role="status">
-                {plotGateMessage}
-              </p>
+              <TabStatusMessage role="status">{plotGateMessage}</TabStatusMessage>
             ) : (
               <>
                 {plotsLoading ? (
@@ -1631,9 +1628,9 @@ export default function JobDetail() {
                 ))}
               </div>
             ) : detailsLoading ? (
-              <p className="text-muted-foreground mb-0">Loading job-level metrics…</p>
+              <TabStatusMessage role="status">Loading job-level metrics…</TabStatusMessage>
             ) : (
-              <p className="text-muted-foreground mb-0">Data not available.</p>
+              <TabStatusMessage>Data not available.</TabStatusMessage>
             )}
           </TabsContent>
           <TabsContent
@@ -1656,9 +1653,7 @@ export default function JobDetail() {
               </h2>
             ) : null}
             {plotGateMessage ? (
-              <p className="mb-2 text-sm text-muted-foreground" role="status">
-                {plotGateMessage}
-              </p>
+              <TabStatusMessage role="status">{plotGateMessage}</TabStatusMessage>
             ) : (
               <div className="grid gap-3 lg:grid-cols-2">
                 {(() => {
@@ -1788,9 +1783,9 @@ export default function JobDetail() {
             className="job-detail-print-out-of-scope mt-0"
           >
             {detailsLoading ? (
-              <p className="text-muted-foreground mb-0">Loading processes…</p>
+              <TabStatusMessage role="status">Loading processes…</TabStatusMessage>
             ) : !(proc_list || []).length ? (
-              <p className="text-muted-foreground mb-0">Data not available.</p>
+              <TabStatusMessage>Data not available.</TabStatusMessage>
             ) : procTable.legacyOnly ? (
               <Table className="border text-sm">
                 <TableCaption className="sr-only">
@@ -1987,52 +1982,48 @@ export default function JobDetail() {
               Large jobs with many samples may take a long time to load. Please report any
               timeouts to support.
             </p>
-            <div className="text-center text-md-start">
-              {detailsLoading ? (
-                <p className="text-muted-foreground mb-0" role="status">
-                  Loading device data and plots…
-                </p>
-              ) : !hasDeviceData ? (
-                <p className="text-muted-foreground mb-0" role="status">
-                  Data not available.
-                </p>
-              ) : (
-                  <Table className={JOB_DETAIL_COMPACT_TABLE_CLASS}>
-                    <TableCaption className="sr-only">
-                      Device types and events for job {job.jid}
-                    </TableCaption>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead scope="col">Type Name</TableHead>
-                        <TableHead scope="col">Recorded Performance Events</TableHead>
+            {detailsLoading ? (
+              <TabStatusMessage role="status">Loading device data and plots…</TabStatusMessage>
+            ) : !hasDeviceData ? (
+              <TabStatusMessage role="status">Data not available.</TabStatusMessage>
+            ) : (
+              <div className="text-center">
+                <Table className={JOB_DETAIL_COMPACT_TABLE_CLASS}>
+                  <TableCaption className="sr-only">
+                    Device types and events for job {job.jid}
+                  </TableCaption>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead scope="col">Type Name</TableHead>
+                      <TableHead scope="col">Recorded Performance Events</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {Object.entries(schema).map(([type_name, event]) => (
+                      <TableRow key={type_name}>
+                        <TableCell>
+                          <TextLink href={`/machine/job/${job.jid}/${type_name}/`}>{type_name}</TextLink>
+                        </TableCell>
+                        <TableCell className="text-left">
+                          {Array.isArray(event)
+                            ? event.map((ev, i) => (
+                                <span key={`${type_name}-${String(ev)}-${i}`}>
+                                  {i > 0 ? ", " : ""}
+                                  <VariableInfoLabel
+                                    variableName={ev}
+                                    labelText={ev}
+                                    enableHelp
+                                  />
+                                </span>
+                              ))
+                            : String(event)}
+                        </TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {Object.entries(schema).map(([type_name, event]) => (
-                        <TableRow key={type_name}>
-                          <TableCell>
-                            <TextLink href={`/machine/job/${job.jid}/${type_name}/`}>{type_name}</TextLink>
-                          </TableCell>
-                          <TableCell className="text-left">
-                            {Array.isArray(event)
-                              ? event.map((ev, i) => (
-                                  <span key={`${type_name}-${String(ev)}-${i}`}>
-                                    {i > 0 ? ", " : ""}
-                                    <VariableInfoLabel
-                                      variableName={ev}
-                                      labelText={ev}
-                                      enableHelp
-                                    />
-                                  </span>
-                                ))
-                              : String(event)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-              )}
-            </div>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </TabsContent>
         </div>
         </Tabs>
