@@ -41,8 +41,30 @@ describe("useJobPlotsQuery", () => {
   });
 
   it("does not fetch when disabled", () => {
-    renderHook(() => useJobPlotsQuery("111", false));
+    const { result } = renderHook(() => useJobPlotsQuery("111", false));
     expect(jobsPlotsRetrieve).not.toHaveBeenCalled();
+    expect(result.current.plotsLoading).toBe(false);
+  });
+
+  it("clears plotsLoading when disabled after being enabled", async () => {
+    vi.mocked(jobsPlotsRetrieve).mockResolvedValue(
+      orvalOkEnvelope({
+        status: "loading",
+        retry_after_seconds: 60,
+      }),
+    );
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useJobPlotsQuery("111", enabled),
+      { initialProps: { enabled: true } },
+    );
+    await waitFor(() => {
+      expect(jobsPlotsRetrieve).toHaveBeenCalled();
+    });
+    expect(result.current.plotsLoading).toBe(true);
+    rerender({ enabled: false });
+    await waitFor(() => {
+      expect(result.current.plotsLoading).toBe(false);
+    });
   });
 
   it("does not update state after unmount", async () => {

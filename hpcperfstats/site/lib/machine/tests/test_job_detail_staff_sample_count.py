@@ -55,13 +55,17 @@ def _patch_job_detail_for_staff_count(api_module, jid, metrics_distinct_time_cou
       patch.object(api_module, "_require_auth", return_value=None),
       patch.object(api_module, "_apply_non_staff_job_visibility", return_value=vis_qs),
       patch.object(api_module, "get_site_content_cache_timeout", return_value=3600),
-      patch.object(api_module.jid_table, "jid_table", return_value=mock_j),
       patch.object(api_module, "build_job_metrics_display_list", return_value=[]),
       patch.object(api_module, "load_job_detail_artifact", return_value={}),
       patch.object(api_module, "compute_detail_input_fingerprint", return_value="fp"),
       patch.object(api_module.cfg, "get_xalt_user", return_value=""),
       patch.object(api_module.cfg, "get_host_name_ext", return_value=""),
       patch.object(api_module, "cached_orm", side_effect=cached_se),
+      patch.object(
+          api_module,
+          "_job_for_detail_list_serializer",
+          return_value=job_mock,
+      ),
       patch.object(
           api_module,
           "JobListSerializer",

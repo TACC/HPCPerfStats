@@ -76,13 +76,17 @@ def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
           api_module, "_apply_non_staff_job_visibility", return_value=vis
       ),
       patch.object(api_module, "get_site_content_cache_timeout", return_value=3600),
-      patch.object(api_module.jid_table, "jid_table", return_value=mock_j),
       patch.object(api_module, "build_job_metrics_display_list", return_value=[]),
       patch.object(api_module.cfg, "get_xalt_user", return_value=""),
       patch.object(api_module.cfg, "get_host_name_ext", return_value=""),
       patch.object(api_module, "cached_orm", side_effect=cached_se),
       patch.object(api_module, "load_job_detail_artifact", side_effect=[
           detail_payload, multiprecision_payload]),
+      patch.object(
+          api_module,
+          "_job_for_detail_list_serializer",
+          return_value=job_mock,
+      ),
       patch.object(
           api_module,
           "JobListSerializer",
@@ -330,6 +334,11 @@ def test_job_detail_gpu_from_metrics_data_skips_host_data_cache():
               "gpu_utilization_mean": 45.25,
               "gpu_count": 4,
           },
+      ),
+      patch.object(
+          api,
+          "_job_for_detail_list_serializer",
+          return_value=job_mock,
       ),
       patch.object(
           api,

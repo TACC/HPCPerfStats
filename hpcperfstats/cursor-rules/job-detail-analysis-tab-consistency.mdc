@@ -13,6 +13,7 @@ Canonical patterns live in **`hpcperfstats/site/frontend/src/views/JobDetail.tsx
 
 ### Loading / unavailable messaging
 
+- **Performance rank gate**: before any plot load, require `job_data.performance.sort_rank === 0`. Until then show only the gate strings (**Plots not yet completed.** for ranks 1/6; **No plots available for this job** for 2–5/missing) inside Summary / Roofline / Multiprecision Mix — not on Metrics.
 - **Unavailable plots**: **`BokehEmbed`** shows the user-visible **`Unavailable — Data not available.`** status line for everyone; staff-only expandable detail uses **`unavailableReason`** from the API (`job_plot_artifacts` / `job_detail_artifacts` style strings — mirror **`Missing … in host_data`** / **`Missing … in job metrics`** phrasing used by summary and roofline builders).
 - **Do not** drive multiprecision or other artifact-backed embed **`isLoading`** from **`detailsLoading`** when plot payloads already arrive with **`getJobDetailLight`** — that flashes misleading **Loading …** copy instead of the same unavailable surfacing as Summary/Roofline.
 - Progressive **`job_plots`** tabs continue to use **`plots[key].loading`** as **`isLoadingExternal`** on **`PlotPanel`**.

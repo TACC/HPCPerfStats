@@ -34,10 +34,20 @@ export type JobDetailPrintReadinessInput = {
   rooflineSettled: boolean;
   gpuRooflineSettled: boolean;
   multiprecisionSettled: boolean;
+  /** Ranks 2–5 / missing: no plots expected — print can proceed without embeds. */
+  plotsUnavailableTerminal?: boolean;
+  /** Ranks 1 / 6: waiting for performance rank 0 before plot loads. */
+  plotsPerformancePending?: boolean;
 };
 
 /** True when all in-scope print surfaces are ready enough to open the print dialog. */
 export function isJobDetailPrintReady(input: JobDetailPrintReadinessInput): boolean {
+  if (input.plotsUnavailableTerminal) {
+    return true;
+  }
+  if (input.plotsPerformancePending) {
+    return false;
+  }
   if (!input.multiprecisionSettled) return false;
   if (input.plotsFetchFailed) {
     return input.multiprecisionSettled;

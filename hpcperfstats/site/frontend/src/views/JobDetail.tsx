@@ -57,6 +57,17 @@ import { useMachineRouteParams } from "../hooks/use-machine-route-params";
 import { replaceTabInHistory } from "../utils/replace-tab-history";
 import { JOB_PLOT_CONFIGS, gpuRooflinePlotName } from "@/utils/job-detail-plots";
 import {
+  JOB_DETAIL_PERFORMANCE_POLL_INTERVAL_MS,
+  JOB_DETAIL_PERFORMANCE_POLL_MAX_ATTEMPTS,
+  isJobDetailAnalysisPlotTab,
+  isJobDetailPlotPerformanceTerminalUnavailable,
+  isJobDetailPlotPerformanceTransitional,
+  isJobDetailPlotsPerformanceReady,
+  jobDetailPlotGateMessage,
+  jobDetailPlotPerformanceSortRank,
+  type JobDetailPerformanceBadge,
+} from "@/utils/job-detail-performance-gate";
+import {
   JOB_DETAIL_PRINT_AFTERPRINT_FALLBACK_MS,
   JOB_DETAIL_PRINT_READY_TIMEOUT_MS,
   isJobDetailPrintReady,
@@ -122,6 +133,7 @@ type JobSummaryRow = {
   state?: string;
   ncores?: string | number | null;
   nhosts?: string | number | null;
+  performance?: JobDetailPerformanceBadge | null;
 };
 
 type XaltLibsetEntry = [string, string];
@@ -404,6 +416,7 @@ export default function JobDetail() {
     detailFetchWarning,
     loadFullDetail,
     loadDetailWithoutDeferParts,
+    refetchDetail,
   } = useJobDetailQuery(pk);
   const data = jobDetailData as JobDetailViewData | null;
   const [analysisTab, setAnalysisTabState] = useState<JobAnalysisTab>(() =>
@@ -437,11 +450,20 @@ export default function JobDetail() {
     printPrepStartedAtRef.current = null;
   }, [pk]);
 
+  const performanceSortRank = jobDetailPlotPerformanceSortRank(
+    data?.job_data?.performance,
+  );
+  const performancePlotsReady = isJobDetailPlotsPerformanceReady(performanceSortRank);
+  const plotGateMessage = jobDetailPlotGateMessage(performanceSortRank);
+  const plotSurfaceActive =
+    printLayoutActive || isJobDetailAnalysisPlotTab(analysisTab);
+
   const plotsEnabled =
     !!pk &&
     !initialLoading &&
     !error &&
     !!data &&
+    performancePlotsReady &&
     (printLayoutActive ||
       analysisTab === "summary" ||
       analysisTab === "roofline");
@@ -450,10 +472,44 @@ export default function JobDetail() {
     plotsEnabled,
   );
 
+  const hasDetailData = !!data;
+  useEffect(() => {
+    if (!pk || initialLoading || !hasDetailData || !plotSurfaceActive) return;
+    if (!isJobDetailPlotPerformanceTransitional(performanceSortRank)) return;
+
+    let attempts = 0;
+    let cancelled = false;
+    let timer: number | undefined;
+    const tick = () => {
+      if (cancelled) return;
+      attempts += 1;
+      void refetchDetail();
+      if (attempts >= JOB_DETAIL_PERFORMANCE_POLL_MAX_ATTEMPTS) return;
+      timer = window.setTimeout(tick, JOB_DETAIL_PERFORMANCE_POLL_INTERVAL_MS);
+    };
+    timer = window.setTimeout(tick, JOB_DETAIL_PERFORMANCE_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [
+    pk,
+    initialLoading,
+    hasDetailData,
+    plotSurfaceActive,
+    performanceSortRank,
+    refetchDetail,
+  ]);
+
   useEffect(() => {
     if (!pk || initialLoading) return;
     if (printLayoutActive || analysisTab === "multiprecisionMix") {
-      loadDetailWithoutDeferParts(["xalt", "proc"]);
+      // Keep multiprecision deferred until Performance Data rank 0.
+      if (performancePlotsReady) {
+        loadDetailWithoutDeferParts(["xalt", "proc"]);
+      } else {
+        loadDetailWithoutDeferParts(["xalt", "proc", "multiprecision"]);
+      }
     } else if (analysisTab === "processes" || analysisTab === "execHosts") {
       loadDetailWithoutDeferParts(["multiprecision"]);
     } else if (analysisTab === "device") {
@@ -464,6 +520,7 @@ export default function JobDetail() {
     printLayoutActive,
     pk,
     initialLoading,
+    performancePlotsReady,
     loadFullDetail,
     loadDetailWithoutDeferParts,
   ]);
@@ -567,6 +624,10 @@ export default function JobDetail() {
       rooflineSettled,
       gpuRooflineSettled,
       multiprecisionSettled: multiprecisionSettled && mpCpuSettled && mpGpuSettled,
+      plotsUnavailableTerminal:
+        isJobDetailPlotPerformanceTerminalUnavailable(performanceSortRank),
+      plotsPerformancePending:
+        isJobDetailPlotPerformanceTransitional(performanceSortRank),
     });
 
     const startedAt = printPrepStartedAtRef.current ?? Date.now();
@@ -593,6 +654,7 @@ export default function JobDetail() {
     printEmbedReady,
     printPollTick,
     openPrintDialog,
+    performanceSortRank,
   ]);
 
   function setAnalysisTab(tab: JobAnalysisTab): void {
@@ -1347,21 +1409,6 @@ export default function JobDetail() {
             <TabsTrigger value="device">Device data</TabsTrigger>
           </TabsList>
         <div className="job-detail-analysis-panel rounded-b-lg border border-t-0 bg-background p-3">
-          {plotsLoading ? (
-            <p className="mb-2 text-sm text-muted-foreground job-detail-print-hide" role="status">
-              Loading job plots…
-            </p>
-          ) : null}
-          {plotsFetchFailed ? (
-            <Alert className="border-amber-200 bg-amber-50 py-2 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100 job-detail-print-hide" role="alert">
-              <AlertDescription className="text-sm">
-                <p className="mb-2">Job plots could not be loaded. The table and metrics below are unchanged.</p>
-                <Button type="button" variant="outline" size="sm" onClick={retryJobPlots}>
-                  Retry plots
-                </Button>
-              </AlertDescription>
-            </Alert>
-          ) : null}
           <TabsContent
             value="summary"
             id="job-detail-panel-plot-summary"
@@ -1369,18 +1416,41 @@ export default function JobDetail() {
             className="job-detail-single-plot-pane job-detail-print-scoped-panel mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
             <h2 className="job-detail-print-only mb-2 text-lg font-medium">Summary plot</h2>
-            <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground job-detail-print-hide">
-              <span>Metric help (also hover the blue ? on each subplot):</span>
-              <VariableInfoLabel variableName="cpu" labelText="CPU" enableHelp />
-              <VariableInfoLabel variableName="mem" labelText="Memory" enableHelp />
-              <VariableInfoLabel variableName="nv_gpu_util" labelText="GPU util" enableHelp />
-              <VariableInfoLabel variableName="nv_gpu_link_gbs" labelText="GPU link" enableHelp />
-              <VariableInfoLabel variableName="node_power_est_w" labelText="Node power" enableHelp />
-            </div>
-            {renderSinglePlotPanel(
-              plotConfigByKey.summary_plot,
-              analysisTab === "summary",
-              "summary_plot",
+            {plotGateMessage ? (
+              <p className="mb-2 text-sm text-muted-foreground" role="status">
+                {plotGateMessage}
+              </p>
+            ) : (
+              <>
+                {plotsLoading ? (
+                  <p className="mb-2 text-sm text-muted-foreground job-detail-print-hide" role="status">
+                    Loading job plots…
+                  </p>
+                ) : null}
+                {plotsFetchFailed ? (
+                  <Alert className="mb-2 border-amber-200 bg-amber-50 py-2 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100 job-detail-print-hide" role="alert">
+                    <AlertDescription className="text-sm">
+                      <p className="mb-2">Job plots could not be loaded. The table and metrics below are unchanged.</p>
+                      <Button type="button" variant="outline" size="sm" onClick={retryJobPlots}>
+                        Retry plots
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground job-detail-print-hide">
+                  <span>Metric help (also hover the blue ? on each subplot):</span>
+                  <VariableInfoLabel variableName="cpu" labelText="CPU" enableHelp />
+                  <VariableInfoLabel variableName="mem" labelText="Memory" enableHelp />
+                  <VariableInfoLabel variableName="nv_gpu_util" labelText="GPU util" enableHelp />
+                  <VariableInfoLabel variableName="nv_gpu_link_gbs" labelText="GPU link" enableHelp />
+                  <VariableInfoLabel variableName="node_power_est_w" labelText="Node power" enableHelp />
+                </div>
+                {renderSinglePlotPanel(
+                  plotConfigByKey.summary_plot,
+                  analysisTab === "summary",
+                  "summary_plot",
+                )}
+              </>
             )}
           </TabsContent>
           <TabsContent
@@ -1390,18 +1460,41 @@ export default function JobDetail() {
             className="job-detail-single-plot-pane job-detail-print-scoped-panel mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
             <h2 className="job-detail-print-only mb-2 text-lg font-medium">Roofline</h2>
-            <p className="mb-2 text-sm text-muted-foreground job-detail-print-hide">
-              CPU and GPU roofline charts for this job.
-            </p>
-            {renderSinglePlotPanel(
-              plotConfigByKey.roofline,
-              analysisTab === "roofline",
-              "roofline",
-            )}
-            {renderSinglePlotPanel(
-              plotConfigByKey.gpu_roofline,
-              analysisTab === "roofline",
-              "gpu_roofline",
+            {plotGateMessage ? (
+              <p className="mb-2 text-sm text-muted-foreground" role="status">
+                {plotGateMessage}
+              </p>
+            ) : (
+              <>
+                {plotsLoading ? (
+                  <p className="mb-2 text-sm text-muted-foreground job-detail-print-hide" role="status">
+                    Loading job plots…
+                  </p>
+                ) : null}
+                {plotsFetchFailed ? (
+                  <Alert className="mb-2 border-amber-200 bg-amber-50 py-2 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100 job-detail-print-hide" role="alert">
+                    <AlertDescription className="text-sm">
+                      <p className="mb-2">Job plots could not be loaded. The table and metrics below are unchanged.</p>
+                      <Button type="button" variant="outline" size="sm" onClick={retryJobPlots}>
+                        Retry plots
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                <p className="mb-2 text-sm text-muted-foreground job-detail-print-hide">
+                  CPU and GPU roofline charts for this job.
+                </p>
+                {renderSinglePlotPanel(
+                  plotConfigByKey.roofline,
+                  analysisTab === "roofline",
+                  "roofline",
+                )}
+                {renderSinglePlotPanel(
+                  plotConfigByKey.gpu_roofline,
+                  analysisTab === "roofline",
+                  "gpu_roofline",
+                )}
+              </>
             )}
           </TabsContent>
           <TabsContent
@@ -1439,54 +1532,60 @@ export default function JobDetail() {
             className="job-detail-single-plot-pane job-detail-print-scoped-panel mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
             <h2 className="job-detail-print-only mb-2 text-lg font-medium">Multiprecision Mix</h2>
-            <div className="grid gap-3 lg:grid-cols-2">
-              <div>
-                <div className="mb-3 w-full min-w-0 box-border">
-                  <h3 className="text-base font-medium">CPU Multiprecision Mix</h3>
-                  {analysisTab === "multiprecisionMix" || printLayoutActive ? (
-                    <PlotPanel
-                      item={multiprecision_cpu_plot_item}
-                      id={`job-multiprecision-cpu-${pk}`}
-                      plotName="CPU Multiprecision Mix"
-                      unavailableReason={multiprecision_cpu_unavailable_reason}
-                      isLoading={
-                        detailsLoading &&
-                        !multiprecision_cpu_plot_item &&
-                        !multiprecision_cpu_unavailable_reason
-                      }
-                      maximizeInContainer={false}
-                      onPlotReadyChange={(ready) =>
-                        markPrintEmbedReady("multiprecision_cpu", ready)
-                      }
-                      deferEmbedUntilVisible={printLayoutActive ? false : undefined}
-                    />
-                  ) : null}
+            {plotGateMessage ? (
+              <p className="mb-2 text-sm text-muted-foreground" role="status">
+                {plotGateMessage}
+              </p>
+            ) : (
+              <div className="grid gap-3 lg:grid-cols-2">
+                <div>
+                  <div className="mb-3 w-full min-w-0 box-border">
+                    <h3 className="text-base font-medium">CPU Multiprecision Mix</h3>
+                    {analysisTab === "multiprecisionMix" || printLayoutActive ? (
+                      <PlotPanel
+                        item={multiprecision_cpu_plot_item}
+                        id={`job-multiprecision-cpu-${pk}`}
+                        plotName="CPU Multiprecision Mix"
+                        unavailableReason={multiprecision_cpu_unavailable_reason}
+                        isLoading={
+                          detailsLoading &&
+                          !multiprecision_cpu_plot_item &&
+                          !multiprecision_cpu_unavailable_reason
+                        }
+                        maximizeInContainer={false}
+                        onPlotReadyChange={(ready) =>
+                          markPrintEmbedReady("multiprecision_cpu", ready)
+                        }
+                        deferEmbedUntilVisible={printLayoutActive ? false : undefined}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-3 w-full min-w-0 box-border">
+                    <h3 className="text-base font-medium">GPU Multiprecision Mix</h3>
+                    {analysisTab === "multiprecisionMix" || printLayoutActive ? (
+                      <PlotPanel
+                        item={multiprecision_gpu_plot_item}
+                        id={`job-multiprecision-gpu-${pk}`}
+                        plotName="GPU Multiprecision Mix"
+                        unavailableReason={multiprecision_gpu_unavailable_reason}
+                        isLoading={
+                          detailsLoading &&
+                          !multiprecision_gpu_plot_item &&
+                          !multiprecision_gpu_unavailable_reason
+                        }
+                        maximizeInContainer={false}
+                        onPlotReadyChange={(ready) =>
+                          markPrintEmbedReady("multiprecision_gpu", ready)
+                        }
+                        deferEmbedUntilVisible={printLayoutActive ? false : undefined}
+                      />
+                    ) : null}
+                  </div>
                 </div>
               </div>
-              <div>
-                <div className="mb-3 w-full min-w-0 box-border">
-                  <h3 className="text-base font-medium">GPU Multiprecision Mix</h3>
-                  {analysisTab === "multiprecisionMix" || printLayoutActive ? (
-                    <PlotPanel
-                      item={multiprecision_gpu_plot_item}
-                      id={`job-multiprecision-gpu-${pk}`}
-                      plotName="GPU Multiprecision Mix"
-                      unavailableReason={multiprecision_gpu_unavailable_reason}
-                      isLoading={
-                        detailsLoading &&
-                        !multiprecision_gpu_plot_item &&
-                        !multiprecision_gpu_unavailable_reason
-                      }
-                      maximizeInContainer={false}
-                      onPlotReadyChange={(ready) =>
-                        markPrintEmbedReady("multiprecision_gpu", ready)
-                      }
-                      deferEmbedUntilVisible={printLayoutActive ? false : undefined}
-                    />
-                  ) : null}
-                </div>
-              </div>
-            </div>
+            )}
           </TabsContent>
           <TabsContent
             value="processes"

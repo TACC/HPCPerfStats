@@ -98,4 +98,24 @@ describe("isJobDetailPrintReady", () => {
       isJobDetailPrintReady({ ...allSettled, multiprecisionSettled: false }),
     ).toBe(false);
   });
+
+  it("is ready when plots are terminal-unavailable (ranks 2–5)", () => {
+    expect(
+      isJobDetailPrintReady({
+        ...allSettled,
+        plotsLoading: true,
+        multiprecisionSettled: false,
+        plotsUnavailableTerminal: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("waits while performance rank is transitional (1/6)", () => {
+    expect(
+      isJobDetailPrintReady({
+        ...allSettled,
+        plotsPerformancePending: true,
+      }),
+    ).toBe(false);
+  });
 });

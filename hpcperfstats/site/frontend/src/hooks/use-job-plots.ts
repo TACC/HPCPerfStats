@@ -18,7 +18,9 @@ import {
 /** Progressive job plots polling via Orval `jobsPlotsRetrieve`. */
 export function useJobPlotsQuery(pk: string, enabled: boolean) {
   const [plots, setPlots] = useState<JobPlotsState | null>(null);
-  const [plotsLoading, setPlotsLoading] = useState(true);
+  // Fail-closed: do not report loading until ``enabled`` starts a fetch (avoids
+  // Metrics-tab "Loading job plots…" when the query is gated off).
+  const [plotsLoading, setPlotsLoading] = useState(false);
   const [plotsFetchFailed, setPlotsFetchFailed] = useState(false);
   const plotsFetchGenRef = useRef(0);
   const plotsRetryCancelRef = useRef<(() => void) | null>(null);
@@ -128,6 +130,8 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
     if (!enabled) {
       plotsRetryCancelRef.current?.();
       plotsRetryCancelRef.current = null;
+      setPlotsLoading(false);
+      setPlotsFetchFailed(false);
       return;
     }
 
@@ -139,10 +143,10 @@ export function useJobPlotsQuery(pk: string, enabled: boolean) {
 
     if (pkChanged) {
       setPlots(createEmptyJobPlotsState(true));
-      setPlotsLoading(true);
-      setPlotsFetchFailed(false);
       progressiveAttemptsRef.current = 0;
     }
+    setPlotsLoading(true);
+    setPlotsFetchFailed(false);
 
     void fetchAllJobPlotsWithPolling(cancelledCheck);
 

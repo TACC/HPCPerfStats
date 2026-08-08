@@ -34,6 +34,13 @@ vi.mock("../../bokehInit", () => ({
   ensureBokehLoaded: vi.fn(() => Promise.resolve(globalThis.window?.Bokeh)),
 }));
 
+const performanceReady = {
+  label: "Metrics & Plots available",
+  tone: "success",
+  aria_label: "Metrics & Plots available",
+  sort_rank: 0,
+};
+
 const minimalJobDetailResponse = {
   job_data: {
     jid: 12345,
@@ -48,6 +55,7 @@ const minimalJobDetailResponse = {
     state: "COMPLETED",
     ncores: 32,
     nhosts: 2,
+    performance: performanceReady,
   },
   host_list: [],
   fsio: {},
@@ -380,6 +388,9 @@ describe("JobDetail", () => {
     });
     expect(screen.getAllByText("testjob").length).toBeGreaterThanOrEqual(1);
     expect(useJobPlotsQuery).toHaveBeenCalledWith("12345", false);
+    expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
+    expect(screen.queryByText("No plots available for this job")).not.toBeInTheDocument();
+    expect(screen.queryByText("Plots not yet completed.")).not.toBeInTheDocument();
   });
 
   it("disables plot query when job detail fails", async () => {
@@ -736,14 +747,14 @@ describe("JobDetail", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps host-level loading message visible while plots are loading", async () => {
+  it("keeps host-level loading message visible while plots are loading on Summary", async () => {
     setJobDetailQueryMock({ data: minimalJobDetailResponse });
     setJobPlotsQueryMock({
       plots: createEmptyJobPlotsState(true),
       plotsLoading: true,
     });
 
-    renderJobDetail("12345");
+    renderJobDetail("12345", { is_staff: false }, "tab=summary");
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
@@ -751,19 +762,162 @@ describe("JobDetail", () => {
     expect(screen.getByText("Loading job plots…")).toBeInTheDocument();
   });
 
-  it("hides plot loading message when batch plots are ready", async () => {
+  it("hides plot loading message when batch plots are ready on Summary", async () => {
     setJobDetailQueryMock({ data: minimalJobDetailResponse });
     setJobPlotsQueryMock({
       plots: plotsStateFromBatchResponse(batchPlotsResponseWithRoots()),
       plotsLoading: false,
     });
 
-    renderJobDetail("12345");
+    renderJobDetail("12345", { is_staff: false }, "tab=summary");
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job 12345" })).toBeInTheDocument();
     });
     expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
+  });
+
+  it("disables plot query at rank 1 and shows Plots not yet completed on Summary", async () => {
+    const loadDetailWithoutDeferParts = vi.fn();
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        job_data: {
+          ...minimalJobDetailResponse.job_data,
+          performance: {
+            label: "Metrics available",
+            tone: "warning",
+            aria_label: "Metrics available",
+            sort_rank: 1,
+          },
+        },
+      },
+      loadDetailWithoutDeferParts,
+    });
+    setJobPlotsQueryMock({ plotsLoading: false });
+
+    renderJobDetail("12345", { is_staff: false }, "tab=summary");
+
+    await waitFor(() => {
+      expect(screen.getByText("Plots not yet completed.")).toBeInTheDocument();
+    });
+    expect(useJobPlotsQuery).toHaveBeenCalledWith("12345", false);
+    expect(screen.queryByText("Loading job plots…")).not.toBeInTheDocument();
+  });
+
+  it("shows No plots available for this job on Summary at rank 2", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        job_data: {
+          ...minimalJobDetailResponse.job_data,
+          performance: {
+            label: "Too few samples to complete",
+            tone: "muted",
+            aria_label: "Too few samples to complete",
+            sort_rank: 2,
+          },
+        },
+      },
+    });
+    setJobPlotsQueryMock({ plotsLoading: false });
+
+    renderJobDetail("12345", { is_staff: false }, "tab=summary");
+
+    await waitFor(() => {
+      expect(screen.getByText("No plots available for this job")).toBeInTheDocument();
+    });
+    expect(useJobPlotsQuery).toHaveBeenCalledWith("12345", false);
+  });
+
+  it("shows Plots not yet completed on Multiprecision Mix at rank 6 and keeps multiprecision deferred", async () => {
+    const loadDetailWithoutDeferParts = vi.fn();
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        job_data: {
+          ...minimalJobDetailResponse.job_data,
+          performance: {
+            label: "Metrics & Plots not yet completed",
+            tone: "muted",
+            aria_label: "Metrics & Plots not yet completed",
+            sort_rank: 6,
+          },
+        },
+      },
+      loadDetailWithoutDeferParts,
+    });
+
+    renderJobDetail("12345", { is_staff: false }, "tab=multiprecisionMix");
+
+    await waitFor(() => {
+      expect(screen.getByText("Plots not yet completed.")).toBeInTheDocument();
+    });
+    expect(loadDetailWithoutDeferParts).toHaveBeenCalledWith([
+      "xalt",
+      "proc",
+      "multiprecision",
+    ]);
+    expect(screen.queryByRole("heading", { name: "CPU Multiprecision Mix" })).not.toBeInTheDocument();
+  });
+
+  it("shows No plots available for this job on Multiprecision Mix at rank 2", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        job_data: {
+          ...minimalJobDetailResponse.job_data,
+          performance: {
+            label: "Too few samples to complete",
+            tone: "muted",
+            aria_label: "Too few samples to complete",
+            sort_rank: 2,
+          },
+        },
+      },
+    });
+
+    renderJobDetail("12345", { is_staff: false }, "tab=multiprecisionMix");
+
+    await waitFor(() => {
+      expect(screen.getByText("No plots available for this job")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("heading", { name: "CPU Multiprecision Mix" })).not.toBeInTheDocument();
+  });
+
+  it("enables plot query at rank 0 on Summary", async () => {
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
+    mockAllPlotCallsReady();
+
+    renderJobDetail("12345", { is_staff: false }, "tab=summary");
+
+    await waitFor(() => {
+      expect(useJobPlotsQuery).toHaveBeenCalledWith("12345", true);
+    });
+  });
+
+  it("shows Plots not yet completed on Roofline at rank 1", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        job_data: {
+          ...minimalJobDetailResponse.job_data,
+          performance: {
+            label: "Metrics available",
+            tone: "warning",
+            aria_label: "Metrics available",
+            sort_rank: 1,
+          },
+        },
+      },
+    });
+
+    renderJobDetail("12345", { is_staff: false }, "tab=roofline");
+
+    await waitFor(() => {
+      expect(screen.getByText("Plots not yet completed.")).toBeInTheDocument();
+    });
+    expect(useJobPlotsQuery).toHaveBeenCalledWith("12345", false);
   });
 
   it("shows GPU count from monitor when utilization stats are absent", async () => {

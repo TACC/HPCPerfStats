@@ -43,7 +43,6 @@ def _patch_job_detail_fsio_context(api_module, jid, mock_j, fsio_payload):
           api_module, "_apply_non_staff_job_visibility", return_value=vis
       ),
       patch.object(api_module, "get_site_content_cache_timeout", return_value=3600),
-      patch.object(api_module.jid_table, "jid_table", return_value=mock_j),
       patch.object(api_module, "build_job_metrics_display_list", return_value=[]),
       patch.object(api_module.cfg, "get_xalt_user", return_value=""),
       patch.object(api_module.cfg, "get_host_name_ext", return_value="example.com"),
@@ -60,6 +59,11 @@ def _patch_job_detail_fsio_context(api_module, jid, mock_j, fsio_payload):
               "gpu_utilization_mean": None,
               "gpu_count": None,
           },
+      ),
+      patch.object(
+          api_module,
+          "_job_for_detail_list_serializer",
+          return_value=job_mock,
       ),
       patch.object(
           api_module,
@@ -208,6 +212,11 @@ def test_job_detail_fsio_from_metrics_skips_host_queries():
       ),
       patch.object(
           api,
+          "_job_for_detail_list_serializer",
+          return_value=job_mock,
+      ),
+      patch.object(
+          api,
           "JobListSerializer",
           return_value=MagicMock(data={"jid": jid, "username": "u1"}),
       ),
@@ -283,6 +292,11 @@ def test_job_detail_schema_prefers_host_data_schema_json():
               "gpu_utilization_mean": None,
               "gpu_count": None,
           },
+      ),
+      patch.object(
+          api,
+          "_job_for_detail_list_serializer",
+          return_value=job_mock,
       ),
       patch.object(
           api,

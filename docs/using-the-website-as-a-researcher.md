@@ -38,7 +38,7 @@ This document is ordered so the **most decision-relevant ideas come first**. Dee
 ## 2. What you should do first on a job page
 
 - **Breadcrumbs** at the top link back to your filtered job list (when you arrived from search) and show where you are in the site. Use them instead of the browser back button when you want to return to the same filter context.
-- **Shareable analysis tabs**: Job data tabs (Summary plot, Roofline, Multiprecision Mix, and related analysis panels) sync to the URL as `?tab=…` so you can bookmark or share a link that opens the same tab. If a plot or metric panel fails to load on first try, the page offers **retry** actions for that section without reloading the whole job.
+- **Shareable analysis tabs**: Job data tabs (Summary plot, Roofline, Multiprecision Mix, and related analysis panels) sync to the URL as `?tab=…` so you can bookmark or share a link that opens the same tab. Those three plot tabs load only when Performance Data is **Metrics & Plots available**; otherwise the tab shows **Plots not yet completed.** (still preparing) or **No plots available for this job** (too short / too few samples). Metrics and other non-plot tabs never show plot loading banners. If a plot panel fails to load after it is ready, the page offers **retry** for that section without reloading the whole job.
 - **Print**: Use the **Print** button next to the job title to prepare a printable snapshot (Job overview, Full scheduling record, Resources, Metrics, Summary plot, Roofline, and Multiprecision Mix). The browser print dialog opens so you can **Save as PDF** or print on paper—useful for tickets, design reviews, and offline sharing. Processes, Execution and hosts, and Device data are not included in that snapshot.
 
 1. **Read Job overview first** (status, runtime, queue, cores/nodes, user/project, start/end). This frames the run before touching telemetry.
@@ -329,5 +329,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-08-07 | Processes Peak VM/HWM (and Stack/Text/Libs) documented as job-level high water via ingest GREATEST across samples. |
 | 2026-08-05 | GPU Roofline prefers estimated memory bandwidth when present (title Memory BW); otherwise PCIe/NvLink (or Xe Link) with matching title and peak roof. |
 | 2026-08-05 | Job Detail **Print** button: prepares overview/Resources/Metrics/Summary/Roofline/Multiprecision Mix for the browser print dialog (Save as PDF). |
+| 2026-08-07 | Job Detail plot tabs (Summary, Roofline, Multiprecision Mix) wait for Performance Data **Metrics & Plots available**; plot-tab messages **Plots not yet completed.** / **No plots available for this job**. |
 
 

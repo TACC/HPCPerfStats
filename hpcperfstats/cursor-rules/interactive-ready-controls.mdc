@@ -28,6 +28,7 @@ alwaysApply: false
 4. **User-initiated in-flight action** — `disabled` on the **same** button the user clicked (`rotating` on PageApiKey) is allowed.
 5. **Bokeh** — defer embed until section visible (`deferEmbedUntilVisible` default); no Unavailable while `isLoading` ([`design-focused-spa-ux.mdc`](design-focused-spa-ux.mdc), [`job-plot-artifacts-caching.mdc`](job-plot-artifacts-caching.mdc)).
 6. **Bokeh list/dashboard preview** — Job-list (and same-pattern) thumbnail/grid embeds must use **`previewMode`** on [`BokehEmbed`](hpcperfstats/site/frontend/src/components/BokehEmbed.tsx): `pointer-events-none` on the **plot root only** (`.bokeh-embed`), skip global `scheduleBokehLayoutReflow` / continuous maximize-on-`resize`. Enlarge / full interactive embeds must **not** set `previewMode`.
+7. **Job Detail plot gate** — Summary / Roofline / Multiprecision Mix wait for `performance.sort_rank === 0` before plot fetch or multiprecision defer clear; `useJobPlotsQuery` must report `plotsLoading === false` when disabled; plot loading/unavailable/gate messages stay inside those tabs only (never Metrics).
 
 ## Forbidden patterns
 

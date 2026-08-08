@@ -3312,6 +3312,23 @@ def _parse_job_detail_defer_set(request: Any) -> Any:
     return defer_set
 
 
+def _job_for_detail_list_serializer(pk: Any, fallback_job: Any) -> Any:
+    """
+    Annotate a single job like job_list so ``performance.sort_rank`` is correct.
+
+    Args:
+      pk (Any): Job id.
+      fallback_job (Any): Job instance if annotate returns nothing.
+
+    Returns:
+      Any: Annotated job_data row (or fallback).
+    """
+    annotated = annotate_job_list_performance_fields(
+        job_data.objects.filter(jid=pk)
+    ).first()
+    return annotated if annotated is not None else fallback_job
+
+
 @JOB_DETAIL_SCHEMA
 @api_view(["GET"])
 @throttle_classes([ExpensiveReadThrottle])
@@ -3575,7 +3592,9 @@ def job_detail(request: Any, pk: Any) -> Any:
     metrics_list = build_job_metrics_display_list(job)
 
     payload = {
-        "job_data": JobListSerializer(job).data,
+        "job_data": JobListSerializer(
+            _job_for_detail_list_serializer(pk, job)
+        ).data,
         "host_list": host_list,
         "fsio": fsio,
         "xalt_data": xalt_data,
