@@ -17,6 +17,7 @@ import {
   plotsStateFromBatchResponse,
 } from "@/utils/job-detail-plots";
 import { replaceTabInHistory } from "@/utils/replace-tab-history";
+import { snapshotJobDetailPrintBokehTargets } from "@/utils/job-detail-print-snapshot";
 
 vi.mock("@/utils/replace-tab-history", () => ({
   replaceTabInHistory: vi.fn(),
@@ -32,6 +33,10 @@ vi.mock("@/hooks/use-job-plots", () => ({
 
 vi.mock("../../bokehInit", () => ({
   ensureBokehLoaded: vi.fn(() => Promise.resolve(globalThis.window?.Bokeh)),
+}));
+
+vi.mock("@/utils/job-detail-print-snapshot", () => ({
+  snapshotJobDetailPrintBokehTargets: vi.fn(),
 }));
 
 const performanceReady = {
@@ -166,12 +171,14 @@ describe("JobDetail", () => {
   beforeEach(() => {
     setJobDetailQueryMock({ data: minimalJobDetailResponse });
     mockAllPlotCallsReady();
+    vi.mocked(snapshotJobDetailPrintBokehTargets).mockClear();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
     vi.mocked(useJobDetailQuery).mockReset();
     vi.mocked(useJobPlotsQuery).mockReset();
+    vi.mocked(snapshotJobDetailPrintBokehTargets).mockClear();
     delete window.Bokeh;
   });
 
@@ -280,6 +287,7 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(printSpy).toHaveBeenCalled();
     });
+    expect(snapshotJobDetailPrintBokehTargets).toHaveBeenCalledWith("12345");
     printSpy.mockRestore();
   });
 

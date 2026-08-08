@@ -114,6 +114,21 @@ describe("interactive-ready drift guard", () => {
     expect(embed).toMatch(/prepareBokehJsonItemForEmbed/);
   });
 
+  it("Job Detail rank-0 print freezes plots, uses previewMode, and snapshots before print", () => {
+    const jobDetail = readFileSync(join(SRC_ROOT, "views/JobDetail.tsx"), "utf8");
+    expect(jobDetail).toMatch(/previewMode=\{printMountsPlotPanels/);
+    expect(jobDetail).toMatch(/PRINT_EMBED_STAGGER/);
+    expect(jobDetail).toMatch(/mergePrintPlotsFreeze/);
+    expect(jobDetail).toMatch(/mergePrintMultiprecisionFreeze/);
+    expect(jobDetail).toMatch(/snapshotJobDetailPrintBokehTargets/);
+    const designRule = readFileSync(
+      join(SRC_ROOT, "../../../cursor-rules/design-focused-spa-ux.mdc"),
+      "utf8",
+    );
+    expect(designRule).toMatch(/previewMode/);
+    expect(designRule).toMatch(/snapshot canvases/);
+  });
+
   it("JobList histogram thumbs use previewMode; Enlarge path does not", () => {
     const thumbs = readFileSync(
       join(SRC_ROOT, "components/HistogramThumbnails.tsx"),
