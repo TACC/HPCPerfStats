@@ -132,4 +132,47 @@ describe("isJobDetailPrintReady", () => {
       }),
     ).toBe(true);
   });
+
+  it("waits when plots payload is still null (rank 0 race)", () => {
+    expect(
+      isJobDetailPrintReady({
+        ...allSettled,
+        plotsPayloadPresent: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("allows print after plots fetch failed even if payload absent", () => {
+    expect(
+      isJobDetailPrintReady({
+        ...allSettled,
+        plotsFetchFailed: true,
+        plotsPayloadPresent: false,
+        summarySettled: false,
+        rooflineSettled: false,
+        gpuRooflineSettled: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("waits when Metrics would be loading-only blank", () => {
+    expect(
+      isJobDetailPrintReady({
+        ...allSettled,
+        printMetricsReady: false,
+      }),
+    ).toBe(false);
+    expect(
+      isJobDetailPrintReady({
+        plotsLoading: false,
+        plotsFetchFailed: false,
+        summarySettled: false,
+        rooflineSettled: false,
+        gpuRooflineSettled: false,
+        multiprecisionSettled: false,
+        printMetricsOnly: true,
+        printMetricsReady: false,
+      }),
+    ).toBe(false);
+  });
 });

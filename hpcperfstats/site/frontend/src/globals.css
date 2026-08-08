@@ -155,8 +155,9 @@
   }
 }
 
-/* Job Detail print prep: show in-scope tab panels (override Base UI [hidden]) so Bokeh can measure. */
-[data-job-detail-print="1"] .job-detail-print-scoped-panel {
+/* Job Detail print prep: show in-scope tab panels (override Base UI / Tailwind [hidden]) so Bokeh can measure. */
+[data-job-detail-print="1"] .job-detail-print-scoped-panel,
+[data-job-detail-print="1"] .job-detail-print-scoped-panel[hidden] {
   display: block !important;
   visibility: visible !important;
   height: auto !important;

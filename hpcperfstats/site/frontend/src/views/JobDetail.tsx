@@ -639,6 +639,12 @@ export default function JobDetail() {
       embedReady: !!printEmbedReady.multiprecision_gpu,
     });
 
+    const metricsCount = Array.isArray(detailView.metrics_list)
+      ? detailView.metrics_list.length
+      : 0;
+    // Keep tables during post-print defer refetch; only block when blank + loading.
+    const printMetricsReady = metricsCount > 0 || !detailsLoading;
+
     const ready = isJobDetailPrintReady({
       plotsLoading,
       plotsFetchFailed,
@@ -647,6 +653,8 @@ export default function JobDetail() {
       gpuRooflineSettled,
       multiprecisionSettled: multiprecisionSettled && mpCpuSettled && mpGpuSettled,
       printMetricsOnly: !printIncludesPlots,
+      plotsPayloadPresent: plots != null,
+      printMetricsReady,
     });
 
     const startedAt = printPrepStartedAtRef.current ?? Date.now();
@@ -1448,6 +1456,9 @@ export default function JobDetail() {
             value="summary"
             id="job-detail-panel-plot-summary"
             keepMounted={printMountsPlotPanels}
+            {...(printMountsPlotPanels
+              ? ({ hidden: false, inert: false } as { hidden: boolean; inert: boolean })
+              : {})}
             className="job-detail-single-plot-pane job-detail-print-scoped-panel job-detail-print-plots-rank0-only mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
             <h2 className="job-detail-print-only mb-2 text-lg font-medium">Summary plot</h2>
@@ -1492,6 +1503,9 @@ export default function JobDetail() {
             value="roofline"
             id="job-detail-panel-plot-roofline"
             keepMounted={printMountsPlotPanels}
+            {...(printMountsPlotPanels
+              ? ({ hidden: false, inert: false } as { hidden: boolean; inert: boolean })
+              : {})}
             className="job-detail-single-plot-pane job-detail-print-scoped-panel job-detail-print-plots-rank0-only mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
             <h2 className="job-detail-print-only mb-2 text-lg font-medium">Roofline</h2>
@@ -1536,15 +1550,19 @@ export default function JobDetail() {
             value="metrics"
             id="job-detail-panel-metrics"
             keepMounted={printLayoutActive}
+            {...(printLayoutActive
+              ? ({ hidden: false, inert: false } as { hidden: boolean; inert: boolean })
+              : {})}
             className="job-detail-print-scoped-panel mt-0"
           >
             <h2 className="job-detail-print-only mb-2 text-lg font-medium">Metrics</h2>
-            {detailsLoading ? (
-              <p className="text-muted-foreground mb-0">Loading job-level metrics…</p>
-            ) : !metrics_list.length ? (
-              <p className="text-muted-foreground mb-0">Data not available.</p>
-            ) : (
+            {metrics_list.length ? (
               <div className="job-detail-metrics-sections space-y-4">
+                {detailsLoading || detailBusy ? (
+                  <p className="mb-2 text-sm text-muted-foreground job-detail-print-hide" role="status">
+                    Updating job-level metrics…
+                  </p>
+                ) : null}
                 {metricsSourceSections.map((section) => (
                   <Card
                     key={section.id}
@@ -1558,12 +1576,19 @@ export default function JobDetail() {
                   </Card>
                 ))}
               </div>
+            ) : detailsLoading ? (
+              <p className="text-muted-foreground mb-0">Loading job-level metrics…</p>
+            ) : (
+              <p className="text-muted-foreground mb-0">Data not available.</p>
             )}
           </TabsContent>
           <TabsContent
             value="multiprecisionMix"
             id="job-detail-panel-multiprecision-mix"
             keepMounted={printMountsPlotPanels}
+            {...(printMountsPlotPanels
+              ? ({ hidden: false, inert: false } as { hidden: boolean; inert: boolean })
+              : {})}
             className="job-detail-single-plot-pane job-detail-print-scoped-panel job-detail-print-plots-rank0-only mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
             <h2 className="job-detail-print-only mb-2 text-lg font-medium">Multiprecision Mix</h2>

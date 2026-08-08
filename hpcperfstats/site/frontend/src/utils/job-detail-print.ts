@@ -56,12 +56,28 @@ export type JobDetailPrintReadinessInput = {
   multiprecisionSettled: boolean;
   /** Rank 1: print Metrics (and overview) without waiting for plot embeds. */
   printMetricsOnly?: boolean;
+  /**
+   * When print includes plots: false until ``useJobPlotsQuery`` has a plots object
+   * (or fetch failed). Prevents treating ``plots === null`` as all-settled empty.
+   */
+  plotsPayloadPresent?: boolean;
+  /**
+   * Metrics section ready for print: true when tables exist or we are not in a
+   * loading-only blank state (empty list while still fetching).
+   */
+  printMetricsReady?: boolean;
 };
 
 /** True when all in-scope print surfaces are ready enough to open the print dialog. */
 export function isJobDetailPrintReady(input: JobDetailPrintReadinessInput): boolean {
+  if (input.printMetricsReady === false) {
+    return false;
+  }
   if (input.printMetricsOnly) {
     return true;
+  }
+  if (!input.plotsFetchFailed && input.plotsPayloadPresent === false) {
+    return false;
   }
   if (!input.multiprecisionSettled) return false;
   if (input.plotsFetchFailed) {
