@@ -89,7 +89,7 @@ export const WIRE_AUDIT_CASES: WireAuditCase[] = [
         accounts: ["proj"],
         queues: ["normal"],
         states: ["COMPLETED"],
-        performance_statuses: [{ sort_rank: 0, label: "Summary available" }],
+        performance_statuses: [{ sort_rank: 0, label: "Metrics & Plots available" }],
         truncated: {
           usernames: false,
           accounts: false,
@@ -108,7 +108,7 @@ export const WIRE_AUDIT_CASES: WireAuditCase[] = [
         accounts: ["proj"],
         queues: ["normal"],
         states: ["COMPLETED"],
-        performance_statuses: [{ sort_rank: 0, label: "Summary available" }],
+        performance_statuses: [{ sort_rank: 0, label: "Metrics & Plots available" }],
         truncated: {
           usernames: false,
           accounts: false,

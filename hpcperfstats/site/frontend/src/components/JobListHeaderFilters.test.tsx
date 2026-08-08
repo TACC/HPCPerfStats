@@ -19,8 +19,8 @@ const filterOptions = {
   queues: ["normal", "debug"],
   states: ["completed", "canceled", "timeout"],
   performance_statuses: [
-    { sort_rank: 0, label: "Summary available" },
-    { sort_rank: 2, label: "Monitoring gaps" },
+    { sort_rank: 0, label: "Metrics & Plots available" },
+    { sort_rank: 2, label: "Too few samples to complete" },
   ],
   truncated: {
     usernames: false,

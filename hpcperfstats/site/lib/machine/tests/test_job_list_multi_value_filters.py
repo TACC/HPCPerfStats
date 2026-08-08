@@ -40,6 +40,7 @@ def test_apply_job_list_header_acct_multi_filters_pops_keys():
 
 def test_parse_job_list_performance_sort_ranks():
     assert parse_job_list_performance_sort_ranks("0,2,99,x,0") == [0, 2]
+    assert parse_job_list_performance_sort_ranks("6,7") == [6]
 
 
 def test_build_job_list_queryset_applies_major_state_filter():

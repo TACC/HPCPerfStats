@@ -23,9 +23,9 @@ JOB_LIST_WIRE_EXAMPLE = {
             "state": "COMPLETED",
             "host_list": ["n001.cluster.example", "n002.cluster.example"],
             "performance": {
-                "label": "Summary available",
+                "label": "Metrics & Plots available",
                 "tone": "success",
-                "aria_label": "Performance: Summary available",
+                "aria_label": "Performance: Metrics & Plots available",
                 "sort_rank": 0,
             },
             "color": "#28a745",
@@ -37,7 +37,7 @@ JOB_LIST_WIRE_EXAMPLE = {
         "accounts": ["proj"],
         "queues": ["normal"],
         "states": ["completed"],
-        "performance_statuses": [{"sort_rank": 0, "label": "Summary available"}],
+        "performance_statuses": [{"sort_rank": 0, "label": "Metrics & Plots available"}],
         "truncated": {
             "usernames": False,
             "accounts": False,
@@ -80,9 +80,9 @@ JOB_LIST_NULLABLE_WIRE_EXAMPLE = {
             "sample_count": None,
             "host_list": ["n003.cluster.example"],
             "performance": {
-                "label": "Summary available",
+                "label": "Metrics & Plots available",
                 "tone": "success",
-                "aria_label": "Performance: Summary available",
+                "aria_label": "Performance: Metrics & Plots available",
                 "sort_rank": 0,
             },
             "color": "#6c757d",

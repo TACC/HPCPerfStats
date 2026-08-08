@@ -31,7 +31,7 @@ This document is ordered so the **most decision-relevant ideas come first**. Dee
 - **Empty results**: When no jobs match the current filters, the list stays on the page with a **No jobs match these filters** message in the table (this is not an error page). Adjust filters via **Modify search** or clear criteria from expanded search.
 - **Job list table**: Typical columns include job ID, submit/start/end times, **runtime**, **requested time (timelimit)**, resource shape (**nodes**, **cores**), **user**, **project**, **queue**, **state**, and **job name**. Row **background color** reflects completion state (e.g. completed vs failed vs other).
 - **Histograms** (where configured): Distribution thumbnails for metrics such as **runtime**, **node count**, and **queue wait** help you see whether your job is typical for that filter.
-- **Performance Data** column: Short status labels (e.g. summary available, monitoring gaps, not summarized yet) indicate current data readiness for each row.
+- **Performance Data** column: Short status labels indicate readiness for each row. **Metrics & Plots available** means metrics and prewarmed plot/detail artifacts are ready. **Metrics available** means metrics values exist but plots are still preparing. Other labels cover jobs that are too short, have too few samples to complete, or have not yet gone through metrics/plot computation.
 
 ---
 

@@ -127,26 +127,17 @@ from hpcperfstats.dbload.lib.shutdown_utils import (
     sleep_until_shutdown,
 )
 from hpcperfstats.site.lib.machine.job_plot_artifacts import (
-    JOB_PLOT_KINDS,
-    JOB_PLOT_LAYOUT_NORMAL,
     persist_job_plot_artifacts_for_jid,
 )
 from hpcperfstats.site.lib.machine.job_detail_artifacts import (
-    ARTIFACT_KIND_JOB_DETAIL,
-    ARTIFACT_KIND_MULTIPRECISION_MIX,
     persist_job_detail_artifacts_for_jid,
 )
 from hpcperfstats.site.lib.machine.artifact_readiness_expressions import (
-    DetailArtifactInputFingerprintHex,
-    HostDataSchemaKeyCount,
-    PlotArtifactInputFingerprintHex,
-    TypeDetailFreshFingerprintRowCount,
+    annotate_job_plots_artifacts_ready,
 )
 from hpcperfstats.site.lib.machine.models import (
     host_data,
     job_data,
-    job_detail_artifact,
-    job_plot_artifact,
     metrics_data,
 )
 from hpcperfstats.site.lib.machine.host_data_latest import (
@@ -1975,57 +1966,11 @@ def _jobs_queryset(date: Any, min_time: Any, rerun: Any) -> Any:
         & Q(live_distinct_time_count__gt=F("metrics_distinct_time_count"))
     )
     need_metrics |= live_distinct_needs_refresh
-    plot_fp_match_sq = Subquery(
-        job_plot_artifact.objects.filter(
-            jid_id=OuterRef("jid"),
-            layout=JOB_PLOT_LAYOUT_NORMAL,
-            plot_kind__in=list(JOB_PLOT_KINDS),
-            input_fingerprint=OuterRef("expected_plot_input_fp"),
-        )
-        .values("jid_id")
-        .annotate(c=Count("id"))
-        .values("c")[:1],
-        output_field=IntegerField(),
-    )
-    job_detail_ok = Exists(
-        job_detail_artifact.objects.filter(
-            jid_id=OuterRef("jid"),
-            artifact_kind=ARTIFACT_KIND_JOB_DETAIL,
-            artifact_scope="",
-            input_fingerprint=OuterRef("expected_detail_input_fp"),
-        )
-    )
-    multiprecision_mix_ok = Exists(
-        job_detail_artifact.objects.filter(
-            jid_id=OuterRef("jid"),
-            artifact_kind=ARTIFACT_KIND_MULTIPRECISION_MIX,
-            artifact_scope="",
-            input_fingerprint=OuterRef("expected_detail_input_fp"),
-        )
-    )
-    annotated = annotated.annotate(
-        expected_plot_input_fp=PlotArtifactInputFingerprintHex(
-            _host_name_suffix(),
-        ),
-        expected_detail_input_fp=DetailArtifactInputFingerprintHex(),
-        schema_type_slot_count=HostDataSchemaKeyCount(),
-        type_detail_fresh_row_count=TypeDetailFreshFingerprintRowCount(),
-    )
-    annotated = annotated.annotate(
-        plot_fp_row_matches=Coalesce(plot_fp_match_sq, int0),
-        job_detail_row_ok=job_detail_ok,
-        multiprecision_mix_row_ok=multiprecision_mix_ok,
+    annotated = annotate_job_plots_artifacts_ready(
+        annotated, _host_name_suffix()
     )
     metrics_complete = Q(md_count__gte=expected) & Q(stale_null=0)
-    need_plot_artifacts = metrics_complete & Q(
-        plot_fp_row_matches__lt=len(JOB_PLOT_KINDS),
-    )
-    need_detail_artifacts = metrics_complete & (
-        Q(job_detail_row_ok=False)
-        | Q(multiprecision_mix_row_ok=False)
-        | Q(schema_type_slot_count__gt=F("type_detail_fresh_row_count"))
-    )
-    artifact_only = need_plot_artifacts | need_detail_artifacts
+    artifact_only = metrics_complete & Q(plots_artifacts_ready=False)
   annotated = annotated.annotate(
       artifact_only_candidate=Case(
           When(artifact_only, then=Value(True)),

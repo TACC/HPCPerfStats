@@ -936,6 +936,9 @@ def _apply_job_list_performance_sort_rank_filter(
     """
     Filter annotated queryset by comma-separated performance_sort_rank values.
     
+    Shared-label ranks 2–4 (Too few samples to complete) expand so selecting
+    any one matches all three designations.
+    
     Args:
       queryset (Any): Queryset passed to this helper.
       fields (Any): Fields passed to this helper.
@@ -946,10 +949,16 @@ def _apply_job_list_performance_sort_rank_filter(
     Examples:
       >>> _apply_job_list_performance_sort_rank_filter(None, None)
     """
+    from hpcperfstats.site.lib.machine.job_list_performance import (
+        expand_performance_sort_ranks_for_filter,
+    )
+
     raw = (fields or {}).get("performance_sort_rank")
     if not raw:
         return queryset
-    ranks = parse_job_list_performance_sort_ranks(raw)
+    ranks = expand_performance_sort_ranks_for_filter(
+        parse_job_list_performance_sort_ranks(raw)
+    )
     if not ranks:
         return queryset
     if len(ranks) == 1:

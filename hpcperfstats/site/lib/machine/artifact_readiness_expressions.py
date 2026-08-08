@@ -1,9 +1,9 @@
 """
 PostgreSQL SQL expressions matching persisted artifact input fingerprints.
 
-Used by ``update_metrics._jobs_queryset`` to include jobs whose metrics are
-complete but plot or job-detail artifacts are missing or stale (fingerprint
-mismatch). Must stay aligned with ``compute_plot_input_fingerprint`` and
+Used by ``update_metrics._jobs_queryset`` and job-list Performance Data to
+detect missing or stale plot/detail artifacts (fingerprint mismatch). Must stay
+aligned with ``compute_plot_input_fingerprint`` and
 ``compute_detail_input_fingerprint``.
 """
 from __future__ import annotations
@@ -11,12 +11,35 @@ from __future__ import annotations
 from typing import Any
 
 import bokeh
-from django.db.models import CharField, IntegerField
+from django.db import connections
+from django.db.models import (
+    BooleanField,
+    Case,
+    CharField,
+    Count,
+    Exists,
+    F,
+    IntegerField,
+    OuterRef,
+    Q,
+    Subquery,
+    Value,
+    When,
+)
 from django.db.models.expressions import Expression
+from django.db.models.functions import Coalesce
 
 from hpcperfstats.site.lib.machine import job_detail_artifacts as detail_cfg
 from hpcperfstats.site.lib.machine import job_plot_artifacts as plot_cfg
-from hpcperfstats.site.lib.machine.models import job_data, job_detail_artifact
+from hpcperfstats.site.lib.machine.job_plot_artifacts import (
+    JOB_PLOT_KINDS,
+    JOB_PLOT_LAYOUT_NORMAL,
+)
+from hpcperfstats.site.lib.machine.models import (
+    job_data,
+    job_detail_artifact,
+    job_plot_artifact,
+)
 
 
 class PlotArtifactInputFingerprintHex(Expression):
@@ -663,3 +686,77 @@ class TypeDetailFreshFingerprintRowCount(Expression):
     params = [detail_cfg.ARTIFACT_KIND_TYPE_DETAIL]
     params.extend(fp_params)
     return sql, params
+
+
+def annotate_job_plots_artifacts_ready(queryset: Any, host_suffix: str) -> Any:
+  """
+  Annotate ``plots_artifacts_ready`` (and PG fingerprint helpers).
+
+  On PostgreSQL, ready means FP-matching plot rows for all ``JOB_PLOT_KINDS``,
+  fresh job_detail + multiprecision_mix rows, and type-detail coverage. On
+  other vendors, annotate ``plots_artifacts_ready=False`` (fail closed).
+
+  Args:
+    queryset: ``job_data`` queryset.
+    host_suffix: FQDN suffix (e.g. ``.cluster.example``) for plot FP SQL.
+
+  Returns:
+    Annotated queryset.
+  """
+  if connections["default"].vendor != "postgresql":
+    return queryset.annotate(
+        plots_artifacts_ready=Value(False, output_field=BooleanField()),
+    )
+  int0 = Value(0, output_field=IntegerField())
+  plot_fp_match_sq = Subquery(
+      job_plot_artifact.objects.filter(
+          jid_id=OuterRef("jid"),
+          layout=JOB_PLOT_LAYOUT_NORMAL,
+          plot_kind__in=list(JOB_PLOT_KINDS),
+          input_fingerprint=OuterRef("expected_plot_input_fp"),
+      )
+      .values("jid_id")
+      .annotate(c=Count("id"))
+      .values("c")[:1],
+      output_field=IntegerField(),
+  )
+  job_detail_ok = Exists(
+      job_detail_artifact.objects.filter(
+          jid_id=OuterRef("jid"),
+          artifact_kind=detail_cfg.ARTIFACT_KIND_JOB_DETAIL,
+          artifact_scope="",
+          input_fingerprint=OuterRef("expected_detail_input_fp"),
+      )
+  )
+  multiprecision_mix_ok = Exists(
+      job_detail_artifact.objects.filter(
+          jid_id=OuterRef("jid"),
+          artifact_kind=detail_cfg.ARTIFACT_KIND_MULTIPRECISION_MIX,
+          artifact_scope="",
+          input_fingerprint=OuterRef("expected_detail_input_fp"),
+      )
+  )
+  annotated = queryset.annotate(
+      expected_plot_input_fp=PlotArtifactInputFingerprintHex(host_suffix),
+      expected_detail_input_fp=DetailArtifactInputFingerprintHex(),
+      schema_type_slot_count=HostDataSchemaKeyCount(),
+      type_detail_fresh_row_count=TypeDetailFreshFingerprintRowCount(),
+  )
+  annotated = annotated.annotate(
+      plot_fp_row_matches=Coalesce(plot_fp_match_sq, int0),
+      job_detail_row_ok=job_detail_ok,
+      multiprecision_mix_row_ok=multiprecision_mix_ok,
+  )
+  ready_q = (
+      Q(plot_fp_row_matches__gte=len(JOB_PLOT_KINDS))
+      & Q(job_detail_row_ok=True)
+      & Q(multiprecision_mix_row_ok=True)
+      & Q(schema_type_slot_count__lte=F("type_detail_fresh_row_count"))
+  )
+  return annotated.annotate(
+      plots_artifacts_ready=Case(
+          When(ready_q, then=Value(True)),
+          default=Value(False),
+          output_field=BooleanField(),
+      ),
+  )

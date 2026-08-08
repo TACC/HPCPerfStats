@@ -360,7 +360,7 @@ export default function JobList() {
   const sortQuery = (orderByValue: string) =>
     new URLSearchParams({ ...paginationParams, order_by: orderByValue, page: "1" }).toString();
   // First-click direction is the column's natural default. performance_sort_rank
-  // sorts ascending so rank 0 ("Summary available") appears first; numeric/time
+  // sorts ascending so rank 0 ("Metrics & Plots available") appears first; numeric/time
   // columns default to descending so largest/newest values come first.
   const sortLink = (field: SortField) => {
     const defaultDir = defaultDirByField[field] || "desc";

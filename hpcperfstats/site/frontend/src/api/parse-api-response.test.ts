@@ -362,9 +362,9 @@ describe("parse-api-response", () => {
           runtime: 3600,
           host_list: ["n001.cluster.example"],
           performance: {
-            label: "Summary available",
+            label: "Metrics & Plots available",
             tone: "success",
-            aria_label: "Performance: Summary available",
+            aria_label: "Performance: Metrics & Plots available",
             sort_rank: 0,
           },
         },
@@ -399,9 +399,9 @@ describe("parse-api-response", () => {
           sample_count: null,
           host_list: ["n003.cluster.example"],
           performance: {
-            label: "Summary available",
+            label: "Metrics & Plots available",
             tone: "success",
-            aria_label: "Performance: Summary available",
+            aria_label: "Performance: Metrics & Plots available",
             sort_rank: 0,
           },
         },

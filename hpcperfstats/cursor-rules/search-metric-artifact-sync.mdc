@@ -16,6 +16,7 @@ When changing any job search parameter, derived metric, prewarmed artifact/table
 - **Derived metrics list:** Extended Search metric options must come from the same catalog as Job Detail Metrics: `job_metrics_catalog_entries()` / `metrics_list`.
 - **Database filtering:** derived metric filters must query persisted/prewarmed metric rows in `metrics_data`; new searchable artifact/database tables need explicit filter logic and stale/missing-data behavior.
 - **Candidate selection:** if a new prewarmed artifact/table is produced by `update_metrics`, update `_jobs_queryset` so jobs missing or stale for that data are selected.
+- **Job list Performance Data:** **Metrics & Plots available** requires the same fingerprint-matching plot/detail readiness as pipeline `plots_artifacts_ready` / non-`artifact_only` (shared `annotate_job_plots_artifacts_ready`). Metrics values alone are **Metrics available**. Keep list annotate and catch-up predicate aligned.
 - **Docs:** update `docs/using-the-website-as-a-researcher.md` when users see a new or changed search field, metric, or no-data behavior.
 
 ## Tests

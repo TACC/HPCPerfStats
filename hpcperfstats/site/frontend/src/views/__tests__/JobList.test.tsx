@@ -133,9 +133,9 @@ describe("JobList", () => {
           {
             jid: 1,
             performance: {
-              label: "Summary available",
+              label: "Metrics & Plots available",
               tone: "success",
-              aria_label: "Performance: Summary available",
+              aria_label: "Performance: Metrics & Plots available",
               sort_rank: 0,
             },
             username: "alice",
@@ -460,9 +460,9 @@ describe("JobList", () => {
           {
             jid: 1,
             performance: {
-              label: "Summary available",
+              label: "Metrics & Plots available",
               tone: "success",
-              aria_label: "Performance: Summary available",
+              aria_label: "Performance: Metrics & Plots available",
               sort_rank: 0,
             },
             username: "alice",
@@ -583,9 +583,9 @@ describe("JobList", () => {
         {
           jid: 1,
           performance: {
-            label: "Summary available",
+            label: "Metrics & Plots available",
             tone: "success",
-            aria_label: "Performance: Summary available",
+            aria_label: "Performance: Metrics & Plots available",
             sort_rank: 0,
           },
           username: "alice",
@@ -625,7 +625,7 @@ describe("JobList", () => {
     expect(tableHeaders[tableHeaders.length - 1].textContent.trim()).toBe("name");
     expect(screen.getByText("job1")).toBeInTheDocument();
     expect(screen.getByText("COMPLETED")).toBeInTheDocument();
-    expect(screen.getByText("Summary available")).toBeInTheDocument();
+    expect(screen.getByText("Metrics & Plots available")).toBeInTheDocument();
   });
 
   it("renders desktop distributions above Refine this list", async () => {
@@ -683,9 +683,9 @@ describe("JobList", () => {
           jid: 1,
           sample_count: 1234,
           performance: {
-            label: "Summary available",
+            label: "Metrics & Plots available",
             tone: "success",
-            aria_label: "Performance: Summary available",
+            aria_label: "Performance: Metrics & Plots available",
             sort_rank: 0,
           },
           username: "alice",
@@ -725,9 +725,9 @@ describe("JobList", () => {
           jid: 1,
           sample_count: 10,
           performance: {
-            label: "Summary available",
+            label: "Metrics & Plots available",
             tone: "success",
-            aria_label: "Performance: Summary available",
+            aria_label: "Performance: Metrics & Plots available",
             sort_rank: 0,
           },
           username: "alice",
@@ -767,9 +767,9 @@ describe("JobList", () => {
         {
           jid: 1,
           performance: {
-            label: "Summary available",
+            label: "Metrics & Plots available",
             tone: "success",
-            aria_label: "Performance: Summary available",
+            aria_label: "Performance: Metrics & Plots available",
             sort_rank: 0,
           },
           username: "alice",
@@ -809,9 +809,9 @@ describe("JobList", () => {
         {
           jid: 1,
           performance: {
-            label: "Summary available",
+            label: "Metrics & Plots available",
             tone: "success",
-            aria_label: "Performance: Summary available",
+            aria_label: "Performance: Metrics & Plots available",
             sort_rank: 0,
           },
           username: "alice",
@@ -863,9 +863,9 @@ describe("JobList", () => {
         {
           jid: 1,
           performance: {
-            label: "Summary available",
+            label: "Metrics & Plots available",
             tone: "success",
-            aria_label: "Performance: Summary available",
+            aria_label: "Performance: Metrics & Plots available",
             sort_rank: 0,
           },
           username: "alice",
@@ -1001,9 +1001,9 @@ describe("JobList", () => {
           {
             jid: 1,
             performance: {
-              label: "Summary available",
+              label: "Metrics & Plots available",
               tone: "success",
-              aria_label: "Performance: Summary available",
+              aria_label: "Performance: Metrics & Plots available",
               sort_rank: 0,
             },
             username: "alice",
@@ -1125,9 +1125,9 @@ describe("JobList", () => {
         {
           jid: 1,
           performance: {
-            label: "Summary available",
+            label: "Metrics & Plots available",
             tone: "success",
-            aria_label: "Performance: Summary available",
+            aria_label: "Performance: Metrics & Plots available",
             sort_rank: 0,
           },
           username: "alice",
@@ -1190,9 +1190,9 @@ describe("JobList", () => {
         jid: 1,
         sample_count: 1234,
         performance: {
-          label: "Summary available",
+          label: "Metrics & Plots available",
           tone: "success",
-          aria_label: "Performance: Summary available",
+          aria_label: "Performance: Metrics & Plots available",
           sort_rank: 0,
         },
         username: "alice",
@@ -1241,7 +1241,7 @@ describe("JobList", () => {
       expect(getOrderByFromHref(link)).toBe("-sample_count");
     });
 
-    it("first click on Performance Data sorts so Summary available is first (ascending)", async () => {
+    it("first click on Performance Data sorts so Metrics & Plots available is first (ascending)", async () => {
       mockJobListWithOrderBy("-end_time");
       renderJobList("/jobs", { is_staff: false });
 

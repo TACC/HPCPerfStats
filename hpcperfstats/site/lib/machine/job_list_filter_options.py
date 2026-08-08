@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .job_list_performance import PERFORMANCE_STATUS_BY_SORT_RANK, performance_status_label
+from .job_list_performance import PERFORMANCE_STATUS_BY_SORT_RANK
 from .job_list_state_groups import major_state_options_from_raw
 
 JOB_LIST_FILTER_OPTIONS_MAX = 200
@@ -137,9 +137,14 @@ def build_job_list_filter_options(
         .order_by("performance_sort_rank")
     )
     ranks_present = {rank for rank in rank_rows if rank is not None}
-    options["performance_statuses"] = [
-        {"sort_rank": rank, "label": performance_status_label(rank)}
-        for rank, _label in PERFORMANCE_STATUS_BY_SORT_RANK
-        if rank in ranks_present
-    ]
+    # One facet per UI label; shared Too-few ranks (2–4) collapse to the lowest
+    # present designation (filter expands via expand_performance_sort_ranks_for_filter).
+    seen_labels = set()
+    statuses = []
+    for rank, label in PERFORMANCE_STATUS_BY_SORT_RANK:
+        if rank not in ranks_present or label in seen_labels:
+            continue
+        seen_labels.add(label)
+        statuses.append({"sort_rank": rank, "label": label})
+    options["performance_statuses"] = statuses
     return options

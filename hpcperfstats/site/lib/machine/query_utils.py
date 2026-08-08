@@ -129,7 +129,7 @@ def parse_job_list_multi_value_field(raw: Any) -> Any:
 
 def parse_job_list_performance_sort_ranks(raw: Any) -> Any:
     """
-    Parse comma-separated performance_sort_rank tokens (0–5); drop invalid.
+    Parse comma-separated performance_sort_rank tokens (0–6); drop invalid.
     
     Args:
       raw (Any): Raw passed to this helper.
@@ -147,7 +147,7 @@ def parse_job_list_performance_sort_ranks(raw: Any) -> Any:
             rank = int(token)
         except (TypeError, ValueError):
             continue
-        if rank < 0 or rank > 5 or rank in seen:
+        if rank < 0 or rank > 6 or rank in seen:
             continue
         seen.add(rank)
         ranks.append(rank)

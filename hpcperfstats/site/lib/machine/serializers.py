@@ -69,11 +69,15 @@ class JobListSerializer(serializers.ModelSerializer):
         mcount = getattr(obj, "metrics_value_count", None)
         if mcount is None:
             mcount = obj.metrics_data_set.filter(value__isnull=False).count()
+        plots_ready = getattr(obj, "plots_artifacts_ready", None)
+        if plots_ready is None:
+            plots_ready = False
         return summarize_performance(
             has_metrics_row=bool(has_row),
             metrics_value_count=int(mcount),
             distinct_time_count=obj.metrics_distinct_time_count,
             runtime=obj.runtime,
+            plots_artifacts_ready=bool(plots_ready),
         )
 
     def get_color(self, obj: Any) -> Any:
