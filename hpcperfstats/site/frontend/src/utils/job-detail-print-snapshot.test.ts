@@ -6,6 +6,8 @@ import {
   disposeBokehViewsForTarget,
   disposeJobDetailPrintBokehTargets,
   jobDetailPrintBokehTargetIds,
+  targetHasPrintableBokehCanvases,
+  waitForPrintBokehCanvases,
   PRINT_SNAPSHOT_FALLBACK_PNG,
 } from "./job-detail-print-snapshot";
 
@@ -174,5 +176,50 @@ describe("disposeJobDetailPrintBokehTargets", () => {
 describe("disposeBokehViewsForTarget", () => {
   it("no-ops without Bokeh index", () => {
     expect(() => disposeBokehViewsForTarget(document.createElement("div"))).not.toThrow();
+  });
+});
+
+describe("waitForPrintBokehCanvases", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("resolves immediately when mounted targets already have printable canvases", async () => {
+    const target = document.createElement("div");
+    target.id = "job-mscript-3";
+    document.body.appendChild(target);
+    appendBokehShadowCanvas(target, { width: 20, height: 10 });
+    expect(targetHasPrintableBokehCanvases(target)).toBe(true);
+
+    await expect(
+      waitForPrintBokehCanvases("3", { timeoutMs: 200, pollMs: 20 }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("times out without hanging when a mounted target never gets canvases", async () => {
+    const target = document.createElement("div");
+    target.id = "job-mscript-4";
+    target.appendChild(document.createElement("div")).className = "bk-root";
+    document.body.appendChild(target);
+    expect(targetHasPrintableBokehCanvases(target)).toBe(false);
+
+    const started = Date.now();
+    await waitForPrintBokehCanvases("4", { timeoutMs: 80, pollMs: 20 });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(70);
+  });
+
+  it("resolves when canvases appear before timeout", async () => {
+    const target = document.createElement("div");
+    target.id = "job-roofline-5";
+    target.appendChild(document.createElement("div")).className = "bk-root";
+    document.body.appendChild(target);
+
+    window.setTimeout(() => {
+      target.innerHTML = "";
+      appendBokehShadowCanvas(target, { width: 12, height: 8 });
+    }, 30);
+
+    await waitForPrintBokehCanvases("5", { timeoutMs: 500, pollMs: 15 });
+    expect(targetHasPrintableBokehCanvases(target)).toBe(true);
   });
 });

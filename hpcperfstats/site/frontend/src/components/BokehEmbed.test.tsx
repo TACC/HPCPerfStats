@@ -313,6 +313,40 @@ describe("BokehEmbed", () => {
     dispatchSpy.mockRestore();
   });
 
+  it("printCaptureLayout with previewMode one-shots resize but does not subscribe maximize-on-resize", async () => {
+    await drainBokehResizeBroadcasts();
+    const addSpy = vi.spyOn(window, "addEventListener");
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+    const onReady = vi.fn();
+    const embedItem = vi.fn(() => Promise.resolve(embedViewsWithIdleDoc()));
+    window.Bokeh = { embed: { embed_item: embedItem } };
+
+    renderBokehEmbed(
+      <BokehEmbed
+        item={VALID_BOKEH_JSON_ITEM}
+        id="bokeh-print-capture-test"
+        plotName="Summary plot"
+        maximizeInContainer="width"
+        previewMode
+        printCaptureLayout
+        onPlotReadyChange={onReady}
+      />,
+    );
+
+    await waitFor(() => expect(embedItem).toHaveBeenCalled());
+    await waitFor(() => expect(onReady).toHaveBeenCalledWith(true));
+    await drainBokehResizeBroadcasts();
+
+    const resizeDispatches = dispatchSpy.mock.calls.filter(
+      (call) => call[0] instanceof Event && call[0].type === "resize",
+    );
+    expect(resizeDispatches.length).toBeGreaterThan(0);
+    expect(addSpy.mock.calls.some((call) => call[0] === "resize")).toBe(false);
+
+    addSpy.mockRestore();
+    dispatchSpy.mockRestore();
+  });
+
   it("defers embed until IntersectionObserver reports intersecting when deferEmbedUntilVisible is true", async () => {
     let intersectionCallback = null;
     class MockIntersectionObserver {

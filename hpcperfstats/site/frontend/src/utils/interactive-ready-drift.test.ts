@@ -117,6 +117,8 @@ describe("interactive-ready drift guard", () => {
   it("Job Detail rank-0 print freezes plots, uses previewMode, and React-owned snapshots", () => {
     const jobDetail = readFileSync(join(SRC_ROOT, "views/JobDetail.tsx"), "utf8");
     expect(jobDetail).toMatch(/previewMode=\{printMountsPlotPanels/);
+    expect(jobDetail).toMatch(/printCaptureLayout=\{printMountsPlotPanels/);
+    expect(jobDetail).toMatch(/waitForPrintBokehCanvases/);
     expect(jobDetail).toMatch(/PRINT_EMBED_STAGGER/);
     expect(jobDetail).toMatch(/mergePrintPlotsFreeze/);
     expect(jobDetail).toMatch(/mergePrintMultiprecisionFreeze/);
@@ -129,7 +131,12 @@ describe("interactive-ready drift guard", () => {
       "utf8",
     );
     expect(snapshotHelper).toMatch(/collectBokehCanvases/);
+    expect(snapshotHelper).toMatch(/waitForPrintBokehCanvases/);
     expect(snapshotHelper).toMatch(/shadowRoot/);
+    const bokehEmbed = readFileSync(join(SRC_ROOT, "components/BokehEmbed.tsx"), "utf8");
+    expect(bokehEmbed).toMatch(/printCaptureLayout/);
+    expect(bokehEmbed).toMatch(/broadcastResize: !previewMode \|\| oneShotPrintLayout/);
+    expect(bokehEmbed).toMatch(/previewMode, printCaptureLayout/);
     const globalsCss = readFileSync(join(SRC_ROOT, "globals.css"), "utf8");
     expect(globalsCss).toMatch(
       /\[data-job-detail-print="1"\] \[data-testid="variable-info-help"\]/,
@@ -141,6 +148,7 @@ describe("interactive-ready drift guard", () => {
       "utf8",
     );
     expect(designRule).toMatch(/previewMode/);
+    expect(designRule).toMatch(/printCaptureLayout/);
     expect(designRule).toMatch(/React state/);
     expect(designRule).toMatch(/VariableInfoLabel/);
     expect(designRule).toMatch(/shadowRoot|shadow root/i);

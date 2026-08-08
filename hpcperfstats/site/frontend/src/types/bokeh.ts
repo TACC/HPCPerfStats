@@ -29,6 +29,12 @@ export type BokehEmbedProps = {
    * no global resize reflow cascade, no continuous maximize-on-resize listener.
    */
   previewMode?: boolean;
+  /**
+   * Job Detail print prep: with ``previewMode``, run one-shot maximize + resize
+   * and wait for non-zero shadow canvases before ``onPlotReadyChange(true)``.
+   * Does not register a continuous resize listener (OOM guard preserved).
+   */
+  printCaptureLayout?: boolean;
 };
 
 export type BokehPlotWithLimitationProps = BokehEmbedProps & {

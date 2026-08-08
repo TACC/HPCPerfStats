@@ -26,7 +26,11 @@ import { prepareBokehJsonItemForEmbed } from "../utils/remap-bokeh-json-item-ids
 import { yieldToMainThread } from "../utils/yield-main-thread";
 import { parseBokehJsonItem } from "@/schemas/api/bokeh-json-item-schema";
 import { waitForBokehEmbedDocumentIdle } from "../utils/bokeh-when-document-idle";
+import { collectBokehCanvases } from "../utils/job-detail-print-snapshot";
 import { ensureBokehLoaded } from "../bokehInit";
+
+/** Bound wait after print one-shot layout before marking embed ready for capture. */
+const PRINT_CAPTURE_CANVAS_WAIT_MS = 3000;
 
 type WhenBokehReadyOptions = { signal?: AbortSignal };
 type LayoutWaitOptions = { timeoutMs?: number; signal?: AbortSignal };
@@ -154,6 +158,65 @@ function disposeBokehViewsForTarget(targetEl: HTMLElement | null) {
     } catch {
       // Best-effort teardown for stale embedded roots.
     }
+  });
+}
+
+function targetHasNonZeroBokehCanvas(targetId: string): boolean {
+  const el = typeof document !== "undefined" ? document.getElementById(targetId) : null;
+  if (!el) return false;
+  return collectBokehCanvases(el).some((c) => c.width > 0 && c.height > 0);
+}
+
+/**
+ * Poll until the embed target has a non-zero shadow canvas (print capture gate).
+ * Resolves false on abort/timeout without throwing.
+ */
+function waitForNonZeroBokehCanvas(
+  targetId: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (isVitestLike()) {
+    return Promise.resolve(true);
+  }
+  if (targetHasNonZeroBokehCanvas(targetId)) {
+    return Promise.resolve(true);
+  }
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(ok);
+    };
+    const onAbort = () => finish(false);
+    if (signal) {
+      if (signal.aborted) {
+        finish(false);
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    const poll = () => {
+      if (signal?.aborted) {
+        finish(false);
+        return;
+      }
+      if (targetHasNonZeroBokehCanvas(targetId)) {
+        finish(true);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        finish(false);
+        return;
+      }
+      timer = setTimeout(poll, 40);
+    };
+    poll();
   });
 }
 
@@ -322,6 +385,7 @@ const BOKEH_EMBED_MIN_HEIGHT_PX = 280;
  * @param {number} [intersectionThreshold] Passed to IntersectionObserver (default 0.01).
  * @param {number} [embedSettleAfterIdleMs] After Bokeh document idle, delay this many ms before releasing the global embed lock (default 24 in production, 0 in Vitest).
  * @param {boolean} [previewMode] List/dashboard preview: pointer-events none on plot root; skip global resize reflow and continuous maximize-on-resize.
+ * @param {boolean} [printCaptureLayout] Job Detail print: with previewMode, one-shot maximize+resize and wait for canvases before ready (no continuous resize listener).
  */
 export default function BokehEmbed({
   item,
@@ -343,6 +407,7 @@ export default function BokehEmbed({
   embedAllowed = true,
   embedStaggerIndex = 0,
   previewMode = false,
+  printCaptureLayout = false,
 }: BokehEmbedProps) {
   const session = useSession();
   const canViewErrorDetails = !!session?.is_staff;
@@ -384,6 +449,8 @@ export default function BokehEmbed({
         ? "stretch_both"
         : null;
 
+  // Reset failure/ready when item/id changes, and when leaving/entering print
+  // preview so a zero-size print failure cannot stick after afterprint.
   useEffect(() => {
     setPlotReady(false);
     setLoadFailed(false);
@@ -391,7 +458,7 @@ export default function BokehEmbed({
     setErrorDetailsOpen(false);
     setCopyStatus("");
     onPlotReadyChangeRef.current?.(false);
-  }, [item, id]);
+  }, [item, id, previewMode, printCaptureLayout]);
 
   useLayoutEffect(() => {
     if (!item) {
@@ -492,16 +559,41 @@ export default function BokehEmbed({
                         failEmbed("Chart container changed before render completed.");
                         return;
                       }
+                      const oneShotPrintLayout = previewMode && printCaptureLayout;
                       if (!previewMode) {
                         scheduleBokehLayoutReflow();
                       }
                       if (maximizeMode) {
+                        // Print: one-shot resize so stretch_width gridplots paint;
+                        // thumbs keep broadcastResize false (OOM guard).
                         maximizeEmbeddedPlot(id, maximizeMode, {
-                          broadcastResize: !previewMode,
+                          broadcastResize: !previewMode || oneShotPrintLayout,
+                        });
+                      } else if (oneShotPrintLayout && typeof window !== "undefined") {
+                        // Fixed-size pies still need a resize pass for legend/label text.
+                        requestAnimationFrame(() => {
+                          requestAnimationFrame(() => {
+                            window.dispatchEvent(new Event("resize"));
+                          });
                         });
                       }
-                      setPlotReady(true);
-                      onPlotReadyChangeRef.current?.(true);
+                      const finishReady = () => {
+                        if (cancelled) return;
+                        setPlotReady(true);
+                        onPlotReadyChangeRef.current?.(true);
+                      };
+                      if (oneShotPrintLayout) {
+                        void waitForNonZeroBokehCanvas(
+                          id,
+                          PRINT_CAPTURE_CANVAS_WAIT_MS,
+                          bokehWait.signal,
+                        ).then(() => {
+                          // Timeout still marks ready; finishPrintPrep canvas wait is backup.
+                          finishReady();
+                        });
+                        return;
+                      }
+                      finishReady();
                     }
                     if (typeof requestAnimationFrame === "function") {
                       requestAnimationFrame(() => requestAnimationFrame(markPlotReady));
@@ -557,6 +649,7 @@ export default function BokehEmbed({
     embedAllowed,
     embedStaggerMs,
     previewMode,
+    printCaptureLayout,
     failEmbed,
   ]);
 

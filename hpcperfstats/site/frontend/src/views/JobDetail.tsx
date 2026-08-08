@@ -94,6 +94,7 @@ import {
 import {
   captureJobDetailPrintBokehSnapshots,
   disposeJobDetailPrintBokehTargets,
+  waitForPrintBokehCanvases,
 } from "@/utils/job-detail-print-snapshot";
 import type { JobPlotsState } from "@/types/view-models";
 
@@ -208,6 +209,8 @@ type PlotPanelProps = {
   deferEmbedUntilVisible?: boolean;
   /** Print prep: suppress global resize/maximize storms. */
   previewMode?: boolean;
+  /** Print prep: one-shot resize + canvas wait before ready (with previewMode). */
+  printCaptureLayout?: boolean;
   /** Print prep: stagger concurrent embed_item starts. */
   embedStaggerIndex?: number;
 };
@@ -411,6 +414,7 @@ const PlotPanel = memo(function PlotPanel({
   onPlotReadyChange,
   deferEmbedUntilVisible,
   previewMode,
+  printCaptureLayout,
   embedStaggerIndex,
 }: PlotPanelProps) {
   const plotDescId = `${id}-plot-desc`;
@@ -432,6 +436,7 @@ const PlotPanel = memo(function PlotPanel({
         onPlotReadyChange={onPlotReadyChange}
         deferEmbedUntilVisible={deferEmbedUntilVisible}
         previewMode={previewMode}
+        printCaptureLayout={printCaptureLayout}
         embedStaggerIndex={embedStaggerIndex}
       />
     </div>
@@ -478,6 +483,7 @@ export default function JobDetail() {
   );
   const [printSnapshotsReady, setPrintSnapshotsReady] = useState(false);
   const printOpenedRef = useRef(false);
+  const printFinishStartedRef = useRef(false);
   const printPrepStartedAtRef = useRef<number | null>(null);
   const printAfterPrintCleanupRef = useRef<(() => void) | null>(null);
   const printIncludesPlotsRef = useRef(false);
@@ -503,6 +509,7 @@ export default function JobDetail() {
     setPrintPlotSnapshots({});
     setPrintSnapshotsReady(false);
     printOpenedRef.current = false;
+    printFinishStartedRef.current = false;
     printPrepStartedAtRef.current = null;
   }, [pk]);
 
@@ -623,20 +630,30 @@ export default function JobDetail() {
     setPrintPlotSnapshots({});
     setPrintSnapshotsReady(false);
     printOpenedRef.current = false;
+    printFinishStartedRef.current = false;
     printPrepStartedAtRef.current = null;
   }, []);
 
   /** Capture React-owned snapshots (if plots), then open print after paint. */
   const finishPrintPrep = useCallback(() => {
-    if (printOpenedRef.current || printSnapshotsReady) return;
-    if (printIncludesPlotsRef.current && pk) {
-      const snaps = captureJobDetailPrintBokehSnapshots(pk);
-      setPrintPlotSnapshots(snaps);
-      // Dispose only captured targets; keep live embeds when capture missed canvases.
-      disposeJobDetailPrintBokehTargets(pk, Object.keys(snaps));
-    } else {
-      setPrintPlotSnapshots({});
+    if (printOpenedRef.current || printSnapshotsReady || printFinishStartedRef.current) {
+      return;
     }
+    printFinishStartedRef.current = true;
+    if (printIncludesPlotsRef.current && pk) {
+      void (async () => {
+        await waitForPrintBokehCanvases(pk, { timeoutMs: 2500 });
+        if (printOpenedRef.current) return;
+        const snaps = captureJobDetailPrintBokehSnapshots(pk);
+        setPrintPlotSnapshots(snaps);
+        // Dispose only captured targets; keep live embeds when capture missed canvases.
+        disposeJobDetailPrintBokehTargets(pk, Object.keys(snaps));
+        setPrintPreparing(false);
+        setPrintSnapshotsReady(true);
+      })();
+      return;
+    }
+    setPrintPlotSnapshots({});
     setPrintPreparing(false);
     setPrintSnapshotsReady(true);
   }, [pk, printSnapshotsReady]);
@@ -679,6 +696,7 @@ export default function JobDetail() {
     printAfterPrintCleanupRef.current?.();
     printAfterPrintCleanupRef.current = null;
     printOpenedRef.current = false;
+    printFinishStartedRef.current = false;
     printPrepStartedAtRef.current = Date.now();
     setPrintEmbedReady({});
     setPrintFrozenPlots(null);
@@ -1075,6 +1093,7 @@ export default function JobDetail() {
             onPlotReadyChange={(ready) => markPrintEmbedReady(printReadyKey, ready)}
             deferEmbedUntilVisible={printMountsPlotPanels ? false : undefined}
             previewMode={printMountsPlotPanels || undefined}
+            printCaptureLayout={printMountsPlotPanels || undefined}
             embedStaggerIndex={
               printMountsPlotPanels ? PRINT_EMBED_STAGGER[printReadyKey] : undefined
             }
@@ -1704,6 +1723,7 @@ export default function JobDetail() {
                               printMountsPlotPanels ? false : undefined
                             }
                             previewMode={printMountsPlotPanels || undefined}
+                            printCaptureLayout={printMountsPlotPanels || undefined}
                             embedStaggerIndex={
                               printMountsPlotPanels
                                 ? PRINT_EMBED_STAGGER.multiprecision_cpu
@@ -1763,6 +1783,7 @@ export default function JobDetail() {
                               printMountsPlotPanels ? false : undefined
                             }
                             previewMode={printMountsPlotPanels || undefined}
+                            printCaptureLayout={printMountsPlotPanels || undefined}
                             embedStaggerIndex={
                               printMountsPlotPanels
                                 ? PRINT_EMBED_STAGGER.multiprecision_gpu

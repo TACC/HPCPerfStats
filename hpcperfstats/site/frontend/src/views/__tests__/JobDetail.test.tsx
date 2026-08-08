@@ -62,6 +62,7 @@ vi.mock("@/utils/job-detail-print-snapshot", () => ({
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   })),
   disposeJobDetailPrintBokehTargets: vi.fn(),
+  waitForPrintBokehCanvases: vi.fn(() => Promise.resolve()),
   jobDetailPrintBokehTargetIds: (pk: string) => [
     `job-mscript-${pk}`,
     `job-roofline-${pk}`,

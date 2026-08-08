@@ -127,6 +127,51 @@ export function captureBokehTargetDataUrl(targetEl: HTMLElement): string | null 
   return dataUrl;
 }
 
+/** True when ``targetEl`` has at least one shadow-reachable canvas with a non-zero buffer. */
+export function targetHasPrintableBokehCanvases(targetEl: HTMLElement): boolean {
+  return collectBokehCanvases(targetEl).some((c) => c.width > 0 && c.height > 0);
+}
+
+export type WaitForPrintBokehCanvasesOptions = {
+  /** Total poll budget (default 2500 ms). */
+  timeoutMs?: number;
+  /** Poll interval (default 50 ms). */
+  pollMs?: number;
+  signal?: AbortSignal;
+};
+
+/**
+ * Poll until every mounted print-scoped Bokeh target for ``pk`` that still has
+ * children has at least one non-zero canvas, or until ``timeoutMs``.
+ * Empty / missing targets are skipped (unavailable plots already omitted).
+ */
+export async function waitForPrintBokehCanvases(
+  pk: string,
+  options: WaitForPrintBokehCanvasesOptions = {},
+): Promise<void> {
+  if (!pk || typeof document === "undefined") return;
+  const timeoutMs = options.timeoutMs ?? 2500;
+  const pollMs = options.pollMs ?? 50;
+  const deadline = Date.now() + timeoutMs;
+
+  const pendingTargets = (): boolean => {
+    for (const id of jobDetailPrintBokehTargetIds(pk)) {
+      const el = document.getElementById(id);
+      if (!el || el.children.length === 0) continue;
+      if (!targetHasPrintableBokehCanvases(el)) return true;
+    }
+    return false;
+  };
+
+  while (Date.now() < deadline) {
+    if (options.signal?.aborted) return;
+    if (!pendingTargets()) return;
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, pollMs);
+    });
+  }
+}
+
 /** Capture every existing print-scoped Bokeh target for ``pk`` (id → dataUrl). */
 export function captureJobDetailPrintBokehSnapshots(pk: string): Record<string, string> {
   const out: Record<string, string> = {};
