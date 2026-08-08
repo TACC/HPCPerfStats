@@ -170,6 +170,11 @@
   display: none !important;
 }
 
+/* Rank-1 metrics-only print: never show Summary / Roofline / Multiprecision panels. */
+[data-job-detail-print="1"][data-job-detail-print-plots="0"] .job-detail-print-plots-rank0-only {
+  display: none !important;
+}
+
 .job-detail-print-only {
   display: none;
 }
@@ -181,7 +186,8 @@
   .job-detail-print-button,
   .job-detail-analysis-tablist,
   .job-detail-print-hide,
-  [data-job-detail-print="1"] .job-detail-print-out-of-scope {
+  [data-job-detail-print="1"] .job-detail-print-out-of-scope,
+  [data-job-detail-print="1"][data-job-detail-print-plots="0"] .job-detail-print-plots-rank0-only {
     display: none !important;
   }
 

@@ -13,6 +13,28 @@ describe("jobMetricSourceSectionId", () => {
     ).toBe("cpu");
   });
 
+  it("maps legacy mem/numa/opa types out of Misc", () => {
+    expect(jobMetricSourceSectionId({ type: "mem", metric: "mem_hwm" })).toBe("cpu");
+    expect(
+      jobMetricSourceSectionId({ type: "numa", metric: "max_numa_remote_rate" }),
+    ).toBe("cpu");
+    expect(
+      jobMetricSourceSectionId({ type: "opa", metric: "max_opa_congestion_rate" }),
+    ).toBe("network");
+  });
+
+  it("falls back by metric name for mem_hwm / NUMA / OPA when type is wrong", () => {
+    expect(jobMetricSourceSectionId({ type: "future_widget", metric: "mem_hwm" })).toBe(
+      "cpu",
+    );
+    expect(
+      jobMetricSourceSectionId({ type: null, metric: "max_numa_remote_rate" }),
+    ).toBe("cpu");
+    expect(
+      jobMetricSourceSectionId({ type: "", metric: "max_opa_congestion_rate" }),
+    ).toBe("network");
+  });
+
   it("maps Intel IMC and AMD DF family types to CPU via prefix", () => {
     expect(
       jobMetricSourceSectionId({ type: "intel_x86_uncore_imc_spr", metric: "avg_mbw" }),

@@ -1,6 +1,6 @@
 /**
  * Job Detail browser-print helpers (Save as PDF via window.print).
- * In-scope: overview, scheduling, resources, Metrics, Summary, Roofline, Multiprecision Mix.
+ * In-scope: overview, scheduling, resources, Metrics; plus Summary/Roofline/MP at rank 0.
  */
 
 /** Max wait for plots/embeds before opening the print dialog anyway. */
@@ -9,12 +9,32 @@ export const JOB_DETAIL_PRINT_READY_TIMEOUT_MS = 20_000;
 /** Safety clear of print layout if afterprint never fires. */
 export const JOB_DETAIL_PRINT_AFTERPRINT_FALLBACK_MS = 60_000;
 
+/** Copy for ranks that cannot print (2–6 / missing). */
+export const JOB_DETAIL_PRINT_NO_DATA_MESSAGE = "There is no data to print.";
+
 export type JobDetailPrintPlotKey =
   | "summary_plot"
   | "roofline"
   | "gpu_roofline"
   | "multiprecision_cpu"
   | "multiprecision_gpu";
+
+export type JobDetailPrintClickAction =
+  | "print_with_plots"
+  | "print_metrics_only"
+  | "no_data";
+
+/**
+ * Decide Print click behavior from Performance Data sort_rank.
+ * Rank 0: metrics + plots; rank 1: metrics only; 2–6 / missing: no-data dialog.
+ */
+export function jobDetailPrintClickAction(
+  sortRank: number | null,
+): JobDetailPrintClickAction {
+  if (sortRank === 0) return "print_with_plots";
+  if (sortRank === 1) return "print_metrics_only";
+  return "no_data";
+}
 
 /** A print-scoped plot is settled when not loading and either unavailable or embed-ready. */
 export function isPrintScopedPlotSettled(opts: {
@@ -34,19 +54,14 @@ export type JobDetailPrintReadinessInput = {
   rooflineSettled: boolean;
   gpuRooflineSettled: boolean;
   multiprecisionSettled: boolean;
-  /** Ranks 2–5 / missing: no plots expected — print can proceed without embeds. */
-  plotsUnavailableTerminal?: boolean;
-  /** Ranks 1 / 6: waiting for performance rank 0 before plot loads. */
-  plotsPerformancePending?: boolean;
+  /** Rank 1: print Metrics (and overview) without waiting for plot embeds. */
+  printMetricsOnly?: boolean;
 };
 
 /** True when all in-scope print surfaces are ready enough to open the print dialog. */
 export function isJobDetailPrintReady(input: JobDetailPrintReadinessInput): boolean {
-  if (input.plotsUnavailableTerminal) {
+  if (input.printMetricsOnly) {
     return true;
-  }
-  if (input.plotsPerformancePending) {
-    return false;
   }
   if (!input.multiprecisionSettled) return false;
   if (input.plotsFetchFailed) {

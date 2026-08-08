@@ -247,6 +247,7 @@ describe("JobDetail", () => {
 
     await waitFor(() => {
       expect(document.querySelector("[data-job-detail-print='1']")).toBeTruthy();
+      expect(document.querySelector("[data-job-detail-print-plots='1']")).toBeTruthy();
       // In-scope inactive tab panels stay [hidden] for a11y; print CSS unhides them.
       expect(
         screen.getByRole("heading", { name: "Summary plot", level: 3, hidden: true }),
@@ -266,6 +267,98 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(printSpy).toHaveBeenCalled();
     });
+    printSpy.mockRestore();
+  });
+
+  it("rank 1 print is metrics-only (no plot panels, no plot defer clear)", async () => {
+    const loadDetailWithoutDeferParts = vi.fn();
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        job_data: {
+          ...minimalJobDetailResponse.job_data,
+          performance: {
+            label: "Metrics available",
+            tone: "info",
+            sort_rank: 1,
+            aria_label: "Metrics available",
+          },
+        },
+      },
+      loadDetailWithoutDeferParts,
+    });
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^print$/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^print$/i }));
+    await waitFor(() => {
+      expect(document.querySelector("[data-job-detail-print='1']")).toBeTruthy();
+      expect(document.querySelector("[data-job-detail-print-plots='0']")).toBeTruthy();
+      expect(printSpy).toHaveBeenCalled();
+    });
+    expect(document.querySelector("#job-detail-panel-plot-summary")).not.toBeInTheDocument();
+    expect(document.querySelector("#job-detail-panel-multiprecision-mix")).not.toBeInTheDocument();
+    expect(loadDetailWithoutDeferParts).not.toHaveBeenCalledWith(["xalt", "proc"]);
+    printSpy.mockRestore();
+  });
+
+  it("ranks 2–6 Print shows no-data dialog and does not call window.print", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        job_data: {
+          ...minimalJobDetailResponse.job_data,
+          performance: {
+            label: "Too few samples to complete",
+            tone: "muted",
+            sort_rank: 2,
+            aria_label: "Too few samples",
+          },
+        },
+      },
+    });
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^print$/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^print$/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByText(/there is no data to print/i)).toBeInTheDocument();
+    });
+    expect(printSpy).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-job-detail-print='1']")).toBeNull();
+    printSpy.mockRestore();
+  });
+
+  it("rank 6 Print shows no-data dialog (not metrics-only print)", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        job_data: {
+          ...minimalJobDetailResponse.job_data,
+          performance: {
+            label: "Metrics & Plots not yet completed",
+            tone: "warning",
+            sort_rank: 6,
+            aria_label: "not yet completed",
+          },
+        },
+      },
+    });
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^print$/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^print$/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/there is no data to print/i)).toBeInTheDocument();
+    });
+    expect(printSpy).not.toHaveBeenCalled();
     printSpy.mockRestore();
   });
 

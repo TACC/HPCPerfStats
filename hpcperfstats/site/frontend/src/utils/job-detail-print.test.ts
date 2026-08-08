@@ -1,9 +1,29 @@
 import { describe, expect, it } from "vitest";
 import {
+  jobDetailPrintClickAction,
   isJobDetailPrintReady,
   isMultiprecisionPrintSettled,
   isPrintScopedPlotSettled,
 } from "./job-detail-print";
+
+describe("jobDetailPrintClickAction", () => {
+  it("prints with plots at rank 0", () => {
+    expect(jobDetailPrintClickAction(0)).toBe("print_with_plots");
+  });
+
+  it("prints metrics only at rank 1", () => {
+    expect(jobDetailPrintClickAction(1)).toBe("print_metrics_only");
+  });
+
+  it("returns no_data for ranks 2–6 and missing", () => {
+    expect(jobDetailPrintClickAction(2)).toBe("no_data");
+    expect(jobDetailPrintClickAction(3)).toBe("no_data");
+    expect(jobDetailPrintClickAction(4)).toBe("no_data");
+    expect(jobDetailPrintClickAction(5)).toBe("no_data");
+    expect(jobDetailPrintClickAction(6)).toBe("no_data");
+    expect(jobDetailPrintClickAction(null)).toBe("no_data");
+  });
+});
 
 describe("isPrintScopedPlotSettled", () => {
   it("waits while loading", () => {
@@ -99,23 +119,17 @@ describe("isJobDetailPrintReady", () => {
     ).toBe(false);
   });
 
-  it("is ready when plots are terminal-unavailable (ranks 2–5)", () => {
+  it("is ready immediately for metrics-only print (rank 1)", () => {
     expect(
       isJobDetailPrintReady({
-        ...allSettled,
         plotsLoading: true,
+        plotsFetchFailed: false,
+        summarySettled: false,
+        rooflineSettled: false,
+        gpuRooflineSettled: false,
         multiprecisionSettled: false,
-        plotsUnavailableTerminal: true,
+        printMetricsOnly: true,
       }),
     ).toBe(true);
-  });
-
-  it("waits while performance rank is transitional (1/6)", () => {
-    expect(
-      isJobDetailPrintReady({
-        ...allSettled,
-        plotsPerformancePending: true,
-      }),
-    ).toBe(false);
   });
 });

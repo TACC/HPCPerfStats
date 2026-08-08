@@ -1388,12 +1388,13 @@ def test_mem_hwm_all_nan_returns_none():
 
   class MockU:
     def get_type(self, typename):
-      if typename == "mem":
+      if typename in ("host_mem", "mem"):
         return schema, {"h1": stats}
       return None, {}
 
   value, typename, units = mem_hwm().compute_metric(MockU())
   assert value is None
+  assert typename == "host_mem"
   assert units == "GiB"
 
 
@@ -1406,12 +1407,13 @@ def test_mem_hwm_mixed_nan_uses_finite_peak():
 
   class MockU:
     def get_type(self, typename):
-      if typename == "mem":
+      if typename in ("host_mem", "mem"):
         return schema, {"nan_host": nan_stats, "good_host": good_stats}
       return None, {}
 
   value, typename, units = mem_hwm().compute_metric(MockU())
   assert value == pytest.approx(1.0)
+  assert typename == "host_mem"
   assert units == "GiB"
 
 

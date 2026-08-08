@@ -47,6 +47,9 @@ const EXACT_TYPE_SECTION: Record<string, JobMetricSourceSectionId> = {
   host_cpu_hw: "cpu",
   host_mem: "cpu",
   host_numa: "cpu",
+  /** Legacy persisted metrics_data types (pre host_* rename). */
+  mem: "cpu",
+  numa: "cpu",
   cpu: "cpu",
   pmc: "cpu",
   imc: "cpu",
@@ -80,6 +83,8 @@ const EXACT_TYPE_SECTION: Record<string, JobMetricSourceSectionId> = {
   beegfs_client: "filesystem",
   host_ib: "network",
   host_opa: "network",
+  /** Legacy persisted metrics_data type (pre host_opa rename). */
+  opa: "network",
   host_net: "network",
   net: "network",
   host_lnet: "network",
@@ -97,6 +102,8 @@ const CPU_TYPE_PREFIXES = [
 function sectionFromMetricNameFallback(metric: string): JobMetricSourceSectionId | null {
   if (metric.startsWith("detail_gpu_") || metric === "avg_gpuutil") return "gpu";
   if (metric.startsWith("detail_fsio_")) return "filesystem";
+  if (metric === "max_opa_congestion_rate") return "network";
+  if (metric === "mem_hwm" || metric === "max_numa_remote_rate") return "cpu";
   if (
     metric.startsWith("avg_vector_width_") ||
     metric === "avg_vector_width_combined" ||

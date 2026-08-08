@@ -23,6 +23,7 @@ HPCPerfStats serves researchers and operators who expect clear hierarchy, honest
 - Table headers use `JOB_LIST_TABLE_HEADERS` where applicable.
 - Job list **Performance Data** labels come from the API (`performance.label`). Canonical copy: **Metrics & Plots available** (metrics values + fingerprint-matching plot/detail artifacts), **Metrics available** (values present, artifacts not ready), **Too few samples to complete**, **Too short to complete**, **Metrics & Plots not yet completed** (no `update_metrics` yet; runtime not under the short threshold). Do not claim plots available from metrics rows alone.
 - **Job Detail plot tabs** (Summary plot, Roofline, Multiprecision Mix): do not fetch/embed (`job_plots` or multiprecision defer clear) until `job_data.performance.sort_rank === 0`. Plot-tab status copy (not Performance Data labels): ranks **1**/**6** → **Plots not yet completed.**; ranks **2–5** / missing → **No plots available for this job**. Show that chrome **only** inside those plot tabs — never on Metrics or other non-plot tabs.
+- **Job Detail Print:** rank **0** → Metrics + Summary + Roofline + Multiprecision (wait for embeds); rank **1** → Metrics/overview only (no plot panels); ranks **2–6** / missing → dialog “There is no data to print.” (no `window.print`). Rank **6** is not metrics-only print.
 
 ## Loading vs unavailable vs error
 

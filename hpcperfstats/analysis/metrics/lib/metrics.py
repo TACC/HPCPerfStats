@@ -4727,7 +4727,7 @@ class mem_hwm():
       >>> mem_hwm().compute_metric(None)  # doctest: +SKIP
     """
     max_memusage = 0.0
-    typename = "mem"
+    typename = HOST_MEM_TYPE
     schema, _stats = u.get_type(typename)
     if schema is None or not _schema_has_events(
         schema, "MemUsed", "Slab", "FilePages"):
@@ -4843,7 +4843,7 @@ class max_opa_congestion_rate():
     Examples:
       >>> max_opa_congestion_rate().compute_metric(None)  # doctest: +SKIP
     """
-    typename = "opa"
+    typename = HOST_OPA_TYPE
     schema, _stats = u.get_type(typename)
     if schema is None:
       return None, typename, "#/s"
@@ -4892,7 +4892,7 @@ class max_numa_remote_rate():
     Examples:
       >>> max_numa_remote_rate().compute_metric(None)  # doctest: +SKIP
     """
-    typename = "numa"
+    typename = HOST_NUMA_TYPE
     schema, _stats = u.get_type(typename)
     if schema is None:
       return None, typename, "#/s"

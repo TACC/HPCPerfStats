@@ -60,7 +60,6 @@ import {
   JOB_DETAIL_PERFORMANCE_POLL_INTERVAL_MS,
   JOB_DETAIL_PERFORMANCE_POLL_MAX_ATTEMPTS,
   isJobDetailAnalysisPlotTab,
-  isJobDetailPlotPerformanceTerminalUnavailable,
   isJobDetailPlotPerformanceTransitional,
   isJobDetailPlotsPerformanceReady,
   jobDetailPlotGateMessage,
@@ -68,11 +67,22 @@ import {
   type JobDetailPerformanceBadge,
 } from "@/utils/job-detail-performance-gate";
 import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   JOB_DETAIL_PRINT_AFTERPRINT_FALLBACK_MS,
+  JOB_DETAIL_PRINT_NO_DATA_MESSAGE,
   JOB_DETAIL_PRINT_READY_TIMEOUT_MS,
   isJobDetailPrintReady,
   isMultiprecisionPrintSettled,
   isPrintScopedPlotSettled,
+  jobDetailPrintClickAction,
   type JobDetailPrintPlotKey,
 } from "@/utils/job-detail-print";
 
@@ -423,7 +433,9 @@ export default function JobDetail() {
     analysisTabFromSearchParams(rawSearchParams),
   );
   const [printLayoutActive, setPrintLayoutActive] = useState(false);
+  const [printIncludesPlots, setPrintIncludesPlots] = useState(false);
   const [printPreparing, setPrintPreparing] = useState(false);
+  const [printNoDataOpen, setPrintNoDataOpen] = useState(false);
   const [schedulingDetailsOpen, setSchedulingDetailsOpen] = useState(false);
   const [gpuInventoryOpen, setGpuInventoryOpen] = useState(false);
   const [printEmbedReady, setPrintEmbedReady] = useState<
@@ -444,7 +456,9 @@ export default function JobDetail() {
     printAfterPrintCleanupRef.current?.();
     printAfterPrintCleanupRef.current = null;
     setPrintLayoutActive(false);
+    setPrintIncludesPlots(false);
     setPrintPreparing(false);
+    setPrintNoDataOpen(false);
     setPrintEmbedReady({});
     printOpenedRef.current = false;
     printPrepStartedAtRef.current = null;
@@ -455,8 +469,9 @@ export default function JobDetail() {
   );
   const performancePlotsReady = isJobDetailPlotsPerformanceReady(performanceSortRank);
   const plotGateMessage = jobDetailPlotGateMessage(performanceSortRank);
+  const printMountsPlotPanels = printLayoutActive && printIncludesPlots;
   const plotSurfaceActive =
-    printLayoutActive || isJobDetailAnalysisPlotTab(analysisTab);
+    printMountsPlotPanels || isJobDetailAnalysisPlotTab(analysisTab);
 
   const plotsEnabled =
     !!pk &&
@@ -503,7 +518,7 @@ export default function JobDetail() {
 
   useEffect(() => {
     if (!pk || initialLoading) return;
-    if (printLayoutActive || analysisTab === "multiprecisionMix") {
+    if (printMountsPlotPanels || analysisTab === "multiprecisionMix") {
       // Keep multiprecision deferred until Performance Data rank 0.
       if (performancePlotsReady) {
         loadDetailWithoutDeferParts(["xalt", "proc"]);
@@ -517,7 +532,7 @@ export default function JobDetail() {
     }
   }, [
     analysisTab,
-    printLayoutActive,
+    printMountsPlotPanels,
     pk,
     initialLoading,
     performancePlotsReady,
@@ -536,6 +551,7 @@ export default function JobDetail() {
     printAfterPrintCleanupRef.current?.();
     printAfterPrintCleanupRef.current = null;
     setPrintLayoutActive(false);
+    setPrintIncludesPlots(false);
     setPrintPreparing(false);
     setPrintEmbedReady({});
     printOpenedRef.current = false;
@@ -562,6 +578,11 @@ export default function JobDetail() {
   }, [endPrintLayout]);
 
   const startPrintPrep = useCallback(() => {
+    const action = jobDetailPrintClickAction(performanceSortRank);
+    if (action === "no_data") {
+      setPrintNoDataOpen(true);
+      return;
+    }
     printAfterPrintCleanupRef.current?.();
     printAfterPrintCleanupRef.current = null;
     printOpenedRef.current = false;
@@ -569,9 +590,10 @@ export default function JobDetail() {
     setPrintEmbedReady({});
     setSchedulingDetailsOpen(true);
     setGpuInventoryOpen(true);
+    setPrintIncludesPlots(action === "print_with_plots");
     setPrintLayoutActive(true);
     setPrintPreparing(true);
-  }, []);
+  }, [performanceSortRank]);
 
   useEffect(() => {
     if (!printPreparing || !printLayoutActive || !data) return;
@@ -624,10 +646,7 @@ export default function JobDetail() {
       rooflineSettled,
       gpuRooflineSettled,
       multiprecisionSettled: multiprecisionSettled && mpCpuSettled && mpGpuSettled,
-      plotsUnavailableTerminal:
-        isJobDetailPlotPerformanceTerminalUnavailable(performanceSortRank),
-      plotsPerformancePending:
-        isJobDetailPlotPerformanceTransitional(performanceSortRank),
+      printMetricsOnly: !printIncludesPlots,
     });
 
     const startedAt = printPrepStartedAtRef.current ?? Date.now();
@@ -646,6 +665,7 @@ export default function JobDetail() {
   }, [
     printPreparing,
     printLayoutActive,
+    printIncludesPlots,
     data,
     detailsLoading,
     plots,
@@ -654,7 +674,6 @@ export default function JobDetail() {
     printEmbedReady,
     printPollTick,
     openPrintDialog,
-    performanceSortRank,
   ]);
 
   function setAnalysisTab(tab: JobAnalysisTab): void {
@@ -883,7 +902,7 @@ export default function JobDetail() {
     if (!config) return null;
     const panel = plotPanels.find((p) => p.key === config.panelKey);
     if (!panel) return null;
-    const mountPlot = isTabActive || printLayoutActive;
+    const mountPlot = isTabActive || printMountsPlotPanels;
     return (
       <div key={config.key} className="mb-3 w-full min-w-0 box-border">
         <h3 className="text-base font-medium">{config.plotName}</h3>
@@ -895,7 +914,7 @@ export default function JobDetail() {
             unavailableReason={panel.unavailableReason}
             isLoading={panel.isLoading}
             onPlotReadyChange={(ready) => markPrintEmbedReady(printReadyKey, ready)}
-            deferEmbedUntilVisible={printLayoutActive ? false : undefined}
+            deferEmbedUntilVisible={printMountsPlotPanels ? false : undefined}
           />
         ) : null}
       </div>
@@ -906,8 +925,24 @@ export default function JobDetail() {
     <div
       className="job-detail-page"
       data-job-detail-print={printLayoutActive ? "1" : undefined}
+      data-job-detail-print-plots={
+        printLayoutActive ? (printIncludesPlots ? "1" : "0") : undefined
+      }
       data-job-detail-print-preparing={printPreparing ? "1" : undefined}
     >
+      <Dialog open={printNoDataOpen} onOpenChange={setPrintNoDataOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Unable to print</DialogTitle>
+            <DialogDescription>{JOB_DETAIL_PRINT_NO_DATA_MESSAGE}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose render={<Button type="button" variant="outline" />}>
+              OK
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <PageBreadcrumbs
         items={[
           { label: "Browse", to: "/machine/" },
@@ -1412,8 +1447,8 @@ export default function JobDetail() {
           <TabsContent
             value="summary"
             id="job-detail-panel-plot-summary"
-            keepMounted={printLayoutActive}
-            className="job-detail-single-plot-pane job-detail-print-scoped-panel mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
+            keepMounted={printMountsPlotPanels}
+            className="job-detail-single-plot-pane job-detail-print-scoped-panel job-detail-print-plots-rank0-only mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
             <h2 className="job-detail-print-only mb-2 text-lg font-medium">Summary plot</h2>
             {plotGateMessage ? (
@@ -1456,8 +1491,8 @@ export default function JobDetail() {
           <TabsContent
             value="roofline"
             id="job-detail-panel-plot-roofline"
-            keepMounted={printLayoutActive}
-            className="job-detail-single-plot-pane job-detail-print-scoped-panel mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
+            keepMounted={printMountsPlotPanels}
+            className="job-detail-single-plot-pane job-detail-print-scoped-panel job-detail-print-plots-rank0-only mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
             <h2 className="job-detail-print-only mb-2 text-lg font-medium">Roofline</h2>
             {plotGateMessage ? (
@@ -1528,8 +1563,8 @@ export default function JobDetail() {
           <TabsContent
             value="multiprecisionMix"
             id="job-detail-panel-multiprecision-mix"
-            keepMounted={printLayoutActive}
-            className="job-detail-single-plot-pane job-detail-print-scoped-panel mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
+            keepMounted={printMountsPlotPanels}
+            className="job-detail-single-plot-pane job-detail-print-scoped-panel job-detail-print-plots-rank0-only mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
             <h2 className="job-detail-print-only mb-2 text-lg font-medium">Multiprecision Mix</h2>
             {plotGateMessage ? (
@@ -1541,7 +1576,7 @@ export default function JobDetail() {
                 <div>
                   <div className="mb-3 w-full min-w-0 box-border">
                     <h3 className="text-base font-medium">CPU Multiprecision Mix</h3>
-                    {analysisTab === "multiprecisionMix" || printLayoutActive ? (
+                    {analysisTab === "multiprecisionMix" || printMountsPlotPanels ? (
                       <PlotPanel
                         item={multiprecision_cpu_plot_item}
                         id={`job-multiprecision-cpu-${pk}`}
@@ -1556,7 +1591,7 @@ export default function JobDetail() {
                         onPlotReadyChange={(ready) =>
                           markPrintEmbedReady("multiprecision_cpu", ready)
                         }
-                        deferEmbedUntilVisible={printLayoutActive ? false : undefined}
+                        deferEmbedUntilVisible={printMountsPlotPanels ? false : undefined}
                       />
                     ) : null}
                   </div>
@@ -1564,7 +1599,7 @@ export default function JobDetail() {
                 <div>
                   <div className="mb-3 w-full min-w-0 box-border">
                     <h3 className="text-base font-medium">GPU Multiprecision Mix</h3>
-                    {analysisTab === "multiprecisionMix" || printLayoutActive ? (
+                    {analysisTab === "multiprecisionMix" || printMountsPlotPanels ? (
                       <PlotPanel
                         item={multiprecision_gpu_plot_item}
                         id={`job-multiprecision-gpu-${pk}`}
@@ -1579,7 +1614,7 @@ export default function JobDetail() {
                         onPlotReadyChange={(ready) =>
                           markPrintEmbedReady("multiprecision_gpu", ready)
                         }
-                        deferEmbedUntilVisible={printLayoutActive ? false : undefined}
+                        deferEmbedUntilVisible={printMountsPlotPanels ? false : undefined}
                       />
                     ) : null}
                   </div>
