@@ -326,6 +326,7 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-07-31 | Resources/Metrics Card chrome: Watt hours → GPU Information (inventory collapsed) → Shared File Systems → logs; Metrics subsections in Cards. |
 | 2026-08-06 | Processes tab columns: Peak VM, HWM, Stack, Text, Libs, Threads (dropped RSS/Size from visible set). |
 | 2026-08-07 | Processes Peak VM/HWM (and Stack/Text/Libs) documented as job-level high water via ingest GREATEST across samples. |
+| 2026-08-07 | Processes tab no longer shows UID (API may still include `uid`; display-only hide). |
 | 2026-08-05 | GPU Roofline prefers estimated memory bandwidth when present (title Memory BW); otherwise PCIe/NvLink (or Xe Link) with matching title and peak roof. |
 | 2026-08-05 | Job Detail **Print** button: prepares overview/Resources/Metrics/Summary/Roofline/Multiprecision Mix for the browser print dialog (Save as PDF). |
 | 2026-08-07 | Job Detail plot tabs (Summary, Roofline, Multiprecision Mix) wait for Performance Data **Metrics & Plots available**; plot-tab messages **Plots not yet completed.** / **No plots available for this job**. |

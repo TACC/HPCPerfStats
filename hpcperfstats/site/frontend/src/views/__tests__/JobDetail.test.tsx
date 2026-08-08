@@ -1730,6 +1730,14 @@ describe("JobDetail", () => {
       expect(screen.getByText(/avg HWM/i)).toBeInTheDocument();
       expect(screen.getByText(/avg Peak VM/i)).toBeInTheDocument();
     });
+    // Expand host table so columnheaders mount (closed Collapsible omits them).
+    fireEvent.click(screen.getByText("streams_2.exe"));
+    await waitFor(() => {
+      expect(screen.getByRole("columnheader", { name: /^Host$/i })).toBeInTheDocument();
+      expect(
+        screen.queryByRole("columnheader", { name: /^UID$/i }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("shows Summary metric help strip with VariableInfoLabel fallbacks", async () => {

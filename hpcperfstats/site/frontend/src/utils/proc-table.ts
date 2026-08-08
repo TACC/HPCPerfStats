@@ -23,7 +23,6 @@ export const PROC_TABLE_COLUMNS: ReadonlyArray<{
 }> = [
   { key: "proc", label: "Process" },
   { key: "host", label: "Host" },
-  { key: "uid", label: "UID" },
   { key: "vm_peak", label: "Peak VM (kB)" },
   { key: "vm_hwm", label: "HWM (kB)" },
   { key: "vm_stk", label: "Stack (kB)" },

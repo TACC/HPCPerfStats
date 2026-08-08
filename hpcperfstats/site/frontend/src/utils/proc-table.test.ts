@@ -34,7 +34,6 @@ describe("proc-table", () => {
     expect(keys).toEqual([
       "proc",
       "host",
-      "uid",
       "vm_peak",
       "vm_hwm",
       "vm_stk",
@@ -42,6 +41,7 @@ describe("proc-table", () => {
       "vm_lib",
       "threads",
     ]);
+    expect(keys).not.toContain("uid");
     expect(keys).not.toContain("vm_rss");
     expect(keys).not.toContain("vm_size");
   });
