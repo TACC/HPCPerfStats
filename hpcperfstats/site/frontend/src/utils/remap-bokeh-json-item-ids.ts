@@ -1,4 +1,5 @@
 import type { BokehJsonItem } from "@/types/bokeh";
+import { stripJobDetailBokehHelpMarkersInPlace } from "./strip-job-detail-bokeh-help-markers";
 
 /**
  * Bokeh json_item payloads use string ids like "p1006". Multiple SPA requests may be
@@ -15,8 +16,14 @@ let nextBokehRemapBase = 200_000_000;
 
 type JsonTree = Record<string, unknown> | unknown[];
 
+export type PrepareBokehJsonItemForEmbedOptions = {
+  /** Print prep: drop in-plot ``?`` help Labels / hit HoverTools before embed. */
+  stripHelpMarkers?: boolean;
+};
+
 export function prepareBokehJsonItemForEmbed(
   item: BokehJsonItem | null | undefined,
+  options?: PrepareBokehJsonItemForEmbedOptions,
 ): BokehJsonItem | null | undefined {
   if (!item || typeof item !== "object") {
     return item;
@@ -26,6 +33,10 @@ export function prepareBokehJsonItemForEmbed(
     clone = JSON.parse(JSON.stringify(item)) as BokehJsonItem;
   } catch {
     return item;
+  }
+
+  if (options?.stripHelpMarkers) {
+    stripJobDetailBokehHelpMarkersInPlace(clone);
   }
 
   const oldIds = new Set<string>();

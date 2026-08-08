@@ -13,6 +13,79 @@ type BokehIndexedView = {
   remove?: () => void;
 };
 
+type BokehExportLayer = {
+  canvas?: HTMLCanvasElement;
+};
+
+type BokehExportableView = BokehIndexedView & {
+  export?: (type?: string, hidpi?: boolean) => BokehExportLayer | null | undefined;
+};
+
+/**
+ * Prefer the outermost Bokeh view under ``targetEl`` that exposes ``export``
+ * (PlotView / LayoutDOMView). Dual-renderer legends only paint label text when
+ * ``force_paint`` runs inside ``export("png")``.
+ */
+export function findBokehExportRootForTarget(
+  targetEl: HTMLElement,
+): BokehExportableView | null {
+  if (typeof window === "undefined" || !window.Bokeh?.index) return null;
+  const candidates: BokehExportableView[] = [];
+  for (const view of Object.values(
+    window.Bokeh.index as Record<string, BokehExportableView>,
+  )) {
+    if (!view?.el || !targetEl.contains(view.el)) continue;
+    if (typeof view.export !== "function") continue;
+    candidates.push(view);
+  }
+  if (candidates.length === 0) return null;
+  return (
+    candidates.find(
+      (v) =>
+        !candidates.some(
+          (other) =>
+            other !== v &&
+            other.el instanceof Element &&
+            v.el instanceof Element &&
+            other.el.contains(v.el),
+        ),
+    ) ?? candidates[0]
+  );
+}
+
+function dataUrlFromCanvas(canvas: HTMLCanvasElement): string | null {
+  let dataUrl: string | null = null;
+  try {
+    dataUrl = canvas.toDataURL("image/png");
+  } catch {
+    dataUrl = null;
+  }
+  if (!dataUrl || !dataUrl.startsWith("data:image/")) {
+    return null;
+  }
+  return dataUrl;
+}
+
+/**
+ * Capture via Bokeh ``view.export("png")`` so dual-renderer legend text is painted.
+ * Returns null when export is unavailable or yields an empty canvas.
+ */
+export function captureBokehTargetDataUrlViaExport(
+  targetEl: HTMLElement,
+): string | null {
+  const view = findBokehExportRootForTarget(targetEl);
+  if (!view?.export) return null;
+  try {
+    const layer = view.export("png");
+    const canvas = layer?.canvas;
+    if (!(canvas instanceof HTMLCanvasElement)) return null;
+    if (canvas.width <= 0 || canvas.height <= 0) return null;
+    return dataUrlFromCanvas(canvas);
+  } catch {
+    return null;
+  }
+}
+
 /** Embed target id prefixes used by Job Detail PlotPanels (suffix ``-${pk}``). */
 export const JOB_DETAIL_PRINT_BOKEH_ID_PREFIXES = [
   "job-mscript",
@@ -66,12 +139,15 @@ export function collectBokehCanvases(root: Element): HTMLCanvasElement[] {
 }
 
 /**
- * Composite visible canvases under ``targetEl`` into a PNG data URL.
+ * Composite visible shadow canvases under ``targetEl`` into a PNG data URL.
  * Does **not** mutate ``targetEl`` (React owns the embed node).
+ * Misses dual-renderer HTML legend text — prefer ``export`` when available.
  *
  * @returns data URL, or null when there is nothing to capture.
  */
-export function captureBokehTargetDataUrl(targetEl: HTMLElement): string | null {
+export function captureBokehTargetDataUrlFromCanvases(
+  targetEl: HTMLElement,
+): string | null {
   const canvases = collectBokehCanvases(targetEl).filter(
     (c) => c.width > 0 && c.height > 0,
   );
@@ -115,16 +191,24 @@ export function captureBokehTargetDataUrl(targetEl: HTMLElement): string | null 
     }
   }
 
-  let dataUrl: string | null = null;
-  try {
-    dataUrl = out.toDataURL("image/png");
-  } catch {
-    dataUrl = null;
-  }
-  if (!dataUrl || !dataUrl.startsWith("data:image/")) {
+  const dataUrl = dataUrlFromCanvas(out);
+  if (!dataUrl) {
     return PRINT_SNAPSHOT_FALLBACK_PNG;
   }
   return dataUrl;
+}
+
+/**
+ * Capture ``targetEl`` as a PNG data URL for print.
+ * Prefers Bokeh ``export("png")`` (force-paints legend text); falls back to
+ * compositing shadow canvases when export is missing or empty.
+ *
+ * @returns data URL, or null when there is nothing to capture.
+ */
+export function captureBokehTargetDataUrl(targetEl: HTMLElement): string | null {
+  const exported = captureBokehTargetDataUrlViaExport(targetEl);
+  if (exported) return exported;
+  return captureBokehTargetDataUrlFromCanvases(targetEl);
 }
 
 /** True when ``targetEl`` has at least one shadow-reachable canvas with a non-zero buffer. */

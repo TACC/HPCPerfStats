@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   captureBokehTargetDataUrl,
+  captureBokehTargetDataUrlViaExport,
   captureJobDetailPrintBokehSnapshots,
   collectBokehCanvases,
   disposeBokehViewsForTarget,
   disposeJobDetailPrintBokehTargets,
+  findBokehExportRootForTarget,
   jobDetailPrintBokehTargetIds,
   targetHasPrintableBokehCanvases,
   waitForPrintBokehCanvases,
@@ -67,6 +69,8 @@ describe("collectBokehCanvases", () => {
 describe("captureBokehTargetDataUrl", () => {
   afterEach(() => {
     document.body.innerHTML = "";
+    // @ts-expect-error test cleanup
+    delete window.Bokeh;
   });
 
   it("returns a data URL without mutating the embed target", () => {
@@ -109,6 +113,49 @@ describe("captureBokehTargetDataUrl", () => {
     const target = document.createElement("div");
     target.appendChild(document.createElement("div")).className = "bk-root";
     expect(captureBokehTargetDataUrl(target)).toBeNull();
+  });
+
+  it("prefers Bokeh view.export(png) over shadow canvas composite", () => {
+    const target = document.createElement("div");
+    target.id = "job-multiprecision-gpu-9";
+    const bk = document.createElement("div");
+    bk.className = "bk-root";
+    target.appendChild(bk);
+    document.body.appendChild(target);
+    // Shadow canvas would be used only if export path fails.
+    appendBokehShadowCanvas(target, { width: 8, height: 8 });
+
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = 16;
+    exportCanvas.height = 16;
+    const exportDataUrl =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    exportCanvas.toDataURL = vi.fn(() => exportDataUrl);
+    const exportFn = vi.fn(() => ({ canvas: exportCanvas }));
+    window.Bokeh = {
+      index: { root: { el: bk, export: exportFn } },
+    } as unknown as typeof window.Bokeh;
+
+    expect(findBokehExportRootForTarget(target)?.el).toBe(bk);
+    const viaExport = captureBokehTargetDataUrlViaExport(target);
+    expect(exportFn).toHaveBeenCalledWith("png");
+    expect(viaExport).toBe(exportDataUrl);
+
+    exportFn.mockClear();
+    const dataUrl = captureBokehTargetDataUrl(target);
+    expect(exportFn).toHaveBeenCalledWith("png");
+    expect(dataUrl).toBe(exportDataUrl);
+  });
+
+  it("falls back to canvas composite when export is missing", () => {
+    const target = document.createElement("div");
+    target.id = "job-mscript-8";
+    document.body.appendChild(target);
+    appendBokehShadowCanvas(target);
+    window.Bokeh = { index: {} } as unknown as typeof window.Bokeh;
+
+    expect(captureBokehTargetDataUrlViaExport(target)).toBeNull();
+    expect(captureBokehTargetDataUrl(target)).toMatch(/^data:image\/png/);
   });
 });
 

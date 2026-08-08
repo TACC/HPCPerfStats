@@ -542,7 +542,9 @@ export default function BokehEmbed({
                   failEmbed("Chart container changed before embed.");
                   return;
                 }
-                const embedPayload = prepareBokehJsonItemForEmbed(item);
+                const embedPayload = prepareBokehJsonItemForEmbed(item, {
+                  stripHelpMarkers: Boolean(printCaptureLayout),
+                });
                 const embedResult = window.Bokeh.embed.embed_item(embedPayload, id);
                 return Promise.resolve(embedResult)
                   .then((views) => waitForBokehEmbedDocumentIdle(views))

@@ -347,6 +347,52 @@ describe("BokehEmbed", () => {
     dispatchSpy.mockRestore();
   });
 
+  it("printCaptureLayout strips in-plot help ? Labels before embed_item", async () => {
+    const embedItem = vi.fn(() => Promise.resolve(embedViewsWithIdleDoc()));
+    window.Bokeh = { embed: { embed_item: embedItem } };
+    const itemWithHelp = {
+      ...VALID_BOKEH_JSON_ITEM,
+      doc: {
+        ...VALID_BOKEH_JSON_ITEM.doc,
+        roots: [
+          {
+            type: "object",
+            name: "Figure",
+            id: "p9999",
+            attributes: {
+              center: [
+                {
+                  type: "object",
+                  name: "Label",
+                  id: "p8888",
+                  attributes: { text: "?" },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      root_id: "p9999",
+      root_ids: ["p9999"],
+    };
+
+    renderBokehEmbed(
+      <BokehEmbed
+        item={itemWithHelp}
+        id="bokeh-print-strip-help"
+        plotName="Multiprecision Mix"
+        previewMode
+        printCaptureLayout
+      />,
+    );
+
+    await waitFor(() => expect(embedItem).toHaveBeenCalled());
+    const [payload] = embedItem.mock.calls[0];
+    const payloadJson = JSON.stringify(payload);
+    expect(payloadJson).not.toMatch(/"text":"\?"/);
+    expect(payloadJson).not.toMatch(/"text": "\?"/);
+  });
+
   it("defers embed until IntersectionObserver reports intersecting when deferEmbedUntilVisible is true", async () => {
     let intersectionCallback = null;
     class MockIntersectionObserver {
