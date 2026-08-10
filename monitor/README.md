@@ -73,7 +73,7 @@ LSPCI dumps live under `tests/fixtures/stampede3_lspci_profiles/` (in git).
 are vendored for a future Vista path; the Stampede3 wrapper rejects `gg`/`gh`.
 
 **Horizon / Lonestar6 LSPCI fixtures (inventory):** `tests/fixtures/horizon_lspci_profiles/gb`
-(GB200 / HGX) and `tests/fixtures/ls6_lspci_profiles/{genoa,a100}` are vendored for
+(GB200 / HGX) and `tests/fixtures/ls6_lspci_profiles/{genoa,milan,a100}` are vendored for
 roofline / fleet inventory; not wired into Stampede3 shm validate profiles.
 
 ### Intel Data Center GPU / PVC (`intel_gpu`)
@@ -177,9 +177,9 @@ collect uses **`perfmon_readGroupCounters(groupId)`** (not
 |------:|---------|
 | 0 | Fail-open |
 | 1 | Probed (EDAC / procfs) |
-| 2 | Identity table (Grace CPU part `0xd4f` LPDDR5X) |
+| 2 | Identity table (Grace CPU part `0xd4f`, or x86/AMD CPUID DRAM/HBM allowlist) |
 
-**Horizon / Vista GPU + Grace constants** (datasheet; allowlisted only — no soft invent):
+**Horizon / Vista / Stampede3 / Lonestar6 GPU + CPU constants** (datasheet / TACC docs; allowlisted only — no soft invent):
 
 | Identity | Peak key | Value |
 |----------|----------|------:|
@@ -189,16 +189,32 @@ collect uses **`perfmon_readGroupCounters(groupId)`** (not
 | GPU name `GH200`, `memory.total` &lt; 140000 MiB | `gpu_peak_mem_bw_bytes_per_s` per GPU | `4e12` B/s (HBM3; Vista `97871`) |
 | GPU name `GH200`, `memory.total` ≥ 140000 MiB | `gpu_peak_mem_bw_bytes_per_s` per GPU | `4.9e12` B/s (HBM3e) |
 | GPU name contains `GH200` | `gpu_peak_io_link_bw_bytes_per_s` per GPU | `900e9` B/s (NVLink-C2C) |
+| GPU name contains `H100` | SM / HBM per GPU | `132` / `3.35e12` B/s |
+| GPU name contains `A100` | SM / HBM per GPU | `108` / `1.555e12` B/s (A100-40) |
+| GPU name `RTX PRO 6000` / `GB202` | SM / GDDR per GPU | `188` / `1.597e12` B/s |
 | CPU part `0xd4f` (Grace) | `cpu_peak_dram_bw_bytes_per_s` | `512e9` B/s (LPDDR5X) |
+| `SKYLAKE_X` (EDAC speed miss) | DRAM | `256e9` B/s (TACC S3 SKX) |
+| `CASCADE_LAKE` | DRAM | `282e9` B/s (DDR4-2933 6ch×2) |
+| `ICELAKE_SERVER` | DRAM | `409.6e9` B/s (TACC S3 ICX) |
+| `SAPPHIRE_RAPIDS` + model `Max` | `cpu_peak_hbm_bw_bytes_per_s` | `3.2768e12` B/s (2×1638.4 GB/s) |
+| `SAPPHIRE_RAPIDS` (non-Max, e.g. 8468) | DRAM | `614.4e9` B/s (DDR5-4800 8ch×2) |
+| `AMD_MILAN` | DRAM | `409.6e9` B/s (LS6 DDR4-3200) |
+| `AMD_GENOA` | DRAM | `921.6e9` B/s (2×12ch DDR5-4800) |
+| `AMD_TURIN` | DRAM | `1.228e12` B/s (2×614 GB/s AMD 9555) |
+
+Match order for GPU names: `GH200` → `GB200`/`B200` → `RTX PRO 6000`/`GB202` → `H100` → `A100`.
+Inventory fixtures under `tests/fixtures/{stampede3,ls6,vista,horizon}_lspci_profiles/`.
 
 FLOPS path: NVML-first (SM count + SM clock); smi fallback uses confirmed fields
 `name,clocks.max.sm,compute_cap` plus the SM identity table — **never** invalid
 `cuda.cores` / `multiprocessor.count` on this driver stack. When DRM mem attrs are
-empty, mem BW uses allowlisted HBM tables (GB200 / GH200). For **GH200**, DRM may
+empty, mem BW uses allowlisted HBM/GDDR tables. For **GH200**, DRM may
 expose misleading **PCIe x1** while C2C is the real CPU–GPU link — published C2C
 replaces weaker PCIe-derived IO. Do **not** infer HBM3e from marketing substrings
 like `120GB` in the product name; use smi `memory.total`. When EDAC speeds are
-missing, Grace DRAM uses the CPU-part table. CPU FLOPS remain procfs/cpufreq.
+missing, Grace DRAM uses the CPU-part table, then x86/AMD CPUID DRAM/HBM identity.
+CPU FLOPS remain procfs/cpufreq. Fleet note: probed S3/LS6 classes often have
+EDAC DIMMs without `dimm_mem_speed` — CPU identity is the primary DRAM path there.
 
 **Verify peaks by host + time** (never `jid` alone on `host_data`), e.g.:
 

@@ -8,6 +8,7 @@
 #include <string.h>
 #include <time.h>
 #include "stats.h"
+#include "cpuid.h"
 #include "host_edac_mem_topology.h"
 #include "roofline_hw_peak_detect.h"
 #include "roofline_hw_peak_identity.h"
@@ -327,6 +328,72 @@ static unsigned int detect_cpu_part_from_proc(void)
   return part;
 }
 
+static void read_cpu_model_name(char *buf, size_t cap)
+{
+  FILE *f;
+  char line[512];
+
+  if (buf == NULL || cap == 0)
+    return;
+  buf[0] = '\0';
+  f = fopen("/proc/cpuinfo", "re");
+  if (f == NULL)
+    return;
+  while (fgets(line, sizeof(line), f) != NULL) {
+    if (strncmp(line, "model name", 10) == 0) {
+      char *p = strchr(line, ':');
+      if (p != NULL) {
+        while (*p == ':' || *p == ' ' || *p == '\t')
+          p++;
+        snprintf(buf, cap, "%s", p);
+        {
+          size_t n = strlen(buf);
+          while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
+            buf[--n] = '\0';
+        }
+      }
+      break;
+    }
+  }
+  fclose(f);
+}
+
+/* When EDAC speeds are missing, fill DDR/HBM from Grace CPU-part or x86/AMD CPUID tables. */
+static void apply_cpu_mem_identity_fallback(double *cpu_bw, double *cpu_hbm_bw,
+                                            unsigned long long *cpu_source)
+{
+  double grace_bw;
+  int n_pmcs = 0;
+  processor_t p;
+  char model[256];
+  double ddr = 0.0;
+  double hbm = 0.0;
+
+  if (cpu_bw == NULL || cpu_hbm_bw == NULL || cpu_source == NULL)
+    return;
+  if (*cpu_bw > 0.0 || *cpu_hbm_bw > 0.0)
+    return;
+
+  grace_bw = roofline_grace_dram_bw_from_cpu_part(detect_cpu_part_from_proc());
+  if (grace_bw > 0.0) {
+    *cpu_bw = grace_bw;
+    *cpu_source = ROOFLINE_CPU_PEAK_SOURCE_IDENTITY;
+    return;
+  }
+
+  p = signature(&n_pmcs);
+  if (p == (processor_t)-1)
+    return;
+  read_cpu_model_name(model, sizeof(model));
+  if (roofline_cpu_mem_bw_from_processor(p, model, &ddr, &hbm) != 0)
+    return;
+  if (ddr > 0.0)
+    *cpu_bw = ddr;
+  if (hbm > 0.0)
+    *cpu_hbm_bw = hbm;
+  *cpu_source = ROOFLINE_CPU_PEAK_SOURCE_IDENTITY;
+}
+
 /* Confirmed fields on Horizon: name,clocks.max.sm,compute_cap (+ SM-count identity). */
 static double detect_nvidia_fp64_peak_via_nvidia_smi(void)
 {
@@ -614,13 +681,7 @@ void roofline_hw_peak_detect_fill_cache(struct roofline_cached_peaks *cache)
     detect_cpu_peak_edac_bw_bytes_per_s(&cpu_bw, &cpu_hbm_bw);
     if (cpu_bw > 0.0 || cpu_hbm_bw > 0.0 || cpu_flops > 0.0)
       cpu_source = ROOFLINE_CPU_PEAK_SOURCE_PROBED;
-    if (cpu_bw <= 0.0) {
-      double grace_bw = roofline_grace_dram_bw_from_cpu_part(detect_cpu_part_from_proc());
-      if (grace_bw > 0.0) {
-        cpu_bw = grace_bw;
-        cpu_source = ROOFLINE_CPU_PEAK_SOURCE_IDENTITY;
-      }
-    }
+    apply_cpu_mem_identity_fallback(&cpu_bw, &cpu_hbm_bw, &cpu_source);
     detect_gpu_peaks_from_sysfs(&gpu_flops, &gpu_mem_bw, &gpu_io_bw);
     if (gpu_mem_bw > 0.0 || gpu_io_bw > 0.0)
       gpu_source = ROOFLINE_GPU_PEAK_SOURCE_PROBED;

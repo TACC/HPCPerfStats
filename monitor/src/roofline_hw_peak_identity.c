@@ -49,14 +49,31 @@ static int split_csv_fields(const char *line, char fields[][256], int max_fields
   return n;
 }
 
+static int name_is_rtx_pro_6000(const char *name)
+{
+  return name != NULL && (strstr(name, "RTX PRO 6000") != NULL || strstr(name, "GB202") != NULL);
+}
+
+static int model_name_is_xeon_max(const char *model_name)
+{
+  return model_name != NULL && strstr(model_name, "Max") != NULL;
+}
+
 int roofline_nvidia_sm_count_from_name(const char *name)
 {
   if (name == NULL)
     return 0;
+  /* Match order: GH200 → GB200/B200 → RTX PRO 6000/GB202 → H100 → A100 */
   if (strstr(name, "GH200") != NULL)
     return ROOFLINE_GH200_SM_COUNT;
   if (strstr(name, "GB200") != NULL || strstr(name, "B200") != NULL)
     return ROOFLINE_GB200_SM_COUNT;
+  if (name_is_rtx_pro_6000(name))
+    return ROOFLINE_RTX_PRO_6000_SM_COUNT;
+  if (strstr(name, "H100") != NULL)
+    return ROOFLINE_H100_SM_COUNT;
+  if (strstr(name, "A100") != NULL)
+    return ROOFLINE_A100_40_SM_COUNT;
   return 0;
 }
 
@@ -71,6 +88,12 @@ double roofline_nvidia_hbm_bw_from_name_mem(const char *name, double mem_total_m
   }
   if (strstr(name, "GB200") != NULL || strstr(name, "B200") != NULL)
     return ROOFLINE_GB200_HBM_BW_BYTES_PER_S;
+  if (name_is_rtx_pro_6000(name))
+    return ROOFLINE_RTX_PRO_6000_GDDR_BW_BYTES_PER_S;
+  if (strstr(name, "H100") != NULL)
+    return ROOFLINE_H100_HBM_BW_BYTES_PER_S;
+  if (strstr(name, "A100") != NULL)
+    return ROOFLINE_A100_40_HBM_BW_BYTES_PER_S;
   return 0.0;
 }
 
@@ -95,6 +118,51 @@ double roofline_grace_dram_bw_from_cpu_part(unsigned int cpu_part)
   return 0.0;
 }
 
+int roofline_cpu_mem_bw_from_processor(processor_t p, const char *model_name, double *ddr_bw_out,
+                                       double *hbm_bw_out)
+{
+  double ddr = 0.0;
+  double hbm = 0.0;
+
+  if (ddr_bw_out == NULL || hbm_bw_out == NULL)
+    return -1;
+
+  switch (p) {
+  case SKYLAKE_X:
+    ddr = ROOFLINE_SKYLAKE_X_DRAM_BW_BYTES_PER_S;
+    break;
+  case CASCADE_LAKE:
+    ddr = ROOFLINE_CASCADE_LAKE_DRAM_BW_BYTES_PER_S;
+    break;
+  case ICELAKE_SERVER:
+    ddr = ROOFLINE_ICELAKE_SERVER_DRAM_BW_BYTES_PER_S;
+    break;
+  case SAPPHIRE_RAPIDS:
+    if (model_name_is_xeon_max(model_name))
+      hbm = ROOFLINE_SAPPHIRE_RAPIDS_MAX_HBM_BW_BYTES_PER_S;
+    else
+      ddr = ROOFLINE_SAPPHIRE_RAPIDS_DDR_BW_BYTES_PER_S;
+    break;
+  case AMD_MILAN:
+    ddr = ROOFLINE_AMD_MILAN_DRAM_BW_BYTES_PER_S;
+    break;
+  case AMD_GENOA:
+    ddr = ROOFLINE_AMD_GENOA_DRAM_BW_BYTES_PER_S;
+    break;
+  case AMD_TURIN:
+    ddr = ROOFLINE_AMD_TURIN_DRAM_BW_BYTES_PER_S;
+    break;
+  default:
+    *ddr_bw_out = 0.0;
+    *hbm_bw_out = 0.0;
+    return -1;
+  }
+
+  *ddr_bw_out = ddr;
+  *hbm_bw_out = hbm;
+  return (ddr > 0.0 || hbm > 0.0) ? 0 : -1;
+}
+
 double roofline_pcie_gen_lane_bytes_per_s(int gen)
 {
   if (gen >= 6)
@@ -114,7 +182,9 @@ double roofline_pcie_gen_lane_bytes_per_s(int gen)
 
 double roofline_nvidia_fp64_ratio_from_cc(int major, int minor, const char *name)
 {
-  (void)name;
+  /* RTX PRO / GeForce-class: reduced FP64 even on CC ≥ 9. */
+  if (name != NULL && strstr(name, "RTX") != NULL)
+    return 1.0 / 64.0;
   if (major >= 9)
     return 0.5;
   if (major == 8)

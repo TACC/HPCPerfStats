@@ -10,14 +10,17 @@ alwaysApply: false
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**.
 
-## Lessons (Horizon GB200 / Vista GH200 / Grace)
+## Lessons (Horizon GB200 / Vista GH200 / Grace / Stampede3 / Lonestar6)
 
-- **EDAC may be absent** — do not assume `dimm_mem_speed` exists; Grace DRAM peak uses allowlisted CPU part `0xd4f` → published LPDDR5X BW only when EDAC sum is 0.
+- **EDAC may be absent or speed-less** — do not assume `dimm_mem_speed` exists. On probed Stampede3/LS6 classes (skx/clx/icx/spr/h100-host/amd-rtx + LS6 milan/a100/genoa), EDAC DIMM dirs may exist with types/`rank*` only while **`dimm_mem_speed` sum is 0** — treat CPU DRAM identity (CPUID `processor_t` allowlist) as the primary path after Grace. Prefer live EDAC when the speed sum is **> 0**; identity never overrides non-zero EDAC.
+- **Grace DRAM** — allowlisted CPU part `0xd4f` → published LPDDR5X BW only when EDAC sum is 0 (tried before x86/AMD CPUID identity).
+- **x86/AMD CPU DRAM identity** — when EDAC speeds are 0: `SKYLAKE_X`, `CASCADE_LAKE`, `ICELAKE_SERVER`, `SAPPHIRE_RAPIDS` (DDR vs Xeon **Max** HBM via `model name` containing `Max`), `AMD_MILAN`, `AMD_GENOA`, `AMD_TURIN`. FLOPS stay generic ISA×cpufreq.
 - **DRM AMD-biased attrs** (`mem_info_max_bandwidth`, `pp_dpm_mclk`) are often **missing on NVIDIA** — never treat empty DRM mem as “no GPU.”
 - **Vista GH200 DRM PCIe trap** — `max_link_speed`/`max_link_width` may show **PCIe ×1** while the real CPU–GPU link is **NVLink-C2C**. Prefer published C2C (`900e9` B/s per GH200) when it exceeds DRM/smi PCIe-derived IO.
-- **Never query invalid nvidia-smi fields** on this stack: `cuda.cores`, `multiprocessor.count` fail. Confirmed FLOPS CSV: `name,clocks.max.sm,compute_cap` plus **SM-count identity** for allowlisted names (`GB200`/`B200`/`GH200`).
+- **Never query invalid nvidia-smi fields** on this stack: `cuda.cores`, `multiprocessor.count` fail. Confirmed FLOPS CSV: `name,clocks.max.sm,compute_cap` plus **SM-count identity** for allowlisted names.
+- **GPU name match order:** `GH200` → `GB200`/`B200` → `RTX PRO 6000`/`GB202` → `H100` → `A100`. Inventory fixtures: `tests/fixtures/stampede3_lspci_profiles/`, `ls6_lspci_profiles/`, `vista_lspci_profiles/`, `horizon_lspci_profiles/`.
 - **NVML-first** for GPU FLOPS when `libnvidia-ml` is present; smi is fallback. DEBUG-once log on NVML fail; release stays quiet (`monitor-debug-vs-symbols`).
-- **Identity tables only for allowlisted** GPU names / CPU parts (GB200 HBM3e 8 TB/s, GH200 HBM3 4 TB/s or HBM3e 4.9 TB/s by `memory.total` MiB, Grace 512 GB/s). Unknown names → leave mem BW at 0 (**no soft invent / soft-caps**).
+- **Identity tables only for allowlisted** GPU names / CPU parts / CPUID enums. Unknown names → leave mem BW at 0 (**no soft invent / soft-caps**). GeForce `RTX` without `RTX PRO 6000`/`GB202` stays unknown for SM/HBM.
 - **Do not** key GH200 HBM class off marketing name substrings (e.g. `120GB`); use smi `memory.total` (≥140000 MiB → HBM3e).
 - **Prefer live probes** when present for FLOPS (NVML) and EDAC DRAM; for GH200 IO, C2C identity beats weak PCIe.
 - **KEYS names stay stable**; source enums document provenance (`cpu_peak_source` / `gpu_peak_source`).
