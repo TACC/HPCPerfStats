@@ -106,6 +106,42 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 **Pass (T1):** under ``current``/date-range after newest-first ingest drains, day-close for older months continues without a 30s supervisor teardown gap; new stats discovery during poll resumes `chunk dispatch` promptly.
 
+### T0 / T1 / T2 — false `days_completed` + ghost reconcile thrash (stale `tar_dropped`, 2026-08)
+
+**Failure signature (pre-fix, hpcperfstats04):** ingest idle (`pending=0`) but past-day mutable `.tar` remain with sealed siblings (`zst=True`) and raw-removal `phase=done`. Hints say `tar_dropped` while `.tar` still exists. Logs loop: `day_close ghost manifest reconcile` → `debt_drain_begin debt_remaining=N` → `Archive janitor tick done … debt_popped=N days_started=N days_completed=N debt_remaining=0` in **tens of seconds** (impossible for multi-10 GiB real tar-drop) → ghost reconcile requeues the same days. No seal/delete/tar-drop progress lines.
+
+**Root cause class:** hint-only skip of `_tar_drop_one_day` + void finalize that discarded `finalize_complete_if_filesystem=False` while the mutable `.tar` remained.
+
+```bash
+# T0 — false completion + ghost thrash (full pipeline log; never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+grep -E 'ghost manifest reconcile|Archive janitor tick done|debt_drain_begin|tar drop|day_close' /tmp/pipeline-full.log | tail -120
+
+# T0 — past-day open tar vs sealed sibling (INI paths; calendar-today may keep live .tar)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+  su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as c
+import glob, os, datetime as dt
+d=c.get_daily_archive_dir_path(); today=dt.date.today().isoformat()
+rows=[]
+for tar in sorted(glob.glob(os.path.join(d,\"????-??-??.tar\"))):
+  day=os.path.basename(tar)[:-4]
+  rows.append((day, os.path.getsize(tar), os.path.isfile(tar+\".zst\"), day==today))
+print(\"daily\", d)
+for day, sz, zst, is_today in rows:
+  print(day, \"bytes\", sz, \"zst\", zst, \"calendar_today\", is_today)
+print(\"past_open_n\", sum(1 for r in rows if not r[3]))
+"'
+```
+
+**Fail (T0):** repeating `days_completed=N` with matching `ghost manifest reconcile` for the same past days and **no** durable tar-drop / size decline; tick `duration_s` far too small for the open tar byte sizes; maint hints `tar_dropped` while `os.path.isfile` is still true for those past days.
+
+**Pass (T0):** after deploy, either real tar-drop progress (unlink / reclaim logs, declining past-day sizes) **or** honest non-completion (`days_completed` does not claim success while past-day `.tar` remains). Ghost reconcile must not bounce the same filesystem-incomplete days every tick as false completions.
+
+**Pass (T1):** past-day `open_tar_n` (excluding calendar-today) declines; ghost reconcile for those days stops once filesystem-complete; `days_completed` only advances with real reclaim.
+
+**Pass (T2):** sealed past days reach no mutable `.tar`; async day-close rows are `complete` (not perpetual `queued` + `ghost_manifest_reconcile`); idle ingest no longer reports sticky day-close debt for those days.
+
 ### T0 / T1 — day-close `write_lock_contended` thrash + async between-chunk reconcile (2026-07)
 
 **Failure signature (pre-fix, hpcperfstats03):** `Archive janitor tick done` with `debt_popped`/`days_started`>0 but **`days_completed=0`**, tick **`duration_s`≈500–1000**, `budget_exit leave_in_flight`, and repeated `janitor: day_close defer … reason=write_lock_contended` on the same June daily `.tar` while ingest holds flock. Separately, MainThread stuck in `_cap_pending_after_rescan` / live unprocessed rebuild between chunks under huge backlog (find itself is already async and cheap — **not** a `-newermt` problem).

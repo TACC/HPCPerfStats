@@ -65,13 +65,16 @@ def _stub_janitor_day_close_tick_phases(
         lambda self, **kwargs: None,
     )
 
-  def seal_stub(self, tar_path):
+  def seal_stub(self, tar_path, *args, **kwargs):
     events.append(("seal", os.path.normpath(tar_path)))
     _mark_day_sealed(self, tar_path)
     return True
 
   def tar_drop_stub(self, tar_path, *args, **kwargs):
     events.append((tar_drop_event_key, os.path.normpath(tar_path)))
+    tar_norm = os.path.normpath(tar_path)
+    if os.path.isfile(tar_norm):
+      os.unlink(tar_norm)
     _mark_day_phase(self, tar_path, "tar_dropped")
     return True
 
@@ -83,9 +86,11 @@ def _stub_janitor_day_close_tick_phases(
 
   class _DayCloseCoordStub:
     enabled = True
-    _pre_seal_done = set()
-    _post_seal_done = set()
-    _delete_done = set()
+
+    def __init__(self):
+      self._pre_seal_done = set()
+      self._post_seal_done = set()
+      self._delete_done = set()
 
     def pre_seal_verification_complete(self, tar_path):
       return os.path.normpath(tar_path) in self._pre_seal_done
@@ -1744,7 +1749,7 @@ def test_close_one_day_seals_when_remaining_raw_on_disk_after_pre_seal(
   )
   seal_calls = {"n": 0}
 
-  def real_seal_path(self, tp):
+  def real_seal_path(self, tp, *args, **kwargs):
     seal_calls["n"] += 1
     events.append(("seal", os.path.normpath(tp)))
     open(zst_path, "wb").close()
@@ -2276,6 +2281,258 @@ def test_janitor_close_one_day_finalizes_async_manifest(tmp_path):
       disqualified=set(),
   ) is True
   assert finalize_calls == [tar_path]
+
+
+def test_close_one_day_does_not_skip_live_tar_for_stale_tar_dropped_hint(
+    monkeypatch, tmp_path,
+):
+  """Stale tar_dropped hint must not skip tar-drop while .tar remains."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-08-07.tar"))
+  open(tar_path, "wb").write(b"live")
+  open(tar_path + ".zst", "wb").write(b"zst")
+  tar_drop_calls = []
+  finalize_calls = []
+
+  class _RawCoord:
+    enabled = True
+
+    def pre_seal_verification_complete(self, tar_path):
+      return True
+
+    def post_seal_verification_complete(self, tar_path):
+      return True
+
+    def verification_complete(self, tar_path):
+      return True
+
+    def promote_phase_if_verify_stage_ahead(self, tar_path):
+      return False
+
+    def reopen_done_days_with_verified_on_disk(self):
+      return 0
+
+    def delete_phase_done(self, tar_path):
+      return True
+
+    def reclassify_retryable_skips_after_handoff_sync(self, tar_path):
+      return 0
+
+    def begin_deleting(self, tar_path):
+      return None
+
+    def apply_batch_delete(self, tar_path):
+      return 0
+
+  class _ManifestCoord:
+    def finalize_complete_if_filesystem(self, tar):
+      finalize_calls.append(os.path.normpath(tar))
+      return False
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      day_raw_removal_coordinator=_RawCoord(),
+      day_close_manifest_coordinator=_ManifestCoord(),
+  )
+  with janitor._hints_state_lock:
+    janitor._day_phases[tar_path] = {"phase": "tar_dropped"}
+
+  def _track_tar_drop(self, tp, *args, **kwargs):
+    tar_drop_calls.append(os.path.normpath(tp))
+    return False
+
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_tar_drop_one_day",
+      _track_tar_drop,
+  )
+  monkeypatch.setattr(
+      janitor,
+      "_seal_one_day",
+      lambda *_a, **_k: True,
+  )
+  with janitor._hints_state_lock:
+    janitor._day_phases[tar_path] = {"phase": "tar_dropped"}
+
+  assert janitor._close_one_day(
+      tar_path,
+      snapshot=None,
+      validation_cache={},
+      disqualified=set(),
+  ) is False
+  assert tar_drop_calls == [tar_path]
+  assert finalize_calls == []
+  assert os.path.normpath(tar_path) in janitor._debt_heap_tar_paths()
+
+
+def test_close_one_day_propagates_manifest_finalize_failure(
+    monkeypatch, tmp_path,
+):
+  """Finalize False must requeue and not count as day-close success."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-08-08.tar"))
+  open(tar_path + ".zst", "wb").write(b"zst")
+  finalize_calls = []
+
+  class _RawCoord:
+    enabled = True
+
+    def pre_seal_verification_complete(self, tar_path):
+      return True
+
+    def post_seal_verification_complete(self, tar_path):
+      return True
+
+    def verification_complete(self, tar_path):
+      return True
+
+    def promote_phase_if_verify_stage_ahead(self, tar_path):
+      return False
+
+    def reopen_done_days_with_verified_on_disk(self):
+      return 0
+
+    def delete_phase_done(self, tar_path):
+      return True
+
+    def reclassify_retryable_skips_after_handoff_sync(self, tar_path):
+      return 0
+
+    def begin_deleting(self, tar_path):
+      return None
+
+    def apply_batch_delete(self, tar_path):
+      return 0
+
+  class _ManifestCoord:
+    def finalize_complete_if_filesystem(self, tar):
+      finalize_calls.append(os.path.normpath(tar))
+      return False
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      day_raw_removal_coordinator=_RawCoord(),
+      day_close_manifest_coordinator=_ManifestCoord(),
+  )
+  with janitor._hints_state_lock:
+    janitor._day_phases[tar_path] = {"phase": "tar_dropped"}
+
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_tar_drop_one_day",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      janitor,
+      "_seal_one_day",
+      lambda *_a, **_k: True,
+  )
+
+  assert janitor._close_one_day(
+      tar_path,
+      snapshot=None,
+      validation_cache={},
+      disqualified=set(),
+  ) is False
+  assert finalize_calls == [tar_path]
+  assert os.path.normpath(tar_path) in janitor._debt_heap_tar_paths()
+
+
+def test_close_one_day_completes_after_stale_hint_tar_is_removed(
+    monkeypatch, tmp_path,
+):
+  """After live tar drop under stale hint, finalize True completes the day."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-08-09.tar"))
+  open(tar_path, "wb").write(b"live")
+  open(tar_path + ".zst", "wb").write(b"zst")
+  tar_drop_calls = []
+  finalize_calls = []
+
+  class _RawCoord:
+    enabled = True
+
+    def pre_seal_verification_complete(self, tar_path):
+      return True
+
+    def post_seal_verification_complete(self, tar_path):
+      return True
+
+    def verification_complete(self, tar_path):
+      return True
+
+    def promote_phase_if_verify_stage_ahead(self, tar_path):
+      return False
+
+    def reopen_done_days_with_verified_on_disk(self):
+      return 0
+
+    def delete_phase_done(self, tar_path):
+      return True
+
+    def reclassify_retryable_skips_after_handoff_sync(self, tar_path):
+      return 0
+
+    def begin_deleting(self, tar_path):
+      return None
+
+    def apply_batch_delete(self, tar_path):
+      return 0
+
+  class _ManifestCoord:
+    def finalize_complete_if_filesystem(self, tar):
+      finalize_calls.append(os.path.normpath(tar))
+      return True
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      day_raw_removal_coordinator=_RawCoord(),
+      day_close_manifest_coordinator=_ManifestCoord(),
+  )
+  with janitor._hints_state_lock:
+    janitor._day_phases[tar_path] = {"phase": "tar_dropped"}
+
+  def _track_tar_drop(self, tp, *args, **kwargs):
+    tar_norm = os.path.normpath(tp)
+    tar_drop_calls.append(tar_norm)
+    if os.path.isfile(tar_norm):
+      os.unlink(tar_norm)
+    _mark_day_phase(self, tar_norm, "tar_dropped")
+    return True
+
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_tar_drop_one_day",
+      _track_tar_drop,
+  )
+  monkeypatch.setattr(
+      janitor,
+      "_seal_one_day",
+      lambda *_a, **_k: True,
+  )
+
+  assert janitor._close_one_day(
+      tar_path,
+      snapshot=None,
+      validation_cache={},
+      disqualified=set(),
+  ) is True
+  assert tar_drop_calls == [tar_path]
+  assert finalize_calls == [tar_path]
+  assert not os.path.isfile(tar_path)
+  assert os.path.normpath(tar_path) not in janitor._debt_heap_tar_paths()
 
 
 def test_enqueue_eligible_day_close_no_double_enqueue_under_lock(

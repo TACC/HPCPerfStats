@@ -1659,26 +1659,85 @@ class ArchiveJanitor:
     if last_heartbeat:
       last_heartbeat[0] = now
 
-  def _finalize_day_close_manifest(self, tar_norm: str) -> None:
+  def _finalize_day_close_manifest(self, tar_norm: str) -> bool:
     """
-    Internal helper to handle finalize day close manifest.
-    
+    Mark day-close complete only when filesystem truth agrees.
+
+    With the async coordinator, returns the bool from
+    ``finalize_complete_if_filesystem`` (mutable ``.tar`` gone, sealed
+    sibling present, no blocking remaining raw). Without a coordinator,
+    returns True only when the mutable ``.tar`` is absent — never treats a
+    stale ``tar_dropped`` hint as success while the ``.tar`` remains.
+
     Args:
-      tar_norm (str): String for tar norm.
-    
+      tar_norm (str): Normalized daily ``.tar`` path.
+
     Returns:
-      None
-    
+      bool: True when manifest/filesystem completion succeeded.
+
     Examples:
       >>> ArchiveJanitor()._finalize_day_close_manifest("x")  # doctest: +SKIP
     """
     coord = self.day_close_manifest_coordinator
     if coord is None:
-      return
+      # Production always wires the async coordinator. Without it, never
+      # treat a still-live mutable ``.tar`` as complete (stale-hint trap).
+      return not os.path.isfile(tar_norm)
     try:
-      coord.finalize_complete_if_filesystem(tar_norm)
+      return bool(coord.finalize_complete_if_filesystem(tar_norm))
     except Exception:
-      pass
+      return False
+
+  def _tar_drop_and_finalize_day_close(
+    self,
+    tar_norm: str,
+    validation_cache: Any,
+    disqualified: Set[str],
+  ) -> bool:
+    """
+    Drop a live mutable ``.tar`` when present, then finalize completion.
+
+    Disk truth overrides a stale ``tar_dropped`` phase hint: if the ``.tar``
+    still exists, always attempt ``_tar_drop_one_day``. When the ``.tar`` is
+    already gone, still run sealed-only bookkeeping unless the phase hint is
+    already ``tar_dropped``. Success requires
+    ``_finalize_day_close_manifest`` True.
+
+    Args:
+      tar_norm (str): Normalized daily ``.tar`` path.
+      validation_cache (Any): Validation cache for tar-drop helpers.
+      disqualified (Set[str]): Daily tars excluded from mutation.
+
+    Returns:
+      bool: True only when filesystem-complete finalization succeeds.
+
+    Examples:
+      >>> ArchiveJanitor()._tar_drop_and_finalize_day_close(
+      ...     "x", None, set())  # doctest: +SKIP
+    """
+    if os.path.isfile(tar_norm):
+      if not self._tar_drop_one_day(
+          tar_norm,
+          validation_cache,
+          disqualified,
+      ):
+        self._enqueue_day_close(tar_norm, persist=False)
+        self._persist_hints()
+        return False
+    elif not self._day_phase_at_least(tar_norm, "tar_dropped"):
+      if not self._tar_drop_one_day(
+          tar_norm,
+          validation_cache,
+          disqualified,
+      ):
+        self._enqueue_day_close(tar_norm, persist=False)
+        self._persist_hints()
+        return False
+    if not self._finalize_day_close_manifest(tar_norm):
+      self._enqueue_day_close(tar_norm, persist=False)
+      self._persist_hints()
+      return False
+    return True
 
   def _discover_and_enqueue_ready_day_close(
     self,
@@ -3471,31 +3530,19 @@ class ArchiveJanitor:
         coord.begin_deleting(tar_norm)
         coord.apply_batch_delete(tar_norm)
       if coord.delete_phase_done(tar_norm):
-        if not self._day_phase_at_least(tar_norm, "tar_dropped"):
-          if not self._tar_drop_one_day(
-              tar_norm,
-              validation_cache,
-              disqualified,
-          ):
-            self._enqueue_day_close(tar_norm, persist=False)
-            self._persist_hints()
-            return False
-        self._finalize_day_close_manifest(tar_norm)
-        return True
+        return self._tar_drop_and_finalize_day_close(
+            tar_norm,
+            validation_cache,
+            disqualified,
+        )
       self._enqueue_day_close(tar_norm, persist=False)
       self._persist_hints()
       return False
-    if not self._day_phase_at_least(tar_norm, "tar_dropped"):
-      if not self._tar_drop_one_day(
-          tar_norm,
-          validation_cache,
-          disqualified,
-      ):
-        self._enqueue_day_close(tar_norm, persist=False)
-        self._persist_hints()
-        return False
-    self._finalize_day_close_manifest(tar_norm)
-    return True
+    return self._tar_drop_and_finalize_day_close(
+        tar_norm,
+        validation_cache,
+        disqualified,
+    )
 
   def _seal_one_day(
     self,
