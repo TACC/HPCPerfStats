@@ -86,10 +86,131 @@ def test_submit_drops_when_byte_budget_exceeded(monkeypatch):
   assert pool._counters["queue_drops"].value >= 1
 
 
+def _wire_fake_pool_bytes(pool, *, queued: int, budget: int, per_worker: int):
+  """Attach mock byte counters for watermark unit tests."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool._stop = mock.Mock()
+  pool._stop.is_set.return_value = False
+  byte_count = mock.Mock()
+  byte_count.value = queued
+  pool._byte_counts = [byte_count]
+  pool._queues = [queue.Queue(maxsize=1000)]
+  pool._byte_locks = [mock.MagicMock()]
+  pool._byte_locks[0].__enter__ = mock.Mock(return_value=None)
+  pool._byte_locks[0].__exit__ = mock.Mock(return_value=False)
+  pool._counters = {name: mock.Mock(value=0) for name in ldi._COUNTER_NAMES}
+  for c in pool._counters.values():
+    c.get_lock.return_value = mock.MagicMock()
+    c.get_lock.return_value.__enter__ = mock.Mock(return_value=None)
+    c.get_lock.return_value.__exit__ = mock.Mock(return_value=False)
+  pool._started = True
+  pool.enabled = True
+  pool.budget_bytes = budget
+  pool.per_worker_budget_bytes = per_worker
+  pool.pool_processes = 1
+  return pool
+
+
+def test_should_pause_and_resume_hysteresis():
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  budget = 1000
+  # Above pause watermark (0.95) → pause.
+  _wire_fake_pool_bytes(pool, queued=950, budget=budget, per_worker=budget)
+  assert pool.should_pause_consume() is True
+  assert pool.should_resume_consume() is False
+
+  # Mid band: still above resume (0.50) → stay paused for resume check.
+  pool._byte_counts[0].value = 700
+  assert pool.should_pause_consume() is False
+  assert pool.should_resume_consume() is False
+
+  # At/below resume watermark → resume.
+  pool._byte_counts[0].value = 500
+  assert pool.should_pause_consume() is False
+  assert pool.should_resume_consume() is True
+
+
+def test_should_pause_when_worker_full_even_if_aggregate_low():
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=2,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  pool._stop = mock.Mock()
+  pool._stop.is_set.return_value = False
+  # Worker 0 full (no min-floor headroom); worker 1 empty.
+  # Aggregate can be low vs total budget.
+  b0 = mock.Mock(value=1000)
+  b1 = mock.Mock(value=0)
+  pool._byte_counts = [b0, b1]
+  pool._queues = [queue.Queue(), queue.Queue()]
+  pool._started = True
+  pool.enabled = True
+  pool.budget_bytes = 100_000
+  pool.per_worker_budget_bytes = 1000
+  pool.pool_processes = 2
+  assert pool.should_pause_consume() is True
+  assert pool.worker_has_headroom(0, ldi._MIN_QUEUED_PAYLOAD_BYTES) is False
+  assert pool.worker_has_headroom(1, ldi._MIN_QUEUED_PAYLOAD_BYTES) is True
+
+
+def test_on_message_pauses_without_archive(tmp_path, monkeypatch):
+  import hpcperfstats.listend as listend
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  archived = []
+
+  def capture_archive(message):
+    archived.append(message)
+    return "myhost"
+
+  monkeypatch.setattr(listend, "append_monitor_payload_to_archive", capture_archive)
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  _wire_fake_pool_bytes(pool, queued=999, budget=1000, per_worker=1000)
+  monkeypatch.setattr(listend, "_live_db_ingest_pool_active", lambda: pool)
+  listend._db_backpressure_pause = False
+
+  channel = type("C", (), {"acked": [], "nacked": [], "stopped": False})()
+  channel.basic_ack = lambda delivery_tag=None: channel.acked.append(delivery_tag)
+  channel.basic_nack = lambda delivery_tag=None, requeue=False: channel.nacked.append(
+      (delivery_tag, requeue)
+  )
+  channel.stop_consuming = lambda: setattr(channel, "stopped", True)
+  method = type("M", (), {"delivery_tag": 7})()
+
+  listend.on_message(channel, method, None, b"1710000001.0 1 myhost x\n")
+  assert archived == []
+  assert channel.acked == []
+  assert channel.nacked == [(7, True)]
+  assert channel.stopped is True
+  assert listend._db_backpressure_pause is True
+  assert pool._counters["pause_enters"].value >= 1
+  listend._db_backpressure_pause = False
+
+
 def test_submit_after_write_not_on_failure(tmp_path, monkeypatch):
   import hpcperfstats.listend as listend
 
   monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(listend, "_live_db_ingest_pool_active", lambda: None)
   submitted = []
 
   monkeypatch.setattr(

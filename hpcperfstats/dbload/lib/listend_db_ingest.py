@@ -1,16 +1,18 @@
 """
 Host-affine sliding pool: listend archive payloads → Timescale dual-write.
 
-Ack remains on archive write only. Queue-full / byte-budget overflow drops the
-DB path (file stays durable for sync_timedb). Incomplete samples are never
-partially inserted — timestamp-second presence would poison duplicate-scan
-repair.
+Ack remains on archive write only when consuming. When live DB queues hit the
+high watermark, listend stops RabbitMQ consume (no archive) until usage falls
+below the low watermark. Incomplete samples are never partially inserted —
+timestamp-second presence would poison duplicate-scan repair.
 
 Attributes:
   _COUNTER_NAMES: Attribute.
   _GLOBAL_POOL: Attribute.
   _MIN_QUEUED_PAYLOAD_BYTES: Attribute.
+  _PAUSE_WATERMARK: Attribute.
   _QUEUE_GET_TIMEOUT_S: Attribute.
+  _RESUME_WATERMARK: Attribute.
   _SHUTDOWN_JOIN_TIMEOUT_S: Attribute.
 """
 from __future__ import annotations
@@ -29,10 +31,14 @@ from hpcperfstats.dbload.lib.print_utils import log_print
 _QUEUE_GET_TIMEOUT_S = 30.0
 _MIN_QUEUED_PAYLOAD_BYTES = 256
 _SHUTDOWN_JOIN_TIMEOUT_S = 15.0
+# Consume pause hysteresis (fractions of total queue byte budget).
+_PAUSE_WATERMARK = 0.95
+_RESUME_WATERMARK = 0.50
 
 # Shared counter names (multiprocessing.Value keys via dict of Values).
 _COUNTER_NAMES = (
     "queue_drops",
+    "pause_enters",
     "schema_miss",
     "db_ok",
     "db_err",
@@ -843,6 +849,7 @@ class ListendDbIngestPool:
     _window_baseline: Attribute.
     _workers: Attribute.
     batch_samples: Attribute.
+    budget_bytes: Attribute.
     enabled: Attribute.
     per_worker_budget_bytes: Attribute.
     pool_processes: Attribute.
@@ -882,6 +889,7 @@ class ListendDbIngestPool:
         else bool(enabled)
     )
     self.pool_processes = int(budgets["pool_processes"])
+    self.budget_bytes = int(budgets["budget_bytes"])
     self.per_worker_budget_bytes = int(budgets["per_worker_budget_bytes"])
     self.queue_maxsize = int(budgets["queue_maxsize"])
     self.batch_samples = max(
@@ -992,9 +1000,149 @@ class ListendDbIngestPool:
           pass
     self._started = False
 
+  def queued_bytes(self) -> int:
+    """
+    Return total queued payload bytes across all workers.
+    
+    Returns:
+      int: Sum of per-worker byte counters.
+    
+    Examples:
+      >>> ListendDbIngestPool(enabled=False).queued_bytes()
+      0
+    """
+    total = 0
+    for byte_count in self._byte_counts:
+      try:
+        total += int(byte_count.value)
+      except Exception:
+        pass
+    return total
+
+  def worker_has_headroom(self, worker_idx: int, size: int) -> bool:
+    """
+    Return True when worker ``worker_idx`` can accept ``size`` more bytes.
+    
+    Args:
+      worker_idx (int): Host-affine worker index.
+      size (int): Payload size in bytes.
+    
+    Returns:
+      bool: True when under that worker's byte budget.
+    
+    Examples:
+      >>> p = ListendDbIngestPool(enabled=False, pool_processes=1)
+      >>> p.worker_has_headroom(0, 1)
+      False
+    """
+    if not self._started or not self._byte_counts:
+      return False
+    idx = int(worker_idx) % max(1, self.pool_processes)
+    if idx < 0 or idx >= len(self._byte_counts):
+      return False
+    size_i = max(0, int(size))
+    byte_count = self._byte_counts[idx]
+    try:
+      return int(byte_count.value) + size_i <= self.per_worker_budget_bytes
+    except Exception:
+      return False
+
+  def can_enqueue(self, host: str, message: str) -> bool:
+    """
+    Return True when the host-affine worker can accept ``message`` now.
+    
+    Args:
+      host (str): Monitor hostname token.
+      message (str): Raw monitor payload.
+    
+    Returns:
+      bool: True when enqueue would succeed under the byte budget.
+    
+    Examples:
+      >>> ListendDbIngestPool(enabled=False).can_enqueue("h", "x")
+      False
+    """
+    if not self.enabled or not self._started or self._stop.is_set():
+      return False
+    if not host or message is None:
+      return False
+    idx = host_affine_worker_index(host, self.pool_processes)
+    size = _payload_byte_size(message)
+    return self.worker_has_headroom(idx, size)
+
+  def should_pause_consume(self) -> bool:
+    """
+    Return True when RabbitMQ consume should stop for DB backpressure.
+    
+    Triggers when aggregate queued bytes reach the high watermark fraction of
+    the total budget, or when any worker cannot accept another minimum-floor
+    payload (same condition as a would-be queue drop).
+    
+    Returns:
+      bool: True when listend should stop consuming.
+    
+    Examples:
+      >>> ListendDbIngestPool(enabled=False).should_pause_consume()
+      False
+    """
+    if not self.enabled or not self._started or self._stop.is_set():
+      return False
+    budget = max(1, int(self.budget_bytes))
+    if self.queued_bytes() >= int(_PAUSE_WATERMARK * budget):
+      return True
+    floor = max(1, int(_MIN_QUEUED_PAYLOAD_BYTES))
+    for i in range(len(self._byte_counts)):
+      if not self.worker_has_headroom(i, floor):
+        return True
+    return False
+
+  def should_resume_consume(self) -> bool:
+    """
+    Return True when RabbitMQ consume may restart after a DB pause.
+    
+    Requires aggregate usage at or below the low watermark and every worker
+    having headroom for a minimum-floor payload.
+    
+    Returns:
+      bool: True when listend may resume consuming.
+    
+    Examples:
+      >>> ListendDbIngestPool(enabled=False).should_resume_consume()
+      True
+    """
+    if not self.enabled or not self._started:
+      return True
+    if self._stop.is_set():
+      return True
+    budget = max(1, int(self.budget_bytes))
+    if self.queued_bytes() > int(_RESUME_WATERMARK * budget):
+      return False
+    floor = max(1, int(_MIN_QUEUED_PAYLOAD_BYTES))
+    for i in range(len(self._byte_counts)):
+      if not self.worker_has_headroom(i, floor):
+        return False
+    return True
+
+  def note_pause_enter(self) -> None:
+    """
+    Increment the pause-enter counter (once per stop_consuming transition).
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> ListendDbIngestPool(enabled=False).note_pause_enter()
+    """
+    if not self._started:
+      return
+    _inc_counter(self._counters, "pause_enters")
+
   def submit(self, host: str, message: str) -> bool:
     """
     Nonblocking enqueue. Return False on drop / disabled / not started.
+    
+    Under normal backpressure listend pauses RabbitMQ consume before calling
+    submit. A False return here is an unexpected race (counted as queue_drops).
     
     Args:
       host (str): String for host.
@@ -1045,6 +1193,7 @@ class ListendDbIngestPool:
       except Exception:
         pass
     out["db_queue_depth"] = depth
+    out["db_queued_bytes"] = self.queued_bytes()
     return out
 
   def window_counters_and_reset(self) -> dict:
@@ -1061,7 +1210,7 @@ class ListendDbIngestPool:
     base = self._window_baseline or {}
     delta = {}
     for key, val in now.items():
-      if key == "db_queue_depth":
+      if key in ("db_queue_depth", "db_queued_bytes"):
         delta[key] = val
       else:
         delta[key] = max(0, int(val) - int(base.get(key, 0)))
@@ -1080,15 +1229,18 @@ class ListendDbIngestPool:
     """
     d = self.window_counters_and_reset()
     return (
-        "db_ingest queue_drops=%d schema_miss=%d db_ok=%d db_err=%d "
-        "conn_recycle=%d db_queue_depth=%d batch_flush=%d"
+        "db_ingest queue_drops=%d pause_enters=%d schema_miss=%d db_ok=%d "
+        "db_err=%d conn_recycle=%d db_queue_depth=%d db_queued_bytes=%d "
+        "batch_flush=%d"
         % (
             d.get("queue_drops", 0),
+            d.get("pause_enters", 0),
             d.get("schema_miss", 0),
             d.get("db_ok", 0),
             d.get("db_err", 0),
             d.get("conn_recycle", 0),
             d.get("db_queue_depth", 0),
+            d.get("db_queued_bytes", 0),
             d.get("batch_flush", 0),
         )
     )

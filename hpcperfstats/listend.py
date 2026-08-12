@@ -13,6 +13,7 @@ Attributes:
   _last_idle_report_time: Attribute.
   _last_message_time: Attribute.
   _message_timestamps: Attribute.
+  _db_backpressure_pause: Attribute.
   _recent_host_queue: Attribute.
   _recent_host_redis_client: Attribute.
   _recent_host_worker_stop_event: Attribute.
@@ -67,6 +68,8 @@ _recent_host_worker_thread_started = False
 _recent_host_worker_stop_event = Event()
 _recent_host_queue = queue.Queue(maxsize=100000)
 _recent_host_redis_client = None
+# Set when on_message stops consume for live-DB queue backpressure.
+_db_backpressure_pause = False
 
 
 def _parse_plausible_unix_seconds(token: str) -> int | None:
@@ -534,6 +537,106 @@ def _get_rmq_queue_depth_for_monitor() -> Any:
         pass
 
 
+def _live_db_ingest_pool_active() -> Any:
+  """
+  Return the started live DB ingest pool, or ``None``.
+
+  Returns:
+    Any: ``ListendDbIngestPool`` when enabled and started, else ``None``.
+
+  Examples:
+    >>> _live_db_ingest_pool_active()  # doctest: +SKIP
+  """
+  try:
+    from hpcperfstats.dbload.lib.listend_db_ingest import get_listend_db_ingest_pool
+
+    pool = get_listend_db_ingest_pool()
+  except Exception:
+    return None
+  if pool is None or not pool.enabled or not pool._started:
+    return None
+  return pool
+
+
+def _request_db_backpressure_pause(channel: Any, delivery_tag: Any) -> None:
+  """
+  Nack+requeue without archive and stop consuming for DB backpressure.
+
+  Args:
+    channel (Any): Pika channel used by the consumer.
+    delivery_tag (Any): Delivery tag to nack, or ``None``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _request_db_backpressure_pause(None, None)  # doctest: +SKIP
+  """
+  global _db_backpressure_pause
+  pool = _live_db_ingest_pool_active()
+  if pool is not None and not _db_backpressure_pause:
+    try:
+      pool.note_pause_enter()
+    except Exception:
+      pass
+    log_print(
+        "listend db ingest buffers full; pausing RabbitMQ consume "
+        "(no archive until resume watermark)",
+        flush=True,
+    )
+  _db_backpressure_pause = True
+  try:
+    if hasattr(channel, "basic_nack") and delivery_tag is not None:
+      channel.basic_nack(delivery_tag=delivery_tag, requeue=True)
+  except Exception as nack_err:
+    if DEBUG:
+      log_print("Failed to nack on db backpressure pause: %s" % nack_err)
+  try:
+    channel.stop_consuming()
+  except Exception as stop_err:
+    if DEBUG:
+      log_print("Failed to stop_consuming on db backpressure: %s" % stop_err)
+
+
+def _wait_for_db_backpressure_resume(connection: Any) -> bool:
+  """
+  Wait until live DB queues drain below the resume watermark.
+
+  Pumps ``process_data_events`` so RabbitMQ heartbeats stay alive.
+
+  Args:
+    connection (Any): Open pika ``BlockingConnection``.
+
+  Returns:
+    bool: ``True`` when resume is allowed; ``False`` when the connection is
+    unusable or shutdown was requested.
+
+  Examples:
+    >>> _wait_for_db_backpressure_resume(None)  # doctest: +SKIP
+  """
+  global _db_backpressure_pause
+  while _db_backpressure_pause:
+    if _idle_monitor_stop_event.is_set():
+      return False
+    if connection is None or getattr(connection, "is_closed", True):
+      return False
+    pool = _live_db_ingest_pool_active()
+    if pool is None or pool.should_resume_consume():
+      _db_backpressure_pause = False
+      log_print(
+          "listend db ingest buffers drained; resuming RabbitMQ consume",
+          flush=True,
+      )
+      return True
+    try:
+      connection.process_data_events(time_limit=1)
+    except Exception as exc:
+      if DEBUG:
+        log_print("process_data_events during db pause wait: %s" % exc)
+      return False
+  return True
+
+
 def on_message(
   channel: Any,
   method_frame: Any,
@@ -546,6 +649,9 @@ def on_message(
     host's.
   
     current file and optionally rotate. Acknowledges the message.
+  
+  When live DB ingest queues are at the high watermark, nack+requeue without
+  archive and stop consuming until the low watermark.
   
   Per-message logging of consumption/queue depth is avoided; instead, a
   background monitor thread reports aggregate rates every 10 minutes.
@@ -562,9 +668,26 @@ def on_message(
   Examples:
     >>> on_message(None, None, None, None)  # doctest: +SKIP
   """
+  global _db_backpressure_pause
   delivery_tag = getattr(method_frame, "delivery_tag", None)
   try:
     message = body.decode(errors="replace")
+    pool = _live_db_ingest_pool_active()
+    if pool is not None:
+      from hpcperfstats.dbload.lib.listend_db_ingest import (
+          parse_host_from_monitor_payload,
+      )
+
+      try:
+        peek_host = parse_host_from_monitor_payload(message)
+      except Exception:
+        peek_host = ""
+      if (
+          pool.should_pause_consume()
+          or (peek_host and not pool.can_enqueue(peek_host, message))
+      ):
+        _request_db_backpressure_pause(channel, delivery_tag)
+        return
     host = append_monitor_payload_to_archive(message)
     # Best-effort live DB dual-write; never blocks or fails the ack path.
     try:
@@ -742,35 +865,72 @@ def main() -> None:
           except Exception as e:
             log_print("Failed to get startup queue depth: %s" % e)
 
-          channel.basic_consume(cfg.get_rmq_queue(), on_message)
-          log_print("Begining Consume from queue: " + cfg.get_rmq_queue())
-          try:
-            channel.start_consuming()
-          except (KeyboardInterrupt, SystemExit):
-            channel.stop_consuming()
-            raise
-          except StreamLostError as e:
-            # Connection dropped (e.g. broker restart or idle timeout). Treat as a
-            # normal shutdown condition and only log in DEBUG mode to avoid noisy
-            # "Error while consuming" messages like "pop from an empty deque".
-            if DEBUG:
-              log_print("RabbitMQ stream lost while consuming: %s" % e)
-          except AttributeError as e:
-            # Some pika versions raise an AttributeError like "'NoneType' object
-            # has no attribute 'poll'" during shutdown when the underlying poller
-            # has already been torn down. This is effectively equivalent to a
-            # lost stream and should not be treated as a hard error.
-            msg = str(e)
-            if "NoneType" in msg and "poll" in msg:
+          live_pool = _live_db_ingest_pool_active()
+          if live_pool is not None:
+            # Prefetch=1 so pause leaves work on the broker ready queue.
+            channel.basic_qos(prefetch_count=1)
+
+          # Inner loop: consume until connection error, or pause for DB
+          # backpressure then resume on the same connection.
+          while not _idle_monitor_stop_event.is_set():
+            if _db_backpressure_pause:
+              if not _wait_for_db_backpressure_resume(connection):
+                break
+              if connection.is_closed:
+                break
+              # Channel may still be open after stop_consuming; re-bind.
+              try:
+                if live_pool is not None:
+                  channel.basic_qos(prefetch_count=1)
+              except Exception:
+                break
+
+            # Cancel any prior consumer tags before (re)registering.
+            try:
+              channel.cancel()
+            except Exception:
+              pass
+            channel.basic_consume(cfg.get_rmq_queue(), on_message)
+            log_print("Begining Consume from queue: " + cfg.get_rmq_queue())
+            try:
+              channel.start_consuming()
+            except (KeyboardInterrupt, SystemExit):
+              try:
+                channel.stop_consuming()
+              except Exception:
+                pass
+              raise
+            except StreamLostError as e:
+              # Connection dropped (e.g. broker restart or idle timeout). Treat as a
+              # normal shutdown condition and only log in DEBUG mode to avoid noisy
+              # "Error while consuming" messages like "pop from an empty deque".
               if DEBUG:
-                log_print(
-                    "RabbitMQ connection poller torn down during consume: %s" % e)
-            else:
+                log_print("RabbitMQ stream lost while consuming: %s" % e)
+              break
+            except AttributeError as e:
+              # Some pika versions raise an AttributeError like "'NoneType' object
+              # has no attribute 'poll'" during shutdown when the underlying poller
+              # has already been torn down. This is effectively equivalent to a
+              # lost stream and should not be treated as a hard error.
+              msg = str(e)
+              if "NoneType" in msg and "poll" in msg:
+                if DEBUG:
+                  log_print(
+                      "RabbitMQ connection poller torn down during consume: %s" % e)
+              else:
+                log_print("Error while consuming from RabbitMQ: %s" % e)
+              break
+            except Exception as e:
+              # Handle other connection-level errors from pika without raising during
+              # shutdown/cleanup. We will attempt to reconnect after a short delay.
               log_print("Error while consuming from RabbitMQ: %s" % e)
-          except Exception as e:
-            # Handle other connection-level errors from pika without raising during
-            # shutdown/cleanup. We will attempt to reconnect after a short delay.
-            log_print("Error while consuming from RabbitMQ: %s" % e)
+              break
+
+            if _db_backpressure_pause:
+              # stop_consuming from on_message — wait then resume.
+              continue
+            # Unexpected stop_consuming without pause flag → reconnect.
+            break
         except (KeyboardInterrupt, SystemExit):
           # Allow clean shutdown on explicit termination signals.
           log_print("Shutting down listend daemon on user request")
