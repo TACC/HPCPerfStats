@@ -251,12 +251,22 @@ Piping or redirecting **`rabbitmqctl` / `rabbitmq-plugins` stderr to `/dev/null`
 | Do | Don't |
 |----|-------|
 | Print `rabbitmqctl` stdout **and** stderr (`2>&1`), or omit redirects | `rabbitmqctl status 2>/dev/null \| head` |
-| Prefer listener probe (`ss`/`nc`) plus unfiltered `rabbitmqctl list_queues name messages consumers` | Assume empty CLI output means “no queues” |
+| Prefer unfiltered `exec rabbitmq rabbitmqctl list_queues name messages consumers` | Assume empty CLI output means “no queues” |
+| `exec rabbitmq rabbitmqctl …` as the container command | Wrap `rabbitmqctl` in `sh -lc` / `bash -lc` |
 
-With the **`rabbitmq:*-management-alpine`** image, listeners should include **15672** (compose-internal; not published on the host) and `rabbitmq-plugins list -e` should show **`rabbitmq_management`**. Absence of 15672 means the non-management image is still running.
+### Anti-pattern — `exec rabbitmq sh -lc 'rabbitmqctl…'` → `not found` (hpcperfstats04 2026-08-11)
+
+Login shells inside the **`rabbitmq:*-management-alpine`** image do **not** put `rabbitmqctl` on `PATH` (`/usr/sbin` / RabbitMQ sbin omitted). `exec rabbitmq sh -lc 'rabbitmqctl list_queues …'` prints **`rabbitmqctl: not found`**. Direct exec uses the image entrypoint PATH and works (may print a 60s CLI timeout banner, then the table).
+
+| Do | Don't |
+|----|-------|
+| `docker compose … exec rabbitmq rabbitmqctl list_queues name messages consumers` | `exec rabbitmq sh -lc 'rabbitmqctl …'` |
+| `exec rabbitmq rabbitmqctl status` for node health | Assume wrapping `sh` preserves sbin `PATH` |
+
+With the **`rabbitmq:*-management-alpine`** image, `rabbitmq-plugins list -e` should show **`rabbitmq_management`**. Absence of the management plugin means the non-management image is still running.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec rabbitmq sh -lc 'rabbitmqctl status 2>&1 | head -20; echo ---; rabbitmq-plugins list -e 2>&1; echo ---; (ss -lntp 2>/dev/null || netstat -lntp 2>/dev/null || true) | grep -E "5672|15672" || true; echo ---; rabbitmqctl list_queues name messages consumers 2>&1 | head -20'
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec rabbitmq rabbitmqctl list_queues name messages consumers
 ```
 
 ### Anti-pattern — reading app files from the checkout tree instead of the installed package
@@ -583,6 +593,7 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | Nested `docker compose …` **inside** an already-running `docker compose exec …` shell | Pipeline/web images have **no** Docker CLI → **`docker: not found`** / exit **127** (hpcperfstats04 2026-08-04). Host compose cannot be re-entered from inside the container | Keep **one** host-side `docker compose exec` per paste. Chain only **in-container** commands (`python3`, `ls`, `grep`). For host logs use **host** `docker compose logs …` (not nested inside `exec`) |
 | Long **web** `python3 -c` census (f-strings, nested quotes, 20+ statements) | podman-compose **truncates** the `-c` payload (hpcperfstats04 2026-08-11, cut at `int("samples"…)`) | Short **pipeline** `su hpcperfstats -c 'python3 -c "…"'` one-liner, or a tiny script file in the container |
 | Mix listend `hardlink` + update_metrics tokens then `tail -80` | Hardlink flood drowns `Date Range` / `candidate_jids` (hpcperfstats04 2026-08-11) | Metrics-only `grep -E 'Date Range\|candidate_jids\|window_rollover\|empty_pass'` on the full log buffer, `tail` **after** grep |
+| `exec rabbitmq sh -lc 'rabbitmqctl …'` | Login `PATH` omits RabbitMQ sbin → **`rabbitmqctl: not found`** (hpcperfstats04 2026-08-11) | `exec rabbitmq rabbitmqctl list_queues name messages consumers` (no wrapping shell) |
 
 **Good** — podman service check + filtered log tail (paths from INI first):
 

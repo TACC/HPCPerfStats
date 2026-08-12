@@ -19,6 +19,10 @@ Attributes:
   _recent_host_worker_thread_started: Attribute.
   _timestamps_lock: Attribute.
   _unlink_timestamps: Attribute.
+  _MIN_PLAUSIBLE_UNIX_SECONDS: Lowest unix seconds accepted as a stats
+    timestamp (schema host line ``1 <fqdn>`` is below this).
+  _DIGIT_EPOCH_NAME_MAX_ATTEMPTS: Max digit names to probe when finding a
+    free epoch filename during ``$`` rotate.
 """
 from __future__ import annotations
 
@@ -47,6 +51,10 @@ DEBUG = cfg.get_debug()
 MESSAGE_WINDOW_SECONDS = 600  # 10 minutes
 IDLE_CHECK_INTERVAL = 60      # seconds
 RECENT_HOST_TTL_SECONDS = 7 * 24 * 60 * 60  # 1 week
+# Monitor schema dumps start with ``$`` then ``1 <fqdn>``; that ``1`` is not
+# a sample unix second. Real host_data timestamps are post-2001.
+_MIN_PLAUSIBLE_UNIX_SECONDS = 1_000_000_000
+_DIGIT_EPOCH_NAME_MAX_ATTEMPTS = 10_000
 
 _message_timestamps = deque()
 _unlink_timestamps = deque()
@@ -61,73 +69,114 @@ _recent_host_queue = queue.Queue(maxsize=100000)
 _recent_host_redis_client = None
 
 
-def _get_first_timestamp_seconds(file_path: str, use_lock: bool = True) -> Any:
-  """
-  Return first unix timestamp seconds found in stats file content.
-  
-  Expects a line beginning with digits in the format: "<t> <jid> <host> ...".
-  
+def _parse_plausible_unix_seconds(token: str) -> int | None:
+  """Return truncated unix seconds when ``token`` is a plausible sample time.
+
+  Schema host lines (``1 <fqdn>``) and other small integers are not sample
+  timestamps. Accept only values at or above
+  ``_MIN_PLAUSIBLE_UNIX_SECONDS``.
+
   Args:
-    file_path (str): String for file path.
-    use_lock (bool): Whether to enable use lock.
-  
+    token (str): Leading field from a digit-starting stats line.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    int | None: Truncated unix seconds, or ``None`` when not plausible.
+
   Examples:
-    >>> _get_first_timestamp_seconds("x", True)  # doctest: +SKIP
+    >>> _parse_plausible_unix_seconds("1786487860.470903")
+    1786487860
+    >>> _parse_plausible_unix_seconds("1") is None
+    True
+  """
+  try:
+    ts = int(float(token))
+  except (TypeError, ValueError):
+    return None
+  if ts < _MIN_PLAUSIBLE_UNIX_SECONDS:
+    return None
+  return ts
+
+
+def _first_plausible_unix_seconds_from_open_file(fd: Any) -> int | None:
+  """Scan an open stats file for the first plausible unix-second token.
+
+  Args:
+    fd (Any): Text file object already opened for reading.
+
+  Returns:
+    int | None: First plausible timestamp seconds, or ``None`` if none.
+
+  Examples:
+    >>> from io import StringIO
+    >>> _first_plausible_unix_seconds_from_open_file(
+    ...     StringIO("$\\n1 host.example\\n1786487860 1 host.example\\n")
+    ... )
+    1786487860
+  """
+  for line in fd:
+    if not line:
+      continue
+    s = line.lstrip()
+    if not s or not s[0].isdigit():
+      continue
+    parsed = _parse_plausible_unix_seconds(s.split(maxsplit=1)[0])
+    if parsed is not None:
+      return parsed
+  return None
+
+
+def _get_first_timestamp_seconds(
+    file_path: str,
+    use_lock: bool = True,
+) -> int | None:
+  """Return first plausible unix timestamp seconds in a stats file.
+
+  Skips ``$`` schema host lines (``1 <fqdn>``). Expects a sample line
+  ``"<t> <jid> <host> ..."`` with ``t >= 1e9``.
+
+  Args:
+    file_path (str): Path to ``current`` or a closed epoch file.
+    use_lock (bool): When True, take a read lock before scanning.
+
+  Returns:
+    int | None: First plausible unix seconds, or ``None`` if none / I/O
+    error.
+
+  Examples:
+    >>> _get_first_timestamp_seconds("/no/such/file", False) is None
+    True
   """
   try:
     if use_lock:
       with file_read_lock_wait(file_path):
         with open(file_path, "r") as fd:
-          for line in fd:
-            if not line:
-              continue
-            s = line.lstrip()
-            if not s:
-              continue
-            if s[0].isdigit():
-              t = s.split(maxsplit=1)[0]
-              # The file may store floats (epoch with fractional seconds).
-              return int(float(t))
-    else:
-      with open(file_path, "r") as fd:
-        for line in fd:
-          if not line:
-            continue
-          s = line.lstrip()
-          if not s:
-            continue
-          if s[0].isdigit():
-            t = s.split(maxsplit=1)[0]
-            return int(float(t))
+          return _first_plausible_unix_seconds_from_open_file(fd)
+    with open(file_path, "r") as fd:
+      return _first_plausible_unix_seconds_from_open_file(fd)
   except Exception:
-    pass
-  return None
+    return None
 
 
-def _current_is_hardlinked_to_older_epoch(
-  host_dir: str,
-  current_path: str,
-  cutoff_epoch_ts: Any,
-) -> Any:
-  """
-  Return True if `current_path` shares an inode with an older epoch file.
-  
-  Older epoch files are numeric filenames whose epoch seconds are strictly
-  less than `cutoff_epoch_ts`.
-  
+def _current_is_hardlinked_to_digit_epoch(
+    host_dir: str,
+    current_path: str,
+) -> bool:
+  """Return True if ``current_path`` shares an inode with any digit epoch file.
+
+  Any samefile digit name is durable enough to unlink ``current`` as long
+  as the new-current link uses a different unused name (never
+  ``os.remove`` of that inode).
+
   Args:
-    host_dir (str): String for host dir.
-    current_path (str): String for current path.
-    cutoff_epoch_ts (Any): Cutoff epoch ts passed to this helper.
-  
+    host_dir (str): Per-host archive directory.
+    current_path (str): Path to the live ``current`` file.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    bool: True when a digit-named sibling is the same inode.
+
   Examples:
-    >>> _current_is_hardlinked_to_older_epoch("x", "x", None)  # doctest: +SKIP
+    >>> _current_is_hardlinked_to_digit_epoch("/no/host", "/no/current")
+    False
   """
   try:
     with os.scandir(host_dir) as it:
@@ -135,15 +184,7 @@ def _current_is_hardlinked_to_older_epoch(
         if not entry.is_file():
           continue
         name = entry.name
-        if name.endswith(".lock"):
-          continue
-        if not name.isdigit():
-          continue
-        try:
-          epoch_ts = int(name)
-        except ValueError:
-          continue
-        if epoch_ts >= cutoff_epoch_ts:
+        if name.endswith(".lock") or not name.isdigit():
           continue
         try:
           if os.path.samefile(current_path, entry.path):
@@ -155,46 +196,102 @@ def _current_is_hardlinked_to_older_epoch(
   return False
 
 
-def _ensure_current_hardlinked_to_timestamp(
-  host_dir: str,
-  current_path: str,
-) -> None:
-  """
-  Hardlink current_path to the epoch seconds of the first timestamp line.
-  
-  This is a safety fallback for cases where `current` exists but is not yet
-  linked to an epoch-named file (i.e. sync_timedb can't reliably detect the
-  live segment).
-  
+def _link_current_to_unique_digit_epoch(
+    host_dir: str,
+    current_path: str,
+    start_ts: int,
+    step: int,
+) -> int:
+  """Hardlink ``current_path`` to an unused digit epoch name.
+
+  Walks ``start_ts, start_ts+step, ...`` until a name is free or already
+  samefile with ``current_path``. Never ``os.remove`` a different inode.
+
   Args:
-    host_dir (str): String for host dir.
-    current_path (str): String for current path.
-  
+    host_dir (str): Per-host archive directory.
+    current_path (str): Path to the live ``current`` file.
+    start_ts (int): First candidate unix-second filename.
+    step (int): ``+1`` after creating new current, ``-1`` when ensuring
+      a pre-unlink safety link.
+
+  Returns:
+    int: Digit epoch seconds used for the hardlink.
+
+  Raises:
+    ValueError: ``step`` is 0.
+    RuntimeError: No free name within ``_DIGIT_EPOCH_NAME_MAX_ATTEMPTS``.
+
+  Examples:
+    >>> _link_current_to_unique_digit_epoch("/x", "/x/current", 1, 0)
+    Traceback (most recent call last):
+        ...
+    ValueError: step must be non-zero
+  """
+  if step == 0:
+    raise ValueError("step must be non-zero")
+  ts = int(start_ts)
+  for _ in range(_DIGIT_EPOCH_NAME_MAX_ATTEMPTS):
+    if ts <= 0:
+      break
+    link_path = os.path.join(host_dir, str(ts))
+    if os.path.exists(link_path):
+      try:
+        if os.path.samefile(current_path, link_path):
+          return ts
+      except OSError:
+        pass
+      ts += step
+      continue
+    os.link(current_path, link_path)
+    return ts
+  raise RuntimeError(
+      "Unable to find unused digit epoch name in %s (start=%s step=%s)"
+      % (host_dir, start_ts, step)
+  )
+
+
+def _ensure_current_hardlinked_to_timestamp(
+    host_dir: str,
+    current_path: str,
+    cutoff_epoch_ts: int,
+) -> None:
+  """Hardlink ``current`` to a free digit name at or below first sample ts.
+
+  Safety fallback when ``current`` exists but is not yet linked to any
+  digit epoch file. If ``str(first_ts)`` is a closed different inode,
+  walk downward from ``min(first_ts, cutoff-1)`` instead of raising
+  ``Timestamp link path exists but is not hardlinked to current``.
+
+  Args:
+    host_dir (str): Per-host archive directory.
+    current_path (str): Path to the live ``current`` file.
+    cutoff_epoch_ts (int): Rotate-time unix seconds; safety link names
+      stay strictly below this when first_ts is at/after cutoff.
+
   Returns:
     None
-  
+
   Raises:
-    RuntimeError: Raised when ``_ensure_current_hardlinked_to_timestamp`` hits
-    a ``RuntimeError`` failure path.
-  
+    RuntimeError: No plausible timestamp in ``current``, or no free
+      digit name in the walk budget.
+
   Examples:
-    >>> _ensure_current_hardlinked_to_timestamp("x", "x")  # doctest: +SKIP
+    >>> _ensure_current_hardlinked_to_timestamp("/x", "/x/current", 1)
+    Traceback (most recent call last):
+        ...
+    RuntimeError: Unable to find timestamp in current file
   """
   # Called from on_message() while holding write lock for current_path.
   first_ts_sec = _get_first_timestamp_seconds(current_path, use_lock=False)
   if first_ts_sec is None:
     raise RuntimeError("Unable to find timestamp in current file")
 
-  link_path = os.path.join(host_dir, str(first_ts_sec))
-  if os.path.exists(link_path):
-    # If it's already the same inode, we're done.
-    if os.path.samefile(current_path, link_path):
-      return
-    raise RuntimeError(
-        "Timestamp link path exists but is not hardlinked to current: %s" %
-        link_path
-    )
-  os.link(current_path, link_path)
+  start_ts = min(int(first_ts_sec), int(cutoff_epoch_ts) - 1)
+  if start_ts <= 0:
+    raise RuntimeError("Unable to find unused digit epoch name in %s" % host_dir)
+  _link_current_to_unique_digit_epoch(
+      host_dir, current_path, start_ts, step=-1
+  )
 
 
 def _get_recent_host_redis_client() -> Any:
@@ -353,22 +450,20 @@ def append_monitor_payload_to_archive(message: Any) -> Any:
     epoch_ts = int(time.time())
     with file_write_lock(current_path):
       if os.path.exists(current_path):
-        if not _current_is_hardlinked_to_older_epoch(
-            host_dir, current_path, epoch_ts):
-          _ensure_current_hardlinked_to_timestamp(host_dir, current_path)
-          if not _current_is_hardlinked_to_older_epoch(
-              host_dir, current_path, epoch_ts):
+        if not _current_is_hardlinked_to_digit_epoch(host_dir, current_path):
+          _ensure_current_hardlinked_to_timestamp(
+              host_dir, current_path, epoch_ts)
+          if not _current_is_hardlinked_to_digit_epoch(
+              host_dir, current_path):
             raise RuntimeError(
-                "current is not linked to an older epoch before unlink")
+                "current is not hardlinked to a digit epoch before unlink")
 
         os.unlink(current_path)
         unlinked_current = True
 
       with open(current_path, "w") as fd:
-        link_path = os.path.join(host_dir, str(epoch_ts))
-        if os.path.exists(link_path):
-          os.remove(link_path)
-        os.link(current_path, link_path)
+        _link_current_to_unique_digit_epoch(
+            host_dir, current_path, epoch_ts, step=1)
         # Epoch name and current share an inode until the next ``$`` rotation.
         # sync_timedb skips epoch files same-inode-as-current to avoid read races.
 

@@ -277,3 +277,145 @@ def test_on_message_hardlinks_missing_epoch_before_unlink(tmp_path, monkeypatch)
   assert len(listend._unlink_timestamps) == 1
   assert listend._unlink_timestamps[0] > cutoff_epoch_ts
 
+
+def test_on_message_hardlinks_when_first_ts_epoch_is_other_inode(
+    tmp_path, monkeypatch
+):
+  """$ rotate must ack when first_ts name is a closed different inode.
+
+  Production (hpcperfstats04 2026-08-11): ``Timestamp link path exists but
+  is not hardlinked to current`` then nack/requeue.
+  """
+  import os
+
+  import hpcperfstats.listend as listend
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+
+  host = "c104-028.horizon.tacc.utexas.edu"
+  host_dir = tmp_path / host
+  host_dir.mkdir()
+
+  first_ts_sec = 1786487860
+  closed_bytes = b"closed-previous-segment-other-inode\n"
+  (host_dir / str(first_ts_sec)).write_bytes(closed_bytes)
+
+  old_current = (
+      "header-before-first-ts\n"
+      "1786487860.470903 2946877 %s\n"
+      "live-segment-body\n"
+  ) % host
+  (host_dir / "current").write_text(old_current)
+  assert not os.path.samefile(
+      host_dir / "current", host_dir / str(first_ts_sec)
+  )
+
+  cutoff_epoch_ts = first_ts_sec + 100
+  times = itertools.count(cutoff_epoch_ts + 0.1, 0.1)
+
+  def _fake_time():
+    return round(next(times), 1)
+
+  monkeypatch.setattr(listend.time, "time", _fake_time)
+
+  with listend._timestamps_lock:
+    listend._message_timestamps.clear()
+    listend._unlink_timestamps.clear()
+    listend._last_message_time = None
+
+  channel = _FakeChannel()
+  msg = b"$\n1 " + host.encode("ascii") + b"\nrotated-segment\n"
+  listend.on_message(channel, _FakeMethodFrame(delivery_tag=11), None, msg)
+
+  assert channel.acked == [11]
+  assert channel.nacked == []
+  assert (host_dir / str(first_ts_sec)).read_bytes() == closed_bytes
+
+  old_current_bytes = old_current.encode()
+  digit_epochs = [
+      p for p in host_dir.iterdir() if p.is_file() and p.name.isdigit()
+  ]
+  preserved = [p for p in digit_epochs if p.read_bytes() == old_current_bytes]
+  assert preserved, "old current bytes must remain under a digit epoch name"
+  assert not os.path.samefile(preserved[0], host_dir / str(first_ts_sec))
+
+  current_path = host_dir / "current"
+  assert current_path.read_bytes() == msg
+  current_partners = [
+      p
+      for p in digit_epochs
+      if os.path.samefile(current_path, p)
+  ]
+  assert current_partners, "new current must have a digit samefile epoch"
+
+
+def test_on_message_same_second_double_dollar_preserves_closed_epoch(
+    tmp_path, monkeypatch
+):
+  """Two $ rotates in the same unix second must not delete the first inode."""
+  import os
+
+  import hpcperfstats.listend as listend
+
+  frozen = 1786488768.4
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(listend.time, "time", lambda: frozen)
+
+  with listend._timestamps_lock:
+    listend._message_timestamps.clear()
+    listend._unlink_timestamps.clear()
+    listend._last_message_time = None
+
+  channel = _FakeChannel()
+  host = "myhost"
+  msg1 = b"$\n1 " + host.encode("ascii") + b"\nfirst-segment\n"
+  msg2 = b"$\n1 " + host.encode("ascii") + b"\nsecond-segment\n"
+
+  listend.on_message(channel, _FakeMethodFrame(delivery_tag=1), None, msg1)
+  listend.on_message(channel, _FakeMethodFrame(delivery_tag=2), None, msg2)
+
+  assert channel.acked == [1, 2]
+  assert channel.nacked == []
+
+  host_dir = tmp_path / host
+  current_contents = (host_dir / "current").read_bytes()
+  epoch_files = sorted(
+      p for p in host_dir.iterdir() if p.is_file() and p.name.isdigit()
+  )
+  assert len(epoch_files) >= 2
+  assert all(int(p.name) >= 1_000_000_000 for p in epoch_files), [
+      p.name for p in epoch_files
+  ]
+  first_epoch = host_dir / "1786488768"
+  assert first_epoch.is_file()
+  assert first_epoch.read_bytes() == msg1
+  epoch_inodes = {p.stat().st_ino for p in epoch_files}
+  assert len(epoch_inodes) >= 2
+  epoch_contents = [p.read_bytes() for p in epoch_files]
+  assert current_contents == msg2
+  assert msg1 in epoch_contents
+  assert msg2 in epoch_contents
+  assert os.path.samefile(host_dir / "current", [
+      p for p in epoch_files if p.read_bytes() == msg2
+  ][0])
+  assert not os.path.samefile(first_epoch, host_dir / "current")
+
+
+def test_get_first_timestamp_seconds_skips_dollar_host_line(tmp_path):
+  """Schema host line ``1 <fqdn>`` is not a unix-second timestamp."""
+  import hpcperfstats.listend as listend
+
+  dollar_only = tmp_path / "dollar_only"
+  dollar_only.write_text("$\n1 c104-028.horizon.tacc.utexas.edu\n!cpu a,E\n")
+  assert listend._get_first_timestamp_seconds(str(dollar_only), use_lock=False) is None
+
+  mixed = tmp_path / "mixed"
+  mixed.write_text(
+      "$\n"
+      "1 c104-028.horizon.tacc.utexas.edu\n"
+      "!cpu a,E\n"
+      "1786487860.470903 2946877 c104-028.horizon.tacc.utexas.edu\n"
+      "cpu 0 1 2\n"
+  )
+  assert listend._get_first_timestamp_seconds(str(mixed), use_lock=False) == 1786487860
+
