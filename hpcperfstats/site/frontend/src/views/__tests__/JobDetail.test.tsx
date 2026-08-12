@@ -1484,6 +1484,80 @@ describe("JobDetail", () => {
     });
   });
 
+  it("orders ready GPU roofline before unavailable CPU on the Roofline tab", async () => {
+    window.Bokeh = {
+      embed: {
+        embed_item: vi.fn(() => Promise.resolve()),
+      },
+    };
+    setJobDetailQueryMock({ data: minimalJobDetailResponse });
+    setJobPlotsQueryMock({
+      plots: plotsStateFromBatchResponse({
+        ...minimalBatchPlotsResponse,
+        rplot_item: null,
+        rplot_unavailable_reason: "Missing CPU roofline",
+        grplot_item: VALID_BOKEH_JSON_ITEM,
+        grplot_unavailable_reason: null,
+      }),
+      plotsLoading: false,
+    });
+
+    renderJobDetail("12345", { is_staff: false }, "tab=roofline");
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "GPU Roofline", level: 3 }),
+      ).toBeInTheDocument();
+    });
+    const gpuHeading = screen.getByRole("heading", {
+      name: "GPU Roofline",
+      level: 3,
+    });
+    const cpuHeading = screen.getByRole("heading", {
+      name: "CPU Roofline",
+      level: 3,
+    });
+    expect(
+      gpuHeading.compareDocumentPosition(cpuHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("orders ready GPU multiprecision before unavailable CPU", async () => {
+    window.Bokeh = {
+      embed: {
+        embed_item: vi.fn(() => Promise.resolve()),
+      },
+    };
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        multiprecision_cpu_plot_item: null,
+        multiprecision_cpu_unavailable_reason: "Missing CPU busy-ops mix",
+        multiprecision_gpu_plot_item: VALID_BOKEH_JSON_ITEM,
+        multiprecision_gpu_unavailable_reason: null,
+      },
+    });
+
+    renderJobDetail("12345", { is_staff: false }, "tab=multiprecisionMix");
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "GPU Multiprecision Mix", level: 3 }),
+      ).toBeInTheDocument();
+    });
+    const gpuHeading = screen.getByRole("heading", {
+      name: "GPU Multiprecision Mix",
+      level: 3,
+    });
+    const cpuHeading = screen.getByRole("heading", {
+      name: "CPU Multiprecision Mix",
+      level: 3,
+    });
+    expect(
+      gpuHeading.compareDocumentPosition(cpuHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("shows per-plot loading copy while Bokeh embed is pending on a plot tab", async () => {
     window.Bokeh = {
       embed: {

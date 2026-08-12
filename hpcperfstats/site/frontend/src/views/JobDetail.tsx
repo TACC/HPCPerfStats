@@ -57,6 +57,7 @@ import {
 import { useMachineRouteParams } from "../hooks/use-machine-route-params";
 import { replaceTabInHistory } from "../utils/replace-tab-history";
 import { JOB_PLOT_CONFIGS, gpuRooflinePlotName } from "@/utils/job-detail-plots";
+import { sortByPlotReadiness } from "@/utils/job-detail-plot-readiness-order";
 import {
   JOB_DETAIL_PERFORMANCE_POLL_INTERVAL_MS,
   JOB_DETAIL_PERFORMANCE_POLL_MAX_ATTEMPTS,
@@ -1603,15 +1604,33 @@ export default function JobDetail() {
                 <p className="mb-2 text-sm text-muted-foreground job-detail-print-hide">
                   CPU and GPU roofline charts for this job.
                 </p>
-                {renderSinglePlotPanel(
-                  plotConfigByKey.roofline,
-                  analysisTab === "roofline",
-                  "roofline",
-                )}
-                {renderSinglePlotPanel(
-                  plotConfigByKey.gpu_roofline,
-                  analysisTab === "roofline",
-                  "gpu_roofline",
+                {sortByPlotReadiness(
+                  [
+                    {
+                      config: plotConfigByKey.roofline,
+                      printKey: "roofline" as const,
+                    },
+                    {
+                      config: plotConfigByKey.gpu_roofline,
+                      printKey: "gpu_roofline" as const,
+                    },
+                  ],
+                  ({ config }) => {
+                    const panel = plotPanels.find(
+                      (p) => p.key === config?.panelKey,
+                    );
+                    return {
+                      isLoading: !!panel?.isLoading,
+                      item: panel?.item ?? null,
+                      unavailableReason: panel?.unavailableReason ?? null,
+                    };
+                  },
+                ).map(({ config, printKey }) =>
+                  renderSinglePlotPanel(
+                    config,
+                    analysisTab === "roofline",
+                    printKey,
+                  ),
                 )}
               </>
             )}
@@ -1675,126 +1694,97 @@ export default function JobDetail() {
               <TabStatusMessage role="status">{plotGateMessage}</TabStatusMessage>
             ) : (
               <div className="grid gap-3 lg:grid-cols-2">
-                {(() => {
-                  const cpuId = `job-multiprecision-cpu-${pk}`;
-                  const hideCpuPrint =
+                {sortByPlotReadiness(
+                  [
+                    {
+                      id: `job-multiprecision-cpu-${pk}`,
+                      title: "CPU Multiprecision Mix",
+                      item: mpCpuItemForPanel,
+                      reason: mpCpuReasonForPanel,
+                      isLoading:
+                        detailsLoading &&
+                        !mpCpuItemForPanel &&
+                        !mpCpuReasonForPanel,
+                      printReadyKey: "multiprecision_cpu" as const,
+                      stagger: PRINT_EMBED_STAGGER.multiprecision_cpu,
+                    },
+                    {
+                      id: `job-multiprecision-gpu-${pk}`,
+                      title: "GPU Multiprecision Mix",
+                      item: mpGpuItemForPanel,
+                      reason: mpGpuReasonForPanel,
+                      isLoading:
+                        detailsLoading &&
+                        !mpGpuItemForPanel &&
+                        !mpGpuReasonForPanel,
+                      printReadyKey: "multiprecision_gpu" as const,
+                      stagger: PRINT_EMBED_STAGGER.multiprecision_gpu,
+                    },
+                  ],
+                  (panel) => ({
+                    isLoading: panel.isLoading,
+                    item: panel.item,
+                    unavailableReason: panel.reason,
+                  }),
+                ).map((panel) => {
+                  const hidePrint =
                     printLayoutActive &&
                     printIncludesPlots &&
-                    (!!mpCpuReasonForPanel || !mpCpuItemForPanel);
-                  const cpuSnap = printPlotSnapshots[cpuId];
-                  if (hideCpuPrint) return null;
+                    (!!panel.reason || !panel.item);
+                  const snap = printPlotSnapshots[panel.id];
+                  if (hidePrint) return null;
                   if (
                     printLayoutActive &&
                     printIncludesPlots &&
                     printSnapshotsReady &&
-                    cpuSnap
+                    snap
                   ) {
                     return (
-                      <div className="mb-3 w-full min-w-0 box-border">
-                        <h3 className="text-base font-medium">CPU Multiprecision Mix</h3>
+                      <div
+                        key={panel.id}
+                        className="mb-3 w-full min-w-0 box-border"
+                      >
+                        <h3 className="text-base font-medium">{panel.title}</h3>
                         <img
-                          src={cpuSnap}
-                          alt="CPU Multiprecision Mix"
+                          src={snap}
+                          alt={panel.title}
                           className="job-detail-print-plot-snapshot w-full h-auto max-w-full"
                         />
                       </div>
                     );
                   }
                   return (
-                    <div>
+                    <div key={panel.id}>
                       <div className="mb-3 w-full min-w-0 box-border">
-                        <h3 className="text-base font-medium">CPU Multiprecision Mix</h3>
-                        {analysisTab === "multiprecisionMix" || printMountsPlotPanels ? (
+                        <h3 className="text-base font-medium">{panel.title}</h3>
+                        {analysisTab === "multiprecisionMix" ||
+                        printMountsPlotPanels ? (
                           <PlotPanel
-                            item={mpCpuItemForPanel}
-                            id={cpuId}
-                            plotName="CPU Multiprecision Mix"
-                            unavailableReason={mpCpuReasonForPanel}
-                            isLoading={
-                              detailsLoading &&
-                              !mpCpuItemForPanel &&
-                              !mpCpuReasonForPanel
-                            }
+                            item={panel.item}
+                            id={panel.id}
+                            plotName={panel.title}
+                            unavailableReason={panel.reason}
+                            isLoading={panel.isLoading}
                             maximizeInContainer={false}
                             onPlotReadyChange={(ready) =>
-                              markPrintEmbedReady("multiprecision_cpu", ready)
+                              markPrintEmbedReady(panel.printReadyKey, ready)
                             }
                             deferEmbedUntilVisible={
                               printMountsPlotPanels ? false : undefined
                             }
                             previewMode={printMountsPlotPanels || undefined}
-                            printCaptureLayout={printMountsPlotPanels || undefined}
+                            printCaptureLayout={
+                              printMountsPlotPanels || undefined
+                            }
                             embedStaggerIndex={
-                              printMountsPlotPanels
-                                ? PRINT_EMBED_STAGGER.multiprecision_cpu
-                                : undefined
+                              printMountsPlotPanels ? panel.stagger : undefined
                             }
                           />
                         ) : null}
                       </div>
                     </div>
                   );
-                })()}
-                {(() => {
-                  const gpuId = `job-multiprecision-gpu-${pk}`;
-                  const hideGpuPrint =
-                    printLayoutActive &&
-                    printIncludesPlots &&
-                    (!!mpGpuReasonForPanel || !mpGpuItemForPanel);
-                  const gpuSnap = printPlotSnapshots[gpuId];
-                  if (hideGpuPrint) return null;
-                  if (
-                    printLayoutActive &&
-                    printIncludesPlots &&
-                    printSnapshotsReady &&
-                    gpuSnap
-                  ) {
-                    return (
-                      <div className="mb-3 w-full min-w-0 box-border">
-                        <h3 className="text-base font-medium">GPU Multiprecision Mix</h3>
-                        <img
-                          src={gpuSnap}
-                          alt="GPU Multiprecision Mix"
-                          className="job-detail-print-plot-snapshot w-full h-auto max-w-full"
-                        />
-                      </div>
-                    );
-                  }
-                  return (
-                    <div>
-                      <div className="mb-3 w-full min-w-0 box-border">
-                        <h3 className="text-base font-medium">GPU Multiprecision Mix</h3>
-                        {analysisTab === "multiprecisionMix" || printMountsPlotPanels ? (
-                          <PlotPanel
-                            item={mpGpuItemForPanel}
-                            id={gpuId}
-                            plotName="GPU Multiprecision Mix"
-                            unavailableReason={mpGpuReasonForPanel}
-                            isLoading={
-                              detailsLoading &&
-                              !mpGpuItemForPanel &&
-                              !mpGpuReasonForPanel
-                            }
-                            maximizeInContainer={false}
-                            onPlotReadyChange={(ready) =>
-                              markPrintEmbedReady("multiprecision_gpu", ready)
-                            }
-                            deferEmbedUntilVisible={
-                              printMountsPlotPanels ? false : undefined
-                            }
-                            previewMode={printMountsPlotPanels || undefined}
-                            printCaptureLayout={printMountsPlotPanels || undefined}
-                            embedStaggerIndex={
-                              printMountsPlotPanels
-                                ? PRINT_EMBED_STAGGER.multiprecision_gpu
-                                : undefined
-                            }
-                          />
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })()}
+                })}
               </div>
             )}
           </TabsContent>

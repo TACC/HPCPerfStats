@@ -139,3 +139,29 @@ def test_roofline_job_hover_uses_html_with_separators():
   assert "@perf_plain" in hover.tooltips
   assert "@host" in hover.tooltips
   assert hover.formatters == {}
+
+
+def test_roofline_roof_hover_includes_axis_units():
+  """Navy theoretical line hover must expose the same axis units as the figure."""
+  df = pd.DataFrame({
+      "host": ["h1"],
+      "time": [pd.Timestamp("2024-01-01 00:00:00+00:00")],
+      "flops_gf": [100.0],
+      "bw_gb": [10.0],
+  })
+
+  plot = _build_roofline_figure(df, peak_flops_gf=1000.0, peak_bw_gb=100.0, title="Roofline")
+  assert plot is not None
+
+  tools = [tool for tool in plot.tools if isinstance(tool, HoverTool)]
+  roof_hovers = [
+      hover for hover in tools
+      if isinstance(hover.tooltips, list)
+  ]
+  assert len(roof_hovers) == 1
+  tip_text = " ".join(
+      "%s %s" % (label, value) for label, value in roof_hovers[0].tooltips
+  )
+  assert "Roofline" in tip_text
+  assert "FLOP/byte" in tip_text
+  assert "GFLOP/s" in tip_text

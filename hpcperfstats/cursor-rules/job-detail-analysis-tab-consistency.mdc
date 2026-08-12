@@ -17,6 +17,7 @@ Canonical patterns live in **`hpcperfstats/site/frontend/src/views/JobDetail.tsx
 - **Unavailable plots**: **`BokehEmbed`** shows the user-visible **`Unavailable — Data not available.`** status line for everyone; staff-only expandable detail uses **`unavailableReason`** from the API (`job_plot_artifacts` / `job_detail_artifacts` style strings — mirror **`Missing … in host_data`** / **`Missing … in job metrics`** phrasing used by summary and roofline builders).
 - **Do not** drive multiprecision or other artifact-backed embed **`isLoading`** from **`detailsLoading`** when plot payloads already arrive with **`getJobDetailLight`** — that flashes misleading **Loading …** copy instead of the same unavailable surfacing as Summary/Roofline.
 - Progressive **`job_plots`** tabs continue to use **`plots[key].loading`** as **`isLoadingExternal`** on **`PlotPanel`**.
+- **Multi-plot readiness order**: on tabs that stack more than one Bokeh panel (**Roofline**, **Multiprecision Mix**), DOM order must put **ready** embeds (item present, not loading, no unavailable reason) before **loading**, then **unavailable/error**. Equal ranks keep catalog order (CPU before GPU). Use **`sortByPlotReadiness`** / **`job-detail-plot-readiness-order.ts`**. Summary remains a single panel (no reorder). Print may still omit unavailable blocks; do not require print snapshot reorder.
 
 ### Regression expectation
 

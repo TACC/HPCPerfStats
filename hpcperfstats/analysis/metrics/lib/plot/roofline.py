@@ -618,9 +618,13 @@ def _build_roofline_figure(
     )
     roof_source = ColumnDataSource(dict(ai=ai_curve, perf=perf_curve))
 
-    # No legend; identify series by hovering (popup shows line name).
+    # No legend; identify series by hovering (popup shows line name + axis units).
     hover_roof = HoverTool(
-        tooltips=[("Line", "Roofline")],
+        tooltips=[
+            ("Line", "Roofline"),
+            ("X", "Arithmetic intensity (FLOP/byte)"),
+            ("Y", "Performance (GFLOP/s)"),
+        ],
         renderers=[],  # set after line is added
     )
     hover_job = HoverTool(

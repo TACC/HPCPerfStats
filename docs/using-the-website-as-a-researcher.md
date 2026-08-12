@@ -198,6 +198,7 @@ This section covers job-detail surfaces beyond scalar metrics.
   - **GPU roofline**: the plot title shows which bandwidth axis was used — **GPU Roofline (Memory BW)** when estimated GPU memory bandwidth samples are present (same family of signal as Summary HBM BW), otherwise **GPU Roofline (PCIe/NvLink)** from interconnect byte rates. Apply the same compute vs bandwidth logic; low arithmetic intensity<sup>[2](#ref-2)</sup> phases are often HBM- or link-limited depending on that title, while high-intensity phases can become tensor/core compute limited.
   - **Interconnect context**: GPU scaling limits can reflect PCIe or NVLink behavior<sup>[7](#ref-7)</sup>, not just kernel math throughput — especially when the PCIe/NvLink title is shown.
   - **What to do with this**: memory/link-limited phases usually benefit from locality, data-layout, batching, or communication changes; compute-limited phases usually benefit from kernel efficiency, vector/tensor usage, and occupancy improvements.
+- Hovering the theoretical roof line shows the axis units (**FLOP/byte**, **GFLOP/s**), matching the plot axes. When one of CPU/GPU is still loading or unavailable, the ready chart appears first on the tab (same stacking on Multiprecision Mix).
 
 ### 6.3 Multiprecision Mix tab (CPU and GPU)
 
@@ -331,6 +332,7 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-08-05 | GPU Roofline prefers estimated memory bandwidth when present (title Memory BW); otherwise PCIe/NvLink (or Xe Link) with matching title and peak roof. |
 | 2026-08-05 | Job Detail **Print** button: prepares overview/Resources/Metrics/Summary/Roofline/Multiprecision Mix for the browser print dialog (Save as PDF). |
 | 2026-08-07 | Job Detail plot tabs (Summary, Roofline, Multiprecision Mix) wait for Performance Data **Metrics & Plots available**; plot-tab messages **Plots not yet completed.** / **No plots available for this job**. |
+| 2026-08-12 | Roofline theoretical-line hover shows axis units (FLOP/byte, GFLOP/s); Roofline and Multiprecision Mix stack ready charts above loading/unavailable. |
 | 2026-08-07 | Job Detail: removed page h1 and **Full scheduling record**; **Print** sits beside breadcrumbs. `mem_hwm` reads canonical `host_mem` snake_case events (KB→GiB). |
 
 
