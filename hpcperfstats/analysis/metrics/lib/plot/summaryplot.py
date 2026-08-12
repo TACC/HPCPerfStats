@@ -13,7 +13,7 @@ Attributes:
   _MAX_SANE_GPU_LINK_GBPS: Attribute.
   _NET_SUMMARY_ERROR_EVENTS: Attribute.
   _SERIAL_SUMMARY_AGGREGATE_PREFETCH: Attribute.
-  _SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS: Attribute.
+  get_summary_aggregate_prefetch_max_threads(): Attribute.
   _SUMMARY_ALLOW_PARTIAL_NULL: Attribute.
   _SUMMARY_FIRST_WIN_SPECS: Attribute.
   _SUMMARY_SINGLE_SPECS: Attribute.
@@ -102,7 +102,7 @@ from hpcperfstats.analysis.metrics.lib.plot.bokeh_job_detail_help_marker import 
 
 # Hard cap for nested aggregate prefetch threads (see job_plots + api ThreadPoolExecutor).
 # Keeps DB connection and work_mem spikes bounded when summaryplot runs inside a worker thread.
-_SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS = 2
+# Absolute INI [PORTAL] summary_aggregate_prefetch_max_threads (default 2).
 
 # When True (plot/detail prewarm threads), fetch aggregates serially so peak RSS
 # stays ~one host×time grid (design capacity 5000×48×60).
@@ -297,7 +297,7 @@ def compute_summary_aggregate_prefetch_pool_size(num_specs: Any) -> Any:
   """
   Return ``ThreadPoolExecutor`` ``max_workers`` for summary aggregate prefetch.
   
-  Capped by ``_SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS`` so nested parallelism
+  Capped by ``get_summary_aggregate_prefetch_max_threads`` so nested parallelism
     does not
   multiply against ``site.machine.api``'s shared executor under ``job_plots``.
   
@@ -315,7 +315,7 @@ def compute_summary_aggregate_prefetch_pool_size(num_specs: Any) -> Any:
     min(
       int(num_specs),
       cfg.get_parallel_db_prefetch_max(),
-      _SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS,
+      cfg.get_summary_aggregate_prefetch_max_threads(),
     ),
   )
 
@@ -326,7 +326,7 @@ def _prefetch_single_spec_aggregates(jt: Any, spec_rows: Any) -> Any:
   
     DataFrame.
   
-  Thread count is capped by ``_SUMMARY_AGGREGATE_PREFETCH_MAX_THREADS`` so this
+  Thread count is capped by ``get_summary_aggregate_prefetch_max_threads()`` so this
     path
   does not multiply against ``api.py``'s shared executor when building summary
     plots.

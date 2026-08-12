@@ -72,7 +72,7 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
       st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0,
   )
   monkeypatch.setattr(
-      st.cfg, "get_pipeline_overlap_mode", lambda: "ingest_priority",
+      st.cfg, "get_sync_ingest_pool_processes", lambda: 16,
   )
   monkeypatch.setattr(
       st, "_ingest_stall_defer_state", lambda _day, _state, **kwargs: (False, "redis_warm"),
@@ -100,7 +100,7 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
   assert "sync_ingest_per_file_timeout_max_s=14400.0" in suffix
   assert "effective_ingest_timeout_s=-" in suffix
   assert "ingest_pipeline=combined" in suffix
-  assert "pipeline_overlap_mode=ingest_priority" in suffix
+  assert "sync_ingest_pool_processes=16" in suffix
   assert "chunk_prewarm=2026-05-20:redis_warm" in suffix
   assert "imap_batch_cap=10" in suffix
   assert "batch_max_ingest_timeout_s=900.0" in suffix
@@ -274,7 +274,6 @@ def test_build_ingest_stall_log_suffix_includes_worker_registry_counts(monkeypat
   diag.worker_registry = registry
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0)
-  monkeypatch.setattr(st.cfg, "get_pipeline_overlap_mode", lambda: "balanced")
   monkeypatch.setattr(
       st, "_ingest_stall_defer_state", lambda _d, _s, **kwargs: (False, "redis_warm"),
   )

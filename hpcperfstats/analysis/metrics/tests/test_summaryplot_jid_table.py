@@ -73,9 +73,13 @@ def test_compute_summary_aggregate_prefetch_pool_size_caps_at_two(monkeypatch):
   import hpcperfstats.analysis.metrics.lib.plot.summaryplot as sp
 
   monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max", lambda: 99)
+  monkeypatch.setattr(sp.cfg, "get_summary_aggregate_prefetch_max_threads", lambda: 2)
   assert compute_summary_aggregate_prefetch_pool_size(50) == 2
   assert compute_summary_aggregate_prefetch_pool_size(1) == 1
   monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max", lambda: 1)
+  assert compute_summary_aggregate_prefetch_pool_size(50) == 1
+  monkeypatch.setattr(sp.cfg, "get_summary_aggregate_prefetch_max_threads", lambda: 1)
+  monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max", lambda: 99)
   assert compute_summary_aggregate_prefetch_pool_size(50) == 1
 
 

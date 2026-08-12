@@ -101,8 +101,11 @@ rmq_queue = %(machine)s
 # http or https for CORS origins built from server when debug is off (default https).
 # cors_origin_scheme = https
 
-# Upper bound for Gunicorn workers when WEB_CONCURRENCY is unset (default 32).
-# max_gunicorn_workers = 32
+# Absolute Gunicorn worker count when WEB_CONCURRENCY is unset (default 32).
+# gunicorn_workers = 32
+
+# Nested summary-plot aggregate prefetch thread ceiling (default 2).
+# summary_aggregate_prefetch_max_threads = 2
 
 # Max threads for API prefetch and default small executor (default 4).
 # parallel_db_prefetch_max = 4
@@ -129,17 +132,8 @@ archive_dir = %(data_dir)s/archive
 # Daily sealed monitor archive directory.
 daily_archive_dir = %(data_dir)s/daily_archive
 
-# Pipeline overlap: balanced or ingest_priority (default balanced).
-# pipeline_overlap_mode = balanced
-
-# Cap on update_metrics multiprocessing pool size (default 32).
-# metrics_pool_process_cap = 32
-
-# Metrics pool scale during ingest_priority overlap (default 0.75).
-# metrics_ingest_priority_scale = 0.75
-
-# Minimum metrics processes under ingest_priority (default 1).
-# metrics_min_processes = 1
+# Absolute update_metrics + plot/detail prewarm process pool size (default 24).
+# metrics_pool_processes = 24
 
 # Metrics scheduler: strict_date, global_fifo, or global_priority (default global_priority).
 # metrics_scheduler_mode = global_priority
@@ -151,32 +145,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # metrics_scheduler_ready_queue_target = 2000
 
 # Plot prewarm: inline or pipeline_required (default pipeline_required).
+# Prewarm runs on metrics_pool_processes after successful metrics (no secondary pool).
 # metrics_plot_prewarm_mode = pipeline_required
-
-# Skip job detail/plot prewarm after metrics for catch-up (default no).
-# Thread workers for plot prewarm stage (default 8).
-# metrics_prewarm_workers = 8
-
-# Max queued async prewarm jobs before backpressure (default 128).
-# metrics_prewarm_backlog_cap = 128
-
-# Seconds to wait for async prewarm slot before inline fallback (default 0.25).
-# metrics_prewarm_backpressure_wait_s = 0.25
-
-# Base seconds to drain prewarm after each metrics batch (default 2.0).
-# metrics_prewarm_drain_batch_budget_s = 2.0
-
-# Ceiling for scaled prewarm drain budget seconds (default 180).
-# metrics_prewarm_drain_batch_budget_max_s = 180
-
-# Extra drain seconds per successful jid in batch (default 0.5).
-# metrics_prewarm_drain_per_job_s = 0.5
-
-# Seconds into prewarm finish before processing-updates progress log (default 300).
-# metrics_prewarm_processing_updates_log_s = 300
-
-# Prewarm retry attempts per plot task (default 2).
-# metrics_prewarm_retry_attempts = 2
 
 # Plot aggregate SQL time-slice seconds (default 3600); design 5000x48x60.
 # metrics_plot_aggregate_time_slice_s = 3600
@@ -243,8 +213,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # End edge tolerance seconds (default 600): MAX(time) in window must be >= end - margin.
 # metrics_readiness_end_margin_seconds = 600
 
-# Cap sync_timedb ingest pool and metadata discovery threads; imap inflight equals pool size (default 16).
-# sync_pool_process_cap = 16
+# Absolute sync_timedb ingest pool size; archive discovery/day-raw use the same getter (default 16).
+# sync_ingest_pool_processes = 16
 
 # Concurrent daily-tar append slots / archive spawn pool size (default 2).
 # sync_archive_pool_processes = 2
@@ -252,33 +222,6 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max concurrent sealed-day streams for sync_timedb_archive backfill (default 1).
 # sync_timedb_archive_max_concurrent_sealed_days = 1
 
-# Enable cpuset-aware S/M budget for sync ingest and metrics (default yes).
-# Archive slots are fixed by sync_archive_pool_processes (not budgeted).
-# sync_enable_cpuset_priority_budget = yes
-
-# Fraction of effective cores for sync ingest cap (default 0.60).
-# sync_budget_ingest_ratio = 0.60
-
-# Fraction for metrics cap (default 0.20).
-# sync_budget_metrics_ratio = 0.20
-
-# Reserve fraction for maintenance jitter (default 0.05).
-# sync_budget_reserve_ratio = 0.05
-
-# Minimum metrics percent floor (default 10).
-# sync_budget_min_metrics_percent = 10
-
-# Bounded overprovision mode for budget derivation (default no).
-# sync_enable_overprovision_mode = no
-
-# Overcommit factor for S+M+R cap (default 1.00).
-# sync_budget_overcommit_factor = 1.00
-
-# Ingest multiplier when overprovision on (default 1.00).
-# sync_overprovision_ingest_multiplier = 1.00
-
-# Metrics multiplier when overprovision on (default 1.00).
-# sync_overprovision_metrics_multiplier = 1.00
 
 # Max in-memory ingest work queue size (default 3000; also drives ingest chunk size).
 # sync_ingest_queue_max_size = 3000
@@ -389,8 +332,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Dedicated workers that stream sealed/tar archives into Redis L2 (default 4).
 # sync_archive_members_populate_pool_processes = 4
 
-# Write-lock shard count for sync ingest; auto if unset.
-# sync_write_lock_shards =
+# Absolute write-lock shard count for sync ingest (default 8).
+# sync_write_lock_shards = 8
 
 # Supervisor RSS limit MiB; 0 disables fail-fast exit (default 0).
 # sync_supervisor_rss_limit_mb = 0
@@ -465,9 +408,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # listend async dual-write of samples to Timescale after archive append (default yes).
 # listend_db_ingest_enabled = yes
 
-# Host-affine spawn workers for listend live DB ingest (default 30).
+# Host-affine spawn workers for listend live DB ingest (default 32).
 # Size against Postgres max_connections alongside sync_ingest_pool_processes.
-# listend_db_ingest_pool_processes = 30
+# listend_db_ingest_pool_processes = 32
 
 # Total in-flight listend DB-queue memory budget in GiB across all workers (default 8).
 # listend_db_ingest_queue_max_gb = 8

@@ -42,7 +42,7 @@ Closed segment is archive/delete-ready when **either**:
 - Batched membership uses `sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present` for the small head+tail second sets (typically ≤2 per host); overflow (cardinality cap **or** statement/lock timeout on wide scan) → cached per-second exists (same as ingest duplicate scan).
 - **Ingest duplicate head/tail fast path:** tail second membership uses **`host_timestamp_second_present_in_db`** (indexed per-second `exists()` + 60s TTL cache), not a wide itimes window scan.
 - **Wide itimes scans:** windows wider than 24h are queried in non-overlapping 24h chunks; statement timeout on any chunk returns overflow without killing the ingest pool worker.
-- **Archive metadata discovery** (head + gate-tail scans in `build_archive_maintenance_snapshot`) uses a `ThreadPoolExecutor` sized by **`get_sync_pool_process_cap()`** only (same INI/env as ingest pool cap). Long scans log begin + periodic progress (every 5000 paths or 60s when path count ≥ 1000).
+- **Archive metadata discovery** (head + gate-tail scans in `build_archive_maintenance_snapshot`) uses a `ThreadPoolExecutor` sized by **`get_sync_ingest_pool_processes()`** only (same INI/env as ingest pool cap). Long scans log begin + periodic progress (every 5000 paths or 60s when path count ≥ 1000).
 - Path result cache keyed by `(path, mtime, size)` (TTL ~60s) for maintenance rescans.
 - Archive pool workers call `close_old_connections()` at gate entry.
 

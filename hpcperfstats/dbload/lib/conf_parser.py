@@ -74,29 +74,19 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("DEFAULT", "pipeline_numa_node"),
     # [PORTAL] — Gunicorn / Django web stack tuning
     ("PORTAL", "cors_origin_scheme"),
-    ("PORTAL", "max_gunicorn_workers"),
+    ("PORTAL", "gunicorn_workers"),
+    ("PORTAL", "summary_aggregate_prefetch_max_threads"),
     ("PORTAL", "parallel_db_prefetch_max"),
     ("PORTAL", "api_small_executor_max_workers"),
     ("PORTAL", "db_conn_max_age"),
     ("PORTAL", "db_statement_timeout_ms"),
     ("PORTAL", "db_idle_in_transaction_session_timeout_ms"),
     # [PIPELINE] — sync_timedb, update_metrics, sync_acct, archive paths/tuning
-    ("PIPELINE", "pipeline_overlap_mode"),
-    ("PIPELINE", "metrics_pool_process_cap"),
-    ("PIPELINE", "metrics_ingest_priority_scale"),
-    ("PIPELINE", "metrics_min_processes"),
+    ("PIPELINE", "metrics_pool_processes"),
     ("PIPELINE", "metrics_scheduler_mode"),
     ("PIPELINE", "metrics_scheduler_prefetch_chunks"),
     ("PIPELINE", "metrics_scheduler_ready_queue_target"),
     ("PIPELINE", "metrics_plot_prewarm_mode"),
-    ("PIPELINE", "metrics_prewarm_workers"),
-    ("PIPELINE", "metrics_prewarm_backlog_cap"),
-    ("PIPELINE", "metrics_prewarm_backpressure_wait_s"),
-    ("PIPELINE", "metrics_prewarm_drain_batch_budget_s"),
-    ("PIPELINE", "metrics_prewarm_drain_batch_budget_max_s"),
-    ("PIPELINE", "metrics_prewarm_drain_per_job_s"),
-    ("PIPELINE", "metrics_prewarm_processing_updates_log_s"),
-    ("PIPELINE", "metrics_prewarm_retry_attempts"),
     ("PIPELINE", "metrics_plot_aggregate_time_slice_s"),
     ("PIPELINE", "metrics_plot_aggregate_max_host_time_points"),
     ("PIPELINE", "metrics_run_poll_timeout_s"),
@@ -118,17 +108,8 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "metrics_readiness_require_window_coverage"),
     ("PIPELINE", "metrics_readiness_start_margin_seconds"),
     ("PIPELINE", "metrics_readiness_end_margin_seconds"),
-    ("PIPELINE", "sync_pool_process_cap"),
+    ("PIPELINE", "sync_ingest_pool_processes"),
     ("PIPELINE", "sync_archive_pool_processes"),
-    ("PIPELINE", "sync_enable_cpuset_priority_budget"),
-    ("PIPELINE", "sync_budget_ingest_ratio"),
-    ("PIPELINE", "sync_budget_metrics_ratio"),
-    ("PIPELINE", "sync_budget_reserve_ratio"),
-    ("PIPELINE", "sync_budget_min_metrics_percent"),
-    ("PIPELINE", "sync_enable_overprovision_mode"),
-    ("PIPELINE", "sync_budget_overcommit_factor"),
-    ("PIPELINE", "sync_overprovision_ingest_multiplier"),
-    ("PIPELINE", "sync_overprovision_metrics_multiplier"),
     ("PIPELINE", "sync_ingest_queue_max_size"),
     ("PIPELINE", "sync_ingest_rescan_mtime_days"),
     ("PIPELINE", "sync_ingest_rescan_full_every"),
@@ -266,29 +247,19 @@ INI_OPTION_DEFAULTS = {
     'web_numa_node': None,
     'pipeline_numa_node': None,
     'cors_origin_scheme': '',
-    'max_gunicorn_workers': '32',
+    'gunicorn_workers': '32',
+    'summary_aggregate_prefetch_max_threads': '2',
     'parallel_db_prefetch_max': '4',
     'api_small_executor_max_workers': None,
     'db_conn_max_age': '90',
     'db_statement_timeout_ms': '120000',
     'db_idle_in_transaction_session_timeout_ms': '300000',
-    'pipeline_overlap_mode': 'balanced',
-    'metrics_pool_process_cap': '32',
-    'metrics_ingest_priority_scale': '0.75',
-    'metrics_min_processes': '1',
+    'metrics_pool_processes': '24',
     'metrics_scheduler_mode': 'global_priority',
     'metrics_scheduler_prefetch_chunks': '8',
     'metrics_scheduler_ready_queue_target': '2000',
     'metrics_plot_prewarm_mode': 'pipeline_required',
-    'metrics_prewarm_workers': '8',
-    'metrics_prewarm_backlog_cap': '128',
-    'metrics_prewarm_backpressure_wait_s': '0.25',
-    'metrics_prewarm_drain_batch_budget_s': '2.0',
-    'metrics_prewarm_drain_batch_budget_max_s': '180.0',
-    'metrics_prewarm_drain_per_job_s': '0.5',
-    'metrics_prewarm_processing_updates_log_s': '300.0',
-    'metrics_prewarm_retry_attempts': '2',
-    # Host×time SQL chunk wall seconds (1h @ 1-min sample); design 5000×48×60.
+        # Host×time SQL chunk wall seconds (1h @ 1-min sample); design 5000×48×60.
     'metrics_plot_aggregate_time_slice_s': '3600',
     # Max host×time rows materialised per plot aggregate DF (not 14.4M).
     'metrics_plot_aggregate_max_host_time_points': '1000000',
@@ -312,18 +283,9 @@ INI_OPTION_DEFAULTS = {
     'metrics_readiness_require_window_coverage': 'yes',
     'metrics_readiness_start_margin_seconds': '600',
     'metrics_readiness_end_margin_seconds': '600',
-    'sync_pool_process_cap': '16',
+    'sync_ingest_pool_processes': '16',
     'sync_archive_pool_processes': '2',
-    'sync_enable_cpuset_priority_budget': 'yes',
-    'sync_budget_ingest_ratio': '0.6',
-    'sync_budget_metrics_ratio': '0.2',
-    'sync_budget_reserve_ratio': '0.05',
-    'sync_budget_min_metrics_percent': '10',
-    'sync_enable_overprovision_mode': 'no',
-    'sync_budget_overcommit_factor': '1.0',
-    'sync_overprovision_ingest_multiplier': '1.0',
-    'sync_overprovision_metrics_multiplier': '1.0',
-    'sync_ingest_queue_max_size': '3000',
+        'sync_ingest_queue_max_size': '3000',
     'sync_ingest_rescan_mtime_days': '1',
     'sync_ingest_rescan_full_every': '100',
     'sync_ingest_current_proximity_days': '2',
@@ -364,7 +326,7 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_members_redis_hset_batch_size': '500',
     'sync_archive_members_redis_max_payload_bytes': '8388608',
     'sync_archive_members_populate_pool_processes': '4',
-    'sync_write_lock_shards': None,
+    'sync_write_lock_shards': '8',
     'sync_bulk_create_batch_size': '10000',
     'sync_supervisor_rss_limit_mb': '0',
     'sync_supervisor_rss_check_every_n_chunks': '1',
@@ -385,7 +347,7 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_require_db_ingest': 'yes',
     'sync_archive_maint_hints': 'yes',
     'listend_db_ingest_enabled': 'yes',
-    'listend_db_ingest_pool_processes': '30',
+    'listend_db_ingest_pool_processes': '32',
     'listend_db_ingest_queue_max_gb': '8',
     'listend_db_ingest_batch_samples': '100',
     'acct_path': None,
@@ -1951,83 +1913,84 @@ def get_effective_cores() -> Any:
   return min(ini_budget, host)
 
 
-def get_max_gunicorn_workers() -> Any:
+def get_summary_aggregate_prefetch_max_threads() -> Any:
   """
-  Upper bound for Gunicorn workers (see ``django_startup.sh``).
-  
-  Default **32** pairs with a **40**-core ini budget: leaves headroom vs
-  PostgreSQL ``max_connections`` (Compose default **500**) alongside
-    metrics/sync pools.
-  
+  Absolute ceiling for nested Summary aggregate prefetch threads.
+
+  INI ``[PORTAL] summary_aggregate_prefetch_max_threads`` (default **2**).
+
   Returns:
-    Any: Open return polymorphism from ``get_max_gunicorn_workers``: concrete
-    type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Positive int thread ceiling.
+
   Examples:
-    >>> get_max_gunicorn_workers()  # doctest: +SKIP
+    >>> get_summary_aggregate_prefetch_max_threads()  # doctest: +SKIP
   """
   _ensure_cfg_loaded()
-  return int(_ini_get_from_registry(
-      "PORTAL",
-      "max_gunicorn_workers",
-      legacy_sections=("DEFAULT",),
-  ))
+  return max(
+      1,
+      int(
+          _ini_get_from_registry(
+              "PORTAL",
+              "summary_aggregate_prefetch_max_threads",
+              legacy_sections=("DEFAULT",),
+          )
+      ),
+  )
 
 
-def get_metrics_pool_process_cap() -> Any:
+def get_gunicorn_workers() -> Any:
   """
-  Upper bound for ``multiprocessing.Pool`` process count in metrics compute.
-  
+  Absolute Gunicorn worker count from ``[PORTAL] gunicorn_workers``.
+
+  Default **32**. ``WEB_CONCURRENCY`` may still override in
+  ``django_startup.sh``.
+
   Returns:
-    Any: Open return polymorphism from ``get_metrics_pool_process_cap``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Positive int worker count.
+
   Examples:
-    >>> get_metrics_pool_process_cap()  # doctest: +SKIP
+    >>> get_gunicorn_workers()  # doctest: +SKIP
   """
-  env = os.environ.get("METRICS_POOL_PROCESS_CAP", "").strip()
-  if env:
-    return int(env)
   _ensure_cfg_loaded()
-  return int(_ini_get_from_registry(
-      "PIPELINE",
-      "metrics_pool_process_cap",
-      legacy_sections=("DEFAULT",),
-  ))
+  return max(
+      1,
+      int(
+          _ini_get_from_registry(
+              "PORTAL",
+              "gunicorn_workers",
+              legacy_sections=("DEFAULT",),
+          )
+      ),
+  )
+
+
+def get_metrics_pool_processes() -> Any:
+  """
+  Absolute metrics (+ prewarm) process pool size.
+
+  INI ``[PIPELINE] metrics_pool_processes`` (default **24**).
+
+  Returns:
+    Any: Positive int process count.
+
+  Examples:
+    >>> get_metrics_pool_processes()  # doctest: +SKIP
+  """
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("metrics_pool_processes"))
 
 
 def get_metrics_pool_process_count() -> Any:
   """
-  Processes for metrics pool: ``min(max(1, effective//2),.
-  
-    metrics_pool_process_cap)``.
-  
+  Absolute metrics pool size (same as ``get_metrics_pool_processes``).
+
   Returns:
-    Any: Open return polymorphism from ``get_metrics_pool_process_count``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Positive int process count.
+
   Examples:
     >>> get_metrics_pool_process_count()  # doctest: +SKIP
   """
-  raw = max(1, get_effective_cores() // 2)
-  base = min(raw, get_metrics_pool_process_cap())
-  if not get_sync_enable_cpuset_priority_budget():
-    mode = get_pipeline_overlap_mode()
-    if mode == "ingest_priority":
-      scale = get_metrics_ingest_priority_scale()
-      return max(get_metrics_min_processes(), int(math.floor(base * scale)))
-    return base
-  budget = derive_pipeline_cpuset_priority_budget()
-  capped = max(1, min(base, budget["metrics_cap"]))
-  mode = get_pipeline_overlap_mode()
-  if mode == "ingest_priority":
-    scale = get_metrics_ingest_priority_scale()
-    return max(get_metrics_min_processes(), int(math.floor(capped * scale)))
-  return capped
-
+  return get_metrics_pool_processes()
 
 def get_cpuset_pin_min_total_cores() -> Any:
   """
@@ -2294,67 +2257,21 @@ def get_worker_process_count(divisor: int = 4) -> Any:
   return max(1, get_effective_cores() // divisor)
 
 
-def _apply_sync_pool_cap(size: int, cap: Any) -> Any:
-  """
-  Clamp *size* to *cap* when *cap* is set; result is at least 1.
-  
-  Args:
-    size (int): Integer value for size.
-    cap (Any): Cap passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _apply_sync_pool_cap(0, None)  # doctest: +SKIP
-  """
-  n = max(1, int(size))
-  if cap is None:
-    return n
-  return max(1, min(n, int(cap)))
-
-
-def get_sync_pool_process_cap() -> Any:
-  """
-  Cap ``sync_timedb`` ingest pool and archive metadata discovery thread pool.
-  
-  Env ``SYNC_POOL_PROCESS_CAP`` overrides INI ``sync_pool_process_cap``.
-  
-  Returns:
-    Any: Open return polymorphism from ``get_sync_pool_process_cap``: concrete
-    type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_sync_pool_process_cap()  # doctest: +SKIP
-  """
-  env = os.environ.get("SYNC_POOL_PROCESS_CAP", "").strip()
-  if env:
-    return int(env)
-  _ensure_cfg_loaded()
-  if _pipeline_has_option("sync_pool_process_cap"):
-    return _pipeline_getint("sync_pool_process_cap")
-  return 16
-
-
 def get_sync_ingest_pool_processes() -> Any:
   """
-  Worker count for ``sync_timedb`` after ``sync_pool_process_cap``.
-  
+  Absolute ``sync_timedb`` ingest process pool size.
+
+  Also used as the archive discovery / day-raw thread ceiling (replace,
+  do not alias a separate discovery key). INI default **16**.
+
   Returns:
-    Any: Open return polymorphism from ``get_sync_ingest_pool_processes``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Positive int process/thread count.
+
   Examples:
     >>> get_sync_ingest_pool_processes()  # doctest: +SKIP
   """
-  if get_sync_enable_cpuset_priority_budget():
-    raw = derive_pipeline_cpuset_priority_budget()["sync_ingest_cap"]
-  else:
-    raw = get_worker_process_count(2)
-  return _apply_sync_pool_cap(raw, get_sync_pool_process_cap())
-
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_ingest_pool_processes"))
 
 def get_sync_archive_pool_processes() -> Any:
   """
@@ -2393,93 +2310,6 @@ def get_sync_timedb_archive_max_concurrent_sealed_days() -> Any:
   raw = _pipeline_getint("sync_timedb_archive_max_concurrent_sealed_days")
   pool_cap = max(1, int(get_sync_archive_pool_processes()))
   return max(1, min(pool_cap, raw))
-
-
-def _budget_ratio(name: Any) -> Any:
-  """
-  Internal helper to handle budget ratio.
-  
-  Args:
-    name (Any): Name passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _budget_ratio(None)  # doctest: +SKIP
-  """
-  return _pipeline_getfloat(name)
-
-
-def _budget_floor_percent(name: Any) -> Any:
-  """
-  Internal helper to handle budget floor percent.
-  
-  Args:
-    name (Any): Name passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _budget_floor_percent(None)  # doctest: +SKIP
-  """
-  return _pipeline_getint(name)
-
-
-def get_pipeline_overlap_mode() -> Any:
-  """
-  Pipeline overlap mode: balanced or ingest_priority.
-  
-  Returns:
-    Any: Open return polymorphism from ``get_pipeline_overlap_mode``: concrete
-    type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_pipeline_overlap_mode()  # doctest: +SKIP
-  """
-  env = os.environ.get("HPCPERFSTATS_PIPELINE_OVERLAP_MODE", "").strip().lower()
-  if env in ("balanced", "ingest_priority"):
-    return env
-  _ensure_cfg_loaded()
-  mode = _pipeline_get("pipeline_overlap_mode").strip().lower()
-  return mode if mode in ("balanced", "ingest_priority") else "balanced"
-
-
-def get_metrics_ingest_priority_scale() -> Any:
-  """
-  Metrics pool downscale factor during ingest_priority overlap mode.
-  
-  Returns:
-    Any: Open return polymorphism from ``get_metrics_ingest_priority_scale``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_metrics_ingest_priority_scale()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return max(
-      0.10,
-      min(1.00, _pipeline_getfloat("metrics_ingest_priority_scale")),
-  )
-
-
-def get_metrics_min_processes() -> Any:
-  """
-  Minimum metrics worker count under ingest-priority overlap mode.
-  
-  Returns:
-    Any: Open return polymorphism from ``get_metrics_min_processes``: concrete
-    type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_metrics_min_processes()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("metrics_min_processes"))
 
 
 def get_metrics_scheduler_mode() -> Any:
@@ -2575,205 +2405,6 @@ def get_metrics_per_jid_phase_diagnostics_enabled() -> Any:
   """
   v = os.environ.get("HPCPERFSTATS_METRICS_PER_JID_PHASE_LOG", "").strip().lower()
   return v in ("1", "true", "yes", "on")
-
-
-def get_metrics_prewarm_workers() -> Any:
-  """
-  Thread workers for required plot prewarm stage.
-  
-  Returns:
-    Any: Open return polymorphism from ``get_metrics_prewarm_workers``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_metrics_prewarm_workers()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("metrics_prewarm_workers"))
-
-
-def get_metrics_prewarm_backlog_cap() -> Any:
-  """
-  Max queued async prewarm jobs before scheduler applies backpressure.
-  
-  Returns:
-    Any: Open return polymorphism from ``get_metrics_prewarm_backlog_cap``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_metrics_prewarm_backlog_cap()  # doctest: +SKIP
-  """
-  env = os.environ.get("HPCPERFSTATS_METRICS_PREWARM_BACKLOG_CAP", "").strip()
-  if env:
-    try:
-      return max(1, int(env))
-    except (TypeError, ValueError, OverflowError):
-      return 128
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        1,
-        int(_pipeline_get("metrics_prewarm_backlog_cap")),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return 128
-
-
-def get_metrics_prewarm_backpressure_wait_s() -> Any:
-  """
-  Seconds to wait for one async prewarm slot before inline fallback.
-  
-  Returns:
-    Any: Open return polymorphism from
-    ``get_metrics_prewarm_backpressure_wait_s``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
-  Examples:
-    >>> get_metrics_prewarm_backpressure_wait_s()  # doctest: +SKIP
-  """
-  env = os.environ.get(
-      "HPCPERFSTATS_METRICS_PREWARM_BACKPRESSURE_WAIT_S", ""
-  ).strip()
-  if env:
-    try:
-      return max(0.0, float(env))
-    except (TypeError, ValueError, OverflowError):
-      return 0.25
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        0.0,
-        _pipeline_getfloat("metrics_prewarm_backpressure_wait_s"),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return 0.25
-
-
-def get_metrics_prewarm_drain_batch_budget_s() -> Any:
-  """
-  Base seconds to drain async plot prewarm after each ``Metrics.run`` batch.
-  
-  Env ``HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_S`` overrides INI
-  ``metrics_prewarm_drain_batch_budget_s``. Default 2.0 matches legacy constant.
-  
-  Returns:
-    Any: Open return polymorphism from
-    ``get_metrics_prewarm_drain_batch_budget_s``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
-  Examples:
-    >>> get_metrics_prewarm_drain_batch_budget_s()  # doctest: +SKIP
-  """
-  env = os.environ.get(
-      "HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_S", ""
-  ).strip()
-  if env:
-    try:
-      return max(0.0, float(env))
-    except (TypeError, ValueError, OverflowError):
-      return 2.0
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        0.0,
-        _pipeline_getfloat("metrics_prewarm_drain_batch_budget_s"),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return 2.0
-
-
-def get_metrics_prewarm_drain_batch_budget_max_s() -> Any:
-  """
-  Ceiling for scaled per-batch prewarm drain budget (seconds).
-  
-  Returns:
-    Any: Open return polymorphism from
-    ``get_metrics_prewarm_drain_batch_budget_max_s``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
-  Examples:
-    >>> get_metrics_prewarm_drain_batch_budget_max_s()  # doctest: +SKIP
-  """
-  env = os.environ.get(
-      "HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_MAX_S", ""
-  ).strip()
-  if env:
-    try:
-      return max(0.0, float(env))
-    except (TypeError, ValueError, OverflowError):
-      return 180.0
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        0.0,
-        _pipeline_getfloat("metrics_prewarm_drain_batch_budget_max_s"),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return 180.0
-
-
-def get_metrics_prewarm_processing_updates_log_s() -> Any:
-  """
-  Seconds into ``finish()`` before logging a processing-updates progress line.
-
-  Env ``HPCPERFSTATS_METRICS_PREWARM_PROCESSING_UPDATES_LOG_S`` overrides INI
-  ``metrics_prewarm_processing_updates_log_s``. Log only; does not abandon
-  waiters. Default 300.0.
-
-  Returns:
-    Any: Non-negative float seconds.
-
-  Examples:
-    >>> get_metrics_prewarm_processing_updates_log_s()  # doctest: +SKIP
-  """
-  env = os.environ.get(
-      "HPCPERFSTATS_METRICS_PREWARM_PROCESSING_UPDATES_LOG_S", ""
-  ).strip()
-  if env:
-    try:
-      return max(0.0, float(env))
-    except (TypeError, ValueError, OverflowError):
-      return 300.0
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        0.0,
-        _pipeline_getfloat("metrics_prewarm_processing_updates_log_s"),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return 300.0
-
-
-def get_metrics_prewarm_drain_per_job_s() -> Any:
-  """
-  Extra drain seconds added per successful jid in the batch (scaled budget).
-  
-  Returns:
-    Any: Open return polymorphism from
-    ``get_metrics_prewarm_drain_per_job_s``: concrete type depends on inputs
-    and branch (mapping, scalar, handle, or ``None``-like empty).
-  
-  Examples:
-    >>> get_metrics_prewarm_drain_per_job_s()  # doctest: +SKIP
-  """
-  env = os.environ.get(
-      "HPCPERFSTATS_METRICS_PREWARM_DRAIN_PER_JOB_S", ""
-  ).strip()
-  if env:
-    try:
-      return max(0.0, float(env))
-    except (TypeError, ValueError, OverflowError):
-      return 0.5
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        0.0,
-        _pipeline_getfloat("metrics_prewarm_drain_per_job_s"),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return 0.5
 
 
 def get_metrics_compute_batch_max_window_s() -> Any:
@@ -4099,22 +3730,6 @@ def get_metrics_persist_lock_timeout_ms() -> Any:
     return 10000
 
 
-def get_metrics_prewarm_retry_attempts() -> Any:
-  """
-  Retry attempts for plot artifact prewarm tasks.
-  
-  Returns:
-    Any: Open return polymorphism from ``get_metrics_prewarm_retry_attempts``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_metrics_prewarm_retry_attempts()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("metrics_prewarm_retry_attempts"))
-
-
 def get_metrics_plot_aggregate_time_slice_s() -> Any:
   """
   Wall-clock seconds per plot-aggregate SQL time chunk (default 3600).
@@ -4190,207 +3805,6 @@ def get_metrics_proxy_reject_jid_batch_size() -> Any:
   """
   _ensure_cfg_loaded()
   return max(8, _pipeline_getint("metrics_proxy_reject_jid_batch_size"))
-
-
-def get_sync_enable_cpuset_priority_budget() -> Any:
-  """
-  Enable cpuset-aware S/A/M budgeting for sync + metrics pools (default yes).
-  
-  Returns:
-    Any: Open return polymorphism from
-    ``get_sync_enable_cpuset_priority_budget``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
-  Examples:
-    >>> get_sync_enable_cpuset_priority_budget()  # doctest: +SKIP
-  """
-  env = os.environ.get("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "").strip()
-  if env:
-    return _parse_bool(env)
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _pipeline_get("sync_enable_cpuset_priority_budget"),
-      default=True,
-  )
-
-
-def derive_pipeline_cpuset_priority_budget() -> Any:
-  """
-  Return cpuset-aware thread budget dict for sync ingest/metrics with reserve.
-  
-  Buckets:
-  - real_time: sync ingest workers + listener/feed path
-  - normal: metrics pool (archive append slots are fixed via
-    ``sync_archive_pool_processes``, not budgeted here)
-  - best_effort: maintenance and optional test/browser load
-  
-  Returns:
-    Any: Open return polymorphism from
-    ``derive_pipeline_cpuset_priority_budget``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
-  Examples:
-    >>> derive_pipeline_cpuset_priority_budget()  # doctest: +SKIP
-  """
-  c = max(1, int(get_effective_cores()))
-  ingest_ratio = _budget_ratio("sync_budget_ingest_ratio")
-  metrics_ratio = _budget_ratio("sync_budget_metrics_ratio")
-  reserve_ratio = _budget_ratio("sync_budget_reserve_ratio")
-
-  s = max(1, int(math.floor(ingest_ratio * c)))
-  m = max(1, int(math.floor(metrics_ratio * c)))
-  r = max(1, int(math.floor(reserve_ratio * c)))
-
-  if get_sync_enable_overprovision_mode():
-    s = max(1, int(math.floor(s * get_sync_overprovision_ingest_multiplier())))
-    m = max(1, int(math.floor(m * get_sync_overprovision_metrics_multiplier())))
-
-  total = s + m + r
-  cap = max(1, int(math.floor(c * get_sync_budget_overcommit_factor())))
-  while total > cap:
-    if m > 1:
-      m -= 1
-    elif s > 1:
-      s -= 1
-    else:
-      break
-    total = s + m + r
-
-  min_metrics = _budget_floor_percent("sync_budget_min_metrics_percent")
-  m_min = max(1, int(math.floor((min_metrics / 100.0) * c)))
-  if m < m_min:
-    take = min(s - 1, m_min - m)
-    if take > 0:
-      s -= take
-      m += take
-
-  return {
-      "effective_cores": c,
-      "sync_ingest_cap": max(1, s),
-      # Informational mirror of the sole archive-slot knob (not budget-derived).
-      "sync_archive_cap": max(1, int(get_sync_archive_pool_processes())),
-      "metrics_cap": max(1, m),
-      "reserve_cap": max(1, r),
-      "headroom_cap": cap,
-  }
-
-
-def get_sync_enable_overprovision_mode() -> Any:
-  """
-  Enable bounded overprovision mode for S/A/M derivation (default disabled).
-  
-  Returns:
-    Any: Open return polymorphism from ``get_sync_enable_overprovision_mode``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_sync_enable_overprovision_mode()  # doctest: +SKIP
-  """
-  env = os.environ.get("SYNC_ENABLE_OVERPROVISION_MODE", "").strip()
-  if env:
-    return _parse_bool(env)
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _pipeline_get("sync_enable_overprovision_mode"),
-  )
-
-
-def get_sync_overprovision_ingest_multiplier() -> Any:
-  """
-  Return the sync overprovision ingest multiplier.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> get_sync_overprovision_ingest_multiplier()  # doctest: +SKIP
-  """
-  return _env_or_cfg_bounded_float(
-      "SYNC_OVERPROVISION_INGEST_MULTIPLIER",
-      "PIPELINE",
-      "sync_overprovision_ingest_multiplier",
-      lower=1.00,
-      upper=2.50,
-      legacy_sections=_PIPELINE_LEGACY,
-  )
-
-
-def get_sync_overprovision_metrics_multiplier() -> Any:
-  """
-  Return the sync overprovision metrics multiplier.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> get_sync_overprovision_metrics_multiplier()  # doctest: +SKIP
-  """
-  return _env_or_cfg_bounded_float(
-      "SYNC_OVERPROVISION_METRICS_MULTIPLIER",
-      "PIPELINE",
-      "sync_overprovision_metrics_multiplier",
-      lower=0.10,
-      upper=2.50,
-      legacy_sections=_PIPELINE_LEGACY,
-  )
-
-
-def get_sync_budget_overcommit_factor() -> Any:
-  """
-  Return the sync budget overcommit factor.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> get_sync_budget_overcommit_factor()  # doctest: +SKIP
-  """
-  return _env_or_cfg_bounded_float(
-      "SYNC_BUDGET_OVERCOMMIT_FACTOR",
-      "PIPELINE",
-      "sync_budget_overcommit_factor",
-      lower=1.00,
-      upper=2.00,
-      legacy_sections=_PIPELINE_LEGACY,
-  )
-
-
-def pipeline_cpu_process_buckets(
-  include_browser_phase: bool = False,
-  include_rsync: bool = False,
-) -> Any:
-  """
-  Return process inventory grouped by priority bucket for pipeline accounting.
-  
-  Args:
-    include_browser_phase (bool): Boolean flag for include browser phase.
-    include_rsync (bool): Boolean flag for include rsync.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> pipeline_cpu_process_buckets(True, True)  # doctest: +SKIP
-  """
-  best_effort = ["syslog-ng", "seal_syslog_daily.py"]
-  if include_rsync:
-    best_effort.append("rsync_data (optional)")
-  if include_browser_phase:
-    best_effort.append("browser/api phase test generator (optional)")
-  return {
-      "real_time": [
-          "hpcperfstats-rabbitmq-listener",
-          "sync_timedb ingest workers",
-          "sync_timedb db-writer workers (feature-gated)",
-      ],
-      "normal": [
-          "sync_timedb archive workers/retries",
-          "update_metrics workers",
-          "pipeline startup migrations/bootstrap",
-      ],
-      "best_effort": best_effort,
-  }
 
 
 def get_sync_ingest_queue_max_size() -> Any:
@@ -4603,13 +4017,13 @@ def get_sync_host_itimes_cache_max_timestamps_per_entry() -> Any:
 
 def get_sync_write_lock_shards() -> Any:
   """
-  Number of write-lock shards for sync_timedb ingest writes.
-  
+  Absolute write-lock shard count for sync_timedb ingest writes.
+
+  INI ``[PIPELINE] sync_write_lock_shards`` (default **8**).
+
   Returns:
-    Any: Open return polymorphism from ``get_sync_write_lock_shards``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Positive int shard count.
+
   Examples:
     >>> get_sync_write_lock_shards()  # doctest: +SKIP
   """
@@ -4617,21 +4031,7 @@ def get_sync_write_lock_shards() -> Any:
   if env:
     return max(1, int(env))
   _ensure_cfg_loaded()
-  if _pipeline_has_option("sync_write_lock_shards"):
-    return max(
-        1,
-        int(
-            _ini_option(
-                "PIPELINE",
-                "sync_write_lock_shards",
-                legacy_sections=_PIPELINE_LEGACY,
-            )
-        ),
-    )
-  # Default scales modestly with cores to reduce write serialization without
-  # exploding contention on smaller systems (40 effective cores -> 8 shards).
-  return max(1, min(8, get_effective_cores() // 5))
-
+  return max(1, _pipeline_getint("sync_write_lock_shards"))
 
 def get_sync_ingest_chunk_size() -> Any:
   """
@@ -5520,7 +4920,7 @@ def get_listend_db_ingest_enabled() -> Any:
 
 def get_listend_db_ingest_pool_processes() -> Any:
   """
-  Host-affine spawn workers for listend live DB ingest (default 30).
+  Host-affine spawn workers for listend live DB ingest (default 32).
   
   Returns:
     Any: Open return polymorphism from

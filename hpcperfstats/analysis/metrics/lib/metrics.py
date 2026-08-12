@@ -2547,7 +2547,7 @@ class Metrics():
     Examples:
       >>> Metrics()._worker_process_count()  # doctest: +SKIP
     """
-    return cfg.get_metrics_pool_process_count()
+    return cfg.get_metrics_pool_processes()
 
   def _imap_chunksize(self, job_count: int, threads: Any) -> Any:
     """

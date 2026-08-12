@@ -92,7 +92,7 @@ def _get_archive_discovery_worker_count(total_tasks: int) -> int:
   """
   Parallel head/sampled metadata reads; sole cap is.
   
-    ``get_sync_pool_process_cap()``.
+    ``get_sync_ingest_pool_processes()``.
   
   Args:
     total_tasks (int): Integer value for total tasks.
@@ -105,7 +105,7 @@ def _get_archive_discovery_worker_count(total_tasks: int) -> int:
   """
   if total_tasks <= 0:
     return 1
-  configured = max(1, int(cfg.get_sync_pool_process_cap()))
+  configured = max(1, int(cfg.get_sync_ingest_pool_processes()))
   return max(1, min(total_tasks, configured))
 
 

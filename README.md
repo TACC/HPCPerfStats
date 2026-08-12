@@ -304,8 +304,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    Optional tuning lives in other sections (see `hpcperfstats.ini.example`):
 
-   - **`[PORTAL]`** — Gunicorn/Django web stack only: `max_gunicorn_workers`, `parallel_db_prefetch_max`, `api_small_executor_max_workers`, `db_conn_max_age`, `db_statement_timeout_ms`, `db_idle_in_transaction_timeout_ms`, `cors_origin_scheme`
-   - **`[PIPELINE]`** — ingest, archive, and metrics: required paths `acct_path`, `archive_dir`, `daily_archive_dir`; optional `sync_*`, `metrics_*`, `archive_*`, `pipeline_overlap_mode`, and related keys
+   - **`[PORTAL]`** — Gunicorn/Django web stack only: `gunicorn_workers`, `parallel_db_prefetch_max`, `api_small_executor_max_workers`, `db_conn_max_age`, `db_statement_timeout_ms`, `db_idle_in_transaction_timeout_ms`, `cors_origin_scheme`
+   - **`[PIPELINE]`** — ingest, archive, and metrics: required paths `acct_path`, `archive_dir`, `daily_archive_dir`; optional `sync_*`, `metrics_*`, `archive_*`, `metrics_pool_processes`, and related keys
    - **`[RMQ]`**, **`[OAUTH2]`**, optional **`[CACHE]`**, **`[SYSLOG]`**, **`[XALT]`** — integration sections unchanged
 
    For a fresh Docker install you typically edit **`[DEFAULT]`** as above; **`[RMQ]`** and PostgreSQL defaults in the example are already wired for Compose. Do not change **`[RMQ]`** hostnames unless your RabbitMQ layout differs. For **cluster syslog**, add or edit the optional **`[SYSLOG]`** section (see `hpcperfstats.ini.example` and the compose step above).

@@ -221,5 +221,5 @@ def test_conf_parser_ingest_memory_defaults(temp_ini, monkeypatch):
   assert not hasattr(cfg, "get_sync_ingest_cooperative_recycle_after_giant")
   assert cfg.get_sync_ingest_recycle_worker_on_failure() is True
   assert cfg.get_sync_ingest_cooperative_recycle_rss_fraction() == 0.5
-  assert cfg.get_sync_pool_process_cap() == 16
+  assert cfg.get_sync_ingest_pool_processes() == 16
   assert cfg.get_sync_process_tree_rss_limit_mb() == 110000

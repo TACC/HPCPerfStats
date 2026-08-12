@@ -125,7 +125,7 @@ def ingest_pool_width() -> Any:
   """
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
-  cap = int(cfg.get_sync_pool_process_cap())
+  cap = int(cfg.get_sync_ingest_pool_processes())
   width = int(cfg.get_sync_ingest_pool_processes())
   return max(1, min(cap, width))
 

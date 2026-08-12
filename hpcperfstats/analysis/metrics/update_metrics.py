@@ -44,10 +44,6 @@ Attributes:
   GLOBAL_SCHEDULER_BATCH_SIZE: Attribute.
   LAST_UPDATE_METRICS_DIAGNOSTICS: Attribute.
   METRICS_SCHEDULER_STALL_EXIT_CODE: Attribute.
-  PREWARM_DRAIN_MAX_WALL_SECONDS: Attribute.
-  PREWARM_FINISH_PROCESSING_UPDATES_LOG_SECONDS: Attribute.
-  PREWARM_FINISH_WAIT_SLICE_SECONDS: Attribute.
-  PREWARM_FUTURE_RESULT_TIMEOUT_SECONDS: Attribute.
   PUBLIC_EF_PHASE_NO_PROGRESS_TIMEOUT_SECONDS: Attribute.
   PUBLIC_EF_PHASE_POLL_TIMEOUT_SECONDS: Attribute.
   READINESS_PROBE_TARGET_FAST_SUCCESS_S: Attribute.
@@ -93,7 +89,6 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
 ensure_django()
@@ -204,10 +199,7 @@ RESCAN_SEEN_MIN_CAP = 4096
 STALL_RECOVERY_PER_JID_TIMEOUT_SECONDS = 60.0
 STALL_RECOVERY_PER_JID_POLL_TIMEOUT_SECONDS = 2.0
 STALL_RECOVERY_MAX_WALL_SECONDS = 300.0
-PREWARM_FUTURE_RESULT_TIMEOUT_SECONDS = 60.0
-PREWARM_DRAIN_MAX_WALL_SECONDS = 300.0
-PREWARM_FINISH_PROCESSING_UPDATES_LOG_SECONDS = 300.0
-PREWARM_FINISH_WAIT_SLICE_SECONDS = 0.25
+_METRICS_PREWARM_RETRY_ATTEMPTS = 2
 PUBLIC_EF_PHASE_POLL_TIMEOUT_SECONDS = float(
     os.environ.get("HPCPERFSTATS_PUBLIC_EF_PHASE_POLL_TIMEOUT_S", "5.0")
 )
@@ -309,29 +301,6 @@ def _job_window_runtime_seconds(start_time: Any, end_time: Any) -> Any:
     return max(0.0, (end_time - start_time).total_seconds())
   except Exception:
     return None
-
-
-def _effective_prewarm_drain_batch_budget_s(n_successful: Any) -> Any:
-  """
-  Scaled time budget for draining async prewarm after each metrics batch.
-  
-  Args:
-    n_successful (Any): N successful passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _effective_prewarm_drain_batch_budget_s(None)  # doctest: +SKIP
-  """
-  n = max(0, int(n_successful))
-  base = float(cfg.get_metrics_prewarm_drain_batch_budget_s())
-  per_job = float(cfg.get_metrics_prewarm_drain_per_job_s())
-  ceiling = float(cfg.get_metrics_prewarm_drain_batch_budget_max_s())
-  raw = base + float(n) * per_job
-  if ceiling <= 0.0:
-    return max(0.0, raw)
-  return max(0.0, min(ceiling, raw))
 
 
 def _batch_window_cost_pair_for_ref(ref: Any) -> Any:
@@ -733,35 +702,19 @@ class _PhaseTimer:
 
 class _PrewarmPipeline:
   """
-  Sliding prewarm pool: at most ``_workers`` in-flight futures, overflow in
-  ``_waiting``, newest-first promotion when a slot frees. Never
-  ``Future.cancel``.
+  Sync job-detail + job-plot prewarm helper (no secondary ThreadPool).
 
-  ``submit`` / ``drain_some`` / ``finish`` mutate ``_pending``, ``_waiting``,
-  and ``_created_at``; call only from the owning thread (metrics scheduler
-  main thread) unless guarded. ``run_for_jid`` is safe from concurrent
-  scheduler compute threads (counters under ``_counters_lock``).
+  Metrics and prewarm share absolute ``metrics_pool_processes`` (pool B).
+  Per successful metrics jid, prewarm runs with hard-coded persist retry
+  attempts (``_METRICS_PREWARM_RETRY_ATTEMPTS``). Fail-closed: callers skip
+  prewarm when metrics failed. Mode gate: ``metrics_plot_prewarm_mode``.
 
   Attributes:
     _attempts: Attribute.
-    _backlog_cap: Attribute.
-    _backpressure_events: Attribute.
-    _backpressure_wait_s: Attribute.
     _counters_lock: Attribute.
-    _created_at: Attribute.
     _done: Attribute.
-    _evicted_pending_jobs: Attribute.
-    _executor: Attribute.
     _failed: Attribute.
-    _inline_fallback_jobs: Attribute.
-    _lag_samples: Attribute.
-    _last_backpressure_log_at: Attribute.
     _mode: Attribute.
-    _pending: Attribute.
-    _pending_jids: Attribute.
-    _pending_lock: Attribute.
-    _waiting: Attribute.
-    _workers: Attribute.
   """
 
   def __init__(self) -> None:
@@ -775,40 +728,23 @@ class _PrewarmPipeline:
       >>> _PrewarmPipeline()  # doctest: +SKIP
     """
     self._mode = cfg.get_metrics_plot_prewarm_mode()
-    self._workers = cfg.get_metrics_prewarm_workers()
-    self._attempts = cfg.get_metrics_prewarm_retry_attempts()
-    self._backlog_cap = max(self._workers, cfg.get_metrics_prewarm_backlog_cap())
-    self._backpressure_wait_s = cfg.get_metrics_prewarm_backpressure_wait_s()
+    self._attempts = int(_METRICS_PREWARM_RETRY_ATTEMPTS)
     self._counters_lock = threading.Lock()
-    self._pending_lock = threading.Lock()
-    self._executor = None
-    self._pending = set()
-    self._pending_jids = {}
-    self._waiting: list[tuple[float, Any]] = []
     self._done = 0
     self._failed = 0
-    self._backpressure_events = 0
-    self._inline_fallback_jobs = 0
-    self._evicted_pending_jobs = 0
-    self._lag_samples = deque(maxlen=TELEMETRY_SAMPLE_LIMIT)
-    self._created_at = {}
-    self._last_backpressure_log_at = 0.0
-    if self._mode == "pipeline_required":
-      self._executor = ThreadPoolExecutor(max_workers=self._workers)
 
   def _persist_detail_plot_elapsed(self, jid: Any, shared_context: Any) -> Any:
     """
-    Run job-detail then job-plot persistence; return wall times ``(detail_s,.
-    
-      plots_s)``.
-    
+    Run job-detail then job-plot persistence; return wall times ``(detail_s,
+    plots_s)``.
+
     Args:
       jid (Any): Jid passed to this helper.
       shared_context (Any): Shared context passed to this helper.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> _PrewarmPipeline()._persist_detail_plot_elapsed(None, None)
     """
@@ -829,27 +765,20 @@ class _PrewarmPipeline:
 
   def _run_one(self, jid: Any) -> None:
     """
-    Internal helper to run the one.
-    
+    Persist detail then plot artifacts for one jid with hard-coded retries.
+
     Args:
       jid (Any): Jid passed to this helper.
-    
+
     Returns:
       None
-    
+
     Raises:
       last_exc: Raised when ``_run_one`` hits a ``last_exc`` failure path.
-    
+
     Examples:
       >>> _PrewarmPipeline()._run_one(None)  # doctest: +SKIP
     """
-    from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
-
-    set_daemon_thread_title(
-        "",
-        script_name=UPDATE_METRICS_PROCESS_TITLE,
-        role="prewarm-pool",
-    )
     from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
         serial_summary_aggregate_prefetch_context,
     )
@@ -867,29 +796,41 @@ class _PrewarmPipeline:
   def run_for_jid(self, jid: Any, shared_context: Any | None = None) -> Any:
     """
     Run detail+plot prewarm synchronously for one jid.
-    
+
     Returns a dict with wall-clock seconds: ``detail_s``, ``plots_s`` (when the
     dict ``shared_context`` path is used), ``prewarm_total_s`` (detail+plots or
     the whole ``_run_one`` wall time when ``shared_context`` is not a dict), and
     ``undivided`` (True when only ``prewarm_total_s`` is meaningful).
-    
+
     Args:
       jid (Any): Jid passed to this helper.
       shared_context (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> _PrewarmPipeline().run_for_jid(None, None)  # doctest: +SKIP
     """
-    if isinstance(shared_context, dict):
-      from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
-          serial_summary_aggregate_prefetch_context,
-      )
+    from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
+        serial_summary_aggregate_prefetch_context,
+    )
 
+    if isinstance(shared_context, dict):
+      last_exc = None
+      detail_s = plots_s = 0.0
       with serial_summary_aggregate_prefetch_context():
-        detail_s, plots_s = self._persist_detail_plot_elapsed(jid, shared_context)
+        for _ in range(max(1, self._attempts)):
+          try:
+            detail_s, plots_s = self._persist_detail_plot_elapsed(
+                jid, shared_context
+            )
+            last_exc = None
+            break
+          except Exception as exc:
+            last_exc = exc
+      if last_exc is not None:
+        raise last_exc
       timing = {
           "detail_s": detail_s,
           "plots_s": plots_s,
@@ -909,156 +850,9 @@ class _PrewarmPipeline:
       self._done += 1
     return timing
 
-  def _backlog_size_locked(self) -> int:
-    """
-    Return waiters plus in-flight futures (caller holds ``_pending_lock``).
-
-    Returns:
-      int: Total backlog size under the current lock.
-
-    Examples:
-      >>> pipe = _PrewarmPipeline()  # doctest: +SKIP
-      >>> pipe._backlog_size_locked()  # doctest: +SKIP
-    """
-    return len(self._waiting) + len(self._pending)
-
-  def _oldest_pending_age_locked(self, now: Any | None = None) -> Any:
-    """
-    Oldest age among in-flight futures and wait-queue entries (seconds).
-
-    Args:
-      now (Any | None): Optional monotonic timestamp; defaults to
-        ``time.monotonic()``.
-
-    Returns:
-      Any: Non-negative float age in seconds, or ``0.0`` when empty.
-
-    Examples:
-      >>> _PrewarmPipeline()._oldest_pending_age_locked(None)  # doctest: +SKIP
-    """
-    if not self._pending and not self._waiting:
-      return 0.0
-    if now is None:
-      now = time.monotonic()
-    oldest_start = None
-    for fut in self._pending:
-      start = self._created_at.get(fut, now)
-      if oldest_start is None or start < oldest_start:
-        oldest_start = start
-    for start, _jid in self._waiting:
-      if oldest_start is None or start < oldest_start:
-        oldest_start = start
-    if oldest_start is None:
-      return 0.0
-    return max(0.0, now - oldest_start)
-
-  def _start_one_locked(self, jid: Any, created_at: float) -> None:
-    """
-    Submit one jid onto the executor (caller holds ``_pending_lock``).
-
-    Args:
-      jid (Any): Job id to prewarm.
-      created_at (float): Monotonic enqueue time for lag accounting.
-
-    Returns:
-      None
-
-    Examples:
-      >>> pipe = _PrewarmPipeline()  # doctest: +SKIP
-      >>> pipe._start_one_locked("j1", 1.0)  # doctest: +SKIP
-    """
-    fut = self._executor.submit(self._run_one, jid)
-    self._created_at[fut] = created_at
-    self._pending_jids[fut] = jid
-    self._pending.add(fut)
-
-  def _promote_waiting_locked(self) -> None:
-    """
-    Fill free worker slots from ``_waiting``, newest ``created_at`` first.
-
-    Returns:
-      None
-
-    Examples:
-      >>> _PrewarmPipeline()._promote_waiting_locked()  # doctest: +SKIP
-    """
-    while self._waiting and len(self._pending) < self._workers:
-      newest_idx = max(
-          range(len(self._waiting)),
-          key=lambda i: self._waiting[i][0],
-      )
-      created_at, jid = self._waiting.pop(newest_idx)
-      self._start_one_locked(jid, created_at)
-
-  def _maybe_log_backpressure(
-    self,
-    *,
-    jid: Any,
-    pending: Any,
-    oldest_age_s: Any,
-    action: Any,
-  ) -> None:
-    """
-    Rate-limit backlog pressure log lines for drain/defer actions.
-
-    Args:
-      jid (Any): Incoming job id under pressure.
-      pending (Any): Current wait+inflight backlog size.
-      oldest_age_s (Any): Oldest pending/waiting age in seconds.
-      action (Any): Pressure action label (``drain_wait``, ``defer_submit``).
-
-    Returns:
-      None
-
-    Examples:
-      >>> _PrewarmPipeline()._maybe_log_backpressure(
-      ...     jid="j1", pending=1, oldest_age_s=0.0, action="defer_submit"
-      ... )  # doctest: +SKIP
-    """
-    now = time.monotonic()
-    if action == "drain_wait" and ((now - self._last_backpressure_log_at) < 5.0):
-      return
-    self._last_backpressure_log_at = now
-    log_print(
-        "plot artifact prewarm backlog pressure pending={0} cap={1} "
-        "oldest_pending_age_s={2:.3f} jid={3} action={4}".format(
-            int(pending),
-            int(self._backlog_cap),
-            float(oldest_age_s),
-            jid,
-            action,
-        ),
-        flush=True,
-    )
-
-  def _run_inline_fallback(self, jid: Any) -> None:
-    """
-    Run prewarm inline and update done/failed counters.
-
-    Args:
-      jid (Any): Job id to prewarm synchronously.
-
-    Returns:
-      None
-
-    Examples:
-      >>> _PrewarmPipeline()._run_inline_fallback(None)  # doctest: +SKIP
-    """
-    try:
-      self._run_one(jid)
-      with self._counters_lock:
-        self._done += 1
-    except Exception as exc:
-      with self._counters_lock:
-        self._failed += 1
-      log_print("plot artifact prewarm failed: {0}".format(exc))
-
   def submit(self, jid: Any) -> None:
     """
-    Enqueue prewarm: start immediately, wait-queue, or defer at cap.
-
-    Never cancels in-flight or waiting work. Prefer newest waiters when a
-    worker slot frees (via ``drain_some`` / ``_promote_waiting_locked``).
+    Run prewarm synchronously for ``jid`` (no waiting queue / Future).
 
     Args:
       jid (Any): Job id to prewarm.
@@ -1069,65 +863,24 @@ class _PrewarmPipeline:
     Examples:
       >>> _PrewarmPipeline().submit(None)  # doctest: +SKIP
     """
-    if self._mode == "inline":
-      self._run_one(jid)
+    try:
+      self.run_for_jid(jid)
+    except Exception as exc:
       with self._counters_lock:
-        self._done += 1
-      return
-    with self._pending_lock:
-      pending_now = self._backlog_size_locked()
-      oldest_age_s = self._oldest_pending_age_locked()
-    if pending_now >= self._backlog_cap:
-      with self._counters_lock:
-        self._backpressure_events += 1
-      self._maybe_log_backpressure(
-          jid=jid,
-          pending=pending_now,
-          oldest_age_s=oldest_age_s,
-          action="drain_wait",
-      )
-      self.drain_some(wait_timeout_s=self._backpressure_wait_s)
-      with self._pending_lock:
-        pending_now = self._backlog_size_locked()
-        oldest_age_s = self._oldest_pending_age_locked()
-      if pending_now >= self._backlog_cap:
-        with self._counters_lock:
-          self._backpressure_events += 1
-        self._maybe_log_backpressure(
-            jid=jid,
-            pending=pending_now,
-            oldest_age_s=oldest_age_s,
-            action="defer_submit",
-        )
-        log_print(
-            "plot artifact prewarm defer submit jid={0} "
-            "(backlog full after drain)".format(jid),
-            flush=True,
-        )
-        return
-    with self._pending_lock:
-      if self._backlog_size_locked() >= self._backlog_cap:
-        return
-      created_at = time.monotonic()
-      if len(self._pending) < self._workers:
-        self._start_one_locked(jid, created_at)
-      else:
-        self._waiting.append((created_at, jid))
+        self._failed += 1
+      log_print("plot artifact prewarm failed: {0}".format(exc))
 
   def has_pending(self) -> Any:
     """
-    True when in-flight futures or wait-queue entries remain.
+    Always False — sync prewarm has no async backlog.
 
     Returns:
-      Any: Boolean true when async prewarm work is outstanding.
+      Any: False.
 
     Examples:
       >>> _PrewarmPipeline().has_pending()  # doctest: +SKIP
     """
-    if self._mode == "inline" or self._executor is None:
-      return False
-    with self._pending_lock:
-      return bool(self._pending) or bool(self._waiting)
+    return False
 
   def drain_some(
     self,
@@ -1135,11 +888,11 @@ class _PrewarmPipeline:
     wait_timeout_s: float = 0.0,
   ) -> None:
     """
-    Collect completed in-flight futures and promote newest waiters.
+    No-op retained for call-site compatibility (no async futures).
 
     Args:
-      force (bool): When True with zero timeout, skip waiting on futures.
-      wait_timeout_s (float): Seconds to wait for the first completion.
+      force (bool): Unused.
+      wait_timeout_s (float): Unused.
 
     Returns:
       None
@@ -1147,48 +900,11 @@ class _PrewarmPipeline:
     Examples:
       >>> _PrewarmPipeline().drain_some(True, 0)  # doctest: +SKIP
     """
-    if self._mode == "inline":
-      return
-    with self._pending_lock:
-      if not self._pending and not self._waiting:
-        return
-      if not self._pending:
-        self._promote_waiting_locked()
-        return
-      timeout_s = max(0.0, float(wait_timeout_s or 0.0))
-      if timeout_s > 0.0 or not force:
-        wait(
-            self._pending,
-            timeout=timeout_s,
-            return_when=FIRST_COMPLETED,
-        )
-      done = {fut for fut in self._pending if fut.done()}
-      if not done:
-        return
-      self._pending.difference_update(done)
-    for fut in done:
-      self._pending_jids.pop(fut, None)
-      start = self._created_at.pop(fut, None)
-      if start is not None:
-        self._lag_samples.append(time.monotonic() - start)
-      try:
-        fut.result()
-        with self._counters_lock:
-          self._done += 1
-      except Exception as exc:
-        with self._counters_lock:
-          self._failed += 1
-        log_print("plot artifact prewarm failed: {0}".format(exc))
-    with self._pending_lock:
-      self._promote_waiting_locked()
+    return None
 
   def finish(self) -> None:
     """
-    Drain async prewarm until empty or shutdown; never cancel futures.
-
-    After ``metrics_prewarm_processing_updates_log_s``, log progress once
-    and keep draining. Drop ``_waiting`` only when ``shutdown_requested``;
-    then wait for in-flight work. Never calls ``Future.cancel``.
+    No-op — sync prewarm completes inside submit / run_for_jid / pool map.
 
     Returns:
       None
@@ -1196,69 +912,30 @@ class _PrewarmPipeline:
     Examples:
       >>> _PrewarmPipeline().finish()  # doctest: +SKIP
     """
-    if self._mode == "inline":
-      return
-    started = time.monotonic()
-    log_after_s = float(cfg.get_metrics_prewarm_processing_updates_log_s())
-    processing_updates_logged = False
-    while True:
-      with self._pending_lock:
-        has_work = bool(self._pending) or bool(self._waiting)
-      if not has_work:
-        break
-      if shutdown_requested[0]:
-        with self._pending_lock:
-          oldest_age_s = self._oldest_pending_age_locked()
-          dropped_waiting = len(self._waiting)
-          self._waiting.clear()
-          still_running = len(self._pending)
-        if dropped_waiting:
-          with self._counters_lock:
-            self._failed += dropped_waiting
-          log_print(
-              "plot artifact prewarm finish shutdown; "
-              "dropped_waiting={0} still_running={1} "
-              "oldest_pending_age_s={2:.3f}".format(
-                  dropped_waiting,
-                  still_running,
-                  oldest_age_s,
-              ),
-              flush=True,
-          )
-        if still_running <= 0:
-          break
-        self.drain_some(
-            force=True,
-            wait_timeout_s=PREWARM_FINISH_WAIT_SLICE_SECONDS,
-        )
-        continue
-      elapsed_s = time.monotonic() - started
-      if not processing_updates_logged and elapsed_s >= log_after_s:
-        with self._pending_lock:
-          waiting_n = len(self._waiting)
-          still_running = len(self._pending)
-          oldest_age_s = self._oldest_pending_age_locked()
-        log_print(
-            "plot artifact prewarm processing updates after {0:.1f}s; "
-            "waiting={1} still_running={2} "
-            "oldest_pending_age_s={3:.3f}".format(
-                elapsed_s,
-                waiting_n,
-                still_running,
-                oldest_age_s,
-            ),
-            flush=True,
-        )
-        processing_updates_logged = True
-      self.drain_some(
-          force=True,
-          wait_timeout_s=PREWARM_FINISH_WAIT_SLICE_SECONDS,
-      )
-    self._executor.shutdown(wait=False, cancel_futures=False)
+    return None
+
+  def record_pool_result(self, ok: bool) -> None:
+    """
+    Update done/failed counters after a metrics-pool prewarm task.
+
+    Args:
+      ok (bool): True when the pool worker completed without error.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _PrewarmPipeline().record_pool_result(True)  # doctest: +SKIP
+    """
+    with self._counters_lock:
+      if ok:
+        self._done += 1
+      else:
+        self._failed += 1
 
   def stats(self) -> Any:
     """
-    Return prewarm backlog and success telemetry counters.
+    Return prewarm success telemetry counters (no backlog plane).
 
     Returns:
       Any: Dict of ``prewarm_*`` stats keys for batch logging.
@@ -1266,31 +943,50 @@ class _PrewarmPipeline:
     Examples:
       >>> _PrewarmPipeline().stats()  # doctest: +SKIP
     """
-    with self._pending_lock:
-      backlog_jobs = self._backlog_size_locked()
-      oldest_pending_age_s = self._oldest_pending_age_locked()
     with self._counters_lock:
       done = self._done
       failed = self._failed
-      lag_samples = list(self._lag_samples)
-      backpressure_events = self._backpressure_events
-      inline_fallback_jobs = self._inline_fallback_jobs
-      evicted_pending_jobs = self._evicted_pending_jobs
     total = done + failed
-    p95_lag = 0.0
-    if lag_samples:
-      vals = sorted(lag_samples)
-      p95_lag = vals[max(0, int(len(vals) * 0.95) - 1)]
     return {
-        "prewarm_backlog_jobs": backlog_jobs,
-        "prewarm_oldest_pending_age_s": round(oldest_pending_age_s, 3),
-        "prewarm_lag_seconds_p95": round(p95_lag, 3),
+        "prewarm_backlog_jobs": 0,
+        "prewarm_oldest_pending_age_s": 0.0,
+        "prewarm_lag_seconds_p95": 0.0,
         "prewarm_success_ratio": (float(done) / float(total)) if total else 1.0,
         "prewarm_done_jobs": done,
         "prewarm_failed_jobs": failed,
-        "prewarm_backpressure_events": backpressure_events,
-        "prewarm_inline_fallback_jobs": inline_fallback_jobs,
-        "prewarm_evicted_pending_jobs": evicted_pending_jobs,
+        "prewarm_backpressure_events": 0,
+        "prewarm_inline_fallback_jobs": 0,
+        "prewarm_evicted_pending_jobs": 0,
+    }
+
+
+def _prewarm_jid_on_metrics_pool(jid: Any) -> Any:
+  """
+  Picklable metrics-pool worker: detail+plot prewarm for one jid.
+
+  Args:
+    jid (Any): Job id to prewarm.
+
+  Returns:
+    Any: Dict with ``jid``, ``ok``, and optional ``error``.
+
+  Examples:
+    >>> _prewarm_jid_on_metrics_pool("1")  # doctest: +SKIP
+  """
+  from django.db import connections
+
+  connections.close_all()
+  close_old_connections()
+  pipe = _PrewarmPipeline()
+  try:
+    pipe._run_one(jid)
+    return {"jid": str(jid), "ok": True, "error": None}
+  except Exception as exc:
+    log_print("plot artifact prewarm failed: {0}".format(exc))
+    return {
+        "jid": str(jid),
+        "ok": False,
+        "error": "{0}: {1}".format(type(exc).__name__, exc),
     }
 
 
@@ -4806,6 +4502,52 @@ def _scheduler_jid_outcome(
   }
 
 
+def _prewarm_successful_refs_on_metrics_pool(
+  successful_refs: Any,
+  prewarm_pipeline: Any,
+  shared_pool: Any,
+) -> None:
+  """
+  Run detail+plot prewarm for metrics-successful jids on pool B (wait fully).
+
+  Fail-closed: only ``successful_refs`` are prewarmed. Mode gate uses
+  ``metrics_plot_prewarm_mode`` (``inline`` → parent ``run_for_jid``;
+  ``pipeline_required`` → metrics process pool ``imap``). No second queue,
+  drain budget, or ``Future.cancel``.
+
+  Args:
+    successful_refs (Any): Job refs whose metrics outcome was ok.
+    prewarm_pipeline (Any): Sync ``_PrewarmPipeline`` for counters / inline.
+    shared_pool (Any): Metrics process pool (pool B).
+
+  Returns:
+    None
+
+  Examples:
+    >>> _prewarm_successful_refs_on_metrics_pool([], None, None)  # doctest: +SKIP
+  """
+  if not successful_refs or shutdown_requested[0]:
+    return
+  mode = cfg.get_metrics_plot_prewarm_mode()
+  jids = [ref.jid for ref in successful_refs]
+  if mode == "inline" or shared_pool is None:
+    for jid in jids:
+      if shutdown_requested[0]:
+        break
+      try:
+        prewarm_pipeline.run_for_jid(jid)
+      except Exception as exc:
+        prewarm_pipeline.record_pool_result(False)
+        log_print("plot artifact prewarm failed: {0}".format(exc))
+    return
+  # pipeline_required: reuse metrics pool (absolute metrics_pool_processes).
+  for result in shared_pool.imap_unordered(_prewarm_jid_on_metrics_pool, jids):
+    if shutdown_requested[0]:
+      break
+    ok = bool(result and result.get("ok"))
+    prewarm_pipeline.record_pool_result(ok)
+
+
 def _compute_jid_outcomes_batch(
   job_refs: Any,
   metrics_manager: Any,
@@ -4814,28 +4556,29 @@ def _compute_jid_outcomes_batch(
   batch_timing: Any | None = None,
 ) -> Any:
   """
-  Run one batched ``Metrics.run`` then optional prewarm (submit/drain).
-  
+  Run one batched ``Metrics.run`` then prewarm successful jids on pool B.
+
   Returns outcome dicts sorted by ``jid`` for stable counters/telemetry.
-  
+
   A single ``Metrics.run(job_refs, …)`` saturates the process pool; prewarm
-  uses ``_PrewarmPipeline.submit`` + ``drain_some`` when ``pipeline_required``,
-  or runs inline when configured. Plot and detail artifact prewarm always run
-  for successful outcomes (no skip-prewarm catch-up escape hatch).
+  then runs on the same pool (or inline when configured). Plot and detail
+  artifact prewarm always run for successful outcomes (fail-closed: skip
+  prewarm when metrics failed). Stall/watchdog timing treats
+  metrics+prewarm as one job/batch wall-time unit.
 
   When ``batch_timing`` is a dict, it is populated with ``metrics_wall_s``,
   ``prewarm_wall_s``, and ``batch_wall_s`` for scheduler watchdogs.
-  
+
   Args:
     job_refs (Any): Job refs passed to this helper.
     metrics_manager (Any): Metrics manager passed to this helper.
     prewarm_pipeline (Any): Prewarm pipeline passed to this helper.
     shared_pool (Any): Shared pool passed to this helper.
     batch_timing (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _compute_jid_outcomes_batch(None, None, None, None, None)
   """
@@ -5042,7 +4785,14 @@ def _compute_jid_outcomes_batch(
           persist_s=0.0,
       ))
     timing["metrics_wall_s"] = max(0.0, time.monotonic() - t_batch)
-    timing["prewarm_wall_s"] = 0.0
+    t_prewarm = time.monotonic()
+    recovery_success_refs = [ref for ref, _ in succeeded] + list(artifact_only_refs)
+    _prewarm_successful_refs_on_metrics_pool(
+        recovery_success_refs,
+        prewarm_pipeline,
+        shared_pool,
+    )
+    timing["prewarm_wall_s"] = max(0.0, time.monotonic() - t_prewarm)
     timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
     return outcomes
   if t_metrics_start is not None:
@@ -5086,33 +4836,11 @@ def _compute_jid_outcomes_batch(
       successful_refs.append(ref)
 
   t_prewarm = time.monotonic()
-  for job_ref in successful_refs:
-    if shutdown_requested[0]:
-      break
-    prewarm_pipeline.submit(job_ref.jid)
-  drain_started = time.monotonic()
-  drain_budget_s = _effective_prewarm_drain_batch_budget_s(len(successful_refs))
-  while prewarm_pipeline.has_pending():
-    if shutdown_requested[0]:
-      break
-    if (time.monotonic() - drain_started) >= drain_budget_s:
-      prewarm_snapshot = prewarm_pipeline.stats()
-      pending = prewarm_snapshot.get("prewarm_backlog_jobs", 0)
-      oldest_age_s = prewarm_snapshot.get("prewarm_oldest_pending_age_s", 0.0)
-      log_print(
-          "metrics scheduler: prewarm drain budget hit after {0:.1f}s "
-          "(budget_s={4:.2f}) size={1} pending={2} "
-          "oldest_pending_age_s={3:.3f}; remaining work deferred".format(
-              time.monotonic() - drain_started,
-              len(job_refs),
-              int(pending),
-              float(oldest_age_s),
-              float(drain_budget_s),
-          ),
-          flush=True,
-      )
-      break
-    prewarm_pipeline.drain_some()
+  _prewarm_successful_refs_on_metrics_pool(
+      successful_refs,
+      prewarm_pipeline,
+      shared_pool,
+  )
   prewarm_elapsed = time.monotonic() - t_prewarm
   timing["prewarm_wall_s"] = max(0.0, prewarm_elapsed)
   timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
@@ -5267,7 +4995,7 @@ def update_metrics_for_dates(
       completion_reporter.set_extra_stats_getter(_extra_stats_snapshot)
       completion_reporter.start()
       batch_cap = min(prefetch_target, GLOBAL_SCHEDULER_BATCH_SIZE)
-      worker_count = max(1, int(cfg.get_metrics_pool_process_count()))
+      worker_count = max(1, int(cfg.get_metrics_pool_processes()))
       worker_scaled_cap = max(
           COMPUTE_BATCH_MIN_CAP,
           worker_count * COMPUTE_BATCH_WORKER_MULTIPLIER,
@@ -6067,13 +5795,10 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
   default_start, default_end = _default_metrics_date_range()
   startdate, enddate = parse_start_end_dates(argv, default_start, default_end)
 
-  if cfg.get_sync_enable_cpuset_priority_budget():
-    budget = cfg.derive_pipeline_cpuset_priority_budget()
-    overlap_mode = cfg.get_pipeline_overlap_mode()
-    log_print(
-        "Metrics cpuset budget effective_cores=%d metrics_cap=%d overlap_mode=%s"
-        % (budget["effective_cores"], budget["metrics_cap"], overlap_mode)
-    )
+  log_print(
+      "Metrics absolute pool effective_cores=%d metrics_pool_processes=%d"
+      % (cfg.get_effective_cores(), cfg.get_metrics_pool_processes())
+  )
 
   log_date_range("metrics to update", startdate, enddate)
   #################################################################

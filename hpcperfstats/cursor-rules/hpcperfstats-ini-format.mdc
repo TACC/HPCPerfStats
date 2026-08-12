@@ -43,8 +43,8 @@ When adding a new tunable whose example value is the registry default, add it **
 | Section | Put keys here when… | Examples |
 |---------|---------------------|----------|
 | **`[DEFAULT]`** | Install/site identity; PostgreSQL connection; compose NUMA/cpuset pinning (pinning keys **last**) | `machine`, `server`, `secret_key`, `engine_name`, `dbname`, `cpuset_pin_min_*`, `web_numa_node` |
-| **`[PORTAL]`** | Gunicorn, Django web stack, CORS, API thread pools, Django session PG timeouts — **not** ingest/archive/metrics | `max_gunicorn_workers`, `db_conn_max_age`, `cors_origin_scheme` |
-| **`[PIPELINE]`** | `sync_timedb`, archive/seal, `update_metrics`, `sync_acct`, `listend` paths and tuning | `sync_*`, `metrics_*`, `archive_*`, `acct_path`, `pipeline_overlap_mode` |
+| **`[PORTAL]`** | Gunicorn, Django web stack, CORS, API thread pools, Django session PG timeouts — **not** ingest/archive/metrics | `gunicorn_workers`, `summary_aggregate_prefetch_max_threads`, `db_conn_max_age`, `cors_origin_scheme` |
+| **`[PIPELINE]`** | `sync_timedb`, archive/seal, `update_metrics`, `sync_acct`, `listend` paths and tuning | `sync_ingest_pool_processes`, `metrics_pool_processes`, `sync_*`, `metrics_*`, `archive_*`, `acct_path` |
 | **`[OAUTH2]`** | OAuth2 client/tenant URLs only | `client_id`, `authorize_url`, … |
 | **`[RMQ]`** | RabbitMQ monitor ingest only | `rmq_server`, `rmq_queue` |
 | **`[SYSLOG]`** | Pipeline syslog-ng allowlist/listeners only | `allow_from`, `listen_tcp`, … |
@@ -62,7 +62,7 @@ When adding a new tunable whose example value is the registry default, add it **
 
 - `sync_*`, `metrics_*`, `ingest_*` → **`[PIPELINE]`**
 - `archive_*` → **`[PIPELINE]`**
-- `max_gunicorn_*`, `parallel_db_*`, `api_small_*`, `db_conn_*`, `db_statement_*`, `db_idle_*`, `cors_*` → **`[PORTAL]`**
+- `gunicorn_*`, `summary_aggregate_*`, `parallel_db_*`, `api_small_*`, `db_conn_*`, `db_statement_*`, `db_idle_*`, `cors_*` → **`[PORTAL]`**
 - `xalt_*` → **`[XALT]`**; `rmq_*` → **`[RMQ]`**
 
 When ambiguous, ask the operator/product owner; do not guess.

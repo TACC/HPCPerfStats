@@ -37,7 +37,7 @@ def test_collect_head_metadata_parallel_matches_serial(monkeypatch, tmp_path):
     if host_name and ts is not None:
       serial_identity[path] = (host_name, int(ts.timestamp()))
 
-  monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 2)
+  monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 2)
   parallel_first, parallel_identity, _stats = maint.collect_head_metadata_for_paths(
       paths, hints_data=None, log_fn=None)
 
@@ -280,10 +280,10 @@ def test_build_archive_maintenance_snapshot_once_collects(monkeypatch, tmp_path)
   assert seg in snap.first_timestamp_by_path
 
 
-def test_archive_discovery_worker_count_uses_sync_pool_process_cap(monkeypatch):
-  monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 24)
+def test_archive_discovery_worker_count_uses_sync_ingest_pool_processes(monkeypatch):
+  monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 24)
   assert maint._get_archive_discovery_worker_count(100) == 24
-  monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 3)
+  monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 3)
   assert maint._get_archive_discovery_worker_count(2) == 2
 
 
@@ -296,7 +296,7 @@ def test_gate_tail_metadata_logs_begin_and_progress(monkeypatch):
     return path, "cn001", 1700000001
 
   monkeypatch.setattr(maint, "_read_tail_metadata_one", _fake_read)
-  monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 4)
+  monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 4)
   maint.collect_gate_identities_for_paths(
       paths,
       head_identity,
@@ -316,7 +316,7 @@ def test_head_metadata_logs_begin_and_progress_for_large_read_set(monkeypatch):
     return path, "1700000000", "cn001", 1700000000
 
   monkeypatch.setattr(maint, "_read_head_metadata_one", _fake_read)
-  monkeypatch.setattr(cfg, "get_sync_pool_process_cap", lambda: 4)
+  monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 4)
   maint.collect_head_metadata_for_paths(
       paths,
       hints_data=None,

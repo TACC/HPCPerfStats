@@ -12,6 +12,8 @@ cd HPCPerfStats && tests/run_sync_timedb_regression_battery.sh
 
 Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or deploy ticket.
 
+**After absolute INI pool-size redeploy (`sync_ingest_pool_processes` / `metrics_pool_processes` / `gunicorn_workers` / `listend_db_ingest_pool_processes`, 2026-08):** this is a **pool sizing** change, not a stall-campaign fix. Post-redeploy use **T0/T1 only** — confirm ingest still advances (`chunk_elapsed_s`, `ingest file path=… outcome=…`, alive workers ≤ `sync_ingest_pool_processes`). Do **not** run a full **T2** multi-hour stall campaign solely for the absolute-INI cutover unless a new stall signature appears. Secondary caps/budget/overlap/`metrics_prewarm_*` keys are gone; stale site INI lines for those keys are ignored.
+
 **After sync_timedb dedup-audit deploy (blocking/census split, persistence v6):** run the same battery pre-deploy; post-deploy use T0/T1/T2 below. Persistence v6 resets orphan `startup_*` sidecars on contract bump — expect one-time empty maint hints if the contract file was stale. No separate stall signature is expected from this audit alone; treat regressions like any other sync_timedb deploy.
 
 **After chunk-cadence / RC-0 deploy (persistence v7):** contract bump clears poisoned `zero_host_ingest_mark` entries — expect a one-time re-gate/re-ingest of previously marked paths still on disk. Deleted-but-tarred raws (extract + re-ingest) are a separate operator restore decision after the fixed parser is live.
@@ -1227,7 +1229,7 @@ docker compose logs pipeline 2>&1 | grep -E 'youngest_day_chunk_gate_pad|chunk_p
 
 **Failure signature (pre-fix):** INI `ingest_pool_processes=N` but `ps` under main shows **`child_ingest` ≫ N** (often ~2× then grows: 48 → 71+) after **`dispatch_probe failed … err=`** (empty = `TimeoutError`) → **`proactive swap`** / idle `outcome=abandoned` that SIGKILL'd only `pool._pool`. Orphans sit in `queues.get` while a thin live cohort does work.
 
-**Acceptance (post-deploy, no multi-hour restart required):** `child_ingest == ingest_pool_processes` (and ≤ `pool_process_cap`). Reclaim may log **`ERROR: ingest pool child_ingest over cap`** then cull; subsequent census must match configured size.
+**Acceptance (post-deploy, no multi-hour restart required):** `child_ingest == ingest_pool_processes` (and ≤ `sync_ingest_pool_processes`). Reclaim may log **`ERROR: ingest pool child_ingest over cap`** then cull; subsequent census must match configured size.
 
 ```bash
 # T0 — INI + PPID census (compose cwd = git checkout with docker-compose.yaml)
@@ -1235,7 +1237,7 @@ docker compose exec -T pipeline sh -lc '
 python3 - <<'"'"'PY'"'"'
 from hpcperfstats.dbload.lib import conf_parser as c
 print("ingest_pool_processes", c.get_sync_ingest_pool_processes())
-print("pool_process_cap", c.get_sync_pool_process_cap())
+print("sync_ingest_pool_processes", c.get_sync_ingest_pool_processes())
 PY
 MAIN=$(pgrep -fo "[s]ync_timedb.py \[main\]" || pgrep -fo "[s]ync_timedb" | head -1)
 echo "MAIN=$MAIN"

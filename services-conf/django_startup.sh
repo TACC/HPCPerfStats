@@ -79,9 +79,7 @@ from hpcperfstats.site.lib.spa_static_root_heal import ensure_spa_shells_from_dj
 ensure_spa_shells_from_django_settings()
 PY
 
-# Gunicorn workers: WEB_CONCURRENCY overrides; else min(2*base+1, max_gunicorn_workers)
-# where base = min(visible_cpus, effective_cores) so ini total_cores caps workers even
-# when the container sees more CPUs. Default max_gunicorn_workers in ini is 32.
+# Gunicorn workers: WEB_CONCURRENCY overrides; else absolute [PORTAL] gunicorn_workers (default 32).
 WORKERS=$(/usr/local/bin/python3 -c "
 import os
 from hpcperfstats.dbload.lib import conf_parser as cfg
@@ -89,11 +87,7 @@ override = os.environ.get('WEB_CONCURRENCY', '').strip()
 if override:
     print(max(1, int(override)))
 else:
-    visible = os.cpu_count() or 1
-    eff = cfg.get_effective_cores()
-    base = min(visible, eff)
-    cap = cfg.get_max_gunicorn_workers()
-    print(min(2 * base + 1, cap))
+    print(max(1, int(cfg.get_gunicorn_workers())))
 ")
 
 # Browser CORS: export origins from [DEFAULT] server when unset (production).

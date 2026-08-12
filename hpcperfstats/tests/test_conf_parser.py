@@ -29,8 +29,6 @@ def test_get_debug_true(temp_ini, monkeypatch):
   content = content.replace("debug = no", "debug = yes")
   with open(temp_ini, "w") as f:
     f.write(content)
-  monkeypatch.delenv("SYNC_POOL_PROCESS_CAP", raising=False)
-  monkeypatch.setenv("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "0")
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
@@ -38,12 +36,72 @@ def test_get_debug_true(temp_ini, monkeypatch):
   assert cfg.get_debug() is True
 
 
-def test_get_max_gunicorn_workers_default(temp_ini, monkeypatch):
+def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_max_gunicorn_workers() == 32
+  assert cfg.get_sync_ingest_pool_processes() == 16
+  assert cfg.get_metrics_pool_processes() == 24
+  assert cfg.get_metrics_pool_process_count() == 24
+  assert cfg.get_gunicorn_workers() == 32
+  assert cfg.get_summary_aggregate_prefetch_max_threads() == 2
+  assert cfg.get_sync_write_lock_shards() == 8
+  assert cfg.get_listend_db_ingest_pool_processes() == 32
+  assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
+  assert cfg.get_sync_process_tree_rss_limit_mb() == 110000
+  for dead in (
+      "get_max_gunicorn_workers",
+      "get_sync_pool_process_cap",
+      "get_metrics_pool_process_cap",
+      "get_pipeline_overlap_mode",
+      "get_metrics_ingest_priority_scale",
+      "get_metrics_min_processes",
+      "derive_pipeline_cpuset_priority_budget",
+      "pipeline_cpu_process_buckets",
+      "get_metrics_prewarm_workers",
+      "get_metrics_prewarm_backlog_cap",
+      "get_metrics_prewarm_backpressure_wait_s",
+      "get_metrics_prewarm_retry_attempts",
+      "get_metrics_prewarm_drain_batch_budget_s",
+      "get_metrics_prewarm_drain_batch_budget_max_s",
+      "get_metrics_prewarm_drain_per_job_s",
+      "get_metrics_prewarm_processing_updates_log_s",
+      "_apply_sync_pool_cap",
+  ):
+    assert not hasattr(cfg, dead)
+
+
+def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\n"
+      "sync_ingest_pool_processes = 3\n"
+      "metrics_pool_processes = 5\n"
+      "gunicorn_workers = 9\n"
+      "summary_aggregate_prefetch_max_threads = 1\n"
+      "sync_write_lock_shards = 4\n"
+      "listend_db_ingest_pool_processes = 11\n"
+      "metrics_plot_prewarm_mode = inline\n",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_sync_ingest_pool_processes() == 3
+  assert cfg.get_metrics_pool_processes() == 5
+  assert cfg.get_gunicorn_workers() == 9
+  assert cfg.get_summary_aggregate_prefetch_max_threads() == 1
+  assert cfg.get_sync_write_lock_shards() == 4
+  assert cfg.get_listend_db_ingest_pool_processes() == 11
+  assert cfg.get_metrics_plot_prewarm_mode() == "inline"
+
+
+
 
 
 def test_get_worker_process_count(temp_ini, monkeypatch):
@@ -128,14 +186,6 @@ def test_get_ingest_zstd_threads_default_and_override(temp_ini, monkeypatch):
   importlib.reload(cfg)
   assert cfg.get_ingest_zstd_threads() == 8
 
-
-def test_sync_pool_process_cap_and_tree_rss_defaults(temp_ini, monkeypatch):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  assert cfg.get_sync_pool_process_cap() == 16
-  assert cfg.get_sync_process_tree_rss_limit_mb() == 110000
 
 
 def test_get_archive_zstd_level_clamps(temp_ini, monkeypatch):
@@ -239,31 +289,6 @@ def test_total_cores_defaults_to_40_when_missing(monkeypatch, tmp_path):
   assert cfg.get_effective_cores() == 4
 
 
-def test_get_metrics_pool_process_count_respects_cap(temp_ini, monkeypatch):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  with open(temp_ini) as f:
-    content = f.read()
-  content = content.replace(
-      "total_cores = 4",
-      "total_cores = 128\nmetrics_pool_process_cap = 5",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  importlib.reload(cfg)
-  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 128)
-  assert cfg.get_metrics_pool_process_count() == 5
-
-
-def test_get_metrics_pool_process_cap_env_override(temp_ini, monkeypatch):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  monkeypatch.setenv("METRICS_POOL_PROCESS_CAP", "7")
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  assert cfg.get_metrics_pool_process_cap() == 7
 
 
 def test_get_redis_location_default(temp_ini, monkeypatch):
@@ -490,29 +515,10 @@ def test_build_postgres_options_disabled_by_env(monkeypatch, temp_ini):
   assert cfg.build_postgres_connection_options() == {}
 
 
-def test_sync_ingest_pool_respects_cap(temp_ini, monkeypatch):
-  with open(temp_ini) as f:
-    content = f.read()
-  content = content.replace(
-      "total_cores = 4",
-      "total_cores = 64\nsync_pool_process_cap = 2",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
-  assert cfg.get_worker_process_count(4) == 16
-  assert cfg.get_sync_ingest_pool_processes() == 2
-
 
 def test_sync_archive_pool_processes_ini_knob_default_and_override(temp_ini, monkeypatch):
   """Archive slots come only from sync_archive_pool_processes (default 2)."""
   monkeypatch.delenv("SYNC_ARCHIVE_POOL_PROCESS_CAP", raising=False)
-  monkeypatch.delenv("SYNC_POOL_PROCESS_CAP", raising=False)
-  monkeypatch.setenv("SYNC_ENABLE_CPUSET_PRIORITY_BUDGET", "1")
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
@@ -538,160 +544,8 @@ def test_sync_archive_pool_processes_ini_knob_default_and_override(temp_ini, mon
   assert cfg.get_sync_archive_pool_processes() == 5
 
 
-def test_cpuset_priority_budget_derivation_defaults(temp_ini, monkeypatch):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 16)
-  budget = cfg.derive_pipeline_cpuset_priority_budget()
-  assert budget["effective_cores"] == 4
-  assert budget["sync_ingest_cap"] >= 1
-  assert budget["sync_archive_cap"] == cfg.get_sync_archive_pool_processes()
-  assert budget["metrics_cap"] >= 1
-  assert budget["reserve_cap"] >= 1
-  assert (
-      budget["sync_ingest_cap"]
-      + budget["metrics_cap"]
-      + budget["reserve_cap"]
-  ) <= budget["headroom_cap"]
 
 
-def test_metrics_pool_respects_cpuset_priority_budget(temp_ini, monkeypatch):
-  with open(temp_ini) as f:
-    content = f.read()
-  content = content.replace(
-      "total_cores = 4",
-      "total_cores = 40\nmetrics_pool_process_cap = 32\nsync_enable_cpuset_priority_budget = yes",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 20)
-  assert cfg.get_metrics_pool_process_count() == 4
-
-
-def test_metrics_pool_ingest_priority_overlap_mode(temp_ini, monkeypatch):
-  with open(temp_ini) as f:
-    content = f.read()
-  content = content.replace(
-      "total_cores = 4",
-      "total_cores = 40\nmetrics_pool_process_cap = 32\nsync_enable_cpuset_priority_budget = yes\npipeline_overlap_mode = ingest_priority\nmetrics_ingest_priority_scale = 0.5\nmetrics_min_processes = 2",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 20)
-  assert cfg.get_metrics_pool_process_count() == 2
-
-
-def test_metrics_scheduler_and_prewarm_tunables(temp_ini, monkeypatch):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-
-  importlib.reload(cfg)
-  assert cfg.get_metrics_scheduler_mode() == "global_priority"
-  assert cfg.get_metrics_scheduler_prefetch_chunks() == 8
-  assert cfg.get_metrics_scheduler_ready_queue_target() == 2000
-  assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
-  assert cfg.get_metrics_prewarm_workers() == 8
-  assert cfg.get_metrics_prewarm_backlog_cap() == 128
-  assert cfg.get_metrics_prewarm_backpressure_wait_s() == 0.25
-  assert cfg.get_metrics_run_poll_timeout_s() == 5.0
-  assert cfg.get_metrics_run_stall_timeout_s() == 900.0
-  assert cfg.get_metrics_run_per_job_timeout_s() == 0.0
-  assert cfg.get_metrics_worker_statement_timeout_ms() == 120000
-  assert cfg.get_metrics_persist_statement_timeout_ms() == 120000
-  assert cfg.get_metrics_persist_lock_timeout_ms() == 10000
-  assert cfg.get_metrics_prewarm_retry_attempts() == 2
-  assert cfg.get_metrics_proxy_reject_jid_batch_size() == 48
-  assert cfg.get_metrics_prewarm_drain_batch_budget_s() == 2.0
-  assert cfg.get_metrics_prewarm_drain_batch_budget_max_s() == 180.0
-  assert cfg.get_metrics_prewarm_drain_per_job_s() == 0.5
-  assert cfg.get_metrics_prewarm_processing_updates_log_s() == 300.0
-  assert cfg.get_metrics_compute_batch_max_window_s() == 0.0
-  assert cfg.get_metrics_compute_batch_max_single_job_s() == 0.0
-  assert cfg.get_metrics_compute_batch_unknown_runtime_s() == 172800.0
-  assert cfg.get_metrics_compute_watchdog_s() == 120.0
-  assert cfg.get_metrics_compute_total_watchdog_s() == 0.0
-  assert cfg.get_metrics_deferred_not_ready_retry_s() == 10.0
-  assert cfg.get_metrics_deferred_not_ready_max_retries() == 30
-  assert cfg.get_metrics_deferred_not_ready_max_age_s() == 900.0
-  assert cfg.get_metrics_deferred_not_ready_quarantine_s() == 300.0
-  assert cfg.get_metrics_readiness_require_window_coverage() is True
-  assert cfg.get_metrics_readiness_start_margin_seconds() == 600.0
-  assert cfg.get_metrics_readiness_end_margin_seconds() == 600.0
-
-  with open(temp_ini) as f:
-    content = f.read()
-  content = content.replace(
-      "total_cores = 4",
-      "total_cores = 4\n"
-      "metrics_scheduler_mode = global_fifo\n"
-      "metrics_scheduler_prefetch_chunks = 3\n"
-      "metrics_scheduler_ready_queue_target = 111\n"
-      "metrics_plot_prewarm_mode = inline\n"
-      "metrics_prewarm_workers = 7\n"
-      "metrics_prewarm_backlog_cap = 13\n"
-      "metrics_prewarm_backpressure_wait_s = 0.75\n"
-      "metrics_run_poll_timeout_s = 1.5\n"
-      "metrics_run_stall_timeout_s = 120\n"
-      "metrics_worker_statement_timeout_ms = 300000\n"
-      "metrics_persist_statement_timeout_ms = 45000\n"
-      "metrics_persist_lock_timeout_ms = 7000\n"
-      "metrics_prewarm_retry_attempts = 5\n"
-      "metrics_proxy_reject_jid_batch_size = 32",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  importlib.reload(cfg)
-  assert cfg.get_metrics_scheduler_mode() == "global_fifo"
-  assert cfg.get_metrics_scheduler_prefetch_chunks() == 3
-  assert cfg.get_metrics_scheduler_ready_queue_target() == 111
-  assert cfg.get_metrics_plot_prewarm_mode() == "inline"
-  assert cfg.get_metrics_prewarm_workers() == 7
-  assert cfg.get_metrics_prewarm_backlog_cap() == 13
-  assert cfg.get_metrics_prewarm_backpressure_wait_s() == 0.75
-  assert cfg.get_metrics_run_poll_timeout_s() == 1.5
-  assert cfg.get_metrics_run_stall_timeout_s() == 120.0
-  assert cfg.get_metrics_worker_statement_timeout_ms() == 300000
-  assert cfg.get_metrics_persist_statement_timeout_ms() == 45000
-  assert cfg.get_metrics_persist_lock_timeout_ms() == 7000
-  assert cfg.get_metrics_prewarm_retry_attempts() == 5
-  assert cfg.get_metrics_proxy_reject_jid_batch_size() == 32
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_SCHEDULER_MODE", "strict_date")
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_PLOT_PREWARM_MODE", "pipeline_required")
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_PREWARM_BACKLOG_CAP", "9")
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_PREWARM_BACKPRESSURE_WAIT_S", "1.25")
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_RUN_POLL_TIMEOUT_S", "2.5")
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S", "45")
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_WORKER_STATEMENT_TIMEOUT_MS", "90000")
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_PERSIST_STATEMENT_TIMEOUT_MS", "9000")
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_PERSIST_LOCK_TIMEOUT_MS", "3000")
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_S", "3.5")
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_COMPUTE_WATCHDOG_S", "90")
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_COMPUTE_TOTAL_WATCHDOG_S", "600")
-  monkeypatch.setenv("HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_RETRY_S", "15")
-  assert cfg.get_metrics_scheduler_mode() == "strict_date"
-  assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
-  assert cfg.get_metrics_prewarm_backlog_cap() == 9
-  assert cfg.get_metrics_prewarm_backpressure_wait_s() == 1.25
-  assert cfg.get_metrics_run_poll_timeout_s() == 2.5
-  assert cfg.get_metrics_run_stall_timeout_s() == 45.0
-  assert cfg.get_metrics_worker_statement_timeout_ms() == 90000
-  assert cfg.get_metrics_persist_statement_timeout_ms() == 9000
-  assert cfg.get_metrics_persist_lock_timeout_ms() == 3000
-  assert cfg.get_metrics_prewarm_drain_batch_budget_s() == 3.5
-  assert cfg.get_metrics_compute_watchdog_s() == 90.0
-  assert cfg.get_metrics_compute_total_watchdog_s() == 600.0
-  assert cfg.get_metrics_deferred_not_ready_retry_s() == 15.0
 
 
 def test_get_metrics_readiness_window_coverage_defaults(temp_ini, monkeypatch):
@@ -742,44 +596,88 @@ def test_get_metrics_per_jid_phase_diagnostics_enabled_env(monkeypatch):
   assert cfg.get_metrics_per_jid_phase_diagnostics_enabled() is True
 
 
-def test_cpuset_priority_budget_overprovision_mode(temp_ini, monkeypatch):
+
+
+
+def test_metrics_scheduler_tunables_without_prewarm_pool_keys(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_metrics_scheduler_mode() == "global_priority"
+  assert cfg.get_metrics_scheduler_prefetch_chunks() == 8
+  assert cfg.get_metrics_scheduler_ready_queue_target() == 2000
+  assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
+  assert cfg.get_metrics_run_poll_timeout_s() == 5.0
+  assert cfg.get_metrics_run_stall_timeout_s() == 900.0
+  assert cfg.get_metrics_run_per_job_timeout_s() == 0.0
+  assert cfg.get_metrics_worker_statement_timeout_ms() == 120000
+  assert cfg.get_metrics_persist_statement_timeout_ms() == 120000
+  assert cfg.get_metrics_persist_lock_timeout_ms() == 10000
+  assert cfg.get_metrics_proxy_reject_jid_batch_size() == 48
+  assert cfg.get_metrics_compute_batch_max_window_s() == 0.0
+  assert cfg.get_metrics_compute_batch_max_single_job_s() == 0.0
+  assert cfg.get_metrics_compute_batch_unknown_runtime_s() == 172800.0
+  assert cfg.get_metrics_compute_watchdog_s() == 120.0
+  assert cfg.get_metrics_compute_total_watchdog_s() == 0.0
+  assert cfg.get_metrics_deferred_not_ready_retry_s() == 10.0
+  assert cfg.get_metrics_deferred_not_ready_max_retries() == 30
+  assert cfg.get_metrics_deferred_not_ready_max_age_s() == 900.0
+  assert cfg.get_metrics_deferred_not_ready_quarantine_s() == 300.0
+  assert cfg.get_metrics_readiness_require_window_coverage() is True
+  assert cfg.get_metrics_readiness_start_margin_seconds() == 600.0
+  assert cfg.get_metrics_readiness_end_margin_seconds() == 600.0
+
   with open(temp_ini) as f:
     content = f.read()
   content = content.replace(
       "total_cores = 4",
-      "total_cores = 40\n"
-      "sync_enable_cpuset_priority_budget = yes\n"
-      "sync_enable_overprovision_mode = yes\n"
-      "sync_budget_overcommit_factor = 1.25\n"
-      "sync_overprovision_ingest_multiplier = 1.20\n"
-      "sync_overprovision_metrics_multiplier = 0.90",
+      "total_cores = 4\n"
+      "metrics_scheduler_mode = global_fifo\n"
+      "metrics_scheduler_prefetch_chunks = 3\n"
+      "metrics_scheduler_ready_queue_target = 111\n"
+      "metrics_plot_prewarm_mode = inline\n"
+      "metrics_run_poll_timeout_s = 1.5\n"
+      "metrics_run_stall_timeout_s = 120\n"
+      "metrics_worker_statement_timeout_ms = 300000\n"
+      "metrics_persist_statement_timeout_ms = 45000\n"
+      "metrics_persist_lock_timeout_ms = 7000\n"
+      "metrics_proxy_reject_jid_batch_size = 32",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
-  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 20)
-  budget = cfg.derive_pipeline_cpuset_priority_budget()
-  assert budget["effective_cores"] == 20
-  assert budget["headroom_cap"] == 25
-  assert budget["sync_ingest_cap"] >= 12
-
-
-def test_pipeline_cpu_process_buckets_flags(temp_ini, monkeypatch):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  importlib.reload(cfg)
-  buckets = cfg.pipeline_cpu_process_buckets(
-      include_browser_phase=True,
-      include_rsync=True,
-  )
-  assert "hpcperfstats-rabbitmq-listener" in buckets["real_time"]
-  assert "update_metrics workers" in buckets["normal"]
-  assert "rsync_data (optional)" in buckets["best_effort"]
-  assert any("browser/api" in item for item in buckets["best_effort"])
+  assert cfg.get_metrics_scheduler_mode() == "global_fifo"
+  assert cfg.get_metrics_scheduler_prefetch_chunks() == 3
+  assert cfg.get_metrics_scheduler_ready_queue_target() == 111
+  assert cfg.get_metrics_plot_prewarm_mode() == "inline"
+  assert cfg.get_metrics_run_poll_timeout_s() == 1.5
+  assert cfg.get_metrics_run_stall_timeout_s() == 120.0
+  assert cfg.get_metrics_worker_statement_timeout_ms() == 300000
+  assert cfg.get_metrics_persist_statement_timeout_ms() == 45000
+  assert cfg.get_metrics_persist_lock_timeout_ms() == 7000
+  assert cfg.get_metrics_proxy_reject_jid_batch_size() == 32
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_SCHEDULER_MODE", "strict_date")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_PLOT_PREWARM_MODE", "pipeline_required")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_RUN_POLL_TIMEOUT_S", "2.5")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S", "45")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_WORKER_STATEMENT_TIMEOUT_MS", "90000")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_PERSIST_STATEMENT_TIMEOUT_MS", "9000")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_PERSIST_LOCK_TIMEOUT_MS", "3000")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_COMPUTE_WATCHDOG_S", "90")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_COMPUTE_TOTAL_WATCHDOG_S", "600")
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_RETRY_S", "15")
+  assert cfg.get_metrics_scheduler_mode() == "strict_date"
+  assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
+  assert cfg.get_metrics_run_poll_timeout_s() == 2.5
+  assert cfg.get_metrics_run_stall_timeout_s() == 45.0
+  assert cfg.get_metrics_worker_statement_timeout_ms() == 90000
+  assert cfg.get_metrics_persist_statement_timeout_ms() == 9000
+  assert cfg.get_metrics_persist_lock_timeout_ms() == 3000
+  assert cfg.get_metrics_compute_watchdog_s() == 90.0
+  assert cfg.get_metrics_compute_total_watchdog_s() == 600.0
+  assert cfg.get_metrics_deferred_not_ready_retry_s() == 15.0
 
 
 def test_get_large_job_time_sample_sql_mode_defaults_and_env(temp_ini, monkeypatch):
@@ -991,7 +889,7 @@ def test_sync_host_itimes_cache_max_timestamps_per_entry(temp_ini, monkeypatch):
   assert cfg.get_sync_host_itimes_cache_max_timestamps_per_entry() == 50000
 
 
-def test_sync_write_lock_shards_auto_scales_to_eight_at_forty_cores(temp_ini, monkeypatch):
+def test_sync_write_lock_shards_absolute_default_eight(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
@@ -1013,7 +911,7 @@ def test_sync_phase2_feature_flags_and_shards(temp_ini, monkeypatch):
 
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 16)
-  assert cfg.get_sync_write_lock_shards() == 1
+  assert cfg.get_sync_write_lock_shards() == 8
   # Ingest-first durability is on by default (fallback=yes in conf_parser).
   assert cfg.get_sync_enable_ingest_first_durability_mode() is True
 
@@ -1254,7 +1152,7 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert not hasattr(cfg, "get_db_connection_string")
   assert not hasattr(cfg, "get_machine_name")
   assert cfg.get_sync_day_close_manifest_stale_seconds() == 7200.0
-  assert cfg.get_sync_pool_process_cap() == 16
+  assert cfg.get_sync_ingest_pool_processes() == 16
   assert not hasattr(cfg, "get_sync_archive_pool_process_cap")
 
 

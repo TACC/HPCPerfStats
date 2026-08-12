@@ -2122,7 +2122,7 @@ def _build_ingest_stall_log_suffix(
   in_flight_n = len(sample or ())
   since_last = diag.seconds_since_last_imap_completion()
   since_text = "%.1f" % since_last if since_last >= 0.0 else "-"
-  overlap_mode = cfg.get_pipeline_overlap_mode()
+  ingest_pool_n = int(cfg.get_sync_ingest_pool_processes())
   registry_gap = ""
   if registry_n < in_flight_n:
     registry_gap = " worker_registry_gap=%d" % (in_flight_n - registry_n)
@@ -2144,7 +2144,7 @@ def _build_ingest_stall_log_suffix(
       " stall_defer=%s defer_reason=%s imap_batch_cap=%d chunk_batch=%d imap_batch=%d"
       " distinct_in_flight_days=%s in_flight_file_meta=%s"
       " seconds_since_last_imap_completion=%s ingest_pipeline=%s"
-      " pipeline_overlap_mode=%s day_close=%s chunk_prewarm=%s"
+      " sync_ingest_pool_processes=%s day_close=%s chunk_prewarm=%s"
       " worker_registry_n=%d in_flight_n=%d worker_stages=%s%s%s"
       % (
           floor_timeout_s,
@@ -2162,7 +2162,7 @@ def _build_ingest_stall_log_suffix(
           _in_flight_file_meta_from_paths(sample),
           since_text,
           diag.ingest_pipeline or "combined",
-          overlap_mode,
+          ingest_pool_n,
           diag.format_day_close_pipeline_detail(),
           diag.chunk_prewarm_summary or "-",
           registry_n,
@@ -2597,7 +2597,7 @@ def _effective_ingest_imap_inflight_cap(
   """
   Sliding-window inflight equals live pool size (capped by.
   
-    ``sync_pool_process_cap``).
+    ``sync_ingest_pool_processes``).
   
   Args:
     thread_count (int): Integer value for thread count.
@@ -13398,29 +13398,18 @@ def run_sync_timedb_supervisor_from_parsed(
 
   manager = multiprocessing.Manager()
   try:
-    if cfg.get_sync_enable_cpuset_priority_budget():
-      budget = cfg.derive_pipeline_cpuset_priority_budget()
-      buckets = cfg.pipeline_cpu_process_buckets()
-      log_print(
-          "Pipeline cpuset budget effective_cores=%d sync_ingest=%d sync_archive=%d metrics=%d reserve=%d"
-          % (
-              budget["effective_cores"],
-              budget["sync_ingest_cap"],
-              budget["sync_archive_cap"],
-              budget["metrics_cap"],
-              budget["reserve_cap"],
-          ),
-          flush=True,
-      )
-      log_print(
-          "Pipeline process buckets real_time=%s normal=%s best_effort=%s"
-          % (
-              ",".join(buckets["real_time"]),
-              ",".join(buckets["normal"]),
-              ",".join(buckets["best_effort"]),
-          ),
-          flush=True,
-      )
+    log_print(
+        "Pipeline absolute pools effective_cores=%d sync_ingest=%d sync_archive=%d "
+        "metrics=%d write_lock_shards=%d"
+        % (
+            cfg.get_effective_cores(),
+            cfg.get_sync_ingest_pool_processes(),
+            cfg.get_sync_archive_pool_processes(),
+            cfg.get_metrics_pool_processes(),
+            cfg.get_sync_write_lock_shards(),
+        ),
+        flush=True,
+    )
     lock_shards = max(1, int(cfg.get_sync_write_lock_shards()))
     if lock_shards == 1:
       manager_lock = manager.Lock()

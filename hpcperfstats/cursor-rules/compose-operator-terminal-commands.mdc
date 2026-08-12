@@ -301,7 +301,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 ### Anti-pattern — inventing `conf_parser.get_metrics_pool`
 
-`hpcperfstats.dbload.lib.conf_parser` has **no** `get_metrics_pool()`. Operator `cfg.get_metrics_pool()` raises **`AttributeError`** (hpcperfstats04 2026-08-06). Use **`get_metrics_pool_process_count()`** and/or **`get_metrics_pool_process_cap()`**. Do **not** chain `python3 -c … && docker compose logs …` when the Python can fail — empty exit short-circuits and **drops the log paste**.
+`hpcperfstats.dbload.lib.conf_parser` has **no** `get_metrics_pool()`. Operator `cfg.get_metrics_pool()` raises **`AttributeError`** (hpcperfstats04 2026-08-06). Use **`get_metrics_pool_process_count()`** and/or **`get_metrics_pool_processes()`**. Do **not** chain `python3 -c … && docker compose logs …` when the Python can fail — empty exit short-circuits and **drops the log paste**.
 
 | Do | Don't |
 |----|-------|
@@ -312,7 +312,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
 print(\"metrics_pool_process_count\", cfg.get_metrics_pool_process_count())
-print(\"metrics_pool_process_cap\", cfg.get_metrics_pool_process_cap())
+print(\"metrics_pool_processes\", cfg.get_metrics_pool_processes())
 "'
 ```
 

@@ -1850,7 +1850,7 @@ class _DayRawRemovalState:
         else:
           gate_ready = []
           gate_skipped = []
-          worker_cap = max(1, int(cfg.get_sync_pool_process_cap()))
+          worker_cap = max(1, int(cfg.get_sync_ingest_pool_processes()))
 
           def _gate_one(path: str) -> Any:
             """

@@ -7,7 +7,6 @@ import os
 import threading
 import time
 from collections import deque
-from concurrent.futures import Future
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -56,11 +55,6 @@ def _patch_scheduler_defaults(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 2)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_s", lambda: 2.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_max_s", lambda: 60.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_per_job_s", lambda: 0.5)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_window_s", lambda: 0.0)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_max_single_job_s", lambda: 0.0)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_batch_unknown_runtime_s", lambda: 172800.0)
@@ -1255,45 +1249,6 @@ def test_compute_jid_outcomes_batch_skips_prewarm_for_explicit_failed_outcomes(m
 
 
 @pytest.mark.machine_unit_mock
-def test_compute_jid_outcomes_batch_prewarm_drain_budget_defers_backlog(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_s", lambda: 0.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_per_job_s", lambda: 0.0)
-
-  class _M:
-    def ensure_pool(self, pool_kind="metrics-pool"):
-      return None
-
-    def run(self, job_refs, pool=None):
-      del pool
-
-  class _Pipe:
-    def __init__(self):
-      self.submitted = []
-      self.drain_calls = 0
-
-    def submit(self, jid):
-      self.submitted.append(jid)
-
-    def has_pending(self):
-      return True
-
-    def drain_some(self):
-      self.drain_calls += 1
-
-    def stats(self):
-      return {"prewarm_backlog_jobs": 7}
-
-  pipe = _Pipe()
-  out = update_metrics._compute_jid_outcomes_batch(
-      [SimpleNamespace(jid="j1"), SimpleNamespace(jid="j2")],
-      _M(),
-      pipe,
-      None,
-  )
-  assert pipe.submitted == ["j1", "j2"]
-  # Budget is exhausted immediately, so backlog is deferred instead of spinning.
-  assert pipe.drain_calls == 0
-  assert [d["jid"] for d in out] == ["j1", "j2"]
 
 
 @pytest.mark.machine_unit_mock
@@ -1315,13 +1270,6 @@ def test_pop_candidates_respects_max_window_seconds(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
-def test_effective_prewarm_drain_budget_scales_with_successful_count(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_s", lambda: 1.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_per_job_s", lambda: 0.5)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_max_s", lambda: 10.0)
-  assert update_metrics._effective_prewarm_drain_batch_budget_s(0) == 1.0
-  assert update_metrics._effective_prewarm_drain_batch_budget_s(2) == 2.0
-  assert update_metrics._effective_prewarm_drain_batch_budget_s(100) == 10.0
 
 
 @pytest.mark.machine_unit_mock
@@ -2829,16 +2777,6 @@ def test_add_bounded_seen_jid_evicts_oldest_entries():
 
 
 @pytest.mark.machine_unit_mock
-def test_prewarm_pipeline_lag_samples_are_capped(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.0)
-  pipe = update_metrics._PrewarmPipeline()
-  for i in range(update_metrics.TELEMETRY_SAMPLE_LIMIT + 5):
-    pipe._lag_samples.append(float(i))
-  assert len(pipe._lag_samples) == update_metrics.TELEMETRY_SAMPLE_LIMIT
 
 
 @pytest.mark.machine_unit_mock
@@ -2936,8 +2874,6 @@ def test_update_metrics_pub_parallel_once_then_safe_in_finally(monkeypatch):
   monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
   _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
   monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_batch_budget_s", lambda: 0.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_drain_per_job_s", lambda: 0.0)
   monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
@@ -3294,257 +3230,26 @@ def test_update_metrics_for_dates_per_jid_failure_does_not_stop_progress(monkeyp
 
 
 @pytest.mark.machine_unit_mock
-def test_prewarm_pipeline_drain_some_force_does_not_use_invalid_wait_condition(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 4)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.25)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
-
-  pipeline = update_metrics._PrewarmPipeline()
-  fut = Future()
-  fut.set_result(None)
-  pipeline._pending.add(fut)
-  pipeline._created_at[fut] = update_metrics.time.monotonic()
-
-  pipeline.drain_some(force=True)
-
-  assert pipeline._done == 1
-  assert len(pipeline._pending) == 0
-  pipeline._executor.shutdown(wait=True)
 
 
 @pytest.mark.machine_unit_mock
-def test_prewarm_pipeline_drain_some_force_leaves_unfinished_future_pending(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 4)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.25)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
-
-  class _PendingFuture:
-    def __init__(self):
-      self.result_called = False
-
-    def done(self):
-      return False
-
-    def result(self):
-      self.result_called = True
-      raise AssertionError("unfinished future should not be consumed")
-
-    def cancel(self):
-      return True
-
-  pipeline = update_metrics._PrewarmPipeline()
-  fut = _PendingFuture()
-  pipeline._pending.add(fut)
-  pipeline._created_at[fut] = update_metrics.time.monotonic()
-  monkeypatch.setattr(update_metrics, "wait", lambda pending, timeout, _return_when: (set(), set(pending)))
-
-  pipeline.drain_some(force=True, wait_timeout_s=0.0)
-
-  assert fut in pipeline._pending
-  assert fut.result_called is False
-  pipeline._executor.shutdown(wait=True)
 
 
 @pytest.mark.machine_unit_mock
-def test_prewarm_pipeline_finish_processing_updates_keeps_waiting(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 4)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.25)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
-  monkeypatch.setattr(
-      update_metrics.cfg, "get_metrics_prewarm_processing_updates_log_s", lambda: 1.0
-  )
-  monkeypatch.setattr(update_metrics, "PREWARM_FINISH_WAIT_SLICE_SECONDS", 0.25)
-  update_metrics.shutdown_requested[0] = False
-
-  class _FakeExecutor:
-    def __init__(self):
-      self.shutdown_calls = []
-
-    def shutdown(self, wait=False, cancel_futures=True):
-      self.shutdown_calls.append((wait, cancel_futures))
-
-  pipeline = update_metrics._PrewarmPipeline()
-  pipeline._waiting = [(0.0, "jid-waiting")]
-  pipeline._executor = _FakeExecutor()
-  drain_calls = []
-  logs = []
-
-  def _drain(force=False, wait_timeout_s=0.0):
-    drain_calls.append((force, wait_timeout_s))
-    # Keep waiters until after the processing-updates log, then complete.
-    if len(drain_calls) >= 2:
-      pipeline._waiting.clear()
-
-  monkeypatch.setattr(pipeline, "drain_some", _drain)
-  monkeypatch.setattr(update_metrics, "log_print", lambda msg, **kwargs: logs.append(msg))
-  times = iter([0.0, 0.5, 1.1, 1.2, 1.3, 1.4])
-  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: next(times, 2.0))
-
-  pipeline.finish()
-
-  assert len(drain_calls) >= 2
-  assert all(call == (True, 0.25) for call in drain_calls)
-  assert pipeline._waiting == []
-  assert pipeline._failed == 0
-  assert any("processing updates" in msg for msg in logs)
-  assert not any("soft wall" in msg for msg in logs)
-  assert not any("dropped_waiting" in msg for msg in logs)
-  assert pipeline._executor.shutdown_calls == [(False, False)]
-  update_metrics.shutdown_requested[0] = False
 
 
 @pytest.mark.machine_unit_mock
-def test_prewarm_pipeline_finish_shutdown_drops_waiting(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 4)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.25)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
-  monkeypatch.setattr(
-      update_metrics.cfg, "get_metrics_prewarm_processing_updates_log_s", lambda: 300.0
-  )
-  monkeypatch.setattr(update_metrics, "PREWARM_FINISH_WAIT_SLICE_SECONDS", 0.25)
-  update_metrics.shutdown_requested[0] = True
-
-  class _FakeExecutor:
-    def __init__(self):
-      self.shutdown_calls = []
-
-    def shutdown(self, wait=False, cancel_futures=True):
-      self.shutdown_calls.append((wait, cancel_futures))
-
-  pipeline = update_metrics._PrewarmPipeline()
-  pipeline._waiting = [(0.0, "jid-waiting")]
-  pipeline._executor = _FakeExecutor()
-  drain_calls = []
-  logs = []
-  monkeypatch.setattr(
-      pipeline,
-      "drain_some",
-      lambda force=False, wait_timeout_s=0.0: drain_calls.append((force, wait_timeout_s)),
-  )
-  monkeypatch.setattr(update_metrics, "log_print", lambda msg, **kwargs: logs.append(msg))
-  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 0.0)
-
-  try:
-    pipeline.finish()
-  finally:
-    update_metrics.shutdown_requested[0] = False
-
-  assert pipeline._waiting == []
-  assert pipeline._failed == 1
-  assert drain_calls == []
-  assert any("finish shutdown" in msg and "dropped_waiting=1" in msg for msg in logs)
-  assert not any("soft wall" in msg for msg in logs)
-  assert pipeline._executor.shutdown_calls == [(False, False)]
 
 
 @pytest.mark.machine_unit_mock
-def test_prewarm_pipeline_submit_defers_when_backlog_full_with_waiters(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 2)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
-
-  class _RunningFuture:
-    def __init__(self, jid):
-      self.jid = jid
-
-    def done(self):
-      return False
-
-    def running(self):
-      return True
-
-  pipeline = update_metrics._PrewarmPipeline()
-  running = _RunningFuture("jid-running")
-  pipeline._pending.add(running)
-  pipeline._pending_jids[running] = "jid-running"
-  pipeline._created_at[running] = 10.0
-  pipeline._waiting = [(15.0, "jid-waiting")]
-  drain_calls = []
-  submitted = []
-  logs = []
-  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 20.0)
-  monkeypatch.setattr(
-      pipeline,
-      "drain_some",
-      lambda force=False, wait_timeout_s=0.0: drain_calls.append((force, wait_timeout_s)),
-  )
-  monkeypatch.setattr(
-      pipeline._executor,
-      "submit",
-      lambda fn, jid: submitted.append(jid) or _RunningFuture(jid),
-  )
-  monkeypatch.setattr(update_metrics, "log_print", lambda msg, **kwargs: logs.append(msg))
-
-  pipeline.submit("jid-backpressure")
-
-  stats = pipeline.stats()
-  assert drain_calls == [(False, 0.0)]
-  assert submitted == []
-  assert pipeline._waiting == [(15.0, "jid-waiting")]
-  assert running in pipeline._pending
-  assert stats["prewarm_backpressure_events"] == 2
-  assert stats["prewarm_evicted_pending_jobs"] == 0
-  assert stats["prewarm_backlog_jobs"] == 2
-  assert any("action=defer_submit" in msg for msg in logs)
-  assert any("defer submit" in msg for msg in logs)
-  assert not any("evict" in msg for msg in logs)
-  pipeline._executor.shutdown(wait=True)
 
 
 @pytest.mark.machine_unit_mock
-def test_prewarm_pipeline_promotes_newest_waiting_on_slot_free(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 4)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.25)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
-
-  pipeline = update_metrics._PrewarmPipeline()
-  done_fut = Future()
-  done_fut.set_result(None)
-  pipeline._pending.add(done_fut)
-  pipeline._pending_jids[done_fut] = "jid-done"
-  pipeline._created_at[done_fut] = 5.0
-  pipeline._waiting = [(10.0, "jid-old"), (20.0, "jid-new")]
-  submitted = []
-
-  class _StartedFuture:
-    def done(self):
-      return False
-
-    def running(self):
-      return True
-
-  monkeypatch.setattr(
-      pipeline._executor,
-      "submit",
-      lambda fn, jid: submitted.append(jid) or _StartedFuture(),
-  )
-
-  pipeline.drain_some(force=True)
-
-  assert submitted == ["jid-new"]
-  assert pipeline._waiting == [(10.0, "jid-old")]
-  assert len(pipeline._pending) == 1
-  assert pipeline._done == 1
-  pipeline._executor.shutdown(wait=True)
 
 
 @pytest.mark.machine_unit_mock
 def test_prewarm_pipeline_run_for_jid_shares_context(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   calls = []
 
@@ -3574,8 +3279,6 @@ def test_prewarm_pipeline_run_for_jid_shares_context(monkeypatch):
 def test_compute_and_prewarm_jid_logs_when_full_pipeline_succeeds(monkeypatch):
   """After metrics + job detail + plots, emit one compute-complete timing line."""
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics, "persist_job_detail_artifacts_for_jid", lambda *a, **k: None)
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda *a, **k: None)
@@ -4389,109 +4092,108 @@ def test_strict_readiness_sets_max_parallel_workers_when_configured():
 
 
 @pytest.mark.machine_unit_mock
-def test_prewarm_pipeline_defer_submit_when_all_running(monkeypatch):
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.0)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
-
-  class _RunningFuture:
-    def __init__(self, jid):
-      self.jid = jid
-      self.cancelled = False
-
-    def done(self):
-      return False
-
-    def running(self):
-      return True
-
-    def cancel(self):
-      self.cancelled = True
-      return False
-
-  pipeline = update_metrics._PrewarmPipeline()
-  running = _RunningFuture("jid-running")
-  pipeline._pending.add(running)
-  pipeline._pending_jids[running] = "jid-running"
-  pipeline._created_at[running] = 10.0
-  submitted = []
-  logs = []
-  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 20.0)
-  monkeypatch.setattr(pipeline, "drain_some", lambda **_k: None)
-  monkeypatch.setattr(
-      pipeline._executor,
-      "submit",
-      lambda fn, jid: submitted.append(jid) or _RunningFuture(jid),
-  )
-  monkeypatch.setattr(update_metrics, "log_print", lambda msg, **kwargs: logs.append(msg))
-
-  pipeline.submit("jid-new")
-
-  assert submitted == []
-  assert running in pipeline._pending
-  assert running.cancelled is False
-  assert any("defer submit" in msg for msg in logs)
 
 
 @pytest.mark.machine_unit_mock
-def test_prewarm_pipeline_finish_does_not_cancel_running(monkeypatch):
+
+
+@pytest.mark.django_db(databases=[])
+def test_prewarm_pipeline_is_sync_only_no_executor(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_workers", lambda: 1)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backlog_cap", lambda: 4)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_backpressure_wait_s", lambda: 0.25)
-  monkeypatch.setattr(update_metrics.cfg, "get_metrics_prewarm_retry_attempts", lambda: 1)
-  monkeypatch.setattr(
-      update_metrics.cfg, "get_metrics_prewarm_processing_updates_log_s", lambda: 1.0
+  pipe = update_metrics._PrewarmPipeline()
+  assert pipe.has_pending() is False
+  assert getattr(pipe, "_executor", None) is None
+  assert pipe._attempts == 2
+
+
+@pytest.mark.django_db(databases=[])
+def test_prewarm_successful_refs_runs_inline_for_ok_jids(monkeypatch):
+  calls = []
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
+
+  class _Pipe:
+    def run_for_jid(self, jid, shared_context=None):
+      calls.append(jid)
+      return {"prewarm_total_s": 0.0, "undivided": True}
+
+    def record_pool_result(self, ok):
+      del ok
+
+  refs = [SimpleNamespace(jid="ok1"), SimpleNamespace(jid="ok2")]
+  update_metrics._prewarm_successful_refs_on_metrics_pool(refs, _Pipe(), shared_pool=None)
+  assert calls == ["ok1", "ok2"]
+
+
+@pytest.mark.django_db(databases=[])
+def test_compute_jid_outcomes_batch_prewarm_waits_and_counts_batch_wall(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  prewarm_calls = []
+
+  class _Mgr:
+    def ensure_pool(self, pool_kind=None):
+      del pool_kind
+      return object()
+
+    def run(self, job_refs, pool=None):
+      del pool
+      return [{
+          "jid": ref.jid,
+          "ok": True,
+          "status": "ok",
+          "error_type": None,
+          "error_message": None,
+          "persist_s": 0.01,
+      } for ref in job_refs]
+
+  class _Pipe:
+    def __init__(self):
+      self._done = 0
+
+    def run_for_jid(self, jid, shared_context=None):
+      prewarm_calls.append(jid)
+      time.sleep(0.01)
+      self._done += 1
+      return {
+          "prewarm_total_s": 0.01,
+          "undivided": True,
+          "detail_s": None,
+          "plots_s": None,
+      }
+
+    def record_pool_result(self, ok):
+      del ok
+
+  refs = [
+      SimpleNamespace(jid="j1", artifact_only=False),
+      SimpleNamespace(jid="j2", artifact_only=False),
+  ]
+  timing = {}
+  outcomes = update_metrics._compute_jid_outcomes_batch(
+      refs, _Mgr(), _Pipe(), shared_pool=None, batch_timing=timing,
   )
-  monkeypatch.setattr(update_metrics, "PREWARM_FINISH_WAIT_SLICE_SECONDS", 0.25)
-  update_metrics.shutdown_requested[0] = False
+  assert [o["jid"] for o in outcomes] == ["j1", "j2"]
+  assert all(o["ok"] for o in outcomes)
+  assert prewarm_calls == ["j1", "j2"]
+  assert timing["batch_wall_s"] >= timing["metrics_wall_s"]
+  assert timing["prewarm_wall_s"] > 0.0
+  assert timing["batch_wall_s"] >= timing["metrics_wall_s"] + timing["prewarm_wall_s"] - 1e-6
 
-  class _RunningThenDone:
-    def __init__(self):
-      self._done = False
 
-    def done(self):
-      return self._done
+@pytest.mark.django_db(databases=[])
+def test_prewarm_pipeline_run_for_jid_retries_hard_coded(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
+  attempts = {"n": 0}
 
-    def running(self):
-      return not self._done
+  def _boom(jid, shared_context=None):
+    del shared_context
+    attempts["n"] += 1
+    if attempts["n"] < 2:
+      raise RuntimeError("transient")
+    return 0.01, 0.02
 
-  class _FakeExecutor:
-    def __init__(self):
-      self.shutdown_calls = []
-
-    def shutdown(self, wait=False, cancel_futures=True):
-      self.shutdown_calls.append((wait, cancel_futures))
-
-  pipeline = update_metrics._PrewarmPipeline()
-  fut = _RunningThenDone()
-  pipeline._pending.add(fut)
-  pipeline._created_at[fut] = 0.0
-  pipeline._waiting = [(0.5, "jid-waiting")]
-  pipeline._executor = _FakeExecutor()
-  drain_n = {"n": 0}
-  logs = []
-
-  def _drain(**_k):
-    drain_n["n"] += 1
-    # After processing-updates log, keep waiters briefly then finish in-flight.
-    if drain_n["n"] >= 2:
-      fut._done = True
-      pipeline._pending.discard(fut)
-      pipeline._waiting.clear()
-
-  monkeypatch.setattr(pipeline, "drain_some", _drain)
-  monkeypatch.setattr(update_metrics, "log_print", lambda msg, **kwargs: logs.append(msg))
-  times = iter([0.0, 0.5, 1.1, 1.2, 1.3, 1.4, 1.5])
-  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: next(times, 2.0))
-
-  pipeline.finish()
-
-  assert pipeline._waiting == []
-  assert pipeline._failed == 0
-  assert any("processing updates" in msg for msg in logs)
-  assert not any("dropped_waiting" in msg for msg in logs)
-  assert not any("cancel" in msg.lower() for msg in logs)
-  assert pipeline._executor.shutdown_calls == [(False, False)]
+  pipe = update_metrics._PrewarmPipeline()
+  monkeypatch.setattr(pipe, "_persist_detail_plot_elapsed", _boom)
+  timing = pipe.run_for_jid("jid-x", shared_context={})
+  assert attempts["n"] == 2
+  assert timing["prewarm_total_s"] > 0.0
