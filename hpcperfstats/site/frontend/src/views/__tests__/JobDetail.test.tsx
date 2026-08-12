@@ -1889,6 +1889,9 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByText(/Metric help/i)).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Help: cpu/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /Help: summary_hardware_error_rates/i }),
+      ).toBeInTheDocument();
     });
   });
 

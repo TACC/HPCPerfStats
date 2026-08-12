@@ -125,7 +125,10 @@ describe("getDescriptionForVariable", () => {
     expect(getDescriptionForVariable("nfs_iops")).toMatch(/NFS client read/i);
     expect(getDescriptionForVariable("lustre_read_mb_s")).toMatch(/Lustre client read/i);
     expect(getDescriptionForVariable("summary_hardware_error_rates")).toMatch(
-      /Hardware error rates/i,
+      /each subplot is one InfiniBand/i,
+    );
+    expect(getDescriptionForVariable("summary_hardware_error_rates")).toMatch(
+      /Each line is one host/i,
     );
   });
 

@@ -1255,22 +1255,145 @@ def test_summaryplot_node_power_est_w_prefers_module_branch():
   assert captured == [900.0]
 
 
-def test_plot_hardware_error_rates_figure_returns_when_ib_errors_present():
-  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import plot_hardware_error_rates_figure
+def _summary_with_error_hosts(jt, hosts):
+  """Build SummaryPlot with host colors so plot_metric can render error panels."""
+  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
+      SummaryPlot,
+      _cycled_d3_category20_palette,
+  )
+
+  summary = SummaryPlot(jt)
+  summary.host_list = list(hosts)
+  palette = _cycled_d3_category20_palette(len(hosts))
+  summary.hc = {h: palette[i] for i, h in enumerate(hosts)}
+  return summary
+
+
+def _figure_has_help_question_marker(fig):
+  """True when Job Detail screen-space help Label text is '?'."""
+  from bokeh.embed import json_item
+  from bokeh.models import Label
+
+  for renderer in fig.renderers:
+    if isinstance(renderer, Label) and getattr(renderer, "text", None) == "?":
+      return True
+  blob = str(json_item(fig))
+  return "?" in blob or "\\u003f" in blob
+
+
+def test_plot_hardware_error_rate_figures_per_host_when_ib_errors_present():
+  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
+      plot_hardware_error_rate_figures,
+  )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = MagicMock()
+  jt.host_list = ["n1.cluster", "n2.cluster"]
   jt.schema = {"host_ib": ["port_rcv_errors"]}
 
   def _agg(typ, val_col, events, conv=1.0):
     del val_col, conv
     if typ in ("host_ib", "ib") and list(events) == ["port_rcv_errors"]:
-      return pd.DataFrame([("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+          [
+              ("n1.cluster", t0, 2.0),
+              ("n2.cluster", t0, 0.0),
+          ],
+          columns=["host", "time", "sum_val"],
+      )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
   jt.get_aggregate_df.side_effect = _agg
-  fig = plot_hardware_error_rates_figure(jt, None)
-  assert fig is not None
+  summary = _summary_with_error_hosts(jt, jt.host_list)
+  figs = plot_hardware_error_rate_figures(summary, None)
+  assert len(figs) == 1
+  fig = figs[0]
+  assert fig.yaxis.axis_label == "IB port_rcv_errors [#/s]"
+  assert not getattr(fig, "legend", None) or len(fig.legend.items) == 0
+  assert _figure_has_help_question_marker(fig)
+
+
+def test_plot_hardware_error_rate_figures_empty_when_all_zero():
+  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
+      plot_hardware_error_rate_figures,
+  )
+
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.schema = {"host_ib": ["port_rcv_errors"]}
+
+  def _agg(typ, val_col, events, conv=1.0):
+    del val_col, conv
+    if typ in ("host_ib", "ib") and list(events) == ["port_rcv_errors"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 0.0)],
+          columns=["host", "time", "sum_val"],
+      )
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt.get_aggregate_df.side_effect = _agg
+  summary = _summary_with_error_hosts(jt, jt.host_list)
+  assert plot_hardware_error_rate_figures(summary, None) == []
+
+
+def test_plot_hardware_error_rate_figures_empty_when_schema_missing():
+  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
+      plot_hardware_error_rate_figures,
+  )
+
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.schema = {"host_cpu": ["user"]}
+  jt.get_aggregate_df.return_value = pd.DataFrame(
+      columns=["host", "time", "sum_val"]
+  )
+  summary = _summary_with_error_hosts(jt, jt.host_list)
+  assert plot_hardware_error_rate_figures(summary, None) == []
+
+
+def test_plot_hardware_error_rate_figures_splits_multiple_counters():
+  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
+      plot_hardware_error_rate_figures,
+  )
+
+  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+  jt = MagicMock()
+  jt.host_list = ["n1.cluster"]
+  jt.schema = {
+      "host_ib": ["port_rcv_errors", "symbol_error"],
+      "net": ["rx_crc_errors"],
+  }
+
+  def _agg(typ, val_col, events, conv=1.0):
+    del val_col, conv
+    ev = list(events)
+    if typ in ("host_ib", "ib") and ev == ["port_rcv_errors"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 1.5)], columns=["host", "time", "sum_val"]
+      )
+    if typ in ("host_ib", "ib") and ev == ["symbol_error"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+      )
+    if typ == "net" and ev == ["rx_crc_errors"]:
+      return pd.DataFrame(
+          [("n1.cluster", t0, 3.0)], columns=["host", "time", "sum_val"]
+      )
+    return pd.DataFrame(columns=["host", "time", "sum_val"])
+
+  jt.get_aggregate_df.side_effect = _agg
+  summary = _summary_with_error_hosts(jt, jt.host_list)
+  figs = plot_hardware_error_rate_figures(summary, None)
+  assert len(figs) == 3
+  labels = [f.yaxis.axis_label for f in figs]
+  assert labels == [
+      "IB port_rcv_errors [#/s]",
+      "IB symbol_error [#/s]",
+      "Eth rx_crc_errors [#/s]",
+  ]
+  for fig in figs:
+    assert _figure_has_help_question_marker(fig)
 
 
 def test_summary_allow_partial_null_includes_watts():

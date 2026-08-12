@@ -8,6 +8,7 @@ Attributes:
   _BYTES_TO_MB: Attribute.
   _CAS_BW_CONV: Attribute.
   _CHA_ARC_EVENTS: Attribute.
+  _HARDWARE_ERROR_METRIC_COL: Attribute.
   _IB_SUMMARY_ERROR_EVENTS: Attribute.
   _MAX_SANE_GPU_LINK_GBPS: Attribute.
   _NET_SUMMARY_ERROR_EVENTS: Attribute.
@@ -51,8 +52,6 @@ from pandas import to_datetime
 
 from hpcperfstats.analysis.metrics.lib.gen.utils import (
     add_hover_plain_columns,
-    format_plain_decimal,
-    format_cluster_hover_datetime,
     non_degenerate_y_range_for_series,
     set_linear_axes_plain_numeric,
     timestamps_as_cluster_naive,
@@ -1344,156 +1343,100 @@ _NET_SUMMARY_ERROR_EVENTS = (
 )
 
 
-def _one_error_job_series(jt: Any, typ: Any, event: Any) -> Any:
+# Shared column name so plot_metric looks up summary_hardware_error_rates help.
+_HARDWARE_ERROR_METRIC_COL = "summary_hardware_error_rates"
+
+
+def _iter_hardware_error_event_specs() -> Iterator[tuple[str, str, str]]:
   """
-  Return DataFrame columns ``time``, ``rate`` (job-wide sum of arc per time) or.
-  
-    None.
-  
-  Args:
-    jt (Any): Jt passed to this helper.
-    typ (Any): Typ passed to this helper.
-    event (Any): Event passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+  Yield ``(type, event, y_axis_label)`` for Summary hardware-error subplots.
+
+  Yields:
+    tuple: Canonical monitor type, event name, and y-axis label string.
+
   Examples:
-    >>> _one_error_job_series(None, None, None)  # doctest: +SKIP
+    >>> next(_iter_hardware_error_event_specs())[1]
+    'excessive_buffer_overrun_errors'
+  """
+  for ev in _IB_SUMMARY_ERROR_EVENTS:
+    yield ("host_ib", ev, f"IB {ev} [#/s]")
+  for ev in _NET_SUMMARY_ERROR_EVENTS:
+    yield ("net", ev, f"Eth {ev} [#/s]")
+  yield (
+      "opa",
+      "PortErrorCounterSummary",
+      "OPA PortErrorCounterSummary [#/s]",
+  )
+
+
+def _one_error_host_series(jt: Any, typ: Any, event: Any) -> Any:
+  """
+  Return host×time rates for one error counter, or None when unusable.
+
+  Uses arc rates from ``_get_agg_if_feasible``. Returns None when the aggregate
+  is empty, all-NaN, or all zeros after fillna (no subplot for that counter).
+
+  Args:
+    jt (Any): Job table / HostDataProvider with schema and get_aggregate_df.
+    typ (Any): Canonical monitor type (host_ib, net, opa).
+    event (Any): Counter event name within that type.
+
+  Returns:
+    Any: DataFrame with columns host, time, summary_hardware_error_rates, or
+    None when the counter should not be plotted.
+
+  Examples:
+    >>> _one_error_host_series(None, "host_ib", "port_rcv_errors")  # doctest: +SKIP
   """
   agg = _get_agg_if_feasible(jt, typ, "arc", [event], 1.0)
   if agg.empty or "sum_val" not in agg.columns:
     return None
-  out = (
-      agg.groupby("time", as_index=False)["sum_val"]
-      .sum()
-      .rename(columns={"sum_val": "rate"})
+  out = agg[["host", "time", "sum_val"]].rename(
+      columns={"sum_val": _HARDWARE_ERROR_METRIC_COL}
   )
-  if out.empty or not out["rate"].notna().any():
+  if out.empty or not out[_HARDWARE_ERROR_METRIC_COL].notna().any():
+    return None
+  rates = out[_HARDWARE_ERROR_METRIC_COL].fillna(0.0)
+  if not rates.to_numpy().any():
     return None
   return out
 
 
-def _collect_hardware_error_job_series(jt: Any) -> Any:
+def plot_hardware_error_rate_figures(
+  summary: Any,
+  x_range: Any | None = None,
+) -> list[Any]:
   """
-  List of (legend, time/rate frame) for overlay; may be empty.
-  
+  Build one per-host Summary subplot per non-zero hardware-error counter.
+
+  Each figure uses ``SummaryPlot.plot_metric`` (host multi_line + scatter hover +
+  screen-space ``?`` help). Counters absent from schema, empty, or all-zero are
+  skipped. Returns an empty list when no error panels qualify.
+
   Args:
-    jt (Any): Jt passed to this helper.
-  
+    summary (Any): SummaryPlot instance with jt, host_list, and hc colors.
+    x_range (Any | None): Shared job-window Range1d, or None.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    list[Any]: List of Bokeh figures (may be empty).
+
   Examples:
-    >>> _collect_hardware_error_job_series(None)  # doctest: +SKIP
+    >>> plot_hardware_error_rate_figures(SummaryPlot(jt), None)  # doctest: +SKIP
   """
-
-  parts = []
-  for ev in _IB_SUMMARY_ERROR_EVENTS:
-    leg = f"ib:{ev}"
-    s = _one_error_job_series(jt, "host_ib", ev)
-    if s is not None:
-      parts.append((leg, s))
-  for ev in _NET_SUMMARY_ERROR_EVENTS:
-    leg = f"net:{ev}"
-    s = _one_error_job_series(jt, "net", ev)
-    if s is not None:
-      parts.append((leg, s))
-  s = _one_error_job_series(jt, "opa", "PortErrorCounterSummary")
-  if s is not None:
-    parts.append(("opa:PortErrorCounterSummary", s))
-  return parts
-
-
-def plot_hardware_error_rates_figure(jt: Any, x_range: Any) -> Any:
-  """
-  One figure: job-wide hardware error counter rates [#/s]; None if no data.
-  
-  Args:
-    jt (Any): Jt passed to this helper.
-    x_range (Any): X range passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> plot_hardware_error_rates_figure(None, None)  # doctest: +SKIP
-  """
-  import pandas as pd
-
-  series = _collect_hardware_error_job_series(jt)
-  if not series:
-    return None
-  merged = None
-  for leg, sdf in series:
-    sdf = sdf.rename(columns={"rate": leg})
-    if merged is None:
-      merged = sdf
-    else:
-      merged = pd.merge(merged, sdf, on="time", how="outer")
-  merged = merged.sort_values("time")
-  value_cols = [c for c in merged.columns if c != "time"]
-  if not value_cols:
-    return None
-  merged[value_cols] = merged[value_cols].fillna(0.0)
-  if not merged[value_cols].to_numpy().any():
-    return None
-
-  merged["time"] = timestamps_as_cluster_naive(
-      to_datetime(merged["time"], utc=True)
-  )
-
-  plot_kwargs = figure_embed_kw(
-      150,
-      x_axis_type="datetime",
-      x_axis_label="Time",
-      y_axis_label="Hardware error rates [#/s]",
-      title="Hardware error rates (job-wide sum)",
-  )
-  if x_range is not None:
-    plot_kwargs["x_range"] = x_range
-  plot = figure(**plot_kwargs)
-  plot.xaxis.ticker.desired_num_ticks = 5
-  set_linear_axes_plain_numeric(plot)
-  plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
-
-  palette = d3["Category10"][10]
-  line_renderers = []
-  for i, col in enumerate(value_cols):
-    sub = merged[["time", col]].dropna()
-    if sub.empty:
+  figures: list[Any] = []
+  for typ, event, label in _iter_hardware_error_event_specs():
+    df = _one_error_host_series(summary.jt, typ, event)
+    if df is None:
       continue
-    xi, yi = _continuous_polyline_xy(sub["time"], sub[col])
-    color = palette[i % len(palette)]
-    src = ColumnDataSource(
-        data={
-            "x": xi,
-            "y": yi,
-            "x_plain": [format_cluster_hover_datetime(v) for v in xi],
-            "y_plain": [format_plain_decimal(v) for v in yi],
-        },
-    )
-    ln = plot.line("x", "y", source=src, line_width=1.5, color=color, legend_label=col)
-    line_renderers.append(ln)
-    plot.add_tools(
-        HoverTool(
-            renderers=[ln],
-            tooltips=[
-                ("Series", col),
-                ("Time", "@x_plain"),
-                ("Rate [#/s]", "@y_plain"),
-            ],
+    figures.append(
+        summary.plot_metric(
+            df,
+            _HARDWARE_ERROR_METRIC_COL,
+            label,
+            x_range=x_range,
         )
     )
-  if line_renderers:
-    plot.legend.location = "top_left"
-    plot.legend.click_policy = "hide"
-  add_job_detail_bokeh_help_marker(
-      plot,
-      description_for_summary_metric("summary_hardware_error_rates"),
-      researcher_use_for_summary_metric("summary_hardware_error_rates"),
-  )
-  return plot
+  return figures
 
 
 class SummaryPlot():
@@ -1777,9 +1720,7 @@ class SummaryPlot():
     for name, label, y_top in render_specs:
       plots += [self.plot_metric(df, name, label, y_range_end=y_top, x_range=x_range)]
 
-    err_fig = plot_hardware_error_rates_figure(self.jt, x_range)
-    if err_fig is not None:
-      plots.append(err_fig)
+    plots.extend(plot_hardware_error_rate_figures(self, x_range))
 
     if not plots:
       raise ValueError(MSG_NO_METRIC_DATA)

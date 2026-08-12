@@ -1,7 +1,7 @@
 # Using HPCPerfStats on the Web — Guide for Researchers and HPC Users
 
 
-This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-08-07.
+This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-08-12.
 
 
 This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections.
@@ -184,7 +184,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 
 ### 6.1 Summary plot
 
-- Diagnostic use: fastest phase/host outlier scan across CPU, memory, network, I/O, and GPU traces; the bottom **Hardware error rates** panel overlays job-wide sums of InfiniBand, Ethernet, and OPA error counter rates when those streams exist.
+- Diagnostic use: fastest phase/host outlier scan across CPU, memory, network, I/O, and GPU traces; when InfiniBand, Ethernet, or Omni-Path error counters have non-zero rates, the Summary grid adds one subplot per counter (each line is one host over time, with the same blue `?` help as other Summary metrics).
 - Time axis and hover use the cluster timezone from site configuration (not raw UTC labels).
 - GPU tensor traces: when IMMA/HMMA/DFMA splits are present, Summary shows separate tensor-pipe subplots for those kinds (preferred over a single lumped tensor-pipe series). The lumped any-pipe tensor series appears only when those splits are absent.
 - Performance recommendation: always pair with Metrics tab; peaks in summary often explain extreme scalar maxima and telemetry behavior<sup>[12](#ref-12)</sup>.
@@ -333,6 +333,7 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-08-05 | Job Detail **Print** button: prepares overview/Resources/Metrics/Summary/Roofline/Multiprecision Mix for the browser print dialog (Save as PDF). |
 | 2026-08-07 | Job Detail plot tabs (Summary, Roofline, Multiprecision Mix) wait for Performance Data **Metrics & Plots available**; plot-tab messages **Plots not yet completed.** / **No plots available for this job**. |
 | 2026-08-12 | Roofline theoretical-line hover shows axis units (FLOP/byte, GFLOP/s); Roofline and Multiprecision Mix stack ready charts above loading/unavailable. |
+| 2026-08-12 | Summary hardware errors: one per-host subplot per non-zero IB/Ethernet/OPA error counter (no job-wide legend overlay); blue `?` on each subplot plus Hardware errors strip help. |
 | 2026-08-07 | Job Detail: removed page h1 and **Full scheduling record**; **Print** sits beside breadcrumbs. `mem_hwm` reads canonical `host_mem` snake_case events (KB→GiB). |
 
 

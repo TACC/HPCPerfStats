@@ -750,7 +750,7 @@ const SUMMARY_PLOT_METRIC_METADATA = {
   },
   summary_hardware_error_rates: {
     description:
-      "Hardware error rates: each line is one counter channel summed across hosts at each sample time, using monitor counter deltas divided by elapsed time (events per second). InfiniBand, Omni-Path, and Ethernet error-style counters are included only when present in this job's schema.",
+      "Hardware error rates: each subplot is one InfiniBand, Ethernet, or Omni-Path error-style counter when present in this job's schema. Each line is one host over time (events per second from monitor counter deltas divided by elapsed time). Hover a point to identify the host.",
     researcherUse:
       "Spikes can flag link quality, congestion, or driver issues worth correlating with application slowdowns.",
   },
@@ -792,6 +792,12 @@ const JOB_DETAIL_BOKEH_PLOT_METADATA = {
       "GPU multiprecision mix: wedge areas show each active pipe's share of busy GPU activity only (idle excluded). Hover shows share of busy percent. Tensor IMMA (INT8/INT4), Tensor HMMA (FP16/BF16), and Tensor DFMA (FP64) splits are preferred over lumped tensor_active when present.",
     researcherUse:
       "Use it to spot FP16-heavy kernels versus FP32/64 or tensor-pipe-dominated phases.",
+  },
+  summary_hardware_error_rates: {
+    description:
+      "Hardware error rates: each subplot is one InfiniBand, Ethernet, or Omni-Path error-style counter when present in this job's schema. Each line is one host over time (events per second from monitor counter deltas divided by elapsed time). Hover a point to identify the host.",
+    researcherUse:
+      "Spikes can flag link quality, congestion, or driver issues worth correlating with application slowdowns.",
   },
   jobDetailPlot_type_detail_rates: {
     description:

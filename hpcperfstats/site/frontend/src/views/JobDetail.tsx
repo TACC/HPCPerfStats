@@ -1563,6 +1563,11 @@ export default function JobDetail() {
                   <VariableInfoLabel variableName="nv_gpu_util" labelText="GPU util" enableHelp />
                   <VariableInfoLabel variableName="nv_gpu_link_gbs" labelText="GPU link" enableHelp />
                   <VariableInfoLabel variableName="node_power_est_w" labelText="Node power" enableHelp />
+                  <VariableInfoLabel
+                    variableName="summary_hardware_error_rates"
+                    labelText="Hardware errors"
+                    enableHelp
+                  />
                 </div>
                 {renderSinglePlotPanel(
                   plotConfigByKey.summary_plot,

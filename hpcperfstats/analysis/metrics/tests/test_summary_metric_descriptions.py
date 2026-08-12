@@ -32,6 +32,9 @@ def test_researcher_use_for_summary_metric_unknown_is_none():
 def test_description_for_summary_metric_hardware_error_rates():
   text = description_for_summary_metric("summary_hardware_error_rates")
   assert "Hardware error rates" in text
+  assert "each subplot" in text
+  assert "one host" in text
+  assert "summed across hosts" not in text
   assert text == SUMMARY_METRIC_DESCRIPTIONS["summary_hardware_error_rates"]
 
 

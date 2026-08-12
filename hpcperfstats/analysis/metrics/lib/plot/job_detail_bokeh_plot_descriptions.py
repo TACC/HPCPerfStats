@@ -53,10 +53,10 @@ JOB_DETAIL_BOKEH_HELP: Dict[str, HelpPair] = {
         "phases.",
     ),
     "summary_hardware_error_rates": (
-        "Hardware error rates: each line is one counter channel summed across hosts at "
-        "each sample time, using monitor counter deltas divided by elapsed time (events "
-        "per second). InfiniBand, Omni-Path, and Ethernet error-style counters are "
-        "included only when present in this job's schema.",
+        "Hardware error rates: each subplot is one InfiniBand, Ethernet, or "
+        "Omni-Path error-style counter when present in this job's schema. Each "
+        "line is one host over time (events per second from monitor counter "
+        "deltas divided by elapsed time). Hover a point to identify the host.",
         "Spikes can flag link quality, congestion, or driver issues worth correlating "
         "with application slowdowns.",
     ),
