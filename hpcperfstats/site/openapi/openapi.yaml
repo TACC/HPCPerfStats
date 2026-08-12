@@ -8,9 +8,8 @@ paths:
     get:
       operationId: admin_monitor_retrieve
       description: |-
-        Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis,.
-
-          RabbitMQ, TimescaleDB stats).
+        Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis,
+        RabbitMQ, TimescaleDB stats, telemetry health).
 
         Supports a lightweight, per-section API via the optional 'section' query
         param:
@@ -20,13 +19,14 @@ paths:
         - ?section=rabbitmq   -> {"rabbitmq_stats": {...}}
         - ?section=timescaledb -> {"timescaledb_stats": {...}}
         - ?section=xalt      -> {"xalt_stats": {...}}
+        - ?section=telemetry_health -> {"telemetry_health": {...}}
         - omitted/other       -> {"host_stats": [...], "rabbitmq_host_stats": [...],
                                   "cache_stats": {...},
                                     "rabbitmq_stats":
                                     {...},
                                   "timescaledb_stats":
                                     {...}, "xalt_stats":
-                                    {...}}
+                                    {...}, "telemetry_health": {...}}
 
         Args:
           request (Any): Request passed to this helper.
@@ -1424,6 +1424,9 @@ components:
         xalt_stats:
           type: object
           additionalProperties: {}
+        telemetry_health:
+          type: object
+          additionalProperties: {}
     DropStaffResponse:
       type: object
       description: |-
@@ -1490,6 +1493,14 @@ components:
       required:
       - dev
       - host
+    GrplotBwAxisEnum:
+      enum:
+      - memory_bw
+      - pcie_nvlink
+      type: string
+      description: |-
+        * `memory_bw` - memory_bw
+        * `pcie_nvlink` - pcie_nvlink
     HomeMetricOption:
       type: object
       description: |-
@@ -2223,11 +2234,10 @@ components:
           type: string
           nullable: true
         grplot_bw_axis:
-          type: string
           nullable: true
-          enum:
-          - memory_bw
-          - pcie_nvlink
+          oneOf:
+          - $ref: '#/components/schemas/GrplotBwAxisEnum'
+          - $ref: '#/components/schemas/NullEnum'
         status:
           type: string
         detail:
@@ -2247,6 +2257,9 @@ components:
         unavailable_reason:
           type: string
           nullable: true
+    NullEnum:
+      enum:
+      - null
     ProcListEntry:
       type: object
       description: One proc_data row returned in job_detail proc_list (host_proc KEYS).

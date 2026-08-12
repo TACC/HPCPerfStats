@@ -177,6 +177,21 @@ export const WIRE_AUDIT_CASES: WireAuditCase[] = [
           age_bucket: "ok",
         },
       ],
+      telemetry_health: {
+        window_hours: 12,
+        computed_at: "2024-01-01T00:00:00+00:00",
+        timed_out: false,
+        error: null,
+        all_zero_events: [
+          { type: "host_cpu", event: "user", row_count: 42 },
+        ],
+        missing_core_types: ["host_mem"],
+        truncated: false,
+        ok_summary: {
+          nonzero_type_event_pairs: 17,
+          scanned_note: "Scanned non-error (type, event) pairs in the last 12 hours.",
+        },
+      },
     },
   },
   {

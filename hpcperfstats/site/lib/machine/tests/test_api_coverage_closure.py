@@ -1163,6 +1163,8 @@ class TestRemainingHelperLinesClosure:
         ), patch.object(api, "_get_rabbitmq_stats", return_value={}), patch.object(
             api, "_get_timescaledb_stats", return_value={}
         ), patch.object(api, "_get_xalt_jid_coverage", return_value={}), patch.object(
+            api, "compute_telemetry_health", return_value={}
+        ), patch.object(
             api.cache, "delete", side_effect=RuntimeError("del fail")
         ):
             response = api.admin_monitor(request)

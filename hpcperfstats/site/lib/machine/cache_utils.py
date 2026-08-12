@@ -10,6 +10,7 @@ Attributes:
   KEY_ADMIN_HOST_STATS: Attribute.
   KEY_ADMIN_RMQ_SNAPSHOT: Attribute.
   KEY_ADMIN_RMQ_STATS: Attribute.
+  KEY_ADMIN_TELEMETRY_HEALTH: Attribute.
   KEY_ADMIN_TIMESCALE_STATS: Attribute.
   KEY_ADMIN_XALT_STATS: Attribute.
   KEY_AGG_DF: Attribute.
@@ -672,6 +673,7 @@ KEY_ADMIN_RMQ_SNAPSHOT = "admin_monitor_rmq_snapshot"
 KEY_ADMIN_TIMESCALE_STATS = "admin_monitor_timescaledb_stats"
 KEY_ADMIN_HOST_STATS = "admin_monitor_host_stats"
 KEY_ADMIN_XALT_STATS = "admin_monitor_xalt_stats"
+KEY_ADMIN_TELEMETRY_HEALTH = "admin_monitor_telemetry_health"
 KEY_JOB_PLOT_KEYSET = "job_plot_keyset"
 
 # HPCPerfStats Monitor Redis/RabbitMQ stats: short TTL to avoid hammering backends

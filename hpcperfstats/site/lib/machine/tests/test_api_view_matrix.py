@@ -733,6 +733,26 @@ class TestAdminMonitorView:
             response2 = api.admin_monitor(request2)
         assert response2.data["rabbitmq_stats"]["ok"] is True
 
+    def test_section_telemetry_health(self):
+        from hpcperfstats.site.lib.machine import api
+
+        request = RequestFactory().get(
+            "/api/admin_monitor/", {"section": "telemetry_health"}
+        )
+        request.session = {"is_staff": True}
+        payload = {
+            "window_hours": 12,
+            "timed_out": False,
+            "all_zero_events": [],
+            "missing_core_types": ["host_cpu"],
+        }
+        with patch.object(api, "_require_staff", return_value=None), patch.object(
+            api, "compute_telemetry_health", return_value=payload
+        ):
+            response = api.admin_monitor(request)
+        assert response.status_code == 200
+        assert response.data == {"telemetry_health": payload}
+
     def test_full_payload_without_section(self):
         from hpcperfstats.site.lib.machine import api
 
@@ -746,11 +766,12 @@ class TestAdminMonitorView:
             api, "_get_rabbitmq_stats", return_value={}
         ), patch.object(api, "_get_timescaledb_stats", return_value={}), patch.object(
             api, "_get_xalt_jid_coverage", return_value={}
-        ):
+        ), patch.object(api, "compute_telemetry_health", return_value={}):
             response = api.admin_monitor(request)
         assert response.status_code == 200
         assert "host_stats" in response.data
         assert "xalt_stats" in response.data
+        assert "telemetry_health" in response.data
 
     def test_hosts_section_survives_host_data_query_failure(self):
         from hpcperfstats.site.lib.machine import api
@@ -766,7 +787,11 @@ class TestAdminMonitorView:
         with patch.object(api, "_require_staff", return_value=None), patch.object(
             api, "cached_orm", side_effect=_cached_orm
         ), patch.object(
-            api.host_data.objects, "filter", side_effect=RuntimeError("db timeout")
+            api, "_list_recent_host_fqdns_from_redis", return_value=["n1.example.com"]
+        ), patch.object(
+            api,
+            "latest_sample_time_by_host",
+            side_effect=RuntimeError("db timeout"),
         ):
             response = api.admin_monitor(request)
         assert response.status_code == 200
@@ -1779,11 +1804,13 @@ class TestAdminMonitorRefreshAllSectionsClosure:
         ), patch.object(api, "_get_rabbitmq_stats", return_value={}), patch.object(
             api, "_get_timescaledb_stats", return_value={}
         ), patch.object(api, "_get_xalt_jid_coverage", return_value={}), patch.object(
+            api, "compute_telemetry_health", return_value={}
+        ), patch.object(
             api.cache, "delete"
         ) as mock_delete:
             response = api.admin_monitor(request)
         assert response.status_code == 200
-        assert mock_delete.call_count >= 5
+        assert mock_delete.call_count >= 6
 
 
 class TestJobListHistogramMetricMissingClosure:

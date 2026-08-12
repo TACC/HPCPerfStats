@@ -71,6 +71,27 @@ class TestAdminMonitorRefresh:
     assert api.KEY_ADMIN_RMQ_STATS in deleted_keys
     assert api.KEY_ADMIN_RMQ_SNAPSHOT in deleted_keys
 
+  def test_admin_monitor_refresh_clears_cache_for_telemetry_health_section(self):
+    from hpcperfstats.site.lib.machine import api
+
+    factory = RequestFactory()
+    request = factory.get(
+      "/api/admin_monitor/", {"section": "telemetry_health", "refresh": "1"}
+    )
+    request.session = {"is_staff": True}
+
+    with patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None), patch(
+      "hpcperfstats.site.lib.machine.api.compute_telemetry_health",
+      return_value={"window_hours": 12, "timed_out": False},
+    ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache:
+      response = api.admin_monitor(request)
+
+    assert response.status_code == 200
+    assert response.data == {
+      "telemetry_health": {"window_hours": 12, "timed_out": False}
+    }
+    mock_cache.delete.assert_called_with(api.KEY_ADMIN_TELEMETRY_HEALTH)
+
   def test_admin_monitor_refresh_without_section_clears_all_cached_sections(self):
     from hpcperfstats.site.lib.machine import api
 
@@ -96,6 +117,9 @@ class TestAdminMonitorRefresh:
     ), patch(
       "hpcperfstats.site.lib.machine.api._get_xalt_jid_coverage",
       return_value={},
+    ), patch(
+      "hpcperfstats.site.lib.machine.api.compute_telemetry_health",
+      return_value={},
     ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache:
       response = api.admin_monitor(request)
 
@@ -107,6 +131,7 @@ class TestAdminMonitorRefresh:
     assert api.KEY_ADMIN_TIMESCALE_STATS in deleted_keys
     assert api.KEY_ADMIN_XALT_STATS in deleted_keys
     assert api.KEY_ADMIN_RMQ_SNAPSHOT in deleted_keys
+    assert api.KEY_ADMIN_TELEMETRY_HEALTH in deleted_keys
 
 
 @pytest.mark.django_db(databases=[])

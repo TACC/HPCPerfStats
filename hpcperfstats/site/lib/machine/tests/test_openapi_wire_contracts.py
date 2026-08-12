@@ -179,6 +179,24 @@ ADMIN_MONITOR_HOSTS_WIRE = {
     ],
 }
 
+ADMIN_MONITOR_TELEMETRY_HEALTH_WIRE = {
+    "telemetry_health": {
+        "window_hours": 12,
+        "computed_at": "2024-06-01T12:00:00+00:00",
+        "timed_out": False,
+        "error": None,
+        "all_zero_events": [
+            {"type": "host_cpu", "event": "user", "row_count": 42},
+        ],
+        "missing_core_types": ["host_mem"],
+        "truncated": False,
+        "ok_summary": {
+            "nonzero_type_event_pairs": 17,
+            "scanned_note": "Scanned non-error (type, event) pairs in the last 12 hours.",
+        },
+    },
+}
+
 JOB_PLOTS_WIRE = {
     "mscript": "",
     "mdiv": "",
@@ -245,6 +263,7 @@ def test_openapi_hard_fail_wire_examples_match_serializers(serializer_cls, wire)
     "serializer_cls,wire",
     [
         (AdminMonitorResponseSerializer, ADMIN_MONITOR_HOSTS_WIRE),
+        (AdminMonitorResponseSerializer, ADMIN_MONITOR_TELEMETRY_HEALTH_WIRE),
         (JobPlotsResponseSerializer, JOB_PLOTS_WIRE),
         (JobListHistogramResponseSerializer, JOB_LIST_HISTOGRAM_WIRE),
         (TypeDetailResponseSerializer, TYPE_DETAIL_WIRE),

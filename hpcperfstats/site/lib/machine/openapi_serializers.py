@@ -573,6 +573,7 @@ class AdminMonitorResponseSerializer(serializers.Serializer):
     rabbitmq_stats = serializers.DictField(required=False)
     timescaledb_stats = serializers.DictField(required=False)
     xalt_stats = serializers.DictField(required=False)
+    telemetry_health = serializers.DictField(required=False)
 
 
 class JobMonitorRowSerializer(serializers.Serializer):

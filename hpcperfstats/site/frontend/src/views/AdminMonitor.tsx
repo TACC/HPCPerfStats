@@ -6,6 +6,7 @@ import { ChevronRight } from "lucide-react";
 import type {
   AdminMonitorHostRow,
   AdminMonitorSectionResponse,
+  AdminMonitorTelemetryHealth,
   AdminMonitorXaltStats,
   FreshnessBucket,
 } from "@/types/view-models";
@@ -184,12 +185,14 @@ export default function AdminMonitor() {
   const [rabbitExpanded, setRabbitExpanded] = useState(false);
   const [timescaledbExpanded, setTimescaledbExpanded] = useState(false);
   const [xaltExpanded, setXaltExpanded] = useState(false);
+  const [telemetryHealthExpanded, setTelemetryHealthExpanded] = useState(false);
   const [hostRefreshSeq, setHostRefreshSeq] = useState(0);
   const [rabbitHostRefreshSeq, setRabbitHostRefreshSeq] = useState(0);
   const [cacheRefreshSeq, setCacheRefreshSeq] = useState(0);
   const [rabbitRefreshSeq, setRabbitRefreshSeq] = useState(0);
   const [timescaledbRefreshSeq, setTimescaledbRefreshSeq] = useState(0);
   const [xaltRefreshSeq, setXaltRefreshSeq] = useState(0);
+  const [telemetryHealthRefreshSeq, setTelemetryHealthRefreshSeq] = useState(0);
   const [hostTablePage, setHostTablePage] = useState(1);
   const [rabbitHostTablePage, setRabbitHostTablePage] = useState(1);
   const { sort: hostSort, onSort: handleHostSort } = useTableSort("host", "asc", "asc");
@@ -277,6 +280,32 @@ export default function AdminMonitor() {
     pickResponse: (res: AdminMonitorSectionResponse) =>
       (res.xalt_stats as AdminMonitorXaltStats | null | undefined) || null,
   });
+
+  const {
+    data: telemetryHealth,
+    error: telemetryHealthError,
+    initialLoading: telemetryHealthInitialLoading,
+    sectionBusy: telemetryHealthSectionBusy,
+  } = useAdminMonitorSectionQuery({
+    section: "telemetry_health",
+    enabled: telemetryHealthExpanded,
+    refreshSeq: telemetryHealthRefreshSeq,
+    pickResponse: (res: AdminMonitorSectionResponse) =>
+      (res.telemetry_health as AdminMonitorTelemetryHealth | null | undefined) ||
+      null,
+  });
+
+  const telemetryHealthTitle = useMemo(() => {
+    if (!telemetryHealth) {
+      return "Telemetry health (12h)";
+    }
+    const zeroCount = telemetryHealth.all_zero_events?.length ?? 0;
+    const missingCount = telemetryHealth.missing_core_types?.length ?? 0;
+    if (telemetryHealth.timed_out) {
+      return "Telemetry health (12h) — timed out";
+    }
+    return `Telemetry health (12h) — ${zeroCount} all-zero, ${missingCount} missing`;
+  }, [telemetryHealth]);
 
   // Only show fully qualified hostnames (contain a dot) in the UI.
   const fqdnHostStats = useMemo(
@@ -1142,6 +1171,135 @@ export default function AdminMonitor() {
             !rabbitStats && (
               <div className="text-muted-foreground">No RabbitMQ statistics available.</div>
             )}
+      </AdminMonitorCollapsibleSection>
+
+      <AdminMonitorCollapsibleSection
+        open={telemetryHealthExpanded}
+        onOpenChange={setTelemetryHealthExpanded}
+        panelId="admin-monitor-telemetry-health"
+        ariaLabel="Telemetry health over the last 12 hours"
+        title={telemetryHealthTitle}
+      >
+        <AdminMonitorSectionRefreshButton
+          initialLoading={telemetryHealthInitialLoading}
+          sectionBusy={telemetryHealthSectionBusy}
+          onRefresh={() => setTelemetryHealthRefreshSeq((s) => s + 1)}
+        />
+        {telemetryHealthInitialLoading && (
+          <LoadingMessage message="Loading telemetry health…" />
+        )}
+        {telemetryHealthError && !telemetryHealthInitialLoading && (
+          <BannerErrorMessage
+            variant="inline"
+            message={`Error loading telemetry health: ${telemetryHealthError}`}
+          />
+        )}
+        {!telemetryHealthInitialLoading &&
+          !telemetryHealthError &&
+          telemetryHealth && (
+            <div
+              className={cn(
+                "space-y-3",
+                telemetryHealthSectionBusy && "opacity-70",
+              )}
+              aria-busy={telemetryHealthSectionBusy || undefined}
+            >
+              <p className="text-sm text-muted-foreground">
+                Site-wide scan of non-error <code>host_data</code>{" "}
+                <code>(type, event)</code> pairs over the last{" "}
+                {telemetryHealth.window_hours ?? 12} hours. All-zero means rows
+                exist but every <code>value</code> and <code>arc</code> is zero.
+                Missing core types have no rows in the window. This is an
+                investigation signal after a monitor deploy, not a deployment
+                gate.
+              </p>
+              {telemetryHealth.timed_out || telemetryHealth.error ? (
+                <BannerErrorMessage
+                  variant="inline"
+                  message={
+                    telemetryHealth.error ||
+                    "Telemetry health query timed out; results are incomplete."
+                  }
+                />
+              ) : null}
+              {telemetryHealth.ok_summary?.scanned_note ? (
+                <p className="text-sm">{telemetryHealth.ok_summary.scanned_note}</p>
+              ) : null}
+              {telemetryHealth.truncated ? (
+                <p className="text-sm text-muted-foreground">
+                  All-zero list truncated to the first 500 pairs.
+                </p>
+              ) : null}
+              <Table className="border text-sm">
+                <TableCaption>
+                  All-zero type/event pairs (excluding names containing
+                  &quot;error&quot;).
+                </TableCaption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col">Type</TableHead>
+                    <TableHead scope="col">Event</TableHead>
+                    <TableHead scope="col">Row count</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(telemetryHealth.all_zero_events ?? []).length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={3} className="text-muted-foreground">
+                        {telemetryHealth.timed_out
+                          ? "No all-zero results (query incomplete)."
+                          : "No all-zero type/event pairs in the window."}
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    (telemetryHealth.all_zero_events ?? []).map((row) => (
+                      <TableRow key={`${row.type}\0${row.event}`}>
+                        <TableCell>{row.type}</TableCell>
+                        <TableCell>{row.event}</TableCell>
+                        <TableCell>
+                          {formatAdminMonitorNumericStatistic(row.row_count)}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+              <Table className="border text-sm">
+                <TableCaption>
+                  Expected core monitor types with zero rows in the window.
+                </TableCaption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col">Missing core type</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(telemetryHealth.missing_core_types ?? []).length === 0 ? (
+                    <TableRow>
+                      <TableCell className="text-muted-foreground">
+                        {telemetryHealth.timed_out
+                          ? "No missing-type results (query incomplete)."
+                          : "No missing core types."}
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    (telemetryHealth.missing_core_types ?? []).map((typeName) => (
+                      <TableRow key={typeName}>
+                        <TableCell>{typeName}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        {!telemetryHealthInitialLoading &&
+          !telemetryHealthError &&
+          !telemetryHealth && (
+            <div className="text-muted-foreground">
+              No telemetry health data available.
+            </div>
+          )}
       </AdminMonitorCollapsibleSection>
     </>
   );

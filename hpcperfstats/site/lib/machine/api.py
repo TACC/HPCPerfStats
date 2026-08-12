@@ -108,6 +108,7 @@ from .cache_utils import (
     KEY_ADMIN_TIMESCALE_STATS,
     KEY_ADMIN_HOST_STATS,
     KEY_ADMIN_XALT_STATS,
+    KEY_ADMIN_TELEMETRY_HEALTH,
     KEY_DATES,
     KEY_METRICS_DISTINCT,
     KEY_QUEUES,
@@ -157,6 +158,7 @@ from .host_data_latest import (
     latest_sample_time_by_host,
     latest_sample_time_by_host_in_window,
 )
+from .admin_monitor_telemetry_health import compute_telemetry_health
 from .oauth2 import check_for_tokens
 from .throttles import ExpensiveReadThrottle, StaffIngestThrottle
 from .query_utils import (
@@ -4215,9 +4217,8 @@ def _get_xalt_jid_coverage(
 @throttle_classes([ExpensiveReadThrottle])
 def admin_monitor(request: Any) -> Any:
     """
-    Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis,.
-    
-      RabbitMQ, TimescaleDB stats).
+    Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis,
+    RabbitMQ, TimescaleDB stats, telemetry health).
     
     Supports a lightweight, per-section API via the optional 'section' query
     param:
@@ -4227,13 +4228,14 @@ def admin_monitor(request: Any) -> Any:
     - ?section=rabbitmq   -> {"rabbitmq_stats": {...}}
     - ?section=timescaledb -> {"timescaledb_stats": {...}}
     - ?section=xalt      -> {"xalt_stats": {...}}
+    - ?section=telemetry_health -> {"telemetry_health": {...}}
     - omitted/other       -> {"host_stats": [...], "rabbitmq_host_stats": [...],
                               "cache_stats": {...},
                                 "rabbitmq_stats":
                                 {...},
                               "timescaledb_stats":
                                 {...}, "xalt_stats":
-                                {...}}
+                                {...}, "telemetry_health": {...}}
     
     Args:
       request (Any): Request passed to this helper.
@@ -4305,6 +4307,7 @@ def admin_monitor(request: Any) -> Any:
             "rabbitmq": [KEY_ADMIN_RMQ_STATS, KEY_ADMIN_RMQ_SNAPSHOT],
             "timescaledb": [KEY_ADMIN_TIMESCALE_STATS],
             "xalt": [KEY_ADMIN_XALT_STATS],
+            "telemetry_health": [KEY_ADMIN_TELEMETRY_HEALTH],
         }
         keys_to_clear = []
         if section in keys_by_section:
@@ -4331,6 +4334,10 @@ def admin_monitor(request: Any) -> Any:
         return Response({"timescaledb_stats": _get_timescaledb_stats()})
     if section == "xalt":
         return Response({"xalt_stats": _get_xalt_jid_coverage()})
+    if section == "telemetry_health":
+        return Response(
+            {"telemetry_health": compute_telemetry_health(force_refresh=refresh)}
+        )
 
     host_stats = cached_orm(KEY_ADMIN_HOST_STATS, TIMEOUT_ADMIN_STATS, _host_stats_fn)
     rabbitmq_host_stats = _get_recent_rabbitmq_host_stats()
@@ -4346,6 +4353,7 @@ def admin_monitor(request: Any) -> Any:
             "rabbitmq_stats": rabbitmq_stats,
             "timescaledb_stats": timescaledb_stats,
             "xalt_stats": _get_xalt_jid_coverage(),
+            "telemetry_health": compute_telemetry_health(force_refresh=refresh),
         }
     )
 

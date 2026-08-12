@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import AdminMonitor from "../AdminMonitor";
 import { useAdminMonitorSectionQuery } from "@/hooks/use-admin-monitor-section";
 import { renderWithProviders } from "@test/vitest/test-utils/render-with-providers";
+import { axeSeriousViolations } from "@test/vitest/axe-test-utils";
 
 vi.mock("@/hooks/use-admin-monitor-section", () => ({
   useAdminMonitorSectionQuery: vi.fn(),
@@ -56,7 +57,9 @@ function mockSectionQuery(
                   ? { timescaledb_stats: fixture.data }
                   : section === "xalt"
                     ? { xalt_stats: fixture.data }
-                    : {};
+                    : section === "telemetry_health"
+                      ? { telemetry_health: fixture.data }
+                      : {};
       return {
         data: pickResponse(raw as never),
         error: fixture.error ?? null,
@@ -248,5 +251,93 @@ describe("AdminMonitor", () => {
     expect(screen.getByText("Erlang memory used (bytes)")).toBeInTheDocument();
     expect(screen.getByText("Node alarms")).toBeInTheDocument();
     expect(screen.getByText("Node name")).toBeInTheDocument();
+  });
+
+  it("loads telemetry health only when the section is expanded", async () => {
+    const enabledCallsBefore: boolean[] = [];
+    vi.mocked(useAdminMonitorSectionQuery).mockImplementation(
+      ({ section, enabled, pickResponse }) => {
+        if (section === "telemetry_health") {
+          enabledCallsBefore.push(enabled);
+        }
+        if (!enabled) {
+          return {
+            data: null,
+            error: null,
+            initialLoading: false,
+            sectionBusy: false,
+            loading: false,
+            refetch: vi.fn(),
+          };
+        }
+        const raw = {
+          telemetry_health: {
+            window_hours: 12,
+            timed_out: false,
+            all_zero_events: [
+              { type: "host_cpu", event: "user", row_count: 9 },
+            ],
+            missing_core_types: ["host_mem"],
+            ok_summary: {
+              nonzero_type_event_pairs: 3,
+              scanned_note: "Scanned pairs.",
+            },
+          },
+        };
+        return {
+          data: pickResponse(raw as never),
+          error: null,
+          initialLoading: false,
+          sectionBusy: false,
+          loading: false,
+          refetch: vi.fn(),
+        };
+      },
+    );
+
+    renderWithProviders(<AdminMonitor />);
+    expect(
+      screen.getByRole("button", { name: /Telemetry health \(12h\)/i }),
+    ).toBeInTheDocument();
+    expect(enabledCallsBefore.every((v) => v === false)).toBe(true);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Telemetry health \(12h\)/i }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("host_cpu")).toBeInTheDocument();
+    });
+    expect(screen.getByText("user")).toBeInTheDocument();
+    expect(screen.getByText("host_mem")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /Telemetry health \(12h\) — 1 all-zero, 1 missing/i,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("has no serious axe violations with telemetry health expanded", async () => {
+    mockSectionQuery({
+      telemetry_health: {
+        data: {
+          window_hours: 12,
+          timed_out: false,
+          all_zero_events: [
+            { type: "host_cpu", event: "user", row_count: 9 },
+          ],
+          missing_core_types: ["host_mem"],
+          ok_summary: { nonzero_type_event_pairs: 3, scanned_note: "ok" },
+        },
+      },
+    });
+    const view = renderWithProviders(<AdminMonitor />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Telemetry health \(12h\)/i }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText("host_cpu")).toBeInTheDocument();
+    });
+    expect(await axeSeriousViolations(view.container)).toEqual([]);
   });
 });

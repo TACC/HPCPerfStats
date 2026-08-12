@@ -24,6 +24,26 @@ export type AdminMonitorXaltStats = {
   found_jids_limit?: number;
 };
 
+export type AdminMonitorTelemetryZeroEvent = {
+  type: string;
+  event: string;
+  row_count: number;
+};
+
+export type AdminMonitorTelemetryHealth = {
+  window_hours?: number;
+  computed_at?: string;
+  timed_out?: boolean;
+  error?: string | null;
+  all_zero_events?: AdminMonitorTelemetryZeroEvent[];
+  missing_core_types?: string[];
+  truncated?: boolean;
+  ok_summary?: {
+    nonzero_type_event_pairs?: number;
+    scanned_note?: string;
+  };
+};
+
 export type JobMetricCell = {
   value?: string | number | null;
   no_data_reason?: string | null;
