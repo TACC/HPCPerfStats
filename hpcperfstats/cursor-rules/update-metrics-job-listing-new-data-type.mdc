@@ -17,6 +17,10 @@ Whenever you add **extra persisted or prewarmed computation** for a job that run
 - Canonical entrypoint today: **`hpcperfstats/analysis/metrics/update_metrics.py`** → **`_jobs_queryset`** (and any shared helpers it calls). Selection must OR in a condition equivalent to “this job is missing or stale for the new type,” using the **same staleness contract** as persist/load (typically **input fingerprint**, row counts, or live vs persisted counters—match `persist_*` / `compute_*_fingerprint` semantics).
 - If selection logic is **PostgreSQL-specific** (raw SQL, `jsonb`, digest expressions), document that and keep **non-PostgreSQL** behavior explicit (skip, degrade, or alternate predicate) so tests that monkeypatch `connections` stay honest.
 
+## Scheduler date window (long-running process)
+
+`main()` must not freeze `_default_metrics_date_range()` for the life of a supervisord process. When **`allow_rollover=True`** (no CLI `YYYY-MM-DD` start), the `global_priority` producer rebuilds `dates` and `date_states` **in place** when `_today_datetime().date()` is after the current window end. Do **not** auto-extend operator explicit start/end argv. Empty-pass / rollover logs must include `today=` / `window_start=` / `window_end=` plus cheap `job_data` counts (`all` / `rt_ge_*` / `rt_null` / `listed`); **no `host_data` scan**. `_jobs_queryset(date, min_time, rerun)` — second arg is **runtime seconds**, not an end datetime.
+
 ## Tests
 
 - Add or extend **regression tests** in the same task: at minimum **compiled queryset** coverage (e.g. `hpcperfstats/site/lib/machine/tests/test_update_metrics.py`) asserting the new table/SQL/fingerprint appears where appropriate, and—when on PostgreSQL—**fingerprint parity** or integration checks so SQL selection cannot drift from Python helpers.

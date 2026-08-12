@@ -20,6 +20,10 @@ Processing order: **newest calendar day first**, and within each day **newest
 job first** (``end_time`` descending, then ``jid`` descending as a stable
 tiebreaker).
 
+The long-running ``global_priority`` scheduler rebuilds that default window
+when calendar today advances past the frozen window end (midnight rollover).
+CLI explicit start/end dates do not auto-extend.
+
 The global scheduler (**``update_metrics_for_dates``**) first finishes all
 `/pub/` expansion-factor aggregate artifacts using a metrics-sized process pool
 (one calendar month or one calendar year per worker task), then resets worker
@@ -1739,6 +1743,342 @@ def _default_metrics_date_range() -> Any:
   end = datetime.combine(_today_datetime().date(), datetime.min.time())
   start = end - timedelta(days=DEFAULT_METRICS_RANGE_DAYS - 1)
   return start, end
+
+
+def _newest_first_metrics_dates(start: Any, end: Any) -> list[Any]:
+  """
+  Inclusive calendar days from ``end`` back to ``start``, newest first.
+
+  Args:
+    start (Any): Inclusive window start (local midnight datetime).
+    end (Any): Inclusive window end (local midnight datetime).
+
+  Returns:
+    list[Any]: Datetimes newest-first; empty when ``end`` is before ``start``.
+
+  Examples:
+    >>> from datetime import datetime
+    >>> days = _newest_first_metrics_dates(
+    ...     datetime(2026, 8, 5), datetime(2026, 8, 11)
+    ... )
+    >>> [d.date().isoformat() for d in days[:2]]
+    ['2026-08-11', '2026-08-10']
+  """
+  day_count = (end - start).days + 1
+  if day_count < 1:
+    return []
+  return [end - timedelta(days=i) for i in range(day_count)]
+
+
+def _metrics_window_end(dates: Any) -> Any:
+  """
+  Latest calendar datetime in a scheduler date list, or ``None`` if empty.
+
+  Args:
+    dates (Any): Scheduler dates (newest-first or unsorted).
+
+  Returns:
+    Any: Max datetime in ``dates``, or ``None`` when the list is empty.
+
+  Examples:
+    >>> from datetime import datetime
+    >>> _metrics_window_end(
+    ...     [datetime(2026, 8, 10), datetime(2026, 8, 4)]
+    ... ).date().isoformat()
+    '2026-08-10'
+  """
+  if not dates:
+    return None
+  return max(dates)
+
+
+def _argv_has_explicit_metrics_dates(argv: Any) -> bool:
+  """
+  True when CLI argv[1] is an explicit ``YYYY-MM-DD`` start date.
+
+  ``--jid`` and no-arg supervisord invocations are not explicit dates.
+
+  Args:
+    argv (Any): ``sys.argv``-like list (script name at index 0).
+
+  Returns:
+    bool: True when the operator passed a parseable start date.
+
+  Examples:
+    >>> _argv_has_explicit_metrics_dates(
+    ...     ["update_metrics.py", "2026-08-01", "2026-08-07"]
+    ... )
+    True
+    >>> _argv_has_explicit_metrics_dates(["update_metrics.py", "--jid", "1"])
+    False
+  """
+  if not argv or len(argv) < 2:
+    return False
+  try:
+    datetime.strptime(str(argv[1]), "%Y-%m-%d")
+  except (ValueError, TypeError):
+    return False
+  return True
+
+
+def _metrics_window_needs_rollover(
+  dates: Any,
+  *,
+  allow_rollover: bool,
+) -> bool:
+  """
+  True when calendar today is after the current window end.
+
+  Args:
+    dates (Any): Current scheduler date list.
+    allow_rollover (bool): False for operator-fixed CLI date ranges.
+
+  Returns:
+    bool: True when the long-running default window must be rebuilt.
+
+  Examples:
+    >>> _metrics_window_needs_rollover([], allow_rollover=True)
+    False
+  """
+  if not allow_rollover or not dates:
+    return False
+  window_end = _metrics_window_end(dates)
+  if window_end is None:
+    return False
+  end_day = (
+      window_end.date() if isinstance(window_end, datetime) else window_end
+  )
+  return _today_datetime().date() > end_day
+
+
+def _refresh_default_metrics_dates_list(
+  dates: Any,
+  *,
+  allow_rollover: bool,
+) -> bool:
+  """
+  Replace ``dates`` in place with the current default window when today moved.
+
+  Args:
+    dates (Any): Mutable scheduler date list (newest-first).
+    allow_rollover (bool): False leaves ``dates`` unchanged.
+
+  Returns:
+    bool: True when ``dates`` was rebuilt.
+
+  Examples:
+    >>> _refresh_default_metrics_dates_list([], allow_rollover=True)
+    False
+  """
+  if not isinstance(dates, list):
+    return False
+  if not _metrics_window_needs_rollover(dates, allow_rollover=allow_rollover):
+    return False
+  old_end = _metrics_window_end(dates)
+  start, end = _default_metrics_date_range()
+  dates[:] = _newest_first_metrics_dates(start, end)
+  log_print(
+      "metrics scheduler: window_rollover today={0} old_end={1} new_end={2}".format(
+          _today_datetime().strftime("%Y-%m-%d"),
+          old_end.strftime("%Y-%m-%d") if old_end is not None else "none",
+          end.strftime("%Y-%m-%d"),
+      ),
+      flush=True,
+  )
+  return True
+
+
+def _cheap_metrics_day_job_qs(sched_date: Any, min_time: Any) -> dict[str, Any]:
+  """
+  job_data-only querysets for empty-pass census (no host_data / metrics_data).
+
+  Args:
+    sched_date (Any): Calendar day whose ``end_time`` half-open bounds apply.
+    min_time (Any): Runtime threshold in seconds (same as listing).
+
+  Returns:
+    dict[str, Any]: Keys ``all``, ``rt_null``, ``rt_ge_min_time`` → querysets.
+
+  Examples:
+    >>> census_keys = ("all", "rt_null", "rt_ge_min_time")
+    >>> "host_data" in census_keys
+    False
+  """
+  day_lo, day_hi = _end_time_calendar_day_half_open_bounds(sched_date)
+  day_qs = job_data.objects.filter(end_time__gte=day_lo, end_time__lt=day_hi)
+  return {
+      "all": day_qs,
+      "rt_null": day_qs.filter(runtime__isnull=True),
+      "rt_ge_min_time": day_qs.filter(runtime__gte=min_time),
+  }
+
+
+def _cheap_metrics_day_census(sched_date: Any, min_time: Any) -> dict[str, int]:
+  """
+  Count in-window jobs for one day without scanning host_data.
+
+  Args:
+    sched_date (Any): Calendar day to count.
+    min_time (Any): Runtime threshold in seconds.
+
+  Returns:
+    dict[str, int]: ``all``, ``rt_null``, and ``rt_ge_min_time`` counts.
+
+  Examples:
+    >>> expected_keys = ("all", "rt_null", "rt_ge_min_time")
+    >>> expected_keys[-1]
+    'rt_ge_min_time'
+  """
+  qs_map = _cheap_metrics_day_job_qs(sched_date, min_time)
+  return {key: int(qs.count()) for key, qs in qs_map.items()}
+
+
+def _metrics_day_listed_count(
+  sched_date: Any,
+  min_time: Any,
+  rerun: Any,
+) -> int:
+  """
+  Count jobs the listing predicate would return for one calendar day.
+
+  Args:
+    sched_date (Any): Calendar day passed to ``_jobs_queryset``.
+    min_time (Any): Runtime threshold (second positional; not an end date).
+    rerun (Any): Same rerun flag as the scheduler listing path.
+
+  Returns:
+    int: ``_jobs_queryset`` row count for that day.
+
+  Examples:
+    >>> # Second positional is min_time seconds, not an end datetime.
+    >>> listed_arity = ("date", "min_time", "rerun")
+    >>> listed_arity[1]
+    'min_time'
+  """
+  return int(_jobs_queryset(sched_date, min_time, rerun).count())
+
+
+def _log_metrics_window_census(
+  dates: Any,
+  *,
+  min_time: Any,
+  rerun: Any = False,
+  reason: str,
+) -> None:
+  """
+  Log today, window bounds, and per-day cheap + listed counts.
+
+  Cheap counts are job_data only. ``listed`` uses the catalog predicate
+  (no host_data scan). Failures are logged per day and do not abort the
+  scheduler.
+
+  Args:
+    dates (Any): Current scheduler date list.
+    min_time (Any): Runtime threshold in seconds.
+    rerun (Any): Listing rerun flag (default False).
+    reason (str): Log token such as ``empty_pass`` or ``window_rollover``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> "empty_pass".startswith("empty")
+    True
+  """
+  today = _today_datetime()
+  window_end = _metrics_window_end(dates)
+  window_start = min(dates) if dates else None
+  parts = []
+  for sched_date in dates or []:
+    day_label = (
+        sched_date.strftime("%Y-%m-%d")
+        if hasattr(sched_date, "strftime")
+        else str(sched_date)
+    )
+    try:
+      cheap = _cheap_metrics_day_census(sched_date, min_time)
+      listed = _metrics_day_listed_count(sched_date, min_time, rerun)
+    except Exception as exc:
+      parts.append(
+          "{0}=census_error:{1}".format(day_label, type(exc).__name__)
+      )
+      continue
+    parts.append(
+        "{0}:all={1}/rt_ge_{2}={3}/rt_null={4}/listed={5}".format(
+            day_label,
+            cheap["all"],
+            int(min_time),
+            cheap["rt_ge_min_time"],
+            cheap["rt_null"],
+            listed,
+        )
+    )
+  log_print(
+      "metrics scheduler: {0} today={1} window_start={2} window_end={3} {4}".format(
+          reason,
+          today.strftime("%Y-%m-%d %H:%M:%S"),
+          window_start.strftime("%Y-%m-%d") if window_start is not None else "none",
+          window_end.strftime("%Y-%m-%d") if window_end is not None else "none",
+          " ".join(parts) if parts else "days=none",
+      ),
+      flush=True,
+  )
+
+
+def _apply_default_metrics_window_rollover(
+  dates: Any,
+  date_states: Any,
+  *,
+  min_time: Any,
+  rerun: Any,
+  phase_timer: Any,
+  allow_rollover: bool,
+) -> bool:
+  """
+  Rebuild date iterators in place when calendar today left the window.
+
+  Mutates ``dates`` and ``date_states`` so the producer, consumer, and
+  rescan thread see the new days without restarting the process.
+
+  Args:
+    dates (Any): Mutable scheduler date list.
+    date_states (Any): Mutable iterator-state list sharing those dates.
+    min_time (Any): Runtime threshold passed to listing.
+    rerun (Any): Listing rerun flag.
+    phase_timer (Any): Phase timer used when rebuilding iterators.
+    allow_rollover (bool): False leaves both lists unchanged.
+
+  Returns:
+    bool: True when the window and iterators were rebuilt.
+
+  Examples:
+    >>> _apply_default_metrics_window_rollover(
+    ...     [], [], min_time=300, rerun=False,
+    ...     phase_timer=None, allow_rollover=False
+    ... )
+    False
+  """
+  if not isinstance(date_states, list):
+    return False
+  if not _refresh_default_metrics_dates_list(
+      dates, allow_rollover=allow_rollover
+  ):
+    return False
+  date_states[:] = _build_date_chunk_iterators(
+      dates, min_time, rerun, phase_timer
+  )
+  try:
+    _log_metrics_window_census(
+        dates, min_time=min_time, rerun=rerun, reason="window_rollover"
+    )
+  except Exception as census_exc:
+    log_print(
+        "metrics scheduler: window_rollover census failed {0}".format(
+            type(census_exc).__name__
+        ),
+        flush=True,
+    )
+  return True
 
 
 def _shutdown_db_best_effort() -> None:
@@ -3856,6 +4196,10 @@ def _start_readiness_producer(
   rescan_seen_order: Any,
   rescan_seen_cap: Any,
   rescan_lock: Any,
+  dates: Any,
+  min_time: Any,
+  rerun: Any,
+  allow_rollover: bool = False,
 ) -> Any:
   """
   Start background producer that fills ready_queue from readiness checks.
@@ -3881,6 +4225,11 @@ def _start_readiness_producer(
     rescan_seen_order (Any): Rescan seen order passed to this helper.
     rescan_seen_cap (Any): Rescan seen cap passed to this helper.
     rescan_lock (Any): Rescan lock passed to this helper.
+    dates (Any): Mutable newest-first scheduler date list (rollover in place).
+    min_time (Any): Runtime threshold for listing and cheap census.
+    rerun (Any): Listing rerun flag.
+    allow_rollover (bool): Rebuild the default window when calendar today
+    advances past the frozen window end.
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -3987,6 +4336,15 @@ def _start_readiness_producer(
 
     try:
       while not shutdown_requested[0]:
+        if _apply_default_metrics_window_rollover(
+            dates,
+            date_states,
+            min_time=min_time,
+            rerun=rerun,
+            phase_timer=phase_timer,
+            allow_rollover=allow_rollover,
+        ):
+          last_progress_at = time.monotonic()
         with scheduler_shared_lock:
           processed_now = int(stats["processed"])
         if processed_now > last_processed_total:
@@ -4778,13 +5136,24 @@ def _compute_jid_outcomes_batch(
   ]
 
 
-def update_metrics_for_dates(dates: Any, rerun: bool = False) -> None:
+def update_metrics_for_dates(
+  dates: Any,
+  rerun: bool = False,
+  *,
+  allow_rollover: bool = False,
+) -> None:
   """
   Global scheduler across dates to keep workers saturated.
+
+  When ``allow_rollover`` is true, the readiness producer rebuilds the
+  default last-N-days window if calendar today advances past the frozen
+  window end. Operator CLI date ranges must pass ``allow_rollover=False``.
   
   Args:
     dates (Any): Dates passed to this helper.
     rerun (bool): Boolean flag for rerun.
+    allow_rollover (bool): Rebuild default window on midnight; default
+    False so one-shot / test date lists stay fixed.
   
   Returns:
     None
@@ -4796,6 +5165,7 @@ def update_metrics_for_dates(dates: Any, rerun: bool = False) -> None:
   LAST_UPDATE_METRICS_DIAGNOSTICS = None
   close_old_connections()
   reset_metrics_coverage_defer_log_session()
+  dates = list(dates)
   min_time = 300
   phase_timer = _PhaseTimer()
   scheduler_mode = cfg.get_metrics_scheduler_mode()
@@ -4966,6 +5336,10 @@ def update_metrics_for_dates(dates: Any, rerun: bool = False) -> None:
           rescan_seen_order=rescan_seen_order,
           rescan_seen_cap=rescan_seen_cap,
           rescan_lock=rescan_lock,
+          dates=dates,
+          min_time=min_time,
+          rerun=rerun,
+          allow_rollover=allow_rollover,
       )
       rescan_thread = _start_candidate_rescan_thread(
           dates=dates,
@@ -5077,6 +5451,21 @@ def update_metrics_for_dates(dates: Any, rerun: bool = False) -> None:
                   ),
                   flush=True,
               )
+              if stall_iters == 1:
+                try:
+                  _log_metrics_window_census(
+                      dates,
+                      min_time=min_time,
+                      rerun=rerun,
+                      reason="empty_pass",
+                  )
+                except Exception as census_exc:
+                  log_print(
+                      "metrics scheduler: empty_pass census failed {0}".format(
+                          type(census_exc).__name__
+                      ),
+                      flush=True,
+                  )
             if _maybe_trigger_consumer_stall_exit(
                 stats, consumer_stall_since, scheduler_shared_lock,
             ):
@@ -5689,9 +6078,9 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
   log_date_range("metrics to update", startdate, enddate)
   #################################################################
 
-  day_count = (enddate - startdate).days + 1
   # Newest calendar day first (end of range / today before older days).
-  all_dates = [enddate - timedelta(days=i) for i in range(day_count)]
+  all_dates = _newest_first_metrics_dates(startdate, enddate)
+  allow_rollover = not _argv_has_explicit_metrics_dates(argv)
   log_print(
       "Date order (newest first): {0}".format(
           ", ".join(d.strftime("%Y-%m-%d") for d in all_dates)
@@ -5700,13 +6089,22 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
   )
   scheduler_mode = cfg.get_metrics_scheduler_mode()
   if scheduler_mode == "strict_date":
-    for d in all_dates:
+    day_idx = 0
+    while day_idx < len(all_dates):
       if shutdown_requested[0]:
         break
-      result = update_metrics(d)
+      if _refresh_default_metrics_dates_list(
+          all_dates, allow_rollover=allow_rollover
+      ):
+        day_idx = 0
+        continue
+      result = update_metrics(all_dates[day_idx])
       log_print(result)
+      day_idx += 1
   else:
-    result = update_metrics_for_dates(all_dates)
+    result = update_metrics_for_dates(
+        all_dates, allow_rollover=allow_rollover
+    )
     log_print(result)
 
   if sleep_after and not shutdown_requested[0]:

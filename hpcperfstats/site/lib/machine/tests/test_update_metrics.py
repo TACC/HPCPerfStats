@@ -2,6 +2,7 @@
 
 """
 import contextlib
+import inspect
 import os
 import threading
 import time
@@ -273,6 +274,7 @@ def test_notify_parent_if_sigterm_sends_sigchld(monkeypatch):
   assert calls == ["sigchld"]
 
 
+@pytest.mark.machine_unit_mock
 def test_default_metrics_date_range_seven_days(monkeypatch):
   """No-arg CLI default spans seven calendar days through today (local midnight bounds)."""
   monkeypatch.setattr(
@@ -283,6 +285,183 @@ def test_default_metrics_date_range_seven_days(monkeypatch):
   start, end = update_metrics._default_metrics_date_range()
   assert end == datetime(2025, 3, 23, 0, 0, 0)
   assert start == datetime(2025, 3, 17, 0, 0, 0)
+
+
+@pytest.mark.machine_unit_mock
+def test_newest_first_metrics_dates_span_inclusive_window():
+  start = datetime(2026, 8, 4, 0, 0, 0)
+  end = datetime(2026, 8, 10, 0, 0, 0)
+  dates = update_metrics._newest_first_metrics_dates(start, end)
+  assert dates[0] == end
+  assert dates[-1] == start
+  assert len(dates) == 7
+
+
+@pytest.mark.machine_unit_mock
+def test_metrics_window_needs_rollover_when_today_after_window_end(monkeypatch):
+  monkeypatch.setattr(
+      update_metrics,
+      "_today_datetime",
+      lambda: datetime(2026, 8, 11, 19, 26, 0),
+  )
+  dates = update_metrics._newest_first_metrics_dates(
+      datetime(2026, 8, 4, 0, 0, 0),
+      datetime(2026, 8, 10, 0, 0, 0),
+  )
+  assert update_metrics._metrics_window_needs_rollover(
+      dates, allow_rollover=True
+  ) is True
+  assert update_metrics._metrics_window_needs_rollover(
+      dates, allow_rollover=False
+  ) is False
+
+
+@pytest.mark.machine_unit_mock
+def test_metrics_window_needs_rollover_false_on_same_calendar_day(monkeypatch):
+  monkeypatch.setattr(
+      update_metrics,
+      "_today_datetime",
+      lambda: datetime(2026, 8, 10, 23, 50, 0),
+  )
+  dates = update_metrics._newest_first_metrics_dates(
+      datetime(2026, 8, 4, 0, 0, 0),
+      datetime(2026, 8, 10, 0, 0, 0),
+  )
+  assert update_metrics._metrics_window_needs_rollover(
+      dates, allow_rollover=True
+  ) is False
+
+
+@pytest.mark.machine_unit_mock
+def test_apply_default_metrics_window_rollover_includes_new_today(monkeypatch):
+  """Frozen Aug 10 window must pick up Aug 11 after the clock advances."""
+  clock = {"now": datetime(2026, 8, 10, 23, 6, 0)}
+  monkeypatch.setattr(
+      update_metrics, "_today_datetime", lambda: clock["now"]
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_build_date_chunk_iterators",
+      lambda dates, min_time, rerun, phase_timer: [
+          {"date": d, "done": False} for d in dates
+      ],
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_log_metrics_window_census",
+      lambda *args, **kwargs: None,
+  )
+  start, end = update_metrics._default_metrics_date_range()
+  dates = update_metrics._newest_first_metrics_dates(start, end)
+  date_states = [{"date": d, "done": False} for d in dates]
+  assert dates[0] == datetime(2026, 8, 10, 0, 0, 0)
+  clock["now"] = datetime(2026, 8, 11, 19, 26, 0)
+  rolled = update_metrics._apply_default_metrics_window_rollover(
+      dates,
+      date_states,
+      min_time=300,
+      rerun=False,
+      phase_timer=None,
+      allow_rollover=True,
+  )
+  assert rolled is True
+  assert dates[0] == datetime(2026, 8, 11, 0, 0, 0)
+  assert dates[-1] == datetime(2026, 8, 5, 0, 0, 0)
+  assert datetime(2026, 8, 4, 0, 0, 0) not in dates
+  assert [s["date"] for s in date_states] == dates
+
+
+@pytest.mark.machine_unit_mock
+def test_apply_default_metrics_window_rollover_skips_cli_explicit_dates(
+    monkeypatch,
+):
+  monkeypatch.setattr(
+      update_metrics,
+      "_today_datetime",
+      lambda: datetime(2026, 8, 11, 19, 0, 0),
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_log_metrics_window_census",
+      lambda *args, **kwargs: None,
+  )
+  dates = update_metrics._newest_first_metrics_dates(
+      datetime(2026, 8, 1, 0, 0, 0),
+      datetime(2026, 8, 7, 0, 0, 0),
+  )
+  date_states = [{"date": d} for d in dates]
+  before = list(dates)
+  rolled = update_metrics._apply_default_metrics_window_rollover(
+      dates,
+      date_states,
+      min_time=300,
+      rerun=False,
+      phase_timer=None,
+      allow_rollover=False,
+  )
+  assert rolled is False
+  assert dates == before
+
+
+@pytest.mark.machine_unit_mock
+def test_argv_has_explicit_metrics_dates():
+  assert update_metrics._argv_has_explicit_metrics_dates(
+      ["update_metrics.py", "2026-08-01", "2026-08-07"]
+  ) is True
+  assert update_metrics._argv_has_explicit_metrics_dates(
+      ["update_metrics.py"]
+  ) is False
+  assert update_metrics._argv_has_explicit_metrics_dates(
+      ["update_metrics.py", "--jid", "1987"]
+  ) is False
+
+
+@pytest.mark.machine_unit_mock
+def test_jobs_queryset_arity_is_date_min_time_rerun():
+  params = list(inspect.signature(update_metrics._jobs_queryset).parameters)
+  assert params == ["date", "min_time", "rerun"]
+
+
+@pytest.mark.machine_unit_mock
+def test_cheap_metrics_day_job_qs_omits_host_data():
+  src = inspect.getsource(update_metrics._cheap_metrics_day_job_qs)
+  assert "job_data.objects.filter" in src
+  assert "host_data.objects" not in src
+  assert "metrics_data.objects" not in src
+
+
+@pytest.mark.machine_unit_mock
+def test_log_metrics_window_census_includes_today_and_window(monkeypatch):
+  lines = []
+  monkeypatch.setattr(
+      update_metrics, "_today_datetime",
+      lambda: datetime(2026, 8, 11, 19, 26, 0),
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_cheap_metrics_day_census",
+      lambda _d, _min: {"all": 10, "rt_null": 0, "rt_ge_min_time": 8},
+  )
+  monkeypatch.setattr(
+      update_metrics, "_metrics_day_listed_count", lambda *_a, **_k: 0
+  )
+  monkeypatch.setattr(
+      update_metrics, "log_print", lambda msg, flush=False: lines.append(msg)
+  )
+  dates = [
+      datetime(2026, 8, 11, 0, 0, 0),
+      datetime(2026, 8, 5, 0, 0, 0),
+  ]
+  update_metrics._log_metrics_window_census(
+      dates, min_time=300, rerun=False, reason="empty_pass"
+  )
+  assert len(lines) == 1
+  assert "empty_pass" in lines[0]
+  assert "today=2026-08-11 19:26:00" in lines[0]
+  assert "window_start=2026-08-05" in lines[0]
+  assert "window_end=2026-08-11" in lines[0]
+  assert "listed=0" in lines[0]
+  assert "host_data" not in lines[0].lower()
 
 
 @pytest.mark.django_db(databases=[])
