@@ -27,7 +27,8 @@ alwaysApply: true
 <workspace_root>/.cursor/
   rules/       → symlink → HPCPerfStats/monitor/cursor-rules
   hooks/       → symlink → HPCPerfStats/cursor-hooks
-  hooks.json   → symlink → HPCPerfStats/cursor-hooks/hooks.json
+  hooks.json   → real file copy of HPCPerfStats/cursor-hooks/hooks.json
+                 (Cursor refuses a symlinked project hooks.json)
   plans/       → real directory (live *.plan.md; outside git)
 ```
 
@@ -38,10 +39,10 @@ cd "<workspace_root>"
 mkdir -p .cursor/plans
 ln -sf ../HPCPerfStats/monitor/cursor-rules .cursor/rules
 ln -sf ../HPCPerfStats/cursor-hooks .cursor/hooks
-ln -sf ../HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
+cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
 ```
 
-Full-stack checkouts symlink `.cursor/rules` to `HPCPerfStats/hpcperfstats/cursor-rules` instead.
+Full-stack checkouts symlink `.cursor/rules` to `HPCPerfStats/hpcperfstats/cursor-rules` instead. After editing checked-in `hooks.json`, re-`cp` to `.cursor/hooks.json`.
 
 ## Overlap
 

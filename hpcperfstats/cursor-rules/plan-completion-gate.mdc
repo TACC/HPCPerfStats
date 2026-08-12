@@ -62,7 +62,7 @@ Look for:
 - performance regressions
 - missing components (tests, docs, registry or drift guards, API client or tools updates, nginx or route sync when applicable)
 - edge cases not covered by tests
-- **new or re-triggered domain rules** dual-registered in the **same task** — every `hpcperfstats/cursor-rules/*.mdc` you added or whose triggers changed must appear in **both** `agent-discipline-core.mdc` (task router table) and `cursor-hooks/hook_task_router.py` (`ROUTER_ENTRIES`); a rule in only one file is **orphaned** and hooks will not dispatch it (see **`agent-discipline-core.mdc`** → *Creating or changing domain rules*)
+- **new or re-triggered domain rules** dual-registered in the **same task** — every `hpcperfstats/cursor-rules/*.mdc` you added or whose triggers changed must appear in **both** `agent-discipline-core.mdc` (task router table) and `cursor-hooks/hook_task_router.py` (`ROUTER_ENTRIES`); then **`cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json`**; a rule in only one file is **orphaned** and hooks will not dispatch it (see **`agent-discipline-core.mdc`** → *Creating or changing domain rules*)
 - anything else a senior reviewer would block on merge
 
 **Fix anything found** and re-run relevant tests. Do not proceed to step 2 or mark todos complete while open review items remain.

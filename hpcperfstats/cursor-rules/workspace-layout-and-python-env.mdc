@@ -19,10 +19,11 @@ Example shape:
   .cursor/
     rules/               ← symlink → HPCPerfStats/hpcperfstats/cursor-rules
     hooks/               ← symlink → HPCPerfStats/cursor-hooks
-    hooks.json           ← symlink → HPCPerfStats/cursor-hooks/hooks.json
+    hooks.json           ← real file copy of HPCPerfStats/cursor-hooks/hooks.json
+                           (Cursor refuses a symlinked project hooks.json)
     plans/               ← live Cursor Plan files (*.plan.md); outside git
   HPCPerfStats/          ← cd here for compose, pip install -e, pytest paths in docs
-    cursor-hooks/        ← authoritative hook scripts (edit here; checked in)
+    cursor-hooks/        ← authoritative hook scripts + hooks.json (edit here; checked in)
     pyproject.toml
     docker-compose.yaml
     hpcperfstats/
@@ -58,9 +59,9 @@ Some machines keep a **cloud-sync mirror** under `Library/CloudStorage/` (for ex
 - **Authoritative rules directory:** `HPCPerfStats/hpcperfstats/cursor-rules/*.mdc` (inside the git repo).
 - Workspace **`.cursor/rules`** should point at that directory (symlink), so Cursor loads the same files.
 - **Live Cursor plans:** write `*.plan.md` under **`<workspace_root>/.cursor/plans/`** only — outside git. **`docs/plans/`** is for committed design baselines and `PLAN_TEMPLATE.md`, not live task plans.
-- **Hooks:** authoritative scripts and **`hooks.json`** live in `HPCPerfStats/cursor-hooks/` (checked in). Workspace **`.cursor/hooks`** and **`.cursor/hooks.json`** symlink there — edit the git path only; no copy step.
+- **Hooks:** authoritative scripts and **`hooks.json`** live in `HPCPerfStats/cursor-hooks/` (checked in). Workspace **`.cursor/hooks`** symlinks to that directory. Workspace **`.cursor/hooks.json`** must be a **real file copy** of `HPCPerfStats/cursor-hooks/hooks.json` (Cursor refuses loading project hooks via symlink); after editing the checked-in JSON, `cp` it to `.cursor/hooks.json`.
 - **No nested `.cursor/`:** do not create `HPCPerfStats/.cursor/`; the only `.cursor/` directory is at workspace root.
-- **New or changed domain rules:** register in **both** `agent-discipline-core.mdc` (task router) and `cursor-hooks/hook_task_router.py` in the same task — see **`agent-discipline-core.mdc`** → *Creating or changing domain rules*.
+- **New or changed domain rules:** register in **both** `agent-discipline-core.mdc` (task router) and `cursor-hooks/hook_task_router.py` in the same task, then **`cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json`** — see **`agent-discipline-core.mdc`** → *Creating or changing domain rules*.
 
 ## Host Python and pip (agents)
 

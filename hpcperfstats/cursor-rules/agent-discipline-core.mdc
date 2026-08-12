@@ -31,7 +31,7 @@ Answer **YES** or **N/A (one-line reason)** for each row. If any row is **NO**, 
 | 5 | **Triggered domain rules** below were **Read** (Read tool on the `.mdc` path) before editing — list them under **`## Agent rule dispatch`** at close; hook verifies Read calls for listed domain rules |
 | 6 | **Compose workflows** run when DB/Redis/RabbitMQ/ingest semantics changed (`compose-required-for-data-services-changes.mdc`) |
 | 7 | **Plan YAML** todos synced if implementing a plan (`plan-completion-gate.mdc`) |
-| 8 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `cursor-hooks/hook_task_router.py` (`ROUTER_ENTRIES`) — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
+| 8 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `cursor-hooks/hook_task_router.py` (`ROUTER_ENTRIES`), then **`cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json`** — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
 
 User may reply **`Close gate incomplete`** — redo the full close sequence without argument.
 
@@ -135,10 +135,17 @@ When you **add** a new `hpcperfstats/cursor-rules/*.mdc` or materially change tr
    - **this file** — task router table above (`Trigger paths` → `Read these rules`);
    - **`cursor-hooks/hook_task_router.py`** — matching `ROUTER_ENTRIES` path patterns (close-gate auto-detect + Read-before-edit hooks).
    A rule missing from either file is **orphaned**; hooks will not dispatch it correctly.
-5. Update **`RULES_README.md`** when policy changes (always-on count, hook behavior, router conventions).
-6. Plan authoring only: also update **`plan-creation-contract.mdc`** step 5 when the pattern is recurring.
+5. **Workspace hooks.json copy (same task, non-optional)** — after dual registration (and after any edit to `HPCPerfStats/cursor-hooks/hooks.json`), copy the checked-in config into the workspace so Cursor loads it (Cursor refuses a symlinked project `hooks.json`):
 
-The Cursor hook `check-new-rule-router.py` injects a reminder if a new `.mdc` is written without a reference in this file; keep **`hook_task_router.py`** in sync manually (see step 4).
+   ```bash
+   cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
+   ```
+
+   Run from the Cursor **workspace root**. Do **not** `ln -sf` `.cursor/hooks.json`.
+6. Update **`RULES_README.md`** when policy changes (always-on count, hook behavior, router conventions).
+7. Plan authoring only: also update **`plan-creation-contract.mdc`** step 5 when the pattern is recurring.
+
+The Cursor hook `check-new-rule-router.py` injects a reminder if a new `.mdc` is written without a reference in this file; keep **`hook_task_router.py`** in sync manually (see step 4), then **`cp`** `hooks.json` (step 5).
 
 ## Full rule catalog
 

@@ -43,6 +43,12 @@ Every new or re-scoped **`HPCPerfStats/monitor/cursor-rules/*.mdc`** must appear
 1. **`agent-discipline-core.mdc`** — task router table (`Trigger paths` → `Read these rules`)
 2. **`cursor-hooks/hook_task_router.py`** — matching `MONITOR_ROUTER_ENTRIES` row
 
+Then **copy** the workspace hooks config (Cursor refuses a symlinked project `hooks.json`):
+
+```bash
+cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
+```
+
 See **`RULES_README.md`** and **`monitor-cursor-rules-sync.mdc`**. Hooks enforce dual registration at edit time and close.
 
 ## Trigger Phrase

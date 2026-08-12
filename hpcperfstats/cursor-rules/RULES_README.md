@@ -39,8 +39,9 @@ Adding a new domain rule (same task, non-optional):
 1. Default `alwaysApply: false`
 2. Add `globs:` when file patterns are stable
 3. **Dual registration** — add trigger row in `agent-discipline-core.mdc` **and** matching `ROUTER_ENTRIES` in `cursor-hooks/hook_task_router.py` (same task)
-4. Do **not** duplicate close-gate or testing law (link instead)
-5. Verify dual registration in **Final code review** (`plan-completion-gate.mdc`); Cursor hooks enforce it at edit time and close (`check-new-rule-router.py`, `check-close-gate.py`)
+4. **Copy hooks.json** — `cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json` (Cursor refuses a symlinked project hooks config)
+5. Do **not** duplicate close-gate or testing law (link instead)
+6. Verify dual registration + hooks.json copy in **Final code review** (`plan-completion-gate.mdc`); Cursor hooks enforce dual registration at edit time and close (`check-new-rule-router.py`, `check-close-gate.py`)
 
 ## Cursor hooks
 

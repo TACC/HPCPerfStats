@@ -34,7 +34,7 @@ Answer **YES** or **N/A (one-line reason)** for each row. If any row is **NO**, 
 | 6 | **Dual verify** run when substantive monitor C changed (`monitor-dual-verify-cross-and-static.mdc`) |
 | 7 | **Valgrind + cpp-linter** run when plan implementation touched monitor C/tests/scripts (`monitor-valgrind-cpp-linter-gate.mdc`: `run_valgrind_check.sh` + `run_cpp_linter.sh`; log under `test_runs/`) |
 | 8 | **Plan YAML** todos synced if implementing a plan (`plan-completion-gate.mdc`) |
-| 9 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `cursor-hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`) — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
+| 9 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `cursor-hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`), then **`cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json`** — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
 
 User may reply **`Close gate incomplete`** — redo the full close sequence without argument.
 
@@ -129,10 +129,17 @@ When you **add** a new `HPCPerfStats/monitor/cursor-rules/*.mdc` or materially c
    - **this file** — task router table above (`Trigger paths` → `Read these rules`);
    - **`cursor-hooks/hook_task_router.py`** — matching `MONITOR_ROUTER_ENTRIES` path patterns (close-gate auto-detect + Read-before-edit hooks).
    A rule missing from either file is **orphaned**; hooks will not dispatch it correctly.
-5. Update **`RULES_README.md`** when policy changes (always-on count, hook behavior, router conventions).
-6. Add a one-line cross-link in **`implementation-workflow-discipline.mdc`** Related rules table when agents should consult the rule during implement/verify.
+5. **Workspace hooks.json copy (same task, non-optional)** — after dual registration (and after any edit to `HPCPerfStats/cursor-hooks/hooks.json`), copy the checked-in config into the workspace so Cursor loads it (Cursor refuses a symlinked project `hooks.json`):
 
-The Cursor hook `check-new-rule-router.py` injects a reminder if a new `.mdc` is written without a reference in this file; keep **`hook_task_router.py`** in sync manually (see step 4).
+   ```bash
+   cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
+   ```
+
+   Run from the Cursor **workspace root**. Do **not** `ln -sf` `.cursor/hooks.json`.
+6. Update **`RULES_README.md`** when policy changes (always-on count, hook behavior, router conventions).
+7. Add a one-line cross-link in **`implementation-workflow-discipline.mdc`** Related rules table when agents should consult the rule during implement/verify.
+
+The Cursor hook `check-new-rule-router.py` injects a reminder if a new `.mdc` is written without a reference in this file; keep **`hook_task_router.py`** in sync manually (see step 4), then **`cp`** `hooks.json` (step 5).
 
 ## Full rule catalog
 

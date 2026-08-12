@@ -80,8 +80,10 @@ def main() -> int:
                 "(trigger paths → Read this rule), a matching row in "
                 "`cursor-hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES` or "
                 "`HPCPERFSTATS_ROUTER_ENTRIES`), and a one-line note in "
-                "`RULES_README.md` if policy changes. Verify both routers in "
-                "Final code review before close."
+                "`RULES_README.md` if policy changes. When dual registration is "
+                "done, `cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json` "
+                "(real file — Cursor refuses a symlinked project hooks.json). "
+                "Verify both routers + the copy in Final code review before close."
             ),
         },
     )

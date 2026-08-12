@@ -1,6 +1,6 @@
 # Cursor hooks (HPCPerfStats + monitor workspace)
 
-Project hooks for Cursor Agent. Cursor loads **`<workspace_root>/.cursor/hooks.json`**, which **symlinks** to the checked-in **`HPCPerfStats/cursor-hooks/hooks.json`**.
+Project hooks for Cursor Agent. Cursor loads **`<workspace_root>/.cursor/hooks.json`**. That file must be a **real file** (not a symlink): Cursor refuses project `hooks.json` when it is a symlink below the workspace root (`Refusing to load Project hooks.json via symlink…`). Authoritative source remains **`HPCPerfStats/cursor-hooks/hooks.json`** (checked in); copy it to `.cursor/hooks.json` after edits.
 
 ## Workspace `.cursor/` layout
 
@@ -11,7 +11,7 @@ From **workspace root** (contains `.venv/` and `HPCPerfStats/`):
   rules/       → symlink → HPCPerfStats/hpcperfstats/cursor-rules   (full-stack)
             or → symlink → HPCPerfStats/monitor/cursor-rules       (monitor-focused)
   hooks/       → symlink → HPCPerfStats/cursor-hooks
-  hooks.json   → symlink → HPCPerfStats/cursor-hooks/hooks.json
+  hooks.json   → real file copy of HPCPerfStats/cursor-hooks/hooks.json
   plans/       → real directory; live *.plan.md (outside git)
 ```
 
@@ -22,12 +22,12 @@ cd "<workspace_root>"
 mkdir -p .cursor/plans
 ln -sf ../HPCPerfStats/hpcperfstats/cursor-rules .cursor/rules
 ln -sf ../HPCPerfStats/cursor-hooks .cursor/hooks
-ln -sf ../HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
+cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
 ```
 
 Monitor-focused workspace: symlink `.cursor/rules` to `HPCPerfStats/monitor/cursor-rules` instead.
 
-There is **no** `HPCPerfStats/.cursor/` directory — hooks and rules live in checked-in git paths; only workspace `.cursor/` holds symlinks and local Cursor metadata (`plans/`).
+There is **no** `HPCPerfStats/.cursor/` directory — hook scripts and rules live in checked-in git paths; workspace `.cursor/` holds the rules/hooks script symlinks, a **copied** `hooks.json`, and local Cursor metadata (`plans/`).
 
 ## Profile detection
 
@@ -90,8 +90,10 @@ See monitor **`RULES_README.md`** or hpcperfstats **`RULES_README.md`** for alwa
 
 ## hooks.json
 
-Edit **`HPCPerfStats/cursor-hooks/hooks.json`** only (checked in). With **`.cursor/hooks.json`** symlinked there, Cursor picks up changes immediately — no copy step. If a checkout still has a stale real file at `.cursor/hooks.json`, replace it:
+Edit **`HPCPerfStats/cursor-hooks/hooks.json`** (checked in), then **re-copy** to the workspace root so Cursor reloads:
 
 ```bash
-ln -sf ../HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
+cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
 ```
+
+Do **not** `ln -sf` `.cursor/hooks.json` — Cursor will not load a symlinked project hooks config. After copy, confirm **Settings → Hooks** and the Hooks output channel no longer show the symlink refuse / “No project hooks configuration found” errors.

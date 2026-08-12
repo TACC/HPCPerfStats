@@ -23,9 +23,13 @@ This workspace **hard-links** monitor cursor rules between:
 | Tree | Role |
 |------|------|
 | **`.cursor/hooks/`** | Symlink → `HPCPerfStats/cursor-hooks/` |
-| **`.cursor/hooks.json`** | Symlink → `HPCPerfStats/cursor-hooks/hooks.json` |
+| **`.cursor/hooks.json`** | **Real file copy** of `HPCPerfStats/cursor-hooks/hooks.json` (Cursor refuses a symlink) |
 
-There is **no** `HPCPerfStats/.cursor/` directory. Edit hook scripts in **`HPCPerfStats/cursor-hooks/`** (checked in).
+There is **no** `HPCPerfStats/.cursor/` directory. Edit hook scripts / `hooks.json` in **`HPCPerfStats/cursor-hooks/`** (checked in), then:
+
+```bash
+cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
+```
 
 In **this** checkout, editing either rules path updates the same inode. In other checkouts they may be separate copies — then you must update **both** trees in one commit.
 
@@ -35,6 +39,7 @@ In **this** checkout, editing either rules path updates the same inode. In other
 2. After editing, `diff .cursor/rules/<f> HPCPerfStats/monitor/cursor-rules/<f>` in unfamiliar checkouts.
 3. New monitor-themed rules belong in **both** locations unless workspace-only meta rules.
 4. **Dual registration** — add router row in **`agent-discipline-core.mdc`** and **`MONITOR_ROUTER_ENTRIES`** in **`cursor-hooks/hook_task_router.py`** in the same task.
+5. **Copy hooks.json** — `cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json` before closing the task.
 
 ## Related rules index
 
