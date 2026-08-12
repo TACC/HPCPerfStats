@@ -79,6 +79,8 @@ from typing import Any, Iterator
 import contextlib
 import functools
 import gc
+import inspect
+import multiprocessing
 import os
 import threading
 import signal
@@ -90,6 +92,7 @@ from types import SimpleNamespace
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
+from hpcperfstats.dbload.lib.multiprocessing_pool_health import abort_if_pool_workers_dead
 
 ensure_django()
 
@@ -192,6 +195,7 @@ COMPUTE_BATCH_DOWNSHIFT_FACTOR = 0.5
 COMPUTE_BATCH_UPSHIFT_STEP = 16
 COMPUTE_BATCH_WORKER_MULTIPLIER = 2
 COMPUTE_BATCH_ABSOLUTE_MAX = 64
+COMPUTE_BATCH_HEARTBEAT_LOG_INTERVAL_S = 60.0
 RESCAN_FETCH_LIMIT = CHUNK_SIZE
 TELEMETRY_SAMPLE_LIMIT = 2048
 RESCAN_SEEN_MULTIPLIER = 16
@@ -541,7 +545,310 @@ def _new_scheduler_stats() -> Any:
       "strict_check_timeouts": 0,
       "strict_check_avg_latency_ms": 0.0,
       "strict_batch_size_current": STRICT_CHECK_BATCH_MIN,
+      "compute_batch_phase": "idle",
+      "compute_batch_size": 0,
+      "compute_batch_completed_jids": 0,
+      "compute_batch_started_at": None,
   }
+
+
+def _compute_batch_should_downshift(
+  *,
+  batch_wall_s: float,
+  metrics_watchdog_s: float,
+  total_watchdog_s: float,
+) -> bool:
+  """
+  Return True when the post-batch compute cap should downshift.
+
+  ``metrics_compute_watchdog_s`` applies to **metrics+prewarm** ``batch_wall_s``
+  (one wall-time unit). Optional ``metrics_compute_total_watchdog_s`` remains a
+  stricter override when set ``> 0``.
+
+  Args:
+    batch_wall_s (float): Metrics+prewarm wall seconds for the finished batch.
+    metrics_watchdog_s (float): Primary watchdog from INI/env.
+    total_watchdog_s (float): Optional total-wall override; ``0`` disables.
+
+  Returns:
+    bool: Whether the scheduler should reduce ``effective_batch_cap``.
+
+  Examples:
+    >>> _compute_batch_should_downshift(
+    ...     batch_wall_s=200.0, metrics_watchdog_s=120.0, total_watchdog_s=0.0)
+    True
+  """
+  if float(metrics_watchdog_s) > 0.0 and float(batch_wall_s) >= float(metrics_watchdog_s):
+    return True
+  if float(total_watchdog_s) > 0.0 and float(batch_wall_s) >= float(total_watchdog_s):
+    return True
+  return False
+
+
+def _compute_batch_age_s(stats: Any) -> float:
+  """
+  Seconds since the current compute batch started, or ``0`` when idle.
+
+  Args:
+    stats (Any): Scheduler stats mapping with ``compute_batch_started_at``.
+
+  Returns:
+    float: Non-negative age in seconds.
+
+  Examples:
+    >>> _compute_batch_age_s({"compute_batch_started_at": None})
+    0.0
+  """
+  started = stats.get("compute_batch_started_at") if isinstance(stats, dict) else None
+  if started is None:
+    return 0.0
+  return max(0.0, time.monotonic() - float(started))
+
+
+class _ComputeBatchHeartbeat:
+  """
+  Shared mid-batch phase / completed counters for metrics progress logs.
+  """
+
+  def __init__(self, stats: Any, lock: Any) -> None:
+    """
+    Bind heartbeat updates to scheduler stats under ``lock``.
+
+    Args:
+      stats (Any): Mutable scheduler stats dict.
+      lock (Any): ``threading.Lock`` protecting ``stats``.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _ComputeBatchHeartbeat({}, threading.Lock())  # doctest: +SKIP
+    """
+    self._stats = stats
+    self._lock = lock
+    self._last_log_at = 0.0
+
+  def begin(self, size: int) -> None:
+    """
+    Mark a compute batch as starting (phase ``metrics``).
+
+    Args:
+      size (int): Number of jids in the batch.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _ComputeBatchHeartbeat({}, threading.Lock()).begin(0)  # doctest: +SKIP
+    """
+    with self._lock:
+      self._stats["compute_batch_phase"] = "metrics"
+      self._stats["compute_batch_size"] = int(max(0, size))
+      self._stats["compute_batch_completed_jids"] = 0
+      self._stats["compute_batch_started_at"] = time.monotonic()
+    self.maybe_log(force=True)
+
+  def set_phase(self, phase: str) -> None:
+    """
+    Update the current compute-batch phase label.
+
+    Args:
+      phase (str): One of ``metrics``, ``persist``, ``prewarm``, ``idle``.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _ComputeBatchHeartbeat({}, threading.Lock()).set_phase("idle")  # doctest: +SKIP
+    """
+    with self._lock:
+      self._stats["compute_batch_phase"] = str(phase or "idle")
+    self.maybe_log()
+
+  def note_completed(self, completed: int, total: int | None = None) -> None:
+    """
+    Record how many jids in the current batch have finished the active phase.
+
+    Args:
+      completed (int): Completed count in the active Metrics.run / prewarm drain.
+      total (int | None): Optional total; updates ``compute_batch_size`` when set.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _ComputeBatchHeartbeat({}, threading.Lock()).note_completed(0)  # doctest: +SKIP
+    """
+    with self._lock:
+      self._stats["compute_batch_completed_jids"] = int(max(0, completed))
+      if total is not None:
+        self._stats["compute_batch_size"] = int(max(0, total))
+    self.maybe_log()
+
+  def clear(self) -> None:
+    """
+    Reset heartbeat fields after a batch returns.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _ComputeBatchHeartbeat({}, threading.Lock()).clear()  # doctest: +SKIP
+    """
+    with self._lock:
+      self._stats["compute_batch_phase"] = "idle"
+      self._stats["compute_batch_size"] = 0
+      self._stats["compute_batch_completed_jids"] = 0
+      self._stats["compute_batch_started_at"] = None
+    self._last_log_at = 0.0
+
+  def maybe_log(self, force: bool = False) -> None:
+    """
+    Emit a mid-batch heartbeat line at most once per log interval.
+
+    Args:
+      force (bool): When True, log even if the interval has not elapsed.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _ComputeBatchHeartbeat({}, threading.Lock()).maybe_log()  # doctest: +SKIP
+    """
+    now = time.monotonic()
+    if (
+        not force
+        and (now - self._last_log_at) < COMPUTE_BATCH_HEARTBEAT_LOG_INTERVAL_S
+    ):
+      return
+    with self._lock:
+      phase = str(self._stats.get("compute_batch_phase") or "idle")
+      size = int(self._stats.get("compute_batch_size") or 0)
+      completed = int(self._stats.get("compute_batch_completed_jids") or 0)
+      age_s = _compute_batch_age_s(self._stats)
+    if phase == "idle" and not force:
+      return
+    self._last_log_at = now
+    log_print(
+        "metrics scheduler: compute batch heartbeat phase={0} size={1} "
+        "completed_jids={2} age_s={3:.1f}".format(phase, size, completed, age_s),
+        flush=True,
+    )
+
+
+class MetricsPrewarmStallError(TimeoutError):
+  """
+  Plot/detail prewarm imap made no progress for the Metrics.run stall budget.
+  """
+
+  def __init__(self, stalled_for_s: float, message: str = "") -> None:
+    """
+    Record how long prewarm made no progress.
+
+    Args:
+      stalled_for_s (float): Seconds without a completed prewarm result.
+      message (str): Optional detail for logs.
+
+    Returns:
+      None
+
+    Examples:
+      >>> MetricsPrewarmStallError(1.0, "x")  # doctest: +SKIP
+    """
+    self.stalled_for_s = float(stalled_for_s)
+    super().__init__(message or "prewarm imap stall")
+
+
+def _drain_prewarm_imap(
+  shared_pool: Any,
+  jids: Any,
+  *,
+  poll_timeout_s: float,
+  stall_timeout_s: float,
+  progress_callback: Any | None = None,
+) -> list:
+  """
+  Drain prewarm ``imap_unordered`` with the same poll/stall knobs as Metrics.run.
+
+  Args:
+    shared_pool (Any): Metrics process pool.
+    jids (Any): Iterable of jid strings.
+    poll_timeout_s (float): ``imap`` poll timeout seconds.
+    stall_timeout_s (float): No-progress stall budget seconds.
+    progress_callback (Any | None): Optional heartbeat callback.
+
+  Returns:
+    list: Per-jid result dicts from ``_prewarm_jid_on_metrics_pool``.
+
+  Raises:
+    MetricsPrewarmStallError: When no prewarm result arrives for
+    ``stall_timeout_s``.
+
+  Examples:
+    >>> _drain_prewarm_imap(None, [], poll_timeout_s=1.0, stall_timeout_s=1.0)
+    []
+  """
+  jid_list = list(jids or [])
+  if not jid_list or shared_pool is None:
+    return []
+  abort_if_pool_workers_dead(
+      shared_pool,
+      context="update_metrics prewarm imap (preflight)",
+  )
+  iterator = shared_pool.imap_unordered(_prewarm_jid_on_metrics_pool, jid_list)
+  iterator_next = getattr(iterator, "next", None)
+  supports_timeout = callable(iterator_next)
+  total = len(jid_list)
+  done = 0
+  last_progress_at = time.monotonic()
+  last_heartbeat_log_at = 0.0
+  results = []
+
+  def _emit(phase: str = "prewarm") -> None:
+    if not callable(progress_callback):
+      return
+    try:
+      progress_callback(phase=phase, completed=done, total=total)
+    except Exception:
+      pass
+
+  while done < total:
+    if shutdown_requested[0]:
+      break
+    abort_if_pool_workers_dead(
+        shared_pool,
+        context="update_metrics prewarm imap",
+    )
+    try:
+      if supports_timeout:
+        result = iterator_next(timeout=float(max(0.0, poll_timeout_s)))
+      else:
+        result = next(iterator)
+    except multiprocessing.TimeoutError:
+      stalled_for = time.monotonic() - last_progress_at
+      if stalled_for >= max(0.0, float(stall_timeout_s)):
+        raise MetricsPrewarmStallError(
+            stalled_for,
+            "prewarm imap stall: no completed jids for %.1fs "
+            "(tasks=%s completed=%s)" % (stalled_for, total, done),
+        )
+      now = time.monotonic()
+      if now - last_heartbeat_log_at >= COMPUTE_BATCH_HEARTBEAT_LOG_INTERVAL_S:
+        last_heartbeat_log_at = now
+        _emit("prewarm")
+        log_print(
+            "metrics scheduler: prewarm drain heartbeat completed={0}/{1} "
+            "stalled_for_s={2:.1f}".format(done, total, stalled_for),
+            flush=True,
+        )
+      continue
+    except StopIteration:
+      break
+    results.append(result)
+    done += 1
+    last_progress_at = time.monotonic()
+    _emit("prewarm")
+  return results
 
 
 def _log_exception_details(prefix: Any, exc: Any) -> None:
@@ -1254,7 +1561,9 @@ class _CompletionReporter:
               "public_ef_degraded={20} public_ef_worker_exceptions_total={21} "
               "public_ef_watchdog_timeouts_total={22} public_ef_pending_tasks={23} "
               "prewarm_backlog_jobs={24} prewarm_oldest_pending_age_s={25:.3f} "
-              "prewarm_backpressure_events={26} prewarm_inline_fallback_jobs={27}".format(
+              "prewarm_backpressure_events={26} prewarm_inline_fallback_jobs={27} "
+              "compute_batch_phase={28} compute_batch_age_s={29:.1f} "
+              "compute_batch_completed_jids={30} compute_batch_size={31}".format(
                   int(extra_map.get("strict_batch_size_current", 0)),
                   int(extra_map.get("strict_check_calls", 0)),
                   int(extra_map.get("strict_check_timeouts", 0)),
@@ -1283,6 +1592,10 @@ class _CompletionReporter:
                   float(extra_map.get("prewarm_oldest_pending_age_s", 0.0)),
                   int(extra_map.get("prewarm_backpressure_events", 0)),
                   int(extra_map.get("prewarm_inline_fallback_jobs", 0)),
+                  str(extra_map.get("compute_batch_phase") or "idle"),
+                  float(extra_map.get("compute_batch_age_s", 0.0)),
+                  int(extra_map.get("compute_batch_completed_jids", 0)),
+                  int(extra_map.get("compute_batch_size", 0)),
               )
           )
         except Exception:
@@ -4506,6 +4819,7 @@ def _prewarm_successful_refs_on_metrics_pool(
   successful_refs: Any,
   prewarm_pipeline: Any,
   shared_pool: Any,
+  progress_callback: Any | None = None,
 ) -> None:
   """
   Run detail+plot prewarm for metrics-successful jids on pool B (wait fully).
@@ -4513,12 +4827,14 @@ def _prewarm_successful_refs_on_metrics_pool(
   Fail-closed: only ``successful_refs`` are prewarmed. Mode gate uses
   ``metrics_plot_prewarm_mode`` (``inline`` → parent ``run_for_jid``;
   ``pipeline_required`` → metrics process pool ``imap``). No second queue,
-  drain budget, or ``Future.cancel``.
+  drain budget, or ``Future.cancel``. Pool drain uses the same poll/stall
+  timeouts as ``Metrics.run``.
 
   Args:
     successful_refs (Any): Job refs whose metrics outcome was ok.
     prewarm_pipeline (Any): Sync ``_PrewarmPipeline`` for counters / inline.
     shared_pool (Any): Metrics process pool (pool B).
+    progress_callback (Any | None): Optional mid-batch heartbeat callback.
 
   Returns:
     None
@@ -4531,7 +4847,7 @@ def _prewarm_successful_refs_on_metrics_pool(
   mode = cfg.get_metrics_plot_prewarm_mode()
   jids = [ref.jid for ref in successful_refs]
   if mode == "inline" or shared_pool is None:
-    for jid in jids:
+    for idx, jid in enumerate(jids):
       if shutdown_requested[0]:
         break
       try:
@@ -4539,11 +4855,33 @@ def _prewarm_successful_refs_on_metrics_pool(
       except Exception as exc:
         prewarm_pipeline.record_pool_result(False)
         log_print("plot artifact prewarm failed: {0}".format(exc))
+      if callable(progress_callback):
+        try:
+          progress_callback(phase="prewarm", completed=idx + 1, total=len(jids))
+        except Exception:
+          pass
     return
   # pipeline_required: reuse metrics pool (absolute metrics_pool_processes).
-  for result in shared_pool.imap_unordered(_prewarm_jid_on_metrics_pool, jids):
-    if shutdown_requested[0]:
-      break
+  poll_timeout_s = float(cfg.get_metrics_run_poll_timeout_s())
+  stall_timeout_s = float(cfg.get_metrics_run_stall_timeout_s())
+  try:
+    results = _drain_prewarm_imap(
+        shared_pool,
+        jids,
+        poll_timeout_s=poll_timeout_s,
+        stall_timeout_s=stall_timeout_s,
+        progress_callback=progress_callback,
+    )
+  except MetricsPrewarmStallError as exc:
+    log_print(
+        "metrics scheduler: prewarm drain stalled stalled_for_s={0:.1f}: {1}".format(
+            float(exc.stalled_for_s),
+            exc,
+        ),
+        flush=True,
+    )
+    results = []
+  for result in results:
     ok = bool(result and result.get("ok"))
     prewarm_pipeline.record_pool_result(ok)
 
@@ -4554,6 +4892,7 @@ def _compute_jid_outcomes_batch(
   prewarm_pipeline: Any,
   shared_pool: Any,
   batch_timing: Any | None = None,
+  heartbeat: Any | None = None,
 ) -> Any:
   """
   Run one batched ``Metrics.run`` then prewarm successful jids on pool B.
@@ -4575,6 +4914,8 @@ def _compute_jid_outcomes_batch(
     prewarm_pipeline (Any): Prewarm pipeline passed to this helper.
     shared_pool (Any): Shared pool passed to this helper.
     batch_timing (Any | None): One of ``Any``, ``None``.
+    heartbeat (Any | None): Optional ``_ComputeBatchHeartbeat`` for mid-batch
+    phase / completed_jids updates.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -4601,6 +4942,14 @@ def _compute_jid_outcomes_batch(
   t_batch = time.monotonic()
   timing = {} if batch_timing is None else batch_timing
   n = len(job_refs)
+
+  def _hb_progress(*, phase: str, completed: int, total: int) -> None:
+    if heartbeat is None:
+      return
+    if phase:
+      heartbeat.set_phase(phase)
+    heartbeat.note_completed(completed, total)
+
   if cfg.get_metrics_per_jid_phase_diagnostics_enabled():
     head = min(24, n)
     jids_head = ",".join(r.jid for r in job_refs[:head])
@@ -4619,10 +4968,19 @@ def _compute_jid_outcomes_batch(
   try:
     if metrics_job_refs:
       t_metrics_start = time.monotonic()
-      metrics_run_outcomes = metrics_manager.run(
-          metrics_job_refs,
-          pool=metrics_manager.ensure_pool(),
-      )
+      if heartbeat is not None:
+        heartbeat.set_phase("metrics")
+      run_pool = metrics_manager.ensure_pool()
+      run_kwargs = {"pool": run_pool}
+      try:
+        run_params = inspect.signature(metrics_manager.run).parameters
+      except (TypeError, ValueError):
+        run_params = {}
+      if "progress_callback" in run_params or any(
+          p.kind == inspect.Parameter.VAR_KEYWORD for p in run_params.values()
+      ):
+        run_kwargs["progress_callback"] = _hb_progress
+      metrics_run_outcomes = metrics_manager.run(metrics_job_refs, **run_kwargs)
       if metrics_run_outcomes is None:
         metrics_run_outcomes = [{
             "jid": ref.jid,
@@ -4787,10 +5145,13 @@ def _compute_jid_outcomes_batch(
     timing["metrics_wall_s"] = max(0.0, time.monotonic() - t_batch)
     t_prewarm = time.monotonic()
     recovery_success_refs = [ref for ref, _ in succeeded] + list(artifact_only_refs)
+    if heartbeat is not None:
+      heartbeat.set_phase("prewarm")
     _prewarm_successful_refs_on_metrics_pool(
         recovery_success_refs,
         prewarm_pipeline,
         shared_pool,
+        progress_callback=_hb_progress,
     )
     timing["prewarm_wall_s"] = max(0.0, time.monotonic() - t_prewarm)
     timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
@@ -4836,10 +5197,13 @@ def _compute_jid_outcomes_batch(
       successful_refs.append(ref)
 
   t_prewarm = time.monotonic()
+  if heartbeat is not None:
+    heartbeat.set_phase("prewarm")
   _prewarm_successful_refs_on_metrics_pool(
       successful_refs,
       prewarm_pipeline,
       shared_pool,
+      progress_callback=_hb_progress,
   )
   prewarm_elapsed = time.monotonic() - t_prewarm
   timing["prewarm_wall_s"] = max(0.0, prewarm_elapsed)
@@ -4990,6 +5354,10 @@ def update_metrics_for_dates(
               "prewarm_oldest_pending_age_s": prewarm_snapshot["prewarm_oldest_pending_age_s"],
               "prewarm_backpressure_events": prewarm_snapshot["prewarm_backpressure_events"],
               "prewarm_inline_fallback_jobs": prewarm_snapshot["prewarm_inline_fallback_jobs"],
+              "compute_batch_phase": stats["compute_batch_phase"],
+              "compute_batch_age_s": _compute_batch_age_s(stats),
+              "compute_batch_completed_jids": stats["compute_batch_completed_jids"],
+              "compute_batch_size": stats["compute_batch_size"],
           }
 
       completion_reporter.set_extra_stats_getter(_extra_stats_snapshot)
@@ -5212,16 +5580,25 @@ def update_metrics_for_dates(
           )
           batch_start = time.monotonic()
           batch_phase_timing = {}
+          compute_batch_heartbeat = _ComputeBatchHeartbeat(
+              stats, scheduler_shared_lock,
+          )
+          compute_batch_heartbeat.begin(len(job_refs))
           with phase_timer.phase("metrics_compute_s"):
             succeeded_jids = []
             failed_count = 0
-            jid_outcomes = _compute_jid_outcomes_batch(
-                job_refs,
-                metrics_manager,
-                prewarm_pipeline,
-                shared_pool,
-                batch_timing=batch_phase_timing,
-            )
+            jid_outcomes = []
+            try:
+              jid_outcomes = _compute_jid_outcomes_batch(
+                  job_refs,
+                  metrics_manager,
+                  prewarm_pipeline,
+                  shared_pool,
+                  batch_timing=batch_phase_timing,
+                  heartbeat=compute_batch_heartbeat,
+              )
+            finally:
+              compute_batch_heartbeat.clear()
             for jid_outcome in jid_outcomes:
               if jid_outcome["ok"]:
                 succeeded_jids.append(jid_outcome["jid"])
@@ -5268,11 +5645,11 @@ def update_metrics_for_dates(
           metrics_phase_s = float(batch_phase_timing.get("metrics_wall_s", batch_elapsed))
           prewarm_phase_s = float(batch_phase_timing.get("prewarm_wall_s", 0.0))
           batch_wall_s = float(batch_phase_timing.get("batch_wall_s", batch_elapsed))
-          downshift = False
-          if metrics_phase_s >= metrics_watchdog_s:
-            downshift = True
-          if total_watchdog_s > 0.0 and batch_wall_s >= total_watchdog_s:
-            downshift = True
+          downshift = _compute_batch_should_downshift(
+              batch_wall_s=batch_wall_s,
+              metrics_watchdog_s=metrics_watchdog_s,
+              total_watchdog_s=total_watchdog_s,
+          )
           has_batch_exception = any(bool(o.get("_batch_exception")) for o in jid_outcomes)
           fallback_failed = sum(1 for o in jid_outcomes if bool(o.get("_fallback_failed")))
           worker_failed_outcomes = sum(

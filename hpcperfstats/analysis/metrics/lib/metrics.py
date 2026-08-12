@@ -172,6 +172,12 @@ class MetricsComputeJobTimeoutError(TimeoutError):
   """
 
 
+class MetricsPersistWallTimeoutError(TimeoutError):
+  """
+  Parent-side metrics persist exceeded the Metrics.run stall wall clock.
+  """
+
+
 def _metrics_jid_value(job_or_pk: Any) -> Any:
   """
   Stable jid string from either a job-like object or a raw primary key.
@@ -1803,6 +1809,90 @@ def _persist_metrics_payload(payload: Any) -> Any:
   )
 
 
+def _persist_metrics_payload_bounded(
+  payload: Any,
+  *,
+  wall_timeout_s: float,
+) -> Any:
+  """
+  Persist one worker payload with an optional Unix wall-clock bound.
+
+  When ``wall_timeout_s > 0``, a hang inside ``_persist_metrics_payload``
+  raises ``MetricsPersistWallTimeoutError`` so ``_drain_metrics_imap`` can
+  record a ``parent_persist_timeout`` outcome and keep the stall clock honest.
+
+  Args:
+    payload (Any): Worker payload mapping for one jid.
+    wall_timeout_s (float): Stall/wall budget in seconds; ``<= 0`` disables.
+
+  Returns:
+    Any: Per-jid outcome dict from ``_persist_metrics_payload`` (or a
+    timeout/failure outcome when the wall clock fires).
+
+  Examples:
+    >>> _persist_metrics_payload_bounded({"jid": "1", "status": "ok"}, wall_timeout_s=0)
+  """
+  timeout_s = float(wall_timeout_s)
+  if timeout_s <= 0.0 or not hasattr(signal, "SIGALRM"):
+    return _persist_metrics_payload(payload)
+  jid = _metrics_jid_value(payload.get("jid") if isinstance(payload, dict) else None)
+
+  def _handler(signum: Any, frame: Any) -> None:
+    """
+    Raise when parent persist exceeds the stall wall clock.
+
+    Args:
+      signum (Any): Signal number (unused).
+      frame (Any): Interrupted frame (unused).
+
+    Returns:
+      None
+
+    Raises:
+      MetricsPersistWallTimeoutError: Always raised on the alarm.
+
+    Examples:
+      >>> _handler(None, None)  # doctest: +SKIP
+    """
+    del signum, frame
+    raise MetricsPersistWallTimeoutError(
+        "parent persist exceeded {:.0f}s for jid {}".format(timeout_s, jid)
+    )
+
+  previous = signal.getsignal(signal.SIGALRM)
+  signal.signal(signal.SIGALRM, _handler)
+  try:
+    if hasattr(signal, "setitimer"):
+      signal.setitimer(signal.ITIMER_REAL, timeout_s)
+    else:
+      signal.alarm(max(1, int(timeout_s)))
+    return _persist_metrics_payload(payload)
+  except MetricsPersistWallTimeoutError as exc:
+    log_print(
+        "Metrics.run parent persist wall timeout jid={0} elapsed_budget_s={1:.3f} "
+        "error={2!r}".format(jid, timeout_s, exc),
+        flush=True,
+    )
+    return _metrics_run_outcome(
+        jid,
+        ok=False,
+        status="parent_persist_timeout",
+        persisted_rows=0,
+        distinct_time_count=(
+            payload.get("distinct_time_count") if isinstance(payload, dict) else None
+        ),
+        persist_s=timeout_s,
+        error_type=type(exc).__name__,
+        error_message=str(exc),
+    )
+  finally:
+    if hasattr(signal, "setitimer"):
+      signal.setitimer(signal.ITIMER_REAL, 0)
+    else:
+      signal.alarm(0)
+    signal.signal(signal.SIGALRM, previous)
+
+
 def _drain_metrics_imap(
   active_pool: Any,
   tasks: Any,
@@ -1810,6 +1900,7 @@ def _drain_metrics_imap(
   *,
   poll_timeout_s: Any,
   stall_timeout_s: Any,
+  progress_callback: Any | None = None,
 ) -> Any:
   """
   Apply ``imap_unordered`` results from workers and persist metrics.
@@ -1817,6 +1908,10 @@ def _drain_metrics_imap(
   ``imap_unordered`` can block forever when a worker wedges (driver deadlock,
   query hang, C-extension lock). Poll with timeout and fail fast on prolonged
   no-progress so scheduler code can recover the pool and continue.
+
+  Parent persist runs before the stall progress clock advances. Optional
+  ``progress_callback(phase=..., completed=..., total=...)`` supports
+  mid-batch heartbeats.
   
   Args:
     active_pool (Any): Active pool passed to this helper.
@@ -1825,6 +1920,8 @@ def _drain_metrics_imap(
     chunksize (Any): Chunksize passed to this helper.
     poll_timeout_s (Any): Poll timeout s passed to this helper.
     stall_timeout_s (Any): Stall timeout s passed to this helper.
+    progress_callback (Any | None): Optional callable for mid-batch phase
+    heartbeats; ignored when not callable.
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -1856,8 +1953,34 @@ def _drain_metrics_imap(
   total = len(tasks)
   done = 0
   last_progress_at = time.monotonic()
+  last_heartbeat_log_at = 0.0
   completed_jids = set()
   outcomes = []
+
+  def _emit_progress(phase: str) -> None:
+    """
+    Forward mid-batch phase progress to the optional heartbeat callback.
+
+    Args:
+      phase (str): Current drain phase (``metrics`` or ``persist``).
+
+    Returns:
+      None
+
+    Examples:
+      >>> _emit_progress("metrics")  # doctest: +SKIP
+    """
+    if not callable(progress_callback):
+      return
+    try:
+      progress_callback(
+          phase=phase,
+          completed=done,
+          total=total,
+      )
+    except Exception:
+      pass
+
   while done < total:
     abort_if_pool_workers_dead(
         active_pool,
@@ -1896,11 +2019,21 @@ def _drain_metrics_imap(
             partial_outcomes=list(outcomes),
             pending_jobs=pending_jobs,
         )
+      now = time.monotonic()
+      if now - last_heartbeat_log_at >= 60.0:
+        last_heartbeat_log_at = now
+        _emit_progress("metrics")
+        log_print(
+            "Metrics.run drain heartbeat completed={0}/{1} stalled_for_s={2:.1f}".format(
+                done,
+                total,
+                stalled_for,
+            ),
+            flush=True,
+        )
       continue
     except StopIteration:
       break
-    done += 1
-    last_progress_at = time.monotonic()
     if not payload:
       outcomes.append(
           _metrics_run_outcome(
@@ -1911,9 +2044,23 @@ def _drain_metrics_imap(
               error_message="worker returned empty payload",
           )
       )
+      done += 1
+      last_progress_at = time.monotonic()
+      _emit_progress("metrics")
       continue
-    outcomes.append(_persist_metrics_payload(payload))
+    # Stall clock advances only after parent persist returns so a wedged
+    # persist cannot look like worker progress (stall audit critical #1).
+    _emit_progress("persist")
+    outcomes.append(
+        _persist_metrics_payload_bounded(
+            payload,
+            wall_timeout_s=float(max(0.0, stall_timeout_s)),
+        )
+    )
     completed_jids.add(_metrics_jid_value(payload.get("jid")))
+    done += 1
+    last_progress_at = time.monotonic()
+    _emit_progress("metrics")
   return outcomes
 
 
@@ -2655,7 +2802,12 @@ class Metrics():
     ).start()
 
   # Compute metrics in parallel (Shared memory only)
-  def run(self, job_list: Any, pool: Any | None = None) -> Any:
+  def run(
+    self,
+    job_list: Any,
+    pool: Any | None = None,
+    progress_callback: Any | None = None,
+  ) -> Any:
     """
     Run metric computation for each job in job_list in a process pool; persist.
     
@@ -2664,6 +2816,8 @@ class Metrics():
     Args:
       job_list (Any): Job list passed to this helper.
       pool (Any | None): One of ``Any``, ``None``.
+      progress_callback (Any | None): Optional mid-batch heartbeat callback
+      forwarded to ``_drain_metrics_imap``.
     
     Returns:
       Any: Value produced by this call (type depends on inputs).
@@ -2702,6 +2856,7 @@ class Metrics():
             pool_chunksize,
             poll_timeout_s=poll_timeout_s,
             stall_timeout_s=stall_timeout_s,
+            progress_callback=progress_callback,
         )
       except IndexError:
         # Rare pool/imap edge case (e.g. short batches); single-job tasks avoid it.
@@ -2717,6 +2872,7 @@ class Metrics():
               1,
               poll_timeout_s=poll_timeout_s,
               stall_timeout_s=stall_timeout_s,
+              progress_callback=progress_callback,
           ))
     except MetricsRunWorkerStallError as exc:
       log_print("Metrics.run: %s" % exc, flush=True)

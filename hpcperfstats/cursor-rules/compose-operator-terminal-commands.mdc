@@ -244,6 +244,14 @@ docker compose logs pipeline
 
 Match **`README.md`** *Useful commands* and **`readme-installation-sync.mdc`** (`docker compose exec <service>` over hardcoded container names).
 
+### Anti-pattern — `psql -U postgres` (hpcperfstats04)
+
+The compose **`db`** role is **`hpcperfstats`**, not the stock Postgres superuser. `psql -U postgres` fails with **`FATAL: role "postgres" does not exist`** (hpcperfstats04 2026-08-12). Always pass **`-h localhost -U hpcperfstats`**.
+
+| Do | Don't |
+|----|-------|
+| `docker compose exec db psql -h localhost -U hpcperfstats -c "…"` | `psql -U postgres …` / omit `-h localhost` when the peer map expects TCP |
+
 ### Anti-pattern — `rabbitmqctl … 2>/dev/null` hides failures (hpcperfstats04)
 
 Piping or redirecting **`rabbitmqctl` / `rabbitmq-plugins` stderr to `/dev/null`** yields empty pastes when the CLI fails (wrong user, node not ready, cookie mismatch) while **`ss`/`netstat` listeners still print**. Operators then cannot tell whether plugins/queues were queried.

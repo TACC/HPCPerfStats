@@ -4197,3 +4197,211 @@ def test_prewarm_pipeline_run_for_jid_retries_hard_coded(monkeypatch):
   timing = pipe.run_for_jid("jid-x", shared_context={})
   assert attempts["n"] == 2
   assert timing["prewarm_total_s"] > 0.0
+
+
+@pytest.mark.machine_unit_mock
+def test_compute_batch_should_downshift_uses_batch_wall():
+  """metrics_compute_watchdog_s gates metrics+prewarm batch_wall_s (not metrics-only)."""
+  assert update_metrics._compute_batch_should_downshift(
+      batch_wall_s=5716.91,
+      metrics_watchdog_s=120.0,
+      total_watchdog_s=0.0,
+  )
+  assert update_metrics._compute_batch_should_downshift(
+      batch_wall_s=200.0,
+      metrics_watchdog_s=120.0,
+      total_watchdog_s=0.0,
+  )
+  assert not update_metrics._compute_batch_should_downshift(
+      batch_wall_s=50.0,
+      metrics_watchdog_s=120.0,
+      total_watchdog_s=0.0,
+  )
+  assert not update_metrics._compute_batch_should_downshift(
+      batch_wall_s=200.0,
+      metrics_watchdog_s=0.0,
+      total_watchdog_s=0.0,
+  )
+  assert update_metrics._compute_batch_should_downshift(
+      batch_wall_s=200.0,
+      metrics_watchdog_s=0.0,
+      total_watchdog_s=180.0,
+  )
+
+
+@pytest.mark.machine_unit_mock
+def test_compute_batch_heartbeat_fields_on_progress():
+  """Mid-batch heartbeat updates shared stats exposed on metrics progress extras."""
+  stats = update_metrics._new_scheduler_stats()
+  lock = threading.Lock()
+  hb = update_metrics._ComputeBatchHeartbeat(stats, lock)
+  hb.begin(48)
+  assert stats["compute_batch_phase"] == "metrics"
+  assert stats["compute_batch_size"] == 48
+  assert stats["compute_batch_completed_jids"] == 0
+  assert stats["compute_batch_started_at"] is not None
+  assert update_metrics._compute_batch_age_s(stats) >= 0.0
+  hb.set_phase("persist")
+  hb.note_completed(12, 48)
+  assert stats["compute_batch_phase"] == "persist"
+  assert stats["compute_batch_completed_jids"] == 12
+  hb.set_phase("prewarm")
+  hb.note_completed(24, 48)
+  extras = {
+      "compute_batch_phase": stats["compute_batch_phase"],
+      "compute_batch_age_s": update_metrics._compute_batch_age_s(stats),
+      "compute_batch_completed_jids": stats["compute_batch_completed_jids"],
+      "compute_batch_size": stats["compute_batch_size"],
+  }
+  assert extras["compute_batch_phase"] == "prewarm"
+  assert extras["compute_batch_completed_jids"] == 24
+  assert extras["compute_batch_size"] == 48
+  assert extras["compute_batch_age_s"] >= 0.0
+  hb.clear()
+  assert stats["compute_batch_phase"] == "idle"
+  assert stats["compute_batch_size"] == 0
+  assert stats["compute_batch_started_at"] is None
+
+
+@pytest.mark.machine_unit_mock
+def test_prewarm_pool_drain_stalls_without_progress(monkeypatch):
+  class _It:
+    def next(self, timeout=None):
+      del timeout
+      raise update_metrics.multiprocessing.TimeoutError()
+
+  class _Pool:
+    def imap_unordered(self, fn, jids):
+      del fn, jids
+      return _It()
+
+  monkeypatch.setattr(update_metrics, "abort_if_pool_workers_dead", lambda *a, **k: None)
+  with pytest.raises(update_metrics.MetricsPrewarmStallError) as ei:
+    update_metrics._drain_prewarm_imap(
+        _Pool(),
+        ["j1", "j2"],
+        poll_timeout_s=0.0,
+        stall_timeout_s=0.0,
+    )
+  assert float(ei.value.stalled_for_s) >= 0.0
+
+
+@pytest.mark.machine_unit_mock
+def test_compute_watchdog_downshifts_on_batch_wall_not_metrics_only(monkeypatch):
+  """Short metrics + long prewarm batch_wall must reduce next_batch_cap."""
+  monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 4)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 48)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_pool_processes", lambda: 24)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_watchdog_s", lambda: 120.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_compute_total_watchdog_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(
+      update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext,
+  )
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
+  monkeypatch.setattr(
+      update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)),
+  )
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+  monkeypatch.setattr(
+      update_metrics,
+      "_run_public_ef_artifacts_parallel_phase",
+      lambda shared_pool, phase_timer: {
+          "degraded": 0,
+          "worker_exceptions": 0,
+          "watchdog_timeouts": 0,
+          "pending_tasks": 0,
+          "tasks_completed": 0,
+          "tasks_total": 0,
+      },
+  )
+  jids = list(range(1001, 1049))
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs([(jids, len(jids))]),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+
+  class _DoneProducer:
+    def join(self, timeout=None):
+      del timeout
+
+  def _producer_stub(**kwargs):
+    with kwargs["ready_queue_lock"]:
+      kwargs["ready_queue"].extend(jids)
+    kwargs["producer_done"].set()
+    return _DoneProducer()
+
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _producer_stub)
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None, progress_callback=None):
+      del pool, progress_callback
+      return [{
+          "jid": j.jid,
+          "ok": True,
+          "status": "ok",
+          "error_type": None,
+          "error_message": None,
+          "persist_s": 0.0,
+      } for j in jobs]
+
+  def _slow_prewarm_batch(job_refs, metrics_manager, prewarm_pipeline, shared_pool,
+                          batch_timing=None, heartbeat=None):
+    del metrics_manager, prewarm_pipeline, shared_pool, heartbeat
+    if batch_timing is not None:
+      batch_timing["metrics_wall_s"] = 10.0
+      batch_timing["prewarm_wall_s"] = 200.0
+      batch_timing["batch_wall_s"] = 210.0
+    return [
+        update_metrics._scheduler_jid_outcome(
+            ok=True,
+            jid=ref.jid,
+            metrics_s=0.1,
+            prewarm_s=0.1,
+            telemetry=update_metrics._empty_jid_outcome_telemetry(),
+        )
+        for ref in job_refs
+    ]
+
+  logs = []
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "_compute_jid_outcomes_batch", _slow_prewarm_batch)
+  monkeypatch.setattr(
+      update_metrics, "log_print", lambda msg, flush=False: logs.append(str(msg)),
+  )
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
+  update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS = None
+  update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  watchdog_lines = [line for line in logs if "compute watchdog" in line]
+  assert watchdog_lines, "expected compute watchdog log after prewarm-dominated batch; logs={0}".format(
+      logs[-20:],
+  )
+  assert any("batch_wall_s=210.0" in line or "batch_wall_s=210" in line for line in watchdog_lines)
+  cap_lines = [line for line in logs if "next_batch_cap=" in line]
+  assert cap_lines
+  # Starting cap with 24 workers ×2 = 48; half → 24 (floor MIN_CAP=16).
+  assert any("next_batch_cap=24" in line for line in cap_lines)

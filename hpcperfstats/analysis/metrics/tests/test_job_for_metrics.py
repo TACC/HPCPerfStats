@@ -393,6 +393,62 @@ def test_drain_metrics_imap_returns_parent_persist_timeout_outcome(monkeypatch):
   assert out[0]["error_type"] == "DatabaseError"
 
 
+def test_drain_metrics_imap_stall_clock_waits_for_persist(monkeypatch):
+  """Stall clock must not refresh until parent persist returns (not at worker return)."""
+  clock = {"t": 1000.0}
+  monkeypatch.setattr(metrics.time, "monotonic", lambda: clock["t"])
+  persist_started_at = []
+
+  payload = {
+      "jid": "j1",
+      "status": "ok",
+      "rows": [],
+      "distinct_time_count": 1,
+      "error_type": None,
+      "error_message": None,
+  }
+
+  class _It:
+    n = 0
+
+    def next(self, timeout=None):
+      del timeout
+      _It.n += 1
+      if _It.n == 1:
+        return payload
+      clock["t"] += 0.25
+      raise metrics.multiprocessing.TimeoutError()
+
+  class _Pool:
+    def imap_unordered(self, fn, tasks, chunksize=1):
+      del fn, tasks, chunksize
+      return _It()
+
+  def _slow_persist(pl, *, wall_timeout_s=0.0):
+    del wall_timeout_s
+    persist_started_at.append(clock["t"])
+    clock["t"] += 10.0
+    return metrics._metrics_run_outcome("j1", ok=True, status="ok")
+
+  monkeypatch.setattr(metrics, "_persist_metrics_payload_bounded", _slow_persist)
+  monkeypatch.setattr(metrics, "abort_if_pool_workers_dead", lambda *a, **k: None)
+
+  with pytest.raises(metrics.MetricsRunWorkerStallError) as ei:
+    metrics._drain_metrics_imap(
+        _Pool(),
+        tasks=[("m", "j1"), ("m", "j2")],
+        chunksize=1,
+        poll_timeout_s=0.05,
+        stall_timeout_s=1.0,
+    )
+  assert persist_started_at == [1000.0]
+  # Progress clock starts after the 10s persist, so stall needs ~1s more.
+  assert clock["t"] >= 1011.0
+  assert float(ei.value.stalled_for_s) >= 1.0
+  assert len(ei.value.partial_outcomes) == 1
+  assert ei.value.partial_outcomes[0]["jid"] == "j1"
+
+
 def test_metrics_run_stall_with_owned_pool_returns_partial_outcomes(monkeypatch):
   fake_calls = {"terminate": 0}
 
