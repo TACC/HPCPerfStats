@@ -157,6 +157,7 @@ from .host_data_latest import (
     format_host_data_newest_iso,
     latest_sample_time_by_host,
     latest_sample_time_by_host_in_window,
+    list_recent_host_fqdns_from_redis,
 )
 from .admin_monitor_telemetry_health import compute_telemetry_health
 from .oauth2 import check_for_tokens
@@ -1550,51 +1551,21 @@ def _get_timescaledb_stats() -> Any:
     return stats
 
 
-def _list_recent_host_fqdns_from_redis() -> Any:
+def _list_recent_host_fqdns_from_redis() -> list[str]:
     """
-    FQDNs from Django-cache Redis ``recent_host:*`` keys (listend inventory).
-    
+    Alias for ``list_recent_host_fqdns_from_redis`` (Admin Monitor freshness).
+
+    Kept so existing tests that patch
+    ``api._list_recent_host_fqdns_from_redis`` continue to work.
+
     Returns:
-      Any: Open return polymorphism from
-      ``_list_recent_host_fqdns_from_redis``: concrete type depends on inputs
-      and branch (mapping, scalar, handle, or ``None``-like empty).
-    
+      list[str]: FQDNs from Redis ``recent_host:*`` keys.
+
     Examples:
       >>> _list_recent_host_fqdns_from_redis()  # doctest: +SKIP
+      ['c101-001.example.com']
     """
-    hosts = []
-
-    def _decode_key(raw_key: Any) -> Any:
-        """
-        Internal helper to handle decode key.
-        
-        Args:
-          raw_key (Any): Raw key passed to this helper.
-        
-        Returns:
-          Any: Value produced by this call (type depends on inputs).
-        
-        Examples:
-          >>> _decode_key(None)  # doctest: +SKIP
-        """
-        if isinstance(raw_key, bytes):
-            return raw_key.decode("utf-8", "replace")
-        return str(raw_key)
-
-    try:
-        client = _get_redis_cache_client()
-        if client is None or not hasattr(client, "scan_iter"):
-            return hosts
-        for key in client.scan_iter(match="recent_host:*", count=1000):
-            key_str = _decode_key(key)
-            if not key_str.startswith("recent_host:"):
-                continue
-            host = key_str.split("recent_host:", 1)[1]
-            if host and "." in host:
-                hosts.append(host)
-    except Exception:
-        return []
-    return hosts
+    return list_recent_host_fqdns_from_redis()
 
 
 def _get_rabbitmq_stats() -> Any:

@@ -484,6 +484,15 @@ On large hypertables, **`SELECT host, max(time) FROM host_data WHERE time >= now
 | Per-host: LATERAL / index probe for known FQDNs from Redis DB `/1` | 8-day `GROUP BY host, max(time)` for Admin Monitor |
 | 3h `GROUP BY` only as last-resort fallback (≤60s timeout) | Floor statement_timeout at **600000** ms for host freshness |
 
+### Anti-pattern — Admin Monitor telemetry_health: site-wide 12h `GROUP BY type, event` (hpcperfstats04 2026-08-12)
+
+On large hypertables, **`SELECT type, event, COUNT(*), BOOL_OR(...) FROM host_data WHERE time >= now() - interval '12 hours' … GROUP BY type, event`** plans at cost ~**5.79e6** (tens of millions of rows via time-index / seq scan) and hits **`canceling statement due to statement timeout`**. Admin Monitor `telemetry_health` now samples Redis **`recent_host:*`** (cap 16 FQDNs) and runs **`WHERE host = ANY(%s::text[])`** batches of 8 so Timescale uses host+time indexes (EXPLAIN ~**1.88e6** for 8 hosts). Empty Redis → soft-fail incomplete payload — **no** site-wide fallback.
+
+| Do | Don't |
+|----|-------|
+| Redis `recent_host:*` → cap ≤16 → `host = ANY` + 12h `GROUP BY type, event` in batches of 8 | Site-wide 12h `GROUP BY type, event` for Admin Monitor telemetry health |
+| Soft-fail when Redis inventory is empty | Fall back to unscoped type/event aggregate |
+
 **Anti-pattern — `time >= max(range_start)` as a “cheap” bound:** joining or filtering with **`max(range_start)` from `timescaledb_information.chunks`** still scans many chunks (cost ~**1.5e7** on hpcperfstats04). Prefer **`ORDER BY time DESC LIMIT 1`** in a short wall-clock window.
 
 **Anti-pattern — bare `redis-cli` without `-n N`:** Django cache `redis_location` often ends in **`/1`**. Bare `redis-cli` (or `redis-cli` without `-n`) defaults to **DB0**, which can be empty while **DB1** has hundreds of `recent_host:*` keys. Always:

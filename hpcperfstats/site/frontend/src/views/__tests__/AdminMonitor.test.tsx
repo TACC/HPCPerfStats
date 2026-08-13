@@ -281,6 +281,7 @@ describe("AdminMonitor", () => {
             ok_summary: {
               nonzero_type_event_pairs: 3,
               scanned_note: "Scanned pairs.",
+              hosts_sampled: 16,
             },
           },
         };
@@ -310,6 +311,8 @@ describe("AdminMonitor", () => {
     });
     expect(screen.getByText("user")).toBeInTheDocument();
     expect(screen.getByText("host_mem")).toBeInTheDocument();
+    expect(screen.getByText(/Bounded scan of non-error/i)).toBeInTheDocument();
+    expect(screen.getByText(/16 hosts/i)).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
         name: /Telemetry health \(12h\) — 1 all-zero, 1 missing/i,

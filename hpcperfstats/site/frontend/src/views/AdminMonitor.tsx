@@ -1205,13 +1205,19 @@ export default function AdminMonitor() {
               aria-busy={telemetryHealthSectionBusy || undefined}
             >
               <p className="text-sm text-muted-foreground">
-                Site-wide scan of non-error <code>host_data</code>{" "}
+                Bounded scan of non-error <code>host_data</code>{" "}
                 <code>(type, event)</code> pairs over the last{" "}
-                {telemetryHealth.window_hours ?? 12} hours. All-zero means rows
-                exist but every <code>value</code> and <code>arc</code> is zero.
-                Missing core types have no rows in the window. This is an
-                investigation signal after a monitor deploy, not a deployment
-                gate.
+                {telemetryHealth.window_hours ?? 12} hours, sampling recently
+                reporting hosts from Redis
+                {typeof telemetryHealth.ok_summary?.hosts_sampled === "number"
+                  ? ` (${telemetryHealth.ok_summary.hosts_sampled} host${
+                      telemetryHealth.ok_summary.hosts_sampled === 1 ? "" : "s"
+                    })`
+                  : ""}
+                . All-zero means rows exist but every <code>value</code> and{" "}
+                <code>arc</code> is zero. Missing core types have no rows in the
+                sampled window. This is an investigation signal after a monitor
+                deploy, not a deployment gate.
               </p>
               {telemetryHealth.timed_out || telemetryHealth.error ? (
                 <BannerErrorMessage

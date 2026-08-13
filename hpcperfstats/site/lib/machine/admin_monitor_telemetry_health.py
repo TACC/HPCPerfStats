@@ -1,13 +1,17 @@
 """
 Staff Admin Monitor telemetry-health scan over recent host_data.
 
-Reports site-wide (type, event) pairs that are all-zero over a bounded
-window and missing expected core monitor types. Excludes names containing
-``error`` (case-insensitive). Soft-fails on PostgreSQL statement timeout.
+Reports (type, event) pairs that are all-zero over a bounded window and
+missing expected core monitor types, scoped to a Redis ``recent_host``
+sample (not a site-wide hypertable GROUP BY). Excludes names containing
+``error`` (case-insensitive). Soft-fails on PostgreSQL statement timeout
+or an empty Redis inventory.
 
 Attributes:
   ALL_ZERO_RESULT_LIMIT: Max all-zero (type, event) rows returned.
   EXPECTED_CORE_TYPES: Small always-on CPU-node type list for missing checks.
+  HOST_BATCH_SIZE: Hosts per ``host = ANY`` SQL batch.
+  HOST_SAMPLE_LIMIT: Max Redis FQDNs included in the aggregate scan.
   STATEMENT_TIMEOUT_MS: Per-query PostgreSQL statement_timeout (milliseconds).
   WINDOW_HOURS: Lookback window for the aggregate scan.
   logger: Module logger for soft-fail warnings.
@@ -34,17 +38,26 @@ from hpcperfstats.site.lib.machine.cache_utils import (
     KEY_ADMIN_TELEMETRY_HEALTH,
     TIMEOUT_ADMIN_STATS,
 )
+from hpcperfstats.site.lib.machine.host_data_latest import (
+    list_recent_host_fqdns_from_redis,
+)
 
 logger = logging.getLogger(__name__)
 
-# Site-wide lookback for post-deploy "is the monitor emitting numbers?" checks.
+# Lookback for post-deploy "is the monitor emitting numbers?" checks.
 WINDOW_HOURS = 12
 
-# Bound each attempt; large sites may still time out — return timed_out soft-fail.
-STATEMENT_TIMEOUT_MS = 90_000
+# Bound each batch; host-scoped scans should finish well under this.
+STATEMENT_TIMEOUT_MS = 45_000
 
 # Caps response size only (does not reduce aggregate scan cost).
 ALL_ZERO_RESULT_LIMIT = 500
+
+# Cap Redis inventory sample (hpcperfstats04 EXPLAIN: 8 hosts ~1.88e6 cost).
+HOST_SAMPLE_LIMIT = 16
+
+# Hosts per ``host = ANY`` batch (two batches max at HOST_SAMPLE_LIMIT).
+HOST_BATCH_SIZE = 8
 
 # Deliberately small: types expected on every CPU node in this fleet.
 EXPECTED_CORE_TYPES: tuple[str, ...] = (
@@ -56,6 +69,10 @@ EXPECTED_CORE_TYPES: tuple[str, ...] = (
 )
 
 
+class EmptyRecentHostInventory(Exception):
+    """Raised when Redis has no ``recent_host:*`` FQDNs to sample."""
+
+
 def build_telemetry_health_payload(
     type_event_rows: Sequence[Mapping[str, Any]],
     *,
@@ -65,6 +82,7 @@ def build_telemetry_health_payload(
     expected_core_types: Sequence[str] | None = None,
     all_zero_limit: int | None = None,
     window_hours: int | None = None,
+    hosts_sampled: int | None = None,
 ) -> dict[str, Any]:
     """
     Build the Admin Monitor ``telemetry_health`` response from aggregate rows.
@@ -86,6 +104,8 @@ def build_telemetry_health_payload(
         ``ALL_ZERO_RESULT_LIMIT``.
       window_hours (int | None): Window hours reported in the payload; defaults
         to ``WINDOW_HOURS``.
+      hosts_sampled (int | None): Count of Redis FQDNs included in the scan;
+        included in ``ok_summary`` when not None.
 
     Returns:
       dict[str, Any]: Wire-ready ``telemetry_health`` mapping with
@@ -98,9 +118,12 @@ def build_telemetry_health_payload(
       ...     [{"type": "host_cpu", "event": "user", "row_count": 10,
       ...       "has_nonzero": False}],
       ...     computed_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+      ...     hosts_sampled=8,
       ... )
       >>> payload["all_zero_events"][0]["type"]
       'host_cpu'
+      >>> payload["ok_summary"]["hosts_sampled"]
+      8
       >>> payload["missing_core_types"]
       ['host_mem', 'host_block', 'host_net', 'host_numa']
     """
@@ -112,6 +135,34 @@ def build_telemetry_health_payload(
     when = computed_at or dj_timezone.now()
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
+
+    def _ok_summary(
+        *,
+        nonzero_pairs: int,
+        scanned_note: str,
+    ) -> dict[str, Any]:
+        """
+        Build the ``ok_summary`` mapping, optionally including sample size.
+
+        Args:
+          nonzero_pairs (int): Count of (type, event) pairs with a non-zero
+            sample.
+          scanned_note (str): Human-readable scan summary for the panel.
+
+        Returns:
+          dict[str, Any]: ``ok_summary`` wire fragment.
+
+        Examples:
+          >>> _ok_summary(nonzero_pairs=1, scanned_note="ok")["nonzero_type_event_pairs"]
+          1
+        """
+        summary: dict[str, Any] = {
+            "nonzero_type_event_pairs": nonzero_pairs,
+            "scanned_note": scanned_note,
+        }
+        if hosts_sampled is not None:
+            summary["hosts_sampled"] = int(hosts_sampled)
+        return summary
 
     if timed_out:
         return {
@@ -126,13 +177,13 @@ def build_telemetry_health_payload(
             "all_zero_events": [],
             "missing_core_types": [],
             "truncated": False,
-            "ok_summary": {
-                "nonzero_type_event_pairs": 0,
-                "scanned_note": (
+            "ok_summary": _ok_summary(
+                nonzero_pairs=0,
+                scanned_note=(
                     f"Scan timed out within {hours}h window; "
                     "expand again or refresh after load eases."
                 ),
-            },
+            ),
         }
 
     observed_types: set[str] = set()
@@ -168,14 +219,21 @@ def build_telemetry_health_payload(
         and not missing
         and nonzero_pairs > 0
     )
+    sample_suffix = ""
+    if hosts_sampled is not None:
+        sample_suffix = (
+            f" Sampled {int(hosts_sampled)} recently reporting host(s)."
+        )
     scanned_note = (
         f"Scanned non-error (type, event) pairs in the last {hours} hours; "
         f"{nonzero_pairs} pair(s) had at least one non-zero value or arc."
+        f"{sample_suffix}"
     )
     if healthy:
         scanned_note = (
             f"No all-zero or missing-core anomalies in the last {hours} hours "
             f"({nonzero_pairs} non-zero type/event pair(s))."
+            f"{sample_suffix}"
         )
 
     return {
@@ -186,10 +244,10 @@ def build_telemetry_health_payload(
         "all_zero_events": all_zero,
         "missing_core_types": missing,
         "truncated": truncated,
-        "ok_summary": {
-            "nonzero_type_event_pairs": nonzero_pairs,
-            "scanned_note": scanned_note,
-        },
+        "ok_summary": _ok_summary(
+            nonzero_pairs=nonzero_pairs,
+            scanned_note=scanned_note,
+        ),
     }
 
 
@@ -215,26 +273,98 @@ def _is_statement_timeout(exc: BaseException) -> bool:
     return "statement timeout" in text or "canceling statement" in text
 
 
-def _fetch_type_event_aggregates(*, window_hours: int) -> list[dict[str, Any]]:
+def _merge_type_event_batches(
+    batches: Sequence[Sequence[Mapping[str, Any]]],
+) -> list[dict[str, Any]]:
     """
-    Run the bounded ``host_data`` GROUP BY under statement_timeout.
+    Merge per-batch (type, event) aggregates by summing counts and OR-ing nonzero.
+
+    Args:
+      batches (Sequence[Sequence[Mapping[str, Any]]]): Rows from each
+        ``host = ANY`` batch query.
+
+    Returns:
+      list[dict[str, Any]]: Merged rows sorted by ``(type, event)``.
+
+    Examples:
+      >>> _merge_type_event_batches(
+      ...     [[{"type": "a", "event": "e", "row_count": 1, "has_nonzero": False}],
+      ...      [{"type": "a", "event": "e", "row_count": 2, "has_nonzero": True}]]
+      ... )
+      [{'type': 'a', 'event': 'e', 'row_count': 3, 'has_nonzero': True}]
+    """
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for batch in batches:
+        for row in batch:
+            type_name = str(row.get("type") or "")
+            event_name = str(row.get("event") or "")
+            key = (type_name, event_name)
+            existing = merged.get(key)
+            row_count = int(row.get("row_count") or 0)
+            has_nonzero = bool(row.get("has_nonzero"))
+            if existing is None:
+                merged[key] = {
+                    "type": type_name,
+                    "event": event_name,
+                    "row_count": row_count,
+                    "has_nonzero": has_nonzero,
+                }
+            else:
+                existing["row_count"] = int(existing["row_count"]) + row_count
+                existing["has_nonzero"] = bool(existing["has_nonzero"]) or has_nonzero
+    return [merged[k] for k in sorted(merged.keys())]
+
+
+def _fetch_type_event_aggregates(
+    *,
+    window_hours: int,
+    host_sample_limit: int | None = None,
+    host_batch_size: int | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """
+    Run Redis-scoped ``host_data`` GROUP BY batches under statement_timeout.
+
+    Reads FQDNs from Redis ``recent_host:*``, caps the sample, and queries
+    ``WHERE host = ANY(%s::text[])`` in batches so Timescale can use
+    host+time indexes. Does **not** fall back to a site-wide GROUP BY.
 
     Args:
       window_hours (int): Lookback hours for ``time >= now() - interval``.
+      host_sample_limit (int | None): Max FQDNs to sample; defaults to
+        ``HOST_SAMPLE_LIMIT``.
+      host_batch_size (int | None): Hosts per SQL batch; defaults to
+        ``HOST_BATCH_SIZE``.
 
     Returns:
-      list[dict[str, Any]]: Rows with ``type``, ``event``, ``row_count``,
-      ``has_nonzero``.
+      tuple[list[dict[str, Any]], int]: Merged rows with ``type``, ``event``,
+      ``row_count``, ``has_nonzero``, plus the number of hosts sampled.
 
     Raises:
+      EmptyRecentHostInventory: When Redis has no FQDN inventory.
       Exception: Propagates DB errors (including statement timeout) to the
         caller for soft-fail handling.
 
     Examples:
       >>> _fetch_type_event_aggregates(window_hours=12)  # doctest: +SKIP
-      [{'type': 'host_cpu', 'event': 'user', 'row_count': 1, 'has_nonzero': True}]
+      ([{'type': 'host_cpu', 'event': 'user', 'row_count': 1, 'has_nonzero': True}], 8)
     """
     hours = max(1, int(window_hours))
+    sample_limit = max(
+        1,
+        int(host_sample_limit if host_sample_limit is not None else HOST_SAMPLE_LIMIT),
+    )
+    batch_size = max(
+        1,
+        int(host_batch_size if host_batch_size is not None else HOST_BATCH_SIZE),
+    )
+    fqdns = sorted(set(list_recent_host_fqdns_from_redis()))
+    if not fqdns:
+        raise EmptyRecentHostInventory(
+            "No recent_host FQDN inventory in Redis; "
+            "telemetry health scan skipped (not a healthy signal)."
+        )
+    sampled = fqdns[:sample_limit]
+
     sql = """
         SELECT type,
                event,
@@ -243,13 +373,14 @@ def _fetch_type_event_aggregates(*, window_hours: int) -> list[dict[str, Any]]:
                  COALESCE(value, 0) <> 0 OR COALESCE(arc, 0) <> 0
                ) AS has_nonzero
         FROM host_data
-        WHERE time >= now() - (%s * INTERVAL '1 hour')
+        WHERE host = ANY(%s::text[])
+          AND time >= now() - (%s * INTERVAL '1 hour')
           AND type NOT ILIKE '%%error%%'
           AND event NOT ILIKE '%%error%%'
         GROUP BY type, event
         ORDER BY type, event
     """
-    rows: list[dict[str, Any]] = []
+    batches: list[list[dict[str, Any]]] = []
     using = getattr(connection, "alias", None) or "default"
     with transaction.atomic(using=using):
         with connection.cursor() as cursor:
@@ -258,25 +389,30 @@ def _fetch_type_event_aggregates(*, window_hours: int) -> list[dict[str, Any]]:
                 [STATEMENT_TIMEOUT_MS],
             )
             cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
-            cursor.execute(sql, [hours])
-            for type_name, event_name, row_count, has_nonzero in cursor.fetchall():
-                rows.append(
-                    {
-                        "type": type_name,
-                        "event": event_name,
-                        "row_count": int(row_count or 0),
-                        "has_nonzero": bool(has_nonzero),
-                    }
-                )
-    return rows
+            for i in range(0, len(sampled), batch_size):
+                chunk = sampled[i : i + batch_size]
+                cursor.execute(sql, [chunk, hours])
+                batch_rows: list[dict[str, Any]] = []
+                for type_name, event_name, row_count, has_nonzero in cursor.fetchall():
+                    batch_rows.append(
+                        {
+                            "type": type_name,
+                            "event": event_name,
+                            "row_count": int(row_count or 0),
+                            "has_nonzero": bool(has_nonzero),
+                        }
+                    )
+                batches.append(batch_rows)
+    return _merge_type_event_batches(batches), len(sampled)
 
 
 def compute_telemetry_health(*, force_refresh: bool = False) -> dict[str, Any]:
     """
     Compute (and optionally cache) Admin Monitor telemetry health.
 
-    On PostgreSQL timeout or other DB failure, returns a structured
-    ``timed_out`` / error payload instead of raising (HTTP 200 soft-fail).
+    On PostgreSQL timeout, empty Redis inventory, or other DB failure, returns
+    a structured ``timed_out`` / error payload instead of raising (HTTP 200
+    soft-fail). Never invents missing-core anomalies from a failed scan.
 
     Args:
       force_refresh (bool): When True, skip reading the Django cache entry
@@ -304,20 +440,39 @@ def compute_telemetry_health(*, force_refresh: bool = False) -> dict[str, Any]:
             payload = build_telemetry_health_payload(
                 [],
                 computed_at=computed_at,
+                hosts_sampled=0,
             )
         else:
-            aggregates = _fetch_type_event_aggregates(window_hours=WINDOW_HOURS)
+            aggregates, hosts_sampled = _fetch_type_event_aggregates(
+                window_hours=WINDOW_HOURS,
+            )
             payload = build_telemetry_health_payload(
                 aggregates,
                 computed_at=computed_at,
+                hosts_sampled=hosts_sampled,
             )
-    except Exception as exc:
-        logger.warning(
-            "admin_monitor telemetry_health query failed: %s",
-            exc,
-            exc_info=True,
+    except EmptyRecentHostInventory as exc:
+        logger.warning("admin_monitor telemetry_health skipped: %s", exc)
+        payload = build_telemetry_health_payload(
+            [],
+            computed_at=computed_at,
+            timed_out=True,
+            error=str(exc),
+            hosts_sampled=0,
         )
+    except Exception as exc:
         timed_out = _is_statement_timeout(exc)
+        if timed_out:
+            logger.warning(
+                "admin_monitor telemetry_health query failed: %s",
+                exc,
+            )
+        else:
+            logger.warning(
+                "admin_monitor telemetry_health query failed: %s",
+                exc,
+                exc_info=True,
+            )
         payload = build_telemetry_health_payload(
             [],
             computed_at=computed_at,

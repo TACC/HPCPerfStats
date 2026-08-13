@@ -17,9 +17,11 @@ globs: hpcperfstats/site/lib/machine/api.py,hpcperfstats/site/lib/machine/job_pl
 - Direct `host_data` reads are allowed only for:
   - ingest/sync scripts and metrics/update pipelines,
   - **staff** monitor paths (`job monitor`, `admin monitor`, and related monitor diagnostics),
-    including Admin Monitor `?section=telemetry_health` (bounded 12h
-    all-zero / missing-core aggregate with `SET LOCAL statement_timeout`,
-    Django cache key `KEY_ADMIN_TELEMETRY_HEALTH`, soft-fail on timeout),
+    including Admin Monitor `?section=telemetry_health` (Redis
+    ``recent_host:*``-scoped, host-batched 12h aggregate with
+    ``host = ANY`` + ``SET LOCAL statement_timeout``, Django cache key
+    ``KEY_ADMIN_TELEMETRY_HEALTH``, soft-fail on timeout or empty Redis
+    inventory — **not** a site-wide ``GROUP BY type, event``),
   - **`host_plot`** (authenticated users; live `HostDataProvider` — rarely used; harden statement timeouts; do **not** convert to prewarm in the same task as Job Detail plots).
 
 ## Required implementation behavior

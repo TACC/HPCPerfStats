@@ -149,3 +149,28 @@ def test_format_host_data_newest_iso():
   assert host_data_latest.format_host_data_newest_iso(None) is None
   dt = datetime(2026, 8, 4, 0, 55, tzinfo=dt_timezone.utc)
   assert "2026-08-04" in host_data_latest.format_host_data_newest_iso(dt)
+
+
+@pytest.mark.machine_unit_mock
+def test_list_recent_host_fqdns_from_redis_filters_fqdns(monkeypatch):
+  class FakeClient:
+    def scan_iter(self, match=None, count=None):
+      assert match == "recent_host:*"
+      yield b"recent_host:c101-001.example.com"
+      yield "recent_host:shortname"
+      yield "recent_host:c102-002.example.com"
+      yield "other:key"
+
+  monkeypatch.setattr(
+      host_data_latest,
+      "_get_redis_py_client",
+      lambda: FakeClient(),
+  )
+  out = host_data_latest.list_recent_host_fqdns_from_redis()
+  assert out == ["c101-001.example.com", "c102-002.example.com"]
+
+
+@pytest.mark.machine_unit_mock
+def test_list_recent_host_fqdns_from_redis_empty_without_client(monkeypatch):
+  monkeypatch.setattr(host_data_latest, "_get_redis_py_client", lambda: None)
+  assert host_data_latest.list_recent_host_fqdns_from_redis() == []

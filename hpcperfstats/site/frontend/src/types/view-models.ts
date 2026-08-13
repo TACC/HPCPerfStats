@@ -41,6 +41,7 @@ export type AdminMonitorTelemetryHealth = {
   ok_summary?: {
     nonzero_type_event_pairs?: number;
     scanned_note?: string;
+    hosts_sampled?: number;
   };
 };
 

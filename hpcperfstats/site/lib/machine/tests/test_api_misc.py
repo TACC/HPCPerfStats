@@ -199,16 +199,13 @@ class TestAdminMonitorHostStatsTimeout:
       return_value={"c1.example.org": last},
     ) as mock_lateral, patch(
       "hpcperfstats.site.lib.machine.api.latest_sample_time_by_host_in_window",
-    ) as mock_window, patch(
-      "hpcperfstats.site.lib.machine.api.host_data.objects.filter",
-    ) as mock_filter:
+    ) as mock_window:
       response = api.admin_monitor(request)
 
     assert response.status_code == 200
     assert response.data["host_stats"][0]["host"] == "c1.example.org"
     mock_lateral.assert_called_once_with(["c1.example.org"])
     mock_window.assert_not_called()
-    mock_filter.assert_not_called()
 
 
 @pytest.mark.django_db(databases=[])

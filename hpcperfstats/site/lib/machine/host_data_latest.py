@@ -5,8 +5,10 @@ Avoid multi-day ``GROUP BY host, max(time)`` over the hypertable — that path
 scans hundreds of millions of rows on large sites (Admin Monitor hang).
 
 Attributes:
-  HOST_DATA_FRESHNESS_WINDOW: Attribute.
-  HOST_LAST_TIME_LOOKUP_BATCH: Attribute.
+  HOST_DATA_FRESHNESS_WINDOW: Default Admin Monitor freshness lookback
+    (3 hours).
+  HOST_LAST_TIME_LOOKUP_BATCH: Hosts per LATERAL batch for per-host max
+    probes.
 """
 from __future__ import annotations
 
@@ -18,7 +20,59 @@ from django.db import connections, transaction
 from django.db.models import Max
 from django.utils import timezone
 
+from hpcperfstats.site.lib.machine.cache_utils import _get_redis_py_client
 from hpcperfstats.site.lib.machine.models import host_data
+
+
+def list_recent_host_fqdns_from_redis() -> list[str]:
+    """
+    Return FQDNs from Django-cache Redis ``recent_host:*`` keys.
+
+    listend writes ``recent_host:<fqdn>`` into the cache Redis DB. Keys whose
+    host portion lacks a ``.`` (not an FQDN) are skipped. On Redis errors or a
+    missing client, returns an empty list.
+
+    Returns:
+      list[str]: Distinct FQDNs discovered via ``SCAN``, order undefined.
+
+    Examples:
+      >>> list_recent_host_fqdns_from_redis()  # doctest: +SKIP
+      ['c101-001.example.com']
+    """
+    hosts: list[str] = []
+
+    def _decode_key(raw_key: Any) -> str:
+        """
+        Decode a Redis key to a UTF-8 string for ``recent_host:`` parsing.
+
+        Args:
+          raw_key (Any): Raw SCAN key (bytes or str).
+
+        Returns:
+          str: Decoded key text.
+
+        Examples:
+          >>> _decode_key(b"recent_host:a.example.com")
+          'recent_host:a.example.com'
+        """
+        if isinstance(raw_key, bytes):
+            return raw_key.decode("utf-8", "replace")
+        return str(raw_key)
+
+    try:
+        client = _get_redis_py_client()
+        if client is None or not hasattr(client, "scan_iter"):
+            return hosts
+        for key in client.scan_iter(match="recent_host:*", count=1000):
+            key_str = _decode_key(key)
+            if not key_str.startswith("recent_host:"):
+                continue
+            host = key_str.split("recent_host:", 1)[1]
+            if host and "." in host:
+                hosts.append(host)
+    except Exception:
+        return []
+    return hosts
 
 # PostgreSQL uses a per-host LATERAL + LIMIT 1 (index probe on (host, time))
 # inside a short transaction with parallel workers disabled for the probe.
