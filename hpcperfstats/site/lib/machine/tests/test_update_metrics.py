@@ -4541,3 +4541,149 @@ def test_prewarm_stall_recycles_pool_and_keeps_partial_results(monkeypatch):
   # One partial success recorded + one soft-fail for unfinished.
   assert soft_fails.count(True) == 1
   assert soft_fails.count(False) == 1
+
+
+@pytest.mark.machine_unit_mock
+def test_maybe_reap_metrics_main_zombie_children_throttles(monkeypatch):
+  """Local throttle must skip shared waitpid within the interval."""
+  calls = []
+
+  def _reap(*, context=""):
+    calls.append(context)
+    return [1]
+
+  monkeypatch.setattr(update_metrics, "reap_zombie_children_of_self", _reap)
+  monkeypatch.setattr(update_metrics, "warn_unreaped_zombie_children", lambda **k: None)
+  monkeypatch.setattr(update_metrics, "_METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S", 60.0)
+  monkeypatch.setattr(update_metrics, "_last_metrics_main_zombie_reap_mono", 0.0)
+  assert update_metrics._maybe_reap_metrics_main_zombie_children(context="first") is True
+  assert update_metrics._maybe_reap_metrics_main_zombie_children(context="second") is False
+  assert calls == ["first"]
+
+
+@pytest.mark.machine_unit_mock
+def test_scheduler_empty_pass_invokes_metrics_zombie_reap(monkeypatch):
+  """Empty ready-queue idle path must invoke throttled metrics [main] zombie reap."""
+  hygiene_contexts = []
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+  monkeypatch.setattr(
+      update_metrics,
+      "_run_public_ef_artifacts_parallel_phase",
+      lambda *_a, **_k: {
+          "degraded": 0,
+          "worker_exceptions": 0,
+          "watchdog_timeouts": 0,
+          "pending_tasks": 0,
+      },
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_maybe_reap_metrics_main_zombie_children",
+      lambda *, context="": hygiene_contexts.append(context) or True,
+  )
+  monkeypatch.setattr(update_metrics, "_log_metrics_window_census", lambda *a, **k: None)
+  monkeypatch.setattr(update_metrics, "STALL_EXIT_AFTER_SECONDS", 0.05)
+
+  def _empty_producer(**kwargs):
+    class _DoneProducer:
+      def join(self, timeout=None):
+        del timeout
+
+    # Leave ready_queue empty; delay producer_done so the consumer hits empty_pass.
+    def _finish():
+      time.sleep(0.08)
+      kwargs["producer_done"].set()
+
+    threading.Thread(target=_finish, daemon=True).start()
+    return _DoneProducer()
+
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _empty_producer)
+  monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *a, **k: object())
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _c: iter([]))
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def reset_pool_hard(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      raise AssertionError("metrics run should not run on empty readiness")
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  try:
+    update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  except update_metrics.MetricsSchedulerStallExit:
+    pass
+  assert "empty_pass" in hygiene_contexts
+
+
+@pytest.mark.machine_unit_mock
+def test_compute_batch_start_invokes_metrics_zombie_reap(monkeypatch):
+  """Compute-batch start must invoke throttled metrics [main] zombie reap."""
+  hygiene_contexts = []
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _enqueue_chunks_from_date_states)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+  monkeypatch.setattr(
+      update_metrics,
+      "_run_public_ef_artifacts_parallel_phase",
+      lambda *_a, **_k: {
+          "degraded": 0,
+          "worker_exceptions": 0,
+          "watchdog_timeouts": 0,
+          "pending_tasks": 0,
+      },
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_maybe_reap_metrics_main_zombie_children",
+      lambda *, context="": hygiene_contexts.append(context) or True,
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_compute_jid_outcomes_batch",
+      lambda *a, **k: [{"jid": 1001, "ok": True, "metrics_s": 0.0, "prewarm_s": 0.0}],
+  )
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
+  monkeypatch.setattr(update_metrics, "_jobs_queryset", lambda *a, **k: object())
+  monkeypatch.setattr(
+      update_metrics,
+      "_iter_chunked_pks",
+      lambda qs, _chunk: iter([([1001], 1)]),
+  )
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def reset_pool_hard(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      return []
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
+  update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  assert "compute_batch_start" in hygiene_contexts

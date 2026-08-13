@@ -67,6 +67,7 @@ If the failure reveals a **recurring** gap (not a one-off typo), also add a one-
 - Querying `timescaledb_information.hypertable_compression_stats` as a view — **`relation does not exist`**; use function `hypertable_compression_stats('host_data')` (valid 2.17–2.28.2 on this fleet; see **Anti-pattern — `timescaledb_information.hypertable_compression_stats` is not a view** in `compose-operator-terminal-commands.mdc`).
 - **`rabbitmqctl … 2>/dev/null`** (or `rabbitmq-plugins … 2>/dev/null`) — empty status/plugins/queue pastes while listeners still show (hpcperfstats04 2026-08-03); keep stderr (`2>&1`) — see **Anti-pattern — `rabbitmqctl … 2>/dev/null`** in `compose-operator-terminal-commands.mdc`.
 - **`exec rabbitmq sh -lc 'rabbitmqctl …'`** — **`rabbitmqctl: not found`** (hpcperfstats04 2026-08-11); login `PATH` omits RabbitMQ sbin. Use **`exec rabbitmq rabbitmqctl list_queues name messages consumers`** with no wrapping shell (see **Anti-pattern — `exec rabbitmq sh -lc 'rabbitmqctl…'`** in `compose-operator-terminal-commands.mdc`).
+- Host mega-block nesting `su -c 'python && sh -lc && python'` plus host logs — shell stuck at `>` continuation; no census/fingerprint/logs (hpcperfstats04 2026-08-12); use **four separate** host-side blocks (see **Podman-compose sites** mega-block row in `compose-operator-terminal-commands.mdc`).
 
 ## Same-task checklist
 

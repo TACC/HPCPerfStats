@@ -71,6 +71,8 @@ Attributes:
   _COVERAGE_DEFER_LOGGED_CAP: Attribute.
   _COVERAGE_MARGIN_WARN_CAP_SECONDS: Attribute.
   _COVERAGE_MARGIN_WARN_LOGGED: Attribute.
+  _METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S: Attribute.
+  _last_metrics_main_zombie_reap_mono: Attribute.
 """
 from __future__ import annotations
 
@@ -133,6 +135,10 @@ from hpcperfstats.dbload.lib.db_unavailable import (
 )
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.date_utils import log_date_range, parse_start_end_dates
+from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
+    reap_zombie_children_of_self,
+    warn_unreaped_zombie_children,
+)
 from hpcperfstats.dbload.lib.shutdown_utils import (
     shutdown_requested,
     send_sigchld_to_parent,
@@ -229,6 +235,75 @@ STRICT_READINESS_DB_LOCK_TIMEOUT_MS = int(
 
 # Non-zero exit so supervisord ``autorestart`` replaces a wedged scheduler pass.
 METRICS_SCHEDULER_STALL_EXIT_CODE = 1
+
+# Throttled idle/batch hygiene for ``update_metrics.py [main]`` zombies left by
+# pool attrition between ``reset_pool_hard`` calls (Branch Z-H2 metrics analogue).
+_METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S = 60.0
+_last_metrics_main_zombie_reap_mono = 0.0
+
+
+def _reap_metrics_main_zombie_children(*, context: str = "metrics_main") -> Any:
+  """
+  Waitpid zombie children of ``update_metrics.py [main]`` and warn if any remain.
+
+  Prefer PID-specific shared ``reap_zombie_children_of_self`` over ``waitpid(-1)``
+  so live Pool/Manager waits are not stolen. Fault-isolates reap vs warn so one
+  failure cannot skip the other.
+
+  Args:
+    context (str): Log token (for example ``empty_pass`` or ``compute_batch_start``).
+
+  Returns:
+    Any: List of reaped PIDs from ``reap_zombie_children_of_self``, or ``[]`` on
+    reap failure.
+
+  Examples:
+    >>> _reap_metrics_main_zombie_children(context="unit")  # doctest: +SKIP
+  """
+  reaped: Any = []
+  try:
+    reaped = reap_zombie_children_of_self(context=context)
+  except Exception as exc:
+    log_print(
+        "WARN: metrics main zombie reap failed context={0} err={1}: {2}".format(
+            context, type(exc).__name__, exc
+        ),
+        flush=True,
+    )
+  try:
+    warn_unreaped_zombie_children(context=context)
+  except Exception as exc:
+    log_print(
+        "WARN: metrics main unreaped-zombie warn failed context={0} "
+        "err={1}: {2}".format(context, type(exc).__name__, exc),
+        flush=True,
+    )
+  return reaped
+
+
+def _maybe_reap_metrics_main_zombie_children(
+  *,
+  context: str = "throttled",
+) -> bool:
+  """
+  Run metrics ``[main]`` zombie hygiene at most once per reap interval.
+
+  Args:
+    context (str): Log token forwarded to ``_reap_metrics_main_zombie_children``.
+
+  Returns:
+    bool: ``True`` when hygiene ran; ``False`` when the throttle skipped it.
+
+  Examples:
+    >>> _maybe_reap_metrics_main_zombie_children(context="empty_pass")  # doctest: +SKIP
+  """
+  global _last_metrics_main_zombie_reap_mono
+  now_mono = time.monotonic()
+  if now_mono - _last_metrics_main_zombie_reap_mono < _METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S:
+    return False
+  _last_metrics_main_zombie_reap_mono = now_mono
+  _reap_metrics_main_zombie_children(context=context)
+  return True
 
 
 class MetricsSchedulerStallExit(BaseException):
@@ -5806,6 +5881,7 @@ def update_metrics_for_dates(
               stats["ready_dequeued_total"] += len(jobs_this_round)
               stats["inflight_jids"] += len(jobs_this_round)
           if not jobs_this_round:
+            _maybe_reap_metrics_main_zombie_children(context="empty_pass")
             if _maybe_trigger_consumer_stall_exit(
                 stats, consumer_stall_since, scheduler_shared_lock,
             ):
@@ -5892,6 +5968,7 @@ def update_metrics_for_dates(
             continue
           stall_iters = 0
           job_refs = _job_refs_from_jids(jobs_this_round)
+          _maybe_reap_metrics_main_zombie_children(context="compute_batch_start")
           log_print(
               "metrics scheduler: compute batch starting size={0} inflight_jids={1} batch_cap={2}".format(
                   len(job_refs),
@@ -6537,7 +6614,20 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
     # Close DB connections before long sleep to avoid idle connections.
     close_old_connections()
     connections.close_all()
-    sleep_until_shutdown(600)
+
+    def _idle_sleep_hygiene_tick() -> None:
+      """
+      Throttled ``[main]`` zombie reap during post-pass idle sleep.
+
+      Returns:
+        None
+
+      Examples:
+        >>> _idle_sleep_hygiene_tick()  # doctest: +SKIP
+      """
+      _maybe_reap_metrics_main_zombie_children(context="idle_sleep_after_pass")
+
+    sleep_until_shutdown(600, on_tick=_idle_sleep_hygiene_tick)
   return 0
 
 
