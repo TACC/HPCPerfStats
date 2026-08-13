@@ -44,7 +44,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_debug_shm_emit_golden.c` | Golden regression for assembled `@fast`/`@full` sample payloads via debug shm (`tests/expected/debug_shm_*.txt`; DEBUG + RabbitMQ) |
 | `test_debug_shm_schema_mirror.c` | `schema` shm file + `stats_buffer_debug_shm_schema_wanted` gating (DEBUG) |
 | `test_shm_message_correctness.sh` | Python validator on `tests/expected/synthetic_fixture/`; optional slug goldens (exit 77 skip) |
-| `scripts/emit_build_capabilities.py` | Writes `monitor-build-capabilities.json` + `capability_slug` (`make capabilities`) |
+| `scripts/emit_build_capabilities.py` | Writes `monitor-build-capabilities.json` + `capability_slug` and `MONITOR_CAPABILITY_SLUG` header (`make capabilities` / `BUILT_SOURCES`) |
 | `scripts/build_message_expectations.py` | Host probes + shm `schema` → `expectations_<slug>.json` |
 | `scripts/validate_shm_messages.py` | Validates shm `schema`/`fast`/`full` against expectations manifest; live `--cross-sample-check` injects brief host stimulus by default (`--no-cross-sample-stimulus` to disable) |
 | `test_stats_runtime_collect.c` | `stats_runtime_collect_cycle`, `stats_schema_key_active_this_phase` |

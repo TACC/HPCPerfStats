@@ -14,6 +14,16 @@ endif
 
 bin_PROGRAMS = hpcperfstatsd
 
+# Compile-time capability_slug for $build banner (same algorithm as make capabilities).
+BUILT_SOURCES = monitor_capability_slug.h
+CLEANFILES = monitor_capability_slug.h
+monitor_capability_slug.h: $(top_srcdir)/scripts/emit_build_capabilities.py
+	$(AM_V_GEN)python3 "$(abs_top_srcdir)/scripts/emit_build_capabilities.py" \
+	  --build-dir "$(top_builddir)" \
+	  --tier "$${CAPABILITIES_TIER:-slowtier1}" \
+	  --header "$(abs_builddir)/monitor_capability_slug.h" \
+	  --skip-json
+
 STATS_DIR_PATH = /var/log/hpcperfstats
 STATS_LOCK_PATH = /var/lock/hpcperfstats
 JOBID_FILE_PATH = /var/run/stats_jobid

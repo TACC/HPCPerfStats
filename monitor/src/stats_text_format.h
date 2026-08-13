@@ -28,7 +28,7 @@ void stats_format_emit_property_banner(stats_format_emit_fn emit, void *opaque, 
                                        const char *prog, const char *vers, const char *nodename,
                                        const char *sysname, const char *machine,
                                        const char *release, const char *version,
-                                       unsigned long long uptime);
+                                       unsigned long long uptime, const char *capability_slug);
 
 void stats_format_emit_schema_line(stats_format_emit_fn emit, void *opaque, int schema_char,
                                    struct stats_type *type);

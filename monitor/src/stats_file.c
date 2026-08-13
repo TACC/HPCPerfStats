@@ -17,6 +17,14 @@
 #include "fileio.h"
 #include "path_open_fail_once.h"
 #include "string1.h"
+#if defined(__has_include)
+#if __has_include("monitor_capability_slug.h")
+#include "monitor_capability_slug.h"
+#endif
+#endif
+#ifndef MONITOR_CAPABILITY_SLUG
+#define MONITOR_CAPABILITY_SLUG ""
+#endif
 
 #define SF_SCHEMA_CHAR '!'
 #define SF_DEVICES_CHAR '@'
@@ -50,7 +58,8 @@ static void stats_file_write_property_banner(struct stats_file *sf)
 
   stats_format_emit_property_banner(stats_file_emit, sf, SF_PROPERTY_CHAR, STATS_PROGRAM,
                                     STATS_VERSION, uts_buf.nodename, uts_buf.sysname,
-                                    uts_buf.machine, uts_buf.release, uts_buf.version, uptime);
+                                    uts_buf.machine, uts_buf.release, uts_buf.version, uptime,
+                                    MONITOR_CAPABILITY_SLUG);
 }
 
 static int sf_rd_dispatch_header_line(struct stats_file *sf, char *first, char *line, int line_nr)

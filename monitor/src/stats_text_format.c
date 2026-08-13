@@ -76,7 +76,7 @@ void stats_format_emit_property_banner(stats_format_emit_fn emit, void *opaque, 
                                        const char *prog, const char *vers, const char *nodename,
                                        const char *sysname, const char *machine,
                                        const char *release, const char *version,
-                                       unsigned long long uptime)
+                                       unsigned long long uptime, const char *capability_slug)
 {
   if (emit == NULL)
     return;
@@ -87,6 +87,8 @@ void stats_format_emit_property_banner(stats_format_emit_fn emit, void *opaque, 
        machine != NULL ? machine : "", release != NULL ? release : "",
        version != NULL ? version : "");
   emit(opaque, "%cuptime %llu\n", prop_char, (unsigned long long)uptime);
+  if (capability_slug != NULL && capability_slug[0] != '\0')
+    emit(opaque, "%cbuild %s\n", prop_char, capability_slug);
 }
 
 static void stats_format_emit_one_schema_entry(stats_format_emit_fn emit, void *opaque,

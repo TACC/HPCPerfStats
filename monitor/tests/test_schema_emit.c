@@ -1,3 +1,4 @@
+/* Unit tests for stats_format_emit_* banner/schema/mark helpers. */
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -29,18 +30,42 @@ static void capture_emit(void *opaque, const char *fmt, ...)
 static void test_emit_property_banner(void)
 {
   struct emit_capture cap;
+  const char *first_nl;
+  const char *second_nl;
 
   memset(&cap, 0, sizeof(cap));
   stats_format_emit_property_banner(capture_emit, &cap, '$', "hpcperfstats", "1.2.3", "node1",
-                                    "Linux", "aarch64", "6.1.0", "#1", 12345ULL);
+                                    "Linux", "aarch64", "6.1.0", "#1", 12345ULL,
+                                    "x86_64-ver3.0-debug-slowtier1");
   assert(strstr(cap.buf, "$hpcperfstats 1.2.3\n") != NULL);
   assert(strstr(cap.buf, "$hostname node1\n") != NULL);
   assert(strstr(cap.buf, "$uname Linux aarch64 6.1.0 #1\n") != NULL);
   assert(strstr(cap.buf, "$uptime 12345\n") != NULL);
+  assert(strstr(cap.buf, "$build x86_64-ver3.0-debug-slowtier1\n") != NULL);
+  /* listend host is second $ line */
+  first_nl = strchr(cap.buf, '\n');
+  assert(first_nl != NULL);
+  second_nl = strchr(first_nl + 1, '\n');
+  assert(second_nl != NULL);
+  assert(strncmp(first_nl + 1, "$hostname ", 10) == 0);
 
   cap.len = 0;
   cap.buf[0] = '\0';
-  stats_format_emit_property_banner(NULL, &cap, '$', "x", "y", "z", "L", "m", "r", "v", 0ULL);
+  stats_format_emit_property_banner(capture_emit, &cap, '$', "hpcperfstats", "1.2.3", "node1",
+                                    "Linux", "aarch64", "6.1.0", "#1", 12345ULL, NULL);
+  assert(strstr(cap.buf, "$uptime 12345\n") != NULL);
+  assert(strstr(cap.buf, "$build") == NULL);
+
+  cap.len = 0;
+  cap.buf[0] = '\0';
+  stats_format_emit_property_banner(capture_emit, &cap, '$', "hpcperfstats", "1.2.3", "node1",
+                                    "Linux", "aarch64", "6.1.0", "#1", 12345ULL, "");
+  assert(strstr(cap.buf, "$build") == NULL);
+
+  cap.len = 0;
+  cap.buf[0] = '\0';
+  stats_format_emit_property_banner(NULL, &cap, '$', "x", "y", "z", "L", "m", "r", "v", 0ULL,
+                                    "slug");
   assert(cap.len == 0);
 }
 

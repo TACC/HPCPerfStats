@@ -18,6 +18,7 @@ from lib.golden_diff import (  # noqa: E402
     resolve_optin_golden_dir,
 )
 from lib.listend_contract import (  # noqa: E402
+    listend_capability_slug_from_schema,
     listend_host_from_schema,
     validate_schema_listend_contract,
 )
@@ -400,6 +401,41 @@ class ListendContractTests(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             validate_schema_listend_contract(bad, manifest)
         self.assertIn("wrong_host", str(ctx.exception))
+
+    def test_missing_build_ok(self) -> None:
+        """Synthetic fixture has no $build; validators must tolerate absence."""
+        manifest = _load_manifest()
+        schema = (SYNTHETIC / "schema").read_text(encoding="utf-8")
+        self.assertIsNone(listend_capability_slug_from_schema(schema))
+        validate_schema_listend_contract(schema, manifest)
+
+    def test_build_slug_mismatch_fails(self) -> None:
+        manifest = _load_manifest()
+        schema = (SYNTHETIC / "schema").read_text(encoding="utf-8")
+        with_build = schema.replace(
+            "$uptime 1000\n",
+            "$uptime 1000\n$build wrong-slug\n",
+        )
+        man = dict(manifest)
+        man["capability_slug"] = "expected-slug"
+        with self.assertRaises(ValueError) as ctx:
+            validate_schema_listend_contract(with_build, man)
+        self.assertIn("$build", str(ctx.exception))
+
+    def test_build_slug_match_ok(self) -> None:
+        manifest = _load_manifest()
+        schema = (SYNTHETIC / "schema").read_text(encoding="utf-8")
+        slug = manifest.get("capability_slug") or "synthetic_debug_tier1"
+        with_build = schema.replace(
+            "$uptime 1000\n",
+            f"$uptime 1000\n$build {slug}\n",
+        )
+        man = dict(manifest)
+        man["capability_slug"] = slug
+        self.assertEqual(listend_capability_slug_from_schema(with_build), slug)
+        validate_schema_listend_contract(with_build, man)
+        # Host still second $ line
+        self.assertEqual(listend_host_from_schema(with_build), "golden_host")
 
 
 class PlausibilityTests(unittest.TestCase):
@@ -1225,6 +1261,15 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
         self.assertIn("-ib-", f"-{slug}-")
         self.assertIn("-opa-", f"-{slug}-")
         self.assertIn("-nvgpu-", f"-{slug}-")
+
+    def test_write_header_matches_slug(self) -> None:
+        slug = "x86_64-ver3.0-debug-hw-slowtier1"
+        with tempfile.TemporaryDirectory() as td:
+            hdr = Path(td) / "monitor_capability_slug.h"
+            ebc.write_capability_slug_header(hdr, slug)
+            text = hdr.read_text(encoding="utf-8")
+            self.assertIn(f'#define MONITOR_CAPABILITY_SLUG "{slug}"', text)
+            self.assertIn("MONITOR_CAPABILITY_SLUG_H_", text)
 
     def test_slug_includes_beegfs(self) -> None:
         slug = ebc.build_capability_slug(

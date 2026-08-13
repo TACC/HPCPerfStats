@@ -21,6 +21,14 @@
 #include "stats_buffer_rmq_internal.h"
 #include "stats_buffer_uts.h"
 #include "stats_text_format.h"
+#if defined(__has_include)
+#if __has_include("monitor_capability_slug.h")
+#include "monitor_capability_slug.h"
+#endif
+#endif
+#ifndef MONITOR_CAPABILITY_SLUG
+#define MONITOR_CAPABILITY_SLUG ""
+#endif
 #include "trace.h"
 #include "monitor_log.h"
 #include "pscanf.h"
@@ -86,7 +94,7 @@ int stats_wr_hdr(struct stats_buffer *sf)
 
   stats_format_emit_property_banner(stats_buf_emit, sf, SF_PROPERTY_CHAR, STATS_PROGRAM,
                                     STATS_VERSION, uts->nodename, uts->sysname, uts->machine,
-                                    uts->release, uts->version, uptime);
+                                    uts->release, uts->version, uptime, MONITOR_CAPABILITY_SLUG);
 
   {
     size_t i = 0;

@@ -27,13 +27,15 @@ alwaysApply: false
 
 ## Capability slug
 
-- Emitted by `scripts/emit_build_capabilities.py` → `<builddir>/monitor-build-capabilities.json`.
-- `make capabilities` in configured build tree; `build_static_bundle.sh` invokes unless `SKIP_CAPABILITIES=1`.
+- Emitted by `scripts/emit_build_capabilities.py` → `<builddir>/monitor-build-capabilities.json` **and** compile-time header `<builddir>/src/monitor_capability_slug.h` (`MONITOR_CAPABILITY_SLUG`).
+- **On the wire:** `$` property banner includes `$build {capability_slug}` (after `$uptime`) on RabbitMQ schema rotation and DEBUG shm `schema` (shared `stats_format_emit_property_banner`). Missing `$build` is consumer-tolerant (old daemons).
+- Slug must match JSON `capability_slug` for that build — **do not invent a second algorithm**.
+- `make capabilities` in configured build tree; `BUILT_SOURCES` regenerates the header before linking `hpcperfstatsd`; `build_static_bundle.sh` invokes `make capabilities` unless `SKIP_CAPABILITIES=1`.
 - Slug tokens (omit absent): `arch`, `ver`, `debug`, `hw`, `ib`, `ibdyn`, `nvgpu`, `amdgpu`, `intelgpu`, `lustre`, `opa`, `opadyn`, `dcgm|likwid|none`, `slowtier0|slowtier1`.
 - Stampede3 fleet signature → JSON `fleet: "stampede3"` when `ib_mad_dlopen` + `opa_mad_dlopen` + `intel_gpu` and not `amd_gpu` (not a slug token).
 - **Fixtures** use slug in filename: `expectations_<slug>.json`, `tests/expected/shm_{schema,fast,full}_<slug>.txt`.
 - **Profile-scoped** (Stampede3 one-binary × queue): `expectations_<slug>__<profile>.json`, `shm_*_<slug>__<profile>.txt` — profile is host/run identity, not compile identity.
-- Validator **layer 0**: manifest slug must match capabilities JSON; exit 2 on mismatch.
+- Validator **layer 0**: manifest slug must match capabilities JSON; exit 2 on mismatch. Optional `$build` in schema body must match manifest when present.
 - CI/integration: **exit 77 skip** when no goldens for live slug — never fall back to generic golden.
 
 ## TACC LSPCI profile fixtures

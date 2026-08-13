@@ -15,6 +15,10 @@ other properties to be specified.
     $hostname i101-101.ranger.tacc.utexas.edu
     $uname Linux x86_64 2.6.18-194.32.1.el5_TACC #18 SMP Mon Mar 14 22:24:19 CDT 2011
     $uptime 4753669
+    $build x86_64-ver3.0-debug-hw-ib-likwid-slowtier1
+
+`$build {capability_slug}` is optional on older archives; when present it matches
+`make capabilities` / `monitor-build-capabilities.json` for that binary.
 
 These are followed by schema descriptors for each of the types collected:
 

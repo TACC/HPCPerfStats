@@ -430,8 +430,12 @@ Opt-in golden: `GOLDEN_CHECK=1` or `GOLDEN_DIR=auto`.
 
 **Capability slug** — `monitor-build-capabilities.json` includes
 `capability_slug` (compile flags + `slowtier0`/`slowtier1`; Stampede3 fleet may
-add `ibdyn`/`opadyn`/`intelgpu` and `fleet: "stampede3"`). Golden fixtures
-and expectations must use the same slug in filenames
+add `ibdyn`/`opadyn`/`intelgpu` and `fleet: "stampede3"`). The same slug is
+embedded at compile time (`src/monitor_capability_slug.h` via `BUILT_SOURCES` /
+`emit_build_capabilities.py`) and emitted on the shared `$` property banner as
+**`$build {capability_slug}`** (after `$uptime`) for RabbitMQ schema rotation and
+DEBUG shm `schema`. Consumers may omit parsing when `$build` is absent (old
+daemons). Golden fixtures and expectations must use the same slug in filenames
 (`tests/expected/shm_*_<slug>.txt`, `expectations_<slug>.json`; optional
 `__<profile>` suffix for multi-queue fleet validates). CI runs
 `tests/test_shm_message_correctness.sh` (synthetic fixture always; live slug
