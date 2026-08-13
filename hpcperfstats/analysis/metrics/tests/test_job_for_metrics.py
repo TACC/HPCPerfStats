@@ -541,14 +541,13 @@ def test_metrics_run_stall_with_owned_pool_raises_when_no_partial_outcomes(monke
   assert excinfo.value.pool_reset_confirmed is True
 
 
-def test_reset_pool_hard_detaches_pool_before_background_terminate(monkeypatch):
-  terminate_started = threading.Event()
-  terminate_release = threading.Event()
+def test_reset_pool_hard_terminates_synchronously_after_detach(monkeypatch):
+  calls = {"terminate": 0}
 
-  def slow_terminate(active_pool, timeout_s):
-    terminate_started.set()
-    terminate_release.wait(timeout=5.0)
-    return False
+  def sync_terminate(active_pool, timeout_s):
+    del active_pool, timeout_s
+    calls["terminate"] += 1
+    return True
 
   class _Pool:
     def terminate(self):
@@ -560,13 +559,31 @@ def test_reset_pool_hard_detaches_pool_before_background_terminate(monkeypatch):
   m = metrics.Metrics()
   m._shared_pool = pool
   m._shared_pool_kind = "metrics-pool"
-  monkeypatch.setattr(metrics, "_terminate_pool_bounded", slow_terminate)
+  monkeypatch.setattr(metrics, "_terminate_pool_bounded", sync_terminate)
 
   m.reset_pool_hard()
   assert m._shared_pool is None
-  assert terminate_started.wait(timeout=2.0)
-  terminate_release.set()
-  time.sleep(0.05)
+  assert calls["terminate"] == 1
+
+
+def test_metrics_terminate_pool_delegates_to_shared_sigkill_reap(monkeypatch):
+  """Metrics terminate must use shared helper (SIGKILL lingerers + zombie reap)."""
+  calls = []
+
+  def fake_shared(active_pool, timeout_s=30.0, *, context="", **kwargs):
+    del kwargs
+    calls.append({
+        "pool": active_pool,
+        "timeout_s": timeout_s,
+        "context": context,
+    })
+    return True
+
+  monkeypatch.setattr(metrics, "_shared_terminate_pool_bounded", fake_shared)
+  assert metrics._terminate_pool_bounded(object(), 1.5) is True
+  assert len(calls) == 1
+  assert calls[0]["timeout_s"] == 1.5
+  assert calls[0]["context"] == "metrics_pool"
 
 
 def test_drain_metrics_imap_aborts_when_pool_worker_dead(monkeypatch):

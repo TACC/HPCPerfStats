@@ -86,6 +86,9 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "metrics_scheduler_mode"),
     ("PIPELINE", "metrics_scheduler_prefetch_chunks"),
     ("PIPELINE", "metrics_scheduler_ready_queue_target"),
+    ("PIPELINE", "metrics_idle_slot_supplement_enabled"),
+    ("PIPELINE", "metrics_supplement_sample_soft_max"),
+    ("PIPELINE", "metrics_supplement_sample_hard_max"),
     ("PIPELINE", "metrics_plot_prewarm_mode"),
     ("PIPELINE", "metrics_plot_aggregate_time_slice_s"),
     ("PIPELINE", "metrics_plot_aggregate_max_host_time_points"),
@@ -257,7 +260,10 @@ INI_OPTION_DEFAULTS = {
     'metrics_pool_processes': '24',
     'metrics_scheduler_mode': 'global_priority',
     'metrics_scheduler_prefetch_chunks': '8',
-    'metrics_scheduler_ready_queue_target': '2000',
+    'metrics_scheduler_ready_queue_target': '100',
+    'metrics_idle_slot_supplement_enabled': 'yes',
+    'metrics_supplement_sample_soft_max': '10000',
+    'metrics_supplement_sample_hard_max': '80000',
     'metrics_plot_prewarm_mode': 'pipeline_required',
         # Host×time SQL chunk wall seconds (1h @ 1-min sample); design 5000×48×60.
     'metrics_plot_aggregate_time_slice_s': '3600',
@@ -2364,6 +2370,51 @@ def get_metrics_scheduler_ready_queue_target() -> Any:
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("metrics_scheduler_ready_queue_target"))
+
+
+def get_metrics_idle_slot_supplement_enabled() -> bool:
+  """
+  Whether update_metrics fills idle pool slots from the ready queue.
+
+  Returns:
+    bool: True when idle-slot sample-count supplement is enabled.
+
+  Examples:
+    >>> get_metrics_idle_slot_supplement_enabled()  # doctest: +SKIP
+  """
+  _ensure_cfg_loaded()
+  return _pipeline_get(
+      "metrics_idle_slot_supplement_enabled",
+  ).strip().lower() in ("1", "true", "yes", "on")
+
+
+def get_metrics_supplement_sample_soft_max() -> int:
+  """
+  Prefer supplement jobs with estimated_sample_count below this soft max.
+
+  Returns:
+    int: Soft sample ceiling (exclusive preference band).
+
+  Examples:
+    >>> get_metrics_supplement_sample_soft_max()  # doctest: +SKIP
+  """
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("metrics_supplement_sample_soft_max"))
+
+
+def get_metrics_supplement_sample_hard_max() -> int:
+  """
+  Never supplement jobs with estimated_sample_count at or above this hard max.
+
+  Returns:
+    int: Hard sample ceiling (inclusive reject).
+
+  Examples:
+    >>> get_metrics_supplement_sample_hard_max()  # doctest: +SKIP
+  """
+  _ensure_cfg_loaded()
+  soft = get_metrics_supplement_sample_soft_max()
+  return max(soft, _pipeline_getint("metrics_supplement_sample_hard_max"))
 
 
 def get_metrics_plot_prewarm_mode() -> Any:

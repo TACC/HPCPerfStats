@@ -92,6 +92,16 @@ from types import SimpleNamespace
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
+from hpcperfstats.analysis.metrics.lib.metrics_idle_slot_supplement import (
+    estimated_sample_count_for_job,
+    pop_supplement_refs_from_ready_queue,
+    resolve_nhosts_for_ref,
+)
+from hpcperfstats.analysis.metrics.lib.metrics_sliding_session import (
+    resolve_metrics_pool_max_inflight,
+    run_metrics_sliding_session,
+    should_use_metrics_sliding_session,
+)
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import abort_if_pool_workers_dead
 
 ensure_django()
@@ -379,13 +389,13 @@ def _pop_candidates_for_compute_batch_locked(ready_queue: Any, cap: Any) -> Any:
 def _chunk_rows_to_candidate_refs(rows: Any) -> Any:
   """
   Map queryset ``values_list`` rows to candidate refs (supports test stubs).
-  
+
   Args:
     rows (Any): Rows passed to this helper.
-  
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: List of candidate refs.
+
   Examples:
     >>> _chunk_rows_to_candidate_refs(None)  # doctest: +SKIP
   """
@@ -397,7 +407,28 @@ def _chunk_rows_to_candidate_refs(rows: Any) -> Any:
   refs = []
   for row in rows:
     n = len(row)
-    if n >= 4:
+    if n >= 6:
+      jid, end_time, start_time, artifact_only, nhosts, host_list = (
+          row[0], row[1], row[2], row[3], row[4], row[5],
+      )
+      hosts = resolve_nhosts_for_ref(nhosts, host_list)
+      refs.append(_candidate_ref(
+          jid,
+          bool(artifact_only),
+          runtime_s=_job_window_runtime_seconds(start_time, end_time),
+          nhosts=hosts,
+      ))
+    elif n >= 5:
+      jid, end_time, start_time, artifact_only, nhosts = (
+          row[0], row[1], row[2], row[3], row[4],
+      )
+      refs.append(_candidate_ref(
+          jid,
+          bool(artifact_only),
+          runtime_s=_job_window_runtime_seconds(start_time, end_time),
+          nhosts=nhosts,
+      ))
+    elif n >= 4:
       jid, end_time, start_time, artifact_only = row[0], row[1], row[2], row[3]
       refs.append(_candidate_ref(
           jid,
@@ -741,13 +772,20 @@ class MetricsPrewarmStallError(TimeoutError):
   Plot/detail prewarm imap made no progress for the Metrics.run stall budget.
   """
 
-  def __init__(self, stalled_for_s: float, message: str = "") -> None:
+  def __init__(
+    self,
+    stalled_for_s: float,
+    message: str = "",
+    *,
+    partial_results: Any | None = None,
+  ) -> None:
     """
     Record how long prewarm made no progress.
 
     Args:
       stalled_for_s (float): Seconds without a completed prewarm result.
       message (str): Optional detail for logs.
+      partial_results (Any | None): Completed prewarm result dicts so far.
 
     Returns:
       None
@@ -756,6 +794,7 @@ class MetricsPrewarmStallError(TimeoutError):
       >>> MetricsPrewarmStallError(1.0, "x")  # doctest: +SKIP
     """
     self.stalled_for_s = float(stalled_for_s)
+    self.partial_results = list(partial_results or [])
     super().__init__(message or "prewarm imap stall")
 
 
@@ -831,6 +870,7 @@ def _drain_prewarm_imap(
             stalled_for,
             "prewarm imap stall: no completed jids for %.1fs "
             "(tasks=%s completed=%s)" % (stalled_for, total, done),
+            partial_results=list(results),
         )
       now = time.monotonic()
       if now - last_heartbeat_log_at >= COMPUTE_BATCH_HEARTBEAT_LOG_INTERVAL_S:
@@ -2368,7 +2408,12 @@ def _iter_chunked_pks(queryset: Any, chunk_size: int) -> Iterator[Any]:
         )
       rows = list(
           page_qs.values_list(
-              "jid", "end_time", "start_time", "artifact_only_candidate",
+              "jid",
+              "end_time",
+              "start_time",
+              "artifact_only_candidate",
+              "nhosts",
+              "host_list",
           )[:chunk_size]
       )
       if not rows:
@@ -2376,13 +2421,18 @@ def _iter_chunked_pks(queryset: Any, chunk_size: int) -> Iterator[Any]:
       chunk = _chunk_rows_to_candidate_refs(rows)
       total += len(chunk)
       yield chunk, total
-      last_jid, last_end_time, _start_time, _artifact_only = rows[-1]
+      last_jid, last_end_time, _start_time, _artifact_only = rows[-1][:4]
     return
 
   offset = 0
   try:
     pk_values = queryset.values_list(
-        "jid", "end_time", "start_time", "artifact_only_candidate",
+        "jid",
+        "end_time",
+        "start_time",
+        "artifact_only_candidate",
+        "nhosts",
+        "host_list",
     )
   except Exception:
     try:
@@ -2408,26 +2458,54 @@ def _candidate_ref(
   runtime_s: Any | None = None,
   telemetry_first_time: Any | None = None,
   telemetry_last_time: Any | None = None,
+  nhosts: Any | None = None,
+  estimated_sample_count: Any | None = None,
+  host_list: Any | None = None,
 ) -> Any:
   """
-  Internal helper to handle candidate ref.
-  
+  Build a lightweight candidate namespace for the metrics scheduler.
+
   Args:
-    jid (Any): Jid passed to this helper.
-    artifact_only (bool): Boolean flag for artifact only.
-    runtime_s (Any | None): One of ``Any``, ``None``.
-    telemetry_first_time (Any | None): One of ``Any``, ``None``.
-    telemetry_last_time (Any | None): One of ``Any``, ``None``.
-  
+    jid (Any): Job id.
+    artifact_only (bool): True when only artifact refresh is needed.
+    runtime_s (Any | None): Accounting-window seconds when known.
+    telemetry_first_time (Any | None): Optional telemetry window start.
+    telemetry_last_time (Any | None): Optional telemetry window end.
+    nhosts (Any | None): Host count for sample-count sizing.
+    estimated_sample_count (Any | None): Precomputed sample estimate.
+    host_list (Any | None): Host names when ``nhosts`` is missing or zero.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: SimpleNamespace candidate ref.
+
   Examples:
-    >>> _candidate_ref(None, True, None, None, None)  # doctest: +SKIP
+    >>> _candidate_ref("1", False, 60.0, None, None, 2, 2)  # doctest: +SKIP
   """
-  ns = SimpleNamespace(jid=jid, artifact_only=bool(artifact_only))
-  if runtime_s is not None:
-    ns.runtime_s = float(runtime_s)
+  hosts = resolve_nhosts_for_ref(nhosts, host_list)
+  rt = float(runtime_s) if runtime_s is not None else None
+  if estimated_sample_count is None:
+    samples = estimated_sample_count_for_job(
+        hosts,
+        rt,
+        unknown_runtime_s=float(cfg.get_metrics_compute_batch_unknown_runtime_s()),
+    )
+  else:
+    try:
+      samples = max(1, int(estimated_sample_count))
+    except (TypeError, ValueError):
+      samples = estimated_sample_count_for_job(
+          hosts,
+          rt,
+          unknown_runtime_s=float(cfg.get_metrics_compute_batch_unknown_runtime_s()),
+      )
+  ns = SimpleNamespace(
+      jid=jid,
+      artifact_only=bool(artifact_only),
+      nhosts=hosts,
+      estimated_sample_count=samples,
+  )
+  if rt is not None:
+    ns.runtime_s = rt
   if telemetry_first_time is not None:
     ns.telemetry_first_time = telemetry_first_time
   if telemetry_last_time is not None:
@@ -4026,7 +4104,12 @@ def _start_candidate_rescan_thread(
             qs = _jobs_queryset(d, min_time, rerun)
             candidates = list(
                 qs.values_list(
-                    "jid", "start_time", "end_time", "artifact_only_candidate",
+                    "jid",
+                    "start_time",
+                    "end_time",
+                    "artifact_only_candidate",
+                    "nhosts",
+                    "host_list",
                 )[:RESCAN_FETCH_LIMIT]
             )
           except Exception:
@@ -4035,7 +4118,12 @@ def _start_candidate_rescan_thread(
             continue
           with rescan_lock:
             for row in candidates:
-              if len(row) >= 4:
+              nhosts = None
+              host_list = None
+              if len(row) >= 6:
+                jid, st, et, artifact_only = row[0], row[1], row[2], row[3]
+                nhosts, host_list = row[4], row[5]
+              elif len(row) >= 4:
                 jid, st, et, artifact_only = row[0], row[1], row[2], row[3]
               elif len(row) >= 2:
                 jid, artifact_only = row[0], row[1]
@@ -4055,6 +4143,8 @@ def _start_candidate_rescan_thread(
                       jid,
                       bool(artifact_only),
                       runtime_s=_job_window_runtime_seconds(st, et),
+                      nhosts=nhosts,
+                      host_list=host_list,
                   )
               )
               added_any = True
@@ -4820,21 +4910,22 @@ def _prewarm_successful_refs_on_metrics_pool(
   prewarm_pipeline: Any,
   shared_pool: Any,
   progress_callback: Any | None = None,
+  metrics_manager: Any | None = None,
 ) -> None:
   """
   Run detail+plot prewarm for metrics-successful jids on pool B (wait fully).
 
   Fail-closed: only ``successful_refs`` are prewarmed. Mode gate uses
   ``metrics_plot_prewarm_mode`` (``inline`` → parent ``run_for_jid``;
-  ``pipeline_required`` → metrics process pool ``imap``). No second queue,
-  drain budget, or ``Future.cancel``. Pool drain uses the same poll/stall
-  timeouts as ``Metrics.run``.
+  ``pipeline_required`` → metrics process pool ``imap``). On prewarm stall,
+  keep partial successes, soft-fail unfinished jids, and recycle the pool.
 
   Args:
     successful_refs (Any): Job refs whose metrics outcome was ok.
     prewarm_pipeline (Any): Sync ``_PrewarmPipeline`` for counters / inline.
     shared_pool (Any): Metrics process pool (pool B).
     progress_callback (Any | None): Optional mid-batch heartbeat callback.
+    metrics_manager (Any | None): Metrics owner used to ``reset_pool_hard``.
 
   Returns:
     None
@@ -4851,7 +4942,7 @@ def _prewarm_successful_refs_on_metrics_pool(
       if shutdown_requested[0]:
         break
       try:
-        prewarm_pipeline.run_for_jid(jid)
+        prewarm_pipeline.submit(jid)
       except Exception as exc:
         prewarm_pipeline.record_pool_result(False)
         log_print("plot artifact prewarm failed: {0}".format(exc))
@@ -4861,9 +4952,9 @@ def _prewarm_successful_refs_on_metrics_pool(
         except Exception:
           pass
     return
-  # pipeline_required: reuse metrics pool (absolute metrics_pool_processes).
   poll_timeout_s = float(cfg.get_metrics_run_poll_timeout_s())
   stall_timeout_s = float(cfg.get_metrics_run_stall_timeout_s())
+  results: list[Any] = []
   try:
     results = _drain_prewarm_imap(
         shared_pool,
@@ -4880,10 +4971,205 @@ def _prewarm_successful_refs_on_metrics_pool(
         ),
         flush=True,
     )
-    results = []
+    results = list(exc.partial_results or [])
+    done_jids = {
+        str(r.get("jid"))
+        for r in results
+        if isinstance(r, dict) and r.get("jid") is not None
+    }
+    for jid in jids:
+      if str(jid) not in done_jids:
+        prewarm_pipeline.record_pool_result(False)
+    resetter = getattr(metrics_manager, "reset_pool_hard", None)
+    if callable(resetter):
+      try:
+        resetter()
+      except Exception as reset_exc:
+        log_print(
+            "metrics scheduler: pool reset after prewarm stall failed: {0}".format(
+                reset_exc,
+            ),
+            flush=True,
+        )
   for result in results:
     ok = bool(result and result.get("ok"))
     prewarm_pipeline.record_pool_result(ok)
+
+
+def _compute_jid_outcomes_sliding(
+  *,
+  job_refs: Any,
+  metrics_job_refs: Any,
+  artifact_only_refs: Any,
+  metrics_manager: Any,
+  prewarm_pipeline: Any,
+  shared_pool: Any,
+  timing: Any,
+  t_batch: float,
+  heartbeat: Any | None,
+  progress_callback: Any | None,
+  ready_queue: Any | None,
+  ready_queue_lock: Any | None,
+) -> Any:
+  """
+  Sliding metrics+prewarm session with optional ready-queue idle-slot fill.
+
+  Args:
+    job_refs (Any): Full original batch refs (ordering / diagnostics).
+    metrics_job_refs (Any): Non-artifact-only refs for metrics workers.
+    artifact_only_refs (Any): Artifact-only refs (prewarm only).
+    metrics_manager (Any): Metrics owner for unwrap + pool reset.
+    prewarm_pipeline (Any): Parent prewarm pipeline for inline / counters.
+    shared_pool (Any): Metrics process pool with ``apply_async``.
+    timing (Any): Mutable timing dict for watchdogs.
+    t_batch (float): Session start monotonic time.
+    heartbeat (Any | None): Optional compute-batch heartbeat.
+    progress_callback (Any | None): Mid-session progress callback.
+    ready_queue (Any | None): Ready queue for supplements.
+    ready_queue_lock (Any | None): Lock guarding the ready queue.
+
+  Returns:
+    Any: Sorted per-jid scheduler outcome dicts.
+
+  Examples:
+    >>> _compute_jid_outcomes_sliding(  # doctest: +SKIP
+    ...     job_refs=[], metrics_job_refs=[], artifact_only_refs=[],
+    ...     metrics_manager=None, prewarm_pipeline=None, shared_pool=None,
+    ...     timing={}, t_batch=0.0, heartbeat=None, progress_callback=None,
+    ...     ready_queue=None, ready_queue_lock=None)
+  """
+  del job_refs  # retained for API symmetry / future diagnostics
+  if heartbeat is not None:
+    heartbeat.set_phase("metrics")
+  stall_timeout_s = float(cfg.get_metrics_run_stall_timeout_s())
+  poll_timeout_s = float(cfg.get_metrics_run_poll_timeout_s())
+  soft_max = int(cfg.get_metrics_supplement_sample_soft_max())
+  hard_max = int(cfg.get_metrics_supplement_sample_hard_max())
+  prewarm_mode = str(cfg.get_metrics_plot_prewarm_mode())
+  worker_fallback = 1
+  try:
+    worker_fallback = int(metrics_manager._worker_process_count())
+  except Exception:
+    try:
+      worker_fallback = int(cfg.get_metrics_pool_processes())
+    except Exception:
+      worker_fallback = 1
+  max_inflight = resolve_metrics_pool_max_inflight(
+      shared_pool,
+      fallback=worker_fallback,
+  )
+
+  def _persist(payload: Any) -> Any:
+    return metrics._persist_metrics_payload_bounded(
+        payload,
+        wall_timeout_s=float(max(0.0, stall_timeout_s)),
+    )
+
+  def _inline_prewarm(jid: Any) -> None:
+    prewarm_pipeline.submit(jid)
+
+  def _on_stall_reset() -> None:
+    resetter = getattr(metrics_manager, "reset_pool_hard", None)
+    if callable(resetter):
+      try:
+        resetter()
+      except Exception as reset_exc:
+        log_print(
+            "metrics scheduler: pool reset after sliding stall failed: {0}".format(
+                reset_exc,
+            ),
+            flush=True,
+        )
+
+  primary = list(metrics_job_refs)
+  artifact_as_metrics_done = list(artifact_only_refs)
+
+  sliding_rows = run_metrics_sliding_session(
+      primary_refs=primary,
+      metrics_obj=metrics_manager,
+      shared_pool=shared_pool,
+      unwrap_fn=metrics._unwrap,
+      persist_fn=_persist,
+      prewarm_worker_fn=_prewarm_jid_on_metrics_pool,
+      inline_prewarm_fn=_inline_prewarm,
+      prewarm_mode=prewarm_mode,
+      max_inflight=max_inflight,
+      poll_timeout_s=poll_timeout_s,
+      stall_timeout_s=stall_timeout_s,
+      ready_queue=ready_queue,
+      ready_queue_lock=ready_queue_lock,
+      soft_max=soft_max,
+      hard_max=hard_max,
+      supplement_enabled=True,
+      shutdown_requested=shutdown_requested,
+      progress_callback=progress_callback,
+      abort_if_pool_dead_fn=abort_if_pool_workers_dead,
+      on_stall_reset=_on_stall_reset,
+  )
+  # Run artifact-only prewarms on the same pool path (closed small batch).
+  if artifact_as_metrics_done and not shutdown_requested[0]:
+    if progress_callback is not None:
+      try:
+        progress_callback(
+            phase="prewarm",
+            completed=len(sliding_rows),
+            total=len(sliding_rows) + len(artifact_as_metrics_done),
+        )
+      except Exception:
+        pass
+    _prewarm_successful_refs_on_metrics_pool(
+        artifact_as_metrics_done,
+        prewarm_pipeline,
+        shared_pool,
+        progress_callback=progress_callback,
+        metrics_manager=metrics_manager,
+    )
+    for ref in artifact_as_metrics_done:
+      sliding_rows.append({
+          "ref": ref,
+          "ok": True,
+          "base_outcome": {
+              "jid": ref.jid,
+              "ok": True,
+              "status": "artifact_only",
+              "persist_s": 0.0,
+          },
+          "metrics_s": 0.0,
+          "prewarm_s": 0.0,
+      })
+
+  timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
+  # Sliding interleaves metrics+prewarm; report full session as batch wall and
+  # attribute the whole window to metrics_wall for phase diagnostics.
+  timing["metrics_wall_s"] = float(timing["batch_wall_s"])
+  timing["prewarm_wall_s"] = 0.0
+
+  telem = _empty_jid_outcome_telemetry()
+  outcomes = []
+  for row in sliding_rows:
+    ref = row["ref"]
+    base = row.get("base_outcome") or {}
+    if (
+        prewarm_mode != "inline"
+        and base.get("ok")
+        and "prewarm_ok" in row
+    ):
+      try:
+        prewarm_pipeline.record_pool_result(bool(row.get("prewarm_ok")))
+      except Exception:
+        pass
+    outcomes.append(_scheduler_jid_outcome(
+        ok=bool(row.get("ok")),
+        jid=ref.jid,
+        metrics_s=float(row.get("metrics_s") or 0.0),
+        prewarm_s=float(row.get("prewarm_s") or 0.0),
+        telemetry=telem,
+        failure_kind=None if row.get("ok") else str(base.get("status") or "failed"),
+        error_type=base.get("error_type"),
+        error_message=base.get("error_message"),
+        persist_s=float(base.get("persist_s") or 0.0),
+    ))
+  return sorted(outcomes, key=lambda item: item["jid"])
 
 
 def _compute_jid_outcomes_batch(
@@ -4893,32 +5179,37 @@ def _compute_jid_outcomes_batch(
   shared_pool: Any,
   batch_timing: Any | None = None,
   heartbeat: Any | None = None,
+  ready_queue: Any | None = None,
+  ready_queue_lock: Any | None = None,
 ) -> Any:
   """
-  Run one batched ``Metrics.run`` then prewarm successful jids on pool B.
+  Run one compute session (closed Metrics.run or sliding feeder) then prewarm.
 
   Returns outcome dicts sorted by ``jid`` for stable counters/telemetry.
 
-  A single ``Metrics.run(job_refs, …)`` saturates the process pool; prewarm
-  then runs on the same pool (or inline when configured). Plot and detail
-  artifact prewarm always run for successful outcomes (fail-closed: skip
-  prewarm when metrics failed). Stall/watchdog timing treats
-  metrics+prewarm as one job/batch wall-time unit.
+  When idle-slot supplement is enabled and ``shared_pool`` exposes
+  ``apply_async``, uses a pool-sized sliding session: per-jid metrics
+  persist then prewarm, filling idle slots from ``ready_queue`` under
+  sample-count soft/hard caps (RC-E). Otherwise a single
+  ``Metrics.run(job_refs, …)`` saturates the process pool and prewarm
+  runs afterward on successful jids.
 
-  When ``batch_timing`` is a dict, it is populated with ``metrics_wall_s``,
-  ``prewarm_wall_s``, and ``batch_wall_s`` for scheduler watchdogs.
+  Stall/watchdog timing treats metrics+prewarm as one job/batch wall-time
+  unit. When ``batch_timing`` is a dict, it is populated with
+  ``metrics_wall_s``, ``prewarm_wall_s``, and ``batch_wall_s``.
 
   Args:
     job_refs (Any): Job refs passed to this helper.
     metrics_manager (Any): Metrics manager passed to this helper.
     prewarm_pipeline (Any): Prewarm pipeline passed to this helper.
     shared_pool (Any): Shared pool passed to this helper.
-    batch_timing (Any | None): One of ``Any``, ``None``.
-    heartbeat (Any | None): Optional ``_ComputeBatchHeartbeat`` for mid-batch
-    phase / completed_jids updates.
+    batch_timing (Any | None): Optional timing dict for watchdogs.
+    heartbeat (Any | None): Optional ``_ComputeBatchHeartbeat``.
+    ready_queue (Any | None): Optional ready queue for idle-slot fill.
+    ready_queue_lock (Any | None): Lock guarding ``ready_queue``.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: Sorted per-jid scheduler outcome dicts.
 
   Examples:
     >>> _compute_jid_outcomes_batch(None, None, None, None, None)
@@ -4963,6 +5254,27 @@ def _compute_jid_outcomes_batch(
         "artifact_only[{1}]={4}".format(n, head, jids_head, suffix, ao_head),
         flush=True,
     )
+
+  use_sliding = should_use_metrics_sliding_session(
+      supplement_enabled=bool(cfg.get_metrics_idle_slot_supplement_enabled()),
+      shared_pool=shared_pool,
+  )
+  if use_sliding:
+    return _compute_jid_outcomes_sliding(
+        job_refs=job_refs,
+        metrics_job_refs=metrics_job_refs,
+        artifact_only_refs=artifact_only_refs,
+        metrics_manager=metrics_manager,
+        prewarm_pipeline=prewarm_pipeline,
+        shared_pool=shared_pool,
+        timing=timing,
+        t_batch=t_batch,
+        heartbeat=heartbeat,
+        progress_callback=_hb_progress,
+        ready_queue=ready_queue,
+        ready_queue_lock=ready_queue_lock,
+    )
+
   metrics_run_outcomes = []
   t_metrics_start = None
   try:
@@ -5152,6 +5464,7 @@ def _compute_jid_outcomes_batch(
         prewarm_pipeline,
         shared_pool,
         progress_callback=_hb_progress,
+        metrics_manager=metrics_manager,
     )
     timing["prewarm_wall_s"] = max(0.0, time.monotonic() - t_prewarm)
     timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
@@ -5204,6 +5517,7 @@ def _compute_jid_outcomes_batch(
       prewarm_pipeline,
       shared_pool,
       progress_callback=_hb_progress,
+      metrics_manager=metrics_manager,
   )
   prewarm_elapsed = time.monotonic() - t_prewarm
   timing["prewarm_wall_s"] = max(0.0, prewarm_elapsed)
@@ -5294,9 +5608,7 @@ def update_metrics_for_dates(
       rescan_seen_jids = set()
       rescan_seen_order = deque()
       rescan_stop_event = threading.Event()
-      prefetch_ready_cap = max(
-          1, min(prefetch_target, prefetch_chunks * CHUNK_SIZE)
-      )
+      prefetch_ready_cap = max(1, int(prefetch_target))
       readiness_probe_target = {
           "value": max(READINESS_PROBE_TARGET_MIN, min(prefetch_ready_cap, CHUNK_SIZE))
       }
@@ -5596,6 +5908,8 @@ def update_metrics_for_dates(
                   shared_pool,
                   batch_timing=batch_phase_timing,
                   heartbeat=compute_batch_heartbeat,
+                  ready_queue=ready_queue,
+                  ready_queue_lock=ready_queue_lock,
               )
             finally:
               compute_batch_heartbeat.clear()

@@ -141,8 +141,17 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Prefetch chunk descriptors for global scheduler (default 8).
 # metrics_scheduler_prefetch_chunks = 8
 
-# Ready-jid queue depth target before compute (default 2000).
-# metrics_scheduler_ready_queue_target = 2000
+# Ready-jid queue depth target before compute (default 100; sole ready-queue depth).
+# metrics_scheduler_ready_queue_target = 100
+
+# Fill idle metrics-pool slots with smaller ready-queue jobs (default yes).
+# metrics_idle_slot_supplement_enabled = yes
+
+# Prefer supplements with estimated_sample_count below this soft max (default 10000).
+# metrics_supplement_sample_soft_max = 10000
+
+# Never supplement at or above this hard sample max (default 80000).
+# metrics_supplement_sample_hard_max = 80000
 
 # Plot prewarm: inline or pipeline_required (default pipeline_required).
 # Prewarm runs on metrics_pool_processes after successful metrics (no secondary pool).

@@ -4150,7 +4150,8 @@ def test_compute_jid_outcomes_batch_prewarm_waits_and_counts_batch_wall(monkeypa
     def __init__(self):
       self._done = 0
 
-    def run_for_jid(self, jid, shared_context=None):
+    def submit(self, jid, shared_context=None):
+      del shared_context
       prewarm_calls.append(jid)
       time.sleep(0.01)
       self._done += 1
@@ -4405,3 +4406,138 @@ def test_compute_watchdog_downshifts_on_batch_wall_not_metrics_only(monkeypatch)
   assert cap_lines
   # Starting cap with 24 workers ×2 = 48; half → 24 (floor MIN_CAP=16).
   assert any("next_batch_cap=24" in line for line in cap_lines)
+
+
+@pytest.mark.machine_unit_mock
+def test_candidate_ref_attaches_estimated_sample_count(monkeypatch):
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_compute_batch_unknown_runtime_s",
+      lambda: 60.0,
+  )
+  ref = update_metrics._candidate_ref("j1", False, runtime_s=120.0, nhosts=2)
+  assert ref.nhosts == 2
+  assert ref.estimated_sample_count == 4
+  ref2 = update_metrics._candidate_ref(
+      "j2", False, runtime_s=60.0, nhosts=0, host_list=["a", "b", "c"],
+  )
+  assert ref2.nhosts == 3
+  assert ref2.estimated_sample_count == 3
+
+
+@pytest.mark.machine_unit_mock
+def test_ready_queue_cap_uses_ini_target_not_chunks_product(monkeypatch):
+  """prefetch_ready_cap equals ready_queue_target; ignores chunks×CHUNK_SIZE."""
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 8)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 100)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(
+      update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext,
+  )
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  captured = {}
+
+  class _DoneProducer:
+    def join(self, timeout=None):
+      del timeout
+
+  def _producer_stub(**kwargs):
+    captured["prefetch_ready_cap"] = kwargs.get("prefetch_ready_cap")
+    kwargs["producer_done"].set()
+    return _DoneProducer()
+
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _producer_stub)
+  monkeypatch.setattr(
+      update_metrics,
+      "_run_public_ef_artifacts_parallel_phase",
+      lambda *a, **k: {
+          "degraded": 0,
+          "worker_exceptions": 0,
+          "watchdog_timeouts": 0,
+          "pending_tasks": 0,
+          "tasks_completed": 0,
+          "tasks_total": 0,
+      },
+  )
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def reset_pool_hard(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      del jobs, pool
+      return []
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda *a, **k: SimpleNamespace(chunks=[]),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _c: iter([]))
+  update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
+  assert captured.get("prefetch_ready_cap") == 100
+  # chunks×CHUNK_SIZE would be 4000; must not be used as the cap.
+  assert captured.get("prefetch_ready_cap") != 8 * update_metrics.CHUNK_SIZE
+
+
+@pytest.mark.machine_unit_mock
+def test_prewarm_stall_recycles_pool_and_keeps_partial_results(monkeypatch):
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_run_poll_timeout_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_run_stall_timeout_s", lambda: 0.0)
+  monkeypatch.setattr(update_metrics, "abort_if_pool_workers_dead", lambda *a, **k: None)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  resets = []
+  soft_fails = []
+
+  class _Mgr:
+    def reset_pool_hard(self):
+      resets.append("reset")
+
+  class _Pipe:
+    def record_pool_result(self, ok):
+      soft_fails.append(bool(ok))
+
+    def submit(self, jid):
+      raise AssertionError("pipeline mode must not submit inline")
+
+  class _It:
+    def __init__(self):
+      self._n = 0
+
+    def next(self, timeout=None):
+      del timeout
+      self._n += 1
+      if self._n == 1:
+        return {"jid": "ok1", "ok": True}
+      raise update_metrics.multiprocessing.TimeoutError()
+
+  class _Pool:
+    def imap_unordered(self, fn, jids):
+      del fn, jids
+      return _It()
+
+  update_metrics._prewarm_successful_refs_on_metrics_pool(
+      [SimpleNamespace(jid="ok1"), SimpleNamespace(jid="ok2")],
+      _Pipe(),
+      _Pool(),
+      metrics_manager=_Mgr(),
+  )
+  assert resets == ["reset"]
+  # One partial success recorded + one soft-fail for unfinished.
+  assert soft_fails.count(True) == 1
+  assert soft_fails.count(False) == 1

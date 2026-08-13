@@ -55,7 +55,11 @@ from django.db.models import Max, Min
 from django.db.utils import OperationalError, DatabaseError
 
 from hpcperfstats.analysis.metrics.lib.gen import jid_table
-from hpcperfstats.dbload.lib.multiprocessing_pool_health import abort_if_pool_workers_dead
+from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
+  abort_if_pool_workers_dead,
+  close_pool_bounded as _shared_close_pool_bounded,
+  terminate_pool_bounded as _shared_terminate_pool_bounded,
+)
 from hpcperfstats.analysis.metrics.lib.gen.utils import utils
 from hpcperfstats.lib.dcgm_blank import (
     is_dcgm_numeric_blank,
@@ -283,63 +287,49 @@ def _wait_pool_processes_bounded(active_pool: Any, timeout_s: Any) -> Any:
 
 def _close_pool_bounded(active_pool: Any, timeout_s: Any) -> Any:
   """
-  Best-effort bounded graceful close; terminates if workers linger.
-  
+  Best-effort bounded graceful close with SIGKILL lingerers and zombie reap.
+
+  Delegates to shared ``multiprocessing_pool_health.close_pool_bounded`` so
+  metrics /pub recycle cannot leave ``STAT=Z`` children under ``[main]``.
+
   Args:
     active_pool (Any): Active pool passed to this helper.
     timeout_s (Any): Timeout s passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _close_pool_bounded(None, None)  # doctest: +SKIP
   """
-  try:
-    active_pool.close()
-  except Exception:
-    pass
-  all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
-  if all_done:
-    return True
-  try:
-    active_pool.terminate()
-  except Exception:
-    pass
-  all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
-  if not all_done:
-    log_print(
-        "Metrics.run: pool close timeout after terminate; lingering_workers=%s" % alive,
-        flush=True,
-    )
-  return all_done
+  return _shared_close_pool_bounded(
+      active_pool,
+      timeout_s=float(timeout_s),
+  )
 
 
 def _terminate_pool_bounded(active_pool: Any, timeout_s: Any) -> Any:
   """
-  Best-effort bounded terminate used in stall recovery paths.
-  
+  Best-effort bounded terminate with SIGKILL lingerers and zombie reap.
+
+  Used in stall recovery and ``reset_pool_hard``. After join timeout, shared
+  terminate SIGKILL's lingering worker PIDs then reaps zombie children of main.
+
   Args:
     active_pool (Any): Active pool passed to this helper.
     timeout_s (Any): Timeout s passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _terminate_pool_bounded(None, None)  # doctest: +SKIP
   """
-  try:
-    active_pool.terminate()
-  except Exception:
-    pass
-  all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
-  if not all_done:
-    log_print(
-        "Metrics.run: pool terminate timeout; lingering_workers=%s" % alive,
-        flush=True,
-    )
-  return all_done
+  return _shared_terminate_pool_bounded(
+      active_pool,
+      timeout_s=float(timeout_s),
+      context="metrics_pool",
+  )
 
 
 def _log_exception_details(prefix: Any, exc: Any) -> None:
@@ -2761,16 +2751,15 @@ class Metrics():
 
   def reset_pool_hard(self) -> None:
     """
-    Terminate retained worker pool without blocking the scheduler thread.
-    
-    Detach the pool reference first so ``ensure_pool()`` can create a fresh pool
-    while lingering workers are torn down in the background. Blocking on
-    ``terminate()``/``join()`` after a wedged worker caused indefinite stalls
-    after ``MetricsRunWorkerStallError`` was logged.
-    
+    Terminate the retained metrics worker pool with bounded SIGKILL + reap.
+
+    Detach the pool reference first so ``ensure_pool()`` can create a fresh
+    pool. Teardown runs synchronously with a bounded join/SIGKILL/reap so
+    lingerers and zombies cannot outlive /pub recycle before the next spawn.
+
     Returns:
       None
-    
+
     Examples:
       >>> Metrics().reset_pool_hard()  # doctest: +SKIP
     """
@@ -2779,27 +2768,10 @@ class Metrics():
       return
     self._shared_pool = None
     self._shared_pool_kind = None
-
-    def _terminate_background() -> None:
-      """
-      Internal helper to handle terminate background.
-      
-      Returns:
-        None
-      
-      Examples:
-        >>> Metrics()._terminate_background()  # doctest: +SKIP
-      """
-      try:
-        _terminate_pool_bounded(pool, METRICS_POOL_JOIN_TIMEOUT_S)
-      except Exception:
-        pass
-
-    threading.Thread(
-        target=_terminate_background,
-        name="metrics-pool-terminate",
-        daemon=True,
-    ).start()
+    try:
+      _terminate_pool_bounded(pool, METRICS_POOL_JOIN_TIMEOUT_S)
+    except Exception:
+      pass
 
   # Compute metrics in parallel (Shared memory only)
   def run(

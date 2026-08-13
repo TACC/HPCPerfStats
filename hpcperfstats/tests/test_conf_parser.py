@@ -607,7 +607,10 @@ def test_metrics_scheduler_tunables_without_prewarm_pool_keys(temp_ini, monkeypa
   importlib.reload(cfg)
   assert cfg.get_metrics_scheduler_mode() == "global_priority"
   assert cfg.get_metrics_scheduler_prefetch_chunks() == 8
-  assert cfg.get_metrics_scheduler_ready_queue_target() == 2000
+  assert cfg.get_metrics_scheduler_ready_queue_target() == 100
+  assert cfg.get_metrics_idle_slot_supplement_enabled() is True
+  assert cfg.get_metrics_supplement_sample_soft_max() == 10000
+  assert cfg.get_metrics_supplement_sample_hard_max() == 80000
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
   assert cfg.get_metrics_run_poll_timeout_s() == 5.0
   assert cfg.get_metrics_run_stall_timeout_s() == 900.0
