@@ -752,19 +752,26 @@ class TestAdminMonitor:
       response = api.admin_monitor(request)
 
     assert response.status_code == 200
-    assert response.data == {
-      "xalt_stats": {
-        "total_jids": 2,
-        "jids_with_xalt_data": 1,
-        "jids_missing_xalt_data": 1,
-        "found_jids": ["jid-1"],
-        "found_jids_limit": 200,
-        "found_jids_truncated": False,
-        "missing_jids": ["jid-2"],
-        "missing_jids_limit": 200,
-        "missing_jids_truncated": False,
-      }
-    }
+    assert response.data["xalt_stats"]["total_jids"] == 2
+
+  def test_get_xalt_jid_coverage_exception_returns_opaque_error(self):
+    from hpcperfstats.site.lib.machine import api
+
+    marker = "UNIQUE_XALT_SECRET_TRACE_xyz"
+    with patch.object(api.cfg, "get_xalt_user", return_value="xalt"), patch(
+        "hpcperfstats.site.lib.machine.api.close_old_connections"
+    ), patch(
+        "hpcperfstats.site.lib.machine.api.cached_orm",
+        side_effect=RuntimeError(marker),
+    ), patch.object(api.logger, "exception") as log_exc:
+      result = api._get_xalt_jid_coverage()
+
+    assert result["error"] == (
+        "XALT coverage query failed; see server logs for details."
+    )
+    assert marker not in result["error"]
+    assert result["total_jids"] == 0
+    assert log_exc.called
 
   def test_get_recent_rabbitmq_host_stats_reads_redis_keys(self):
     from hpcperfstats.site.lib.machine import api

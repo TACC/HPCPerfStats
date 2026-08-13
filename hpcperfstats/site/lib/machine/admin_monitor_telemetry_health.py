@@ -457,7 +457,10 @@ def compute_telemetry_health(*, force_refresh: bool = False) -> dict[str, Any]:
             [],
             computed_at=computed_at,
             timed_out=True,
-            error=str(exc),
+            error=(
+                "No recent_host FQDN inventory in Redis; results are "
+                "incomplete (not a healthy signal)."
+            ),
             hosts_sampled=0,
         )
     except Exception as exc:
@@ -482,7 +485,10 @@ def compute_telemetry_health(*, force_refresh: bool = False) -> dict[str, Any]:
                 "Telemetry health query timed out; results are incomplete "
                 "(not a healthy signal)."
                 if timed_out
-                else f"Telemetry health query failed: {exc}"
+                else (
+                    "Telemetry health query failed; results are incomplete "
+                    "(not a healthy signal)."
+                )
             ),
         )
 

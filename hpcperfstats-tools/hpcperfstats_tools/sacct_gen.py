@@ -17,7 +17,7 @@ from dateutil.parser import parse
 
 from .api_client import ApiClient
 from .api_key_cache import (
-    API_KEY_CACHE,
+    API_KEY_CACHE_DISPLAY,
     api_key_help_url,
     load_cached_api_key,
     save_cached_api_key,
@@ -330,7 +330,7 @@ Environment variables:
 
 Files:
   %s  Cached API keys per API base URL. Written when you pass --api-key.
-""" % API_KEY_CACHE,
+""" % API_KEY_CACHE_DISPLAY,
     )
     parser.add_argument(
         "start_date",
@@ -356,7 +356,7 @@ Files:
         "--api-key",
         help="API key for authenticating to the HPCPerfStats REST API. "
         "If omitted in API mode, a cached key in %s is used when present. "
-        "Mutually exclusive with -f." % API_KEY_CACHE,
+        "Mutually exclusive with -f." % API_KEY_CACHE_DISPLAY,
     )
     args = parser.parse_args(argv)
 

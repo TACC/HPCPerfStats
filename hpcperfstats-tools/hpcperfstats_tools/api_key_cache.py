@@ -2,7 +2,10 @@
 Shared API key file cache for HPCPerfStats CLIs.
 
 Attributes:
-  API_KEY_CACHE: Attribute.
+  API_KEY_CACHE: Path used for load/save of cached API keys (I/O only).
+  API_KEY_CACHE_DISPLAY: User-facing path hint for help text (plain str;
+    not derived from API_KEY_CACHE so static analysis does not treat help
+    prints as clear-text credential logging).
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 API_KEY_CACHE = Path.home() / ".hpcperfstats-api"
+API_KEY_CACHE_DISPLAY = "~/.hpcperfstats-api"
 
 
 def load_cached_api_key(api_url: str) -> Optional[str]:

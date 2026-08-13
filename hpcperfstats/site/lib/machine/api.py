@@ -4164,8 +4164,11 @@ def _get_xalt_jid_coverage(
         close_old_connections()
         return cached_orm(KEY_ADMIN_XALT_STATS, TIMEOUT_ADMIN_STATS, _xalt_fn)
     except Exception as exc:
+        logger.exception("XALT coverage query failed: %s", exc)
         return {
-            "error": f"XALT coverage query failed: {exc}",
+            "error": (
+                "XALT coverage query failed; see server logs for details."
+            ),
             "window_days": days,
             "since": since_dt.isoformat(),
             "total_jids": 0,

@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from .api_client import ApiClient
 from .api_key_cache import (
-    API_KEY_CACHE,
+    API_KEY_CACHE_DISPLAY,
     api_key_help_url,
     load_cached_api_key,
     save_cached_api_key,
@@ -173,7 +173,7 @@ def _get_json(
         "Obtain an API key from:\n"
         f"  {help_url}\n"
         "Then run this command again with --api-key.\n"
-        f"The key will be cached in {API_KEY_CACHE}."
+        f"The key will be cached in {API_KEY_CACHE_DISPLAY}."
     )
     return None, result.status_code
   if not result.ok:
@@ -331,7 +331,7 @@ Environment variables:
 
 Files:
   %s  Cached API keys per API base URL. Written when you pass --api-key.
-""" % API_KEY_CACHE,
+""" % API_KEY_CACHE_DISPLAY,
   )
   parser.add_argument(
       "--api-url",
@@ -343,7 +343,7 @@ Files:
       help=(
           "API key for authenticating to the HPCPerfStats REST API. "
           "If omitted, a cached key in %s is used when present."
-      ) % API_KEY_CACHE,
+      ) % API_KEY_CACHE_DISPLAY,
   )
   parser.add_argument(
       "--insecure",

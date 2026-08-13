@@ -42,6 +42,32 @@ def test_main_returns_1_without_api_key(monkeypatch, capsys):
   assert "No API key" in err
 
 
+def test_print_jobstats_auth_failure_prints_display_cache_path(capsys):
+  """401 help must use API_KEY_CACHE_DISPLAY, not the Path storage object."""
+  from hpcperfstats_tools.api_key_cache import API_KEY_CACHE_DISPLAY
+  from hpcperfstats_tools.jobstats_cli import _get_json
+
+  client = MagicMock()
+  client.get_json.return_value = MagicMock(
+      status_code=401, ok=False, data=None, error="unauthorized"
+  )
+  with patch(
+      "hpcperfstats_tools.jobstats_cli.api_key_help_url",
+      return_value="http://x/api-key/",
+  ):
+    data, code = _get_json(
+        client, "http://localhost:8000/api/", "jobs/1/", True, "bad-key"
+    )
+  assert data is None
+  assert code == 401
+  out = capsys.readouterr().out
+  assert API_KEY_CACHE_DISPLAY in out
+  assert "cached in" in out.lower()
+  # Must not print the Path object representation of home/.hpcperfstats-api
+  assert "PosixPath" not in out
+  assert "WindowsPath" not in out
+
+
 def test_print_jobstats_returns_0(capsys):
   detail = {
       "job_data": {

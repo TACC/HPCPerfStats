@@ -168,20 +168,40 @@ def test_compute_telemetry_health_timeout_logs_without_traceback():
 
 
 def test_compute_telemetry_health_redis_empty_is_incomplete():
+    marker = "UNIQUE_REDIS_EMPTY_EXC_DETAIL_xyz"
     with patch.object(th.cache, "get", return_value=None), patch.object(
         th.cache, "set"
     ), patch.object(th.connection, "vendor", "postgresql"), patch.object(
         th,
         "_fetch_type_event_aggregates",
-        side_effect=th.EmptyRecentHostInventory("No recent_host FQDN inventory"),
+        side_effect=th.EmptyRecentHostInventory(marker),
     ) as fetch:
         payload = th.compute_telemetry_health(force_refresh=True)
     assert payload["timed_out"] is True
     assert payload["all_zero_events"] == []
     assert payload["missing_core_types"] == []
-    assert "recent_host" in (payload.get("error") or "").lower()
+    err = payload.get("error") or ""
+    assert "recent_host" in err.lower()
+    assert marker not in err
     assert payload["ok_summary"]["hosts_sampled"] == 0
     assert fetch.called
+
+
+def test_compute_telemetry_health_generic_failure_omits_exc_text():
+    marker = "UNIQUE_TELEMETRY_FAILURE_DETAIL_abc"
+    with patch.object(th.cache, "get", return_value=None), patch.object(
+        th.cache, "set"
+    ), patch.object(th.connection, "vendor", "postgresql"), patch.object(
+        th,
+        "_fetch_type_event_aggregates",
+        side_effect=RuntimeError(marker),
+    ):
+        payload = th.compute_telemetry_health(force_refresh=True)
+    assert payload["timed_out"] is True
+    err = payload.get("error") or ""
+    assert "failed" in err.lower()
+    assert "incomplete" in err.lower()
+    assert marker not in err
 
 
 def test_compute_telemetry_health_returns_cached():
