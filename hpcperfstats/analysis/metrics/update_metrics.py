@@ -125,6 +125,7 @@ from hpcperfstats.analysis.metrics.lib.metrics import (
     expected_job_metric_row_count,
     maybe_reap_metrics_main_zombie_children as _maybe_reap_metrics_main_zombie_children,
     persist_window_coverage_gate_failure,
+    reap_metrics_main_zombie_children as _reap_metrics_main_zombie_children,
 )
 from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
 from hpcperfstats.dbload.lib.db_unavailable import (
@@ -4256,7 +4257,9 @@ def _reset_metrics_pool_after_public_phase(metrics_manager: Any) -> None:
   the pool between phases avoids carrying any mixed server-cursor/session state
   into the first metrics batch. Callers must follow with
   ``ensure_pool(pool_kind="metrics-pool")``, which enforces configured live
-  width and logs configured versus alive.
+  width and logs configured versus alive. After hard reset, run **unthrottled**
+  ``reap_metrics_main_zombie_children`` so abandon leftovers cannot wait for
+  the 60s idle throttle (hs04: 24Z+24alive after ``/pub`` recycle).
   
   Args:
     metrics_manager (Any): Metrics manager passed to this helper.
@@ -4276,6 +4279,14 @@ def _reset_metrics_pool_after_public_phase(metrics_manager: Any) -> None:
           "metrics scheduler: pool reset after /pub phase failed; recreating lazily: {0}".format(exc),
           flush=True,
       )
+  try:
+    _reap_metrics_main_zombie_children(context="after_pub_pool_recycle")
+  except Exception as exc:
+    log_print(
+        "WARN: metrics main zombie reap after /pub reset failed err=%s: %s"
+        % (type(exc).__name__, exc),
+        flush=True,
+    )
 
 
 def _start_readiness_producer(
@@ -5728,6 +5739,14 @@ def update_metrics_for_dates(
         stats["public_ef_pending_tasks"] = int(pub_stats.get("pending_tasks", 0))
       _reset_metrics_pool_after_public_phase(metrics_manager)
       shared_pool = metrics_manager.ensure_pool(pool_kind="metrics-pool")
+      try:
+        _reap_metrics_main_zombie_children(context="after_pub_pool_recycle")
+      except Exception as exc:
+        log_print(
+            "WARN: metrics main zombie reap after metrics ensure_pool "
+            "failed err=%s: %s" % (type(exc).__name__, exc),
+            flush=True,
+        )
       log_print(
           "Metrics worker pool recycled after /pub phase. "
           "configured=%s pool_processes=%s"

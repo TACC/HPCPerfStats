@@ -2106,6 +2106,9 @@ def test_terminate_pool_bounded_abandon_skips_blocking_terminate(monkeypatch):
       "reap_zombie_children_of_self",
       lambda **kwargs: None,
   )
+  monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([]))
+  monkeypatch.setattr(mph, "warn_unreaped_zombie_children", lambda **k: None)
+  monkeypatch.setattr(mph, "_reap_pool_worker_pids", lambda pool, **kwargs: [])
 
   class _HangTerminatePool:
     _pool = [_AliveWorker()]
@@ -2306,6 +2309,9 @@ def test_terminate_pool_bounded_abandon_kills_ppid_census_orphans(monkeypatch):
       "reap_zombie_children_of_self",
       lambda **kwargs: None,
   )
+  monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([]))
+  monkeypatch.setattr(mph, "warn_unreaped_zombie_children", lambda **k: None)
+  monkeypatch.setattr(mph, "_reap_pool_worker_pids", lambda pool, **kwargs: [])
 
   def fake_census(**kwargs):
     census_calls.append(dict(kwargs))
@@ -2394,6 +2400,13 @@ def test_terminate_pool_bounded_abandon_reaps_and_skips_stdlib_terminate(monkeyp
       "reap_zombie_children_of_self",
       lambda **kwargs: reap_calls.append(dict(kwargs)),
   )
+  monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([]))
+  monkeypatch.setattr(mph, "warn_unreaped_zombie_children", lambda **k: None)
+  monkeypatch.setattr(
+      mph,
+      "_reap_pool_worker_pids",
+      lambda pool, **kwargs: [],
+  )
   monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
 
   ok = mph.terminate_pool_bounded(
@@ -2408,6 +2421,186 @@ def test_terminate_pool_bounded_abandon_reaps_and_skips_stdlib_terminate(monkeyp
   assert aggressive and aggressive[0].get("sigkill_first") is True
   assert census_calls[0]["cmdline_mark"] == "[worker:metrics-pool]"
   assert reap_calls
+
+
+def test_terminate_pool_bounded_abandon_stops_handler_before_kill(monkeypatch):
+  """hs04: stop _worker_handler + cancel Finalize before SIGKILL; never terminate()."""
+  from multiprocessing.pool import TERMINATE
+
+  order = []
+  cancel_calls = []
+
+  class _Handler:
+    _state = "RUN"
+
+  class _Finalize:
+    def cancel(self):
+      cancel_calls.append(True)
+      order.append("finalize_cancel")
+
+  class _Pool:
+    def __init__(self):
+      self._pool = [_AliveWorker(pid=9001)]
+      self._state = "RUN"
+      self._worker_handler = _Handler()
+      self._terminate = _Finalize()
+
+    def terminate(self):
+      order.append("stdlib_terminate")
+      raise AssertionError("stdlib Pool.terminate must not run on abandon")
+
+  pool = _Pool()
+
+  def _aggressive(active, **kwargs):
+    del kwargs
+    order.append(
+        (
+            "sigkill",
+            getattr(active._worker_handler, "_state", None),
+            getattr(active, "_state", None),
+        )
+    )
+
+  monkeypatch.setattr(mph, "_aggressive_terminate_pool_workers", _aggressive)
+  monkeypatch.setattr(
+      mph,
+      "kill_pool_children_by_ppid_census",
+      lambda **kwargs: order.append("census") or [],
+  )
+  monkeypatch.setattr(mph, "reap_zombie_children_of_self", lambda **kwargs: [])
+  monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([]))
+  monkeypatch.setattr(mph, "warn_unreaped_zombie_children", lambda **k: None)
+  monkeypatch.setattr(mph, "_reap_pool_worker_pids", lambda pool, **kwargs: [])
+  monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
+
+  ok = mph.terminate_pool_bounded(
+      pool,
+      timeout_s=2.0,
+      context="metrics_pool",
+      kill_workers_first=True,
+      abandon_after_kill=True,
+      pool_worker_cmdline_mark="[worker:metrics-pool]",
+  )
+  assert ok is True
+  assert cancel_calls == [True]
+  assert pool._worker_handler._state == TERMINATE
+  assert pool._state == TERMINATE
+  assert "stdlib_terminate" not in order
+  assert order[0] == "finalize_cancel"
+  assert order[1][0] == "sigkill"
+  assert order[1][1] == TERMINATE
+  assert order[1][2] == TERMINATE
+
+
+def test_terminate_pool_bounded_abandon_retries_reap_until_clear(monkeypatch):
+  """Abandon must Process.join then retry /proc reap until empty or wall."""
+  join_calls = []
+  reap_calls = []
+  warn_calls = []
+  iter_calls = {"n": 0}
+
+  def _iter_zombies():
+    # Each abandon loop calls reap (1×) then remaining check (1×).
+    iter_calls["n"] += 1
+    if iter_calls["n"] <= 3:
+      return iter([830, 831])
+    return iter([])
+
+  monkeypatch.setattr(
+      mph,
+      "_aggressive_terminate_pool_workers",
+      lambda pool, **kwargs: None,
+  )
+  monkeypatch.setattr(
+      mph,
+      "kill_pool_children_by_ppid_census",
+      lambda **kwargs: [],
+  )
+  monkeypatch.setattr(
+      mph,
+      "_reap_pool_worker_pids",
+      lambda pool, **kwargs: join_calls.append(dict(kwargs)) or [9001],
+  )
+  monkeypatch.setattr(
+      mph,
+      "reap_zombie_children_of_self",
+      lambda **kwargs: reap_calls.append(dict(kwargs)) or [],
+  )
+  monkeypatch.setattr(mph, "_iter_zombie_child_pids", _iter_zombies)
+  monkeypatch.setattr(
+      mph,
+      "warn_unreaped_zombie_children",
+      lambda **kwargs: warn_calls.append(dict(kwargs)),
+  )
+  monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
+  monkeypatch.setattr(mph.time, "sleep", lambda _s: None)
+
+  class _Pool:
+    _pool = [_AliveWorker(pid=9001)]
+
+    def terminate(self):
+      raise AssertionError("stdlib terminate must not run")
+
+  ok = mph.terminate_pool_bounded(
+      _Pool(),
+      timeout_s=2.0,
+      context="abandon_pool",
+      kill_workers_first=True,
+      abandon_after_kill=True,
+      pool_worker_cmdline_mark="[worker:metrics-pool]",
+  )
+  assert ok is True
+  assert join_calls, "abandon must call _reap_pool_worker_pids (Process.join)"
+  assert len(reap_calls) >= 2, "abandon must retry /proc reap until clear"
+  assert warn_calls and warn_calls[0].get("context") == "abandon_pool"
+
+
+def test_terminate_pool_bounded_abandon_no_repopulate_after_kill(monkeypatch):
+  """Post-kill handler must stay TERMINATE so replacement PIDs are not forked."""
+  from multiprocessing.pool import TERMINATE
+
+  class _Handler:
+    _state = "RUN"
+
+  class _Pool:
+    def __init__(self):
+      self._pool = [_AliveWorker(pid=792)]
+      self._state = "RUN"
+      self._worker_handler = _Handler()
+      self._terminate = SimpleNamespace(cancel=lambda: None)
+      self.repopulate_attempts = 0
+
+    def terminate(self):
+      raise AssertionError("stdlib terminate must not run")
+
+  pool = _Pool()
+
+  def _aggressive(active, **kwargs):
+    del kwargs
+    # Simulate what a still-RUN handler would do after SIGKILL.
+    if getattr(active._worker_handler, "_state", None) != TERMINATE:
+      active.repopulate_attempts += 1
+      active._pool.append(_AliveWorker(pid=830))
+
+  monkeypatch.setattr(mph, "_aggressive_terminate_pool_workers", _aggressive)
+  monkeypatch.setattr(mph, "kill_pool_children_by_ppid_census", lambda **k: [])
+  monkeypatch.setattr(mph, "reap_zombie_children_of_self", lambda **k: [])
+  monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([]))
+  monkeypatch.setattr(mph, "warn_unreaped_zombie_children", lambda **k: None)
+  monkeypatch.setattr(mph, "_reap_pool_worker_pids", lambda pool, **kwargs: [])
+  monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
+
+  mph.terminate_pool_bounded(
+      pool,
+      timeout_s=2.0,
+      context="metrics_pool",
+      kill_workers_first=True,
+      abandon_after_kill=True,
+      pool_worker_cmdline_mark="[worker:metrics-pool]",
+  )
+  assert pool._worker_handler._state == TERMINATE
+  assert pool.repopulate_attempts == 0
+  assert len(pool._pool) == 1
 
 
 def test_metrics_recycle_not_misread_as_attrition(monkeypatch):

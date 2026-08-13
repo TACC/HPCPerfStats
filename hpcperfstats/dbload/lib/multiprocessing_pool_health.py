@@ -2275,6 +2275,99 @@ def _sigkill_pool_worker_pids(
       time.sleep(0.05)
 
 
+def _stop_abandoned_pool_repopulate(pool: Any) -> None:
+  """
+  Stop Pool ``_worker_handler`` and cancel Finalize before abandon SIGKILL.
+
+  CPython ``_handle_workers`` keeps calling ``_maintain_pool`` while
+  ``thread._state != TERMINATE``. Leaving the handler in RUN after SIGKILL
+  repopulates replacement workers that become unreaped ``STAT=Z`` under
+  ``[main]`` when the Pool object is dropped without Process.join (hs04
+  2026-08-13: zombie PIDs disjoint from the SIGKILL list after ``/pub``
+  recycle). Cancelling ``pool._terminate`` prevents a later Finalize from
+  entering hangable ``_terminate_pool`` / ``p.join``.
+
+  Args:
+    pool (Any): Abandoned ``multiprocessing.Pool`` (or test double).
+
+  Returns:
+    None
+
+  Examples:
+    >>> _stop_abandoned_pool_repopulate(object())  # doctest: +SKIP
+  """
+  try:
+    from multiprocessing.pool import TERMINATE as _POOL_TERMINATE
+  except ImportError:  # pragma: no cover - stdlib always present
+    _POOL_TERMINATE = "TERMINATE"
+  try:
+    pool._state = _POOL_TERMINATE
+  except Exception:
+    pass
+  handler = getattr(pool, "_worker_handler", None)
+  if handler is not None:
+    try:
+      handler._state = _POOL_TERMINATE
+    except Exception:
+      pass
+  finalize = getattr(pool, "_terminate", None)
+  cancel = getattr(finalize, "cancel", None)
+  if callable(cancel):
+    try:
+      cancel()
+    except Exception:
+      pass
+
+
+def _abandon_pool_reap_until_clear(
+  pool: Any,
+  *,
+  timeout_s: float,
+  context: str,
+) -> None:
+  """
+  Process.join tracked workers, then retry ``/proc`` zombie reap to empty.
+
+  Args:
+    pool (Any): Abandoned pool whose ``_pool`` workers may still need join.
+    timeout_s (float): Caller join/abandon budget; clamped to ~2–10s wall.
+    context (str): Operator-facing reap/warn context string.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _abandon_pool_reap_until_clear(None, timeout_s=2.0, context="x")  # doctest: +SKIP
+  """
+  reap_ctx = context or "abandon_pool"
+  join_budget = min(5.0, max(0.1, float(timeout_s)))
+  try:
+    _reap_pool_worker_pids(pool, timeout_s=join_budget, context=reap_ctx)
+  except Exception:
+    pass
+  # Bounded wall: enough for post-kill waitpid storms, not a hang.
+  wall_s = min(10.0, max(2.0, float(timeout_s)))
+  deadline = time.monotonic() + wall_s
+  while True:
+    try:
+      reap_zombie_children_of_self(context=reap_ctx)
+    except Exception:
+      pass
+    try:
+      remaining = list(_iter_zombie_child_pids())
+    except Exception:
+      remaining = []
+    if not remaining:
+      break
+    if time.monotonic() >= deadline:
+      break
+    time.sleep(0.05)
+  try:
+    warn_unreaped_zombie_children(context=reap_ctx)
+  except Exception:
+    pass
+
+
 def terminate_pool_bounded(
   active_pool: Any,
   timeout_s: float = 30.0,
@@ -2289,17 +2382,21 @@ def terminate_pool_bounded(
   death.
 
   When ``abandon_after_kill=True`` (idle-pool recover / proactive swap /
-  metrics teardown), SIGKILL known worker PIDs and **do not** call stdlib
+  metrics teardown), **stop ``_worker_handler`` and cancel Finalize first**,
+  then SIGKILL known worker PIDs and **do not** call stdlib
   ``Pool.terminate()`` / join — that path can hang forever in
   ``_help_stuff_finish`` or at ``p.join()`` when workers swallow SIGTERM
   (RC-C; hs04 2026-08-13). Also SIGKILL every direct child whose cmdline
   matches ``pool_worker_cmdline_mark`` (default ``[worker:ingest-pool]``)
   so orphans left out of ``pool._pool`` cannot double the live cohort on
-  recreate.
+  recreate. After kill, Process.join + retry ``/proc`` reap until empty
+  (or a bounded wall) and warn unreaped zombies — a single-pass reap left
+  the ``/pub`` recycle 24Z cohort under metrics ``[main]``.
 
   Args:
     active_pool (Any): Live ``multiprocessing.Pool``.
-    timeout_s (float): Join budget for the non-abandon path.
+    timeout_s (float): Join budget for the non-abandon path; abandon reap
+      wall clamps to about 2–10s from this value.
     context (str): Operator-facing context string.
     kill_workers_first (bool): SIGTERM/SIGKILL workers before terminate.
     abandon_after_kill (bool): Skip stdlib ``Pool.terminate()`` after kill.
@@ -2319,6 +2416,9 @@ def terminate_pool_bounded(
   if active_pool is None:
     return True
   alive_before = alive_pool_worker_count(active_pool)
+  if abandon_after_kill:
+    # Primary: stop repopulator before SIGKILL (hs04 PID gap 830–853).
+    _stop_abandoned_pool_repopulate(active_pool)
   if kill_workers_first or abandon_after_kill:
     wchan_sample = format_pool_worker_wchan_sample(active_pool)
     log_print(
@@ -2354,10 +2454,11 @@ def terminate_pool_bounded(
         % (context or "pool", alive_before),
         flush=True,
     )
-    try:
-      reap_zombie_children_of_self(context=context or "abandon_pool")
-    except Exception:
-      pass
+    _abandon_pool_reap_until_clear(
+        active_pool,
+        timeout_s=float(timeout_s),
+        context=context or "abandon_pool",
+    )
     # RC-8: drop retire tracking for abandoned pool identity so a recycled
     # ``id(pool)`` cannot inherit a dead cohort's SIGTERM set.
     _SUPERVISOR_RETIRE_PIDS_BY_POOL.pop(id(active_pool), None)

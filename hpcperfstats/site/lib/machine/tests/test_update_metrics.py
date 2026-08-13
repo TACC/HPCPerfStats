@@ -4693,3 +4693,40 @@ def test_compute_batch_start_invokes_metrics_zombie_reap(monkeypatch):
   monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
   update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
   assert "compute_batch_start" in hygiene_contexts
+
+
+@pytest.mark.machine_unit_mock
+def test_reset_metrics_pool_after_public_phase_reaps_unthrottled(monkeypatch):
+  """/pub recycle must force unthrottled main zombie reap (not 60s throttle)."""
+  resets = []
+  reap_contexts = []
+  maybe_contexts = []
+
+  class _Mgr:
+    def reset_pool_hard(self):
+      resets.append("reset")
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_reap_metrics_main_zombie_children",
+      lambda **kwargs: reap_contexts.append(kwargs.get("context")),
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_maybe_reap_metrics_main_zombie_children",
+      lambda **kwargs: maybe_contexts.append(kwargs.get("context")),
+  )
+
+  update_metrics._reset_metrics_pool_after_public_phase(_Mgr())
+  assert resets == ["reset"]
+  assert reap_contexts == ["after_pub_pool_recycle"]
+  assert maybe_contexts == []
+
+  # Caller after metrics ensure_pool must also use the unthrottled helper.
+  src = inspect.getsource(update_metrics.update_metrics_for_dates)
+  assert "_reset_metrics_pool_after_public_phase" in src
+  assert (
+      'ensure_pool(pool_kind="metrics-pool")' in src
+      or "ensure_pool(pool_kind='metrics-pool')" in src
+  )
+  assert '_reap_metrics_main_zombie_children(context="after_pub_pool_recycle")' in src
