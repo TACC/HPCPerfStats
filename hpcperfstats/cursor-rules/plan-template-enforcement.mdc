@@ -24,15 +24,18 @@ Per **`plan-live-disk-sync.mdc`**:
 1. All required sections in order per **`plan-creation-contract.mdc`** (Plan disk file → Problem and facts → Operator discovery when needed → Approach → Testing → Implementation → Cursor rules → Final code review).
 2. **`Final code review (mandatory before implementation close)`** per **`PLAN_TEMPLATE.md`**.
 3. **`Post-implementation review (required before close)`** per **`PLAN_TEMPLATE.md`**.
-4. Final YAML todo:
+4. Closing YAML todos (order fixed; **`post-implementation-review` last**):
 
 ```yaml
+- id: git-hooks-pre-close
+  content: "Run all commit-stage and push-stage git hooks green (pre-commit run --all-files; pre-commit run --hook-stage pre-push --all-files); fix failures before close"
+  status: pending
 - id: post-implementation-review
   content: "Final senior code review (diff + workflow) clean; structured self-review in chat (why it works, edge cases, convention check)"
   status: pending
 ```
 
-Copy the full frontmatter/todo block from **`docs/plans/PLAN_TEMPLATE.md`** when authoring new plans.
+Copy the full frontmatter/todo block from **`docs/plans/PLAN_TEMPLATE.md`** when authoring new plans. **Required:** run all commit and push git hooks green before the plan is done (`plan-creation-contract.mdc` → *Git hooks before plan done*).
 
 ## When the user asks for a plan
 
@@ -59,10 +62,11 @@ Per **`plan-completion-gate.mdc`** → *Blocking close gate*, every **non-trivia
 **Close sequence order:**
 
 1. **Agent rule dispatch** — list triggered **`*.mdc`** rules Read (or **N/A** with reason); see **`agent-discipline-core.mdc`** task router.
-2. **Final code review (senior engineer pass)** — review the full diff and every workflow the change touches; when `cursor-rules/*.mdc` changed, confirm dual registration in `agent-discipline-core.mdc` and `hook_task_router.py`; fix anything a senior reviewer would block on merge; re-run relevant tests.
-3. **Structured chat self-review** — after step 2 is clean, write **Why it works**, **Edge cases** (≥3 realistic failure modes), and **Convention check** (tests, triggered rules, layer wiring, **`test_runs/`** logging; confirm senior pass had no unfixed gaps).
+2. **Git hooks (plan work)** — when implementing a plan, run **all commit-stage and push-stage** hooks green (`git-hooks-pre-close`) before claiming done — `pre-commit run --all-files` and `pre-commit run --hook-stage pre-push --all-files` from `HPCPerfStats/` (`plan-creation-contract.mdc`).
+3. **Final code review (senior engineer pass)** — review the full diff and every workflow the change touches; when `cursor-rules/*.mdc` changed, confirm dual registration in `agent-discipline-core.mdc` and `hook_task_router.py`; fix anything a senior reviewer would block on merge; re-run relevant tests.
+4. **Structured chat self-review** — after step 3 is clean, write **Why it works**, **Edge cases** (≥3 realistic failure modes), and **Convention check** (tests, triggered rules, layer wiring, **`test_runs/`** logging; confirm senior pass had no unfixed gaps).
 
-**Do not mark the task, plan, or todos done** until all close steps are complete (and, when a plan is active, plan YAML todos are synced and **`post-implementation-review`** is complete). If step 3 surfaces a new gap, return to step 2 before close.
+**Do not mark the task, plan, or todos done** until all close steps are complete (and, when a plan is active, plan YAML todos are synced, **`git-hooks-pre-close`** is green, and **`post-implementation-review`** is complete). If step 4 surfaces a new gap, return to step 3 before close.
 
 ## Recommended Cursor User Rule (paste in Settings → Rules → User Rules)
 

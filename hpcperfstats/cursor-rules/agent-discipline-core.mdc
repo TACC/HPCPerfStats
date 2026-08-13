@@ -109,7 +109,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 
 | Trigger | Read |
 |---------|------|
-| User asks for a plan / Cursor Plan / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `plan-template-enforcement.mdc`, `compose-operator-terminal-commands.mdc`, `deploy-ini-with-code-no-phase-zero.mdc`, `operator-command-lessons-learned.mdc`, `docs/plans/PLAN_TEMPLATE.md` — write live plans to **`<workspace_root>/.cursor/plans/*.plan.md`**, not `docs/plans/`; **disk before Plan UI** |
+| User asks for a plan / Cursor Plan / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `plan-template-enforcement.mdc`, `compose-operator-terminal-commands.mdc`, `deploy-ini-with-code-no-phase-zero.mdc`, `operator-command-lessons-learned.mdc`, `docs/plans/PLAN_TEMPLATE.md` — write live plans to **`<workspace_root>/.cursor/plans/*.plan.md`**, not `docs/plans/`; **disk before Plan UI**; plan close requires **`git-hooks-pre-close`** (all commit + push hooks green) before **`post-implementation-review`** |
 | `hpcperfstats.ini.example`, `docs/DEPLOY*.md` (INI redeploy guidance) | `deploy-ini-with-code-no-phase-zero.mdc`, `immutable-image-ini-policy.mdc`, `hpcperfstats-ini-format.mdc` |
 | Pre-code planning | `implementation-review-workflow.mdc` |
 | Plan or change blocked — operator must run terminal commands for facts | `compose-operator-terminal-commands.mdc`, `operator-command-lessons-learned.mdc` (when pastes fail) |

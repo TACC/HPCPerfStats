@@ -480,6 +480,9 @@ def _minimal_plan_markdown() -> str:
       "## Post-implementation review (required before close)\n\nreview\n"
       "---\n"
       "todos:\n"
+      "  - id: git-hooks-pre-close\n"
+      "    content: run commit and push hooks\n"
+      "    status: pending\n"
       "  - id: post-implementation-review\n"
       "    content: review\n"
       "    status: pending\n"
@@ -511,10 +514,22 @@ def test_plan_content_issues_detects_missing_sections():
   assert any("Operator discovery" in item for item in issues)
   assert any("Problem and facts" in item for item in issues)
   assert any("post-implementation-review todo" in item for item in issues)
+  assert any("git-hooks-pre-close todo" in item for item in issues)
 
 
 def test_plan_content_issues_accepts_minimal_plan():
   assert lib.plan_content_issues(_minimal_plan_markdown()) == []
+
+
+def test_plan_content_issues_requires_git_hooks_pre_close_todo():
+  body = _minimal_plan_markdown().replace(
+      "  - id: git-hooks-pre-close\n"
+      "    content: run commit and push hooks\n"
+      "    status: pending\n",
+      "",
+  )
+  issues = lib.plan_content_issues(body)
+  assert any("git-hooks-pre-close todo" in item for item in issues)
 
 
 def test_is_live_plan_disk_path():

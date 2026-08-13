@@ -11,7 +11,7 @@ Part of the always-on set in **`agent-discipline-core.mdc`** (pre-close checklis
 
 1. **Final code review** (senior-engineer pass on the diff and affected workflows) finds no unfixed gaps,
 2. **Structured chat self-review** (step 2 below) is written in the **same final turn**, and
-3. **When implementing a plan:** plan YAML todos synced (`status: completed` for every finished step; see **Plan YAML todo sync** below) and the **`post-implementation-review`** todo is complete.
+3. **When implementing a plan:** plan YAML todos synced (`status: completed` for every finished step; see **Plan YAML todo sync** below); **all commit-stage and push-stage git hooks** have been run and are green (`git-hooks-pre-close` — **required**, see **`plan-creation-contract.mdc`** → *Git hooks before plan done*); and the **`post-implementation-review`** todo is complete.
 
 See **`plan-template-enforcement.mdc`** for request phrasing and PLAN_TEMPLATE alignment.
 
@@ -79,17 +79,20 @@ After the senior pass is clean, write these three headings in chat (per **`imple
 
 If writing the chat sections surfaces a new gap, return to step 1, fix, re-test, then update the chat sections.
 
-## Plan todos (mandatory last item)
+## Plan todos (mandatory closing items)
 
-Every implementation plan YAML must include a final todo:
+Every implementation plan YAML must include these closing todos (**`post-implementation-review` last**):
 
 ```yaml
+- id: git-hooks-pre-close
+  content: "Run all commit-stage and push-stage git hooks green (pre-commit run --all-files; pre-commit run --hook-stage pre-push --all-files); fix failures before close"
+  status: pending
 - id: post-implementation-review
   content: "Final senior code review (diff + workflow) clean; structured self-review in chat (why it works, edge cases, convention check)"
   status: pending
 ```
 
-Do not mark this todo **completed** until **both** close-sequence steps above are done (or a narrow exception below applies).
+Do not mark **`git-hooks-pre-close`** completed until both hook stages are green. Do not mark **`post-implementation-review`** **completed** until **both** close-sequence steps above are done **and** git hooks are green (or a narrow exception below applies).
 
 ## Runtime logic changes
 
@@ -100,6 +103,7 @@ When behavior changes, also run **`logic-change-checklist.mdc`** mentally and co
 - Executed tests reported with pass/fail; blockers documented per **`test-first-discipline.mdc`**.
 - Run artifacts under **`test_runs/`**, not **`docs/`**, per **`test-runs-output-directory.mdc`**.
 - Plan frontmatter: all implementation todos `status: completed` (or explicit deferral documented) before reporting done.
+- **When implementing a plan:** run **all commit-stage and push-stage git hooks** green before close (`pre-commit run --all-files` and `pre-commit run --hook-stage pre-push --all-files` from `HPCPerfStats/`); log under **`test_runs/`**.
 
 ## Narrow exceptions
 

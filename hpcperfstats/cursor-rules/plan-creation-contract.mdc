@@ -60,15 +60,31 @@ Hooks enforce disk sync, **operator-discovery command shape** (`compose-operator
 
 ## Plan YAML todos (required shape)
 
-Include a **final** todo the agent cannot skip:
+Include these **closing** todos (order fixed; agent cannot skip):
 
 ```yaml
+- id: git-hooks-pre-close
+  content: "Run all commit-stage and push-stage git hooks green (pre-commit run --all-files; pre-commit run --hook-stage pre-push --all-files); fix failures before close"
+  status: pending
 - id: post-implementation-review
   content: "Final senior code review (diff + workflow) clean; structured self-review in chat (why it works, edge cases, convention check)"
   status: pending
 ```
 
 Copy the full todo block from **`docs/plans/PLAN_TEMPLATE.md`** when authoring new plans.
+
+### Git hooks before plan done (mandatory)
+
+A plan is **not done** until **all local commit-stage and push-stage git hooks** have been run and are green on the implementation tree. This is **required** (not optional soak).
+
+From the git checkout root (`HPCPerfStats/`):
+
+```bash
+pre-commit run --all-files
+pre-commit run --hook-stage pre-push --all-files
+```
+
+(Install hooks first via `./scripts/install-git-hooks.sh` when missing — see **`docs/TESTING.md`** → Static analysis.) Fix every failure in the same task; log results under **`test_runs/`**. Do **not** mark **`git-hooks-pre-close`** or **`post-implementation-review`** completed, and do **not** claim the plan complete, while any commit or push hook fails. This does **not** require creating a git commit or pushing — only running the hook suites.
 
 ### sync_timedb / ingest-stall plans (mandatory YAML todos)
 
@@ -91,6 +107,7 @@ Per `plan-completion-gate.mdc` close-sequence step 2 and `implementation-review-
 - [ ] **Why it works** — one paragraph, contracts cited
 - [ ] **Edge cases** — ≥3 realistic failure modes named
 - [ ] **Convention check** — tests, triggered rules, layer wiring; senior review pass had no unfixed gaps
+- [ ] **Git hooks** — all commit-stage and push-stage hooks green (`git-hooks-pre-close`; see *Git hooks before plan done*)
 - [ ] Regression tests for any fixed/discovered errors (`every-error-regression-test.mdc`)
 - [ ] Test run logged under `test_runs/` when tests executed (`test-runs-output-directory.mdc`)
 - [ ] Runtime logic: `logic-change-checklist.mdc` satisfied (if applicable)
@@ -105,6 +122,7 @@ A plan — and the work it describes — is **not complete** until:
 - tests are added or extended and executed (or blockers documented per **`test-first-discipline.mdc`**),
 - the Cursor rules step is done (rule added/updated, or explicit no-rule rationale),
 - plan YAML todos are synced (`status: completed` per **`plan-completion-gate.mdc`** → *Plan YAML todo sync*),
+- **all commit-stage and push-stage git hooks** have been run and are green (`git-hooks-pre-close` — **required**),
 - **final code review** (senior-engineer pass on diff and affected workflows) is done with no unfixed findings,
 - **`post-implementation-review`** todo is completed only after structured chat self-review is delivered,
 - conclusions trace to verified facts.

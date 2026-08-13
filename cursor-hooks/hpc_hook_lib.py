@@ -103,6 +103,10 @@ PLAN_CONTENT_SECTIONS = (
         "## Post-implementation review (required before close)",
     ),
     (
+        re.compile(r"id:\s*git-hooks-pre-close\b", re.I),
+        "git-hooks-pre-close todo",
+    ),
+    (
         re.compile(r"id:\s*post-implementation-review\b", re.I),
         "post-implementation-review todo",
     ),

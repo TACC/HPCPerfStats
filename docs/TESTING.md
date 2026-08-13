@@ -664,9 +664,18 @@ pip install -e ".[dev]"
 ./scripts/install-git-hooks.sh
 ```
 
-**Pre-commit** (staged files): Ruff `F401`/`F841`/`F811` on `hpcperfstats/`, `cursor-hooks/`, `scripts/`; ESLint on staged `hpcperfstats/site/frontend` TypeScript.
+**Pre-commit** (staged files): Ruff `F401`/`F841`/`F811` on `hpcperfstats/`, `cursor-hooks/`, `scripts/`; ESLint on staged `hpcperfstats/site/frontend` TypeScript; python def inventory `--check`.
 
 **Pre-push:** frontend `npm run typecheck` and `npm run lint:dead` (knip); `vulture hpcperfstats scripts/vulture_whitelist.py --min-confidence 80`.
+
+**Plan close (required):** implementation plans are not done until **both** hook stages are green (`plan-creation-contract.mdc` / `PLAN_TEMPLATE.md` todo `git-hooks-pre-close`). From the git checkout root:
+
+```bash
+pre-commit run --all-files
+pre-commit run --hook-stage pre-push --all-files
+```
+
+Does not require creating a commit or pushing — only running the hook suites and fixing failures.
 
 Manual equivalents:
 
