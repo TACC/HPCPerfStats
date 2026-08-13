@@ -35,7 +35,8 @@ def _ready_queue_jids(ready_queue):
 def _patch_strict_readiness_batch(monkeypatch, fn):
   """Patch batched strict readiness in ``_fill_ready_queue`` (jid list + bounds map)."""
 
-  def _wrapped(jids):
+  def _wrapped(jids, *, stats=None, scheduler_shared_lock=None):
+    del stats, scheduler_shared_lock
     result = fn(jids)
     if isinstance(result, tuple) and len(result) == 2:
       return result
@@ -886,6 +887,9 @@ def test_window_coverage_ready_requires_start_and_end_margins_job_aggregate(monk
 
   monkeypatch.setattr(update_metrics.job_data, "objects", _JobManager())
   monkeypatch.setattr(update_metrics, "_in_window_min_max_by_job_rows", _fake_bounds)
+  monkeypatch.setattr(
+      update_metrics, "_maybe_persist_window_coverage_gate_failure", lambda *a, **k: None,
+  )
 
   ready = update_metrics._filter_jids_with_samples_after_end(["101", "102"])
   assert ready == ["101"]
@@ -900,7 +904,11 @@ def test_ready_jids_batches_in_window_min_max_lookups(monkeypatch):
       "get_metrics_readiness_require_window_coverage",
       lambda: True,
   )
-  monkeypatch.setattr(update_metrics, "HOST_LAST_TIME_LOOKUP_BATCH", 2)
+  from hpcperfstats.analysis.metrics.lib import metrics as metrics_lib
+  monkeypatch.setattr(metrics_lib, "METRICS_HOST_QUERY_BATCH", 2)
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_metrics_plot_aggregate_time_slice_s", lambda: 86400,
+  )
   filter_batches = []
   time_filters = []
   start = datetime(2025, 4, 10, 11, 0, 0, tzinfo=timezone.utc)
@@ -2135,6 +2143,19 @@ def test_update_metrics_exits_on_compute_all_failed(monkeypatch):
       "get_metrics_readiness_require_window_coverage",
       lambda: False,
   )
+  monkeypatch.setattr(update_metrics, "_log_metrics_window_census", lambda *a, **k: None)
+  monkeypatch.setattr(
+      update_metrics,
+      "_run_public_ef_artifacts_parallel_phase",
+      lambda shared_pool, phase_timer: {
+          "degraded": 0,
+          "worker_exceptions": 0,
+          "watchdog_timeouts": 0,
+          "pending_tasks": 0,
+          "tasks_completed": 0,
+          "tasks_total": 0,
+      },
+  )
 
   class _FakeQs:
     def __init__(self, chunks):
@@ -2147,6 +2168,18 @@ def test_update_metrics_exits_on_compute_all_failed(monkeypatch):
   )
   monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
   monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+
+  class _DoneProducer:
+    def join(self, timeout=None):
+      del timeout
+
+  def _producer_stub(**kwargs):
+    with kwargs["ready_queue_lock"]:
+      kwargs["ready_queue"].extend([1001, 1002])
+    kwargs["producer_done"].set()
+    return _DoneProducer()
+
+  monkeypatch.setattr(update_metrics, "_start_readiness_producer", _producer_stub)
 
   class FakeMetrics:
     simple_metrics_list = {}
@@ -3563,15 +3596,16 @@ def test_main_exits_on_scheduler_stall_without_sleep(monkeypatch):
   )
   monkeypatch.setattr(update_metrics, "log_date_range", lambda *args, **kwargs: None)
   monkeypatch.setattr(update_metrics, "log_print", lambda *args, **kwargs: None)
-  monkeypatch.setattr(
-      update_metrics.cfg, "get_sync_enable_cpuset_priority_budget", lambda: False
-  )
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
   update_metrics.shutdown_requested[0] = False
   sleeps = []
-  monkeypatch.setattr(update_metrics, "sleep_until_shutdown", lambda secs: sleeps.append(secs))
+  monkeypatch.setattr(
+      update_metrics,
+      "sleep_until_shutdown",
+      lambda secs, on_tick=None: sleeps.append(secs),
+  )
 
-  def _raise_stall(_dates):
+  def _raise_stall(_dates, **_kwargs):
     raise update_metrics.MetricsSchedulerStallExit(stall_reason="no_ready_candidates")
 
   monkeypatch.setattr(update_metrics, "update_metrics_for_dates", _raise_stall)
@@ -3594,16 +3628,19 @@ def test_main_sleep_after_waits_60_seconds(monkeypatch):
   )
   monkeypatch.setattr(update_metrics, "log_date_range", lambda *args, **kwargs: None)
   monkeypatch.setattr(update_metrics, "log_print", lambda *args, **kwargs: None)
-  monkeypatch.setattr(
-      update_metrics.cfg, "get_sync_enable_cpuset_priority_budget", lambda: False
-  )
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
-  monkeypatch.setattr(update_metrics, "update_metrics_for_dates", lambda dates: None)
+  monkeypatch.setattr(
+      update_metrics, "update_metrics_for_dates", lambda dates, **kwargs: None,
+  )
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics.connections, "close_all", lambda: None)
   update_metrics.shutdown_requested[0] = False
   sleeps = []
-  monkeypatch.setattr(update_metrics, "sleep_until_shutdown", lambda secs: sleeps.append(secs))
+  monkeypatch.setattr(
+      update_metrics,
+      "sleep_until_shutdown",
+      lambda secs, on_tick=None: sleeps.append(secs),
+  )
 
   update_metrics.main(argv=["update_metrics.py"], sleep_after=True)
 
@@ -3623,16 +3660,19 @@ def test_main_default_sleep_after_waits_60_seconds(monkeypatch):
   )
   monkeypatch.setattr(update_metrics, "log_date_range", lambda *args, **kwargs: None)
   monkeypatch.setattr(update_metrics, "log_print", lambda *args, **kwargs: None)
-  monkeypatch.setattr(
-      update_metrics.cfg, "get_sync_enable_cpuset_priority_budget", lambda: False
-  )
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
-  monkeypatch.setattr(update_metrics, "update_metrics_for_dates", lambda dates: None)
+  monkeypatch.setattr(
+      update_metrics, "update_metrics_for_dates", lambda dates, **kwargs: None,
+  )
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics.connections, "close_all", lambda: None)
   update_metrics.shutdown_requested[0] = False
   sleeps = []
-  monkeypatch.setattr(update_metrics, "sleep_until_shutdown", lambda secs: sleeps.append(secs))
+  monkeypatch.setattr(
+      update_metrics,
+      "sleep_until_shutdown",
+      lambda secs, on_tick=None: sleeps.append(secs),
+  )
 
   update_metrics.main(argv=["update_metrics.py"])
 
@@ -3662,9 +3702,6 @@ def test_main_env_false_disables_default_sleep(monkeypatch):
   )
   monkeypatch.setattr(update_metrics, "log_date_range", lambda *args, **kwargs: None)
   monkeypatch.setattr(update_metrics, "log_print", lambda *args, **kwargs: None)
-  monkeypatch.setattr(
-      update_metrics.cfg, "get_sync_enable_cpuset_priority_budget", lambda: False
-  )
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
   monkeypatch.setattr(update_metrics, "update_metrics_for_dates", lambda dates: None)
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
@@ -3835,7 +3872,11 @@ def test_process_pk_chunk_proxy_reject_still_runs_strict_when_host_list_passes(m
 @pytest.mark.machine_unit_mock
 def test_strict_in_window_bounds_query_count_bounded(monkeypatch):
   """Batched strict bounds use O(unique_hosts/64) queries, not O(jobs*hosts/64)."""
-  monkeypatch.setattr(update_metrics, "HOST_LAST_TIME_LOOKUP_BATCH", 64)
+  from hpcperfstats.analysis.metrics.lib import metrics as metrics_lib
+  monkeypatch.setattr(metrics_lib, "METRICS_HOST_QUERY_BATCH", 64)
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_metrics_plot_aggregate_time_slice_s", lambda: 86400,
+  )
   query_count = [0]
 
   class _HostManager:
@@ -3879,7 +3920,11 @@ def test_strict_in_window_bounds_query_count_bounded(monkeypatch):
 @pytest.mark.machine_unit_mock
 def test_ready_jids_from_job_rows_batched_matches_per_job_reference(monkeypatch):
   """Batched in-window bounds match the per-job reference implementation."""
-  monkeypatch.setattr(update_metrics, "HOST_LAST_TIME_LOOKUP_BATCH", 2)
+  from hpcperfstats.analysis.metrics.lib import metrics as metrics_lib
+  monkeypatch.setattr(metrics_lib, "METRICS_HOST_QUERY_BATCH", 2)
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_metrics_plot_aggregate_time_slice_s", lambda: 86400,
+  )
   start = datetime(2025, 4, 1, 10, 0, 0, tzinfo=timezone.utc)
   end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
   end2 = end + timedelta(hours=1)
@@ -4018,7 +4063,8 @@ def test_strict_readiness_batch_timeout_falls_back_per_jid_without_dropping(monk
   monkeypatch.setattr(update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids)))
   call_state = {"batch": 0}
 
-  def _strict(jids):
+  def _strict(jids, *, stats=None, scheduler_shared_lock=None):
+    del stats, scheduler_shared_lock
     if call_state["batch"] == 0:
       call_state["batch"] = 1
       raise OperationalError("statement timeout")
@@ -4276,7 +4322,9 @@ def test_prewarm_pool_drain_stalls_without_progress(monkeypatch):
       del fn, jids
       return _It()
 
-  monkeypatch.setattr(update_metrics, "abort_if_pool_workers_dead", lambda *a, **k: None)
+  monkeypatch.setattr(
+      update_metrics, "abort_if_metrics_pool_workers_dead", lambda *a, **k: None,
+  )
   with pytest.raises(update_metrics.MetricsPrewarmStallError) as ei:
     update_metrics._drain_prewarm_imap(
         _Pool(),
@@ -4367,8 +4415,10 @@ def test_compute_watchdog_downshifts_on_batch_wall_not_metrics_only(monkeypatch)
       } for j in jobs]
 
   def _slow_prewarm_batch(job_refs, metrics_manager, prewarm_pipeline, shared_pool,
-                          batch_timing=None, heartbeat=None):
+                          batch_timing=None, heartbeat=None, ready_queue=None,
+                          ready_queue_lock=None):
     del metrics_manager, prewarm_pipeline, shared_pool, heartbeat
+    del ready_queue, ready_queue_lock
     if batch_timing is not None:
       batch_timing["metrics_wall_s"] = 10.0
       batch_timing["prewarm_wall_s"] = 200.0
@@ -4498,7 +4548,9 @@ def test_prewarm_stall_recycles_pool_and_keeps_partial_results(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required")
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_run_poll_timeout_s", lambda: 0.0)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_run_stall_timeout_s", lambda: 0.0)
-  monkeypatch.setattr(update_metrics, "abort_if_pool_workers_dead", lambda *a, **k: None)
+  monkeypatch.setattr(
+      update_metrics, "abort_if_metrics_pool_workers_dead", lambda *a, **k: None,
+  )
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
 
   resets = []

@@ -397,6 +397,31 @@ def test_janitor_tick_budget_interrupt_requeues_remaining_debt(monkeypatch, tmp_
   assert janitor.stats()["janitor_budget_throttled"] >= 1
 
 
+def test_signal_work_available_defers_when_tick_depth_positive(monkeypatch):
+  """Regression: day-close done callbacks must not start a parallel tick.
+
+  Sync ``_run_tick_body`` (unit tests) and in-flight ticks share the debt heap;
+  overlapping drains emptied remaining budget debt (debt_depth 0 vs 1).
+  """
+  janitor = _make_janitor()
+  submitted = {"n": 0}
+  real_submit = janitor._session_executor.submit
+
+  def counting_submit(fn, *a, **k):
+    submitted["n"] += 1
+    return real_submit(fn, *a, **k)
+
+  monkeypatch.setattr(janitor._session_executor, "submit", counting_submit)
+  janitor._tick_depth = 1
+  janitor.signal_work_available()
+  assert submitted["n"] == 0
+  assert janitor._pending_signal is True
+  janitor._tick_depth = 0
+  janitor._pending_signal = False
+  janitor.signal_work_available()
+  assert submitted["n"] == 1
+
+
 def test_janitor_tick_exception_requeues_unprocessed_debt(monkeypatch):
   janitor = _make_janitor()
   janitor._enqueue_debt(DebtKind.SEAL_PRIOR_DAY, "/tmp/2026-01-01.tar", persist=False)
@@ -736,6 +761,8 @@ def test_day_raw_removal_coordinator_always_enabled(tmp_path):
 
 def test_janitor_rss_defer_reschedules_tick(monkeypatch):
   janitor = _make_janitor()
+  # RSS defer sets ``_pending_signal``; chaining must flush that wake.
+  janitor._allow_tick_chaining = True
   submitted = []
 
   class _Exec:
@@ -1346,6 +1373,8 @@ def test_janitor_skips_debt_item_when_day_becomes_disqualified_mid_tick(monkeypa
   monkeypatch.setattr(janitor_mod, "atomic_seal_tar_to_zst", lambda *a, **k: None)
   monkeypatch.setattr(janitor_mod, "remove_verified_uncompressed_daily_tars", lambda *a, **k: None)
   monkeypatch.setattr(janitor_mod.cfg, "get_archive_janitor_budget_seconds", lambda: 9999)
+  # One in-flight worker so tar2 is only considered after tar1's delete flips disqualify.
+  monkeypatch.setattr(janitor_mod.cfg, "get_sync_day_close_max_inflight", lambda: 1)
   janitor._run_tick_body()
   assert calls == [tar1]
 
@@ -2176,7 +2205,7 @@ def test_janitor_zero_pop_logs_budget_remaining(monkeypatch, tmp_path):
 
 
 def test_janitor_does_not_chain_when_mid_tick_only_requeues_disqualified(monkeypatch, tmp_path):
-  """All-disqualified / zero-pop may wake once; must not require progress flags for that wake."""
+  """F11: all-disqualified zero_pop must not busy-wake via signal_work_available."""
   signal_count = {"n": 0}
   tar_path = str(tmp_path / "2026-01-01.tar")
   open(tar_path, "wb").close()
@@ -2209,9 +2238,8 @@ def test_janitor_does_not_chain_when_mid_tick_only_requeues_disqualified(monkeyp
   janitor._enqueue_debt(DebtKind.DAY_CLOSE, tar_path, persist=False)
   janitor._run_tick_body()
   assert janitor.debt_depth() == 1
-  # Zero-pop durable wake is allowed once; follow-up ticks still need real progress
-  # or in-flight workers to chain via finally.
-  assert signal_count["n"] >= 1
+  # Every heap tar is seal-disqualified → no durable wake (avoids busy loops).
+  assert signal_count["n"] == 0
 
 
 def test_janitor_day_close_runs_close_one_day_on_debt(monkeypatch, tmp_path):
@@ -3029,6 +3057,15 @@ def test_janitor_tick_discovers_and_submits_without_startup_reason(
     def active_or_submitted_tar_paths(self):
       return set(enqueued)
 
+    def active_discover_cap_tar_paths(self, live_worker_tars=None):
+      return set(enqueued) | set(live_worker_tars or ())
+
+    def recover_stale_manifest_entries(self):
+      return 0
+
+    def reconcile_manifest_with_debt_heap(self, **_kwargs):
+      return 0
+
     def enqueue_day_close(self, tar, reason="", *, disqualified_daily_tars=None):
       enqueued.append(os.path.normpath(tar))
       return True
@@ -3072,7 +3109,7 @@ def test_janitor_tick_discovers_and_submits_without_startup_reason(
       "_run_tick_lock_cleanup",
       lambda self: 0,
   )
-  janitor.signal_work_available()
+  # Sync tick only — do not also schedule an async executor tick.
   janitor._run_tick_body()
   assert tar_path in enqueued
 
@@ -3587,16 +3624,14 @@ def test_janitor_day_close_reclassify_unblocks_tar_drop(monkeypatch, tmp_path):
       lambda: 0,
   )
 
-  def _track_tar_drop(self, tp, *args, **kwargs):
+  def _track_tar_drop(tp, *args, **kwargs):
     tar_drop_calls.append(os.path.normpath(tp))
-    _mark_day_phase(self, tp, "tar_dropped")
+    _mark_day_phase(janitor, tp, "tar_dropped")
     return True
 
-  monkeypatch.setattr(
-      janitor_mod.ArchiveJanitor,
-      "_tar_drop_one_day",
-      _track_tar_drop,
-  )
+  # Instance patch: avoid class-level monkeypatch catching leftover async
+  # ticks from earlier tests that still call ArchiveJanitor._tar_drop_one_day.
+  monkeypatch.setattr(janitor, "_tar_drop_one_day", _track_tar_drop)
 
   janitor.log_fn = MagicMock()
   assert coord.post_seal_verification_complete(tar_norm)

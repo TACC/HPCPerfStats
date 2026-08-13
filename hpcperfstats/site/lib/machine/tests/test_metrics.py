@@ -1402,8 +1402,9 @@ def test_mem_hwm_all_nan_returns_none():
 def test_mem_hwm_mixed_nan_uses_finite_peak():
   schema = _Schema(["MemUsed", "Slab", "FilePages"])
   nan_stats = np.array([[np.nan, np.nan, np.nan]], dtype=np.float64)
-  gi = 2**30
-  good_stats = np.array([[float(gi), 0.0, 0.0]], dtype=np.float64)
+  # Monitor host_mem values are KB; 1 GiB == 1024**2 KB (Summary scale).
+  one_gib_kb = float(1024 ** 2)
+  good_stats = np.array([[one_gib_kb, 0.0, 0.0]], dtype=np.float64)
 
   class MockU:
     def get_type(self, typename):

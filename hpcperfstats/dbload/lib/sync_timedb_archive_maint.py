@@ -235,9 +235,14 @@ def load_archive_maint_hints(archive_data_dir: str) -> Optional[Dict[str, Any]]:
   data = load_persistence_document(path, "archive_maint_hints", default=None)
   if not isinstance(data, dict):
     return None
-  version = data.get("version")
+  # Persistence envelope uses ``schema_version`` (save pops legacy ``version``).
+  version = data.get("schema_version", data.get("version"))
   if version not in (_MAINT_HINTS_VERSION, 1):
     return None
+  # Callers and older tests still read ``version``; keep both keys aligned.
+  if data.get("version") != version:
+    data = dict(data)
+    data["version"] = version
   return data
 
 

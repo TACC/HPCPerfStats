@@ -936,6 +936,11 @@ class ArchiveJanitor:
     Examples:
       >>> ArchiveJanitor().signal_work_available()  # doctest: +SKIP
     """
+    # Never overlap ticks: day-close done callbacks and sync unit-test
+    # ``_run_tick_body()`` calls must not start a second drain on the heap.
+    if self._tick_depth > 0:
+      self._pending_signal = True
+      return
     if self._future is not None and not self._future.done():
       self._pending_signal = True
       return
@@ -2308,7 +2313,13 @@ class ArchiveJanitor:
         >>> ArchiveJanitor()._on_day_close_done(None)  # doctest: +SKIP
       """
       try:
-        self.signal_work_available()
+        # Prefer coalescing into the in-progress tick's finally flush so
+        # unit-test sync drains and production single-flight wakes stay
+        # non-overlapping (parallel ``_run_tick_body`` races the debt heap).
+        if self._tick_depth > 0:
+          self._pending_signal = True
+        else:
+          self.signal_work_available()
       except Exception:
         pass
 
@@ -2979,10 +2990,23 @@ class ArchiveJanitor:
           or has_in_flight
       ):
         self._pending_signal = True
-      if self._pending_signal and self._tick_depth == 1:
+      # Unit tests set ``_allow_tick_chaining=False`` so sync ``_run_tick_body``
+      # assertions see heap state without an async follow-up drain. Production
+      # keeps the default True and flushes pending wakes after releasing depth.
+      should_flush_pending = bool(
+          self._allow_tick_chaining
+          and self._pending_signal
+          and self._tick_depth == 1
+      )
+      if not self._allow_tick_chaining:
+        self._pending_signal = False
+        should_flush_pending = False
+      # Drop depth before flush so ``signal_work_available`` does not treat this
+      # tick as still active and coalesce the wake into a no-op.
+      self._tick_depth = max(0, self._tick_depth - 1)
+      if should_flush_pending:
         self._pending_signal = False
         self.signal_work_available()
-      self._tick_depth = max(0, self._tick_depth - 1)
 
   def _debt_heap_tar_paths(self) -> Set[str]:
     """

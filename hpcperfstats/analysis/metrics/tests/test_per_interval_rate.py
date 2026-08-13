@@ -158,18 +158,18 @@ def test_max_numa_remote_rate_per_host_fallback():
 
   class _Host:
     def __init__(self):
-      self.stats = {"numa": {"agg": a}}
+      self.stats = {"host_numa": {"agg": a}}
 
   class _Job:
     def __init__(self):
       self.hosts = {"n1": _Host()}
-      self.schemas = {"numa": schema}
+      self.schemas = {"host_numa": schema}
       self.times = np.array([0.0, 1.0, 2.0], dtype=np.float64)
       self.acct = {"cores": 1, "nodes": 1}
 
   u = job_utils(_Job())
   val, typename, units = metrics.max_numa_remote_rate().compute_metric(u)
-  assert typename == "numa"
+  assert typename == "host_numa"
   assert units == "#/s"
   assert val is not None
   assert val >= 200.0
@@ -181,18 +181,18 @@ def test_max_opa_congestion_rate_per_host_fallback():
 
   class _Host:
     def __init__(self):
-      self.stats = {"opa": {"agg": a}}
+      self.stats = {"host_opa": {"agg": a}}
 
   class _Job:
     def __init__(self):
       self.hosts = {"n1": _Host()}
-      self.schemas = {"opa": schema}
+      self.schemas = {"host_opa": schema}
       self.times = np.array([0.0, 1.0, 2.0], dtype=np.float64)
       self.acct = {"cores": 1, "nodes": 1}
 
   u = job_utils(_Job())
   val, typename, units = metrics.max_opa_congestion_rate().compute_metric(u)
-  assert typename == "opa"
+  assert typename == "host_opa"
   assert units == "#/s"
   assert val is not None
   assert val >= 100.0

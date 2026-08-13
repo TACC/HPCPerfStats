@@ -392,6 +392,12 @@ def test_histogram_queryset_nj_matches_job_list_with_batch_metrics_param():
     ), patch.object(
         api, "get_job_list_order_by", return_value="-end_time"
     ), patch.object(
+        # Keep username in acct kwargs; do not also emit header multi kwargs
+        # (real apply pops username into multi filters and would duplicate).
+        api,
+        "apply_job_list_header_acct_multi_filters",
+        side_effect=lambda d: (dict(d), {}),
+    ), patch.object(
         api, "partition_job_list_acct_filters", return_value=({"username": "parity-user"}, None)
     ), patch.object(
         api, "annotate_job_list_performance_fields", return_value=chain

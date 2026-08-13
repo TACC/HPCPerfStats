@@ -595,7 +595,9 @@ def test_summaryplot_plot_metric_palette_matches_factor_count_for_many_hosts():
 
 
 def test_summaryplot_uses_job_window_for_x_range():
-  """Summary plots should use job start/end as explicit x-axis bounds."""
+  """Summary plots use cluster-naive job start/end as explicit x-axis bounds."""
+  from hpcperfstats.analysis.metrics.lib.plot.job_window import job_window_bounds_local
+
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   t1 = pd.Timestamp("2024-06-01 12:01:00+00:00")
   job_start = pd.Timestamp("2024-06-01 11:55:00+00:00")
@@ -631,21 +633,28 @@ def test_summaryplot_uses_job_window_for_x_range():
   fig = summary.plot()
   assert fig is not None
   assert seen_x_ranges
-  assert pd.Timestamp(seen_x_ranges[0].start).tz_convert("UTC") == job_start
-  assert pd.Timestamp(seen_x_ranges[0].end).tz_convert("UTC") == job_end
-  assert str(pd.Timestamp(seen_x_ranges[0].start).tz) in ("UTC", "+00:00")
+  x_start_l, x_end_l = job_window_bounds_local(jt)
+  # plot() strips tz after local conversion so Range1d matches glyph times.
+  assert pd.Timestamp(seen_x_ranges[0].start) == x_start_l.tz_localize(None)
+  assert pd.Timestamp(seen_x_ranges[0].end) == x_end_l.tz_localize(None)
+  assert pd.Timestamp(seen_x_ranges[0].start).tzinfo is None
 
 
 def test_summaryplot_plot_metric_keeps_utc_epoch_for_data_and_x_range():
-  """Summary metric plots pass UTC instants to Bokeh for both data and x_range."""
+  """Summary metric plots use cluster-naive wall clock for data and x_range."""
   from bokeh.models import HoverTool, Range1d
   from bokeh.util.serialization import convert_datetime_type
+  from hpcperfstats.analysis.metrics.lib.gen.utils import timestamps_as_cluster_naive
 
   t0 = pd.Timestamp("2024-06-01 10:00:00+00:00")
   t1 = pd.Timestamp("2024-06-01 10:05:00+00:00")
   job_start = pd.Timestamp("2024-06-01 09:55:00+00:00")
   job_end = pd.Timestamp("2024-06-01 10:10:00+00:00")
-  x_range = Range1d(job_start, job_end)
+  t0_n = timestamps_as_cluster_naive(pd.Series([t0])).iloc[0]
+  t1_n = timestamps_as_cluster_naive(pd.Series([t1])).iloc[0]
+  job_start_n = timestamps_as_cluster_naive(pd.Series([job_start])).iloc[0]
+  job_end_n = timestamps_as_cluster_naive(pd.Series([job_end])).iloc[0]
+  x_range = Range1d(job_start_n, job_end_n)
 
   class _Jt:
     jid = 1
@@ -660,8 +669,8 @@ def test_summaryplot_plot_metric_keeps_utc_epoch_for_data_and_x_range():
   })
 
   plot = sp.plot_metric(df, "cpu", "CPU Usage [#cores]", x_range=x_range)
-  assert convert_datetime_type(plot.x_range.start) == convert_datetime_type(job_start)
-  assert convert_datetime_type(plot.x_range.end) == convert_datetime_type(job_end)
+  assert convert_datetime_type(plot.x_range.start) == convert_datetime_type(job_start_n)
+  assert convert_datetime_type(plot.x_range.end) == convert_datetime_type(job_end_n)
 
   scatter = [
       r
@@ -670,8 +679,8 @@ def test_summaryplot_plot_metric_keeps_utc_epoch_for_data_and_x_range():
       and getattr(r.glyph, "y", None) == "cpu"
   ][0]
   data_times = scatter.data_source.data["time"]
-  assert convert_datetime_type(data_times[0]) == convert_datetime_type(t0)
-  assert convert_datetime_type(data_times[1]) == convert_datetime_type(t1)
+  assert convert_datetime_type(data_times[0]) == convert_datetime_type(t0_n)
+  assert convert_datetime_type(data_times[1]) == convert_datetime_type(t1_n)
 
   hover = [
       tool

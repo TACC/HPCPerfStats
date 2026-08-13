@@ -49,6 +49,45 @@ def test_save_and_load_hints_v2_round_trip(tmp_path, monkeypatch):
   assert loaded["debt_queue"][0]["kind"] == "raw_remove"
 
 
+def test_load_hints_accepts_schema_version_without_legacy_version_key(
+  tmp_path, monkeypatch,
+):
+  """Regression: save_persistence_document pops ``version`` for schema_version.
+
+  load_archive_maint_hints must not reject the on-disk envelope (janitor debt
+  restore / day_phases) when only ``schema_version`` is present.
+  """
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
+      lambda: True,
+  )
+  archive_dir = str(tmp_path / "archive")
+  os.makedirs(archive_dir, exist_ok=True)
+  path = maint_hints_path(archive_dir)
+  with open(path, "w", encoding="utf-8") as handle:
+    json.dump(
+        {
+            "contract_version": 8,
+            "schema_version": 2,
+            "host_dirs": {},
+            "paths": {},
+            "validated_days": {},
+            "day_phases": {},
+            "debt_queue": [
+                {"kind": "raw_remove", "tar_path": "/tmp/2026-01-01.tar"},
+                {"kind": "tar_drop", "tar_path": "/tmp/2026-01-02.tar"},
+            ],
+        },
+        handle,
+    )
+  loaded = load_archive_maint_hints(archive_dir)
+  assert loaded is not None
+  assert "version" not in json.load(open(path, encoding="utf-8"))
+  assert loaded["version"] == 2
+  assert loaded["schema_version"] == 2
+  assert len(loaded["debt_queue"]) == 2
+
+
 def test_validated_days_hint_dropped_when_daily_tar_mtime_changes(tmp_path, monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",

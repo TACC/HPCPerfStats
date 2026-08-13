@@ -432,7 +432,10 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
     schema = raw.get("schema_version", raw.get("version"))
     if schema is not None and expected is not None:
       try:
-        if int(schema) != expected:
+        # Legacy on-disk hints used ``version`` 1 before the persistence
+        # envelope standardized on ``schema_version`` == expected (2).
+        schema_i = int(schema)
+        if schema_i not in (expected, 1):
           if log_fn:
             log_fn(
                 "reject archive_maint_hints schema_version=%s expected=%s"
