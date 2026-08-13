@@ -66,7 +66,7 @@ Plan template paths accepted for Read verification:
 
 1. Cursor **Settings → Hooks** tab should list both hooks after save/reload.
 2. Hooks output channel shows stdin/stdout when hooks fire.
-3. Unit tests: `cd HPCPerfStats && ../.venv/bin/python3 -m pytest hpcperfstats/tests/test_cursor_hooks.py -q`
+3. Unit tests: `cd HPCPerfStats && ../.venv/bin/python3 -m pytest -p no:django hpcperfstats/tests/test_cursor_hooks.py -q`
 4. Manual smoke test:
 
 ```bash

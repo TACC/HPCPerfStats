@@ -17,9 +17,9 @@ alwaysApply: true
 
 | Path | Role |
 |------|------|
-| **`<workspace_root>/.cursor/`** | Cursor-local metadata only (symlinks to checked-in rules/hooks, live `plans/`) |
+| **`<workspace_root>/.cursor/`** | Cursor-local metadata: rules/hooks **symlinks**, **copied** `hooks.json`, live `plans/` |
 | **`HPCPerfStats/monitor/cursor-rules/`** | Authoritative monitor rule `*.mdc` (workspace `.cursor/rules` symlinks here) |
-| **`HPCPerfStats/cursor-hooks/`** | Authoritative hook scripts (workspace `.cursor/hooks` symlinks here) |
+| **`HPCPerfStats/cursor-hooks/`** | Authoritative hook scripts + `hooks.json` (`.cursor/hooks` symlinks here; `.cursor/hooks.json` is a **real file copy**) |
 
 ## Required workspace `.cursor/` layout
 

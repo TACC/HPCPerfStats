@@ -45,7 +45,7 @@ Adding a new domain rule (same task, non-optional):
 
 ## Cursor hooks
 
-Committed under `HPCPerfStats/cursor-hooks/` (workspace `.cursor/hooks` symlinks there). See `cursor-hooks/README.md`.
+Committed under `HPCPerfStats/cursor-hooks/` (workspace `.cursor/hooks` symlinks there). Workspace **`.cursor/hooks.json`** must be a **real file copy** of `HPCPerfStats/cursor-hooks/hooks.json` (Cursor refuses a symlinked project hooks config). See `cursor-hooks/README.md`.
 
 - **`preToolUse`** — `check-pre-create-plan-reads.py` denies **`CreatePlan`** until plan-authoring `*.mdc` + `PLAN_TEMPLATE.md` Read; `check-block-until-plan-disk.py` blocks other tools until live plan disk write
 - **`stop`** — close-gate headings after file edits **or `CreatePlan`**, auto-triggered rule dispatch, **Read before first edit/plan**, **rule dual-registration** when `cursor-rules/*.mdc` edited, **PLAN_TEMPLATE** + **operator-discovery command shape** in the **live disk plan file** when `CreatePlan` was used (not CreatePlan tool body alone), invalid-N/A rejection, ≥3 edge-case bullets (`loop_limit: 3`)

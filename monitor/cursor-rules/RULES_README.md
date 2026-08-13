@@ -46,7 +46,7 @@ Adding a new domain rule (same task, non-optional):
 
 ## Cursor hooks
 
-Committed under `HPCPerfStats/cursor-hooks/` (workspace `.cursor/hooks` symlinks there). See `cursor-hooks/README.md`.
+Committed under `HPCPerfStats/cursor-hooks/` (workspace `.cursor/hooks` symlinks there). Workspace **`.cursor/hooks.json`** must be a **real file copy** of `HPCPerfStats/cursor-hooks/hooks.json` — Cursor refuses a symlinked project hooks config. See `cursor-hooks/README.md`.
 
 - **`stop`** — close-gate headings after file edits **or `CreatePlan`**, rule dispatch, dual-registration when `cursor-rules/*.mdc` edited, plan body `PLAN_TEMPLATE.md` sections, Read-before-edit/plan proof
 - **`postToolUse`** — `check-edit-triggered-rules.py` warns when triggered domain rules or plan reads are missing

@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 HOOKS_DIR = Path(__file__).resolve().parents[2] / "cursor-hooks"
 RULES_DIR = Path(__file__).resolve().parents[1] / "cursor-rules"
 sys.path.insert(0, str(HOOKS_DIR))
@@ -2187,6 +2189,22 @@ def test_detect_rules_profile_hpcperfstats_symlink(tmp_path):
   (hps_rules / "agent-discipline-core.mdc").write_text("---\n---\n", encoding="utf-8")
   (cursor_dir / "rules").symlink_to(hps_rules)
   assert detect_rules_profile([str(tmp_path)]) == "hpcperfstats"
+
+
+def test_workspace_hooks_json_must_be_real_file_not_symlink():
+  """Cursor refuses project hooks.json via symlink (workspace-layout / single-cursor rules)."""
+  # HPCPerfStats/hpcperfstats/tests -> workspace root is parents[3]
+  workspace_root = Path(__file__).resolve().parents[3]
+  hooks_json = workspace_root / ".cursor" / "hooks.json"
+  if not hooks_json.exists():
+    pytest.skip("workspace .cursor/hooks.json not present on this checkout")
+  assert not hooks_json.is_symlink(), (
+      f"{hooks_json} must be a real file copy of HPCPerfStats/cursor-hooks/hooks.json "
+      "(Cursor refuses a symlinked project hooks.json)"
+  )
+  auth = workspace_root / "HPCPerfStats" / "cursor-hooks" / "hooks.json"
+  assert auth.is_file()
+  assert hooks_json.read_text(encoding="utf-8") == auth.read_text(encoding="utf-8")
 
 
 def test_monitor_router_entries_reference_existing_files():

@@ -45,9 +45,9 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [monitor-xpum-integration.mdc](monitor-xpum-integration.mdc) | Intel PVC / XPU Manager (`intel_gpu`) |
 | [monitor-papi-integration.mdc](monitor-papi-integration.mdc) | aarch64 DCGM+PAPI hybrid FLOPs/cycles |
 | [monitor-amd-epyc-likwid.mdc](monitor-amd-epyc-likwid.mdc) | EPYC Rome–Turin LIKWID-only DF/core; no MSR fallback |
-| [monitor-cursor-rules-sync.mdc](monitor-cursor-rules-sync.mdc) | Edit both `.cursor/rules/` and `monitor/cursor-rules/` |
+| [monitor-cursor-rules-sync.mdc](monitor-cursor-rules-sync.mdc) | Edit both `.cursor/rules/` and `monitor/cursor-rules/`; **`cp` hooks.json** after hook/rule registration |
 | [python-venv-enforcement.mdc](python-venv-enforcement.mdc) | Python tooling: repo `.venv` |
-| [workspace-single-cursor-directory.mdc](workspace-single-cursor-directory.mdc) | Single `<workspace_root>/.cursor/`; symlink layout |
+| [workspace-single-cursor-directory.mdc](workspace-single-cursor-directory.mdc) | Single `<workspace_root>/.cursor/`; real-file `hooks.json` (not symlink) |
 | [test-first-discipline.mdc](test-first-discipline.mdc) | Test-first workflow |
 | [logic-change-checklist.mdc](logic-change-checklist.mdc) | Runtime logic changes |
 | [test-runs-output-directory.mdc](test-runs-output-directory.mdc) | Run logs under `test_runs/` |
