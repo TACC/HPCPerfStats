@@ -24,8 +24,10 @@ Attributes:
   _MAX_FABRIC_BW_SANITY_MB_S: Attribute.
   _MAX_SANE_GPU_LINK_GBPS: Attribute.
   _MAX_SANE_PACKETRATE: Attribute.
+  _METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S: Attribute.
   _PARENT_PERSIST_TIMEOUT_MARKERS: Attribute.
   _TIME_IMBALANCE_MAX_SLICE_RATIO: Attribute.
+  _last_metrics_main_zombie_reap_mono: Attribute.
 """
 from __future__ import annotations
 
@@ -60,7 +62,9 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
   abort_if_pool_workers_dead,
   alive_pool_worker_count,
   close_pool_bounded as _shared_close_pool_bounded,
+  reap_zombie_children_of_self,
   terminate_pool_bounded as _shared_terminate_pool_bounded,
+  warn_unreaped_zombie_children,
 )
 from hpcperfstats.analysis.metrics.lib.gen.utils import utils
 from hpcperfstats.lib.dcgm_blank import (
@@ -301,6 +305,80 @@ def abort_if_metrics_pool_workers_dead(
       context=context,
       pool_health_context=_metrics_pool_health_context(),
   )
+
+
+# Throttled hygiene for ``update_metrics.py [main]`` zombies left by pool
+# attrition between ``reset_pool_hard`` calls (Branch Z-H2 metrics analogue).
+_METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S = 60.0
+_last_metrics_main_zombie_reap_mono = 0.0
+
+
+def reap_metrics_main_zombie_children(*, context: str = "metrics_main") -> Any:
+  """
+  Waitpid zombie children of metrics ``[main]`` and warn if any remain.
+
+  Prefer PID-specific shared ``reap_zombie_children_of_self`` over
+  ``waitpid(-1)`` so live Pool/Manager waits are not stolen. Fault-isolates
+  reap vs warn so one failure cannot skip the other.
+
+  Args:
+    context (str): Log token (for example ``empty_pass`` or
+    ``metrics_run_poll``).
+
+  Returns:
+    Any: List of reaped PIDs from ``reap_zombie_children_of_self``, or ``[]``
+    on reap failure.
+
+  Examples:
+    >>> reap_metrics_main_zombie_children(context="unit")  # doctest: +SKIP
+  """
+  reaped: Any = []
+  try:
+    reaped = reap_zombie_children_of_self(context=context)
+  except Exception as exc:
+    log_print(
+        "WARN: metrics main zombie reap failed context=%s err=%s: %s"
+        % (context, type(exc).__name__, exc),
+        flush=True,
+    )
+  try:
+    warn_unreaped_zombie_children(context=context)
+  except Exception as exc:
+    log_print(
+        "WARN: metrics main unreaped-zombie warn failed context=%s "
+        "err=%s: %s" % (context, type(exc).__name__, exc),
+        flush=True,
+    )
+  return reaped
+
+
+def maybe_reap_metrics_main_zombie_children(
+  *,
+  context: str = "throttled",
+) -> bool:
+  """
+  Run metrics ``[main]`` zombie hygiene at most once per reap interval.
+
+  Called from scheduler idle/batch boundaries and mid-batch drain polls so
+  ``STAT=Z`` children cannot wait for the next empty_pass after attrition
+  during a long ``Metrics.run``.
+
+  Args:
+    context (str): Log token forwarded to ``reap_metrics_main_zombie_children``.
+
+  Returns:
+    bool: ``True`` when hygiene ran; ``False`` when the throttle skipped it.
+
+  Examples:
+    >>> maybe_reap_metrics_main_zombie_children(context="metrics_run_poll")  # doctest: +SKIP
+  """
+  global _last_metrics_main_zombie_reap_mono
+  now_mono = time.monotonic()
+  if now_mono - _last_metrics_main_zombie_reap_mono < _METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S:
+    return False
+  _last_metrics_main_zombie_reap_mono = now_mono
+  reap_metrics_main_zombie_children(context=context)
+  return True
 
 
 def _metrics_worker_exit_is_oom_or_sigkill(
@@ -2057,6 +2135,7 @@ def _drain_metrics_imap(
         active_pool,
         context="Metrics.run imap_unordered",
     )
+    maybe_reap_metrics_main_zombie_children(context="metrics_run_poll")
     try:
       if iterator_next_supports_timeout:
         payload = iterator_next(timeout=float(max(0.0, poll_timeout_s)))

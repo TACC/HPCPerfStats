@@ -606,6 +606,46 @@ def test_drain_metrics_imap_aborts_when_pool_worker_dead(monkeypatch):
     )
 
 
+def test_drain_metrics_imap_invokes_metrics_zombie_reap(monkeypatch):
+  """Mid-batch poll must invoke throttled metrics [main] zombie reap."""
+  hygiene = []
+
+  class _FakePool:
+    def imap_unordered(self, fn, tasks, chunksize=1):
+      del fn, tasks, chunksize
+
+      class _It:
+        def next(self, timeout=None):
+          del timeout
+          return {
+              "jid": "j-reap",
+              "status": "worker_db_error",
+              "rows": [],
+              "distinct_time_count": None,
+              "error_type": "OperationalError",
+              "error_message": "lost synchronization with server",
+          }
+
+      return _It()
+
+  monkeypatch.setattr(metrics, "abort_if_metrics_pool_workers_dead", lambda *a, **k: None)
+  monkeypatch.setattr(
+      metrics,
+      "maybe_reap_metrics_main_zombie_children",
+      lambda *, context="": hygiene.append(context) or True,
+  )
+  out = metrics._drain_metrics_imap(
+      _FakePool(),
+      tasks=[("m", "j-reap")],
+      chunksize=1,
+      poll_timeout_s=0.01,
+      stall_timeout_s=60.0,
+  )
+  assert len(out) == 1
+  assert out[0]["jid"] == "j-reap"
+  assert "metrics_run_poll" in hygiene
+
+
 def test_metrics_run_stall_with_shared_pool_calls_reset(monkeypatch):
   class _SharedPool:
     pass

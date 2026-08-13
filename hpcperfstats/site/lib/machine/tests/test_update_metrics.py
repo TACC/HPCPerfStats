@@ -4552,10 +4552,16 @@ def test_maybe_reap_metrics_main_zombie_children_throttles(monkeypatch):
     calls.append(context)
     return [1]
 
-  monkeypatch.setattr(update_metrics, "reap_zombie_children_of_self", _reap)
-  monkeypatch.setattr(update_metrics, "warn_unreaped_zombie_children", lambda **k: None)
-  monkeypatch.setattr(update_metrics, "_METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S", 60.0)
-  monkeypatch.setattr(update_metrics, "_last_metrics_main_zombie_reap_mono", 0.0)
+  monkeypatch.setattr(update_metrics.metrics, "reap_zombie_children_of_self", _reap)
+  monkeypatch.setattr(
+      update_metrics.metrics, "warn_unreaped_zombie_children", lambda **k: None
+  )
+  monkeypatch.setattr(
+      update_metrics.metrics, "_METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S", 60.0
+  )
+  monkeypatch.setattr(
+      update_metrics.metrics, "_last_metrics_main_zombie_reap_mono", 0.0
+  )
   assert update_metrics._maybe_reap_metrics_main_zombie_children(context="first") is True
   assert update_metrics._maybe_reap_metrics_main_zombie_children(context="second") is False
   assert calls == ["first"]

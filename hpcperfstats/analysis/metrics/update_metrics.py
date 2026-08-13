@@ -71,8 +71,6 @@ Attributes:
   _COVERAGE_DEFER_LOGGED_CAP: Attribute.
   _COVERAGE_MARGIN_WARN_CAP_SECONDS: Attribute.
   _COVERAGE_MARGIN_WARN_LOGGED: Attribute.
-  _METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S: Attribute.
-  _last_metrics_main_zombie_reap_mono: Attribute.
 """
 from __future__ import annotations
 
@@ -125,6 +123,7 @@ from hpcperfstats.analysis.metrics.lib.metrics import (
     INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
     abort_if_metrics_pool_workers_dead,
     expected_job_metric_row_count,
+    maybe_reap_metrics_main_zombie_children as _maybe_reap_metrics_main_zombie_children,
     persist_window_coverage_gate_failure,
 )
 from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
@@ -135,10 +134,6 @@ from hpcperfstats.dbload.lib.db_unavailable import (
 )
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.date_utils import log_date_range, parse_start_end_dates
-from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-    reap_zombie_children_of_self,
-    warn_unreaped_zombie_children,
-)
 from hpcperfstats.dbload.lib.shutdown_utils import (
     shutdown_requested,
     send_sigchld_to_parent,
@@ -235,75 +230,6 @@ STRICT_READINESS_DB_LOCK_TIMEOUT_MS = int(
 
 # Non-zero exit so supervisord ``autorestart`` replaces a wedged scheduler pass.
 METRICS_SCHEDULER_STALL_EXIT_CODE = 1
-
-# Throttled idle/batch hygiene for ``update_metrics.py [main]`` zombies left by
-# pool attrition between ``reset_pool_hard`` calls (Branch Z-H2 metrics analogue).
-_METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S = 60.0
-_last_metrics_main_zombie_reap_mono = 0.0
-
-
-def _reap_metrics_main_zombie_children(*, context: str = "metrics_main") -> Any:
-  """
-  Waitpid zombie children of ``update_metrics.py [main]`` and warn if any remain.
-
-  Prefer PID-specific shared ``reap_zombie_children_of_self`` over ``waitpid(-1)``
-  so live Pool/Manager waits are not stolen. Fault-isolates reap vs warn so one
-  failure cannot skip the other.
-
-  Args:
-    context (str): Log token (for example ``empty_pass`` or ``compute_batch_start``).
-
-  Returns:
-    Any: List of reaped PIDs from ``reap_zombie_children_of_self``, or ``[]`` on
-    reap failure.
-
-  Examples:
-    >>> _reap_metrics_main_zombie_children(context="unit")  # doctest: +SKIP
-  """
-  reaped: Any = []
-  try:
-    reaped = reap_zombie_children_of_self(context=context)
-  except Exception as exc:
-    log_print(
-        "WARN: metrics main zombie reap failed context={0} err={1}: {2}".format(
-            context, type(exc).__name__, exc
-        ),
-        flush=True,
-    )
-  try:
-    warn_unreaped_zombie_children(context=context)
-  except Exception as exc:
-    log_print(
-        "WARN: metrics main unreaped-zombie warn failed context={0} "
-        "err={1}: {2}".format(context, type(exc).__name__, exc),
-        flush=True,
-    )
-  return reaped
-
-
-def _maybe_reap_metrics_main_zombie_children(
-  *,
-  context: str = "throttled",
-) -> bool:
-  """
-  Run metrics ``[main]`` zombie hygiene at most once per reap interval.
-
-  Args:
-    context (str): Log token forwarded to ``_reap_metrics_main_zombie_children``.
-
-  Returns:
-    bool: ``True`` when hygiene ran; ``False`` when the throttle skipped it.
-
-  Examples:
-    >>> _maybe_reap_metrics_main_zombie_children(context="empty_pass")  # doctest: +SKIP
-  """
-  global _last_metrics_main_zombie_reap_mono
-  now_mono = time.monotonic()
-  if now_mono - _last_metrics_main_zombie_reap_mono < _METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S:
-    return False
-  _last_metrics_main_zombie_reap_mono = now_mono
-  _reap_metrics_main_zombie_children(context=context)
-  return True
 
 
 class MetricsSchedulerStallExit(BaseException):
@@ -5182,6 +5108,9 @@ def _compute_jid_outcomes_sliding(
       progress_callback=progress_callback,
       abort_if_pool_dead_fn=abort_if_metrics_pool_workers_dead,
       on_stall_reset=_on_stall_reset,
+      on_poll_hygiene_fn=lambda: _maybe_reap_metrics_main_zombie_children(
+          context="sliding_session_poll",
+      ),
   )
   # Run artifact-only prewarms on the same pool path (closed small batch).
   if artifact_as_metrics_done and not shutdown_requested[0]:

@@ -165,10 +165,11 @@ def run_metrics_sliding_session(
   progress_callback: Any | None = None,
   abort_if_pool_dead_fn: Any | None = None,
   on_stall_reset: Any | None = None,
+  on_poll_hygiene_fn: Any | None = None,
   empty_supplement_sleep_s: float = 0.05,
 ) -> list[dict[str, Any]]:
   """
-  Pool-sized sliding metrics+prewarm session with sample-count supplements.
+  Pool-sized sliding metrics+prewarm session with sample-count idle-slot fill.
 
   Does not call ingest ``imap_sliding_window_watch_pool``. Primary refs are
   drained first; when the primary iterator is empty and original-batch work
@@ -196,6 +197,8 @@ def run_metrics_sliding_session(
     progress_callback (Any | None): Mid-session heartbeat callback.
     abort_if_pool_dead_fn (Any | None): Optional pool-death checker.
     on_stall_reset (Any | None): Called after stall soft-fail.
+    on_poll_hygiene_fn (Any | None): Optional zero-arg callback for throttled
+    ``[main]`` zombie reap each poll loop.
     empty_supplement_sleep_s (float): Sleep when waiting with empty fill.
 
   Returns:
@@ -290,6 +293,11 @@ def run_metrics_sliding_session(
     })
 
   while (primary or pending) and not _shutting_down():
+    if callable(on_poll_hygiene_fn):
+      try:
+        on_poll_hygiene_fn()
+      except Exception:
+        pass
     if callable(abort_if_pool_dead_fn):
       try:
         abort_if_pool_dead_fn(
