@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 TOOLS_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE = TOOLS_ROOT.parent
-HPCP_SCRIPTS = WORKSPACE / "HPCPerfStats" / "scripts"
+# In-tree under HPCPerfStats/; scripts/ is a sibling of hpcperfstats-tools/.
+HPCP_SCRIPTS = TOOLS_ROOT.parent / "scripts"
 INV_PATH = HPCP_SCRIPTS / "python_def_inventory.py"
 
 

@@ -24,6 +24,7 @@ Keep these patterns in **`.dockerignore`** unless a deliberate runtime contract 
 | Frontend test-only files | `vitest.config.ts`, `setupTests.ts` under `frontend/test/vitest/`, `axe-test-utils.ts`, playwright smoke assets |
 | Cursor / agent rules | `hpcperfstats/cursor-rules/`, `**/*.mdc`, `.cursor/` |
 | Docs (not runtime) | `docs/` |
+| External API client | `hpcperfstats-tools/` (host/CLI package; not installed in web/pipeline images) |
 | Compose / CI / staging | `docker-compose*.yaml`, `docker-compose*.yaml.example`, `.github/`, `.build/` |
 | Local artifacts | `artifacts/`, `staticfiles/`, `.DS_Store` |
 

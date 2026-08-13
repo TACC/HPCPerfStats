@@ -8,5 +8,5 @@ from .job_dataframe import get_job_full_dataframe
 
 __all__ = ["__version__", "ApiClient", "ApiResult", "get_job_full_dataframe"]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 

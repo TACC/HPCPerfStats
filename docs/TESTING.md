@@ -53,8 +53,8 @@ Every in-scope production module/class/def must pass the full Google/Napoleon su
 # Gate unit tests (fixtures + full-tree green)
 ../.venv/bin/python3 -m pytest -q hpcperfstats/tests/test_python_def_inventory_gate.py
 
-# Tools package (sibling checkout)
-../.venv/bin/python3 -m pytest -q ../hpcperfstats-tools/tests/test_python_def_inventory_gate.py
+# Tools package (in-tree under hpcperfstats-tools/)
+../.venv/bin/python3 -m pytest -q hpcperfstats-tools/tests/test_python_def_inventory_gate.py
 ```
 
 Optional bulk upgrade helper (review the diff; must not emit call-site / ellipsis-placeholder boilerplate; annotations may use `Any` with explicit Args prose; `# doctest: +SKIP` only with concrete example calls):
@@ -64,7 +64,7 @@ Optional bulk upgrade helper (review the diff; must not emit call-site / ellipsi
 
 # Rewrap / fill full surface to Ruff line-length (80 HPCPerfStats / 88 tools)
 ../.venv/bin/python3 scripts/python_def_docstring_upgrade.py --force-docs --line-length 80 --apply
-../.venv/bin/python3 scripts/python_def_docstring_upgrade.py --root ../hpcperfstats-tools \
+../.venv/bin/python3 scripts/python_def_docstring_upgrade.py --root hpcperfstats-tools \
   --force-docs --line-length 88 --apply
 ```
 
@@ -261,14 +261,16 @@ bash tests/colima_docker_cleanup.sh
 
 If a follow-up script fails with **`failed to resolve host 'db'`** inside the container, Docker networking may still be cleaning up from a previous run. Run `docker-compose down --remove-orphans` from `HPCPerfStats/` and retry, or wait a few seconds between workflows.
 
-### 4. Sibling repo and SPA unit tests
+### 4. In-tree tools package and SPA unit tests
 
-From `HPCPerfStats/` (inner project root, next to `hpcperfstats-tools/`):
+From `HPCPerfStats/` (git checkout; tools live at `hpcperfstats-tools/`):
 
 ```bash
-cd ../hpcperfstats-tools && python -m pytest -q
-cd ../HPCPerfStats/hpcperfstats/site/frontend && npm test -- --run
+cd hpcperfstats-tools && python -m pytest -q
+cd ../hpcperfstats/site/frontend && npm test -- --run
 ```
+
+`hpcperfstats-tools/pytest.ini` disables the Django plugin (`-p no:django`) so in-tree runs do not inherit the parent checkout’s `DJANGO_SETTINGS_MODULE`.
 
 ## Code coverage
 
@@ -298,7 +300,7 @@ Reports are written to `hpcperfstats/site/frontend/coverage/` (ignored via `hpcp
 cd hpcperfstats/site/frontend && npm test -- --run src/components/BokehEmbed.test.jsx src/components/HistogramThumbnails.test.jsx src/utils/bokeh-embed-defaults.test.js
 ```
 
-**`hpcperfstats-tools`** (sibling package):
+**`hpcperfstats-tools`** (in-tree client package under this checkout):
 
 ```bash
 cd hpcperfstats-tools && python -m pytest --cov=hpcperfstats_tools --cov-report=term-missing
@@ -671,7 +673,7 @@ Manual equivalents:
 ```bash
 # Python unused imports/variables
 ../.venv/bin/ruff check hpcperfstats cursor-hooks scripts --select F401,F841,F811
-../.venv/bin/ruff check ../hpcperfstats-tools --select F401,F841,F811
+../.venv/bin/ruff check hpcperfstats-tools --select F401,F841,F811
 
 # Python dead symbols (high confidence)
 ../.venv/bin/vulture hpcperfstats scripts/vulture_whitelist.py --min-confidence 80

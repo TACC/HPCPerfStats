@@ -90,6 +90,7 @@ def _is_under_excluded_tree(rel_path: str) -> bool:
       ".cursor/",
       "test_runs/",
       "monitor/",
+      "hpcperfstats-tools/",
   )
   if rel.startswith(prefixes):
     return True
@@ -102,7 +103,17 @@ def _looks_like_non_runtime_dev_artifact(rel_path: str) -> bool:
   rel = rel_path.replace("\\", "/").lstrip("./")
   if _is_under_excluded_tree(rel):
     return False
-  if rel.startswith(("hpcperfstats/cursor-rules/", "docs/", ".build/", ".github/", "artifacts/", "staticfiles/")):
+  if rel.startswith(
+      (
+          "hpcperfstats/cursor-rules/",
+          "docs/",
+          ".build/",
+          ".github/",
+          "artifacts/",
+          "staticfiles/",
+          "hpcperfstats-tools/",
+      )
+  ):
     return True
   if rel.endswith(".mdc"):
     return True
@@ -181,6 +192,7 @@ def test_dockerignore_lists_required_dev_patterns():
       ".github/",
       "artifacts/",
       "hpcperfstats/site/frontend/README.md",
+      "hpcperfstats-tools/",
   )
   for pattern in required:
     assert pattern in content, f"missing .dockerignore pattern: {pattern}"

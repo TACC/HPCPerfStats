@@ -152,10 +152,11 @@ Do this from your scheduler’s **prolog** and **epilog**.
 1. **Install the tools (Python):**
 
    ```bash
-   # These tools are not published to PyPI, so install from GitHub.
-   git clone https://github.com/TACC/HPCPerfStats-tools.git
-   cd HPCPerfStats-tools
-   python3 -m pip install .
+   # Client CLIs live in-tree under hpcperfstats-tools/ (separate distribution).
+   # From the HPCPerfStats git checkout:
+   python3 -m pip install ./hpcperfstats-tools
+   # Editable during development:
+   # python3 -m pip install -e ./hpcperfstats-tools
    ```
 
 2. **Configure the API base URL:**

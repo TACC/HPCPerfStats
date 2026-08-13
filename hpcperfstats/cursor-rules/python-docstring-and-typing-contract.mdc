@@ -8,7 +8,7 @@ globs: hpcperfstats/**/*.py,scripts/**/*.py,services-conf/**/*.py
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-Applies to **in-scope** Python in the HPCPerfStats checkout and the sibling **`hpcperfstats-tools`** package (same standard; tools lives at `<workspace_root>/hpcperfstats-tools/`).
+Applies to **in-scope** Python in the HPCPerfStats checkout and the in-tree **`hpcperfstats-tools`** package (same standard; tools lives at `HPCPerfStats/hpcperfstats-tools/` inside the git checkout).
 
 ## In scope
 
@@ -78,4 +78,4 @@ Do **not** weaken the checker to make a PR green.
 - **`django-python-cursor-rules.mdc`** — general Django/Python style; this rule owns docstring/hint coverage.
 - **`test-first-discipline.mdc`** / **`testing-best-practices.mdc`** — gate tests for the inventory.
 - **`testing-doc-sync.mdc`** — keep `docs/TESTING.md` aligned with gate commands.
-- **`workspace-layout-and-python-env.mdc`** — host `.venv` interpreter; tools sibling checkout path.
+- **`workspace-layout-and-python-env.mdc`** — host `.venv` interpreter; in-tree tools path under the checkout.

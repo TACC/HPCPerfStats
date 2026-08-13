@@ -1598,9 +1598,13 @@ def default_roots(workspace_root: Path | None = None) -> list[Path]:
   roots: list[Path] = []
   if checkout.is_dir():
     roots.append(checkout)
-  tools = workspace_root / "hpcperfstats-tools"
-  if tools.is_dir():
-    roots.append(tools)
+  # Prefer in-tree monorepo client; fall back to legacy workspace-root sibling.
+  tools_in_checkout = checkout / "hpcperfstats-tools"
+  tools_sibling = workspace_root / "hpcperfstats-tools"
+  if tools_in_checkout.is_dir():
+    roots.append(tools_in_checkout)
+  elif tools_sibling.is_dir() and tools_sibling.resolve() != tools_in_checkout.resolve():
+    roots.append(tools_sibling)
   return roots
 
 
@@ -1641,7 +1645,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     action="append",
     type=Path,
     default=None,
-    help="Scan root (repeatable). Default: HPCPerfStats + hpcperfstats-tools.",
+    help="Scan root (repeatable). Default: HPCPerfStats + in-tree hpcperfstats-tools.",
   )
   parser.add_argument(
     "--workspace-root",

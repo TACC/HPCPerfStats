@@ -12,7 +12,7 @@ alwaysApply: true
 - Do not treat this message-flow inspection as justification to modify `@HPCPerfStats/monitor/` sources.
 
 ## External API Client Convention
-- Treat `@hpcperfstats-tools` as the client for the API exposed by the Django site.
+- Treat `@hpcperfstats-tools` (in-tree at `HPCPerfStats/hpcperfstats-tools/`, separate distribution / import `hpcperfstats_tools`) as the client for the API exposed by the Django site.
 - Keep API contract concerns (endpoints, auth headers, request/response shapes, retries/timeouts) inside `@hpcperfstats-tools`.
 - Do not duplicate business rules in `@hpcperfstats-tools`; instead, rely on server-side Django/DRF logic and validate responses against expected serializers/schemas.
 - When changing an API endpoint in Django, update `@hpcperfstats-tools` accordingly and add/adjust tests that cover the client-server contract.

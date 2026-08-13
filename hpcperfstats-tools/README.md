@@ -2,12 +2,15 @@
 
 Command-line tools for querying and feeding an [HPCPerfStats](https://github.com/TACC/hpcperfstats) deployment. These tools run independently of the main Django portal and talk to it via the REST API.
 
+> **Canonical location:** this package now lives **in-tree** under the main HPCPerfStats git checkout at `hpcperfstats-tools/`. Develop and install from there (`pip install ./hpcperfstats-tools` or `pip install -e ./hpcperfstats-tools`). The standalone GitHub repo `TACC/hpcperfstats-tools` is an archive/redirect only — do not dual-write.
+
 ## Installation
 
 ```bash
-pip install .
-# or from PyPI when published:
-# pip install hpcperfstats-tools
+# From the HPCPerfStats git checkout root:
+pip install ./hpcperfstats-tools
+# Editable during development:
+# pip install -e ./hpcperfstats-tools
 ```
 
 Requires Python 3.10+.

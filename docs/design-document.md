@@ -160,7 +160,7 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 
 ### 5.4 External API client
 
-- **`hpcperfstats-tools`** (sibling/client repository) is the **canonical CLI/client** for the Django API (endpoints, auth headers, schemas). Server-side business rules stay in Django; the client validates responses (workspace guardrails).
+- **`hpcperfstats-tools`** (in-tree monorepo directory under this checkout; separate Python distribution / import `hpcperfstats_tools`) is the **canonical CLI/client** for the Django API (endpoints, auth headers, schemas). Server-side business rules stay in Django; the client validates responses (workspace guardrails).
 
 ---
 

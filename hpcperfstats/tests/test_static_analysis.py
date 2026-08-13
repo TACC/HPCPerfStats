@@ -35,7 +35,7 @@ def test_ruff_unused_imports_and_variables_clean():
           "F401,F841,F811",
       ],
   )
-  tools_root = _REPO_ROOT.parent / "hpcperfstats-tools"
+  tools_root = _REPO_ROOT / "hpcperfstats-tools"
   if tools_root.is_dir():
     proc_tools = _run(
         [

@@ -28,6 +28,7 @@ Example shape:
     docker-compose.yaml
     hpcperfstats/
       cursor-rules/      ← authoritative rule *.mdc files (edit here; checked in)
+    hpcperfstats-tools/  ← external API client (separate pyproject; pip install -e ./hpcperfstats-tools)
     docs/plans/          ← PLAN_TEMPLATE + committed design baselines only
 ```
 
@@ -72,6 +73,8 @@ Some machines keep a **cloud-sync mirror** under `Library/CloudStorage/` (for ex
 
 ```bash
 cd "<workspace_root>/HPCPerfStats" && "<workspace_root>/.venv/bin/pip3" install -e ".[test]"
+# External API client (separate distribution; optional for host CLI work):
+# cd "<workspace_root>/HPCPerfStats" && "<workspace_root>/.venv/bin/pip3" install -e ./hpcperfstats-tools
 ```
 
 - **Forbidden unless the user explicitly asks:** creating ad hoc envs under `/tmp`, `python -m venv` in random paths, `pip install --break-system-packages` on the system interpreter, using **`.venv/bin/python`** or bare **`python`** for host-side runs, or implying there is no usable venv when `<workspace_root>/.venv/bin/python3` works.

@@ -93,6 +93,9 @@ script-files = [
 
 [tool.setuptools.packages.find]
 include = ["hpcperfstats*"]
+# Monorepo client package under hpcperfstats-tools/ must stay a separate
+# distribution (import hpcperfstats_tools); do not absorb into hpcperfstats.
+exclude = ["hpcperfstats_tools", "hpcperfstats_tools.*"]
 
 [tool.setuptools.package-data]
 hpcperfstats = [

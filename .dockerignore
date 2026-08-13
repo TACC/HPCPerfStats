@@ -28,6 +28,9 @@ temp/
 # Entire monitor C daemon tree (sources, build artifacts, unit tests)
 monitor/
 
+# External API client (host/CLI only; not runtime in web/pipeline image)
+hpcperfstats-tools/
+
 # ---------------------------------------------------------------------------
 # Tests and test-only artifacts (keep Docker build context lean; not runtime).
 # ---------------------------------------------------------------------------
