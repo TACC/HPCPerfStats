@@ -2288,7 +2288,7 @@ def test_maintain_ingest_pool_proactive_swap_abandons_old_pool(monkeypatch):
 
 
 def test_terminate_pool_bounded_abandon_kills_ppid_census_orphans(monkeypatch):
-  """Abandon must SIGKILL ingest-pool children of main, not only pool._pool."""
+  """Abandon must SIGKILL pool-kind children of main, not only pool._pool."""
   logs = []
   census_calls = []
   monkeypatch.setattr(
@@ -2311,7 +2311,7 @@ def test_terminate_pool_bounded_abandon_kills_ppid_census_orphans(monkeypatch):
     census_calls.append(dict(kwargs))
     return [9001, 9002]
 
-  monkeypatch.setattr(mph, "kill_ingest_pool_children_by_ppid_census", fake_census)
+  monkeypatch.setattr(mph, "kill_pool_children_by_ppid_census", fake_census)
 
   class _Pool:
     _pool = [_AliveWorker(pid=100)]
@@ -2325,7 +2325,121 @@ def test_terminate_pool_bounded_abandon_kills_ppid_census_orphans(monkeypatch):
   assert ok is True
   assert census_calls
   assert census_calls[0].get("context") == "proactive_swap"
+  assert census_calls[0].get("cmdline_mark") == "[worker:ingest-pool]"
   assert any("outcome=abandoned" in line for line in logs)
+
+
+def test_kill_pool_children_by_ppid_census_matches_pool_kind_mark(monkeypatch):
+  """Generic census matches the supplied mark; ingest wrapper stays ingest-only."""
+  listed = []
+
+  def fake_list(*, cmdline_mark, self_pid=None):
+    del self_pid
+    listed.append(cmdline_mark)
+    if cmdline_mark == "[worker:metrics-pool]":
+      return [501, 502]
+    if cmdline_mark == "[worker:ingest-pool]":
+      return [601]
+    return []
+
+  killed = []
+
+  def fake_sigkill(pids, context="", blocking_reap_s=0.2):
+    del context, blocking_reap_s
+    killed.extend(list(pids))
+
+  monkeypatch.setattr(mph, "list_pool_child_pids_of_self", fake_list)
+  monkeypatch.setattr(mph, "_sigkill_pool_worker_pids", fake_sigkill)
+  monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
+
+  out = mph.kill_pool_children_by_ppid_census(
+      cmdline_mark="[worker:metrics-pool]",
+      context="metrics_pool",
+  )
+  assert out == [501, 502]
+  assert killed == [501, 502]
+  assert "[worker:metrics-pool]" in listed
+
+  ingest_out = mph.kill_ingest_pool_children_by_ppid_census(context="ingest")
+  assert ingest_out == [601]
+  assert "[worker:ingest-pool]" in listed
+
+
+def test_terminate_pool_bounded_abandon_reaps_and_skips_stdlib_terminate(monkeypatch):
+  """Abandon path SIGKILLs, censuses, reaps, and never calls pool.terminate()."""
+  terminate_calls = []
+  reap_calls = []
+  census_calls = []
+  aggressive = []
+
+  class _HangPool:
+    _pool = [_AliveWorker()]
+
+    def terminate(self):
+      terminate_calls.append(True)
+      raise AssertionError("stdlib terminate must not run on abandon")
+
+  monkeypatch.setattr(
+      mph,
+      "_aggressive_terminate_pool_workers",
+      lambda pool, **kwargs: aggressive.append(dict(kwargs)),
+  )
+  monkeypatch.setattr(
+      mph,
+      "kill_pool_children_by_ppid_census",
+      lambda **kwargs: census_calls.append(dict(kwargs)) or [42],
+  )
+  monkeypatch.setattr(
+      mph,
+      "reap_zombie_children_of_self",
+      lambda **kwargs: reap_calls.append(dict(kwargs)),
+  )
+  monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
+
+  ok = mph.terminate_pool_bounded(
+      _HangPool(),
+      context="metrics_pool",
+      kill_workers_first=True,
+      abandon_after_kill=True,
+      pool_worker_cmdline_mark="[worker:metrics-pool]",
+  )
+  assert ok is True
+  assert terminate_calls == []
+  assert aggressive and aggressive[0].get("sigkill_first") is True
+  assert census_calls[0]["cmdline_mark"] == "[worker:metrics-pool]"
+  assert reap_calls
+
+
+def test_metrics_recycle_not_misread_as_attrition(monkeypatch):
+  """Metrics health context drives recycle classification, not ingest getter."""
+  class _Proc:
+    exitcode = None
+    pid = 99
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+      lambda: 0,
+  )
+  # Without metrics context, ingest getter=0 → not recycle.
+  assert mph._dead_worker_exitcode_is_recycle(_Proc(), pool=None) is False
+  # With metrics maxtasksperchild in context → recycle.
+  assert (
+      mph._dead_worker_exitcode_is_recycle(
+          _Proc(),
+          pool=None,
+          pool_health_context={"maxtasksperchild": 16},
+      )
+      is True
+  )
+  # Explicit 0 in context must not fall through to ingest getter.
+  assert (
+      mph._dead_worker_exitcode_is_recycle(
+          _Proc(),
+          pool=None,
+          pool_health_context={"maxtasksperchild": 0},
+      )
+      is False
+  )
 
 
 def test_reclaim_excess_ingest_pool_children_kills_orphans_keeps_pool(monkeypatch):

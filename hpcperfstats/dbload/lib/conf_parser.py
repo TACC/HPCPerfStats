@@ -83,6 +83,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PORTAL", "db_idle_in_transaction_session_timeout_ms"),
     # [PIPELINE] — sync_timedb, update_metrics, sync_acct, archive paths/tuning
     ("PIPELINE", "metrics_pool_processes"),
+    ("PIPELINE", "metrics_pool_maxtasksperchild"),
     ("PIPELINE", "metrics_scheduler_mode"),
     ("PIPELINE", "metrics_scheduler_prefetch_chunks"),
     ("PIPELINE", "metrics_scheduler_ready_queue_target"),
@@ -258,6 +259,7 @@ INI_OPTION_DEFAULTS = {
     'db_statement_timeout_ms': '120000',
     'db_idle_in_transaction_session_timeout_ms': '300000',
     'metrics_pool_processes': '24',
+    'metrics_pool_maxtasksperchild': '16',
     'metrics_scheduler_mode': 'global_priority',
     'metrics_scheduler_prefetch_chunks': '8',
     'metrics_scheduler_ready_queue_target': '100',
@@ -1984,6 +1986,25 @@ def get_metrics_pool_processes() -> Any:
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("metrics_pool_processes"))
+
+
+def get_metrics_pool_maxtasksperchild() -> Any:
+  """
+  Recycle metrics-pool workers after N tasks; 0 means unlimited.
+
+  INI ``[PIPELINE] metrics_pool_maxtasksperchild`` (default **16**). Caps
+  per-worker RSS growth without relying on cgroup OOM. Pass to both
+  metrics ``Pool(...)`` sites and into ``pool_health_context`` so recycle
+  exits are not misread as attrition.
+
+  Returns:
+    Any: Non-negative int task count (0 = no maxtasksperchild).
+
+  Examples:
+    >>> get_metrics_pool_maxtasksperchild()  # doctest: +SKIP
+  """
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("metrics_pool_maxtasksperchild"))
 
 
 def get_metrics_pool_process_count() -> Any:

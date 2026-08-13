@@ -167,6 +167,33 @@ def test_apply_pool_worker_process_title(monkeypatch):
   assert len(pdeath_calls) == 1
 
 
+def test_apply_pool_worker_process_title_restores_default_signal_handlers(monkeypatch):
+  """Workers must not inherit a parent flag-only SIGTERM handler (hs04 hang)."""
+  import signal
+
+  restored = []
+
+  def fake_signal(sig, handler):
+    restored.append((sig, handler))
+    return signal.SIG_IGN
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.process_title.signal.signal",
+      fake_signal,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.process_title.enable_parent_death_signal",
+      lambda sig=None: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.process_title.set_daemon_process_title",
+      lambda **kwargs: None,
+  )
+  apply_pool_worker_process_title("update_metrics.py", "metrics-pool")
+  assert (signal.SIGTERM, signal.SIG_DFL) in restored
+  assert (signal.SIGINT, signal.SIG_DFL) in restored
+
+
 def test_enable_parent_death_signal_noop_off_linux(monkeypatch):
   monkeypatch.setattr("hpcperfstats.dbload.lib.process_title.sys.platform", "darwin")
   assert enable_parent_death_signal() is False

@@ -135,6 +135,10 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Absolute update_metrics + plot/detail prewarm process pool size (default 24).
 # metrics_pool_processes = 24
 
+# Recycle metrics-pool workers after N tasks; 0 = unlimited (default 16).
+# Caps per-worker RSS growth; pair with metrics_pool_processes and cgroup headroom.
+# metrics_pool_maxtasksperchild = 16
+
 # Metrics scheduler: strict_date, global_fifo, or global_priority (default global_priority).
 # metrics_scheduler_mode = global_priority
 

@@ -152,7 +152,9 @@ Compose sets **`max_connections=500`** with **reduced `work_mem` / parallel gath
 
 ## Absolute pipeline / portal pool sizes
 
-Pool sizes are absolute INI keys: `sync_ingest_pool_processes` (default **16**), `metrics_pool_processes` (default **24**; metrics + plot/detail prewarm), `gunicorn_workers` (default **32**), `listend_db_ingest_pool_processes` (default **32**), `sync_write_lock_shards` (default **8**), `summary_aggregate_prefetch_max_threads` (default **2**). Secondary formula/budget/cap/overlap/`metrics_prewarm_*` gates were removed.
+Pool sizes are absolute INI keys: `sync_ingest_pool_processes` (default **16**), `metrics_pool_processes` (default **24**; metrics + plot/detail prewarm), `metrics_pool_maxtasksperchild` (default **16**; recycle metrics workers after N tasks — caps per-worker RSS growth; set **0** for unlimited lifetime), `gunicorn_workers` (default **32**), `listend_db_ingest_pool_processes` (default **32**), `sync_write_lock_shards` (default **8**), `summary_aggregate_prefetch_max_threads` (default **2**). Secondary formula/budget/cap/overlap/`metrics_prewarm_*` gates were removed.
+
+**Metrics pool teardown (2026-08-13):** `update_metrics` stall recovery / `reset_pool_hard` / `close_pool` must use shared `terminate_pool_bounded(..., abandon_after_kill=True)` with the `[worker:metrics-pool]` PPID census mark — **never** stdlib `Pool.terminate()`. CPython `_terminate_pool` can hang forever at `p.join()` when workers inherit a flag-only SIGTERM handler (hs04 production: MainThread wedged ~7.5h, 16 zombies unreaped). Pair `metrics_pool_maxtasksperchild` with `metrics_pool_processes` and pipeline cgroup headroom: higher recycle frequency lowers peak RSS but raises fork cost.
 
 Archive append and day-close concurrency are fixed caps only (**`sync_archive_pool_processes`** for append slots, **`sync_day_close_max_inflight`** for day-close — one calendar day / daily tar per slot). Overflow calendar days drain on slot finalize (not only on the next ingest chunk). There is no adaptive queue burst/backoff or soft queue watermark logging.
 

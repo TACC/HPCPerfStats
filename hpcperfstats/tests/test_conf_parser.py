@@ -43,6 +43,7 @@ def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_pool_processes() == 16
   assert cfg.get_metrics_pool_processes() == 24
+  assert cfg.get_metrics_pool_maxtasksperchild() == 16
   assert cfg.get_metrics_pool_process_count() == 24
   assert cfg.get_gunicorn_workers() == 32
   assert cfg.get_summary_aggregate_prefetch_max_threads() == 2
@@ -80,6 +81,7 @@ def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):
       "total_cores = 4\n"
       "sync_ingest_pool_processes = 3\n"
       "metrics_pool_processes = 5\n"
+      "metrics_pool_maxtasksperchild = 8\n"
       "gunicorn_workers = 9\n"
       "summary_aggregate_prefetch_max_threads = 1\n"
       "sync_write_lock_shards = 4\n"
@@ -94,6 +96,7 @@ def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_pool_processes() == 3
   assert cfg.get_metrics_pool_processes() == 5
+  assert cfg.get_metrics_pool_maxtasksperchild() == 8
   assert cfg.get_gunicorn_workers() == 9
   assert cfg.get_summary_aggregate_prefetch_max_threads() == 1
   assert cfg.get_sync_write_lock_shards() == 4

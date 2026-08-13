@@ -49,7 +49,7 @@ Use a **distinct, stable `pool_kind`** per pool type in the same script (e.g. `i
    )
    ```
 
-   Do not use nested closures for `initializer` (`spawn` must pickle it). ``Pool`` calls ``initializer(*initargs)``, so pass two positional args in ``initargs``, not a single nested tuple.
+   Do not use nested closures for `initializer` (`spawn` must pickle it). ``Pool`` calls ``initializer(*initargs)``, so pass two positional args in ``initargs``, not a single nested tuple. ``apply_pool_worker_process_title`` must reset ``SIGTERM``/``SIGINT`` to ``SIG_DFL`` so workers do not inherit a parent daemon flag-only handler (stdlib ``Pool.terminate`` otherwise hangs at ``p.join()``).
 
 4. **Daemon threads only:** `set_daemon_thread_title(..., script_name="….py", role="…")`. Never change the **process** title for threads.
 5. **Log role mirrors title:** `set_daemon_process_title` and `set_daemon_thread_title` wire `print_utils.set_log_role()` so `log_print` emits `[script:role]` (e.g. `[sync_timedb:thread:archive-janitor]`) matching `top`/`ps` labels.

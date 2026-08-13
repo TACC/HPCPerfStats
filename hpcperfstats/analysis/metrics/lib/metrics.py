@@ -267,16 +267,21 @@ def _metrics_pool_health_context() -> dict[str, int]:
   """
   Build ``pool_health_context`` for metrics ``abort_if_pool_workers_dead``.
 
-  Carries absolute ``metrics_pool_processes`` so the shared recycle gate
-  cannot treat attrition as healthy ``maxtasksperchild`` turnover.
+  Carries absolute ``metrics_pool_processes`` and
+  ``metrics_pool_maxtasksperchild`` so the shared recycle gate classifies
+  healthy worker recycle correctly (not as attrition).
 
   Returns:
-    dict[str, int]: Context with ``expected_pool_workers``.
+    dict[str, int]: Context with ``expected_pool_workers`` and
+    ``maxtasksperchild``.
 
   Examples:
     >>> _metrics_pool_health_context()  # doctest: +SKIP
   """
-  return {"expected_pool_workers": int(cfg.get_metrics_pool_processes())}
+  return {
+      "expected_pool_workers": int(cfg.get_metrics_pool_processes()),
+      "maxtasksperchild": int(cfg.get_metrics_pool_maxtasksperchild()),
+  }
 
 
 def abort_if_metrics_pool_workers_dead(
@@ -444,19 +449,78 @@ def _wait_pool_processes_bounded(active_pool: Any, timeout_s: Any) -> Any:
   return len(alive) == 0, alive
 
 
-def _close_pool_bounded(active_pool: Any, timeout_s: Any) -> Any:
+def _metrics_pool_worker_cmdline_mark(pool_kind: str = "metrics-pool") -> str:
   """
-  Best-effort bounded graceful close with SIGKILL lingerers and zombie reap.
-
-  Delegates to shared ``multiprocessing_pool_health.close_pool_bounded`` so
-  metrics /pub recycle cannot leave ``STAT=Z`` children under ``[main]``.
+  Cmdline mark for metrics PPID census during abandon teardown.
 
   Args:
-    active_pool (Any): Active pool passed to this helper.
-    timeout_s (Any): Timeout s passed to this helper.
+    pool_kind (str): Stable pool label (``metrics-pool`` or
+      ``public-ef-pool``).
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    str: ``[worker:{pool_kind}]`` substring.
+
+  Examples:
+    >>> _metrics_pool_worker_cmdline_mark("metrics-pool")
+    '[worker:metrics-pool]'
+  """
+  from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
+      pool_worker_cmdline_mark_for_kind,
+  )
+
+  return pool_worker_cmdline_mark_for_kind(pool_kind or "metrics-pool")
+
+
+def _metrics_pool_create_kwargs(
+  processes: int,
+  pool_kind: str = "metrics-pool",
+) -> dict[str, Any]:
+  """
+  Keyword args for metrics ``multiprocessing.Pool`` construction.
+
+  Includes ``maxtasksperchild`` when ``metrics_pool_maxtasksperchild`` > 0.
+
+  Args:
+    processes (int): Absolute worker count.
+    pool_kind (str): Process-title pool label.
+
+  Returns:
+    dict[str, Any]: Args for ``multiprocessing.Pool(...)``.
+
+  Examples:
+    >>> _metrics_pool_create_kwargs(24, "metrics-pool")  # doctest: +SKIP
+  """
+  kwargs: dict[str, Any] = {
+      "processes": int(processes),
+      "initializer": apply_pool_worker_process_title,
+      "initargs": ("update_metrics.py", pool_kind),
+  }
+  maxtasks = int(cfg.get_metrics_pool_maxtasksperchild())
+  if maxtasks > 0:
+    kwargs["maxtasksperchild"] = maxtasks
+  return kwargs
+
+
+def _close_pool_bounded(
+  active_pool: Any,
+  timeout_s: Any,
+  *,
+  pool_kind: str = "metrics-pool",
+) -> Any:
+  """
+  Best-effort bounded close via abandon-kill (never stdlib ``Pool.terminate``).
+
+  Delegates to shared ``close_pool_bounded`` with ``force_terminate=True`` so
+  join-timeout fallback cannot re-enter the hangable non-abandon branch
+  (hs04: MainThread wedged at ``pool.py:732`` ``p.join()``).
+
+  Args:
+    active_pool (Any): Live metrics pool.
+    timeout_s (Any): Join/kill budget seconds.
+    pool_kind (str): Pool label for PPID census mark.
+
+  Returns:
+    Any: Shared helper return value.
 
   Examples:
     >>> _close_pool_bounded(None, None)  # doctest: +SKIP
@@ -464,22 +528,31 @@ def _close_pool_bounded(active_pool: Any, timeout_s: Any) -> Any:
   return _shared_close_pool_bounded(
       active_pool,
       timeout_s=float(timeout_s),
+      force_terminate=True,
+      pool_worker_cmdline_mark=_metrics_pool_worker_cmdline_mark(pool_kind),
   )
 
 
-def _terminate_pool_bounded(active_pool: Any, timeout_s: Any) -> Any:
+def _terminate_pool_bounded(
+  active_pool: Any,
+  timeout_s: Any,
+  *,
+  pool_kind: str = "metrics-pool",
+) -> Any:
   """
-  Best-effort bounded terminate with SIGKILL lingerers and zombie reap.
+  Best-effort bounded terminate via abandon-kill (never stdlib terminate).
 
-  Used in stall recovery and ``reset_pool_hard``. After join timeout, shared
-  terminate SIGKILL's lingering worker PIDs then reaps zombie children of main.
+  Used in stall recovery and ``reset_pool_hard``. Always passes
+  ``abandon_after_kill=True`` so metrics never calls stdlib
+  ``Pool.terminate()`` (hs04 hang at ``p.join()`` after swallowed SIGTERM).
 
   Args:
-    active_pool (Any): Active pool passed to this helper.
-    timeout_s (Any): Timeout s passed to this helper.
+    active_pool (Any): Live metrics pool.
+    timeout_s (Any): Kill/reap budget seconds.
+    pool_kind (str): Pool label for PPID census mark.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: Shared helper return value.
 
   Examples:
     >>> _terminate_pool_bounded(None, None)  # doctest: +SKIP
@@ -488,6 +561,9 @@ def _terminate_pool_bounded(active_pool: Any, timeout_s: Any) -> Any:
       active_pool,
       timeout_s=float(timeout_s),
       context="metrics_pool",
+      abandon_after_kill=True,
+      kill_workers_first=True,
+      pool_worker_cmdline_mark=_metrics_pool_worker_cmdline_mark(pool_kind),
   )
 
 
@@ -2870,8 +2946,10 @@ class Metrics():
     Create and retain a shared worker pool for repeated run() calls.
 
     Same-kind reuse requires alive workers at the configured absolute width
-    (``metrics_pool_processes``). Undersized pools are hard-reset and
-    recreated so post-``/pub`` attrition cannot silently shrink capacity.
+    (``metrics_pool_processes``) **and** a live ``Pool._worker_handler``
+    thread. Undersized pools or a dead worker-handler are hard-reset and
+    recreated so post-``/pub`` attrition or a wedged terminate cannot silently
+    shrink capacity or disable reaping.
 
     Args:
       pool_kind (str): Stable pool label for process titles
@@ -2889,27 +2967,40 @@ class Metrics():
         and self._shared_pool_kind == pool_kind
     ):
       alive = int(alive_pool_worker_count(self._shared_pool))
-      if alive >= configured:
+      handler = getattr(self._shared_pool, "_worker_handler", None)
+      handler_alive = True
+      if handler is not None and hasattr(handler, "is_alive"):
+        try:
+          handler_alive = bool(handler.is_alive())
+        except Exception:
+          handler_alive = False
+      if alive >= configured and handler_alive:
         return self._shared_pool
-      log_print(
-          "WARN: metrics pool undersized pool_kind=%s configured=%s "
-          "alive=%s pool_processes=%s; recreating"
-          % (
-              pool_kind,
-              configured,
-              alive,
-              getattr(self._shared_pool, "_processes", None),
-          ),
-          flush=True,
-      )
+      if not handler_alive:
+        log_print(
+            "WARN: metrics pool worker_handler dead pool_kind=%s "
+            "configured=%s alive=%s; recreating"
+            % (pool_kind, configured, alive),
+            flush=True,
+        )
+      else:
+        log_print(
+            "WARN: metrics pool undersized pool_kind=%s configured=%s "
+            "alive=%s pool_processes=%s; recreating"
+            % (
+                pool_kind,
+                configured,
+                alive,
+                getattr(self._shared_pool, "_processes", None),
+            ),
+            flush=True,
+        )
       self.reset_pool_hard()
     elif self._shared_pool is not None:
       self.close_pool()
     self._shared_pool_kind = pool_kind
     self._shared_pool = multiprocessing.Pool(
-        processes=configured,
-        initializer=apply_pool_worker_process_title,
-        initargs=("update_metrics.py", pool_kind),
+        **_metrics_pool_create_kwargs(configured, pool_kind),
     )
     alive = int(alive_pool_worker_count(self._shared_pool))
     log_print(
@@ -2970,26 +3061,31 @@ class Metrics():
   def close_pool(self) -> None:
     """
     Close retained worker pool (idempotent).
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> Metrics().close_pool()  # doctest: +SKIP
     """
     if self._shared_pool is None:
       return
-    _close_pool_bounded(self._shared_pool, METRICS_POOL_JOIN_TIMEOUT_S)
+    pool_kind = self._shared_pool_kind or "metrics-pool"
+    _close_pool_bounded(
+        self._shared_pool,
+        METRICS_POOL_JOIN_TIMEOUT_S,
+        pool_kind=pool_kind,
+    )
     self._shared_pool = None
     self._shared_pool_kind = None
 
   def reset_pool_hard(self) -> None:
     """
-    Terminate the retained metrics worker pool with bounded SIGKILL + reap.
+    Terminate the retained metrics worker pool with abandon-kill + reap.
 
     Detach the pool reference first so ``ensure_pool()`` can create a fresh
-    pool. Teardown runs synchronously with a bounded join/SIGKILL/reap so
-    lingerers and zombies cannot outlive /pub recycle before the next spawn.
+    pool. Teardown uses ``abandon_after_kill`` (never stdlib
+    ``Pool.terminate()``) so lingerers and zombies cannot wedge ``[main]``.
 
     Returns:
       None
@@ -3000,10 +3096,15 @@ class Metrics():
     pool = self._shared_pool
     if pool is None:
       return
+    pool_kind = self._shared_pool_kind or "metrics-pool"
     self._shared_pool = None
     self._shared_pool_kind = None
     try:
-      _terminate_pool_bounded(pool, METRICS_POOL_JOIN_TIMEOUT_S)
+      _terminate_pool_bounded(
+          pool,
+          METRICS_POOL_JOIN_TIMEOUT_S,
+          pool_kind=pool_kind,
+      )
     except Exception:
       pass
 
@@ -3046,9 +3147,7 @@ class Metrics():
     active_pool = pool
     if active_pool is None:
       active_pool = multiprocessing.Pool(
-          processes=threads,
-          initializer=apply_pool_worker_process_title,
-          initargs=("update_metrics.py", "metrics-pool"),
+          **_metrics_pool_create_kwargs(threads, "metrics-pool"),
       )
     tasks = [(self, job) for job in job_list]
     poll_timeout_s = cfg.get_metrics_run_poll_timeout_s()

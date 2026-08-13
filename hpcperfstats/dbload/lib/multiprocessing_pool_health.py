@@ -788,6 +788,12 @@ def _dead_worker_exitcode_is_recycle(
         pool_health_context=pool_health_context,
     ):
       return True
+    ctx = pool_health_context if isinstance(pool_health_context, dict) else {}
+    if "maxtasksperchild" in ctx:
+      try:
+        return int(ctx.get("maxtasksperchild") or 0) > 0
+      except (TypeError, ValueError):
+        return False
     import hpcperfstats.dbload.lib.conf_parser as cfg
 
     return cfg.get_sync_ingest_pool_maxtasksperchild() > 0
@@ -1796,6 +1802,27 @@ def reap_zombie_children_of_self(*, context: str = "") -> Any:
 _INGEST_POOL_WORKER_CMDLINE_MARK = "[worker:ingest-pool]"
 
 
+def pool_worker_cmdline_mark_for_kind(pool_kind: str) -> str:
+  """
+  Build the ``ps``/cmdline mark for a pool worker title.
+
+  Matches ``apply_pool_worker_process_title`` output
+  ``{script} [worker:{pool_kind}]``.
+
+  Args:
+    pool_kind (str): Stable pool label (e.g. ``ingest-pool``,
+      ``metrics-pool``).
+
+  Returns:
+    str: Substring used for PPID census matching.
+
+  Examples:
+    >>> pool_worker_cmdline_mark_for_kind("metrics-pool")
+    '[worker:metrics-pool]'
+  """
+  return "[worker:%s]" % str(pool_kind or "").strip()
+
+
 def _read_proc_cmdline(pid: int) -> Any:
   """
   Return decoded ``/proc/<pid>/cmdline`` (nulls → spaces) or ``""``.
@@ -1855,23 +1882,31 @@ def _iter_direct_child_pids(*, self_pid: Any | None = None) -> Iterator[Any]:
       yield pid
 
 
-def list_ingest_pool_child_pids_of_self(*, self_pid: Any | None = None) -> Any:
+def list_pool_child_pids_of_self(
+  *,
+  cmdline_mark: str,
+  self_pid: Any | None = None,
+) -> list[int]:
   """
-  Direct children whose cmdline matches ``[worker:ingest-pool]``.
-  
+  Direct children whose cmdline contains ``cmdline_mark``.
+
   Args:
-    self_pid (Any | None): One of ``Any``, ``None``.
-  
+    cmdline_mark (str): Substring to match (e.g.
+      ``[worker:ingest-pool]`` or ``[worker:metrics-pool]``).
+    self_pid (Any | None): Optional parent PID override (tests).
+
   Returns:
-    Any: Open return polymorphism from
-    ``list_ingest_pool_child_pids_of_self``: concrete type depends on inputs
-    and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    list[int]: Matching live (non-zombie) child PIDs.
+
   Examples:
-    >>> list_ingest_pool_child_pids_of_self(None)  # doctest: +SKIP
+    >>> list_pool_child_pids_of_self(
+    ...     cmdline_mark="[worker:metrics-pool]"
+    ... )  # doctest: +SKIP
   """
-  mark = _INGEST_POOL_WORKER_CMDLINE_MARK
-  out = []
+  mark = str(cmdline_mark or "")
+  if not mark:
+    return []
+  out: list[int] = []
   for pid in _iter_direct_child_pids(self_pid=self_pid):
     cmdline = _read_proc_cmdline(pid)
     if mark in cmdline:
@@ -1879,31 +1914,59 @@ def list_ingest_pool_child_pids_of_self(*, self_pid: Any | None = None) -> Any:
   return out
 
 
-def kill_ingest_pool_children_by_ppid_census(
+def list_ingest_pool_child_pids_of_self(*, self_pid: Any | None = None) -> Any:
+  """
+  Direct children whose cmdline matches ``[worker:ingest-pool]``.
+
+  Thin wrapper over ``list_pool_child_pids_of_self`` preserving the
+  ingest-only census used by ``sync_timedb`` reclaim/abandon paths.
+
+  Args:
+    self_pid (Any | None): Optional parent PID override (tests).
+
+  Returns:
+    Any: List of matching child PIDs.
+
+  Examples:
+    >>> list_ingest_pool_child_pids_of_self(None)  # doctest: +SKIP
+  """
+  return list_pool_child_pids_of_self(
+      cmdline_mark=_INGEST_POOL_WORKER_CMDLINE_MARK,
+      self_pid=self_pid,
+  )
+
+
+def kill_pool_children_by_ppid_census(
   *,
+  cmdline_mark: str,
   context: str = "",
   keep_pids: Any | None = None,
-) -> Any:
+) -> list[int]:
   """
-  SIGKILL ingest-pool children of main except optional ``keep_pids``.
-  
-  Used on abandon/recreate so orphans left out of ``pool._pool`` cannot survive
-  a proactive swap (operator census ``child_ingest`` growing past configured).
-  
+  SIGKILL children of main matching ``cmdline_mark`` except ``keep_pids``.
+
+  Used on abandon/recreate so orphans left out of ``pool._pool`` cannot
+  survive a proactive swap. Pool-kind agnostic; ingest and metrics pass
+  their respective ``[worker:…]`` marks.
+
   Args:
-    context (str): String for context.
-    keep_pids (Any | None): One of ``Any``, ``None``.
-  
+    cmdline_mark (str): Cmdline substring for the pool kind.
+    context (str): Operator-facing context string.
+    keep_pids (Any | None): PIDs to leave alive.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    list[int]: PIDs that were targeted for SIGKILL.
+
   Examples:
-    >>> kill_ingest_pool_children_by_ppid_census("x", None)  # doctest: +SKIP
+    >>> kill_pool_children_by_ppid_census(
+    ...     cmdline_mark="[worker:metrics-pool]",
+    ...     context="metrics_pool",
+    ... )  # doctest: +SKIP
   """
   keep = {int(p) for p in (keep_pids or ()) if p is not None}
   targets = [
       pid
-      for pid in list_ingest_pool_child_pids_of_self()
+      for pid in list_pool_child_pids_of_self(cmdline_mark=cmdline_mark)
       if pid not in keep
   ]
   if not targets:
@@ -1919,6 +1982,36 @@ def kill_ingest_pool_children_by_ppid_census(
       blocking_reap_s=0.2,
   )
   return targets
+
+
+def kill_ingest_pool_children_by_ppid_census(
+  *,
+  context: str = "",
+  keep_pids: Any | None = None,
+) -> Any:
+  """
+  SIGKILL ingest-pool children of main except optional ``keep_pids``.
+
+  Thin wrapper preserving ``sync_timedb`` call sites; delegates to
+  ``kill_pool_children_by_ppid_census`` with the ingest cmdline mark.
+
+  Args:
+    context (str): Operator-facing context string.
+    keep_pids (Any | None): PIDs to leave alive.
+
+  Returns:
+    Any: List of targeted PIDs.
+
+  Examples:
+    >>> kill_ingest_pool_children_by_ppid_census(
+    ...     context="x", keep_pids=None
+    ... )  # doctest: +SKIP
+  """
+  return kill_pool_children_by_ppid_census(
+      cmdline_mark=_INGEST_POOL_WORKER_CMDLINE_MARK,
+      context=context,
+      keep_pids=keep_pids,
+  )
 
 
 def reclaim_excess_ingest_pool_children(
@@ -2189,31 +2282,39 @@ def terminate_pool_bounded(
   context: str = "",
   kill_workers_first: bool = False,
   abandon_after_kill: bool = False,
+  pool_worker_cmdline_mark: str | None = None,
 ) -> Any:
   """
-  Terminate a pool and wait briefly so shutdown does not hang after worker.
-  
-    death.
-  
-  When ``abandon_after_kill=True`` (idle-pool recover / proactive swap), SIGKILL
-  known worker PIDs and **do not** call stdlib ``Pool.terminate()`` / join —
-    that
-  path can hang forever in ``_help_stuff_finish`` (RC-C). Also SIGKILL every
-  direct child whose cmdline matches ``[worker:ingest-pool]`` (PPID census) so
-  orphans left out of ``pool._pool`` cannot double the live cohort on recreate.
-  
+  Terminate a pool and wait briefly so shutdown does not hang after worker
+  death.
+
+  When ``abandon_after_kill=True`` (idle-pool recover / proactive swap /
+  metrics teardown), SIGKILL known worker PIDs and **do not** call stdlib
+  ``Pool.terminate()`` / join — that path can hang forever in
+  ``_help_stuff_finish`` or at ``p.join()`` when workers swallow SIGTERM
+  (RC-C; hs04 2026-08-13). Also SIGKILL every direct child whose cmdline
+  matches ``pool_worker_cmdline_mark`` (default ``[worker:ingest-pool]``)
+  so orphans left out of ``pool._pool`` cannot double the live cohort on
+  recreate.
+
   Args:
-    active_pool (Any): Active pool passed to this helper.
-    timeout_s (float): Floating-point value for timeout s.
-    context (str): String for context.
-    kill_workers_first (bool): Boolean flag for kill workers first.
-    abandon_after_kill (bool): Boolean flag for abandon after kill.
-  
+    active_pool (Any): Live ``multiprocessing.Pool``.
+    timeout_s (float): Join budget for the non-abandon path.
+    context (str): Operator-facing context string.
+    kill_workers_first (bool): SIGTERM/SIGKILL workers before terminate.
+    abandon_after_kill (bool): Skip stdlib ``Pool.terminate()`` after kill.
+    pool_worker_cmdline_mark (str | None): PPID census cmdline mark; when
+      ``None`` and abandoning, defaults to the ingest-pool mark.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: ``True`` when workers exited (or abandon completed).
+
   Examples:
-    >>> terminate_pool_bounded(None, 0, "x", True, True)  # doctest: +SKIP
+    >>> terminate_pool_bounded(
+    ...     None, 0, context="x", kill_workers_first=True,
+    ...     abandon_after_kill=True,
+    ...     pool_worker_cmdline_mark="[worker:metrics-pool]",
+    ... )  # doctest: +SKIP
   """
   if active_pool is None:
     return True
@@ -2234,8 +2335,14 @@ def terminate_pool_bounded(
     )
   if abandon_after_kill:
     # Orphans may sit under main outside pool._pool after retire/swap.
+    mark = (
+        str(pool_worker_cmdline_mark)
+        if pool_worker_cmdline_mark
+        else _INGEST_POOL_WORKER_CMDLINE_MARK
+    )
     try:
-      kill_ingest_pool_children_by_ppid_census(
+      kill_pool_children_by_ppid_census(
+          cmdline_mark=mark,
           context=context or "abandon_pool",
           keep_pids=(),
       )
@@ -2490,20 +2597,30 @@ def close_pool_bounded(
   timeout_s: float = 30.0,
   *,
   force_terminate: bool = False,
+  pool_worker_cmdline_mark: str | None = None,
 ) -> Any:
   """
   Close a pool with a bounded join; terminate when workers already exited.
-  
+
+  When ``force_terminate=True``, routes through ``terminate_pool_bounded``
+  with ``abandon_after_kill=True`` so metrics/teardown never enters stdlib
+  ``Pool.terminate()``.
+
   Args:
-    active_pool (Any): Active pool passed to this helper.
-    timeout_s (float): Floating-point value for timeout s.
-    force_terminate (bool): Whether to enable force terminate.
-  
+    active_pool (Any): Live ``multiprocessing.Pool``.
+    timeout_s (float): Join budget for the graceful close path.
+    force_terminate (bool): Skip close/join; abandon-kill instead.
+    pool_worker_cmdline_mark (str | None): PPID census mark forwarded on
+      force/abandon terminate.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: ``True`` when workers exited (or abandon completed).
+
   Examples:
-    >>> close_pool_bounded(None, 0, True)  # doctest: +SKIP
+    >>> close_pool_bounded(
+    ...     None, 0, force_terminate=True,
+    ...     pool_worker_cmdline_mark="[worker:metrics-pool]",
+    ... )  # doctest: +SKIP
   """
   if active_pool is None:
     return True
@@ -2514,6 +2631,7 @@ def close_pool_bounded(
         abandon_after_kill=bool(force_terminate),
         kill_workers_first=bool(force_terminate),
         context="close_force_terminate" if force_terminate else "",
+        pool_worker_cmdline_mark=pool_worker_cmdline_mark,
     )
   try:
     active_pool.close()
@@ -2525,7 +2643,11 @@ def close_pool_bounded(
         "Pool close join timeout; terminating lingering_workers=%s" % alive,
         flush=True,
     )
-    return terminate_pool_bounded(active_pool, timeout_s)
+    return terminate_pool_bounded(
+        active_pool,
+        timeout_s,
+        pool_worker_cmdline_mark=pool_worker_cmdline_mark,
+    )
   return all_done
 
 

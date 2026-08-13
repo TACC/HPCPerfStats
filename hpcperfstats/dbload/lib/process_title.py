@@ -257,20 +257,31 @@ def enable_parent_death_signal(sig: Any | None = None) -> Any:
 def apply_pool_worker_process_title(script_name: Any, pool_kind: Any) -> None:
   """
   Picklable ``multiprocessing.Pool`` initializer for spawn/fork workers.
-  
+
   ``Pool`` invokes ``initializer(*initargs)``, so ``initargs`` must be a
   ``(script_name, pool_kind)`` tuple of two positional arguments.
-  
+
+  Resets ``SIGTERM`` / ``SIGINT`` to ``SIG_DFL`` so workers do not inherit a
+  parent daemon handler that only sets a shutdown flag (hs04: stdlib
+  ``Pool.terminate`` hung forever at ``p.join()`` after ineffective SIGTERM).
+
   Args:
-    script_name (Any): Script name passed to this helper.
-    pool_kind (Any): Pool kind passed to this helper.
-  
+    script_name (Any): Daemon script basename for the process title.
+    pool_kind (Any): Stable pool label (e.g. ``metrics-pool``).
+
   Returns:
     None
-  
+
   Examples:
-    >>> apply_pool_worker_process_title(None, None)  # doctest: +SKIP
+    >>> apply_pool_worker_process_title(
+    ...     "update_metrics.py", "metrics-pool"
+    ... )  # doctest: +SKIP
   """
+  try:
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+  except Exception:
+    pass
   enable_parent_death_signal()
   set_daemon_process_title(name=script_name, role="worker", pool_kind=pool_kind)
 
