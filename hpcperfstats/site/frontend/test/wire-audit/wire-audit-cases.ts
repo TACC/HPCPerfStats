@@ -187,9 +187,33 @@ export const WIRE_AUDIT_CASES: WireAuditCase[] = [
         ],
         missing_core_types: ["host_mem"],
         truncated: false,
+        hosts_sampled_fqdns: ["n001.cluster.example"],
+        monitor_identities: [
+          {
+            fqdn: "n001.cluster.example",
+            package_version: "3.0",
+            uname: "Linux x86_64",
+            capability_slug: null,
+            schema_types: ["host_cpu", "host_mem"],
+            updated_at: 1710000000,
+          },
+        ],
+        findings: [
+          {
+            kind: "all_zero_core_event",
+            severity: "high",
+            message: "Core type/event is all-zero over the sampled window.",
+            type: "host_cpu",
+            event: "user",
+            row_count: 42,
+          },
+        ],
+        monitor_handoff_markdown:
+          "# Telemetry health handoff (Admin Monitor)\n\n## Actionable findings\n",
         ok_summary: {
           nonzero_type_event_pairs: 17,
           scanned_note: "Scanned non-error (type, event) pairs in the last 12 hours.",
+          hosts_sampled: 1,
         },
       },
     },

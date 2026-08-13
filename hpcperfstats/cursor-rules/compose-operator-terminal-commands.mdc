@@ -495,7 +495,7 @@ On large hypertables, **`SELECT host, max(time) FROM host_data WHERE time >= now
 
 ### Anti-pattern — Admin Monitor telemetry_health: site-wide 12h `GROUP BY type, event` (hpcperfstats04 2026-08-12)
 
-On large hypertables, **`SELECT type, event, COUNT(*), BOOL_OR(...) FROM host_data WHERE time >= now() - interval '12 hours' … GROUP BY type, event`** plans at cost ~**5.79e6** (tens of millions of rows via time-index / seq scan) and hits **`canceling statement due to statement timeout`**. Admin Monitor `telemetry_health` now samples Redis **`recent_host:*`** (cap 16 FQDNs) and runs **`WHERE host = ANY(%s::text[])`** batches of 8 so Timescale uses host+time indexes (EXPLAIN ~**1.88e6** for 8 hosts). Empty Redis → soft-fail incomplete payload — **no** site-wide fallback.
+On large hypertables, **`SELECT type, event, COUNT(*), BOOL_OR(...) FROM host_data WHERE time >= now() - interval '12 hours' … GROUP BY type, event`** plans at cost ~**5.79e6** (tens of millions of rows via time-index / seq scan) and hits **`canceling statement due to statement timeout`**. Admin Monitor `telemetry_health` now samples Redis **`recent_host:*`** (cap 16 FQDNs) and runs **`WHERE host = ANY(%s::text[])`** batches of 8 so Timescale uses host+time indexes (EXPLAIN ~**1.88e6** for 8 hosts). Empty Redis → soft-fail incomplete payload — **no** site-wide fallback. UI defaults to **actionable** findings only (core missing / core all-zero); informational idle IB/GPU/PMC zeros are collapsed. Use **Copy monitor handoff report** for monitor-focused Cursor paste (server `monitor_handoff_markdown`). listend may also SET Redis **`monitor_identity:{fqdn}`** on `$` schema rotation (`$build` optional until RPM).
 
 | Do | Don't |
 |----|-------|

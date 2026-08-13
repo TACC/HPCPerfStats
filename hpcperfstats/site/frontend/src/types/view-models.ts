@@ -30,6 +30,25 @@ export type AdminMonitorTelemetryZeroEvent = {
   row_count: number;
 };
 
+export type AdminMonitorTelemetryFinding = {
+  kind: string;
+  severity: string;
+  message: string;
+  type?: string;
+  event?: string;
+  row_count?: number;
+  fqdn?: string;
+};
+
+export type AdminMonitorTelemetryIdentity = {
+  fqdn?: string;
+  package_version?: string | null;
+  uname?: string | null;
+  capability_slug?: string | null;
+  schema_types?: string[];
+  updated_at?: number;
+};
+
 export type AdminMonitorTelemetryHealth = {
   window_hours?: number;
   computed_at?: string;
@@ -38,6 +57,10 @@ export type AdminMonitorTelemetryHealth = {
   all_zero_events?: AdminMonitorTelemetryZeroEvent[];
   missing_core_types?: string[];
   truncated?: boolean;
+  hosts_sampled_fqdns?: string[];
+  monitor_identities?: AdminMonitorTelemetryIdentity[];
+  findings?: AdminMonitorTelemetryFinding[];
+  monitor_handoff_markdown?: string;
   ok_summary?: {
     nonzero_type_event_pairs?: number;
     scanned_note?: string;

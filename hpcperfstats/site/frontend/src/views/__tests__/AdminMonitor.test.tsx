@@ -9,6 +9,12 @@ vi.mock("@/hooks/use-admin-monitor-section", () => ({
   useAdminMonitorSectionQuery: vi.fn(),
 }));
 
+vi.mock("../../utils/copy-to-clipboard", () => ({
+  copyToClipboard: vi.fn().mockResolvedValue(true),
+}));
+
+import { copyToClipboard } from "../../utils/copy-to-clipboard";
+
 function mockSectionQuery(
   sectionResponses: Record<
     string,
@@ -278,6 +284,42 @@ describe("AdminMonitor", () => {
               { type: "host_cpu", event: "user", row_count: 9 },
             ],
             missing_core_types: ["host_mem"],
+            hosts_sampled_fqdns: ["n001.example.com"],
+            monitor_identities: [
+              {
+                fqdn: "n001.example.com",
+                package_version: "3.0",
+                capability_slug: null,
+                uname: "Linux x86_64",
+                schema_types: ["host_cpu"],
+              },
+            ],
+            findings: [
+              {
+                kind: "all_zero_core_event",
+                severity: "high",
+                message: "core zero",
+                type: "host_cpu",
+                event: "user",
+                row_count: 9,
+              },
+              {
+                kind: "all_zero_other_event",
+                severity: "low",
+                message: "idle",
+                type: "host_ib",
+                event: "port_xmit_data",
+                row_count: 3,
+              },
+              {
+                kind: "missing_core_type",
+                severity: "high",
+                message: "missing",
+                type: "host_mem",
+              },
+            ],
+            monitor_handoff_markdown:
+              "# Telemetry health handoff\n\n## Actionable findings\n",
             ok_summary: {
               nonzero_type_event_pairs: 3,
               scanned_note: "Scanned pairs.",
@@ -313,11 +355,75 @@ describe("AdminMonitor", () => {
     expect(screen.getByText("host_mem")).toBeInTheDocument();
     expect(screen.getByText(/Bounded scan of non-error/i)).toBeInTheDocument();
     expect(screen.getByText(/16 hosts/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/n001.example.com/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/slug pending RPM/i)).toBeInTheDocument();
+    expect(screen.queryByText("port_xmit_data")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: /Telemetry health \(12h\) — 1 all-zero, 1 missing/i,
+        name: /Show 1 informational all-zero pair/i,
       }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /Copy monitor handoff report/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /Telemetry health \(12h\) — 1 actionable all-zero, 1 missing/i,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("copies monitor handoff markdown and expands informational zeros", async () => {
+    vi.mocked(copyToClipboard).mockClear();
+    vi.mocked(copyToClipboard).mockResolvedValue(true);
+
+    mockSectionQuery({
+      telemetry_health: {
+        data: {
+          window_hours: 12,
+          timed_out: false,
+          all_zero_events: [
+            { type: "host_cpu", event: "user", row_count: 9 },
+          ],
+          missing_core_types: [],
+          findings: [
+            {
+              kind: "all_zero_other_event",
+              severity: "low",
+              message: "idle",
+              type: "host_ib",
+              event: "port_xmit_data",
+              row_count: 3,
+            },
+          ],
+          monitor_handoff_markdown: "# handoff body",
+          ok_summary: { nonzero_type_event_pairs: 1, scanned_note: "ok" },
+        },
+      },
+    });
+    renderWithProviders(<AdminMonitor />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Telemetry health \(12h\)/i }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /Copy monitor handoff report/i }),
+      ).toBeInTheDocument();
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /Copy monitor handoff report/i }),
+    );
+    await waitFor(() => {
+      expect(copyToClipboard).toHaveBeenCalledWith("# handoff body");
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Show 1 informational all-zero pair/i,
+      }),
+    );
+    expect(screen.getByText("port_xmit_data")).toBeInTheDocument();
   });
 
   it("has no serious axe violations with telemetry health expanded", async () => {
@@ -330,6 +436,7 @@ describe("AdminMonitor", () => {
             { type: "host_cpu", event: "user", row_count: 9 },
           ],
           missing_core_types: ["host_mem"],
+          monitor_handoff_markdown: "# handoff",
           ok_summary: { nonzero_type_event_pairs: 3, scanned_note: "ok" },
         },
       },

@@ -46,6 +46,10 @@ import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.file_locking import file_read_lock_wait, file_write_lock
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.shutdown_utils import send_sigchld_to_parent
+from hpcperfstats.lib.monitor_identity import (
+    parse_monitor_identity_from_dollar_message,
+    set_monitor_identity,
+)
 
 DEBUG = cfg.get_debug()
 
@@ -348,7 +352,7 @@ def _enqueue_recent_host_update(host: Any) -> None:
   Queue a best-effort Redis host timestamp update.
   
   Args:
-    host (Any): Host passed to this helper.
+    host (Any): Host FQDN string (must contain ``.``).
   
   Returns:
     None
@@ -365,10 +369,47 @@ def _enqueue_recent_host_update(host: Any) -> None:
       log_print("Recent-host Redis queue is full; dropping update for %s" % host)
 
 
+def _enqueue_monitor_identity_update(identity: Any) -> None:
+  """
+  Queue a best-effort Redis ``monitor_identity:{fqdn}`` SET.
+
+  Identity writes ride the same background worker as ``recent_host`` so
+  RabbitMQ ack / archive I/O timing is unchanged. Missing ``$build`` is
+  already tolerated by the parser (slug may be null).
+
+  Args:
+    identity (Any): Mapping from
+      ``parse_monitor_identity_from_dollar_message`` (must include ``fqdn``).
+
+  Returns:
+    None
+
+  Examples:
+    >>> _enqueue_monitor_identity_update(None)  # doctest: +SKIP
+  """
+  if not isinstance(identity, dict):
+    return
+  fqdn = identity.get("fqdn")
+  if not fqdn or "." not in str(fqdn):
+    return
+  try:
+    _recent_host_queue.put_nowait(identity)
+  except queue.Full:
+    if DEBUG:
+      log_print(
+          "Recent-host Redis queue is full; dropping monitor_identity for %s"
+          % fqdn
+      )
+
+
 def _recent_host_worker() -> None:
   """
-  Background worker that writes recent-host timestamps to Redis.
-  
+  Background worker that writes recent-host and monitor-identity keys to Redis.
+
+  Queue items are either an FQDN ``str`` (``recent_host`` timestamp) or an
+  identity ``dict`` (``monitor_identity`` JSON). Redis-only; no DB writes,
+  pause/ack, or archive-gate changes.
+
   Returns:
     None
   
@@ -380,17 +421,32 @@ def _recent_host_worker() -> None:
   set_daemon_thread_title("", script_name="listend.py", role="recent-host-worker")
   while not _recent_host_worker_stop_event.is_set():
     try:
-      host = _recent_host_queue.get(timeout=1.0)
+      item = _recent_host_queue.get(timeout=1.0)
     except queue.Empty:
       continue
 
     try:
       redis_client = _get_recent_host_redis_client()
       if redis_client is not None:
-        _set_recent_host_timestamp(redis_client, host)
+        if isinstance(item, dict):
+          set_monitor_identity(
+              redis_client,
+              item,
+              ttl_seconds=RECENT_HOST_TTL_SECONDS,
+          )
+        else:
+          _set_recent_host_timestamp(redis_client, item)
     except Exception as e:
       if DEBUG:
-        log_print("Failed to update recent-host Redis key for %s: %s" % (host, e))
+        label = (
+            item.get("fqdn")
+            if isinstance(item, dict)
+            else item
+        )
+        log_print(
+            "Failed to update recent-host/monitor_identity Redis for %s: %s"
+            % (label, e)
+        )
     finally:
       _recent_host_queue.task_done()
 
@@ -477,6 +533,18 @@ def append_monitor_payload_to_archive(message: Any) -> Any:
       with open(current_path, "a") as fd:
         fd.write(message)
   _enqueue_recent_host_update(host)
+  # Redis-only identity snapshot on ``$`` rotation (tolerant if ``$build``
+  # absent). Does not change ack, pause/resume, or archive/DB gate semantics.
+  if message[0] == "$":
+    try:
+      identity = parse_monitor_identity_from_dollar_message(
+          message if isinstance(message, str) else message.decode("utf-8", "replace"),
+          updated_at=int(time.time()),
+      )
+    except Exception:
+      identity = None
+    if identity is not None:
+      _enqueue_monitor_identity_update(identity)
 
   now = time.time()
   with _timestamps_lock:

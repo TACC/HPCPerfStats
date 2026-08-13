@@ -21,7 +21,10 @@ globs: hpcperfstats/site/lib/machine/api.py,hpcperfstats/site/lib/machine/job_pl
     ``recent_host:*``-scoped, host-batched 12h aggregate with
     ``host = ANY`` + ``SET LOCAL statement_timeout``, Django cache key
     ``KEY_ADMIN_TELEMETRY_HEALTH``, soft-fail on timeout or empty Redis
-    inventory — **not** a site-wide ``GROUP BY type, event``),
+    inventory — **not** a site-wide ``GROUP BY type, event``; payload includes
+    severity ``findings``, ``monitor_handoff_markdown`` for Copy, and joins
+    Redis ``monitor_identity:{fqdn}`` written by listend on ``$`` schema
+    rotation — ``$build`` optional until monitor RPM ships),
   - **`host_plot`** (authenticated users; live `HostDataProvider` — rarely used; harden statement timeouts; do **not** convert to prewarm in the same task as Job Detail plots).
 
 ## Required implementation behavior

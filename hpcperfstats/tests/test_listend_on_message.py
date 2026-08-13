@@ -73,6 +73,85 @@ def test_on_message_enqueues_recent_host_redis_update(tmp_path, monkeypatch):
   assert captured == ["node1.example.com"]
 
 
+def test_on_message_dollar_enqueues_monitor_identity_without_build(
+    tmp_path, monkeypatch
+):
+  """``$`` rotation SETs identity even when ``$build`` is absent (old RPM)."""
+  import hpcperfstats.listend as listend
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(listend.time, "time", lambda: 1710000000.0)
+  recent = []
+  identities = []
+  monkeypatch.setattr(
+      listend,
+      "_enqueue_recent_host_update",
+      lambda host: recent.append(host),
+  )
+  monkeypatch.setattr(
+      listend,
+      "_enqueue_monitor_identity_update",
+      lambda identity: identities.append(identity),
+  )
+  channel = _FakeChannel()
+  body = (
+      b"$\n"
+      b"1 node1.example.com\n"
+      b"$hpcperfstats 3.0\n"
+      b"$uname Linux x86_64\n"
+      b"!host_cpu user,E\n"
+  )
+  listend.on_message(channel, _FakeMethodFrame(delivery_tag=333), None, body)
+
+  assert channel.acked == [333]
+  assert recent == ["node1.example.com"]
+  assert len(identities) == 1
+  assert identities[0]["fqdn"] == "node1.example.com"
+  assert identities[0]["package_version"] == "3.0"
+  assert identities[0]["capability_slug"] is None
+  assert identities[0]["schema_types"] == ["host_cpu"]
+
+
+def test_recent_host_worker_sets_monitor_identity_dict(monkeypatch):
+  import hpcperfstats.listend as listend
+
+  class _FakeRedis:
+    def __init__(self):
+      self.writes = []
+
+    def set(self, key, value, ex=None):
+      self.writes.append((key, ex, value))
+
+  fake = _FakeRedis()
+  monkeypatch.setattr(listend, "_get_recent_host_redis_client", lambda: fake)
+  # Drain one identity item then stop.
+  items = [
+      {
+          "fqdn": "node1.example.com",
+          "package_version": "3.0",
+          "uname": "Linux",
+          "capability_slug": "arch_x86_64",
+          "schema_types": ["host_cpu"],
+          "updated_at": 1710000000,
+      }
+  ]
+
+  def _get(timeout=1.0):
+    if items:
+      return items.pop(0)
+    listend._recent_host_worker_stop_event.set()
+    raise listend.queue.Empty
+
+  monkeypatch.setattr(listend._recent_host_queue, "get", _get)
+  monkeypatch.setattr(listend._recent_host_queue, "task_done", lambda: None)
+  listend._recent_host_worker_stop_event.clear()
+  listend._recent_host_worker()
+  assert fake.writes
+  assert fake.writes[0][0] == "monitor_identity:node1.example.com"
+  assert fake.writes[0][1] == listend.RECENT_HOST_TTL_SECONDS
+  assert b"arch_x86_64" in fake.writes[0][2].encode() or "arch_x86_64" in fake.writes[0][2]
+
+
 def test_on_message_nacks_and_requeues_on_write_failure(tmp_path, monkeypatch):
   import hpcperfstats.listend as listend
 

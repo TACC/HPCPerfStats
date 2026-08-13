@@ -186,6 +186,7 @@ export default function AdminMonitor() {
   const [timescaledbExpanded, setTimescaledbExpanded] = useState(false);
   const [xaltExpanded, setXaltExpanded] = useState(false);
   const [telemetryHealthExpanded, setTelemetryHealthExpanded] = useState(false);
+  const [showInformationalZeros, setShowInformationalZeros] = useState(false);
   const [hostRefreshSeq, setHostRefreshSeq] = useState(0);
   const [rabbitHostRefreshSeq, setRabbitHostRefreshSeq] = useState(0);
   const [cacheRefreshSeq, setCacheRefreshSeq] = useState(0);
@@ -299,14 +300,28 @@ export default function AdminMonitor() {
     if (!telemetryHealth) {
       return "Telemetry health (12h)";
     }
-    const zeroCount = telemetryHealth.all_zero_events?.length ?? 0;
-    const missingCount = telemetryHealth.missing_core_types?.length ?? 0;
     if (telemetryHealth.timed_out) {
       return "Telemetry health (12h) — timed out";
     }
-    return `Telemetry health (12h) — ${zeroCount} all-zero, ${missingCount} missing`;
+    const zeroCount = telemetryHealth.all_zero_events?.length ?? 0;
+    const missingCount = telemetryHealth.missing_core_types?.length ?? 0;
+    return `Telemetry health (12h) — ${zeroCount} actionable all-zero, ${missingCount} missing`;
   }, [telemetryHealth]);
 
+  const informationalZeroFindings = useMemo(
+    () =>
+      (telemetryHealth?.findings ?? []).filter(
+        (f) => f.kind === "all_zero_other_event",
+      ),
+    [telemetryHealth],
+  );
+
+  const handleCopyMonitorHandoff = async () => {
+    const md = telemetryHealth?.monitor_handoff_markdown;
+    if (!md) return;
+    const ok = await copyToClipboard(md);
+    if (!ok) console.error("Failed to copy monitor handoff report");
+  };
   // Only show fully qualified hostnames (contain a dot) in the UI.
   const fqdnHostStats = useMemo(
     () => (hostStats ?? []).filter((row) => row.host && row.host.includes(".")),
@@ -1204,21 +1219,67 @@ export default function AdminMonitor() {
               )}
               aria-busy={telemetryHealthSectionBusy || undefined}
             >
-              <p className="text-sm text-muted-foreground">
-                Bounded scan of non-error <code>host_data</code>{" "}
-                <code>(type, event)</code> pairs over the last{" "}
-                {telemetryHealth.window_hours ?? 12} hours, sampling recently
-                reporting hosts from Redis
-                {typeof telemetryHealth.ok_summary?.hosts_sampled === "number"
-                  ? ` (${telemetryHealth.ok_summary.hosts_sampled} host${
-                      telemetryHealth.ok_summary.hosts_sampled === 1 ? "" : "s"
-                    })`
-                  : ""}
-                . All-zero means rows exist but every <code>value</code> and{" "}
-                <code>arc</code> is zero. Missing core types have no rows in the
-                sampled window. This is an investigation signal after a monitor
-                deploy, not a deployment gate.
-              </p>
+              <div className="flex flex-wrap items-start gap-2">
+                <p className="text-sm text-muted-foreground flex-1 min-w-[16rem]">
+                  Bounded scan of non-error <code>host_data</code>{" "}
+                  <code>(type, event)</code> pairs over the last{" "}
+                  {telemetryHealth.window_hours ?? 12} hours, sampling recently
+                  reporting hosts from Redis
+                  {typeof telemetryHealth.ok_summary?.hosts_sampled === "number"
+                    ? ` (${telemetryHealth.ok_summary.hosts_sampled} host${
+                        telemetryHealth.ok_summary.hosts_sampled === 1 ? "" : "s"
+                      })`
+                    : ""}
+                  . Default tables show actionable core missing/all-zero only;
+                  idle IB/GPU/PMC zeros are informational. This is an
+                  investigation signal after a monitor deploy, not a deployment
+                  gate.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="ms-auto"
+                  disabled={!telemetryHealth.monitor_handoff_markdown}
+                  onClick={handleCopyMonitorHandoff}
+                >
+                  Copy monitor handoff report
+                </Button>
+              </div>
+              {(telemetryHealth.hosts_sampled_fqdns ?? []).length > 0 ? (
+                <p className="text-sm">
+                  <span className="font-medium">Sampled FQDNs: </span>
+                  {(telemetryHealth.hosts_sampled_fqdns ?? []).join(", ")}
+                </p>
+              ) : null}
+              <div className="text-sm space-y-1">
+                <p className="font-medium">Monitor signatures</p>
+                {(telemetryHealth.monitor_identities ?? []).length === 0 ? (
+                  <p className="text-muted-foreground">
+                    No Redis monitor identity for sampled hosts (slug pending
+                    RPM / identity not yet written).
+                  </p>
+                ) : (
+                  <ul className="list-disc pl-5 space-y-1">
+                    {(telemetryHealth.monitor_identities ?? []).map((ident) => {
+                      const slug =
+                        ident.capability_slug || "slug pending RPM";
+                      return (
+                        <li key={ident.fqdn ?? slug}>
+                          <code>{ident.fqdn}</code> — version{" "}
+                          <code>{ident.package_version ?? "unknown"}</code>,
+                          build <code>{slug}</code>
+                          {ident.uname ? (
+                            <>
+                              , uname <code>{ident.uname}</code>
+                            </>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
               {telemetryHealth.timed_out || telemetryHealth.error ? (
                 <BannerErrorMessage
                   variant="inline"
@@ -1233,13 +1294,13 @@ export default function AdminMonitor() {
               ) : null}
               {telemetryHealth.truncated ? (
                 <p className="text-sm text-muted-foreground">
-                  All-zero list truncated to the first 500 pairs.
+                  Actionable all-zero list truncated at the hard cap.
                 </p>
               ) : null}
               <Table className="border text-sm">
                 <TableCaption>
-                  All-zero type/event pairs (excluding names containing
-                  &quot;error&quot;).
+                  Actionable all-zero core type/event pairs (excluding names
+                  containing &quot;error&quot;).
                 </TableCaption>
                 <TableHeader>
                   <TableRow>
@@ -1254,7 +1315,7 @@ export default function AdminMonitor() {
                       <TableCell colSpan={3} className="text-muted-foreground">
                         {telemetryHealth.timed_out
                           ? "No all-zero results (query incomplete)."
-                          : "No all-zero type/event pairs in the window."}
+                          : "No actionable all-zero type/event pairs in the window."}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -1297,6 +1358,52 @@ export default function AdminMonitor() {
                   )}
                 </TableBody>
               </Table>
+              {informationalZeroFindings.length > 0 ? (
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      setShowInformationalZeros((open) => !open)
+                    }
+                  >
+                    {showInformationalZeros ? "Hide" : "Show"}{" "}
+                    {informationalZeroFindings.length} informational all-zero
+                    pair{informationalZeroFindings.length === 1 ? "" : "s"}
+                  </Button>
+                  {showInformationalZeros ? (
+                    <Table className="border text-sm">
+                      <TableCaption>
+                        Informational all-zero pairs (idle/sparse may be
+                        normal).
+                      </TableCaption>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead scope="col">Type</TableHead>
+                          <TableHead scope="col">Event</TableHead>
+                          <TableHead scope="col">Row count</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {informationalZeroFindings.map((row) => (
+                          <TableRow
+                            key={`${row.type ?? ""}\0${row.event ?? ""}`}
+                          >
+                            <TableCell>{row.type}</TableCell>
+                            <TableCell>{row.event}</TableCell>
+                            <TableCell>
+                              {formatAdminMonitorNumericStatistic(
+                                row.row_count,
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           )}
         {!telemetryHealthInitialLoading &&

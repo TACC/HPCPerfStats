@@ -4,6 +4,8 @@ Backlog catch-up sites (months of `waiting_on_ingest` days) can run **many hours
 
 See also: `sync-timedb-change-regression-gate.mdc`, [SYNC_TIMEDB_PARALLELISM.md](SYNC_TIMEDB_PARALLELISM.md) (spawn vs thread pool taxonomy), [day-close-ingest-loop-fix plan](.cursor/plans/day-close-ingest-loop-fix.plan.md) Phase 6, [june-ingest-stall-prevention plan](.cursor/plans/june-ingest-stall-prevention.plan.md).
 
+**After listend Redis `monitor_identity` on `$` rotation (2026-08):** identity SET is **Redis-only** on the existing `$` schema-rotation / `recent_host` worker path. It must **not** change RabbitMQ ack timing, pause/resume watermarks, sample completeness, or the archive/DB-ingest gate. Pre-deploy still run `tests/run_sync_timedb_regression_battery.sh` as a **no-regression guard** when `listend.py` touched the `$` branch; post-deploy **no T2 stall campaign** is required for this feature alone — confirm listend still acks and archives `$` payloads, and Admin Monitor can join `monitor_identity:{fqdn}` when present (`$build` optional until monitor RPM).
+
 ## Pre-deploy (every PR touching sync_timedb)
 
 ```bash

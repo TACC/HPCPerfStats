@@ -40,10 +40,13 @@ def test_build_payload_reports_all_zero_and_missing_cores():
     assert payload["missing_core_types"] == ["host_block"]
     assert payload["ok_summary"]["nonzero_type_event_pairs"] == 1
     assert payload["truncated"] is False
+    assert any(f["kind"] == "all_zero_core_event" for f in payload["findings"])
+    assert any(f["kind"] == "missing_core_type" for f in payload["findings"])
+    assert "Actionable findings" in payload["monitor_handoff_markdown"]
 
 
 def test_build_payload_excludes_error_names_are_caller_filtered():
-    """Caller SQL excludes *error*; payload still reports only supplied rows."""
+    """Caller SQL excludes *error*; informational IB zeros stay out of default table."""
     payload = th.build_telemetry_health_payload(
         [
             {
@@ -56,8 +59,12 @@ def test_build_payload_excludes_error_names_are_caller_filtered():
         computed_at=datetime(2024, 6, 1, tzinfo=timezone.utc),
         expected_core_types=("host_cpu",),
     )
-    assert payload["all_zero_events"][0]["event"] == "port_xmit_data"
+    assert payload["all_zero_events"] == []
     assert "host_cpu" in payload["missing_core_types"]
+    assert any(
+        f["kind"] == "all_zero_other_event" and f["event"] == "port_xmit_data"
+        for f in payload["findings"]
+    )
 
 
 def test_build_payload_non_zero_value_or_arc_clears_pair():
@@ -115,8 +122,8 @@ def test_build_payload_timeout_soft_fail_empty_lists():
 def test_build_payload_truncates_all_zero_list():
     rows = [
         {
-            "type": f"t{i}",
-            "event": "e",
+            "type": "host_cpu",
+            "event": f"e{i}",
             "row_count": 1,
             "has_nonzero": False,
         }
@@ -125,11 +132,88 @@ def test_build_payload_truncates_all_zero_list():
     payload = th.build_telemetry_health_payload(
         rows,
         computed_at=datetime(2024, 6, 1, tzinfo=timezone.utc),
-        expected_core_types=(),
+        expected_core_types=("host_cpu",),
         all_zero_limit=3,
     )
     assert len(payload["all_zero_events"]) == 3
     assert payload["truncated"] is True
+
+
+def test_build_payload_core_zero_actionable_ib_informational():
+    payload = th.build_telemetry_health_payload(
+        [
+            {
+                "type": "host_cpu",
+                "event": "user",
+                "row_count": 9,
+                "has_nonzero": False,
+            },
+            {
+                "type": "host_ib",
+                "event": "port_xmit_data",
+                "row_count": 9,
+                "has_nonzero": False,
+            },
+        ],
+        computed_at=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        expected_core_types=("host_cpu",),
+        hosts_sampled_fqdns=["n001.example.com"],
+        monitor_identities=[
+            {
+                "fqdn": "n001.example.com",
+                "package_version": "3.0",
+                "uname": "Linux x86_64",
+                "capability_slug": None,
+                "schema_types": ["host_cpu", "host_ib"],
+                "updated_at": 1,
+            }
+        ],
+    )
+    assert payload["all_zero_events"] == [
+        {"type": "host_cpu", "event": "user", "row_count": 9}
+    ]
+    kinds = {f["kind"] for f in payload["findings"]}
+    assert "all_zero_core_event" in kinds
+    assert "all_zero_other_event" in kinds
+    assert "signature_absent" not in kinds
+    md = payload["monitor_handoff_markdown"]
+    assert "n001.example.com" in md
+    assert "slug pending" in md.lower() or "slug pending RPM" in md
+    assert "host_ib" not in md.split("## Actionable findings")[1].split("## Out")[0]
+
+
+def test_build_payload_incomplete_scan_markdown_banner():
+    payload = th.build_telemetry_health_payload(
+        [],
+        computed_at=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        timed_out=True,
+        error="timed out",
+        hosts_sampled_fqdns=["a.example.com"],
+    )
+    assert payload["timed_out"] is True
+    assert payload["findings"][0]["kind"] == "incomplete_scan"
+    assert "do not conclude" in payload["monitor_handoff_markdown"].lower()
+
+
+def test_build_payload_signature_absent_when_identity_missing():
+    payload = th.build_telemetry_health_payload(
+        [
+            {
+                "type": "host_cpu",
+                "event": "user",
+                "row_count": 1,
+                "has_nonzero": True,
+            }
+        ],
+        computed_at=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        expected_core_types=("host_cpu",),
+        hosts_sampled_fqdns=["orphan.example.com"],
+        monitor_identities=[],
+    )
+    assert any(
+        f["kind"] == "signature_absent" and f["fqdn"] == "orphan.example.com"
+        for f in payload["findings"]
+    )
 
 
 def test_is_statement_timeout_detects_pg_message():
@@ -278,7 +362,7 @@ def test_fetch_aggregates_scopes_sql_to_redis_hosts():
             host_sample_limit=16,
             host_batch_size=8,
         )
-    assert sampled == 5
+    assert len(sampled) == 5
     assert rows[0]["type"] == "host_cpu"
     group_sql = [e for e in exec_log if e[0] and "GROUP BY" in e[0]]
     assert group_sql
@@ -322,7 +406,7 @@ def test_fetch_aggregates_caps_host_sample():
             host_sample_limit=th.HOST_SAMPLE_LIMIT,
             host_batch_size=th.HOST_BATCH_SIZE,
         )
-    assert sampled == th.HOST_SAMPLE_LIMIT
+    assert len(sampled) == th.HOST_SAMPLE_LIMIT
     group_params = [
         e[1] for e in exec_log if e[0] and "GROUP BY" in e[0] and e[1] is not None
     ]
@@ -371,7 +455,7 @@ def test_fetch_aggregates_merges_batches():
             host_sample_limit=16,
             host_batch_size=8,
         )
-    assert sampled == 16
+    assert len(sampled) == 16
     assert len(rows) == 1
     assert rows[0]["row_count"] == 5
     assert rows[0]["has_nonzero"] is True
