@@ -35,6 +35,15 @@ repos:
 
   - repo: local
     hooks:
+      - id: python-memory-leak-check
+        name: python memory-leak smoke (memray curated workloads)
+        entry: ../.venv/bin/python3 scripts/run_commit_memory_leak_check.py
+        language: system
+        files: ^(hpcperfstats/|scripts/).*\.py$
+        pass_filenames: false
+
+  - repo: local
+    hooks:
       - id: frontend-pre-push
         name: frontend typecheck + knip (pre-push)
         entry: >-

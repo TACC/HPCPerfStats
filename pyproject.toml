@@ -59,6 +59,7 @@ dev = [
   "pylint>=4.0.6",  # optional; Ruff is the primary linter (see docs/TESTING.md)
   "vulture>=2.16",
   "pre-commit>=4.6.1",
+  "memray>=1.17.0",  # commit-hook memory-leak smoke (scripts/run_commit_memory_leak_check.py)
 ]
 
 [tool.pytest.ini_options]

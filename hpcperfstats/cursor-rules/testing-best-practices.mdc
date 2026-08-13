@@ -77,6 +77,15 @@ Examples: `urlconf_route_catalog.py`, `extended-search-validation.test.js`, `job
 | Web UI / routes | Vitest + `tests/run_web_e2e_workflow.sh` |
 | Metrics catalog / monitor types | Unit + pipeline E2E when payloads change |
 
+## Local git hooks (memory)
+
+- **Commit stage:** `python-memory-leak-check` runs
+  `scripts/run_commit_memory_leak_check.py` under memray on curated no-Django
+  workloads; **hard-fail** on fixed growth/peak/leaked ceilings. Requires
+  `[dev]` (memray). Fail closed if memray is missing.
+- **Do not** add a second tracemalloc hard-fail commit gate alongside memray.
+  Keep **tracemalloc** for optional offline debugging only (`docs/TESTING.md`).
+
 ## Module priority for new tests
 
 1. Operational daemons: `sync_timedb`, `update_metrics`, `listend`

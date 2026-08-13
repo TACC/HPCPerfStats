@@ -340,6 +340,7 @@ Split monolithic functions when it materially reduces mock surface—lock behavi
 | Web UI | Vitest + `tests/run_web_e2e_workflow.sh` when user-visible behavior changes |
 | Metrics/ingest | Compose db pytest + pipeline E2E when payloads change |
 
+Local git hooks: commit-stage **memray** growth smoke (`python-memory-leak-check`); tracemalloc remains offline/ad-hoc only — see **Optional memory profiling** below.
 ### `api.py` coverage
 
 **100% line coverage** on `hpcperfstats.site.lib.machine.api` is enforced by host-side mock tests (LocMem cache, `django_db(databases=[])`):
@@ -637,7 +638,29 @@ Unit tests: `PYTHONPATH=. pytest -q hpcperfstats/tests/test_numa_topology.py hpc
 
 ## Optional memory profiling (development)
 
-Use these on a machine with DB/Redis available (for example the Docker Compose `web` service) when investigating RSS growth in long-lived workers or CLI jobs. They are not part of CI.
+**Commit-stage hard gate (memray):** when staged paths match
+`^(hpcperfstats/|scripts/).*\.py$`, pre-commit runs
+`scripts/run_commit_memory_leak_check.py` (hook id `python-memory-leak-check`).
+It exercises curated **no-Django** workloads under memray, discards warm-up
+iterations, and **hard-fails** if late-window mean heap growth or peak/leaked
+bytes exceed fixed ceilings. Requires workspace venv with `pip install -e ".[dev]"`
+(memray is in the `[dev]` extra). Exit `2` with an install hint if memray is
+missing. Manual run:
+
+```bash
+cd HPCPerfStats
+../.venv/bin/python3 scripts/run_commit_memory_leak_check.py
+# or:
+pre-commit run python-memory-leak-check --all-files
+```
+
+Set `HPCPERFSTATS_MEMORY_LEAK_CHECK_LOG=1` for per-workload measurement lines.
+This is the **only** commit hard gate for memory growth — do not add a second
+tracemalloc hard-fail hook alongside it.
+
+**Offline / ad-hoc only (not hooks):** use these on a machine with DB/Redis
+available (for example the Docker Compose `web` service) when investigating RSS
+growth in long-lived workers or CLI jobs.
 
 **tracemalloc** (stdlib) around a focused pytest node:
 
@@ -647,7 +670,7 @@ PYTHONPATH=. python -X tracemalloc=25 -m pytest -q \
   --tb=no 2>&1 | tail -20
 ```
 
-**memray** (install with `pip install memray` in the same environment) on a single test file:
+**memray flamegraphs** when investigating a hook failure or a single test file:
 
 ```bash
 PYTHONPATH=. memray run -m pytest -q hpcperfstats/site/lib/machine/tests/test_job_plots_timeout.py
@@ -664,7 +687,7 @@ pip install -e ".[dev]"
 ./scripts/install-git-hooks.sh
 ```
 
-**Pre-commit** (staged files): Ruff `F401`/`F841`/`F811` on `hpcperfstats/`, `cursor-hooks/`, `scripts/`; ESLint on staged `hpcperfstats/site/frontend` TypeScript; python def inventory `--check`.
+**Pre-commit** (staged files): Ruff `F401`/`F841`/`F811` on `hpcperfstats/`, `cursor-hooks/`, `scripts/`; ESLint on staged `hpcperfstats/site/frontend` TypeScript; python def inventory `--check`; **memray** curated memory-leak smoke (`python-memory-leak-check`) on staged `hpcperfstats/` / `scripts/` Python.
 
 **Pre-push:** frontend `npm run typecheck` and `npm run lint:dead` (knip); `vulture hpcperfstats scripts/vulture_whitelist.py --min-confidence 80`.
 

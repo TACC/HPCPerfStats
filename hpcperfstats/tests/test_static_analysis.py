@@ -66,3 +66,10 @@ def test_vulture_no_high_confidence_dead_code():
 
 def test_pre_commit_config_exists():
   assert (_REPO_ROOT / ".pre-commit-config.yaml").is_file()
+
+
+def test_pre_commit_config_includes_python_memory_leak_check():
+  text = (_REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+  assert "id: python-memory-leak-check" in text
+  assert "scripts/run_commit_memory_leak_check.py" in text
+  assert "memray" in text.lower() or "memory-leak" in text
