@@ -153,12 +153,23 @@ static void test_skip_process_name_deny_list(void)
   assert(proc_status_skip_process_name("sshd") == 1);
   assert(proc_status_skip_process_name("sshd-session") == 1);
   assert(proc_status_skip_process_name("metacity") == 1);
+  assert(proc_status_skip_process_name("(bootflag)") == 1);
+  assert(proc_status_skip_process_name("(fwupdmgr)") == 1);
+  assert(proc_status_skip_process_name("(polkitd)") == 1);
+  assert(proc_status_skip_process_name("(sd-exec-strv)") == 1);
   assert(proc_status_skip_process_name("(sd-pam)") == 1);
+  assert(proc_status_skip_process_name("(systemd)") == 1);
+  assert(proc_status_skip_process_name("(tmpfiles)") == 1);
+  assert(proc_status_skip_process_name("(ystemctl)") == 1);
+  assert(proc_status_skip_process_name("30-systemd-envi") == 1);
   assert(proc_status_skip_process_name("chronyd") == 1);
   assert(proc_status_skip_process_name("fwupdmgr") == 1);
   assert(proc_status_skip_process_name("munged") == 1);
   assert(proc_status_skip_process_name("systemd") == 1);
   assert(proc_status_skip_process_name("polkitd") == 1);
+  assert(proc_status_skip_process_name("systemctl") == 1);
+  assert(proc_status_skip_process_name("systemd-tmpfile") == 1);
+  assert(proc_status_skip_process_name("systemd-xdg-aut") == 1);
   /* Kernel truncates nvidia-persistenced to 15 chars in Name:. */
   assert(proc_status_skip_process_name("nvidia-persiste") == 1);
   assert(proc_status_skip_process_name("nv-hostengine") == 1);
@@ -168,6 +179,7 @@ static void test_skip_process_name_deny_list(void)
   assert(proc_status_skip_process_name("my_app") == 0);
   assert(proc_status_skip_process_name("sd-pam") == 0);
   assert(proc_status_skip_process_name("nvidia-persistenced") == 0);
+  assert(proc_status_skip_process_name("systemd-tmpfiles") == 0);
 }
 
 int main(void)
