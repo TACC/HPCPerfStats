@@ -1,6 +1,6 @@
 # Security audit memo (HPCPerfStats)
 
-Internal reference for security posture review. **Last reviewed:** 2026-08-05 (Burp Suite report disposition + nginx HSTS/OCSP/CSP edge hardening; prior frontend stack posture 2026-07-31; Dependabot npm sweep 2026-07-26).
+Internal reference for security posture review. **Last reviewed:** 2026-08-13 (Dependabot #109 `nanoid` floor; prior Burp Suite report disposition + nginx HSTS/OCSP/CSP edge hardening 2026-08-05; frontend stack posture 2026-07-31; Dependabot npm sweep 2026-07-26).
 
 ## Executive summary
 
@@ -10,7 +10,7 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 
 1. Lightweight threat model: assets (sessions, API keys, DB, ingest payloads), trust boundaries (browser → nginx → Django → data stores), adversaries (anonymous abuse, authenticated users, stolen staff API keys).
 2. **pip-audit** inside the production **web** Docker image (`docker run --rm hpcperfstats pip-audit`, 2026-06-05): **no known vulnerabilities** in installed runtime deps (Django 6.0.6, cryptography 48.0.0, requests 2.34.2, pillow 12.2.0). Host `.venv` freeze (dev/test extras) still reports low-severity **idna** / **pip** advisories not present in the production image.
-3. **npm audit** in `hpcperfstats/site/frontend` (2026-08-03): **0** reported vulnerabilities after pin refresh — raised floors plus new `overrides` for `hono`, `ip-address`, and `undici` (clears ReDoS / SSRF / undici advisories in the shadcn/jsdom tree). Prior 2026-07-26: **0** after Dependabot sweep — `next@^16.2.11` plus raised/added `overrides` for `dompurify`, `postcss`, `brace-expansion`, `fast-uri`, `sharp`, and `@hono/node-server`. Prior 2026-06-15: **0** after `dompurify` / `js-yaml` overrides.
+3. **npm audit** in `hpcperfstats/site/frontend` (2026-08-13): **0** reported vulnerabilities after Dependabot #109 — `nanoid@^3.3.18` override (GHSA-2v37-7h3g-55p8 / CVE-2026-67213; lock was 3.3.17). Prior 2026-08-03: **0** after pin refresh — raised floors plus new `overrides` for `hono`, `ip-address`, and `undici`. Prior 2026-07-26: **0** after Dependabot sweep — `next@^16.2.11` plus raised/added `overrides` for `dompurify`, `postcss`, `brace-expansion`, `fast-uri`, `sharp`, and `@hono/node-server`. Prior 2026-06-15: **0** after `dompurify` / `js-yaml` overrides.
 4. **bandit** (`-ll`, excluding `*/tests/*`) on `hpcperfstats/` (2026-06-05): **no high** findings; **6** medium B608 on SQL fragment builders (same modules as prior review); manual review confirms table/column identifiers come from internal constants, not request input. One B108 on `wsgi.py` `MPLCONFIGDIR=/tmp/` (matplotlib cache path; accepted).
 5. **Security regression tests** (host pytest, 2026-06-05): 9 passed (`test_settings_security`, throttles, API-key page, HTTP headers/cache); 5 compose-backed modules skipped/errored on host (`db` hostname). CI and compose workflows remain the gate for DB-dependent security tests.
 6. Manual review of [`settings.py`](../hpcperfstats/site/hpcperfstats_site/settings.py), [`middleware.py`](../hpcperfstats/site/hpcperfstats_site/middleware.py), [`oauth2.py`](../hpcperfstats/site/lib/machine/oauth2.py), [`api.py`](../hpcperfstats/site/lib/machine/api.py) (auth and staff gates), [`views.py`](../hpcperfstats/site/hpcperfstats_site/views.py) (`csp_report`), nginx templates under [`services-conf/`](../services-conf/), and high-risk patterns (`subprocess`, `cursor.execute`).
@@ -36,6 +36,8 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 
 ### npm audit (frontend)
 
+**2026-08-13:** 0 vulnerabilities. Dependabot alert [#109](https://github.com/TACC/HPCPerfStats/security/dependabot/109) (`nanoid` / GHSA-2v37-7h3g-55p8 / CVE-2026-67213): added `overrides.nanoid` **`^3.3.18`** (lock was **3.3.17**; Dependabot `first_patched` **3.3.18**). Verified with `npm install`, `npm audit`, and `test_nanoid_override_meets_dependabot_109_floor`. Log: [`test_runs/dependabot_109_nanoid_2026-08-13.md`](../test_runs/dependabot_109_nanoid_2026-08-13.md).
+
 **2026-08-05:** Docker `frontend-builder` upgrades to **npm 12.0.2** before `npm ci` (stock Node 26 image still ships npm 11). npm 12 blocks dependency lifecycle scripts unless listed in `package.json` `allowScripts` (currently pinned `esbuild@0.28.1` only). Aligns with Shai-Hulud / install-time worm defenses. Same day: reverted accidental `js-yaml@^5` override to **`4.3.1`** (Orval default-import breakage in `build:prod`).
 
 **2026-08-03:** 0 vulnerabilities (686 packages audited). Pin refresh raised direct floors (`next@^16.3.0`, `@bokeh/bokehjs@3.9.2`, etc.) and added/raised **`overrides`** for `hono@^4.13.0`, `ip-address@^10.4.0`, `undici@^7.29.0` (plus existing transitive floors). `npm install`, `npm audit`, `typecheck:all`, and Vitest (584) verified. Log: [`test_runs/dependency_pin_refresh_2026-08-03.md`](../test_runs/dependency_pin_refresh_2026-08-03.md).
@@ -52,6 +54,7 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 | `js-yaml@4.3.1` | GHSA-h67p-54hq-rp68 merge-key DoS (`orval` codegen). **Stay on 4.x** — Orval uses `import … from "js-yaml"`; js-yaml 5 has no default export and breaks `npm run generate:api` / Docker `build:prod`. |
 | `esbuild@^0.28.1` | GHSA-gv7w-rqvm-qjhr, GHSA-g7r4-m6w7-qqqr (Orval + Vitest/Vite tree) |
 | `postcss@^8.5.25` | GHSA-r28c-9q8g-f849 source map path traversal (Next nested postcss) |
+| `nanoid@^3.3.18` | GHSA-2v37-7h3g-55p8 / CVE-2026-67213 / Dependabot #109 — customAlphabet/customRandom infinite loop when size is 0 (via postcss) |
 | `lodash@^4.18.1` | GHSA-r5fr-rjxr-66jc, GHSA-f23m-r3pf-42rh (`@stoplight/spectral-functions` via Orval) |
 | `brace-expansion@^5.0.9` | GHSA-mh99-v99m-4gvg / CVE-2026-14257 DoS OOM |
 | `fast-uri@^3.1.5` | GHSA-v2hh-gcrm-f6hx / CVE-2026-16221 host confusion |
@@ -162,3 +165,4 @@ Source: operator scan PDF `2026-08-05-hpcperfstats04.pdf` against the public TLS
 | 2026-07-31 | Documented Mid-2026 frontend stack as security controls (static export, TypeScript, OpenAPI/Orval/Zod, CSRF mutator, no CDN, prod/test build boundary); corrected `robots.txt` build wording (Next export, not Vite). |
 | 2026-08-03 | Dependency pin refresh: Bokeh 3.9.2, Next 16.3, Redis/Timescale/RabbitMQ image bumps; npm overrides for `hono` / `ip-address` / `undici`; `npm audit` 0 (686 pkgs); Vitest 584 green. |
 | 2026-08-05 | Burp 2026-08-05 disposition: nginx-canonical HSTS/framing/CSP; OCSP trusted cert + runtime resolver; hash-based SPA CSP (no unsafe-inline); public dashboard non-reflective validation. |
+| 2026-08-13 | Dependabot #109: `overrides.nanoid@^3.3.18` (GHSA-2v37-7h3g-55p8); lock **3.3.18**; `npm audit` 0; regression test on package.json + lock. |

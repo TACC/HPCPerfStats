@@ -75,6 +75,33 @@ def test_js_yaml_override_stays_on_v4_for_orval_default_import():
   )
 
 
+def test_nanoid_override_meets_dependabot_109_floor():
+  """Dependabot #109 / GHSA-2v37-7h3g-55p8: nanoid < 3.3.18 is vulnerable (DoS on size 0)."""
+  import json
+  import re
+
+  package_json = json.loads(
+      (_repo_root() / "hpcperfstats/site/frontend/package.json").read_text(encoding="utf-8"),
+  )
+  override = (package_json.get("overrides") or {}).get("nanoid")
+  assert override is not None, "nanoid override required (GHSA-2v37-7h3g-55p8 / Dependabot #109)"
+  match = re.fullmatch(r"\^?(3)\.(\d+)\.(\d+)", override)
+  assert match, f"nanoid override must stay on 3.x for postcss; got {override!r}"
+  major, minor, patch = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+  assert (major, minor, patch) >= (3, 3, 18), (
+      f"nanoid override must be >= 3.3.18 (Dependabot first_patched); got {override!r}"
+  )
+
+  lock = (_repo_root() / "hpcperfstats/site/frontend/package-lock.json").read_text(
+      encoding="utf-8",
+  )
+  # Locked resolved entry must not stay on the vulnerable 3.3.17 tarball.
+  assert "nanoid/-/nanoid-3.3.17.tgz" not in lock
+  assert re.search(r"nanoid/-/nanoid-3\.3\.(1[89]|[2-9]\d)\.tgz", lock), (
+      "package-lock.json must resolve nanoid to >= 3.3.18"
+  )
+
+
 def test_build_prod_runs_write_site_identity_hook():
   """build:prod must generate gitignored site-identity.ts (Docker uses build:prod, not build)."""
   import json
