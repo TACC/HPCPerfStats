@@ -54,16 +54,15 @@ export function findBokehExportRootForTarget(
 }
 
 function dataUrlFromCanvas(canvas: HTMLCanvasElement): string | null {
-  let dataUrl: string | null = null;
   try {
-    dataUrl = canvas.toDataURL("image/png");
+    const dataUrl = canvas.toDataURL("image/png");
+    if (!dataUrl || !dataUrl.startsWith("data:image/")) {
+      return null;
+    }
+    return dataUrl;
   } catch {
-    dataUrl = null;
-  }
-  if (!dataUrl || !dataUrl.startsWith("data:image/")) {
     return null;
   }
-  return dataUrl;
 }
 
 /**

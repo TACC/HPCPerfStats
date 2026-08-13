@@ -84,7 +84,11 @@ def resolve_nhosts_for_ref(
   return max(1, int(hl))
 
 
-def sample_count_for_ref(ref: Any, *, unknown_runtime_s: float = 172800.0) -> int:
+def sample_count_for_ref(
+  ref: Any,
+  *,
+  unknown_runtime_s: float = 172800.0,
+) -> int:
   """
   Read or compute ``estimated_sample_count`` on a candidate ref.
 
@@ -173,6 +177,20 @@ def pop_supplement_refs_from_ready_queue(
     pool: list[Any],
     already: list[Any],
   ) -> tuple[list[Any], list[Any]]:
+    """
+    Partition ``pool`` into selected refs and leftovers under ``pred``.
+
+    Args:
+      pred (Any): Callable ``samples -> bool`` gate for selecting a ref.
+      pool (list[Any]): Candidate refs still under consideration.
+      already (list[Any]): Refs already selected from a prior pass.
+
+    Returns:
+      tuple[list[Any], list[Any]]: ``(taken, remaining)`` lists.
+
+    Examples:
+      >>> _select(lambda s: s < 10, [], [])  # doctest: +SKIP
+    """
     taken: list[Any] = list(already)
     remaining: list[Any] = []
     for ref in pool:

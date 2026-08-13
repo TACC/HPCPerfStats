@@ -129,6 +129,15 @@ def pop_idle_slot_supplements(
     return []
 
   def _pop() -> list[Any]:
+    """
+    Pop ready-queue supplements using the shared soft/hard sample caps.
+
+    Returns:
+      list[Any]: Selected supplement refs (may be empty).
+
+    Examples:
+      >>> _pop()  # doctest: +SKIP
+    """
     return pop_supplement_refs_from_ready_queue(
         ready_queue,
         max_n=max_n,
@@ -205,6 +214,9 @@ def run_metrics_sliding_session(
     list[dict[str, Any]]: Per-ref results with keys ``ref``, ``ok``,
     ``base_outcome``, ``metrics_s``, ``prewarm_s``.
 
+  Raises:
+    Exception: Re-raised when ``abort_if_pool_dead_fn`` reports pool death.
+
   Examples:
     >>> run_metrics_sliding_session(  # doctest: +SKIP
     ...     primary_refs=[], metrics_obj=None, shared_pool=None,
@@ -226,6 +238,15 @@ def run_metrics_sliding_session(
   session_total = len(primary_refs)
 
   def _shutting_down() -> bool:
+    """
+    Return True when the shared shutdown flag is set.
+
+    Returns:
+      bool: Whether the session should stop submitting work.
+
+    Examples:
+      >>> _shutting_down()  # doctest: +SKIP
+    """
     if shutdown_requested is None:
       return False
     try:
@@ -234,6 +255,18 @@ def run_metrics_sliding_session(
       return bool(shutdown_requested)
 
   def _emit(phase: str) -> None:
+    """
+    Invoke ``progress_callback`` for the current phase, swallowing errors.
+
+    Args:
+      phase (str): Progress phase label (for example ``metrics``).
+
+    Returns:
+      None
+
+    Examples:
+      >>> _emit("metrics")  # doctest: +SKIP
+    """
     if not callable(progress_callback):
       return
     try:
@@ -246,6 +279,19 @@ def run_metrics_sliding_session(
       pass
 
   def _submit_metrics(ref: Any, *, is_original: bool) -> None:
+    """
+    Queue one metrics ``apply_async`` and track it in ``pending``.
+
+    Args:
+      ref (Any): Candidate job ref with a ``jid`` attribute.
+      is_original (bool): True when ``ref`` came from ``primary_refs``.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _submit_metrics(None, is_original=True)  # doctest: +SKIP
+    """
     async_result = shared_pool.apply_async(unwrap_fn, ((metrics_obj, ref),))
     pending.append({
         "async_result": async_result,
@@ -258,6 +304,18 @@ def run_metrics_sliding_session(
     })
 
   def _submit_prewarm(item: dict[str, Any]) -> None:
+    """
+    Run inline prewarm or queue a pool prewarm for a finished metrics item.
+
+    Args:
+      item (dict[str, Any]): Pending entry with ``ref`` and ``base_outcome``.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _submit_prewarm({})  # doctest: +SKIP
+    """
     ref = item["ref"]
     if prewarm_mode == "inline" or not callable(prewarm_worker_fn):
       t_pw = time.monotonic()
@@ -283,7 +341,25 @@ def run_metrics_sliding_session(
     item["t_prewarm0"] = time.monotonic()
     pending.append(item)
 
-  def _finalize_failed(ref: Any, base: dict[str, Any], metrics_s: float) -> None:
+  def _finalize_failed(
+    ref: Any,
+    base: dict[str, Any],
+    metrics_s: float,
+  ) -> None:
+    """
+    Append a failed metrics outcome without attempting prewarm.
+
+    Args:
+      ref (Any): Candidate job ref.
+      base (dict[str, Any]): Persist/outcome dict for the failed job.
+      metrics_s (float): Metrics wall seconds to record.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _finalize_failed(None, {}, 0.0)  # doctest: +SKIP
+    """
     results.append({
         "ref": ref,
         "ok": False,

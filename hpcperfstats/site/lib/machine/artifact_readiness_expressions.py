@@ -702,6 +702,9 @@ def annotate_job_plots_artifacts_ready(queryset: Any, host_suffix: str) -> Any:
 
   Returns:
     Annotated queryset.
+
+  Examples:
+    >>> annotate_job_plots_artifacts_ready(None, ".x")  # doctest: +SKIP
   """
   if connections["default"].vendor != "postgresql":
     return queryset.annotate(

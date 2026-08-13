@@ -1992,7 +1992,7 @@ def kill_ingest_pool_children_by_ppid_census(
   """
   SIGKILL ingest-pool children of main except optional ``keep_pids``.
 
-  Thin wrapper preserving ``sync_timedb`` call sites; delegates to
+  Thin wrapper used by ``sync_timedb``; delegates to
   ``kill_pool_children_by_ppid_census`` with the ingest cmdline mark.
 
   Args:

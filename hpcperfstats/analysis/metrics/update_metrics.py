@@ -33,6 +33,7 @@ Attributes:
   CHUNK_SIZE: Attribute.
   COMPUTE_BATCH_ABSOLUTE_MAX: Attribute.
   COMPUTE_BATCH_DOWNSHIFT_FACTOR: Attribute.
+  COMPUTE_BATCH_HEARTBEAT_LOG_INTERVAL_S: Seconds between mid-batch heartbeat logs.
   COMPUTE_BATCH_MIN_CAP: Attribute.
   COMPUTE_BATCH_UPSHIFT_STEP: Attribute.
   COMPUTE_BATCH_WORKER_MULTIPLIER: Attribute.
@@ -71,6 +72,7 @@ Attributes:
   _COVERAGE_DEFER_LOGGED_CAP: Attribute.
   _COVERAGE_MARGIN_WARN_CAP_SECONDS: Attribute.
   _COVERAGE_MARGIN_WARN_LOGGED: Attribute.
+  _METRICS_PREWARM_RETRY_ATTEMPTS: Retries for sync detail/plot prewarm.
 """
 from __future__ import annotations
 
@@ -94,7 +96,6 @@ from collections import defaultdict, deque
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 from hpcperfstats.analysis.metrics.lib.metrics_idle_slot_supplement import (
     estimated_sample_count_for_job,
-    pop_supplement_refs_from_ready_queue,
     resolve_nhosts_for_ref,
 )
 from hpcperfstats.analysis.metrics.lib.metrics_sliding_session import (
@@ -641,6 +642,11 @@ def _compute_batch_age_s(stats: Any) -> float:
 class _ComputeBatchHeartbeat:
   """
   Shared mid-batch phase / completed counters for metrics progress logs.
+
+  Attributes:
+    _stats: Mutable scheduler stats dict updated under ``_lock``.
+    _lock: Thread lock protecting heartbeat fields on ``_stats``.
+    _last_log_at: Monotonic timestamp of the last heartbeat log line.
   """
 
   def __init__(self, stats: Any, lock: Any) -> None:
@@ -772,6 +778,13 @@ class _ComputeBatchHeartbeat:
 class MetricsPrewarmStallError(TimeoutError):
   """
   Plot/detail prewarm imap made no progress for the Metrics.run stall budget.
+
+  Subclasses ``TimeoutError`` so stall recovery can treat prewarm stalls like
+  other timeout failures.
+
+  Attributes:
+    stalled_for_s: Seconds without a completed prewarm result.
+    partial_results: Completed prewarm result dicts collected before the stall.
   """
 
   def __init__(
@@ -846,6 +859,18 @@ def _drain_prewarm_imap(
   results = []
 
   def _emit(phase: str = "prewarm") -> None:
+    """
+    Invoke ``progress_callback`` for prewarm drain progress.
+
+    Args:
+      phase (str): Progress phase label (default ``prewarm``).
+
+    Returns:
+      None
+
+    Examples:
+      >>> _emit("prewarm")  # doctest: +SKIP
+    """
     if not callable(progress_callback):
       return
     try:
@@ -1158,6 +1183,9 @@ class _PrewarmPipeline:
     Returns:
       Any: Value produced by this call (type depends on inputs).
 
+    Raises:
+      last_exc: Re-raised when every retry of detail+plot persist fails.
+
     Examples:
       >>> _PrewarmPipeline().run_for_jid(None, None)  # doctest: +SKIP
     """
@@ -1237,7 +1265,7 @@ class _PrewarmPipeline:
     wait_timeout_s: float = 0.0,
   ) -> None:
     """
-    No-op retained for call-site compatibility (no async futures).
+    No-op retained for older callers that still invoke drain (no async futures).
 
     Args:
       force (bool): Unused.
@@ -5074,15 +5102,48 @@ def _compute_jid_outcomes_sliding(
   )
 
   def _persist(payload: Any) -> Any:
+    """
+    Persist one metrics payload under the batch stall wall budget.
+
+    Args:
+      payload (Any): Metrics worker payload to persist.
+
+    Returns:
+      Any: Persist outcome dict from ``_persist_metrics_payload_bounded``.
+
+    Examples:
+      >>> _persist(None)  # doctest: +SKIP
+    """
     return metrics._persist_metrics_payload_bounded(
         payload,
         wall_timeout_s=float(max(0.0, stall_timeout_s)),
     )
 
   def _inline_prewarm(jid: Any) -> None:
+    """
+    Submit sync detail/plot prewarm for one jid on the parent process.
+
+    Args:
+      jid (Any): Job id to prewarm.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _inline_prewarm("1")  # doctest: +SKIP
+    """
     prewarm_pipeline.submit(jid)
 
   def _on_stall_reset() -> None:
+    """
+    Hard-reset the metrics pool after a sliding-session stall soft-fail.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _on_stall_reset()  # doctest: +SKIP
+    """
     resetter = getattr(metrics_manager, "reset_pool_hard", None)
     if callable(resetter):
       try:
@@ -5252,6 +5313,20 @@ def _compute_jid_outcomes_batch(
   n = len(job_refs)
 
   def _hb_progress(*, phase: str, completed: int, total: int) -> None:
+    """
+    Forward mid-batch progress into the optional heartbeat helper.
+
+    Args:
+      phase (str): Current compute phase label.
+      completed (int): Completed jid count.
+      total (int): Batch size.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _hb_progress(phase="metrics", completed=0, total=1)  # doctest: +SKIP
+    """
     if heartbeat is None:
       return
     if phase:
@@ -5593,7 +5668,6 @@ def update_metrics_for_dates(
   phase_timer = _PhaseTimer()
   scheduler_mode = cfg.get_metrics_scheduler_mode()
   prefetch_target = cfg.get_metrics_scheduler_ready_queue_target()
-  prefetch_chunks = cfg.get_metrics_scheduler_prefetch_chunks()
   stats = _new_scheduler_stats()
 
   def _run() -> None:

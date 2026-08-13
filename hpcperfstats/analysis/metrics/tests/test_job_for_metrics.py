@@ -1,6 +1,5 @@
 import contextlib
 import signal
-import threading
 import time
 
 import numpy as np
@@ -425,7 +424,7 @@ def test_drain_metrics_imap_stall_clock_waits_for_persist(monkeypatch):
       return _It()
 
   def _slow_persist(pl, *, wall_timeout_s=0.0):
-    del wall_timeout_s
+    del pl, wall_timeout_s
     persist_started_at.append(clock["t"])
     clock["t"] += 10.0
     return metrics._metrics_run_outcome("j1", ok=True, status="ok")

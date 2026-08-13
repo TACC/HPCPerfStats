@@ -26,8 +26,6 @@ export const PROC_MEMORY_KB_KEYS = [
   "vm_lib",
 ] as const;
 
-export type ProcMemoryKbKey = (typeof PROC_MEMORY_KB_KEYS)[number];
-
 const PROC_MEMORY_KB_KEY_SET = new Set<string>(PROC_MEMORY_KB_KEYS);
 
 export const PROC_TABLE_COLUMNS: ReadonlyArray<{

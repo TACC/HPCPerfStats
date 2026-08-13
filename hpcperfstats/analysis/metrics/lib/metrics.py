@@ -43,7 +43,6 @@ from hpcperfstats.dbload.lib.process_title import apply_pool_worker_process_titl
 import multiprocessing
 import signal
 import sys
-import threading
 import time
 import traceback
 
@@ -3036,6 +3035,7 @@ class Metrics():
 
     Raises:
       MultiprocessingWorkerExitError: Re-raised for OOM/SIGKILL causes.
+      exc: Same fatal worker-exit instance when OOM/SIGKILL is detected.
 
     Examples:
       >>> Metrics().handle_pool_worker_exit(

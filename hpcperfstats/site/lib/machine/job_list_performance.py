@@ -15,6 +15,11 @@ metrics rows; runtime < SHORT threshold). 6 — Metrics & Plots not yet complete
 (group 2). Public ``order_by=performance_sort_rank`` orders by that group.
 
 Attributes:
+  LABEL_METRICS_AND_PLOTS_AVAILABLE: Display label for sort_rank 0.
+  LABEL_METRICS_AVAILABLE: Display label for sort_rank 1.
+  LABEL_NOT_YET_COMPLETED: Display label for sort_rank 6.
+  LABEL_TOO_FEW_SAMPLES: Display label for sort_ranks 2–4.
+  LABEL_TOO_SHORT: Display label for sort_rank 5.
   MONITORING_GAPS_MIN_DISTINCT_TIMES: Attribute.
   PERFORMANCE_STATUS_BY_SORT_RANK: Attribute.
   SHORT_RUNTIME_NO_METRICS_SECONDS: Attribute.
@@ -81,10 +86,14 @@ def expand_performance_sort_ranks_for_filter(ranks: Any) -> Any:
   Expand shared-label ranks so filtering one Too-few rank covers 2–4.
 
   Args:
-    ranks: Iterable of int ranks from the query string.
+    ranks (Any): Iterable of int ranks from the query string.
 
   Returns:
-    Deduplicated list of ranks (order preserved for first occurrence).
+    Any: Deduplicated list of ranks (order preserved for first occurrence).
+
+  Examples:
+    >>> expand_performance_sort_ranks_for_filter([2])
+    [2, 3, 4]
   """
   out = []
   seen = set()
@@ -132,6 +141,19 @@ def summarize_performance(
   """
 
   def aria_label_for(text: str) -> str:
+    """
+    Build the screen-reader label for a performance status string.
+
+    Args:
+      text (str): Visible performance status label.
+
+    Returns:
+      str: Prefixed aria label.
+
+    Examples:
+      >>> aria_label_for("Metrics available")
+      'Performance: Metrics available'
+    """
     return f"Performance: {text}"
 
   if metrics_value_count > 0:
@@ -194,7 +216,15 @@ def summarize_performance(
 
 
 def _job_list_host_name_suffix() -> str:
-  """FQDN suffix for plot fingerprint SQL (``.<host_name_ext>``)."""
+  """
+  FQDN suffix for plot fingerprint SQL (``.<host_name_ext>``).
+
+  Returns:
+    str: Dot-prefixed host name extension, or empty string when unset.
+
+  Examples:
+    >>> _job_list_host_name_suffix()  # doctest: +SKIP
+  """
   ext = cfg.get_host_name_ext()
   if not ext:
     return ""

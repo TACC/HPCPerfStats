@@ -3295,6 +3295,9 @@ def _job_for_detail_list_serializer(pk: Any, fallback_job: Any) -> Any:
 
     Returns:
       Any: Annotated job_data row (or fallback).
+
+    Examples:
+      >>> _job_for_detail_list_serializer("1", None)  # doctest: +SKIP
     """
     annotated = annotate_job_list_performance_fields(
         job_data.objects.filter(jid=pk)
