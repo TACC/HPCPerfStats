@@ -1,0 +1,12 @@
+# Example configuration for hpcperfstats-tools.
+# Set HPCPERFSTATS_TOOLS_INI to the path of this file (or a copy).
+#
+# Used by hpcperfstats-jobstats and hpcperfstats-sacct-gen.
+
+[API]
+# Base URL for the HPCPerfStats REST API.
+# For a local development instance:
+#   base_url = http://localhost:8000/api/
+# For a deployed portal:
+#   base_url = https://stats.cluster.domain.edu/api/
+base_url = http://localhost:8000/api/
