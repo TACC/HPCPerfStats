@@ -50,7 +50,11 @@ import {
   getJobWattHoursShortLabel,
   jobHasGpuForWattHoursLabel,
 } from "../utils/jobMetricDisplayLabels";
-import { groupJobMetricsBySourceSection } from "../utils/jobMetricSourceSections";
+import {
+  groupJobMetricsBySourceSection,
+  partitionJobMetricRows,
+  type JobMetricSourceSectionId,
+} from "../utils/jobMetricSourceSections";
 import {
   readTabFromSearchParams,
 } from "../utils/sync-tab-search-param";
@@ -471,6 +475,9 @@ export default function JobDetail() {
   const [printPreparing, setPrintPreparing] = useState(false);
   const [printNoDataOpen, setPrintNoDataOpen] = useState(false);
   const [gpuInventoryOpen, setGpuInventoryOpen] = useState(false);
+  const [metricsNotComputedOpen, setMetricsNotComputedOpen] = useState<
+    Partial<Record<JobMetricSourceSectionId, boolean>>
+  >({});
   const [printEmbedReady, setPrintEmbedReady] = useState<
     Partial<Record<JobDetailPrintPlotKey, boolean>>
   >({});
@@ -1010,20 +1017,20 @@ export default function JobDetail() {
     ));
   }
 
-  function renderMetricsSectionTables(
+  function renderMetricRowTables(
     sectionId: string,
     rows: JobMetricDisplayRow[],
+    captionKind: "valued" | "not-computed",
   ): ReactNode {
-    if (rows.length === 0) {
-      return <p className="text-muted-foreground mb-0">Data not available.</p>;
-    }
     const left = rows.filter((_, index) => index % 2 === 0);
     const right = rows.filter((_, index) => index % 2 === 1);
+    const kindLabel =
+      captionKind === "not-computed" ? "not-computed " : "";
     if (right.length === 0) {
       return (
         <Table className={JOB_DETAIL_METRICS_TABLE_CLASS}>
           <TableCaption className="sr-only">
-            Job-level {sectionId} metrics for job {job.jid}
+            Job-level {sectionId} {kindLabel}metrics for job {job.jid}
           </TableCaption>
           <TableBody>{metricTableRows(left)}</TableBody>
         </Table>
@@ -1034,7 +1041,7 @@ export default function JobDetail() {
         <div>
           <Table className={JOB_DETAIL_METRICS_TABLE_CLASS}>
             <TableCaption className="sr-only">
-              Job-level {sectionId} metrics for job {job.jid} (column 1)
+              Job-level {sectionId} {kindLabel}metrics for job {job.jid} (column 1)
             </TableCaption>
             <TableBody>{metricTableRows(left)}</TableBody>
           </Table>
@@ -1042,12 +1049,54 @@ export default function JobDetail() {
         <div>
           <Table className={JOB_DETAIL_METRICS_TABLE_CLASS}>
             <TableCaption className="sr-only">
-              Job-level {sectionId} metrics for job {job.jid} (column 2)
+              Job-level {sectionId} {kindLabel}metrics for job {job.jid} (column 2)
             </TableCaption>
             <TableBody>{metricTableRows(right)}</TableBody>
           </Table>
         </div>
       </div>
+    );
+  }
+
+  function renderMetricsSectionTables(
+    sectionId: JobMetricSourceSectionId,
+    rows: JobMetricDisplayRow[],
+  ): ReactNode {
+    if (rows.length === 0) {
+      return <p className="text-muted-foreground mb-0">Data not available.</p>;
+    }
+    const { valued, notComputed } = partitionJobMetricRows(rows);
+    const notComputedOpen =
+      printLayoutActive || !!metricsNotComputedOpen[sectionId];
+    return (
+      <>
+        {valued.length > 0
+          ? renderMetricRowTables(sectionId, valued, "valued")
+          : null}
+        {notComputed.length > 0 ? (
+          <Collapsible
+            className={cn(
+              "job-detail-metrics-not-computed rounded-lg border px-3 py-2",
+              valued.length > 0 ? "mt-3" : "",
+            )}
+            open={notComputedOpen}
+            onOpenChange={(open) => {
+              if (printLayoutActive) return;
+              setMetricsNotComputedOpen((prev) => ({
+                ...prev,
+                [sectionId]: open,
+              }));
+            }}
+          >
+            <CollapsibleTrigger className="cursor-pointer text-left text-sm font-medium">
+              Metrics not computed ({formatDecimalStandard(notComputed.length)})
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2">
+              {renderMetricRowTables(sectionId, notComputed, "not-computed")}
+            </CollapsibleContent>
+          </Collapsible>
+        ) : null}
+      </>
     );
   }
 

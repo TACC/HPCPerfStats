@@ -167,3 +167,35 @@ export function groupJobMetricsBySourceSection<T extends JobMetricSourceSectionR
   }
   return out;
 }
+
+/** True when a metrics_list row has a displayable value (same predicate as Job Detail cells). */
+export function jobMetricRowHasValue(
+  row: Pick<JobMetricSourceSectionRow, "value">,
+): boolean {
+  return row.value != null && row.value !== "";
+}
+
+export type PartitionedJobMetricRows<T extends JobMetricSourceSectionRow = JobMetricSourceSectionRow> =
+  {
+    valued: T[];
+    notComputed: T[];
+  };
+
+/**
+ * Split section rows into valued vs non-value (error / not computed) buckets.
+ * Preserves relative input order within each bucket.
+ */
+export function partitionJobMetricRows<T extends JobMetricSourceSectionRow>(
+  rows: readonly T[],
+): PartitionedJobMetricRows<T> {
+  const valued: T[] = [];
+  const notComputed: T[] = [];
+  for (const row of rows) {
+    if (jobMetricRowHasValue(row)) {
+      valued.push(row);
+    } else {
+      notComputed.push(row);
+    }
+  }
+  return { valued, notComputed };
+}

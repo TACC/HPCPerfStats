@@ -983,15 +983,20 @@ describe("JobDetail", () => {
         },
       ],
     };
-    setJobDetailQueryMock({ data: 
-      detailWithMetricMessage
-     });
+    setJobDetailQueryMock({ data: detailWithMetricMessage });
 
     renderJobDetail("12345", { is_staff: true });
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
+    await waitFor(() => {
+      expect(screen.getByText(/Metrics not computed \(1\.00\)/)).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText("No usable PMC telemetry for average CPU frequency"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText(/Metrics not computed \(1\.00\)/));
     await waitFor(() => {
       expect(
         screen.getByText("No usable PMC telemetry for average CPU frequency"),
@@ -1020,10 +1025,16 @@ describe("JobDetail", () => {
     const { container } = renderJobDetail("12345", { is_staff: true });
 
     await waitFor(() => {
+      expect(screen.getByText(/Metrics not computed \(1\.00\)/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText(/Metrics not computed \(1\.00\)/));
+    await waitFor(() => {
       expect(screen.getByText(longReason)).toBeInTheDocument();
     });
 
-    const metricsTable = container.querySelector(".job-detail-metrics-table");
+    const metricsTable = container.querySelector(
+      ".job-detail-metrics-not-computed .job-detail-metrics-table",
+    );
     expect(metricsTable).not.toBeNull();
     const valueCell = screen.getByText(longReason).closest("td");
     expect(valueCell).not.toBeNull();
@@ -1046,9 +1057,7 @@ describe("JobDetail", () => {
         },
       ],
     };
-    setJobDetailQueryMock({ data: 
-      detailWithMetricMessage
-     });
+    setJobDetailQueryMock({ data: detailWithMetricMessage });
 
     renderJobDetail("12345", { is_staff: false });
 
@@ -1056,11 +1065,152 @@ describe("JobDetail", () => {
       expect(screen.getByRole("heading", { name: "Job overview" })).toBeInTheDocument();
     });
     await waitFor(() => {
+      expect(screen.getByText(/Metrics not computed \(1\.00\)/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText(/Metrics not computed \(1\.00\)/));
+    await waitFor(() => {
       expect(screen.getAllByText("Data not available.").length).toBeGreaterThan(0);
     });
     expect(
-      screen.queryByText("No usable PMC telemetry for average CPU frequency")
+      screen.queryByText("No usable PMC telemetry for average CPU frequency"),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps valued metrics visible and collapses non-value rows under Metrics not computed", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        metrics_list: [
+          {
+            metric: "avg_freq",
+            type: "pmc",
+            units: "GHz",
+            value: 2.5,
+            no_data_reason: null,
+          },
+          {
+            metric: "avg_cpuusage",
+            type: "host_cpu",
+            units: "#cores",
+            value: 32,
+            no_data_reason: null,
+          },
+          {
+            metric: "avg_flops64b",
+            type: "pmc",
+            units: "GFLOPS",
+            value: null,
+            no_data_reason: "No usable PMC telemetry for average FLOPS",
+          },
+        ],
+      },
+    });
+
+    renderJobDetail("12345", { is_staff: true });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "CPU", level: 3 })).toBeInTheDocument();
+    });
+    const cpuCard = document.querySelector('[data-metrics-section="cpu"]');
+    expect(cpuCard?.textContent).toMatch(/Average effective CPU frequency/);
+    expect(cpuCard?.textContent).toMatch(/Average CPU cores in use/);
+    expect(screen.getByText(/Metrics not computed \(1\.00\)/)).toBeInTheDocument();
+    expect(
+      screen.queryByText("No usable PMC telemetry for average FLOPS"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText(/Metrics not computed \(1\.00\)/));
+    await waitFor(() => {
+      expect(
+        screen.getByText("No usable PMC telemetry for average FLOPS"),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("shows only Metrics not computed when a section has no valued rows", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        metrics_list: [
+          {
+            metric: "avg_freq",
+            type: "pmc",
+            units: "GHz",
+            value: null,
+            no_data_reason: "Metric not computed",
+          },
+          {
+            metric: "avg_flops64b",
+            type: "pmc",
+            units: "GFLOPS",
+            value: null,
+            no_data_reason: "No usable PMC telemetry for average FLOPS",
+          },
+        ],
+      },
+    });
+
+    renderJobDetail("12345", { is_staff: true });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "CPU", level: 3 })).toBeInTheDocument();
+    });
+    const cpuCard = document.querySelector('[data-metrics-section="cpu"]');
+    expect(cpuCard?.querySelector(".job-detail-metrics-not-computed")).toBeTruthy();
+    expect(screen.getByText(/Metrics not computed \(2\.00\)/)).toBeInTheDocument();
+    // No redundant empty-state paragraph above the collapsible.
+    const emptyParas = Array.from(cpuCard?.querySelectorAll("p.text-muted-foreground") ?? []);
+    expect(emptyParas.filter((p) => p.textContent === "Data not available.")).toHaveLength(0);
+  });
+
+  it("opens Metrics not computed sections during print prep", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        metrics_list: [
+          {
+            metric: "avg_freq",
+            type: "pmc",
+            units: "GHz",
+            value: 2.5,
+            no_data_reason: null,
+          },
+          {
+            metric: "avg_flops64b",
+            type: "pmc",
+            units: "GFLOPS",
+            value: null,
+            no_data_reason: "No usable PMC telemetry for average FLOPS",
+          },
+        ],
+      },
+    });
+    setJobPlotsQueryMock({
+      plots: plotsStateFromBatchResponse({
+        ...minimalBatchPlotsResponse,
+        mplot_unavailable_reason: "Missing summary",
+        rplot_unavailable_reason: "Missing CPU roofline",
+        grplot_unavailable_reason: "Missing GPU roofline",
+      }),
+      plotsLoading: false,
+    });
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderJobDetail("12345", { is_staff: true });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Metrics not computed \(1\.00\)/)).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText("No usable PMC telemetry for average FLOPS"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^print$/i }));
+    await waitFor(() => {
+      expect(
+        screen.getByText("No usable PMC telemetry for average FLOPS"),
+      ).toBeInTheDocument();
+    });
+    printSpy.mockRestore();
   });
 
   it("keeps host-level loading message visible while plots are loading on Summary", async () => {

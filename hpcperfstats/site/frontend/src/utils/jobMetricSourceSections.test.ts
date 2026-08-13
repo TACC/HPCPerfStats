@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   groupJobMetricsBySourceSection,
+  jobMetricRowHasValue,
   jobMetricSourceSectionId,
   JOB_METRIC_SOURCE_SECTION_LABELS,
+  partitionJobMetricRows,
 } from "./jobMetricSourceSections";
 
 describe("jobMetricSourceSectionId", () => {
@@ -149,5 +151,50 @@ describe("groupJobMetricsBySourceSection", () => {
       "detail_gpu_count",
       "avg_tensor_active",
     ]);
+  });
+});
+
+describe("jobMetricRowHasValue", () => {
+  it("treats null and empty string as non-value", () => {
+    expect(jobMetricRowHasValue({ value: null })).toBe(false);
+    expect(jobMetricRowHasValue({ value: undefined })).toBe(false);
+    expect(jobMetricRowHasValue({ value: "" })).toBe(false);
+  });
+
+  it("treats numbers and non-empty strings as valued", () => {
+    expect(jobMetricRowHasValue({ value: 0 })).toBe(true);
+    expect(jobMetricRowHasValue({ value: 1.5 })).toBe(true);
+    expect(jobMetricRowHasValue({ value: "1.2 / 3.4" })).toBe(true);
+  });
+});
+
+describe("partitionJobMetricRows", () => {
+  it("splits valued vs non-value rows while preserving relative order", () => {
+    const { valued, notComputed } = partitionJobMetricRows([
+      { type: "pmc", metric: "avg_freq", value: 2.5 },
+      {
+        type: "pmc",
+        metric: "avg_flops64b",
+        value: null,
+        no_data_reason: "No usable PMC telemetry",
+      },
+      { type: "host_cpu", metric: "avg_cpuusage", value: 32 },
+      {
+        type: "pmc",
+        metric: "avg_vector_width_combined",
+        value: "",
+        no_data_reason: "Metric not computed",
+      },
+    ]);
+
+    expect(valued.map((r) => r.metric)).toEqual(["avg_freq", "avg_cpuusage"]);
+    expect(notComputed.map((r) => r.metric)).toEqual([
+      "avg_flops64b",
+      "avg_vector_width_combined",
+    ]);
+  });
+
+  it("returns empty buckets for empty input", () => {
+    expect(partitionJobMetricRows([])).toEqual({ valued: [], notComputed: [] });
   });
 });
