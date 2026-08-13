@@ -102,7 +102,6 @@ from hpcperfstats.analysis.metrics.lib.metrics_sliding_session import (
     run_metrics_sliding_session,
     should_use_metrics_sliding_session,
 )
-from hpcperfstats.dbload.lib.multiprocessing_pool_health import abort_if_pool_workers_dead
 
 ensure_django()
 
@@ -122,6 +121,7 @@ from hpcperfstats.analysis.metrics.lib.live_host_sample_count import (
 )
 from hpcperfstats.analysis.metrics.lib.metrics import (
     INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
+    abort_if_metrics_pool_workers_dead,
     expected_job_metric_row_count,
     persist_window_coverage_gate_failure,
 )
@@ -830,7 +830,7 @@ def _drain_prewarm_imap(
   jid_list = list(jids or [])
   if not jid_list or shared_pool is None:
     return []
-  abort_if_pool_workers_dead(
+  abort_if_metrics_pool_workers_dead(
       shared_pool,
       context="update_metrics prewarm imap (preflight)",
   )
@@ -854,7 +854,7 @@ def _drain_prewarm_imap(
   while done < total:
     if shutdown_requested[0]:
       break
-    abort_if_pool_workers_dead(
+    abort_if_metrics_pool_workers_dead(
         shared_pool,
         context="update_metrics prewarm imap",
     )
@@ -4253,7 +4253,9 @@ def _reset_metrics_pool_after_public_phase(metrics_manager: Any) -> None:
   
   Public EF workers and job-metrics workers both use ORM-heavy paths. Recreating
   the pool between phases avoids carrying any mixed server-cursor/session state
-  into the first metrics batch.
+  into the first metrics batch. Callers must follow with
+  ``ensure_pool(pool_kind="metrics-pool")``, which enforces configured live
+  width and logs configured versus alive.
   
   Args:
     metrics_manager (Any): Metrics manager passed to this helper.
@@ -5103,7 +5105,7 @@ def _compute_jid_outcomes_sliding(
       supplement_enabled=True,
       shutdown_requested=shutdown_requested,
       progress_callback=progress_callback,
-      abort_if_pool_dead_fn=abort_if_pool_workers_dead,
+      abort_if_pool_dead_fn=abort_if_metrics_pool_workers_dead,
       on_stall_reset=_on_stall_reset,
   )
   # Run artifact-only prewarms on the same pool path (closed small batch).
@@ -5722,7 +5724,15 @@ def update_metrics_for_dates(
         stats["public_ef_pending_tasks"] = int(pub_stats.get("pending_tasks", 0))
       _reset_metrics_pool_after_public_phase(metrics_manager)
       shared_pool = metrics_manager.ensure_pool(pool_kind="metrics-pool")
-      log_print("Metrics worker pool recycled after /pub phase.", flush=True)
+      log_print(
+          "Metrics worker pool recycled after /pub phase. "
+          "configured=%s pool_processes=%s"
+          % (
+              cfg.get_metrics_pool_processes(),
+              getattr(shared_pool, "_processes", None),
+          ),
+          flush=True,
+      )
       ready_queue_lock = threading.Lock()
       producer_done = threading.Event()
       producer = _start_readiness_producer(

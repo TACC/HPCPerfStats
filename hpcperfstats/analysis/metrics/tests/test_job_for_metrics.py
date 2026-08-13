@@ -876,3 +876,252 @@ def test_host_data_metric_rows_batched_uses_metrics_host_batch(monkeypatch):
   assert rows == []
   assert chunk_sizes == [metrics.METRICS_HOST_QUERY_BATCH, 2]
 
+
+def test_ensure_pool_recreates_when_alive_below_configured(monkeypatch):
+  """hs04 signature: configured 24, alive 4 → terminate and recreate at 24."""
+  created = []
+  terminated = {"n": 0}
+
+  class _AliveProc:
+    def __init__(self, alive):
+      self._alive = alive
+
+    def is_alive(self):
+      return self._alive
+
+  class _Pool:
+    def __init__(self, processes, initializer=None, initargs=()):
+      del initializer, initargs
+      self._processes = processes
+      # Undersized live set when processes is the configured width and we
+      # simulate attrition by attaching fewer alive workers after the fact.
+      self._pool = [_AliveProc(True) for _ in range(processes)]
+      created.append(self)
+
+    def terminate(self):
+      return None
+
+    def close(self):
+      return None
+
+    def join(self):
+      return None
+
+  def sync_terminate(active_pool, timeout_s):
+    del active_pool, timeout_s
+    terminated["n"] += 1
+    return True
+
+  monkeypatch.setattr(metrics.multiprocessing, "Pool", _Pool)
+  monkeypatch.setattr(metrics, "_terminate_pool_bounded", sync_terminate)
+  monkeypatch.setattr(
+      metrics.cfg, "get_metrics_pool_processes", lambda: 24
+  )
+
+  m = metrics.Metrics()
+  first = m.ensure_pool(pool_kind="metrics-pool")
+  assert first._processes == 24
+  assert len(created) == 1
+
+  # Simulate attrition: only 4 workers still alive (hs04 production).
+  first._pool = [_AliveProc(True) for _ in range(4)]
+  second = m.ensure_pool(pool_kind="metrics-pool")
+  assert terminated["n"] == 1
+  assert second is not first
+  assert second._processes == 24
+  assert len(created) == 2
+  assert m._shared_pool is second
+
+
+def test_ensure_pool_reuses_full_width_pool(monkeypatch):
+  created = []
+
+  class _AliveProc:
+    def is_alive(self):
+      return True
+
+  class _Pool:
+    def __init__(self, processes, initializer=None, initargs=()):
+      del initializer, initargs
+      self._processes = processes
+      self._pool = [_AliveProc() for _ in range(processes)]
+      created.append(self)
+
+  monkeypatch.setattr(metrics.multiprocessing, "Pool", _Pool)
+  monkeypatch.setattr(
+      metrics.cfg, "get_metrics_pool_processes", lambda: 24
+  )
+
+  m = metrics.Metrics()
+  first = m.ensure_pool(pool_kind="metrics-pool")
+  second = m.ensure_pool(pool_kind="metrics-pool")
+  assert first is second
+  assert len(created) == 1
+
+
+def test_ensure_pool_logs_configured_and_alive_after_create(monkeypatch):
+  logs = []
+
+  class _AliveProc:
+    def is_alive(self):
+      return True
+
+  class _Pool:
+    def __init__(self, processes, initializer=None, initargs=()):
+      del initializer, initargs
+      self._processes = processes
+      self._pool = [_AliveProc() for _ in range(processes)]
+
+  monkeypatch.setattr(metrics.multiprocessing, "Pool", _Pool)
+  monkeypatch.setattr(
+      metrics.cfg, "get_metrics_pool_processes", lambda: 24
+  )
+  monkeypatch.setattr(
+      metrics, "log_print", lambda msg, flush=False: logs.append(str(msg))
+  )
+
+  m = metrics.Metrics()
+  m.ensure_pool(pool_kind="metrics-pool")
+  joined = "\n".join(logs)
+  assert "configured=24" in joined
+  assert "alive=24" in joined
+  assert "pool_kind=metrics-pool" in joined
+
+
+def test_metrics_health_checks_supply_expected_worker_count(monkeypatch):
+  seen = []
+
+  def fake_abort(pool, *, context="", pool_health_context=None):
+    del pool
+    seen.append({
+        "context": context,
+        "pool_health_context": dict(pool_health_context or {}),
+    })
+
+  monkeypatch.setattr(metrics, "abort_if_pool_workers_dead", fake_abort)
+  monkeypatch.setattr(
+      metrics.cfg, "get_metrics_pool_processes", lambda: 24
+  )
+
+  metrics.abort_if_metrics_pool_workers_dead(
+      object(),
+      context="unit-test",
+  )
+  assert len(seen) == 1
+  assert seen[0]["context"] == "unit-test"
+  assert seen[0]["pool_health_context"].get("expected_pool_workers") == 24
+
+  drain_seen = []
+
+  def fake_metrics_abort(pool, *, context=""):
+    del pool
+    drain_seen.append(context)
+
+  monkeypatch.setattr(
+      metrics, "abort_if_metrics_pool_workers_dead", fake_metrics_abort
+  )
+
+  class _ReadyIter:
+    def next(self, timeout=None):
+      del timeout
+      raise StopIteration
+
+  class _Pool:
+    def imap_unordered(self, *args, **kwargs):
+      del args, kwargs
+      return _ReadyIter()
+
+  # Drain catches StopIteration and returns; preflight abort must still run.
+  metrics._drain_metrics_imap(
+      _Pool(),
+      [("metrics", SimpleNamespace(jid="j1"))],
+      1,
+      poll_timeout_s=0.01,
+      stall_timeout_s=60.0,
+  )
+  assert drain_seen
+  assert "Metrics.run imap_unordered (preflight)" in drain_seen[0]
+
+
+def test_metrics_worker_exit_error_recreates_pool(monkeypatch):
+  """Non-OOM MultiprocessingWorkerExitError must reset+recreate, not shrink."""
+  created = []
+
+  class _AliveProc:
+    def is_alive(self):
+      return True
+
+  class _Pool:
+    def __init__(self, processes, initializer=None, initargs=()):
+      del initializer, initargs
+      self._processes = processes
+      self._pool = [_AliveProc() for _ in range(processes)]
+      created.append(self)
+
+  def sync_terminate(active_pool, timeout_s):
+    del active_pool, timeout_s
+    return True
+
+  monkeypatch.setattr(metrics.multiprocessing, "Pool", _Pool)
+  monkeypatch.setattr(metrics, "_terminate_pool_bounded", sync_terminate)
+  monkeypatch.setattr(
+      metrics.cfg, "get_metrics_pool_processes", lambda: 24
+  )
+
+  m = metrics.Metrics()
+  first = m.ensure_pool(pool_kind="metrics-pool")
+  assert first._processes == 24
+
+  exc = MultiprocessingWorkerExitError(
+      "dead",
+      dead_pids=[101],
+      context="metrics",
+      exit_code=0,
+      likely_cause="recycle_stuck",
+      diagnostics={
+          "dead_workers": [{"pid": 101, "exitcode": 0}],
+          "alive_workers": 4,
+          "likely_cause": "recycle_stuck",
+      },
+  )
+  recreated = m.handle_pool_worker_exit(exc)
+  assert m._shared_pool is recreated
+  assert recreated is not first
+  assert recreated._processes == 24
+  assert len(created) == 2
+
+
+def test_metrics_worker_exit_oom_remains_fatal(monkeypatch):
+  class _AliveProc:
+    def is_alive(self):
+      return True
+
+  class _Pool:
+    def __init__(self, processes, initializer=None, initargs=()):
+      del initializer, initargs
+      self._processes = processes
+      self._pool = [_AliveProc() for _ in range(processes)]
+
+  monkeypatch.setattr(metrics.multiprocessing, "Pool", _Pool)
+  monkeypatch.setattr(
+      metrics.cfg, "get_metrics_pool_processes", lambda: 24
+  )
+
+  m = metrics.Metrics()
+  m.ensure_pool(pool_kind="metrics-pool")
+  exc = MultiprocessingWorkerExitError(
+      "oom",
+      dead_pids=[202],
+      context="metrics",
+      exit_code=137,
+      likely_cause="sigkill",
+      diagnostics={
+          "dead_workers": [{"pid": 202, "exitcode": -9}],
+          "likely_cause": "sigkill",
+          "cgroup_oom_kill": 1,
+      },
+  )
+  with pytest.raises(MultiprocessingWorkerExitError):
+    m.handle_pool_worker_exit(exc)
+  assert m._shared_pool is not None
+

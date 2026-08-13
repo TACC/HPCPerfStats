@@ -196,6 +196,50 @@ def test_sliding_feeder_does_not_busy_spin_on_empty_supplement(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
+def test_sliding_session_invokes_abort_with_pool(monkeypatch):
+  seen = []
+
+  def abort_fn(pool, *, context=""):
+    seen.append({"pool": pool, "context": context})
+
+  class _Pool:
+    def apply_async(self, fn, args=(), kwds=None):
+      del kwds
+      payload = fn(*args)
+      return _ReadyAsync(payload)
+
+  monkeypatch.setattr(mss.time, "monotonic", lambda: 1000.0)
+  rows = mss.run_metrics_sliding_session(
+      primary_refs=[SimpleNamespace(jid="j1", estimated_sample_count=1)],
+      metrics_obj=object(),
+      shared_pool=_Pool(),
+      unwrap_fn=lambda task: {
+          "jid": task[1].jid,
+          "ok": True,
+          "status": "ok",
+          "persisted_rows": 0,
+          "distinct_time_count": 1,
+          "persist_s": 0.0,
+          "error_type": None,
+          "error_message": None,
+      },
+      persist_fn=lambda payload: payload,
+      prewarm_worker_fn=lambda jid: {"jid": jid, "ok": True},
+      inline_prewarm_fn=None,
+      prewarm_mode="pipeline_required",
+      max_inflight=1,
+      poll_timeout_s=0.01,
+      stall_timeout_s=5.0,
+      ready_queue=deque(),
+      ready_queue_lock=threading.Lock(),
+      abort_if_pool_dead_fn=abort_fn,
+  )
+  assert len(rows) == 1
+  assert seen
+  assert seen[0]["context"] == "metrics sliding session"
+
+
+@pytest.mark.machine_unit_mock
 def test_pop_supplement_rc_e_via_helper():
   q = deque([SimpleNamespace(jid="s", estimated_sample_count=5)])
   assert pop_supplement_refs_from_ready_queue(

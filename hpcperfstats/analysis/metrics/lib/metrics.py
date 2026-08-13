@@ -56,7 +56,9 @@ from django.db.utils import OperationalError, DatabaseError
 
 from hpcperfstats.analysis.metrics.lib.gen import jid_table
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
+  MultiprocessingWorkerExitError,
   abort_if_pool_workers_dead,
+  alive_pool_worker_count,
   close_pool_bounded as _shared_close_pool_bounded,
   terminate_pool_bounded as _shared_terminate_pool_bounded,
 )
@@ -255,6 +257,85 @@ def _is_parent_persist_timeout_error(exc: Any) -> Any:
   """
   text = str(exc or "").lower()
   return any(marker in text for marker in _PARENT_PERSIST_TIMEOUT_MARKERS)
+
+
+def _metrics_pool_health_context() -> dict[str, int]:
+  """
+  Build ``pool_health_context`` for metrics ``abort_if_pool_workers_dead``.
+
+  Carries absolute ``metrics_pool_processes`` so the shared recycle gate
+  cannot treat attrition as healthy ``maxtasksperchild`` turnover.
+
+  Returns:
+    dict[str, int]: Context with ``expected_pool_workers``.
+
+  Examples:
+    >>> _metrics_pool_health_context()  # doctest: +SKIP
+  """
+  return {"expected_pool_workers": int(cfg.get_metrics_pool_processes())}
+
+
+def abort_if_metrics_pool_workers_dead(
+  pool: Any,
+  *,
+  context: str = "",
+) -> None:
+  """
+  Abort when metrics pool workers are dead, with absolute expected width.
+
+  Args:
+    pool (Any): Live metrics ``multiprocessing.Pool``.
+    context (str): Operator-facing context string.
+
+  Returns:
+    None
+
+  Raises:
+    MultiprocessingWorkerExitError: When a worker has exited unexpectedly.
+
+  Examples:
+    >>> abort_if_metrics_pool_workers_dead(None, context="x")  # doctest: +SKIP
+  """
+  abort_if_pool_workers_dead(
+      pool,
+      context=context,
+      pool_health_context=_metrics_pool_health_context(),
+  )
+
+
+def _metrics_worker_exit_is_oom_or_sigkill(
+  exc: MultiprocessingWorkerExitError,
+) -> bool:
+  """
+  Return True when a pool-worker exit looks like OOM or SIGKILL.
+
+  Args:
+    exc (MultiprocessingWorkerExitError): Raised worker-exit error.
+
+  Returns:
+    bool: True when OOM/SIGKILL diagnostics should stay fatal.
+
+  Examples:
+    >>> _metrics_worker_exit_is_oom_or_sigkill(
+    ...     MultiprocessingWorkerExitError(
+    ...         "x", dead_pids=[1], likely_cause="sigkill"
+    ...     )
+    ... )
+    True
+  """
+  cause = str(getattr(exc, "likely_cause", "") or "").lower()
+  if "oom" in cause or "sigkill" in cause:
+    return True
+  if int(getattr(exc, "cgroup_oom_kill", 0) or 0) > 0:
+    return True
+  diagnostics = getattr(exc, "diagnostics", None) or {}
+  if int(diagnostics.get("cgroup_oom_kill", 0) or 0) > 0:
+    return True
+  for worker in diagnostics.get("dead_workers") or ():
+    exitcode = worker.get("exitcode")
+    if exitcode in (-signal.SIGKILL, 137):
+      return True
+  return False
 
 
 def _wait_pool_processes_bounded(active_pool: Any, timeout_s: Any) -> Any:
@@ -1929,7 +2010,7 @@ def _drain_metrics_imap(
   # Larger chunks can block indefinitely on ``next(timeout=...)`` and bypass
   # stall detection (observed as inflight batches with zero completions).
   submit_chunksize = 1
-  abort_if_pool_workers_dead(
+  abort_if_metrics_pool_workers_dead(
       active_pool,
       context="Metrics.run imap_unordered (preflight)",
   )
@@ -1972,7 +2053,7 @@ def _drain_metrics_imap(
       pass
 
   while done < total:
-    abort_if_pool_workers_dead(
+    abort_if_metrics_pool_workers_dead(
         active_pool,
         context="Metrics.run imap_unordered",
     )
@@ -2708,31 +2789,105 @@ class Metrics():
   def ensure_pool(self, pool_kind: str = "metrics-pool") -> Any:
     """
     Create and retain a shared worker pool for repeated run() calls.
-    
+
+    Same-kind reuse requires alive workers at the configured absolute width
+    (``metrics_pool_processes``). Undersized pools are hard-reset and
+    recreated so post-``/pub`` attrition cannot silently shrink capacity.
+
     Args:
-      pool_kind (str): String for pool kind.
-    
+      pool_kind (str): Stable pool label for process titles
+      (``metrics-pool`` or ``public-ef-pool``).
+
     Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
+      Any: Live ``multiprocessing.Pool`` retained on this instance.
+
     Examples:
-      >>> Metrics().ensure_pool("x")  # doctest: +SKIP
+      >>> Metrics().ensure_pool("metrics-pool")  # doctest: +SKIP
     """
+    configured = int(self._worker_process_count())
     if (
         self._shared_pool is not None
         and self._shared_pool_kind == pool_kind
     ):
-      return self._shared_pool
-    if self._shared_pool is not None:
+      alive = int(alive_pool_worker_count(self._shared_pool))
+      if alive >= configured:
+        return self._shared_pool
+      log_print(
+          "WARN: metrics pool undersized pool_kind=%s configured=%s "
+          "alive=%s pool_processes=%s; recreating"
+          % (
+              pool_kind,
+              configured,
+              alive,
+              getattr(self._shared_pool, "_processes", None),
+          ),
+          flush=True,
+      )
+      self.reset_pool_hard()
+    elif self._shared_pool is not None:
       self.close_pool()
     self._shared_pool_kind = pool_kind
     self._shared_pool = multiprocessing.Pool(
-        processes=self._worker_process_count(),
+        processes=configured,
         initializer=apply_pool_worker_process_title,
         initargs=("update_metrics.py", pool_kind),
     )
+    alive = int(alive_pool_worker_count(self._shared_pool))
+    log_print(
+        "INFO: metrics pool created pool_kind=%s configured=%s "
+        "pool_processes=%s alive=%s"
+        % (
+            pool_kind,
+            configured,
+            getattr(self._shared_pool, "_processes", None),
+            alive,
+        ),
+        flush=True,
+    )
     return self._shared_pool
 
+  def handle_pool_worker_exit(
+    self,
+    exc: MultiprocessingWorkerExitError,
+  ) -> Any:
+    """
+    Reset and recreate the shared metrics pool after unexpected worker loss.
+
+    OOM / SIGKILL exits remain fatal (re-raised). Exit-zero attrition and
+    recycle-stuck deaths hard-reset the pool and recreate at the configured
+    absolute width so the scheduler cannot continue with an undersized pool.
+
+    Args:
+      exc (MultiprocessingWorkerExitError): Worker-exit error from a metrics
+      health check.
+
+    Returns:
+      Any: Fresh shared pool after non-fatal recovery.
+
+    Raises:
+      MultiprocessingWorkerExitError: Re-raised for OOM/SIGKILL causes.
+
+    Examples:
+      >>> Metrics().handle_pool_worker_exit(
+      ...     MultiprocessingWorkerExitError("x", dead_pids=[1])
+      ... )  # doctest: +SKIP
+    """
+    if _metrics_worker_exit_is_oom_or_sigkill(exc):
+      raise exc
+    pool_kind = self._shared_pool_kind or "metrics-pool"
+    log_print(
+        "WARN: metrics pool worker exit context=%s likely_cause=%s "
+        "dead_pids=%s; resetting and recreating pool_kind=%s"
+        % (
+            getattr(exc, "context", "") or "unknown",
+            getattr(exc, "likely_cause", "") or "unknown",
+            list(getattr(exc, "dead_pids", ()) or ()),
+            pool_kind,
+        ),
+        flush=True,
+    )
+    self.reset_pool_hard()
+    return self.ensure_pool(pool_kind=pool_kind)
   def close_pool(self) -> None:
     """
     Close retained worker pool (idempotent).
@@ -2888,6 +3043,20 @@ class Metrics():
           partial_outcomes=exc.partial_outcomes,
           pending_jobs=exc.pending_jobs,
       )
+    except MultiprocessingWorkerExitError as exc:
+      if own_pool:
+        try:
+          _terminate_pool_bounded(
+              active_pool,
+              METRICS_POOL_JOIN_TIMEOUT_S,
+          )
+          active_pool = None
+        except Exception:
+          pass
+        raise
+      # Shared pool: recreate on non-OOM attrition; OOM/SIGKILL stays fatal.
+      self.handle_pool_worker_exit(exc)
+      raise
     except Exception as exc:
       _log_exception_details("Metrics.run failure", exc)
       raise
