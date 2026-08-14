@@ -13,7 +13,7 @@ export const JOB_PLOT_CONFIGS = [
     key: "summary_plot" as const,
     panelKey: "summary" as const,
     idPrefix: "job-mscript",
-    plotName: "Summary plot",
+    plotName: "Summary plots",
   },
   {
     key: "roofline" as const,

@@ -52,6 +52,7 @@ import { useExtendedSearchLayout } from "../context/extended-search-layout-conte
 import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { buildJobListApiParams, buildJobListHistogramApiParams } from "../utils/build-job-list-api-params";
+import { filterIdentitySearchParamsKey } from "../utils/filter-identity-params";
 import {
   buildJobListActiveFilterLines,
 } from "../utils/job-list-filter-summary";
@@ -238,9 +239,13 @@ export default function JobList() {
     [asURLSearchParams, paramsFromRoute],
   );
 
+  // Memo on filter identity so sort/page URL churn does not rebuild hist params.
+  const histogramFilterIdentityKey = filterIdentitySearchParamsKey(asURLSearchParams);
   const histogramApiParams = useMemo(
     () => buildJobListHistogramApiParams(asURLSearchParams, paramsFromRoute),
-    [asURLSearchParams, paramsFromRoute],
+    // asURLSearchParams is read inside; identity key + route filters are the semantic deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- presentation-stable key
+    [histogramFilterIdentityKey, paramsFromRoute],
   );
 
   const {

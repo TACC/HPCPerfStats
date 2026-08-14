@@ -6,6 +6,7 @@ import { orvalResponseData } from "@/api/orval-response";
 import { HISTOGRAM_EMBED_VERSION } from "@/api-paths";
 import type { JobListHistogramEntry, MetricHistStatusMap } from "@/types/view-models";
 import { fingerprintBokehJsonItem } from "@/utils/fingerprint-bokeh-json-item";
+import { stripPresentationParams } from "@/utils/filter-identity-params";
 import { normalizeJobListHistogramEntry } from "@/utils/normalize-job-list-histogram-entry";
 
 export type MetricName = "runtime" | "nhosts" | "queue_wait";
@@ -98,9 +99,11 @@ export function useJobListHistograms(
   enabled = true,
   jobsFetching = false,
 ) {
-  const paramsKey = serializeJobListApiParams(listApiParams);
-  const listApiParamsRef = useRef(listApiParams);
-  listApiParamsRef.current = listApiParams;
+  // Defense in depth: strip presentation keys even if a caller passes listApiParams.
+  const filterIdentityParams = stripPresentationParams(listApiParams);
+  const paramsKey = serializeJobListApiParams(filterIdentityParams);
+  const listApiParamsRef = useRef(filterIdentityParams);
+  listApiParamsRef.current = filterIdentityParams;
   const jobsFetchingRef = useRef(jobsFetching);
   jobsFetchingRef.current = jobsFetching;
   const histogramsFingerprintRef = useRef<string>("");
@@ -125,7 +128,7 @@ export function useJobListHistograms(
     }
 
     // Keep previous embeds visible while filter-identity refetch runs (sort/page
-    // must not reach this effect — callers pass stripPresentationParams keys).
+    // are stripped above so they never change paramsKey).
     setMetricHistStatus((prev) => {
       const next = createInitialMetricStatus(true);
       for (const metric of JOB_LIST_HISTOGRAM_METRICS) {

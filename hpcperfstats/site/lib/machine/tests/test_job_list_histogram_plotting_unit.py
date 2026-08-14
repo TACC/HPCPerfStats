@@ -74,12 +74,56 @@ def test_build_histogram_queryset_orders_by_jid_not_user_order_by():
     with patch(
         "hpcperfstats.site.lib.machine.api._build_job_list_queryset_from_request",
         return_value=(mock_qs, {"order_by": "-metrics_distinct_time_count"}, {}, "-metrics_distinct_time_count"),
-    ):
+    ) as mock_build:
         job_list_qs, nj, _fields, _cur = _build_histogram_queryset(request)
 
+    mock_build.assert_called_once()
+    assert mock_build.call_args.kwargs.get("ignore_order_by") is True
+    assert mock_build.call_args.kwargs.get("annotate_all") is True
     mock_qs.order_by.assert_called_with("jid")
     assert job_list_qs is ordered
     assert nj == 3
+
+
+def test_build_job_list_queryset_ignore_order_by_skips_user_sort():
+    """Histogram path must not apply expensive user order_by before forced jid."""
+    from hpcperfstats.site.lib.machine.api import _build_job_list_queryset_from_request
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/api/jobs/histograms/batch/",
+        {"order_by": "-runtime", "end_time__date": "2024-01-15"},
+    )
+    mock_qs = MagicMock()
+    mock_qs.filter.return_value = mock_qs
+
+    with patch(
+        "hpcperfstats.site.lib.machine.api.job_data.objects.filter",
+        return_value=mock_qs,
+    ), patch(
+        "hpcperfstats.site.lib.machine.api._apply_non_staff_job_visibility",
+        side_effect=lambda qs, _req: qs,
+    ), patch(
+        "hpcperfstats.site.lib.machine.api.annotate_job_list_performance_fields",
+        side_effect=lambda qs: qs,
+    ), patch(
+        "hpcperfstats.site.lib.machine.api._apply_job_list_performance_sort_rank_filter",
+        side_effect=lambda qs, _fields: qs,
+    ), patch(
+        "hpcperfstats.site.lib.machine.api._apply_job_list_major_state_filter",
+        side_effect=lambda qs, _fields: qs,
+    ), patch(
+        "hpcperfstats.site.lib.machine.api._apply_job_list_metric_filters",
+        side_effect=lambda qs, _metrics: qs,
+    ):
+        _qs, _fields, _cur, order_by = _build_job_list_queryset_from_request(
+            request,
+            annotate_all=True,
+            ignore_order_by=True,
+        )
+
+    assert order_by == "-runtime"
+    mock_qs.order_by.assert_not_called()
 
 
 def test_job_list_histograms_batch_uses_full_nj_when_large():

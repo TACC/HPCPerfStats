@@ -207,12 +207,12 @@ describe("BokehEmbed", () => {
   it("shows loading message while external plot query is still running", () => {
     renderBokehEmbed(
       <BokehEmbed
-        plotName="Summary plot"
+        plotName="Summary plots"
         isLoadingExternal
       />
     );
 
-    expect(screen.getByText("Loading Summary plot…")).toBeInTheDocument();
+    expect(screen.getByText("Loading Summary plots…")).toBeInTheDocument();
     expect(screen.queryByText("Unavailable — Data not available.")).not.toBeInTheDocument();
   });
 
@@ -325,7 +325,7 @@ describe("BokehEmbed", () => {
       <BokehEmbed
         item={VALID_BOKEH_JSON_ITEM}
         id="bokeh-print-capture-test"
-        plotName="Summary plot"
+        plotName="Summary plots"
         maximizeInContainer="width"
         previewMode
         printCaptureLayout

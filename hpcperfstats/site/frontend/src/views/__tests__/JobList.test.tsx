@@ -1037,6 +1037,83 @@ describe("JobList", () => {
     );
   });
 
+  it("keeps histogram hook params free of order_by/page across soft sort", async () => {
+    setJobListQueryMock({
+      data: {
+        job_list: [
+          {
+            jid: 1,
+            performance: {
+              label: "Metrics & Plots available",
+              tone: "success",
+              aria_label: "Performance: Metrics & Plots available",
+              sort_rank: 0,
+            },
+            username: "alice",
+            account: "acct",
+            start_time: "2024-01-01T00:00:00Z",
+            end_time: "2024-01-01T01:00:00Z",
+            runtime: 3600,
+            queue: "normal",
+            jobname: "job1",
+            state: "COMPLETED",
+            ncores: 32,
+            nhosts: 2,
+            node_hrs: 64,
+          },
+        ],
+        nj: 1,
+        aggregates: { total_node_hours: 64 },
+        qname: "Jobs",
+        order_by: "-end_time",
+        pagination: { page: 1, num_pages: 1 },
+        filter_summary: ["Queue: normal"],
+      },
+    });
+    renderJobList("/jobs?end_time__date=2024-01-15&queue=normal&order_by=-end_time");
+
+    await waitFor(() => {
+      expect(vi.mocked(useJobListHistograms).mock.calls.length).toBeGreaterThan(0);
+    });
+
+    const firstHistParams = vi.mocked(useJobListHistograms).mock.calls.at(-1)?.[0] as Record<
+      string,
+      string
+    >;
+    expect(firstHistParams).not.toHaveProperty("order_by");
+    expect(firstHistParams).not.toHaveProperty("page");
+    expect(firstHistParams).toMatchObject({
+      end_time__date: "2024-01-15",
+      queue: "normal",
+    });
+
+    fireEvent.click(screen.getByRole("link", { name: /^User/i }));
+    await waitFor(() => {
+      expect(nextNavigationMock.router.replace).toHaveBeenCalled();
+    });
+
+    const afterSortParams = vi.mocked(useJobListHistograms).mock.calls.at(-1)?.[0] as Record<
+      string,
+      string
+    >;
+    expect(afterSortParams).not.toHaveProperty("order_by");
+    expect(afterSortParams).not.toHaveProperty("page");
+    expect(afterSortParams).toEqual(firstHistParams);
+
+    fireEvent.click(screen.getByRole("link", { name: /^start time/i }));
+    await waitFor(() => {
+      expect(nextNavigationMock.router.replace.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    const afterSecondSort = vi.mocked(useJobListHistograms).mock.calls.at(-1)?.[0] as Record<
+      string,
+      string
+    >;
+    expect(afterSecondSort).not.toHaveProperty("order_by");
+    expect(afterSecondSort).not.toHaveProperty("page");
+    expect(afterSecondSort).toEqual(firstHistParams);
+  });
+
   it("soft-navigates pagination with router.replace scroll:false", async () => {
     setJobListQueryMock({
       data: {

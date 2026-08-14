@@ -70,7 +70,7 @@ Query-string / path changes must **not** remount or blank surfaces whose **ident
 
 ### Required
 
-1. Secondary fetches (JobList histograms, HostDetail plot params) use a **filter-identity** param set — strip presentation keys before the request key.
+1. Secondary fetches (JobList histograms, HostDetail plot params) use a **filter-identity** param set — strip presentation keys before the request key. **Manual-fetch secondary hooks must also strip presentation keys internally** before `paramsKey` / batch fetch (defense in depth). View-level strip alone is insufficient: if a caller accidentally passes full `listApiParams`, sort/page must not regenerate distributions (`useJobListHistograms` + `stripPresentationParams`).
 2. Do **not** `setX(null)` on secondary state when only presentation keys change; use an updating flag (`histogramsUpdating`, `*Busy`) until new identity data arrives.
 3. Enlarge / filter combobox open state resets on **filter-identity** key only (not full `searchParams.toString()`). Layout nav chrome may still reset on full QS.
 4. If a hook exposes `tableBusy` / `detailBusy` / `sectionBusy` / `refetchBusy`, the view **must** use it — never full-page `LoadingMessage` on refetch when prior data exists.
@@ -94,7 +94,7 @@ Reference hooks: [`use-job-list.ts`](hpcperfstats/site/frontend/src/hooks/use-jo
 
 ## Reference implementations
 
-- **JobList** — table first; deferred `filter_options`; distributions default open / always fetch; histogram params omit `order_by`/`page`; **document-scroll** table rows (no nested max-h virtualizer); histogram thumbs/mobile grid use **`previewMode`**; Enlarge stays interactive; soft sort/pagination (`scroll: false`); pagination/`order_by` chrome from **URL** while rows may lag on `keepPreviousData`; `JobList.test.tsx` (`tableBusy` not pointer-blocked; stale-placeholder page active).
+- **JobList** — table first; deferred `filter_options`; distributions default open / always fetch; histogram params omit `order_by`/`page` at the view **and** inside `useJobListHistograms`; hist memo keys on filter identity; **document-scroll** table rows (no nested max-h virtualizer); histogram thumbs/mobile grid use **`previewMode`**; Enlarge stays interactive; soft sort/pagination (`scroll: false`); pagination/`order_by` chrome from **URL** while rows may lag on `keepPreviousData`; `JobList.test.tsx` (`tableBusy` not pointer-blocked; stale-placeholder page active; hist params stable across soft sort).
 - **JobDetail** — `initialLoading` only on first paint; tabs stay mounted during `detailsLoading`; tab chrome via `useState` + `history.replaceState`; plots clear on `pk` only; deep-link test in `JobDetail.test.tsx`.
 - **HostDetail / TypeDetail** — `keepPreviousData` + `detailBusy` (no full-page blank on refetch).
 - **JobMonitor / AdminMonitor / ClusterDashboard** — progressive `*Busy`; paginated tables use document scroll (no nested list scrollers).

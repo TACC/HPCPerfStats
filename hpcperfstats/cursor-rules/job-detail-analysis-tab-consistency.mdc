@@ -1,6 +1,6 @@
 # Job Detail Analysis Tab Consistency
 
-When adding or changing a tab under **Job Detail → Analysis** (the Bootstrap nav shared by Metrics, Summary plot, Roofline, Multiprecision Mix, Processes, etc.), align presentation with existing tabs unless there is an explicit product reason not to.
+When adding or changing a tab under **Job Detail → Analysis** (the Bootstrap nav shared by Metrics, Summary plots, Roofline, Multiprecision Mix, Processes, etc.), align presentation with existing tabs unless there is an explicit product reason not to.
 
 ## Plot tabs (Bokeh panels)
 
@@ -9,11 +9,12 @@ Canonical patterns live in **`hpcperfstats/site/frontend/src/views/JobDetail.tsx
 ### Structure
 
 - **Section chrome**: Wrap each chart block in **`job-detail-single-plot-host`** / **`mb-3 w-full`**, **`h3`** title, then **`PlotPanel`** only — no intro paragraph under the title.
+- **No tablist intro blurbs**: Do **not** add a secondary title or intro paragraph under the analysis tablist (anti-pattern: Roofline “CPU and GPU roofline charts for this job.”). Per-chart **`h3`** headings are required; tab-level prose under the tablist is not.
 - **Embed**: Always **`PlotPanel`** (do not call **`BokehEmbed`** directly from the page for parity).
 
 ### Loading / unavailable messaging
 
-- **Performance rank gate**: before any plot load, require `job_data.performance.sort_rank === 0`. Until then show only the gate strings (**Plots not yet completed.** for ranks 1/6; **No plots available for this job** for 2–5/missing) inside Summary / Roofline / Multiprecision Mix — not on Metrics.
+- **Performance rank gate**: before any plot load, require `job_data.performance.sort_rank === 0`. Until then show only the gate strings (**Plots not yet completed.** for ranks 1/6; **No plots available for this job** for 2–5/missing) inside Summary plots / Roofline / Multiprecision Mix — not on Metrics.
 - **Unavailable plots**: **`BokehEmbed`** shows the user-visible **`Unavailable — Data not available.`** status line for everyone; staff-only expandable detail uses **`unavailableReason`** from the API (`job_plot_artifacts` / `job_detail_artifacts` style strings — mirror **`Missing … in host_data`** / **`Missing … in job metrics`** phrasing used by summary and roofline builders).
 - **Do not** drive multiprecision or other artifact-backed embed **`isLoading`** from **`detailsLoading`** when plot payloads already arrive with **`getJobDetailLight`** — that flashes misleading **Loading …** copy instead of the same unavailable surfacing as Summary/Roofline.
 - Progressive **`job_plots`** tabs continue to use **`plots[key].loading`** as **`isLoadingExternal`** on **`PlotPanel`**.
@@ -45,7 +46,7 @@ Follow neighboring tabs for typography (**`h3`** subsection headings), **`text-m
 
 Job Detail **Print** uses the browser print dialog (`window.print` → Save as PDF). Do **not** add CDN or npm PDF libraries (`jspdf` / `html2canvas`).
 
-- **In-scope surfaces:** Job overview, Resources, Metrics, Summary plot, Roofline, Multiprecision Mix.
+- **In-scope surfaces:** Job overview, Resources, Metrics, Summary plots, Roofline, Multiprecision Mix.
 - **Out of scope:** Processes, Execution and hosts, Device data (mark with **`job-detail-print-out-of-scope`**; do not `keepMounted` for print).
 - **Prep:** set **`data-job-detail-print="1"`** on the page wrapper; force-load multiprecision + plots; **`keepMounted`** + mount in-scope **`PlotPanel`**s even when the active tab differs; open GPU inventory collapsibles **and Metrics not computed collapsibles**; disable Bokeh viewport defer during prep so embeds can measure; pass **`previewMode`** + **`printCaptureLayout`** + staggered embeds (one-shot maximize/`window.resize` for stretch_width grids and pie label paint; **no** continuous resize listener); freeze settled plot payloads; wait until mounted targets have non-zero shadow canvases (`waitForPrintBokehCanvases` / `collectBokehCanvases`) before snapshot; **prefer Bokeh `view.export("png")`** (force-paints dual-renderer legend text) for print data URLs, with shadow-canvas composite fallback; **strip** in-plot help `Label(text="?")` / hit HoverTools on print embeds (`stripHelpMarkers`); **capture → React-state `<img>`** then dispose **only captured** Bokeh targets before **`window.print`**; **omit** unavailable/error plot blocks from print; if a plot **has data** but capture yields no snapshot, **keep the live `PlotPanel`** (never silently hide). Clearing print layout must drop **`previewMode`/`printCaptureLayout`** so a zero-size print failure cannot stick on the interactive Summary tab.
 - **CSS:** screen + `@media print` rules in **`globals.css`** keyed off **`[data-job-detail-print]`** (override Base UI **`[hidden]`** on in-scope panels with `display: block !important`; hide chrome, tablist, Print button, out-of-scope panels, VariableInfoLabel **`?`** / tooltips, `.bokeh-plot-unavailable`). Print also omits the **Bokeh canvas** help `?` via embed strip (CSS cannot hide that glyph).

@@ -1568,7 +1568,7 @@ export default function JobDetail() {
             aria-label="Job data views"
           >
             <TabsTrigger value="metrics">Metrics</TabsTrigger>
-            <TabsTrigger value="summary">Summary plot</TabsTrigger>
+            <TabsTrigger value="summary">Summary plots</TabsTrigger>
             <TabsTrigger value="roofline">Roofline</TabsTrigger>
             <TabsTrigger value="multiprecisionMix">Multiprecision Mix</TabsTrigger>
             <TabsTrigger value="processes">Processes</TabsTrigger>
@@ -1585,7 +1585,7 @@ export default function JobDetail() {
               : {})}
             className="job-detail-single-plot-pane job-detail-print-scoped-panel job-detail-print-plots-rank0-only mt-0 [&_.job-detail-plots-intro]:mx-0 [&_.job-detail-plots-intro]:max-w-none [&_.job-detail-plots-intro]:text-start"
           >
-            <h2 className="job-detail-print-only mb-2 text-lg font-medium">Summary plot</h2>
+            <h2 className="job-detail-print-only mb-2 text-lg font-medium">Summary plots</h2>
             {plotGateMessage ? (
               <TabStatusMessage role="status">{plotGateMessage}</TabStatusMessage>
             ) : (
@@ -1655,9 +1655,6 @@ export default function JobDetail() {
                     </AlertDescription>
                   </Alert>
                 ) : null}
-                <p className="mb-2 text-sm text-muted-foreground job-detail-print-hide">
-                  CPU and GPU roofline charts for this job.
-                </p>
                 {sortByPlotReadiness(
                   [
                     {

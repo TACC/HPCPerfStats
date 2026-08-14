@@ -307,7 +307,7 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /^print$/i })).toBeInTheDocument();
     });
-    expect(screen.queryByRole("heading", { name: "Summary plot", level: 3 })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Summary plots", level: 3 })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^print$/i }));
 
@@ -343,7 +343,7 @@ describe("JobDetail", () => {
     expect(document.querySelectorAll("img.job-detail-print-plot-snapshot").length).toBeGreaterThan(
       0,
     );
-    expect(screen.getByRole("heading", { name: "Summary plot", level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Summary plots", level: 3 })).toBeInTheDocument();
     printSpy.mockRestore();
   });
 
@@ -374,7 +374,7 @@ describe("JobDetail", () => {
     });
     expect(disposeJobDetailPrintBokehTargets).toHaveBeenCalledWith("12345", []);
     expect(document.querySelectorAll("img.job-detail-print-plot-snapshot").length).toBe(0);
-    expect(screen.getByRole("heading", { name: "Summary plot", level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Summary plots", level: 3 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "CPU Roofline", level: 3 })).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "CPU Multiprecision Mix", level: 3 }),
@@ -405,7 +405,7 @@ describe("JobDetail", () => {
       expect(document.querySelector("[data-job-detail-print='1']")).toBeTruthy();
       expect(printSpy).toHaveBeenCalled();
     });
-    expect(screen.queryByRole("heading", { name: "Summary plot", level: 3 })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Summary plots", level: 3 })).not.toBeInTheDocument();
     expect(screen.queryByText(/Unavailable/i)).not.toBeInTheDocument();
     printSpy.mockRestore();
   });
@@ -1606,7 +1606,7 @@ describe("JobDetail", () => {
     const tabLabels = screen.getAllByRole("tab").map((tab) => tab.textContent);
     expect(tabLabels).toEqual([
       "Metrics",
-      "Summary plot",
+      "Summary plots",
       "Roofline",
       "Multiprecision Mix",
       "Processes",
@@ -1629,6 +1629,9 @@ describe("JobDetail", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
     });
+    expect(
+      screen.queryByText(/CPU and GPU roofline charts for this job/i),
+    ).not.toBeInTheDocument();
     await waitFor(() => {
       expect(document.querySelectorAll(".bokeh-embed-wrapper").length).toBe(2);
     });
@@ -1725,7 +1728,7 @@ describe("JobDetail", () => {
       expect(screen.getByRole("heading", { name: "Job data" })).toBeInTheDocument();
     });
     await waitFor(() => {
-      expect(screen.getByText(/Loading Summary plot/i)).toBeInTheDocument();
+      expect(screen.getByText(/Loading Summary plots/i)).toBeInTheDocument();
     });
   });
 

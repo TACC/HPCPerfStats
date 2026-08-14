@@ -996,6 +996,7 @@ def _build_job_list_queryset_from_request(
   extra_excluded_fields: tuple[Any, ...] = (),
   annotate_all: bool = False,
   exclude_header_dimension: Any | None = None,
+  ignore_order_by: bool = False,
 ) -> Any:
     """
     Build filtered ordered queryset and parsed filter maps for job list.
@@ -1008,6 +1009,8 @@ def _build_job_list_queryset_from_request(
       fields.
       annotate_all (bool): Boolean flag for annotate all.
       exclude_header_dimension (Any | None): One of ``Any``, ``None``.
+      ignore_order_by (bool): When True, skip applying the user ``order_by``
+      (histogram bins are order-invariant; callers re-order cheaply).
     
     Returns:
       Any: Value produced by this call (type depends on inputs).
@@ -1036,7 +1039,9 @@ def _build_job_list_queryset_from_request(
     if host_val:
         queryset = queryset.filter(host_list__contains=[host_val])
     queryset = _apply_non_staff_job_visibility(queryset, request)
-    if annotate_all or order_by.lstrip("-") == "performance_sort_rank":
+    if annotate_all or (
+        not ignore_order_by and order_by.lstrip("-") == "performance_sort_rank"
+    ):
         queryset = annotate_job_list_performance_fields(queryset)
     queryset = _apply_job_list_performance_sort_rank_filter(queryset, fields)
     queryset = _apply_job_list_major_state_filter(queryset, fields)
@@ -1046,7 +1051,11 @@ def _build_job_list_queryset_from_request(
         if k.startswith("metrics_")
     }
     queryset = _apply_job_list_metric_filters(queryset, cur_metrics)
-    if order_by.lstrip("-") == "metrics_distinct_time_count":
+    if ignore_order_by:
+        # Histogram (and similar) callers force their own order; skip expensive
+        # user metric / performance sorts before that re-order.
+        pass
+    elif order_by.lstrip("-") == "metrics_distinct_time_count":
         # Keep blank sample counts at the end for both sort directions so
         # "largest sample count first" behaves as users expect.
         sample_count_order = (
@@ -2453,6 +2462,7 @@ def _build_histogram_queryset(request: Any) -> Any:
             request,
             extra_excluded_fields=_JOB_LIST_QUERY_FIELD_EXCLUDES_HISTOGRAM,
             annotate_all=True,
+            ignore_order_by=True,
         )
         # Histogram bins are order-invariant; skip user order_by (expensive metric sorts).
         job_list_qs = job_list_qs.order_by("jid")

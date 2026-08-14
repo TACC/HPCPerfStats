@@ -416,6 +416,86 @@ describe("useJobListHistograms", () => {
     expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
   });
 
+  it("does not refetch when order_by/page flip after hook-level strip", async () => {
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(mockBatchResponse());
+
+    const baseFilters = { end_time__date: "2024-01-15", queue: "normal" };
+    const { rerender } = renderHook(
+      ({ params }) => useJobListHistograms(params, 0, true),
+      {
+        initialProps: {
+          params: { ...baseFilters, page: "1", order_by: "-end_time" },
+        },
+      },
+    );
+
+    await advanceDebounce();
+    await waitFor(() => {
+      expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
+    });
+    const firstCallParams = jobsHistogramsBatchRetrieve.mock.calls[0]?.[0] as Record<
+      string,
+      string
+    >;
+    expect(firstCallParams).not.toHaveProperty("order_by");
+    expect(firstCallParams).not.toHaveProperty("page");
+    expect(firstCallParams).toMatchObject(baseFilters);
+
+    rerender({
+      params: { ...baseFilters, page: "2", order_by: "-runtime" },
+    });
+    await advanceDebounce();
+    expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
+
+    rerender({
+      params: { ...baseFilters, page: "3", order_by: "username" },
+    });
+    await advanceDebounce();
+    expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
+  });
+
+  it("refetches when filter identity changes even if presentation keys also change", async () => {
+    vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(mockBatchResponse());
+
+    const { rerender } = renderHook(
+      ({ params }) => useJobListHistograms(params, 0, true),
+      {
+        initialProps: {
+          params: {
+            end_time__date: "2024-01-15",
+            queue: "normal",
+            page: "1",
+            order_by: "-end_time",
+          },
+        },
+      },
+    );
+
+    await advanceDebounce();
+    await waitFor(() => {
+      expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
+    });
+
+    rerender({
+      params: {
+        end_time__date: "2024-01-15",
+        queue: "debug",
+        page: "2",
+        order_by: "-runtime",
+      },
+    });
+    await advanceDebounce();
+    await waitFor(() => {
+      expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(2);
+    });
+    expect(jobsHistogramsBatchRetrieve.mock.calls[1]?.[0]).toMatchObject({
+      queue: "debug",
+      end_time__date: "2024-01-15",
+    });
+    expect(jobsHistogramsBatchRetrieve.mock.calls[1]?.[0]).not.toHaveProperty("order_by");
+    expect(jobsHistogramsBatchRetrieve.mock.calls[1]?.[0]).not.toHaveProperty("page");
+  });
+
   it("sets histogramsUpdating immediately when params change", async () => {
     vi.mocked(jobsHistogramsBatchRetrieve).mockResolvedValue(mockBatchResponse());
 
