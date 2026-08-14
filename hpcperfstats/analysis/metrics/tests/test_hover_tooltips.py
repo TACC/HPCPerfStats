@@ -138,7 +138,25 @@ def test_roofline_job_hover_uses_html_with_separators():
   assert "border-bottom" in hover.tooltips
   assert "@perf_plain" in hover.tooltips
   assert "@host" in hover.tooltips
+  assert "@dev_display" in hover.tooltips
+  assert "device:" in hover.tooltips
   assert hover.formatters == {}
+
+
+def test_roofline_job_hover_shows_device_when_dev_present():
+  df = pd.DataFrame({
+      "host": ["h1"],
+      "dev": ["gpu0"],
+      "time": [pd.Timestamp("2024-01-01 00:00:00+00:00")],
+      "flops_gf": [100.0],
+      "bw_gb": [10.0],
+  })
+
+  plot = _build_roofline_figure(df, peak_flops_gf=1000.0, peak_bw_gb=100.0, title="Roofline")
+  assert plot is not None
+  job_source = plot.renderers[1].data_source.data
+  assert job_source["dev"] == ["gpu0"]
+  assert job_source["dev_display"] == ["gpu0"]
 
 
 def test_roofline_roof_hover_includes_axis_units():
@@ -165,3 +183,7 @@ def test_roofline_roof_hover_includes_axis_units():
   assert "Roofline" in tip_text
   assert "FLOP/byte" in tip_text
   assert "GFLOP/s" in tip_text
+  assert "Peak performance" in tip_text
+  assert "1,000.00 GFLOP/s" in tip_text
+  assert "Peak bandwidth" in tip_text
+  assert "100.00 GB/s" in tip_text

@@ -203,6 +203,58 @@ def host_data_sum_val_per_sample_queryset(
   )
 
 
+def host_data_sum_val_per_sample_dev_queryset(
+  qs: Any,
+  column: Any,
+  *,
+  nonnegative_only: bool = False,
+  coalesce_zero: bool = True,
+) -> Any:
+  """
+  One row per (host, sample time, device) with ``column`` summed by PostgreSQL.
+
+  Same ``ExpressionWrapper`` time alias as
+  ``host_data_sum_val_per_sample_queryset`` so Django keeps ``host`` (and
+  ``dev``) in GROUP BY. Used by GPU roofline per-device scatter; Summary
+  node-level plots keep the host/time-only helper.
+
+  Args:
+    qs (Any): Filtered ``host_data`` queryset.
+    column (Any): Column name to sum (``arc``, ``value``, or ``delta``).
+    nonnegative_only (bool): When True, only non-negative contributions.
+    coalesce_zero (bool): When True, coalesce NULL sums to zero.
+
+  Returns:
+    Any: Aggregated Django queryset with host, sample_time alias, ``dev``,
+    and sum_val alias.
+
+  Examples:
+    >>> host_data_sum_val_per_sample_dev_queryset(  # doctest: +SKIP
+    ...     host_data.objects.none(), "arc"
+    ... )
+  """
+  return (
+      qs.annotate(
+          **{
+              HOST_DATA_TIME_ALIAS:
+                  ExpressionWrapper(F("time"), output_field=DateTimeField())
+          }
+      )
+      .values("host", HOST_DATA_TIME_ALIAS, "dev")
+      .annotate(
+          **{
+              HOST_DATA_SUM_VAL_ALIAS:
+                  host_data_sum_val_annotation(
+                      column,
+                      nonnegative_only=nonnegative_only,
+                      coalesce_zero=coalesce_zero,
+                  )
+          }
+      )
+      .order_by("host", HOST_DATA_TIME_ALIAS, "dev")
+  )
+
+
 def host_data_restore_time_column(df: Any) -> Any:
   """
   Rename ``HOST_DATA_TIME_ALIAS`` back to ``time`` on an aggregate DataFrame.
@@ -945,27 +997,32 @@ def _assemble_sum_val_parts_bounded(
   parts: Any,
   conv: float,
   max_rows: int,
+  *,
+  group_cols: tuple[str, ...] = ("host", "time"),
 ) -> Any:
   """
-  Build one host/time/sum_val DataFrame from chunk parts without a mega-concat.
+  Build one sum_val DataFrame from chunk parts without a mega-concat.
 
   Parts must already be capped so total rows ≤ ``max_rows``. A single part is
   returned without ``pd.concat``; multiple parts are concatenated once.
 
   Args:
-    parts (Any): Sequence of non-empty DataFrames with host/time/sum_val.
+    parts (Any): Sequence of non-empty DataFrames with sum_val plus group cols.
     conv (float): Multiplier applied to ``sum_val``.
     max_rows (int): Hard row budget (safety truncate).
+    group_cols (tuple[str, ...]): Columns to keep in the final GROUP BY
+      (``host,time`` for Summary; ``host,time,dev`` for GPU roofline).
 
   Returns:
-    Any: Sorted DataFrame with columns host, time, sum_val.
+    Any: Sorted DataFrame with group cols plus sum_val.
 
   Examples:
     >>> _assemble_sum_val_parts_bounded([], 1.0, 10)  # doctest: +SKIP
   """
   import pandas as pd
 
-  empty = pd.DataFrame(columns=["host", "time", "sum_val"])
+  cols = list(group_cols) + ["sum_val"]
+  empty = pd.DataFrame(columns=cols)
   if not parts:
     return empty
   budget = max(1, int(max_rows or 1))
@@ -975,14 +1032,15 @@ def _assemble_sum_val_parts_bounded(
     df = pd.concat(parts, ignore_index=True)
   if df is None or df.empty or "sum_val" not in df.columns:
     return empty
-  if not {"host", "time"}.issubset(df.columns):
+  if not set(group_cols).issubset(df.columns):
     return empty
   if len(df.index) > budget:
     df = df.iloc[:budget].copy()
+  sort_cols = list(group_cols)
   df = (
-      df.groupby(["host", "time"], as_index=False)["sum_val"]
+      df.groupby(list(group_cols), as_index=False)["sum_val"]
       .sum()
-      .sort_values(["host", "time"])
+      .sort_values(sort_cols)
   )
   df["sum_val"] = df["sum_val"].astype("float64") * float(conv)
   return df.reset_index(drop=True)
@@ -2657,21 +2715,25 @@ class jid_table:
     val_col: Any,
     events: Any,
     conv: float = 1.0,
+    *,
+    group_by_dev: bool = False,
   ) -> Any:
     """
     Aggregate val_col (e.g. 'arc' or 'value') for given type and events.
     
       Returns.
     
-      DataFrame with columns host, time, sum_val (sum * conv). Result is
-        cached
-      per (jid, typ, val_col, events).
+      DataFrame with columns host, time, sum_val (sum * conv). When
+      ``group_by_dev`` is True (GPU roofline), also keep ``dev`` and do not
+      sum devices together. Result is cached per (jid, typ, val_col, events,
+      grain).
     
     Args:
       typ (Any): Typ passed to this helper.
       val_col (Any): Val col passed to this helper.
       events (Any): Events passed to this helper.
       conv (float): Floating-point value for conv.
+      group_by_dev (bool): When True, GROUP BY host/time/dev (per-device).
     
     Returns:
       Any: Value produced by this call (type depends on inputs).
@@ -2687,6 +2749,10 @@ class jid_table:
     reject_dcgm_blank = typ in _gpu_types or any(
         t in _gpu_types for t in type_probe_names(typ)
     )
+    group_cols = (
+        ("host", "time", "dev") if group_by_dev else ("host", "time")
+    )
+    empty_cols = list(group_cols) + ["sum_val"]
 
     def _fn_pandas_groupby() -> Any:
       """
@@ -2695,7 +2761,7 @@ class jid_table:
       Uses host×time chunking with timeout split/retry and a row budget.
 
       Returns:
-        Any: DataFrame with host, time, sum_val columns (possibly empty).
+        Any: DataFrame with host, time[,dev], sum_val columns (possibly empty).
 
       Examples:
         >>> True
@@ -2705,7 +2771,7 @@ class jid_table:
       import pandas as pd
 
       if not hosts:
-        return pd.DataFrame(columns=["host", "time", "sum_val"])
+        return pd.DataFrame(columns=empty_cols)
 
       tkw = self._host_data_time_filter_kwargs()
       host_batch = _aggregate_df_host_batch(
@@ -2716,6 +2782,11 @@ class jid_table:
       slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
       max_rows = int(cfg.get_plot_aggregate_max_host_time_points())
       time_chunks = list(_iter_aggregate_time_filter_chunks(tkw, slice_s))
+      value_cols = (
+          ["host", "time", "dev", val_col]
+          if group_by_dev
+          else ["host", "time", val_col]
+      )
       for candidate_typ in type_probe_names(typ):
         def build_qs_raw(
           host_chunk: Any,
@@ -2731,7 +2802,7 @@ class jid_table:
             ct (Any): Candidate ``host_data.type`` string.
 
           Returns:
-            Any: Django values queryset (host, time, val_col).
+            Any: Django values queryset (host, time[,dev], val_col).
 
           Examples:
             >>> True
@@ -2745,7 +2816,7 @@ class jid_table:
           )
           if reject_dcgm_blank and val_col in ("value", "delta", "arc"):
             qs = qs.filter(**{f"{val_col}__lt": DCGM_FP64_BLANK})
-          return qs.values("host", "time", val_col)
+          return qs.values(*value_cols)
 
         df_raw = _fetch_host_data_values_frames(
             hosts,
@@ -2762,13 +2833,25 @@ class jid_table:
             or val_col not in df_raw.columns
         ):
           continue
+        if group_by_dev:
+          if "dev" not in df_raw.columns:
+            df_raw = df_raw.copy()
+            df_raw["dev"] = ""
+          else:
+            df_raw = df_raw.copy()
+            df_raw["dev"] = df_raw["dev"].fillna("").astype(str)
         df_grouped = (
-            df_raw.groupby(["host", "time"], as_index=False)[val_col]
+            df_raw.groupby(list(group_cols), as_index=False)[val_col]
             .sum()
             .rename(columns={val_col: "sum_val"})
         )
-        return _assemble_sum_val_parts_bounded([df_grouped], conv, max_rows)
-      return pd.DataFrame(columns=["host", "time", "sum_val"])
+        return _assemble_sum_val_parts_bounded(
+            [df_grouped],
+            conv,
+            max_rows,
+            group_cols=group_cols,
+        )
+      return pd.DataFrame(columns=empty_cols)
 
     def _fn() -> Any:
       """
@@ -2780,7 +2863,7 @@ class jid_table:
       (never a larger 64-host scan).
 
       Returns:
-        Any: DataFrame with host, time, sum_val columns (possibly empty).
+        Any: DataFrame with host, time[,dev], sum_val columns (possibly empty).
 
       Raises:
         Exception: Control-flow timeouts (SIGALRM) are re-raised.
@@ -2793,7 +2876,7 @@ class jid_table:
 
       hosts = [str(h) for h in self._base_filter.get("host__in") or []]
       if not hosts:
-        return pd.DataFrame(columns=["host", "time", "sum_val"])
+        return pd.DataFrame(columns=empty_cols)
 
       _ALLOWED = ("arc", "value", "delta")
       if val_col not in _ALLOWED:
@@ -2834,7 +2917,8 @@ class jid_table:
                   ct (Any): Candidate ``host_data.type`` string.
 
                 Returns:
-                  Any: Aggregated Django queryset (host, sample_time, sum_val).
+                  Any: Aggregated Django queryset (host, sample_time[,dev],
+                  sum_val).
 
                 Examples:
                   >>> True
@@ -2850,6 +2934,10 @@ class jid_table:
                   qs_base = qs_base.filter(
                       **{f"{val_col}__lt": DCGM_FP64_BLANK}
                   )
+                if group_by_dev:
+                  return host_data_sum_val_per_sample_dev_queryset(
+                      qs_base, val_col
+                  )
                 return host_data_sum_val_per_sample_queryset(qs_base, val_col)
 
               df_try = host_data_restore_time_column(
@@ -2860,6 +2948,13 @@ class jid_table:
                   )
               )
               if not df_try.empty and "sum_val" in df_try.columns:
+                if group_by_dev:
+                  if "dev" not in df_try.columns:
+                    df_try = df_try.copy()
+                    df_try["dev"] = ""
+                  else:
+                    df_try = df_try.copy()
+                    df_try["dev"] = df_try["dev"].fillna("").astype(str)
                 chunk_df = df_try
                 break
             if chunk_df is None or chunk_df.empty:
@@ -2870,8 +2965,13 @@ class jid_table:
             parts.append(chunk_df)
             nrows += len(chunk_df.index)
         if not parts:
-          return pd.DataFrame(columns=["host", "time", "sum_val"])
-        return _assemble_sum_val_parts_bounded(parts, conv, max_rows)
+          return pd.DataFrame(columns=empty_cols)
+        return _assemble_sum_val_parts_bounded(
+            parts,
+            conv,
+            max_rows,
+            group_cols=group_cols,
+        )
       except Exception as exc:
         if is_metrics_compute_control_flow_error(exc):
           raise
@@ -2887,7 +2987,12 @@ class jid_table:
         return _fn_pandas_groupby()
 
     key = make_cache_key_bounded(
-        KEY_AGG_DF, self.jid, typ, val_col, events_key,
+        KEY_AGG_DF,
+        self.jid,
+        typ,
+        val_col,
+        events_key,
+        "by_dev" if group_by_dev else "by_host",
         self._large_job_plot_cache_token,
     )
     import pandas as pd
@@ -2895,7 +3000,7 @@ class jid_table:
     result = cached_orm(key, get_site_content_cache_timeout(), _fn)
     if result is not None:
       return result
-    return pd.DataFrame(columns=["host", "time", "sum_val"])
+    return pd.DataFrame(columns=empty_cols)
 
   def get_full_host_data_df(self, columns: Any | None = None) -> Any:
     """

@@ -137,6 +137,7 @@ def _hover_tooltip_html_roofline_job() -> Any:
     <div style="padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid #d0d7de;">
       <div><strong>Line:</strong> Job</div>
       <div><strong>host:</strong> @host</div>
+      <div><strong>device:</strong> @dev_display</div>
       <div><strong>AI (FLOP/byte):</strong> @ai_plain</div>
       <div><strong>Perf (GFLOP/s):</strong> @perf_plain</div>
       <div><strong>time:</strong> @time</div>
@@ -181,6 +182,46 @@ def _aggregate_value(jt: Any, typ: Any, events: Any, conv: Any) -> Any:
       >>> _aggregate_value(None, None, None, None)  # doctest: +SKIP
     """
     agg = jt.get_aggregate_df(typ, "value", events, conv)
+    return agg, "value"
+
+
+def _aggregate_arc_by_dev(jt: Any, typ: Any, events: Any, conv: Any) -> Any:
+    """
+    Per-device arc aggregate for GPU roofline (keeps ``dev``).
+
+    Args:
+      jt (Any): Job ``jid_table`` with aggregate helpers.
+      typ (Any): ``host_data.type`` string.
+      events (Any): Event name list.
+      conv (Any): Multiplier applied to aggregates.
+
+    Returns:
+      Any: ``(DataFrame, \"arc\")`` with host/time/dev/sum_val when present.
+
+    Examples:
+      >>> _aggregate_arc_by_dev(None, None, None, None)  # doctest: +SKIP
+    """
+    agg = jt.get_aggregate_df(typ, "arc", events, conv, group_by_dev=True)
+    return agg, "arc"
+
+
+def _aggregate_value_by_dev(jt: Any, typ: Any, events: Any, conv: Any) -> Any:
+    """
+    Per-device value aggregate for GPU roofline (keeps ``dev``).
+
+    Args:
+      jt (Any): Job ``jid_table`` with aggregate helpers.
+      typ (Any): ``host_data.type`` string.
+      events (Any): Event name list.
+      conv (Any): Multiplier applied to aggregates.
+
+    Returns:
+      Any: ``(DataFrame, \"value\")`` with host/time/dev/sum_val when present.
+
+    Examples:
+      >>> _aggregate_value_by_dev(None, None, None, None)  # doctest: +SKIP
+    """
+    agg = jt.get_aggregate_df(typ, "value", events, conv, group_by_dev=True)
     return agg, "value"
 
 
@@ -571,6 +612,11 @@ def _build_roofline_figure(
     perf = df["flops_gf"].values
     host = df["host"].tolist()
     time_vals = df["time"].astype(str).tolist()
+    if "dev" in df.columns:
+        dev_vals = df["dev"].fillna("").astype(str).tolist()
+    else:
+        dev_vals = [""] * len(host)
+    dev_display = [d if d else "—" for d in dev_vals]
 
     # Clamp AI for plot range (avoid log(0))
     ai_min, ai_max = max(1e-3, float(ai.min())), max(1e-2, float(ai.max()))
@@ -612,16 +658,22 @@ def _build_roofline_figure(
             perf=perf,
             host=host,
             time=time_vals,
+            dev=dev_vals,
+            dev_display=dev_display,
             ai_plain=[format_plain_decimal(v) for v in ai],
             perf_plain=[format_plain_decimal(v) for v in perf],
         ),
     )
     roof_source = ColumnDataSource(dict(ai=ai_curve, perf=perf_curve))
 
-    # No legend; identify series by hovering (popup shows line name + axis units).
+    peak_flops_plain = format_plain_decimal(peak_flops_gf)
+    peak_bw_plain = format_plain_decimal(peak_bw_gb)
+    # No legend; identify series by hovering (popup shows line name + peaks + units).
     hover_roof = HoverTool(
         tooltips=[
             ("Line", "Roofline"),
+            ("Peak performance", f"{peak_flops_plain} GFLOP/s"),
+            ("Peak bandwidth", f"{peak_bw_plain} GB/s"),
             ("X", "Arithmetic intensity (FLOP/byte)"),
             ("Y", "Performance (GFLOP/s)"),
         ],
@@ -676,21 +728,21 @@ def _build_roofline_figure(
 
 def _merge_gpu_flops_bw_on_base(base: Any, flops_agg: Any, bw_agg: Any) -> Any:
     """
-    Inner-join FLOPS and BW aggregates onto host/time base; None if unusable or.
-    
-      empty.
+    Inner-join FLOPS and BW aggregates; prefer per-device keys when present.
     
     Args:
-      base (Any): Base passed to this helper.
-      flops_agg (Any): Flops agg passed to this helper.
-      bw_agg (Any): Bw agg passed to this helper.
+      base (Any): Optional host/time[/dev] base; unused when aggregates carry
+      join keys (GPU path builds points from aggregates alone).
+      flops_agg (Any): FLOPS aggregate with ``sum_val``.
+      bw_agg (Any): Bandwidth aggregate with ``sum_val``.
     
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: Merged frame with flops_gf/bw_gb, or None if empty/unusable.
     
     Examples:
       >>> _merge_gpu_flops_bw_on_base(None, None, None)  # doctest: +SKIP
     """
+    del base  # GPU path joins aggregates directly on host[/dev]/time.
     if (
         flops_agg.empty
         or "sum_val" not in flops_agg.columns
@@ -698,13 +750,18 @@ def _merge_gpu_flops_bw_on_base(base: Any, flops_agg: Any, bw_agg: Any) -> Any:
         or "sum_val" not in bw_agg.columns
     ):
         return None
-    flops_gf = flops_agg.rename(columns={"sum_val": "flops_gf"})[
-        ["host", "time", "flops_gf"]
-    ]
-    bw_gb = bw_agg.rename(columns={"sum_val": "bw_gb"})[["host", "time", "bw_gb"]]
-    df = base.merge(flops_gf, on=["host", "time"], how="inner").merge(
-        bw_gb, on=["host", "time"], how="inner"
-    )
+    join_keys = ["host", "time"]
+    if "dev" in flops_agg.columns and "dev" in bw_agg.columns:
+        join_keys = ["host", "dev", "time"]
+        flops_agg = flops_agg.copy()
+        bw_agg = bw_agg.copy()
+        flops_agg["dev"] = flops_agg["dev"].fillna("").astype(str)
+        bw_agg["dev"] = bw_agg["dev"].fillna("").astype(str)
+    flops_cols = join_keys + ["flops_gf"]
+    bw_cols = join_keys + ["bw_gb"]
+    flops_gf = flops_agg.rename(columns={"sum_val": "flops_gf"})[flops_cols]
+    bw_gb = bw_agg.rename(columns={"sum_val": "bw_gb"})[bw_cols]
+    df = flops_gf.merge(bw_gb, on=join_keys, how="inner")
     return df if not df.empty else None
 
 
@@ -798,7 +855,7 @@ def _try_gpu_roofline_flops_bw_merge(
         else:
             overlap_miss = (
                 f"{gpu_typ}: counters found in {source_tag} but no overlapping "
-                "host/time samples"
+                "host/device/time samples"
             )
     return None, log_line, overlap_miss
 
@@ -825,8 +882,9 @@ def _try_gpu_roofline_axis_attempt(
     missing_reasons (list[str]): Mutable list of overlap/miss reasons.
     gpu_typ (str): ``host_data.type`` name.
     source_tag (str): Short label for attempt logs.
-    flops_fn (Any): FLOPS aggregator (``_aggregate_arc`` / ``_aggregate_value``).
-    bw_fn (Any): Bandwidth aggregator.
+    flops_fn (Any): FLOPS aggregator (prefer ``_aggregate_arc_by_dev`` /
+      ``_aggregate_value_by_dev`` for GPU).
+    bw_fn (Any): Bandwidth aggregator (same per-device helpers for GPU).
     bw_events (Any): Bandwidth event name sequence.
     bw_axis (str): ``memory_bw`` or ``pcie_nvlink`` when this attempt wins.
 
@@ -837,7 +895,8 @@ def _try_gpu_roofline_axis_attempt(
   Examples:
     >>> _try_gpu_roofline_axis_attempt(  # doctest: +SKIP
     ...     None, None, [], [], "nvidia_gpu", "mem_value",
-    ...     _aggregate_arc, _aggregate_value, ["gpu_mem_bw_bytes_rate"],
+    ...     _aggregate_arc_by_dev, _aggregate_value_by_dev,
+    ...     ["gpu_mem_bw_bytes_rate"],
     ...     GPU_ROOFLINE_BW_AXIS_MEMORY,
     ... )
   """
@@ -867,7 +926,7 @@ def _try_gpu_roofline_axis_attempt(
       gpu_typ,
       base,
       rate_tag,
-      _aggregate_value,
+      _aggregate_value_by_dev,
       ["gpu_flops_rate"],
       1e-9,
       bw_fn,
@@ -893,7 +952,8 @@ def _get_gpu_flops_bw_df_and_reason(
     when usable overlapping samples exist on ``nvidia_gpu`` then ``amd_gpu``.
     Otherwise try link bytes: ``gpu_io_link_total_bytes``, then NVIDIA
     directional PCIe/NVLink arcs, then Intel PCIe+Xe Link (when FLOPS exist).
-    Bandwidth and peaks use GiB/s via ``_GPU_BYTES_TO_GIB``.
+    Aggregates are per ``(host, dev, time)`` so multi-GPU nodes plot one
+    point per device. Bandwidth and peaks use GiB/s via ``_GPU_BYTES_TO_GIB``.
 
     Args:
       jt (Any): Job ``jid_table`` with host list and aggregates.
@@ -926,8 +986,8 @@ def _get_gpu_flops_bw_df_and_reason(
             missing_reasons,
             gpu_typ,
             "mem_value",
-            _aggregate_arc,
-            _aggregate_value,
+            _aggregate_arc_by_dev,
+            _aggregate_value_by_dev,
             ["gpu_mem_bw_bytes_rate"],
             GPU_ROOFLINE_BW_AXIS_MEMORY,
         )
@@ -942,8 +1002,8 @@ def _get_gpu_flops_bw_df_and_reason(
         missing_reasons,
         "nvidia_gpu",
         "link_arc_total",
-        _aggregate_arc,
-        _aggregate_arc,
+        _aggregate_arc_by_dev,
+        _aggregate_arc_by_dev,
         ["gpu_io_link_total_bytes"],
         GPU_ROOFLINE_BW_AXIS_LINK,
     )
@@ -958,8 +1018,8 @@ def _get_gpu_flops_bw_df_and_reason(
         missing_reasons,
         "nvidia_gpu",
         "link_arc_directional",
-        _aggregate_arc,
-        _aggregate_arc,
+        _aggregate_arc_by_dev,
+        _aggregate_arc_by_dev,
         _NVIDIA_GPU_LINK_DIRECTIONAL_EVENTS,
         GPU_ROOFLINE_BW_AXIS_LINK,
     )
@@ -974,8 +1034,8 @@ def _get_gpu_flops_bw_df_and_reason(
         missing_reasons,
         "intel_gpu",
         "link_arc_intel",
-        _aggregate_arc,
-        _aggregate_arc,
+        _aggregate_arc_by_dev,
+        _aggregate_arc_by_dev,
         _INTEL_GPU_LINK_EVENTS,
         GPU_ROOFLINE_BW_AXIS_LINK,
     )

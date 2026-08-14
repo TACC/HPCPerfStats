@@ -777,7 +777,7 @@ const JOB_DETAIL_BOKEH_PLOT_METADATA = {
   },
   jobDetailPlot_roofline_gpu: {
     description:
-      "GPU roofline: each point is one host and time sample. Horizontal axis is arithmetic intensity (GPU GFLOP/s divided by GB/s). When usable gpu_mem_bw_bytes_rate samples exist, bandwidth is the monitor's estimated GPU memory bandwidth (same source as Summary HBM BW); otherwise it is PCIe plus NVLink (or Intel Xe Link) byte rate. Vertical axis is GPU GFLOP/s. The navy curve uses inferred peaks matched to that bandwidth axis.",
+      "GPU roofline: each point is one host, GPU device, and time sample. Horizontal axis is arithmetic intensity (GPU GFLOP/s divided by GB/s). When usable gpu_mem_bw_bytes_rate samples exist, bandwidth is the monitor's estimated GPU memory bandwidth (same source as Summary HBM BW); otherwise it is PCIe plus NVLink (or Intel Xe Link) byte rate. Vertical axis is GPU GFLOP/s. The navy curve uses inferred host-level peaks matched to that bandwidth axis.",
     researcherUse:
       "Use Memory BW mode for device-memory-bound phases and PCIe/NvLink mode for interconnect-limited phases relative to the matching roof.",
   },

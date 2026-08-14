@@ -18,9 +18,9 @@ GPU-derived job-detail fields (including `gpu_count`, utilization summaries, and
 ## Per-device identity (`host_data.dev`)
 
 - GPU ingest must **retain** monitor `dev` through collapse and Timescale insert (`unique_together` includes `dev`; empty → `''`, never NULL for uniqueness).
-- Analysis and Job Detail inventory group by `(host, dev)`. Summary / node-level plots sum across `dev` at query time (`get_aggregate_df`).
+- Analysis and Job Detail inventory group by `(host, dev)`. Summary / node-level plots sum across `dev` at query time (`get_aggregate_df`). **Exception:** GPU roofline scatter uses `get_aggregate_df(..., group_by_dev=True)` so each point is one `(host, dev, time)` sample (not a host-wide sum of devices). CPU roofline stays host×time. The navy roof curve remains host-level (`host_roofline_peak`).
 - `gpu_count` is a **node** count: collapse uses **MAX** across duplicate emits (never SUM of per-device copies of N → N²).
-- Legacy rows with empty `dev` are node aggregates — UI must not claim one row per GPU.
+- Legacy rows with empty `dev` are node aggregates — UI must not claim one row per GPU. On GPU roofline, empty `dev` is still one scatter bucket (`''`).
 
 ## DCGM blank-family sentinels
 
