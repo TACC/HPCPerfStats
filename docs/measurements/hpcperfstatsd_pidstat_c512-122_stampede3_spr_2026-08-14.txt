@@ -1,0 +1,79 @@
+# Raw pidstat capture of production hpcperfstatsd CPU overhead
+# Host: c512-122.stampede3.tacc.utexas.edu (Stampede3 SPR / Sapphire Rapids node)
+# Date: 2026-08-14
+# Kernel: Linux 5.14.0-611.24.1.el9_7.x86_64 (112 CPU)
+# PID: 3695308 (hpcperfstatsd)
+# Command: pidstat -p 3695308 10 60
+# Interval: 10 s; samples: 60 (10 minutes wall time)
+# Prompt context: c512-122[spr](782)#
+#
+# Interpretation notes (see companion .md):
+# - Elevated %CPU appears in periodic sample windows (peaks 2.80--3.00% of one core).
+# - pidstat Average line: 0.19% CPU over the full observation window.
+
+Linux 5.14.0-611.24.1.el9_7.x86_64 (c512-122.stampede3.tacc.utexas.edu) 	08/14/2026 	_x86_64_	(112 CPU)
+
+04:23:47 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+04:23:57 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    65  hpcperfstatsd
+04:24:07 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    65  hpcperfstatsd
+04:24:17 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    65  hpcperfstatsd
+04:24:27 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    65  hpcperfstatsd
+04:24:37 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    65  hpcperfstatsd
+04:24:47 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    65  hpcperfstatsd
+04:24:57 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    65  hpcperfstatsd
+04:25:07 PM     0   3695308    0.20    2.60    0.00    0.00    2.80    64  hpcperfstatsd
+04:25:17 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:25:27 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:25:37 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:25:47 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:25:57 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:26:07 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:26:17 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:26:27 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:26:37 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:26:47 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:26:57 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:27:07 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:27:17 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:27:27 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:27:37 PM     0   3695308    0.20    2.70    0.00    0.00    2.90   105  hpcperfstatsd
+04:27:47 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:27:57 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:28:07 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:28:17 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:28:27 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:28:37 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:28:47 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:28:57 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+
+04:28:57 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+04:29:07 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:29:17 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:29:27 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:29:37 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:29:47 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:29:57 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:30:07 PM     0   3695308    0.30    2.70    0.00    0.00    3.00   105  hpcperfstatsd
+04:30:17 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:30:27 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:30:37 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:30:47 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:30:57 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:31:07 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:31:17 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:31:27 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:31:37 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:31:47 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:31:57 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:32:07 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:32:17 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:32:27 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:32:37 PM     0   3695308    0.30    2.60    0.00    0.00    2.90    85  hpcperfstatsd
+04:32:47 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    85  hpcperfstatsd
+04:32:57 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    85  hpcperfstatsd
+04:33:07 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    85  hpcperfstatsd
+04:33:17 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    85  hpcperfstatsd
+04:33:27 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    85  hpcperfstatsd
+04:33:37 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    85  hpcperfstatsd
+04:33:47 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    85  hpcperfstatsd
+Average:        0   3695308    0.02    0.18    0.00    0.00    0.19     -  hpcperfstatsd

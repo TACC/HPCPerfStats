@@ -25,7 +25,7 @@ HPC centers need **multi-resolution visibility** into how jobs use nodes: CPU, m
 
 ### 2.1 Goals
 
-- **Collect** representative node-level performance samples on cluster nodes with bounded overhead (see `HPCPerfStats/README.md`: daemon overhead and typical sampling intervals).
+- **Collect** representative node-level performance samples on cluster nodes with bounded overhead (see `HPCPerfStats/README.md` and `docs/measurements/monitor_overhead_stampede3_spr_2026-08-14.md` for a recorded Stampede3 SPR `pidstat` capture).
 - **Reliably transport** samples from nodes to a central service via **RabbitMQ**.
 - **Persist** raw archives and normalized time-series/job records for audit and reprocessing.
 - **Join** node telemetry with **Slurm accounting**–backed job metadata to support per-job analysis.
