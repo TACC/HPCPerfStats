@@ -39,6 +39,10 @@ Arc continuity (`_ARC_GROUP_COLS`) includes ``dev`` so multi-GPU rates stay per-
 
 Any parse that resumes at a mid-file line index must accumulate schema/state from the prefix. Reference: `parse_stats_lines` feeds all lines and gates only the digit-timestamp branch on `i >= start_idx`. Streaming entry points (`parse_stats_file_streaming`, `parse_stats_file_streaming_incremental`) must match that contract.
 
+## Sample-header ``jid`` on host_data
+
+Digit-line jobid belongs on stats ``tags`` (same value as proc ``tags2``). Collapse helpers preserve ``jid`` with ``"first"`` when the column is present (`_optional_jid_first_agg`); do **not** add ``jid`` to ``_COLLAPSE_GROUP_COLS*`` (DB uniqueness stays time/host/type/event[/dev]). Empty delta frames include ``jid``. ORM maps ``"-"`` → NULL.
+
 ## Canonical helpers (`sync_timedb_parsing.py`)
 
 - `_collapse_stats_with_deltas` — single entrypoint

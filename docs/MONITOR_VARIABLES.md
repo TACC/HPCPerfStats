@@ -14,9 +14,9 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 2. **`hpcperfstats/listend.py`** (`on_message`) appends payloads under the per-host archive directory (RabbitMQ consumer).
 3. **`hpcperfstats/dbload/sync_timedb.py`** (`add_stats_file_to_db`) reads archive files.
 4. **`hpcperfstats/dbload/lib/sync_timedb_parsing.py`** (`parse_stats_lines`, `compute_deltas_and_arc`, `EVENTMAPS_BY_TYPE`) parses lines, maps raw PMC encodings to logical event names, collapses multi-GPU rows, and computes `delta` / `arc`.
-5. **`hpcperfstats/dbload/io_helpers.py`** (`host_data_instance_from_stats_row`) builds ORM rows.
-6. **`hpcperfstats/site/lib/machine/models.py`** (`host_data` model) stores `time`, `host`, `type`, `dev`, `event`, `unit`, `value`, `delta`, `arc`.
-7. **Analysis** (`jid_table`, `metrics`, `plot/*`) and **API/SPA** query `host_data` by job window and schema.
+5. **`hpcperfstats/dbload/lib/io_helpers.py`** (`host_data_instance_from_stats_row`) builds ORM rows.
+6. **`hpcperfstats/site/lib/machine/models.py`** (`host_data` model) stores `time`, `host`, `jid` (nullable; monitor idle `-` maps to NULL), `type`, `dev`, `event`, `unit`, `value`, `delta`, `arc`. Sample-header jobid propagates through parse + collapse on both live listend and archive `sync_timedb` ingest.
+7. **Analysis** (`jid_table`, `metrics`, `plot/*`) and **API/SPA** query `host_data` primarily by job `host_list` + time window (and may use `host_data.jid` when tagged).
 
 ---
 

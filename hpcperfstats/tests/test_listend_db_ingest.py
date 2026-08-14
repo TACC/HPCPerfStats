@@ -370,6 +370,51 @@ def test_process_sample_skips_without_schema():
   assert proc_objs == []
 
 
+def test_process_sample_sets_host_data_jid_from_header():
+  """Live listend path: sample-header jobid must reach host_data.jid."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import DeltaCarryState as DCS
+
+  schema = {"cpu": ["user", "sys"]}
+  schema_fast = {"cpu": ["user", "sys"]}
+  sample = (
+      "1710000001.0 job42 host.example.edu\n"
+      "cpu 0 10 20\n"
+  )
+  host_objs, proc_objs = ldi._process_sample_to_orm(
+      sample,
+      host="host.example.edu",
+      schema=schema,
+      schema_fast=schema_fast,
+      carry=DCS(),
+  )
+  assert host_objs
+  assert all(o.jid == "job42" for o in host_objs)
+  assert proc_objs == []
+
+
+def test_process_sample_idle_jid_dash_maps_to_none():
+  """Idle header '-' must become NULL on host_data ORM instances."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import DeltaCarryState as DCS
+
+  schema = {"cpu": ["user", "sys"]}
+  schema_fast = {"cpu": ["user", "sys"]}
+  sample = (
+      "1710000001.0 - host.example.edu\n"
+      "cpu 0 10 20\n"
+  )
+  host_objs, _ = ldi._process_sample_to_orm(
+      sample,
+      host="host.example.edu",
+      schema=schema,
+      schema_fast=schema_fast,
+      carry=DCS(),
+  )
+  assert host_objs
+  assert all(o.jid is None for o in host_objs)
+
+
 def test_flush_clears_batch_lists():
   """Document memory contract: flush clears ORM batch (unit via mock write)."""
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi

@@ -230,14 +230,14 @@ class metrics_data(models.Model):
 class host_data(models.Model):
   """
   TimescaleDB hypertable: per (time, host, type, event, dev) value/delta/arc.
-  
-  Job/sample scoping in the application uses job_data.start_time/end_time and
-  job_data.host_list (FQDNs); host_data.jid is retained for compatibility and
-  ad-hoc queries but is not used when gathering job samples.
-  ``dev`` is the monitor device id for GPU types (``""`` when absent);
-    uniqueness
-  includes ``dev`` so multi-GPU samples at the same timestamp are insertable.
-  Table: host_data.
+
+  Job/sample scoping in analysis and Job Detail uses job_data.start_time/end_time
+  and job_data.host_list (FQDNs) as the primary path. ``jid`` is filled from the
+  monitor sample-header jobid on live listend and archive sync_timedb ingest
+  (idle ``-`` stored as NULL) and supports jid-scoped live-distinct / ad-hoc
+  queries. ``dev`` is the monitor device id for GPU types (``""`` when absent);
+  uniqueness includes ``dev`` so multi-GPU samples at the same timestamp are
+  insertable. Table: host_data.
   """
   time = models.DateTimeField(primary_key=True)
   host = models.CharField(max_length=64, blank=True, null=True)

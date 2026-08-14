@@ -21,6 +21,7 @@ globs: hpcperfstats/listend.py,hpcperfstats/dbload/lib/listend_db_ingest.py,hpcp
 - **Strict post-use memory release** — drop message/DataFrame refs after parse; clear ORM batches after flush; reuse `release_spawn_pool_worker_memory` cadence on flush/idle (not every sample). Run **memory-leak review** before close when changing this path.
 - **When `listend_db_ingest_enabled`:** sync_timedb must **not** use weak `_try_db_complete_head_tail_fast_path` / `_try_db_complete_tail_window_fast_path`. Fall through to duplicate-timestamp scan (`db_skip=full_scan` when all sample seconds present). Archive/delete gate requires **sync_timedb file-complete mark** (or zero-host mark for proc-only) — never live-only head+tail. Live listend **never** writes the file-complete mark.
 - Process titles: `listend.py [main]` / `worker:listend-db-pool`. Extend the existing 10-minute idle monitor with DB counters (`pause_enters`, `db_queued_bytes`).
+- **`host_data.jid` from sample header:** digit-line jobid must propagate on stats tags through `compute_deltas_and_arc*` collapse (`"first"` within the group; not a group key) into `host_data.jid`. Idle `-` maps to NULL at ORM (`host_data_instance_from_stats_row`). Same contract for archive `sync_timedb` (shared `sync_timedb_parsing`).
 
 ## Canonical modules
 

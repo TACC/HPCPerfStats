@@ -264,8 +264,21 @@ def test_parse_stats_lines_handles_leading_spaces():
   assert len(proc_list) == 0
 
 
-def test_parse_stats_lines_with_missing_jid_placeholder_no_host_data_jid():
-  """When jid is '-', stats rows omit jid (host_data is time/host scoped); proc still uses jid."""
+def test_parse_stats_lines_real_jid_propagates_to_host_data_stats():
+  """Header jobid must tag every stats row (host_data.jid path)."""
+  lines = [
+      "1709123456 job1 cn001\n",
+      "!cpu user sys\n",
+      "cpu 0 100 200\n",
+  ]
+  stats_list, proc_list = parse_stats_lines(lines, 0)
+  assert len(stats_list) == 2
+  assert all(r.get("jid") == "job1" for r in stats_list)
+  assert len(proc_list) == 0
+
+
+def test_parse_stats_lines_with_missing_jid_placeholder_carries_dash():
+  """When jid is '-', stats rows carry jid='-' (ORM maps '-' -> NULL)."""
   lines = [
       "1709123456 - cn001\n",
       "!cpu user sys\n",
@@ -274,7 +287,7 @@ def test_parse_stats_lines_with_missing_jid_placeholder_no_host_data_jid():
   start_idx = 0
   stats_list, proc_list = parse_stats_lines(lines, start_idx)
   assert len(stats_list) == 2
-  assert all("jid" not in r for r in stats_list)
+  assert all(r.get("jid") == "-" for r in stats_list)
   assert len(proc_list) == 0
 
 
@@ -1015,6 +1028,24 @@ def test_collapse_nvidia_gpu_or_skips_dcgm_int64_blank():
   assert by_dev["1"] == 7.0
 
 
+def test_collapse_preserves_jid_across_multi_dev_sum():
+  """jid is constant per sample; collapse must keep it without adding it to group keys."""
+  stats_df = pd.DataFrame([
+      {
+          "host": "h", "jid": "2738", "type": "cpu", "dev": "0",
+          "event": "user", "unit": "cs", "time": 100.0, "value": 10.0, "delta": 1.0,
+      },
+      {
+          "host": "h", "jid": "2738", "type": "cpu", "dev": "1",
+          "event": "user", "unit": "cs", "time": 100.0, "value": 20.0, "delta": 2.0,
+      },
+  ])
+  collapsed = _collapse_stats_with_deltas(stats_df)
+  assert len(collapsed) == 1
+  assert float(collapsed.iloc[0]["value"]) == 30.0
+  assert str(collapsed.iloc[0]["jid"]) == "2738"
+
+
 def test_host_data_instance_from_stats_row_sets_jid_when_present():
   row_type = namedtuple(
       "Row",
@@ -1101,8 +1132,10 @@ def test_sync_timedb_parsing_with_real_sample_produces_deltas_and_arc():
 
   deltas_df = compute_deltas_and_arc(stats_df)
   assert not deltas_df.empty
-  assert {"delta", "arc", "time", "host"}.issubset(deltas_df.columns)
-  assert "jid" not in deltas_df.columns
+  assert {"delta", "arc", "time", "host", "jid"}.issubset(deltas_df.columns)
+  # Sample fixture header jobid must survive collapse into host_data-bound rows.
+  assert deltas_df["jid"].notna().any()
+  assert (deltas_df["jid"].astype(str) != "").any()
 
 
 def test_parse_stats_file_streaming_matches_readlines_path(tmp_path):

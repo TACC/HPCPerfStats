@@ -480,6 +480,8 @@ def _collapse_dcg_cpu_power_vectorized(ccm_df: Any, gcols: Any) -> Any:
     row = dict(zip(gcols, key_tuple))
     row["value"] = _cluster_mean_sum_sorted(vals, 1.0)
     row["delta"] = _cluster_mean_sum_sorted(dvals, _dcg_delta_gap_threshold(dvals))
+    if "jid" in group.columns and len(group):
+      row["jid"] = group["jid"].iloc[0]
     rows.append(row)
   if not rows:
     return _empty_delta_arc_frame()
@@ -571,6 +573,28 @@ def _nvidia_bitwise_or_values(series: Any) -> Any:
   return float(acc & mask64)
 
 
+def _optional_jid_first_agg(df: Any) -> dict[str, tuple[str, str]]:
+  """
+  Return ``jid`` ``first`` agg kwargs when the column is present.
+
+  Sample-header jobid is constant within a collapse group; do not add ``jid``
+  to group keys (DB uniqueness remains time/host/type/event[/dev]).
+
+  Args:
+    df (Any): Stats frame that may include a ``jid`` column.
+
+  Returns:
+    dict[str, tuple[str, str]]: Empty or ``{"jid": ("jid", "first")}``.
+
+  Examples:
+    >>> _optional_jid_first_agg(DataFrame({"jid": ["1"]}))
+    {'jid': ('jid', 'first')}
+  """
+  if "jid" in getattr(df, "columns", ()):
+    return {"jid": ("jid", "first")}
+  return {}
+
+
 def _groupby_sum_min_count(df: Any, gcols: Any) -> Any:
   """
   Sum value/delta across devs with pandas ``sum(min_count=1)`` NaN semantics.
@@ -592,6 +616,7 @@ def _groupby_sum_min_count(df: Any, gcols: Any) -> Any:
       delta=("delta", "sum"),
       _value_n=("value", "count"),
       _delta_n=("delta", "count"),
+      **_optional_jid_first_agg(df),
   ).reset_index()
   grouped["value"] = grouped["value"].where(grouped["_value_n"] > 0)
   grouped["delta"] = grouped["delta"].where(grouped["_delta_n"] > 0)
@@ -654,6 +679,7 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
         max_df.groupby(gcols, observed=True).agg(
             value=("value", "max"),
             delta=("delta", "mean"),
+            **_optional_jid_first_agg(max_df),
         ).reset_index()
     )
 
@@ -663,6 +689,7 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
         mean_df.groupby(gcols, observed=True).agg(
             value=("value", "mean"),
             delta=("delta", "mean"),
+            **_optional_jid_first_agg(mean_df),
         ).reset_index()
     )
 
@@ -672,6 +699,7 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
         value=("value", _nvidia_bitwise_or_values),
         delta=("delta", "sum"),
         _delta_n=("delta", "count"),
+        **_optional_jid_first_agg(or_df),
     ).reset_index()
     or_collapsed["delta"] = or_collapsed["delta"].where(or_collapsed["_delta_n"] > 0)
     parts.append(or_collapsed.drop(columns=["_delta_n"]))
@@ -1520,7 +1548,8 @@ class IncrementalStatsParser:
         return
       t, jid, host = parsed
       self.insert = True
-      self.line_ctx["tags"] = {"time": float(t), "host": host}
+      # Same sample-header jid as tags2; idle monitors emit "-".
+      self.line_ctx["tags"] = {"time": float(t), "host": host, "jid": jid}
       self.line_ctx["tags2"] = {"time": float(t), "host": host, "jid": jid}
     elif s[0] == "!":
       label, events = s.split(maxsplit=1)
@@ -1671,7 +1700,7 @@ def build_stats_dataframes(stats_list: Any, proc_stats_list: Any) -> Any:
 
 
 _EMPTY_DELTA_ARC_COLUMNS = [
-    "time", "host", "type", "dev", "event", "unit", "value", "delta", "arc"
+    "time", "host", "jid", "type", "dev", "event", "unit", "value", "delta", "arc"
 ]
 
 
