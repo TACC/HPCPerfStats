@@ -31,6 +31,7 @@ extern double buffer_hours;
 extern int enable_slow_tier;
 extern char *collection_profile;
 extern char *disable_types;
+extern char *intel_gpu_backend;
 extern int max_buffer_size;
 extern int allow_ring_buffer_overwrite;
 extern int file_mode_enabled;

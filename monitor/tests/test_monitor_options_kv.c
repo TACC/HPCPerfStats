@@ -30,6 +30,7 @@ double buffer_hours = 6.0;
 int enable_slow_tier = 1;
 char *collection_profile = NULL;
 char *disable_types = NULL;
+char *intel_gpu_backend = NULL;
 int max_buffer_size = 0;
 ev_timer sample_timer;
 ev_timer send_timer;

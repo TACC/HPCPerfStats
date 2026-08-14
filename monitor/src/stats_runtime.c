@@ -314,7 +314,7 @@ enum collect_phase stats_runtime_collect_phase_for_tick(double now_sec, long lon
   return phase;
 }
 
-int stats_runtime_format_enabled_type_names(char *buf, size_t cap)
+static int stats_runtime_format_type_names_by_enabled(char *buf, size_t cap, int want_enabled)
 {
   size_t i = 0;
   size_t used = 0;
@@ -328,9 +328,17 @@ int stats_runtime_format_enabled_type_names(char *buf, size_t cap)
   while ((type = stats_type_for_each(&i)) != NULL) {
     size_t name_len;
     size_t need;
+    int is_on;
 
-    if (!type->st_enabled || type->st_name[0] == '\0')
+    if (type->st_name[0] == '\0')
       continue;
+    is_on = type->st_enabled ? 1 : 0;
+    if (want_enabled) {
+      if (!is_on)
+        continue;
+    } else if (is_on) {
+      continue;
+    }
     name_len = strlen(type->st_name);
     need = name_len + (first ? 0u : 1u);
     if (used + need + 1u > cap)
@@ -343,4 +351,14 @@ int stats_runtime_format_enabled_type_names(char *buf, size_t cap)
     first = 0;
   }
   return (int)used;
+}
+
+int stats_runtime_format_enabled_type_names(char *buf, size_t cap)
+{
+  return stats_runtime_format_type_names_by_enabled(buf, cap, 1);
+}
+
+int stats_runtime_format_disabled_type_names(char *buf, size_t cap)
+{
+  return stats_runtime_format_type_names_by_enabled(buf, cap, 0);
 }

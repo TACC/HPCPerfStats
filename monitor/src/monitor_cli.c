@@ -71,4 +71,11 @@ void monitor_cli_free_heap(void)
   if (jobid_file_path != NULL && jobid_file_path != (char *)monitor_cli_lit_jobid_file_path)
     free(jobid_file_path);
   jobid_file_path = (char *)monitor_cli_lit_jobid_file_path;
+
+  free(disable_types);
+  disable_types = NULL;
+  free(collection_profile);
+  collection_profile = NULL;
+  free(intel_gpu_backend);
+  intel_gpu_backend = NULL;
 }

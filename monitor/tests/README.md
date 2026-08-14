@@ -26,6 +26,8 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_ib_hca_is_opa_hfi.c` | HFI vs IB HCA classification |
 | `test_opa_lspci_match.c` | Stampede3 Cornelis/OPA lspci fixture match |
 | `test_intel_gpu_schema_contract.c` | Intel PVC `intel_gpu` KEYS contract (Xe Link, no NvLink) |
+| `test_intel_gpu_publish.c` | libxpum path publish + default xpumcli skips `xpumInit` |
+| `test_intel_gpu_xpumcli_parse.c` | xpumcli discovery/dump CSV parse → KEYS |
 | `test_xpum_gpu_dyn.c` | XPUM dlopen stubs / missing-lib / hooks |
 | `test_lnet_schema_contract.c` | LNet collector schema token contract |
 | `test_likwid_rapl_scale.c` | RAPL energy scaling + `uint64_t`→lo32 truncate contract |

@@ -196,6 +196,10 @@ static void monitor_log_release_startup_summary(void)
 
   monitor_log_info("Started %s version %s\n", app_name, STATS_VERSION);
   monitor_log_info("Enabled types: %s\n", types_buf[0] != '\0' ? types_buf : "(none)");
+  n = stats_runtime_format_disabled_type_names(types_buf, sizeof(types_buf));
+  if (n < 0)
+    snprintf(types_buf, sizeof(types_buf), "(truncated)");
+  monitor_log_info("Disabled types: %s\n", types_buf[0] != '\0' ? types_buf : "(none)");
   monitor_log_info(
       "Config: server=%s port=%s sample_freq=%.1fs send_freq=%.1fs buffer=%d (%.2fh) "
       "enable_slow_tier=%d sample_freq_slow=%.1fs; probe nvidia=%s amd=%s intel=%s ib=%s opa=%s\n",

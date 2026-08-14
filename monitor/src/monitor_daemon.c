@@ -55,6 +55,7 @@ double buffer_hours = 6.0;
 int enable_slow_tier = 1;
 char *collection_profile = NULL;
 char *disable_types = NULL;
+char *intel_gpu_backend = NULL;
 int max_buffer_size = 0;
 int allow_ring_buffer_overwrite = 1;
 int file_mode_enabled = 0;

@@ -79,9 +79,10 @@ roofline / fleet inventory; not wired into Stampede3 shm validate profiles.
 ### Intel Data Center GPU / PVC (`intel_gpu`)
 
 - **`--enable-intel-gpu={auto,yes,no}`** (default **auto** via `scripts/gpu_lspci_probe.sh intel`). Compiles against vendored **`third_party/intel-xpum/`** headers (XPUM **1.2.33** only — not system `/usr/include`).
-- Runtime **`dlopen`** of `libxpum` (`/usr/lib64/libxpum.so`, `libxpum.so.1`, …); override with **`HPCPERFSTATS_XPUM_LIB`**. No link-time `-lxpum`.
-- Before `xpumInit`, monitor sets `XPUM_DISABLE_PERIODIC_METRIC_MONITOR=1` and `XPUM_METRICS=0,1,4,6-10,30,34,35,36` (1.2.33-safe; memory temp **30** for PVC). Collect picks/merges realtime rows and falls back to `xpumGetStats` when POWER is missing.
-- Stampede3 PVC: four Data Center GPU Max 1550 (`[8086:0bd5]` / Ponte Vecchio) → device rows `"0"`…`"3"`; keys align conceptually with `nvidia_gpu` / `amd_gpu` (Xe Link keys, not NvLink). Level Zero pipe metrics are deferred.
+- **Default collect backend: `xpumcli`** (short-lived child). Avoids in-process `libxpum` / Level Zero, which on Stampede3 PVC held hundreds of `i915.gem` maps (~16 TiB **VSZ**) and stressed GuC error capture. Conf/env: **`intel_gpu_backend xpumcli|libxpum`** or **`HPCPERFSTATS_INTEL_GPU_BACKEND`** (default **xpumcli**).
+- **Opt-in `libxpum`:** runtime **`dlopen`** (`/usr/lib64/libxpum.so`, …); override path with **`HPCPERFSTATS_XPUM_LIB`**. No link-time `-lxpum`. Before `xpumInit`, sets `XPUM_DISABLE_PERIODIC_METRIC_MONITOR=1` and `XPUM_METRICS=…` (overwrite). Documents GuC/VSIZE/segfault risk — use only for lab.
+- **xpumcli path:** `discovery` + `dump -m 0,1,2,3,4,5,9,17,18,35 -i 1 -n 1` (dump IDs ≠ API `XPUM_STATS_*`; dump power **1** → `power_usage`). PCIe/Xe Link counters stay 0 on this path. Bounded fork/exec timeout (~8 s).
+- Stampede3 PVC: four Data Center GPU Max 1550 → device rows `"0"`…`"3"`. Ops emergency: **`disable_types intel_gpu`**, **`--disable-types intel_gpu`**, or **`HPCPERFSTATS_DISABLE_TYPES=intel_gpu`** (clears GEM/VSZ). Startup logs **Enabled types** and **Disabled types**.
 - Force enable for testing: **`HPCPERFSTATS_FORCE_INTEL_GPU`**. Static bundle enables intel_gpu when vendored headers are present on **x86**, or on aarch64 only with Stampede3 fleet / **`HPCS_BUNDLE_ENABLE_INTEL_GPU=1`**.
 
 ## Metric profiler build options

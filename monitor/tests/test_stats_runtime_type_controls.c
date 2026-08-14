@@ -152,12 +152,35 @@ static void test_format_enabled_type_names(void)
   assert(stats_runtime_format_enabled_type_names(buf, 0) == -1);
 }
 
+static void test_format_disabled_type_names(void)
+{
+  char buf[64];
+  int n;
+
+  reset_state();
+  g_types[0].st_enabled = 1;
+  g_types[1].st_enabled = 0;
+  n = stats_runtime_format_disabled_type_names(buf, sizeof(buf));
+  assert(n > 0);
+  assert(strcmp(buf, "host_net") == 0);
+
+  g_types[0].st_enabled = 0;
+  n = stats_runtime_format_disabled_type_names(buf, sizeof(buf));
+  assert(n > 0);
+  assert(strstr(buf, "host_proc") != NULL);
+  assert(strstr(buf, "host_net") != NULL);
+
+  assert(stats_runtime_format_disabled_type_names(NULL, 8) == -1);
+  assert(stats_runtime_format_disabled_type_names(buf, 0) == -1);
+}
+
 int main(void)
 {
   test_minimal_profile_disables_proc();
   test_disable_csv_disables_named_type();
   test_env_disable_types_applies();
   test_format_enabled_type_names();
+  test_format_disabled_type_names();
   printf("test_stats_runtime_type_controls passed\n");
   return 0;
 }

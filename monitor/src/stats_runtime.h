@@ -53,4 +53,8 @@ enum collect_phase stats_runtime_collect_phase_for_tick(double now_sec, long lon
  *  Returns bytes written excluding NUL, or -1 on truncation/NULL buf. */
 int stats_runtime_format_enabled_type_names(char *buf, size_t cap);
 
+/*! Join disabled collector st_name values into buf (comma-separated).
+ *  Returns bytes written excluding NUL, or -1 on truncation/NULL buf. */
+int stats_runtime_format_disabled_type_names(char *buf, size_t cap);
+
 #endif

@@ -1,10 +1,12 @@
 /* Unit tests for intel_gpu collect/publish (xpum_gpu_dyn test hooks; no live GPU). */
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "intel_gpu.h"
 #include "intel_gpu_xpum_helpers.h"
+#include "intel_gpu_xpumcli.h"
 #include "stats.h"
 #include "test_stats_stub.h"
 #include "xpum_gpu_dyn.h"
@@ -12,6 +14,9 @@
 #ifdef INTEL_GPU_TEST_BUILD
 void intel_gpu_test_reset(void);
 #endif
+
+/* Linked from intel_gpu.c; default NULL → xpumcli; tests force libxpum via env. */
+char *intel_gpu_backend = NULL;
 
 static struct test_stats_stub g_stub;
 static struct stats g_dummy_stats;
@@ -276,6 +281,8 @@ static void install_hooks(void)
 
 static void reset_test_state(void)
 {
+  /* Force libxpum path for existing dyn-hook tests (default collect is xpumcli). */
+  assert(setenv("HPCPERFSTATS_INTEL_GPU_BACKEND", "libxpum", 1) == 0);
   xpum_gpu_dyn_unload();
   install_hooks();
 #ifdef INTEL_GPU_TEST_BUILD
@@ -286,6 +293,49 @@ static void reset_test_state(void)
   g_stats_fetch_calls = 0;
   g_dev_list[0].deviceId = 0;
   g_dev_list[0].type = GPU;
+}
+
+static int g_init_calls;
+
+static xpum_result_t counting_xpumInit(void)
+{
+  g_init_calls++;
+  return XPUM_OK;
+}
+
+static int fake_xpumcli_capture_fail(char *const argv[], char *out, size_t out_cap)
+{
+  (void)argv;
+  (void)out;
+  (void)out_cap;
+  return -1;
+}
+
+static void test_default_xpumcli_skips_xpumInit(void)
+{
+  struct xpum_gpu_dyn_test_hooks hooks;
+
+  assert(unsetenv("HPCPERFSTATS_INTEL_GPU_BACKEND") == 0);
+  intel_gpu_backend = NULL;
+  xpum_gpu_dyn_unload();
+  memset(&hooks, 0, sizeof(hooks));
+  hooks.xpumInit = counting_xpumInit;
+  hooks.xpumShutdown = fake_xpumShutdown;
+  hooks.xpumGetDeviceList = fake_xpumGetDeviceList;
+  hooks.xpumGetDeviceProperties = fake_xpumGetDeviceProperties;
+  hooks.xpumGetRealtimeMetrics = fake_xpumGetRealtimeMetrics;
+  hooks.xpumGetStats = fake_xpumGetStats;
+  hooks.xpumGetFabricThroughputStats = fake_xpumGetFabricThroughputStats;
+  xpum_gpu_dyn_test_set_hooks(&hooks);
+#ifdef INTEL_GPU_TEST_BUILD
+  intel_gpu_test_reset();
+  intel_gpu_xpumcli_test_set_capture(fake_xpumcli_capture_fail);
+#endif
+  g_init_calls = 0;
+  test_stats_stub_reset(&g_stub);
+  intel_gpu_stats_type.st_enabled = 1;
+  intel_gpu_stats_type.st_collect(&intel_gpu_stats_type);
+  assert(g_init_calls == 0);
 }
 
 static void test_helper_tile_merge(void)
@@ -395,6 +445,7 @@ int main(void)
   test_mem_temp_publish();
   test_tile_power_sum_collect();
   test_device_avg_vs_tile_sum_collect();
+  test_default_xpumcli_skips_xpumInit();
   test_stats_stub_unbind();
   printf("test_intel_gpu_publish passed\n");
   return 0;

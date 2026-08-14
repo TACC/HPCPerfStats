@@ -1,10 +1,12 @@
-/* intel_gpu — Intel Data Center GPU (PVC) counters via XPU Manager (libxpum dlopen). */
+/* intel_gpu — Intel Data Center GPU (PVC) counters via xpumcli (default) or libxpum. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "intel_gpu.h"
 #include "intel_gpu_xpum_helpers.h"
+#include "intel_gpu_xpumcli.h"
+#include "monitor_daemon.h"
 #include "monitor_log.h"
 #include "stats.h"
 #include "trace.h"
@@ -26,15 +28,29 @@ void intel_gpu_test_reset(void)
   g_device_count = 0;
   memset(g_device_ids, 0, sizeof(g_device_ids));
   memset(g_power_warned, 0, sizeof(g_power_warned));
+  intel_gpu_xpumcli_test_reset();
 }
 #endif
+
+/* Default xpumcli; opt-in libxpum via conf/env intel_gpu_backend=libxpum. */
+static int intel_gpu_use_libxpum(void)
+{
+  const char *b = intel_gpu_backend;
+  const char *env = getenv("HPCPERFSTATS_INTEL_GPU_BACKEND");
+
+  if (env != NULL && env[0] != '\0')
+    b = env;
+  if (b == NULL || b[0] == '\0')
+    return 0;
+  return strcmp(b, "libxpum") == 0;
+}
 
 static void intel_gpu_env_prepare(void)
 {
   /* On-demand pulls only — avoid XPUM background sampler jitter on HPC nodes. */
-  setenv("XPUM_DISABLE_PERIODIC_METRIC_MONITOR", "1", 0);
+  setenv("XPUM_DISABLE_PERIODIC_METRIC_MONITOR", "1", 1);
   /* XPUM 1.2.33: metric IDs 0–36 only (37/38 rejected). Include memory temp (30). */
-  setenv("XPUM_METRICS", "0,1,4,6-10,30,34,35,36", 0);
+  setenv("XPUM_METRICS", "0,1,4,6-10,30,34,35,36", 1);
 }
 
 static int intel_gpu_lookup_mem_total_mb(xpum_device_id_t id, unsigned long long *out_mb)
@@ -323,6 +339,20 @@ static void intel_gpu_collect(struct stats_type *type)
 
   if (type == NULL || !type->st_enabled)
     return;
+
+  if (!intel_gpu_use_libxpum()) {
+    if (intel_gpu_xpumcli_collect(type) == 0) {
+      g_miss_streak = 0;
+      return;
+    }
+    g_miss_streak++;
+    if (g_miss_streak >= INTEL_GPU_MISS_STREAK_MAX) {
+      TRACE("intel_gpu: disabling after xpumcli collect failures\n");
+      type->st_enabled = 0;
+    }
+    return;
+  }
+
   if (intel_gpu_runtime_prepare() < 0) {
     g_miss_streak++;
     if (g_miss_streak >= INTEL_GPU_MISS_STREAK_MAX) {

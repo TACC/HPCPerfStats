@@ -220,6 +220,12 @@ void monitor_options_apply_daemon_conf_kv(const char *key, const char *value_lin
     monitor_log_debug("%s: Setting disabled types to `%s` based on file %s\n", app_name,
                       disable_types, conf_file_name);
   }
+  if (strcmp(key, "intel_gpu_backend") == 0) {
+    free(intel_gpu_backend);
+    intel_gpu_backend = strdup(value_line);
+    monitor_log_debug("%s: Setting intel_gpu_backend to %s based on file %s\n", app_name,
+                      intel_gpu_backend != NULL ? intel_gpu_backend : "(null)", conf_file_name);
+  }
   if (strcmp(key, "freq") == 0) {
     if (parse_double_arg(value_line, &sample_freq) == 0)
       monitor_log_debug("%s: Deprecated key `freq` mapped to sample_freq=%f in file %s\n", app_name,
