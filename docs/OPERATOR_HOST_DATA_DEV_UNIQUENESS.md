@@ -32,6 +32,8 @@ Do **not** copy one `LIMIT` across sites: ~3 GB/chunk on 02 vs ~34 GB/chunk on 0
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks, count(*) AS chunks FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';"
 ```
 
+
+
 ## Decompress one batch
 
 Repeat until `compressed_chunks = 0`. Set `LIMIT` from the table above (example uses 5 for 04/01).
@@ -39,6 +41,8 @@ Repeat until `compressed_chunks = 0`. Set `LIMIT` from the table above (example 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; SELECT decompress_chunk(format('%I.%I', chunk_schema, chunk_name)::regclass, true) FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data' AND is_compressed ORDER BY range_start LIMIT 5;"
 ```
+
+
 
 ### Parallel decompress (multi-CPU)
 
@@ -89,6 +93,8 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 Then redeploy the Phase 1 image and let `migrate` apply `0030` for real.
 
 ---
+
+
 
 ## Upgrade Timescale catalog to the compose pin (minor)
 
@@ -148,6 +154,8 @@ Catalog upgrade is **independent** of Stage 1 decompress / Stage 2 `0032`; do it
 
 ---
 
+
+
 ## Stage 2 — apply 5-column UNIQUE and restore compression (`0032`)
 
 Stage 2 ships in a **separate image** that includes migration `0032_host_data_unique_include_dev_db`. It replaces the live 4-column UNIQUE with `UNIQUE (time, host, type, event, dev)` and restores `add_compression_policy('host_data', compress_after => INTERVAL '8d')`.
@@ -196,41 +204,31 @@ Serial one-shot (small sites only):
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; UPDATE host_data SET dev = '' WHERE dev IS NULL;"
 ```
 
+
 ### Deploy and one-shot migrate (avoid `web` crash-loop)
 
-`ADD UNIQUE` on a large `host_data` can run for a long time. Under Compose `restart: always`, a timed-out or killed startup migrate crash-loops `web`. Prefer **stopped `web` + stopped `pipeline` + one-shot migrate**, with `**db` (and redis/rabbitmq) left up**.
+`ADD UNIQUE` on a large `host_data` can run for a long time. Under Compose `restart: always`, a timed-out or killed startup migrate crash-loops `web`. Prefer **stopped writers + one-shot migrate**. Keep **`db`** up.
 
-Checkout must already contain the Stage 2 commit (migration `0032_host_data_unique_include_dev_db`). Do not start `web` until the one-shot migrate finishes.
-
-**1. Stop writers / migrate-on-start (`pipeline` then `web`). Keep `db` up:**
+1. Deploy / pull the image that contains migration `0032` (rebuild stack as you normally release).
+2. Stop `pipeline` and `web` so nothing restarts mid-DDL and ingest is not writing during the UNIQUE rewrite:
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml stop -t 300 pipeline && docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml stop -t 120 web
 ```
 
-**2. Build the Stage 2 app image (`web` / `pipeline` share it). Do not `up` yet:**
+3. Run migrate once:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml build web pipeline
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml run --rm web bash -lc 'python3 hpcperfstats/site/manage.py migrate machine 0032'
 ```
 
-Python-only sites can instead use `./scripts/rebuild_pipeline.sh --no-start` (stops + builds; skips compose up). Prefer that when SPA did not change; use the `compose build` block above when you are not using the helper script.
-
-**3. One-shot migrate with `web` still down (uses the image from step 2):**
+4. Start `web` and `pipeline` again:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml run --rm --no-deps web bash -lc 'python3 hpcperfstats/site/manage.py migrate machine 0032'
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml up -d --no-deps web pipeline
 ```
 
-**4. Bring app containers back (recreate on the new image):**
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml up -d --force-recreate --no-deps web && docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml up -d --force-recreate --no-deps pipeline
-```
-
-If `proxy` was stopped for a name-reuse recreate on podman-compose, start it again after `web` is healthy: `docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml start proxy`.
-
-If you accidentally start `web` before the gates pass, `0032` is written to **soft-skip** (NOTICE + success) when compressed chunks remain or a multi-column PK is still present — uniqueness will not change until you fix the gate and re-run migrate (one-shot again with `web`/`pipeline` stopped).
+If you accidentally start `web` before the gates pass, `0032` is written to **soft-skip** (NOTICE + success) when compressed chunks remain or a multi-column PK is still present — uniqueness will not change until you fix the gate and re-run migrate (one-shot again).
 
 ### Post-check
 
