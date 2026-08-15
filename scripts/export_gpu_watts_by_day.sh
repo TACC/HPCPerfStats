@@ -6,20 +6,29 @@
 # without ORDER BY. jid is resolved via host+time against the lookup (not
 # host_data.jid). statement_timeout is disabled for the long export.
 #
+# job_data.host_list holds short names while host_data.host holds FQDNs built
+# with DEFAULT/host_name_ext, so both sides are compared on the first DNS label
+# (split_part(host, '.', 1)). Comparing raw values matches nothing.
+#
+# Samples outside any job window are still exported, with an empty jid.
+#
 # Usage (from checkout with docker-compose.yaml):
 #   ./scripts/export_gpu_watts_by_day.sh
 #   ./scripts/export_gpu_watts_by_day.sh 7 gpu_watts_last_week.csv
 #   ./scripts/export_gpu_watts_by_day.sh 14 /tmp/gpu_watts.csv
 #
 # Env:
-#   HPCPERFSTATS_GPU_EXPORT_KEEP_STAGING=1  keep lookup table after run
-#   HPCPERFSTATS_GPU_EXPORT_WORK_MEM=512MB  session work_mem for COPY
+#   HPCPERFSTATS_GPU_EXPORT_KEEP_STAGING=1   keep lookup table after run
+#   HPCPERFSTATS_GPU_EXPORT_WORK_MEM=512MB   session work_mem for COPY
+#   HPCPERFSTATS_GPU_EXPORT_SKIP_PREFLIGHT=1 skip the jid match preflight
 set -euo pipefail
 
 DAYS="${1:-7}"
 OUTFILE="${2:-gpu_watts_last_week.csv}"
 KEEP_STAGING="${HPCPERFSTATS_GPU_EXPORT_KEEP_STAGING:-0}"
 WORK_MEM="${HPCPERFSTATS_GPU_EXPORT_WORK_MEM:-512MB}"
+SKIP_PREFLIGHT="${HPCPERFSTATS_GPU_EXPORT_SKIP_PREFLIGHT:-0}"
+PREFLIGHT_SAMPLE="${HPCPERFSTATS_GPU_EXPORT_PREFLIGHT_SAMPLE:-5000}"
 STAGING_TABLE="tmp_export_gpu_job_lookup"
 
 if ! [[ "$DAYS" =~ ^[1-9][0-9]*$ ]]; then
@@ -70,18 +79,25 @@ SET work_mem = '${WORK_MEM}';
 DROP TABLE IF EXISTS ${STAGING_TABLE};
 CREATE UNLOGGED TABLE ${STAGING_TABLE} AS
 SELECT jd.jid,
-       h AS host,
+       split_part(h, '.', 1) AS host_short,
        COALESCE(jd.telemetry_first_time, jd.start_time) AS t0,
        COALESCE(jd.telemetry_last_time,  jd.end_time)   AS t1
 FROM job_data jd
 CROSS JOIN LATERAL unnest(jd.host_list) AS h
-WHERE jd.end_time >= CURRENT_DATE - ${DAYS};
-CREATE INDEX ON ${STAGING_TABLE} (host, t0, t1);
+WHERE jd.end_time >= CURRENT_DATE - ${DAYS}
+  AND h IS NOT NULL
+  AND btrim(h) <> '';
+CREATE INDEX ON ${STAGING_TABLE} (host_short, t0, t1);
 ANALYZE ${STAGING_TABLE};
 "
 
 lookup_rows="$(psql_at "SELECT count(*) FROM ${STAGING_TABLE};")"
 echo "lookup rows: ${lookup_rows}"
+if [[ "${lookup_rows:-0}" -eq 0 ]]; then
+  echo "job lookup is empty: no job_data rows with end_time in the last ${DAYS} days," >&2
+  echo "or every host_list is empty. Every exported jid would be blank." >&2
+  exit 1
+fi
 
 # Day list oldest → newest so partial files are chronological.
 # Inclusive calendar window ending today (DAYS=7 → today and prior 6 days).
@@ -132,7 +148,7 @@ COPY (
   LEFT JOIN LATERAL (
     SELECT g.jid
     FROM ${STAGING_TABLE} g
-    WHERE g.host = hd.host
+    WHERE g.host_short = split_part(hd.host, '.', 1)
       AND hd.time >= g.t0
       AND hd.time <= g.t1
     ORDER BY g.t1 DESC
