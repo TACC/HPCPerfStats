@@ -4158,7 +4158,8 @@ def test_prewarm_successful_refs_runs_inline_for_ok_jids(monkeypatch):
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline")
 
   class _Pipe:
-    def run_for_jid(self, jid, shared_context=None):
+    def submit(self, jid, shared_context=None):
+      del shared_context
       calls.append(jid)
       return {"prewarm_total_s": 0.0, "undivided": True}
 
@@ -4554,18 +4555,8 @@ def test_prewarm_stall_recycles_pool_and_keeps_partial_results(monkeypatch):
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
 
   resets = []
+  ensures = []
   soft_fails = []
-
-  class _Mgr:
-    def reset_pool_hard(self):
-      resets.append("reset")
-
-  class _Pipe:
-    def record_pool_result(self, ok):
-      soft_fails.append(bool(ok))
-
-    def submit(self, jid):
-      raise AssertionError("pipeline mode must not submit inline")
 
   class _It:
     def __init__(self):
@@ -4583,16 +4574,200 @@ def test_prewarm_stall_recycles_pool_and_keeps_partial_results(monkeypatch):
       del fn, jids
       return _It()
 
+  live_pool = _Pool()
+
+  class _Mgr:
+    def reset_pool_hard(self):
+      resets.append("reset")
+
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      ensures.append(pool_kind)
+      # Before stall reset: return the drainable pool. After: any object.
+      return live_pool if not resets else object()
+
+  class _Pipe:
+    def record_pool_result(self, ok):
+      soft_fails.append(bool(ok))
+
+    def submit(self, jid):
+      raise AssertionError("pipeline mode must not submit inline")
+
   update_metrics._prewarm_successful_refs_on_metrics_pool(
       [SimpleNamespace(jid="ok1"), SimpleNamespace(jid="ok2")],
       _Pipe(),
-      _Pool(),
+      live_pool,
       metrics_manager=_Mgr(),
   )
   assert resets == ["reset"]
+  assert ensures == ["metrics-pool", "metrics-pool"]
   # One partial success recorded + one soft-fail for unfinished.
   assert soft_fails.count(True) == 1
   assert soft_fails.count(False) == 1
+
+
+@pytest.mark.machine_unit_mock
+def test_prewarm_refreshes_pool_via_ensure_pool_before_drain(monkeypatch):
+  """Prewarm must drain ensure_pool() result, never an abandoned caller pool."""
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required",
+  )
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_run_poll_timeout_s", lambda: 0.1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_run_stall_timeout_s", lambda: 10.0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(
+      update_metrics, "abort_if_metrics_pool_workers_dead", lambda *a, **k: None,
+  )
+
+  abandoned = object()
+  fresh = object()
+  drained_pools = []
+
+  class _Mgr:
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      assert pool_kind == "metrics-pool"
+      return fresh
+
+  class _Pipe:
+    def record_pool_result(self, ok):
+      del ok
+
+  def _fake_drain(shared_pool, jids, **kwargs):
+    del kwargs
+    drained_pools.append(shared_pool)
+    return [{"jid": j, "ok": True} for j in jids]
+
+  monkeypatch.setattr(update_metrics, "_drain_prewarm_imap", _fake_drain)
+  update_metrics._prewarm_successful_refs_on_metrics_pool(
+      [SimpleNamespace(jid="j1")],
+      _Pipe(),
+      abandoned,
+      metrics_manager=_Mgr(),
+  )
+  assert drained_pools == [fresh]
+
+
+@pytest.mark.machine_unit_mock
+def test_batch_prewarm_after_metrics_run_stall_reset_uses_fresh_pool(monkeypatch):
+  """After Metrics.run (which may reset_pool_hard), batch prewarm gets ensure_pool."""
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required",
+  )
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_metrics_idle_slot_supplement_enabled", lambda: False,
+  )
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(
+      update_metrics, "should_use_metrics_sliding_session", lambda **k: False,
+  )
+
+  abandoned = object()
+  fresh = object()
+  prewarm_pools = []
+
+  class _Mgr:
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      del pool_kind
+      return fresh
+
+    def run(self, job_refs, pool=None, progress_callback=None):
+      del pool, progress_callback
+      return [{
+          "jid": ref.jid,
+          "ok": True,
+          "status": "ok",
+          "error_type": None,
+          "error_message": None,
+          "persist_s": 0.0,
+      } for ref in job_refs]
+
+  class _Pipe:
+    def record_pool_result(self, ok):
+      del ok
+
+  def _capture_prewarm(refs, pipe, shared_pool, **kwargs):
+    del refs, pipe, kwargs
+    prewarm_pools.append(shared_pool)
+
+  monkeypatch.setattr(
+      update_metrics, "_prewarm_successful_refs_on_metrics_pool", _capture_prewarm,
+  )
+  update_metrics._compute_jid_outcomes_batch(
+      [SimpleNamespace(jid="j1", artifact_only=False)],
+      _Mgr(),
+      _Pipe(),
+      abandoned,
+  )
+  assert prewarm_pools == [fresh]
+
+
+@pytest.mark.machine_unit_mock
+def test_sliding_stall_reset_rebinds_shared_pool_for_artifact_prewarm(monkeypatch):
+  """Sliding _on_stall_reset must rebind shared_pool before artifact-only prewarm."""
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "pipeline_required",
+  )
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_run_poll_timeout_s", lambda: 0.1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_run_stall_timeout_s", lambda: 10.0)
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_metrics_supplement_sample_soft_max", lambda: 10000,
+  )
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_metrics_supplement_sample_hard_max", lambda: 80000,
+  )
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  abandoned = object()
+  fresh = object()
+  prewarm_pools = []
+  resets = []
+
+  class _Mgr:
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      del pool_kind
+      return fresh
+
+    def reset_pool_hard(self):
+      resets.append("reset")
+
+  class _Pipe:
+    def submit(self, jid):
+      del jid
+
+    def record_pool_result(self, ok):
+      del ok
+
+  def _fake_sliding(**kwargs):
+    on_stall = kwargs.get("on_stall_reset")
+    if callable(on_stall):
+      on_stall()
+    return []
+
+  monkeypatch.setattr(update_metrics, "run_metrics_sliding_session", _fake_sliding)
+
+  def _capture_prewarm(refs, pipe, shared_pool, **kwargs):
+    del refs, pipe, kwargs
+    prewarm_pools.append(shared_pool)
+
+  monkeypatch.setattr(
+      update_metrics, "_prewarm_successful_refs_on_metrics_pool", _capture_prewarm,
+  )
+  timing = {}
+  update_metrics._compute_jid_outcomes_sliding(
+      job_refs=[SimpleNamespace(jid="m1", artifact_only=False)],
+      metrics_job_refs=[SimpleNamespace(jid="m1", artifact_only=False)],
+      artifact_only_refs=[SimpleNamespace(jid="a1", artifact_only=True)],
+      metrics_manager=_Mgr(),
+      prewarm_pipeline=_Pipe(),
+      shared_pool=abandoned,
+      timing=timing,
+      t_batch=time.monotonic(),
+      heartbeat=None,
+      progress_callback=None,
+      ready_queue=None,
+      ready_queue_lock=None,
+  )
+  assert resets == ["reset"]
+  assert prewarm_pools == [fresh]
 
 
 @pytest.mark.machine_unit_mock

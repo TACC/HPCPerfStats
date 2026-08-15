@@ -4947,6 +4947,50 @@ def _scheduler_jid_outcome(
   }
 
 
+def _rebind_metrics_shared_pool(
+  metrics_manager: Any,
+  shared_pool: Any,
+) -> Any:
+  """
+  Return a live metrics pool after ``reset_pool_hard`` may have abandoned one.
+
+  When ``metrics_manager`` exposes ``ensure_pool``, call it so callers never
+  health-check or ``imap`` an abandoned ``Pool`` whose workers were SIGKILL'd
+  by intentional teardown (``sigkill_non_cgroup`` recycle-gate false positive).
+
+  Args:
+    metrics_manager (Any): Metrics owner with optional ``ensure_pool``.
+    shared_pool (Any): Caller-held pool reference (may be abandoned).
+
+  Returns:
+    Any: Fresh pool from ``ensure_pool``, or ``shared_pool`` when no manager.
+
+  Examples:
+    >>> class _M:
+    ...     def ensure_pool(self, pool_kind="metrics-pool"):
+    ...         return "fresh"
+    >>> _rebind_metrics_shared_pool(_M(), "stale")
+    'fresh'
+    >>> _rebind_metrics_shared_pool(None, "stale")
+    'stale'
+  """
+  if metrics_manager is None:
+    return shared_pool
+  ensure = getattr(metrics_manager, "ensure_pool", None)
+  if not callable(ensure):
+    return shared_pool
+  try:
+    return ensure(pool_kind="metrics-pool")
+  except TypeError:
+    return ensure()
+  except Exception as exc:
+    log_print(
+        "metrics scheduler: ensure_pool after reset failed: {0}".format(exc),
+        flush=True,
+    )
+    return shared_pool
+
+
 def _prewarm_successful_refs_on_metrics_pool(
   successful_refs: Any,
   prewarm_pipeline: Any,
@@ -4961,13 +5005,16 @@ def _prewarm_successful_refs_on_metrics_pool(
   ``metrics_plot_prewarm_mode`` (``inline`` → parent ``run_for_jid``;
   ``pipeline_required`` → metrics process pool ``imap``). On prewarm stall,
   keep partial successes, soft-fail unfinished jids, and recycle the pool.
+  Before pool imap, rebind via ``ensure_pool`` so abandoned pools after
+  ``reset_pool_hard`` are never fed to the recycle gate.
 
   Args:
     successful_refs (Any): Job refs whose metrics outcome was ok.
     prewarm_pipeline (Any): Sync ``_PrewarmPipeline`` for counters / inline.
-    shared_pool (Any): Metrics process pool (pool B).
+    shared_pool (Any): Metrics process pool (pool B); may be rebound.
     progress_callback (Any | None): Optional mid-batch heartbeat callback.
-    metrics_manager (Any | None): Metrics owner used to ``reset_pool_hard``.
+    metrics_manager (Any | None): Metrics owner used to ``reset_pool_hard``
+    and ``ensure_pool``.
 
   Returns:
     None
@@ -4979,6 +5026,8 @@ def _prewarm_successful_refs_on_metrics_pool(
     return
   mode = cfg.get_metrics_plot_prewarm_mode()
   jids = [ref.jid for ref in successful_refs]
+  if mode != "inline" and shared_pool is not None:
+    shared_pool = _rebind_metrics_shared_pool(metrics_manager, shared_pool)
   if mode == "inline" or shared_pool is None:
     for idx, jid in enumerate(jids):
       if shutdown_requested[0]:
@@ -5033,6 +5082,7 @@ def _prewarm_successful_refs_on_metrics_pool(
             ),
             flush=True,
         )
+    _rebind_metrics_shared_pool(metrics_manager, None)
   for result in results:
     ok = bool(result and result.get("ok"))
     prewarm_pipeline.record_pool_result(ok)
@@ -5138,12 +5188,16 @@ def _compute_jid_outcomes_sliding(
     """
     Hard-reset the metrics pool after a sliding-session stall soft-fail.
 
+    Rebinds ``shared_pool`` via ``ensure_pool`` so artifact-only prewarm
+    after the session does not health-check the abandoned pool.
+
     Returns:
       None
 
     Examples:
       >>> _on_stall_reset()  # doctest: +SKIP
     """
+    nonlocal shared_pool
     resetter = getattr(metrics_manager, "reset_pool_hard", None)
     if callable(resetter):
       try:
@@ -5155,6 +5209,7 @@ def _compute_jid_outcomes_sliding(
             ),
             flush=True,
         )
+    shared_pool = _rebind_metrics_shared_pool(metrics_manager, shared_pool)
 
   primary = list(metrics_job_refs)
   artifact_as_metrics_done = list(artifact_only_refs)
@@ -5551,6 +5606,7 @@ def _compute_jid_outcomes_batch(
     recovery_success_refs = [ref for ref, _ in succeeded] + list(artifact_only_refs)
     if heartbeat is not None:
       heartbeat.set_phase("prewarm")
+    shared_pool = _rebind_metrics_shared_pool(metrics_manager, shared_pool)
     _prewarm_successful_refs_on_metrics_pool(
         recovery_success_refs,
         prewarm_pipeline,
@@ -5604,6 +5660,7 @@ def _compute_jid_outcomes_batch(
   t_prewarm = time.monotonic()
   if heartbeat is not None:
     heartbeat.set_phase("prewarm")
+  shared_pool = _rebind_metrics_shared_pool(metrics_manager, shared_pool)
   _prewarm_successful_refs_on_metrics_pool(
       successful_refs,
       prewarm_pipeline,
