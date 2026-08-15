@@ -29,6 +29,7 @@ Attributes:
   KEY_JOB_JID_TABLE_WINDOW: Attribute.
   KEY_JOB_PLOT_KEYSET: Attribute.
   KEY_JOB_SCHEMA: Attribute.
+  KEY_BEEGFS_DELTA: Attribute.
   KEY_LLITE_DELTA: Attribute.
   KEY_METRICS_DISTINCT: Attribute.
   KEY_NFS_FSIO: Attribute.
@@ -651,6 +652,7 @@ KEY_DATES = "dates"
 KEY_QUEUES = "queues"
 KEY_STATES = "states"
 KEY_LLITE_DELTA = "llite_delta"
+KEY_BEEGFS_DELTA = "beegfs_delta"
 KEY_NFS_FSIO = "nfs_fsio"
 # Aggregate GPU stats (Count/Max/Avg) cache namespace.
 KEY_GPU_AGG = "gpu_agg"

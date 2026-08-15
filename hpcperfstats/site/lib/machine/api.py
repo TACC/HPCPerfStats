@@ -443,14 +443,15 @@ def _gpu_detail_tuple_from_metrics(job: Any) -> Any:
 
 def _fsio_dict_from_metrics(job: Any) -> Any:
     """
-    Return job_detail-shaped fsio dict from metrics_data (dual NFS+Lustre).
-    
+    Return job_detail-shaped fsio dict from metrics_data (Lustre+NFS+BeeGFS).
+
     Args:
       job (Any): Job record (Django ``job_data`` or job-like mapping).
-    
+
     Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
+      Any: Mapping of family key to ``[read_mb, write_mb, peak_mb_s, peak_iops]``,
+      or ``None`` when no family has both read and write totals.
+
     Examples:
       >>> _fsio_dict_from_metrics(None)  # doctest: +SKIP
     """
@@ -458,14 +459,14 @@ def _fsio_dict_from_metrics(job: Any) -> Any:
 
     def _val(metric: Any) -> Any:
         """
-        Internal helper to handle val.
-        
+        Float value for one metrics_data metric name, or None.
+
         Args:
-          metric (Any): Metric passed to this helper.
-        
+          metric (Any): Metric name string.
+
         Returns:
-          Any: Value produced by this call (type depends on inputs).
-        
+          Any: Float value or None when missing/null.
+
         Examples:
           >>> _val(None)  # doctest: +SKIP
         """
@@ -492,6 +493,15 @@ def _fsio_dict_from_metrics(job: Any) -> Any:
             nw,
             _val("detail_fsio_nfs_peak_mb_s"),
             _val("detail_fsio_nfs_peak_iops"),
+        ]
+    br = _val("detail_fsio_beegfs_read_mb")
+    bw = _val("detail_fsio_beegfs_write_mb")
+    if br is not None and bw is not None:
+        out["beegfs"] = [
+            br,
+            bw,
+            _val("detail_fsio_beegfs_peak_mb_s"),
+            _val("detail_fsio_beegfs_peak_iops"),
         ]
     return out or None
 

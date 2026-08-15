@@ -251,6 +251,7 @@ const JOB_DETAIL_ANALYSIS_TABS: ReadonlySet<JobAnalysisTab> = new Set([
 function fsioResourceLabel(key: string): string {
   if (key === "llite") return "Lustre";
   if (key === "nfs") return "NFS";
+  if (key === "beegfs") return "BeeGFS";
   return key;
 }
 

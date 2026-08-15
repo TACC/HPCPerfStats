@@ -374,6 +374,34 @@ class TestFsioAndGpuDetailFromMetrics:
         assert out["llite"][0] == 10.0
         assert out["nfs"][0] == 5.0
 
+    def test_fsio_beegfs_when_read_write_present(self):
+        from hpcperfstats.site.lib.machine import api
+
+        job = _make_metrics_job({
+            "detail_fsio_beegfs_read_mb": 7.0,
+            "detail_fsio_beegfs_write_mb": 8.0,
+            "detail_fsio_beegfs_peak_mb_s": 2.5,
+            "detail_fsio_beegfs_peak_iops": 40.0,
+        })
+        out = api._fsio_dict_from_metrics(job)
+        assert out == {"beegfs": [7.0, 8.0, 2.5, 40.0]}
+
+    def test_fsio_triple_llite_nfs_beegfs_when_all_present(self):
+        from hpcperfstats.site.lib.machine import api
+
+        job = _make_metrics_job({
+            "detail_fsio_llite_read_mb": 10.0,
+            "detail_fsio_llite_write_mb": 20.0,
+            "detail_fsio_nfs_read_mb": 5.0,
+            "detail_fsio_nfs_write_mb": 6.0,
+            "detail_fsio_beegfs_read_mb": 7.0,
+            "detail_fsio_beegfs_write_mb": 8.0,
+        })
+        out = api._fsio_dict_from_metrics(job)
+        assert out["llite"][0] == 10.0
+        assert out["nfs"][0] == 5.0
+        assert out["beegfs"][0] == 7.0
+
     def test_fsio_returns_none_when_incomplete(self):
         from hpcperfstats.site.lib.machine import api
 

@@ -326,7 +326,7 @@ Old→new llite event map lives under `type_events.lustre_llite` in
 | Units | Prefer `--rwunit=B`; else `MiB-*` × 1048576 → `vfs_*_bytes` |
 | Cadence | Slow/full when `enable_slow_tier`; else ≤ once per `max(sample_freq, 30s)` + wall timeout |
 | Configure | `--enable-beegfs` (default yes); capability slug fragment `beegfs` |
-| Consumer follow-up | Website FSIO still NFS+Lustre-only — dual-read `beegfs_client` in a separate authorized consumer task |
+| Consumer follow-up | Website FSIO includes BeeGFS alongside Lustre and NFS (`beegfs_client` → Resources / Summary / `detail_fsio_beegfs_*`) |
 
 ### DEBUG `/dev/shm` mirror (daemon only)
 

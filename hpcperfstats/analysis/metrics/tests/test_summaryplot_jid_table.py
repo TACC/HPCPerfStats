@@ -941,6 +941,14 @@ def test_summaryplot_orders_lustre_nfs_before_network():
       if evset.intersection({"read_ops", "write_ops", "READ_ops", "WRITE_ops"}):
         return pd.DataFrame([("n1.cluster", t0, 128.0)], columns=["host", "time", "sum_val"])
       return empty
+    if typ in ("beegfs_client", "beegfs") and val_col == "arc":
+      if "vfs_read_bytes" in ev:
+        return pd.DataFrame([("n1.cluster", t0, 400.0)], columns=["host", "time", "sum_val"])
+      if "vfs_write_bytes" in ev:
+        return pd.DataFrame([("n1.cluster", t0, 300.0)], columns=["host", "time", "sum_val"])
+      if any(e.endswith("_ops") for e in ev):
+        return pd.DataFrame([("n1.cluster", t0, 80.0)], columns=["host", "time", "sum_val"])
+      return empty
     if typ in _IB_FABRIC_TYPES and val_col == "arc" and ev == ["port_rcv_data", "port_xmit_data"]:
       return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
     if typ in _INTEL_CORE_TYPES and val_col == "arc":
@@ -972,7 +980,10 @@ def test_summaryplot_orders_lustre_nfs_before_network():
   assert captured_metrics.index("liops") < captured_metrics.index("nfs_read_mb_s")
   assert captured_metrics.index("nfs_read_mb_s") < captured_metrics.index("nfs_write_mb_s")
   assert captured_metrics.index("nfs_write_mb_s") < captured_metrics.index("nfs_iops")
-  assert captured_metrics.index("nfs_iops") < captured_metrics.index("ibbw")
+  assert captured_metrics.index("nfs_iops") < captured_metrics.index("beegfs_read_mb_s")
+  assert captured_metrics.index("beegfs_read_mb_s") < captured_metrics.index("beegfs_write_mb_s")
+  assert captured_metrics.index("beegfs_write_mb_s") < captured_metrics.index("beegfs_iops")
+  assert captured_metrics.index("beegfs_iops") < captured_metrics.index("ibbw")
   idx_ibbw = captured_metrics.index("ibbw")
   for name in ("opa_wait_cong", "opa_ecn"):
     if name in captured_metrics:

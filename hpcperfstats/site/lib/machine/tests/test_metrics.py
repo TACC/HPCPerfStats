@@ -542,6 +542,26 @@ def test_job_arc_avg_sharedfs_iops_includes_nfs_when_available():
 
 
 @pytest.mark.machine_unit_mock
+def test_job_arc_avg_sharedfs_iops_includes_beegfs_when_available():
+  """avg_sharedfs_iops sums BeeGFS metadata ops with Lustre/NFS when present."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") in ("llite", "lustre_llite"):
+      return 20.0
+    if kw.get("typename") == "nfs":
+      return 5.0
+    if kw.get("typename") == "beegfs_client":
+      return 3.0
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_sharedfs_iops(object())
+  assert abs(value - 28.0) < 1e-9
+  assert typename == "llite"
+
+
+@pytest.mark.machine_unit_mock
 def test_job_arc_avg_sharedfs_bw_falls_back_to_nfs():
   """avg_sharedfs_bw uses nfs byte counters when llite counters are absent."""
 
@@ -575,6 +595,26 @@ def test_job_arc_avg_sharedfs_bw_sums_llite_and_nfs():
     value, typename = m._job_arc_avg_sharedfs_bw(object())
   assert abs(value - 15.0) < 1e-9
   assert typename == "llite"
+
+
+@pytest.mark.machine_unit_mock
+def test_job_arc_avg_sharedfs_bw_includes_beegfs():
+  """avg_sharedfs_bw sums BeeGFS byte counters when present."""
+
+  def fake_job_arc(self, jt, **kw):
+    if kw.get("typename") in ("llite", "lustre_llite"):
+      return None
+    if kw.get("typename") == "nfs":
+      return None
+    if kw.get("typename") == "beegfs_client":
+      return 9.0
+    return None
+
+  with patch.object(Metrics, "job_arc", fake_job_arc):
+    m = Metrics()
+    value, typename = m._job_arc_avg_sharedfs_bw(object())
+  assert abs(value - 9.0) < 1e-9
+  assert typename == "beegfs"
 
 
 def test_job_arc_avg_ibbw_falls_back_to_ethernet():

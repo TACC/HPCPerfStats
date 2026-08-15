@@ -149,6 +149,18 @@ SUMMARY_METRIC_DESCRIPTIONS: dict[str, str] = {
         "NFS client read plus write operation rate from READ_ops and WRITE_ops, "
         "per second (Lustre metadata IOPS is plotted separately)."
     ),
+    "beegfs_read_mb_s": (
+        "BeeGFS client read bandwidth from vfs_read_bytes deltas, in MB/s "
+        "(Lustre and NFS are plotted separately)."
+    ),
+    "beegfs_write_mb_s": (
+        "BeeGFS client write bandwidth from vfs_write_bytes deltas, in MB/s "
+        "(Lustre and NFS are plotted separately)."
+    ),
+    "beegfs_iops": (
+        "BeeGFS client metadata operation rate from summed vfs_*_ops counters "
+        "(open, close, getattr, and related), per second."
+    ),
     "ibbw": (
         "High-speed fabric data rate from InfiniBand extended port byte "
         "counters (receive plus transmit), in MB/s; Omni-Path may fill this "
@@ -272,6 +284,15 @@ SUMMARY_METRIC_RESEARCHER_USE: dict[str, str] = {
     ),
     "nfs_write_mb_s": "NFS write load alongside Lustre when both appear.",
     "nfs_iops": "NFS operation-heavy phases versus byte-heavy streaming.",
+    "beegfs_read_mb_s": (
+        "BeeGFS read load for workflows not on Lustre/NFS; compare with sibling "
+        "shared-filesystem subplots in mixed setups."
+    ),
+    "beegfs_write_mb_s": "BeeGFS write load alongside Lustre/NFS when both appear.",
+    "beegfs_iops": (
+        "BeeGFS metadata-heavy phases (small files, directory storms) versus "
+        "bulk read/write."
+    ),
     "ibbw": (
         "Fabric bytes for MPI and GPU-direct traffic; correlate with CPU FLOPs and "
         "GPU util for comms-bound phases."

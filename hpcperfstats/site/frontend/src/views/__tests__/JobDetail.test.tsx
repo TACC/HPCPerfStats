@@ -2097,6 +2097,25 @@ describe("JobDetail", () => {
     });
   });
 
+  it("labels BeeGFS FSIO rows alongside Lustre and NFS", async () => {
+    setJobDetailQueryMock({
+      data: {
+        ...minimalJobDetailResponse,
+        fsio: {
+          llite: [10, 20, 1, 2],
+          nfs: [3, 4, 0.5, 1],
+          beegfs: [5, 6, 0.2, 3],
+        },
+      },
+    });
+    renderJobDetail("12345");
+    await waitFor(() => {
+      expect(screen.getByText("Lustre")).toBeInTheDocument();
+      expect(screen.getByText("NFS")).toBeInTheDocument();
+      expect(screen.getByText("BeeGFS")).toBeInTheDocument();
+    });
+  });
+
   it("deep-links to Device data without full-page skeleton when data exists", async () => {
     setJobDetailQueryMock({ data: minimalJobDetailResponse, initialLoading: false });
     renderJobDetail("12345", { is_staff: false }, "tab=device");

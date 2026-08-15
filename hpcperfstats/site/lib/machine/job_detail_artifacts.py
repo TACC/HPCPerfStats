@@ -77,7 +77,7 @@ _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
     "Missing GPU precision-width mix metrics in job metrics "
     "(need positive avg_*_active shares)."
 )
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 11
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 12
 
 _FSIO_FINGERPRINT_METRIC_NAMES = tuple(
     sorted(name for name, _t, _u in fsio_job_detail_catalog())
@@ -742,19 +742,19 @@ def _fsio_from_metric_values(
   metric_values: Dict[str, Optional[float]],
 ) -> tuple[Optional[Dict[str, Any]], bool]:
   """
-  Build dual NFS+Lustre fsio dict from metrics.
-  
+  Build Lustre+NFS+BeeGFS fsio dict from metrics.
+
   Returns ``({}, False)`` when catalog keys exist but all values are null so
   host_data fallback can still run. Returns ``(None, False)`` when no FSIO
   catalog keys are present in ``metric_values``.
-  
+
   Args:
     metric_values (Dict[str, Optional[float]]): Mapping for metric values.
-  
+
   Returns:
-    tuple[Optional[Dict[str, Any]], bool]: tuple[Optional[Dict[str, Any]],
-    bool] produced by this call.
-  
+    tuple[Optional[Dict[str, Any]], bool]: Payload dict and whether metrics
+    supplied usable totals.
+
   Examples:
     >>> _fsio_from_metric_values({})  # doctest: +SKIP
   """
@@ -766,10 +766,14 @@ def _fsio_from_metric_values(
   llite_write = metric_values.get("detail_fsio_llite_write_mb")
   nfs_read = metric_values.get("detail_fsio_nfs_read_mb")
   nfs_write = metric_values.get("detail_fsio_nfs_write_mb")
+  beegfs_read = metric_values.get("detail_fsio_beegfs_read_mb")
+  beegfs_write = metric_values.get("detail_fsio_beegfs_write_mb")
   llite_peak_mb = metric_values.get("detail_fsio_llite_peak_mb_s")
   llite_peak_iops = metric_values.get("detail_fsio_llite_peak_iops")
   nfs_peak_mb = metric_values.get("detail_fsio_nfs_peak_mb_s")
   nfs_peak_iops = metric_values.get("detail_fsio_nfs_peak_iops")
+  beegfs_peak_mb = metric_values.get("detail_fsio_beegfs_peak_mb_s")
+  beegfs_peak_iops = metric_values.get("detail_fsio_beegfs_peak_iops")
   if llite_read is not None or llite_write is not None:
     out["llite"] = [
         float(llite_read or 0.0),
@@ -783,6 +787,13 @@ def _fsio_from_metric_values(
         float(nfs_write or 0.0),
         nfs_peak_mb,
         nfs_peak_iops,
+    ]
+  if beegfs_read is not None or beegfs_write is not None:
+    out["beegfs"] = [
+        float(beegfs_read or 0.0),
+        float(beegfs_write or 0.0),
+        beegfs_peak_mb,
+        beegfs_peak_iops,
     ]
   if not out:
     # Catalog rows present but all null — allow host_data fallback.
@@ -869,6 +880,25 @@ def persist_job_detail_artifacts_for_jid(
       nfs = jt.get_nfs_delta_totals_mb()
       if nfs is not None:
         fsio["nfs"] = nfs
+    except Exception:
+      pass
+
+  if (not fsio_from_metrics) and ("beegfs" not in fsio):
+    try:
+      if telemetry is not None:
+        telemetry["detail_fsio_fallback_queries"] = int(
+            telemetry.get("detail_fsio_fallback_queries", 0)
+        ) + 1
+      beegfs_df = jt.get_beegfs_delta_by_event()
+      if not beegfs_df.empty and "delta_sum" in beegfs_df.columns:
+        beegfs_df = beegfs_df.copy()
+        beegfs_df["delta_mb"] = beegfs_df["delta_sum"].fillna(0) / (1024 * 1024)
+        read_row = beegfs_df[beegfs_df["event"] == "vfs_read_bytes"]
+        write_row = beegfs_df[beegfs_df["event"] == "vfs_write_bytes"]
+        fsio["beegfs"] = [
+            float(read_row["delta_mb"].iloc[0]) if len(read_row) else 0.0,
+            float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0,
+        ]
     except Exception:
       pass
 

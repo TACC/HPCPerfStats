@@ -46,7 +46,7 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `amd64_pmc` | `amd64_pmc.c` | HW map → `FLOPS`, branch/stall events |
 | `amd64_rapl` | `amd64_rapl.c` | Package energy |
 | `arm_imc` | `arm_imc.c` | `CAS_READS` / `CAS_WRITES` |
-| `beegfs_client` | `beegfs.c` | BeeGFS client: `vfs_*` via `beegfs-ctl`, `fs_*` via `statvfs` (archive today; FSIO plots need consumer follow-up) |
+| `beegfs_client` | `beegfs.c` | BeeGFS client: `vfs_*` via `beegfs-ctl`, `fs_*` via `statvfs` (Job Detail FSIO / Summary panels wired) |
 | `block` | `block.c` | Block sysfs counters |
 | `cpu` | `cpu.c` | Per-CPU jiffies |
 | `cpu_counter_metrics` | `cpu_counter_metrics.c` | Intel/AMD/ARM paths; DCGM CPU power; synthetic ARM metrics |

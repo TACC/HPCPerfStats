@@ -721,6 +721,60 @@ def test_jid_table_get_llite_delta_by_event_cache_set_failure_still_returns_df()
   mock_cache.set.assert_called()
 
 
+def test_jid_table_get_beegfs_delta_by_event_cache_set_failure_still_returns_df():
+  """``get_beegfs_delta_by_event`` uses ``cached_orm``; set failure must not drop results."""
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import jid_table
+  from hpcperfstats.site.lib.machine import cache_utils as cu
+
+  class FakeQs:
+    def values(self, *args):
+      return self
+
+    def annotate(self, **kwargs):
+      return self
+
+    def order_by(self, *args):
+      return self
+
+    def __iter__(self):
+      yield {"event": "vfs_read_bytes", "delta_sum": 10.0}
+      yield {"event": "vfs_write_bytes", "delta_sum": 20.0}
+
+  inst = jid_table.__new__(jid_table)
+  inst.jid = "jid-beegfs-set-fail"
+  inst._large_job_plot_cache_token = "full"
+  inst.acct_host_list = ["h1.example.com"]
+  inst._base_filter = {
+      "host__in": ["h1.example.com"],
+      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
+      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+  }
+  inst._host_data_time_filter_kwargs = lambda: {
+      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
+      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+  }
+
+  mock_cache = MagicMock()
+  mock_cache.get.side_effect = lambda key, default=None: default
+  mock_cache.set.side_effect = OSError("redis read-only")
+
+  with patch.object(cu, "cache", mock_cache):
+    with patch(
+        "hpcperfstats.analysis.metrics.lib.gen.jid_table.get_site_content_cache_timeout",
+        return_value=60,
+    ):
+      with patch(
+          "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data"
+      ) as hd:
+        hd.objects.filter.return_value = FakeQs()
+        df = jid_table.get_beegfs_delta_by_event(inst)
+
+  assert isinstance(df, pd.DataFrame)
+  assert not df.empty
+  assert "event" in df.columns
+  mock_cache.set.assert_called()
+
+
 def test_jid_table_get_nfs_delta_totals_mb_cache_set_failure_still_returns_list():
   """``get_nfs_delta_totals_mb`` uses ``cached_orm``; set failure must not drop totals."""
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import jid_table

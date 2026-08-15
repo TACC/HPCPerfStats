@@ -57,6 +57,7 @@ from hpcperfstats.site.lib.machine.cache_utils import (
     KEY_HOST_SCHEMA,
     KEY_HOST_TIME_DF,
     KEY_JID_HOST_WINDOW_ROW_COUNT,
+    KEY_BEEGFS_DELTA,
     KEY_LLITE_DELTA,
     KEY_NFS_FSIO,
     KEY_TYPE_DETAIL_AGG,
@@ -89,6 +90,8 @@ _DENSE_PLOT_AGG_TYPES = frozenset({
     "host_nfs",
     "llite",
     "lustre_llite",
+    "beegfs_client",
+    "beegfs",
 })
 
 _STATEMENT_TIMEOUT_ERROR_MARKERS = (
@@ -3279,6 +3282,119 @@ class jid_table:
         KEY_NFS_FSIO, self.jid, self._large_job_plot_cache_token)
     result = cached_orm(key, get_site_content_cache_timeout(), _nfs_fn)
     return result
+
+  def get_beegfs_delta_by_event(self) -> Any:
+    """
+    BeeGFS ``vfs_read_bytes``/``vfs_write_bytes`` sum(delta) by event for this job.
+
+    Uses host×time chunking (same contract as ``get_llite_delta_by_event``).
+    Returned ``event`` values are canonicalized via
+    ``canonical_event_name_for_type``.
+
+    Returns:
+      Any: DataFrame with ``event`` / ``delta_sum`` columns, or an empty
+      DataFrame when no BeeGFS byte deltas are present.
+
+    Examples:
+      >>> jid_table().get_beegfs_delta_by_event()  # doctest: +SKIP
+    """
+    from hpcperfstats.analysis.metrics.lib.metrics import METRICS_HOST_QUERY_BATCH
+
+    byte_events = ["vfs_read_bytes", "vfs_write_bytes"]
+
+    def _beegfs_fn() -> Any:
+      """
+      Aggregate BeeGFS byte deltas for one cache fill.
+
+      Returns:
+        Any: DataFrame of ``event`` / ``delta_sum``, or empty DataFrame.
+
+      Examples:
+        >>> True
+        True
+      """
+      import pandas as pd
+
+      if not self.acct_host_list or not self._base_filter:
+        return queryset_to_dataframe(None)
+      tkw = self._host_data_time_filter_kwargs()
+      slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+      for typ in type_probe_names("beegfs_client"):
+        probed = events_probe_names(byte_events, typ=typ)
+
+        def run(
+            hosts_list: Any,
+            tf_cur: Any,
+            _typ: Any = typ,
+            _probed: Any = probed,
+        ) -> Any:
+          """
+          SUM(delta) by event for one host×time chunk.
+
+          Args:
+            hosts_list (Any): Hostnames for this attempt.
+            tf_cur (Any): Time filter dict.
+            _typ (Any): Bound BeeGFS type name.
+            _probed (Any): Bound event name list.
+
+          Returns:
+            Any: List of annotate dicts.
+
+          Examples:
+            >>> True
+            True
+          """
+          qs = (
+              host_data.objects.filter(
+                  host__in=hosts_list,
+                  **(tf_cur or {}),
+                  type=_typ,
+                  event__in=_probed,
+              )
+              .values("event")
+              .annotate(delta_sum=Sum("delta"))
+              .order_by("event")
+          )
+          return list(qs)
+
+        all_rows: list = []
+        for host_chunk, tf in _iter_host_time_query_chunks(
+            self.acct_host_list,
+            tkw,
+            batch_size=METRICS_HOST_QUERY_BATCH,
+            slice_s=slice_s,
+        ):
+          all_rows.extend(
+              _run_with_host_time_timeout_retry(
+                  host_chunk,
+                  tf,
+                  run,
+                  _merge_list_results,
+                  empty=[],
+              )
+          )
+        all_rows = _fold_sum_by_key(all_rows, ("event",), "delta_sum")
+        if not all_rows:
+          continue
+        df = pd.DataFrame(all_rows)
+        if df.empty:
+          continue
+        if "event" in df.columns:
+          df = df.copy()
+          df["event"] = df["event"].map(
+              lambda e: canonical_event_name_for_type(typ, str(e)))
+          df = (
+              df.groupby("event", as_index=False)["delta_sum"]
+              .sum()
+              .sort_values("event")
+          )
+        return df
+      return queryset_to_dataframe(None)
+
+    key = make_cache_key(
+        KEY_BEEGFS_DELTA, self.jid, self._large_job_plot_cache_token)
+    result = cached_orm(key, get_site_content_cache_timeout(), _beegfs_fn)
+    return result if result is not None else queryset_to_dataframe(None)
 
   def close(self) -> None:
     """

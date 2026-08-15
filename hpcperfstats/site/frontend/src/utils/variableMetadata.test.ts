@@ -65,15 +65,16 @@ describe("getDescriptionForVariable", () => {
 
   it("documents shared filesystem metrics with the job detail section", () => {
     expect(getDescriptionForVariable("avg_sharedfs_bw")).toMatch(
-      /Lustre llite and NFS/i,
+      /Lustre llite, NFS, and BeeGFS/i,
     );
-    expect(getDescriptionForVariable("avg_sharedfs_iops")).toMatch(
-      /Lustre llite and NFS/i,
-    );
+    expect(getDescriptionForVariable("avg_sharedfs_iops")).toMatch(/BeeGFS/i);
     expect(getDescriptionForVariable("detail_fsio_llite_read_mb")).toMatch(
       /Lustre llite/i,
     );
     expect(getDescriptionForVariable("detail_fsio_nfs_read_mb")).toMatch(/NFS/i);
+    expect(getDescriptionForVariable("detail_fsio_beegfs_read_mb")).toMatch(/BeeGFS/i);
+    expect(getDescriptionForVariable("beegfs_read_mb_s")).toMatch(/BeeGFS client read/i);
+    expect(getDescriptionForVariable("beegfs_iops")).toMatch(/BeeGFS client metadata/i);
   });
 
   it("documents metrics_distinct_time_count for staff Sample Count help", () => {

@@ -102,15 +102,15 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   avg_sharedfs_iops: {
     description:
-      "Average metadata and I/O operation rate summing Lustre llite and NFS READ/WRITE operation counters over the job when both are present. An Insufficient Data reason on this metric means the job failed the telemetry coverage gate, not that shared-filesystem counters were absent.",
+      "Average metadata and I/O operation rate summing Lustre llite, NFS READ/WRITE, and BeeGFS vfs_*_ops counters over the job when present. An Insufficient Data reason on this metric means the job failed the telemetry coverage gate, not that shared-filesystem counters were absent.",
     researcherUse:
       "Metadata-heavy jobs: small files, directory creation storms, or recursive listing in batch scripts.",
   },
   avg_sharedfs_bw: {
     description:
-      "Average read+write bandwidth summing Lustre llite and NFS byte counters over the job when both are present. An Insufficient Data reason on this metric means the job failed the telemetry coverage gate, not that FSIO totals were missing.",
+      "Average read+write bandwidth summing Lustre llite, NFS, and BeeGFS byte counters over the job when present. An Insufficient Data reason on this metric means the job failed the telemetry coverage gate, not that FSIO totals were missing.",
     researcherUse:
-      "Checkpoint and post-processing I/O; compare with Lustre/NFS summary subplots for time structure.",
+      "Checkpoint and post-processing I/O; compare with Lustre/NFS/BeeGFS summary subplots for time structure.",
   },
   avg_ibbw: {
     description:
@@ -299,6 +299,30 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
     researcherUse:
       "Burst small-file or metadata-heavy NFS phases.",
   },
+  detail_fsio_beegfs_read_mb: {
+    description:
+      "Total BeeGFS client vfs_read_bytes delta over the job window (MB), for job-detail FSIO.",
+    researcherUse:
+      "Parallel file read volume on BeeGFS when beegfs_client telemetry is present.",
+  },
+  detail_fsio_beegfs_write_mb: {
+    description:
+      "Total BeeGFS client vfs_write_bytes delta over the job window (MB), for job-detail FSIO.",
+    researcherUse:
+      "Parallel file write volume on BeeGFS when beegfs_client telemetry is present.",
+  },
+  detail_fsio_beegfs_peak_mb_s: {
+    description:
+      "Peak aggregate BeeGFS client MB/s over the job: maximum over sample times of (read MB/s + write MB/s), each summed across hosts, using the same BeeGFS byte counters as the summary plot.",
+    researcherUse:
+      "Short burst read/write load on BeeGFS versus long-window totals.",
+  },
+  detail_fsio_beegfs_peak_iops: {
+    description:
+      "Peak aggregate BeeGFS client metadata IOPS: maximum over sample times of summed beegfs_client arc rates for the same metadata event set as the summary beegfs_iops panel.",
+    researcherUse:
+      "Burst metadata load (creates, stats, readdirs) versus steady streaming on BeeGFS.",
+  },
   avg_gpuutil: {
     description:
       "GPU utilization % for the job: same value as detail GPU mean % (SQL aggregate over per-device averages, not a trimmed time-series mean).",
@@ -325,7 +349,7 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   max_mds: {
     description:
-      "Peak shared-filesystem metadata or client operation rate (Lustre llite ops and/or NFS ops), in operations per second.",
+      "Peak shared-filesystem metadata or client operation rate (Lustre llite ops, NFS ops, and/or BeeGFS vfs_*_ops), in operations per second.",
     researcherUse:
       "Metadata storms alongside I/O-bound diagnosis (file-per-rank, small writes, directory-heavy scripts).",
   },
@@ -741,6 +765,24 @@ const SUMMARY_PLOT_METRIC_METADATA = {
       "NFS client read plus write operation rate from READ_ops and WRITE_ops, per second (Lustre metadata IOPS is plotted separately).",
     researcherUse:
       "NFS operation-heavy phases versus byte-heavy streaming.",
+  },
+  beegfs_read_mb_s: {
+    description:
+      "BeeGFS client read bandwidth from vfs_read_bytes deltas, in MB/s (Lustre and NFS are plotted separately).",
+    researcherUse:
+      "BeeGFS read load for workflows not on Lustre/NFS; compare with sibling shared-filesystem subplots in mixed setups.",
+  },
+  beegfs_write_mb_s: {
+    description:
+      "BeeGFS client write bandwidth from vfs_write_bytes deltas, in MB/s (Lustre and NFS are plotted separately).",
+    researcherUse:
+      "BeeGFS write load alongside Lustre/NFS when both appear.",
+  },
+  beegfs_iops: {
+    description:
+      "BeeGFS client metadata operation rate from summed vfs_*_ops counters (open, close, getattr, and related), per second.",
+    researcherUse:
+      "BeeGFS metadata-heavy phases (small files, directory storms) versus bulk read/write.",
   },
   ibbw: {
     description:

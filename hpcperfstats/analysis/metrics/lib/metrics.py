@@ -113,6 +113,9 @@ from hpcperfstats.analysis.metrics.lib.job_detail_fsio import (
     compute_job_detail_fsio_metric_rows,
     fsio_job_detail_catalog,
 )
+from hpcperfstats.analysis.metrics.lib.beegfs_metadata_iops_events import (
+    BEEGFS_METADATA_IOPS_EVENTS,
+)
 from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
     LLITE_METADATA_IOPS_EVENTS,
 )
@@ -978,7 +981,7 @@ _COMPLEX_NO_DATA_REASONS = {
     "avg_packetsize": "No usable InfiniBand/OPA telemetry for packet size",
     "max_fabricbw": "No usable fabric telemetry for peak bandwidth",
     "max_lnetbw": "No usable LNET telemetry for peak bandwidth",
-    "max_mds": "No usable Lustre/NFS telemetry for metadata/operation rate",
+    "max_mds": "No usable Lustre/NFS/BeeGFS telemetry for metadata/operation rate",
     "max_packetrate": "No usable fabric telemetry for peak packet rate",
     "max_opa_congestion_rate": "No usable OPA congestion telemetry",
     "max_numa_remote_rate": "No usable NUMA remote-access telemetry",
@@ -3875,19 +3878,19 @@ class Metrics():
     rows_cache: Any | None = None,
   ) -> Any:
     """
-    Shared filesystem IOPS from Lustre llite and NFS operation counters.
-    
+    Shared filesystem IOPS from Lustre llite, NFS, and BeeGFS operation counters.
+
     Returns summed contribution from available sources and a representative
       type.
-    
+
     Args:
       jt (Any): Jt passed to this helper.
       cache (Any | None): One of ``Any``, ``None``.
       rows_cache (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> Metrics()._job_arc_avg_sharedfs_iops(None, None, None)  # doctest: +SKIP
     """
@@ -3917,6 +3920,18 @@ class Metrics():
     if nfs is not None:
       total += nfs
       used.append("nfs")
+    beegfs = self.job_arc(
+        jt,
+        typename="beegfs_client",
+        events=list(BEEGFS_METADATA_IOPS_EVENTS),
+        conv=1,
+        units="iops",
+        cache=cache,
+        rows_cache=rows_cache,
+    )
+    if beegfs is not None:
+      total += beegfs
+      used.append("beegfs")
     if not used:
       return None, None
     return total, used[0]
@@ -3928,19 +3943,19 @@ class Metrics():
     rows_cache: Any | None = None,
   ) -> Any:
     """
-    Shared filesystem bandwidth from Lustre llite and NFS byte counters.
-    
+    Shared filesystem bandwidth from Lustre llite, NFS, and BeeGFS byte counters.
+
     Returns summed contribution from available sources and a representative
       type.
-    
+
     Args:
       jt (Any): Jt passed to this helper.
       cache (Any | None): One of ``Any``, ``None``.
       rows_cache (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> Metrics()._job_arc_avg_sharedfs_bw(None, None, None)  # doctest: +SKIP
     """
@@ -3975,6 +3990,18 @@ class Metrics():
     if nfs is not None:
       total += nfs
       used.append("nfs")
+    beegfs = self.job_arc(
+        jt,
+        typename="beegfs_client",
+        events=["vfs_read_bytes", "vfs_write_bytes"],
+        conv=conv,
+        units="MB/s",
+        cache=cache,
+        rows_cache=rows_cache,
+    )
+    if beegfs is not None:
+      total += beegfs
+      used.append("beegfs")
     if not used:
       return None, None
     return total, used[0]
@@ -5062,19 +5089,19 @@ class max_lnetbw():
 
 class max_mds():
   """
-  Maximum Lustre MDS operations (iops) from llite vfs_*_ops (dual-read legacy).
+  Maximum shared-FS metadata/ops rate from llite, NFS, and BeeGFS counters.
   """
 
   def compute_metric(self, u: Any) -> Any:
     """
     Compute the metric.
-    
+
     Args:
       u (Any): U passed to this helper.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> max_mds().compute_metric(None)  # doctest: +SKIP
     """
@@ -5116,6 +5143,33 @@ class max_mds():
         fin = ratio[np.isfinite(ratio)]
         if fin.size > 0:
           max_mds = max(max_mds, fin.max())
+    beegfs_typename = "beegfs_client"
+    beegfs_schema, beegfs_stats, beegfs_resolved = resolve_get_type(
+        u, type_probe_names(beegfs_typename))
+    beegfs_cols = list(BEEGFS_METADATA_IOPS_EVENTS)
+    if beegfs_schema is not None and _schema_has_events_for_type(
+        beegfs_schema, beegfs_resolved or beegfs_typename, *beegfs_cols
+    ):
+      col_idx = [
+          _schema_event_index(
+              beegfs_schema, beegfs_resolved or beegfs_typename, c)
+          for c in beegfs_cols
+      ]
+      cluster_peak = _peak_interval_rate_from_cluster_mean(
+          u, beegfs_resolved or beegfs_typename, col_idx, 1)
+      if cluster_peak is not None:
+        max_mds = max(max_mds, cluster_peak)
+        typename = beegfs_typename
+      for hostname, stats in beegfs_stats.items():
+        mds_sum = None
+        for idx in col_idx:
+          col = stats[:, idx]
+          mds_sum = col if mds_sum is None else mds_sum + col
+        mds_diff = _per_interval_rate(mds_sum, u.t)
+        fin = mds_diff[np.isfinite(mds_diff)]
+        if fin.size > 0:
+          max_mds = max(max_mds, fin.max())
+          typename = beegfs_typename
     if max_mds == 0:
       return None, typename, 'iops'
     value = max_mds

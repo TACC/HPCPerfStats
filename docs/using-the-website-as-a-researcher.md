@@ -115,8 +115,8 @@ On the page, rows are grouped under source subsections in fixed order **CPU → 
 | ---------- | ----------- | ------------------ | --------------------------------------- |
 | `avg_blockbw` | Average local block-device throughput | Mean local block-device throughput | High values indicate local scratch/checkpoint pressure; unexpected nonzero can reveal spill to local disk. |
 | `avg_cpuusage` | Average CPU cores in use | Job-total busy cores (sum of per-host means from user/system/nice); compare with allocated `ncores`. Rows from older pipelines may still be mean-per-host until metrics recompute. | Low vs allocated cores suggests under-subscription, waiting, serialization, or I/O/network stalls. |
-| `avg_sharedfs_iops` | Average shared filesystem operation rate | Mean shared filesystem metadata/op rate (Lustre + NFS summed when both present). Insufficient Data here is a coverage gate, not “no FSIO”. | High with low MB/s points to small-file metadata bottlenecks. |
-| `avg_sharedfs_bw` | Average shared filesystem read+write bandwidth | Mean shared filesystem bandwidth (Lustre + NFS summed when both present). Insufficient Data here is a coverage gate, not “no FSIO”. | Sustained high values indicate file I/O-heavy phases; correlate with runtime spikes/checkpoint windows. |
+| `avg_sharedfs_iops` | Average shared filesystem operation rate | Mean shared filesystem metadata/op rate (Lustre + NFS + BeeGFS summed when present). Insufficient Data here is a coverage gate, not “no FSIO”. | High with low MB/s points to small-file metadata bottlenecks. |
+| `avg_sharedfs_bw` | Average shared filesystem read+write bandwidth | Mean shared filesystem bandwidth (Lustre + NFS + BeeGFS summed when present). Insufficient Data here is a coverage gate, not “no FSIO”. | Sustained high values indicate file I/O-heavy phases; correlate with runtime spikes/checkpoint windows. |
 | `avg_ibbw` | Average high-speed fabric bandwidth | Mean InfiniBand/fabric byte throughput | High values with modest FLOP rate imply communication-heavy behavior<sup>[15](#ref-15)</sup>. |
 | `avg_fabric_mb_per_gflops` | Fabric traffic per floating-point work | Fabric MB per GFLOP | Communication intensity relative to compute; rising with scale often means weaker scaling efficiency. |
 | `avg_tensor_active` | Average GPU tensor-pipe activity | Mean lumped tensor pipeline activity (prefer IMMA/HMMA/DFMA splits when present) | Low on expected tensor workloads suggests kernels not reaching tensor paths. |
@@ -148,6 +148,10 @@ On the page, rows are grouped under source subsections in fixed order **CPU → 
 | `detail_fsio_nfs_write_mb` | Total NFS client write volume | Total NFS write MB | Aggregate client-side write volume for NFS-backed paths. |
 | `detail_fsio_nfs_peak_mb_s` | Peak NFS client read+write rate | Peak aggregate NFS client MB/s (shown alongside Lustre when both have data) | Short burst NFS throughput; dual NFS+Lustre rows appear when both clients report volume. |
 | `detail_fsio_nfs_peak_iops` | Peak NFS client I/O operation rate | Peak aggregate NFS read/write op rate (alongside Lustre when both present) | Burst small-file or metadata-heavy NFS phases. |
+| `detail_fsio_beegfs_read_mb` | Total BeeGFS client read volume | Total BeeGFS read MB | Aggregate client-side read volume for BeeGFS-backed paths. |
+| `detail_fsio_beegfs_write_mb` | Total BeeGFS client write volume | Total BeeGFS write MB | Aggregate client-side write volume for BeeGFS-backed paths. |
+| `detail_fsio_beegfs_peak_mb_s` | Peak BeeGFS client read+write rate | Peak aggregate BeeGFS client MB/s | Short burst BeeGFS throughput versus job-total MB. |
+| `detail_fsio_beegfs_peak_iops` | Peak BeeGFS client metadata operation rate | Peak aggregate BeeGFS metadata IOPS | Burst metadata load (creates, stats, readdirs) on BeeGFS. |
 | `avg_gpuutil` | Job GPU utilization (aggregate) | Same aggregate as `detail_gpu_util_mean` when both exist (duplicate row hidden in UI) | Core accelerator utilization KPI; low values indicate feed/scheduling inefficiency. |
 | `job_cpu_gpu_watt_hours` | CPU+GPU watt-hours for job (CPU watt-hours when no GPUs) | ∫ estimated node power over time, summed across hosts (Wh); GPU included when present | Top of Resources when CPU power fragments exist; title omits +GPU when `gpu_count` is absent/zero; energy budget for the run. |
 | `avg_packetsize` | Mean fabric packet payload size | Mean network packet size | Small average packet sizes imply metadata/collective chatter overhead. |
@@ -210,7 +214,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 
 ### 6.4 Resources panel (FSIO + GPU summary + logs)
 
-- Diagnostic use: rapid verification of I/O volume, burst peaks, and GPU occupancy before deep plotting. Lustre and NFS resource rows can both appear when both clients have data for the job.
+- Diagnostic use: rapid verification of I/O volume, burst peaks, and GPU occupancy before deep plotting. Lustre, NFS, and BeeGFS resource rows can all appear when each client has data for the job.
 - Recommendation: if FS totals or **Peak MB/s** / **Peak IOPS** are high, check `FS MB/s`, `FS IOPS`, `MDS peak`, and LNET metrics for bottleneck type; this is usually an I/O bottleneck triage path<sup>[11](#ref-11)</sup>. GPU statistics sit above the log buttons so you scan filesystem and accelerator context together before opening logs.
 
 ### 6.5 Execution and hosts tab
@@ -325,6 +329,7 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-07-30 | Metrics tab: source subsections CPU → GPU → File System → Network → Misc; Memory/NUMA under CPU; always-show Network; hide empty GPU/FS/Misc. |
 | 2026-07-31 | Resources GPU inventory: one row per device when ingest stores `dev`; legacy empty-`dev` jobs show node-aggregate note (not “per GPU”). |
 | 2026-07-31 | Resources/Metrics Card chrome: Watt hours → GPU Information (inventory collapsed) → Shared File Systems → logs; Metrics subsections in Cards. |
+| 2026-08-14 | BeeGFS added to Resources Shared File Systems / `detail_fsio_beegfs_*` / Summary BeeGFS panels; `avg_sharedfs_*` and `max_mds` include BeeGFS when present. |
 | 2026-08-06 | Processes tab columns: Peak VM, HWM, Stack, Text, Libs, Threads (dropped RSS/Size from visible set). |
 | 2026-08-07 | Processes Peak VM/HWM (and Stack/Text/Libs) documented as job-level high water via ingest GREATEST across samples. |
 | 2026-08-07 | Processes tab no longer shows UID (API may still include `uid`; display-only hide). |

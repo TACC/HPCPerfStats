@@ -42,6 +42,11 @@ from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
     begin_summary_aggregate_counting,
     end_summary_aggregate_counting,
 )
+from hpcperfstats.analysis.metrics.lib.beegfs_metadata_iops_events import (
+    BEEGFS_METADATA_IOPS_EVENTS,
+    BEEGFS_READ_BYTES_EVENTS,
+    BEEGFS_WRITE_BYTES_EVENTS,
+)
 from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
     LLITE_METADATA_IOPS_EVENTS,
 )
@@ -539,6 +544,30 @@ _SUMMARY_SINGLE_SPECS = [
         "NFS write [MB/s]",
     ),
     ("host_nfs", "arc", ["read_ops", "write_ops"], "nfs_iops", 1.0, "NFS IOPS [#/s]"),
+    (
+        "beegfs_client",
+        "arc",
+        list(BEEGFS_READ_BYTES_EVENTS),
+        "beegfs_read_mb_s",
+        _BYTES_TO_MB,
+        "BeeGFS read [MB/s]",
+    ),
+    (
+        "beegfs_client",
+        "arc",
+        list(BEEGFS_WRITE_BYTES_EVENTS),
+        "beegfs_write_mb_s",
+        _BYTES_TO_MB,
+        "BeeGFS write [MB/s]",
+    ),
+    (
+        "beegfs_client",
+        "arc",
+        list(BEEGFS_METADATA_IOPS_EVENTS),
+        "beegfs_iops",
+        1.0,
+        "BeeGFS IOPS [#/s]",
+    ),
     ("host_cpu", "arc", ["user", "system", "nice"], "cpu", 0.01,
      "CPU [#cores]"),
     ("nvidia_gpu", "value", ["gpu_util"], "nv_gpu_util", 1, "GPU util [%]"),
@@ -677,6 +706,9 @@ _SUMMARY_ALLOW_PARTIAL_NULL = frozenset({
     "nfs_read_mb_s",
     "nfs_write_mb_s",
     "nfs_iops",
+    "beegfs_read_mb_s",
+    "beegfs_write_mb_s",
+    "beegfs_iops",
 })
 
 # Merged for scaling/context only; not rendered as its own subplot.
@@ -1302,7 +1334,11 @@ def _summary_plot_order_key(metric_name: Any) -> Any:
       "nfs_read_mb_s": 810,
       "nfs_write_mb_s": 813,
       "nfs_iops": 816,
-      # --- 10) Network ---
+      # --- 10) BeeGFS ---
+      "beegfs_read_mb_s": 820,
+      "beegfs_write_mb_s": 823,
+      "beegfs_iops": 826,
+      # --- 11) Network ---
       "ibbw": 900,
       "opa_wait_cong": 930,
       "opa_ecn": 940,
