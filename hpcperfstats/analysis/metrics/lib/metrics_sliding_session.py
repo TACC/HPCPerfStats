@@ -176,6 +176,7 @@ def run_metrics_sliding_session(
   on_stall_reset: Any | None = None,
   on_poll_hygiene_fn: Any | None = None,
   empty_supplement_sleep_s: float = 0.05,
+  on_supplements_taken: Any | None = None,
 ) -> list[dict[str, Any]]:
   """
   Pool-sized sliding metrics+prewarm session with sample-count idle-slot fill.
@@ -207,8 +208,10 @@ def run_metrics_sliding_session(
     abort_if_pool_dead_fn (Any | None): Optional pool-death checker.
     on_stall_reset (Any | None): Called after stall soft-fail.
     on_poll_hygiene_fn (Any | None): Optional zero-arg callback for throttled
-    ``[main]`` zombie reap each poll loop.
+        ``[main]`` zombie reap each poll loop.
     empty_supplement_sleep_s (float): Sleep when waiting with empty fill.
+    on_supplements_taken (Any | None): Optional ``(n: int) -> None`` after
+        each non-empty ready-queue supplement pop (scheduler dequeue counters).
 
   Returns:
     list[dict[str, Any]]: Per-ref results with keys ``ref``, ``ok``,
@@ -407,6 +410,11 @@ def run_metrics_sliding_session(
       )
       if not taken:
         break
+      if callable(on_supplements_taken):
+        try:
+          on_supplements_taken(len(taken))
+        except Exception:
+          pass
       for ref in taken:
         _submit_metrics(ref, is_original=False)
         filled = True

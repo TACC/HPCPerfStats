@@ -111,16 +111,13 @@ UPDATE_METRICS_PROCESS_TITLE = "update_metrics.py"
 
 from django.db import close_old_connections, connections, transaction
 from django.utils import timezone as django_timezone
-from django.db.models import BooleanField, Count, Exists, F, IntegerField, Max, Min, OuterRef, Q, Subquery, Value
+from django.db.models import BooleanField, Count, Exists, IntegerField, Max, Min, OuterRef, Q, Subquery, Value
 from django.db.models.query import QuerySet
 from django.db.models.functions import Coalesce
 from django.db.utils import OperationalError, DatabaseError
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.analysis.metrics.lib import metrics
-from hpcperfstats.analysis.metrics.lib.live_host_sample_count import (
-    live_distinct_host_time_count_expression,
-)
 from hpcperfstats.analysis.metrics.lib.metrics import (
     INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
     abort_if_metrics_pool_workers_dead,
@@ -145,6 +142,7 @@ from hpcperfstats.dbload.lib.shutdown_utils import (
 from hpcperfstats.site.lib.machine.job_plot_artifacts import (
     JOB_PLOT_KINDS,
     JOB_PLOT_LAYOUT_NORMAL,
+    get_live_distinct_time_count_for_jid,
     persist_job_plot_artifacts_for_jid,
 )
 from hpcperfstats.site.lib.machine.job_detail_artifacts import (
@@ -1979,12 +1977,11 @@ def _pg_session_statement_timeout_for_metrics_batch() -> Iterator[Any]:
   
     queries.
   
-  ``_jobs_queryset`` annotated scans (metrics subqueries, live distinct-time
-    counts,
-  and PostgreSQL-only plot/detail fingerprint probes)
-  can exceed the default session ``statement_timeout`` (often 2 minutes). Keyset
-  pagination must not fall back to offset slicing on timeout — that repeats the
-  same expensive SQL. Restore the configured timeout when the block exits.
+  ``_jobs_queryset`` annotated scans (cheap metrics subqueries) and Phase A2
+  page live-distinct / Phase B fingerprint probes can exceed the default
+  session ``statement_timeout`` (often 2 minutes). Keyset pagination must not
+  fall back to offset slicing on timeout — that repeats the same expensive SQL.
+  Restore the configured timeout when the block exits.
   
   Yields:
     Iterator[Any]: Open return polymorphism from
@@ -2292,11 +2289,13 @@ def _metrics_day_listed_count(
   rerun: Any,
 ) -> int:
   """
-  Count jobs the Phase A listing predicate would return for one calendar day.
+  Count jobs the cheap Phase A listing predicate would return for one day.
 
-  Uses ``_jobs_queryset`` only (metrics gates) — never fingerprint annotate —
-  so empty-pass census cannot re-trigger hot-day sha256 statement timeouts.
-  Artifact-only backlog is omitted from ``listed=`` (Phase B is separate).
+  Uses ``_jobs_queryset`` only (md/stale/gate-failure gates) — never
+  live_distinct annotate, Phase A2 catch-up, or fingerprint annotate — so
+  empty-pass census cannot re-trigger hot-day ``host_data`` / sha256
+  statement timeouts. ``listed=`` is metrics-incomplete + gate-failure
+  candidates, not live-refresh or artifact-only backlog.
 
   Args:
     sched_date (Any): Calendar day passed to ``_jobs_queryset``.
@@ -2592,9 +2591,10 @@ def _jobs_queryset(date: Any, min_time: Any, rerun: Any) -> Any:
   """
   Phase A listing: jobs ending on ``date`` that need a metrics pass.
 
-  Newest first (``-end_time``, ``-jid``). Does **not** embed plot/detail
-  sha256 fingerprints in the keyset SQL — artifact catch-up is Phase B
-  (``_jobs_queryset_artifact_catchup`` + per-page FP checks).
+  Newest first (``-end_time``, ``-jid``). Keyset SQL uses **cheap** metrics
+  gates only (``md_count`` / ``stale_null`` / gate-failure ``Exists``). Does
+  **not** embed correlated ``live_distinct`` ``host_data`` aggregates or
+  plot/detail sha256 fingerprints — those are Phase A2 and Phase B.
 
   Args:
     date (Any): Calendar day (or datetime) for ``end_time`` half-open bounds.
@@ -2626,7 +2626,11 @@ def _jobs_queryset(date: Any, min_time: Any, rerun: Any) -> Any:
 
 def _annotate_metrics_listing_gates(qs: Any) -> tuple[Any, Any]:
   """
-  Annotate metrics completeness / live-distinct gates used by Phase A and B.
+  Annotate cheap metrics completeness gates used by Phase A / A2 / B keysets.
+
+  Intentionally omits correlated ``live_distinct_host_time_count_expression``
+  (hot-day statement timeouts). Live vs persisted distinct is Phase A2
+  (``_page_rows_needing_live_distinct_refresh``).
 
   Args:
     qs (Any): ``job_data`` queryset already bounded to one calendar day.
@@ -2663,47 +2667,31 @@ def _annotate_metrics_listing_gates(qs: Any) -> tuple[Any, Any]:
       stale_null=Coalesce(stale_count_sq, int0),
   )
   need_metrics = Q(md_count__lt=expected) | Q(stale_null__gt=0)
-  maybe_live_distinct = Q(md_count__gte=expected) & Q(stale_null=0)
-  gate_failure_recheck = maybe_live_distinct & Exists(
+  maybe_complete = Q(md_count__gte=expected) & Q(stale_null=0)
+  gate_failure_recheck = maybe_complete & Exists(
       metrics_data.objects.filter(
           jid_id=OuterRef("jid"),
           no_data_reason=INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
       )
   )
   need_metrics |= gate_failure_recheck
-  if connections["default"].vendor == "postgresql":
-    annotated = annotated.annotate(
-        live_distinct_time_count=live_distinct_host_time_count_expression(
-            _host_name_suffix(),
-        ),
-    )
-    live_distinct_needs_refresh = (
-        maybe_live_distinct
-        & Q(metrics_distinct_time_count__isnull=False)
-        & Q(live_distinct_time_count__gt=F("metrics_distinct_time_count"))
-    )
-    need_metrics |= live_distinct_needs_refresh
   return annotated, need_metrics
 
 
-def _jobs_queryset_artifact_catchup(date: Any, min_time: Any) -> Any:
+def _jobs_queryset_metrics_complete(date: Any, min_time: Any) -> Any:
   """
-  Phase B keyset: metrics-complete jobs that are not in Phase A.
-
-  SQL stays free of plot/detail ``encode(sha256…)``. Per-page Python /
-  bounded FP annotate decides ``artifact_only``
-  (``_page_rows_needing_artifact_refresh``).
+  Metrics-complete day queryset (cheap gates) for Phase A2 / Phase B keysets.
 
   Args:
     date (Any): Calendar day for ``end_time`` half-open bounds.
     min_time (Any): Minimum runtime seconds.
 
   Returns:
-    Any: Django queryset (empty on non-PostgreSQL).
+    Any: Django queryset (empty on non-PostgreSQL), ordered newest-first.
 
   Examples:
-    >>> # Catch-up listing is PostgreSQL-only (same as prior FP annotate).
-    >>> "postgresql" == "postgresql"
+    >>> # Shared base for live-distinct and artifact catch-up pages.
+    >>> "a2" != "b"
     True
   """
   if connections["default"].vendor != "postgresql":
@@ -2719,6 +2707,91 @@ def _jobs_queryset_artifact_catchup(date: Any, min_time: Any) -> Any:
   return annotated.annotate(
       artifact_only_candidate=Value(False, output_field=BooleanField()),
   ).filter(metrics_complete & ~need_metrics).order_by("-end_time", "-jid")
+
+
+def _jobs_queryset_live_distinct_catchup(date: Any, min_time: Any) -> Any:
+  """
+  Phase A2 keyset: metrics-complete jobs (live distinct checked per page).
+
+  Args:
+    date (Any): Calendar day for ``end_time`` half-open bounds.
+    min_time (Any): Minimum runtime seconds.
+
+  Returns:
+    Any: Django queryset (empty on non-PostgreSQL).
+
+  Examples:
+    >>> # Page filter uses get_live_distinct_time_count_for_jid.
+    >>> callable(get_live_distinct_time_count_for_jid)
+    True
+  """
+  return _jobs_queryset_metrics_complete(date, min_time)
+
+
+def _jobs_queryset_artifact_catchup(date: Any, min_time: Any) -> Any:
+  """
+  Phase B keyset: metrics-complete jobs that are not in Phase A.
+
+  SQL stays free of plot/detail ``encode(sha256…)`` and live_distinct
+  ``host_data`` aggregates. Per-page Python / bounded FP annotate decides
+  ``artifact_only`` (``_page_rows_needing_artifact_refresh``).
+
+  Args:
+    date (Any): Calendar day for ``end_time`` half-open bounds.
+    min_time (Any): Minimum runtime seconds.
+
+  Returns:
+    Any: Django queryset (empty on non-PostgreSQL).
+
+  Examples:
+    >>> # Catch-up listing is PostgreSQL-only (same as prior FP annotate).
+    >>> "postgresql" == "postgresql"
+    True
+  """
+  return _jobs_queryset_metrics_complete(date, min_time)
+
+
+def _page_rows_needing_live_distinct_refresh(rows: Any) -> list[Any]:
+  """
+  Keep Phase A2 page rows whose live distinct exceeds persisted count.
+
+  Uses ``get_live_distinct_time_count_for_jid`` per jid on the page
+  (``≤ CHUNK_SIZE``) — never embeds correlated live distinct in day keyset SQL.
+
+  Args:
+    rows (Any): ``values_list`` tuples
+        ``(jid, end_time, start_time, artifact_only, nhosts, host_list)``.
+
+  Returns:
+    list[Any]: Subset of ``rows`` that still need a metrics refresh.
+
+  Examples:
+    >>> _page_rows_needing_live_distinct_refresh([])
+    []
+  """
+  if not rows:
+    return []
+  jids = [row[0] for row in rows]
+  persisted: dict[Any, Any] = {}
+  for jid, cnt in job_data.objects.filter(jid__in=jids).values_list(
+      "jid",
+      "metrics_distinct_time_count",
+  ):
+    persisted[jid] = cnt
+  out: list[Any] = []
+  for row in rows:
+    jid = row[0]
+    stored = persisted.get(jid)
+    if stored is None:
+      continue
+    try:
+      live = int(get_live_distinct_time_count_for_jid(str(jid)))
+      stored_i = int(stored)
+    except (TypeError, ValueError):
+      continue
+    if live > stored_i:
+      out.append(row)
+  return out
 
 
 def _page_rows_needing_artifact_refresh(rows: Any) -> list[Any]:
@@ -2933,6 +3006,58 @@ def _iter_chunked_pks_artifact_catchup(
       yield chunk, total
 
 
+def _iter_chunked_pks_live_distinct_catchup(
+  queryset: Any,
+  chunk_size: int,
+) -> Iterator[Any]:
+  """
+  Keyset-paginate Phase A2 jobs and yield live-stale metrics candidates.
+
+  Args:
+    queryset (Any): Phase A2 queryset from
+        ``_jobs_queryset_live_distinct_catchup``.
+    chunk_size (int): Page size (same as Phase A ``CHUNK_SIZE``).
+
+  Yields:
+    Iterator[Any]: ``(candidate_refs, total_so_far)`` pairs.
+
+  Examples:
+    >>> list(_iter_chunked_pks_live_distinct_catchup(
+    ...     job_data.objects.none(), 10))
+    []
+  """
+  total = 0
+  last_end_time = None
+  last_jid = None
+  while True:
+    page_qs = queryset
+    if last_end_time is not None and last_jid is not None:
+      page_qs = page_qs.filter(
+          Q(end_time__lt=last_end_time) | (
+              Q(end_time=last_end_time) & Q(jid__lt=last_jid)
+          )
+      )
+    with _pg_local_readiness_timeouts():
+      rows = list(
+          page_qs.values_list(
+              "jid",
+              "end_time",
+              "start_time",
+              "artifact_only_candidate",
+              "nhosts",
+              "host_list",
+          )[:chunk_size]
+      )
+    if not rows:
+      break
+    last_jid, last_end_time = rows[-1][0], rows[-1][1]
+    needed = _page_rows_needing_live_distinct_refresh(rows)
+    if needed:
+      chunk = _chunk_rows_to_candidate_refs(needed)
+      total += len(chunk)
+      yield chunk, total
+
+
 def _iter_date_listing_pks(
   date: Any,
   min_time: Any,
@@ -2940,7 +3065,7 @@ def _iter_date_listing_pks(
   chunk_size: int = CHUNK_SIZE,
 ) -> Iterator[Any]:
   """
-  Two-phase day listing: metrics candidates, then artifact catch-up.
+  Three-phase day listing: cheap metrics, live-distinct A2, artifact catch-up.
 
   Args:
     date (Any): Calendar day for listing.
@@ -2949,7 +3074,7 @@ def _iter_date_listing_pks(
     chunk_size (int): Keyset page size.
 
   Yields:
-    Iterator[Any]: ``(candidate_refs, total_so_far)`` across both phases.
+    Iterator[Any]: ``(candidate_refs, total_so_far)`` across all phases.
 
   Examples:
     >>> isinstance(CHUNK_SIZE, int)
@@ -2965,12 +3090,25 @@ def _iter_date_listing_pks(
   if connections["default"].vendor != "postgresql":
     return
   # Unit-test stubs replace ``_jobs_queryset`` with non-QuerySet fakes;
-  # skip Phase B there so host mocks never open a DB connection.
+  # skip Phase A2/B there so host mocks never open a DB connection.
   if not isinstance(phase_a_qs, QuerySet):
     return
+  live_seen: set[Any] = set()
+  for chunk, _phase_total in _iter_chunked_pks_live_distinct_catchup(
+      _jobs_queryset_live_distinct_catchup(date, min_time), chunk_size
+  ):
+    for ref in chunk:
+      live_seen.add(ref.jid)
+    total += len(chunk)
+    yield chunk, total
   for chunk, _phase_total in _iter_chunked_pks_artifact_catchup(
       _jobs_queryset_artifact_catchup(date, min_time), chunk_size
   ):
+    if live_seen:
+      filtered = [ref for ref in chunk if ref.jid not in live_seen]
+      if not filtered:
+        continue
+      chunk = filtered
     total += len(chunk)
     yield chunk, total
 
@@ -5778,6 +5916,7 @@ def _compute_jid_outcomes_sliding(
   progress_callback: Any | None,
   ready_queue: Any | None,
   ready_queue_lock: Any | None,
+  on_supplements_taken: Any | None = None,
 ) -> Any:
   """
   Sliding metrics+prewarm session with optional ready-queue idle-slot fill.
@@ -5795,6 +5934,8 @@ def _compute_jid_outcomes_sliding(
     progress_callback (Any | None): Mid-session progress callback.
     ready_queue (Any | None): Ready queue for supplements.
     ready_queue_lock (Any | None): Lock guarding the ready queue.
+    on_supplements_taken (Any | None): Optional ``(n: int) -> None`` for
+        ready-queue dequeue / inflight accounting.
 
   Returns:
     Any: Sorted per-jid scheduler outcome dicts.
@@ -5914,6 +6055,7 @@ def _compute_jid_outcomes_sliding(
       on_poll_hygiene_fn=lambda: _maybe_reap_metrics_main_zombie_children(
           context="sliding_session_poll",
       ),
+      on_supplements_taken=on_supplements_taken,
   )
   # Run artifact-only prewarms on the same pool path (closed small batch).
   if artifact_as_metrics_done and not shutdown_requested[0]:
@@ -5990,6 +6132,7 @@ def _compute_jid_outcomes_batch(
   heartbeat: Any | None = None,
   ready_queue: Any | None = None,
   ready_queue_lock: Any | None = None,
+  on_supplements_taken: Any | None = None,
 ) -> Any:
   """
   Run one compute session (closed Metrics.run or sliding feeder) then prewarm.
@@ -6016,6 +6159,8 @@ def _compute_jid_outcomes_batch(
     heartbeat (Any | None): Optional ``_ComputeBatchHeartbeat``.
     ready_queue (Any | None): Optional ready queue for idle-slot fill.
     ready_queue_lock (Any | None): Lock guarding ``ready_queue``.
+    on_supplements_taken (Any | None): Optional ``(n: int) -> None`` for
+        ready-queue dequeue / inflight accounting during sliding fill.
 
   Returns:
     Any: Sorted per-jid scheduler outcome dicts.
@@ -6096,6 +6241,7 @@ def _compute_jid_outcomes_batch(
         progress_callback=_hb_progress,
         ready_queue=ready_queue,
         ready_queue_lock=ready_queue_lock,
+        on_supplements_taken=on_supplements_taken,
     )
 
   metrics_run_outcomes = []
@@ -6738,6 +6884,28 @@ def update_metrics_for_dates(
               stats, scheduler_shared_lock,
           )
           compute_batch_heartbeat.begin(len(job_refs))
+          batch_dequeued = [len(job_refs)]
+
+          def _on_supplements_taken(n: int) -> None:
+            """
+            Bump dequeue/inflight when idle-slot pops from ``ready_queue``.
+
+            Args:
+              n (int): Number of supplement refs taken.
+
+            Returns:
+              None
+
+            Examples:
+              >>> _on_supplements_taken(0)  # doctest: +SKIP
+            """
+            if n <= 0:
+              return
+            with scheduler_shared_lock:
+              stats["ready_dequeued_total"] += int(n)
+              stats["inflight_jids"] += int(n)
+              batch_dequeued[0] += int(n)
+
           with phase_timer.phase("metrics_compute_s"):
             succeeded_jids = []
             failed_count = 0
@@ -6752,6 +6920,7 @@ def update_metrics_for_dates(
                   heartbeat=compute_batch_heartbeat,
                   ready_queue=ready_queue,
                   ready_queue_lock=ready_queue_lock,
+                  on_supplements_taken=_on_supplements_taken,
               )
             finally:
               compute_batch_heartbeat.clear()
@@ -6830,7 +6999,9 @@ def update_metrics_for_dates(
             stats["per_jid_fallback_failures_total"] += fallback_failed
             stats["worker_failed_outcomes_total"] += worker_failed_outcomes
             stats["parent_persist_failures_total"] += parent_persist_failures
-            stats["inflight_jids"] = max(0, stats["inflight_jids"] - len(job_refs))
+            stats["inflight_jids"] = max(
+                0, stats["inflight_jids"] - int(batch_dequeued[0]),
+            )
             proc_total = stats["processed"]
             fail_total = stats["failed"]
             attempted_total = stats["attempted_total"]

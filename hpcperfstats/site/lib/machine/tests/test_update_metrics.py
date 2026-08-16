@@ -765,46 +765,32 @@ def test_end_time_calendar_day_half_open_bounds_span_one_day():
 
 @pytest.mark.django_db(databases=[])
 @pytest.mark.machine_unit_mock
-def test_jobs_queryset_postgresql_sql_jid_scoped_live_samples(monkeypatch):
-  """Non-rerun + PostgreSQL: live sum uses jid + window (Phase A, no sha256 FP)."""
-  monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
-  _patch_connections_vendor(monkeypatch, "postgresql")
-  update_metrics._expected_job_metrics_row_count.cache_clear()
-  d = datetime(2025, 4, 10, 15, 30, 0)
-  qs = update_metrics._jobs_queryset(d, 300, rerun=False)
-  sql = str(qs.query).lower()
-  full_sql = str(qs.query)
-  # Default live path is jid-scoped (not host_list unnest in live subquery).
-  assert 'h."jid" = "job_data"."jid"' in full_sql
-  assert "group by" in sql
-  assert "sum(" in sql
-  assert "metrics_distinct_time_count" in sql
-  # Phase A keyset must not embed plot/detail sha256 fingerprints.
-  assert "encode(sha256" not in sql
-  assert "job_plot_artifact" not in sql
-  assert "job_detail_artifact" not in sql
-  assert "multiprecision_mix" not in sql
-
-
-@pytest.mark.django_db(databases=[])
-@pytest.mark.machine_unit_mock
-def test_jobs_queryset_listing_sql_omits_sha256_fingerprint(monkeypatch):
-  """Hot-day listing Phase A SQL must omit encode(sha256) plot/detail FPs."""
+def test_jobs_queryset_listing_sql_omits_live_distinct_and_sha256(monkeypatch):
+  """Hot-day Phase A keyset omits live_distinct host_data SQL and sha256 FPs."""
   monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
   _patch_connections_vendor(monkeypatch, "postgresql")
   update_metrics._expected_job_metrics_row_count.cache_clear()
   d = datetime(2026, 8, 15, 12, 0, 0)
   qs = update_metrics._jobs_queryset(d, 300, rerun=False)
   sql = str(qs.query).lower()
+  full_sql = str(qs.query)
   assert "encode(sha256" not in sql
   assert "convert_to(" not in sql or "sha256" not in sql
   assert "md_count" in sql or "metrics_data" in sql
+  assert "job_plot_artifact" not in sql
+  assert "job_detail_artifact" not in sql
+  assert "count(distinct" not in sql
+  assert 'h."jid" = "job_data"."jid"' not in full_sql
+  assert "live_distinct_time_count" not in sql
+  assert "unnest" not in sql
 
 
 @pytest.mark.django_db(databases=[])
 @pytest.mark.machine_unit_mock
-def test_jobs_queryset_artifact_catchup_sql_omits_sha256(monkeypatch):
-  """Phase B metrics-complete keyset also omits sha256 (FP checked per page)."""
+def test_jobs_queryset_artifact_catchup_sql_omits_live_distinct_and_sha256(
+  monkeypatch,
+):
+  """Phase B metrics-complete keyset omits live_distinct and sha256."""
   monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
   _patch_connections_vendor(monkeypatch, "postgresql")
   update_metrics._expected_job_metrics_row_count.cache_clear()
@@ -813,48 +799,38 @@ def test_jobs_queryset_artifact_catchup_sql_omits_sha256(monkeypatch):
   sql = str(qs.query).lower()
   assert "encode(sha256" not in sql
   assert "job_plot_artifact" not in sql
+  assert "count(distinct" not in sql
+  assert "live_distinct_time_count" not in sql
 
 
 @pytest.mark.django_db(databases=[])
 @pytest.mark.machine_unit_mock
-def test_jobs_queryset_postgresql_live_subquery_correlates_outer_job_row(monkeypatch):
-  """Scalar subquery references outer job_data columns; OuterRef is not a bind param."""
+def test_jobs_queryset_live_distinct_catchup_sql_omits_host_data_distinct(
+  monkeypatch,
+):
+  """Phase A2 keyset is metrics-complete cheap gates only (no host_data distinct)."""
   monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
   _patch_connections_vendor(monkeypatch, "postgresql")
   update_metrics._expected_job_metrics_row_count.cache_clear()
-  d = datetime(2025, 4, 10, 15, 30, 0)
-  qs = update_metrics._jobs_queryset(d, 300, rerun=False)
-  sql = str(qs.query)
-  assert 'h."jid" = "job_data"."jid"' in sql
-  assert 'h.time >= "job_data"."start_time"' in sql
-  assert 'h.time <= "job_data"."end_time"' in sql
-
-
-@pytest.mark.django_db(databases=[])
-@pytest.mark.machine_unit_mock
-def test_jobs_queryset_postgresql_legacy_live_uses_unnest(monkeypatch):
-  """Optional legacy mode restores unnest(host_list) live SQL."""
-  monkeypatch.setenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", "1")
-  _patch_connections_vendor(monkeypatch, "postgresql")
-  update_metrics._expected_job_metrics_row_count.cache_clear()
-  d = datetime(2025, 4, 10, 15, 30, 0)
-  qs = update_metrics._jobs_queryset(d, 300, rerun=False)
-  sql = str(qs.query)
-  assert 'unnest("job_data"."host_list")' in sql
-  assert 'h.time >= "job_data"."start_time"' in sql
-  assert 'h.time <= "job_data"."end_time"' in sql
+  d = datetime(2026, 8, 15, 12, 0, 0)
+  qs = update_metrics._jobs_queryset_live_distinct_catchup(d, 300)
+  sql = str(qs.query).lower()
+  assert "count(distinct" not in sql
+  assert "live_distinct_time_count" not in sql
+  assert "metrics_data" in sql
 
 
 @pytest.mark.django_db(databases=[])
 @pytest.mark.machine_unit_mock
 def test_jobs_queryset_non_postgresql_omits_unnest_live_samples(monkeypatch):
-  """Non-PostgreSQL: skip live sample annotation (no unnest)."""
+  """Non-PostgreSQL Phase A stays free of unnest / live distinct SQL."""
   _patch_connections_vendor(monkeypatch, "sqlite")
   update_metrics._expected_job_metrics_row_count.cache_clear()
   d = datetime(2025, 4, 10, 15, 30, 0)
   qs = update_metrics._jobs_queryset(d, 300, rerun=False)
   sql = str(qs.query).lower()
   assert "unnest" not in sql
+  assert "count(distinct" not in sql
 
 
 @pytest.mark.django_db(databases=[])
@@ -872,8 +848,8 @@ def test_jobs_queryset_annotates_artifact_only_candidate(monkeypatch):
 
 @pytest.mark.django_db(databases=[])
 @pytest.mark.machine_unit_mock
-def test_jobs_queryset_keeps_metrics_and_live_distinct_gates(monkeypatch):
-  """Phase A retains md/stale/gate/live_distinct metrics selection."""
+def test_jobs_queryset_keeps_cheap_metrics_gates_without_live_distinct(monkeypatch):
+  """Phase A retains md/stale/gate-failure selection; live_distinct is Phase A2."""
   from hpcperfstats.analysis.metrics.lib.metrics import (
       INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
   )
@@ -886,8 +862,8 @@ def test_jobs_queryset_keeps_metrics_and_live_distinct_gates(monkeypatch):
   sql = str(qs.query)
   assert INSUFFICIENT_DATA_FOR_METRICS_PROCESSING in sql
   assert "no_data_reason" in sql.lower()
-  assert "metrics_distinct_time_count" in sql.lower()
-  assert 'h."jid" = "job_data"."jid"' in sql
+  assert "live_distinct_time_count" not in sql.lower()
+  assert "count(distinct" not in sql.lower()
 
 
 @pytest.mark.django_db(databases=[])
@@ -904,6 +880,41 @@ def test_jobs_queryset_includes_gate_failure_recheck(monkeypatch):
   sql = str(qs.query)
   assert INSUFFICIENT_DATA_FOR_METRICS_PROCESSING in sql
   assert "no_data_reason" in sql.lower()
+
+
+@pytest.mark.machine_unit_mock
+def test_page_rows_needing_live_distinct_refresh_keeps_stale(monkeypatch):
+  """Phase A2 page filter keeps jids where live distinct exceeds persisted."""
+  et = datetime(2026, 8, 15, 18, 0, 0, tzinfo=timezone.utc)
+  st = et - timedelta(hours=1)
+  rows = [
+      ("live-stale", et, st, False, 2, ["h1", "h2"]),
+      ("live-fresh", et, st, False, 1, ["h1"]),
+      ("no-persisted", et, st, False, 1, ["h1"]),
+  ]
+
+  class _Vals:
+    def values_list(self, *args, **kwargs):
+      del args, kwargs
+      return [
+          ("live-stale", 10),
+          ("live-fresh", 20),
+          ("no-persisted", None),
+      ]
+
+  class _Mgr:
+    def filter(self, **kwargs):
+      del kwargs
+      return _Vals()
+
+  monkeypatch.setattr(update_metrics.job_data, "objects", _Mgr())
+  monkeypatch.setattr(
+      update_metrics,
+      "get_live_distinct_time_count_for_jid",
+      lambda jid: {"live-stale": 15, "live-fresh": 20, "no-persisted": 5}[jid],
+  )
+  kept = update_metrics._page_rows_needing_live_distinct_refresh(rows)
+  assert [row[0] for row in kept] == ["live-stale"]
 
 
 @pytest.mark.machine_unit_mock
@@ -956,8 +967,8 @@ def test_jobs_queryset_still_lists_artifact_only_via_phase_b(monkeypatch):
 
 @pytest.mark.django_db(databases=[])
 @pytest.mark.machine_unit_mock
-def test_census_listed_avoids_fingerprint_sql(monkeypatch):
-  """Census listed= uses Phase A queryset (no sha256 artifact annotate)."""
+def test_census_listed_avoids_live_distinct_and_fingerprint_sql(monkeypatch):
+  """Census listed= uses cheap Phase A only (no live_distinct / sha256)."""
   monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
   _patch_connections_vendor(monkeypatch, "postgresql")
   update_metrics._expected_job_metrics_row_count.cache_clear()
@@ -965,17 +976,22 @@ def test_census_listed_avoids_fingerprint_sql(monkeypatch):
   sql = str(update_metrics._jobs_queryset(d, 300, rerun=False).query).lower()
   assert "encode(sha256" not in sql
   assert "job_plot_artifact" not in sql
-  # Documented contract: listed count is Phase A only.
+  assert "count(distinct" not in sql
+  assert "live_distinct_time_count" not in sql
   src = inspect.getsource(update_metrics._metrics_day_listed_count)
   assert "_jobs_queryset(" in src
   assert "_jobs_queryset_artifact_catchup" not in src
+  assert "_jobs_queryset_live_distinct_catchup" not in src
 
 
 @pytest.mark.machine_unit_mock
-def test_iter_date_listing_pks_runs_phase_a_then_phase_b(monkeypatch):
-  """Two-phase listing yields metrics chunks then artifact_only catch-up."""
+def test_iter_date_listing_pks_runs_phase_a_a2_then_phase_b(monkeypatch):
+  """Listing yields Phase A, then live-distinct A2, then artifact Phase B."""
   phase_a = [
       ([SimpleNamespace(jid="m1", artifact_only=False)], 1),
+  ]
+  phase_a2 = [
+      ([SimpleNamespace(jid="live1", artifact_only=False)], 1),
   ]
   phase_b = [
       ([SimpleNamespace(jid="a1", artifact_only=True)], 1),
@@ -987,6 +1003,11 @@ def test_iter_date_listing_pks_runs_phase_a_then_phase_b(monkeypatch):
     calls.append("a")
     yield from phase_a
 
+  def _live(qs, chunk_size):
+    del qs, chunk_size
+    calls.append("a2")
+    yield from phase_a2
+
   def _catchup(qs, chunk_size):
     del qs, chunk_size
     calls.append("b")
@@ -994,12 +1015,19 @@ def test_iter_date_listing_pks_runs_phase_a_then_phase_b(monkeypatch):
 
   monkeypatch.setattr(update_metrics, "_iter_chunked_pks", _chunked)
   monkeypatch.setattr(
+      update_metrics, "_iter_chunked_pks_live_distinct_catchup", _live
+  )
+  monkeypatch.setattr(
       update_metrics, "_iter_chunked_pks_artifact_catchup", _catchup
   )
-  # Real empty QuerySets so Phase B is not skipped by the stub guard.
   monkeypatch.setattr(
       update_metrics,
       "_jobs_queryset",
+      lambda *a, **k: update_metrics.job_data.objects.none(),
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset_live_distinct_catchup",
       lambda *a, **k: update_metrics.job_data.objects.none(),
   )
   monkeypatch.setattr(
@@ -1011,9 +1039,77 @@ def test_iter_date_listing_pks_runs_phase_a_then_phase_b(monkeypatch):
   out = list(update_metrics._iter_date_listing_pks(
       datetime(2026, 8, 15).date(), 300, False, 10
   ))
-  assert calls == ["a", "b"]
-  assert [chunk[0].jid for chunk, _t in out] == ["m1", "a1"]
-  assert out[1][0][0].artifact_only is True
+  assert calls == ["a", "a2", "b"]
+  assert [chunk[0].jid for chunk, _t in out] == ["m1", "live1", "a1"]
+  assert out[2][0][0].artifact_only is True
+
+
+@pytest.mark.machine_unit_mock
+def test_sliding_supplements_invoke_on_supplements_taken(monkeypatch):
+  """Idle-slot pops notify caller so ready_dequeued/inflight stay honest."""
+  from collections import deque
+
+  from hpcperfstats.analysis.metrics.lib import metrics_sliding_session as mss
+
+  ready = deque([
+      SimpleNamespace(jid="sup1", estimated_sample_count=5),
+  ])
+  taken_counts = []
+
+  class _Ready:
+    def __init__(self, payload):
+      self._payload = payload
+      self._ready = True
+
+    def ready(self):
+      return self._ready
+
+    def get(self, timeout=None):
+      del timeout
+      self._ready = False
+      return self._payload
+
+  class _Pool:
+    def apply_async(self, fn, args):
+      del fn
+      jid = args[1].jid if len(args) > 1 else args[0]
+      return _Ready({
+          "jid": jid,
+          "status": "ok",
+          "rows": [],
+          "distinct_time_count": 1,
+      })
+
+  def persist(payload):
+    return {
+        "jid": payload["jid"],
+        "ok": True,
+        "status": "ok",
+        "persist_s": 0.0,
+    }
+
+  mss.run_metrics_sliding_session(
+      primary_refs=[SimpleNamespace(jid="prim", estimated_sample_count=5)],
+      metrics_obj=object(),
+      shared_pool=_Pool(),
+      unwrap_fn=lambda a: a,
+      persist_fn=persist,
+      prewarm_worker_fn=lambda jid: {"jid": jid, "ok": True},
+      inline_prewarm_fn=None,
+      prewarm_mode="pipeline_required",
+      max_inflight=2,
+      poll_timeout_s=0.01,
+      stall_timeout_s=2.0,
+      ready_queue=ready,
+      ready_queue_lock=None,
+      soft_max=10000,
+      hard_max=80000,
+      supplement_enabled=True,
+      empty_supplement_sleep_s=0.0,
+      on_supplements_taken=lambda n: taken_counts.append(n),
+  )
+  assert taken_counts == [1]
+  assert len(ready) == 0
 
 
 def test_expected_job_metrics_row_count_cached(monkeypatch):
