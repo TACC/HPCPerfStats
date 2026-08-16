@@ -764,8 +764,9 @@ def test_end_time_calendar_day_half_open_bounds_span_one_day():
 
 
 @pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
 def test_jobs_queryset_postgresql_sql_jid_scoped_live_samples(monkeypatch):
-  """Non-rerun + PostgreSQL: live sum uses jid + window (default path)."""
+  """Non-rerun + PostgreSQL: live sum uses jid + window (Phase A, no sha256 FP)."""
   monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
   _patch_connections_vendor(monkeypatch, "postgresql")
   update_metrics._expected_job_metrics_row_count.cache_clear()
@@ -773,22 +774,49 @@ def test_jobs_queryset_postgresql_sql_jid_scoped_live_samples(monkeypatch):
   qs = update_metrics._jobs_queryset(d, 300, rerun=False)
   sql = str(qs.query).lower()
   full_sql = str(qs.query)
-  # Default live path is jid-scoped (not host_list unnest in live subquery);
-  # unrelated unnest() may appear in plot fingerprint host ordering.
+  # Default live path is jid-scoped (not host_list unnest in live subquery).
   assert 'h."jid" = "job_data"."jid"' in full_sql
   assert "group by" in sql
   assert "sum(" in sql
   assert "metrics_distinct_time_count" in sql
-  assert "encode(sha256" in sql
-  assert "job_plot_artifact" in sql
-  assert "job_detail_artifact" in sql
-  assert "multiprecision_mix" in sql
-  # TypeDetailFreshFingerprintRowCount raw SQL must use the real FK column
-  # (db_column="jid"), not Django's jid_id ORM suffix.
-  assert 't."jid" = "job_data"."jid"' in str(qs.query)
+  # Phase A keyset must not embed plot/detail sha256 fingerprints.
+  assert "encode(sha256" not in sql
+  assert "job_plot_artifact" not in sql
+  assert "job_detail_artifact" not in sql
+  assert "multiprecision_mix" not in sql
 
 
 @pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
+def test_jobs_queryset_listing_sql_omits_sha256_fingerprint(monkeypatch):
+  """Hot-day listing Phase A SQL must omit encode(sha256) plot/detail FPs."""
+  monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  d = datetime(2026, 8, 15, 12, 0, 0)
+  qs = update_metrics._jobs_queryset(d, 300, rerun=False)
+  sql = str(qs.query).lower()
+  assert "encode(sha256" not in sql
+  assert "convert_to(" not in sql or "sha256" not in sql
+  assert "md_count" in sql or "metrics_data" in sql
+
+
+@pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
+def test_jobs_queryset_artifact_catchup_sql_omits_sha256(monkeypatch):
+  """Phase B metrics-complete keyset also omits sha256 (FP checked per page)."""
+  monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  d = datetime(2026, 8, 15, 12, 0, 0)
+  qs = update_metrics._jobs_queryset_artifact_catchup(d, 300)
+  sql = str(qs.query).lower()
+  assert "encode(sha256" not in sql
+  assert "job_plot_artifact" not in sql
+
+
+@pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
 def test_jobs_queryset_postgresql_live_subquery_correlates_outer_job_row(monkeypatch):
   """Scalar subquery references outer job_data columns; OuterRef is not a bind param."""
   monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
@@ -803,6 +831,7 @@ def test_jobs_queryset_postgresql_live_subquery_correlates_outer_job_row(monkeyp
 
 
 @pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
 def test_jobs_queryset_postgresql_legacy_live_uses_unnest(monkeypatch):
   """Optional legacy mode restores unnest(host_list) live SQL."""
   monkeypatch.setenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", "1")
@@ -817,6 +846,7 @@ def test_jobs_queryset_postgresql_legacy_live_uses_unnest(monkeypatch):
 
 
 @pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
 def test_jobs_queryset_non_postgresql_omits_unnest_live_samples(monkeypatch):
   """Non-PostgreSQL: skip live sample annotation (no unnest)."""
   _patch_connections_vendor(monkeypatch, "sqlite")
@@ -828,18 +858,40 @@ def test_jobs_queryset_non_postgresql_omits_unnest_live_samples(monkeypatch):
 
 
 @pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
 def test_jobs_queryset_annotates_artifact_only_candidate(monkeypatch):
+  """Phase A still exposes artifact_only_candidate (always false for metrics path)."""
   _patch_connections_vendor(monkeypatch, "postgresql")
   update_metrics._expected_job_metrics_row_count.cache_clear()
   d = datetime(2025, 4, 10, 15, 30, 0)
   qs = update_metrics._jobs_queryset(d, 300, rerun=False)
   sql = str(qs.query)
   assert "artifact_only_candidate" in sql
-  assert "job_plot_artifact" in sql
-  assert "job_detail_artifact" in sql
+  assert "job_plot_artifact" not in sql
 
 
 @pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
+def test_jobs_queryset_keeps_metrics_and_live_distinct_gates(monkeypatch):
+  """Phase A retains md/stale/gate/live_distinct metrics selection."""
+  from hpcperfstats.analysis.metrics.lib.metrics import (
+      INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
+  )
+
+  monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  d = datetime(2025, 4, 10, 15, 30, 0)
+  qs = update_metrics._jobs_queryset(d, 300, rerun=False)
+  sql = str(qs.query)
+  assert INSUFFICIENT_DATA_FOR_METRICS_PROCESSING in sql
+  assert "no_data_reason" in sql.lower()
+  assert "metrics_distinct_time_count" in sql.lower()
+  assert 'h."jid" = "job_data"."jid"' in sql
+
+
+@pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
 def test_jobs_queryset_includes_gate_failure_recheck(monkeypatch):
   from hpcperfstats.analysis.metrics.lib.metrics import (
       INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
@@ -852,6 +904,116 @@ def test_jobs_queryset_includes_gate_failure_recheck(monkeypatch):
   sql = str(qs.query)
   assert INSUFFICIENT_DATA_FOR_METRICS_PROCESSING in sql
   assert "no_data_reason" in sql.lower()
+
+
+@pytest.mark.machine_unit_mock
+def test_jobs_queryset_still_lists_artifact_only_via_phase_b(monkeypatch):
+  """Metrics-complete missing-plot job is selected as artifact_only in Phase B."""
+  et = datetime(2026, 8, 15, 18, 0, 0, tzinfo=timezone.utc)
+  st = et - timedelta(hours=1)
+  rows = [("art-missing", et, st, False, 2, ["h1", "h2"])]
+  kept = [("art-missing", et, st, True, 2, ["h1", "h2"])]
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_page_rows_needing_artifact_refresh",
+      lambda page_rows: kept if page_rows == rows else [],
+  )
+
+  class _FakeQs:
+    def __init__(self):
+      self._pages = 0
+
+    def filter(self, *args, **kwargs):
+      del args, kwargs
+      return self
+
+    def values_list(self, *args, **kwargs):
+      del args, kwargs
+      return self
+
+    def __getitem__(self, item):
+      del item
+      self._pages += 1
+      if self._pages > 1:
+        return []
+      return rows
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_pg_local_readiness_timeouts",
+      lambda: contextlib.nullcontext(),
+  )
+  out = list(
+      update_metrics._iter_chunked_pks_artifact_catchup(_FakeQs(), 10)
+  )
+  assert len(out) == 1
+  refs, total = out[0]
+  assert total == 1
+  assert refs[0].jid == "art-missing"
+  assert refs[0].artifact_only is True
+
+
+@pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
+def test_census_listed_avoids_fingerprint_sql(monkeypatch):
+  """Census listed= uses Phase A queryset (no sha256 artifact annotate)."""
+  monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  d = datetime(2026, 8, 15, 12, 0, 0)
+  sql = str(update_metrics._jobs_queryset(d, 300, rerun=False).query).lower()
+  assert "encode(sha256" not in sql
+  assert "job_plot_artifact" not in sql
+  # Documented contract: listed count is Phase A only.
+  src = inspect.getsource(update_metrics._metrics_day_listed_count)
+  assert "_jobs_queryset(" in src
+  assert "_jobs_queryset_artifact_catchup" not in src
+
+
+@pytest.mark.machine_unit_mock
+def test_iter_date_listing_pks_runs_phase_a_then_phase_b(monkeypatch):
+  """Two-phase listing yields metrics chunks then artifact_only catch-up."""
+  phase_a = [
+      ([SimpleNamespace(jid="m1", artifact_only=False)], 1),
+  ]
+  phase_b = [
+      ([SimpleNamespace(jid="a1", artifact_only=True)], 1),
+  ]
+  calls = []
+
+  def _chunked(qs, chunk_size):
+    del qs, chunk_size
+    calls.append("a")
+    yield from phase_a
+
+  def _catchup(qs, chunk_size):
+    del qs, chunk_size
+    calls.append("b")
+    yield from phase_b
+
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", _chunked)
+  monkeypatch.setattr(
+      update_metrics, "_iter_chunked_pks_artifact_catchup", _catchup
+  )
+  # Real empty QuerySets so Phase B is not skipped by the stub guard.
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda *a, **k: update_metrics.job_data.objects.none(),
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset_artifact_catchup",
+      lambda *a, **k: update_metrics.job_data.objects.none(),
+  )
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  out = list(update_metrics._iter_date_listing_pks(
+      datetime(2026, 8, 15).date(), 300, False, 10
+  ))
+  assert calls == ["a", "b"]
+  assert [chunk[0].jid for chunk, _t in out] == ["m1", "a1"]
+  assert out[1][0][0].artifact_only is True
 
 
 def test_expected_job_metrics_row_count_cached(monkeypatch):

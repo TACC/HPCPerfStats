@@ -72,12 +72,13 @@ Shared helpers (prefer these over copying bisect loops): `_iter_host_time_query_
 
 ## Candidate listing resilience (keyset pagination)
 
+- **Two-phase listing (mandatory on PostgreSQL):** Phase A ``_jobs_queryset`` keyset pages use metrics gates only (`md_count` / `stale_null` / gate-failure recheck / `live_distinct`) — **do not** call ``annotate_job_plots_artifacts_ready`` or embed ``encode(sha256…)`` plot/detail fingerprints in the day ``ORDER BY … LIMIT`` SQL. Phase B ``_jobs_queryset_artifact_catchup`` pages metrics-complete jobs (not in Phase A); ``_page_rows_needing_artifact_refresh`` applies cheap row-existence then **bounded** page FP compare. Wire both via ``_iter_date_listing_pks`` / ``_rebuild_date_listing_iter``.
 - **Listing `OperationalError` / `DatabaseError`:** catch around `_resume_or_next_pk_chunk` in `_fill_ready_queue` (same availability fatal path as strict readiness via `is_database_unavailable_error` → `log_and_raise_database_unavailable`). Transient cancels (e.g. `canceling statement due to statement timeout`) must **not** kill the readiness producer thread.
 - **Partial ready:** leave already-appended `local_ready` / ready-queue entries intact so today’s strict-ready jobs still enqueue when a **later** day’s keyset page times out (hs04 signature: `strict_ready_jids>0` with `ready_enqueued_total=0` before the fix).
-- **Per-day cooldown:** set `listing_cooldown_until` + `listing_needs_rebuild` on the failed day; do **not** mark `done=True`. Rebuild the iterator after cooldown via `_ensure_date_listing_iter` / `_jobs_queryset`.
+- **Per-day cooldown:** set `listing_cooldown_until` + `listing_needs_rebuild` on the failed day; do **not** mark `done=True`. Rebuild the iterator after cooldown via `_ensure_date_listing_iter` / `_iter_date_listing_pks`.
 - **Producer safety net:** unexpected exceptions escaping `_fill_ready_queue` must flush partial `local_ready`, set ``stall_reason=listing_query_failed`` + ``stall_exit_triggered=1``, and exit the producer (documented in `docs/TESTING.md`).
-- **Census:** `empty_pass` / window census must log ``census_error:{Type}:{truncated message}`` (include `statement timeout`), not type-only tokens.
-- **Forbidden:** “fix” by raising portal `db_statement_timeout_ms` alone; treating `/pub` `outcome=abandoned` pool recycle as this failure.
+- **Census:** `empty_pass` / window census ``listed=`` must use Phase A ``_jobs_queryset`` only (no fingerprint annotate); log ``census_error:{Type}:{truncated message}`` (include `statement timeout`), not type-only tokens.
+- **Forbidden:** “fix” by raising portal `db_statement_timeout_ms` alone; treating `/pub` `outcome=abandoned` pool recycle as this failure; reintroducing sha256 FP annotate into Phase A/B keyset SQL.
 
 ## Tests (same task)
 

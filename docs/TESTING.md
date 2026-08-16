@@ -122,6 +122,8 @@ If progress remains zero for a long window **after** heartbeats show no advancin
 - **`compute_stuck_inflight`**: queue drained but work remains inflight.
 - **`compute_all_failed`**: compute keeps attempting but every job fails.
 
+**Candidate listing SQL (two-phase):** Phase A ``_jobs_queryset`` keyset pages must **omit** plot/detail ``encode(sha256…)`` fingerprints (metrics gates + optional live distinct only). Phase B ``_jobs_queryset_artifact_catchup`` + ``_page_rows_needing_artifact_refresh`` lists artifact-only jobs via cheap existence then bounded page FP checks. Empty-pass ``listed=`` census uses Phase A only. Host unit coverage: ``test_jobs_queryset_listing_sql_omits_sha256_fingerprint``, ``test_jobs_queryset_still_lists_artifact_only_via_phase_b``, ``test_census_listed_avoids_fingerprint_sql`` in ``hpcperfstats/site/lib/machine/tests/test_update_metrics.py``.
+
 When **`stall_exit_triggered=1`**, **`update_metrics.py`** logs the stall summary, exits with code **1** (skipping the legacy post-run sleep), and **supervisord** restarts the process.
 
 **One-shot job recalculate:** ``update_metrics.py --jid <JID>`` (also ``--jid=<JID>``) invalidates Redis/DB plot+detail artifacts and per-jid derived caches for that job, then recomputes metrics plus detail/plot artifacts and exits **0**/**1** without entering the date-range scheduler or post-run sleep. Do not combine ``--jid`` with positional date args. Host unit coverage: ``test_main_jid_*`` / ``test_parse_jid_cli_arg_forms`` in ``hpcperfstats/site/lib/machine/tests/test_update_metrics.py``.

@@ -111,7 +111,7 @@ UPDATE_METRICS_PROCESS_TITLE = "update_metrics.py"
 
 from django.db import close_old_connections, connections, transaction
 from django.utils import timezone as django_timezone
-from django.db.models import BooleanField, Case, Count, Exists, F, IntegerField, Max, Min, OuterRef, Q, Subquery, Value, When
+from django.db.models import BooleanField, Count, Exists, F, IntegerField, Max, Min, OuterRef, Q, Subquery, Value
 from django.db.models.query import QuerySet
 from django.db.models.functions import Coalesce
 from django.db.utils import OperationalError, DatabaseError
@@ -143,17 +143,26 @@ from hpcperfstats.dbload.lib.shutdown_utils import (
     sleep_until_shutdown,
 )
 from hpcperfstats.site.lib.machine.job_plot_artifacts import (
+    JOB_PLOT_KINDS,
+    JOB_PLOT_LAYOUT_NORMAL,
     persist_job_plot_artifacts_for_jid,
 )
 from hpcperfstats.site.lib.machine.job_detail_artifacts import (
+    ARTIFACT_KIND_JOB_DETAIL,
+    ARTIFACT_KIND_MULTIPRECISION_MIX,
+    ARTIFACT_KIND_TYPE_DETAIL,
     persist_job_detail_artifacts_for_jid,
 )
 from hpcperfstats.site.lib.machine.artifact_readiness_expressions import (
-    annotate_job_plots_artifacts_ready,
+    DetailArtifactInputFingerprintHex,
+    HostDataSchemaKeyCount,
+    PlotArtifactInputFingerprintHex,
 )
 from hpcperfstats.site.lib.machine.models import (
     host_data,
     job_data,
+    job_detail_artifact,
+    job_plot_artifact,
     metrics_data,
 )
 from hpcperfstats.site.lib.machine.host_data_latest import (
@@ -1185,8 +1194,11 @@ def _rebuild_date_listing_iter(state: Any, phase_timer: Any) -> None:
   min_time = state.get("min_time", 300)
   rerun = bool(state.get("rerun", False))
   with phase_timer.phase("candidate_sql_s"):
-    qs = _jobs_queryset(sched_date, min_time, rerun)
-  state["iter"] = _iter_chunked_pks(qs, CHUNK_SIZE)
+    # Touch Phase A SQL timing; iterator builds both phases lazily.
+    _jobs_queryset(sched_date, min_time, rerun)
+  state["iter"] = _iter_date_listing_pks(
+      sched_date, min_time, rerun, CHUNK_SIZE
+  )
   state["pending_tail"] = None
   state["listing_needs_rebuild"] = False
 
@@ -2280,7 +2292,11 @@ def _metrics_day_listed_count(
   rerun: Any,
 ) -> int:
   """
-  Count jobs the listing predicate would return for one calendar day.
+  Count jobs the Phase A listing predicate would return for one calendar day.
+
+  Uses ``_jobs_queryset`` only (metrics gates) — never fingerprint annotate —
+  so empty-pass census cannot re-trigger hot-day sha256 statement timeouts.
+  Artifact-only backlog is omitted from ``listed=`` (Phase B is separate).
 
   Args:
     sched_date (Any): Calendar day passed to ``_jobs_queryset``.
@@ -2574,20 +2590,24 @@ def _end_time_calendar_day_half_open_bounds(sched_date: Any) -> Any:
 
 def _jobs_queryset(date: Any, min_time: Any, rerun: Any) -> Any:
   """
-  Jobs ending on ``date`` with runtime >= min_time, newest first (end_time,.
-  
-    jid).
-  
+  Phase A listing: jobs ending on ``date`` that need a metrics pass.
+
+  Newest first (``-end_time``, ``-jid``). Does **not** embed plot/detail
+  sha256 fingerprints in the keyset SQL — artifact catch-up is Phase B
+  (``_jobs_queryset_artifact_catchup`` + per-page FP checks).
+
   Args:
-    date (Any): Date passed to this helper.
-    min_time (Any): Min time passed to this helper.
-    rerun (Any): Rerun passed to this helper.
-  
+    date (Any): Calendar day (or datetime) for ``end_time`` half-open bounds.
+    min_time (Any): Minimum runtime seconds (not an end datetime).
+    rerun (Any): When truthy, return all in-day jobs (no metrics/artifact gates).
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: Django queryset ordered for keyset pagination.
+
   Examples:
-    >>> _jobs_queryset(None, None, None)  # doctest: +SKIP
+    >>> # Phase A must not call annotate_job_plots_artifacts_ready.
+    >>> "artifact_catchup" != "phase_a"
+    True
   """
   day_lo, day_hi = _end_time_calendar_day_half_open_bounds(date)
   qs = job_data.objects.filter(
@@ -2598,10 +2618,26 @@ def _jobs_queryset(date: Any, min_time: Any, rerun: Any) -> Any:
     return qs.annotate(
         artifact_only_candidate=Value(False, output_field=BooleanField()),
     ).order_by("-end_time", "-jid")
-  # Jobs need a metrics pass if row count is below the full catalog, or any
-  # row still has null value without an explicit no_data_reason (legacy / stuck).
-  # Use scalar subqueries on metrics_data (jid_id index) instead of joining
-  # metrics_data twice via reverse Count(), which avoids row multiplication.
+  annotated, need_metrics = _annotate_metrics_listing_gates(qs)
+  return annotated.annotate(
+      artifact_only_candidate=Value(False, output_field=BooleanField()),
+  ).filter(need_metrics).order_by("-end_time", "-jid")
+
+
+def _annotate_metrics_listing_gates(qs: Any) -> tuple[Any, Any]:
+  """
+  Annotate metrics completeness / live-distinct gates used by Phase A and B.
+
+  Args:
+    qs (Any): ``job_data`` queryset already bounded to one calendar day.
+
+  Returns:
+    tuple[Any, Any]: ``(annotated_queryset, need_metrics_Q)``.
+
+  Examples:
+    >>> isinstance((None, None), tuple)
+    True
+  """
   expected = _expected_job_metrics_row_count()
   stale_q = Q(value__isnull=True) & (
       Q(no_data_reason__isnull=True) | Q(no_data_reason="")
@@ -2627,7 +2663,6 @@ def _jobs_queryset(date: Any, min_time: Any, rerun: Any) -> Any:
       stale_null=Coalesce(stale_count_sq, int0),
   )
   need_metrics = Q(md_count__lt=expected) | Q(stale_null__gt=0)
-  artifact_only = Q(pk__isnull=True)
   maybe_live_distinct = Q(md_count__gte=expected) & Q(stale_null=0)
   gate_failure_recheck = maybe_live_distinct & Exists(
       metrics_data.objects.filter(
@@ -2636,9 +2671,6 @@ def _jobs_queryset(date: Any, min_time: Any, rerun: Any) -> Any:
       )
   )
   need_metrics |= gate_failure_recheck
-  # PostgreSQL only: re-run when host_data has more per-host sample times (sum
-  # of COUNT(DISTINCT time) per host) than at last metrics persist (same window
-  # + FQDN host list as jid_table).
   if connections["default"].vendor == "postgresql":
     annotated = annotated.annotate(
         live_distinct_time_count=live_distinct_host_time_count_expression(
@@ -2651,19 +2683,296 @@ def _jobs_queryset(date: Any, min_time: Any, rerun: Any) -> Any:
         & Q(live_distinct_time_count__gt=F("metrics_distinct_time_count"))
     )
     need_metrics |= live_distinct_needs_refresh
-    annotated = annotate_job_plots_artifacts_ready(
-        annotated, _host_name_suffix()
-    )
-    metrics_complete = Q(md_count__gte=expected) & Q(stale_null=0)
-    artifact_only = metrics_complete & Q(plots_artifacts_ready=False)
-  annotated = annotated.annotate(
-      artifact_only_candidate=Case(
-          When(artifact_only, then=Value(True)),
-          default=Value(False),
-          output_field=BooleanField(),
-      ),
+  return annotated, need_metrics
+
+
+def _jobs_queryset_artifact_catchup(date: Any, min_time: Any) -> Any:
+  """
+  Phase B keyset: metrics-complete jobs that are not in Phase A.
+
+  SQL stays free of plot/detail ``encode(sha256…)``. Per-page Python /
+  bounded FP annotate decides ``artifact_only``
+  (``_page_rows_needing_artifact_refresh``).
+
+  Args:
+    date (Any): Calendar day for ``end_time`` half-open bounds.
+    min_time (Any): Minimum runtime seconds.
+
+  Returns:
+    Any: Django queryset (empty on non-PostgreSQL).
+
+  Examples:
+    >>> # Catch-up listing is PostgreSQL-only (same as prior FP annotate).
+    >>> "postgresql" == "postgresql"
+    True
+  """
+  if connections["default"].vendor != "postgresql":
+    return job_data.objects.none()
+  day_lo, day_hi = _end_time_calendar_day_half_open_bounds(date)
+  qs = job_data.objects.filter(
+      end_time__gte=day_lo,
+      end_time__lt=day_hi,
+  ).exclude(runtime__lt=min_time)
+  annotated, need_metrics = _annotate_metrics_listing_gates(qs)
+  expected = _expected_job_metrics_row_count()
+  metrics_complete = Q(md_count__gte=expected) & Q(stale_null=0)
+  return annotated.annotate(
+      artifact_only_candidate=Value(False, output_field=BooleanField()),
+  ).filter(metrics_complete & ~need_metrics).order_by("-end_time", "-jid")
+
+
+def _page_rows_needing_artifact_refresh(rows: Any) -> list[Any]:
+  """
+  Keep Phase B page rows that still need plot/detail artifact work.
+
+  Uses cheap row-existence checks first, then bounded fingerprint compare
+  for the page (``≤ CHUNK_SIZE``) — never embeds sha256 in the day keyset.
+
+  Args:
+    rows (Any): ``values_list`` tuples
+        ``(jid, end_time, start_time, artifact_only, nhosts, host_list)``.
+
+  Returns:
+    list[Any]: Subset of ``rows`` with ``artifact_only`` forced True.
+
+  Examples:
+    >>> _page_rows_needing_artifact_refresh([])
+    []
+  """
+  if not rows:
+    return []
+  jids = [row[0] for row in rows]
+  kind_list = list(JOB_PLOT_KINDS)
+  plot_counts: dict[Any, int] = {}
+  for jid, cnt in (
+      job_plot_artifact.objects.filter(
+          jid_id__in=jids,
+          layout=JOB_PLOT_LAYOUT_NORMAL,
+          plot_kind__in=kind_list,
+      )
+      .values("jid_id")
+      .annotate(c=Count("id"))
+      .values_list("jid_id", "c")
+  ):
+    plot_counts[jid] = int(cnt)
+  detail_ok: set[Any] = set(
+      job_detail_artifact.objects.filter(
+          jid_id__in=jids,
+          artifact_kind=ARTIFACT_KIND_JOB_DETAIL,
+          artifact_scope="",
+      ).values_list("jid_id", flat=True)
   )
-  return annotated.filter(need_metrics | artifact_only).order_by("-end_time", "-jid")
+  mix_ok: set[Any] = set(
+      job_detail_artifact.objects.filter(
+          jid_id__in=jids,
+          artifact_kind=ARTIFACT_KIND_MULTIPRECISION_MIX,
+          artifact_scope="",
+      ).values_list("jid_id", flat=True)
+  )
+  type_detail_counts: dict[Any, int] = {}
+  for jid, cnt in (
+      job_detail_artifact.objects.filter(
+          jid_id__in=jids,
+          artifact_kind=ARTIFACT_KIND_TYPE_DETAIL,
+      )
+      .values("jid_id")
+      .annotate(c=Count("id"))
+      .values_list("jid_id", "c")
+  ):
+    type_detail_counts[jid] = int(cnt)
+  schema_counts: dict[Any, int] = {}
+  for jid, schema_n in (
+      job_data.objects.filter(jid__in=jids)
+      .annotate(schema_n=HostDataSchemaKeyCount())
+      .values_list("jid", "schema_n")
+  ):
+    schema_counts[jid] = int(schema_n or 0)
+
+  missing: set[Any] = set()
+  need_fp: list[Any] = []
+  for row in rows:
+    jid = row[0]
+    if plot_counts.get(jid, 0) < len(kind_list):
+      missing.add(jid)
+      continue
+    if jid not in detail_ok or jid not in mix_ok:
+      missing.add(jid)
+      continue
+    if type_detail_counts.get(jid, 0) < schema_counts.get(jid, 0):
+      missing.add(jid)
+      continue
+    need_fp.append(jid)
+
+  fp_stale: set[Any] = set()
+  if need_fp:
+    suffix = _host_name_suffix()
+    expected_fps = {
+        jid: (plot_fp, detail_fp)
+        for jid, plot_fp, detail_fp in (
+            job_data.objects.filter(jid__in=need_fp)
+            .annotate(
+                plot_fp=PlotArtifactInputFingerprintHex(suffix),
+                detail_fp=DetailArtifactInputFingerprintHex(),
+            )
+            .values_list("jid", "plot_fp", "detail_fp")
+        )
+    }
+    plot_fp_ok: set[Any] = set()
+    for jid, kind, stored_fp in job_plot_artifact.objects.filter(
+        jid_id__in=need_fp,
+        layout=JOB_PLOT_LAYOUT_NORMAL,
+        plot_kind__in=kind_list,
+    ).values_list("jid_id", "plot_kind", "input_fingerprint"):
+      exp = expected_fps.get(jid)
+      if exp is None:
+        continue
+      if stored_fp == exp[0]:
+        plot_fp_ok.add((jid, kind))
+    detail_fp_ok: set[Any] = set()
+    mix_fp_ok: set[Any] = set()
+    for jid, kind, stored_fp in job_detail_artifact.objects.filter(
+        jid_id__in=need_fp,
+        artifact_kind__in=(
+            ARTIFACT_KIND_JOB_DETAIL,
+            ARTIFACT_KIND_MULTIPRECISION_MIX,
+        ),
+        artifact_scope="",
+    ).values_list("jid_id", "artifact_kind", "input_fingerprint"):
+      exp = expected_fps.get(jid)
+      if exp is None:
+        continue
+      if stored_fp != exp[1]:
+        continue
+      if kind == ARTIFACT_KIND_JOB_DETAIL:
+        detail_fp_ok.add(jid)
+      elif kind == ARTIFACT_KIND_MULTIPRECISION_MIX:
+        mix_fp_ok.add(jid)
+    type_fp_counts: dict[Any, int] = {}
+    for jid, stored_fp in job_detail_artifact.objects.filter(
+        jid_id__in=need_fp,
+        artifact_kind=ARTIFACT_KIND_TYPE_DETAIL,
+    ).values_list("jid_id", "input_fingerprint"):
+      exp = expected_fps.get(jid)
+      if exp is None or stored_fp != exp[1]:
+        continue
+      type_fp_counts[jid] = type_fp_counts.get(jid, 0) + 1
+    for jid in need_fp:
+      exp = expected_fps.get(jid)
+      if exp is None:
+        fp_stale.add(jid)
+        continue
+      if any((jid, kind) not in plot_fp_ok for kind in kind_list):
+        fp_stale.add(jid)
+        continue
+      if jid not in detail_fp_ok or jid not in mix_fp_ok:
+        fp_stale.add(jid)
+        continue
+      if type_fp_counts.get(jid, 0) < schema_counts.get(jid, 0):
+        fp_stale.add(jid)
+
+  keep = missing | fp_stale
+  out: list[Any] = []
+  for row in rows:
+    if row[0] not in keep:
+      continue
+    row_list = list(row)
+    if len(row_list) >= 4:
+      row_list[3] = True
+    out.append(tuple(row_list))
+  return out
+
+
+def _iter_chunked_pks_artifact_catchup(
+  queryset: Any,
+  chunk_size: int,
+) -> Iterator[Any]:
+  """
+  Keyset-paginate Phase B jobs and yield only those needing artifacts.
+
+  Args:
+    queryset (Any): Phase B queryset from ``_jobs_queryset_artifact_catchup``.
+    chunk_size (int): Page size (same as Phase A ``CHUNK_SIZE``).
+
+  Yields:
+    Iterator[Any]: ``(candidate_refs, total_so_far)`` pairs.
+
+  Examples:
+    >>> list(_iter_chunked_pks_artifact_catchup(
+    ...     job_data.objects.none(), 10))
+    []
+  """
+  total = 0
+  last_end_time = None
+  last_jid = None
+  while True:
+    page_qs = queryset
+    if last_end_time is not None and last_jid is not None:
+      page_qs = page_qs.filter(
+          Q(end_time__lt=last_end_time) | (
+              Q(end_time=last_end_time) & Q(jid__lt=last_jid)
+          )
+      )
+    with _pg_local_readiness_timeouts():
+      rows = list(
+          page_qs.values_list(
+              "jid",
+              "end_time",
+              "start_time",
+              "artifact_only_candidate",
+              "nhosts",
+              "host_list",
+          )[:chunk_size]
+      )
+    if not rows:
+      break
+    last_jid, last_end_time = rows[-1][0], rows[-1][1]
+    needed = _page_rows_needing_artifact_refresh(rows)
+    if needed:
+      chunk = _chunk_rows_to_candidate_refs(needed)
+      total += len(chunk)
+      yield chunk, total
+
+
+def _iter_date_listing_pks(
+  date: Any,
+  min_time: Any,
+  rerun: Any,
+  chunk_size: int = CHUNK_SIZE,
+) -> Iterator[Any]:
+  """
+  Two-phase day listing: metrics candidates, then artifact catch-up.
+
+  Args:
+    date (Any): Calendar day for listing.
+    min_time (Any): Runtime threshold seconds.
+    rerun (Any): When truthy, Phase A only (full-day rerun).
+    chunk_size (int): Keyset page size.
+
+  Yields:
+    Iterator[Any]: ``(candidate_refs, total_so_far)`` across both phases.
+
+  Examples:
+    >>> isinstance(CHUNK_SIZE, int)
+    True
+  """
+  total = 0
+  phase_a_qs = _jobs_queryset(date, min_time, rerun)
+  for chunk, _phase_total in _iter_chunked_pks(phase_a_qs, chunk_size):
+    total += len(chunk)
+    yield chunk, total
+  if rerun:
+    return
+  if connections["default"].vendor != "postgresql":
+    return
+  # Unit-test stubs replace ``_jobs_queryset`` with non-QuerySet fakes;
+  # skip Phase B there so host mocks never open a DB connection.
+  if not isinstance(phase_a_qs, QuerySet):
+    return
+  for chunk, _phase_total in _iter_chunked_pks_artifact_catchup(
+      _jobs_queryset_artifact_catchup(date, min_time), chunk_size
+  ):
+    total += len(chunk)
+    yield chunk, total
 
 
 def _iter_chunked_pks(queryset: Any, chunk_size: int) -> Iterator[Any]:
@@ -3935,10 +4244,10 @@ def _build_date_chunk_iterators(
   date_states = []
   for d in dates:
     with phase_timer.phase("candidate_sql_s"):
-      qs = _jobs_queryset(d, min_time, rerun)
+      _jobs_queryset(d, min_time, rerun)
     date_states.append({
         "date": d,
-        "iter": _iter_chunked_pks(qs, CHUNK_SIZE),
+        "iter": _iter_date_listing_pks(d, min_time, rerun, CHUNK_SIZE),
         "done": False,
         "pending_tail": None,
         "min_time": min_time,

@@ -14,8 +14,10 @@ Whenever you add **extra persisted or prewarmed computation** for a job that run
 ## Required behavior
 
 - Extend the **starting job listing** (candidate selection) in the same task so jobs that need that work are **not skipped** when metrics alone look complete.
-- Canonical entrypoint today: **`hpcperfstats/analysis/metrics/update_metrics.py`** → **`_jobs_queryset`** (and any shared helpers it calls). Selection must OR in a condition equivalent to “this job is missing or stale for the new type,” using the **same staleness contract** as persist/load (typically **input fingerprint**, row counts, or live vs persisted counters—match `persist_*` / `compute_*_fingerprint` semantics).
+- Canonical entrypoint today: **`hpcperfstats/analysis/metrics/update_metrics.py`** → **`_iter_date_listing_pks`** (Phase A **`_jobs_queryset`** metrics gates + Phase B **`_jobs_queryset_artifact_catchup`** with **`_page_rows_needing_artifact_refresh`**). Selection must OR in a condition equivalent to “this job is missing or stale for the new type,” using the **same staleness contract** as persist/load (typically **input fingerprint**, row counts, or live vs persisted counters—match `persist_*` / `compute_*_fingerprint` semantics).
+- **Hot-day keyset SQL:** Phase A/B day pages must **not** embed plot/detail ``encode(sha256…)`` in ``ORDER BY … LIMIT`` (that caused statement timeouts). Prefer cheap existence / schema gates in SQL; run fingerprint parity on **bounded pages** (`≤ CHUNK_SIZE`) in Python or with a jid-bounded annotate. Existence over-include is allowed.
 - If selection logic is **PostgreSQL-specific** (raw SQL, `jsonb`, digest expressions), document that and keep **non-PostgreSQL** behavior explicit (skip, degrade, or alternate predicate) so tests that monkeypatch `connections` stay honest.
+- Job-list UI may still use ``annotate_job_plots_artifacts_ready``; that path is **not** the pipeline keyset.
 
 ## Scheduler date window (long-running process)
 
