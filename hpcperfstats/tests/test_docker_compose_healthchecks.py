@@ -78,6 +78,21 @@ def test_docker_compose_rabbitmq_allows_large_monitor_messages():
   assert "max_message_size = 134217728" in conf_text
 
 
+def test_docker_compose_rabbitmq_defaults_to_classic_queue_type():
+  """Regression: RabbitMQ 4.x quorum default breaks classic-queue monitor/listend AMQP."""
+  repo_root = Path(__file__).resolve().parents[2]
+  compose_path = repo_root / "docker-compose.yaml"
+  content = compose_path.read_text()
+  conf_path = repo_root / "services-conf" / "rabbitmq_default_queue_type.conf"
+
+  assert (
+      "rabbitmq_default_queue_type.conf:/etc/rabbitmq/conf.d/25-default_queue_type.conf"
+      in content
+  )
+  conf_text = conf_path.read_text()
+  assert "default_queue_type = classic" in conf_text
+
+
 def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
