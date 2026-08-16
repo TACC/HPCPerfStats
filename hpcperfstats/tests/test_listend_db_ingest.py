@@ -564,3 +564,143 @@ def test_worker_main_configures_blas_before_numpy(monkeypatch):
   blas_env.configure_blas_thread_env()
   assert os.environ.get("OPENBLAS_NUM_THREADS") == "1"
   assert os.environ.get("OMP_NUM_THREADS") == "1"
+
+
+def test_pause_resume_wait_emits_no_transition_info(monkeypatch):
+  """Repeated pause/resume must not emit the former hot-path INFO spam."""
+  import hpcperfstats.listend as listend
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  _wire_fake_pool_bytes(pool, queued=999, budget=1000, per_worker=1000)
+  logs = []
+
+  monkeypatch.setattr(listend, "log_print", lambda *a, **k: logs.append(a[0] if a else ""))
+  monkeypatch.setattr(listend, "_live_db_ingest_pool_active", lambda: pool)
+  listend._db_backpressure_pause = False
+  listend._idle_monitor_stop_event.clear()
+
+  channel = type("C", (), {})()
+  channel.basic_nack = lambda delivery_tag=None, requeue=False: None
+  channel.stop_consuming = lambda: None
+
+  connection = type("Conn", (), {"is_closed": False})()
+  connection.process_data_events = lambda *a, **k: None
+
+  # Flap: pause → drain → resume → pause again (preserve counters across flaps).
+  for _ in range(3):
+    pool._byte_counts[0].value = 999
+    listend._request_db_backpressure_pause(channel, 1)
+    assert listend._db_backpressure_pause is True
+    pool._byte_counts[0].value = 100
+    assert listend._wait_for_db_backpressure_resume(connection) is True
+    assert listend._db_backpressure_pause is False
+
+  spam_needles = (
+      "pausing RabbitMQ consume",
+      "resuming RabbitMQ consume",
+  )
+  joined = "\n".join(str(x) for x in logs)
+  for needle in spam_needles:
+    assert needle not in joined
+  assert pool._counters["pause_enters"].value >= 3
+
+
+def test_idle_monitor_pause_s_closed_interval(monkeypatch):
+  """Closed pause intervals contribute integer pause_s on the idle suffix."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  _wire_fake_pool_bytes(pool, queued=0, budget=1000, per_worker=1000)
+
+  mono = {"t": 1000.0}
+  monkeypatch.setattr(ldi.time, "monotonic", lambda: mono["t"])
+
+  pool.note_pause_enter()
+  mono["t"] = 1012.5
+  pool.note_pause_exit()
+  suffix = pool.format_idle_monitor_suffix()
+  assert "pause_s=12" in suffix
+  assert "paused=0" in suffix
+  assert "pause_enters=1" in suffix
+
+  # Second window after reset starts at zero unless still paused.
+  suffix2 = pool.format_idle_monitor_suffix()
+  assert "pause_s=0" in suffix2
+  assert "paused=0" in suffix2
+
+
+def test_idle_monitor_pause_s_open_interval_and_window_reset(monkeypatch):
+  """In-progress pause counts at snapshot; reset keeps open interval going."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  _wire_fake_pool_bytes(pool, queued=0, budget=1000, per_worker=1000)
+
+  mono = {"t": 5000.0}
+  monkeypatch.setattr(ldi.time, "monotonic", lambda: mono["t"])
+
+  pool.note_pause_enter()
+  mono["t"] = 5045.0
+  pause_s, paused = pool.pause_seconds_snapshot()
+  assert paused == 1
+  assert pause_s == 45
+
+  suffix = pool.format_idle_monitor_suffix()
+  assert "pause_s=45" in suffix
+  assert "paused=1" in suffix
+
+  # Still paused after reset — next window should not include prior 45s.
+  mono["t"] = 5050.0
+  pause_s2, paused2 = pool.pause_seconds_snapshot()
+  assert paused2 == 1
+  assert pause_s2 == 5
+  suffix2 = pool.format_idle_monitor_suffix()
+  assert "pause_s=5" in suffix2
+  assert "paused=1" in suffix2
+
+
+def test_wait_connection_loss_does_not_note_pause_exit(monkeypatch):
+  """Connection drop while paused must leave the open pause interval open."""
+  import hpcperfstats.listend as listend
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  _wire_fake_pool_bytes(pool, queued=999, budget=1000, per_worker=1000)
+
+  mono = {"t": 100.0}
+  monkeypatch.setattr(ldi.time, "monotonic", lambda: mono["t"])
+  monkeypatch.setattr(listend, "_live_db_ingest_pool_active", lambda: pool)
+  listend._idle_monitor_stop_event.clear()
+  listend._db_backpressure_pause = False
+
+  channel = type("C", (), {})()
+  channel.basic_nack = lambda delivery_tag=None, requeue=False: None
+  channel.stop_consuming = lambda: None
+  listend._request_db_backpressure_pause(channel, 1)
+  assert pool._pause_started_mono is not None
+
+  connection = type("Conn", (), {"is_closed": True})()
+  assert listend._wait_for_db_backpressure_resume(connection) is False
+  assert pool._pause_started_mono is not None
+  listend._db_backpressure_pause = False

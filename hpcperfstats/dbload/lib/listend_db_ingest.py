@@ -843,6 +843,9 @@ class ListendDbIngestPool:
     _byte_locks: Attribute.
     _counters: Attribute.
     _ctx: Attribute.
+    _pause_seconds_window: Accumulated pause seconds in the current idle
+      monitor window (closed intervals only).
+    _pause_started_mono: Monotonic start of an open pause interval, or None.
     _queues: Attribute.
     _started: Attribute.
     _stop: Attribute.
@@ -910,6 +913,8 @@ class ListendDbIngestPool:
         name: self._ctx.Value("Q", 0) for name in _COUNTER_NAMES
     }
     self._started = False
+    self._pause_started_mono: float | None = None
+    self._pause_seconds_window = 0.0
     self._window_baseline = self.snapshot_counters()
 
   def start(self) -> None:
@@ -1125,17 +1130,66 @@ class ListendDbIngestPool:
 
   def note_pause_enter(self) -> None:
     """
-    Increment the pause-enter counter (once per stop_consuming transition).
-    
+    Record a consume-pause enter (once per False→True stop_consuming).
+
+    Increments ``pause_enters`` and opens a monotonic pause interval when one
+    is not already open (so reconnect while paused does not double-start).
+
     Returns:
       None
-    
+
     Examples:
       >>> ListendDbIngestPool(enabled=False).note_pause_enter()
     """
     if not self._started:
       return
     _inc_counter(self._counters, "pause_enters")
+    if self._pause_started_mono is None:
+      self._pause_started_mono = time.monotonic()
+
+  def note_pause_exit(self) -> None:
+    """
+    Close an open consume-pause interval and add elapsed time to the window.
+
+    Call only on a real resume (True→False). Do not call on connection-loss
+    abort while still paused — the open interval continues across reconnect.
+
+    Returns:
+      None
+
+    Examples:
+      >>> ListendDbIngestPool(enabled=False).note_pause_exit()
+    """
+    if not self._started:
+      return
+    started = self._pause_started_mono
+    if started is None:
+      return
+    self._pause_seconds_window += max(0.0, time.monotonic() - started)
+    self._pause_started_mono = None
+
+  def pause_seconds_snapshot(self) -> tuple[int, int]:
+    """
+    Return window pause seconds and whether consume is currently paused.
+
+    Open intervals contribute elapsed time through ``time.monotonic()`` so
+    a full-window stall reports near the window length even without exit.
+
+    Returns:
+      tuple[int, int]: ``(pause_s, paused)`` where ``paused`` is ``0`` or
+      ``1``.
+
+    Examples:
+      >>> ListendDbIngestPool(enabled=False).pause_seconds_snapshot()
+      (0, 0)
+    """
+    pause_s = float(self._pause_seconds_window)
+    paused = 0
+    started = self._pause_started_mono
+    if started is not None:
+      pause_s += max(0.0, time.monotonic() - started)
+      paused = 1
+    return int(pause_s), paused
 
   def submit(self, host: str, message: str) -> bool:
     """
@@ -1199,10 +1253,15 @@ class ListendDbIngestPool:
   def window_counters_and_reset(self) -> dict:
     """
     Return counters since last window baseline, then reset the baseline.
-    
+
+    Also snapshots ``pause_s`` / ``paused`` for the idle monitor, then clears
+    the window pause accumulator. If still paused, restarts the open monotonic
+    start so the next window does not double-count already-reported seconds.
+
     Returns:
-      dict: dict produced by this call.
-    
+      dict: Window deltas plus live ``db_queue_depth``, ``db_queued_bytes``,
+      ``pause_s``, and ``paused``.
+
     Examples:
       >>> ListendDbIngestPool().window_counters_and_reset()  # doctest: +SKIP
     """
@@ -1214,27 +1273,38 @@ class ListendDbIngestPool:
         delta[key] = val
       else:
         delta[key] = max(0, int(val) - int(base.get(key, 0)))
+    pause_s, paused = self.pause_seconds_snapshot()
+    delta["pause_s"] = pause_s
+    delta["paused"] = paused
+    self._pause_seconds_window = 0.0
+    if self._pause_started_mono is not None:
+      self._pause_started_mono = time.monotonic()
     self._window_baseline = now
     return delta
 
   def format_idle_monitor_suffix(self) -> str:
     """
-    Format the idle monitor suffix.
-    
+    Format the idle-monitor DB-ingest suffix for the 10-minute status line.
+
+    Includes window ``pause_enters``, ``pause_s``, and ``paused`` so operators
+    see backpressure duration without per-flap pause/resume INFO.
+
     Returns:
-      str: str produced by this call.
-    
+      str: Space-separated ``key=value`` fields for the idle monitor line.
+
     Examples:
       >>> ListendDbIngestPool().format_idle_monitor_suffix()  # doctest: +SKIP
     """
     d = self.window_counters_and_reset()
     return (
-        "db_ingest queue_drops=%d pause_enters=%d schema_miss=%d db_ok=%d "
-        "db_err=%d conn_recycle=%d db_queue_depth=%d db_queued_bytes=%d "
-        "batch_flush=%d"
+        "db_ingest queue_drops=%d pause_enters=%d pause_s=%d paused=%d "
+        "schema_miss=%d db_ok=%d db_err=%d conn_recycle=%d "
+        "db_queue_depth=%d db_queued_bytes=%d batch_flush=%d"
         % (
             d.get("queue_drops", 0),
             d.get("pause_enters", 0),
+            d.get("pause_s", 0),
+            d.get("paused", 0),
             d.get("schema_miss", 0),
             d.get("db_ok", 0),
             d.get("db_err", 0),

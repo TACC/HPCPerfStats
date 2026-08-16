@@ -647,11 +647,8 @@ def _request_db_backpressure_pause(channel: Any, delivery_tag: Any) -> None:
       pool.note_pause_enter()
     except Exception:
       pass
-    log_print(
-        "listend db ingest buffers full; pausing RabbitMQ consume "
-        "(no archive until resume watermark)",
-        flush=True,
-    )
+    # Pause duration is reported on the 10-minute idle-monitor line
+    # (pause_s / paused) — no per-flap INFO here.
   _db_backpressure_pause = True
   try:
     if hasattr(channel, "basic_nack") and delivery_tag is not None:
@@ -691,10 +688,12 @@ def _wait_for_db_backpressure_resume(connection: Any) -> bool:
     pool = _live_db_ingest_pool_active()
     if pool is None or pool.should_resume_consume():
       _db_backpressure_pause = False
-      log_print(
-          "listend db ingest buffers drained; resuming RabbitMQ consume",
-          flush=True,
-      )
+      if pool is not None:
+        try:
+          pool.note_pause_exit()
+        except Exception:
+          pass
+      # Resume is visible via idle-monitor pause_s / paused=0 — no INFO.
       return True
     try:
       connection.process_data_events(time_limit=1)
@@ -938,6 +937,10 @@ def main() -> None:
             # Prefetch=1 so pause leaves work on the broker ready queue.
             channel.basic_qos(prefetch_count=1)
 
+          # Log consume-start once per RabbitMQ connection; pause/resume
+          # rebinds must not re-emit (that was log spam with backpressure).
+          consume_start_logged = False
+
           # Inner loop: consume until connection error, or pause for DB
           # backpressure then resume on the same connection.
           while not _idle_monitor_stop_event.is_set():
@@ -959,7 +962,9 @@ def main() -> None:
             except Exception:
               pass
             channel.basic_consume(cfg.get_rmq_queue(), on_message)
-            log_print("Begining Consume from queue: " + cfg.get_rmq_queue())
+            if not consume_start_logged:
+              log_print("Begining Consume from queue: " + cfg.get_rmq_queue())
+              consume_start_logged = True
             try:
               channel.start_consuming()
             except (KeyboardInterrupt, SystemExit):
