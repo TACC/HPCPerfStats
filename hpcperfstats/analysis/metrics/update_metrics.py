@@ -304,6 +304,100 @@ def _maybe_trigger_consumer_stall_exit(
   return True
 
 
+def _producer_has_live_consumer_work(
+  ready_queue_depth: int,
+  inflight_jids: int,
+) -> bool:
+  """
+  Return True when the consumer still has queued or in-flight jobs.
+
+  The readiness producer must not treat a long metrics+prewarm batch as
+  ``no_ready_candidates`` starvation while work remains on the ready queue
+  or in ``inflight_jids`` (``stats["processed"]`` only advances after the
+  full batch finishes).
+
+  Args:
+    ready_queue_depth (int): Current ``len(ready_queue)``.
+    inflight_jids (int): Scheduler ``stats["inflight_jids"]`` count.
+
+  Returns:
+    bool: True when the consumer still has live work.
+
+  Examples:
+    >>> _producer_has_live_consumer_work(0, 0)
+    False
+    >>> _producer_has_live_consumer_work(1, 0)
+    True
+    >>> _producer_has_live_consumer_work(0, 3)
+    True
+  """
+  return int(ready_queue_depth) > 0 or int(inflight_jids) > 0
+
+
+def _bump_producer_progress_clock(
+  stats: Any,
+  last_processed_total: int,
+  last_ready_enqueued_total: int,
+  last_compute_batch_completed_jids: int,
+  ready_queue_depth: int,
+  last_progress_at: float,
+  now: float | None = None,
+) -> tuple[float, int, int, int]:
+  """
+  Advance producer stall progress when batch-final or mid-batch signals move.
+
+  ``stats["processed"]`` alone is insufficient: a metrics+prewarm batch can
+  run longer than ``STALL_EXIT_AFTER_SECONDS`` while
+  ``compute_batch_completed_jids``, ``ready_enqueued_total``, ready-queue
+  depth, or ``inflight_jids`` still show progress.
+
+  Args:
+    stats (Any): Shared scheduler stats mapping (read under caller lock).
+    last_processed_total (int): Last observed ``stats["processed"]``.
+    last_ready_enqueued_total (int): Last observed ``ready_enqueued_total``.
+    last_compute_batch_completed_jids (int): Last mid-batch completed count.
+    ready_queue_depth (int): Current ``len(ready_queue)``.
+    last_progress_at (float): Monotonic timestamp of last progress.
+    now (float | None): Optional monotonic timestamp; defaults to
+      ``time.monotonic()``.
+
+  Returns:
+    tuple[float, int, int, int]: Updated
+    ``(last_progress_at, last_processed_total, last_ready_enqueued_total,
+    last_compute_batch_completed_jids)``.
+
+  Examples:
+    >>> s = {"processed": 0, "ready_enqueued_total": 2,
+    ...      "compute_batch_completed_jids": 0, "inflight_jids": 0}
+    >>> at, p, e, c = _bump_producer_progress_clock(
+    ...     s, 0, 0, 0, 0, 1.0, now=5.0)
+    >>> (at, p, e, c)
+    (5.0, 0, 2, 0)
+  """
+  stamp = time.monotonic() if now is None else float(now)
+  processed_now = int(stats.get("processed", 0) or 0)
+  enqueued_now = int(stats.get("ready_enqueued_total", 0) or 0)
+  completed_now = int(stats.get("compute_batch_completed_jids", 0) or 0)
+  inflight_now = int(stats.get("inflight_jids", 0) or 0)
+  progressed = (
+      processed_now > int(last_processed_total)
+      or enqueued_now > int(last_ready_enqueued_total)
+      or completed_now > int(last_compute_batch_completed_jids)
+      or _producer_has_live_consumer_work(
+          int(ready_queue_depth),
+          inflight_now,
+      )
+  )
+  if progressed:
+    last_progress_at = stamp
+  return (
+      float(last_progress_at),
+      max(int(last_processed_total), processed_now),
+      max(int(last_ready_enqueued_total), enqueued_now),
+      max(int(last_compute_batch_completed_jids), completed_now),
+  )
+
+
 def _job_window_runtime_seconds(start_time: Any, end_time: Any) -> Any:
   """
   Return job accounting-window length in seconds, or None if not computable.
@@ -4610,6 +4704,8 @@ def _start_readiness_producer(
     deferred_not_ready = {}
     deferred_meta = {}
     last_processed_total = 0
+    last_ready_enqueued_total = 0
+    last_compute_batch_completed_jids = 0
     last_progress_at = time.monotonic()
 
     def _remember_candidate(candidate: Any) -> None:
@@ -4696,13 +4792,22 @@ def _start_readiness_producer(
             allow_rollover=allow_rollover,
         ):
           last_progress_at = time.monotonic()
-        with scheduler_shared_lock:
-          processed_now = int(stats["processed"])
-        if processed_now > last_processed_total:
-          last_processed_total = processed_now
-          last_progress_at = time.monotonic()
         with ready_queue_lock:
           current_depth = len(ready_queue)
+        with scheduler_shared_lock:
+          (
+              last_progress_at,
+              last_processed_total,
+              last_ready_enqueued_total,
+              last_compute_batch_completed_jids,
+          ) = _bump_producer_progress_clock(
+              stats,
+              last_processed_total,
+              last_ready_enqueued_total,
+              last_compute_batch_completed_jids,
+              current_depth,
+              last_progress_at,
+          )
         if current_depth >= prefetch_ready_cap:
           time.sleep(0.05)
           continue
@@ -4890,6 +4995,14 @@ def _start_readiness_producer(
           has_rescan_backlog = bool(rescan_candidate_jids)
         if all(s["done"] for s in date_states) and (not deferred_not_ready) and (not has_rescan_backlog):
           break
+        with ready_queue_lock:
+          stall_depth = len(ready_queue)
+        with scheduler_shared_lock:
+          stall_inflight = int(stats.get("inflight_jids", 0) or 0)
+        if _producer_has_live_consumer_work(stall_depth, stall_inflight):
+          last_progress_at = time.monotonic()
+          time.sleep(0.05)
+          continue
         stalled_for_s = time.monotonic() - last_progress_at
         if stalled_for_s >= STALL_EXIT_AFTER_SECONDS:
           with scheduler_shared_lock:

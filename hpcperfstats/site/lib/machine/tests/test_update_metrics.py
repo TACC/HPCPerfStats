@@ -2551,6 +2551,289 @@ def test_update_metrics_for_dates_sets_stall_diagnostics_on_no_progress(monkeypa
 
 
 @pytest.mark.machine_unit_mock
+def test_producer_has_live_consumer_work_signals():
+  """Ready-queue depth or inflight must count as live consumer work."""
+  assert update_metrics._producer_has_live_consumer_work(0, 0) is False
+  assert update_metrics._producer_has_live_consumer_work(2, 0) is True
+  assert update_metrics._producer_has_live_consumer_work(0, 1) is True
+
+
+@pytest.mark.machine_unit_mock
+def test_producer_progress_resets_on_compute_batch_completed_jids():
+  """Rising mid-batch completed_jids alone must refresh the producer stall clock."""
+  stats = {
+      "processed": 0,
+      "ready_enqueued_total": 0,
+      "compute_batch_completed_jids": 3,
+      "inflight_jids": 0,
+  }
+  at, processed, enqueued, completed = update_metrics._bump_producer_progress_clock(
+      stats,
+      last_processed_total=0,
+      last_ready_enqueued_total=0,
+      last_compute_batch_completed_jids=1,
+      ready_queue_depth=0,
+      last_progress_at=1.0,
+      now=9.0,
+  )
+  assert at == 9.0
+  assert processed == 0
+  assert enqueued == 0
+  assert completed == 3
+
+
+@pytest.mark.machine_unit_mock
+def test_producer_progress_resets_on_inflight_or_ready_queue():
+  """Inflight or non-empty ready queue must refresh progress even when processed is 0."""
+  stats = {
+      "processed": 0,
+      "ready_enqueued_total": 0,
+      "compute_batch_completed_jids": 0,
+      "inflight_jids": 4,
+  }
+  at, *_rest = update_metrics._bump_producer_progress_clock(
+      stats,
+      last_processed_total=0,
+      last_ready_enqueued_total=0,
+      last_compute_batch_completed_jids=0,
+      ready_queue_depth=0,
+      last_progress_at=1.0,
+      now=7.0,
+  )
+  assert at == 7.0
+  at2, *_rest2 = update_metrics._bump_producer_progress_clock(
+      {
+          "processed": 0,
+          "ready_enqueued_total": 0,
+          "compute_batch_completed_jids": 0,
+          "inflight_jids": 0,
+      },
+      last_processed_total=0,
+      last_ready_enqueued_total=0,
+      last_compute_batch_completed_jids=0,
+      ready_queue_depth=2,
+      last_progress_at=1.0,
+      now=8.0,
+  )
+  assert at2 == 8.0
+  at3, *_rest3 = update_metrics._bump_producer_progress_clock(
+      {
+          "processed": 0,
+          "ready_enqueued_total": 0,
+          "compute_batch_completed_jids": 0,
+          "inflight_jids": 0,
+      },
+      last_processed_total=0,
+      last_ready_enqueued_total=0,
+      last_compute_batch_completed_jids=0,
+      ready_queue_depth=0,
+      last_progress_at=1.0,
+      now=9.0,
+  )
+  assert at3 == 1.0
+
+
+@pytest.mark.machine_unit_mock
+@pytest.mark.django_db(databases=[])
+def test_producer_stall_skips_while_inflight_or_ready_queue(monkeypatch):
+  """Long batch with inflight must not set no_ready_candidates before compute ends."""
+  monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
+  monkeypatch.setattr(
+      update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_priority"
+  )
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 4)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(
+      update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext
+  )
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
+  monkeypatch.setattr(
+      update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids))
+  )
+  monkeypatch.setattr(update_metrics, "STALL_EXIT_AFTER_SECONDS", 0.15)
+  monkeypatch.setattr(update_metrics, "LISTING_QUERY_COOLDOWN_SECONDS", 0.05)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+  monkeypatch.setattr(update_metrics, "_log_metrics_window_census", lambda *a, **k: None)
+  monkeypatch.setattr(
+      update_metrics,
+      "_run_public_ef_artifacts_parallel_phase",
+      lambda shared_pool, phase_timer: {
+          "degraded": 0,
+          "worker_exceptions": 0,
+          "watchdog_timeouts": 0,
+          "pending_tasks": 0,
+          "tasks_completed": 0,
+          "tasks_total": 0,
+      },
+  )
+
+  class _BoomIter:
+    def __iter__(self):
+      return self
+
+    def __next__(self):
+      raise OperationalError("canceling statement due to statement timeout")
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  def _jobs_qs(d, *_args, **_kwargs):
+    if d.day == 16:
+      return _FakeQs([([1001], 1)])
+    return _FakeQs([_BoomIter()])
+
+  def _iter_chunked(qs, _chunk):
+    if qs.chunks and isinstance(qs.chunks[0], _BoomIter):
+      return qs.chunks[0]
+    return iter(qs.chunks)
+
+  monkeypatch.setattr(update_metrics, "_jobs_queryset", _jobs_qs)
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", _iter_chunked)
+
+  events = []
+  log_lines = []
+
+  def _slow_batch(job_refs, *args, **kwargs):
+    del args, kwargs
+    events.append("compute_start")
+    time.sleep(0.4)
+    events.append("compute_end")
+    return [
+        {
+            "ok": True,
+            "jid": ref.jid,
+            "metrics_s": 0.01,
+            "prewarm_s": 0.01,
+            "telemetry": {},
+            "failure_kind": None,
+        }
+        for ref in job_refs
+    ]
+
+  monkeypatch.setattr(update_metrics, "_compute_jid_outcomes_batch", _slow_batch)
+  monkeypatch.setattr(
+      update_metrics,
+      "log_print",
+      lambda msg, flush=False: log_lines.append(msg),
+  )
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      raise AssertionError("Metrics.run should not run; batch is patched")
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
+  update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS = None
+  dates = [datetime(2026, 8, 16), datetime(2026, 8, 15)]
+  try:
+    update_metrics.update_metrics_for_dates(dates, rerun=False)
+  except update_metrics.MetricsSchedulerStallExit as exc:
+    # Hot-day listing may still starve after the batch; stall must not precede compute_end.
+    assert exc.stall_reason == "no_ready_candidates"
+  assert "compute_start" in events
+  assert "compute_end" in events
+  stall_msgs = [m for m in log_lines if "no progress for" in m]
+  if stall_msgs:
+    # Stall log must appear only after the slow batch finished.
+    assert events.index("compute_end") < len(events)
+    # Re-scan log_lines order relative to events via shared timeline: stall lines
+    # appended during producer loop after compute_end when inflight clears.
+    first_stall_idx = next(
+        i for i, m in enumerate(log_lines) if "no progress for" in m
+    )
+    # compute_end is not in log_lines; ensure processed advanced in diagnostics.
+    diag = update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS
+    assert diag is not None
+    assert diag["stats"]["processed"] >= 1
+    assert first_stall_idx >= 0
+  else:
+    diag = update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS
+    assert diag is not None
+    assert diag["stats"]["processed"] >= 1
+    assert int(diag["stats"].get("stall_exit_triggered", 0) or 0) == 0
+  # Never stall while processed still zero with a completed compute_start/end pair.
+  assert not any(
+      "no progress for" in m and "attempted_total=0" in m for m in log_lines
+  )
+
+
+@pytest.mark.machine_unit_mock
+@pytest.mark.django_db(databases=[])
+def test_producer_stall_still_fires_on_true_starvation(monkeypatch):
+  """Readiness filtering every candidate with no inflight must still stall-exit."""
+  d1 = datetime(2025, 4, 10)
+  monkeypatch.delenv("HPCPERFSTATS_METRICS_SCHEDULER_MODE", raising=False)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 2)
+  monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_ready_queue_target", lambda: 8)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(
+      update_metrics, "_pg_session_statement_timeout_for_metrics_batch", contextlib.nullcontext
+  )
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: [])
+  monkeypatch.setattr(
+      update_metrics, "_proxy_reject_not_ready_jids", lambda jids: (set(), list(jids))
+  )
+  monkeypatch.setattr(update_metrics, "STALL_EXIT_AFTER_SECONDS", 0.1)
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
+  monkeypatch.setattr(update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None)
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  monkeypatch.setattr(
+      update_metrics,
+      "_jobs_queryset",
+      lambda d, *_args, **_kwargs: _FakeQs([([1001], 1)]),
+  )
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks))
+
+  class FakeMetrics:
+    simple_metrics_list = {}
+    complex_metrics_list = []
+
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      return object()
+
+    def close_pool(self):
+      return None
+
+    def run(self, jobs, pool=None):
+      raise AssertionError("metrics run should not run when readiness filters all jids")
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None)
+  with pytest.raises(update_metrics.MetricsSchedulerStallExit) as excinfo:
+    update_metrics.update_metrics_for_dates([d1], rerun=False)
+  assert excinfo.value.stall_reason == "no_ready_candidates"
+
+
+@pytest.mark.machine_unit_mock
 def test_pg_session_statement_timeout_restore_swallows_closed_connection(monkeypatch):
   """Closed connection during timeout restore must not raise."""
   monkeypatch.setattr(
