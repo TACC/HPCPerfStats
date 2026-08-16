@@ -49,6 +49,7 @@ def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
   assert cfg.get_summary_aggregate_prefetch_max_threads() == 2
   assert cfg.get_sync_write_lock_shards() == 8
   assert cfg.get_listend_db_ingest_pool_processes() == 32
+  assert cfg.get_listend_db_ingest_backpressure() == "drop"
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
   assert cfg.get_sync_process_tree_rss_limit_mb() == 110000
   for dead in (
@@ -86,6 +87,7 @@ def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):
       "summary_aggregate_prefetch_max_threads = 1\n"
       "sync_write_lock_shards = 4\n"
       "listend_db_ingest_pool_processes = 11\n"
+      "listend_db_ingest_backpressure = pause\n"
       "metrics_plot_prewarm_mode = inline\n",
   )
   with open(temp_ini, "w") as f:
@@ -101,10 +103,30 @@ def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):
   assert cfg.get_summary_aggregate_prefetch_max_threads() == 1
   assert cfg.get_sync_write_lock_shards() == 4
   assert cfg.get_listend_db_ingest_pool_processes() == 11
+  assert cfg.get_listend_db_ingest_backpressure() == "pause"
   assert cfg.get_metrics_plot_prewarm_mode() == "inline"
 
 
 
+
+
+def test_listend_db_ingest_backpressure_unknown_falls_back_to_drop(
+    temp_ini, monkeypatch
+):
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\n"
+      "listend_db_ingest_backpressure = no_such_mode\n",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_listend_db_ingest_backpressure() == "drop"
 
 
 def test_get_worker_process_count(temp_ini, monkeypatch):

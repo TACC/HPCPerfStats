@@ -175,6 +175,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_archive_require_db_ingest"),
     ("PIPELINE", "sync_archive_maint_hints"),
     ("PIPELINE", "listend_db_ingest_enabled"),
+    ("PIPELINE", "listend_db_ingest_backpressure"),
     ("PIPELINE", "listend_db_ingest_pool_processes"),
     ("PIPELINE", "listend_db_ingest_queue_max_gb"),
     ("PIPELINE", "listend_db_ingest_batch_samples"),
@@ -354,6 +355,7 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_require_db_ingest': 'yes',
     'sync_archive_maint_hints': 'yes',
     'listend_db_ingest_enabled': 'yes',
+    'listend_db_ingest_backpressure': 'drop',
     'listend_db_ingest_pool_processes': '32',
     'listend_db_ingest_queue_max_gb': '8',
     'listend_db_ingest_batch_samples': '100',
@@ -4987,6 +4989,28 @@ def get_listend_db_ingest_enabled() -> Any:
       _pipeline_get("listend_db_ingest_enabled"),
       default=True,
   )
+
+
+def get_listend_db_ingest_backpressure() -> str:
+  """
+  Policy when live DB queues hit the high watermark.
+
+  ``drop`` archives and acks while shedding live DB enqueue (``queue_drops``).
+  ``pause`` nacks without archive and stops RabbitMQ consume until the resume
+  watermark. Unknown values fall back to ``drop``.
+
+  Returns:
+    str: ``drop`` or ``pause``.
+
+  Examples:
+    >>> get_listend_db_ingest_backpressure() in ("drop", "pause")  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  mode = _pipeline_get("listend_db_ingest_backpressure").strip().lower()
+  if mode in ("drop", "pause"):
+    return mode
+  return "drop"
 
 
 def get_listend_db_ingest_pool_processes() -> Any:

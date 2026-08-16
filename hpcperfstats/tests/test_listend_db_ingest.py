@@ -170,6 +170,9 @@ def test_on_message_pauses_without_archive(tmp_path, monkeypatch):
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi
 
   monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+      listend.cfg, "get_listend_db_ingest_backpressure", lambda: "pause"
+  )
   archived = []
 
   def capture_archive(message):
@@ -204,6 +207,50 @@ def test_on_message_pauses_without_archive(tmp_path, monkeypatch):
   assert listend._db_backpressure_pause is True
   assert pool._counters["pause_enters"].value >= 1
   listend._db_backpressure_pause = False
+
+
+def test_on_message_drop_mode_archives_when_full(tmp_path, monkeypatch):
+  import hpcperfstats.listend as listend
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+      listend.cfg, "get_listend_db_ingest_backpressure", lambda: "drop"
+  )
+  archived = []
+
+  def capture_archive(message):
+    archived.append(message)
+    return "myhost"
+
+  monkeypatch.setattr(listend, "append_monitor_payload_to_archive", capture_archive)
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  _wire_fake_pool_bytes(pool, queued=999, budget=1000, per_worker=1000)
+  monkeypatch.setattr(listend, "_live_db_ingest_pool_active", lambda: pool)
+  monkeypatch.setattr(ldi, "_GLOBAL_POOL", pool)
+  listend._db_backpressure_pause = False
+
+  channel = type("C", (), {"acked": [], "nacked": [], "stopped": False})()
+  channel.basic_ack = lambda delivery_tag=None: channel.acked.append(delivery_tag)
+  channel.basic_nack = lambda delivery_tag=None, requeue=False: channel.nacked.append(
+      (delivery_tag, requeue)
+  )
+  channel.stop_consuming = lambda: setattr(channel, "stopped", True)
+  method = type("M", (), {"delivery_tag": 9})()
+
+  listend.on_message(channel, method, None, b"1710000001.0 1 myhost x\n")
+  assert len(archived) == 1
+  assert channel.acked == [9]
+  assert channel.nacked == []
+  assert channel.stopped is False
+  assert listend._db_backpressure_pause is False
+  assert pool._counters["queue_drops"].value >= 1
 
 
 def test_submit_after_write_not_on_failure(tmp_path, monkeypatch):

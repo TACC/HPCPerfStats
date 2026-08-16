@@ -10,7 +10,10 @@ globs: hpcperfstats/listend.py,hpcperfstats/dbload/lib/listend_db_ingest.py,hpcp
 
 ## Invariants
 
-- **File durable when consuming; DB coupled under backpressure.** RabbitMQ ack only after successful archive append. When live ingest is on and DB queues hit the **high watermark** (module constants **0.95** of total byte budget, or any host-affine worker cannot accept another min-floor payload), listend **stops RabbitMQ consume**: nack+requeue **without** archive, `stop_consuming`, wait until usage ≤ **resume watermark 0.50** (and every worker has min-floor headroom) while pumping heartbeats. Overflow stays on the broker ready queue — **not** dropped. `basic_qos(prefetch_count=1)` when live on so pause leaves work on the broker. Watermarks are **module constants** in `listend_db_ingest.py` (not INI). Unexpected `submit` races may still increment `queue_drops` (should stay ~0).
+- **File durable when consuming; DB backpressure mode is INI-selected.** RabbitMQ ack only after successful archive append. When live ingest is on and DB queues hit the **high watermark** (module constants **0.95** of total byte budget, or any host-affine worker cannot accept another min-floor payload), behavior follows **`[PIPELINE] listend_db_ingest_backpressure`** (`get_listend_db_ingest_backpressure()`, default **`drop`**):
+  - **`drop`** — still archive + ack; live enqueue fails closed and increments `queue_drops`; consume continues. Prefer this when broker buffering is undesirable.
+  - **`pause`** — nack+requeue **without** archive, `stop_consuming`, wait until usage ≤ **resume watermark 0.50** (and every worker has min-floor headroom) while pumping heartbeats. Overflow stays on the broker ready queue. `basic_qos(prefetch_count=1)` only when live on **and** mode is `pause`.
+  Watermark fractions remain **module constants** in `listend_db_ingest.py` (not INI). Master switch `listend_db_ingest_enabled=no` disables live DB entirely.
 - **`$` rotate hardlinks are unique inodes.** Digit epoch filenames must not share a path with a **different** inode. `_ensure_current_hardlinked_to_timestamp` / new-current `os.link` pick an unused digit name (decrement below cutoff for the pre-unlink safety link; increment from `int(time.time())` for the new `current`). **Never** `os.remove` an epoch path that is a different inode (same-second double `$` would delete the just-closed segment). Any samefile digit name is durable enough to unlink `current`. `_get_first_timestamp_seconds` skips `$` schema host lines (`1 <fqdn>`); only plausible unix seconds (`>= 1e9`) name files. Name collision is recoverable — ack after a unique link, do not nack/requeue. Real I/O (`ENOSPC`, `EACCES`, empty `current` with no timestamp) still fail-closed nack.
 - **Never insert incomplete samples.** `host_data` uniqueness / itimes / duplicate-scan use **host + unix-second**. Any row for second `T` without the full event set from that monitor sample makes sync_timedb treat `T` as done → **permanent silent loss** under `ignore_conflicts`. Live path: whole-sample skip without schema (or with schema mismatch / parse failure); no per-type silent drops like the file parser.
 - **Host-affine workers** (`hash(host) % N`, stable adler32): per-host `schema_by_host` + `DeltaCarryState`. `$` updates schema; cold-start may seed from on-disk `current` `!` lines. Carry survives `bulk_create` flush; schema/carry not cleared on flush.
@@ -31,11 +34,11 @@ globs: hpcperfstats/listend.py,hpcperfstats/dbload/lib/listend_db_ingest.py,hpcp
 | Wire + ack + pause/resume consume | `hpcperfstats/listend.py` |
 | File-complete mark | `hpcperfstats/dbload/lib/sync_timedb_file_complete_ingest_mark.py` |
 | Archive gate | `hpcperfstats/dbload/lib/sync_timedb_ingest_readiness.py` |
-| INI | `listend_db_ingest_*` in `[PIPELINE]` via `conf_parser` (queue budget / pool / batch — **not** pause/resume fractions) |
+| INI | `listend_db_ingest_*` in `[PIPELINE]` via `conf_parser` (enabled / pool / queue / batch / **`listend_db_ingest_backpressure`** `drop`\|`pause` — **not** pause/resume watermark fractions) |
 
 ## Residual risk (accepted)
 
-Long DB stalls grow RabbitMQ ready-queue depth (and broker memory/disk). Prefer that over silent live drops. Unexpected race drops of sample *k* can still leave carry reflecting *k−1* while *k+1* is written with a skewed delta (first-writer-wins); sync_timedb repairs missing *seconds* from disk but cannot overwrite live-written keys.
+Under **`drop`**, live Timescale may lag until `sync_timedb` catches up from disk; silent live gaps are expected when queues are full. Under **`pause`**, long DB stalls grow RabbitMQ ready-queue depth (and broker memory/disk). Unexpected race drops of sample *k* can still leave carry reflecting *k−1* while *k+1* is written with a skewed delta (first-writer-wins); sync_timedb repairs missing *seconds* from disk but cannot overwrite live-written keys.
 
 ## Overlap
 

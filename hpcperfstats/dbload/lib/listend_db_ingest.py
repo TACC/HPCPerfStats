@@ -1195,8 +1195,9 @@ class ListendDbIngestPool:
     """
     Nonblocking enqueue. Return False on drop / disabled / not started.
     
-    Under normal backpressure listend pauses RabbitMQ consume before calling
-    submit. A False return here is an unexpected race (counted as queue_drops).
+    Under ``listend_db_ingest_backpressure=pause``, listend normally pauses
+    RabbitMQ consume before calling submit. Under ``drop``, False returns and
+    ``queue_drops`` are expected when queues are full.
     
     Args:
       host (str): String for host.

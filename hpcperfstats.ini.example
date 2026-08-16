@@ -431,6 +431,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Samples cached per listend DB worker before one bulk_create (default 100).
 # listend_db_ingest_batch_samples = 100
 
+# When live DB queues are full: drop (archive+ack, shed DB) or pause (nack, stop consume).
+# listend_db_ingest_backpressure = drop
+
 # Keep uncompressed YYYY-MM-DD.tar after sealing globally (default no).
 # Prior days drop at seal when raw is gone; calendar-today uses grace hours below.
 # archive_keep_uncompressed_tar = no

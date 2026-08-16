@@ -626,6 +626,26 @@ def _live_db_ingest_pool_active() -> Any:
   return pool
 
 
+def _listend_db_backpressure_mode_is_pause() -> bool:
+  """
+  Return True when INI backpressure mode is ``pause`` (not ``drop``).
+
+  Defaults to False (``drop``) when the getter fails so archive+ack remains
+  the fail-open path.
+
+  Returns:
+    bool: True when consume should pause on DB-full; False for drop-on-full.
+
+  Examples:
+    >>> isinstance(_listend_db_backpressure_mode_is_pause(), bool)
+    True
+  """
+  try:
+    return cfg.get_listend_db_ingest_backpressure() == "pause"
+  except Exception:
+    return False
+
+
 def _request_db_backpressure_pause(channel: Any, delivery_tag: Any) -> None:
   """
   Nack+requeue without archive and stop consuming for DB backpressure.
@@ -717,8 +737,9 @@ def on_message(
   
     current file and optionally rotate. Acknowledges the message.
   
-  When live DB ingest queues are at the high watermark, nack+requeue without
-  archive and stop consuming until the low watermark.
+  When live DB ingest is on and backpressure mode is ``pause``, high-watermark
+  queues cause nack+requeue without archive until the resume watermark. Mode
+  ``drop`` (default) always archives and acks, shedding live DB enqueue.
   
   Per-message logging of consumption/queue depth is avoided; instead, a
   background monitor thread reports aggregate rates every 10 minutes.
@@ -740,7 +761,7 @@ def on_message(
   try:
     message = body.decode(errors="replace")
     pool = _live_db_ingest_pool_active()
-    if pool is not None:
+    if pool is not None and _listend_db_backpressure_mode_is_pause():
       from hpcperfstats.dbload.lib.listend_db_ingest import (
           parse_host_from_monitor_payload,
       )
@@ -933,7 +954,7 @@ def main() -> None:
             log_print("Failed to get startup queue depth: %s" % e)
 
           live_pool = _live_db_ingest_pool_active()
-          if live_pool is not None:
+          if live_pool is not None and _listend_db_backpressure_mode_is_pause():
             # Prefetch=1 so pause leaves work on the broker ready queue.
             channel.basic_qos(prefetch_count=1)
 
@@ -951,7 +972,10 @@ def main() -> None:
                 break
               # Channel may still be open after stop_consuming; re-bind.
               try:
-                if live_pool is not None:
+                if (
+                    live_pool is not None
+                    and _listend_db_backpressure_mode_is_pause()
+                ):
                   channel.basic_qos(prefetch_count=1)
               except Exception:
                 break
