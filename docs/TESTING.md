@@ -118,6 +118,7 @@ Options: **`--skip-build`**, **`--keep-env`**; extra pytest args after **`--`**.
 
 If progress remains zero for a long window **after** heartbeats show no advancing completed_jids and workers are dead/missing, the scheduler emits **`stall_exit_triggered=1`** and classifies the reason in **`stall_reason`**:
 - **`no_ready_candidates`**: starvation at readiness/candidate stage.
+- **`listing_query_failed`**: unexpected exception escaped listing/`_fill_ready_queue` (statement-timeout recovery should catch `OperationalError` inside fill; this stall is the producer safety net). Partial `local_ready` is still flushed before exit.
 - **`compute_stuck_inflight`**: queue drained but work remains inflight.
 - **`compute_all_failed`**: compute keeps attempting but every job fails.
 

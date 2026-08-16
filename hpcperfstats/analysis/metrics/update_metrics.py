@@ -66,6 +66,7 @@ Attributes:
   STRICT_CHECK_FAST_SUCCESS_S: Attribute.
   STRICT_READINESS_DB_LOCK_TIMEOUT_MS: Attribute.
   STRICT_READINESS_DB_TIMEOUT_MS: Attribute.
+  LISTING_QUERY_COOLDOWN_SECONDS: Attribute.
   TELEMETRY_SAMPLE_LIMIT: Attribute.
   UPDATE_METRICS_PROCESS_TITLE: Attribute.
   _COVERAGE_DEFER_LOGGED: Attribute.
@@ -185,15 +186,20 @@ STRICT_CHECK_BATCH_MIN = 32
 STRICT_CHECK_BATCH_STEP = 32
 STRICT_CHECK_FAST_SUCCESS_S = 0.25
 STRICT_CHECK_COOLDOWN_SECONDS = 30
+# After candidate keyset pagination hits a transient statement timeout, skip that
+# calendar day briefly so already-ready jobs can enqueue (hs04 2026-08-15).
+LISTING_QUERY_COOLDOWN_SECONDS = 60
 RESCAN_INTERVAL_SECONDS = 5.0
 # When rescan loops add no new jids, sleep backs off (capped) to cut duplicate SQL.
 RESCAN_IDLE_INTERVAL_MAX_SECONDS = 60.0
 STALL_WARNING_EVERY_PASSES = 200
 STALL_EXIT_AFTER_SECONDS = 900.0
-# User-facing stall_reason strings (docs/TESTING.md); producer sets no_ready_candidates;
-# consumer sets compute_* / worker_* after sustained zero processed progress.
+# User-facing stall_reason strings (docs/TESTING.md); producer sets
+# no_ready_candidates / listing_query_failed; consumer sets compute_* /
+# worker_* after sustained zero processed progress.
 DOCUMENTED_SCHEDULER_STALL_REASONS = frozenset({
     "no_ready_candidates",
+    "listing_query_failed",
     "compute_stuck_inflight",
     "compute_all_failed",
 })
@@ -1005,6 +1011,168 @@ def _handle_strict_readiness_db_error(
   log_print(
       "strict readiness batch timed out size={0}; new_strict_batch_size={1}: {2}".format(
           int(batch_size_seen), strict_check_state["batch_size"], exc
+      ),
+      flush=True,
+  )
+
+
+def _truncate_census_error_message(
+  exc: BaseException,
+  *,
+  max_len: int = 80,
+) -> str:
+  """
+  Collapse whitespace and truncate ``exc`` text for one-line census tokens.
+
+  Args:
+    exc (BaseException): Exception whose message is logged.
+    max_len (int): Maximum characters after collapse (default 80).
+
+  Returns:
+    str: Single-line message fragment safe for ``census_error`` tokens.
+
+  Examples:
+    >>> _truncate_census_error_message(
+    ...     Exception("canceling statement due to statement timeout")
+    ... )
+    'canceling statement due to statement timeout'
+  """
+  text = " ".join(str(exc).split())
+  if len(text) > max_len:
+    return text[: max(0, max_len - 3)] + "..."
+  return text
+
+
+def _date_state_listing_schedulable(
+  state: Any,
+  *,
+  now_mono: float | None = None,
+) -> bool:
+  """
+  True when a date iterator may be advanced (not done and not in listing cooldown).
+
+  Args:
+    state (Any): Per-day producer state dict from ``_build_date_chunk_iterators``.
+    now_mono (float | None): Optional monotonic clock; defaults to ``time.monotonic()``.
+
+  Returns:
+    bool: Whether ``_fill_ready_queue`` may call ``next`` on this day's iterator.
+
+  Examples:
+    >>> _date_state_listing_schedulable({"done": False, "listing_cooldown_until": 0.0})
+    True
+  """
+  if state.get("done"):
+    return False
+  until = float(state.get("listing_cooldown_until") or 0.0)
+  mono = time.monotonic() if now_mono is None else float(now_mono)
+  return until <= mono
+
+
+def _rebuild_date_listing_iter(state: Any, phase_timer: Any) -> None:
+  """
+  Replace a poisoned listing generator after a transient keyset DB failure.
+
+  Args:
+    state (Any): Per-day producer state; must include ``date``, ``min_time``, ``rerun``.
+    phase_timer (Any): Phase timer for ``candidate_sql_s`` accounting.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _rebuild_date_listing_iter({"date": None}, None)  # doctest: +SKIP
+  """
+  sched_date = state.get("date")
+  if sched_date is None:
+    state["listing_needs_rebuild"] = False
+    state["iter"] = iter(())
+    return
+  min_time = state.get("min_time", 300)
+  rerun = bool(state.get("rerun", False))
+  with phase_timer.phase("candidate_sql_s"):
+    qs = _jobs_queryset(sched_date, min_time, rerun)
+  state["iter"] = _iter_chunked_pks(qs, CHUNK_SIZE)
+  state["pending_tail"] = None
+  state["listing_needs_rebuild"] = False
+
+
+def _ensure_date_listing_iter(state: Any, phase_timer: Any) -> None:
+  """
+  Rebuild the day iterator when a prior listing timeout marked it for refresh.
+
+  Args:
+    state (Any): Per-day producer state.
+    phase_timer (Any): Phase timer for candidate SQL accounting.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _ensure_date_listing_iter({"listing_needs_rebuild": False}, None)
+  """
+  if not state.get("listing_needs_rebuild"):
+    return
+  _rebuild_date_listing_iter(state, phase_timer)
+
+
+def _handle_listing_query_db_error(
+  *,
+  state: Any,
+  stats: Any,
+  phase_timer: Any,
+  exc: BaseException,
+  scheduler_shared_lock: Any,
+) -> None:
+  """
+  Recover from transient listing pagination DB errors without killing the producer.
+
+  Fatal database-unavailable errors still exit via
+  ``log_and_raise_database_unavailable``. Statement timeouts set a short per-day
+  cooldown, mark the iterator for rebuild, increment ``readiness_error_chunks``,
+  and leave already-appended ready jobs intact.
+
+  Args:
+    state (Any): Per-day producer state whose keyset page failed.
+    stats (Any): Scheduler stats dict (mutated under ``scheduler_shared_lock``).
+    phase_timer (Any): Phase timer reserved for future listing timing hooks.
+    exc (BaseException): The listing ``OperationalError`` / ``DatabaseError``.
+    scheduler_shared_lock (Any): Lock protecting shared scheduler counters.
+
+  Returns:
+    None
+
+  Raises:
+    DatabaseUnavailableExit: When ``is_database_unavailable_error(exc)`` is true.
+
+  Examples:
+    >>> _handle_listing_query_db_error(  # doctest: +SKIP
+    ...     state={}, stats={}, phase_timer=None, exc=Exception("x"),
+    ...     scheduler_shared_lock=None,
+    ... )
+  """
+  del phase_timer
+  if is_database_unavailable_error(exc):
+    log_and_raise_database_unavailable(
+        exc, context="update_metrics listing pagination"
+    )
+  with scheduler_shared_lock:
+    stats["readiness_error_chunks"] += 1
+  state["listing_cooldown_until"] = (
+      time.monotonic() + float(LISTING_QUERY_COOLDOWN_SECONDS)
+  )
+  state["listing_needs_rebuild"] = True
+  # Drop the poisoned generator so a later StopIteration cannot mark the day done.
+  state["iter"] = iter(())
+  state["pending_tail"] = None
+  sched_date = state.get("date")
+  if sched_date is not None and hasattr(sched_date, "strftime"):
+    day_label = sched_date.strftime("%Y-%m-%d")
+  else:
+    day_label = str(sched_date) if sched_date is not None else "none"
+  log_print(
+      "metrics scheduler: listing query failed day={0}; cooling down {1}s: {2}".format(
+          day_label, int(LISTING_QUERY_COOLDOWN_SECONDS), exc
       ),
       flush=True,
   )
@@ -2079,7 +2247,11 @@ def _log_metrics_window_census(
       listed = _metrics_day_listed_count(sched_date, min_time, rerun)
     except Exception as exc:
       parts.append(
-          "{0}=census_error:{1}".format(day_label, type(exc).__name__)
+          "{0}=census_error:{1}:{2}".format(
+              day_label,
+              type(exc).__name__,
+              _truncate_census_error_message(exc),
+          )
       )
       continue
     parts.append(
@@ -2436,16 +2608,17 @@ def _iter_chunked_pks(queryset: Any, chunk_size: int) -> Iterator[Any]:
                 Q(end_time=last_end_time) & Q(jid__lt=last_jid)
             )
         )
-      rows = list(
-          page_qs.values_list(
-              "jid",
-              "end_time",
-              "start_time",
-              "artifact_only_candidate",
-              "nhosts",
-              "host_list",
-          )[:chunk_size]
-      )
+      with _pg_local_readiness_timeouts():
+        rows = list(
+            page_qs.values_list(
+                "jid",
+                "end_time",
+                "start_time",
+                "artifact_only_candidate",
+                "nhosts",
+                "host_list",
+            )[:chunk_size]
+        )
       if not rows:
         break
       chunk = _chunk_rows_to_candidate_refs(rows)
@@ -3674,6 +3847,10 @@ def _build_date_chunk_iterators(
         "iter": _iter_chunked_pks(qs, CHUNK_SIZE),
         "done": False,
         "pending_tail": None,
+        "min_time": min_time,
+        "rerun": rerun,
+        "listing_cooldown_until": 0.0,
+        "listing_needs_rebuild": False,
     })
   return date_states
 
@@ -3724,16 +3901,20 @@ def _fill_ready_queue(
   def _resume_or_next_pk_chunk(state: Any) -> Any:
     """
     Return ``(pk_list_or_none, is_new_iter_chunk)``.
-    
+
+    Rebuilds the day iterator when a prior listing timeout marked
+    ``listing_needs_rebuild`` after the cooldown window expired.
+
     Args:
       state (Any): State passed to this helper.
-    
+
     Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
+      Any: ``(pk_chunk_or_none, is_new_iter_chunk)`` tuple.
+
     Examples:
       >>> _resume_or_next_pk_chunk(None)  # doctest: +SKIP
     """
+    _ensure_date_listing_iter(state, phase_timer)
     tail = state.get("pending_tail")
     if tail:
       state["pending_tail"] = None
@@ -3746,17 +3927,16 @@ def _fill_ready_queue(
 
   def _strict_ready_record_latency(latency_s: Any, n_calls: Any) -> None:
     """
-    Update rolling strict-check latency and adaptive batch size (``n_calls`` DB.
-    
-      calls).
-    
+    Update rolling strict-check latency and adaptive batch size (``n_calls`` DB
+    calls).
+
     Args:
-      latency_s (Any): Latency s passed to this helper.
-      n_calls (Any): N calls passed to this helper.
-    
+      latency_s (Any): Wall seconds for the readiness batch.
+      n_calls (Any): Number of strict-check calls represented by ``latency_s``.
+
     Returns:
       None
-    
+
     Examples:
       >>> _strict_ready_record_latency(None, None)  # doctest: +SKIP
     """
@@ -4033,12 +4213,24 @@ def _fill_ready_queue(
     return False
 
   if mode == "strict_date":
-    active = [s for s in date_states if not s["done"]]
+    active = [
+        s for s in date_states if _date_state_listing_schedulable(s)
+    ]
     if not active:
       return
     state = active[0]
     while len(ready_queue) < prefetch_chunks:
-      pk_chunk, is_new = _resume_or_next_pk_chunk(state)
+      try:
+        pk_chunk, is_new = _resume_or_next_pk_chunk(state)
+      except (OperationalError, DatabaseError) as exc:
+        _handle_listing_query_db_error(
+            state=state,
+            stats=stats,
+            phase_timer=phase_timer,
+            exc=exc,
+            scheduler_shared_lock=scheduler_shared_lock,
+        )
+        break
       if pk_chunk is None:
         state["done"] = True
         break
@@ -4050,7 +4242,9 @@ def _fill_ready_queue(
         return
     return
 
-  active = [s for s in date_states if not s["done"]]
+  active = [
+      s for s in date_states if _date_state_listing_schedulable(s)
+  ]
   if not active:
     return
   start = int(rr_cursor.get("idx", 0)) % len(active)
@@ -4059,7 +4253,17 @@ def _fill_ready_queue(
   for state in ordered:
     if len(ready_queue) >= prefetch_chunks:
       break
-    pk_chunk, is_new = _resume_or_next_pk_chunk(state)
+    try:
+      pk_chunk, is_new = _resume_or_next_pk_chunk(state)
+    except (OperationalError, DatabaseError) as exc:
+      _handle_listing_query_db_error(
+          state=state,
+          stats=stats,
+          phase_timer=phase_timer,
+          exc=exc,
+          scheduler_shared_lock=scheduler_shared_lock,
+      )
+      continue
     if pk_chunk is None:
       state["done"] = True
       continue
@@ -4380,11 +4584,17 @@ def _start_readiness_producer(
   """
   def _producer_loop() -> None:
     """
-    Internal helper to handle producer loop.
-    
+    Fill ``ready_queue`` from listing/readiness until shutdown or stall exit.
+
     Returns:
       None
-    
+
+    Raises:
+      DatabaseUnavailableExit: When listing/fill hits a fatal DB outage.
+      Exception: Unexpected fill failures are logged, partial ready is flushed,
+      and the producer exits with ``stall_reason=listing_query_failed`` (does
+      not re-raise after the safety net).
+
     Examples:
       >>> _producer_loop()  # doctest: +SKIP
     """
@@ -4561,21 +4771,45 @@ def _start_readiness_producer(
               "iter": iter([(extra_candidates, len(extra_candidates))]),
               "done": False,
               "pending_tail": None,
+              "min_time": min_time,
+              "rerun": rerun,
+              "listing_cooldown_until": 0.0,
+              "listing_needs_rebuild": False,
           }]
-          _fill_ready_queue(
-              extra_state,
-              local_ready,
-              "strict_date",
-              prefetch_chunks=max(1, probe_target),
-              phase_timer=phase_timer,
-              stats=stats,
-              strict_check_state=strict_check_state,
-              strict_check_cooldown_until=strict_check_cooldown_until,
-              rr_cursor={"idx": 0},
-              scheduler_shared_lock=scheduler_shared_lock,
-              on_not_ready_jid=_defer_hit,
-              on_candidate_jid=_remember_candidate,
-          )
+          try:
+            _fill_ready_queue(
+                extra_state,
+                local_ready,
+                "strict_date",
+                prefetch_chunks=max(1, probe_target),
+                phase_timer=phase_timer,
+                stats=stats,
+                strict_check_state=strict_check_state,
+                strict_check_cooldown_until=strict_check_cooldown_until,
+                rr_cursor={"idx": 0},
+                scheduler_shared_lock=scheduler_shared_lock,
+                on_not_ready_jid=_defer_hit,
+                on_candidate_jid=_remember_candidate,
+            )
+          except DatabaseUnavailableExit:
+            raise
+          except Exception as fill_exc:
+            log_print(
+                "metrics scheduler: unexpected fill failure (extra); "
+                "flushing partial ready: {0}".format(fill_exc),
+                flush=True,
+            )
+            traceback.print_exc()
+            if local_ready:
+              with ready_queue_lock:
+                ready_queue.extend(local_ready)
+              with scheduler_shared_lock:
+                stats["ready_enqueued_total"] += len(local_ready)
+              local_ready.clear()
+            with scheduler_shared_lock:
+              stats["stall_exit_triggered"] = 1
+              stats["stall_reason"] = "listing_query_failed"
+            break
           for jid, rt in deferred_hits:
             _defer_not_ready_jid(jid, runtime_s=rt)
           if len(local_ready) >= probe_target:
@@ -4592,20 +4826,40 @@ def _start_readiness_producer(
             with scheduler_shared_lock:
               stats["ready_enqueued_total"] += len(local_ready)
             continue
-        _fill_ready_queue(
-            date_states,
-            local_ready,
-            scheduler_mode,
-            prefetch_chunks=max(1, probe_target),
-            phase_timer=phase_timer,
-            stats=stats,
-            strict_check_state=strict_check_state,
-            strict_check_cooldown_until=strict_check_cooldown_until,
-            rr_cursor=rr_cursor,
-            scheduler_shared_lock=scheduler_shared_lock,
-            on_not_ready_jid=_defer_hit,
-            on_candidate_jid=_remember_candidate,
-        )
+        try:
+          _fill_ready_queue(
+              date_states,
+              local_ready,
+              scheduler_mode,
+              prefetch_chunks=max(1, probe_target),
+              phase_timer=phase_timer,
+              stats=stats,
+              strict_check_state=strict_check_state,
+              strict_check_cooldown_until=strict_check_cooldown_until,
+              rr_cursor=rr_cursor,
+              scheduler_shared_lock=scheduler_shared_lock,
+              on_not_ready_jid=_defer_hit,
+              on_candidate_jid=_remember_candidate,
+          )
+        except DatabaseUnavailableExit:
+          raise
+        except Exception as fill_exc:
+          log_print(
+              "metrics scheduler: unexpected fill failure; "
+              "flushing partial ready: {0}".format(fill_exc),
+              flush=True,
+          )
+          traceback.print_exc()
+          if local_ready:
+            with ready_queue_lock:
+              ready_queue.extend(local_ready)
+            with scheduler_shared_lock:
+              stats["ready_enqueued_total"] += len(local_ready)
+            local_ready.clear()
+          with scheduler_shared_lock:
+            stats["stall_exit_triggered"] = 1
+            stats["stall_reason"] = "listing_query_failed"
+          break
         for jid, rt in deferred_hits:
           _defer_not_ready_jid(jid, runtime_s=rt)
         with scheduler_shared_lock:

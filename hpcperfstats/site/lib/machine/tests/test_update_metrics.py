@@ -221,6 +221,7 @@ def test_iter_chunked_pks_non_queryset_does_not_double_yield():
   assert [r.jid for r in chunks[0][0]] == [1, 2, 3]
 
 
+@pytest.mark.machine_unit_mock
 def test_iter_chunked_pks_reraises_operational_error():
   """Keyset pagination must not fall back to offset slicing on DB timeout/cancel."""
   class BadQs:
@@ -232,6 +233,273 @@ def test_iter_chunked_pks_reraises_operational_error():
 
   with pytest.raises(OperationalError):
     list(_iter_chunked_pks(BadQs(), 2))
+
+
+@pytest.mark.machine_unit_mock
+def test_fill_ready_queue_listing_operational_error_keeps_partial_ready(
+    monkeypatch,
+):
+  """Listing OE on a later day must keep already-strict-ready local_ready (hs04)."""
+  _patch_connections_vendor(monkeypatch, "sqlite")
+  monkeypatch.setattr(
+      update_metrics.cfg,
+      "get_metrics_readiness_require_window_coverage",
+      lambda: False,
+  )
+  monkeypatch.setattr(
+      update_metrics, "_proxy_readiness_for_jid", lambda jid: "unknown"
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_proxy_reject_not_ready_jids",
+      lambda jids: (set(), list(jids)),
+  )
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
+  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: 1000.0)
+  lines = []
+  monkeypatch.setattr(
+      update_metrics, "log_print", lambda msg, flush=False: lines.append(msg)
+  )
+
+  class _BoomIter:
+    def __iter__(self):
+      return self
+
+    def __next__(self):
+      raise OperationalError("canceling statement due to statement timeout")
+
+  day_ok = datetime(2026, 8, 16)
+  day_hot = datetime(2026, 8, 15)
+  states = [
+      {
+          "date": day_ok,
+          "iter": iter([(["j-today-1", "j-today-2"], 2)]),
+          "done": False,
+          "pending_tail": None,
+          "min_time": 300,
+          "rerun": False,
+          "listing_cooldown_until": 0.0,
+          "listing_needs_rebuild": False,
+      },
+      {
+          "date": day_hot,
+          "iter": _BoomIter(),
+          "done": False,
+          "pending_tail": None,
+          "min_time": 300,
+          "rerun": False,
+          "listing_cooldown_until": 0.0,
+          "listing_needs_rebuild": False,
+      },
+  ]
+  ready = []
+  stats = {
+      "candidate_jids": 0,
+      "skipped_not_ready": 0,
+      "readiness_error_chunks": 0,
+      "proxy_checked_chunks": 0,
+      "proxy_rejected_jids": 0,
+      "proxy_not_ready_jids": 0,
+      "strict_not_ready_jids": 0,
+      "strict_ready_jids": 0,
+      "strict_cooldown_skips": 0,
+      "deferred_not_ready_queue_size": 0,
+      "deferred_not_ready_due_now": 0,
+      "deferred_quarantined_jids": 0,
+      "stall_exit_triggered": 0,
+      "strict_check_calls": 0,
+      "strict_check_timeouts": 0,
+      "strict_check_avg_latency_ms": 0.0,
+      "strict_batch_size_current": update_metrics.STRICT_CHECK_BATCH_MIN,
+  }
+  update_metrics._fill_ready_queue(
+      states,
+      ready,
+      mode="global_priority",
+      prefetch_chunks=10,
+      phase_timer=update_metrics._PhaseTimer(),
+      stats=stats,
+      strict_check_state={
+          "batch_size": update_metrics.STRICT_CHECK_BATCH_MIN,
+          "max_batch_size": update_metrics.STRICT_CHECK_BATCH_MIN,
+      },
+      strict_check_cooldown_until={},
+      rr_cursor={"idx": 0},
+      scheduler_shared_lock=threading.Lock(),
+  )
+  assert _ready_queue_jids(ready) == ["j-today-1", "j-today-2"]
+  assert stats["strict_ready_jids"] == 2
+  assert stats["readiness_error_chunks"] == 1
+  assert states[1]["done"] is False
+  assert states[1]["listing_needs_rebuild"] is True
+  assert states[1]["listing_cooldown_until"] > 1000.0
+  assert any("listing query failed" in msg for msg in lines)
+  assert any("statement timeout" in msg for msg in lines)
+
+
+@pytest.mark.machine_unit_mock
+def test_producer_enqueues_partial_ready_after_listing_error(monkeypatch):
+  """Producer must enqueue partial local_ready after listing OE recovery."""
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(
+      update_metrics,
+      "_apply_default_metrics_window_rollover",
+      lambda *a, **k: False,
+  )
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  class _Reporter:
+    def readiness_errors_total(self):
+      return 0
+
+    def record_readiness_error_chunk(self, n):
+      del n
+
+  fill_calls = {"n": 0}
+
+  def _fill(
+      date_states,
+      ready_queue,
+      mode,
+      prefetch_chunks,
+      phase_timer,
+      stats,
+      strict_check_state,
+      strict_check_cooldown_until,
+      rr_cursor,
+      scheduler_shared_lock,
+      on_not_ready_jid=None,
+      on_candidate_jid=None,
+  ):
+    del (
+        date_states,
+        mode,
+        prefetch_chunks,
+        phase_timer,
+        strict_check_state,
+        strict_check_cooldown_until,
+        rr_cursor,
+        on_not_ready_jid,
+        on_candidate_jid,
+    )
+    fill_calls["n"] += 1
+    ready_queue.append(update_metrics._candidate_ref("j-ready-1"))
+    ready_queue.append(update_metrics._candidate_ref("j-ready-2"))
+    with scheduler_shared_lock:
+      stats["strict_ready_jids"] += 2
+      stats["readiness_error_chunks"] += 1
+    update_metrics.shutdown_requested[0] = True
+
+  monkeypatch.setattr(update_metrics, "_fill_ready_queue", _fill)
+
+  ready_queue = deque()
+  ready_queue_lock = threading.Lock()
+  producer_done = threading.Event()
+  stats = {
+      "processed": 0,
+      "failed": 0,
+      "candidate_jids": 0,
+      "skipped_not_ready": 0,
+      "readiness_error_chunks": 0,
+      "proxy_checked_chunks": 0,
+      "proxy_rejected_jids": 0,
+      "proxy_not_ready_jids": 0,
+      "strict_not_ready_jids": 0,
+      "strict_ready_jids": 0,
+      "strict_cooldown_skips": 0,
+      "deferred_not_ready_queue_size": 0,
+      "deferred_not_ready_due_now": 0,
+      "deferred_quarantined_jids": 0,
+      "stall_exit_triggered": 0,
+      "stall_reason": "n/a",
+      "ready_enqueued_total": 0,
+      "ready_dequeued_total": 0,
+      "strict_check_calls": 0,
+      "strict_check_timeouts": 0,
+      "strict_check_avg_latency_ms": 0.0,
+      "strict_batch_size_current": update_metrics.STRICT_CHECK_BATCH_MIN,
+  }
+  date_states = [{
+      "date": datetime(2026, 8, 16),
+      "iter": iter([]),
+      "done": False,
+      "pending_tail": None,
+      "min_time": 300,
+      "rerun": False,
+      "listing_cooldown_until": 0.0,
+      "listing_needs_rebuild": False,
+  }]
+  producer = update_metrics._start_readiness_producer(
+      date_states=date_states,
+      ready_queue=ready_queue,
+      ready_queue_lock=ready_queue_lock,
+      producer_done=producer_done,
+      scheduler_mode="global_priority",
+      prefetch_ready_cap=100,
+      readiness_probe_target={"value": 100},
+      strict_check_state={
+          "batch_size": update_metrics.STRICT_CHECK_BATCH_MIN,
+          "max_batch_size": update_metrics.STRICT_CHECK_BATCH_MIN,
+      },
+      strict_check_cooldown_until={},
+      phase_timer=update_metrics._PhaseTimer(),
+      stats=stats,
+      completion_reporter=_Reporter(),
+      scheduler_shared_lock=threading.Lock(),
+      rescan_candidate_jids=deque(),
+      rescan_seen_jids=set(),
+      rescan_seen_order=deque(),
+      rescan_seen_cap=100,
+      rescan_lock=threading.Lock(),
+      dates=[datetime(2026, 8, 16)],
+      min_time=300,
+      rerun=False,
+      allow_rollover=False,
+  )
+  producer.join(timeout=5.0)
+  assert producer_done.wait(timeout=1.0)
+  assert fill_calls["n"] >= 1
+  assert stats["ready_enqueued_total"] >= 2
+  assert stats["strict_ready_jids"] >= 2
+  assert _ready_queue_jids(list(ready_queue))[:2] == ["j-ready-1", "j-ready-2"]
+
+
+@pytest.mark.machine_unit_mock
+def test_log_metrics_window_census_includes_operational_error_message(monkeypatch):
+  """census_error token must include truncated OperationalError message text."""
+  lines = []
+  monkeypatch.setattr(
+      update_metrics, "_today_datetime",
+      lambda: datetime(2026, 8, 16, 8, 30, 0),
+  )
+  monkeypatch.setattr(
+      update_metrics,
+      "_cheap_metrics_day_census",
+      lambda d, _min: (
+          (_ for _ in ()).throw(
+              OperationalError("canceling statement due to statement timeout")
+          )
+          if getattr(d, "day", None) == 15
+          else {"all": 12, "rt_null": 0, "rt_ge_min_time": 12}
+      ),
+  )
+  monkeypatch.setattr(
+      update_metrics, "_metrics_day_listed_count", lambda *_a, **_k: 12
+  )
+  monkeypatch.setattr(
+      update_metrics, "log_print", lambda msg, flush=False: lines.append(msg)
+  )
+  dates = [
+      datetime(2026, 8, 16, 0, 0, 0),
+      datetime(2026, 8, 15, 0, 0, 0),
+  ]
+  update_metrics._log_metrics_window_census(
+      dates, min_time=300, rerun=False, reason="empty_pass"
+  )
+  assert len(lines) == 1
+  assert "2026-08-15=census_error:OperationalError:" in lines[0]
+  assert "statement timeout" in lines[0]
+  assert "2026-08-16:all=12" in lines[0]
 
 
 def test_iter_chunked_pks_uses_slice_windows_not_iterator():
@@ -2207,11 +2475,12 @@ def test_update_metrics_exits_on_compute_all_failed(monkeypatch):
   assert diag["stats"]["attempted_total"] == 2
 
 
-@pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
 def test_update_metrics_stall_reason_doc_drift_guard():
   """Lock documented stall_reason strings to code constants (docs/TESTING.md)."""
   expected = frozenset({
       "no_ready_candidates",
+      "listing_query_failed",
       "compute_stuck_inflight",
       "compute_all_failed",
   })
