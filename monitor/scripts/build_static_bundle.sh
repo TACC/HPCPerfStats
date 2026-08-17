@@ -539,7 +539,14 @@ build_likwid() {
     sed -i 's/^SHARED_LIBRARY = true/SHARED_LIBRARY = false/' config.mk
   fi
   likwid_cflags="$(append_fpic_flags "${CFLAGS-}")"
-  local -a likwid_mk=(CFLAGS="${likwid_cflags}")
+  # LIKWID still builds shared liblikwidpin.so even when SHARED_LIBRARY=false.
+  # GCC's pinlib link uses SHARED_LFLAGS + LIBS but not LFLAGS; without -pthread,
+  # pthread_setaffinity_np is undefined on some hosts (seen on Lonestar6).
+  local -a likwid_mk=(
+    CFLAGS="${likwid_cflags}"
+    SHARED_LFLAGS="-shared -fvisibility=hidden -pthread"
+    LIBS="-lm -lrt -pthread"
+  )
   make clean >/dev/null 2>&1 || true
   make -j"${JOBS}" PREFIX="${PREFIX}" INSTALLED_PREFIX="${PREFIX}" \
     BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=direct \
