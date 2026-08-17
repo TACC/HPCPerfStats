@@ -133,14 +133,16 @@ if test "x$cpu_counter_backend" = "xlikwid" && test "x$is_x86" != "xtrue"; then
 fi
 
 if test "x$cpu_counter_backend" = "xlikwid"; then
-  dnl Static liblikwid.a (prefix-static, foreign cross deps) needs hwloc/lua archives and -lm on the
-  dnl probe link line. AC_SEARCH_LIBS only adds -llikwid to LIBS; extras are for the try link only.
-  dnl Try the static-bundle link first, then fall back to a shared-only -llikwid (distro packages).
+  dnl Static liblikwid.a (prefix-static, foreign cross deps) needs hwloc/lua archives and -lm
+  dnl plus -lpthread/-ldl/-lrt on some hosts (Lonestar6). AC_SEARCH_LIBS only adds -llikwid to
+  dnl LIBS; extras are for the try link only. Unset cache before the shared-only retry (same
+  dnl ac_cv_search_* key — mirror rabbitmq probe).
   have_likwid=no
   likwid_static_bundle=no
   AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes likwid_static_bundle=yes],
-    [], [-llikwid-hwloc -llikwid-lua -lm])
+    [], [-llikwid-hwloc -llikwid-lua -lm -lrt -pthread -ldl])
   if test "x${have_likwid}" != xyes; then
+    AS_UNSET([ac_cv_search_perfmon_init])
     AC_SEARCH_LIBS([perfmon_init], [likwid], [have_likwid=yes],
       [AC_MSG_ERROR([Unable to find liblikwid!])])
   fi

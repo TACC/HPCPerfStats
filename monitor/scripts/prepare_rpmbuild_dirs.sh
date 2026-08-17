@@ -87,7 +87,8 @@ verify_likwid_static_link_probe() {
   out="${tbase}.out"
   printf '%s\n' '#include <likwid.h>' 'int main(void){ return perfmon_init(0, (int*)0); }' > "${tbase}.c"
   rc=0
-  if ! ${CC:-gcc} ${CPPFLAGS:-} ${LDFLAGS:-} "${tbase}.c" ${LIBS:-} -lpthread -ldl -o "${out}" >/dev/null 2>&1; then
+  # LIBS from the caller must already include -lpthread -ldl (same as configure env).
+  if ! ${CC:-gcc} ${CPPFLAGS:-} ${LDFLAGS:-} "${tbase}.c" ${LIBS:-} -o "${out}" >/dev/null 2>&1; then
     rc=1
   fi
   rm -f "${tbase}.c" "${out}"
@@ -222,7 +223,10 @@ EOF
     exit 1
   fi
 
-  export LIBS="-Wl,--start-group -llikwid -llikwid-hwloc -llikwid-lua -Wl,--end-group -lm -lrt ${LIBS:-}"
+  # Include -lpthread -ldl in exported LIBS (not only on the probe cmdline). LS6 static
+  # liblikwid needs them for configure AC_SEARCH_LIBS(perfmon_init); the probe used to
+  # pass while configure still failed with "(cached) no".
+  export LIBS="-Wl,--start-group -llikwid -llikwid-hwloc -llikwid-lua -Wl,--end-group -lm -lrt -lpthread -ldl ${LIBS:-}"
   if ! verify_likwid_static_link_probe; then
     cat <<EOF >&2
 Unable to link a trivial LIKWID program from PREFIX=${PREFIX}.
