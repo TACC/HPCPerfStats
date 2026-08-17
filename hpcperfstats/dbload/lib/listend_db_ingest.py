@@ -903,18 +903,28 @@ class ListendDbIngestPool:
             else cfg.get_listend_db_ingest_batch_samples()
         ),
     )
-    self._ctx = mp.get_context("spawn")
-    self._stop = self._ctx.Event()
     self._queues: list = []
     self._byte_counts: list = []
     self._byte_locks: list = []
     self._workers: list = []
-    self._counters = {
-        name: self._ctx.Value("Q", 0) for name in _COUNTER_NAMES
-    }
     self._started = False
     self._pause_started_mono: float | None = None
     self._pause_seconds_window = 0.0
+    # Disabled pools must not allocate spawn Event/Value/Queue objects.
+    # POSIX semaphores fail with FileNotFoundError when /dev/shm is missing
+    # (the [listend:main] "Failed to start listend db ingest pool: [Errno 2]"
+    # log) even though start() would have been a no-op.
+    if not self.enabled:
+      self._ctx = None
+      self._stop = None
+      self._counters = {}
+      self._window_baseline = self.snapshot_counters()
+      return
+    self._ctx = mp.get_context("spawn")
+    self._stop = self._ctx.Event()
+    self._counters = {
+        name: self._ctx.Value("Q", 0) for name in _COUNTER_NAMES
+    }
     self._window_baseline = self.snapshot_counters()
 
   def start(self) -> None:
@@ -1240,7 +1250,12 @@ class ListendDbIngestPool:
     Examples:
       >>> ListendDbIngestPool().snapshot_counters()  # doctest: +SKIP
     """
-    out = {name: int(self._counters[name].value) for name in _COUNTER_NAMES}
+    out = {}
+    for name in _COUNTER_NAMES:
+      try:
+        out[name] = int(self._counters[name].value)
+      except Exception:
+        out[name] = 0
     depth = 0
     for q in self._queues:
       try:
@@ -1339,22 +1354,37 @@ def start_listend_db_ingest_pool(
   **kwargs: Any,
 ) -> Optional[ListendDbIngestPool]:
   """
-  Start the listend db ingest pool.
-  
+  Construct and start the process-global live DB ingest pool.
+
+  When live ingest is off (``listend_db_ingest_enabled=no`` or
+  ``enabled=False``), return ``None`` without creating multiprocessing
+  shared objects. Spawn ``Event``/``Value`` allocation is what raises
+  ``FileNotFoundError`` when ``/dev/shm`` or ``sys.executable`` is missing.
+
   Args:
-    **kwargs (Any): Extra keyword arguments forwarded to the wrapped API; keys
-    and value types match that callee's signature.
-  
+    **kwargs (Any): Forwarded to ``ListendDbIngestPool``:
+      ``pool_processes``, ``queue_max_gb``, ``batch_samples``, ``enabled``.
+
   Returns:
-    Optional[ListendDbIngestPool]: Optional[ListendDbIngestPool] — the result,
-    or None when unavailable.
-  
+    Optional[ListendDbIngestPool]: The started pool, an already-created
+      global pool, or ``None`` when live ingest is disabled.
+
   Examples:
-    >>> start_listend_db_ingest_pool()  # doctest: +SKIP
+    >>> start_listend_db_ingest_pool(enabled=False)
+    None
   """
   global _GLOBAL_POOL
   if _GLOBAL_POOL is not None:
     return _GLOBAL_POOL
+  enabled = kwargs.get("enabled")
+  if enabled is None:
+    enabled = bool(cfg.get_listend_db_ingest_enabled())
+  if not enabled:
+    log_print(
+        "listend db ingest disabled; skipping live DB pool",
+        flush=True,
+    )
+    return None
   pool = ListendDbIngestPool(**kwargs)
   if pool.enabled:
     pool.start()

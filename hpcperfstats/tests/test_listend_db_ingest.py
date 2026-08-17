@@ -21,6 +21,49 @@ def test_compute_listend_db_queue_budgets_splits_evenly():
   assert budgets["queue_maxsize"] == budgets["per_worker_budget_bytes"] // 256
 
 
+def test_disabled_pool_skips_multiprocessing_spawn_ipc(monkeypatch):
+  """listend_db_ingest_enabled=no must not create spawn Event/Value objects.
+
+  Those POSIX semaphores raise FileNotFoundError when /dev/shm or the
+  spawn executable is missing — the [listend:main] Errno 2 log.
+  """
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  def boom(*_args, **_kwargs):
+    raise FileNotFoundError(2, "No such file or directory")
+
+  monkeypatch.setattr(ldi.mp, "get_context", boom)
+  pool = ldi.ListendDbIngestPool(enabled=False)
+  assert pool.enabled is False
+  assert pool._started is False
+  assert pool._ctx is None
+  assert pool.queued_bytes() == 0
+
+
+def test_start_listend_db_ingest_pool_disabled_skips_spawn(monkeypatch):
+  """start_listend_db_ingest_pool must not construct IPC when INI is off."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  monkeypatch.setattr(ldi.cfg, "get_listend_db_ingest_enabled", lambda: False)
+  monkeypatch.setattr(ldi, "_GLOBAL_POOL", None)
+
+  def boom(*_args, **_kwargs):
+    raise FileNotFoundError(2, "No such file or directory")
+
+  monkeypatch.setattr(ldi.mp, "get_context", boom)
+  monkeypatch.setattr(
+      ldi,
+      "ListendDbIngestPool",
+      mock.Mock(side_effect=AssertionError("must not construct pool")),
+  )
+  try:
+    pool = ldi.start_listend_db_ingest_pool()
+    assert pool is None
+    assert ldi.get_listend_db_ingest_pool() is None
+  finally:
+    ldi._GLOBAL_POOL = None
+
+
 def test_host_affine_worker_index_stable():
   from hpcperfstats.dbload.lib.listend_db_ingest import host_affine_worker_index
 
