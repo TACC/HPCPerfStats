@@ -118,6 +118,15 @@ grep -q 'is-active hpcperfstats.service' "${verify}" \
 grep -q 'refusing shm validate' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must refuse validate when service not active" >&2; exit 1; }
 
+grep -Eq 'field group creation failed|basic-no-board-power|stage=6' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must hint FieldGroupCreate / basic-no-board-power on validate fail" >&2; exit 1; }
+
+grep -Eq 'Driver/stack probe|libdcgm' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must mention Driver/stack probe libdcgm on validate fail" >&2; exit 1; }
+
+grep -Eq 'field group creation failed|stage=6|libdcgm' "${ROOT}/scripts/lib/device_validate.py" \
+  || { echo "device_validate.py must hint field group / libdcgm for nvidia_gpu no rows" >&2; exit 1; }
+
 grep -q 'STRICT_CROSS_SAMPLE:-1' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must default STRICT_CROSS_SAMPLE on" >&2; exit 1; }
 

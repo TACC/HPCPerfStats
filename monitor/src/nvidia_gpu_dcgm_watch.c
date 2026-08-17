@@ -15,87 +15,10 @@
 #include "monitor_log.h"
 #include "stats.h"
 #include "nvidia_gpu_dcgm_compat.h"
+#include "nvidia_gpu_dcgm_profiles.h"
 #include "nvidia_gpu_dcgm_watch.h"
 
 #define dcgm_err nvidia_gpu_dcgm_err
-
-/*
- * Core DCGM watch list (works on stacks without PROF tensor IMMA/HMMA/DFMA field IDs).
- * Must stay aligned with the full list minus the three optional tensor split fields.
- */
-static const unsigned short g_dcgm_field_ids_core[NVIDIA_GPU_DCGM_NCORE] = {
-    DCGM_FI_DEV_POWER_USAGE,
-    DCGM_FI_DEV_GPU_TEMP,
-    DCGM_FI_DEV_MEM_COPY_UTIL,
-    DCGM_FI_DEV_GPU_UTIL,
-    DCGM_FI_DEV_FB_TOTAL,
-    DCGM_FI_DEV_FB_USED,
-    DCGM_FI_DEV_FB_FREE,
-    DCGM_FI_DEV_SM_CLOCK,
-    DCGM_FI_DEV_PCIE_REPLAY_COUNTER,
-    DCGM_FI_PROF_PIPE_TENSOR_ACTIVE,
-    DCGM_FI_PROF_PIPE_FP64_ACTIVE,
-    DCGM_FI_PROF_PIPE_FP32_ACTIVE,
-    DCGM_FI_PROF_PIPE_FP16_ACTIVE,
-    DCGM_FI_PROF_SM_ACTIVE,
-    DCGM_FI_PROF_SM_OCCUPANCY,
-    DCGM_FI_PROF_DRAM_ACTIVE,
-    DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
-    DCGM_FI_PROF_PCIE_TX_BYTES,
-    DCGM_FI_PROF_PCIE_RX_BYTES,
-    DCGM_FI_PROF_NVLINK_TX_BYTES,
-    DCGM_FI_PROF_NVLINK_RX_BYTES,
-    DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT,
-    DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT};
-
-/*
- * Non-PROF fallback for nodes where DCGM profiling watches are unsupported/permissioned off.
- * Keeps nvidia_gpu rows alive with basic telemetry and gpu_count.
- */
-static const unsigned short g_dcgm_field_ids_basic[NVIDIA_GPU_DCGM_NBASIC] = {
-    DCGM_FI_DEV_POWER_USAGE,
-    DCGM_FI_DEV_GPU_TEMP,
-    DCGM_FI_DEV_MEM_COPY_UTIL,
-    DCGM_FI_DEV_GPU_UTIL,
-    DCGM_FI_DEV_FB_TOTAL,
-    DCGM_FI_DEV_FB_USED,
-    DCGM_FI_DEV_FB_FREE,
-    DCGM_FI_DEV_SM_CLOCK,
-    DCGM_FI_DEV_PCIE_REPLAY_COUNTER,
-    DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
-    DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT,
-    DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT};
-
-static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
-    DCGM_FI_DEV_POWER_USAGE,
-    DCGM_FI_DEV_GPU_TEMP,
-    DCGM_FI_DEV_MEM_COPY_UTIL,
-    DCGM_FI_DEV_GPU_UTIL,
-    DCGM_FI_DEV_FB_TOTAL,
-    DCGM_FI_DEV_FB_USED,
-    DCGM_FI_DEV_FB_FREE,
-    DCGM_FI_DEV_SM_CLOCK,
-    DCGM_FI_DEV_PCIE_REPLAY_COUNTER,
-    DCGM_FI_PROF_PIPE_TENSOR_ACTIVE,
-    DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE,
-    DCGM_FI_PROF_PIPE_TENSOR_HMMA_ACTIVE,
-    DCGM_FI_PROF_PIPE_TENSOR_DFMA_ACTIVE,
-    DCGM_FI_PROF_PIPE_FP64_ACTIVE,
-    DCGM_FI_PROF_PIPE_FP32_ACTIVE,
-    DCGM_FI_PROF_PIPE_FP16_ACTIVE,
-    DCGM_FI_PROF_SM_ACTIVE,
-    DCGM_FI_PROF_SM_OCCUPANCY,
-    DCGM_FI_PROF_DRAM_ACTIVE,
-    DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
-    DCGM_FI_PROF_PCIE_TX_BYTES,
-    DCGM_FI_PROF_PCIE_RX_BYTES,
-    DCGM_FI_PROF_NVLINK_TX_BYTES,
-    DCGM_FI_PROF_NVLINK_RX_BYTES,
-    DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT,
-    DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT};
-
-_Static_assert(sizeof(g_dcgm_field_ids) / sizeof(g_dcgm_field_ids[0]) == NVIDIA_GPU_NFIELDS,
-               "g_dcgm_field_ids length must match NVIDIA_GPU_NFIELDS");
 
 static int g_last_watch_profile = -1;
 
@@ -175,27 +98,6 @@ static int env_int_or_default(const char *name, int fallback)
   return (int)parsed;
 }
 
-static int nvidia_gpu_watch_attempt_order(int order[3])
-{
-  int n = 0;
-  int p;
-  if (g_last_watch_profile >= 0 && g_last_watch_profile <= 2)
-    order[n++] = g_last_watch_profile;
-  for (p = 0; p < 3; p++) {
-    int seen = 0;
-    int i;
-    for (i = 0; i < n; i++) {
-      if (order[i] == p) {
-        seen = 1;
-        break;
-      }
-    }
-    if (!seen)
-      order[n++] = p;
-  }
-  return n;
-}
-
 static int nvidia_gpu_warmup_wait_latest_values(dcgmHandle_t dcgm_handle, dcgmGpuGrp_t group_id,
                                                 dcgmFieldGrp_t field_group_id)
 {
@@ -203,6 +105,8 @@ static int nvidia_gpu_warmup_wait_latest_values(dcgmHandle_t dcgm_handle, dcgmGp
   int step_ms = 250;
   dcgmReturn_t rc = DCGM_ST_OK;
   int elapsed;
+  (void)group_id;
+  (void)field_group_id;
   if (wait_ms <= 0)
     return 0;
   for (elapsed = 0; elapsed < wait_ms; elapsed += step_ms) {
@@ -314,33 +218,25 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
 
   {
     int attempt_idx;
-    int attempts[3] = {0, 1, 2};
-    int attempt_nr = nvidia_gpu_watch_attempt_order(attempts);
+    int attempts[NVIDIA_GPU_WATCH_PROFILE_NR];
+    int attempt_nr = nvidia_gpu_watch_attempt_order(attempts, g_last_watch_profile);
+    int last_attempt = NVIDIA_GPU_WATCH_PROFILE_NR - 1;
     for (attempt_idx = 0; attempt_idx < attempt_nr; attempt_idx++) {
       int attempt = attempts[attempt_idx];
       unsigned int nf = 0;
       const unsigned short *fid = NULL;
       const char *profile_name = NULL;
 
-      if (attempt == 0) {
-        nf = (unsigned int)NVIDIA_GPU_NFIELDS;
-        fid = g_dcgm_field_ids;
-        profile_name = "full-prof";
-      } else if (attempt == 1) {
-        nf = (unsigned int)NVIDIA_GPU_DCGM_NCORE;
-        fid = g_dcgm_field_ids_core;
-        profile_name = "core-prof";
-      } else {
-        nf = (unsigned int)NVIDIA_GPU_DCGM_NBASIC;
-        fid = g_dcgm_field_ids_basic;
-        profile_name = "basic-nonprof";
+      if (nvidia_gpu_watch_profile_select(attempt, &fid, &nf, &profile_name) < 0 || fid == NULL) {
+        *fail_stage = NVIDIA_GPU_FAIL_FIELD_GROUP_CREATE;
+        continue;
       }
 
       rc = dcgmFieldGroupCreate(g_nvidia_gpu_runtime_handle, nf, (unsigned short *)fid,
                                 (char *)"hpcperfstats_fields", &g_nvidia_gpu_runtime_field_group);
       if (rc != DCGM_ST_OK) {
         *fail_stage = NVIDIA_GPU_FAIL_FIELD_GROUP_CREATE;
-        if (attempt == 2)
+        if (attempt == last_attempt)
           ERROR("DCGM field group creation failed: %s\n", dcgm_err(rc));
         else
           TRACE("DCGM field group creation failed for %s (will retry fallback): %s\n", profile_name,
@@ -352,7 +248,7 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
                            g_nvidia_gpu_runtime_field_group, 10000000, 3600.0, 3600);
       if (rc != DCGM_ST_OK) {
         *fail_stage = NVIDIA_GPU_FAIL_WATCH_FIELDS;
-        if (attempt == 2)
+        if (attempt == last_attempt)
           ERROR("DCGM watch fields failed: %s\n", dcgm_err(rc));
         else
           TRACE("DCGM watch fields failed for %s (will retry fallback): %s\n", profile_name,
@@ -371,8 +267,11 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
     }
   }
   if (watch_profile > 0) {
-    monitor_log_warn("nvidia_gpu: using DCGM fallback watch profile %s\n",
-                     watch_profile == 1 ? "core-prof" : "basic-nonprof");
+    const unsigned short *fid = NULL;
+    unsigned int nf = 0;
+    const char *profile_name = "unknown";
+    (void)nvidia_gpu_watch_profile_select(watch_profile, &fid, &nf, &profile_name);
+    monitor_log_warn("nvidia_gpu: using DCGM fallback watch profile %s\n", profile_name);
   }
   if (nvidia_gpu_maybe_warmup(g_nvidia_gpu_runtime_handle, g_nvidia_gpu_runtime_group,
                               g_nvidia_gpu_runtime_field_group, watch_profile) < 0) {

@@ -73,6 +73,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_gpu_schema_contract.c` | NVIDIA/AMD GPU schema substrings (incl. module/sysio power keys) |
 | `test_nvidia_gpu_estimate.c` | `nvidia_gpu_estimate_rates` FLOP/memory-bandwidth math |
 | `test_nvidia_gpu_dcgm_field.c` | DCGM blank-family reject on GPU watts/util/u64/ratio converters |
+| `test_nvidia_gpu_dcgm_profiles.c` | FieldGroupCreate profile ladder: preferred keep 1132/1133; last-resort omits; attempt order |
 | `test_roofline_hw_peak_schema.c` | Roofline peak schema contract strings |
 | `test_roofline_hw_peak_changeover.c` | Roofline changeover / mode gating with `HPCPERFSTATS_SKIP_HW_PROBE` |
 | `test_roofline_detect_fixture.c` | `roofline_hw_peak_detect_fill_cache` fixture when `HPCPERFSTATS_SKIP_HW_PROBE=1` |

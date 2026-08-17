@@ -8,6 +8,11 @@
 #define NVIDIA_GPU_DCGM_NCORE 23
 /* Minimal non-PROF list for stacks where DCGM profiling watches are not permissioned/supported. */
 #define NVIDIA_GPU_DCGM_NBASIC 12
+/*
+ * Last-resort basic list without soft-defined board-power fields 1132/1133 (DCGM ≤3.1.x
+ * FieldGroupCreate BADPARAM). Preferred full/core/basic profiles still include those IDs.
+ */
+#define NVIDIA_GPU_DCGM_NBASIC_NO_BOARD_POWER (NVIDIA_GPU_DCGM_NBASIC - 2)
 
 #define KEYS                                                                                       \
   X(gpu_util, "", "GPU utilization in %"), X(gpu_mem_util, "", "Memory utilization in %"),         \

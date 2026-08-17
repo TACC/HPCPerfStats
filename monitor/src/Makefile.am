@@ -359,6 +359,8 @@ TYPES += \
 	nvidia_gpu.c \
 	nvidia_gpu_dcgm_watch.c \
 	nvidia_gpu_dcgm_watch.h \
+	nvidia_gpu_dcgm_profiles.c \
+	nvidia_gpu_dcgm_profiles.h \
 	nvidia_gpu_dcgm_compat.h \
 	nvidia_gpu_dcgm_field.c
 if GPU_DLOPEN

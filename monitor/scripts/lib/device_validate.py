@@ -36,7 +36,13 @@ def validate_devices_in_payload(
         if type_name == "host_proc":
             continue
         if type_name not in seen:
-            raise ValueError(f"type {type_name!r}: no rows in payload (expected devices)")
+            hint = ""
+            if type_name == "nvidia_gpu":
+                hint = (
+                    "; check journal for 'field group creation failed' / stage=6 "
+                    "(board-power field IDs) or Driver/stack probe libdcgm="
+                )
+            raise ValueError(f"type {type_name!r}: no rows in payload (expected devices){hint}")
         if type_name == "host_cpu" and len(seen[type_name]) != len(devices):
             raise ValueError(
                 f"host_cpu: {len(seen[type_name])} rows, expected {len(devices)} CPU devices"

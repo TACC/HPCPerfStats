@@ -322,7 +322,18 @@ PY
       echo "WARN: golden opted in but no matching shm_*_${slug} files under tests/expected (or GOLDEN_DIR)"
     fi
   fi
-  "${py}" "${monitor_dir}/scripts/validate_shm_messages.py" "${validate_args[@]}"
+  if ! "${py}" "${monitor_dir}/scripts/validate_shm_messages.py" "${validate_args[@]}"; then
+    echo "HINT: nvidia_gpu expected devices but no rows often means DCGM FieldGroupCreate BADPARAM" >&2
+    echo "      (journal: 'field group creation failed' / stage=6). Preferred profiles may include" >&2
+    echo "      board-power fields 1132/1133 unknown to older DCGM (e.g. 3.1.8); daemon should fall" >&2
+    echo "      back to basic-no-board-power. Also check Driver/stack probe libdcgm=." >&2
+    if command -v journalctl >/dev/null 2>&1; then
+      journalctl -u hpcperfstats.service -b --no-pager 2>/dev/null \
+        | grep -E 'Driver/stack probe|field group creation failed|nvidia_gpu: no device rows|basic-no-board-power' \
+        | tail -20 >&2 || true
+    fi
+    return 1
+  fi
 
   echo "PASS: validate_shm_messages (slug=${slug})"
 }
