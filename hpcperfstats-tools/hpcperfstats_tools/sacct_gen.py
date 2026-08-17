@@ -28,21 +28,30 @@ from .config import get_api_base_url
 def _daterange(
   start_date: datetime,
   end_date: datetime,
-  inclusive_end: bool = False,
+  inclusive_end: bool = True,
 ) -> Iterator[Any]:
     """
-    Yield each date from start_date through end_date, one day at a time.
-    
+    Yield each calendar day from start_date through end_date.
+
+    By default both ends are included (CLI date range is inclusive). Pass
+    ``inclusive_end=False`` for a half-open ``[start, end)`` span.
+
     Args:
-      start_date (datetime): Start date.
-      end_date (datetime): End date.
-      inclusive_end (bool): Boolean flag for inclusive end.
-    
+      start_date (datetime): First day to yield.
+      end_date (datetime): Last day to yield when ``inclusive_end`` is True;
+        exclusive upper bound when False.
+      inclusive_end (bool): When True (default), include ``end_date``.
+
     Yields:
-      Iterator[Any]: Value produced by this call (type depends on inputs).
-    
+      datetime: One datetime per day in the range (time-of-day preserved
+        from ``start_date``).
+
     Examples:
-      >>> _daterange(None, None, True)  # doctest: +SKIP
+      >>> from datetime import datetime
+      >>> start = datetime(2024, 1, 1)
+      >>> end = datetime(2024, 1, 2)
+      >>> [d.strftime("%Y-%m-%d") for d in _daterange(start, end)]
+      ['2024-01-01', '2024-01-02']
     """
     days = int((end_date - start_date).days)
     if inclusive_end:
@@ -200,9 +209,10 @@ def _parse_date_range(args: Any) -> Any:
         start_date = datetime.now()
 
     try:
-        end_date = parse(args.end_date) if args.end_date else start_date + timedelta(1)
+        # Inclusive CLI range: omit end_date → same calendar day as start.
+        end_date = parse(args.end_date) if args.end_date else start_date
     except Exception:
-        end_date = start_date + timedelta(1)
+        end_date = start_date
     return start_date, end_date
 
 
@@ -342,7 +352,7 @@ Files:
         "end_date",
         nargs="?",
         default=None,
-        help="End date (exclusive). Default: start_date + 1 day.",
+        help="End date (inclusive). Default: start_date (same day).",
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(

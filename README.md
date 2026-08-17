@@ -167,10 +167,10 @@ Do this from your scheduler’s **prolog** and **epilog**.
 3. **Run the ingest (requires a staff-capable API key):**
 
    ```bash
-   # Ingest today only (default date range is today .. today+1 day)
+   # Ingest today only (default date range is today .. today, inclusive)
    hpcperfstats-sacct-gen --api-key YOUR_KEY
 
-   # Ingest an explicit date range (end_date is exclusive)
+   # Ingest an explicit date range (both ends inclusive)
    hpcperfstats-sacct-gen 2024-01-01 2024-01-08 --api-key YOUR_KEY
 
    # Write daily YYYY-MM-DD.txt files locally instead of POSTing (DIR must exist;
