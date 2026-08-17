@@ -14,6 +14,7 @@ Attributes:
   _last_message_time: Attribute.
   _message_timestamps: Attribute.
   _db_backpressure_pause: Attribute.
+  _amqp_reconnect_requested: Attribute.
   _recent_host_queue: Attribute.
   _recent_host_redis_client: Attribute.
   _recent_host_worker_stop_event: Attribute.
@@ -40,7 +41,12 @@ from fcntl import LOCK_EX, LOCK_NB, flock
 
 import pika
 import redis
-from pika.exceptions import StreamLostError
+from pika.exceptions import (
+    AMQPChannelError,
+    ChannelWrongStateError,
+    ConnectionWrongStateError,
+    StreamLostError,
+)
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.file_locking import file_read_lock_wait, file_write_lock
@@ -74,6 +80,9 @@ _recent_host_queue = queue.Queue(maxsize=100000)
 _recent_host_redis_client = None
 # Set when on_message stops consume for live-DB queue backpressure.
 _db_backpressure_pause = False
+# Set when on_message detects a dead AMQP channel/connection and requests
+# a full BlockingConnection restart via the outer reconnect loop.
+_amqp_reconnect_requested = False
 
 
 def _parse_plausible_unix_seconds(token: str) -> int | None:
@@ -646,6 +655,100 @@ def _listend_db_backpressure_mode_is_pause() -> bool:
     return False
 
 
+def _is_amqp_channel_or_connection_dead(
+    exc: BaseException | None = None,
+    channel: Any = None,
+) -> bool:
+  """
+  Return True when the AMQP channel or connection is unusable.
+
+  Matches closed-channel/connection messages, pika wrong-state / stream-lost
+  errors, and ``channel.is_closed`` / ``channel.connection.is_closed`` when
+  those attributes exist. Idle-monitor depth probes use a separate short-lived
+  connection and must not share this consumer channel.
+
+  Args:
+    exc (BaseException | None): Exception from ack/nack/consume, if any.
+    channel (Any): Pika channel to inspect, or ``None``.
+
+  Returns:
+    bool: ``True`` when a full connection restart is required.
+
+  Examples:
+    >>> _is_amqp_channel_or_connection_dead(Exception("Channel is closed."))
+    True
+    >>> _is_amqp_channel_or_connection_dead(OSError("disk full"))
+    False
+  """
+  if channel is not None:
+    try:
+      if getattr(channel, "is_closed", False):
+        return True
+    except Exception:
+      pass
+    try:
+      conn = getattr(channel, "connection", None)
+      if conn is not None and getattr(conn, "is_closed", False):
+        return True
+    except Exception:
+      pass
+  if exc is None:
+    return False
+  if isinstance(
+      exc,
+      (
+          ChannelWrongStateError,
+          ConnectionWrongStateError,
+          StreamLostError,
+          AMQPChannelError,
+      ),
+  ):
+    return True
+  msg = str(exc).lower()
+  return "channel is closed" in msg or "connection is closed" in msg
+
+
+def _request_amqp_full_reconnect(channel: Any, reason: str) -> None:
+  """
+  Stop consuming and close the BlockingConnection for a clean reconnect.
+
+  Sets ``_amqp_reconnect_requested`` and logs at most once while the flag is
+  already set (avoids per-message ERROR storms after the channel dies). Does
+  not set ``_db_backpressure_pause``; pause/resume remains same-connection.
+
+  Args:
+    channel (Any): Pika channel whose connection should be torn down.
+    reason (str): Short reason string for the reconnect log line.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _request_amqp_full_reconnect(None, "Channel is closed.")  # doctest: +SKIP
+  """
+  global _amqp_reconnect_requested
+  already = _amqp_reconnect_requested
+  _amqp_reconnect_requested = True
+  if already:
+    return
+  log_print(
+      "AMQP reconnect requested (channel/connection dead): %s" % reason
+  )
+  try:
+    if channel is not None and hasattr(channel, "stop_consuming"):
+      channel.stop_consuming()
+  except Exception as stop_err:
+    if DEBUG:
+      log_print("Failed to stop_consuming on AMQP reconnect: %s" % stop_err)
+  try:
+    conn = getattr(channel, "connection", None) if channel is not None else None
+    if conn is not None and not getattr(conn, "is_closed", True):
+      conn.close()
+  except Exception as close_err:
+    if DEBUG:
+      log_print("Failed to close connection on AMQP reconnect: %s" % close_err)
+
+
 def _request_db_backpressure_pause(channel: Any, delivery_tag: Any) -> None:
   """
   Nack+requeue without archive and stop consuming for DB backpressure.
@@ -740,19 +843,23 @@ def on_message(
   When live DB ingest is on and backpressure mode is ``pause``, high-watermark
   queues cause nack+requeue without archive until the resume watermark. Mode
   ``drop`` (default) always archives and acks, shedding live DB enqueue.
-  
+
+  When ack/nack/ops hit a dead AMQP channel or connection, requests a full
+  BlockingConnection restart (stop consume + close) instead of per-message
+  ERROR spam; non-AMQP archive failures keep nack+requeue.
+
   Per-message logging of consumption/queue depth is avoided; instead, a
   background monitor thread reports aggregate rates every 10 minutes.
-  
+
   Args:
     channel (Any): Channel passed to this helper.
     method_frame (Any): Method frame passed to this helper.
     _header_frame (Any):  header frame passed to this helper.
     body (Any): Value to inspect (typically a numeric scalar).
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> on_message(None, None, None, None)  # doctest: +SKIP
   """
@@ -788,6 +895,10 @@ def on_message(
     channel.basic_ack(delivery_tag=delivery_tag)
   except Exception as e:
     # Critical behavior: do not acknowledge on failure.
+    if _is_amqp_channel_or_connection_dead(e, channel):
+      # Dead channel: stop consume + close connection once; skip futile nack.
+      _request_amqp_full_reconnect(channel, str(e))
+      return
     # Requeue so the message remains on the server for later retry.
     log_print("Error processing message; leaving on server: %s" % e)
     try:
@@ -796,6 +907,8 @@ def on_message(
     except Exception as nack_err:
       if DEBUG:
         log_print("Failed to nack message after processing error: %s" % nack_err)
+      if _is_amqp_channel_or_connection_dead(nack_err, channel):
+        _request_amqp_full_reconnect(channel, str(nack_err))
     return
 
 
@@ -872,6 +985,7 @@ def main() -> None:
   set_daemon_process_title(name="listend.py", role="main")
   global _idle_thread_started
   global _recent_host_worker_thread_started
+  global _amqp_reconnect_requested
   # Use a mutable container so the SIGTERM handler can update state without
   # relying on `nonlocal` (which is only valid for enclosing function scopes).
   sigterm_received = {"value": False}
@@ -1026,7 +1140,9 @@ def main() -> None:
             if _db_backpressure_pause:
               # stop_consuming from on_message — wait then resume.
               continue
-            # Unexpected stop_consuming without pause flag → reconnect.
+            # Dead channel/connection or unexpected stop_consuming → reconnect.
+            if _amqp_reconnect_requested:
+              _amqp_reconnect_requested = False
             break
         except (KeyboardInterrupt, SystemExit):
           # Allow clean shutdown on explicit termination signals.
@@ -1043,6 +1159,7 @@ def main() -> None:
           except Exception as e:
             if DEBUG:
               log_print("Error while closing RabbitMQ connection: %s" % e)
+          _amqp_reconnect_requested = False
 
         # If we reach this point without breaking, sleep briefly before attempting
         # to reconnect. This avoids tight reconnect loops that could cause

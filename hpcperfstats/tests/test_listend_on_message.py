@@ -498,3 +498,129 @@ def test_get_first_timestamp_seconds_skips_dollar_host_line(tmp_path):
   )
   assert listend._get_first_timestamp_seconds(str(mixed), use_lock=False) == 1786487860
 
+
+class _FakeConn:
+  def __init__(self):
+    self.is_closed = False
+    self.close_calls = 0
+
+  def close(self):
+    self.close_calls += 1
+    self.is_closed = True
+
+
+class _ChannelClosedOnAck(_FakeChannel):
+  """Channel that dies on ack (production Channel is closed storm)."""
+
+  def __init__(self):
+    super().__init__()
+    self.stop_calls = 0
+    self.connection = _FakeConn()
+    self.is_closed = False
+
+  def basic_ack(self, delivery_tag=None):
+    raise Exception("Channel is closed.")
+
+  def basic_nack(self, delivery_tag=None, requeue=False):
+    raise Exception("Channel is closed.")
+
+  def stop_consuming(self):
+    self.stop_calls += 1
+
+
+def test_is_amqp_channel_or_connection_dead_detects_channel_closed_message():
+  import hpcperfstats.listend as listend
+
+  assert listend._is_amqp_channel_or_connection_dead(
+      Exception("Channel is closed."), None
+  )
+  assert listend._is_amqp_channel_or_connection_dead(
+      Exception("Connection is closed"), None
+  )
+  assert not listend._is_amqp_channel_or_connection_dead(
+      OSError("disk full"), None
+  )
+
+
+def test_on_message_channel_closed_on_ack_requests_reconnect_once(
+    tmp_path, monkeypatch
+):
+  """Dead channel on ack must stop consume and request full reconnect once."""
+  import hpcperfstats.listend as listend
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  listend._amqp_reconnect_requested = False
+  logs = []
+  monkeypatch.setattr(listend, "log_print", lambda msg: logs.append(msg))
+
+  channel = _ChannelClosedOnAck()
+  body = b"foo bar myhost baz\n"
+  listend.on_message(channel, _FakeMethodFrame(delivery_tag=55), None, body)
+
+  assert listend._amqp_reconnect_requested is True
+  assert channel.stop_calls == 1
+  assert channel.connection.close_calls == 1
+  assert channel.acked == []
+  assert channel.nacked == []
+  reconnect_logs = [m for m in logs if "AMQP reconnect" in m or "Channel is closed" in m]
+  assert len(reconnect_logs) == 1
+  assert "Error processing message; leaving on server" not in "\n".join(logs)
+
+  # Second dead-channel callback must not re-log / re-stop storm.
+  listend.on_message(channel, _FakeMethodFrame(delivery_tag=56), None, body)
+  assert channel.stop_calls == 1
+  reconnect_logs2 = [m for m in logs if "AMQP reconnect" in m]
+  assert len(reconnect_logs2) == 1
+
+  listend._amqp_reconnect_requested = False
+
+
+def test_on_message_write_failure_nacks_without_amqp_reconnect(
+    tmp_path, monkeypatch
+):
+  """Archive I/O failure keeps nack+requeue; must not set reconnect flag."""
+  import hpcperfstats.listend as listend
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  listend._amqp_reconnect_requested = False
+
+  real_open = builtins.open
+
+  def _failing_open(path, mode="r", *args, **kwargs):
+    if str(path).endswith("/current") and "a" in mode:
+      raise OSError("disk full")
+    return real_open(path, mode, *args, **kwargs)
+
+  monkeypatch.setattr(builtins, "open", _failing_open)
+  channel = _FakeChannel()
+  channel.stop_consuming = lambda: (_ for _ in ()).throw(
+      AssertionError("stop_consuming must not run on archive IOError")
+  )
+  listend.on_message(
+      channel, _FakeMethodFrame(delivery_tag=8), None, b"foo bar myhost baz\n"
+  )
+  assert listend._amqp_reconnect_requested is False
+  assert channel.nacked == [(8, True)]
+
+
+def test_db_backpressure_pause_does_not_set_amqp_reconnect(monkeypatch):
+  """Pause path must stop consume without full AMQP reconnect flag."""
+  import hpcperfstats.listend as listend
+
+  listend._amqp_reconnect_requested = False
+  listend._db_backpressure_pause = False
+
+  class _Pool:
+    def note_pause_enter(self):
+      return None
+
+  monkeypatch.setattr(
+      listend, "_live_db_ingest_pool_active", lambda: _Pool()
+  )
+  channel = _FakeChannel()
+  channel.stop_consuming = lambda: setattr(channel, "stopped", True)
+  listend._request_db_backpressure_pause(channel, 1)
+  assert listend._db_backpressure_pause is True
+  assert listend._amqp_reconnect_requested is False
+  listend._db_backpressure_pause = False
+
