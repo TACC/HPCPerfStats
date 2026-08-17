@@ -76,8 +76,12 @@ docs/
 docker-compose*.yaml
 docker-compose*.yaml.example
 
-# Pipeline rebuild staging (rebuild_pipeline.sh populates before --target refresh)
+# Pipeline rebuild staging (rebuild_pipeline.sh populates before --target refresh).
+# Keep the staging tree out of normal contexts, but allow the preserve dir used by
+# Dockerfile target hpcperfstats-pipeline-refresh (COPY .build/pipeline-rebuild-frontend/).
 .build/
+!.build/pipeline-rebuild-frontend/
+!.build/pipeline-rebuild-frontend/**
 
 # CI workflows and local analysis artifacts
 .github/

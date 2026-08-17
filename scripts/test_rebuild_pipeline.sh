@@ -114,10 +114,39 @@ if ! grep -q 'compose rm -sf pipeline web' "${HELPERS}"; then
   exit 1
 fi
 
-web_recreate_line="$(grep -n 'compose_recreate_web_after_image_refresh' "${PIPELINE_SCRIPT}" | head -n 1 | cut -d: -f1)"
-pipe_recreate_line="$(grep -n 'compose_recreate_pipeline_after_image_refresh' "${PIPELINE_SCRIPT}" | head -n 1 | cut -d: -f1)"
+web_recreate_line="$(
+  awk '
+    /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_fn = ($0 ~ /^start_app_containers\(\)/) }
+    in_fn && /compose_recreate_web_after_image_refresh/ { print NR; exit }
+  ' "${PIPELINE_SCRIPT}"
+)"
+pipe_recreate_line="$(
+  awk '
+    /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_fn = ($0 ~ /^start_app_containers\(\)/) }
+    in_fn && /compose_recreate_pipeline_after_image_refresh/ { print NR; exit }
+  ' "${PIPELINE_SCRIPT}"
+)"
 if [[ -z "${web_recreate_line}" || -z "${pipe_recreate_line}" || "${web_recreate_line}" -ge "${pipe_recreate_line}" ]]; then
-  echo "rebuild_pipeline.sh must recreate web before pipeline" >&2
+  echo "rebuild_pipeline.sh start_app_containers must recreate web before pipeline (web line ${web_recreate_line:-?}, pipeline line ${pipe_recreate_line:-?})" >&2
+  exit 1
+fi
+
+no_web_pipe_line="$(
+  awk '
+    /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_fn = ($0 ~ /^start_pipeline_only\(\)/) }
+    in_fn && /compose_recreate_pipeline_after_image_refresh/ { print NR; exit }
+  ' "${PIPELINE_SCRIPT}"
+)"
+if [[ -z "${no_web_pipe_line}" ]]; then
+  echo "rebuild_pipeline.sh start_pipeline_only must recreate pipeline" >&2
+  exit 1
+fi
+if awk '
+  /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_fn = ($0 ~ /^start_pipeline_only\(\)/) }
+  in_fn && /compose_recreate_web_after_image_refresh/ { found=1 }
+  END { exit found ? 0 : 1 }
+' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh start_pipeline_only must not recreate web" >&2
   exit 1
 fi
 
@@ -138,6 +167,31 @@ fi
 
 if grep -q 'docker compose build.*proxy' "${PIPELINE_SCRIPT}"; then
   echo "rebuild_pipeline.sh must not rebuild proxy service" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--no-web' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must support --no-web for pipeline-only rebuild without running web" >&2
+  exit 1
+fi
+
+if ! grep -q 'preserve_frontend_without_web' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must define preserve_frontend_without_web for --no-web" >&2
+  exit 1
+fi
+
+if ! grep -q 'start_pipeline_only' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must define start_pipeline_only for --no-web" >&2
+  exit 1
+fi
+
+if ! grep -q 'warn_no_web_temporary' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must warn that --no-web requires a proper rebuild before full stack/web" >&2
+  exit 1
+fi
+
+if ! grep -q 'Before bringing web' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh --no-web warning must tell operators to rebuild properly before web/full stack" >&2
   exit 1
 fi
 

@@ -11,6 +11,7 @@
 #   ./scripts/rebuild_pipeline.sh --dry-run
 #   ./scripts/rebuild_pipeline.sh --build-only
 #   ./scripts/rebuild_pipeline.sh --no-start
+#   ./scripts/rebuild_pipeline.sh --no-web
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,6 +29,7 @@ WEB_WAIT_TIMEOUT="${HPCPERFSTATS_WEB_WAIT_TIMEOUT:-600}"
 DRY_RUN=0
 BUILD_ONLY=0
 NO_START=0
+NO_WEB=0
 SKIP_FRONTEND_VERIFY=0
 
 usage() {
@@ -47,6 +49,10 @@ Options:
   --dry-run                 Print planned steps only
   --build-only              Preserve frontend + build image; do not stop/start
   --no-start                Stop + build; skip compose up
+  --no-web                  Pipeline-only: no running web required; do not start web.
+                            Seeds SPA from the existing image (or placeholders).
+                            Temporary — run a proper rebuild before bringing web /
+                            the full stack back into service.
   --skip-frontend-verify    Skip live SPA shell / fingerprint checks (dev only)
   --pipeline-stop-timeout S Timeout for compose stop pipeline (default 300)
   Env HPCPERFSTATS_WEB_STOP_TIMEOUT  Grace seconds for compose stop web (default 120)
@@ -66,6 +72,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-start)
       NO_START=1
+      shift
+      ;;
+    --no-web)
+      NO_WEB=1
+      SKIP_FRONTEND_VERIFY=1
       shift
       ;;
     --skip-frontend-verify)
@@ -95,6 +106,14 @@ run_cmd() {
     return 0
   fi
   "$@"
+}
+
+warn_no_web_temporary() {
+  cat <<'EOF' >&2
+WARN: --no-web is a temporary pipeline-only rebuild (web is not required and will not be started).
+Before bringing web / the full stack back into service, rebuild properly with web available:
+  ./scripts/rebuild_pipeline.sh
+EOF
 }
 
 preflight() {
@@ -131,7 +150,7 @@ verify_live_frontend_ready() {
   fi
   if ! web_service_running; then
     echo "rebuild_pipeline.sh: web is not running; cannot verify live frontend" >&2
-    echo "Start web or pass --skip-frontend-verify for empty dev volumes." >&2
+    echo "Start web, or pass --no-web for a temporary pipeline-only rebuild." >&2
     exit 1
   fi
   verify_spa_shells_via_compose \
@@ -152,7 +171,7 @@ backup_live_frontend_volume() {
   local container_ref
   container_ref="$(web_container_ref)"
   if compose_cp_supported; then
-    docker compose cp "web: /tmp/hps-pipeline-frontend-backup.tar" "${FRONTEND_BACKUP_TAR}"
+    docker compose cp "web:/tmp/hps-pipeline-frontend-backup.tar" "${FRONTEND_BACKUP_TAR}"
   elif podman_cli_available; then
     podman cp "${container_ref}":/tmp/hps-pipeline-frontend-backup.tar "${FRONTEND_BACKUP_TAR}"
   else
@@ -172,6 +191,62 @@ preserve_frontend_for_build() {
     "${CONTAINER_STATIC_ROOT_FRONTEND}" \
     "${PRESERVE_FRONTEND_DIR}"
   verify_spa_shells "${PRESERVE_FRONTEND_DIR}" "pipeline-rebuild preserve dir"
+}
+
+# Copy package static frontend from an existing image (no running web container).
+try_extract_frontend_from_image() {
+  local image_name="$1"
+  local dest="$2"
+  local cid=""
+  local cli=()
+
+  if podman_cli_available && podman image exists "${image_name}" >/dev/null 2>&1; then
+    cli=(podman)
+  elif command -v docker >/dev/null 2>&1 \
+    && docker image inspect "${image_name}" >/dev/null 2>&1; then
+    cli=(docker)
+  else
+    return 1
+  fi
+
+  cid="$("${cli[@]}" create "${image_name}")" || return 1
+  if ! "${cli[@]}" cp "${cid}:${CONTAINER_STATIC_FRONTEND}/." "${dest}/"; then
+    "${cli[@]}" rm -f "${cid}" >/dev/null 2>&1 || true
+    return 1
+  fi
+  "${cli[@]}" rm -f "${cid}" >/dev/null 2>&1 || true
+  [[ -f "${dest}/machine/index.html" && -f "${dest}/pub/index.html" ]]
+}
+
+write_placeholder_spa_shells() {
+  local dest="$1"
+  mkdir -p "${dest}/machine" "${dest}/pub"
+  printf '%s\n' '<!doctype html><title>hpcperfstats --no-web placeholder</title>' \
+    >"${dest}/machine/index.html"
+  cp "${dest}/machine/index.html" "${dest}/pub/index.html"
+}
+
+preserve_frontend_without_web() {
+  echo "Seeding ${PRESERVE_FRONTEND_DIR} without a running web container ..."
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    echo "[dry-run] would seed ${PRESERVE_FRONTEND_DIR} from image or placeholders"
+    return 0
+  fi
+
+  mkdir -p "${PRESERVE_FRONTEND_DIR}"
+  rm -rf "${PRESERVE_FRONTEND_DIR:?}/"*
+
+  local image_name
+  image_name="$(compose_web_image_name)"
+  if try_extract_frontend_from_image "${image_name}" "${PRESERVE_FRONTEND_DIR}"; then
+    echo "Seeded SPA shells from image ${image_name}"
+    verify_spa_shells "${PRESERVE_FRONTEND_DIR}" "pipeline-rebuild preserve dir (--no-web from image)"
+    return 0
+  fi
+
+  echo "WARN: could not extract SPA from image ${image_name}; writing placeholder shells" >&2
+  write_placeholder_spa_shells "${PRESERVE_FRONTEND_DIR}"
+  verify_spa_shells "${PRESERVE_FRONTEND_DIR}" "pipeline-rebuild preserve dir (--no-web placeholders)"
 }
 
 restore_frontend_volume_if_drifted() {
@@ -237,11 +312,23 @@ build_pipeline_image() {
   build_web_image_with_target "${PIPELINE_BUILD_TARGET}"
 }
 
- stop_app_containers() {
+stop_pipeline_only() {
+  echo "Stopping pipeline (grace ${PIPELINE_STOP_TIMEOUT}s; --no-web leaves web alone) ..."
+  run_cmd docker compose stop -t "${PIPELINE_STOP_TIMEOUT}" pipeline
+}
+
+stop_app_containers() {
   echo "Stopping pipeline (grace ${PIPELINE_STOP_TIMEOUT}s) ..."
   run_cmd docker compose stop -t "${PIPELINE_STOP_TIMEOUT}" pipeline
   echo "Stopping web (grace ${WEB_STOP_TIMEOUT}s) ..."
   run_cmd docker compose stop -t "${WEB_STOP_TIMEOUT}" web
+}
+
+start_pipeline_only() {
+  export HPCPERFSTATS_SCRIPT_DRY_RUN="${DRY_RUN}"
+  echo "Recreating pipeline on refreshed image (--no-web; web not started) ..."
+  compose_recreate_pipeline_after_image_refresh
+  echo "Pipeline-only image refresh complete."
 }
 
 start_app_containers() {
@@ -275,19 +362,41 @@ cleanup() {
 
 main() {
   preflight
-  verify_live_frontend_ready
-  backup_live_frontend_volume
-  preserve_frontend_for_build
+
+  if [[ "${NO_WEB}" -eq 1 ]]; then
+    warn_no_web_temporary
+    preserve_frontend_without_web
+  else
+    verify_live_frontend_ready
+    backup_live_frontend_volume
+    preserve_frontend_for_build
+  fi
 
   if [[ "${BUILD_ONLY}" -eq 0 ]]; then
-    stop_app_containers
+    if [[ "${NO_WEB}" -eq 1 ]]; then
+      stop_pipeline_only
+    else
+      stop_app_containers
+    fi
   fi
 
   build_pipeline_image
 
   if [[ "${BUILD_ONLY}" -eq 1 || "${NO_START}" -eq 1 ]]; then
     echo "Skipping container start (--build-only or --no-start)."
+    if [[ "${NO_WEB}" -eq 1 ]]; then
+      warn_no_web_temporary
+    fi
     cleanup
+    return 0
+  fi
+
+  if [[ "${NO_WEB}" -eq 1 ]]; then
+    start_pipeline_only
+    cleanup
+    warn_no_web_temporary
+    echo "Pipeline-only rebuild complete. Confirm with:"
+    echo "  docker compose logs -f pipeline | grep -E 'pending reconcile cap|startup maintenance idle|Number of host stats files'"
     return 0
   fi
 

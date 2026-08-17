@@ -24,8 +24,20 @@ def _dockerignore_patterns(repo_root: Path) -> list[str]:
   return patterns
 
 
+def _normalize_dockerignore_rel(rel_path: str) -> str:
+  """Normalize a context-relative path for dockerignore matching.
+
+  Only strips repeated ``./`` prefixes (and a single leading ``/``). Do **not**
+  use ``str.lstrip('./')`` — that also strips the leading dot from ``.build/``.
+  """
+  rel = rel_path.replace("\\", "/")
+  while rel.startswith("./"):
+    rel = rel[2:]
+  return rel.lstrip("/")
+
+
 def _match_dockerignore(rel_path: str, pattern: str) -> bool:
-  rel = rel_path.replace("\\", "/").lstrip("./")
+  rel = _normalize_dockerignore_rel(rel_path)
   pattern = pattern.strip()
   if not pattern:
     return False
@@ -66,15 +78,21 @@ def _match_dockerignore(rel_path: str, pattern: str) -> bool:
 
 
 def _is_excluded(rel_path: str, patterns: list[str]) -> bool:
-  rel = rel_path.replace("\\", "/").lstrip("./")
+  rel = _normalize_dockerignore_rel(rel_path)
   if rel.startswith("monitor/"):
     return True
   excluded = False
   for pattern in patterns:
     if pattern.startswith("!"):
       neg = pattern[1:].strip().lstrip("/")
-      if rel == neg:
-        excluded = False
+      if neg.endswith("/**"):
+        prefix = neg[:-3].rstrip("/")
+        if rel == prefix or rel.startswith(f"{prefix}/"):
+          excluded = False
+      else:
+        neg = neg.rstrip("/")
+        if rel == neg or rel.startswith(f"{neg}/"):
+          excluded = False
       continue
     if _match_dockerignore(rel, pattern):
       excluded = True
@@ -196,6 +214,18 @@ def test_dockerignore_lists_required_dev_patterns():
   )
   for pattern in required:
     assert pattern in content, f"missing .dockerignore pattern: {pattern}"
+
+
+def test_pipeline_rebuild_frontend_staging_not_excluded():
+  """Dockerfile hpcperfstats-pipeline-refresh COPY needs this tree in context."""
+  content = (_repo_root() / ".dockerignore").read_text()
+  assert "!.build/pipeline-rebuild-frontend/" in content
+  assert "!.build/pipeline-rebuild-frontend/**" in content
+  patterns = _dockerignore_patterns(_repo_root())
+  assert not _is_excluded(
+      ".build/pipeline-rebuild-frontend/machine/index.html", patterns
+  )
+  assert _is_excluded(".build/other-scratch.txt", patterns)
 
 
 def test_root_readme_not_excluded_from_docker_build_context():

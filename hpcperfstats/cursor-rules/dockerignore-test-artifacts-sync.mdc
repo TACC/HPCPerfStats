@@ -25,7 +25,7 @@ Keep these patterns in **`.dockerignore`** unless a deliberate runtime contract 
 | Cursor / agent rules | `hpcperfstats/cursor-rules/`, `**/*.mdc`, `.cursor/` |
 | Docs (not runtime) | `docs/` |
 | External API client | `hpcperfstats-tools/` (host/CLI package; not installed in web/pipeline images) |
-| Compose / CI / staging | `docker-compose*.yaml`, `docker-compose*.yaml.example`, `.github/`, `.build/` |
+| Compose / CI / staging | `docker-compose*.yaml`, `docker-compose*.yaml.example`, `.github/`, `.build/` (with `!.build/pipeline-rebuild-frontend/` + `/**` so `hpcperfstats-pipeline-refresh` COPY works) |
 | Local artifacts | `artifacts/`, `staticfiles/`, `.DS_Store` |
 
 **`monitor/`** and **`node_modules/`** remain excluded separately; do not rely on other patterns to cover them.
