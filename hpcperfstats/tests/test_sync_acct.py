@@ -27,9 +27,10 @@ def _sacct_row(
     nodes="1",
     cpus="32",
     nodelist="node1",
+    timelimit="01:00:00",
 ):
   return (
-      f"{jid}|{user}|acct1|{start}|{end}|{submit}|{queue}|01:00:00|job1|"
+      f"{jid}|{user}|acct1|{start}|{end}|{submit}|{queue}|{timelimit}|job1|"
       f"COMPLETED|{nodes}|{cpus}|{nodelist}"
   )
 
@@ -229,3 +230,81 @@ def test_persisted_file_is_reingestible_by_sync_acct(
 
   assert inserted == 1
   mock_jd.objects.bulk_create.assert_called_once()
+
+
+def test_acct_timelimit_to_seconds_day_and_hhmmss():
+  import pandas as pd
+  from hpcperfstats.dbload.sync_acct import _acct_timelimit_to_seconds
+
+  out = _acct_timelimit_to_seconds(pd.Series(["01:00:00", "1-02:00:00"]))
+  assert list(out) == [3600.0, 93600.0]
+
+
+def test_acct_timelimit_to_seconds_sentinels_and_garbage():
+  import math
+
+  import pandas as pd
+  from hpcperfstats.dbload.sync_acct import _acct_timelimit_to_seconds
+
+  out = _acct_timelimit_to_seconds(
+      pd.Series([
+          "UNLIMITED",
+          "Partition_Limit",
+          "Partition_limit",
+          " INFINITE ",
+          "INVALID",
+          "not-a-duration",
+          "",
+      ]),
+  )
+  assert all(pd.isna(v) or (isinstance(v, float) and math.isnan(v)) for v in out)
+
+
+@patch("hpcperfstats.dbload.sync_acct._notify_job_cache_after_acct_ingest")
+@patch("hpcperfstats.dbload.sync_acct.job_data")
+def test_sync_acct_from_content_unlimited_timelimit_does_not_abort_batch(
+    mock_jd, mock_notify,
+):
+  from hpcperfstats.dbload.sync_acct import sync_acct_from_content
+
+  content = _sacct_content(
+      _sacct_row(jid="1101", timelimit="UNLIMITED"),
+      _sacct_row(jid="1102", timelimit="01:00:00"),
+  )
+  filter_qs = MagicMock()
+  filter_qs.values_list.side_effect = [[], ["1101", "1102"]]
+  mock_jd.objects.filter.return_value = filter_qs
+
+  inserted = sync_acct_from_content(content, jobs_in_db=set())
+
+  assert inserted == 2
+  created = mock_jd.objects.bulk_create.call_args[0][0]
+  by_jid = {obj.jid: obj for obj in created}
+  assert by_jid["1101"].timelimit is None
+  assert by_jid["1102"].timelimit == 3600.0
+  mock_notify.assert_called_once()
+
+
+@patch("hpcperfstats.dbload.sync_acct._notify_job_cache_after_acct_ingest")
+@patch("hpcperfstats.dbload.sync_acct.job_data")
+def test_sync_acct_from_content_partition_limit_timelimit(mock_jd, mock_notify):
+  from hpcperfstats.dbload.sync_acct import sync_acct_from_content
+
+  content = _sacct_content(
+      _sacct_row(jid="1201", timelimit="Partition_Limit"),
+      _sacct_row(jid="1202", timelimit="Partition_limit"),
+      _sacct_row(jid="1203", timelimit="1-02:00:00"),
+  )
+  filter_qs = MagicMock()
+  filter_qs.values_list.side_effect = [[], ["1201", "1202", "1203"]]
+  mock_jd.objects.filter.return_value = filter_qs
+
+  inserted = sync_acct_from_content(content, jobs_in_db=set())
+
+  assert inserted == 3
+  created = mock_jd.objects.bulk_create.call_args[0][0]
+  by_jid = {obj.jid: obj for obj in created}
+  assert by_jid["1201"].timelimit is None
+  assert by_jid["1202"].timelimit is None
+  assert by_jid["1203"].timelimit == 93600.0
+  mock_notify.assert_called_once()

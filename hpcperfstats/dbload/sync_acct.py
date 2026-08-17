@@ -5,8 +5,9 @@ filters restricted queues and existing jobs, and bulk-inserts or falls back to
 per-row insert.
 
 Attributes:
-  COLUMNS_TO_READ: Attribute.
-  local_timezone: Attribute.
+  COLUMNS_TO_READ: Sacct columns retained for job_data ingest.
+  _ACCT_TIMELIMIT_SENTINELS: Lowercase Slurm Timelimit tokens stored as NULL.
+  local_timezone: Timezone used when localizing sacct Start/End/Submit.
 """
 from __future__ import annotations
 
@@ -39,6 +40,51 @@ from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 from hpcperfstats.site.lib.machine.models import job_data
 
 local_timezone = dt_timezone.utc
+
+# sacct Timelimit specials (SchedMD sacct man + src/sacct/print.c) plus
+# parse_time.c defense tokens. Matched case-insensitively after strip.
+_ACCT_TIMELIMIT_SENTINELS = frozenset({
+    "unlimited",
+    "partition_limit",
+    "infinite",
+    "invalid",
+    "none",
+    "unknown",
+})
+
+
+def _acct_timelimit_to_seconds(series: Any) -> Any:
+  """
+  Convert Slurm sacct Timelimit strings to seconds, mapping sentinels to NA.
+
+  Official sacct tokens ``UNLIMITED`` and ``Partition_Limit`` (man page may
+  spell ``Partition_limit``) become pandas NA so ``job_data.timelimit`` is
+  NULL. Slurm ``D-HH:MM:SS`` becomes ``D days HH:MM:SS`` before
+  ``to_timedelta``. Unknown tokens coerce to NA instead of aborting ingest.
+
+  Args:
+    series (Any): Pandas Series of Timelimit cell values (strings or NA).
+
+  Returns:
+    Any: Float Series of total seconds, with NA where Timelimit is
+    missing, a known sentinel, or unparsable.
+
+  Examples:
+    >>> import pandas as pd
+    >>> from hpcperfstats.dbload.sync_acct import _acct_timelimit_to_seconds
+    >>> float(_acct_timelimit_to_seconds(pd.Series(["01:00:00"])).iloc[0])
+    3600.0
+    >>> pd.isna(
+    ...     _acct_timelimit_to_seconds(pd.Series(["UNLIMITED"])).iloc[0]
+    ... )
+    True
+  """
+  text = series.astype("string").str.strip()
+  key = text.str.lower().str.replace("-", "_", regex=False)
+  is_sentinel = text.isna() | (text == "") | key.isin(_ACCT_TIMELIMIT_SENTINELS)
+  durations = text.mask(is_sentinel)
+  durations = durations.str.replace("-", " days ", regex=False)
+  return to_timedelta(durations, errors="coerce").dt.total_seconds()
 
 
 def _notify_job_cache_after_acct_ingest(
@@ -345,8 +391,7 @@ def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
 
   df["runtime"] = to_timedelta(df["end_time"] -
                                df["start_time"]).dt.total_seconds()
-  df["timelimit"] = df["timelimit"].str.replace('-', ' days ')
-  df["timelimit"] = to_timedelta(df["timelimit"]).dt.total_seconds()
+  df["timelimit"] = _acct_timelimit_to_seconds(df["timelimit"])
 
   df["host_list"] = df["host_list"].apply(hostlist.expand_hostlist)
   df["node_hrs"] = df["nhosts"] * df["runtime"] / 3600.
