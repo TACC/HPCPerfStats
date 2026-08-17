@@ -162,6 +162,24 @@ def _fleet_stampede3(
     return None
 
 
+def _fleet_ls6(
+    *,
+    ib_mad_dlopen: bool,
+    opa_mad_dlopen: bool,
+    features: set[str],
+) -> str | None:
+    """Return 'ls6' when compiled matrix matches Lonestar6 fleet signature."""
+    if (
+        ib_mad_dlopen
+        and not opa_mad_dlopen
+        and "GPU" in features
+        and "INTEL_GPU" not in features
+        and "AMD_GPU" not in features
+    ):
+        return "ls6"
+    return None
+
+
 def write_capability_slug_header(path: Path, slug: str) -> None:
     """Write MONITOR_CAPABILITY_SLUG for the daemon $build banner (same slug as JSON)."""
     esc = slug.replace("\\", "\\\\").replace('"', '\\"')
@@ -203,6 +221,12 @@ def emit_capabilities(build_dir: Path, tier: str) -> dict:
         opa_mad_dlopen=opa_mad_dlopen,
         features=features,
     )
+    if fleet is None:
+        fleet = _fleet_ls6(
+            ib_mad_dlopen=ib_mad_dlopen,
+            opa_mad_dlopen=opa_mad_dlopen,
+            features=features,
+        )
 
     doc: dict = {
         "capability_slug": slug,

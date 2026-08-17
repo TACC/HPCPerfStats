@@ -141,6 +141,7 @@ for distfile in \
   scripts/lib/monitor_tree_clean.sh \
   scripts/rpm_debug_shm_verify.sh \
   scripts/prepare_rpmbuild_stampede3.sh \
+  scripts/prepare_rpmbuild_ls6.sh \
   scripts/gpu_lspci_probe.sh \
   scripts/gpu_lspci_detect.awk \
   scripts/fleet/README

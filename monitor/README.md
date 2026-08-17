@@ -72,9 +72,27 @@ LSPCI dumps live under `tests/fixtures/stampede3_lspci_profiles/` (in git).
 **Vista LSPCI fixtures (future validate):** `tests/fixtures/vista_lspci_profiles/{gg,gh}`
 are vendored for a future Vista path; the Stampede3 wrapper rejects `gg`/`gh`.
 
-**Horizon / Lonestar6 LSPCI fixtures (inventory):** `tests/fixtures/horizon_lspci_profiles/gb`
-(GB200 / HGX) and `tests/fixtures/ls6_lspci_profiles/{genoa,milan,a100}` are vendored for
-roofline / fleet inventory; not wired into Stampede3 shm validate profiles.
+**Horizon LSPCI fixtures (inventory):** `tests/fixtures/horizon_lspci_profiles/gb`
+(GB200 / HGX) are vendored for roofline / fleet inventory; not wired into Stampede3 shm validate.
+
+### Lonestar6 one-build RPM
+
+One x86_64 RPM covers Lonestar6 LSPCI profiles (`genoa` / `milan` / `a100`):
+
+```bash
+cd HPCPerfStats/monitor
+./scripts/prepare_rpmbuild_ls6.sh              # or --debug-build
+rpmbuild -ba --define "_topdir ${PWD}/rpmbuild" "${PWD}/rpmbuild/SPECS/hpcperfstats.spec"
+```
+
+| Queue | Collectors (when hardware/libs present) | Runtime libs for full fidelity |
+|-------|------------------------------------------|--------------------------------|
+| genoa / milan | `host_ib` (CX6); AMD CPU/LIKWID; no NVIDIA | `libibmad` optional |
+| a100 | `nvidia_gpu` + `host_ib` + AMD CPU/LIKWID | `libdcgm`, `libibmad` optional |
+
+Fleet matrix (opt-in via `prepare_rpmbuild_ls6.sh`: `HPCS_BUNDLE_FLEET=ls6` and/or `scripts/fleet/ls6.force` — never commit the force file): `--enable-ib-mad-dlopen`, `--disable-amd-gpu`, `--disable-intel-gpu` (forced even when vendored XPUM headers exist). Does **not** enable OPA MAD (`--enable-opa-mad-dlopen`). Never auto `--disable-infiniband`. Binary `NEEDED` must not list `libibmad`. NVIDIA stays on the default x86 DCGM runtime-dlopen path.
+
+LSPCI dumps: `tests/fixtures/ls6_lspci_profiles/{genoa,milan,a100}`. Per-queue shm validate wrapper is **not** wired yet (future; same pattern as Stampede3).
 
 ### Intel Data Center GPU / PVC (`intel_gpu`)
 

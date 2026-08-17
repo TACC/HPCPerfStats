@@ -26,6 +26,10 @@ dist-hook:
 	  $(MKDIR_P) "$(distdir)/scripts/fleet"; \
 	  cp -p "$(srcdir)/scripts/fleet/stampede3.force" "$(distdir)/scripts/fleet/stampede3.force"; \
 	fi
+	@if test -f "$(srcdir)/scripts/fleet/ls6.force"; then \
+	  $(MKDIR_P) "$(distdir)/scripts/fleet"; \
+	  cp -p "$(srcdir)/scripts/fleet/ls6.force" "$(distdir)/scripts/fleet/ls6.force"; \
+	fi
 
 EXTRA_DIST = README README.md \
 	third_party/nvidia-dcgm/README \

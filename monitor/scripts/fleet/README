@@ -1,8 +1,13 @@
-Stampede3 fleet marker for build_static_bundle.sh / rpm %build.
+Fleet markers for build_static_bundle.sh / rpm %build.
 
-Opt-in only:
-  - Created by scripts/prepare_rpmbuild_stampede3.sh (never commit this file).
-  - Embedded in the dist tarball via dist-hook when the file exists at make dist time.
-  - Or set HPCS_BUNDLE_FLEET=stampede3 for the prepare/build host.
+Opt-in only (never commit *.force files):
+  - stampede3.force — created by scripts/prepare_rpmbuild_stampede3.sh
+  - ls6.force — created by scripts/prepare_rpmbuild_ls6.sh
 
-Default prepare_rpmbuild_dirs.sh must not require or ship stampede3.force.
+Embedded in the dist tarball via dist-hook when the file exists at make dist time.
+Or set HPCS_BUNDLE_FLEET=stampede3|ls6 for the prepare/build host.
+
+When both markers exist, explicit HPCS_BUNDLE_FLEET wins. Prepare wrappers create
+one marker at a time and export the matching fleet env.
+
+Default prepare_rpmbuild_dirs.sh must not require or ship either force file.

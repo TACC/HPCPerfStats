@@ -1315,6 +1315,44 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
             )
         )
 
+    def test_fleet_ls6_signature(self) -> None:
+        self.assertEqual(
+            ebc._fleet_ls6(
+                ib_mad_dlopen=True,
+                opa_mad_dlopen=False,
+                features={"GPU"},
+            ),
+            "ls6",
+        )
+        self.assertIsNone(
+            ebc._fleet_ls6(
+                ib_mad_dlopen=True,
+                opa_mad_dlopen=True,
+                features={"GPU"},
+            )
+        )
+        self.assertIsNone(
+            ebc._fleet_ls6(
+                ib_mad_dlopen=True,
+                opa_mad_dlopen=False,
+                features={"GPU", "INTEL_GPU"},
+            )
+        )
+        self.assertIsNone(
+            ebc._fleet_ls6(
+                ib_mad_dlopen=True,
+                opa_mad_dlopen=False,
+                features={"GPU", "AMD_GPU"},
+            )
+        )
+        self.assertIsNone(
+            ebc._fleet_ls6(
+                ib_mad_dlopen=False,
+                opa_mad_dlopen=False,
+                features={"GPU"},
+            )
+        )
+
     def test_parse_makefile_dyn_macros(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             td = Path(tmp)
