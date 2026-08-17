@@ -542,10 +542,13 @@ build_likwid() {
   # LIKWID still builds shared liblikwidpin.so even when SHARED_LIBRARY=false.
   # GCC's pinlib link uses SHARED_LFLAGS + LIBS but not LFLAGS; without -pthread,
   # pthread_setaffinity_np is undefined on some hosts (seen on Lonestar6).
+  # Command-line LIBS= replaces makefile LIBS; pinlib's `LIBS += -ldl` does NOT
+  # append (GNU make ignores += on cmdline vars without override) — keep -ldl here
+  # or dlopen/dlsym fail on LS6 for pinlib and the lua helper binary.
   local -a likwid_mk=(
     CFLAGS="${likwid_cflags}"
     SHARED_LFLAGS="-shared -fvisibility=hidden -pthread"
-    LIBS="-lm -lrt -pthread"
+    LIBS="-lm -lrt -pthread -ldl"
   )
   make clean >/dev/null 2>&1 || true
   make -j"${JOBS}" PREFIX="${PREFIX}" INSTALLED_PREFIX="${PREFIX}" \

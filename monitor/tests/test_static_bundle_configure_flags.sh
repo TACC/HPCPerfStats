@@ -96,7 +96,8 @@ esac
 
 # LIKWID pinlib (liblikwidpin.so) is still built with SHARED_LIBRARY=false; its
 # GCC link omits LFLAGS (-pthread). Bundle must pass -pthread or LS6 fails with
-# undefined reference to pthread_setaffinity_np.
+# undefined reference to pthread_setaffinity_np. Command-line LIBS= must also
+# include -ldl (makefile LIBS += -ldl does not append to cmdline vars).
 if ! awk '/^build_likwid\(\)/{p=1} p&&/^}$/{print; exit} p' ./scripts/build_static_bundle.sh \
   | grep -q -- '-pthread'; then
   echo "build_likwid must pass -pthread for liblikwidpin.so (Lonestar6 link)" >&2
@@ -105,6 +106,11 @@ fi
 if ! awk '/^build_likwid\(\)/{p=1} p&&/^}$/{print; exit} p' ./scripts/build_static_bundle.sh \
   | grep -q 'SHARED_LFLAGS=.*-pthread'; then
   echo "build_likwid must set SHARED_LFLAGS with -pthread for pinlib" >&2
+  exit 1
+fi
+if ! awk '/^build_likwid\(\)/{p=1} p&&/^}$/{print; exit} p' ./scripts/build_static_bundle.sh \
+  | grep -q 'LIBS=.*-ldl'; then
+  echo "build_likwid LIBS= must include -ldl (cmdline override drops makefile += -ldl)" >&2
   exit 1
 fi
 
