@@ -706,8 +706,9 @@ EOF
 - This path links rabbitmq-c, libev, and LIKWID statically into hpcperfstatsd.
   LIKWID's static lib embeds bundled Lua and internal hwloc objects; configure also
   pulls -llikwid-hwloc and -llikwid-lua when using --enable-all-static.
-- The monitor uses LIKWID ACCESSMODE_DIRECT for MSR access (PMU + RAPL); run with
-  privileges appropriate for MSR access on your site.
+- The monitor uses LIKWID ACCESSMODE_PERF by default (HPCPERFSTATS_LIKWID_ACCESS=perf);
+  set HPCPERFSTATS_LIKWID_ACCESS=direct for legacy MSR access. Run with privileges
+  appropriate for perf_event and RAPL on your site.
 EOF
   else
     cat <<'EOF'

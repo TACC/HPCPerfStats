@@ -87,6 +87,7 @@ RAPL notes:
 - **RAPL vendor path is runtime** (`likwid_rapl_collect_path`): EPYC uses AMD MSRs even when the binary was configured with `MONITOR_ARCH_INTEL`. Compile-time `#if MONITOR_ARCH_*` for RAPL collect caused SEGV in `power_read` on Turin.
 - AMD core eventset uses **`LS_DISPATCH_ALL`** (LIKWID Zen umask); bare `LS_DISPATCH` fails `perfmon_addEventSet` and silently used to disable `host_cpu_hw`.
 - **`LIKWID_FORCE`:** privileged host daemon defaults `LIKWID_FORCE=1` via `likwid_pmc_adapter_ensure_force_env()` before `HPMinit` (same effect as `likwid-perfctr -f`). Without force, LIKWID refuses in-use PMC0–PMC3 (`addEventSet` −22). Opt out with `LIKWID_FORCE=0`. Quiet setup (`HPCPERFSTATS_LIKWID_SETUP_QUIET`, default on) retries failed add/setup/start once with stderr restored so “in use” lines reach the journal.
+- **`HPCPERFSTATS_LIKWID_ACCESS`:** unset / empty / `perf` (default) → `ACCESSMODE_PERF` (`perf_event` backend; avoids userspace **MSR 0x38f** writes on kernel ≥5.9 with `msr.allow_writes=default`, e.g. Stampede3 SPR dmesg spam). `direct` → `ACCESSMODE_DIRECT` (legacy MSR path; opt-in). Invalid values log an error and fall back to `perf`. Journal line: `LIKWID HPM access mode: perf|direct`.
 - `host_cpu_hw` begin failures log init vs eventset step and the event string (`likwid_backend_begin` / `likwid_pmc_adapter_setup_events`).
 
 Counter-name → device/key mapping is exercised by `test_likwid_uncore_adapter.c`

@@ -11,7 +11,9 @@
 #include <unistd.h>
 #include "trace.h"
 #include "stats.h"
+#include "monitor_log.h"
 #include "likwid_pmc_adapter.h"
+#include "likwid_pmc_access_mode.h"
 #include "likwid_pmc_schema_map.h"
 #include "likwid_result_convert.h"
 
@@ -89,10 +91,18 @@ int likwid_pmc_adapter_init(int nr_threads)
     cpus[i] = i;
   topology_init();
   numa_init();
+  likwid_pmc_access_mode_t access_mode;
+  int access_invalid = 0;
+
   /* Default to quiet LIKWID logs; override with HPCPERFSTATS_LIKWID_VERBOSITY. */
   perfmon_setVerbosity(likwid_env_verbosity());
-  /* Direct MSR access enables LIKWID power_init / RAPL (likwid_rapl). */
-  HPMmode(ACCESSMODE_DIRECT);
+  /* perf_event avoids userspace IA32_PERF_GLOBAL_CTRL (MSR 0x38f) writes on kernel ≥5.9
+   * with msr.allow_writes=default; direct is opt-in via HPCPERFSTATS_LIKWID_ACCESS. */
+  access_mode = likwid_pmc_access_mode_from_env(&access_invalid);
+  if (access_invalid)
+    monitor_log_error("invalid HPCPERFSTATS_LIKWID_ACCESS; using perf (valid: perf, direct)\n");
+  HPMmode(access_mode == LIKWID_PMC_ACCESS_DIRECT ? ACCESSMODE_DIRECT : ACCESSMODE_PERF);
+  monitor_log_info("LIKWID HPM access mode: %s\n", likwid_pmc_access_mode_name(access_mode));
   if (HPMinit() < 0) {
     ERROR("LIKWID HPMinit failed\n");
     goto out;

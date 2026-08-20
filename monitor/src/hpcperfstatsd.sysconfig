@@ -55,6 +55,8 @@
 # LIKWID logging controls (x86 backend deployments).
 #HPCPERFSTATS_LIKWID_SETUP_QUIET=1
 #HPCPERFSTATS_LIKWID_VERBOSITY=0
+# LIKWID HPM access: perf (default) uses perf_event; direct uses MSR (may log MSR 0x38f on el9).
+#HPCPERFSTATS_LIKWID_ACCESS=perf
 
 # Override monitor architecture mapping for LIKWID.
 #HPCPERFSTATS_MONITOR_ARCH=ZEN4
