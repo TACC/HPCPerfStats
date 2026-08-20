@@ -10380,25 +10380,30 @@ def run_sync_timedb_supervisor_loop(
     stall_diagnostics.chunk_ingest_elapsed_s = time.time() - ingest_t0
     return successful_paths, files_to_be_archived, active_workers, k
 
-  def _finalize_ingest_archive_batch(
+  def _enqueue_ingest_archive_batch(
     successful_paths: Any,
     files_to_be_archived: Any,
     *,
     context_label: Any,
   ) -> None:
     """
-    Internal helper to handle finalize ingest archive batch.
-    
+    Map ingested paths onto the archive heap and dispatch append slots.
+
+    Does not wait for archive-pool results or run oldest-tar unprocessed
+    census. MainThread owns ``_finalize_archive_slots_if_needed`` so
+    day-close workers can enqueue DbReadyNotInArchive handoff without
+    finding #8 ``isfile`` storms.
+
     Args:
-      successful_paths (Any): Iterable of filesystem paths as strings.
-      files_to_be_archived (Any): Files to be archived passed to this helper.
-      context_label (Any): Context label passed to this helper.
-    
+      successful_paths (Any): Paths that finished ingest (or handoff append).
+      files_to_be_archived (Any): Subset that still need tar append.
+      context_label (Any): Log context for heap dump / mapping misses.
+
     Returns:
       None
-    
+
     Examples:
-      >>> _finalize_ingest_archive_batch(None, None, None)  # doctest: +SKIP
+      >>> _enqueue_ingest_archive_batch([], [], context_label="x")  # doctest: +SKIP
     """
     nonlocal checkpoint_dirty_count
     if files_to_be_archived:
@@ -10412,7 +10417,6 @@ def run_sync_timedb_supervisor_loop(
           files_to_be_archived,
           tgz_archive_dir,
       )
-    _finalize_archive_slots_if_needed(force=False)
     archived_candidates = set(files_to_be_archived)
     immediate_paths = [
         p for p in successful_paths if p not in archived_candidates
@@ -10440,17 +10444,17 @@ def run_sync_timedb_supervisor_loop(
         retry_at: Any | None = None,
       ) -> None:
         """
-        Internal helper to handle enqueue overflow item.
-        
+        Overflow archive groups onto the retry heap when slots are full.
+
         Args:
-          item (Any): Value to inspect (typically a numeric scalar).
-          retry_at (Any | None): One of ``Any``, ``None``.
-        
+          item (Any): ``(tgz_path, paths)`` archive group tuple.
+          retry_at (Any | None): Unix time when the overflow item is due.
+
         Returns:
           None
-        
+
         Examples:
-          >>> _enqueue_overflow_item(None, None)  # doctest: +SKIP
+          >>> _enqueue_overflow_item(("x.tar", ["a"]), None)  # doctest: +SKIP
         """
         _enqueue_archive_task({
             "task": ArchiveTask(archive_info=item, attempt=1),
@@ -10478,6 +10482,34 @@ def run_sync_timedb_supervisor_loop(
           % len(deferred_paths),
           flush=True,
       )
+    _flush_checkpoint_if_needed(force=True)
+
+  def _finalize_ingest_archive_batch(
+    successful_paths: Any,
+    files_to_be_archived: Any,
+    *,
+    context_label: Any,
+  ) -> None:
+    """
+    Enqueue archive append work, then wait for slots on MainThread.
+
+    Args:
+      successful_paths (Any): Iterable of filesystem paths as strings.
+      files_to_be_archived (Any): Files to be archived passed to this helper.
+      context_label (Any): Context label passed to this helper.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _finalize_ingest_archive_batch([], [], context_label="x")  # doctest: +SKIP
+    """
+    _finalize_archive_slots_if_needed(force=False)
+    _enqueue_ingest_archive_batch(
+        successful_paths,
+        files_to_be_archived,
+        context_label=context_label,
+    )
     _finalize_archive_slots_if_needed(
         force=True,
         allow_defer=False,
@@ -11980,7 +12012,9 @@ def run_sync_timedb_supervisor_loop(
       _flush_checkpoint_if_needed(force=True)
       if day_close_manifest is not None:
         day_close_manifest.defer_for_ingest_handoff(tar_norm)
-      _finalize_ingest_archive_batch(
+      # Two-queue (finding #8): enqueue append only. MainThread / ingest
+      # chunk end runs ``_finalize_ingest_archive_batch`` / oldest-tar census.
+      _enqueue_ingest_archive_batch(
           append_paths,
           append_paths,
           context_label="day_close_handoff_append",

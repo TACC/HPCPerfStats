@@ -1080,6 +1080,71 @@ def test_branch_c_reclassify_under_deleting_upgrades_before_handoff(
   assert coord.delete_phase_done(tar_path)
 
 
+def test_skip_only_deleting_not_in_tar_handoffs_not_freeze(tmp_path):
+  """06-02/06-10 shape: deleting + skipped_not_in_archive, membership false.
+
+  Reclassify cannot upgrade. apply_batch_delete must durable-handoff, not
+  silent freeze with deleted_count=0 and no callback.
+  """
+  day = datetime(2026, 6, 2)
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True, exist_ok=True)
+  ts0 = int(datetime(day.year, day.month, day.day, 10, 0, 0).timestamp())
+  ts1 = int(datetime(day.year, day.month, day.day, 11, 0, 0).timestamp())
+  seg0 = host / str(ts0)
+  seg1 = host / str(ts1)
+  seg0.write_text("%d job1 cn001\nline\n" % ts0)
+  seg1.write_text("%d job1 cn001\nline\n" % ts1)
+  os.utime(seg0, (ts0, ts0))
+  os.utime(seg1, (ts1, ts1))
+  tar_path, zst = _seal_day(tmp_path, seg0, day)
+  handoffs = []
+
+  def _on_handoff(tar_norm, paths, reason):
+    handoffs.append((tar_norm, list(paths), reason))
+
+  coord = _make_coordinator(
+      tmp_path,
+      ingest_ready_fn=lambda _p: False,
+      on_handoff_to_ingest=_on_handoff,
+  )
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg0), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["entries"][str(seg0)]["deleted"] = True
+    state._manifest["verified_count"] = 1
+  state._record_entry(
+      str(seg1),
+      zst,
+      "skipped_not_in_archive",
+      "not_in_sealed_archive",
+  )
+  with state._lock:
+    state._manifest["phase"] = PHASE_DELETING
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["skipped_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  seg0.unlink()
+
+  deleted = coord.apply_batch_delete(tar_path)
+  assert deleted == 0
+  assert seg1.is_file()
+  assert handoffs, "skip-only deleting must handoff when membership stays false"
+  assert str(seg1) in handoffs[0][1]
+  assert handoffs[0][2] == "batch_delete_waiting_on_ingest"
+  assert not coord.delete_phase_done(tar_path)
+
+  kick_handoffs = []
+
+  def _on_kick_handoff(tar_norm, paths, reason):
+    kick_handoffs.append((tar_norm, list(paths), reason))
+
+  coord.on_handoff_to_ingest = _on_kick_handoff
+  action = coord.kick_closed_raw_unblock(tar_path, reason="unit_skip_only")
+  assert action == "handoff"
+  assert kick_handoffs
+
+
 def test_reclassify_retryable_skip_upgrades_to_verified_when_tar_member(
     tmp_path,
 ):

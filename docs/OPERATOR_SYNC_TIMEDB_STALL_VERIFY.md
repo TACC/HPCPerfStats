@@ -380,6 +380,42 @@ print(\"phase\", m.get(\"phase\"), \"entries\", len(ents), \"verified_not_delete
 
 **Pass (T1):** `open_tar_n` declines for lead/sticky days; sticky days leave `phase=deleting` (toward done/tar-drop/complete); no multi-day Branch C / DbReadyNotInArchive loop of identical handoff path counts with undrained retryables. **Do not** treat green `handoff_lead_uncapped` alone as day-close health while multi-hundred-GB mutable June `.tar` remain.
 
+### T0 / T1 / T2 — skip-only deleting + empty done+live tar + two-queue handoff (hpcperfstats03, 2026-08-19)
+
+Do **not** mark this class verified on **T0 smoke alone**. Use T0 then T1 then T2.
+
+**Failure signature (pre-fix):** CLI ``current``; sealed June days (`*.tar.zst` present) stuck **`phase=deleting`**, histogram **100% `skipped_not_in_archive`**, **`deleted_count=0`**, **zero quarantine**. Separate day **`phase=done` + `entries=0` + live `.tar`**. py-spy **`day-close_N`**: `apply_batch_delete` → `complete_handoff_to_ingest` → `_finalize_ingest_archive_batch` → `oldest_checkpoint_incomplete_tar` (`isfile`). Janitor tick may sit in discover `isfile` so compose **`Archive janitor tick done` count 0** is not proof the thread is dead.
+
+**Do not:** quarantine-only tar-drop for retryable skips; py-spy `pgrep … .[m]ain. | head -1` (Manager leftover); treat `supervisorctl` missing socket as ingest-down.
+
+```bash
+# T0 — skip-status histogram (Path.read_text fingerprint; no Django import of day_raw_removal)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+  su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as c
+from collections import Counter
+import json, os
+raw=os.path.join(c.get_archive_dir_path(), \".sync_timedb_day_raw_removal\")
+for day in (\"2026-06-02\", \"2026-06-10\", \"2026-08-16\"):
+  mp=os.path.join(raw, day+\".json\")
+  print(\"day\", day, \"exists\", os.path.isfile(mp))
+  if not os.path.isfile(mp):
+    continue
+  m=json.load(open(mp))
+  ents=m.get(\"entries\") or {}
+  print(\"phase\", m.get(\"phase\"), \"entries\", len(ents), \"deleted_count\", m.get(\"deleted_count\"))
+  print(Counter((e or {}).get(\"status\") for e in ents.values() if isinstance(e, dict)))
+"'
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'handoff_mode=archive_append|batch_delete_waiting_on_ingest|day_close reclassify|Archive janitor tick done|oldest_checkpoint_incomplete_tar' | tail -80
+```
+
+**Pass (T0):** skip-only days log reclassify **and/or** `handoff_mode=archive_append` / `day_close handoff requeue` without `day-close_*` stacks in `_finalize_ingest_archive_batch` / `oldest_checkpoint_incomplete_tar`. Empty `phase=done` days with a live `.tar` log tar-drop attempt (`janitor: day_close` tar drop / unlink), not silent complete.
+
+**Pass (T1):** `retryable_skips` / skip-only `phase=deleting` counts decline; `open_tar_n` for those ISO days trends down; `day-close_*` inflight slots free (not 4/4 GIL in oldest-tar `isfile`). Dual ingest-pool `[main]` trees remain an **ops** finding, not a code substitute.
+
+**Pass (T2):** sealed skip-only June days reach tar-drop / no mutable `.tar`; empty-done live tar is gone or `tar_dropped` matches disk; no multi-day skip-only freeze with `deleted_count=0`.
+
 ### T0 / T1 — tar append exit 2 / large member (`out of off_t range`, 2026-07)
 
 Members larger than **8 GiB − 1** fail classic ustar without pax headers (`value N out of off_t range 0..8589934591`). Production always passes **`--posix`** on tar create/append (`-C /` + relative `-T` members). When the daily tar is **not pax-capable** (bare `POSIX tar archive` without pax headers; GNU labels need no convert), the **archive pool** job logs **`must_convert`**, attempts **extract + `tar --format=pax` recreate**, then appends. On convert failure: **`convert_fail_skip`** oversized members (original tar untouched) and continue with remaining paths. **`archive_job_done`** includes **`outcome=ok|fail`** (do not treat `archive_job_done` alone as success).

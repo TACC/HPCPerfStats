@@ -2397,6 +2397,85 @@ def test_close_one_day_does_not_skip_live_tar_for_stale_tar_dropped_hint(
   assert os.path.normpath(tar_path) in janitor._debt_heap_tar_paths()
 
 
+def test_close_one_day_empty_done_live_tar_attempts_tar_drop(
+    monkeypatch, tmp_path,
+):
+  """08-16 shape: phase=done, empty entries, live .tar + zst still attempts drop."""
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-08-16.tar"))
+  open(tar_path, "wb").write(b"live")
+  open(tar_path + ".zst", "wb").write(b"zst")
+  tar_drop_calls = []
+
+  class _RawCoord:
+    enabled = True
+
+    def pre_seal_verification_complete(self, tar_path):
+      return True
+
+    def post_seal_verification_complete(self, tar_path):
+      return True
+
+    def verification_complete(self, tar_path):
+      return True
+
+    def promote_phase_if_verify_stage_ahead(self, tar_path):
+      return False
+
+    def reopen_done_days_with_verified_on_disk(self):
+      return 0
+
+    def delete_phase_done(self, tar_path):
+      return True
+
+    def reclassify_retryable_skips_after_handoff_sync(self, tar_path):
+      return 0
+
+    def begin_deleting(self, tar_path):
+      return None
+
+    def apply_batch_delete(self, tar_path):
+      pytest.fail("empty phase=done must not re-enter batch delete")
+
+  class _ManifestCoord:
+    def finalize_complete_if_filesystem(self, tar):
+      return False
+
+    def active_or_submitted_tar_paths(self):
+      return set()
+
+  janitor = _make_janitor(
+      tgz_archive_dir=str(daily_dir),
+      day_raw_removal_coordinator=_RawCoord(),
+      day_close_manifest_coordinator=_ManifestCoord(),
+  )
+  _mark_day_sealed(janitor, tar_path)
+
+  def _track_tar_drop(self, tp, *args, **kwargs):
+    tar_drop_calls.append(os.path.normpath(tp))
+    return False
+
+  monkeypatch.setattr(
+      janitor_mod.ArchiveJanitor,
+      "_tar_drop_one_day",
+      _track_tar_drop,
+  )
+  monkeypatch.setattr(
+      janitor,
+      "_seal_one_day",
+      lambda *_a, **_k: pytest.fail("already sealed empty-done day must not reseal"),
+  )
+
+  assert janitor._close_one_day(
+      tar_path,
+      snapshot=None,
+      validation_cache={},
+      disqualified=set(),
+  ) is False
+  assert tar_drop_calls == [tar_path]
+
+
 def test_close_one_day_propagates_manifest_finalize_failure(
     monkeypatch, tmp_path,
 ):

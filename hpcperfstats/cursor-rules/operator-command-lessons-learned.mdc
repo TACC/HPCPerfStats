@@ -83,6 +83,8 @@ If the failure reveals a **recurring** gap (not a one-off typo), also add a one-
 - One-off operator typo in the paste (operator ran the wrong block) — fix the plan only; no rule edit required.
 - Environment outage (compose down, disk full) — document blocker in plan; no rule change unless the command shape was wrong.
 
+- **`pgrep -f 'sync_timedb.py .[m]ain.' | head -1`** — hpcperfstats03 2026-08-19 hit leftover Manager PID 458; corrected ingest-pool-parent selector lives in **`compose-operator-terminal-commands.mdc`** (Podman-compose anti-patterns).
+
 ## Overlap
 
 - **`compose-operator-terminal-commands.mdc`** — authoritative command shape; this rule requires **writing back** failures into that file.

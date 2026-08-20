@@ -164,6 +164,28 @@ def test_arch_archive_finalize_defers_reconcile_to_chunk_boundary():
   assert "_cap_pending_after_rescan(" in nonblocking
 
 
+def test_arch_day_close_handoff_does_not_run_ingest_archive_finalize():
+  """Finding #8: day-close handoff must enqueue only; no ingest archive finalize.
+
+  Live signature (hpcperfstats03 2026-08-19 PID 208452): ``day-close_1`` ran
+  ``apply_batch_delete`` → ``complete_handoff_to_ingest`` →
+  ``_requeue_day_close_handoff_paths_inner`` → ``_finalize_ingest_archive_batch``
+  → ``_apply_archive_finalize_results`` → ``oldest_checkpoint_incomplete_tar``
+  (aligned unprocessed ``isfile``). That belongs on MainThread, not
+  ``day-close_N``.
+  """
+  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
+  inner = source.split(
+      "def _requeue_day_close_handoff_paths_inner",
+      1,
+  )[1].split("def _process_boot_handoffs_once", 1)[0]
+  assert "_finalize_ingest_archive_batch(" not in inner
+  assert "_finalize_archive_slots_if_needed(" not in inner
+  assert "_apply_archive_finalize_results(" not in inner
+  assert "oldest_checkpoint_incomplete_tar(" not in inner
+  assert "_enqueue_ingest_archive_batch(" in inner
+
+
 def test_arch_phase_tar_dropped_does_not_skip_disk_predicate(tmp_path):
   """Phase 3c: tar_dropped hint alone does not clear day-close work when .tar remains."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (

@@ -3360,7 +3360,7 @@ class DayRawRemovalCoordinator:
       reason (str): String for reason.
     
     Returns:
-      str: str produced by this call.
+      str: Kick outcome (``handoff``, ``delete_reopen``, ``noop``, …).
     
     Examples:
       >>> DayRawRemovalCoordinator().kick_closed_raw_unblock("x", "x")
@@ -3450,6 +3450,31 @@ class DayRawRemovalCoordinator:
                 flush=True,
             )
           return "delete_reopen"
+      # Skip-only deleting (F15): reclassify, else durable ingest handoff.
+      upgraded = state._reclassify_retryable_skips_on_disk()
+      if upgraded:
+        state.begin_deleting()
+        self.apply_batch_delete(tar_path)
+        if self.log_fn:
+          self.log_fn(
+              "Day raw removal closed-raw delete kick tar=%s reason=%s "
+              "detail=reclassify_upgraded_deleting"
+              % (tar_norm, reason or ""),
+              flush=True,
+          )
+        return "delete_reopen"
+      if state.should_handoff_day_close_to_ingest():
+        self.complete_handoff_to_ingest(
+            tar_path,
+            reason=reason or "closed_raw_unblock_waiting_on_ingest",
+        )
+        if self.log_fn:
+          self.log_fn(
+              "Day raw removal closed-raw handoff kick tar=%s reason=%s"
+              % (tar_norm, reason or ""),
+              flush=True,
+          )
+        return "handoff"
     return "noop"
 
   def requeue_closed_raw_paths_for_ingest(

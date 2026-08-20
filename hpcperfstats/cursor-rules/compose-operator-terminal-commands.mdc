@@ -595,8 +595,9 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 |--------------|--------------|-------------------|
 | `docker compose ps pipeline` | podman-compose treats `pipeline` as an unrecognized positional argument | `docker compose -p hpcperfstats ps \| grep pipeline` (or full `ps` table) |
 | Multi-line `su hpcperfstats -c 'tail … \| grep …'` with no matches | Non-zero exit when grep finds nothing; fragile quoting through podman-compose | `docker compose exec pipeline su hpcperfstats -c "sh -lc 'tail -200 /path/to/sync_timedb.log \| grep -E \"pattern1\|pattern2\" \|\| true'"` |
-| Host `$MAIN_PID` passed to `py-spy` inside `exec` | PID namespaces differ; host PID is invalid in container | Resolve PID inside container with a **supervisor selector**, then dump: `SUP=$(pgrep -f 'sync_timedb.py .[m]ain.' \| head -1); ps -p "$SUP" -o args=; py-spy dump --pid "$SUP"` (bracket class avoids self-match; verify `ps args` before dump — no `--nonblocking` on older py-spy) |
-| `pgrep -f sync_timedb \| head -1` for MainThread / py-spy | Matches an **ingest/archive pool worker** first on multi-process sites | Prefer `pgrep -f 'sync_timedb.py .[m]ain.'` (or equivalent title) and confirm `ps -p … -o args=` shows the supervisor, not `worker:ingest-pool` |
+| Host `$MAIN_PID` passed to `py-spy` inside `exec` | PID namespaces differ; host PID is invalid in container | Resolve the ingest-pool parent **inside** the container (selector in the Good block below), `ps -p "$SUP" -o pid,ppid,nlwp,args=`, then `py-spy dump --pid "$SUP"` in the **same** `su … sh -lc` (no `--nonblocking` on older py-spy) |
+| `pgrep -f sync_timedb \| head -1` for MainThread / py-spy | Matches an **ingest/archive pool worker** first on multi-process sites | Never use lowest `sync_timedb` PID; use the ingest-pool-parent selector below |
+| `pgrep -f 'sync_timedb.py .[m]ain.' \| head -1` as the py-spy target | **hpcperfstats03 2026-08-19:** lowest `[main]` was leftover **multiprocessing.Manager PID 458** (`Thread-1 (accepter)`, PPID 1, nlwp=2). Live ingest supervisors were **208452** (janitor + `day-close_*`) and **1579581** (ingest-only). py-spy of 458 is idle MainThread + accepter only | Select `sync_timedb.py [main]` whose **children** include `grep -F '[worker:ingest-pool]'`. Skip PPID=1 leftovers with only an accepter thread. **Do not py-spy Manager leftovers.** Python thread **names** are executor `archive-janitor_0` / `day-close_N` (not argv `[thread:archive-janitor]`). `supervisorctl status` as `hpcperfstats` may print `unix:///var/run/supervisor.sock no such file` — not proof supervisord is down. Compose `Archive janitor tick done` count **0** can mean the tick is **in progress** in discover `isfile`, not a dead janitor |
 | `pgrep -f` matching its own `su … -c` / `sh -lc` wrapper | Wrapper is often root-owned non-Python → `py-spy` **Permission Denied** | Use a **bracket class** in the pattern (`.[m]ain.`, `worker:ingest-[p]ool`) so the `pgrep` command line does not match itself; always `ps -p "$SUP" -o args=` before `py-spy` |
 | Stale log token `ingest file completed` | Current outcome line is `ingest file path=… outcome=… elapsed_s=… size_bytes=… parse_elapsed_s=… stats_rows=… proc_rows=…` | Grep `ingest file path=` (optional `stats_rows_parsed=`) |
 | `podman-compose exec … --pid "$SUP"` as a separate exec | **podman-compose eats `--pid`** — flag never reaches `py-spy` (`ParseIntError` / `InvalidDigit`) | Single `su hpcperfstats -c "sh -lc 'SUP=\$(pgrep …); py-spy dump --pid \"\$SUP\"'"` in one exec |
@@ -621,6 +622,32 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | Mix listend `hardlink` + update_metrics tokens then `tail -80` | Hardlink flood drowns `Date Range` / `candidate_jids` (hpcperfstats04 2026-08-11) | Metrics-only `grep -E 'Date Range\|candidate_jids\|window_rollover\|empty_pass'` on the full log buffer, `tail` **after** grep |
 | `exec rabbitmq sh -lc 'rabbitmqctl …'` | Login `PATH` omits RabbitMQ sbin → **`rabbitmqctl: not found`** (hpcperfstats04 2026-08-11) | `exec rabbitmq rabbitmqctl list_queues name messages consumers` (no wrapping shell) |
 | Host mega-block chaining `su -c 'python3 -c … && sh -lc … && python …'` then host `docker compose logs` in one nested paste | Host shell stops at a `>` continuation prompt (nested quotes / unfinished `'`/`"`); census, fingerprint, and logs never run (hpcperfstats04 2026-08-12 update_metrics zombie discovery) | **Four separate host-side blocks:** (1) config getters `su -c 'python3 -c "…"'`; (2) in-container PPID/`ps` census `su -c 'sh -lc "…"'`; (3) source fingerprint `su -c 'python3 -c "…"'` (**no** outer `sh -lc`); (4) **host** `docker compose logs pipeline 2>&1 \| grep -cE '…' \|\| true`. Never nest host logs inside `exec`, and never wrap fingerprint Python in `sh -lc` |
+
+**Good** — ingest-pool parent for py-spy (not `pgrep … [main] | head -1`):
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+  su hpcperfstats -c 'python3 -c "
+import subprocess
+out = subprocess.check_output([\"ps\", \"-eo\", \"pid,ppid,args\"], text=True)
+rows = []
+kids = {}
+for line in out.splitlines()[1:]:
+  parts = line.split(None, 2)
+  if len(parts) < 3:
+    continue
+  pid, ppid, args = parts[0], parts[1], parts[2]
+  kids.setdefault(ppid, []).append(args)
+  if \"sync_timedb.py [main]\" in args and \"[worker:\" not in args:
+    rows.append((pid, ppid, args))
+for pid, ppid, args in rows:
+  titles = kids.get(pid, [])
+  if any(\"[worker:ingest-pool]\" in t for t in titles):
+    print(\"INGEST_SUP\", pid, \"ppid\", ppid)
+"'
+```
+
+Then dump **each** printed `INGEST_SUP` (a site may have two ingest trees; one may lack janitor/day-close). Confirm `ps` args before `py-spy`.
 
 **Good** — podman service check + filtered log tail (paths from INI first):
 
