@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <time.h>
 #include <search.h>
+#include <stdint.h>
 
 #include "stats.h"
 #include "collect.h"
@@ -348,6 +349,38 @@ static void ring_buffer_drop_first(struct sf_ring_buffer *w)
   w->q_count -= 1;
 }
 
+static size_t g_rmq_soft_max_override; /* 0 = use STATS_BUFFER_RMQ_SOFT_MAX_BYTES */
+
+size_t stats_buffer_rmq_soft_max_bytes(void)
+{
+  if (g_rmq_soft_max_override != 0)
+    return g_rmq_soft_max_override;
+  return STATS_BUFFER_RMQ_SOFT_MAX_BYTES;
+}
+
+int stats_buffer_rmq_batch_can_add(size_t batch_len, int batch_count, size_t next_len,
+                                   size_t soft_max)
+{
+  size_t new_len;
+
+  /* First sample always allowed (single-entry overshoot is intentional). */
+  if (batch_count <= 0)
+    return 1;
+  if (soft_max == 0)
+    return 1;
+  if (next_len > SIZE_MAX - batch_len)
+    return 0;
+  new_len = batch_len + next_len;
+  return new_len <= soft_max;
+}
+
+#if defined(STATS_BUFFER_TEST_SEND_HOOK)
+void stats_buffer_rmq_test_set_soft_max_bytes(size_t n)
+{
+  g_rmq_soft_max_override = n;
+}
+#endif
+
 void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long max_runtime_us,
                                 int *processed_entries)
 {
@@ -388,6 +421,9 @@ void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long 
       if (node == NULL || node->sf == NULL || node->sf->sf_data == NULL)
         break;
       if (stats_buffer_is_schema_payload(node->sf))
+        break;
+      if (!stats_buffer_rmq_batch_can_add(batch_len, batch_count, node->sf->sf_data_len,
+                                          stats_buffer_rmq_soft_max_bytes()))
         break;
       batch_len += node->sf->sf_data_len;
       batch_count++;

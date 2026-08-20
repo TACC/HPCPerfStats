@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #include "cpuid.h"
 #include "collect_tier.h"
@@ -221,6 +222,64 @@ static void test_resend_limited_batches(void)
   assert(w.q_count == 0);
 }
 
+static void test_rmq_batch_can_add(void)
+{
+  const size_t soft = 100;
+
+  assert(STATS_BUFFER_RMQ_SOFT_MAX_BYTES == ((size_t)32 << 20));
+  assert(stats_buffer_rmq_soft_max_bytes() == STATS_BUFFER_RMQ_SOFT_MAX_BYTES);
+
+  /* First sample always allowed, even if larger than soft max. */
+  assert(stats_buffer_rmq_batch_can_add(1, 0, soft + 50, soft) == 1);
+  /* Nonempty batch: reject when sum would exceed soft max. */
+  assert(stats_buffer_rmq_batch_can_add(1 + 60, 1, 50, soft) == 0);
+  assert(stats_buffer_rmq_batch_can_add(1 + 40, 1, 50, soft) == 1);
+  /* soft_max 0 disables the byte gate. */
+  assert(stats_buffer_rmq_batch_can_add(1, 1, SIZE_MAX / 2, 0) == 1);
+}
+
+static void test_resend_soft_max_splits_multi_message(void)
+{
+  struct sf_ring_buffer w;
+  /* Each payload is 20 bytes; soft max 35 allows one sample per message (1+20<=35,
+   * 1+20+20>35) so three samples → three publishes in one unlimited resend. */
+  const char *p1 = "aaaaaaaaaaaaaaaaaaa\n"; /* 20 */
+  const char *p2 = "bbbbbbbbbbbbbbbbbbb\n";
+  const char *p3 = "ccccccccccccccccccc\n";
+
+  assert(strlen(p1) == 20);
+  memset(&w, 0, sizeof(w));
+  reset_hook();
+  stats_buffer_rmq_test_set_soft_max_bytes(35);
+  assert(ring_buffer_insert(make_payload_buf(p1), &w, -1, 1) == 0);
+  assert(ring_buffer_insert(make_payload_buf(p2), &w, -1, 1) == 0);
+  assert(ring_buffer_insert(make_payload_buf(p3), &w, -1, 1) == 0);
+  ring_buffer_resend(&w);
+  assert(w.q_count == 0);
+  assert(w.status == 0);
+  assert(g_send_hook_calls == 3u);
+  stats_buffer_rmq_test_set_soft_max_bytes(0);
+}
+
+static void test_resend_soft_max_allows_merge_under_cap(void)
+{
+  struct sf_ring_buffer w;
+  const char *p1 = "aaaaaaaaaaaaaaaaaaa\n"; /* 20 */
+  const char *p2 = "bbbbbbbbbbbbbbbbbbb\n";
+
+  memset(&w, 0, sizeof(w));
+  reset_hook();
+  /* 1+20+20 = 41 <= 50 → one merged publish. */
+  stats_buffer_rmq_test_set_soft_max_bytes(50);
+  assert(ring_buffer_insert(make_payload_buf(p1), &w, -1, 1) == 0);
+  assert(ring_buffer_insert(make_payload_buf(p2), &w, -1, 1) == 0);
+  ring_buffer_resend(&w);
+  assert(w.q_count == 0);
+  assert(g_send_hook_calls == 1u);
+  assert(strcmp(g_last_payload, "aaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbb\n") == 0);
+  stats_buffer_rmq_test_set_soft_max_bytes(0);
+}
+
 static void test_load_file_two_records(void)
 {
   struct sf_ring_buffer w;
@@ -318,6 +377,9 @@ int main(void)
   test_resend_schema_then_stats();
   test_resend_stops_on_send_failure();
   test_resend_limited_batches();
+  test_rmq_batch_can_add();
+  test_resend_soft_max_splits_multi_message();
+  test_resend_soft_max_allows_merge_under_cap();
   test_load_file_two_records();
   test_load_file_leading_blank_skipped();
   test_load_file_open_fails();

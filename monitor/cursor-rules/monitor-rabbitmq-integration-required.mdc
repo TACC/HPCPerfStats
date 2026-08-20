@@ -13,3 +13,9 @@ When changes under these globs can alter monitor -> RabbitMQ behavior, do not st
 - Treat this as additive to `monitor-dual-verify-cross-and-static`: this rule adds RabbitMQ message contract verification, it does not replace static bundle + cross-compile verification.
 - Consider edits substantive when they can affect connection/login settings, queue declare/bind behavior, payload body formatting, AMQP publish properties, or send/retry orchestration.
 - Report integration-test pass/fail status explicitly in the handoff.
+
+## Soft payload size (merge cap)
+
+- Merged non-`$` samples in `ring_buffer_resend_limited` use soft max **`STATS_BUFFER_RMQ_SOFT_MAX_BYTES` (~32 MiB)**. Stop adding the next sample when `batch_len + next` would exceed the soft max; first sample in a batch is always allowed (single-sample overshoot OK).
+- Soft max ends **one** AMQP body only. The outer `while (q_count > 0)` still drains with **many** messages in the same call (subject to existing `max_batches` / runtime budgets). Do not treat soft max as “one message per send tick.”
+- `$` schema payloads stay isolated and unsplit.

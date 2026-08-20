@@ -127,7 +127,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | Daemon loop, RMQ send, ring buffer | `monitor_daemon.c`, `monitor_daemon.h`, `monitor_release_log.c` (release: compact startup + hourly status + first-fail RMQ errors; DEBUG: verbose tick status / resend chatter; full `$` schema header every 6h and when JOBID unloads to `-`). |
 | Schema text parsing | `schema_entry_parse.c` (`parse_schema_entry`); `schema.c` builds full schemas for types. |
 | Archive header / schema suffix / directive class / marks (file mode) | `stats_file_format.c`, `stats_file_format.h` (`stats_file_classify_header_directive`, `stats_file_fprint_mark_multiline`, …); orchestration in `stats_file.c`. |
-| RMQ text payloads | `stats_buffer.c` + `stats_buffer_data_append.c` (persistent AMQP; cached `uname` for header + sample lines; batched rows; declare `syslog` INFO in `DEBUG` only). |
+| RMQ text payloads | `stats_buffer.c` + `stats_buffer_data_append.c` (persistent AMQP; cached `uname` for header + sample lines; batched rows; declare `syslog` INFO in `DEBUG` only). Soft merge cap **`STATS_BUFFER_RMQ_SOFT_MAX_BYTES` (~32 MiB)** stops adding samples to one AMQP body when the next would exceed the limit; the resend loop still publishes **multiple** such messages in one drain call. A single oversize sample/`$` may publish alone. |
 | DEBUG shm mirror (`@fast`/`@full` snapshots) | `stats_buffer_debug_shm.c`, `stats_buffer_debug_shm.h` (`DEBUG` builds only). |
 | Intel CPUID / generation gating | `cpuid.c`, `intel_cpuid_match.c`, `intel_processor.c` |
 | AMD EPYC CPUID / DF types | `amd_cpuid_match.c`, `amd_processor.c`, `amd_x86_uncore_df.c` |

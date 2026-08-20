@@ -1,8 +1,13 @@
 #ifndef _STATS_BUFFER_H_
 #define _STATS_BUFFER_H_
 #include <stdio.h>
+#include <stddef.h>
 
 #include "stats_text_format.h"
+
+/* Soft max AMQP body size for merged ring samples (~32 MiB). Fuzzy: one sample over/under OK.
+ * Outer resend loop still publishes many such messages in one call. */
+#define STATS_BUFFER_RMQ_SOFT_MAX_BYTES ((size_t)32 << 20)
 
 struct stats_buffer {
   char *sf_mark;
@@ -70,9 +75,20 @@ void stats_buffer_rmq_get_failure_counts(unsigned long *connect_failures,
                                          unsigned long *queue_failures,
                                          unsigned long *publish_failures);
 
+/*! Effective soft max for merge sizing (honors test override when set). */
+size_t stats_buffer_rmq_soft_max_bytes(void);
+
+/*! Return 1 if next_len may join a batch that already has batch_count entries and
+ *  batch_len bytes (including the trailing NUL slot). First sample (batch_count==0)
+ *  always returns 1 so a single oversize sample may publish alone. */
+int stats_buffer_rmq_batch_can_add(size_t batch_len, int batch_count, size_t next_len,
+                                   size_t soft_max);
+
 #ifdef STATS_BUFFER_TEST_SEND_HOOK
 /* Unit tests provide this to exercise ring_buffer_resend without a live broker. */
 int stats_buffer_test_send_hook(struct stats_buffer *sf);
+/* 0 restores production STATS_BUFFER_RMQ_SOFT_MAX_BYTES. */
+void stats_buffer_rmq_test_set_soft_max_bytes(size_t n);
 #endif
 
 #endif
