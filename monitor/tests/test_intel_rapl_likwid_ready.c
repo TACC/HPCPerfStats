@@ -8,7 +8,7 @@
 #include "cpu_counter_metrics_likwid_begin.h"
 #include "likwid_rapl_pwr.h"
 
-processor_t processor = AMD_TURIN;
+processor_t processor = SAPPHIRE_RAPIDS;
 int nr_cpus = 1;
 int n_pmcs = 6;
 
@@ -63,21 +63,20 @@ int cpuid_read_cpu_topology(char *cpu, int *pkg, int *core, int *smt, int *nr_co
   return 1;
 }
 
-void rapl_likwid_amd_collect_socket_cpu(struct stats_type *type, const char *socket_key,
-                                        int cpu_lineno, unsigned socket_id, int topology_core_id)
+void rapl_likwid_intel_collect_pkg(struct stats_type *type, const char *pkg_key, int cpu_lineno,
+                                   unsigned pkg_id)
 {
   (void)type;
-  (void)socket_key;
+  (void)pkg_key;
   (void)cpu_lineno;
-  (void)socket_id;
-  (void)topology_core_id;
+  (void)pkg_id;
 }
 
-extern struct stats_type amd64_rapl_stats_type;
+extern struct stats_type intel_rapl_stats_type;
 
 static void test_disabled_when_likwid_not_ready(void)
 {
-  struct stats_type *t = &amd64_rapl_stats_type;
+  struct stats_type *t = &intel_rapl_stats_type;
 
   unsetenv("HPCPERFSTATS_LIKWID_ACCESS");
   g_likwid_ready = 0;
@@ -89,7 +88,7 @@ static void test_disabled_when_likwid_not_ready(void)
 
 static void test_begins_when_likwid_ready_direct(void)
 {
-  struct stats_type *t = &amd64_rapl_stats_type;
+  struct stats_type *t = &intel_rapl_stats_type;
 
   assert(setenv("HPCPERFSTATS_LIKWID_ACCESS", "direct", 1) == 0);
   g_likwid_ready = 1;
@@ -101,7 +100,7 @@ static void test_begins_when_likwid_ready_direct(void)
 
 static void test_begins_when_perf_pwr_ok(void)
 {
-  struct stats_type *t = &amd64_rapl_stats_type;
+  struct stats_type *t = &intel_rapl_stats_type;
 
   unsetenv("HPCPERFSTATS_LIKWID_ACCESS");
   g_likwid_ready = 1;
@@ -113,7 +112,7 @@ static void test_begins_when_perf_pwr_ok(void)
 
 static void test_disabled_when_perf_pwr_fails(void)
 {
-  struct stats_type *t = &amd64_rapl_stats_type;
+  struct stats_type *t = &intel_rapl_stats_type;
 
   unsetenv("HPCPERFSTATS_LIKWID_ACCESS");
   g_likwid_ready = 1;
@@ -130,6 +129,6 @@ int main(void)
   test_begins_when_perf_pwr_ok();
   test_disabled_when_perf_pwr_fails();
   unsetenv("HPCPERFSTATS_LIKWID_ACCESS");
-  printf("test_amd64_rapl_likwid_ready passed\n");
+  printf("test_intel_rapl_likwid_ready passed\n");
   return 0;
 }

@@ -997,8 +997,8 @@ build_foreign_likwid() {
       sed -i 's/^SHARED_LIBRARY = true/SHARED_LIBRARY = false/' config.mk
     fi
     make clean >/dev/null 2>&1 || true
-    make -j'${JOBS}' PREFIX='${prefix}' INSTALLED_PREFIX='${prefix}' BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=direct CFLAGS='-fPIC'
-    make install PREFIX='${prefix}' INSTALLED_PREFIX='${prefix}' BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=direct CFLAGS='-fPIC'
+    make -j'${JOBS}' PREFIX='${prefix}' INSTALLED_PREFIX='${prefix}' BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=perf_event CFLAGS='-fPIC'
+    make install PREFIX='${prefix}' INSTALLED_PREFIX='${prefix}' BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=perf_event CFLAGS='-fPIC'
   "
 }
 

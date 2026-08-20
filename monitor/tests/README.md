@@ -32,6 +32,9 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_lnet_schema_contract.c` | LNet collector schema token contract |
 | `test_likwid_rapl_scale.c` | RAPL energy scaling + `uint64_t`→lo32 truncate contract |
 | `test_likwid_rapl_support.c` | Intel vs AMD RAPL processor support gates (SPR/EMR/GNR/SRF ≠ AMD; EPYC enums) |
+| `test_likwid_rapl_pwr_events.c` | PWR* eventset strings + schema key map + J→mJ for PERF RAPL |
+| `test_intel_rapl_likwid_ready.c` | `intel_x86_rapl` begin requires LIKWID ready + PWR begin under PERF |
+| `test_amd64_rapl_likwid_ready.c` | `amd_x86_rapl` begin requires LIKWID ready + PWR begin under PERF |
 | `test_amd_cpuid_match.c` | EPYC Rome/Milan/Genoa/Turin CPUID allowlists; Ryzen/unknown → `-1` |
 | `test_amd_df_likwid_profiles.c` | Golden LIKWID DF `EVENT:COUNTER` strings per EPYC gen |
 | `test_amd_x86_uncore_df_schema.c` | Family DF `st_name` + `dram_chan*_bytes` schema contract |

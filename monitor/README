@@ -173,12 +173,12 @@ see `amd64_pmc.c` in the hpcperfstats source for details.
 
 The monitor uses **LIKWID** for both CPU performance counters and **RAPL energy**
 on the LIKWID x86 backend. PMU collection goes through `cpu_counter_metrics` and
-`likwid_pmc_adapter`; package / core / DRAM energy uses LIKWID’s `power_read` path
-(`likwid_rapl.c`). By default the adapter uses LIKWID **`ACCESSMODE_PERF`**
-(`perf_event`, via `HPCPERFSTATS_LIKWID_ACCESS` unset or `perf`) so core PMU
-programming does not write **MSR 0x38f** (`IA32_PERF_GLOBAL_CTRL`) on kernels with
-`msr.allow_writes=default`. Set **`HPCPERFSTATS_LIKWID_ACCESS=direct`** to restore
-legacy direct MSR access if a site requires it.
+`likwid_pmc_adapter`. Static/cross builds compile LIKWID with **`ACCESSMODE=perf_event`**.
+By default the adapter uses runtime **`ACCESSMODE_PERF`** (`HPCPERFSTATS_LIKWID_ACCESS`
+unset or `perf`) so core PMU programming does not write **MSR 0x38f**
+(`IA32_PERF_GLOBAL_CTRL`) on kernels with `msr.allow_writes=default`. Under PERF,
+RAPL uses LIKWID **PWR*** perfmon (`likwid_rapl_pwr.c` / power PMU), not `power_read`.
+Set **`HPCPERFSTATS_LIKWID_ACCESS=direct`** only for lab MSR access (spam 0x38f).
 
 Compile-time architecture selection: `--with-monitor-arch=auto` (default),
 `intel`, or `amd`. Scope, RAPL behavior, PMU fallback matrix, and build notes are

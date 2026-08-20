@@ -26,5 +26,5 @@ alwaysApply: false
 - **Output contract**: Payloads must stay compatible with `HPCPerfStats/hpcperfstats/listend.py` (see workspace monitor-workspace-contract rule). Emitted **`st_name`** and event keys must follow **monitor-emitted-variable-naming** (`HPCPerfStats/docs/MONITOR_NAMING_SCHEME.md`).
 - **Schema KEYS**: define in shared `src/*.h` per collector; see **monitor-schema-keys-headers**. Breaking renames require **monitor-consumer-schema-migration**.
 - **Two-tier collection**: gate at `stats_set` / collect hooks; see **monitor-collect-tier-gating**.
-- **RAPL / energy**: Use `likwid_rapl.c` and LIKWID `power_*` APIs; do not add Variorum or JSON energy parsing for `intel_rapl` / `amd64_rapl` without an explicit design change.
+- **RAPL / energy**: Use `likwid_rapl.c` / `likwid_rapl_pwr.c` (PWR* under PERF, `power_read` under DIRECT); do not add Variorum or JSON energy parsing for `intel_rapl` / `amd64_rapl` without an explicit design change.
 - **Safety**: No `gets`/`strcpy`/`sprintf` on untrusted data; prefer `snprintf`, bounded copies, and checked returns.

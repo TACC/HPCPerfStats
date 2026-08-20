@@ -1,5 +1,5 @@
 /*! \file likwid_rapl.c
- *  LIKWID power_read helpers for intel_x86_rapl / amd_x86_rapl collectors.
+ *  LIKWID RAPL helpers: power_read (DIRECT) or PWR perfmon (PERF).
  */
 
 #include <stddef.h>
@@ -12,6 +12,8 @@
 #include "cpuid.h"
 #include "amd_processor.h"
 #include "likwid_rapl.h"
+#include "likwid_rapl_pwr.h"
+#include "likwid_pmc_access_mode.h"
 
 #ifdef HAVE_LIKWID
 #include <likwid.h>
@@ -70,6 +72,11 @@ int likwid_rapl_collect_path(void)
   if (likwid_rapl_is_supported_intel_processor())
     return LIKWID_RAPL_PATH_INTEL;
   return LIKWID_RAPL_PATH_NONE;
+}
+
+int likwid_rapl_use_pwr_path(void)
+{
+  return likwid_pmc_access_mode_from_env(NULL) == LIKWID_PMC_ACCESS_PERF;
 }
 
 #ifdef HAVE_LIKWID
@@ -154,7 +161,6 @@ int likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id, unsigned l
 #ifdef HAVE_LIKWID
   PowerInfo_t pi;
 
-  (void)socket_id;
   if (pkg_mj == NULL || core_mj == NULL || dram_mj == NULL || has_pkg == NULL || has_core == NULL ||
       has_dram == NULL)
     return -1;
@@ -168,6 +174,18 @@ int likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id, unsigned l
     TRACE("likwid_rapl: invalid cpu_id %d\n", cpu_id);
     return -1;
   }
+
+  /* PERF: power_init/power_read leave hasRAPL=0; use PWR* perfmon instead. */
+  if (likwid_rapl_use_pwr_path()) {
+    if (!likwid_rapl_pwr_ready()) {
+      TRACE("likwid_rapl: PWR RAPL not ready (cpu_id=%d)\n", cpu_id);
+      likwid_rapl_warn_not_initialized(cpu_id);
+      return -1;
+    }
+    return likwid_rapl_pwr_collect_socket_mj(cpu_id, socket_id, pkg_mj, core_mj, dram_mj, has_pkg,
+                                             has_core, has_dram, pp1_mj, has_pp1);
+  }
+
   pi = get_powerInfo();
   if (pi == NULL || !pi->hasRAPL) {
     TRACE("likwid_rapl: RAPL not initialized (cpu_id=%d)\n", cpu_id);

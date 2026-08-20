@@ -9,6 +9,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 #include "trace.h"
 #include "stats.h"
 #include "monitor_log.h"
@@ -107,8 +108,9 @@ int likwid_pmc_adapter_init(int nr_threads)
     ERROR("LIKWID HPMinit failed\n");
     goto out;
   }
+  errno = 0;
   if (perfmon_init(nr_threads, cpus) < 0) {
-    ERROR("LIKWID perfmon_init failed\n");
+    ERROR("LIKWID perfmon_init failed: %s (errno=%d)\n", strerror(errno), errno);
     goto out;
   }
   g_initialized = 1;

@@ -132,6 +132,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | Intel CPUID / generation gating | `cpuid.c`, `intel_cpuid_match.c`, `intel_processor.c` |
 | AMD EPYC CPUID / DF types | `amd_cpuid_match.c`, `amd_processor.c`, `amd_x86_uncore_df.c` |
 | LIKWID core + uncore PMU | `likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`, `likwid_uncore_profiles.c`, `likwid_result_convert.c` |
+| LIKWID RAPL (PWR / power_read) | `likwid_rapl.c`, `likwid_rapl_pwr.c` |
 | Omni-Path / Cornelis HFI (`host_opa`) | `opa.c`, `opa_sysfs.c`, `opa_mad_backoff.c`, `opa_mad_dyn.c`, `host_opa.h` (sysfs always; STL MAD via `--enable-opa-mad-dlopen` or link-time `--enable-opa`) |
 | BeeGFS client (`beegfs_client`) | `beegfs.c`, `beegfs_client.h`, `beegfs_ctl_parse.c` (mounts + `statvfs`; I/O via bounded `beegfs-ctl`) |
 | Intel Data Center GPU / PVC (`intel_gpu`) | `intel_gpu.c`, `intel_gpu.h`, `xpum_gpu_dyn.c` (vendored `third_party/intel-xpum/`; runtime `libxpum` dlopen) |

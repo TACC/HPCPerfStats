@@ -551,11 +551,15 @@ build_likwid() {
     LIBS="-lm -lrt -pthread -ldl"
   )
   make clean >/dev/null 2>&1 || true
+  # Makefile ACCESSMODE=perf_event sets -DLIKWID_USE_PERFEVENT so runtime PERF
+  # can call perfmon_init (cpu/power/uncore_imc sysfs). A DIRECT-built archive
+  # with runtime PERF leaves access_init NULL → ENODEV; DIRECT runtime also
+  # writes MSR 0x38f.
   make -j"${JOBS}" PREFIX="${PREFIX}" INSTALLED_PREFIX="${PREFIX}" \
-    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=direct \
+    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=perf_event \
     "${likwid_mk[@]}"
   make install PREFIX="${PREFIX}" INSTALLED_PREFIX="${PREFIX}" \
-    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=direct \
+    BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=perf_event \
     "${likwid_mk[@]}"
 }
 
@@ -706,9 +710,10 @@ EOF
 - This path links rabbitmq-c, libev, and LIKWID statically into hpcperfstatsd.
   LIKWID's static lib embeds bundled Lua and internal hwloc objects; configure also
   pulls -llikwid-hwloc and -llikwid-lua when using --enable-all-static.
-- The monitor uses LIKWID ACCESSMODE_PERF by default (HPCPERFSTATS_LIKWID_ACCESS=perf);
-  set HPCPERFSTATS_LIKWID_ACCESS=direct for legacy MSR access. Run with privileges
-  appropriate for perf_event and RAPL on your site.
+- This path builds LIKWID with ACCESSMODE=perf_event (-DLIKWID_USE_PERFEVENT).
+  Runtime default is ACCESSMODE_PERF (HPCPERFSTATS_LIKWID_ACCESS unset/perf).
+  Set HPCPERFSTATS_LIKWID_ACCESS=direct only for lab MSR access (spam MSR 0x38f).
+  Run with privileges appropriate for perf_event and RAPL on your site.
 EOF
   else
     cat <<'EOF'

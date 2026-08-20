@@ -113,5 +113,15 @@ if ! awk '/^build_likwid\(\)/{p=1} p&&/^}$/{print; exit} p' ./scripts/build_stat
   echo "build_likwid LIBS= must include -ldl (cmdline override drops makefile += -ldl)" >&2
   exit 1
 fi
+if ! awk '/^build_likwid\(\)/{p=1} p&&/^}$/{print; exit} p' ./scripts/build_static_bundle.sh \
+  | grep -q 'ACCESSMODE=perf_event'; then
+  echo "build_likwid must use ACCESSMODE=perf_event (runtime PERF needs LIKWID_USE_PERFEVENT)" >&2
+  exit 1
+fi
+if awk '/^build_likwid\(\)/{p=1} p&&/^}$/{print; exit} p' ./scripts/build_static_bundle.sh \
+  | grep -E '[[:space:]]ACCESSMODE=direct([[:space:]]|$)' >/dev/null; then
+  echo "build_likwid must not use ACCESSMODE=direct (ENODEV under runtime PERF)" >&2
+  exit 1
+fi
 
 echo "test_static_bundle_configure_flags passed"
