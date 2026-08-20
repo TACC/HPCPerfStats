@@ -39,7 +39,8 @@ static int intel_rapl_begin(struct stats_type *type)
 
   if (likwid_rapl_use_pwr_path()) {
     if (likwid_rapl_pwr_begin(0) < 0) {
-      monitor_log_error("intel_x86_rapl: disabled (PWR RAPL eventset failed under PERF)\n");
+      monitor_log_error(
+          "intel_x86_rapl: disabled (PWR RAPL and powercap energy_uj unavailable under PERF)\n");
       type->st_enabled = 0;
       return -1;
     }

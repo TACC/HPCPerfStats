@@ -256,6 +256,8 @@ hpcperfstatsd_SOURCES += \
 	likwid_rapl.c \
 	likwid_rapl_pwr.h \
 	likwid_rapl_pwr.c \
+	rapl_powercap.h \
+	rapl_powercap.c \
 	likwid_pmc_adapter.h \
 	likwid_pmc_adapter.c \
 	likwid_pmc_access_mode.h \

@@ -1,15 +1,17 @@
 /*! \file likwid_rapl_pwr.c
- *  RAPL energy via LIKWID PWR* perfmon (perf power PMU under ACCESSMODE_PERF).
+ *  RAPL energy via LIKWID PWR* perfmon (perf power PMU) with powercap fallback.
  */
 
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
 #include "likwid_rapl_pwr.h"
 #include "monitor_log.h"
+#include "rapl_powercap.h"
 #include "trace.h"
 
 #ifdef HAVE_LIKWID
@@ -27,6 +29,7 @@ static const char k_amd_pwr_pkg[] = "PWR_PKG_ENERGY:PWR0";
 
 static int g_pwr_group = -1;
 static int g_pwr_ready;
+static int g_powercap_ok;
 static int g_pwr_amd_path;
 
 const char *likwid_rapl_pwr_intel_eventset(void)
@@ -56,9 +59,14 @@ const char *likwid_rapl_pwr_schema_key_from_event(const char *event_name, int am
 
 unsigned long long likwid_rapl_joules_to_mj(double joules)
 {
-  if (joules < 0.0)
+  if (!(joules > 0.0) || !isfinite(joules))
     return 0;
   return (unsigned long long)(joules * 1000.0 + 0.5);
+}
+
+int likwid_rapl_pwr_result_usable(double joules)
+{
+  return isfinite(joules) && joules > 0.0;
 }
 
 #ifdef HAVE_LIKWID
@@ -97,6 +105,50 @@ static int likwid_rapl_pwr_try_eventset(const char *events, int *group_out)
   *group_out = group;
   return 0;
 }
+
+/*
+ * LIKWID POWER events are programmed only on the socket-lock CPU. Prefer
+ * cpu_id, then take the max usable result across threads.
+ */
+static double likwid_rapl_pwr_best_result(int group, int event_id, int cpu_id)
+{
+  double best = perfmon_getResult(group, event_id, cpu_id);
+  int n_threads;
+  int t;
+
+  if (likwid_rapl_pwr_result_usable(best))
+    return best;
+  n_threads = perfmon_getNumberOfThreads();
+  for (t = 0; t < n_threads; t++) {
+    double raw = perfmon_getResult(group, event_id, t);
+
+    if (likwid_rapl_pwr_result_usable(raw) && (!isfinite(best) || raw > best))
+      best = raw;
+  }
+  return best;
+}
+
+static void likwid_rapl_pwr_seed_energy_units(void)
+{
+  double pkg_u;
+  PowerInfo_t pi;
+
+  /* LIKWID calculateResult multiplies POWER by power_getEnergyUnit; under PERF
+   * power_init skips MSR units, but getEnergyUnit lazy-loads sysfs scales. */
+  pkg_u = power_getEnergyUnit(PKG);
+  pi = get_powerInfo();
+  if (pi != NULL && pkg_u <= 0.0 && rapl_powercap_available()) {
+    /* Keep PWR path from permanently zeroing if sysfs scale path is missing. */
+    monitor_log_warn("likwid_rapl_pwr: power_getEnergyUnit(PKG)=%.3g; will prefer powercap "
+                     "energy_uj if PWR results stay flat\n",
+                     pkg_u);
+  } else if (pkg_u > 0.0) {
+    TRACE("likwid_rapl_pwr: energy unit PKG=%g\n", pkg_u);
+  }
+  (void)power_getEnergyUnit(PP0);
+  (void)power_getEnergyUnit(DRAM);
+  (void)power_getEnergyUnit(PP1);
+}
 #endif
 
 int likwid_rapl_pwr_begin(int amd_path)
@@ -107,6 +159,7 @@ int likwid_rapl_pwr_begin(int amd_path)
 
   g_pwr_group = -1;
   g_pwr_ready = 0;
+  g_powercap_ok = 0;
   g_pwr_amd_path = amd_path ? 1 : 0;
 
   if (amd_path) {
@@ -122,24 +175,33 @@ int likwid_rapl_pwr_begin(int amd_path)
     chosen = k_intel_pwr_pkg;
   }
 
-  if (group < 0 || chosen == NULL) {
+  g_powercap_ok = rapl_powercap_available() ? 1 : 0;
+
+  if (group >= 0 && chosen != NULL) {
+    g_pwr_group = group;
+    g_pwr_ready = 1;
+    likwid_rapl_pwr_seed_energy_units();
+    monitor_log_info("likwid_rapl_pwr: enabled eventset `%s`\n", chosen);
+  } else {
     monitor_log_error("likwid_rapl_pwr: perfmon_addEventSet failed for PWR RAPL events\n");
-    return -1;
   }
 
-  g_pwr_group = group;
-  g_pwr_ready = 1;
-  monitor_log_info("likwid_rapl_pwr: enabled eventset `%s`\n", chosen);
+  if (g_powercap_ok)
+    monitor_log_info("likwid_rapl_pwr: powercap energy_uj available (PERF fallback)\n");
+
+  if (!g_pwr_ready && !g_powercap_ok)
+    return -1;
   return 0;
 #else
   (void)amd_path;
-  return -1;
+  g_powercap_ok = rapl_powercap_available() ? 1 : 0;
+  return g_powercap_ok ? 0 : -1;
 #endif
 }
 
 int likwid_rapl_pwr_ready(void)
 {
-  return g_pwr_ready;
+  return g_pwr_ready || g_powercap_ok;
 }
 
 int likwid_rapl_pwr_collect_socket_mj(int cpu_id, unsigned int socket_id,
@@ -147,11 +209,8 @@ int likwid_rapl_pwr_collect_socket_mj(int cpu_id, unsigned int socket_id,
                                       unsigned long long *dram_mj, int *has_pkg, int *has_core,
                                       int *has_dram, unsigned long long *pp1_mj, int *has_pp1)
 {
-#ifdef HAVE_LIKWID
-  int n_events;
-  int i;
+  int got = 0;
 
-  (void)socket_id;
   if (pkg_mj == NULL || core_mj == NULL || dram_mj == NULL || has_pkg == NULL || has_core == NULL ||
       has_dram == NULL)
     return -1;
@@ -161,56 +220,64 @@ int likwid_rapl_pwr_collect_socket_mj(int cpu_id, unsigned int socket_id,
     *pp1_mj = 0;
     *has_pp1 = 0;
   }
-  if (!g_pwr_ready || g_pwr_group < 0 || cpu_id < 0)
-    return -1;
-  if (perfmon_readGroupCounters(g_pwr_group) < 0)
-    return -1;
-  n_events = perfmon_getNumberOfEvents(g_pwr_group);
-  for (i = 0; i < n_events; i++) {
-    const char *event_name = perfmon_getEventName(g_pwr_group, i);
-    const char *key;
-    double raw;
-    unsigned long long mj = 0;
 
-    key = likwid_rapl_pwr_schema_key_from_event(event_name, g_pwr_amd_path);
-    if (key == NULL)
-      continue;
-    raw = perfmon_getResult(g_pwr_group, i, cpu_id);
-    if (raw < 0.0)
-      continue;
-    /* PWR results are Joules; schema keys are millijoules. */
-    mj = likwid_rapl_joules_to_mj(raw);
-    if (strcmp(key, "pkg_energy") == 0) {
-      *pkg_mj = mj;
-      *has_pkg = 1;
-    } else if (strcmp(key, "pp0_energy") == 0 || strcmp(key, "core_energy") == 0) {
-      *core_mj = mj;
-      *has_core = 1;
-    } else if (strcmp(key, "pp1_energy") == 0) {
-      if (pp1_mj != NULL && has_pp1 != NULL) {
-        *pp1_mj = mj;
-        *has_pp1 = 1;
+#ifdef HAVE_LIKWID
+  if (g_pwr_ready && g_pwr_group >= 0 && cpu_id >= 0) {
+    int n_events;
+    int i;
+
+    if (perfmon_readGroupCounters(g_pwr_group) >= 0) {
+      n_events = perfmon_getNumberOfEvents(g_pwr_group);
+      for (i = 0; i < n_events; i++) {
+        const char *event_name = perfmon_getEventName(g_pwr_group, i);
+        const char *key;
+        double raw;
+        unsigned long long mj = 0;
+
+        key = likwid_rapl_pwr_schema_key_from_event(event_name, g_pwr_amd_path);
+        if (key == NULL)
+          continue;
+        raw = likwid_rapl_pwr_best_result(g_pwr_group, i, cpu_id);
+        if (!likwid_rapl_pwr_result_usable(raw))
+          continue;
+        mj = likwid_rapl_joules_to_mj(raw);
+        if (mj == 0)
+          continue;
+        if (strcmp(key, "pkg_energy") == 0) {
+          *pkg_mj = mj;
+          *has_pkg = 1;
+          got = 1;
+        } else if (strcmp(key, "pp0_energy") == 0 || strcmp(key, "core_energy") == 0) {
+          *core_mj = mj;
+          *has_core = 1;
+          got = 1;
+        } else if (strcmp(key, "pp1_energy") == 0) {
+          if (pp1_mj != NULL && has_pp1 != NULL) {
+            *pp1_mj = mj;
+            *has_pp1 = 1;
+            got = 1;
+          }
+        } else if (strcmp(key, "dram_energy") == 0) {
+          *dram_mj = mj;
+          *has_dram = 1;
+          got = 1;
+        }
       }
-    } else if (strcmp(key, "dram_energy") == 0) {
-      *dram_mj = mj;
-      *has_dram = 1;
     }
+    if (got)
+      return 0;
+    TRACE("likwid_rapl_pwr: no usable PWR energy for cpu_id=%d; trying powercap\n", cpu_id);
   }
-  if (*has_pkg || *has_core || *has_dram || (has_pp1 != NULL && *has_pp1))
-    return 0;
-  TRACE("likwid_rapl_pwr: no energy results for cpu_id=%d\n", cpu_id);
-  return -1;
 #else
   (void)cpu_id;
-  (void)socket_id;
-  (void)pkg_mj;
-  (void)core_mj;
-  (void)dram_mj;
-  (void)has_pkg;
-  (void)has_core;
-  (void)has_dram;
-  (void)pp1_mj;
-  (void)has_pp1;
-  return -1;
 #endif
+
+  if (g_powercap_ok || rapl_powercap_available()) {
+    if (rapl_powercap_collect_socket_mj(socket_id, pkg_mj, core_mj, dram_mj, has_pkg, has_core,
+                                        has_dram, pp1_mj, has_pp1, g_pwr_amd_path) == 0)
+      return 0;
+  }
+
+  TRACE("likwid_rapl_pwr: no energy results for cpu_id=%d socket=%u\n", cpu_id, socket_id);
+  return -1;
 }

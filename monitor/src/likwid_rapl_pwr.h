@@ -23,7 +23,11 @@ const char *likwid_rapl_pwr_schema_key_from_event(const char *event_name, int am
 /* Convert LIKWID PWR result (Joules) to schema millijoules. */
 unsigned long long likwid_rapl_joules_to_mj(double joules);
 
-/* Add/setup PWR eventset after host_cpu_hw LIKWID session is ready. */
+/* Nonzero when joules is finite and strictly positive (reject flat-zero/NaN). */
+int likwid_rapl_pwr_result_usable(double joules);
+
+/* Add/setup PWR eventset after host_cpu_hw LIKWID session is ready.
+ * Succeeds when PWR eventset works and/or powercap energy_uj is available. */
 int likwid_rapl_pwr_begin(int amd_path);
 
 int likwid_rapl_pwr_ready(void);

@@ -82,9 +82,9 @@ RAPL notes:
 
 - LIKWID `power_read(cpu, reg, uint64_t *data)` requires a **64-bit** buffer; energy status is the low 32 bits (`likwid_rapl_energy_status_lo32` → `likwid_rapl_raw_to_mj`). Used only when **`HPCPERFSTATS_LIKWID_ACCESS=direct`**.
 - **Pinned LIKWID must be built `ACCESSMODE=perf_event`** (`build_static_bundle.sh` / `cross_compile_test.sh`). Runtime PERF on a DIRECT-built liblikwid leaves `access_init` NULL → `perfmon_init` ENODEV (no `host_cpu_hw`).
-- **Under runtime PERF (default):** RAPL uses LIKWID **PWR*** perfmon (`likwid_rapl_pwr.c`, e.g. `PWR_PKG_ENERGY:PWR0`) via the `power` PMU. `power_init`/`hasRAPL` stay false by LIKWID design — do not wait on `power_read`.
+- **Under runtime PERF (default):** RAPL prefers LIKWID **PWR*** perfmon (`likwid_rapl_pwr.c`, e.g. `PWR_PKG_ENERGY:PWR0`) via the `power` PMU. If PWR results are flat zero/NaN (common when counters only land on the socket-lock thread or energy units stay unset), collect falls back to **`/sys/class/powercap/*/energy_uj`** (`rapl_powercap.c`) — still no MSR **0x38f**. `power_init`/`hasRAPL` stay false by LIKWID design — do not wait on `power_read`.
 - Do not enable AMD RAPL/PMC/DF types on Intel (or Intel RAPL on AMD); shared `likwid_rapl_is_supported_processor()` is OR of both vendors and is not used for type begin.
-- **`intel_x86_rapl` and `amd_x86_rapl` begin require `cpu_counter_metrics_likwid_ready()`**. Under PERF they also require `likwid_rapl_pwr_begin()`; if that fails the type is **disabled** — do not publish flat-zero rows.
+- **`intel_x86_rapl` and `amd_x86_rapl` begin require `cpu_counter_metrics_likwid_ready()`**. Under PERF they also require `likwid_rapl_pwr_begin()` (PWR eventset and/or powercap available); if that fails the type is **disabled** — do not publish flat-zero rows.
 - **Flat-zero `core_energy` / `pkg_energy` on AMD is not healthy idle behavior** — it means energy collect failed or RAPL was never initialized (typically `host_cpu_hw` / HPMinit did not run). Healthy sockets show large cumulative mJ.
 - **RAPL vendor path is runtime** (`likwid_rapl_collect_path`): EPYC uses AMD MSRs (DIRECT) even when the binary was configured with `MONITOR_ARCH_INTEL`.
 - AMD core eventset uses **`LS_DISPATCH_ALL`** (LIKWID Zen umask); bare `LS_DISPATCH` fails `perfmon_addEventSet` and silently used to disable `host_cpu_hw`.

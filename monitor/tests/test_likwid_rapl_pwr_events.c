@@ -42,6 +42,14 @@ static void test_joules_to_mj(void)
   assert(likwid_rapl_joules_to_mj(1.0) == 1000ULL);
   assert(likwid_rapl_joules_to_mj(0.5) == 500ULL);
   assert(likwid_rapl_joules_to_mj(-1.0) == 0ULL);
+  assert(likwid_rapl_joules_to_mj(0.0) == 0ULL);
+}
+
+static void test_result_usable_rejects_flat_zero(void)
+{
+  assert(likwid_rapl_pwr_result_usable(1.0) == 1);
+  assert(likwid_rapl_pwr_result_usable(0.0) == 0);
+  assert(likwid_rapl_pwr_result_usable(-0.1) == 0);
 }
 
 int main(void)
@@ -51,6 +59,7 @@ int main(void)
   test_schema_key_map_intel();
   test_schema_key_map_amd();
   test_joules_to_mj();
+  test_result_usable_rejects_flat_zero();
   printf("test_likwid_rapl_pwr_events passed\n");
   return 0;
 }
