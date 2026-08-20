@@ -30,6 +30,7 @@ static void test_load_missing_lib_fails(void)
   setenv("HPCPERFSTATS_OIB_LIB", "/nonexistent/liboib_utils.so.test-missing", 1);
   assert(opa_mad_dyn_load() < 0);
   assert(opa_mad_dyn_loaded() == 0);
+  assert(opa_mad_dyn_available() == 0);
   assert(opa_mad_dyn_last_error()[0] != '\0');
   unsetenv("HPCPERFSTATS_OIB_LIB");
 }
@@ -54,12 +55,29 @@ static void test_injected_hooks(void)
   opa_mad_dyn_test_set_hooks(NULL);
 }
 
-static void test_idempotent_load_failure(void)
+static void test_sticky_load_failure(void)
 {
+  const char *err1;
+  const char *err2;
+
   opa_mad_dyn_unload();
   setenv("HPCPERFSTATS_OIB_LIB", "/nonexistent/liboib_utils.so.test-missing", 1);
   assert(opa_mad_dyn_load() < 0);
+  err1 = opa_mad_dyn_last_error();
+  assert(err1[0] != '\0');
+  /* Second load must stay failed without clearing sticky state. */
   assert(opa_mad_dyn_load() < 0);
+  assert(opa_mad_dyn_available() == 0);
+  err2 = opa_mad_dyn_last_error();
+  assert(strcmp(err1, err2) == 0);
+  /* Point env at a different missing path; sticky must still refuse without success. */
+  setenv("HPCPERFSTATS_OIB_LIB", "/nonexistent/other-missing.so", 1);
+  assert(opa_mad_dyn_available() == 0);
+  unsetenv("HPCPERFSTATS_OIB_LIB");
+  /* unload clears sticky so a new probe can run (tests / SIGHUP-style reset). */
+  opa_mad_dyn_unload();
+  setenv("HPCPERFSTATS_OIB_LIB", "/nonexistent/liboib_utils.so.test-missing", 1);
+  assert(opa_mad_dyn_available() == 0);
   unsetenv("HPCPERFSTATS_OIB_LIB");
 }
 
@@ -67,7 +85,7 @@ int main(void)
 {
   test_load_missing_lib_fails();
   test_injected_hooks();
-  test_idempotent_load_failure();
+  test_sticky_load_failure();
   printf("test_opa_mad_dyn passed\n");
   return 0;
 }

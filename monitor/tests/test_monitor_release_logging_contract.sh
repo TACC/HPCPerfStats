@@ -31,6 +31,12 @@ grep -q 'ring_resend_fail_delta' src/monitor_daemon.c \
   || { echo "hourly status must include ring_resend_fail_delta" >&2; exit 1; }
 grep -q 'ib_mad_fail_delta' src/monitor_daemon.c \
   || { echo "hourly status must include ib_mad_fail_delta" >&2; exit 1; }
+grep -q 'opa_mad_fail_delta' src/monitor_daemon.c \
+  || { echo "hourly status must include opa_mad_fail_delta" >&2; exit 1; }
+grep -q 'MONITOR_REL_FAIL_OPA_MAD' src/opa.c \
+  || { echo "opa.c must use OPA MAD first-fail counter" >&2; exit 1; }
+grep -q 'opa_mad_dyn_available' src/opa.c \
+  || { echo "opa.c must gate MAD on opa_mad_dyn_available when dlopen" >&2; exit 1; }
 grep -q 'monitor_stderr_quiet_begin' src/ib_mad.c \
   || { echo "ib_mad.c must quiet stderr around MAD RPC" >&2; exit 1; }
 grep -q 'MONITOR_REL_FAIL_IB_MAD' src/ib_mad.c \

@@ -62,7 +62,7 @@ unsigned long monitor_release_fail_count(monitor_rel_fail_id id)
 }
 
 void monitor_release_fail_get_counts(unsigned long *ring_resend, unsigned long *ib_mad,
-                                     unsigned long *nvidia_zero)
+                                     unsigned long *nvidia_zero, unsigned long *opa_mad)
 {
   if (ring_resend != NULL)
     *ring_resend = g_rel_fail_counts[MONITOR_REL_FAIL_RING_RESEND];
@@ -70,6 +70,8 @@ void monitor_release_fail_get_counts(unsigned long *ring_resend, unsigned long *
     *ib_mad = g_rel_fail_counts[MONITOR_REL_FAIL_IB_MAD];
   if (nvidia_zero != NULL)
     *nvidia_zero = g_rel_fail_counts[MONITOR_REL_FAIL_NVIDIA_ZERO];
+  if (opa_mad != NULL)
+    *opa_mad = g_rel_fail_counts[MONITOR_REL_FAIL_OPA_MAD];
 }
 
 void monitor_release_fail_reset_for_test(void)

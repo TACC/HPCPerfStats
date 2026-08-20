@@ -7,11 +7,12 @@
  * third-party probes (libibmad ibwarn). Callers pass first_only=1 in release.
  */
 
-/*! Named recurring failure classes (ring resend, IB MAD, nvidia zero-row). */
+/*! Named recurring failure classes (ring resend, IB MAD, OPA MAD, nvidia zero-row). */
 typedef enum {
   MONITOR_REL_FAIL_RING_RESEND = 0,
   MONITOR_REL_FAIL_IB_MAD,
   MONITOR_REL_FAIL_NVIDIA_ZERO,
+  MONITOR_REL_FAIL_OPA_MAD,
   MONITOR_REL_FAIL_COUNT
 } monitor_rel_fail_id;
 
@@ -49,9 +50,10 @@ void monitor_release_fail_clear(monitor_rel_fail_id id);
 /*! Current total for a named failure class (0 if id out of range). */
 unsigned long monitor_release_fail_count(monitor_rel_fail_id id);
 
-/*! Snapshot ring / ib_mad / nvidia totals for hourly status. */
+/*! Snapshot ring / ib_mad / nvidia / opa_mad totals for hourly status.
+ *  Any pointer may be NULL. */
 void monitor_release_fail_get_counts(unsigned long *ring_resend, unsigned long *ib_mad,
-                                     unsigned long *nvidia_zero);
+                                     unsigned long *nvidia_zero, unsigned long *opa_mad);
 
 /*! Reset counters and latches (unit tests only). */
 void monitor_release_fail_reset_for_test(void);

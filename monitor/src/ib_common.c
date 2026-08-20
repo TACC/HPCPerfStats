@@ -21,6 +21,23 @@ int ib_hca_is_opa_hfi(const char *hca)
   return hca[4] == '\0' || hca[4] == '_';
 }
 
+int opa_hfi_unit_from_name(const char *hca)
+{
+  unsigned long unit;
+  char *end = NULL;
+
+  if (!ib_hca_is_opa_hfi(hca))
+    return -1;
+  if (hca[4] == '\0')
+    return 0;
+  if (hca[4] != '_' || hca[5] == '\0')
+    return -1;
+  unit = strtoul(hca + 5, &end, 10);
+  if (end == hca + 5 || *end != '\0' || unit > (unsigned long)INT_MAX)
+    return -1;
+  return (int)unit;
+}
+
 int ib_sysfs_has_opa_hfi(void)
 {
   DIR *d;

@@ -1,6 +1,7 @@
 /* host_opa — Omni-Path / Cornelis HFI port counters (STL MAD + sysfs fallback). */
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 
 #include "stats.h"
@@ -10,16 +11,52 @@
 #include "host_opa.h"
 #include "opa_sysfs.h"
 #include "opa_mad_backoff.h"
+#include "monitor_release_log.h"
+#include "monitor_log.h"
 
 #if defined(MONITOR_WITH_OPA)
 #include "opa_mad_api.h"
 #include "iba/stl_pa.h"
 #include "iba/stl_sm.h"
+#if defined(MONITOR_OPA_MAD_DLOPEN)
+#include "opa_mad_dyn.h"
+#endif
 #endif
 
 #if defined(MONITOR_WITH_OPA)
 uint64_t g_transactID = 0xffffffff12340000;
 #define RESP_WAIT_TIME 1000
+
+/*! Count a MAD failure; emit ERROR only on first failure in release (always in DEBUG). */
+static void
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((format(printf, 1, 2)))
+#endif
+    opa_mad_report_fail(const char *fmt, ...)
+{
+  va_list ap;
+  char buf[256];
+
+  if (!monitor_release_fail_note(MONITOR_REL_FAIL_OPA_MAD, monitor_release_log_first_only()))
+    return;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  ERROR("%s", buf);
+}
+
+static void opa_mad_note_disabled_once(void)
+{
+  static int latched;
+
+  if (!monitor_release_log_should_emit(&latched, 1))
+    return;
+#if defined(MONITOR_OPA_MAD_DLOPEN)
+  monitor_log_warn("host_opa MAD disabled (%s); using sysfs\n", opa_mad_dyn_last_error());
+#else
+  monitor_log_warn("host_opa MAD disabled; using sysfs\n");
+#endif
+}
 
 static int opa_count_ports(uint64 portmask)
 {
@@ -56,7 +93,8 @@ static void opa_init_port_counters_mad(STL_PERF_MAD *mad, uint32_t port)
   mad->common.AttributeModifier = attrmod;
 }
 
-static int opa_send_port_counters_mad(struct oib_port *mad_port, STL_PERF_MAD *mad, IB_LID lid)
+static int opa_send_port_counters_mad(struct oib_port *mad_port, STL_PERF_MAD *mad, IB_LID lid,
+                                      const char *hfi, uint32_t port)
 {
   uint16_t pkey;
   struct oib_mad_addr addr;
@@ -68,7 +106,8 @@ static int opa_send_port_counters_mad(struct oib_port *mad_port, STL_PERF_MAD *m
 
   pkey = oib_get_mgmt_pkey(mad_port, lid, 0);
   if (pkey == 0) {
-    ERROR("Local port does not have management privileges\n");
+    opa_mad_report_fail("Local port does not have management privileges on HFI %s port %u\n",
+                        hfi != NULL ? hfi : "?", port);
     return -1;
   }
 
@@ -82,7 +121,12 @@ static int opa_send_port_counters_mad(struct oib_port *mad_port, STL_PERF_MAD *m
                                       sizeof(STL_DATA_PORT_COUNTERS_REQ) + sizeof(MAD_COMMON),
                                       &addr, (uint8_t *)mad, &recv_size, RESP_WAIT_TIME, 0);
   BSWAP_MAD_HEADER((MAD *)mad);
-  return (status == FSUCCESS) ? 0 : -1;
+  if (status != FSUCCESS) {
+    opa_mad_report_fail("OPA MAD send/recv failed on HFI %s port %u\n", hfi != NULL ? hfi : "?",
+                        port);
+    return -1;
+  }
+  return 0;
 }
 
 static void opa_publish_port_counters(struct stats *stats, STL_DATA_PORT_COUNTERS_RSP *rsp)
@@ -95,7 +139,7 @@ static void opa_publish_port_counters(struct stats *stats, STL_DATA_PORT_COUNTER
 #undef X
 }
 
-static int collect_hfi_port_mad(struct stats *stats, uint32_t port)
+static int collect_hfi_port_mad(struct stats *stats, const char *hfi, uint32_t port)
 {
   struct oib_port *mad_port = NULL;
   STL_SMP smp;
@@ -103,26 +147,36 @@ static int collect_hfi_port_mad(struct stats *stats, uint32_t port)
   STL_DATA_PORT_COUNTERS_REQ *req;
   STL_DATA_PORT_COUNTERS_RSP *rsp;
   IB_LID lid;
+  int hfi_unit;
   int rc = -1;
 
-  if (stats == NULL)
+  if (stats == NULL || hfi == NULL)
     return -1;
+
+  hfi_unit = opa_hfi_unit_from_name(hfi);
+  if (hfi_unit < 0)
+    hfi_unit = 0;
 
   opa_init_port_counters_mad(mad, port);
   req = (STL_DATA_PORT_COUNTERS_REQ *)&mad->PerfData;
 
-  if (oib_open_port_by_num(&mad_port, (uint8)0, port) != 0) {
-    ERROR("cannot open MAD port %u\n", port);
+  if (oib_open_port_by_num(&mad_port, (uint8)hfi_unit, port) != 0) {
+#if defined(MONITOR_OPA_MAD_DLOPEN)
+    opa_mad_report_fail("cannot open MAD port %u on HFI %s (unit %d): %s\n", port, hfi, hfi_unit,
+                        opa_mad_dyn_last_error());
+#else
+    opa_mad_report_fail("cannot open MAD port %u on HFI %s (unit %d)\n", port, hfi, hfi_unit);
+#endif
     goto out;
   }
 
   if (oib_get_port_state(mad_port) != IB_PORT_ACTIVE) {
-    ERROR("skipping inactive port %u", port);
+    opa_mad_report_fail("skipping inactive MAD port %u on HFI %s\n", port, hfi);
     goto out;
   }
 
   lid = oib_get_port_lid(mad_port);
-  if (opa_send_port_counters_mad(mad_port, mad, lid) != 0)
+  if (opa_send_port_counters_mad(mad_port, mad, lid, hfi, port) != 0)
     goto out;
 
   rsp = (STL_DATA_PORT_COUNTERS_RSP *)req;
@@ -150,9 +204,15 @@ static void opa_collect_one_port(struct stats *stats, const char *hfi, int port)
     return;
 
 #if defined(MONITOR_WITH_OPA)
-  if (opa_mad_collect_cycle_ok()) {
-    if (collect_hfi_port_mad(stats, (uint32_t)port) == 0) {
+#if defined(MONITOR_OPA_MAD_DLOPEN)
+  if (!opa_mad_dyn_available()) {
+    opa_mad_note_disabled_once();
+  } else
+#endif
+      if (opa_mad_collect_cycle_ok()) {
+    if (collect_hfi_port_mad(stats, hfi, (uint32_t)port) == 0) {
       opa_mad_note_success();
+      monitor_release_fail_clear(MONITOR_REL_FAIL_OPA_MAD);
       mad_ok = 1;
     } else {
       opa_mad_note_failure();

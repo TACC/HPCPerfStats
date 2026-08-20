@@ -430,7 +430,8 @@ test_opa_sysfs_map_SOURCES = \
 
 test_opa_mad_backoff_SOURCES = \
 	test_opa_mad_backoff.c \
-	$(top_srcdir)/src/opa_mad_backoff.c
+	$(top_srcdir)/src/opa_mad_backoff.c \
+	$(top_srcdir)/src/monitor_log.c
 
 test_ib_hca_is_opa_hfi_SOURCES = \
 	test_ib_hca_is_opa_hfi.c \

@@ -12,6 +12,8 @@ extern "C" {
 
 int opa_mad_dyn_load(void);
 int opa_mad_dyn_loaded(void);
+/*! 1 if liboib_utils is loaded (probes once); 0 if missing/sticky-failed. */
+int opa_mad_dyn_available(void);
 void opa_mad_dyn_unload(void);
 const char *opa_mad_dyn_last_error(void);
 

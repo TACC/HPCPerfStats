@@ -10,6 +10,8 @@ globs:
   - HPCPerfStats/monitor/src/monitor_release_log.*
   - HPCPerfStats/monitor/src/stats_buffer_rmq.c
   - HPCPerfStats/monitor/src/ib_mad.c
+  - HPCPerfStats/monitor/src/opa.c
+  - HPCPerfStats/monitor/src/opa_mad_*.c
   - HPCPerfStats/monitor/src/nvidia_gpu.c
   - HPCPerfStats/monitor/src/roofline_hw_peak.c
 alwaysApply: false
@@ -35,14 +37,15 @@ alwaysApply: false
 Release builds must stay quiet in the journal:
 
 1. **Startup** — compact block after types init: version, enabled `st_name`s, one conf/probe line (`monitor_log_release_startup_summary` in `monitor.c`). Conf key echoes use `monitor_log_debug` (no-op without `DEBUG`).
-2. **Hourly rollup** — `MONITOR_DAEMON_HOURLY_STATUS_SEC` (3600) `ev_timer` prints buffered/sent/resent, RMQ failure deltas, and named failure deltas (`ring_resend_fail`, `ib_mad_fail`, `nvidia_zero`). Tick-based `print_buffer_status` is DEBUG-only.
+2. **Hourly rollup** — `MONITOR_DAEMON_HOURLY_STATUS_SEC` (3600) `ev_timer` prints buffered/sent/resent, RMQ failure deltas, and named failure deltas (`ring_resend_fail`, `ib_mad_fail`, `nvidia_zero`, `opa_mad_fail`). Tick-based `print_buffer_status` is DEBUG-only.
 3. **Recurring failures (first-fail)** — first failure of each class logs immediately; further attempts only increment counters until success clears latches (`monitor_release_log_*` / `monitor_release_fail_*`):
    - RMQ connect / queue / publish (`stats_buffer_rmq.c`)
    - Ring buffer resend `status != 0` (`monitor_daemon.c`)
    - IB MAD collect errors (`ib_mad.c`); libibmad `ibwarn` stderr is quieted around MAD open/query/close via `monitor_stderr_quiet_*`
+   - OPA MAD (`opa.c`): with `--enable-opa-mad-dlopen`, if `liboib_utils` is missing, **probe once then skip MAD** (one-shot warn; sysfs only—no per-sample MAD ERROR). When the library is loaded, open/query failures use `MONITOR_REL_FAIL_OPA_MAD` first-fail + hourly `opa_mad_fail_delta`; cooldown warn on streak threshold (`opa_mad_backoff.c`, ≥300s).
    - `nvidia_gpu` zero-row warn (`nvidia_gpu.c`)
 4. **RMQ detail** — per-attempt socket/login/publish `ERROR` strings are DEBUG-only; release relies on the latched class summary above.
-5. Keep rare events: jobid load/unload, config reload, shutdown, init hard-failures, IB MAD cooldown warn (streak threshold).
+5. Keep rare events: jobid load/unload, config reload, shutdown, init hard-failures, IB/OPA MAD cooldown warn (streak threshold).
 6. Do **not** add logging on collect/sample hot paths (**monitor-jitter-and-fidelity-priority**). Roofline cadence-skip chatter is DEBUG-only.
 
 DEBUG builds keep verbose timer/status/RMQ TRACE-style chatter.
@@ -51,3 +54,4 @@ DEBUG builds keep verbose timer/status/RMQ TRACE-style chatter.
 
 - **monitor-debug-shm** — `/dev/shm` mirror requires behavioral `DEBUG`.
 - **monitor-c-conventions** — daemon logging facade `monitor_log_*`.
+- **monitor-ib-sysfs-parsing** — healthy HFI + missing `liboib_utils` is sysfs-only, not a fabric failure.

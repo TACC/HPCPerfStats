@@ -42,6 +42,13 @@ Port collectibility uses these parsers — false positives cause extra MAD I/O. 
 - Devices named `hfi1` / `hfi1_*` are **Cornelis CN5000 / Intel Omni-Path** and belong to **`host_opa`**, not **`host_ib`**.
 - `ib_foreach_hca_port` skips OPA HFIs; `opa.c` walks only those names.
 - `hwdetect` treats `cornelis` / `cn5000` / `omnipath` / `hfi` lspci tokens and `/sys/class/infiniband/hfi1_*` as OPA present; IB sysfs fallback ignores HFI-only nodes.
+- Parse MAD HFI unit via **`opa_hfi_unit_from_name`** (`hfi1_N` → N; bare `hfi1` → 0).
+
+## `host_opa` MAD vs sysfs
+
+- Healthy ACTIVE/LinkUp HFI does **not** imply STL MAD works. Fleet `--enable-opa-mad-dlopen` needs **`liboib_utils`** at runtime; **`opa-basic-tools` alone is insufficient**.
+- When the library is absent: **skip MAD** (sticky after one probe), emit **sysfs-only** `host_opa` rows, and do **not** spam `cannot open MAD port` every sample.
+- When the library is present but open/query fails: first-fail release logging + MAD backoff (≥300s), then sysfs fallback.
 
 ## `host_opa` sysfs counters (`opa_sysfs.c`)
 
@@ -50,4 +57,4 @@ Port collectibility uses these parsers — false positives cause extra MAD I/O. 
 - If classic already set any key, **do not overwrite** with hw (OPA100 stays primary).
 - Do **not** map `DmaWait`, `RcvHdrOvr*`, or comma-named hw files into KEYS (v1). Bounded hot-path: only the five utilization files above.
 
-Cross-links: **monitor-c-new-function-unittests**, **traceback-fix-discipline**.
+Cross-links: **monitor-c-new-function-unittests**, **traceback-fix-discipline**, **monitor-debug-vs-symbols**.

@@ -700,10 +700,11 @@ void monitor_daemon_hourly_status_cb(struct ev_loop *loop, ev_timer *w_, int rev
   struct sf_ring_buffer *w = (struct sf_ring_buffer *)w_->data;
   unsigned long rmq_c = 0, rmq_q = 0, rmq_p = 0;
   unsigned long d_c = 0, d_q = 0, d_p = 0;
-  unsigned long ring_c = 0, ib_c = 0, nv_c = 0;
+  unsigned long ring_c = 0, ib_c = 0, nv_c = 0, opa_c = 0;
   unsigned long d_ring = 0, d_ib = 0, d_nv = 0;
+  unsigned long d_opa = 0;
   static unsigned long prev_c, prev_q, prev_p;
-  static unsigned long prev_ring, prev_ib, prev_nv;
+  static unsigned long prev_ring, prev_ib, prev_nv, prev_opa;
   static int have_prev;
 
   (void)loop;
@@ -712,12 +713,13 @@ void monitor_daemon_hourly_status_cb(struct ev_loop *loop, ev_timer *w_, int rev
     return;
 
   stats_buffer_rmq_get_failure_counts(&rmq_c, &rmq_q, &rmq_p);
-  monitor_release_fail_get_counts(&ring_c, &ib_c, &nv_c);
+  monitor_release_fail_get_counts(&ring_c, &ib_c, &nv_c, &opa_c);
   if (have_prev) {
     monitor_release_log_failure_deltas(prev_c, prev_q, prev_p, rmq_c, rmq_q, rmq_p, &d_c, &d_q,
                                        &d_p);
     monitor_release_log_failure_deltas(prev_ring, prev_ib, prev_nv, ring_c, ib_c, nv_c, &d_ring,
                                        &d_ib, &d_nv);
+    d_opa = opa_c - prev_opa;
   } else {
     d_c = rmq_c;
     d_q = rmq_q;
@@ -725,6 +727,7 @@ void monitor_daemon_hourly_status_cb(struct ev_loop *loop, ev_timer *w_, int rev
     d_ring = ring_c;
     d_ib = ib_c;
     d_nv = nv_c;
+    d_opa = opa_c;
   }
   prev_c = rmq_c;
   prev_q = rmq_q;
@@ -732,16 +735,18 @@ void monitor_daemon_hourly_status_cb(struct ev_loop *loop, ev_timer *w_, int rev
   prev_ring = ring_c;
   prev_ib = ib_c;
   prev_nv = nv_c;
+  prev_opa = opa_c;
   have_prev = 1;
 
   monitor_log_info("hourly status: buffered=%d/%d processed=%d sent=%d resent=%d "
                    "file_mode=%d rmq_fail_delta connect=%lu queue=%lu publish=%lu "
                    "(total connect=%lu queue=%lu publish=%lu) "
                    "ring_resend_fail_delta=%lu ib_mad_fail_delta=%lu nvidia_zero_delta=%lu "
-                   "(total ring_resend=%lu ib_mad=%lu nvidia_zero=%lu)\n",
+                   "opa_mad_fail_delta=%lu "
+                   "(total ring_resend=%lu ib_mad=%lu nvidia_zero=%lu opa_mad=%lu)\n",
                    w->q_count, max_buffer_size, w->b_count, w->s_count, w->r_count,
-                   file_mode_enabled, d_c, d_q, d_p, rmq_c, rmq_q, rmq_p, d_ring, d_ib, d_nv,
-                   ring_c, ib_c, nv_c);
+                   file_mode_enabled, d_c, d_q, d_p, rmq_c, rmq_q, rmq_p, d_ring, d_ib, d_nv, d_opa,
+                   ring_c, ib_c, nv_c, opa_c);
 }
 
 void monitor_daemon_rotate_collect_flush(struct sf_ring_buffer *w)

@@ -30,11 +30,19 @@ static void test_success_clears(void)
   assert(opa_mad_collect_cycle_ok() == 1);
 }
 
+static void test_backoff_exceeds_old_60s_window(void)
+{
+  /* Regression: 60s backoff was shorter than ~150s sample cadence. */
+  assert(OPA_MAD_BACKOFF_SEC >= 300);
+  assert(OPA_MAD_FAIL_STREAK_MAX == 8);
+}
+
 int main(void)
 {
   test_fresh_allows();
   test_fail_streak_blocks();
   test_success_clears();
+  test_backoff_exceeds_old_60s_window();
   printf("test_opa_mad_backoff passed\n");
   return 0;
 }

@@ -52,7 +52,7 @@ static void test_failure_deltas(void)
 
 static void test_named_fail_note_and_clear(void)
 {
-  unsigned long ring = 0, ib = 0, nv = 0;
+  unsigned long ring = 0, ib = 0, nv = 0, opa = 0;
 
   monitor_release_fail_reset_for_test();
   assert(monitor_release_fail_note(MONITOR_REL_FAIL_RING_RESEND, 1) == 1);
@@ -70,18 +70,26 @@ static void test_named_fail_note_and_clear(void)
   assert(monitor_release_fail_note(MONITOR_REL_FAIL_NVIDIA_ZERO, 1) == 1);
   assert(monitor_release_fail_note(MONITOR_REL_FAIL_NVIDIA_ZERO, 1) == 0);
 
-  monitor_release_fail_get_counts(&ring, &ib, &nv);
+  assert(monitor_release_fail_note(MONITOR_REL_FAIL_OPA_MAD, 1) == 1);
+  assert(monitor_release_fail_note(MONITOR_REL_FAIL_OPA_MAD, 1) == 0);
+  assert(monitor_release_fail_count(MONITOR_REL_FAIL_OPA_MAD) == 2);
+  monitor_release_fail_clear(MONITOR_REL_FAIL_OPA_MAD);
+  assert(monitor_release_fail_note(MONITOR_REL_FAIL_OPA_MAD, 1) == 1);
+
+  monitor_release_fail_get_counts(&ring, &ib, &nv, &opa);
   assert(ring == 3);
   assert(ib == 2);
   assert(nv == 2);
+  assert(opa == 3);
 
-  monitor_release_fail_get_counts(NULL, NULL, NULL);
+  monitor_release_fail_get_counts(NULL, NULL, NULL, NULL);
   assert(monitor_release_fail_count((monitor_rel_fail_id)99) == 0);
   assert(monitor_release_fail_note((monitor_rel_fail_id)99, 1) == 1);
   monitor_release_fail_clear((monitor_rel_fail_id)99);
 
   monitor_release_fail_reset_for_test();
   assert(monitor_release_fail_count(MONITOR_REL_FAIL_RING_RESEND) == 0);
+  assert(monitor_release_fail_count(MONITOR_REL_FAIL_OPA_MAD) == 0);
 }
 
 static void test_stderr_quiet_begin_end(void)

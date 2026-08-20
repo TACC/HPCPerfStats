@@ -20,6 +20,7 @@ OPA_MAD_DYN_SYM_LIST
 
 static void *g_oib_handle;
 static int g_oib_loaded;
+static int g_oib_load_failed; /* sticky: do not re-dlopen every sample */
 static char g_oib_last_error[256];
 
 struct opa_mad_dyn_test_hooks g_opa_mad_test_hooks_storage;
@@ -101,35 +102,52 @@ int opa_mad_dyn_load(void)
 
   if (g_oib_loaded)
     return 0;
+  if (g_oib_load_failed)
+    return -1;
 
   g_oib_last_error[0] = '\0';
   override = getenv("HPCPERFSTATS_OIB_LIB");
   if (override != NULL && override[0] != '\0') {
-    if (opa_mad_dyn_try_open(override) < 0)
+    if (opa_mad_dyn_try_open(override) < 0) {
+      g_oib_load_failed = 1;
       return -1;
+    }
   } else {
     for (i = 0; default_libs[i] != NULL; i++) {
       g_oib_last_error[0] = '\0';
       if (opa_mad_dyn_try_open(default_libs[i]) == 0)
         break;
     }
-    if (g_oib_handle == NULL)
+    if (g_oib_handle == NULL) {
+      g_oib_load_failed = 1;
       return -1;
+    }
   }
 
   if (opa_mad_dyn_bind_symbols() < 0) {
     dlclose(g_oib_handle);
     g_oib_handle = NULL;
+    g_oib_load_failed = 1;
     return -1;
   }
 
   g_oib_loaded = 1;
+  g_oib_load_failed = 0;
   return 0;
 }
 
 int opa_mad_dyn_loaded(void)
 {
   return g_oib_loaded;
+}
+
+int opa_mad_dyn_available(void)
+{
+  if (g_oib_loaded)
+    return 1;
+  if (g_oib_load_failed)
+    return 0;
+  return opa_mad_dyn_load() == 0;
 }
 
 void opa_mad_dyn_unload(void)
@@ -139,6 +157,7 @@ void opa_mad_dyn_unload(void)
     g_oib_handle = NULL;
   }
   g_oib_loaded = 0;
+  g_oib_load_failed = 0;
   g_opa_mad_test_hooks_active = 0;
   g_opa_mad_test_hooks = NULL;
 #define X(name) p_##name = NULL;
