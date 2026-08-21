@@ -10,7 +10,11 @@ extern struct stats_type amd_x86_uncore_df_genoa_stats_type;
 extern struct stats_type amd_x86_uncore_df_turin_stats_type;
 extern struct stats_type amd64_rapl_stats_type;
 extern struct stats_type intel_rapl_stats_type;
+extern struct stats_type intel_emr_cha_stats_type;
+extern struct stats_type intel_gnr_cha_stats_type;
+extern struct stats_type intel_icx_cha_stats_type;
 extern struct stats_type intel_skx_cha_stats_type;
+extern struct stats_type intel_spr_cha_stats_type;
 extern struct stats_type intel_skx_imc_stats_type;
 extern struct stats_type intel_icx_imc_stats_type;
 extern struct stats_type intel_spr_imc_stats_type;
@@ -101,7 +105,11 @@ struct stats_type *const stats_type_table[] = {
     &ib_stats_type,
 #if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
     &intel_rapl_stats_type,
+    &intel_emr_cha_stats_type,
+    &intel_gnr_cha_stats_type,
+    &intel_icx_cha_stats_type,
     &intel_skx_cha_stats_type,
+    &intel_spr_cha_stats_type,
     &intel_emr_imc_stats_type,
     &intel_gnr_imc_stats_type,
     &intel_icx_imc_stats_type,

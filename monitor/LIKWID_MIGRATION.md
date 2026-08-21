@@ -33,7 +33,8 @@ the row includes `@full`; FIXC are `$10–$12`.
 
 Intel LIKWID collectors target server generations from **Skylake-X** through
 **Sierra Forest** (pinned LIKWID 5.5.2rc2): SKX, CLX, ICX, SPR, EMR, GNR, SRF.
-CHA uncore remains SKX-era only (`intel_x86_uncore_cha_skx`).
+CHA uncore covers **SKX through Granite Rapids** (`intel_x86_uncore_cha_{skx,icx,spr,emr,gnr}`);
+CLX shares the SKX CHA type. Sierra Forest has no CHA collector in this tree.
 
 **Retired (no longer classified or registered):** Sandybridge, Ivybridge,
 Haswell, Broadwell — including `intel_x86_pcu` MSR PCU and all
@@ -69,7 +70,11 @@ LIKWID pin adds them.
 | `intel_x86_uncore_imc_emr` | `IMC_EMR` (SPR event ladder) | Emerald Rapids |
 | `intel_x86_uncore_imc_gnr` | `IMC_GNR` (`CAS_COUNT_SCH0_*`) | Granite Rapids |
 | `intel_x86_uncore_imc_srf` | `IMC_SRF` (`CAS_COUNT_SCH0_*`) | Sierra Forest |
-| `intel_x86_uncore_cha_skx` | `CHA_SKX` (`CBOX*` LLC events) | Trimmed CBOX subset from `skylakeX/CACHES.txt` |
+| `intel_x86_uncore_cha_skx` | `CHA_SKX` (`CBOX*` + `STATE=0x1F` on LLC_LOOKUP) | SKX + CLX; program write+bypass |
+| `intel_x86_uncore_cha_icx` | `CHA_ICX` (`LLC_LOOKUP_DATA_READ`, victims, writes_and_other, bypass) | Ice Lake server |
+| `intel_x86_uncore_cha_spr` | `CHA_SPR` (`LLC_LOOKUP_DATA_RD`, victims, bypass) | Sapphire Rapids |
+| `intel_x86_uncore_cha_emr` | `CHA_EMR` (SPR CHA events) | Emerald Rapids |
+| `intel_x86_uncore_cha_gnr` | `CHA_GNR` (`REQUESTS_READS`, `LLC_VICTIMS_LOCAL_M`) | Granite Rapids |
 
 `host_cpu_hw` LIKWID notes:
 
@@ -84,6 +89,7 @@ RAPL notes:
 - **Pinned LIKWID must be built `ACCESSMODE=perf_event`** (`build_static_bundle.sh` / `cross_compile_test.sh`). Runtime PERF on a DIRECT-built liblikwid leaves `access_init` NULL → `perfmon_init` ENODEV (no `host_cpu_hw`).
 - **Under runtime PERF (default):** RAPL prefers LIKWID **PWR*** perfmon (`likwid_rapl_pwr.c`, e.g. `PWR_PKG_ENERGY:PWR0`) via the `power` PMU. **Select domains from** `/sys/bus/event_source/devices/power/events/` (`energy-pkg`→PKG, `energy-ram`→DRAM, `energy-cores`→PP0, `energy-gpu`→PP1) **before** `addEventSet` — Stampede3 ICX has pkg+ram only; programming PP0/PP1 causes journal `Invalid argument` while `setupCounters` still returns 0. Quiet stderr for both add and setup. If PWR results are flat zero/NaN (common when counters only land on the socket-lock thread or energy units stay unset), collect falls back to **`/sys/class/powercap/*/energy_uj`** (`rapl_powercap.c`) — still no MSR **0x38f**. `power_init`/`hasRAPL` stay false by LIKWID design — do not wait on `power_read`.
 - **ICX IMC under PERF:** use `CAS_COUNT_RD/WR:MBOX*` (ladder MBOX12→6→4), map to devices **`mdevN`** / keys `dram_cas_*`. Do not use `DDR_READ_BYTES:MDEV*` (fails eventset setup on Stampede3 ICX).
+- **CHA under PERF:** discover `uncore_cha_*` count at begin only; ladder N→28→16→8. SKX `LLC_LOOKUP_*` **requires** `:STATE=0x1F` (maps to sysfs `filter_state` / `config1:17-26`); omitting STATE leaves filter 0 and all-zero samples. Do not reuse SKX event names on SPR (`LLC_LOOKUP_DATA_RD`) or GNR (`REQUESTS_READS`). Never advertise schema KEYS that are not programmed.
 - Do not enable AMD RAPL/PMC/DF types on Intel (or Intel RAPL on AMD); shared `likwid_rapl_is_supported_processor()` is OR of both vendors and is not used for type begin.
 - **`intel_x86_rapl` and `amd_x86_rapl` begin require `cpu_counter_metrics_likwid_ready()`**. Under PERF they also require `likwid_rapl_pwr_begin()` (PWR eventset and/or powercap available); if that fails the type is **disabled** — do not publish flat-zero rows.
 - **Flat-zero `core_energy` / `pkg_energy` on AMD is not healthy idle behavior** — it means energy collect failed or RAPL was never initialized (typically `host_cpu_hw` / HPMinit did not run). Healthy sockets show large cumulative mJ.

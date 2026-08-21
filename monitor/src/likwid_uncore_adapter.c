@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -325,6 +326,88 @@ static int likwid_uncore_adapter_begin_icx(struct stats_type *type, likwid_uncor
   type->st_enabled = 0;
   return -1;
 }
+
+#define LIKWID_CHA_EVENTSET_BUF 65536
+
+static int likwid_uncore_adapter_begin_cha(struct stats_type *type, likwid_uncore_profile_t profile)
+{
+  int sizes[8];
+  int n_sizes;
+  int discovered;
+  int table_max;
+  int saved_stderr = -1;
+  int null_fd = -1;
+  int quiet = 0;
+  int i;
+  char *buf = NULL;
+  const char *st_name =
+      type != NULL && type->st_name != NULL ? type->st_name : "intel_x86_uncore_cha";
+
+  if (g_profile_ready[profile])
+    return 0;
+
+  table_max = likwid_cha_profile_cbox_max(profile);
+  discovered = likwid_cha_count_sysfs_devices(NULL);
+  n_sizes = likwid_cha_ladder_sizes(discovered, table_max, sizes,
+                                    (int)(sizeof(sizes) / sizeof(sizes[0])));
+  monitor_log_info("%s: uncore_cha count=%d table_max=%d; trying %d CBOX ladder size(s)\n", st_name,
+                   discovered, table_max, n_sizes);
+
+  buf = malloc(LIKWID_CHA_EVENTSET_BUF);
+  if (buf == NULL) {
+    monitor_log_error("%s: out of memory for CHA eventset; disabling type\n", st_name);
+    type->st_enabled = 0;
+    return -1;
+  }
+
+  for (i = 0; i < n_sizes; i++) {
+    char label[32];
+    const char *fail_step = NULL;
+    int fail_errno = 0;
+    int group = -1;
+    int last = (i == n_sizes - 1);
+
+    snprintf(label, sizeof(label), "CBOX%d", sizes[i]);
+    if (likwid_cha_build_eventset(profile, sizes[i], buf, LIKWID_CHA_EVENTSET_BUF) < 0) {
+      monitor_log_warn("%s: failed to build eventset for %s\n", st_name, label);
+      continue;
+    }
+
+    if (!last && !quiet)
+      quiet = likwid_uncore_quiet_stderr(&saved_stderr, &null_fd);
+    if (last && quiet) {
+      likwid_uncore_restore_stderr(saved_stderr, null_fd);
+      saved_stderr = -1;
+      null_fd = -1;
+      quiet = 0;
+    }
+
+    if (likwid_uncore_try_eventset(buf, &group, &fail_step, &fail_errno) == 0) {
+      if (quiet) {
+        likwid_uncore_restore_stderr(saved_stderr, null_fd);
+        quiet = 0;
+      }
+      free(buf);
+      return likwid_uncore_spr_enable(profile, group, label, i, st_name);
+    }
+    if (quiet) {
+      likwid_uncore_restore_stderr(saved_stderr, null_fd);
+      saved_stderr = -1;
+      null_fd = -1;
+      quiet = 0;
+    }
+    monitor_log_warn("%s: eventset %s failed at %s (errno=%d)\n", st_name, label,
+                     fail_step != NULL ? fail_step : "unknown", fail_errno);
+  }
+
+  if (quiet)
+    likwid_uncore_restore_stderr(saved_stderr, null_fd);
+  free(buf);
+  monitor_log_error("%s: all LIKWID CHA CBOX ladder sizes failed (discovered=%d); disabling type\n",
+                    st_name, discovered);
+  type->st_enabled = 0;
+  return -1;
+}
 #endif
 
 int likwid_uncore_adapter_begin(struct stats_type *type, likwid_uncore_profile_t profile)
@@ -352,6 +435,8 @@ int likwid_uncore_adapter_begin(struct stats_type *type, likwid_uncore_profile_t
     return likwid_uncore_adapter_begin_spr(type, profile);
   if (profile == LIKWID_UNCORE_PROFILE_IMC_ICX)
     return likwid_uncore_adapter_begin_icx(type, profile);
+  if (likwid_cha_profile_is_cha(profile))
+    return likwid_uncore_adapter_begin_cha(type, profile);
 
   events = likwid_uncore_profile_eventset(profile);
   if (events == NULL || events[0] == '\0')

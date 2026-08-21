@@ -211,15 +211,24 @@ TYPES 	+= \
 	amd64_rapl.c \
 	intel_rapl.c \
 	amd_x86_uncore_df.c \
+	intel_emr_cha.c \
 	intel_emr_imc.c \
+	intel_gnr_cha.c \
 	intel_gnr_imc.c \
+	intel_icx_cha.c \
 	intel_icx_imc.c \
+	intel_spr_cha.c \
 	intel_spr_imc.c \
 	intel_srf_imc.c \
 	intel_skx_cha.c \
 	intel_skx_imc.c
 hpcperfstatsd_SOURCES += \
 	cpu_counter_metrics.h \
+	intel_emr_cha.h \
+	intel_gnr_cha.h \
+	intel_icx_cha.h \
+	intel_skx_cha.h \
+	intel_spr_cha.h \
 	rapl_likwid_stats.h \
 	rapl_likwid_stats.c
 endif

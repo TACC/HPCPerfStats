@@ -4,11 +4,10 @@
 
 #include "stats.h"
 #include "JOIN.h"
+#include "intel_skx_cha.h"
 #include "likwid_uncore_adapter.h"
 
-#define KEYS                                                                                       \
-  X(sf_evictions_mes, "E,W=48", ""), X(llc_lookup_data_read_local, "E,W=48", ""),                  \
-      X(bypass_cha_imc_all, "E,W=48", ""), X(llc_lookup_write, "E,W=48", "")
+#define KEYS INTEL_SKX_CHA_KEYS
 
 static int intel_skx_cha_begin(struct stats_type *type)
 {

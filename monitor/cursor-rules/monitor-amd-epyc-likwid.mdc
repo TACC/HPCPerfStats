@@ -10,6 +10,7 @@ globs:
   - HPCPerfStats/monitor/src/likwid_arch_map.c
   - HPCPerfStats/monitor/src/likwid_rapl.*
   - HPCPerfStats/monitor/src/likwid_rapl_pwr.*
+  - HPCPerfStats/monitor/src/intel_*cha*
   - HPCPerfStats/monitor/src/cpuid.*
   - HPCPerfStats/monitor/src/stats_registry.c
   - HPCPerfStats/monitor/configure.ac
@@ -36,6 +37,7 @@ alwaysApply: false
 - **Live amd-rtx healthy bar:** unit `active` (not core-dump restart loop), shm sample age &lt; 300s, `@full` has `host_cpu_hw` + `amd_x86_uncore_df_turin` + non-flat `amd_x86_rapl`. `rpm_debug_shm_verify` refuses validate when the service is not active after install.
 - **AMD core eventset:** use `LS_DISPATCH_ALL` (not bare `LS_DISPATCH`) — LIKWID Zen tables only define `LS_DISPATCH_*` umasks.
 - **ICX IMC (PERF):** program `CAS_COUNT_*:MBOX*` (ladder 12→6→4 channels); emit devices **`mdevN`** / `dram_cas_*`. Do not use `DDR_*:MDEV*` — Stampede3 ICX `uncore_imc_*` exposes `cas_count_read`/`write` only; MDEV eventset fails begin.
+- **CHA (PERF):** SKX→GNR collectors (`intel_x86_uncore_cha_{skx,icx,spr,emr,gnr}`); CLX shares SKX. Begin-only CBOX ladder from `uncore_cha_*` count. SKX LLC_LOOKUP needs `:STATE=0x1F` (`filter_state`). Gen-specific LIKWID names (SPR `DATA_RD`, GNR `REQUESTS_READS`); never advertise unprogrammed KEYS.
 - **RAPL PERF domain select:** probe `/sys/bus/event_source/devices/power/events/` (`energy-pkg`/`energy-ram`/`energy-cores`/`energy-gpu`) and program only present domains. ICX servers typically pkg+ram — never program PP0/PP1 when absent (`setupCounters` can return 0 while still logging Invalid argument). Quiet stderr for addEventSet and setupCounters.
 
 See [LIKWID_MIGRATION.md](../LIKWID_MIGRATION.md).

@@ -1,6 +1,7 @@
 #ifndef _LIKWID_UNCORE_PROFILES_H_
 #define _LIKWID_UNCORE_PROFILES_H_
 
+#include <stddef.h>
 #include "cpuid.h"
 
 typedef enum {
@@ -11,6 +12,10 @@ typedef enum {
   LIKWID_UNCORE_PROFILE_IMC_GNR,
   LIKWID_UNCORE_PROFILE_IMC_SRF,
   LIKWID_UNCORE_PROFILE_CHA_SKX,
+  LIKWID_UNCORE_PROFILE_CHA_ICX,
+  LIKWID_UNCORE_PROFILE_CHA_SPR,
+  LIKWID_UNCORE_PROFILE_CHA_EMR,
+  LIKWID_UNCORE_PROFILE_CHA_GNR,
   LIKWID_UNCORE_PROFILE_DF_ROME,
   LIKWID_UNCORE_PROFILE_DF_MILAN,
   LIKWID_UNCORE_PROFILE_DF_GENOA,
@@ -46,5 +51,15 @@ typedef enum {
 const char *likwid_icx_imc_eventset_string(likwid_icx_imc_eventset_t variant);
 const char *likwid_icx_imc_eventset_variant_name(likwid_icx_imc_eventset_t variant);
 int likwid_icx_imc_eventset_try_order(likwid_icx_imc_eventset_t *out, int out_cap);
+
+/* CHA / CBOX: gen-specific LLC events; count uncore_cha_* only at begin. */
+int likwid_cha_profile_is_cha(likwid_uncore_profile_t profile);
+int likwid_cha_profile_cbox_max(likwid_uncore_profile_t profile);
+int likwid_cha_events_per_cbox(likwid_uncore_profile_t profile);
+int likwid_cha_build_eventset(likwid_uncore_profile_t profile, int n_cbox, char *buf,
+                              size_t buf_len);
+int likwid_cha_ladder_sizes(int discovered, int table_max, int *out, int out_cap);
+/* devices_root NULL → /sys/bus/event_source/devices (or HPCPERFSTATS_UNCORE_DEVICES). */
+int likwid_cha_count_sysfs_devices(const char *devices_root);
 
 #endif
