@@ -40,6 +40,17 @@ static void test_counter_map(void)
   assert(strcmp(dev, "mdev1") == 0);
   assert(strcmp(key, "dram_cas_reads") == 0);
 
+  /* ICX CAS/MBOX counters keep historical mdevN device names. */
+  assert(likwid_uncore_profile_map_counter(LIKWID_UNCORE_PROFILE_IMC_ICX, "MBOX3C1", dev,
+                                           sizeof(dev), &key) == 0);
+  assert(strcmp(dev, "mdev3") == 0);
+  assert(strcmp(key, "dram_cas_writes") == 0);
+
+  assert(likwid_uncore_profile_map_counter(LIKWID_UNCORE_PROFILE_IMC_ICX, "MBOX1C0", dev,
+                                           sizeof(dev), &key) == 0);
+  assert(strcmp(dev, "mdev1") == 0);
+  assert(strcmp(key, "dram_cas_reads") == 0);
+
   assert(likwid_uncore_profile_map_counter(LIKWID_UNCORE_PROFILE_CHA_SKX, "CBOX4C0", dev,
                                            sizeof(dev), &key) == 0);
   assert(strcmp(dev, "cbox4") == 0);
@@ -100,8 +111,10 @@ static void test_eventset_nonempty(void)
   cha = likwid_uncore_profile_eventset(LIKWID_UNCORE_PROFILE_CHA_SKX);
   assert(strstr(skx, "CAS_COUNT_RD:MBOX0C0") != NULL);
   assert(strstr(skx, "MBOX0C0 CAS_COUNT") == NULL);
-  assert(strstr(icx, "DDR_READ_BYTES:MDEV0C0") != NULL);
-  assert(strstr(icx, "MDEV0C0 DDR_READ") == NULL);
+  assert(strstr(icx, "CAS_COUNT_RD:MBOX0C0") != NULL);
+  assert(strstr(icx, "CAS_COUNT_RD:MBOX11C0") != NULL);
+  assert(strstr(icx, "DDR_READ_BYTES:MDEV") == NULL);
+  assert(strstr(icx, "MBOX12C0") == NULL);
   assert(strstr(cha, "LLC_LOOKUP_DATA_READ:CBOX0C0") != NULL);
   assert(strstr(cha, "CBOX0C0 LLC_LOOKUP") == NULL);
 
@@ -215,6 +228,30 @@ static void test_spr_try_order(void)
   assert(likwid_spr_imc_eventset_try_order(1, 1, order, 0) == 0);
 }
 
+static void test_icx_try_order(void)
+{
+  likwid_icx_imc_eventset_t order[3];
+  int n;
+  const char *es;
+
+  n = likwid_icx_imc_eventset_try_order(order, 3);
+  assert(n == 3);
+  assert(order[0] == LIKWID_ICX_IMC_EVT_MBOX12);
+  assert(order[1] == LIKWID_ICX_IMC_EVT_MBOX6);
+  assert(order[2] == LIKWID_ICX_IMC_EVT_MBOX4);
+
+  es = likwid_icx_imc_eventset_string(LIKWID_ICX_IMC_EVT_MBOX12);
+  assert(strstr(es, "CAS_COUNT_RD:MBOX0C0") != NULL);
+  assert(strstr(es, "CAS_COUNT_RD:MBOX11C0") != NULL);
+  assert(strstr(likwid_icx_imc_eventset_string(LIKWID_ICX_IMC_EVT_MBOX6), "MBOX5C0") != NULL);
+  assert(strstr(likwid_icx_imc_eventset_string(LIKWID_ICX_IMC_EVT_MBOX6), "MBOX6C0") == NULL);
+  assert(strstr(likwid_icx_imc_eventset_string(LIKWID_ICX_IMC_EVT_MBOX4), "MBOX3C0") != NULL);
+  assert(strstr(likwid_icx_imc_eventset_string(LIKWID_ICX_IMC_EVT_MBOX4), "MBOX4C0") == NULL);
+  assert(strcmp(likwid_icx_imc_eventset_variant_name(LIKWID_ICX_IMC_EVT_MBOX12), "MBOX12") == 0);
+  assert(likwid_icx_imc_eventset_try_order(NULL, 3) == 0);
+  assert(likwid_icx_imc_eventset_try_order(order, 0) == 0);
+}
+
 int main(void)
 {
   test_profile_processor_match();
@@ -223,5 +260,6 @@ int main(void)
   test_eventset_colon_format();
   test_hbm_ladder();
   test_spr_try_order();
+  test_icx_try_order();
   return 0;
 }

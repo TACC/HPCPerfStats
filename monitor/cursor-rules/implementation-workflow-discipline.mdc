@@ -29,7 +29,7 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [monitor-static-bundle-feature-matrix.mdc](monitor-static-bundle-feature-matrix.mdc) | Bundle `--disable-*` / Stampede3+LS6 fleet MAD dlopen matrix |
 | [tacc-lmod-build-environment.mdc](tacc-lmod-build-environment.mdc) | TACC SSH hosts: Lmod modules + Stampede3 build practices |
 | [monitor-build-clean-workspace.mdc](monitor-build-clean-workspace.mdc) | Pre-compile clean workspace in build scripts |
-| [monitor-dual-verify-cross-and-static.mdc](monitor-dual-verify-cross-and-static.mdc) | Static bundle + cross-compile |
+| [monitor-dual-verify-cross-and-static.mdc](monitor-dual-verify-cross-and-static.mdc) | Static bundle on required arches; foreign cross only for portable / DCGM GPU |
 | [monitor-valgrind-cpp-linter-gate.mdc](monitor-valgrind-cpp-linter-gate.mdc) | Plan-close Valgrind Memcheck `make check` + full-tree clang-format/clang-tidy (no git hooks) |
 | [monitor-collect-tier-gating.mdc](monitor-collect-tier-gating.mdc) | Two-tier collect/emit |
 | [monitor-schema-keys-headers.mdc](monitor-schema-keys-headers.mdc) | Shared KEYS headers |

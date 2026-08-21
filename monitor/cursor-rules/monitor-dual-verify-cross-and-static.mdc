@@ -1,35 +1,54 @@
 ---
-description: After monitor changes, require static bundle + make check and foreign cross_compile_test success
+description: After monitor changes, require static bundle + make check; foreign cross only for portable/multi-arch diffs
 globs:
   - HPCPerfStats/monitor/**
 alwaysApply: false
 ---
 
-# Monitor dual verification (static bundle + cross smoke)
+# Monitor dual verification (static bundle + arch-scoped cross)
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-After **any substantive change** under **`HPCPerfStats/monitor/`** (C sources, **`configure.ac`**, **`Makefile.am`**, **`tests/`**, **`scripts/build_static_bundle.sh`**, **`scripts/cross_compile_test.sh`**, packaging/spec tied to the monitor build—**not** typo-only comments with zero behavioral impact), do **not** treat the task as complete until **both** of the following succeed on the agent’s runner:
+After **any substantive change** under **`HPCPerfStats/monitor/`** (C sources, **`configure.ac`**, **`Makefile.am`**, **`tests/`**, **`scripts/build_static_bundle.sh`**, **`scripts/cross_compile_test.sh`**, packaging/spec tied to the monitor build—**not** typo-only comments with zero behavioral impact), do **not** treat the task as complete until the **native static path for every CPU family that compiles the changed code** succeeds. Foreign **`cross_compile_test.sh`** is **not** automatic for every C change.
 
-## 1. Canonical static bundle + unit tests
+## 1. Canonical static bundle + unit tests (on relevant arches)
 
-Follow **`monitor-static-build-verification`** end-to-end:
+Follow **`monitor-static-build-verification`** on each required CPU family (see §3):
 
-- Run **`HPCPerfStats/monitor/scripts/build_static_bundle.sh`** (from **`HPCPerfStats/monitor/`**, with **`SKIP_DEPS=1`** / **`PREFIX`** only when that rule allows).
-- Run **`make check`** in **`HPCPerfStats/monitor/.build-static`** (build tree root).
-- Run **`make distclean`** in **`.build-static`** after success per **`monitor-post-verify-distclean`**.
+- Run **`HPCPerfStats/monitor/scripts/build_static_bundle.sh`** (from **`HPCPerfStats/monitor/`**, with **`SKIP_DEPS=1`** / **`PREFIX`** only when that rule allows) when the host **is** that family.
+- When the host is **not** that family, use **`cross_compile_test.sh`** with **`TARGETS`** set to that triplet (that is a **needed-arch** compile, not a “run ARM because dual-verify always wants foreign”).
+- Run **`make check`** in **`HPCPerfStats/monitor/.build-static`** (native) or the cross script’s **`make check`**.
+- Run **`make distclean`** after success per **`monitor-post-verify-distclean`**.
 
 ## 2. Foreign cross-compile smoke (`cross_compile_test.sh`)
 
-Run **`HPCPerfStats/monitor/scripts/cross_compile_test.sh`** so that **at least one target runs in foreign mode** (CPU family differs from the host), **`make check`** included, exit zero:
+Run a **foreign** triplet (`--force-foreign --fail-fast`, CPU family differs from the host) **only** when §3 classifies the diff as **portable or multi-arch**.
 
-- Prefer **`--force-foreign --fail-fast`** so behavior does not depend on host triplet classification.
-- Set **`TARGETS`** to a triplet **foreign to this host** (e.g. on **aarch64** hosts use **`TARGETS=x86_64-linux-gnu`**; on **x86_64** hosts use e.g. **`TARGETS=aarch64-linux-gnu`** or another non-x86 default from the script—ensure the chosen triplet is actually foreign).
-- Use **`--skip-deps`** only when per-target prefix/sysroots are already populated and the change does not require rebuilding foreign deps; otherwise run a full deps pass.
-- If **`configure.ac`** / **`configure`** changed, allow **`autoreconf`** (script default); use **`--no-autoreconf`** only when **`configure`** is already regenerated and you need a faster rerun.
+When foreign smoke **is** required:
 
-Handoffs must state that **both** the static bundle path **and** **`cross_compile_test.sh`** completed successfully (mention **`SKIP_DEPS`**, **`TARGETS`**, and **`--force-foreign`** when relevant).
+- Prefer **`--force-foreign --fail-fast`**.
+- Set **`TARGETS`** to a triplet **foreign to this host** that still **compiles the changed code** (do not pick ARM “because it is foreign” for LIKWID-only diffs).
+- Use **`--skip-deps`** only when per-target prefix/sysroots are already populated and the change does not require rebuilding foreign deps.
+- If **`configure.ac`** / **`configure`** changed, allow **`autoreconf`** (script default).
+
+## 3. Architecture scope (classify the entire diff)
+
+ARM never uses LIKWID. x86 never uses the DCGM **CPU** backend. DCGM **GPU** is multi-architecture.
+
+| Entire diff is only… | Verify on | Skip |
+|----------------------|-----------|------|
+| **Portable / shared** — daemon core, emit/schema, RabbitMQ, generic collectors, Autotools/scripts that affect all targets | Host native static + **at least one foreign** family | — |
+| **DCGM GPU** — `nvidia_gpu*`, `dcgm_gpu_*`, GPU field groups/watch (x86 `dlopen` **and** aarch64 link) | Same as portable (native + foreign) | Do **not** treat GPU as x86-only |
+| **x86 LIKWID** — `likwid_*`, Intel/AMD uncore, RAPL-via-LIKWID, x86 CPUID maps | **x86_64 only** (native on x86; else `TARGETS=x86_64-linux-gnu`) | **aarch64** (and other non-x86) — ARM path never uses LIKWID |
+| **DCGM CPU** — Grace/`MONITOR_CPU_BACKEND_DCGM` util/power CPU path only (not GPU) | **aarch64 only** (native on ARM; else `TARGETS=aarch64-linux-gnu`) | **x86_64** — not an x86 CPU backend |
+| **PAPI hybrid** — `MONITOR_CPU_PAPI_FLOPS` overlay without GPU/portable files | **aarch64 only** (same as DCGM CPU) | **x86_64** |
+| **Mixed families** (LIKWID + GPU, DCGM CPU + portable, …) | **Union** of the rows above | Skip only families none of the slices use |
+
+**Shared DCGM session** (`dcgm_session.c` and similar) is **not** CPU-only if GPU still compiles it — use the DCGM GPU / portable row.
+
+Handoffs must state native bundle result, **`TARGETS`** that ran, **`--force-foreign`** when used, and **which CPU families were skipped and why** (cite this table). Do not claim dual-verify complete after skipping a family the table still requires.
 
 ## Relation to other rules
 
-- This **adds** the cross script requirement alongside the static bundle; it does **not** replace **`monitor-static-build-verification`** or **`monitor-workspace-contract`** (still monitor-only edits unless the user overrides).
+- This **adds** arch-scoped cross alongside the static bundle; it does **not** replace **`monitor-static-build-verification`** or **`monitor-workspace-contract`**.
+- Plans and **`PLAN_TEMPLATE.md`** must pick verify targets from this table — do not default every plan close to ARM-on-x86 (or x86-on-ARM) foreign smoke.

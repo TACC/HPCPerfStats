@@ -574,7 +574,7 @@ Use these steps on a **representative host** (same kernel, privilege level, and 
 
 3. **Cleanup** (optional after a successful verify pass): from the same build tree root, **`make distclean`** removes generated Makefiles and artifacts unless you need to keep the tree configured.
 
-See **monitor-static-build-verification**, **monitor-dual-verify-cross-and-static**, and **monitor-valgrind-cpp-linter-gate** in `monitor/cursor-rules/` for project expectations.
+See **monitor-static-build-verification**, **monitor-dual-verify-cross-and-static**, and **monitor-valgrind-cpp-linter-gate** in `monitor/cursor-rules/` for project expectations. Foreign `cross_compile_test.sh` is required only for **portable / multi-arch** diffs (including DCGM **GPU**). Skip aarch64 when the change is LIKWID-only (ARM never uses LIKWID). Skip x86_64 when the change is DCGM **CPU**-only.
 
 4. **Plan-close Valgrind + cpp-linter** (additive; required when closing a plan that touched monitor C/tests/scripts — no git hooks):
 
@@ -587,7 +587,7 @@ See **monitor-static-build-verification**, **monitor-dual-verify-cross-and-stati
 
 ## Cross-compile smoke (qemu-user)
 
-Use `scripts/cross_compile_test.sh` when you want one machine to run compile+test smoke for multiple target triplets.
+Use `scripts/cross_compile_test.sh` when one machine should compile+test a **CPU family that actually builds the changed code**. Do not run aarch64 smoke for LIKWID-only work, and do not run x86_64 smoke for DCGM **CPU**-only work. DCGM **GPU** is multi-architecture — GPU DCGM diffs still need a foreign family. Policy: **monitor-dual-verify-cross-and-static**.
 
 - **Native triplet** (`target` CPU family matches host): the script runs the canonical native path (`scripts/build_static_bundle.sh` then `make check`) without qemu wrapping for compilation.
 - **Foreign triplet** (`target` CPU family differs from host): the script uses host `make`/`cmake`/`pkg-config` and qemu-wrapped target compiler/binutils from a target sysroot (`gcc`, `g++`, `ar`, `ranlib`, `strip` under `SYSROOT/usr/bin`).

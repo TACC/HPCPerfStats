@@ -54,7 +54,7 @@ Per **`agent-discipline-core.mdc`** task router: for each triggered domain rule,
 
 ### 1. Final code review (senior engineer pass)
 
-Act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches**—callers, tests, static bundle + cross-compile verification, consumer contract (`listend.py`), config and docs sync—not only the files edited.
+Act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches**—callers, tests, static bundle + **arch-scoped** cross-compile verification (`monitor-dual-verify-cross-and-static.mdc`), consumer contract (`listend.py`), config and docs sync—not only the files edited.
 
 Look for:
 
@@ -99,7 +99,7 @@ When behavior changes, also run **`logic-change-checklist.mdc`** mentally and co
 
 - Executed tests reported with pass/fail; blockers documented per **`test-first-discipline.mdc`**.
 - Run artifacts under **`test_runs/`**, not **`docs/`**, per **`test-runs-output-directory.mdc`**.
-- When closing a **plan** that touched monitor C/tests/scripts: **`run_valgrind_check.sh`** and **`run_cpp_linter.sh`** per **`monitor-valgrind-cpp-linter-gate.mdc`** (additive to dual-verify; no git hooks).
+- When closing a **plan** that touched monitor C/tests/scripts: **`run_valgrind_check.sh`** and **`run_cpp_linter.sh`** per **`monitor-valgrind-cpp-linter-gate.mdc`** (additive to arch-scoped dual-verify; no git hooks).
 - Plan frontmatter: all implementation todos `status: completed` (or explicit deferral documented) before reporting done.
 
 ## Narrow exceptions

@@ -64,7 +64,7 @@ LIKWID pin adds them.
 | `intel_x86_rapl` | LIKWID RAPL (`likwid_rapl.c`) | Intel-only begin (`likwid_rapl_is_supported_intel_processor`) |
 | `amd_x86_rapl` | LIKWID RAPL (`likwid_rapl.c`) | AMD Zen-only begin (`likwid_rapl_is_supported_amd_processor`) |
 | `intel_x86_uncore_imc_skx` | `IMC_SKX` (`MBOX*` CAS) | SKX + CLX server |
-| `intel_x86_uncore_imc_icx` | `IMC_ICX` (`MDEV*` DDR bytes) | Ice Lake server |
+| `intel_x86_uncore_imc_icx` | `IMC_ICX` (`CAS_COUNT_*:MBOX0–11` → `mdevN`) | Ice Lake server; PERF kernel `cas_count_*` on `uncore_imc_*` (not `DDR_*:MDEV*`) |
 | `intel_x86_uncore_imc_spr` | `IMC_SPR` (`MBOX*` + `HBM*` CAS) | DDR and HBM on same type |
 | `intel_x86_uncore_imc_emr` | `IMC_EMR` (SPR event ladder) | Emerald Rapids |
 | `intel_x86_uncore_imc_gnr` | `IMC_GNR` (`CAS_COUNT_SCH0_*`) | Granite Rapids |
@@ -82,7 +82,8 @@ RAPL notes:
 
 - LIKWID `power_read(cpu, reg, uint64_t *data)` requires a **64-bit** buffer; energy status is the low 32 bits (`likwid_rapl_energy_status_lo32` → `likwid_rapl_raw_to_mj`). Used only when **`HPCPERFSTATS_LIKWID_ACCESS=direct`**.
 - **Pinned LIKWID must be built `ACCESSMODE=perf_event`** (`build_static_bundle.sh` / `cross_compile_test.sh`). Runtime PERF on a DIRECT-built liblikwid leaves `access_init` NULL → `perfmon_init` ENODEV (no `host_cpu_hw`).
-- **Under runtime PERF (default):** RAPL prefers LIKWID **PWR*** perfmon (`likwid_rapl_pwr.c`, e.g. `PWR_PKG_ENERGY:PWR0`) via the `power` PMU. If PWR results are flat zero/NaN (common when counters only land on the socket-lock thread or energy units stay unset), collect falls back to **`/sys/class/powercap/*/energy_uj`** (`rapl_powercap.c`) — still no MSR **0x38f**. `power_init`/`hasRAPL` stay false by LIKWID design — do not wait on `power_read`.
+- **Under runtime PERF (default):** RAPL prefers LIKWID **PWR*** perfmon (`likwid_rapl_pwr.c`, e.g. `PWR_PKG_ENERGY:PWR0`) via the `power` PMU. **Select domains from** `/sys/bus/event_source/devices/power/events/` (`energy-pkg`→PKG, `energy-ram`→DRAM, `energy-cores`→PP0, `energy-gpu`→PP1) **before** `addEventSet` — Stampede3 ICX has pkg+ram only; programming PP0/PP1 causes journal `Invalid argument` while `setupCounters` still returns 0. Quiet stderr for both add and setup. If PWR results are flat zero/NaN (common when counters only land on the socket-lock thread or energy units stay unset), collect falls back to **`/sys/class/powercap/*/energy_uj`** (`rapl_powercap.c`) — still no MSR **0x38f**. `power_init`/`hasRAPL` stay false by LIKWID design — do not wait on `power_read`.
+- **ICX IMC under PERF:** use `CAS_COUNT_RD/WR:MBOX*` (ladder MBOX12→6→4), map to devices **`mdevN`** / keys `dram_cas_*`. Do not use `DDR_READ_BYTES:MDEV*` (fails eventset setup on Stampede3 ICX).
 - Do not enable AMD RAPL/PMC/DF types on Intel (or Intel RAPL on AMD); shared `likwid_rapl_is_supported_processor()` is OR of both vendors and is not used for type begin.
 - **`intel_x86_rapl` and `amd_x86_rapl` begin require `cpu_counter_metrics_likwid_ready()`**. Under PERF they also require `likwid_rapl_pwr_begin()` (PWR eventset and/or powercap available); if that fails the type is **disabled** — do not publish flat-zero rows.
 - **Flat-zero `core_energy` / `pkg_energy` on AMD is not healthy idle behavior** — it means energy collect failed or RAPL was never initialized (typically `host_cpu_hw` / HPMinit did not run). Healthy sockets show large cumulative mJ.

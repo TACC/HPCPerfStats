@@ -52,9 +52,37 @@ static void test_result_usable_rejects_flat_zero(void)
   assert(likwid_rapl_pwr_result_usable(-0.1) == 0);
 }
 
+static void test_intel_eventset_for_domains(void)
+{
+  const char *es;
+
+  es = likwid_rapl_pwr_intel_eventset_for_domains(1, 1, 0, 0);
+  assert(es != NULL);
+  assert(strstr(es, "PWR_PKG_ENERGY:PWR0") != NULL);
+  assert(strstr(es, "PWR_DRAM_ENERGY:PWR3") != NULL);
+  assert(strstr(es, "PWR_PP0_ENERGY") == NULL);
+  assert(strstr(es, "PWR_PP1_ENERGY") == NULL);
+
+  es = likwid_rapl_pwr_intel_eventset_for_domains(1, 1, 1, 0);
+  assert(es != NULL);
+  assert(strstr(es, "PWR_PP0_ENERGY:PWR1") != NULL);
+  assert(strstr(es, "PWR_PP1_ENERGY") == NULL);
+
+  es = likwid_rapl_pwr_intel_eventset_for_domains(1, 1, 1, 1);
+  assert(es != NULL);
+  assert(strstr(es, "PWR_PP1_ENERGY:PWR2") != NULL);
+
+  es = likwid_rapl_pwr_intel_eventset_for_domains(1, 0, 0, 0);
+  assert(es != NULL);
+  assert(strcmp(es, "PWR_PKG_ENERGY:PWR0") == 0);
+
+  assert(likwid_rapl_pwr_intel_eventset_for_domains(0, 0, 0, 0) == NULL);
+}
+
 int main(void)
 {
   test_intel_eventset_has_pwr_pkg();
+  test_intel_eventset_for_domains();
   test_amd_eventset_pkg_only();
   test_schema_key_map_intel();
   test_schema_key_map_amd();

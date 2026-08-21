@@ -27,7 +27,7 @@ In the **same final turn** that reports implementation done, run this close sequ
 
 ### 1. Final code review (senior engineer pass)
 
-Act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches**—callers, tests, static bundle + cross-compile, consumer contract, config and docs sync—not only the files edited. Look for regressions, performance issues (jitter), missing components, untested edge cases, and anything else you would block on merge. When the diff adds or re-triggers a `cursor-rules/*.mdc` file, confirm **dual registration** in the same task: a task-router row in **`agent-discipline-core.mdc`** and a matching **`MONITOR_ROUTER_ENTRIES`** row in **`cursor-hooks/hook_task_router.py`**. **Fix anything found** and re-run relevant tests. Do not proceed to step 2 while open review items remain.
+Act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches**—callers, tests, static bundle + **arch-scoped** cross-compile per **`monitor-dual-verify-cross-and-static.mdc`**, consumer contract, config and docs sync—not only the files edited. Look for regressions, performance issues (jitter), missing components, untested edge cases, and anything else you would block on merge. When the diff adds or re-triggers a `cursor-rules/*.mdc` file, confirm **dual registration** in the same task: a task-router row in **`agent-discipline-core.mdc`** and a matching **`MONITOR_ROUTER_ENTRIES`** row in **`cursor-hooks/hook_task_router.py`**. **Fix anything found** and re-run relevant tests. Do not proceed to step 2 while open review items remain.
 
 ### 2. Structured self-review in chat
 

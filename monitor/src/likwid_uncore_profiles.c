@@ -31,11 +31,7 @@
                    "CAS_COUNT_RD:MBOX10C0,CAS_COUNT_WR:MBOX10C1,"                                  \
                    "CAS_COUNT_RD:MBOX11C0,CAS_COUNT_WR:MBOX11C1"
 
-#define MDEV4_ICX_EVENTS                                                                           \
-  "DDR_READ_BYTES:MDEV0C0,DDR_WRITE_BYTES:MDEV0C1,"                                                \
-  "DDR_READ_BYTES:MDEV1C0,DDR_WRITE_BYTES:MDEV1C1,"                                                \
-  "DDR_READ_BYTES:MDEV2C0,DDR_WRITE_BYTES:MDEV2C1,"                                                \
-  "DDR_READ_BYTES:MDEV3C0,DDR_WRITE_BYTES:MDEV3C1"
+/* Legacy DDR_*:MDEV* removed — Stampede3 ICX PERF uses CAS_COUNT MBOX* (see MBOX12). */
 
 #define HBM1_EVENTS "CAS_COUNT_RD:HBM0C0,CAS_COUNT_WR:HBM0C1"
 
@@ -109,7 +105,8 @@
 
 static const char *const profile_events[LIKWID_UNCORE_PROFILE_COUNT] = {
     [LIKWID_UNCORE_PROFILE_IMC_SKX] = MBOX6_IMC_EVENTS,
-    [LIKWID_UNCORE_PROFILE_IMC_ICX] = MDEV4_ICX_EVENTS,
+    /* Stampede3 ICX PERF: cas_count_* on uncore_imc_0..11 — not DDR_*:MDEV*. */
+    [LIKWID_UNCORE_PROFILE_IMC_ICX] = MBOX12_IMC_EVENTS,
     [LIKWID_UNCORE_PROFILE_IMC_SPR] = SPR_DDR_HBM_EVENTS,
     [LIKWID_UNCORE_PROFILE_IMC_EMR] = SPR_DDR_HBM_EVENTS,
     [LIKWID_UNCORE_PROFILE_IMC_GNR] = MBOX12_SCH0_IMC_EVENTS,
@@ -249,6 +246,48 @@ int likwid_spr_imc_hbm_ladder_sizes(int *out, int out_cap)
   return n;
 }
 
+const char *likwid_icx_imc_eventset_string(likwid_icx_imc_eventset_t variant)
+{
+  switch (variant) {
+  case LIKWID_ICX_IMC_EVT_MBOX12:
+    return MBOX12_IMC_EVENTS;
+  case LIKWID_ICX_IMC_EVT_MBOX6:
+    return MBOX6_IMC_EVENTS;
+  case LIKWID_ICX_IMC_EVT_MBOX4:
+    return MBOX4_IMC_EVENTS;
+  default:
+    return NULL;
+  }
+}
+
+const char *likwid_icx_imc_eventset_variant_name(likwid_icx_imc_eventset_t variant)
+{
+  switch (variant) {
+  case LIKWID_ICX_IMC_EVT_MBOX12:
+    return "MBOX12";
+  case LIKWID_ICX_IMC_EVT_MBOX6:
+    return "MBOX6";
+  case LIKWID_ICX_IMC_EVT_MBOX4:
+    return "MBOX4";
+  default:
+    return "UNKNOWN";
+  }
+}
+
+int likwid_icx_imc_eventset_try_order(likwid_icx_imc_eventset_t *out, int out_cap)
+{
+  static const likwid_icx_imc_eventset_t order[] = {
+      LIKWID_ICX_IMC_EVT_MBOX12, LIKWID_ICX_IMC_EVT_MBOX6, LIKWID_ICX_IMC_EVT_MBOX4};
+  int n = 0;
+  int i;
+
+  if (out == NULL || out_cap <= 0)
+    return 0;
+  for (i = 0; i < (int)(sizeof(order) / sizeof(order[0])) && n < out_cap; i++)
+    out[n++] = order[i];
+  return n;
+}
+
 static const char *counter_name_base(const char *counter_name, char *work, size_t work_len)
 {
   const char *state;
@@ -265,8 +304,9 @@ static const char *counter_name_base(const char *counter_name, char *work, size_
   return work;
 }
 
+/* icx_mbox_as_mdev: ICX keeps historical device names mdevN while programming MBOX*. */
 static int map_mbox_hbm_mdev(const char *counter_name, char *dev_out, size_t dev_len,
-                             const char **key_out)
+                             const char **key_out, int icx_mbox_as_mdev)
 {
   unsigned int idx = 0;
   char ch[4];
@@ -277,7 +317,10 @@ static int map_mbox_hbm_mdev(const char *counter_name, char *dev_out, size_t dev
     return -1;
 
   if (sscanf(base, "MBOX%uC%1s", &idx, ch) == 2) {
-    snprintf(dev_out, dev_len, "mbox%u", idx);
+    if (icx_mbox_as_mdev)
+      snprintf(dev_out, dev_len, "mdev%u", idx);
+    else
+      snprintf(dev_out, dev_len, "mbox%u", idx);
     if (strcmp(ch, "0") == 0)
       *key_out = "dram_cas_reads";
     else
@@ -365,13 +408,14 @@ int likwid_uncore_profile_map_counter(likwid_uncore_profile_t profile, const cha
   switch (profile) {
   case LIKWID_UNCORE_PROFILE_CHA_SKX:
     return map_cbox(counter_name, dev_out, dev_len, key_out);
-  case LIKWID_UNCORE_PROFILE_IMC_SKX:
   case LIKWID_UNCORE_PROFILE_IMC_ICX:
+    return map_mbox_hbm_mdev(counter_name, dev_out, dev_len, key_out, 1);
+  case LIKWID_UNCORE_PROFILE_IMC_SKX:
   case LIKWID_UNCORE_PROFILE_IMC_SPR:
   case LIKWID_UNCORE_PROFILE_IMC_EMR:
   case LIKWID_UNCORE_PROFILE_IMC_GNR:
   case LIKWID_UNCORE_PROFILE_IMC_SRF:
-    return map_mbox_hbm_mdev(counter_name, dev_out, dev_len, key_out);
+    return map_mbox_hbm_mdev(counter_name, dev_out, dev_len, key_out, 0);
   case LIKWID_UNCORE_PROFILE_DF_ROME:
   case LIKWID_UNCORE_PROFILE_DF_MILAN:
   case LIKWID_UNCORE_PROFILE_DF_GENOA:

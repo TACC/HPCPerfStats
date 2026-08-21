@@ -7,8 +7,20 @@
 
 #include <stdint.h>
 
-/* Intel SPR/SKX-class: pkg + pp0 + pp1 + dram (LIKWID PWR0–PWR3). */
+/* Intel SPR/SKX-class catalog (max): pkg + pp0 + pp1 + dram (LIKWID PWR0–PWR3). */
 const char *likwid_rapl_pwr_intel_eventset(void);
+
+/*
+ * Pick Intel PWR eventset from sysfs power PMU domain flags.
+ * has_* nonzero when the corresponding energy-* event exists under
+ * /sys/bus/event_source/devices/power/events/.
+ * Returns NULL when no supported domain is present.
+ */
+const char *likwid_rapl_pwr_intel_eventset_for_domains(int has_pkg, int has_dram, int has_pp0,
+                                                       int has_pp1);
+
+/* Fill has_* from /sys/bus/event_source/devices/power/events/ (0 if path missing). */
+void likwid_rapl_pwr_probe_power_domains(int *has_pkg, int *has_dram, int *has_pp0, int *has_pp1);
 
 /* AMD Zen: package energy only (PWR0). */
 const char *likwid_rapl_pwr_amd_eventset(void);

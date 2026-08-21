@@ -85,18 +85,22 @@ Every behavior change needs at least one **regression and/or unit test** at the 
 | Change touches | Minimum run |
 |----------------|-------------|
 | Pure helper / parser in `src/` | Targeted `tests/test_*.c` via `make check` |
-| Substantive monitor C / Autotools | `scripts/build_static_bundle.sh` + `make check` in `.build-static` |
-| Same + foreign arch risk | Also `scripts/cross_compile_test.sh --force-foreign --fail-fast` |
+| Substantive monitor C / Autotools | `scripts/build_static_bundle.sh` + `make check` in `.build-static` on **arches that compile the change** (`monitor-dual-verify-cross-and-static.mdc` §3) |
+| Portable / multi-arch slice (shared daemon, Autotools-all-targets, **DCGM GPU**) | Also `scripts/cross_compile_test.sh --force-foreign --fail-fast` on a foreign family that **uses** the change |
+| x86-only LIKWID / uncore / RAPL-via-LIKWID | x86_64 static + check; **skip aarch64** (ARM never uses LIKWID) |
+| DCGM **CPU** only (Grace backend; not GPU) | aarch64 static or `TARGETS=aarch64-linux-gnu`; **skip x86_64** |
 | Plan implementation closing (monitor C/tests/scripts) | Also `scripts/run_valgrind_check.sh` + `scripts/run_cpp_linter.sh` (logs under `test_runs/`) |
 | `hpcperfstats.spec` / version fields | `rpmspec -P hpcperfstats.spec` |
 | After successful verify | `make distclean` in build dir per `monitor-post-verify-distclean.mdc` |
 
-Runner (from monitor package dir):
+Do **not** put unconditional ARM-on-x86 (or x86-on-ARM) foreign smoke in plan verify todos. Cite skipped families in the plan Testing section.
+
+Runner (from monitor package dir; drop the cross line when §3 skips foreign):
 
 ```bash
 cd HPCPerfStats/monitor && ./scripts/build_static_bundle.sh
 make -C .build-static check
-./scripts/cross_compile_test.sh --force-foreign --fail-fast
+./scripts/cross_compile_test.sh --force-foreign --fail-fast   # portable / DCGM GPU only
 make -C .build-static distclean
 ./scripts/run_valgrind_check.sh
 ./scripts/run_cpp_linter.sh
@@ -105,9 +109,9 @@ make -C .build-static distclean
 **Validation runbook** (`logic-change-checklist.mdc`):
 
 1. Run smallest targeted test modules first.
-2. Escalate to static bundle + cross-compile for substantive C/Autotools changes.
+2. Escalate to static bundle on **required CPU families**; add foreign cross only for portable / multi-arch diffs.
 3. Append results to **`test_runs/test_run_log_YYYY-MM-DD.md`** (command, exit code, blockers) — not `docs/`.
-4. Record residual risks if anything was skipped.
+4. Record residual risks if anything was skipped (name the arch family and the dual-verify table row).
 
 ## 4. Implementation
 
@@ -162,7 +166,7 @@ State in the monitor summary: **consumer plan attached** or **no consumer change
 
 ## Final code review (mandatory before implementation close)
 
-Per `plan-creation-contract.mdc` step 6 and `plan-completion-gate.mdc` close-sequence **step 1** — act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches** (callers, tests, static bundle + cross-compile, consumer contract, docs sync—not only files edited).
+Per `plan-creation-contract.mdc` step 6 and `plan-completion-gate.mdc` close-sequence **step 1** — act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches** (callers, tests, static bundle + **arch-scoped** cross-compile per `monitor-dual-verify-cross-and-static.mdc`, consumer contract, docs sync—not only files edited).
 
 - [ ] Correctness and behavior regressions
 - [ ] Performance regressions (jitter, hot-path work)

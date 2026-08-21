@@ -38,7 +38,7 @@ Applies to **every plan**: pre-code chat plans, **`HPCPerfStats/monitor/docs/pla
  - Keep rules narrow and actionable; base content on **verified facts** from this plan, not assumptions.
  - If nothing merits a new or updated rule, state **no rule change needed** with one sentence of rationale.
  - If rule scope or wording is unclear, **ask the user** before writing the **`.mdc`** text.
-6. **Final code review (mandatory last step)** — at implementation close, act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches** (callers, tests, static bundle + cross-compile, consumer contract, docs sync—not only files edited). Look for:
+6. **Final code review (mandatory last step)** — at implementation close, act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches** (callers, tests, static bundle + **arch-scoped** cross-compile per **`monitor-dual-verify-cross-and-static.mdc`**, consumer contract, docs sync—not only files edited). Look for:
    - correctness and behavior regressions
    - performance regressions
    - missing components (tests, docs, contract tests, spec/version sync)

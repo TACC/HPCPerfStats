@@ -30,8 +30,10 @@ Treat every non-trivial monitor change as test-first work.
 | Change touches | Minimum run |
 |----------------|-------------|
 | Pure helper / parser in `src/` | Targeted `tests/test_*.c` via `make check` |
-| Substantive monitor C / Autotools | **`build_static_bundle.sh`** + **`make check`** in `.build-static` |
-| Same + foreign arch risk | Also **`cross_compile_test.sh --force-foreign --fail-fast`** |
+| Substantive monitor C / Autotools | **`build_static_bundle.sh`** + **`make check`** on **arches that compile the change** |
+| Portable / multi-arch (shared code, **DCGM GPU**) | Also **`cross_compile_test.sh --force-foreign --fail-fast`** |
+| x86-only LIKWID | x86_64 only; **skip aarch64** |
+| DCGM **CPU** only | aarch64 only; **skip x86_64** |
 | `hpcperfstats.spec` / version | **`rpmspec -P`**; optional full RPM prep |
 | After successful verify | **`make distclean`** in build dir per **`monitor-post-verify-distclean.mdc`** |
 
@@ -39,4 +41,4 @@ Treat every non-trivial monitor change as test-first work.
 
 - **`implementation-review-workflow.mdc`** — pre-code planning and post-code self-review; regression coverage and test runs are part of the post-implementation review.
 - **`monitor-c-testing-standards.mdc`** — pyramid, fixtures, contract tests.
-- **`monitor-dual-verify-cross-and-static.mdc`** — dual verify is mandatory for substantive monitor changes.
+- **`monitor-dual-verify-cross-and-static.mdc`** — static bundle on required arches; foreign cross only for portable / multi-arch diffs.

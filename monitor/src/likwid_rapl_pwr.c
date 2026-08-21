@@ -37,6 +37,43 @@ const char *likwid_rapl_pwr_intel_eventset(void)
   return k_intel_pwr_full;
 }
 
+const char *likwid_rapl_pwr_intel_eventset_for_domains(int has_pkg, int has_dram, int has_pp0,
+                                                       int has_pp1)
+{
+  if (has_pkg && has_pp0 && has_pp1 && has_dram)
+    return k_intel_pwr_full;
+  if (has_pkg && has_pp0 && has_dram)
+    return k_intel_pwr_no_pp1;
+  if (has_pkg && has_dram)
+    return k_intel_pwr_pkg_dram;
+  if (has_pkg)
+    return k_intel_pwr_pkg;
+  return NULL;
+}
+
+void likwid_rapl_pwr_probe_power_domains(int *has_pkg, int *has_dram, int *has_pp0, int *has_pp1)
+{
+  if (has_pkg != NULL)
+    *has_pkg = 0;
+  if (has_dram != NULL)
+    *has_dram = 0;
+  if (has_pp0 != NULL)
+    *has_pp0 = 0;
+  if (has_pp1 != NULL)
+    *has_pp1 = 0;
+
+  if (access("/sys/bus/event_source/devices/power/events/energy-pkg", F_OK) == 0 && has_pkg != NULL)
+    *has_pkg = 1;
+  if (access("/sys/bus/event_source/devices/power/events/energy-ram", F_OK) == 0 &&
+      has_dram != NULL)
+    *has_dram = 1;
+  if (access("/sys/bus/event_source/devices/power/events/energy-cores", F_OK) == 0 &&
+      has_pp0 != NULL)
+    *has_pp0 = 1;
+  if (access("/sys/bus/event_source/devices/power/events/energy-gpu", F_OK) == 0 && has_pp1 != NULL)
+    *has_pp1 = 1;
+}
+
 const char *likwid_rapl_pwr_amd_eventset(void)
 {
   return k_amd_pwr_pkg;
@@ -70,11 +107,22 @@ int likwid_rapl_pwr_result_usable(double joules)
 }
 
 #ifdef HAVE_LIKWID
+static void likwid_rapl_pwr_restore_stderr(int saved_stderr, int null_fd)
+{
+  if (saved_stderr >= 0) {
+    (void)dup2(saved_stderr, STDERR_FILENO);
+    close(saved_stderr);
+  }
+  if (null_fd >= 0)
+    close(null_fd);
+}
+
 static int likwid_rapl_pwr_try_eventset(const char *events, int *group_out)
 {
   int group;
   int saved_stderr = -1;
   int null_fd = -1;
+  int quiet = 0;
 
   if (events == NULL || events[0] == '\0' || group_out == NULL)
     return -1;
@@ -82,26 +130,34 @@ static int likwid_rapl_pwr_try_eventset(const char *events, int *group_out)
   saved_stderr = dup(STDERR_FILENO);
   if (saved_stderr >= 0) {
     null_fd = open("/dev/null", O_WRONLY);
-    if (null_fd >= 0)
+    if (null_fd >= 0) {
       (void)dup2(null_fd, STDERR_FILENO);
+      quiet = 1;
+    }
   }
 
   errno = 0;
   group = perfmon_addEventSet(events);
-  if (saved_stderr >= 0) {
-    (void)dup2(saved_stderr, STDERR_FILENO);
-    close(saved_stderr);
-  }
-  if (null_fd >= 0)
-    close(null_fd);
-
-  if (group < 0)
+  if (group < 0 && quiet) {
+    likwid_rapl_pwr_restore_stderr(saved_stderr, null_fd);
+    saved_stderr = -1;
+    null_fd = -1;
+    quiet = 0;
     group = perfmon_addEventSet(events);
-  if (group < 0)
+  }
+  if (group < 0) {
+    if (quiet)
+      likwid_rapl_pwr_restore_stderr(saved_stderr, null_fd);
     return -1;
-  if (perfmon_setupCounters(group) < 0)
+  }
+  if (perfmon_setupCounters(group) < 0) {
+    if (quiet)
+      likwid_rapl_pwr_restore_stderr(saved_stderr, null_fd);
     return -1;
+  }
   (void)perfmon_startCounters();
+  if (quiet)
+    likwid_rapl_pwr_restore_stderr(saved_stderr, null_fd);
   *group_out = group;
   return 0;
 }
@@ -156,6 +212,11 @@ int likwid_rapl_pwr_begin(int amd_path)
 #ifdef HAVE_LIKWID
   int group = -1;
   const char *chosen = NULL;
+  int has_pkg = 0;
+  int has_dram = 0;
+  int has_pp0 = 0;
+  int has_pp1 = 0;
+  const char *probed = NULL;
 
   g_pwr_group = -1;
   g_pwr_ready = 0;
@@ -165,14 +226,22 @@ int likwid_rapl_pwr_begin(int amd_path)
   if (amd_path) {
     if (likwid_rapl_pwr_try_eventset(k_amd_pwr_pkg, &group) == 0)
       chosen = k_amd_pwr_pkg;
-  } else if (likwid_rapl_pwr_try_eventset(k_intel_pwr_full, &group) == 0) {
-    chosen = k_intel_pwr_full;
-  } else if (likwid_rapl_pwr_try_eventset(k_intel_pwr_no_pp1, &group) == 0) {
-    chosen = k_intel_pwr_no_pp1;
-  } else if (likwid_rapl_pwr_try_eventset(k_intel_pwr_pkg_dram, &group) == 0) {
-    chosen = k_intel_pwr_pkg_dram;
-  } else if (likwid_rapl_pwr_try_eventset(k_intel_pwr_pkg, &group) == 0) {
-    chosen = k_intel_pwr_pkg;
+  } else {
+    likwid_rapl_pwr_probe_power_domains(&has_pkg, &has_dram, &has_pp0, &has_pp1);
+    probed = likwid_rapl_pwr_intel_eventset_for_domains(has_pkg, has_dram, has_pp0, has_pp1);
+    if (probed != NULL && likwid_rapl_pwr_try_eventset(probed, &group) == 0) {
+      chosen = probed;
+    } else {
+      /* No/partial sysfs: prefer pkg+dram then pkg — never try full first (PP spam). */
+      if (likwid_rapl_pwr_try_eventset(k_intel_pwr_pkg_dram, &group) == 0)
+        chosen = k_intel_pwr_pkg_dram;
+      else if (likwid_rapl_pwr_try_eventset(k_intel_pwr_pkg, &group) == 0)
+        chosen = k_intel_pwr_pkg;
+      else if (likwid_rapl_pwr_try_eventset(k_intel_pwr_no_pp1, &group) == 0)
+        chosen = k_intel_pwr_no_pp1;
+      else if (likwid_rapl_pwr_try_eventset(k_intel_pwr_full, &group) == 0)
+        chosen = k_intel_pwr_full;
+    }
   }
 
   g_powercap_ok = rapl_powercap_available() ? 1 : 0;

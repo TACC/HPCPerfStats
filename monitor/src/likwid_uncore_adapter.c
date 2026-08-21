@@ -265,6 +265,66 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type, likwid_uncor
   type->st_enabled = 0;
   return -1;
 }
+
+static int likwid_uncore_adapter_begin_icx(struct stats_type *type, likwid_uncore_profile_t profile)
+{
+  likwid_icx_imc_eventset_t order[3];
+  int n_order;
+  int saved_stderr = -1;
+  int null_fd = -1;
+  int quiet = 0;
+  int i;
+  const char *st_name =
+      type != NULL && type->st_name != NULL ? type->st_name : "intel_x86_uncore_imc_icx";
+
+  if (g_profile_ready[profile])
+    return 0;
+
+  n_order = likwid_icx_imc_eventset_try_order(order, (int)(sizeof(order) / sizeof(order[0])));
+  monitor_log_info("%s: trying %d ICX IMC eventset(s), primary %s\n", st_name, n_order,
+                   n_order > 0 ? likwid_icx_imc_eventset_variant_name(order[0]) : "none");
+
+  for (i = 0; i < n_order; i++) {
+    const char *label = likwid_icx_imc_eventset_variant_name(order[i]);
+    const char *events = likwid_icx_imc_eventset_string(order[i]);
+    const char *fail_step = NULL;
+    int fail_errno = 0;
+    int group = -1;
+    int last = (i == n_order - 1);
+
+    if (!last && !quiet)
+      quiet = likwid_uncore_quiet_stderr(&saved_stderr, &null_fd);
+    if (last && quiet) {
+      likwid_uncore_restore_stderr(saved_stderr, null_fd);
+      saved_stderr = -1;
+      null_fd = -1;
+      quiet = 0;
+    }
+
+    if (likwid_uncore_try_eventset(events, &group, &fail_step, &fail_errno) == 0) {
+      if (quiet) {
+        likwid_uncore_restore_stderr(saved_stderr, null_fd);
+        quiet = 0;
+      }
+      return likwid_uncore_spr_enable(profile, group, label, i, st_name);
+    }
+    if (quiet) {
+      likwid_uncore_restore_stderr(saved_stderr, null_fd);
+      saved_stderr = -1;
+      null_fd = -1;
+      quiet = 0;
+    }
+    monitor_log_warn("%s: eventset %s (`%s`) failed at %s (errno=%d)\n", st_name, label,
+                     events != NULL ? events : "", fail_step != NULL ? fail_step : "unknown",
+                     fail_errno);
+  }
+
+  if (quiet)
+    likwid_uncore_restore_stderr(saved_stderr, null_fd);
+  monitor_log_error("%s: all LIKWID ICX IMC eventset variants failed; disabling type\n", st_name);
+  type->st_enabled = 0;
+  return -1;
+}
 #endif
 
 int likwid_uncore_adapter_begin(struct stats_type *type, likwid_uncore_profile_t profile)
@@ -290,6 +350,8 @@ int likwid_uncore_adapter_begin(struct stats_type *type, likwid_uncore_profile_t
 
   if (profile == LIKWID_UNCORE_PROFILE_IMC_SPR || profile == LIKWID_UNCORE_PROFILE_IMC_EMR)
     return likwid_uncore_adapter_begin_spr(type, profile);
+  if (profile == LIKWID_UNCORE_PROFILE_IMC_ICX)
+    return likwid_uncore_adapter_begin_icx(type, profile);
 
   events = likwid_uncore_profile_eventset(profile);
   if (events == NULL || events[0] == '\0')
@@ -316,8 +378,8 @@ disable:
 err:
   if (quiet)
     likwid_uncore_restore_stderr(saved_stderr, null_fd);
-  monitor_log_error("%s: LIKWID eventset setup failed; disabling type\n",
-                    type->st_name != NULL ? type->st_name : "uncore");
+  monitor_log_error("%s: LIKWID eventset setup failed (events=`%s`); disabling type\n",
+                    type->st_name != NULL ? type->st_name : "uncore", events != NULL ? events : "");
   type->st_enabled = 0;
   return -1;
 #else

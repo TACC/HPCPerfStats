@@ -54,6 +54,8 @@ static void test_emit_imc_and_cha_counters(void)
   emit_and_check(LIKWID_UNCORE_PROFILE_IMC_SKX, "MBOX2C0", "mbox2", "dram_cas_reads", 100ULL);
   emit_and_check(LIKWID_UNCORE_PROFILE_IMC_SPR, "HBM3C1", "hbm3", "hbm_cas_writes", 200ULL);
   emit_and_check(LIKWID_UNCORE_PROFILE_IMC_ICX, "MDEV1C0", "mdev1", "dram_cas_reads", 300ULL);
+  emit_and_check(LIKWID_UNCORE_PROFILE_IMC_ICX, "MBOX1C0", "mdev1", "dram_cas_reads", 301ULL);
+  emit_and_check(LIKWID_UNCORE_PROFILE_IMC_ICX, "MBOX3C1", "mdev3", "dram_cas_writes", 302ULL);
   emit_and_check(LIKWID_UNCORE_PROFILE_CHA_SKX, "CBOX4C0", "cbox4", "llc_lookup_data_read_local",
                  400ULL);
   emit_and_check(LIKWID_UNCORE_PROFILE_CHA_SKX, "CBOX4C1", "cbox4", "sf_evictions_mes", 500ULL);

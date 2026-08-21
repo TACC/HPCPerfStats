@@ -20,7 +20,7 @@ Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` f
 
 Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 
-- **`monitor-static-build-verification.mdc`** / **`monitor-dual-verify-cross-and-static.mdc`** — canonical static bundle + cross-compile gates
+- **`monitor-static-build-verification.mdc`** / **`monitor-dual-verify-cross-and-static.mdc`** — canonical static bundle; foreign cross only for portable / multi-arch diffs (skip ARM for LIKWID-only; skip x86 for DCGM CPU-only)
 - **`monitor-valgrind-cpp-linter-gate.mdc`** — plan-close Valgrind Memcheck + full-tree clang-format/clang-tidy (scripts only; no git hooks)
 - **`tacc-lmod-build-environment.mdc`** — on TACC SSH hosts: Lmod `module avail`/`module load`, fix agent MODULEPATH, Stampede3 build practices
 - **`monitor-build-clean-workspace.mdc`** — pre-compile clean workspace in `prepare_rpmbuild_dirs.sh`, `build_static_bundle.sh`, `cross_compile_test.sh`

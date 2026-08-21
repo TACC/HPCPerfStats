@@ -76,5 +76,5 @@ After substantive test or monitor C changes:
 
 1. `HPCPerfStats/monitor/scripts/build_static_bundle.sh` (canonical static bundle).
 2. `make check` in `.build-static`.
-3. `HPCPerfStats/monitor/scripts/cross_compile_test.sh` when production C changed.
+3. `HPCPerfStats/monitor/scripts/cross_compile_test.sh` when production C changed **and** **`monitor-dual-verify-cross-and-static.mdc`** §3 requires a foreign family.
 4. `make distclean` in the build dir after success.

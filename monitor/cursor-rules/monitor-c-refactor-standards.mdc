@@ -49,4 +49,4 @@ When editing a collector, apply **monitor_variable_rename_map.yaml** for that ty
 1. `scripts/build_static_bundle.sh` (or `SKIP_DEPS=1` when prefix is warm)
 2. `make check` in `.build-static`
 3. `make distclean` in `.build-static`
-4. `scripts/cross_compile_test.sh --force-foreign --fail-fast` with a foreign `TARGETS` triplet
+4. `scripts/cross_compile_test.sh --force-foreign --fail-fast` only when **`monitor-dual-verify-cross-and-static.mdc`** §3 requires a foreign family (skip ARM for LIKWID-only; skip x86 for DCGM CPU-only)

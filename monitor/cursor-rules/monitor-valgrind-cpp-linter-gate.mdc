@@ -22,7 +22,7 @@ Before finishing **any plan implementation** that edits monitor C sources, tests
 1. **`./scripts/run_valgrind_check.sh`** — configure/build in **`.build-valgrind`** (`-g -O1`, **`--enable-all-static`**), then **`make check`** with Valgrind Memcheck via Automake `LOG_COMPILER`/`LOG_FLAGS`, then **`make distclean`** (unless `SKIP_DISTCLEAN=1` for a same-turn follow-up).
 2. **`./scripts/run_cpp_linter.sh`** — **clang-format** `--dry-run -Werror` and **clang-tidy** on **all** of `src/**/*.{c,h}` and `tests/**/*.{c,h}` (not changed-files-only; `third_party/` excluded).
 
-This gate is **additive** to dual-verify (`build_static_bundle.sh` + `cross_compile_test.sh`). It does **not** replace the static bundle or foreign cross smoke.
+This gate is **additive** to dual-verify (`build_static_bundle.sh` + arch-scoped `cross_compile_test.sh`). It does **not** replace the static bundle. Foreign cross remains optional per **`monitor-dual-verify-cross-and-static.mdc`** §3.
 
 ## No git hooks
 
@@ -49,7 +49,7 @@ Apply format with `CLANG_FORMAT_FIX=1 ./scripts/run_cpp_linter.sh` when establis
 
 ## Overlap
 
-- **`monitor-dual-verify-cross-and-static.mdc`** — static + cross still required for substantive C.
+- **`monitor-dual-verify-cross-and-static.mdc`** — static on required arches; foreign cross only for portable / multi-arch diffs.
 - **`monitor-static-build-verification.mdc`** — canonical static path; Valgrind uses a separate `.build-valgrind` tree.
 - **`monitor-post-verify-distclean.mdc`** — Valgrind script distcleans `.build-valgrind` after success.
 - **`monitor-build-clean-workspace.mdc`** — Valgrind script removes stale `.build-valgrind` (and leftover `.build-asan`) before configure.
