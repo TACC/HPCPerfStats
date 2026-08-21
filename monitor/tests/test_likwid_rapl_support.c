@@ -20,7 +20,7 @@ int main(void)
 
   processor = AMD_TURIN;
   assert(likwid_rapl_is_supported_amd_processor() == 1);
-  /* Regression: MONITOR_ARCH_INTEL build must still pick AMD MSRs on Turin (SEGV class). */
+  /* Regression: MONITOR_ARCH_INTEL build must still pick AMD PWR path on Turin. */
   assert(likwid_rapl_collect_path() == LIKWID_RAPL_PATH_AMD);
 
   processor = AMD_10H;

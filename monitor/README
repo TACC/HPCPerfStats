@@ -177,8 +177,9 @@ on the LIKWID x86 backend. PMU collection goes through `cpu_counter_metrics` and
 By default the adapter uses runtime **`ACCESSMODE_PERF`** (`HPCPERFSTATS_LIKWID_ACCESS`
 unset or `perf`) so core PMU programming does not write **MSR 0x38f**
 (`IA32_PERF_GLOBAL_CTRL`) on kernels with `msr.allow_writes=default`. Under PERF,
-RAPL uses LIKWID **PWR*** perfmon (`likwid_rapl_pwr.c` / power PMU), not `power_read`.
-Set **`HPCPERFSTATS_LIKWID_ACCESS=direct`** only for lab MSR access (spam 0x38f).
+RAPL uses LIKWID **PWR*** perfmon (`likwid_rapl_pwr.c` / power PMU) with powercap
+fallback — **no** `power_read` / DIRECT MSR. `HPCPERFSTATS_LIKWID_ACCESS=direct`
+is rejected (warn) and still uses PERF.
 
 Compile-time architecture selection: `--with-monitor-arch=auto` (default),
 `intel`, or `amd`. Scope, RAPL behavior, PMU fallback matrix, and build notes are

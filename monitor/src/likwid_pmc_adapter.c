@@ -93,16 +93,20 @@ int likwid_pmc_adapter_init(int nr_threads)
   topology_init();
   numa_init();
   likwid_pmc_access_mode_t access_mode;
-  int access_invalid = 0;
+  int access_env_status = LIKWID_PMC_ACCESS_ENV_OK;
 
   /* Default to quiet LIKWID logs; override with HPCPERFSTATS_LIKWID_VERBOSITY. */
   perfmon_setVerbosity(likwid_env_verbosity());
-  /* perf_event avoids userspace IA32_PERF_GLOBAL_CTRL (MSR 0x38f) writes on kernel ≥5.9
-   * with msr.allow_writes=default; direct is opt-in via HPCPERFSTATS_LIKWID_ACCESS. */
-  access_mode = likwid_pmc_access_mode_from_env(&access_invalid);
-  if (access_invalid)
-    monitor_log_error("invalid HPCPERFSTATS_LIKWID_ACCESS; using perf (valid: perf, direct)\n");
-  HPMmode(access_mode == LIKWID_PMC_ACCESS_DIRECT ? ACCESSMODE_DIRECT : ACCESSMODE_PERF);
+  /* Always ACCESSMODE_PERF: avoids userspace IA32_PERF_GLOBAL_CTRL (MSR 0x38f)
+   * on kernel ≥5.9 with msr.allow_writes=default. DIRECT MSR is removed. */
+  access_mode = likwid_pmc_access_mode_from_env(&access_env_status);
+  if (access_env_status == LIKWID_PMC_ACCESS_ENV_DIRECT_REMOVED)
+    monitor_log_error("HPCPERFSTATS_LIKWID_ACCESS=direct is removed; using perf only (valid: "
+                      "unset, empty, perf)\n");
+  else if (access_env_status == LIKWID_PMC_ACCESS_ENV_INVALID)
+    monitor_log_error(
+        "invalid HPCPERFSTATS_LIKWID_ACCESS; using perf (valid: unset, empty, perf)\n");
+  HPMmode(ACCESSMODE_PERF);
   monitor_log_info("LIKWID HPM access mode: %s\n", likwid_pmc_access_mode_name(access_mode));
   if (HPMinit() < 0) {
     ERROR("LIKWID HPMinit failed\n");

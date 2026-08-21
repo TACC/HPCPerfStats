@@ -23,7 +23,7 @@
                    "CAS_COUNT_RD:MBOX4C0,CAS_COUNT_WR:MBOX4C1,"                                    \
                    "CAS_COUNT_RD:MBOX5C0,CAS_COUNT_WR:MBOX5C1"
 
-/* LIKWID 5.5.2rc2 SPR counters.h defines MBOX0–11 only (not MBOX12–15). */
+/* LIKWID 5.5.2 SPR counters.h defines MBOX0–11 only (not MBOX12–15). */
 #define MBOX12_IMC_EVENTS                                                                          \
   MBOX6_IMC_EVENTS ","                                                                             \
                    "CAS_COUNT_RD:MBOX6C0,CAS_COUNT_WR:MBOX6C1,"                                    \

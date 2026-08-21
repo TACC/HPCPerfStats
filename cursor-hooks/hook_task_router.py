@@ -578,6 +578,7 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
         "rules": [
             "monitor-amd-epyc-likwid.mdc",
+            "monitor-likwid-rapl-refactor.mdc",
         ],
     },
     {

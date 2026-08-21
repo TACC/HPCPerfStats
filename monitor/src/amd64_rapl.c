@@ -64,13 +64,10 @@ static int amd64_rapl_begin(struct stats_type *type)
     return -1;
   }
 
-  if (likwid_rapl_use_pwr_path()) {
-    if (likwid_rapl_pwr_begin(1) < 0) {
-      monitor_log_error(
-          "amd_x86_rapl: disabled (PWR RAPL and powercap energy_uj unavailable under PERF)\n");
-      type->st_enabled = 0;
-      return -1;
-    }
+  if (likwid_rapl_pwr_begin(1) < 0) {
+    monitor_log_error("amd_x86_rapl: disabled (PWR RAPL and powercap energy_uj unavailable)\n");
+    type->st_enabled = 0;
+    return -1;
   }
 
   for (i = 0; i < nr_cpus; i++) {

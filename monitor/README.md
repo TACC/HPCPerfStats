@@ -132,7 +132,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | Intel CPUID / generation gating | `cpuid.c`, `intel_cpuid_match.c`, `intel_processor.c` |
 | AMD EPYC CPUID / DF types | `amd_cpuid_match.c`, `amd_processor.c`, `amd_x86_uncore_df.c` |
 | LIKWID core + uncore PMU | `likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`, `likwid_uncore_profiles.c`, `likwid_result_convert.c` |
-| LIKWID RAPL (PWR / power_read) | `likwid_rapl.c`, `likwid_rapl_pwr.c` |
+| LIKWID RAPL (PWR + powercap) | `likwid_rapl.c`, `likwid_rapl_pwr.c`, `rapl_powercap.c` |
 | Omni-Path / Cornelis HFI (`host_opa`) | `opa.c`, `opa_sysfs.c`, `opa_mad_backoff.c`, `opa_mad_dyn.c`, `host_opa.h` (sysfs always; STL MAD via `--enable-opa-mad-dlopen` or link-time `--enable-opa`) |
 | BeeGFS client (`beegfs_client`) | `beegfs.c`, `beegfs_client.h`, `beegfs_ctl_parse.c` (mounts + `statvfs`; I/O via bounded `beegfs-ctl`) |
 | Intel Data Center GPU / PVC (`intel_gpu`) | `intel_gpu.c`, `intel_gpu.h`, `xpum_gpu_dyn.c` (vendored `third_party/intel-xpum/`; runtime `libxpum` dlopen) |
@@ -158,7 +158,7 @@ FIXC. With `@full` tier tokens, census awk must use **CPU = `$2`**, FIXC =
 **`$10 $11 $12`**.
 
 **Uncore collectors (IMC/CHA)** target SKX+ server parts through Sierra Forest
-(LIKWID 5.5.2rc2): Skylake-X (`06_55` stepping &lt; 5), Cascade Lake / CLX
+(LIKWID 5.5.2): Skylake-X (`06_55` stepping &lt; 5), Cascade Lake / CLX
 (`06_55` stepping ≥ 5), Ice Lake server (`06_6a`/`06_6c`), Sapphire Rapids
 (`06_8f`), Emerald Rapids (`06_cf`), Granite Rapids (`06_ad`), and Sierra Forest
 (`06_af`). CHA types are `intel_x86_uncore_cha_{skx,icx,spr,emr,gnr}` (CLX uses

@@ -16,7 +16,7 @@ alwaysApply: false
 
 ## Intent
 
-- **Single energy backend**: RAPL millijoule stats for `intel_rapl` / `amd64_rapl` come from **LIKWID** in `likwid_rapl_collect_socket_mj()`, not from Variorum JSON.
+- **Single energy backend**: RAPL millijoule stats for `intel_rapl` / `amd64_rapl` come from **LIKWID PWR*** (`likwid_rapl_pwr.c`) via `likwid_rapl_collect_socket_mj()`, with powercap `energy_uj` fallback — **not** Variorum JSON and **not** `power_read` MSR.
 - **Init order**: `cpu_counter_metrics` / `likwid_pmc_adapter_init()` must run **before** RAPL collection on each cycle — enforced by **`TYPES` / stats registration order** in `src/Makefile.am` (`cpu_counter_metrics.c` listed before `*_rapl.c`).
 
 ## API

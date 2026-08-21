@@ -1,5 +1,5 @@
 /*! \file likwid_rapl.h
- *  LIKWID RAPL millijoule sampling for Intel/AMD socket energy MSRs.
+ *  LIKWID RAPL millijoule sampling via PWR* perfmon / powercap (no MSR).
  */
 
 #ifndef _LIKWID_RAPL_H_
@@ -7,24 +7,16 @@
 
 #include <stdint.h>
 
-unsigned long long likwid_rapl_raw_to_mj(uint32_t raw, double joules_per_lsb);
-
-/* Low 32 bits of a LIKWID power_read uint64_t (RAPL energy status field). */
-uint32_t likwid_rapl_energy_status_lo32(uint64_t raw_u64);
-
 int likwid_rapl_is_supported_intel_processor(void);
 int likwid_rapl_is_supported_amd_processor(void);
 /* OR of Intel and AMD helpers (legacy callers). Prefer vendor-specific helpers. */
 int likwid_rapl_is_supported_processor(void);
 
-/* Runtime MSR path for power_read (not MONITOR_ARCH_*). AMD wins if both match. */
+/* Vendor path for PWR* event strings (not MONITOR_ARCH_*). AMD wins if both match. */
 #define LIKWID_RAPL_PATH_NONE 0
 #define LIKWID_RAPL_PATH_INTEL 1
 #define LIKWID_RAPL_PATH_AMD 2
 int likwid_rapl_collect_path(void);
-
-/* Nonzero when HPCPERFSTATS_LIKWID_ACCESS is PERF (default): use PWR perfmon, not power_read. */
-int likwid_rapl_use_pwr_path(void);
 
 int likwid_rapl_collect_socket_mj(int cpu_id, unsigned int socket_id, unsigned long long *pkg_mj,
                                   unsigned long long *core_mj, unsigned long long *dram_mj,

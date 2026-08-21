@@ -30,16 +30,15 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_intel_gpu_xpumcli_parse.c` | xpumcli discovery/dump CSV parse → KEYS |
 | `test_xpum_gpu_dyn.c` | XPUM dlopen stubs / missing-lib / hooks |
 | `test_lnet_schema_contract.c` | LNet collector schema token contract |
-| `test_likwid_rapl_scale.c` | RAPL energy scaling + `uint64_t`→lo32 truncate contract |
-| `test_likwid_rapl_support.c` | Intel vs AMD RAPL processor support gates (SPR/EMR/GNR/SRF ≠ AMD; EPYC enums) |
+| `test_likwid_rapl_support.c` | Intel vs AMD RAPL processor support gates + vendor collect path (SPR/EMR/GNR/SRF ≠ AMD; EPYC enums) |
 | `test_likwid_rapl_pwr_events.c` | PWR* eventset strings + schema key map + J→mJ for PERF RAPL |
-| `test_intel_rapl_likwid_ready.c` | `intel_x86_rapl` begin requires LIKWID ready + PWR begin under PERF |
-| `test_amd64_rapl_likwid_ready.c` | `amd_x86_rapl` begin requires LIKWID ready + PWR begin under PERF |
+| `test_intel_rapl_likwid_ready.c` | `intel_x86_rapl` begin requires LIKWID ready + PWR begin (DIRECT env does not skip PWR) |
+| `test_amd64_rapl_likwid_ready.c` | `amd_x86_rapl` begin requires LIKWID ready + PWR begin (DIRECT env does not skip PWR) |
 | `test_amd_cpuid_match.c` | EPYC Rome/Milan/Genoa/Turin CPUID allowlists; Ryzen/unknown → `-1` |
 | `test_amd_df_likwid_profiles.c` | Golden LIKWID DF `EVENT:COUNTER` strings per EPYC gen |
 | `test_amd_x86_uncore_df_schema.c` | Family DF `st_name` + `dram_chan*_bytes` schema contract |
 | `test_amd_legacy_removed.sh` | Legacy `amd64_pmc`/`amd64_df` sources gone; registry has family DF only |
-| `test_intel_legacy_pmc_removed.sh` | Legacy Intel MSR gpr4/8 / `msr_io` / `fallback_fill` gone |
+| `test_intel_legacy_pmc_removed.sh` | Legacy Intel MSR gpr4/8 / `msr_io` / `fallback_fill` / DIRECT `power_read` gone |
 | `test_string1.c` | `wsep` / `strsep_ne` (header-only `string1.h`) |
 | `test_stats_buffer_data_append.c` | `stats_buffer_data_append` (RMQ payload string growth) |
 | `test_stats_buffer_uts.c` | `stats_buffer_ensure_uts_cached` / `stats_buffer_uts_cache_reset` |
@@ -93,6 +92,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `requirements-rabbitmq-integration.txt` | Python dependency pin for integration validator (`pika`) |
 | `test_monitor_configure_help.sh.in` | Regression (via `check-local`): `configure --help` mentions `--enable-all-static`, `--enable-metric-profiler`, and `--with-metric-profiler-backend`; must **not** mention `--enable-legacy-pmcs` |
 | `test_likwid_read_group_counters.sh` | Regression (via `check-local`): PMC/uncore adapters call `perfmon_readGroupCounters` only (not bare `perfmon_readCounters`, which follows stolen `activeGroup`) |
+| `test_likwid_static_pin.sh` | Regression (via `check-local`): `build_static_bundle.sh` and `cross_compile_test.sh` pin LIKWID **5.5.2** (not a `5.5.2rc*` prerelease) |
 | `Makefile.am` | Automake `check_PROGRAMS` / `TESTS`; **keep `monitor_unit_cppflags` in sync** with `src/Makefile.am` `hpcperfstatsd_CPPFLAGS` for `-D` flags |
 | `run_tests.sh` | Convenience wrapper around `make check` in a build directory |
 | `../scripts/profile_hpcperfstatsd_example.sh` | Prints `perf record` / `perf stat` recipes for CPU baseline comparisons |
@@ -194,7 +194,7 @@ Some drivers are omitted or skipped depending on the configured build:
 | Condition | Affected tests |
 |-----------|----------------|
 | `CPU_BACKEND_DCGM` | `test_cpu_counter_dcgm_util`, `test_cpu_counter_dcgm_publish`, `test_dcgm_pkg_uniq` |
-| (always) | `test_likwid_rapl_scale` / `test_likwid_rapl_support` link production `likwid_rapl.c` (helpers do not require LIKWID at link for scale/support asserts) |
+| (always) | `test_likwid_rapl_support` links production `likwid_rapl.c` (PWR collect stubs allowed; support asserts do not require live LIKWID) |
 | `RABBITMQ` | `test_monitor_cli`, `test_ring_buffer`, `test_stats_buffer_collect`, `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden`, `test_monitor_timing` |
 | `DEBUG` | `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden` (meaningful assertions; otherwise skipped) |
 | `INFINIBAND` | `test_ib_mad_backoff`, `test_ib_mad_decode` |

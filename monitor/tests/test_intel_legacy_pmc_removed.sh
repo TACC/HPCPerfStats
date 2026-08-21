@@ -39,4 +39,18 @@ if grep -n 'msr_io.h' "${ROOT}/src/likwid_pmc_adapter.c"; then
   exit 1
 fi
 
+# PERF-only: no LIKWID ACCESSMODE_DIRECT or RAPL power_read MSR collect.
+if grep -nE 'ACCESSMODE_DIRECT|LIKWID_PMC_ACCESS_DIRECT' "${ROOT}/src/"*.c "${ROOT}/src/"*.h 2>/dev/null; then
+  echo "FAIL: src must not reference ACCESSMODE_DIRECT / LIKWID_PMC_ACCESS_DIRECT" >&2
+  exit 1
+fi
+if grep -nE 'power_read\(' "${ROOT}/src/"*.c "${ROOT}/src/"*.h 2>/dev/null; then
+  echo "FAIL: src must not call LIKWID power_read (MSR RAPL path removed)" >&2
+  exit 1
+fi
+if grep -nE '0x611u|0x639u|0x641u|0x619u|0xC001029Au|0xC001029Bu' "${ROOT}/src/"*.c "${ROOT}/src/"*.h 2>/dev/null; then
+  echo "FAIL: src must not hardcode Intel/AMD RAPL energy MSRs" >&2
+  exit 1
+fi
+
 echo "test_intel_legacy_pmc_removed passed"

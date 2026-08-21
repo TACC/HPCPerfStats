@@ -86,16 +86,17 @@ static void test_disabled_when_likwid_not_ready(void)
   assert(t->st_enabled == 0);
 }
 
-static void test_begins_when_likwid_ready_direct(void)
+static void test_disabled_when_direct_env_and_pwr_fails(void)
 {
   struct stats_type *t = &intel_rapl_stats_type;
 
+  /* DIRECT MSR escape is removed: same failure mode as PERF when PWR begin fails. */
   assert(setenv("HPCPERFSTATS_LIKWID_ACCESS", "direct", 1) == 0);
   g_likwid_ready = 1;
   g_pwr_begin_rc = -1;
   t->st_enabled = 1;
-  assert((*t->st_begin)(t) == 0);
-  assert(t->st_enabled == 1);
+  assert((*t->st_begin)(t) < 0);
+  assert(t->st_enabled == 0);
 }
 
 static void test_begins_when_perf_pwr_ok(void)
@@ -125,7 +126,7 @@ static void test_disabled_when_perf_pwr_fails(void)
 int main(void)
 {
   test_disabled_when_likwid_not_ready();
-  test_begins_when_likwid_ready_direct();
+  test_disabled_when_direct_env_and_pwr_fails();
   test_begins_when_perf_pwr_ok();
   test_disabled_when_perf_pwr_fails();
   unsetenv("HPCPERFSTATS_LIKWID_ACCESS");

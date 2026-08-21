@@ -32,7 +32,7 @@ the row includes `@full`; FIXC are `$10–$12`.
 ## Supported Intel generations (SKX+)
 
 Intel LIKWID collectors target server generations from **Skylake-X** through
-**Sierra Forest** (pinned LIKWID 5.5.2rc2): SKX, CLX, ICX, SPR, EMR, GNR, SRF.
+**Sierra Forest** (pinned LIKWID 5.5.2): SKX, CLX, ICX, SPR, EMR, GNR, SRF.
 CHA uncore covers **SKX through Granite Rapids** (`intel_x86_uncore_cha_{skx,icx,spr,emr,gnr}`);
 CLX shares the SKX CHA type. Sierra Forest has no CHA collector in this tree.
 
@@ -85,18 +85,18 @@ LIKWID pin adds them.
 
 RAPL notes:
 
-- LIKWID `power_read(cpu, reg, uint64_t *data)` requires a **64-bit** buffer; energy status is the low 32 bits (`likwid_rapl_energy_status_lo32` → `likwid_rapl_raw_to_mj`). Used only when **`HPCPERFSTATS_LIKWID_ACCESS=direct`**.
+- **No DIRECT MSR:** `likwid_pmc_adapter_init` always uses `ACCESSMODE_PERF`. `HPCPERFSTATS_LIKWID_ACCESS=direct` is rejected (journal warn) and does not enable `power_read`.
 - **Pinned LIKWID must be built `ACCESSMODE=perf_event`** (`build_static_bundle.sh` / `cross_compile_test.sh`). Runtime PERF on a DIRECT-built liblikwid leaves `access_init` NULL → `perfmon_init` ENODEV (no `host_cpu_hw`).
-- **Under runtime PERF (default):** RAPL prefers LIKWID **PWR*** perfmon (`likwid_rapl_pwr.c`, e.g. `PWR_PKG_ENERGY:PWR0`) via the `power` PMU. **Select domains from** `/sys/bus/event_source/devices/power/events/` (`energy-pkg`→PKG, `energy-ram`→DRAM, `energy-cores`→PP0, `energy-gpu`→PP1) **before** `addEventSet` — Stampede3 ICX has pkg+ram only; programming PP0/PP1 causes journal `Invalid argument` while `setupCounters` still returns 0. Quiet stderr for both add and setup. If PWR results are flat zero/NaN (common when counters only land on the socket-lock thread or energy units stay unset), collect falls back to **`/sys/class/powercap/*/energy_uj`** (`rapl_powercap.c`) — still no MSR **0x38f**. `power_init`/`hasRAPL` stay false by LIKWID design — do not wait on `power_read`.
+- **RAPL collect:** LIKWID **PWR*** perfmon (`likwid_rapl_pwr.c`, e.g. `PWR_PKG_ENERGY:PWR0`) via the `power` PMU. **Select domains from** `/sys/bus/event_source/devices/power/events/` (`energy-pkg`→PKG, `energy-ram`→DRAM, `energy-cores`→PP0, `energy-gpu`→PP1) **before** `addEventSet` — Stampede3 ICX has pkg+ram only; programming PP0/PP1 causes journal `Invalid argument` while `setupCounters` still returns 0. Quiet stderr for both add and setup. If PWR results are flat zero/NaN (common when counters only land on the socket-lock thread or energy units stay unset), collect falls back to **`/sys/class/powercap/*/energy_uj`** (`rapl_powercap.c`) — still no MSR **0x38f**. Do not call `power_read`.
 - **ICX IMC under PERF:** use `CAS_COUNT_RD/WR:MBOX*` (ladder MBOX12→6→4), map to devices **`mdevN`** / keys `dram_cas_*`. Do not use `DDR_READ_BYTES:MDEV*` (fails eventset setup on Stampede3 ICX).
 - **CHA under PERF:** discover `uncore_cha_*` count at begin only; ladder N→28→16→8. SKX `LLC_LOOKUP_*` **requires** `:STATE=0x1F` (maps to sysfs `filter_state` / `config1:17-26`); omitting STATE leaves filter 0 and all-zero samples. Do not reuse SKX event names on SPR (`LLC_LOOKUP_DATA_RD`) or GNR (`REQUESTS_READS`). Never advertise schema KEYS that are not programmed.
 - Do not enable AMD RAPL/PMC/DF types on Intel (or Intel RAPL on AMD); shared `likwid_rapl_is_supported_processor()` is OR of both vendors and is not used for type begin.
-- **`intel_x86_rapl` and `amd_x86_rapl` begin require `cpu_counter_metrics_likwid_ready()`**. Under PERF they also require `likwid_rapl_pwr_begin()` (PWR eventset and/or powercap available); if that fails the type is **disabled** — do not publish flat-zero rows.
+- **`intel_x86_rapl` and `amd_x86_rapl` begin require `cpu_counter_metrics_likwid_ready()`** and `likwid_rapl_pwr_begin()` (PWR eventset and/or powercap available); if that fails the type is **disabled** — do not publish flat-zero rows.
 - **Flat-zero `core_energy` / `pkg_energy` on AMD is not healthy idle behavior** — it means energy collect failed or RAPL was never initialized (typically `host_cpu_hw` / HPMinit did not run). Healthy sockets show large cumulative mJ.
-- **RAPL vendor path is runtime** (`likwid_rapl_collect_path`): EPYC uses AMD MSRs (DIRECT) even when the binary was configured with `MONITOR_ARCH_INTEL`.
+- **RAPL vendor path is runtime** (`likwid_rapl_collect_path`): EPYC uses AMD **PWR** strings even when the binary was configured with `MONITOR_ARCH_INTEL`.
 - AMD core eventset uses **`LS_DISPATCH_ALL`** (LIKWID Zen umask); bare `LS_DISPATCH` fails `perfmon_addEventSet` and silently used to disable `host_cpu_hw`.
 - **`LIKWID_FORCE`:** privileged host daemon defaults `LIKWID_FORCE=1` via `likwid_pmc_adapter_ensure_force_env()` before `HPMinit` (same effect as `likwid-perfctr -f`). Without force, LIKWID refuses in-use PMC0–PMC3 (`addEventSet` −22). Opt out with `LIKWID_FORCE=0`. Quiet setup (`HPCPERFSTATS_LIKWID_SETUP_QUIET`, default on) retries failed add/setup/start once with stderr restored so “in use” lines reach the journal.
-- **`HPCPERFSTATS_LIKWID_ACCESS`:** unset / empty / `perf` (default) → `ACCESSMODE_PERF` (`perf_event` backend; avoids userspace **MSR 0x38f** writes on kernel ≥5.9 with `msr.allow_writes=default`, e.g. Stampede3 SPR dmesg spam). `direct` → `ACCESSMODE_DIRECT` (legacy MSR path; opt-in; **will** spam 0x38f). Invalid values log an error and fall back to `perf`. Journal line: `LIKWID HPM access mode: perf|direct`.
+- **`HPCPERFSTATS_LIKWID_ACCESS`:** unset / empty / `perf` → `ACCESSMODE_PERF` (only supported mode). `direct` is **removed** (journal error; still PERF). Invalid values also fall back to `perf`. Journal line: `LIKWID HPM access mode: perf`.
 - `host_cpu_hw` begin failures log init vs eventset step and the event string (`likwid_backend_begin` / `likwid_pmc_adapter_setup_events`); `perfmon_init` failures include errno.
 
 Counter-name → device/key mapping is exercised by `test_likwid_uncore_adapter.c`

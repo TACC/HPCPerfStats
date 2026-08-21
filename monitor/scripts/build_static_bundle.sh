@@ -64,7 +64,7 @@ readonly REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
 STATIC_PIN_LIBEV_VERSION="4.33"
 STATIC_PIN_RABBITMQ_C_VERSION="0.17.0"
 # LIKWID: Git tag name without a leading "v" (archive is .../tags/v${VER}.tar.gz).
-STATIC_PIN_LIKWID_VERSION="5.5.2rc2"
+STATIC_PIN_LIKWID_VERSION="5.5.2"
 STATIC_PIN_LIBBPF_VERSION="1.7.0"
 # PAPI: used on aarch64 with DCGM CPU backend for PMU SP/DP FLOPs + cycles.
 STATIC_PIN_PAPI_VERSION="7.2.0"
@@ -553,8 +553,8 @@ build_likwid() {
   make clean >/dev/null 2>&1 || true
   # Makefile ACCESSMODE=perf_event sets -DLIKWID_USE_PERFEVENT so runtime PERF
   # can call perfmon_init (cpu/power/uncore_imc sysfs). A DIRECT-built archive
-  # with runtime PERF leaves access_init NULL → ENODEV; DIRECT runtime also
-  # writes MSR 0x38f.
+  # with runtime PERF leaves access_init NULL → ENODEV. Runtime is PERF-only
+  # (HPCPERFSTATS_LIKWID_ACCESS=direct is rejected).
   make -j"${JOBS}" PREFIX="${PREFIX}" INSTALLED_PREFIX="${PREFIX}" \
     BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=perf_event \
     "${likwid_mk[@]}"
@@ -711,8 +711,8 @@ EOF
   LIKWID's static lib embeds bundled Lua and internal hwloc objects; configure also
   pulls -llikwid-hwloc and -llikwid-lua when using --enable-all-static.
 - This path builds LIKWID with ACCESSMODE=perf_event (-DLIKWID_USE_PERFEVENT).
-  Runtime default is ACCESSMODE_PERF (HPCPERFSTATS_LIKWID_ACCESS unset/perf).
-  Set HPCPERFSTATS_LIKWID_ACCESS=direct only for lab MSR access (spam MSR 0x38f).
+  Runtime always uses ACCESSMODE_PERF (HPCPERFSTATS_LIKWID_ACCESS unset/empty/perf).
+  HPCPERFSTATS_LIKWID_ACCESS=direct is rejected (no MSR path).
   Run with privileges appropriate for perf_event and RAPL on your site.
 EOF
   else

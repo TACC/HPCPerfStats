@@ -37,18 +37,18 @@ static void test_perf_explicit(void)
   assert(invalid == 0);
 }
 
-static void test_direct_explicit(void)
+static void test_direct_rejected_uses_perf(void)
 {
   int invalid = -1;
 
   assert(setenv("HPCPERFSTATS_LIKWID_ACCESS", "direct", 1) == 0);
-  assert(likwid_pmc_access_mode_from_env(&invalid) == LIKWID_PMC_ACCESS_DIRECT);
-  assert(invalid == 0);
-  assert(strcmp(likwid_pmc_access_mode_name(LIKWID_PMC_ACCESS_DIRECT), "direct") == 0);
+  assert(likwid_pmc_access_mode_from_env(&invalid) == LIKWID_PMC_ACCESS_PERF);
+  assert(invalid == LIKWID_PMC_ACCESS_ENV_DIRECT_REMOVED);
 
+  invalid = -1;
   assert(setenv("HPCPERFSTATS_LIKWID_ACCESS", "DIRECT", 1) == 0);
-  assert(likwid_pmc_access_mode_from_env(&invalid) == LIKWID_PMC_ACCESS_DIRECT);
-  assert(invalid == 0);
+  assert(likwid_pmc_access_mode_from_env(&invalid) == LIKWID_PMC_ACCESS_PERF);
+  assert(invalid == LIKWID_PMC_ACCESS_ENV_DIRECT_REMOVED);
 }
 
 static void test_invalid_falls_back_perf(void)
@@ -57,17 +57,20 @@ static void test_invalid_falls_back_perf(void)
 
   assert(setenv("HPCPERFSTATS_LIKWID_ACCESS", "msr", 1) == 0);
   assert(likwid_pmc_access_mode_from_env(&invalid) == LIKWID_PMC_ACCESS_PERF);
-  assert(invalid == 1);
+  assert(invalid == LIKWID_PMC_ACCESS_ENV_INVALID);
 
   invalid = 0;
   assert(setenv("HPCPERFSTATS_LIKWID_ACCESS", "accessdaemon", 1) == 0);
   assert(likwid_pmc_access_mode_from_env(&invalid) == LIKWID_PMC_ACCESS_PERF);
-  assert(invalid == 1);
+  assert(invalid == LIKWID_PMC_ACCESS_ENV_INVALID);
 }
 
 static void test_null_invalid_out_param(void)
 {
   assert(setenv("HPCPERFSTATS_LIKWID_ACCESS", "bogus", 1) == 0);
+  assert(likwid_pmc_access_mode_from_env(NULL) == LIKWID_PMC_ACCESS_PERF);
+
+  assert(setenv("HPCPERFSTATS_LIKWID_ACCESS", "direct", 1) == 0);
   assert(likwid_pmc_access_mode_from_env(NULL) == LIKWID_PMC_ACCESS_PERF);
 }
 
@@ -76,7 +79,7 @@ int main(void)
   test_unset_defaults_perf();
   test_empty_defaults_perf();
   test_perf_explicit();
-  test_direct_explicit();
+  test_direct_rejected_uses_perf();
   test_invalid_falls_back_perf();
   test_null_invalid_out_param();
   unsetenv("HPCPERFSTATS_LIKWID_ACCESS");
