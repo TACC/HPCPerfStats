@@ -2000,3 +2000,79 @@ def test_rescan_exclude_skips_day_scoped_before_ingest_going(tmp_path, monkeypat
   state.get_allow_day_scoped_closed_raw = lambda: True
   state._build_remaining_raw_for_daily_tar()
   assert day_scoped_calls == [1]
+
+
+def test_skip_only_apply_batch_delete_memos_day_scoped_closed_raw(
+    tmp_path, monkeypatch,
+):
+  """One apply_batch_delete + handoff pass must census closed_raw at most once."""
+  day = datetime(2026, 6, 2)
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True, exist_ok=True)
+  ts0 = int(datetime(day.year, day.month, day.day, 10, 0, 0).timestamp())
+  ts1 = int(datetime(day.year, day.month, day.day, 11, 0, 0).timestamp())
+  seg0 = host / str(ts0)
+  seg1 = host / str(ts1)
+  seg0.write_text("%d job1 cn001\nline\n" % ts0)
+  seg1.write_text("%d job1 cn001\nline\n" % ts1)
+  os.utime(seg0, (ts0, ts0))
+  os.utime(seg1, (ts1, ts1))
+  tar_path, zst = _seal_day(tmp_path, seg0, day)
+  census_calls = []
+
+  import hpcperfstats.dbload.lib.sync_timedb_day_raw_removal as drm
+
+  real_build = drm.build_remaining_raw_for_daily_tar
+
+  def spy_build(*args, **kwargs):
+    census_calls.append(1)
+    return real_build(*args, **kwargs)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      spy_build,
+  )
+
+  def _on_handoff(tar_norm, paths, reason):
+    return None
+
+  coord = _make_coordinator(
+      tmp_path,
+      ingest_ready_fn=lambda _p: False,
+      on_handoff_to_ingest=_on_handoff,
+  )
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg0), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["entries"][str(seg0)]["deleted"] = True
+    state._manifest["verified_count"] = 1
+  state._record_entry(
+      str(seg1),
+      zst,
+      "skipped_not_in_archive",
+      "not_in_sealed_archive",
+  )
+  with state._lock:
+    state._manifest["phase"] = PHASE_DELETING
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["skipped_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  seg0.unlink()
+
+  deleted = coord.apply_batch_delete(tar_path)
+  assert deleted == 0
+  assert len(census_calls) <= 1, (
+      "skip-only delete/handoff must memoize day-scoped closed_raw "
+      "(got %d censuses)" % len(census_calls)
+  )
+
+
+def test_skip_only_second_handoff_suppressed_predicate():
+  """Re-handoff suppress helper covers inflight / heap ownership (plan fix 2)."""
+  import hpcperfstats.dbload.sync_timedb as st
+
+  assert st.should_suppress_day_close_archive_append_rehandoff(
+      archive_append_inflight=True,
+      has_active_append=False,
+      pending_archive_owns_tar=False,
+  ) == "archive_append_inflight"

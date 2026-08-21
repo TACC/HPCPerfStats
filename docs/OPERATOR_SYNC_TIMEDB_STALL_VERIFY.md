@@ -416,6 +416,34 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 **Pass (T2):** sealed skip-only June days reach tar-drop / no mutable `.tar`; empty-done live tar is gone or `tar_dropped` matches disk; no multi-day skip-only freeze with `deleted_count=0`.
 
+### T0 / T1 / T2 — skip-only archive_append thrash (`to_add=0` + skip invalidate, 2026-08-21)
+
+**Signature (hpcperfstats03 soak after finding #8):** `handoff_mode=archive_append` works, but skip-only `phase=deleting` cycles forever: `archive_job_duty … to_add=0 appended=0` → `archive_finalize skip invalidate reason=no_tar_mutation_or_worker_invalidated` → deferred/pins clear → delete again with **flat** `retryable_skips` / handoff `paths=N`. Open-tar `member_hit False`. Massive `day-scoped closed_raw` spam. `Archive soft_requeue=0`, `same_boot_duplicate=0`. Not heap starvation.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+
+# T0 — thrash census (filtered; no --tail before grep)
+grep -cE 'handoff_mode=archive_append' /tmp/pipeline-full.log || true
+grep -cE 'archive_job_duty.*to_add=0' /tmp/pipeline-full.log || true
+grep -cE 'archive_finalize skip invalidate' /tmp/pipeline-full.log || true
+grep -cE 'archive_finalize handoff_pin_hold' /tmp/pipeline-full.log || true
+grep -cE 'day_close handoff requeue skip.*detail=(archive_append_inflight|active_append_or_inflight_paths|pending_archive_heap)' /tmp/pipeline-full.log || true
+grep -cE 'day-scoped closed_raw' /tmp/pipeline-full.log || true
+grep -cE 'Archive soft_requeue|same_boot_duplicate' /tmp/pipeline-full.log || true
+
+# T0 — samples
+grep -E 'archive_job_duty|archive_finalize skip invalidate|handoff_pin_hold|handoff_mode=archive_append|day_close handoff requeue skip' /tmp/pipeline-full.log | tail -80
+```
+
+**Fail (T0):** repeated `to_add=0` + `skip invalidate` with **no** `handoff_pin_hold`, pins/`waiting_on_ingest` cleared, flat handoff `paths=N`, and hundreds of `day-scoped closed_raw` per tick while `days_completed=0`.
+
+**Pass (T0):** skip-invalidate on day-close pins logs **`handoff_pin_hold`** (pins retained) and/or re-handoff skip **`detail=archive_append_inflight|…`**; `day-scoped closed_raw` is not multi-dozen per single delete pass.
+
+**Pass (T1):** `retryable_skips` / handoff `paths=N` for sticky June days decline or stay deferred without thrash re-enqueue storms; `open_tar_n` trends down when membership lands; tick `duration_s` no longer multi-hour from census spam alone.
+
+**Pass (T2):** skip-only days reach Branch C upgrade → delete → tar-drop; no perpetual `to_add=0` / skip-invalidate pin-clear loop.
+
 ### T0 / T1 — tar append exit 2 / large member (`out of off_t range`, 2026-07)
 
 Members larger than **8 GiB − 1** fail classic ustar without pax headers (`value N out of off_t range 0..8589934591`). Production always passes **`--posix`** on tar create/append (`-C /` + relative `-T` members). When the daily tar is **not pax-capable** (bare `POSIX tar archive` without pax headers; GNU labels need no convert), the **archive pool** job logs **`must_convert`**, attempts **extract + `tar --format=pax` recreate**, then appends. On convert failure: **`convert_fail_skip`** oversized members (original tar untouched) and continue with remaining paths. **`archive_job_done`** includes **`outcome=ok|fail`** (do not treat `archive_job_done` alone as success).

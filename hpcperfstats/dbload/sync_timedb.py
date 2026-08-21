@@ -268,6 +268,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     set_deferred_prewarm_flush_hook,
     stats_file_is_active_segment,
     stats_path_ingest_sort_epoch,
+    get_tar_member_name,
     verify_tar_archive_readable,
     _derive_stats_path_date,
     normalize_daily_compressed_path,
@@ -3949,6 +3950,126 @@ def _archive_finalize_skip_invalidate_log_reason(result: Any) -> Any:
   if isinstance(result, ArchiveAppendOutcome) and result.redis_merge_ok:
     return "redis_merge_warm"
   return "no_tar_mutation_or_worker_invalidated"
+
+
+def archive_finalize_may_clear_handoff_pin(
+  *,
+  is_handoff_pin: bool,
+  skip_finalize_invalidate: bool,
+  stats_path: str,
+  open_tar_path: str | None,
+  open_tar_members: Any | None = None,
+) -> bool:
+  """
+  Whether archive finalize may discard a day-close handoff pin.
+
+  Skip-only ``to_add=0`` outcomes set ``skip_finalize_invalidate`` and must
+  not clear pins unless open-tar membership+size is proven (Branch C). Real
+  tar mutations (``skip_finalize_invalidate=False``) may clear pins. Non-pin
+  paths always clear (checkpoint / redis-merge warm path).
+
+  Args:
+    is_handoff_pin (bool): Path is in ``handoff_priority_paths``.
+    skip_finalize_invalidate (bool): Worker reported noop / warm skip.
+    stats_path (str): Closed raw path under consideration.
+    open_tar_path (str | None): Mutable daily ``.tar`` path, or None.
+    open_tar_members (Any | None): Optional ``member_name -> size`` map; when
+      None and ``open_tar_path`` exists, members are read from that tar.
+
+  Returns:
+    bool: True when finalize may call ``_add_processed_path`` for this pin.
+
+  Examples:
+    >>> archive_finalize_may_clear_handoff_pin(
+    ...     is_handoff_pin=False,
+    ...     skip_finalize_invalidate=True,
+    ...     stats_path="/x",
+    ...     open_tar_path=None,
+    ... )
+    True
+    >>> archive_finalize_may_clear_handoff_pin(
+    ...     is_handoff_pin=True,
+    ...     skip_finalize_invalidate=True,
+    ...     stats_path="/missing",
+    ...     open_tar_path=None,
+    ... )
+    False
+  """
+  if not is_handoff_pin:
+    return True
+  if not skip_finalize_invalidate:
+    return True
+  path = os.path.normpath(str(stats_path or ""))
+  if not path:
+    return False
+  tar_path = os.path.normpath(str(open_tar_path or "")) if open_tar_path else ""
+  if not tar_path:
+    return False
+  try:
+    if not os.path.isfile(path):
+      return False
+    expected_size = int(os.path.getsize(path))
+  except OSError:
+    return False
+  members = open_tar_members
+  if members is None:
+    if not os.path.isfile(tar_path):
+      return False
+    try:
+      members = get_existing_archive_members(tar_path) or {}
+    except Exception:
+      return False
+  member_name = get_tar_member_name(path)
+  try:
+    return members.get(member_name) == expected_size
+  except Exception:
+    return False
+
+
+def should_suppress_day_close_archive_append_rehandoff(
+  *,
+  archive_append_inflight: bool,
+  has_active_append: bool,
+  pending_archive_owns_tar: bool,
+) -> str | None:
+  """
+  Detail string when skip-only day-close must not re-enqueue archive_append.
+
+  While Redis ``archive_append_inflight``, heap/slot ownership, or pending
+  append buckets already own the daily tar, a second handoff thrash (soak:
+  flat ``paths=N`` + ``to_add=0``) must be suppressed.
+
+  Args:
+    archive_append_inflight (bool): Redis append-inflight for the day token.
+    has_active_append (bool): ``_has_active_append_for_tar`` (pending append
+      bucket or inflight archive paths for that tar).
+    pending_archive_owns_tar (bool): Daily tar appears on
+      ``pending_archive_tasks`` heap.
+
+  Returns:
+    str | None: Skip ``detail=`` token, or None when re-handoff may proceed.
+
+  Examples:
+    >>> should_suppress_day_close_archive_append_rehandoff(
+    ...     archive_append_inflight=True,
+    ...     has_active_append=False,
+    ...     pending_archive_owns_tar=False,
+    ... )
+    'archive_append_inflight'
+    >>> should_suppress_day_close_archive_append_rehandoff(
+    ...     archive_append_inflight=False,
+    ...     has_active_append=False,
+    ...     pending_archive_owns_tar=False,
+    ... ) is None
+    True
+  """
+  if archive_append_inflight:
+    return "archive_append_inflight"
+  if has_active_append:
+    return "active_append_or_inflight_paths"
+  if pending_archive_owns_tar:
+    return "pending_archive_heap"
+  return None
 
 
 def _shutdown_ingest_pools(
@@ -8968,9 +9089,10 @@ def run_sync_timedb_supervisor_loop(
               os.path.normpath(p) for p in (result.skipped_paths or ()) if p
           }
         archive_path = archive_task.archive_info[0]
-        day_date = calendar_date_from_daily_tar_path(
+        open_tar_path = os.path.normpath(
             daily_tar_path_from_compressed(archive_path),
         )
+        day_date = calendar_date_from_daily_tar_path(open_tar_path)
         day_token = day_date.isoformat() if day_date is not None else None
         if skip_finalize_invalidate:
           log_print(
@@ -8987,13 +9109,46 @@ def run_sync_timedb_supervisor_loop(
               reason="archive_finalize",
               log_fn=log_print,
           )
+        open_tar_members = None
+        if skip_finalize_invalidate and handoff_priority_paths:
+          pin_paths = [
+              p for p in archive_paths
+              if os.path.normpath(p) in handoff_priority_paths
+          ]
+          if pin_paths and os.path.isfile(open_tar_path):
+            try:
+              open_tar_members = get_existing_archive_members(open_tar_path) or {}
+            except Exception:
+              open_tar_members = {}
         for p in archive_paths:
-          if os.path.normpath(p) in skipped_set:
+          path_norm = os.path.normpath(p)
+          if path_norm in skipped_set:
             log_print(
                 "INFO: archive_finalize convert_fail_skip path=%s day=%s"
                 % (p, day_token or archive_path),
                 flush=True,
             )
+          is_handoff_pin = (
+              handoff_priority_paths is not None
+              and path_norm in handoff_priority_paths
+          )
+          if not archive_finalize_may_clear_handoff_pin(
+              is_handoff_pin=is_handoff_pin,
+              skip_finalize_invalidate=skip_finalize_invalidate,
+              stats_path=p,
+              open_tar_path=open_tar_path,
+              open_tar_members=open_tar_members,
+          ):
+            # Skip-only append: leave handoff pin + waiting_on_ingest deferred
+            # so Branch C can retry; do not dishonestly ACK as archived.
+            log_print(
+                "INFO: archive_finalize handoff_pin_hold path=%s day=%s "
+                "reason=skip_invalidate_no_open_tar_member"
+                % (p, day_token or archive_path),
+                flush=True,
+            )
+            _discard_inflight_archive_path(p)
+            continue
           _transition_file_state(file_states, p, SyncFileState.ARCHIVED)
           added = _add_processed_path(
               p, processed_files, processed_files_order, checkpoint_entries,
@@ -11932,6 +12087,32 @@ def run_sync_timedb_supervisor_loop(
     nonlocal pending_stats_files
     tar_norm = os.path.normpath(str(tar_norm or ""))
     if not tar_norm:
+      return
+    day_date = calendar_date_from_daily_tar_path(tar_norm)
+    day_token = day_date.isoformat() if day_date is not None else None
+    pending_owns = tar_norm in {
+        os.path.normpath(t)
+        for t in daily_tar_paths_from_pending_archive_tasks(pending_archive_tasks)
+    }
+    suppress_detail = should_suppress_day_close_archive_append_rehandoff(
+        archive_append_inflight=bool(
+            day_token and archive_append_inflight_for_day(day_token)
+        ),
+        has_active_append=_has_active_append_for_tar(tar_norm),
+        pending_archive_owns_tar=pending_owns,
+    )
+    if suppress_detail:
+      log_print(
+          "day_close handoff requeue skip day=%s reason=%s "
+          "detail=%s retryable_on_disk=%d"
+          % (
+              day_token or tar_norm,
+              reason or "",
+              suppress_detail,
+              len(_filter_handoff_requeue_paths(paths) or ()),
+          ),
+          flush=True,
+      )
       return
     requeued_paths = _filter_handoff_requeue_paths(paths)
     if not requeued_paths and day_raw_removal is not None:

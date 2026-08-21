@@ -237,6 +237,9 @@ class _DayRawRemovalState:
   Per-calendar-day verify/delete state backed by a JSON manifest.
   
   Attributes:
+    _closed_raw_pass_memo: Attribute.
+    _closed_raw_pass_memo_active: Attribute.
+    _closed_raw_paths_pass_memo: Attribute.
     _lock: Attribute.
     _manifest: Attribute.
     _manifest_path: Attribute.
@@ -326,6 +329,11 @@ class _DayRawRemovalState:
     self._validation_cache = {"hits": 0, "misses": 0}
     self._pipeline_future = None
     self._verify_sealed_members = None
+    # Memoize day-scoped closed_raw within one apply_batch_delete / handoff
+    # pass (soak: uncached rebuild logged hundreds of times per tick).
+    self._closed_raw_pass_memo: Optional[Dict[str, List[str]]] = None
+    self._closed_raw_paths_pass_memo: Optional[List[str]] = None
+    self._closed_raw_pass_memo_active: bool = False
 
   def phase(self) -> str:
     """
@@ -545,26 +553,63 @@ class _DayRawRemovalState:
 
   def _build_remaining_raw_for_daily_tar(self) -> Dict[str, List[str]]:
     """
-    Internal helper to build the remaining raw for daily tar.
-    
+    Day-scoped or snapshot remaining_raw for this daily tar.
+
+    Within one ``apply_batch_delete`` / handoff pass, reuse the memoized map so
+    completion helpers do not rebuild/log ``day-scoped closed_raw`` many times.
+
     Returns:
-      Dict[str, List[str]]: Dict[str, List[str]] produced by this call.
+      Dict[str, List[str]]: Mapping of compressed path to closed raw paths.
     
     Examples:
       >>> _DayRawRemovalState()._build_remaining_raw_for_daily_tar()
     """
+    if self._closed_raw_pass_memo_active and self._closed_raw_pass_memo is not None:
+      return self._closed_raw_pass_memo
     snap = self._resolve_maintenance_snapshot()
     if snap is None and not self.get_allow_day_scoped_closed_raw():
-      return {}
-    return build_remaining_raw_for_daily_tar(
-        self.archive_data_dir,
-        self.host_name_ext,
-        self.tgz_archive_dir,
-        self.tar_path,
-        maintenance_snapshot=snap,
-        allow_full_snapshot=False,
-        log_fn=self.log_fn,
-    )
+      remaining: Dict[str, List[str]] = {}
+    else:
+      remaining = build_remaining_raw_for_daily_tar(
+          self.archive_data_dir,
+          self.host_name_ext,
+          self.tgz_archive_dir,
+          self.tar_path,
+          maintenance_snapshot=snap,
+          allow_full_snapshot=False,
+          log_fn=self.log_fn,
+      )
+    if self._closed_raw_pass_memo_active:
+      self._closed_raw_pass_memo = remaining
+    return remaining
+
+  def _clear_closed_raw_pass_memo(self) -> None:
+    """
+    Drop day-scoped closed_raw memo for the next delete/handoff pass.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _DayRawRemovalState()._clear_closed_raw_pass_memo()  # doctest: +SKIP
+    """
+    self._closed_raw_pass_memo = None
+    self._closed_raw_paths_pass_memo = None
+    self._closed_raw_pass_memo_active = False
+
+  def _begin_closed_raw_pass_memo(self) -> None:
+    """
+    Start a fresh closed_raw memo window for one delete/handoff pass.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _DayRawRemovalState()._begin_closed_raw_pass_memo()  # doctest: +SKIP
+    """
+    self._closed_raw_pass_memo = None
+    self._closed_raw_paths_pass_memo = None
+    self._closed_raw_pass_memo_active = True
 
   def _manifest_paths_on_disk(self) -> List[str]:
     """
@@ -580,10 +625,10 @@ class _DayRawRemovalState:
 
   def _closed_raw_paths_on_disk(self) -> List[str]:
     """
-    Internal helper to handle closed raw paths on disk.
-    
+    Closed raw paths still on disk for this day (memoized per delete pass).
+
     Returns:
-      List[str]: List[str] produced by this call.
+      List[str]: Flat list of closed raw paths.
     
     Examples:
       >>> _DayRawRemovalState()._closed_raw_paths_on_disk()  # doctest: +SKIP
@@ -593,10 +638,17 @@ class _DayRawRemovalState:
       if blocking:
         return blocking
       return []
+    if (
+        self._closed_raw_pass_memo_active
+        and self._closed_raw_paths_pass_memo is not None
+    ):
+      return list(self._closed_raw_paths_pass_memo)
     remaining = self._build_remaining_raw_for_daily_tar()
     paths: List[str] = []
     for raw_list in (remaining or {}).values():
       paths.extend(raw_list or [])
+    if self._closed_raw_pass_memo_active:
+      self._closed_raw_paths_pass_memo = list(paths)
     return paths
 
   def _has_closed_raw_existing_on_disk(self) -> bool:
@@ -2014,6 +2066,25 @@ class _DayRawRemovalState:
     
     Examples:
       >>> _DayRawRemovalState().apply_batch_delete()  # doctest: +SKIP
+    """
+    owns_memo = not self._closed_raw_pass_memo_active
+    if owns_memo:
+      self._begin_closed_raw_pass_memo()
+    try:
+      return self._apply_batch_delete_body()
+    finally:
+      if owns_memo:
+        self._clear_closed_raw_pass_memo()
+
+  def _apply_batch_delete_body(self) -> int:
+    """
+    Batch-delete implementation (runs under an active closed_raw memo window).
+
+    Returns:
+      int: Number of paths deleted this pass.
+
+    Examples:
+      >>> _DayRawRemovalState()._apply_batch_delete_body()  # doctest: +SKIP
     """
     if self.needs_ghost_delete_retry():
       self._prepare_ghost_delete_retry()
@@ -3880,26 +3951,31 @@ class DayRawRemovalCoordinator:
       >>> DayRawRemovalCoordinator().apply_batch_delete("x")  # doctest: +SKIP
     """
     state = self._get_or_create_day(tar_path)
-    # Branch C: reclassify under deleting/verification_complete before delete or
-    # handoff so post-ingest upgrades are not skipped (F15 keeps phase=deleting).
-    upgraded = state._reclassify_retryable_skips_on_disk()
-    if upgraded and self.log_fn:
-      self.log_fn(
-          "Day raw removal reclassify before batch_delete tar=%s upgraded=%d"
-          % (tar_path, upgraded),
-          flush=True,
-      )
-    deleted = state.apply_batch_delete()
-    if state.should_handoff_day_close_to_ingest():
-      self.complete_handoff_to_ingest(
-          tar_path,
-          reason="batch_delete_waiting_on_ingest",
-      )
-    elif state.delete_phase_done():
-      self._notify_delete_complete(tar_path)
-    elif state.phase() == PHASE_VERIFYING:
-      self.start_async_verify(tar_path)
-    return deleted
+    # One closed_raw census for reclassify + delete completion + handoff.
+    state._begin_closed_raw_pass_memo()
+    try:
+      # Branch C: reclassify under deleting/verification_complete before delete or
+      # handoff so post-ingest upgrades are not skipped (F15 keeps phase=deleting).
+      upgraded = state._reclassify_retryable_skips_on_disk()
+      if upgraded and self.log_fn:
+        self.log_fn(
+            "Day raw removal reclassify before batch_delete tar=%s upgraded=%d"
+            % (tar_path, upgraded),
+            flush=True,
+        )
+      deleted = state.apply_batch_delete()
+      if state.should_handoff_day_close_to_ingest():
+        self.complete_handoff_to_ingest(
+            tar_path,
+            reason="batch_delete_waiting_on_ingest",
+        )
+      elif state.delete_phase_done():
+        self._notify_delete_complete(tar_path)
+      elif state.phase() == PHASE_VERIFYING:
+        self.start_async_verify(tar_path)
+      return deleted
+    finally:
+      state._clear_closed_raw_pass_memo()
 
   def shutdown(self, wait: bool = True) -> None:
     """

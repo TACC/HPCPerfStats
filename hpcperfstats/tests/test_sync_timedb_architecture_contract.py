@@ -636,7 +636,8 @@ def test_arch_apply_batch_delete_rechecks_quarantine_skip_paths():
   """Delete must re-check quarantine skip immediately before os.remove."""
   from hpcperfstats.dbload.lib import sync_timedb_day_raw_removal as drm
 
-  source = inspect.getsource(drm._DayRawRemovalState.apply_batch_delete)
+  # Body holds the delete loop; wrapper only manages closed_raw pass memo.
+  source = inspect.getsource(drm._DayRawRemovalState._apply_batch_delete_body)
   skip_idx = source.index("get_ingest_active_skip_paths")
   subtract_idx = source.index("paths_pending_delete()")
   remove_idx = source.index("os.remove")
@@ -645,7 +646,9 @@ def test_arch_apply_batch_delete_rechecks_quarantine_skip_paths():
   assert "delete_deferred" in source
   assert "active_ingest" in source
   assert "skip_class=" in source
-
+  wrapper = inspect.getsource(drm._DayRawRemovalState.apply_batch_delete)
+  assert "_apply_batch_delete_body" in wrapper
+  assert "_begin_closed_raw_pass_memo" in wrapper or "_clear_closed_raw_pass_memo" in wrapper
 
 def test_arch_delete_disqualified_uses_full_inflight_not_sample():
   """Tar delete block must union all in-flight ingest paths, not sample_in_flight(10)."""

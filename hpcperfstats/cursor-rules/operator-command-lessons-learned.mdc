@@ -68,6 +68,7 @@ If the failure reveals a **recurring** gap (not a one-off typo), also add a one-
 - **`rabbitmqctl … 2>/dev/null`** (or `rabbitmq-plugins … 2>/dev/null`) — empty status/plugins/queue pastes while listeners still show (hpcperfstats04 2026-08-03); keep stderr (`2>&1`) — see **Anti-pattern — `rabbitmqctl … 2>/dev/null`** in `compose-operator-terminal-commands.mdc`.
 - **`exec rabbitmq sh -lc 'rabbitmqctl …'`** — **`rabbitmqctl: not found`** (hpcperfstats04 2026-08-11); login `PATH` omits RabbitMQ sbin. Use **`exec rabbitmq rabbitmqctl list_queues name messages consumers`** with no wrapping shell (see **Anti-pattern — `exec rabbitmq sh -lc 'rabbitmqctl…'`** in `compose-operator-terminal-commands.mdc`).
 - Host mega-block nesting `su -c 'python && sh -lc && python'` plus host logs — shell stuck at `>` continuation; no census/fingerprint/logs (hpcperfstats04 2026-08-12); use **four separate** host-side blocks (see **Podman-compose sites** mega-block row in `compose-operator-terminal-commands.mdc`).
+- Escaped-grep mega-block with `\"` inside double-quoted host `bash -lc` / nested `grep -E \"…\"` — **`syntax error near '('`** or empty paste (hpcperfstats03 2026-08-21 skip-only append thrash census); use **separate** host `grep -cE` / `grep -E … | tail` on a teed full log (no mega-block of escaped quotes) — see **Podman-compose sites** escaped-grep mega-block row in `compose-operator-terminal-commands.mdc`.
 
 ## Same-task checklist
 
