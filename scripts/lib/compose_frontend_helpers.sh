@@ -496,11 +496,37 @@ compose_service_running() {
   docker compose ps --status running --services "${service}" 2>/dev/null | grep -qx "${service}"
 }
 
+# podman-compose has no ``rm`` subcommand (Docker Compose v2 only). Remove stale
+# project containers by name/id via podman/docker CLI so ``up -d`` can reuse
+# fixed names like ``hpcperfstats_web_1``.
+compose_podman_rm_service_containers() {
+  local service cid name
+  local -a rm_cli
+  cd "${REPO_ROOT}"
+  if podman_cli_available; then
+    rm_cli=(podman rm -f)
+  else
+    rm_cli=(docker rm -f)
+  fi
+  for service in "$@"; do
+    cid="$(docker compose ps -q "${service}" 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+    if [[ -n "${cid}" ]]; then
+      "${rm_cli[@]}" "${cid}" 2>/dev/null || true
+      continue
+    fi
+    name="$(docker compose ps --format '{{.Name}}' "${service}" 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+    if [[ -z "${name}" ]]; then
+      name="hpcperfstats_${service}_1"
+    fi
+    "${rm_cli[@]}" "${name}" 2>/dev/null || true
+  done
+}
+
 compose_recreate_web_after_image_refresh() {
   cd "${REPO_ROOT}"
   if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
     if compose_backend_is_podman; then
-      echo "[dry-run] podman: stop proxy; compose rm -sf pipeline web; compose up -d web"
+      echo "[dry-run] podman: stop proxy; podman rm -f pipeline+web containers; compose up -d web"
     else
       echo "[dry-run] docker compose up -d --force-recreate --no-deps web"
     fi
@@ -515,7 +541,7 @@ compose_recreate_web_after_image_refresh() {
       docker compose stop proxy || true
     fi
     echo "Removing stopped pipeline and web containers (podman) ..."
-    docker compose rm -sf pipeline web
+    compose_podman_rm_service_containers pipeline web
     echo "Starting web with refreshed image ..."
     docker compose up -d web
     return 0
@@ -529,7 +555,7 @@ compose_recreate_pipeline_after_image_refresh() {
   cd "${REPO_ROOT}"
   if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
     if compose_backend_is_podman; then
-      echo "[dry-run] podman: compose rm -sf pipeline; compose up -d pipeline"
+      echo "[dry-run] podman: podman rm -f pipeline container; compose up -d pipeline"
     else
       echo "[dry-run] docker compose up -d --force-recreate --no-deps pipeline"
     fi
@@ -537,7 +563,7 @@ compose_recreate_pipeline_after_image_refresh() {
   fi
 
   if compose_backend_is_podman; then
-    docker compose rm -sf pipeline 2>/dev/null || true
+    compose_podman_rm_service_containers pipeline
     docker compose up -d pipeline
     return 0
   fi

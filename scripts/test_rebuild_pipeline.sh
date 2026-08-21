@@ -109,8 +109,23 @@ if ! grep -q 'force-recreate --no-deps web' "${HELPERS}"; then
   exit 1
 fi
 
-if ! grep -q 'compose rm -sf pipeline web' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must rm pipeline+web on podman before web up" >&2
+if ! grep -q 'compose_podman_rm_service_containers' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must define compose_podman_rm_service_containers (podman-compose has no rm)" >&2
+  exit 1
+fi
+
+if grep -qE 'docker compose rm -sf|compose rm -sf' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must not call docker compose rm (invalid on podman-compose)" >&2
+  exit 1
+fi
+
+if ! grep -q 'compose_podman_rm_service_containers pipeline web' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must podman-rm pipeline+web before web up" >&2
+  exit 1
+fi
+
+if ! grep -q 'podman rm -f' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must use podman rm -f for stale containers" >&2
   exit 1
 fi
 
