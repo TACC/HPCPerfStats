@@ -17,7 +17,8 @@ def test_get_rmq_queue_depth_for_monitor_passive_ok(monkeypatch):
   declare_calls = []
 
   class _FakeChannel:
-    def queue_declare(self, queue=None, _durable=None, passive=None):
+    def queue_declare(self, queue=None, durable=None, passive=None):
+      _ = durable
       declare_calls.append(passive)
       return _FakeQueue(99)
 
@@ -30,24 +31,32 @@ def test_get_rmq_queue_depth_for_monitor_passive_ok(monkeypatch):
     def close(self):
       self.is_closed = True
 
-  monkeypatch.setattr(listend.pika, "BlockingConnection", lambda _p: _FakeConnection())
-  monkeypatch.setattr(listend.pika, "ConnectionParameters", lambda _h: object())
+  monkeypatch.setattr(
+      listend.pika, "BlockingConnection", lambda _p: _FakeConnection()
+  )
+  monkeypatch.setattr(
+      listend,
+      "listend_amqp_connection_parameters",
+      lambda _h: object(),
+  )
 
   assert listend._get_rmq_queue_depth_for_monitor() == 99
   assert declare_calls == [True]
 
 
-def test_get_rmq_queue_depth_for_monitor_falls_back_to_non_passive(monkeypatch):
+def test_get_rmq_queue_depth_for_monitor_passive_only_returns_zero_on_fail(
+    monkeypatch,
+):
+  """Idle depth must not non-passive-declare (quorum Ra / create churn)."""
   import hpcperfstats.listend as listend
 
   declare_calls = []
 
   class _FakeChannel:
-    def queue_declare(self, queue=None, _durable=None, passive=None):
+    def queue_declare(self, queue=None, durable=None, passive=None):
+      _ = durable
       declare_calls.append(passive)
-      if passive is True:
-        raise RuntimeError("queue not found (simulated)")
-      return _FakeQueue(7)
+      raise RuntimeError("queue not found (simulated)")
 
   class _FakeConnection:
     is_closed = False
@@ -58,12 +67,17 @@ def test_get_rmq_queue_depth_for_monitor_falls_back_to_non_passive(monkeypatch):
     def close(self):
       self.is_closed = True
 
-  monkeypatch.setattr(listend.pika, "BlockingConnection", lambda _p: _FakeConnection())
-  monkeypatch.setattr(listend.pika, "ConnectionParameters", lambda _h: object())
+  monkeypatch.setattr(
+      listend.pika, "BlockingConnection", lambda _p: _FakeConnection()
+  )
+  monkeypatch.setattr(
+      listend,
+      "listend_amqp_connection_parameters",
+      lambda _h: object(),
+  )
 
-  assert listend._get_rmq_queue_depth_for_monitor() == 7
-  assert declare_calls[0] is True
-  assert declare_calls[-1] is False
+  assert listend._get_rmq_queue_depth_for_monitor() == 0
+  assert declare_calls == [True]
 
 
 def test_get_rmq_queue_depth_for_monitor_returns_zero_when_connect_fails(monkeypatch):
@@ -73,7 +87,11 @@ def test_get_rmq_queue_depth_for_monitor_returns_zero_when_connect_fails(monkeyp
     raise OSError("no broker")
 
   monkeypatch.setattr(listend.pika, "BlockingConnection", _boom)
-  monkeypatch.setattr(listend.pika, "ConnectionParameters", lambda _h: object())
+  monkeypatch.setattr(
+      listend,
+      "listend_amqp_connection_parameters",
+      lambda _h: object(),
+  )
 
   assert listend._get_rmq_queue_depth_for_monitor() == 0
 

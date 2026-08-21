@@ -76,6 +76,7 @@ def test_package_lib_paths_not_gitignored():
       "hpcperfstats/site/lib/machine/migrations/0001_initial.py",
       "hpcperfstats/dbload/lib/conf_parser.py",
       "hpcperfstats/analysis/metrics/lib/metrics.py",
+      "hpcperfstats/lib/monitor_identity.py",
   ]
   for rel in samples:
     proc = subprocess.run(

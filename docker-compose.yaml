@@ -162,8 +162,7 @@ services:
       retries: 10
     stop_signal: SIGINT  # Preferred for faster, yet still graceful, shutdowns
     stop_grace_period: 2m
-    ports:
-      #- 5432:5432
+    # Host publish optional: # ports: ["5432:5432"]
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     environment:

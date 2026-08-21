@@ -17,25 +17,27 @@ import pika
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.listend import append_monitor_payload_to_archive
 from hpcperfstats.dbload.lib.print_utils import log_print
+from hpcperfstats.lib.rmq_quorum_queue import (
+    declare_durable_quorum_queue,
+    listend_amqp_connection_parameters,
+)
 
 
 def drain_queue_to_archive() -> Any:
   """
   Pull all messages from ``cfg.get_rmq_queue()`` and append each to archive.
-  
+
   Returns:
-    Any: Open return polymorphism from ``drain_queue_to_archive``: concrete
-    type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Count of messages drained (integer).
+
   Examples:
     >>> drain_queue_to_archive()  # doctest: +SKIP
   """
-  parameters = pika.ConnectionParameters(cfg.get_rmq_server())
+  parameters = listend_amqp_connection_parameters(cfg.get_rmq_server())
   connection = pika.BlockingConnection(parameters)
   channel = connection.channel()
   queue_name = cfg.get_rmq_queue()
-  channel.queue_declare(queue=queue_name, durable=True)
+  declare_durable_quorum_queue(channel, queue_name)
   drained = 0
   try:
     while True:
