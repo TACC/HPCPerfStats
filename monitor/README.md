@@ -157,14 +157,13 @@ census-zero CPU (`taskset -c N bash -c 'while true; do :; done'`) and re-check
 FIXC. With `@full` tier tokens, census awk must use **CPU = `$2`**, FIXC =
 **`$10 $11 $12`**.
 
-**Uncore collectors (IMC/CHA)** target SKX+ server parts through Sierra Forest
+**Uncore collectors (IMC)** target SKX+ server parts through Sierra Forest
 (LIKWID 5.5.2): Skylake-X (`06_55` stepping &lt; 5), Cascade Lake / CLX
 (`06_55` stepping ≥ 5), Ice Lake server (`06_6a`/`06_6c`), Sapphire Rapids
 (`06_8f`), Emerald Rapids (`06_cf`), Granite Rapids (`06_ad`), and Sierra Forest
-(`06_af`). CHA types are `intel_x86_uncore_cha_{skx,icx,spr,emr,gnr}` (CLX uses
-SKX CHA; SRF has no CHA type). SKX CHA LLC_LOOKUP programs `:STATE=0x1F` for
-PERF `filter_state`. Sandybridge, Ivybridge, Haswell, and Broadwell are no longer
-classified or registered (`intel_x86_pcu` and pre-SKX uncore types removed).
+(`06_af`). Intel CHA/CBOX collectors are not shipped. Sandybridge, Ivybridge,
+Haswell, and Broadwell are no longer classified or registered (`intel_x86_pcu`
+and pre-SKX uncore types removed).
 SPR/EMR expose DDR and HBM uncore keys (`dram_*`, `hbm_*`); SPR/EMR IMC LIKWID
 eventsets use **MBOX0–11** only (LIKWID 5.5 Sapphire Rapids counter table —
 not MBOX12–15), always try DDR+HBM first then DDR-only then HBM-only, then an

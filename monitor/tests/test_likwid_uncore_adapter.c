@@ -47,7 +47,7 @@ static void emit_and_check(likwid_uncore_profile_t profile, const char *counter_
   assert(out == val);
 }
 
-static void test_emit_imc_and_cha_counters(void)
+static void test_emit_imc_and_df_counters(void)
 {
   test_stats_stub_bind(&g_stub);
 
@@ -56,15 +56,6 @@ static void test_emit_imc_and_cha_counters(void)
   emit_and_check(LIKWID_UNCORE_PROFILE_IMC_ICX, "MDEV1C0", "mdev1", "dram_cas_reads", 300ULL);
   emit_and_check(LIKWID_UNCORE_PROFILE_IMC_ICX, "MBOX1C0", "mdev1", "dram_cas_reads", 301ULL);
   emit_and_check(LIKWID_UNCORE_PROFILE_IMC_ICX, "MBOX3C1", "mdev3", "dram_cas_writes", 302ULL);
-  emit_and_check(LIKWID_UNCORE_PROFILE_CHA_SKX, "CBOX4C0", "cbox4", "llc_lookup_data_read_local",
-                 400ULL);
-  emit_and_check(LIKWID_UNCORE_PROFILE_CHA_SKX, "CBOX4C1", "cbox4", "sf_evictions_mes", 500ULL);
-  emit_and_check(LIKWID_UNCORE_PROFILE_CHA_SKX, "CBOX4C2:STATE=0x1F", "cbox4", "llc_lookup_write",
-                 501ULL);
-  emit_and_check(LIKWID_UNCORE_PROFILE_CHA_SKX, "CBOX4C3", "cbox4", "bypass_cha_imc_all", 502ULL);
-  emit_and_check(LIKWID_UNCORE_PROFILE_CHA_SPR, "CBOX1C2", "cbox1", "bypass_cha_imc_all", 503ULL);
-  emit_and_check(LIKWID_UNCORE_PROFILE_CHA_GNR, "CBOX0C0", "cbox0", "llc_lookup_data_read_local",
-                 504ULL);
   emit_and_check(LIKWID_UNCORE_PROFILE_DF_ROME, "DFC0", "df", "dram_chan0_bytes", 600ULL);
   emit_and_check(LIKWID_UNCORE_PROFILE_DF_TURIN, "UMC2C0", "df", "dram_chan2_bytes", 700ULL);
 
@@ -109,7 +100,7 @@ static void test_likwid_result_to_ull(void)
 
 int main(void)
 {
-  test_emit_imc_and_cha_counters();
+  test_emit_imc_and_df_counters();
   test_likwid_result_to_ull();
   printf("test_likwid_uncore_adapter passed\n");
   return 0;
