@@ -1042,6 +1042,29 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
     }
   }
 #endif
+#ifndef MONITOR_CPU_BACKEND_DCGM
+  {
+    int skip_pmc_reads = 0;
+
+    /* Re-program core LIKWID group once per tick after DF/RAPL setupCounters. */
+    if (cpu_counter_metrics_likwid_ready() && likwid_pmc_adapter_prepare_collect() != 0)
+      skip_pmc_reads = 1;
+
+    for (i = 0; i < nr_cpus; i++) {
+      char cpu[80];
+      struct stats *stats;
+      snprintf(cpu, sizeof(cpu), "%d", i);
+      stats = get_current_stats(type, cpu);
+      if (stats == NULL)
+        continue;
+      /* LIKWID-only: no MSR fallback when setup failed or read_cpu fails. */
+      if (!skip_pmc_reads && cpu_counter_metrics_likwid_ready()) {
+        uint64_t ctls[8] = {0};
+        (void)likwid_pmc_adapter_read_cpu(stats, i, ctls, 8, 8);
+      }
+    }
+  }
+#else
   for (i = 0; i < nr_cpus; i++) {
     char cpu[80];
     struct stats *stats;
@@ -1049,7 +1072,6 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
     stats = get_current_stats(type, cpu);
     if (stats == NULL)
       continue;
-#ifdef MONITOR_CPU_BACKEND_DCGM
     if (!dcgm_host_cpu_hw_collect_active(g_dcgm_ready, papi_ready, dcgm_util_bufs_ok()))
       continue;
     {
@@ -1094,16 +1116,9 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
       if (papi_ready)
         cpu_counter_metrics_papi_collect_cpu(stats, i);
 #endif
-      continue;
     }
-#else
-    /* LIKWID-only: no MSR fallback when setup failed or read_cpu fails. */
-    if (cpu_counter_metrics_likwid_ready()) {
-      uint64_t ctls[8] = {0};
-      (void)likwid_pmc_adapter_read_cpu(stats, i, ctls, 8, 8);
-    }
-#endif
   }
+#endif
 #ifdef MONITOR_CPU_BACKEND_DCGM
   if (dcgm_util_bufs_ok() && proc_stat_ok && nr_cpus > 0) {
     memcpy(g_dcjm_prev, g_dcjm_cur, (size_t)nr_cpus * sizeof(*g_dcjm_prev));

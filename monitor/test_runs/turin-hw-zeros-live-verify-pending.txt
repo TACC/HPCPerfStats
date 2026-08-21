@@ -1,0 +1,18 @@
+# Turin host_cpu_hw zeros — live verify pending
+
+Code fix is in-tree (`likwid_pmc_adapter_prepare_collect` + once-per-tick call).
+
+After deploying a build with this change to amd-rtx (e.g. c571-003):
+
+```bash
+systemctl restart hpcperfstats
+CPU=60
+taskset -c "$CPU" bash -c 'while true; do :; done' &
+sleep 15
+grep "host_cpu_hw ${CPU} " /dev/shm/hpcperfstatsd-debug/full | tail -3
+# expect mid-row retired_instructions / ls_dispatch / instr_retired non-zero
+grep -E 'amd_x86_uncore_df_turin|amd_x86_rapl' /dev/shm/hpcperfstatsd-debug/full | tail -4
+kill %1 2>/dev/null
+```
+
+Date: 2026-08-21

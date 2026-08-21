@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <time.h>
 #include "trace.h"
 #include "stats.h"
 #include "monitor_log.h"
@@ -299,6 +300,38 @@ static void likwid_pmc_adapter_publish_semantic_counters(
   }
 }
 #endif /* HAVE_LIKWID */
+
+int likwid_pmc_adapter_prepare_collect(void)
+{
+#ifdef HAVE_LIKWID
+  int setup_rc;
+  static time_t last_warn;
+
+  if (!g_initialized || g_group < 0)
+    return -1;
+
+  /*
+   * DF/RAPL call perfmon_setupCounters on later groups and leave the core
+   * PERF programming inactive. readGroupCounters(g_group) alone then yields
+   * flat zeros on Turin (amd-rtx). Re-program the core group once per tick.
+   */
+  setup_rc = perfmon_setupCounters(g_group);
+  if (setup_rc < 0) {
+    time_t now = time(NULL);
+
+    if (last_warn == 0 || (now > last_warn && now - last_warn >= 60)) {
+      monitor_log_warn("host_cpu_hw: perfmon_setupCounters(core group=%d) failed before "
+                       "readGroupCounters; core PMCs may stay zero\n",
+                       g_group);
+      last_warn = now;
+    }
+    return -1;
+  }
+  return 0;
+#else
+  return -1;
+#endif
+}
 
 int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, int nr_events,
                                 int max_ctrs)

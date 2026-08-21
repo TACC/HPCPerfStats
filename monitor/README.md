@@ -157,6 +157,15 @@ census-zero CPU (`taskset -c N bash -c 'while true; do :; done'`) and re-check
 FIXC. With `@full` tier tokens, census awk must use **CPU = `$2`**, FIXC =
 **`$10 $11 $12`**.
 
+**`host_cpu_hw` on AMD LIKWID (Rome → Turin):** Leading util / Intel FIXC /
+FP columns stay **0** by design. Judge health on mid-row AMD canaries
+(`retired_instructions`, `retired_branch_instr`, `ls_dispatch`, `instr_retired`)
+under load — not on FIXC. If those canaries stay flat while
+`amd_x86_uncore_df_*` and `amd_x86_rapl` look healthy, core PERF programming was
+stolen by later DF/RAPL `setupCounters`; collect re-calls
+`perfmon_setupCounters` on the core group once per tick
+(`likwid_pmc_adapter_prepare_collect`) before `readGroupCounters`.
+
 **Uncore collectors (IMC)** target SKX+ server parts through Sierra Forest
 (LIKWID 5.5.2): Skylake-X (`06_55` stepping &lt; 5), Cascade Lake / CLX
 (`06_55` stepping ≥ 5), Ice Lake server (`06_6a`/`06_6c`), Sapphire Rapids
@@ -175,10 +184,12 @@ doubles so they are never cast to `9223372036854775808` (`2^63`). EDAC
 `has_ddr`/`has_hbm` are logged only. Uncore custom event strings use LIKWID
 **`EVENT:COUNTER`** form (e.g. `CAS_COUNT_RD:MBOX0C0`); space-separated
 counter-first tokens are rejected by `perfmon_addEventSet` as named
-performance groups. When core PMC and uncore IMC share one LIKWID session,
-collect uses **`perfmon_readGroupCounters(groupId)`** (not
+performance groups. When core PMC and uncore IMC/DF/RAPL share one LIKWID
+session, each `host_cpu_hw` collect tick **re-`setupCounters`s the core group**
+then uses **`perfmon_readGroupCounters(groupId)`** (not
 `perfmon_readCounters()`), because setup of a later group steals
-`activeGroup` and would otherwise leave `host_cpu_hw` stuck at zeros.
+`activeGroup` / PERF programming and would otherwise leave `host_cpu_hw`
+stuck at zeros.
 `host_roofline_peak` adds
 `cpu_peak_hbm_bw_bytes_per_s` (EDAC HBM/DDR split, `peak_calc_version` 2).
 
