@@ -3,9 +3,10 @@
 # Bare perfmon_readCounters() follows activeGroup; IMC setup steals it and
 # leaves host_cpu_hw stuck at zeros (spr-host-cpu-hw-active-group).
 #
-# Turin/amd-rtx: DF/RAPL setupCounters also leave core PERF flat unless collect
-# re-programs the core group (likwid_pmc_adapter_prepare_collect) before
-# readGroupCounters (turin-host-cpu-hw-zeros).
+# Turin/SPR multi-group PERF: DF/IMC/RAPL setupCounters leave core flat unless
+# collect re-arms the core group (likwid_pmc_adapter_prepare_collect) with
+# setupCounters(g_group) + startCounters before readGroupCounters
+# (turin-host-cpu-hw-zeros / host-cpu-hw-residual-zeros).
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -26,6 +27,17 @@ grep -qE 'likwid_pmc_adapter_prepare_collect[[:space:]]*\(' "${pmc}" \
   || { echo "FAIL: ${pmc} must define likwid_pmc_adapter_prepare_collect" >&2; exit 1; }
 grep -qE 'perfmon_setupCounters[[:space:]]*\([[:space:]]*g_group' "${pmc}" \
   || { echo "FAIL: ${pmc} prepare_collect must call perfmon_setupCounters(g_group)" >&2; exit 1; }
+# prepare_collect must start after setup (uncore pattern); require start near setup(g_group).
+awk '
+  /int likwid_pmc_adapter_prepare_collect/,/^int likwid_pmc_adapter_read_cpu/ {
+    if ($0 ~ /perfmon_setupCounters[[:space:]]*\([[:space:]]*g_group/) saw_setup = 1
+    if (saw_setup && $0 ~ /perfmon_startCounters[[:space:]]*\(/) saw_start = 1
+  }
+  END {
+    if (!saw_setup) { print "FAIL: prepare_collect missing setupCounters(g_group)" > "/dev/stderr"; exit 1 }
+    if (!saw_start) { print "FAIL: prepare_collect must call startCounters after setupCounters(g_group)" > "/dev/stderr"; exit 1 }
+  }
+' "${pmc}"
 grep -qE 'likwid_pmc_adapter_prepare_collect[[:space:]]*\(' "${collect}" \
   || { echo "FAIL: ${collect} must call likwid_pmc_adapter_prepare_collect once per LIKWID tick" >&2; exit 1; }
 

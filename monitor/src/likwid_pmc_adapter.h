@@ -15,7 +15,7 @@ void likwid_pmc_adapter_ensure_force_env(void);
 int likwid_pmc_adapter_init(int nr_threads);
 void likwid_pmc_adapter_finalize(void);
 int likwid_pmc_adapter_setup_events(const char *event_string);
-/* Once per host_cpu_hw collect tick: re-program core group after DF/RAPL setupCounters. */
+/* Once per host_cpu_hw tick: setupCounters(g_group)+startCounters after DF/IMC/RAPL steal. */
 int likwid_pmc_adapter_prepare_collect(void);
 int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, int nr_events,
                                 int max_ctrs);

@@ -162,9 +162,10 @@ FP columns stay **0** by design. Judge health on mid-row AMD canaries
 (`retired_instructions`, `retired_branch_instr`, `ls_dispatch`, `instr_retired`)
 under load — not on FIXC. If those canaries stay flat while
 `amd_x86_uncore_df_*` and `amd_x86_rapl` look healthy, core PERF programming was
-stolen by later DF/RAPL `setupCounters`; collect re-calls
-`perfmon_setupCounters` on the core group once per tick
-(`likwid_pmc_adapter_prepare_collect`) before `readGroupCounters`.
+stolen by later DF/IMC/RAPL `setupCounters`; collect re-arms the core group
+once per tick via `likwid_pmc_adapter_prepare_collect` →
+`perfmon_setupCounters(g_group)` **and** `perfmon_startCounters()` (same
+pattern as uncore finish) before `readGroupCounters`.
 
 **Uncore collectors (IMC)** target SKX+ server parts through Sierra Forest
 (LIKWID 5.5.2): Skylake-X (`06_55` stepping &lt; 5), Cascade Lake / CLX

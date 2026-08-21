@@ -311,9 +311,10 @@ int likwid_pmc_adapter_prepare_collect(void)
     return -1;
 
   /*
-   * DF/RAPL call perfmon_setupCounters on later groups and leave the core
-   * PERF programming inactive. readGroupCounters(g_group) alone then yields
-   * flat zeros on Turin (amd-rtx). Re-program the core group once per tick.
+   * DF/IMC/RAPL call perfmon_setupCounters on later groups and leave the core
+   * PERF programming inactive. setup alone is not enough on Turin/SPR — match
+   * uncore finish: setupCounters then startCounters (ignore start failure if
+   * the session is already running).
    */
   setup_rc = perfmon_setupCounters(g_group);
   if (setup_rc < 0) {
@@ -327,6 +328,8 @@ int likwid_pmc_adapter_prepare_collect(void)
     }
     return -1;
   }
+  /* Same as likwid_uncore_finish_group: start may fail if already running. */
+  (void)perfmon_startCounters();
   return 0;
 #else
   return -1;
