@@ -444,6 +444,42 @@ grep -E 'archive_job_duty|archive_finalize skip invalidate|handoff_pin_hold|hand
 
 **Pass (T2):** skip-only days reach Branch C upgrade → delete → tar-drop; no perpetual `to_add=0` / skip-invalidate pin-clear loop.
 
+### T0 / T1 / T2 — open-tar vs Redis membership divergence (hpcperfstats03, 2026-08-23)
+
+**Signature (pre-fix):** mutable daily `.tar` remains (`open_tar_n` high); `archive_job_begin … members_source=redis` (or `tar_scan`) with **`to_add=0 appended=0`** while `handoff_mode=archive_append` requeues keep **flat** `paths=N`; Branch C `member_hit False` on open tar; optional **`skip_invalidate`** without **`handoff_pin_hold`** when skip-only pin-hold fix is not deployed. Root cause: warm Redis/sealed claimed membership the **open mutable tar** lacked.
+
+**Deploy:** ship **open-tar authority** + **skip-only pin-hold** in **one** pipeline image refresh (`rebuild_pipeline.sh` or site equivalent).
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T pipeline \
+  su hpcperfstats -c 'python3 -c "
+import glob, os
+from hpcperfstats.dbload.lib import conf_parser as c
+d = c.get_daily_archive_dir_path()
+print(\"open_tar_n\", len(glob.glob(os.path.join(d, \"????-??-??.tar\"))))
+"'
+
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | awk '\''
+/archive_finalize handoff_pin_hold/ { hp++ }
+/archive_job_duty.*to_add=0/ { tz++ }
+/archive_job_begin.*members_source=redis/ { mr++ }
+/archive_append open_tar_redis_divergence/ { div++ }
+/archive_finalize skip invalidate/ { si++ }
+/archive_job_duty.*appended=[1-9]/ { ap++ }
+END { printf "handoff_pin_hold %d\nto_add_zero %d\nmembers_source_redis %d\nopen_tar_redis_divergence %d\nskip_invalidate %d\nappended_positive %d\n", hp+0, tz+0, mr+0, div+0, si+0, ap+0 }'\''
+
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'archive_job_duty|archive_job_begin|handoff_pin_hold|open_tar_redis_divergence|handoff_mode=archive_append|day_close reclassify' | tail -25
+```
+
+**Fail (T0):** `members_source=redis` + `to_add=0` on huge `tar_bytes` + flat handoff `paths=` + **`handoff_pin_hold=0`** + **`open_tar_redis_divergence=0`** while `open_tar_n` unchanged for 24h.
+
+**Pass (T0):** sticky June days log **`members_source=tar_scan`** and/or **`open_tar_redis_divergence`**; **`to_add>0`** or **`appended_positive>0`** for at least one sticky day; **`handoff_pin_hold>0`** when skip-invalidate thrash persists without open-tar member proof.
+
+**Pass (T1):** `day_close reclassify upgraded>` for sticky days; handoff `paths=N` declines; `open_tar_n` trends down for lead/sticky ISO days.
+
+**Pass (T2):** past-day mutable `.tar` dropped for completed days; no multi-day loop of identical handoff counts with `to_add=0` / flat `retryable_skips`.
+
 ### T0 / T1 — tar append exit 2 / large member (`out of off_t range`, 2026-07)
 
 Members larger than **8 GiB − 1** fail classic ustar without pax headers (`value N out of off_t range 0..8589934591`). Production always passes **`--posix`** on tar create/append (`-C /` + relative `-T` members). When the daily tar is **not pax-capable** (bare `POSIX tar archive` without pax headers; GNU labels need no convert), the **archive pool** job logs **`must_convert`**, attempts **extract + `tar --format=pax` recreate**, then appends. On convert failure: **`convert_fail_skip`** oversized members (original tar untouched) and continue with remaining paths. **`archive_job_done`** includes **`outcome=ok|fail`** (do not treat `archive_job_done` alone as success).

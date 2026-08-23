@@ -7327,23 +7327,33 @@ def _lookup_existing_members_for_archive_append(
   archive_tar_fname: Any,
 ) -> Any:
   """
-  Return (members, members_source) for archive append; Redis/sealed before tar.
-  
-  Works when sibling ``.tar`` is missing: Redis L2 or sealed stream can still
-  supply membership so noop appends skip multi-hour decompress restore.
-  
+  Return (members, members_source) for archive append.
+
+  When a sibling mutable ``.tar`` exists, membership comes from an open-tar
+  scan (authoritative for append). Redis/sealed fast paths apply only when the
+  mutable ``.tar`` is absent (sealed-only days).
+
   Args:
     archive_fname (Any): Archive fname passed to this helper.
     archive_tar_fname (Any): Archive tar fname passed to this helper.
-  
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: ``(member_map, members_source)`` where ``members_source`` is one of
+    ``redis``, ``sealed_stream``, or ``tar_scan``.
+
   Examples:
     >>> _lookup_existing_members_for_archive_append(None, None)
   """
   canonical = normalize_daily_compressed_path(archive_fname)
   tar_exists = os.path.exists(archive_tar_fname)
+  if tar_exists:
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+        get_mutable_tar_authority_member_map,
+    )
+    return (
+        get_mutable_tar_authority_member_map(archive_tar_fname),
+        "tar_scan",
+    )
   if cfg.get_sync_archive_members_redis_enabled():
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         archive_members_redis_enabled,
@@ -7363,15 +7373,8 @@ def _lookup_existing_members_for_archive_append(
       )
       with archive_pre_append_member_lookup_context():
         members = get_existing_archive_members_for_daily_archive(canonical)
-      if was_warm:
-        members_source = "redis"
-      elif not tar_exists:
-        members_source = "sealed_stream"
-      else:
-        members_source = "tar_scan"
+      members_source = "redis" if was_warm else "sealed_stream"
       return members, members_source
-  if tar_exists:
-    return get_existing_archive_members(archive_tar_fname), "tar_scan"
   # Redis off + sealed-only day: local sealed scan (no mutable tar).
   members = get_existing_archive_members_for_daily_archive(canonical)
   return members, ("sealed_stream" if members else "tar_scan")
@@ -7481,11 +7484,40 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
 
     # Membership before restore: Redis/sealed can answer to_add without
     # materializing a multi-hundred-GB mutable .tar (noop sealed days).
+    redis_warm_members = None
+    if os.path.exists(archive_tar_fname) and cfg.get_sync_archive_members_redis_enabled():
+      from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+          _daily_archive_members_cache_key,
+          maybe_invalidate_open_tar_redis_divergence_for_append_batch,
+      )
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+          archive_members_redis_enabled,
+          archive_pre_append_member_lookup_context,
+          build_archive_members_redis_keys,
+          redis_members_cache_is_fully_warm,
+      )
+      if archive_members_redis_enabled():
+        canonical = normalize_daily_compressed_path(archive_fname)
+        keys = build_archive_members_redis_keys(
+            _daily_archive_members_cache_key(canonical),
+        )
+        if redis_members_cache_is_fully_warm(keys):
+          with archive_pre_append_member_lookup_context():
+            redis_warm_members = get_existing_archive_members_for_daily_archive(
+                canonical,
+            )
     if sealed_exists or os.path.exists(archive_tar_fname):
       existing_members, members_source = _lookup_existing_members_for_archive_append(
           archive_fname, archive_tar_fname,
       )
       _ensure_job_begin_logged(members_source)
+      if redis_warm_members is not None:
+        maybe_invalidate_open_tar_redis_divergence_for_append_batch(
+            archive_fname,
+            stats_files,
+            redis_warm_members,
+            existing_members,
+        )
 
     mapped_n = len(stats_files)
     stats_files_to_tar = filter_files_to_add_to_archive(

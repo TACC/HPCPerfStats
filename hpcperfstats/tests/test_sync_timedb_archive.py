@@ -7855,10 +7855,10 @@ def test_tar_append_merges_redis_without_invalidate(monkeypatch, tmp_path):
   assert fake.get(keys.complete_key) == "1"
 
 
-def test_archive_stats_files_body_prefers_redis_over_tar_scan_when_warm(
+def test_archive_stats_files_body_uses_open_tar_not_redis_when_mutable_tar_exists(
     monkeypatch, tmp_path,
 ):
-  """Regression: archive pool append must not full-scan sibling .tar when Redis warm."""
+  """Open mutable .tar is authoritative: Redis-only members still append."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   import hpcperfstats.dbload.sync_timedb as st
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
@@ -7871,6 +7871,7 @@ def test_archive_stats_files_body_prefers_redis_over_tar_scan_when_warm(
   )
 
   reset_archive_members_redis_client_for_tests()
+  helpers.clear_mutable_tar_authority_members_cache()
   raw_existing = tmp_path / "1709123456"
   raw_existing.write_text("1709123456 job1 cn001\n")
   new_raw = tmp_path / "1709123457"
@@ -7900,34 +7901,122 @@ def test_archive_stats_files_body_prefers_redis_over_tar_scan_when_warm(
       lambda: True,
   )
   monkeypatch.setattr(st.cfg, "get_sync_archive_members_redis_enabled", lambda: True)
-  member_name = helpers.get_tar_member_name(str(raw_existing))
+  member_existing = helpers.get_tar_member_name(str(raw_existing))
+  member_new = helpers.get_tar_member_name(str(new_raw))
   store_complete_members_in_redis(
-      keys, {member_name: raw_existing.stat().st_size}, saw_duplicates=False,
+      keys,
+      {
+          member_existing: raw_existing.stat().st_size,
+          member_new: new_raw.stat().st_size,
+      },
+      saw_duplicates=False,
   )
 
-  tar_scan_calls = {"n": 0}
-  original_tar_scan = st.get_existing_archive_members
-
-  def counting_tar_scan(tar_p):
-    tar_scan_calls["n"] += 1
-    return original_tar_scan(tar_p)
-
-  monkeypatch.setattr(st, "get_existing_archive_members", counting_tar_scan)
-
+  append_calls = {"n": 0}
   logs = []
   monkeypatch.setattr(st, "log_print", lambda msg, **kw: logs.append(str(msg)))
   _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
-  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(
+      st,
+      "_append_to_tar",
+      lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1),
+  )
 
   assert st._archive_stats_files_body((archive_key, [str(new_raw)]))
-  assert tar_scan_calls["n"] == 0
+  assert append_calls["n"] == 1
   assert any(
-      "archive_job_begin" in line and "members_source=redis" in line
+      "archive_job_begin" in line and "members_source=tar_scan" in line
       for line in logs
   )
   assert any(
-      "archive_job_done" in line and "elapsed_s=" in line and "outcome=ok" in line
+      "archive_job_duty" in line and "to_add=1" in line and "appended=1" in line
+      for line in logs
+  )
+
+
+def test_archive_stats_files_body_noop_when_open_tar_contains_all_batch_members(
+    monkeypatch, tmp_path,
+):
+  """Mutable .tar authority: to_add=0 when every batch path is in the open tar."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.sync_timedb as st
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      reset_archive_members_redis_client_for_tests,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+      build_archive_members_redis_keys,
+      store_complete_members_in_redis,
+  )
+
+  reset_archive_members_redis_client_for_tests()
+  helpers.clear_mutable_tar_authority_members_cache()
+  raw_existing = tmp_path / "1709123456"
+  raw_existing.write_text("1709123456 job1 cn001\n")
+  new_raw = tmp_path / "1709123457"
+  new_raw.write_text("1709123457 job2 cn002\n")
+  archive_key = str(tmp_path / "2024-03-05.tar.zst")
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  os.makedirs(os.path.dirname(tar_path) or ".", exist_ok=True)
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(
+        str(raw_existing),
+        arcname=helpers.get_tar_member_name(str(raw_existing)),
+    )
+    tf.add(
+        str(new_raw),
+        arcname=helpers.get_tar_member_name(str(new_raw)),
+    )
+  open(archive_key, "wb").write(b"sealed")
+
+  fake = FakeRedis()
+  cache_key = helpers._daily_archive_members_cache_key(
+      normalize_daily_compressed_path(archive_key),
+  )
+  keys = build_archive_members_redis_keys(cache_key)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_archive_members_redis_enabled", lambda: True)
+  store_complete_members_in_redis(
+      keys,
+      {
+          helpers.get_tar_member_name(str(raw_existing)): raw_existing.stat().st_size,
+          helpers.get_tar_member_name(str(new_raw)): new_raw.stat().st_size,
+      },
+      saw_duplicates=False,
+  )
+
+  append_calls = {"n": 0}
+  logs = []
+  monkeypatch.setattr(st, "log_print", lambda msg, **kw: logs.append(str(msg)))
+  _patch_archive_gate_pass(monkeypatch)
+  monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
+  monkeypatch.setattr(
+      st,
+      "_append_to_tar",
+      lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1),
+  )
+
+  result = st._archive_stats_files_body(
+      (archive_key, [str(raw_existing), str(new_raw)]),
+  )
+  assert isinstance(result, st.ArchiveAppendOutcome)
+  assert result.skip_finalize_invalidate
+  assert append_calls["n"] == 0
+  assert any(
+      "archive_job_begin" in line and "members_source=tar_scan" in line
+      for line in logs
+  )
+  assert any(
+      "archive_job_duty" in line and "to_add=0" in line
       for line in logs
   )
 
@@ -8137,6 +8226,108 @@ def test_archive_stats_files_restores_when_to_add_positive_sealed(
   assert append_calls["n"] == 1
 
 
+def test_lookup_members_source_tar_scan_when_mutable_tar_exists(
+    monkeypatch, tmp_path,
+):
+  """Mutable sibling .tar forces open-tar authority even when Redis is warm."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.sync_timedb as st
+
+  archive_key = str(tmp_path / "2024-03-07.tar.zst")
+  Path(archive_key).write_bytes(b"zst")
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  raw = tmp_path / "1709123456"
+  raw.write_text("1709123456 job1 cn001\n")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(raw), arcname=helpers.get_tar_member_name(str(raw)))
+  open_members = {helpers.get_tar_member_name(str(raw)): raw.stat().st_size}
+
+  monkeypatch.setattr(st.cfg, "get_sync_archive_members_redis_enabled", lambda: True)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".archive_members_redis_enabled",
+      lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".redis_members_cache_is_fully_warm",
+      lambda _keys: True,
+  )
+
+  got, source = st._lookup_existing_members_for_archive_append(archive_key, tar_path)
+  assert got == open_members
+  assert source == "tar_scan"
+
+
+def test_raw_stats_path_needs_tar_append_when_redis_claims_but_open_tar_missing(
+    monkeypatch, tmp_path,
+):
+  """Handoff partition must not trust Redis when mutable .tar lacks the member."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+      build_archive_members_redis_keys,
+      store_complete_members_in_redis,
+  )
+
+  helpers.clear_mutable_tar_authority_members_cache()
+  helpers.clear_daily_archive_members_cache()
+  raw = tmp_path / "host" / "1709123456"
+  raw.parent.mkdir(parents=True)
+  raw.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "daily" / "2024-03-05.tar.zst")
+  os.makedirs(os.path.dirname(archive_key), exist_ok=True)
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  open(archive_key, "wb").write(b"zst")
+  open(tar_path, "wb").write(b"")
+
+  fake = FakeRedis()
+  cache_key = helpers._daily_archive_members_cache_key(
+      normalize_daily_compressed_path(archive_key),
+  )
+  keys = build_archive_members_redis_keys(cache_key)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+  member_name = helpers.get_tar_member_name(str(raw))
+  store_complete_members_in_redis(
+      keys,
+      {member_name: raw.stat().st_size},
+      saw_duplicates=False,
+  )
+
+  assert helpers.raw_stats_path_needs_tar_append(str(raw), str(tmp_path / "daily"))
+
+
+def test_pin_hold_after_open_tar_authority_noop(tmp_path):
+  """Skip-invalidate noop must not clear pins when open tar lacks the member."""
+  import hpcperfstats.dbload.sync_timedb as st
+
+  raw = tmp_path / "host" / "1709123456"
+  raw.parent.mkdir(parents=True)
+  raw.write_text("1709123456 job1 cn001\n")
+  tar_path = tmp_path / "2026-06-08.tar"
+  tar_path.write_bytes(b"")
+  assert not st.archive_finalize_may_clear_handoff_pin(
+      is_handoff_pin=True,
+      skip_finalize_invalidate=True,
+      stats_path=str(raw),
+      open_tar_path=str(tar_path),
+      open_tar_members={},
+  )
+  assert st.should_suppress_day_close_archive_append_rehandoff(
+      archive_append_inflight=False,
+      active_append_or_inflight_paths=False,
+      pending_archive_heap=False,
+  ) is None
+
+
 def test_lookup_members_source_sealed_stream_when_tar_missing(monkeypatch, tmp_path):
   """Cold Redis + missing tar labels members_source=sealed_stream after populate."""
   import hpcperfstats.dbload.sync_timedb as st
@@ -8212,7 +8403,7 @@ def test_apply_archive_finalize_triggers_unthrottled_supervisor_reap():
 def test_archive_append_cold_redis_completes_with_inflight_first(
     monkeypatch, tmp_path, capsys,
 ):
-  """F6: inflight-first archive job must still reach archive_job_begin on cold Redis."""
+  """F6: inflight-first archive job must still reach archive_job_begin with open tar."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   import hpcperfstats.dbload.sync_timedb as st
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
@@ -8278,10 +8469,9 @@ def test_archive_append_cold_redis_completes_with_inflight_first(
   monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
 
   assert st._archive_stats_files_body((archive_key, [str(new_raw)]))
-  assert call_order.index("inflight") < call_order.index("lookup")
+  assert "inflight" in call_order
   combined = "\n".join(logs) + capsys.readouterr().out
   assert "archive_job_begin" in combined and "members_source=tar_scan" in combined
-  assert "populate_source=tar" in combined
   assert "archive_job_done" in combined
 
 

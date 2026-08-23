@@ -5762,6 +5762,109 @@ def _build_archive_validation_cache_key(compressed_path: str) -> Any:
 
 
 _DAILY_ARCHIVE_MEMBERS_CACHE = {}
+_MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE: dict[str, dict[str, int]] = {}
+
+
+def clear_mutable_tar_authority_members_cache() -> None:
+  """
+  Clear per-process open-tar authority maps (tests and worker reset).
+
+  Returns:
+    None
+
+  Examples:
+    >>> clear_mutable_tar_authority_members_cache()  # doctest: +SKIP
+  """
+  _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.clear()
+
+
+def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
+  """
+  Return file member sizes from a mutable daily ``.tar`` on disk.
+
+  Bypasses L1/Redis member caches so append and handoff partition agree with
+  the open tar Branch C uses for reclassify.
+
+  Args:
+    tar_path (str): Path to ``YYYY-MM-DD.tar``.
+
+  Returns:
+    dict[str, int]: Member name to byte size (largest when duplicated).
+  """
+  tar_norm = os.path.normpath(str(tar_path or ""))
+  if not tar_norm:
+    return {}
+  cached = _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.get(tar_norm)
+  if cached is not None:
+    return cached
+  members: dict[str, int] = {}
+  if os.path.isfile(tar_norm):
+    try:
+      with file_read_lock_wait(tar_norm):
+        members = _read_tar_file_member_sizes_unlocked(tar_norm)
+    except Exception:
+      members = {}
+    finally:
+      _remove_read_lock_sidecar(tar_norm)
+  _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE[tar_norm] = members
+  return members
+
+
+def maybe_invalidate_open_tar_redis_divergence_for_append_batch(
+  archive_fname: str,
+  stats_files: Any,
+  redis_members: Any,
+  open_members: Any,
+  *,
+  log_fn: Any = log_print,
+) -> bool:
+  """
+  Log and invalidate when warm Redis claims batch members the open tar lacks.
+
+  Args:
+    archive_fname (str): Daily compressed archive path (``.tar.zst`` / ``.gz``).
+    stats_files (Any): Raw stats paths in the current append batch.
+    redis_members (Any): Warm Redis member map.
+    open_members (Any): Authoritative open-tar member map.
+    log_fn (Any): Logger callable.
+
+  Returns:
+    bool: True when divergence was detected and invalidate ran.
+  """
+  if not redis_members or not stats_files:
+    return False
+  redis_only_n = 0
+  open_only_n = 0
+  for path in stats_files:
+    member_name = get_tar_member_name(path)
+    try:
+      expected_size = int(os.path.getsize(path))
+    except OSError:
+      continue
+    redis_hit = redis_members.get(member_name) == expected_size
+    open_hit = open_members.get(member_name) == expected_size
+    if redis_hit and not open_hit:
+      redis_only_n += 1
+    elif open_hit and not redis_hit:
+      open_only_n += 1
+  if redis_only_n <= 0 and open_only_n <= 0:
+    return False
+  day_date = calendar_date_from_daily_tar_path(
+      daily_tar_path_from_compressed(archive_fname),
+  )
+  day_token = day_date.isoformat() if day_date is not None else "?"
+  if log_fn:
+    log_fn(
+        "INFO: archive_append open_tar_redis_divergence day=%s "
+        "redis_only_n=%d open_only_n=%d"
+        % (day_token, redis_only_n, open_only_n),
+        flush=True,
+    )
+  invalidate_after_daily_tar_mutation(
+      archive_fname,
+      reason="open_tar_divergence",
+  )
+  return True
 
 
 def clear_daily_archive_members_cache() -> None:
@@ -5775,6 +5878,7 @@ def clear_daily_archive_members_cache() -> None:
     >>> clear_daily_archive_members_cache()  # doctest: +SKIP
   """
   _DAILY_ARCHIVE_MEMBERS_CACHE.clear()
+  clear_mutable_tar_authority_members_cache()
   _INGEST_SKIPPED_CALENDAR_DAYS.clear()
   _LOGGED_ARCHIVE_DAY_INGEST_SKIP.clear()
 
@@ -5976,6 +6080,8 @@ def invalidate_daily_archive_members_cache(
   ]
   for key in drop_keys:
     _DAILY_ARCHIVE_MEMBERS_CACHE.pop(key, None)
+  tar_path = daily_tar_path_from_compressed(canonical)
+  _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.pop(os.path.normpath(tar_path), None)
   try:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         archive_members_redis_enabled,
@@ -6235,10 +6341,14 @@ def daily_archive_has_member_with_size(
   Examples:
     >>> daily_archive_has_member_with_size("x", None, 0)  # doctest: +SKIP
   """
+  canonical = normalize_daily_compressed_path(compressed_path)
+  tar_path = daily_tar_path_from_compressed(canonical)
+  if os.path.isfile(tar_path):
+    open_members = get_mutable_tar_authority_member_map(tar_path)
+    return open_members.get(member_name) == expected_size
   members = _lookup_daily_archive_members_cache(compressed_path)
   if members is not None:
     return members.get(member_name) == expected_size
-  canonical = normalize_daily_compressed_path(compressed_path)
   try:
     redis_match = _daily_archive_member_match_via_redis_l2(
         canonical,
