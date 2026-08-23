@@ -26,6 +26,7 @@ Attributes:
   USTAR_MAX_MEMBER_BYTES: Attribute.
   _ARCHIVE_MEMBERS_INVALIDATION_HOOK: Attribute.
   _DAILY_ARCHIVE_MEMBERS_CACHE: Attribute.
+  _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE: Attribute.
   _DAILY_GZ_BASENAME_RE: Attribute.
   _DAILY_ISO_DATE_RE: Attribute.
   _DAILY_TAR_BASENAME_RE: Attribute.
@@ -5790,6 +5791,9 @@ def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
 
   Returns:
     dict[str, int]: Member name to byte size (largest when duplicated).
+
+  Examples:
+    >>> get_mutable_tar_authority_member_map("")  # doctest: +SKIP
   """
   tar_norm = os.path.normpath(str(tar_path or ""))
   if not tar_norm:
@@ -5830,6 +5834,11 @@ def maybe_invalidate_open_tar_redis_divergence_for_append_batch(
 
   Returns:
     bool: True when divergence was detected and invalidate ran.
+
+  Examples:
+    >>> maybe_invalidate_open_tar_redis_divergence_for_append_batch(
+    ...     "", [], {}, {},
+    ... )  # doctest: +SKIP
   """
   if not redis_members or not stats_files:
     return False
@@ -6282,6 +6291,8 @@ def _daily_archive_member_match_via_redis_l2(
 
   if not archive_members_redis_enabled():
     return None
+  if not daily_archive_populate_source_exists(compressed_path):
+    return None
   cache_key = _daily_archive_members_cache_key(canonical)
   keys = build_archive_members_redis_keys(cache_key)
   client = get_archive_members_redis_client(required=True)
@@ -6346,6 +6357,8 @@ def daily_archive_has_member_with_size(
   if os.path.isfile(tar_path):
     open_members = get_mutable_tar_authority_member_map(tar_path)
     return open_members.get(member_name) == expected_size
+  if not daily_archive_populate_source_exists(canonical):
+    return False
   members = _lookup_daily_archive_members_cache(compressed_path)
   if members is not None:
     return members.get(member_name) == expected_size
@@ -8220,12 +8233,12 @@ def get_existing_archive_members_for_daily_archive(
     >>> get_existing_archive_members_for_daily_archive("x")  # doctest: +SKIP
   """
   canonical = normalize_daily_compressed_path(archive_compressed_path)
-  cached = _lookup_daily_archive_members_cache(canonical)
-  if cached is not None:
-    return cached
   if not daily_archive_populate_source_exists(canonical):
     _store_daily_archive_members_cache(canonical, {})
     return {}
+  cached = _lookup_daily_archive_members_cache(canonical)
+  if cached is not None:
+    return cached
   try:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         archive_members_redis_enabled,

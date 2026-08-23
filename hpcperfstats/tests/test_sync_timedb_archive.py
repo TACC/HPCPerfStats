@@ -8328,6 +8328,140 @@ def test_pin_hold_after_open_tar_authority_noop(tmp_path):
   ) is None
 
 
+def test_get_existing_archive_members_empty_when_no_archive_despite_l1(
+    tmp_path,
+):
+  """Stale L1 must not claim members when no tar and no sealed archive exist."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  helpers.clear_daily_archive_members_cache()
+  archive_key = str(tmp_path / "daily" / "2026-08-20.tar.zst")
+  os.makedirs(os.path.dirname(archive_key), exist_ok=True)
+  canonical = normalize_daily_compressed_path(archive_key)
+  helpers._store_daily_archive_members_cache(
+      canonical,
+      {"host/1709123456": 999},
+  )
+  assert helpers.get_existing_archive_members_for_daily_archive(canonical) == {}
+
+
+def test_archive_stats_files_body_to_add_when_redis_warm_no_archive_on_disk(
+    monkeypatch, tmp_path,
+):
+  """Aug 20+ class: warm Redis must not skip bootstrap when no archive on disk."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.sync_timedb as st
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      reset_archive_members_redis_client_for_tests,
+  )
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+      build_archive_members_redis_keys,
+      store_complete_members_in_redis,
+  )
+
+  reset_archive_members_redis_client_for_tests()
+  helpers.clear_daily_archive_members_cache()
+  raw = tmp_path / "1709123456"
+  raw.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "daily" / "2026-08-20.tar.zst")
+  os.makedirs(os.path.dirname(archive_key), exist_ok=True)
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  assert not os.path.exists(tar_path)
+  assert not os.path.exists(archive_key)
+
+  fake = FakeRedis()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+  cache_key = helpers._daily_archive_members_cache_key(
+      normalize_daily_compressed_path(archive_key),
+  )
+  keys = build_archive_members_redis_keys(cache_key)
+  member_name = helpers.get_tar_member_name(str(raw))
+  store_complete_members_in_redis(
+      keys,
+      {member_name: raw.stat().st_size},
+      saw_duplicates=False,
+  )
+  monkeypatch.setattr(st.cfg, "get_sync_archive_members_redis_enabled", lambda: True)
+
+  append_calls = {"n": 0}
+  logs = []
+  monkeypatch.setattr(st, "log_print", lambda msg, **kw: logs.append(str(msg)))
+  _patch_archive_gate_pass(monkeypatch)
+  monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
+  monkeypatch.setattr(
+      st,
+      "_append_to_tar",
+      lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1),
+  )
+
+  assert st._archive_stats_files_body((archive_key, [str(raw)]))
+  assert append_calls["n"] == 1
+  assert any(
+      "archive_job_duty" in line and "to_add=1" in line and "appended=1" in line
+      for line in logs
+  )
+
+
+def test_raw_stats_path_needs_tar_append_when_redis_warm_no_archive_on_disk(
+    monkeypatch, tmp_path,
+):
+  """Ingest gate: phantom warm Redis must not suppress need_archival with no archive."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+      build_archive_members_redis_keys,
+      store_complete_members_in_redis,
+  )
+
+  helpers.clear_daily_archive_members_cache()
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts = _local_day_epoch("2026-08-20")
+  raw_path = host_dir / ts
+  raw_path.write_text(f"{ts} job1 node1\n")
+  archive_key = str(daily_dir / "2026-08-20.tar.zst")
+  assert not os.path.exists(archive_key)
+  assert not os.path.exists(daily_tar_path_from_compressed(archive_key))
+
+  fake = FakeRedis()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+  cache_key = helpers._daily_archive_members_cache_key(
+      normalize_daily_compressed_path(archive_key),
+  )
+  keys = build_archive_members_redis_keys(cache_key)
+  member_name = helpers.get_tar_member_name(str(raw_path))
+  store_complete_members_in_redis(
+      keys,
+      {member_name: raw_path.stat().st_size},
+      saw_duplicates=False,
+  )
+
+  assert helpers.raw_stats_path_needs_tar_append(
+      str(raw_path),
+      str(daily_dir),
+      first_ts=ts,
+  )
+
+
 def test_lookup_members_source_sealed_stream_when_tar_missing(monkeypatch, tmp_path):
   """Cold Redis + missing tar labels members_source=sealed_stream after populate."""
   import hpcperfstats.dbload.sync_timedb as st

@@ -480,6 +480,45 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 **Pass (T2):** past-day mutable `.tar` dropped for completed days; no multi-day loop of identical handoff counts with `to_add=0` / flat `retryable_skips`.
 
+### T0 / T1 / T2 — daily tar append stall / new tars (hpcperfstats03, 2026-08-23)
+
+**Signature (pre-fix):** all open daily `.tar` mtimes stale >3d (`tars_mtime_older_than_3d` equals `tar_count`); **`Archived batch=0`**; **`archive_job_duty` with `to_add=0`** on every job (e.g. 47/47); newest calendar days (e.g. **2026-08-20+**) have **no** `.tar`; June days occupy oldest-first archive slots with **`mapped>0`** but **`appended=0`**. Often coexists with open-tar/redis divergence on older mutable tars and skip-invalidate thrash when pin-hold is not deployed.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T pipeline \
+  su hpcperfstats -c 'python3 -c "
+import glob, os, time
+from hpcperfstats.dbload.lib import conf_parser as c
+d = c.get_daily_archive_dir_path()
+tars = sorted(glob.glob(os.path.join(d, \"????-??-??.tar\")))
+now = time.time()
+old3d = sum(1 for p in tars if now - os.path.getmtime(p) > 3 * 86400)
+print(\"daily_archive_dir\", d)
+print(\"tar_count\", len(tars))
+print(\"tars_mtime_older_than_3d\", old3d)
+for day in (\"2026-08-20\", \"2026-08-21\", \"2026-08-22\", \"2026-08-23\"):
+    print(day, \"tar_exists\", os.path.isfile(os.path.join(d, day + \".tar\")))
+"'
+
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | awk '\''
+/archive_job_duty.*to_add=0/ { tz++ }
+/archive_job_duty.*appended=[1-9]/ { ap++ }
+/Archived batch/ { ab++ }
+/archive_finalize skip invalidate/ { si++ }
+END { printf "to_add_zero %d\nappended_positive %d\narchived_batch %d\nskip_invalidate %d\n", tz+0, ap+0, ab+0, si+0 }'\''
+
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'archive_job_duty|Archived batch|archive_job_begin|handoff_pin_hold|open_tar_redis_divergence' | tail -30
+```
+
+**Fail (T0):** `tars_mtime_older_than_3d == tar_count` with **`appended_positive=0`** and **`Archived batch=0`** for 24h+; missing newest-calendar-day `.tar` files while June-only `archive_job_duty` lines show **`to_add=0`**.
+
+**Pass (T0):** at least one sticky day logs **`to_add>0`** / **`appended>0`** or **`Archived batch`**; newest calendar days gain `.tar` files or advancing mtimes; **`members_source=tar_scan`** on mutable-tar jobs (see open-tar/redis divergence section).
+
+**Pass (T1):** `open_tar_n` declines for lead days; handoff `paths=N` trends down; August calendar days appear in `archive_job_duty` samples.
+
+**Pass (T2):** daily `.tar` mtimes advance on active days; no perpetual all-`to_add=0` census while closed raw remains on disk.
+
 ### T0 / T1 — tar append exit 2 / large member (`out of off_t range`, 2026-07)
 
 Members larger than **8 GiB − 1** fail classic ustar without pax headers (`value N out of off_t range 0..8589934591`). Production always passes **`--posix`** on tar create/append (`-C /` + relative `-T` members). When the daily tar is **not pax-capable** (bare `POSIX tar archive` without pax headers; GNU labels need no convert), the **archive pool** job logs **`must_convert`**, attempts **extract + `tar --format=pax` recreate**, then appends. On convert failure: **`convert_fail_skip`** oversized members (original tar untouched) and continue with remaining paths. **`archive_job_done`** includes **`outcome=ok|fail`** (do not treat `archive_job_done` alone as success).
