@@ -24,6 +24,7 @@ Attributes:
   _LOCK_PREFIX: Attribute.
   _MEMBERSHIP_DAY_EXACT_SCAN_PREFIXES: Attribute.
   _MEMBERSHIP_IDENTITY_SCAN_PREFIXES: Attribute.
+  _JOB_V1_PREFIX: Attribute.
   _POPULATE_QUEUED_PREFIX: Attribute.
   _POPULATE_QUEUE_KEY: Attribute.
   _PROTECTED_COORD_PREFIXES: Attribute.
@@ -55,6 +56,8 @@ _POPULATE_QUEUED_PREFIX = "%s:archive_members:populate_queued:v1" % _KEY_PREFIX
 _INGEST_TAR_HOT_PREFIX = "%s:ingest_tar_hot:v1" % _KEY_PREFIX
 _ARCHIVE_APPEND_INFLIGHT_PREFIX = "%s:archive_append_inflight:v1" % _KEY_PREFIX
 _DAILY_TAR_RESTORE_PREFIX = "%s:daily_tar_restore:v1" % _KEY_PREFIX
+# Keep in sync with sync_timedb_job_queue.JOB_V1_PREFIX (orchestrator jobs).
+_JOB_V1_PREFIX = "%s:job:v1" % _KEY_PREFIX
 
 _MEMBERSHIP_IDENTITY_SCAN_PREFIXES = (
     _HASH_PREFIX,
@@ -72,6 +75,7 @@ _PROTECTED_COORD_PREFIXES = (
     _INGEST_TAR_HOT_PREFIX,
     _ARCHIVE_APPEND_INFLIGHT_PREFIX,
     _DAILY_TAR_RESTORE_PREFIX,
+    _JOB_V1_PREFIX,
 )
 
 
@@ -408,8 +412,8 @@ def invalidate_archive_members_redis_bulk(
   ``day_tokens=None`` clears all membership-related key families and the
   populate queue list. Otherwise only keys for those calendar days.
   
-  Does **not** delete ``ingest_tar_hot``, ``archive_append_inflight``, or
-  ``daily_tar_restore`` coordination keys.
+  Does **not** delete ``ingest_tar_hot``, ``archive_append_inflight``,
+  ``daily_tar_restore``, or ``job:v1`` orchestrator queue/lease/payload keys.
   
   Returns ``{"scanned": int, "deleted": int, "dry_run": bool, "days": list}``.
   When ``client`` is omitted, returns ``"error": "redis_unavailable"`` (callers
