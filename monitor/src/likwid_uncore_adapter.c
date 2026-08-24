@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "cpu_counter_metrics_likwid_begin.h"
@@ -413,21 +414,41 @@ void likwid_uncore_adapter_collect(struct stats_type *type, likwid_uncore_profil
   int i;
   int n_events = 0;
   int thread_id = 0;
+  int group;
+  static time_t last_warn;
 
   if (type == NULL || profile < 0 || profile >= LIKWID_UNCORE_PROFILE_COUNT)
     return;
   if (!g_profile_ready[profile] || g_profile_group[profile] < 0)
     return;
-  if (perfmon_readGroupCounters(g_profile_group[profile]) < 0)
+
+  group = g_profile_group[profile];
+  /*
+   * host_cpu_hw prepare_collect re-arms the core group each tick; SKX/ICX
+   * uncore_imc PERF stops unless we finish this group before read.
+   */
+  if (likwid_uncore_finish_group(group) < 0) {
+    time_t now = time(NULL);
+    const char *name = type->st_name != NULL ? type->st_name : "uncore";
+
+    if (last_warn == 0 || (now > last_warn && now - last_warn >= 60)) {
+      monitor_log_warn("%s: perfmon_setupCounters(uncore group=%d) failed before "
+                       "readGroupCounters; uncore counters may stay zero\n",
+                       name, group);
+      last_warn = now;
+    }
+    return;
+  }
+  if (perfmon_readGroupCounters(group) < 0)
     return;
 
-  n_events = perfmon_getNumberOfEvents(g_profile_group[profile]);
+  n_events = perfmon_getNumberOfEvents(group);
   for (i = 0; i < n_events; i++) {
-    const char *counter_name = perfmon_getCounterName(g_profile_group[profile], i);
+    const char *counter_name = perfmon_getCounterName(group, i);
     unsigned long long val = 0;
     double raw;
 
-    raw = perfmon_getResult(g_profile_group[profile], i, thread_id);
+    raw = perfmon_getResult(group, i, thread_id);
     if (likwid_result_to_ull(raw, LIKWID_RESULT_U48_MAX, &val) < 0)
       continue;
     likwid_uncore_adapter_emit_counter(type, profile, counter_name, val);

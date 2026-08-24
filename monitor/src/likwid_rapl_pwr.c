@@ -117,6 +117,15 @@ static void likwid_rapl_pwr_restore_stderr(int saved_stderr, int null_fd)
     close(null_fd);
 }
 
+static int likwid_rapl_pwr_finish_group(int group)
+{
+  if (perfmon_setupCounters(group) < 0)
+    return -1;
+  /* startCounters may fail if another group already started the session. */
+  (void)perfmon_startCounters();
+  return 0;
+}
+
 static int likwid_rapl_pwr_try_eventset(const char *events, int *group_out)
 {
   int group;
@@ -150,12 +159,11 @@ static int likwid_rapl_pwr_try_eventset(const char *events, int *group_out)
       likwid_rapl_pwr_restore_stderr(saved_stderr, null_fd);
     return -1;
   }
-  if (perfmon_setupCounters(group) < 0) {
+  if (likwid_rapl_pwr_finish_group(group) < 0) {
     if (quiet)
       likwid_rapl_pwr_restore_stderr(saved_stderr, null_fd);
     return -1;
   }
-  (void)perfmon_startCounters();
   if (quiet)
     likwid_rapl_pwr_restore_stderr(saved_stderr, null_fd);
   *group_out = group;
@@ -295,41 +303,44 @@ int likwid_rapl_pwr_collect_socket_mj(int cpu_id, unsigned int socket_id,
     int n_events;
     int i;
 
-    if (perfmon_readGroupCounters(g_pwr_group) >= 0) {
-      n_events = perfmon_getNumberOfEvents(g_pwr_group);
-      for (i = 0; i < n_events; i++) {
-        const char *event_name = perfmon_getEventName(g_pwr_group, i);
-        const char *key;
-        double raw;
-        unsigned long long mj = 0;
+    if (perfmon_setupCounters(g_pwr_group) >= 0) {
+      (void)perfmon_startCounters();
+      if (perfmon_readGroupCounters(g_pwr_group) >= 0) {
+        n_events = perfmon_getNumberOfEvents(g_pwr_group);
+        for (i = 0; i < n_events; i++) {
+          const char *event_name = perfmon_getEventName(g_pwr_group, i);
+          const char *key;
+          double raw;
+          unsigned long long mj = 0;
 
-        key = likwid_rapl_pwr_schema_key_from_event(event_name, g_pwr_amd_path);
-        if (key == NULL)
-          continue;
-        raw = likwid_rapl_pwr_best_result(g_pwr_group, i, cpu_id);
-        if (!likwid_rapl_pwr_result_usable(raw))
-          continue;
-        mj = likwid_rapl_joules_to_mj(raw);
-        if (mj == 0)
-          continue;
-        if (strcmp(key, "pkg_energy") == 0) {
-          *pkg_mj = mj;
-          *has_pkg = 1;
-          got = 1;
-        } else if (strcmp(key, "pp0_energy") == 0 || strcmp(key, "core_energy") == 0) {
-          *core_mj = mj;
-          *has_core = 1;
-          got = 1;
-        } else if (strcmp(key, "pp1_energy") == 0) {
-          if (pp1_mj != NULL && has_pp1 != NULL) {
-            *pp1_mj = mj;
-            *has_pp1 = 1;
+          key = likwid_rapl_pwr_schema_key_from_event(event_name, g_pwr_amd_path);
+          if (key == NULL)
+            continue;
+          raw = likwid_rapl_pwr_best_result(g_pwr_group, i, cpu_id);
+          if (!likwid_rapl_pwr_result_usable(raw))
+            continue;
+          mj = likwid_rapl_joules_to_mj(raw);
+          if (mj == 0)
+            continue;
+          if (strcmp(key, "pkg_energy") == 0) {
+            *pkg_mj = mj;
+            *has_pkg = 1;
+            got = 1;
+          } else if (strcmp(key, "pp0_energy") == 0 || strcmp(key, "core_energy") == 0) {
+            *core_mj = mj;
+            *has_core = 1;
+            got = 1;
+          } else if (strcmp(key, "pp1_energy") == 0) {
+            if (pp1_mj != NULL && has_pp1 != NULL) {
+              *pp1_mj = mj;
+              *has_pp1 = 1;
+              got = 1;
+            }
+          } else if (strcmp(key, "dram_energy") == 0) {
+            *dram_mj = mj;
+            *has_dram = 1;
             got = 1;
           }
-        } else if (strcmp(key, "dram_energy") == 0) {
-          *dram_mj = mj;
-          *has_dram = 1;
-          got = 1;
         }
       }
     }
