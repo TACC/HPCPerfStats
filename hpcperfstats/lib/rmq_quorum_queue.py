@@ -12,18 +12,21 @@ Attributes:
     timeout.
   AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS: First reconnect sleep after 541.
   AMQP_RECONNECT_BACKOFF_CAP_SECONDS: Max exponential reconnect sleep.
+  AMQP_RECONNECT_STABLE_CONSUME_SECONDS: Consume duration before backoff reset.
 """
 from __future__ import annotations
 
 from typing import Any
 
 import pika
+from pika.exceptions import StreamLostError
 
 QUORUM_QUEUE_TYPE = "quorum"
 LISTEND_AMQP_HEARTBEAT_SECONDS = 60
 LISTEND_AMQP_BLOCKED_CONNECTION_TIMEOUT_SECONDS = 300
 AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS = 5
 AMQP_RECONNECT_BACKOFF_CAP_SECONDS = 60
+AMQP_RECONNECT_STABLE_CONSUME_SECONDS = 30
 
 
 class QuorumQueuePreconditionError(RuntimeError):
@@ -131,8 +134,67 @@ def is_quorum_consume_setup_error(exc: BaseException) -> bool:
   if args and args[0] == 541:
     return True
   msg = str(exc).lower()
-  return "timed out consuming from quorum" in msg or (
-      "541" in msg and "quorum" in msg
+  if "timed out consuming from quorum" in msg:
+    return True
+  if "541" in msg and "quorum" in msg:
+    return True
+  return "541" in msg and "internal_error" in msg
+
+
+def is_amqp_peer_reset_reconnect_error(exc: BaseException) -> bool:
+  """
+  Return True when ``exc`` is a peer-reset / stream-lost / handshake failure.
+
+  Matches ``ConnectionResetError``, pika ``StreamLostError``, and common
+  broker/client strings (connection reset, handshake timeout).
+
+  Args:
+    exc (BaseException): Exception from consume, ack, or connect.
+
+  Returns:
+    bool: ``True`` when exponential reconnect backoff should apply.
+
+  Examples:
+    >>> is_amqp_peer_reset_reconnect_error(ConnectionResetError(104, "reset"))
+    True
+    >>> is_amqp_peer_reset_reconnect_error(OSError("disk full"))
+    False
+  """
+  if isinstance(exc, (ConnectionResetError, StreamLostError)):
+    return True
+  msg = str(exc).lower()
+  if "connectionreset" in msg or "connection reset" in msg:
+    return True
+  if "stream" in msg and "lost" in msg:
+    return True
+  if "handshake" in msg and "timeout" in msg:
+    return True
+  return False
+
+
+def should_use_amqp_exponential_reconnect_backoff(exc: BaseException) -> bool:
+  """
+  Return True when listend should grow outer-loop reconnect sleep.
+
+  Combines quorum consume-setup (541) and peer-reset / handshake failures.
+
+  Args:
+    exc (BaseException): Exception from connect, declare, or consume.
+
+  Returns:
+    bool: ``True`` when ``next_amqp_reconnect_backoff_seconds`` applies.
+
+  Examples:
+    >>> should_use_amqp_exponential_reconnect_backoff(
+    ...     ConnectionResetError(104, "Connection reset by peer")
+    ... )
+    True
+    >>> should_use_amqp_exponential_reconnect_backoff(OSError("disk full"))
+    False
+  """
+  return (
+      is_quorum_consume_setup_error(exc)
+      or is_amqp_peer_reset_reconnect_error(exc)
   )
 
 

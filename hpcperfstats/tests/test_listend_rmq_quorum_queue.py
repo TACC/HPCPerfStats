@@ -92,13 +92,117 @@ def test_classify_amqp_outer_error_logs_consume_setup_for_541(monkeypatch):
   assert not any("Error establishing RabbitMQ connection" in m for m in logs)
 
 
-def test_classify_amqp_outer_error_logs_establishing_for_tcp(monkeypatch):
+def test_is_quorum_consume_setup_error_detects_bare_541_internal_error():
+  from hpcperfstats.lib.rmq_quorum_queue import is_quorum_consume_setup_error
+
+  assert is_quorum_consume_setup_error(Exception("(541, 'INTERNAL_ERROR')")) is True
+
+  class _TupleExc(Exception):
+    def __init__(self) -> None:
+      super().__init__(541, "INTERNAL_ERROR")
+
+  assert is_quorum_consume_setup_error(_TupleExc()) is True
+
+
+def test_is_amqp_peer_reset_reconnect_error_detects_connection_reset():
+  from hpcperfstats.lib.rmq_quorum_queue import is_amqp_peer_reset_reconnect_error
+
+  assert is_amqp_peer_reset_reconnect_error(
+      ConnectionResetError(104, "Connection reset by peer")
+  ) is True
+  assert is_amqp_peer_reset_reconnect_error(
+      Exception("Timeout during AMQP handshake")
+  ) is True
+  assert is_amqp_peer_reset_reconnect_error(OSError("disk full")) is False
+
+
+def test_should_use_amqp_exponential_reconnect_backoff_peer_reset():
+  from hpcperfstats.lib.rmq_quorum_queue import (
+      should_use_amqp_exponential_reconnect_backoff,
+  )
+
+  assert should_use_amqp_exponential_reconnect_backoff(
+      ConnectionResetError(104, "reset")
+  ) is True
+
+
+def test_apply_amqp_reconnect_backoff_grows(monkeypatch):
+  import hpcperfstats.listend as listend
+
+  listend._amqp_reconnect_backoff_seconds = 5
+  assert listend._apply_amqp_reconnect_backoff() == 10
+  assert listend._amqp_reconnect_backoff_seconds == 10
+  assert listend._apply_amqp_reconnect_backoff() == 20
+
+
+def test_maybe_reset_backoff_after_stable_consume(monkeypatch):
+  import hpcperfstats.listend as listend
+
+  listend._amqp_reconnect_backoff_seconds = 40
+  listend._consume_attach_monotonic = 1000.0
+  monkeypatch.setattr(listend.time, "monotonic", lambda: 1031.0)
+  listend._maybe_reset_amqp_reconnect_backoff_after_stable_consume()
+  assert listend._amqp_reconnect_backoff_seconds == 5
+
+  listend._amqp_reconnect_backoff_seconds = 40
+  listend._consume_attach_monotonic = 1000.0
+  monkeypatch.setattr(listend.time, "monotonic", lambda: 1010.0)
+  listend._maybe_reset_amqp_reconnect_backoff_after_stable_consume()
+  assert listend._amqp_reconnect_backoff_seconds == 40
+
+
+def test_request_amqp_full_reconnect_closes_channel_then_connection(monkeypatch):
+  import hpcperfstats.listend as listend
+
+  calls = []
+
+  def _fake_close(channel, connection, *, stop_consuming=False):
+    calls.append(("close", stop_consuming, channel, connection))
+
+  monkeypatch.setattr(
+      listend, "_close_amqp_channel_and_connection_gracefully", _fake_close
+  )
+  monkeypatch.setattr(listend, "log_print", lambda _m: None)
+
+  channel = MagicMock()
+  conn = MagicMock()
+  channel.connection = conn
+  listend._amqp_reconnect_requested = False
+  listend._request_amqp_full_reconnect(channel, "Channel is closed.")
+  assert calls == [("close", True, channel, conn)]
+
+
+def test_classify_amqp_outer_error_logs_peer_reset(monkeypatch):
+  import hpcperfstats.listend as listend
+
+  logs = []
+  monkeypatch.setattr(listend, "log_print", lambda m: logs.append(m))
+  kind = listend._log_amqp_outer_loop_error(
+      ConnectionResetError(104, "Connection reset by peer")
+  )
+  assert kind == "peer_reset"
+  assert any("peer reset" in m.lower() for m in logs)
+
+
+def test_classify_amqp_outer_error_logs_handshake_as_peer_reset(monkeypatch):
   import hpcperfstats.listend as listend
 
   logs = []
   monkeypatch.setattr(listend, "log_print", lambda m: logs.append(m))
   kind = listend._log_amqp_outer_loop_error(
       Exception("Timeout during AMQP handshake")
+  )
+  assert kind == "peer_reset"
+  assert any("peer reset" in m.lower() for m in logs)
+
+
+def test_classify_amqp_outer_error_logs_establishing_for_tcp(monkeypatch):
+  import hpcperfstats.listend as listend
+
+  logs = []
+  monkeypatch.setattr(listend, "log_print", lambda m: logs.append(m))
+  kind = listend._log_amqp_outer_loop_error(
+      Exception("Connection refused")
   )
   assert kind == "connection"
   assert any("Error establishing RabbitMQ connection" in m for m in logs)

@@ -16,6 +16,7 @@ Attributes:
   _db_backpressure_pause: Attribute.
   _amqp_reconnect_requested: Attribute.
   _amqp_reconnect_backoff_seconds: Attribute.
+  _consume_attach_monotonic: Attribute.
   _recent_host_queue: Attribute.
   _recent_host_redis_client: Attribute.
   _recent_host_worker_stop_event: Attribute.
@@ -59,10 +60,13 @@ from hpcperfstats.lib.monitor_identity import (
 )
 from hpcperfstats.lib.rmq_quorum_queue import (
     AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS,
+    AMQP_RECONNECT_STABLE_CONSUME_SECONDS,
     declare_durable_quorum_queue,
+    is_amqp_peer_reset_reconnect_error,
     is_quorum_consume_setup_error,
     listend_amqp_connection_parameters,
     next_amqp_reconnect_backoff_seconds,
+    should_use_amqp_exponential_reconnect_backoff,
 )
 
 DEBUG = cfg.get_debug()
@@ -93,6 +97,8 @@ _db_backpressure_pause = False
 _amqp_reconnect_requested = False
 # Outer-loop reconnect sleep after 541 / connection failure (reset on consume).
 _amqp_reconnect_backoff_seconds = AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
+# Monotonic time when the current consume session started (Begining Consume).
+_consume_attach_monotonic: float | None = None
 
 
 def _parse_plausible_unix_seconds(token: str) -> int | None:
@@ -581,7 +587,7 @@ def append_monitor_payload_to_archive(message: Any) -> Any:
   return host
 
 
-def _get_rmq_queue_depth_for_monitor() -> Any:
+def _get_rmq_queue_depth_for_monitor() -> int | str:
   """
   Return ``message_count`` for the configured queue.
 
@@ -595,7 +601,7 @@ def _get_rmq_queue_depth_for_monitor() -> Any:
   (avoids Ra checkout contention with consume setup).
 
   Returns:
-    Any: Message count integer, or ``0`` when the probe fails.
+    int | str: Message count integer, or ``\"n/a\"`` when the probe fails.
 
   Examples:
     >>> _get_rmq_queue_depth_for_monitor()  # doctest: +SKIP
@@ -611,7 +617,7 @@ def _get_rmq_queue_depth_for_monitor() -> Any:
   except Exception as e:
     if DEBUG:
       log_print("Failed to get queue depth in monitor: %s" % e)
-    return 0
+    return "n/a"
   finally:
     if connection is not None:
       try:
@@ -619,6 +625,86 @@ def _get_rmq_queue_depth_for_monitor() -> Any:
           connection.close()
       except Exception:
         pass
+
+
+def _maybe_reset_amqp_reconnect_backoff_after_stable_consume() -> None:
+  """
+  Reset reconnect backoff after a stable consume session (≥30s).
+
+  Backoff must not reset on ``Begining Consume`` alone; only after the
+  consumer has been attached long enough to indicate broker health.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _maybe_reset_amqp_reconnect_backoff_after_stable_consume()  # doctest: +SKIP
+  """
+  global _amqp_reconnect_backoff_seconds
+  global _consume_attach_monotonic
+  if _consume_attach_monotonic is None:
+    return
+  if (
+      time.monotonic() - _consume_attach_monotonic
+      >= AMQP_RECONNECT_STABLE_CONSUME_SECONDS
+  ):
+    _amqp_reconnect_backoff_seconds = AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
+
+
+def _apply_amqp_reconnect_backoff() -> int:
+  """
+  Grow outer-loop reconnect sleep and return the new value.
+
+  Returns:
+    int: Next reconnect sleep in seconds.
+
+  Examples:
+    >>> _apply_amqp_reconnect_backoff()  # doctest: +SKIP
+  """
+  global _amqp_reconnect_backoff_seconds
+  nxt = next_amqp_reconnect_backoff_seconds(_amqp_reconnect_backoff_seconds)
+  _amqp_reconnect_backoff_seconds = nxt
+  return nxt
+
+
+def _close_amqp_channel_and_connection_gracefully(
+    channel: Any,
+    connection: Any,
+    *,
+    stop_consuming: bool = False,
+) -> None:
+  """
+  Tear down channel then connection to reduce broker termination timeouts.
+
+  Args:
+    channel (Any): Pika channel, or ``None``.
+    connection (Any): Pika ``BlockingConnection``, or ``None``.
+    stop_consuming (bool): When ``True``, call ``stop_consuming`` first.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _close_amqp_channel_and_connection_gracefully(None, None)  # doctest: +SKIP
+  """
+  if stop_consuming and channel is not None:
+    try:
+      if hasattr(channel, "stop_consuming"):
+        channel.stop_consuming()
+    except Exception:
+      pass
+  if channel is not None:
+    try:
+      if not getattr(channel, "is_closed", True):
+        channel.close()
+    except Exception:
+      pass
+  if connection is not None:
+    try:
+      if not getattr(connection, "is_closed", True):
+        connection.close()
+    except Exception:
+      pass
 
 
 def _bind_listend_consume(
@@ -661,8 +747,9 @@ def _log_amqp_outer_loop_error(exc: BaseException) -> str:
     exc (BaseException): Exception from connect, declare, or consume setup.
 
   Returns:
-    str: ``\"quorum_consume_setup\"`` for 541 / Ra checkout timeouts, else
-    ``\"connection\"``.
+    str: ``\"quorum_consume_setup\"`` for 541 / Ra checkout timeouts,
+    ``\"peer_reset\"`` for connection reset / stream lost / handshake timeout,
+    else ``\"connection\"``.
 
   Examples:
     >>> _log_amqp_outer_loop_error(Exception("x"))  # doctest: +SKIP
@@ -670,6 +757,9 @@ def _log_amqp_outer_loop_error(exc: BaseException) -> str:
   if is_quorum_consume_setup_error(exc):
     log_print("AMQP quorum consume-setup timeout (541): %s" % exc)
     return "quorum_consume_setup"
+  if is_amqp_peer_reset_reconnect_error(exc):
+    log_print("AMQP peer reset / stream lost / handshake timeout: %s" % exc)
+    return "peer_reset"
   log_print("Error establishing RabbitMQ connection: %s" % exc)
   return "connection"
 
@@ -794,19 +884,9 @@ def _request_amqp_full_reconnect(channel: Any, reason: str) -> None:
   log_print(
       "AMQP reconnect requested (channel/connection dead): %s" % reason
   )
-  try:
-    if channel is not None and hasattr(channel, "stop_consuming"):
-      channel.stop_consuming()
-  except Exception as stop_err:
-    if DEBUG:
-      log_print("Failed to stop_consuming on AMQP reconnect: %s" % stop_err)
-  try:
-    conn = getattr(channel, "connection", None) if channel is not None else None
-    if conn is not None and not getattr(conn, "is_closed", True):
-      conn.close()
-  except Exception as close_err:
-    if DEBUG:
-      log_print("Failed to close connection on AMQP reconnect: %s" % close_err)
+  conn = getattr(channel, "connection", None) if channel is not None else None
+  _close_amqp_channel_and_connection_gracefully(
+      channel, conn, stop_consuming=True)
 
 
 def _request_db_backpressure_pause(channel: Any, delivery_tag: Any) -> None:
@@ -1020,7 +1100,7 @@ def _idle_monitor() -> None:
 
     log_print(
         "Messages consumed in the last 10 minutes: %d; "
-        "messages waiting to be consumed: %d; "
+        "messages waiting to be consumed: %s; "
         "current file unlinks (last 10 minutes): %d%s" %
         (count_last_10, queue_depth, unlink_count_last_10, db_suffix))
 
@@ -1047,6 +1127,7 @@ def main() -> None:
   global _recent_host_worker_thread_started
   global _amqp_reconnect_requested
   global _amqp_reconnect_backoff_seconds
+  global _consume_attach_monotonic
   # Use a mutable container so the SIGTERM handler can update state without
   # relying on `nonlocal` (which is only valid for enclosing function scopes).
   sigterm_received = {"value": False}
@@ -1114,6 +1195,7 @@ def main() -> None:
         log_print("Starting Connection")
         parameters = listend_amqp_connection_parameters(cfg.get_rmq_server())
         reconnect_sleep_s = AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
+        channel = None
         try:
           connection = pika.BlockingConnection(parameters)
 
@@ -1167,9 +1249,7 @@ def main() -> None:
             if not consume_start_logged:
               log_print("Begining Consume from queue: " + queue_name)
               consume_start_logged = True
-              _amqp_reconnect_backoff_seconds = (
-                  AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
-              )
+              _consume_attach_monotonic = time.monotonic()
             try:
               channel.start_consuming()
             except (KeyboardInterrupt, SystemExit):
@@ -1179,11 +1259,10 @@ def main() -> None:
                 pass
               raise
             except StreamLostError as e:
-              # Connection dropped (e.g. broker restart or idle timeout). Treat as a
-              # normal shutdown condition and only log in DEBUG mode to avoid noisy
-              # "Error while consuming" messages like "pop from an empty deque".
               if DEBUG:
                 log_print("RabbitMQ stream lost while consuming: %s" % e)
+              _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
+              reconnect_sleep_s = _apply_amqp_reconnect_backoff()
               break
             except AttributeError as e:
               # Some pika versions raise an AttributeError like "'NoneType' object
@@ -1195,19 +1274,21 @@ def main() -> None:
                 if DEBUG:
                   log_print(
                       "RabbitMQ connection poller torn down during consume: %s" % e)
+                _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
+                reconnect_sleep_s = _apply_amqp_reconnect_backoff()
               else:
                 log_print("Error while consuming from RabbitMQ: %s" % e)
               break
             except Exception as e:
-              # Handle other connection-level errors from pika without raising during
-              # shutdown/cleanup. We will attempt to reconnect after a short delay.
-              if is_quorum_consume_setup_error(e):
-                log_print(
-                    "AMQP quorum consume-setup timeout (541): %s" % e)
-                reconnect_sleep_s = next_amqp_reconnect_backoff_seconds(
-                    _amqp_reconnect_backoff_seconds
-                )
-                _amqp_reconnect_backoff_seconds = reconnect_sleep_s
+              if should_use_amqp_exponential_reconnect_backoff(e):
+                if is_quorum_consume_setup_error(e):
+                  log_print(
+                      "AMQP quorum consume-setup timeout (541): %s" % e)
+                elif is_amqp_peer_reset_reconnect_error(e):
+                  log_print(
+                      "AMQP peer reset / stream lost during consume: %s" % e)
+                _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
+                reconnect_sleep_s = _apply_amqp_reconnect_backoff()
               else:
                 log_print("Error while consuming from RabbitMQ: %s" % e)
               break
@@ -1218,6 +1299,10 @@ def main() -> None:
             # Dead channel/connection or unexpected stop_consuming → reconnect.
             if _amqp_reconnect_requested:
               _amqp_reconnect_requested = False
+              _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
+              reconnect_sleep_s = _apply_amqp_reconnect_backoff()
+            else:
+              _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
             break
         except (KeyboardInterrupt, SystemExit):
           # Allow clean shutdown on explicit termination signals.
@@ -1225,23 +1310,17 @@ def main() -> None:
           break
         except Exception as e:
           kind = _log_amqp_outer_loop_error(e)
-          if kind == "quorum_consume_setup":
-            reconnect_sleep_s = next_amqp_reconnect_backoff_seconds(
-                _amqp_reconnect_backoff_seconds
-            )
-            _amqp_reconnect_backoff_seconds = reconnect_sleep_s
+          _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
+          if kind in ("quorum_consume_setup", "peer_reset"):
+            reconnect_sleep_s = _apply_amqp_reconnect_backoff()
+          elif should_use_amqp_exponential_reconnect_backoff(e):
+            reconnect_sleep_s = _apply_amqp_reconnect_backoff()
           else:
             reconnect_sleep_s = AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
         finally:
-          try:
-            # Guard against closing an already-closed connection, which would raise
-            # ConnectionWrongStateError in recent pika versions.
-            if connection and not connection.is_closed:
-              connection.close()
-          except Exception as e:
-            if DEBUG:
-              log_print("Error while closing RabbitMQ connection: %s" % e)
+          _close_amqp_channel_and_connection_gracefully(channel, connection)
           _amqp_reconnect_requested = False
+          _consume_attach_monotonic = None
 
         # Sleep before reconnect. 541 consume-setup uses exponential backoff
         # so we do not hammer Ra checkout under load.

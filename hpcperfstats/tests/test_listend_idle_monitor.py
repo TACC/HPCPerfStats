@@ -44,10 +44,10 @@ def test_get_rmq_queue_depth_for_monitor_passive_ok(monkeypatch):
   assert declare_calls == [True]
 
 
-def test_get_rmq_queue_depth_for_monitor_passive_only_returns_zero_on_fail(
+def test_get_rmq_queue_depth_for_monitor_passive_only_returns_na_on_fail(
     monkeypatch,
 ):
-  """Idle depth must not non-passive-declare (quorum Ra / create churn)."""
+  """Idle depth must not non-passive-declare; probe failure is n/a not 0."""
   import hpcperfstats.listend as listend
 
   declare_calls = []
@@ -76,11 +76,11 @@ def test_get_rmq_queue_depth_for_monitor_passive_only_returns_zero_on_fail(
       lambda _h: object(),
   )
 
-  assert listend._get_rmq_queue_depth_for_monitor() == 0
+  assert listend._get_rmq_queue_depth_for_monitor() == "n/a"
   assert declare_calls == [True]
 
 
-def test_get_rmq_queue_depth_for_monitor_returns_zero_when_connect_fails(monkeypatch):
+def test_get_rmq_queue_depth_for_monitor_returns_na_when_connect_fails(monkeypatch):
   import hpcperfstats.listend as listend
 
   def _boom(_p):
@@ -93,7 +93,7 @@ def test_get_rmq_queue_depth_for_monitor_returns_zero_when_connect_fails(monkeyp
       lambda _h: object(),
   )
 
-  assert listend._get_rmq_queue_depth_for_monitor() == 0
+  assert listend._get_rmq_queue_depth_for_monitor() == "n/a"
 
 
 def test_idle_monitor_reports_real_queue_depth(monkeypatch):
@@ -163,7 +163,7 @@ def test_idle_monitor_reports_real_queue_depth(monkeypatch):
 
     listend.log_print(
         "Messages consumed in the last 10 minutes: %d; "
-        "messages waiting to be consumed: %d; "
+        "messages waiting to be consumed: %s; "
         "current file unlinks (last 10 minutes): %d" %
         (count_last_10, queue_depth, unlink_count_last_10))
 
