@@ -30,16 +30,18 @@ done
 grep -qE 'likwid_pmc_adapter_prepare_collect[[:space:]]*\(' "${pmc}" \
   || { echo "FAIL: ${pmc} must define likwid_pmc_adapter_prepare_collect" >&2; exit 1; }
 grep -qE 'perfmon_setupCounters[[:space:]]*\([[:space:]]*g_group' "${pmc}" \
-  || { echo "FAIL: ${pmc} prepare_collect must call perfmon_setupCounters(g_group)" >&2; exit 1; }
-# prepare_collect must start after setup (uncore pattern); require start near setup(g_group).
+  || { echo "FAIL: ${pmc} prepare_collect must call perfmon_setupCounters(g_group) on x86" >&2; exit 1; }
+# x86 prepare_collect must start after setup; aarch64/ARM branch skips re-arm (Grace E window).
 awk '
   /int likwid_pmc_adapter_prepare_collect/,/^int likwid_pmc_adapter_read_cpu/ {
     if ($0 ~ /perfmon_setupCounters[[:space:]]*\([[:space:]]*g_group/) saw_setup = 1
     if (saw_setup && $0 ~ /perfmon_startCounters[[:space:]]*\(/) saw_start = 1
+    if ($0 ~ /__aarch64__/) saw_arm_skip = 1
   }
   END {
-    if (!saw_setup) { print "FAIL: prepare_collect missing setupCounters(g_group)" > "/dev/stderr"; exit 1 }
-    if (!saw_start) { print "FAIL: prepare_collect must call startCounters after setupCounters(g_group)" > "/dev/stderr"; exit 1 }
+    if (!saw_setup) { print "FAIL: prepare_collect missing setupCounters(g_group) for x86" > "/dev/stderr"; exit 1 }
+    if (!saw_start) { print "FAIL: prepare_collect must call startCounters after setupCounters(g_group) on x86" > "/dev/stderr"; exit 1 }
+    if (!saw_arm_skip) { print "FAIL: prepare_collect must skip re-arm on aarch64/ARM" > "/dev/stderr"; exit 1 }
   }
 ' "${pmc}"
 grep -qE 'likwid_pmc_adapter_prepare_collect[[:space:]]*\(' "${collect}" \

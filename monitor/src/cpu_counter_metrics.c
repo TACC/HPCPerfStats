@@ -100,6 +100,7 @@ int *g_dcgm_logical_to_power_slot = NULL;
 double *g_dcgm_sock_power_util = NULL;
 double *g_dcgm_sock_power_limit = NULL;
 static int g_dcgm_sock_map_mismatch_logged = 0;
+static int g_dcgm_power_limit_blank_warned = 0;
 static const unsigned short g_dcgm_cpu_power_field_ids[] = {DCGM_FI_DEV_CPU_POWER_UTIL_CURRENT,
                                                             DCGM_FI_DEV_CPU_POWER_LIMIT};
 #define DCGM_CPU_POWER_NFIELDS                                                                     \
@@ -651,6 +652,7 @@ static void dcgm_cpu_refresh_socket_power(void)
     dcgmFieldValue_v1 vals[DCGM_CPU_POWER_NFIELDS];
     int eid = g_dcgm_cpu_entity_list[j];
     double u = 0.0, lim = 0.0;
+    int limit_unavailable = 0;
 
     memset(vals, 0, sizeof(vals));
     if (dcgmEntityGetLatestValues(g_dcgm_handle, DCGM_FE_CPU, eid,
@@ -671,13 +673,27 @@ static void dcgm_cpu_refresh_socket_power(void)
         lim = vals[1].value.dbl;
       else
         lim = (double)vals[1].value.i64;
+    } else {
+      limit_unavailable = 1;
     }
     if (u < 0.0 || dcgm_fp64_value_is_blank(u))
       u = 0.0;
-    if (lim < 0.0 || dcgm_fp64_value_is_blank(lim))
+    if (lim < 0.0 || dcgm_fp64_value_is_blank(lim)) {
+      if (dcgm_fp64_value_is_blank(lim))
+        limit_unavailable = 1;
       lim = 0.0;
+    }
     g_dcgm_sock_power_util[j] = u;
     g_dcgm_sock_power_limit[j] = lim;
+    /*
+     * Grace field 1131 is N/A (dcgmi dmon). Keep emit 0; warn once. Do not map
+     * 1132/1133 (sysio / module watts) as a power limit.
+     */
+    if (limit_unavailable && !g_dcgm_power_limit_blank_warned) {
+      monitor_log_warn("host_cpu_hw: DCGM CPU power limit (field 1131) unavailable; "
+                       "publishing dcgm_cpu_power_limit_w=0 (do not treat 1132/1133 as limit)\n");
+      g_dcgm_power_limit_blank_warned = 1;
+    }
   }
 }
 

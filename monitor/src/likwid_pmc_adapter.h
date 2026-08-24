@@ -15,7 +15,11 @@ void likwid_pmc_adapter_ensure_force_env(void);
 int likwid_pmc_adapter_init(int nr_threads);
 void likwid_pmc_adapter_finalize(void);
 int likwid_pmc_adapter_setup_events(const char *event_string);
-/* Once per host_cpu_hw tick: setupCounters(g_group)+startCounters after DF/IMC/RAPL steal. */
+/*
+ * Once per host_cpu_hw tick on x86: setupCounters(g_group)+startCounters after
+ * DF/IMC/RAPL steal. On aarch64/ARM there is no LIKWID uncore steal — skip
+ * re-arm so PERF keeps a lifetime window for schema E keys.
+ */
 int likwid_pmc_adapter_prepare_collect(void);
 /* One perfmon_readGroupCounters after prepare_collect; overlay then peeks per CPU. */
 int likwid_pmc_adapter_read_group(void);

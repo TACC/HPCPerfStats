@@ -35,6 +35,7 @@ alwaysApply: false
 - Overlay init fail: **do not** disable `host_cpu_hw`; DCGM util/power stays. Exclusive ARM LIKWID still fail-closes the type (no DCGM fallback).
 - **Lifetime vs DCGM soft-fail:** overlay must **survive** DCGM `UpdateAllFields` soft-reset. Tear down DCGM only; do **not** `HPMfinalize` / `cpu_counter_metrics_likwid_overlay_cleanup()` when only the DCGM session is torn down.
 - Collect: one `prepare_collect` + `read_group` per tick; per-CPU `read_cpu_cycles_instr` must not re-`readGroupCounters`.
+- **ARM / Grace no per-tick re-arm:** `likwid_pmc_adapter_prepare_collect()` must **not** call `perfmon_setupCounters` / `perfmon_startCounters` on aarch64/ARM. Those re-arms exist only for **x86** core-group recovery after DF/IMC/RAPL steal. Re-arming on Grace resets the PERF window and publishes last-interval counts for schema **`E`** keys (`cpu_clock_est_cycles` / `aperf` / `mperf` / `instr_retired`). After begin, ARM collect is `read_group` + per-CPU peek; overlay advances a **lifetime** total via `likwid_overlay_lifetime_advance` (absolute when readings grow; sticky add-on-drop if the window resets; raw `0` must not clear the total). Keep x86 per-tick re-arm unchanged.
 - `HPCPERFSTATS_LIKWID_ACCESS=direct` is still rejected (PERF only) on ARM too.
 - Keep collect hot-path bounded; do not add unbounded per-sample work.
 

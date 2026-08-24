@@ -304,33 +304,45 @@ static void likwid_pmc_adapter_publish_semantic_counters(
 int likwid_pmc_adapter_prepare_collect(void)
 {
 #ifdef HAVE_LIKWID
-  int setup_rc;
-  static time_t last_warn;
-
   if (!g_initialized || g_group < 0)
     return -1;
 
+#if defined(__aarch64__) || defined(__arm__)
   /*
-   * DF/IMC/RAPL call perfmon_setupCounters on later groups and leave the core
-   * PERF programming inactive. setup alone is not enough on Turin/SPR — match
-   * uncore finish: setupCounters then startCounters (ignore start failure if
-   * the session is already running).
+   * Grace/ARM: no LIKWID DF/IMC/RAPL group steal. Re-setup+start every tick
+   * resets the PERF window and publishes last-interval counts for schema E
+   * keys (cpu_clock_est_cycles / aperf / mperf / instr_retired). Keep the
+   * session from setup_events and only readGroupCounters in collect.
    */
-  setup_rc = perfmon_setupCounters(g_group);
-  if (setup_rc < 0) {
-    time_t now = time(NULL);
-
-    if (last_warn == 0 || (now > last_warn && now - last_warn >= 60)) {
-      monitor_log_warn("host_cpu_hw: perfmon_setupCounters(core group=%d) failed before "
-                       "readGroupCounters; core PMCs may stay zero\n",
-                       g_group);
-      last_warn = now;
-    }
-    return -1;
-  }
-  /* Same as likwid_uncore_finish_group: start may fail if already running. */
-  (void)perfmon_startCounters();
   return 0;
+#else
+  {
+    int setup_rc;
+    static time_t last_warn;
+
+    /*
+     * DF/IMC/RAPL call perfmon_setupCounters on later groups and leave the core
+     * PERF programming inactive. setup alone is not enough on Turin/SPR — match
+     * uncore finish: setupCounters then startCounters (ignore start failure if
+     * the session is already running).
+     */
+    setup_rc = perfmon_setupCounters(g_group);
+    if (setup_rc < 0) {
+      time_t now = time(NULL);
+
+      if (last_warn == 0 || (now > last_warn && now - last_warn >= 60)) {
+        monitor_log_warn("host_cpu_hw: perfmon_setupCounters(core group=%d) failed before "
+                         "readGroupCounters; core PMCs may stay zero\n",
+                         g_group);
+        last_warn = now;
+      }
+      return -1;
+    }
+    /* Same as likwid_uncore_finish_group: start may fail if already running. */
+    (void)perfmon_startCounters();
+    return 0;
+  }
+#endif /* __aarch64__ || __arm__ */
 #else
   return -1;
 #endif

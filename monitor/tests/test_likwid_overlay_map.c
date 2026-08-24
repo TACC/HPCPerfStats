@@ -143,6 +143,47 @@ static void test_map_null_inputs(void)
   likwid_overlay_map_to_host_cpu_hw(&g_dummy, NULL);
 }
 
+static void test_lifetime_advance_absolute_and_zero(void)
+{
+  unsigned long long accum = 0;
+  unsigned long long prev = 0;
+  int as_interval = 0;
+
+  assert(likwid_overlay_lifetime_advance(&accum, &prev, &as_interval, 1000ULL) == 1000ULL);
+  assert(accum == 1000ULL && prev == 1000ULL && as_interval == 0);
+  /* Absolute cumulative growth: publish raw as lifetime. */
+  assert(likwid_overlay_lifetime_advance(&accum, &prev, &as_interval, 2500ULL) == 2500ULL);
+  assert(accum == 2500ULL && prev == 2500ULL && as_interval == 0);
+  /* Zero must not clear lifetime. */
+  assert(likwid_overlay_lifetime_advance(&accum, &prev, &as_interval, 0ULL) == 2500ULL);
+  assert(accum == 2500ULL && prev == 2500ULL);
+}
+
+static void test_lifetime_advance_interval_deltas_sum(void)
+{
+  unsigned long long accum = 0;
+  unsigned long long prev = 0;
+  int as_interval = 0;
+
+  assert(likwid_overlay_lifetime_advance(&accum, &prev, &as_interval, 1000ULL) == 1000ULL);
+  /* Drop below prev → sticky interval mode: add deltas even if next raw grows. */
+  assert(likwid_overlay_lifetime_advance(&accum, &prev, &as_interval, 400ULL) == 1400ULL);
+  assert(as_interval == 1);
+  assert(likwid_overlay_lifetime_advance(&accum, &prev, &as_interval, 500ULL) == 1900ULL);
+  assert(likwid_overlay_lifetime_advance(&accum, &prev, &as_interval, 0ULL) == 1900ULL);
+}
+
+static void test_lifetime_advance_null_safe(void)
+{
+  unsigned long long accum = 7;
+  unsigned long long prev = 3;
+  int as_interval = 0;
+
+  assert(likwid_overlay_lifetime_advance(NULL, &prev, &as_interval, 9ULL) == 0ULL);
+  assert(likwid_overlay_lifetime_advance(&accum, NULL, &as_interval, 9ULL) == 0ULL);
+  assert(accum == 7ULL && prev == 3ULL);
+}
+
 int main(void)
 {
   test_map_sp_dp_sum_and_cycles();
@@ -150,6 +191,9 @@ int main(void)
   test_map_zero_cycles_preserves_estimate();
   test_map_int8_int16_excluded_from_flops();
   test_map_null_inputs();
+  test_lifetime_advance_absolute_and_zero();
+  test_lifetime_advance_interval_deltas_sum();
+  test_lifetime_advance_null_safe();
   printf("test_likwid_overlay_map passed\n");
   return 0;
 }

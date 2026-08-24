@@ -8,6 +8,31 @@ int likwid_overlay_should_overwrite_cycle_keys(unsigned long long cycles)
   return (cycles > 0) ? 1 : 0;
 }
 
+unsigned long long likwid_overlay_lifetime_advance(unsigned long long *accum,
+                                                   unsigned long long *prev_raw, int *as_interval,
+                                                   unsigned long long raw)
+{
+  int interval;
+
+  if (accum == NULL || prev_raw == NULL)
+    return 0ULL;
+  if (raw == 0ULL)
+    return *accum;
+  interval = (as_interval != NULL && *as_interval) ? 1 : 0;
+  if (!interval && *prev_raw > 0ULL && raw < *prev_raw)
+    interval = 1;
+  if (interval) {
+    if (as_interval != NULL)
+      *as_interval = 1;
+    *accum += raw;
+  } else {
+    /* Absolute cumulative since session start (preferred after ARM no-rearm). */
+    *accum = raw;
+  }
+  *prev_raw = raw;
+  return *accum;
+}
+
 void likwid_overlay_map_to_host_cpu_hw(struct stats *stats, const struct likwid_overlay_counters *c)
 {
   unsigned long long sp = 0;
