@@ -27,7 +27,15 @@ Bare `log_print("INFO: populate empty recover deferred … reason=archive_append
 - `test_empty_recover_deferred_log_rate_limited`
 - `test_empty_recover_deferred_log_rate_limited_cluster_wide`
 - `test_empty_recover_deferred_while_archive_append_inflight` (asserts ≤1 INFO under many recover trips)
+- `test_empty_recover_defer_reason_populate_source_within_max`
+- `test_empty_recover_deferred_while_populate_source_within_max`
+- `test_empty_recover_bound_fatal_when_append_idle_no_source`
+- `test_empty_recover_bound_fatal_when_source_exists_past_max_seconds`
+- `test_empty_recover_deferred_while_populate_lock_held`
+- `test_empty_recover_deferred_while_ingest_tar_hot_populate_wait`
 - Keep existing: `test_append_inflight_defer_log_rate_limited`, `test_identity_drift_rate_limited_per_day`, `test_stale_incomplete_log_rate_limited_cluster_wide`
+
+**Empty recover ×3 (`hlen≤0`):** defer (reset counter, rate-limited INFO **`reason=`**) when **`archive_append_inflight`**, alive populate lock, populate-class **`ingest_tar_hot`**, or **`daily_archive_populate_source_exists(canonical)`** with elapsed **&lt; `populate_max_seconds`** — fail-closed **`empty recover bound`** only when no source or budget exhausted (hpcperfstats03 June-02 census).
 
 ## Overlap
 

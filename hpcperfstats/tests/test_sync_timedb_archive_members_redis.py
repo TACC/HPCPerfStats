@@ -2701,10 +2701,10 @@ def test_dead_owner_orphan_then_waiters_single_flight_recover(
   assert sum(1 for m in clear_logs if "clearing stale incomplete" in m) <= 1
 
 
-def test_empty_recover_bound_fatal_when_append_idle(
+def test_empty_recover_bound_fatal_when_append_idle_no_source(
     _redis_test_env, tmp_path, monkeypatch,
 ):
-  """RC-ER fail-closed: three empty recovers with append idle still raise."""
+  """Fail-closed: three empty recovers with append idle and no populate source."""
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser"
       ".get_sync_archive_members_redis_populate_max_seconds",
@@ -2723,6 +2723,286 @@ def test_empty_recover_bound_fatal_when_append_idle(
       match="empty recover bound",
   ):
     wait_for_complete_members(keys)
+
+
+def test_empty_recover_defer_reason_populate_source_within_max(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Unit: census H1 defer token when tar source exists within max_seconds."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _empty_recover_defer_reason,
+  )
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_max_seconds",
+      lambda: 7200,
+  )
+  day = "2026-06-02"
+  tar = tmp_path / ("%s.tar" % day)
+  zst = tmp_path / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  canonical = str(zst)
+  keys = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  started = time.monotonic()
+  reason = _empty_recover_defer_reason(
+      _redis_test_env, keys, canonical=canonical, started_monotonic=started,
+  )
+  assert reason == "populate_source_within_max"
+
+
+def test_empty_recover_defer_reason_fatal_when_past_max(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Unit: no defer when populate_max_seconds budget is exhausted."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _empty_recover_defer_reason,
+  )
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_max_seconds",
+      lambda: 30,
+  )
+  day = "2026-06-02"
+  tar = tmp_path / ("%s.tar" % day)
+  zst = tmp_path / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  canonical = str(zst)
+  keys = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  reason = _empty_recover_defer_reason(
+      _redis_test_env,
+      keys,
+      canonical=canonical,
+      started_monotonic=time.monotonic() - 60.0,
+  )
+  assert reason == ""
+
+
+def test_empty_recover_deferred_while_populate_source_within_max(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """H1 census: huge tar exists, append/lock/hot idle → defer within max wait."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _EMPTY_RECOVER_DEFER_LOG_STATE,
+  )
+
+  _EMPTY_RECOVER_DEFER_LOG_STATE.clear()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_max_seconds",
+      lambda: 7200,
+  )
+  mod = "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+  monkeypatch.setattr(
+      "%s._check_populate_wait_limits" % mod,
+      lambda *a, **k: True,
+  )
+  monkeypatch.setattr("%s._wait_poll_seconds" % mod, lambda: 0.001)
+  monkeypatch.setattr(
+      "%s.enqueue_archive_members_populate" % mod,
+      lambda *a, **k: False,
+  )
+  monkeypatch.setattr("%s._IDENTITY_DRIFT_LOG_INTERVAL_S" % mod, 60.0)
+  logs = []
+  monkeypatch.setattr(
+      "%s.log_print" % mod,
+      lambda msg, flush=False: logs.append(msg),
+  )
+  day = "2026-06-02"
+  tar = tmp_path / ("%s.tar" % day)
+  zst = tmp_path / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  canonical = str(zst)
+  keys = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  _redis_test_env.set(keys.complete_key, "0")
+  result = {"members": None, "exc": None}
+
+  def _waiter():
+    try:
+      result["members"] = wait_for_complete_members(
+          keys, canonical=canonical,
+      )
+    except Exception as exc:  # noqa: BLE001
+      result["exc"] = exc
+
+  t_wait = threading.Thread(target=_waiter)
+  t_wait.start()
+  deadline = time.monotonic() + 5.0
+  while time.monotonic() < deadline:
+    if any("empty recover deferred" in line for line in logs):
+      break
+    time.sleep(0.01)
+  recover_logs = [line for line in logs if "empty recover deferred" in line]
+  assert len(recover_logs) >= 1, logs[:20]
+  assert "reason=populate_source_within_max" in recover_logs[0]
+  _redis_test_env.hset(keys.hash_key, mapping={"host/a": "1"})
+  _redis_test_env.set(keys.complete_key, "1")
+  t_wait.join(timeout=3)
+  assert result["exc"] is None
+  assert result["members"] == {"host/a": 1}
+
+
+def test_empty_recover_bound_fatal_when_source_exists_past_max_seconds(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Fail-closed when populate source exists but populate_max_seconds exhausted."""
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_max_seconds",
+      lambda: 30,
+  )
+  mod = "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+  monkeypatch.setattr(
+      "%s._check_populate_wait_limits" % mod,
+      lambda *a, **k: True,
+  )
+  monkeypatch.setattr("%s._wait_poll_seconds" % mod, lambda: 0.001)
+  monkeypatch.setattr(
+      "%s.enqueue_archive_members_populate" % mod,
+      lambda *a, **k: False,
+  )
+  mono_calls = [0]
+
+  def _monotonic():
+    mono_calls[0] += 1
+    if mono_calls[0] == 1:
+      return 1000.0
+    return 1050.0
+
+  monkeypatch.setattr(time, "monotonic", _monotonic)
+  day = "2026-06-02"
+  tar = tmp_path / ("%s.tar" % day)
+  zst = tmp_path / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  canonical = str(zst)
+  keys = build_archive_members_redis_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  _redis_test_env.set(keys.complete_key, "0")
+  with pytest.raises(
+      ArchiveMembersPopulateStalledError,
+      match="empty recover bound",
+  ):
+    wait_for_complete_members(keys, canonical=canonical)
+
+
+def test_empty_recover_deferred_while_populate_lock_held(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Empty recover defers while alive populate lock owner holds lock_key."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _EMPTY_RECOVER_DEFER_LOG_STATE,
+  )
+
+  _EMPTY_RECOVER_DEFER_LOG_STATE.clear()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_max_seconds",
+      lambda: 30,
+  )
+  mod = "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+  monkeypatch.setattr(
+      "%s._check_populate_wait_limits" % mod,
+      lambda *a, **k: True,
+  )
+  monkeypatch.setattr("%s._wait_poll_seconds" % mod, lambda: 0.001)
+  logs = []
+  monkeypatch.setattr(
+      "%s.log_print" % mod,
+      lambda msg, flush=False: logs.append(msg),
+  )
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path))
+  _redis_test_env.set(keys.lock_key, "tok:%d" % os.getpid(), ex=30)
+  _redis_test_env.set(keys.progress_key, str(time.time()), ex=30)
+  _redis_test_env.set(keys.complete_key, "0")
+  result = {"members": None, "exc": None}
+
+  def _waiter():
+    try:
+      result["members"] = wait_for_complete_members(keys)
+    except Exception as exc:  # noqa: BLE001
+      result["exc"] = exc
+
+  t_wait = threading.Thread(target=_waiter)
+  t_wait.start()
+  deadline = time.monotonic() + 5.0
+  while time.monotonic() < deadline:
+    if any("reason=populate_lock" in line for line in logs):
+      break
+    time.sleep(0.01)
+  recover_logs = [line for line in logs if "empty recover deferred" in line]
+  assert recover_logs, logs[:20]
+  assert "reason=populate_lock" in recover_logs[0]
+  _redis_test_env.delete(keys.lock_key)
+  _redis_test_env.hset(keys.hash_key, mapping={"host/a": "1"})
+  _redis_test_env.set(keys.complete_key, "1")
+  t_wait.join(timeout=3)
+  assert result["exc"] is None
+  assert result["members"] == {"host/a": 1}
+
+
+def test_empty_recover_deferred_while_ingest_tar_hot_populate_wait(
+    _redis_test_env, tmp_path, monkeypatch,
+):
+  """Empty recover defers while ingest_tar_hot reason is populate_wait."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _EMPTY_RECOVER_DEFER_LOG_STATE,
+      clear_ingest_tar_hot,
+      set_ingest_tar_hot,
+  )
+
+  _EMPTY_RECOVER_DEFER_LOG_STATE.clear()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser"
+      ".get_sync_archive_members_redis_populate_max_seconds",
+      lambda: 30,
+  )
+  mod = "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+  monkeypatch.setattr(
+      "%s._check_populate_wait_limits" % mod,
+      lambda *a, **k: True,
+  )
+  monkeypatch.setattr("%s._wait_poll_seconds" % mod, lambda: 0.001)
+  logs = []
+  monkeypatch.setattr(
+      "%s.log_print" % mod,
+      lambda msg, flush=False: logs.append(msg),
+  )
+  day = "2026-06-02"
+  keys = build_archive_members_redis_keys(_sample_cache_key(tmp_path, day=day))
+  _redis_test_env.set(keys.complete_key, "0")
+  set_ingest_tar_hot(day, reason="populate_wait")
+  result = {"members": None, "exc": None}
+
+  def _waiter():
+    try:
+      result["members"] = wait_for_complete_members(keys)
+    except Exception as exc:  # noqa: BLE001
+      result["exc"] = exc
+
+  t_wait = threading.Thread(target=_waiter)
+  t_wait.start()
+  deadline = time.monotonic() + 5.0
+  while time.monotonic() < deadline:
+    if any("reason=ingest_tar_hot_populate_wait" in line for line in logs):
+      break
+    time.sleep(0.01)
+  recover_logs = [line for line in logs if "empty recover deferred" in line]
+  assert recover_logs, logs[:20]
+  assert "reason=ingest_tar_hot_populate_wait" in recover_logs[0]
+  clear_ingest_tar_hot(day)
+  _redis_test_env.hset(keys.hash_key, mapping={"host/a": "1"})
+  _redis_test_env.set(keys.complete_key, "1")
+  t_wait.join(timeout=3)
+  assert result["exc"] is None
+  assert result["members"] == {"host/a": 1}
 
 
 def test_empty_recover_deferred_while_archive_append_inflight(

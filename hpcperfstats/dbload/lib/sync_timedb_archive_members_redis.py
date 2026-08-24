@@ -2611,9 +2611,56 @@ def _log_append_inflight_defer_if_allowed(day_token: str) -> None:
   )
 
 
+def _empty_recover_defer_reason(
+  client: Any,
+  keys: ArchiveMembersRedisKeys,
+  *,
+  canonical: str = "",
+  started_monotonic: float,
+) -> str:
+  """
+  Return defer-reason token for empty-recover trips, or empty when fail-closed.
+  
+  Args:
+    client (Any): Live handle (pool, client, or connection).
+    keys (ArchiveMembersRedisKeys): Keys.
+    canonical (str): String for canonical.
+    started_monotonic (float): Monotonic clock when populate wait began.
+  
+  Returns:
+    str: Non-empty defer reason token, or ``""`` when empty recover must fatal.
+  
+  Examples:
+    >>> _empty_recover_defer_reason(None, None, "x", 0.0)  # doctest: +SKIP
+  """
+  day_token = str(getattr(keys, "day_token", "") or "")
+  if day_token and archive_append_inflight_for_day(day_token):
+    return "archive_append_inflight"
+  if _populate_lock_is_held(client, keys):
+    return "populate_lock"
+  if day_token:
+    hot_reason = ingest_tar_hot_reason_for_day(day_token)
+    if hot_reason in _SELF_INGEST_TAR_HOT_REASONS:
+      return "ingest_tar_hot_%s" % hot_reason
+  max_seconds = _populate_max_seconds()
+  if max_seconds > 0 and canonical:
+    elapsed = time.monotonic() - started_monotonic
+    if elapsed < max_seconds:
+      from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+          daily_archive_populate_source_exists,
+          normalize_daily_compressed_path,
+      )
+      if daily_archive_populate_source_exists(
+          normalize_daily_compressed_path(canonical),
+      ):
+        return "populate_source_within_max"
+  return ""
+
+
 def _log_empty_recover_deferred_if_allowed(
   day_token: str,
   *,
+  reason: str = "archive_append_inflight",
   client: Any | None = None,
 ) -> None:
   """
@@ -2621,6 +2668,7 @@ def _log_empty_recover_deferred_if_allowed(
   
   Args:
     day_token (str): String for day token.
+    reason (str): Defer reason token for operator diagnostics.
     client (Any | None): One of ``Any``, ``None``.
   
   Returns:
@@ -2632,8 +2680,8 @@ def _log_empty_recover_deferred_if_allowed(
   _rate_limited_day_info_log(
       _EMPTY_RECOVER_DEFER_LOG_STATE,
       day_token,
-      "INFO: populate empty recover deferred day=%s "
-      "reason=archive_append_inflight" % day_token,
+      "INFO: populate empty recover deferred day=%s reason=%s"
+      % (day_token, reason),
       interval_s=_IDENTITY_DRIFT_LOG_INTERVAL_S,
       client=client,
       redis_key_fn=_empty_recover_defer_log_redis_key,
@@ -2802,12 +2850,24 @@ def wait_for_complete_members(
         if last_hlen <= 0:
           incomplete_recover_n += 1
           if incomplete_recover_n >= 3:
-            # RC-ER: identity drift during live tar append leaves empty HASH
-            # fingerprints; do not sys.exit(1) the supervisor mid-append.
+            # RC-ER: empty HASH after lock release is recoverable while append,
+            # populate lock, populate-class hot, or on-disk source exists within
+            # populate_max_seconds — fail-closed only when no source or budget
+            # exhausted (hpcperfstats03 June-02 ~989GB census).
             day_token = str(getattr(keys, "day_token", "") or "")
-            if day_token and archive_append_inflight_for_day(day_token):
+            defer_reason = _empty_recover_defer_reason(
+                client,
+                keys,
+                canonical=canonical,
+                started_monotonic=started,
+            )
+            if defer_reason:
               incomplete_recover_n = 0
-              _log_empty_recover_deferred_if_allowed(day_token, client=client)
+              _log_empty_recover_deferred_if_allowed(
+                  day_token,
+                  reason=defer_reason,
+                  client=client,
+              )
             else:
               raise ArchiveMembersPopulateStalledError(
                   "Archive members populate incomplete after lock release "
