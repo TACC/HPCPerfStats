@@ -15,7 +15,7 @@ def test_max_node_power_est_w_from_jt_mock():
   base = pd.DataFrame([("h1", t0), ("h1", pd.Timestamp("2024-06-01 12:01:00+00:00"))],
                       columns=["host", "time"])
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
     ev = list(events)
     rapl_types = ("intel_x86_rapl", "intel_rapl")
     pkg_hits = {"pkg_energy", "MSR_PKG_ENERGY_STATUS", "MSR_PKG_ENERGY_STAT"}

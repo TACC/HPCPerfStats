@@ -14,9 +14,9 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 2. **`hpcperfstats/listend.py`** (`on_message`) appends payloads under the per-host archive directory (RabbitMQ consumer).
 3. **`hpcperfstats/dbload/sync_timedb.py`** (`add_stats_file_to_db`) reads archive files.
 4. **`hpcperfstats/dbload/lib/sync_timedb_parsing.py`** (`parse_stats_lines`, `compute_deltas_and_arc`, `EVENTMAPS_BY_TYPE`) parses lines, maps raw PMC encodings to logical event names, collapses multi-GPU rows, and computes `delta` / `arc`.
-5. **`hpcperfstats/dbload/lib/io_helpers.py`** (`host_data_instance_from_stats_row`) builds ORM rows.
-6. **`hpcperfstats/site/lib/machine/models.py`** (`host_data` model) stores `time`, `host`, `jid` (nullable; monitor idle `-` maps to NULL), `type`, `dev`, `event`, `unit`, `value`, `delta`, `arc`. Sample-header jobid propagates through parse + collapse on both live listend and archive `sync_timedb` ingest.
-7. **Analysis** (`jid_table`, `metrics`, `plot/*`) and **API/SPA** query `host_data` primarily by job `host_list` + time window (and may use `host_data.jid` when tagged).
+5. **`hpcperfstats/dbload/io_helpers.py`** (`host_data_instance_from_stats_row`) builds ORM rows.
+6. **`hpcperfstats/site/lib/machine/models.py`** (`host_data` model) stores `time`, `host`, `type`, `dev`, `event`, `unit`, `value`, `delta`, `arc`.
+7. **Analysis** (`jid_table`, `metrics`, `plot/*`) and **API/SPA** query `host_data` by job window and schema.
 
 ---
 
@@ -46,7 +46,6 @@ This document catalogs **`host_data.event` names** that the HPCPerfStats monitor
 | `amd64_pmc` | `amd64_pmc.c` | HW map → `FLOPS`, branch/stall events |
 | `amd64_rapl` | `amd64_rapl.c` | Package energy |
 | `arm_imc` | `arm_imc.c` | `CAS_READS` / `CAS_WRITES` |
-| `beegfs_client` | `beegfs.c` | BeeGFS client: `vfs_*` via `beegfs-ctl`, `fs_*` via `statvfs` (Job Detail FSIO / Summary panels wired) |
 | `block` | `block.c` | Block sysfs counters |
 | `cpu` | `cpu.c` | Per-CPU jiffies |
 | `cpu_counter_metrics` | `cpu_counter_metrics.c` | Intel/AMD/ARM paths; DCGM CPU power; synthetic ARM metrics |
@@ -86,7 +85,7 @@ Exact `st_name` values are in `HPCPerfStats/monitor/src/*.c` (grep `.st_name`). 
 - **High-speed fabric:** `host_ib`, `opa` — `port_*`, `Port*` counters
 - **Ethernet / LNET:** `net`, `lnet` — `rx_bytes`, `tx_bytes`, …
 - **Local disk:** `block` — `rd_sectors`, `wr_sectors`, …
-- **Shared filesystem:** `llite`, `mdc`, `osc`, `nfs`, `beegfs_client` — bytes, ops, Lustre `mds_*` / `ost_*`; BeeGFS uses portable `vfs_*` / `fs_*`
+- **Shared filesystem:** `llite`, `mdc`, `osc`, `nfs` — bytes, ops, Lustre `mds_*` / `ost_*`
 - **Memory & NUMA:** `mem`, NUMA meminfo fields on `mem`, `numa`, `vm`
 - **Power:** `intel_rapl`, `amd64_rapl`, `cpu_counter_metrics` (`DCGM_CPU_POWER_*`), GPU power fields
 - **Process footprint:** `proc` — `VmRSS`, `VmHWM`, …
@@ -174,7 +173,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** `nfs`
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `READ_queue`
 
@@ -230,7 +229,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `WRITE_queue`
 
@@ -290,7 +289,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `aperf`
 
-- **Definition:** Active cycles (util-scaled). Grace DCGM fail-soft: act = mperf * (util_total / 100); on x86, MSR/FIXED actual/unhalted cycle counters rename to this key.
+- **Definition:** Active cycles (util-scaled). Grace DCGM fail-soft: act = mperf * (util_total / 100); LIKWID overlay overwrites with measured active cycles when measured > 0; on x86, MSR/FIXED actual/unhalted cycle counters rename to this key.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
@@ -299,11 +298,12 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `arm_dram_bw_bytes`
 
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
+- **Definition:** Synthetic cumulative DRAM byte traffic estimate for ARM/DCGM-backed paths (monitor-derived).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_roofline_jid_table.py
 
 ### `arm_est_flops`
 
@@ -312,11 +312,11 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
 - **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py
-- **Tests:** hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_roofline_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `arm_int16_ops`
 
-- **Definition:** Grace host_cpu_hw: INT16 arithmetic operations from ASE_SVE_INT16_SPEC (PAPI fail-soft may report zero).
+- **Definition:** Grace host_cpu_hw: INT16 arithmetic operations from ASE_SVE_INT16_SPEC (overlay/eventset may report zero).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
@@ -324,21 +324,13 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `arm_int8_ops`
 
-- **Definition:** Grace host_cpu_hw: INT8 arithmetic operations from ASE_SVE_INT8_SPEC (PAPI fail-soft may report zero).
+- **Definition:** Grace host_cpu_hw: INT8 arithmetic operations from ASE_SVE_INT8_SPEC (overlay/eventset may report zero).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
 - **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py
 
 ### `bounce`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `bypass_cha_imc_all`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
@@ -388,7 +380,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `cpu_clock_est_cycles`
 
-- **Definition:** Active cycles (same as aperf under Grace DCGM fail-soft util-scaled estimate). PAPI may overwrite when measured cycles are nonzero.
+- **Definition:** Active cycles (same as aperf under Grace DCGM fail-soft util-scaled estimate). LIKWID overlay overwrites with measured cycles when measured > 0.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
@@ -504,7 +496,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/node_power_est.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_node_power_est.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_dcgm_cpu_power_agg.py; hpcperfstats/analysis/metrics/tests/test_node_power_est.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
 ### `dentry_use`
 
@@ -520,7 +512,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py
 
 ### `direct_write`
 
@@ -528,7 +520,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py
 
 ### `dirty`
 
@@ -610,14 +602,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `dtlb_load_misses_miss_causes_a_walk`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
 ### `errors`
 
 - **Definition:** LNET error counter.
@@ -639,7 +623,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py
 
 ### `file_use`
 
@@ -747,22 +731,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py
 - **Tests:** hpcperfstats/site/lib/machine/tests/test_metrics.py
 
-### `fp_comp_ops_exe_sse_fp_packed`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `fp_comp_ops_exe_sse_fp_scalar`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
 ### `fs_bytes_avail`
 
 - **Definition:** Lustre llite mount capacity: available bytes for unprivileged users from sysfs (gauge).
@@ -808,8 +776,8 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** GPU device count for the monitor row. DCGM-visible GPU count on `nvidia_gpu`; `amd_gpu` schema documents a stub row count (often 1).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/cache_utils.py; hpcperfstats/site/lib/machine/job_detail_artifacts.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_api_coverage_gaps.py; hpcperfstats/site/lib/machine/tests/test_job_detail_artifacts_prewarm.py; hpcperfstats/site/lib/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/lib/machine/tests/test_job_detail_gpu.py; hpcperfstats/site/lib/machine/tests/test_job_detail_openapi_wire_contract.py; hpcperfstats/site/lib/machine/tests/test_openapi_wire_contracts.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/cache_utils.py; hpcperfstats/site/lib/machine/job_detail_artifacts.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_api_coverage_gaps.py; hpcperfstats/site/lib/machine/tests/test_job_detail_artifacts_prewarm.py; hpcperfstats/site/lib/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/lib/machine/tests/test_job_detail_gpu.py; hpcperfstats/site/lib/machine/tests/test_job_detail_openapi_wire_contract.py; hpcperfstats/site/lib/machine/tests/test_job_detail_performance_annotate.py; hpcperfstats/site/lib/machine/tests/test_openapi_wire_contracts.py
 
 ### `gpu_dram_active`
 
@@ -832,8 +800,8 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Instantaneous estimated GPU FLOP/s (monitor model; both GPU types expose this KEY).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/roofline.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_roofline_jid_table.py
 
 ### `gpu_io_link_total_bytes`
 
@@ -841,14 +809,15 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_roofline_jid_table.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_roofline_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `gpu_mem_bw_bytes_rate`
 
 - **Definition:** Estimated GPU memory bandwidth (bytes/s) from the monitor model. DCGM-backed on `nvidia_gpu`; `amd_gpu` uses the same schema key.
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_avg_gpu_mem_bw_units.py; hpcperfstats/analysis/metrics/tests/test_roofline_jid_table.py
 
 ### `gpu_mem_free_mb`
 
@@ -911,16 +880,16 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_roofline_jid_table.py
 
 ### `gpu_nvlink_tx_bytes`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_roofline_jid_table.py
 
 ### `gpu_pcie_replay_counter`
 
@@ -935,16 +904,16 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_roofline_jid_table.py
 
 ### `gpu_pcie_tx_bytes`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/roofline.py; hpcperfstats/site/lib/machine/job_plot_artifacts.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_roofline_jid_table.py
 
 ### `gpu_peak_fp64_flops_per_s`
 
@@ -991,24 +960,22 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** GPU utilization percent. Populated from DCGM on `nvidia_gpu`; from GPUPerfAPI (or stub zeros) on `amd_gpu`.
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** `amd_gpu`, `nvidia_gpu`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/sync_timedb_parsing.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_gpu_job_detail_summary.py; hpcperfstats/analysis/metrics/tests/test_hover_tooltips.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_job_detail_gpu.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/sync_timedb_parsing.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_gpu_job_detail_summary.py; hpcperfstats/analysis/metrics/tests/test_hover_tooltips.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py; hpcperfstats/site/lib/machine/tests/test_job_detail_gpu.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `gpu_xe_link_rx_bytes`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/roofline.py
 
 ### `gpu_xe_link_tx_bytes`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** GPU cumulative or instantaneous model counters support kernel efficiency and memory traffic diagnosis; `clocks_event_reasons` bitmasks flag thermal or power throttling. Compare link-byte counters with HBM bandwidth estimates for PCIe-bound jobs.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/roofline.py
 
 ### `hbm_cas_reads`
 
@@ -1049,9 +1016,8 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Cumulative CPU idle time.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Diagnostic guidance:** Break down non-user CPU time to distinguish disk wait (`iowait`), interrupt storms (`irq`/`softirq`), and low-priority work (`nice`) from useful compute.
-- **Application / library code:** hpcperfstats/site/lib/machine/management/commands/pg_connection_stats.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_metrics_telemetry_bounds.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage_compose.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/update_metrics.py; hpcperfstats/dbload/lib/listend_db_ingest.py; hpcperfstats/site/lib/machine/management/commands/pg_connection_stats.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_metrics_telemetry_bounds.py; hpcperfstats/site/lib/machine/tests/test_metrics.py; hpcperfstats/site/lib/machine/tests/test_update_metrics.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage_compose.py
 
 ### `in_flight`
 
@@ -1115,16 +1081,16 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Cumulative CPU time waiting for block I/O.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Diagnostic guidance:** Break down non-user CPU time to distinguish disk wait (`iowait`), interrupt storms (`irq`/`softirq`), and low-priority work (`nice`) from useful compute.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Tests:** hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `irq`
 
 - **Definition:** Cumulative CPU time handling hardware interrupts.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Diagnostic guidance:** Break down non-user CPU time to distinguish disk wait (`iowait`), interrupt storms (`irq`/`softirq`), and low-priority work (`nice`) from useful compute.
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `kswapd_inodesteal`
 
@@ -1143,14 +1109,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `l1d_replacement`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `l2_lines_in_all`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
@@ -1179,22 +1137,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-
-### `llc_lookup_data_read_local`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `llc_lookup_write`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
 ### `load_1`
 
@@ -1347,37 +1289,13 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py
 
-### `mem_uncore_retired_local_dram`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `mem_uncore_retired_remote_dram`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `mem_uops_retired_all_loads`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
 ### `mem_used`
 
 - **Definition:** System V shared memory: total bytes used across segments.
 - **Domain:** SysV shared memory
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py; hpcperfstats/site/lib/machine/api.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_api_coverage_closure.py; hpcperfstats/site/lib/machine/tests/test_api_helpers.py
 
 ### `module_power_usage`
 
@@ -1385,11 +1303,11 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/node_power_est.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/sync_timedb_parsing.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_node_power_est.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_dcgm_cpu_power_agg.py; hpcperfstats/analysis/metrics/tests/test_node_power_est.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
 ### `mperf`
 
-- **Definition:** Reference cycles (wall/TSC-like). Grace DCGM fail-soft: ref = clock_khz * delta_t_us / 1000; on x86, MSR/FIXED reference cycle counters rename to this key.
+- **Definition:** Reference cycles (wall/TSC-like). Grace DCGM fail-soft: ref = clock_khz * delta_t_us / 1000; LIKWID overlay overwrites with measured lifetime cycles when measured > 0; on x86, MSR/FIXED reference cycle counters rename to this key.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
@@ -1696,7 +1614,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/node_power_est.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_node_power_est.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_dcgm_cpu_power_agg.py; hpcperfstats/analysis/metrics/tests/test_node_power_est.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
 ### `port_error_counter_summary`
 
@@ -1791,6 +1709,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Tests:** hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `port_rcv_remote_physical_errors`
 
@@ -1843,7 +1762,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** `host_ib`
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_admin_monitor_telemetry_health.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `port_xmit_discards`
 
@@ -1866,7 +1785,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `port_xmit_time_cong`
 
@@ -1905,8 +1824,8 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** GPU power draw (watts). DCGM on `nvidia_gpu`; device-reported path on `amd_gpu` when available.
 - **Domain:** GPU (NVIDIA DCGM / AMD GPUPerfAPI-style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/node_power_est.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/sync_timedb_parsing.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_node_power_est.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/node_power_est.py; hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/dbload/lib/sync_timedb_parsing.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_dcgm_cpu_power_agg.py; hpcperfstats/analysis/metrics/tests/test_node_power_est.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `pp0_energy`
 
@@ -1929,8 +1848,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Processes created (forks) from /proc/stat.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Load average and context-switch rates contextualize CPU contention: high `ctxt` with moderate CPU counters may indicate excessive threading or I/O wakeups.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
 
 ### `pswpin`
 
@@ -1997,14 +1915,6 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
 - **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
 
-### `resource_stalls_any`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
 ### `retired_branch_instr`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
@@ -2051,7 +1961,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** Ethernet (per-interface); LNET may reuse byte keys
 - **Typical `host_data.type` values:** `lnet`, `net`
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `rx_bytes_dropped`
 
@@ -2075,6 +1985,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
 ### `rx_dropped`
 
@@ -2164,7 +2075,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py
 
 ### `server_write`
 
@@ -2172,23 +2083,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** NFS client (mountstats)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
-
-### `sf_evictions_mes`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
-
-### `simd_fp_256_packed_double`
-
-- **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
-- **Domain:** General / multi-type (see monitor `host_data.type`)
-- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py
 
 ### `slab`
 
@@ -2196,7 +2091,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py
 
 ### `slabs_scanned`
 
@@ -2226,8 +2121,8 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Cumulative CPU time in softirq bottom halves.
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Diagnostic guidance:** Break down non-user CPU time to distinguish disk wait (`iowait`), interrupt storms (`irq`/`softirq`), and low-priority work (`nice`) from useful compute.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
+- **Tests:** hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `sw_port_congestion`
 
@@ -2275,6 +2170,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** InfiniBand / Omni-Path / HFI
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
 
 ### `sysio_power_usage`
 
@@ -2290,7 +2186,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/analysis/metrics/tests/test_time_imbalance.py; hpcperfstats/site/lib/machine/tests/test_host_data_per_sample_aggregate.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py; hpcperfstats/site/lib/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `temperature`
 
@@ -2377,8 +2273,8 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/migrations/0029_proc_data_host_proc_fields.py
+- **Tests:** hpcperfstats/site/lib/machine/tests/test_api_view_matrix.py; hpcperfstats/site/lib/machine/tests/test_job_detail_openapi_wire_contract.py; hpcperfstats/site/lib/machine/tests/test_openapi_wire_contracts.py
 
 ### `time_in_queue`
 
@@ -2475,16 +2371,16 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/migrations/0029_proc_data_host_proc_fields.py
+- **Tests:** hpcperfstats/site/lib/machine/tests/test_job_detail_openapi_wire_contract.py; hpcperfstats/site/lib/machine/tests/test_openapi_wire_contracts.py
 
 ### `user`
 
 - **Definition:** Cumulative CPU time in user mode (per-core counter; units per Linux /proc/stat, typically jiffies).
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/tests/test_metrics_telemetry_bounds.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_job_detail_artifacts_prewarm.py; hpcperfstats/site/lib/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/lib/machine/tests/test_metrics.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_diagnosis_compose.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage_compose.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/site/lib/machine/admin_monitor_telemetry_health.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py; hpcperfstats/analysis/metrics/tests/test_metrics_telemetry_bounds.py; hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/analysis/metrics/tests/test_time_imbalance.py; hpcperfstats/site/lib/machine/tests/test_admin_monitor_telemetry_health.py; hpcperfstats/site/lib/machine/tests/test_host_data_per_sample_aggregate.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py; hpcperfstats/site/lib/machine/tests/test_job_detail_artifacts_prewarm.py; hpcperfstats/site/lib/machine/tests/test_job_detail_fsio.py; hpcperfstats/site/lib/machine/tests/test_metrics.py; hpcperfstats/site/lib/machine/tests/test_openapi_wire_contracts.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_diagnosis_compose.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage_compose.py
 
 ### `vfs_alloc_inode_ops`
 
@@ -2500,7 +2396,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
 
 ### `vfs_create_ops`
 
@@ -2508,7 +2404,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
 
 ### `vfs_direct_read_bytes`
 
@@ -2564,7 +2460,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
 
 ### `vfs_getxattr_ops`
 
@@ -2596,7 +2492,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
 
 ### `vfs_listxattr_ops`
 
@@ -2620,7 +2516,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
 
 ### `vfs_mknod_ops`
 
@@ -2644,7 +2540,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
 
 ### `vfs_osc_read_bytes`
 
@@ -2667,8 +2563,8 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Lustre llite: cumulative bytes read on this client mount (canonical vfs_* KEY from `/proc/fs/lustre/llite/*/stats`).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/site/lib/machine/job_detail_artifacts.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py
 
 ### `vfs_read_ops`
 
@@ -2684,7 +2580,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
 
 ### `vfs_removexattr_ops`
 
@@ -2700,7 +2596,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
 
 ### `vfs_rmdir_ops`
 
@@ -2708,7 +2604,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
 
 ### `vfs_seek_ops`
 
@@ -2724,7 +2620,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
 
 ### `vfs_setxattr_ops`
 
@@ -2740,7 +2636,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
 
 ### `vfs_symlink_ops`
 
@@ -2756,7 +2652,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
 
 ### `vfs_unlink_ops`
 
@@ -2764,15 +2660,15 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre client statistic; plot rates over time and compare nodes for skew. Combine with MDS/OSC counters when metadata or lock contention is suspected.
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py
 
 ### `vfs_write_bytes`
 
 - **Definition:** Lustre llite: cumulative bytes written on this client mount (canonical vfs_* KEY).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Application / library code:** hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py
+- **Application / library code:** hpcperfstats/analysis/metrics/lib/beegfs_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/gen/jid_table.py; hpcperfstats/analysis/metrics/lib/job_detail_fsio.py; hpcperfstats/analysis/metrics/lib/llite_metadata_iops_events.py; hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/lib/plot/summaryplot.py; hpcperfstats/site/lib/machine/job_detail_artifacts.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_job_detail_fsio.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_jid_table.py
 
 ### `vfs_write_ops`
 
@@ -2787,88 +2683,80 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/migrations/0029_proc_data_host_proc_fields.py
 
 ### `vm_exe`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/migrations/0029_proc_data_host_proc_fields.py
 
 ### `vm_hwm`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/migrations/0029_proc_data_host_proc_fields.py
+- **Tests:** hpcperfstats/site/lib/machine/tests/test_job_detail_openapi_wire_contract.py; hpcperfstats/site/lib/machine/tests/test_openapi_wire_contracts.py
 
 ### `vm_lck`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/migrations/0029_proc_data_host_proc_fields.py
 
 ### `vm_lib`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/migrations/0029_proc_data_host_proc_fields.py
 
 ### `vm_peak`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/migrations/0029_proc_data_host_proc_fields.py
 
 ### `vm_pte`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/migrations/0029_proc_data_host_proc_fields.py
 
 ### `vm_rss`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/migrations/0029_proc_data_host_proc_fields.py
+- **Tests:** hpcperfstats/site/lib/machine/tests/test_job_detail_openapi_wire_contract.py; hpcperfstats/site/lib/machine/tests/test_openapi_wire_contracts.py
 
 ### `vm_size`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/migrations/0029_proc_data_host_proc_fields.py
+- **Tests:** hpcperfstats/site/lib/machine/tests/test_job_detail_openapi_wire_contract.py; hpcperfstats/site/lib/machine/tests/test_openapi_wire_contracts.py
 
 ### `vm_stk`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/migrations/0029_proc_data_host_proc_fields.py
 
 ### `vm_swap`
 
 - **Definition:** Telemetry field published by the HPCPerfStats monitor as host_data.event (see monitor/src for the owning stats type).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
-- **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
-- **Additional references:** *(none outside universal ingest / schema — may still appear in type-detail API, ad-hoc queries, and Bokeh hovers keyed by raw `event`)*
+- **Application / library code:** hpcperfstats/dbload/lib/sync_timedb_parsing.py; hpcperfstats/site/lib/machine/api.py; hpcperfstats/site/lib/machine/migrations/0029_proc_data_host_proc_fields.py
 
 ### `wait`
 
@@ -2876,7 +2764,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Lustre llite operation counter; unusually high `getxattr`/`inode_permission` rates often accompany metadata-heavy tools or security modules scanning many files.
-- **Tests:** hpcperfstats/site/lib/machine/tests/test_api_view_matrix.py; hpcperfstats/site/lib/machine/tests/test_update_metrics.py
+- **Tests:** hpcperfstats/site/lib/machine/tests/test_api_view_matrix.py
 
 ### `wr_ios`
 

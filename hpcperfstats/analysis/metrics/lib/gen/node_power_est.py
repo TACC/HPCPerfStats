@@ -45,7 +45,10 @@ def build_node_power_est_dataframe(jt: Any) -> Any:
       ),
   ]
   for typ, val, events, name, conv in rows:
-    agg = sp._get_agg_if_feasible(jt, typ, val, list(events), conv)
+    if name == "dcg_cpu_power_w":
+      agg = sp._get_dcgm_cpu_power_util_agg(jt, conv)
+    else:
+      agg = sp._get_agg_if_feasible(jt, typ, val, list(events), conv)
     if agg.empty or "sum_val" not in agg.columns:
       df[name] = np.nan
     else:

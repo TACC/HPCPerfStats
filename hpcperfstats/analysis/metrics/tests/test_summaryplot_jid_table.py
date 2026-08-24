@@ -1140,8 +1140,8 @@ def test_summaryplot_node_power_est_w_intel_plus_gpu():
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     ev = list(events)
     if typ in _INTEL_RAPL_TYPES and val_col == "arc" and _events_include_pkg_energy(ev):
       return pd.DataFrame(
@@ -1212,8 +1212,8 @@ def test_summaryplot_node_power_est_w_prefers_module_branch():
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     ev = list(events)
     if typ in _INTEL_RAPL_TYPES and val_col == "arc" and _events_include_pkg_energy(ev):
       return pd.DataFrame(

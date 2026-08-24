@@ -472,18 +472,20 @@ DESC: dict[str, str] = {
     "tx_fifo_errors": "Linux netdev: transmit FIFO errors (underrun/overrun, driver dependent).",
     "tx_heartbeat_errors": "Linux netdev: heartbeat / half-duplex loss-of-carrier style errors.",
     "tx_window_errors": "Linux netdev: classic transmitter window errors on outbound frames.",
-    # Grace / ARM host_cpu_hw (cpu_counter_metrics): DCGM fail-soft cycles + PAPI overlay.
+    # Grace / ARM host_cpu_hw: DCGM fail-soft cycles + LIKWID overlay when measured > 0.
     "mperf": (
         "Reference cycles (wall/TSC-like). Grace DCGM fail-soft: ref = clock_khz * delta_t_us / 1000; "
+        "LIKWID overlay overwrites with measured lifetime cycles when measured > 0; "
         "on x86, MSR/FIXED reference cycle counters rename to this key."
     ),
     "aperf": (
         "Active cycles (util-scaled). Grace DCGM fail-soft: act = mperf * (util_total / 100); "
+        "LIKWID overlay overwrites with measured active cycles when measured > 0; "
         "on x86, MSR/FIXED actual/unhalted cycle counters rename to this key."
     ),
     "cpu_clock_est_cycles": (
         "Active cycles (same as aperf under Grace DCGM fail-soft util-scaled estimate). "
-        "PAPI may overwrite when measured cycles are nonzero."
+        "LIKWID overlay overwrites with measured cycles when measured > 0."
     ),
     "arm_est_flops": (
         "Grace host_cpu_hw: estimated floating-point operations per interval as SP+DP scalar "
@@ -491,11 +493,11 @@ DESC: dict[str, str] = {
     ),
     "arm_int8_ops": (
         "Grace host_cpu_hw: INT8 arithmetic operations from ASE_SVE_INT8_SPEC "
-        "(PAPI fail-soft may report zero)."
+        "(overlay/eventset may report zero)."
     ),
     "arm_int16_ops": (
         "Grace host_cpu_hw: INT16 arithmetic operations from ASE_SVE_INT16_SPEC "
-        "(PAPI fail-soft may report zero)."
+        "(overlay/eventset may report zero)."
     ),
     "fp_arith_inst_retired_scalar_double": (
         "Grace host_cpu_hw: retired scalar double-precision FP arithmetic instructions."

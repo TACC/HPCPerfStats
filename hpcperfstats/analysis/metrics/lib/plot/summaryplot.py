@@ -241,20 +241,25 @@ def _get_agg_if_feasible(
   val_col: Any,
   events: Any,
   conv: Any,
+  *,
+  group_by_dev: bool = False,
 ) -> Any:
   """
   Like jt.get_aggregate_df with canonical + legacy type/event dual-read.
-  
+
   Args:
-    jt (Any): Jt passed to this helper.
-    typ (Any): Typ passed to this helper.
-    val_col (Any): Val col passed to this helper.
-    events (Any): Events passed to this helper.
-    conv (Any): Conv passed to this helper.
-  
+    jt (Any): Job table with ``schema`` and ``get_aggregate_df``.
+    typ (Any): Canonical host_data type to probe.
+    val_col (Any): Column to aggregate (``arc`` or ``value``).
+    events (Any): Event name list (dual-read probed).
+    conv (Any): Multiplier applied inside ``get_aggregate_df``.
+    group_by_dev (bool): When True, keep per-device rows (no SUM across
+      ``dev``); used for Grace DCGM CPU power unique-watt collapse.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: Aggregate DataFrame (``host``, ``time``[, ``dev``], ``sum_val``)
+      or empty frame when schema/events are infeasible.
+
   Examples:
     >>> _get_agg_if_feasible(None, None, None, None, None)  # doctest: +SKIP
   """
@@ -266,10 +271,48 @@ def _get_agg_if_feasible(
   for t in type_probe_names(typ):
     if not _summary_type_events_feasible(schema, t, events):
       continue
-    agg = jt.get_aggregate_df(t, val_col, ev, conv)
+    if group_by_dev:
+      agg = jt.get_aggregate_df(
+          t, val_col, ev, conv, group_by_dev=True,
+      )
+    else:
+      agg = jt.get_aggregate_df(t, val_col, ev, conv)
     if agg is not None and not agg.empty:
       return agg
   return _empty_agg_df()
+
+
+def _get_dcgm_cpu_power_util_agg(jt: Any, conv: Any = 1.0) -> Any:
+  """
+  Aggregate Grace ``dcgm_cpu_power_util_w`` as sum of unique socket paints.
+
+  Fetches per-``dev`` rows then collapses identical per-CPU replicas via
+  ``sum_unique_watt_values_per_host_time`` so Ncores×socket_watts does not
+  overcount.
+
+  Args:
+    jt (Any): Job table with schema and aggregate accessors.
+    conv (Any): Multiplier for watt values (default 1.0).
+
+  Returns:
+    Any: DataFrame with ``host``, ``time``, ``sum_val`` (unique-watt sum).
+
+  Examples:
+    >>> _get_dcgm_cpu_power_util_agg(None)  # doctest: +SKIP
+  """
+  from hpcperfstats.analysis.metrics.lib.gen.dcgm_cpu_power_agg import (
+      sum_unique_watt_values_per_host_time,
+  )
+
+  agg = _get_agg_if_feasible(
+      jt,
+      "host_cpu_hw",
+      "value",
+      ["dcgm_cpu_power_util_w"],
+      conv,
+      group_by_dev=True,
+  )
+  return sum_unique_watt_values_per_host_time(agg)
 
 
 def _continuous_polyline_xy(times: Any, values: Any) -> Any:
@@ -375,6 +418,8 @@ def _prefetch_single_spec_aggregates(jt: Any, spec_rows: Any) -> Any:
     try:
       if not _summary_type_events_feasible(schema, typ, events):
         return name, pd.DataFrame(columns=["host", "time", "sum_val"])
+      if name == "dcg_cpu_power_w":
+        return name, _get_dcgm_cpu_power_util_agg(jt, conv)
       return name, jt.get_aggregate_df(typ, val, list(events), conv)
     finally:
       close_old_connections()

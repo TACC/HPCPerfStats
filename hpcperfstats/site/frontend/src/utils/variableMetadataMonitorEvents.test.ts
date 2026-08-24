@@ -17,16 +17,20 @@ describe("MONITOR_EVENT_METADATA", () => {
     expect(MONITOR_EVENT_METADATA.READ_ops?.description).toMatch(/NFS READ/i);
   });
 
-  it("documents Grace DCGM fail-soft mperf/aperf/cpu_clock_est_cycles semantics", () => {
+  it("documents Grace DCGM fail-soft + LIKWID overlay for cycle keys", () => {
     const mperf = MONITOR_EVENT_METADATA.mperf?.description ?? "";
     const aperf = MONITOR_EVENT_METADATA.aperf?.description ?? "";
     const est = MONITOR_EVENT_METADATA.cpu_clock_est_cycles?.description ?? "";
     expect(mperf).toMatch(/reference cycles/i);
     expect(mperf).toMatch(/clock_khz/i);
+    expect(mperf).toMatch(/LIKWID overlay/i);
     expect(aperf).toMatch(/active cycles/i);
     expect(aperf).toMatch(/util_total/i);
+    expect(aperf).toMatch(/LIKWID overlay/i);
     expect(est).toMatch(/active cycles/i);
     expect(est).toMatch(/aperf/i);
+    expect(est).toMatch(/LIKWID overlay/i);
+    expect(est).not.toMatch(/PAPI may overwrite/i);
   });
 
   it("does not use scientific notation in descriptions", () => {
