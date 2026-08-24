@@ -325,3 +325,145 @@ def test_invalidate_protects_job_v1_keys():
   )
   assert result["deleted"] >= 1
   assert client.get(job_key) == "should-survive-if-scanned"
+
+
+# --- Slice 2: brownfield reconstruct predicates (library-only) ---
+
+
+def test_reconstruct_laws_empty_redis_and_checkpoint_not_sot():
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  assert jr.empty_job_queues_mean_caught_up() is False
+  assert jr.checkpoint_sidecar_is_reconstruct_source_of_truth() is False
+  assert jr.RECONSTRUCT_CHECKPOINT_BASENAME == ".sync_timedb_state.json"
+  assert "marks" in jr.reconstruct_sources_of_truth()
+  assert ".sync_timedb_state.json" not in jr.reconstruct_sources_of_truth()
+
+
+def test_reconstruct_never_ingested_enqueues_ingest_and_append():
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  client = FakeRedis()
+  plan = jr.classify_closed_raw_path(
+      "/archive/host/raw",
+      tgz_archive_dir="/daily",
+      size=100,
+      mtime_ns=200,
+      calendar_day=date(2026, 8, 20),
+      ingest_is_complete_fn=lambda **_k: False,
+      append_is_complete_fn=lambda **_k: False,
+  )
+  assert plan.kinds_to_enqueue() == ("ingest", "append")
+  enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
+      client,
+      plan,
+      today=date(2026, 8, 24),
+  )
+  assert enqueued == {"ingest": True, "append": True}
+  ingest_key = jq.job_queue_key("ingest")
+  append_key = jq.job_queue_key("append")
+  assert plan.identity in client._zsets[ingest_key]
+  assert client._lists[append_key] == [plan.path]
+
+
+def test_reconstruct_ingested_not_in_tar_enqueues_append_only():
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  client = FakeRedis()
+  plan = jr.classify_closed_raw_path(
+      "/archive/host/raw",
+      tgz_archive_dir="/daily",
+      size=100,
+      mtime_ns=200,
+      calendar_day=date(2026, 6, 2),
+      ingest_is_complete_fn=lambda **_k: True,
+      append_is_complete_fn=lambda **_k: False,
+  )
+  assert plan.kinds_to_enqueue() == ("append",)
+  enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
+      client,
+      plan,
+      today=date(2026, 8, 24),
+  )
+  assert enqueued == {"ingest": False, "append": True}
+  assert not client._zsets.get(jq.job_queue_key("ingest"))
+  assert client._lists[jq.job_queue_key("append")] == [plan.path]
+
+
+def test_reconstruct_skips_zadd_when_both_complete():
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  client = FakeRedis()
+  plan = jr.classify_closed_raw_path(
+      "/archive/host/raw",
+      tgz_archive_dir="/daily",
+      size=100,
+      mtime_ns=200,
+      calendar_day=date(2026, 8, 20),
+      ingest_is_complete_fn=lambda **_k: True,
+      append_is_complete_fn=lambda **_k: True,
+  )
+  assert plan.kinds_to_enqueue() == ()
+  enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
+      client,
+      plan,
+      today=date(2026, 8, 24),
+  )
+  assert enqueued == {"ingest": False, "append": False}
+  assert not client._zsets
+  assert not client._lists
+
+
+def test_reconstruct_ghost_phase_done_still_enqueues_day_close():
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  client = FakeRedis()
+  tar = "/daily/2026-08-01.tar"
+  # Ghost phase=done with incomplete filesystem must still enqueue.
+  did = jr.enqueue_day_close_if_needed(
+      client,
+      tar,
+      calendar_day=date(2026, 8, 1),
+      phase_name="done",
+      filesystem_complete=False,
+      min_age_elapsed=True,
+  )
+  assert did is True
+  assert client._lists[jq.job_queue_key("day_close")] == [tar]
+  # Same phase with FS+age complete → skip enqueue.
+  client2 = FakeRedis()
+  skipped = jr.enqueue_day_close_if_needed(
+      client2,
+      tar,
+      calendar_day=date(2026, 8, 1),
+      phase_name="done",
+      filesystem_complete=True,
+      min_age_elapsed=True,
+  )
+  assert skipped is False
+  assert not client2._lists
+
+
+def test_reconstruct_ingest_complete_ignores_head_tail_when_listend_on():
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  assert (
+      jr.ingest_is_complete(
+          "/x",
+          listend_enabled=True,
+          has_file_complete_fn=lambda _p: False,
+          has_zero_host_fn=lambda _p: False,
+          head_tail_ready_fn=lambda _p: True,
+      )
+      is False
+  )
+  assert (
+      jr.ingest_is_complete(
+          "/x",
+          listend_enabled=False,
+          has_file_complete_fn=lambda _p: False,
+          has_zero_host_fn=lambda _p: False,
+          head_tail_ready_fn=lambda _p: True,
+      )
+      is True
+  )
