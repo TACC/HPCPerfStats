@@ -50,6 +50,12 @@ static void test_schema_key_map(void)
   k = likwid_pmc_schema_key_from_event("LS_DISPATCH", buf, sizeof(buf));
   assert(k != NULL && strcmp(k, "ls_dispatch") == 0);
 
+  k = likwid_pmc_schema_key_from_event("CPU_CYCLES", buf, sizeof(buf));
+  assert(k != NULL && strcmp(k, "cpu_clock_est_cycles") == 0);
+
+  k = likwid_pmc_schema_key_from_event("INST_RETIRED", buf, sizeof(buf));
+  assert(k != NULL && strcmp(k, "instr_retired") == 0);
+
   assert(likwid_pmc_schema_key_from_event(NULL, buf, sizeof(buf)) == NULL);
   assert(likwid_pmc_schema_key_from_event("X", NULL, 8) == NULL);
 }

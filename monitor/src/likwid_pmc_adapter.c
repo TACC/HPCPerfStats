@@ -388,3 +388,74 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, 
   return -1;
 #endif
 }
+
+int likwid_pmc_adapter_read_group(void)
+{
+#ifdef HAVE_LIKWID
+  if (!g_initialized || g_group < 0)
+    return -1;
+  if (perfmon_readGroupCounters(g_group) < 0)
+    return -1;
+  return 0;
+#else
+  return -1;
+#endif
+}
+
+int likwid_pmc_adapter_read_cpu_cycles_instr(int cpu, unsigned long long *cycles_out,
+                                             unsigned long long *instr_out)
+{
+#ifdef HAVE_LIKWID
+  int i;
+  int n_events;
+  unsigned long long cycles = 0;
+  unsigned long long instr = 0;
+  int have_cycles = 0;
+  int have_instr = 0;
+
+  if (cycles_out != NULL)
+    *cycles_out = 0;
+  if (instr_out != NULL)
+    *instr_out = 0;
+  if (!g_initialized || g_group < 0 || cpu < 0)
+    return -1;
+  n_events = perfmon_getNumberOfEvents(g_group);
+  for (i = 0; i < n_events; i++) {
+    const char *event_name = perfmon_getEventName(g_group, i);
+    char keybuf[128];
+    const char *schema_key;
+    unsigned long long val = 0;
+    double raw = perfmon_getResult(g_group, i, cpu);
+
+    if (likwid_result_to_ull(raw, ~(unsigned long long)0, &val) < 0)
+      continue;
+    if (likwid_pmc_result_is_invalid(val))
+      continue;
+    schema_key = likwid_pmc_schema_key_from_event(event_name, keybuf, sizeof(keybuf));
+    if (schema_key == NULL)
+      continue;
+    if (strcmp(schema_key, "cpu_clock_est_cycles") == 0 ||
+        strcmp(schema_key, "cycles_unhalted_core") == 0) {
+      cycles = val;
+      have_cycles = 1;
+    } else if (strcmp(schema_key, "instr_retired") == 0 ||
+               strcmp(schema_key, "instr_retired_any") == 0 ||
+               strcmp(schema_key, "retired_instructions") == 0) {
+      instr = val;
+      have_instr = 1;
+    }
+  }
+  if (cycles_out != NULL && have_cycles)
+    *cycles_out = cycles;
+  if (instr_out != NULL && have_instr)
+    *instr_out = instr;
+  return 0;
+#else
+  (void)cpu;
+  if (cycles_out != NULL)
+    *cycles_out = 0;
+  if (instr_out != NULL)
+    *instr_out = 0;
+  return -1;
+#endif
+}

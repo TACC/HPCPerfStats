@@ -43,7 +43,7 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [monitor-ib-sysfs-parsing.mdc](monitor-ib-sysfs-parsing.mdc) | IB port state parsers |
 | [monitor-beegfs-procfs.mdc](monitor-beegfs-procfs.mdc) | BeeGFS client detect + bounded `beegfs-ctl` |
 | [monitor-xpum-integration.mdc](monitor-xpum-integration.mdc) | Intel PVC / XPU Manager (`intel_gpu`) |
-| [monitor-papi-integration.mdc](monitor-papi-integration.mdc) | aarch64 DCGM+PAPI hybrid FLOPs/cycles |
+| [monitor-likwid-overlay.mdc](monitor-likwid-overlay.mdc) | aarch64 DCGM+LIKWID overlay cycles/inst |
 | [monitor-amd-epyc-likwid.mdc](monitor-amd-epyc-likwid.mdc) | EPYC Rome–Turin LIKWID-only DF/core; no MSR fallback |
 | [monitor-cursor-rules-sync.mdc](monitor-cursor-rules-sync.mdc) | Edit both `.cursor/rules/` and `monitor/cursor-rules/`; **`cp` hooks.json** after hook/rule registration |
 | [python-venv-enforcement.mdc](python-venv-enforcement.mdc) | Python tooling: repo `.venv` |

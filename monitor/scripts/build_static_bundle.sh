@@ -37,15 +37,16 @@
 # libdcgm / GPUPerfAPI headers when hardware matches). Extra CONFIGURE_ARGS still override
 # or extend (e.g. --disable-lustre).
 #
-# CPU counters: configure uses --with-cpu-counter-backend=auto (x86 -> LIKWID, else DCGM);
-# non-x86 builds still need system libdcgm for the DCGM CPU path.
+# CPU counters: configure uses --with-cpu-counter-backend=auto (x86 -> LIKWID,
+# else DCGM + LIKWID overlay). Non-x86 still needs system libdcgm for util/power.
 #
 # Pinned versions: edit STATIC_PIN_* below. Runtime overrides: LIBEV_VER,
 # RABBITMQ_VER, LIKWID_TAG, and *_URL_FMT for mirrors.
 #
 # Architecture (deps + configure):
-#   x86_64 / i686: builds LIKWID static libs; configure auto-selects LIKWID CPU backend.
-#   Other (e.g. aarch64): builds libev + rabbitmq-c only; configure auto-selects DCGM.
+#   All arches: build LIKWID static libs (ACCESSMODE=perf_event).
+#   x86_64 / i686: configure auto-selects exclusive LIKWID CPU backend.
+#   Other (e.g. aarch64): configure auto-selects DCGM + LIKWID overlay.
 #   DCGM GPU/CPU headers are vendored under monitor/third_party/nvidia-dcgm; linking still
 #   needs libdcgm from the NVIDIA DCGM package when those paths are enabled.
 #
@@ -66,15 +67,13 @@ STATIC_PIN_RABBITMQ_C_VERSION="0.17.0"
 # LIKWID: Git tag name without a leading "v" (archive is .../tags/v${VER}.tar.gz).
 STATIC_PIN_LIKWID_VERSION="5.5.2"
 STATIC_PIN_LIBBPF_VERSION="1.7.0"
-# PAPI: used on aarch64 with DCGM CPU backend for PMU SP/DP FLOPs + cycles.
-STATIC_PIN_PAPI_VERSION="7.2.0"
+# LIKWID is the PMU library on x86 and aarch64 (DCGM+LIKWID overlay on Grace).
 # Optional: override tarball base URLs (must contain a single %s for version where used).
 STATIC_PIN_LIBEV_URL_FMT="http://dist.schmorp.de/libev/libev-%s.tar.gz"
 # rabbitmq-c: source-of-truth repo is alanxz/rabbitmq-c; github.com/rabbitmq/rabbitmq-c archive URLs return 404.
 STATIC_PIN_RABBITMQ_C_URL_FMT="https://github.com/alanxz/rabbitmq-c/archive/refs/tags/v%s.tar.gz"
 STATIC_PIN_LIKWID_URL_FMT="https://github.com/RRZE-HPC/likwid/archive/refs/tags/v%s.tar.gz"
 STATIC_PIN_LIBBPF_URL_FMT="https://github.com/libbpf/libbpf/archive/refs/tags/v%s.tar.gz"
-STATIC_PIN_PAPI_URL_FMT="https://icl.utk.edu/projects/papi/downloads/papi-%s.tar.gz"
 # =============================================================================
 
 PREFIX="${PREFIX:-${REPO_ROOT}/.build/prefix-static}"
@@ -177,12 +176,10 @@ LIBEV_VER="${LIBEV_VER:-${STATIC_PIN_LIBEV_VERSION}}"
 RABBITMQ_VER="${RABBITMQ_VER:-${STATIC_PIN_RABBITMQ_C_VERSION}}"
 LIKWID_TAG="${LIKWID_TAG:-${STATIC_PIN_LIKWID_VERSION}}"
 LIBBPF_VER="${LIBBPF_VER:-${STATIC_PIN_LIBBPF_VERSION}}"
-PAPI_VER="${PAPI_VER:-${STATIC_PIN_PAPI_VERSION}}"
 LIBEV_URL_FMT="${LIBEV_URL_FMT:-${STATIC_PIN_LIBEV_URL_FMT}}"
 RABBITMQ_C_URL_FMT="${RABBITMQ_C_URL_FMT:-${STATIC_PIN_RABBITMQ_C_URL_FMT}}"
 LIKWID_URL_FMT="${LIKWID_URL_FMT:-${STATIC_PIN_LIKWID_URL_FMT}}"
 LIBBPF_URL_FMT="${LIBBPF_URL_FMT:-${STATIC_PIN_LIBBPF_URL_FMT}}"
-PAPI_URL_FMT="${PAPI_URL_FMT:-${STATIC_PIN_PAPI_URL_FMT}}"
 
 WANT_METRIC_PROFILER_EBPF=0
 
@@ -225,6 +222,18 @@ is_x86_build_host() {
   case "$(uname -m)" in
   x86_64 | i?86) return 0 ;;
   *) return 1 ;;
+  esac
+}
+
+# LIKWID 5.5.2 config.mk defaults to COMPILER=GCC (x86). Native aarch64/POWER
+# must pass GCCARMv8 / GCCPOWER or make compiles rdpmc / .intel_syntax.
+likwid_compiler_for_host() {
+  case "$(uname -m)" in
+  x86_64 | i?86) printf '%s\n' "GCC" ;;
+  aarch64 | arm64) printf '%s\n' "GCCARMv8" ;;
+  armv7* | arm) printf '%s\n' "GCCARMv7" ;;
+  ppc64le | ppc64 | powerpc64le | powerpc64) printf '%s\n' "GCCPOWER" ;;
+  *) printf '%s\n' "" ;;
   esac
 }
 
@@ -302,8 +311,8 @@ static_bundle_print_detection_summary() {
     cpu_backend="LIKWID"
     likwid_build="yes (this run compiles LIKWID into PREFIX unless SKIP_DEPS=1)"
   else
-    cpu_backend="DCGM"
-    likwid_build="no (non-x86; needs system libdcgm for CPU counters)"
+    cpu_backend="DCGM+LIKWID overlay"
+    likwid_build="yes (aarch64 overlay; DCGM still required for util/power)"
   fi
 
   if command -v lspci >/dev/null 2>&1; then
@@ -521,7 +530,12 @@ build_rabbitmq_c() {
 build_likwid() {
   local d="${SRCDIR}/likwid-${LIKWID_TAG}"
   local t="${SRCDIR}/likwid-${LIKWID_TAG}.tar.gz"
-  local likwid_cflags
+  local likwid_cflags likwid_compiler
+  likwid_compiler="$(likwid_compiler_for_host)"
+  if test -z "${likwid_compiler}"; then
+    echo "error: LIKWID ${LIKWID_TAG} has no COMPILER for host $(uname -m) (supported: x86 GCC, aarch64 GCCARMv8, POWER GCCPOWER)" >&2
+    exit 1
+  fi
   if test ! -d "$d"; then
     fetch_url "$(printf "${LIKWID_URL_FMT}" "${LIKWID_TAG}")" "$t"
     tar -C "${SRCDIR}" -xzf "$t"
@@ -546,6 +560,7 @@ build_likwid() {
   # append (GNU make ignores += on cmdline vars without override) — keep -ldl here
   # or dlopen/dlsym fail on LS6 for pinlib and the lua helper binary.
   local -a likwid_mk=(
+    COMPILER="${likwid_compiler}"
     CFLAGS="${likwid_cflags}"
     SHARED_LFLAGS="-shared -fvisibility=hidden -pthread"
     LIBS="-lm -lrt -pthread -ldl"
@@ -573,55 +588,6 @@ build_libbpf() {
   cd "$d/src"
   make -j"${JOBS}" BUILD_STATIC_ONLY=y OBJDIR=build DESTDIR= CC="${CC_FOR_BUILD:-cc}" HOSTCC="${HOSTCC_FOR_BUILD:-cc}"
   make install PREFIX="${PREFIX}" BUILD_STATIC_ONLY=y OBJDIR=build DESTDIR= CC="${CC_FOR_BUILD:-cc}" HOSTCC="${HOSTCC_FOR_BUILD:-cc}"
-}
-
-build_papi() {
-  local d="${SRCDIR}/papi-${PAPI_VER}"
-  local t="${SRCDIR}/papi-${PAPI_VER}.tar.gz"
-  # libpfm (bundled) fails under nvc pointer arithmetic; prefer gcc/clang for PAPI.
-  local papi_cc="gcc"
-  local papi_cflags="-O2 -fPIC"
-
-  if test ! -d "$d"; then
-    fetch_url "$(printf "${PAPI_URL_FMT}" "${PAPI_VER}")" "$t"
-    tar -C "${SRCDIR}" -xzf "$t"
-    if test ! -d "$d"; then
-      echo "Could not locate extracted PAPI directory ${d}" >&2
-      exit 1
-    fi
-  fi
-  if ! command -v "${papi_cc}" >/dev/null 2>&1; then
-    if command -v clang >/dev/null 2>&1; then
-      papi_cc="clang"
-    else
-      echo "error: build_papi needs gcc or clang (nvc cannot build bundled libpfm)" >&2
-      exit 1
-    fi
-  fi
-  cd "${d}/src"
-  # Force a clean configure when switching compilers or prefix.
-  rm -f Makefile config.status
-  # Export CC/CFLAGS for configure and recursive makes; do not pass CC= on the
-  # make command line (breaks libpfm's include paths when CC absorbs extra flags).
-  (
-    export CC="${papi_cc}"
-    export CFLAGS="${papi_cflags}"
-    # Skip Fortran/tests: nvc/nvfortran and qemu foreign builds break PAPI test targets.
-    ./configure --prefix="${PREFIX}" \
-      --with-static-lib=yes \
-      --with-shared-lib=no \
-      --with-tests=no \
-      --disable-fortran
-    make -j"${JOBS}" libpapi.a
-    make install-lib
-  ) || {
-    echo "error: build_papi configure/make/install failed" >&2
-    exit 1
-  }
-  if test ! -f "${PREFIX}/lib/libpapi.a" && test ! -f "${PREFIX}/lib64/libpapi.a"; then
-    echo "error: build_papi did not install libpapi.a under ${PREFIX}" >&2
-    exit 1
-  fi
 }
 
 configure_arg_requests_ebpf() {
@@ -717,10 +683,10 @@ EOF
 EOF
   else
     cat <<'EOF'
-- On non-x86, this path links rabbitmq-c, libev, and PAPI statically. The CPU counter backend
-  is DCGM (system libdcgm) for util/power plus PAPI for SP/DP FLOPs, cycles, and int8/int16 ops. C headers for
-  DCGM ship under third_party/nvidia-dcgm; you still need libdcgm from NVIDIA DCGM. Match
-  header and library generations when possible.
+- On non-x86, this path links rabbitmq-c, libev, and LIKWID statically. The CPU counter
+  backend is DCGM (system libdcgm) for util/power plus a LIKWID overlay for cycles/inst.
+  C headers for DCGM ship under third_party/nvidia-dcgm; you still need libdcgm from NVIDIA
+  DCGM. Match header and library generations when possible.
 EOF
   fi
   cat <<'EOF'
@@ -748,14 +714,8 @@ build_static_dependencies() {
     echo "Pinned static deps: libev=${LIBEV_VER} rabbitmq-c=${RABBITMQ_VER}"
     build_libev
     build_rabbitmq_c
-    if is_x86_build_host; then
-      echo "Pinned static deps (x86): likwid=${LIKWID_TAG}"
-      build_likwid
-    else
-      echo "Skipping LIKWID build on $(uname -m) (monitor uses DCGM CPU + PAPI FLOPs here)." >&2
-      echo "Pinned static deps (non-x86): papi=${PAPI_VER}"
-      build_papi
-    fi
+    echo "Pinned static deps: likwid=${LIKWID_TAG}"
+    build_likwid
     if test "${WANT_METRIC_PROFILER_EBPF}" = "1"; then
       echo "Pinned static deps (metric profiler ebpf): libbpf=${LIBBPF_VER}"
       build_libbpf
@@ -767,8 +727,8 @@ usage_exit() {
   cat <<EOF
 Usage: $(basename "$0") [--deps-only] [--print-configure-flags] [--release] [CONFIGURE_ARGS...]
 
-  --deps-only   Build and install static archives (libev, rabbitmq-c; LIKWID on x86;
-                PAPI on non-x86) into PREFIX only. Use this when monitor configure
+  --deps-only   Build and install static archives (libev, rabbitmq-c, LIKWID) into PREFIX
+                only. Use this when monitor configure
                 --enable-all-static fails at link time with missing static .a
                 archives.
 
@@ -836,11 +796,7 @@ main() {
   if test "${deps_only}" = "1"; then
     echo ""
     echo "Static dependency install complete: PREFIX=${PREFIX}"
-    if is_x86_build_host; then
-      echo "Expected archives include: libev.a librabbitmq.a liblikwid.a liblikwid-hwloc.a liblikwid-lua.a"
-    else
-      echo "Expected archives include: libev.a librabbitmq.a libpapi.a (LIKWID not built on this architecture)."
-    fi
+    echo "Expected archives include: libev.a librabbitmq.a liblikwid.a liblikwid-hwloc.a liblikwid-lua.a"
     if test "${WANT_METRIC_PROFILER_EBPF}" = "1"; then
       echo "Expected archives include: libbpf.a (metric profiler eBPF backend selected)."
     fi

@@ -620,15 +620,15 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
-        "id": "monitor_papi",
+        "id": "monitor_likwid_overlay",
         "patterns": [
-            "HPCPerfStats/monitor/src/*papi*",
+            "HPCPerfStats/monitor/src/*likwid_overlay*",
             "HPCPerfStats/monitor/src/cpu_counter_metrics*",
-            "monitor/src/*papi*",
+            "monitor/src/*likwid_overlay*",
             "monitor/src/cpu_counter_metrics*",
         ],
         "rules": [
-            "monitor-papi-integration.mdc",
+            "monitor-likwid-overlay.mdc",
         ],
     },
     {

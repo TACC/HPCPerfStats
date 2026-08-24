@@ -27,7 +27,7 @@ _RE_MONITOR_WITH = re.compile(r"-DMONITOR_WITH_([A-Z_]+)")
 _RE_CPU_BACKEND = re.compile(r"-DMONITOR_CPU_BACKEND_([A-Z]+)")
 _RE_IB_MAD_DLOPEN = re.compile(r"-DMONITOR_IB_MAD_DLOPEN\b")
 _RE_OPA_MAD_DLOPEN = re.compile(r"-DMONITOR_OPA_MAD_DLOPEN\b")
-_RE_PAPI_FLOPS = re.compile(r"-DMONITOR_CPU_PAPI_FLOPS\b")
+_RE_LIKWID_OVERLAY = re.compile(r"-DMONITOR_CPU_LIKWID_OVERLAY\b")
 
 
 def _read_text(path: Path) -> str:
@@ -63,8 +63,8 @@ def _parse_src_makefile(
     debug = "-DDEBUG" in text
     ib_mad_dlopen = bool(_RE_IB_MAD_DLOPEN.search(text))
     opa_mad_dlopen = bool(_RE_OPA_MAD_DLOPEN.search(text))
-    papi_hybrid = bool(_RE_PAPI_FLOPS.search(text))
-    return features, cpu_backend, debug, ib_mad_dlopen, opa_mad_dlopen, papi_hybrid
+    likwid_overlay = bool(_RE_LIKWID_OVERLAY.search(text))
+    return features, cpu_backend, debug, ib_mad_dlopen, opa_mad_dlopen, likwid_overlay
 
 
 def _package_version(build_dir: Path) -> str:
@@ -196,7 +196,7 @@ def write_capability_slug_header(path: Path, slug: str) -> None:
 
 def emit_capabilities(build_dir: Path, tier: str) -> dict:
     cfg_log = _parse_config_log(build_dir)
-    features, cpu_backend, debug_from_make, ib_mad_dlopen, opa_mad_dlopen, papi_hybrid = (
+    features, cpu_backend, debug_from_make, ib_mad_dlopen, opa_mad_dlopen, likwid_overlay = (
         _parse_src_makefile(build_dir)
     )
     debug = cfg_log.get("debug", False) or debug_from_make
@@ -246,7 +246,8 @@ def emit_capabilities(build_dir: Path, tier: str) -> dict:
             "ib_mad_dlopen": ib_mad_dlopen,
             "opa_mad_dlopen": opa_mad_dlopen,
             "cpu_backend": cpu_backend or "none",
-            "papi_hybrid": papi_hybrid,
+            "likwid_overlay": likwid_overlay,
+            "papi_hybrid": likwid_overlay,  # alias for older shm validators
             "slow_tier": tier,
         },
         "compile_features": sorted(features),

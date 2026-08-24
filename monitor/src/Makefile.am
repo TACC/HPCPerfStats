@@ -232,15 +232,13 @@ TYPES += \
 	cpu_counter_metrics_dcgm_state.h \
 	cpu_counter_metrics_dcgm_util.c \
 	cpu_counter_metrics_dcgm_util.h
-if CPU_PAPI_FLOPS
+if CPU_LIKWID_OVERLAY
 TYPES += \
-	cpu_counter_metrics_papi.c \
-	cpu_counter_metrics_papi_map.c \
-	cpu_counter_metrics_papi_util.c
+	cpu_counter_metrics_likwid_overlay.c \
+	cpu_counter_metrics_likwid_overlay_map.c
 hpcperfstatsd_SOURCES += \
-	cpu_counter_metrics_papi.h \
-	cpu_counter_metrics_papi_map.h \
-	cpu_counter_metrics_papi_util.h
+	cpu_counter_metrics_likwid_overlay.h \
+	cpu_counter_metrics_likwid_overlay_map.h
 endif
 if MONITOR_ARCH_ARM
 TYPES += \

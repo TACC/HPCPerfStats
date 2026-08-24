@@ -31,7 +31,7 @@ Answer **YES** or **N/A (one-line reason)** for each row. If any row is **NO**, 
 | 3 | **Regression test** added/updated for every failure/bug fixed (`every-error-regression-test.mdc`) |
 | 4 | **Relevant tests executed** (`make check`, static bundle, cross-compile when applicable); pass/fail reported; log under `test_runs/` if run |
 | 5 | **Triggered domain rules** below were **Read** (Read tool on the `.mdc` path) before editing — list them under **`## Agent rule dispatch`** at close; hook verifies Read calls for listed domain rules |
-| 6 | **Dual verify** on **required CPU families** when substantive monitor C changed (`monitor-dual-verify-cross-and-static.mdc` §3 — skip ARM for LIKWID-only; skip x86 for DCGM CPU-only; foreign cross only for portable / DCGM GPU) |
+| 6 | **Dual verify** on **required CPU families** when substantive monitor C changed (`monitor-dual-verify-cross-and-static.mdc` §3 — skip ARM for **x86-only** LIKWID uncore/RAPL/CPUID; skip x86 for DCGM CPU-only / overlay-only; shared LIKWID + both-arch bundle need **both** families; foreign cross for portable / DCGM GPU) |
 | 7 | **Valgrind + cpp-linter** run when plan implementation touched monitor C/tests/scripts (`monitor-valgrind-cpp-linter-gate.mdc`: `run_valgrind_check.sh` + `run_cpp_linter.sh`; log under `test_runs/`) |
 | 8 | **Plan YAML** todos synced if implementing a plan (`plan-completion-gate.mdc`) |
 | 9 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `cursor-hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`), then **`cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json`** — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
@@ -50,7 +50,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | `HPCPerfStats/monitor/src/amd*.c`, `amd_cpuid_match*`, `amd_processor*`, `amd_x86_uncore_df*`, `cpu_counter_metrics*`, `cpu_counter_metrics_likwid_begin*`, `likwid_pmc_adapter*`, `likwid_rapl*`, `likwid_uncore_profiles*`, `likwid_arch_map.c`, `cpuid.*`, `stats_registry.c`, `configure.ac` (LIKWID-only PMU / RAPL path) | `monitor-amd-epyc-likwid.mdc`, `monitor-likwid-rapl-refactor.mdc` |
 | `HPCPerfStats/monitor/src/*ib*.c`, `opa.c` / `opa_sysfs.*`, IB sysfs parsers | `monitor-ib-sysfs-parsing.mdc` |
 | `HPCPerfStats/monitor/src/*dcgm*`, `*gpu*` | `monitor-dcgm-integration.mdc` |
-| `HPCPerfStats/monitor/src/*papi*`, `cpu_counter_metrics*` (PAPI hybrid / FLOPs map) | `monitor-papi-integration.mdc` |
+| `HPCPerfStats/monitor/src/*likwid_overlay*`, `cpu_counter_metrics*` (DCGM+LIKWID overlay / FLOPs map) | `monitor-likwid-overlay.mdc` |
 | `HPCPerfStats/monitor/src/*intel_gpu*`, `*xpum*`, `third_party/intel-xpum/**` | `monitor-xpum-integration.mdc` |
 | DEBUG shm mirror paths | `monitor-debug-shm.mdc` |
 | Release vs DEBUG logging (`monitor.c`, `monitor_daemon*`, `monitor_options.c`, `monitor_log*`, `monitor_release_log*`, `stats_buffer_rmq.c`, `ib_mad.c`, `opa.c`, `opa_mad_*`, `nvidia_gpu.c`, `roofline_hw_peak.c`, `configure.ac`, `*.am`) | `monitor-debug-vs-symbols.mdc` |
@@ -114,7 +114,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 ## Implementation habits (short)
 
 - **Test-first** for behavior changes: `test-first-discipline.mdc`, `monitor-c-testing-standards.mdc`
-- **Canonical verify** for monitor C: `build_static_bundle.sh` + `make check` on arches that compile the change; `cross_compile_test.sh` only for portable / multi-arch diffs per **`monitor-dual-verify-cross-and-static.mdc`**; on plan close also **`run_valgrind_check.sh`** + **`run_cpp_linter.sh`** per **`monitor-valgrind-cpp-linter-gate.mdc`**
+- **Canonical verify** for monitor C: `build_static_bundle.sh` + `make check` on arches that compile the change; `cross_compile_test.sh` only for portable / multi-arch diffs per **`monitor-dual-verify-cross-and-static.mdc`** (shared LIKWID adapters and both-arch bundle scripts need **x86 and aarch64**; skip ARM only for x86-only uncore/RAPL/CPUID); on plan close also **`run_valgrind_check.sh`** + **`run_cpp_linter.sh`** per **`monitor-valgrind-cpp-linter-gate.mdc`**
 - **Consumer contract** — read `listend.py` before changing emit shape; attach **Consumer follow-up plan** when needed (`monitor-consumer-side-plan.mdc`)
 - **Scope** — default monitor-only; explicit user override required for `hpcperfstats/` edits
 

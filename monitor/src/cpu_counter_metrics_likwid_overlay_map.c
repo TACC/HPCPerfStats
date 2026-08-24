@@ -1,14 +1,14 @@
-/* Pure mapping from PAPI SP/DP/cycles/int ops onto host_cpu_hw portable keys. */
-#include "cpu_counter_metrics_papi_map.h"
+/* Pure mapping from LIKWID overlay counters onto host_cpu_hw portable keys. */
+#include "cpu_counter_metrics_likwid_overlay_map.h"
 
 #include "stats.h"
 
-int papi_should_overwrite_cycle_keys(unsigned long long cycles)
+int likwid_overlay_should_overwrite_cycle_keys(unsigned long long cycles)
 {
   return (cycles > 0) ? 1 : 0;
 }
 
-void papi_map_counters_to_host_cpu_hw(struct stats *stats, const struct papi_cpu_hw_counters *c)
+void likwid_overlay_map_to_host_cpu_hw(struct stats *stats, const struct likwid_overlay_counters *c)
 {
   unsigned long long sp = 0;
   unsigned long long dp = 0;
@@ -46,8 +46,8 @@ void papi_map_counters_to_host_cpu_hw(struct stats *stats, const struct papi_cpu
   stats_set(stats, "fp_arith_inst_retired_256b_packed_single", 0);
   stats_set(stats, "fp_arith_inst_retired_512b_packed_single", 0);
 
-  /* Leave DCGM util×freq estimate when PAPI returns 0 (Grace sparse attach). */
-  if (papi_should_overwrite_cycle_keys(cycles)) {
+  /* Leave DCGM util×freq estimate when LIKWID returns 0 (sparse PERF). */
+  if (likwid_overlay_should_overwrite_cycle_keys(cycles)) {
     stats_set(stats, "aperf", cycles);
     stats_set(stats, "mperf", cycles);
     stats_set(stats, "cpu_clock_est_cycles", cycles);

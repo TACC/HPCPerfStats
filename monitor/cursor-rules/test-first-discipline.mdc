@@ -32,7 +32,8 @@ Treat every non-trivial monitor change as test-first work.
 | Pure helper / parser in `src/` | Targeted `tests/test_*.c` via `make check` |
 | Substantive monitor C / Autotools | **`build_static_bundle.sh`** + **`make check`** on **arches that compile the change** |
 | Portable / multi-arch (shared code, **DCGM GPU**) | Also **`cross_compile_test.sh --force-foreign --fail-fast`** |
-| x86-only LIKWID | x86_64 only; **skip aarch64** |
+| x86-only LIKWID uncore / RAPL / CPUID | x86_64 only; **skip aarch64** |
+| Shared LIKWID adapters / overlay / both-arch bundle | **x86_64 and aarch64** |
 | DCGM **CPU** only | aarch64 only; **skip x86_64** |
 | `hpcperfstats.spec` / version | **`rpmspec -P`**; optional full RPM prep |
 | After successful verify | **`make distclean`** in build dir per **`monitor-post-verify-distclean.mdc`** |

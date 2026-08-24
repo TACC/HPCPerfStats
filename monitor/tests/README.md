@@ -15,7 +15,9 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_procfile_kv.c` | `proc_kv_into_stats` (header-only) |
 | `test_collect_str.c` | `str_collect_key_list` / `str_collect_prefix_key_list` |
 | `test_cpu_counter_dcgm_util.c` | DCGM CPU util math (`cpu_counter_metrics_dcgm_util.c`; **DCGM backend only**) |
-| `test_cpu_counter_dcgm_publish.c` | DCGM publish/accumulate helpers (**DCGM backend only**) |
+| `test_cpu_counter_dcgm_publish.c` | DCGM publish/accumulate helpers (**DCGM backend only**; also built as `test_cpu_counter_dcgm_publish_likwid` with `-DMONITOR_CPU_LIKWID_OVERLAY`) |
+| `test_likwid_overlay_map.c` | DCGM+LIKWID overlay key mapping (overwrite cycles only if > 0) |
+| `test_likwid_arch_map_grace.c` | Grace CYC+INS / CYC-only eventset goldens |
 | `test_ib_schema_contract.c` | `ib.h` KEYS rename contract |
 | `test_host_schema_contract.c` | Host collector schema token contract |
 | `test_lustre_schema_contract.c` | Lustre collector schema token contract |
@@ -93,6 +95,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_monitor_configure_help.sh.in` | Regression (via `check-local`): `configure --help` mentions `--enable-all-static`, `--enable-metric-profiler`, and `--with-metric-profiler-backend`; must **not** mention `--enable-legacy-pmcs` |
 | `test_likwid_read_group_counters.sh` | Regression (via `check-local`): PMC/uncore adapters call `perfmon_readGroupCounters` only (not bare `perfmon_readCounters`, which follows stolen `activeGroup`) |
 | `test_likwid_static_pin.sh` | Regression (via `check-local`): `build_static_bundle.sh` and `cross_compile_test.sh` pin LIKWID **5.5.2** (not a `5.5.2rc*` prerelease) |
+| `test_likwid_on_aarch64_configure.sh` | Regression (via `check-local`): non-x86 uses LIKWID overlay, not PAPI; bundle/cross pass `COMPILER=GCCARMv8` on aarch64 |
 | `Makefile.am` | Automake `check_PROGRAMS` / `TESTS`; **keep `monitor_unit_cppflags` in sync** with `src/Makefile.am` `hpcperfstatsd_CPPFLAGS` for `-D` flags |
 | `run_tests.sh` | Convenience wrapper around `make check` in a build directory |
 | `../scripts/profile_hpcperfstatsd_example.sh` | Prints `perf record` / `perf stat` recipes for CPU baseline comparisons |

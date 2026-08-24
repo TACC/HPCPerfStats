@@ -21,8 +21,8 @@
 #include "cpu_counter_metrics_dcgm_state.h"
 #include "cpu_counter_metrics_dcgm_publish.h"
 #include "cpu_counter_metrics_dcgm_util.h"
-#ifdef MONITOR_CPU_PAPI_FLOPS
-#include "cpu_counter_metrics_papi.h"
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+#include "cpu_counter_metrics_likwid_overlay.h"
 #endif
 #else
 #include "likwid_pmc_adapter.h"
@@ -707,7 +707,7 @@ static void dcgm_cpu_watch_cleanup(void)
 
 static void dcgm_backend_teardown_session(void)
 {
-  /* Drop DCGM watches/handle only — keep util accumulators, jiffy bufs, and PAPI. */
+  /* Drop DCGM watches/handle only — keep util accumulators, jiffy bufs, and LIKWID overlay. */
   dcgm_cpu_watch_cleanup();
   dcgm_cpu_sock_watch_cleanup();
 
@@ -730,8 +730,8 @@ static void dcgm_backend_teardown_session(void)
 static void dcgm_backend_cleanup(void)
 {
   dcgm_backend_teardown_session();
-#ifdef MONITOR_CPU_PAPI_FLOPS
-  cpu_counter_metrics_papi_cleanup();
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+  cpu_counter_metrics_likwid_overlay_cleanup();
 #endif
 
   free(g_dcgm_ctr0);
@@ -866,15 +866,15 @@ static int dcgm_backend_begin(struct stats_type *type)
     return 0;
 
   keep_degraded = 0;
-#ifdef MONITOR_CPU_PAPI_FLOPS
-  if (cpu_counter_metrics_papi_ready())
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+  if (cpu_counter_metrics_likwid_overlay_ready())
     keep_degraded = 1;
 #endif
   if (dcgm_util_bufs_ok())
     keep_degraded = 1;
 
   /* Soft-failed sessions already tore down the handle; full cleanup only when
-   * restarting with no retained util/PAPI state. */
+   * restarting with no retained util/LIKWID overlay state. */
   if (keep_degraded)
     dcgm_backend_teardown_session();
   else
@@ -955,10 +955,10 @@ static int dcgm_backend_begin(struct stats_type *type)
     TRACE("DCGM CPU socket power mapping unavailable (sysfs packages vs DCGM_FE_CPU)\n");
   else if (dcgm_cpu_sock_watch_install() != 0)
     TRACE("DCGM CPU socket power field watch not active; using entity reads\n");
-#ifdef MONITOR_CPU_PAPI_FLOPS
-  if (!cpu_counter_metrics_papi_ready()) {
-    if (cpu_counter_metrics_papi_begin(type) != 0)
-      TRACE("PAPI FLOPs/cycles begin returned error; continuing with DCGM util/power only\n");
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+  if (!cpu_counter_metrics_likwid_overlay_ready()) {
+    if (cpu_counter_metrics_likwid_overlay_begin(type) != 0)
+      TRACE("LIKWID overlay begin returned error; continuing with DCGM util/power only\n");
   }
 #endif
   g_dcgm_ready = 1;
@@ -987,19 +987,21 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
   dcgmReturn_t update_rc = DCGM_ST_OK;
   struct timespec t0, t1;
   long long update_elapsed_us = 0;
-  int papi_ready = 0;
+  int overlay_ready = 0;
   time_t now = time(NULL);
 
-#ifdef MONITOR_CPU_PAPI_FLOPS
-  papi_ready = cpu_counter_metrics_papi_ready();
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+  overlay_ready = cpu_counter_metrics_likwid_overlay_ready();
 #endif
 
   /* Re-init DCGM after soft-fail backoff without requiring daemon restart. */
   if (!g_dcgm_ready && dcgm_backend_retry_due(now, g_dcgm_retry_after))
     (void)dcgm_backend_begin(type);
 
-#ifdef MONITOR_CPU_PAPI_FLOPS
-  papi_ready = cpu_counter_metrics_papi_ready();
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+  overlay_ready = cpu_counter_metrics_likwid_overlay_ready();
+  if (overlay_ready && cpu_counter_metrics_likwid_overlay_prepare_collect() != 0)
+    overlay_ready = 0;
 #endif
 
   if (g_dcgm_ready) {
@@ -1017,7 +1019,7 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
     if (update_rc != DCGM_ST_OK) {
       g_dcgm_update_failures++;
       monitor_log_warn("cpu_counter_metrics: dcgmUpdateAllFields failed rc=%d (failures=%lu); "
-                       "soft-reset DCGM (keep PAPI/util)\n",
+                       "soft-reset DCGM (keep LIKWID overlay/util)\n",
                        (int)update_rc, g_dcgm_update_failures);
       dcgm_backend_teardown_session();
       g_dcgm_retry_after = time(NULL) + 60;
@@ -1029,7 +1031,7 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
     proc_stat_ok = (dcgm_proc_stat_read_cpus(g_dcjm_cur, nr_cpus) == 0);
   if (g_dcgm_ready)
     dcgm_cpu_refresh_sample_cache();
-  if (dcgm_host_cpu_hw_collect_active(g_dcgm_ready, papi_ready, dcgm_util_bufs_ok())) {
+  if (dcgm_host_cpu_hw_collect_active(g_dcgm_ready, overlay_ready, dcgm_util_bufs_ok())) {
     struct timespec mono;
 
     if (clock_gettime(CLOCK_MONOTONIC, &mono) == 0) {
@@ -1072,7 +1074,7 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
     stats = get_current_stats(type, cpu);
     if (stats == NULL)
       continue;
-    if (!dcgm_host_cpu_hw_collect_active(g_dcgm_ready, papi_ready, dcgm_util_bufs_ok()))
+    if (!dcgm_host_cpu_hw_collect_active(g_dcgm_ready, overlay_ready, dcgm_util_bufs_ok()))
       continue;
     {
       struct dcgm_cpu_sample sample;
@@ -1112,9 +1114,9 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
         dcgm_accumulate_from_util_sample(i, &sample, delta_us);
         publish_dcgm_cpu_stats(stats, i);
       }
-#ifdef MONITOR_CPU_PAPI_FLOPS
-      if (papi_ready)
-        cpu_counter_metrics_papi_collect_cpu(stats, i);
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+      if (overlay_ready)
+        cpu_counter_metrics_likwid_overlay_collect_cpu(stats, i);
 #endif
     }
   }

@@ -30,7 +30,7 @@ Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 - **`monitor-beegfs-procfs.mdc`** — BeeGFS client detect + bounded `beegfs-ctl` (never `Sum:`); capacity via `statvfs`
 - **`monitor-roofline-peak-detect.mdc`** — `host_roofline_peak` NVML/smi/DRM/EDAC gaps + allowlisted GB200/Grace identity
 - **`monitor-xpum-integration.mdc`** — Intel PVC / XPU Manager (`intel_gpu`, vendored headers, libxpum dlopen)
-- **`monitor-papi-integration.mdc`** — aarch64 DCGM+PAPI hybrid: PAPI SP/DP FLOPs, cycles, int8/int16 ops on `host_cpu_hw`
+- **`monitor-likwid-overlay.mdc`** — aarch64 DCGM+LIKWID hybrid: LIKWID overlay cycles/inst on `host_cpu_hw` (fail-soft; CYC+INS eventset)
 - **`monitor-amd-epyc-likwid.mdc`** — Intel + EPYC LIKWID-only core/DF/RAPL; PERF-only HPM (no DIRECT MSR / `power_read`); no gpr4/8 fallback; family DF `st_name`s
 - **`monitor-likwid-rapl-refactor.mdc`** — RAPL via LIKWID PWR* + powercap; init order before RAPL collect; no Variorum
 - **`monitor-debug-vs-symbols.mdc`** — `--enable-debug` vs `-g`; release quiet logging (startup + hourly + first-fail RMQ)

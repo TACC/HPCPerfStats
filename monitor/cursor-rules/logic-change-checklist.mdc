@@ -37,7 +37,7 @@ Use this checklist for every correctness/completeness change that affects monito
 
 - Run smallest targeted `tests/test_*.c` first via `make check`.
 - Run **`build_static_bundle.sh`** + **`make check`** for substantive C changes.
-- Run **`cross_compile_test.sh`** only when **`monitor-dual-verify-cross-and-static.mdc`** §3 requires a foreign family (portable / DCGM GPU). Skip aarch64 for LIKWID-only; skip x86_64 for DCGM CPU-only.
+- Run **`cross_compile_test.sh`** only when **`monitor-dual-verify-cross-and-static.mdc`** §3 requires a foreign family (portable / DCGM GPU / shared LIKWID). Skip aarch64 for **x86-only** LIKWID uncore/RAPL/CPUID; skip x86_64 for DCGM CPU-only / overlay-only.
 - Record what passed, what was skipped, and residual risks under **`test_runs/`**.
 
 ## Overlap

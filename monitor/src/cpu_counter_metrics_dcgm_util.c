@@ -27,9 +27,9 @@ unsigned long long dcgm_watts_dbl_to_ull(double v)
   return (unsigned long long)(v + 0.5);
 }
 
-int dcgm_host_cpu_hw_collect_active(int dcgm_ready, int papi_ready, int util_bufs_ok)
+int dcgm_host_cpu_hw_collect_active(int dcgm_ready, int overlay_ready, int util_bufs_ok)
 {
-  return (dcgm_ready || papi_ready || util_bufs_ok) ? 1 : 0;
+  return (dcgm_ready || overlay_ready || util_bufs_ok) ? 1 : 0;
 }
 
 int dcgm_backend_retry_due(time_t now, time_t retry_after)

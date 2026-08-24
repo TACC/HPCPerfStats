@@ -147,7 +147,7 @@ static void test_int64_blank(void)
 
 static void test_host_cpu_hw_collect_active(void)
 {
-  /* After DCGM soft-fail: PAPI and/or util bufs must still allow collect. */
+  /* After DCGM soft-fail: LIKWID overlay and/or util bufs must still allow collect. */
   assert(!dcgm_host_cpu_hw_collect_active(0, 0, 0));
   assert(dcgm_host_cpu_hw_collect_active(1, 0, 0));
   assert(dcgm_host_cpu_hw_collect_active(0, 1, 0));

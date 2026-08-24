@@ -108,8 +108,8 @@ static void test_accumulate_from_util_sample(void)
   assert(s_ctr2[0] == 10000000ULL);
   assert(s_ctr3[0] == 5000000ULL);
   assert(s_ctr4[0] == 5000000ULL);
-#ifdef MONITOR_CPU_PAPI_FLOPS
-  /* Hybrid: util + act cycles (ctr5/aperf); mperf=ref; FLOPs/instr stay 0 (PAPI-owned). */
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+  /* Hybrid: util + act cycles (ctr5/aperf); mperf=ref; FLOPs/instr stay 0 (overlay-owned). */
   assert(s_ctr5[0] == 1000000000ULL);
   assert(s_mperf[0] == 2000000000ULL);
   assert(s_aperf[0] == 1000000000ULL);
@@ -175,8 +175,8 @@ static void test_publish_dcgm_cpu_stats(void)
   publish_dcgm_cpu_stats(&g_dummy_stats, 0);
   assert(test_stats_stub_find(&stub, "cpu_util_total_accum_us", &val) && val == 111ULL);
   assert(test_stats_stub_find(&stub, "cpu_clock_est_cycles", &val) && val == 888ULL);
-#ifdef MONITOR_CPU_PAPI_FLOPS
-  /* Hybrid fail-soft: publish cycle estimates; leave FLOPs/instr to PAPI. */
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+  /* Hybrid fail-soft: publish cycle estimates; leave FLOPs/instr to LIKWID overlay. */
   assert(!test_stats_stub_find(&stub, "instr_retired", &val));
   assert(test_stats_stub_find(&stub, "aperf", &val) && val == 333ULL);
   assert(test_stats_stub_find(&stub, "mperf", &val) && val == 444ULL);
@@ -210,8 +210,8 @@ int main(void)
   test_publish_dcgm_cpu_stats();
 
   test_stats_stub_unbind();
-#ifdef MONITOR_CPU_PAPI_FLOPS
-  printf("test_cpu_counter_dcgm_publish_papi passed\n");
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+  printf("test_cpu_counter_dcgm_publish_likwid passed\n");
 #else
   printf("test_cpu_counter_dcgm_publish passed\n");
 #endif

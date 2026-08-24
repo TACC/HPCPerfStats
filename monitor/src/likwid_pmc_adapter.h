@@ -17,7 +17,13 @@ void likwid_pmc_adapter_finalize(void);
 int likwid_pmc_adapter_setup_events(const char *event_string);
 /* Once per host_cpu_hw tick: setupCounters(g_group)+startCounters after DF/IMC/RAPL steal. */
 int likwid_pmc_adapter_prepare_collect(void);
+/* One perfmon_readGroupCounters after prepare_collect; overlay then peeks per CPU. */
+int likwid_pmc_adapter_read_group(void);
 int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, int nr_events,
                                 int max_ctrs);
+/* Overlay: extract measured cycles/instr without writing DCGM fail-soft keys.
+ * Caller must have a fresh likwid_pmc_adapter_read_group() this tick. */
+int likwid_pmc_adapter_read_cpu_cycles_instr(int cpu, unsigned long long *cycles_out,
+                                             unsigned long long *instr_out);
 
 #endif

@@ -69,13 +69,6 @@ monitor_spec_field() {
   grep -E "^${field}:" "${file}" | head -1 | sed 's/^[^:]*:[[:space:]]*//;s/[[:space:]]*$//'
 }
 
-is_x86_build_host() {
-  case "$(uname -m)" in
-  x86_64|i?86) return 0 ;;
-  *) return 1 ;;
-  esac
-}
-
 have_static_archive_basename() {
   local name="$1"
   test -f "${PREFIX}/lib/${name}" || test -f "${PREFIX}/lib64/${name}"
@@ -210,43 +203,31 @@ EOF
   exit 1
 fi
 
-if is_x86_build_host; then
-  if ! have_static_archive_basename "liblikwid.a" \
-     || ! have_static_archive_basename "liblikwid-hwloc.a" \
-     || ! have_static_archive_basename "liblikwid-lua.a"; then
-    cat <<EOF >&2
+if ! have_static_archive_basename "liblikwid.a" \
+   || ! have_static_archive_basename "liblikwid-hwloc.a" \
+   || ! have_static_archive_basename "liblikwid-lua.a"; then
+  cat <<EOF >&2
 LIKWID static archives were not found under ${PREFIX}/lib or ${PREFIX}/lib64.
 Expected: liblikwid.a, liblikwid-hwloc.a, liblikwid-lua.a
 Rebuild deps with SKIP_DEPS unset:
   PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
 EOF
-    exit 1
-  fi
+  exit 1
+fi
 
-  # Include -lpthread -ldl in exported LIBS (not only on the probe cmdline). LS6 static
-  # liblikwid needs them for configure AC_SEARCH_LIBS(perfmon_init); the probe used to
-  # pass while configure still failed with "(cached) no".
-  export LIBS="-Wl,--start-group -llikwid -llikwid-hwloc -llikwid-lua -Wl,--end-group -lm -lrt -lpthread -ldl ${LIBS:-}"
-  if ! verify_likwid_static_link_probe; then
-    cat <<EOF >&2
+# Include -lpthread -ldl in exported LIBS (not only on the probe cmdline). LS6 static
+# liblikwid needs them for configure AC_SEARCH_LIBS(perfmon_init); the probe used to
+# pass while configure still failed with "(cached) no".
+export LIBS="-Wl,--start-group -llikwid -llikwid-hwloc -llikwid-lua -Wl,--end-group -lm -lrt -lpthread -ldl ${LIBS:-}"
+if ! verify_likwid_static_link_probe; then
+  cat <<EOF >&2
 Unable to link a trivial LIKWID program from PREFIX=${PREFIX}.
 Check that liblikwid*.a archives match this host/toolchain and that no stale build artifacts remain.
 Try:
   rm -rf "${PREFIX}" "${SRCDIR}"
   PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
 EOF
-    exit 1
-  fi
-else
-  if ! have_static_archive_basename "libpapi.a"; then
-    cat <<EOF >&2
-PAPI static archive was not found under ${PREFIX}/lib or ${PREFIX}/lib64.
-Expected: libpapi.a (aarch64 / non-x86 DCGM+PAPI hybrid CPU path)
-Rebuild deps with SKIP_DEPS unset:
-  PREFIX="${PREFIX}" SRCDIR="${SRCDIR}" ./scripts/build_static_bundle.sh --deps-only
-EOF
-    exit 1
-  fi
+  exit 1
 fi
 
 rm -f "${MONITOR_DIR}/${tb}"

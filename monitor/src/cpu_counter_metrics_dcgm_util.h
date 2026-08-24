@@ -10,8 +10,8 @@ int dcgm_fp64_value_is_blank(double v);
 int dcgm_int64_value_is_blank(long long v);
 unsigned long long dcgm_watts_dbl_to_ull(double v);
 
-/* Collect host_cpu_hw when DCGM is up and/or PAPI/util buffers remain after soft fail. */
-int dcgm_host_cpu_hw_collect_active(int dcgm_ready, int papi_ready, int util_bufs_ok);
+/* Collect host_cpu_hw when DCGM is up and/or overlay/util buffers remain after soft fail. */
+int dcgm_host_cpu_hw_collect_active(int dcgm_ready, int overlay_ready, int util_bufs_ok);
 /* True when retry_after is unset or now is past the backoff deadline. */
 int dcgm_backend_retry_due(time_t now, time_t retry_after);
 

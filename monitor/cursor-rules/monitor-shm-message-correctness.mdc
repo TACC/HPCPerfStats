@@ -21,7 +21,7 @@ alwaysApply: false
 ## Scope
 
 - Validates **full outbound monitor payloads** mirrored under `HPCPERFSTATS_DEBUG_SHM_DIR` (`schema`, `fast`, `full`).
-- **PAPI hybrid (Grace):** when capabilities set `configure.papi_hybrid` or schema includes `host_cpu_hw`, `validate_shm_messages.py` requires PAPI keys (`arm_int8_ops`, `arm_int16_ops`, `arm_est_flops`, scalar SP/DP, cycles) via `lib/papi_shm_validate.py` and checks FLOPs/cycle invariants in plausibility.
+- **LIKWID overlay (Grace):** when capabilities set `configure.likwid_overlay` (or legacy `configure.papi_hybrid`) or schema includes `host_cpu_hw`, `validate_shm_messages.py` requires overlay keys (`arm_int8_ops`, `arm_int16_ops`, `arm_est_flops`, scalar SP/DP, cycles) via `lib/papi_shm_validate.py` and checks FLOPs/cycle invariants in plausibility.
 - **Out of scope:** listend, archive files, RabbitMQ consumer path.
 - Requires **DEBUG build** (`--enable-debug`) for live shm capture (**monitor-debug-shm**).
 

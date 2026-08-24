@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "cpu_counter_metrics_papi_map.h"
+#include "cpu_counter_metrics_likwid_overlay_map.h"
 #include "stats.h"
 #include "test_stats_stub.h"
 
@@ -16,7 +16,7 @@ static struct stats g_dummy;
 static void test_map_sp_dp_sum_and_cycles(void)
 {
   struct test_stats_stub stub;
-  struct papi_cpu_hw_counters c;
+  struct likwid_overlay_counters c;
   unsigned long long val;
 
   memset(&c, 0, sizeof(c));
@@ -31,7 +31,7 @@ static void test_map_sp_dp_sum_and_cycles(void)
 
   test_stats_stub_reset(&stub);
   test_stats_stub_bind(&stub);
-  papi_map_counters_to_host_cpu_hw(&g_dummy, &c);
+  likwid_overlay_map_to_host_cpu_hw(&g_dummy, &c);
 
   assert(test_stats_stub_find(&stub, "fp_arith_inst_retired_scalar_single", &val) && val == 100ULL);
   assert(test_stats_stub_find(&stub, "fp_arith_inst_retired_scalar_double", &val) && val == 250ULL);
@@ -53,7 +53,7 @@ static void test_map_sp_dp_sum_and_cycles(void)
 static void test_map_partial_sp_only(void)
 {
   struct test_stats_stub stub;
-  struct papi_cpu_hw_counters c;
+  struct likwid_overlay_counters c;
   unsigned long long val;
 
   memset(&c, 0, sizeof(c));
@@ -62,12 +62,12 @@ static void test_map_partial_sp_only(void)
 
   test_stats_stub_reset(&stub);
   test_stats_stub_bind(&stub);
-  papi_map_counters_to_host_cpu_hw(&g_dummy, &c);
+  likwid_overlay_map_to_host_cpu_hw(&g_dummy, &c);
 
   assert(test_stats_stub_find(&stub, "fp_arith_inst_retired_scalar_single", &val) && val == 7ULL);
   assert(test_stats_stub_find(&stub, "fp_arith_inst_retired_scalar_double", &val) && val == 0ULL);
   assert(test_stats_stub_find(&stub, "arm_est_flops", &val) && val == 7ULL);
-  /* Zero PAPI cycles must not clear DCGM estimate (key unset here). */
+  /* Zero LIKWID cycles must not clear DCGM estimate (key unset here). */
   assert(!test_stats_stub_find(&stub, "aperf", &val));
   assert(!test_stats_stub_find(&stub, "cpu_clock_est_cycles", &val));
 
@@ -77,7 +77,7 @@ static void test_map_partial_sp_only(void)
 static void test_map_zero_cycles_preserves_estimate(void)
 {
   struct test_stats_stub stub;
-  struct papi_cpu_hw_counters c;
+  struct likwid_overlay_counters c;
   unsigned long long val;
 
   memset(&c, 0, sizeof(c));
@@ -86,21 +86,20 @@ static void test_map_zero_cycles_preserves_estimate(void)
 
   test_stats_stub_reset(&stub);
   test_stats_stub_bind(&stub);
-  /* Seed fail-soft estimate as publish_dcgm would. */
   stats_set(&g_dummy, "cpu_clock_est_cycles", 555ULL);
   stats_set(&g_dummy, "aperf", 555ULL);
   stats_set(&g_dummy, "mperf", 777ULL);
 
-  assert(papi_should_overwrite_cycle_keys(0) == 0);
-  assert(papi_should_overwrite_cycle_keys(1) == 1);
+  assert(likwid_overlay_should_overwrite_cycle_keys(0) == 0);
+  assert(likwid_overlay_should_overwrite_cycle_keys(1) == 1);
 
-  papi_map_counters_to_host_cpu_hw(&g_dummy, &c);
+  likwid_overlay_map_to_host_cpu_hw(&g_dummy, &c);
   assert(test_stats_stub_find(&stub, "cpu_clock_est_cycles", &val) && val == 555ULL);
   assert(test_stats_stub_find(&stub, "aperf", &val) && val == 555ULL);
   assert(test_stats_stub_find(&stub, "mperf", &val) && val == 777ULL);
 
   c.cycles = 12345ULL;
-  papi_map_counters_to_host_cpu_hw(&g_dummy, &c);
+  likwid_overlay_map_to_host_cpu_hw(&g_dummy, &c);
   assert(test_stats_stub_find(&stub, "cpu_clock_est_cycles", &val) && val == 12345ULL);
   assert(test_stats_stub_find(&stub, "aperf", &val) && val == 12345ULL);
   assert(test_stats_stub_find(&stub, "mperf", &val) && val == 12345ULL);
@@ -111,7 +110,7 @@ static void test_map_zero_cycles_preserves_estimate(void)
 static void test_map_int8_int16_excluded_from_flops(void)
 {
   struct test_stats_stub stub;
-  struct papi_cpu_hw_counters c;
+  struct likwid_overlay_counters c;
   unsigned long long val;
 
   memset(&c, 0, sizeof(c));
@@ -126,7 +125,7 @@ static void test_map_int8_int16_excluded_from_flops(void)
 
   test_stats_stub_reset(&stub);
   test_stats_stub_bind(&stub);
-  papi_map_counters_to_host_cpu_hw(&g_dummy, &c);
+  likwid_overlay_map_to_host_cpu_hw(&g_dummy, &c);
 
   assert(test_stats_stub_find(&stub, "arm_int8_ops", &val) && val == 1000ULL);
   assert(test_stats_stub_find(&stub, "arm_int16_ops", &val) && val == 2000ULL);
@@ -135,12 +134,22 @@ static void test_map_int8_int16_excluded_from_flops(void)
   test_stats_stub_unbind();
 }
 
+static void test_map_null_inputs(void)
+{
+  struct likwid_overlay_counters c;
+
+  memset(&c, 0, sizeof(c));
+  likwid_overlay_map_to_host_cpu_hw(NULL, &c);
+  likwid_overlay_map_to_host_cpu_hw(&g_dummy, NULL);
+}
+
 int main(void)
 {
   test_map_sp_dp_sum_and_cycles();
   test_map_partial_sp_only();
   test_map_zero_cycles_preserves_estimate();
   test_map_int8_int16_excluded_from_flops();
-  printf("test_cpu_counter_papi_map passed\n");
+  test_map_null_inputs();
+  printf("test_likwid_overlay_map passed\n");
   return 0;
 }

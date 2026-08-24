@@ -30,6 +30,8 @@ static const struct likwid_event_alias g_event_aliases[] = {
     {"RETIRED_MISP_BRANCH_INSTR", "retired_misp_branch_instr"},
     {"LS_DISPATCH", "ls_dispatch"},
     {"LS_DISPATCH_ALL", "ls_dispatch"},
+    {"CPU_CYCLES", "cpu_clock_est_cycles"},
+    {"INST_RETIRED", "instr_retired"},
     {"FP_ARITH_INST_RETIRED_SCALAR_DOUBLE", "fp_arith_inst_retired_scalar_double"},
     {"FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE", "fp_arith_inst_retired_128b_packed_double"},
     {"FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE", "fp_arith_inst_retired_256b_packed_double"},

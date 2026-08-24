@@ -34,13 +34,13 @@ void publish_dcgm_cpu_stats(struct stats *stats, int i)
   stats_set(stats, "cpu_util_irq_accum_us", g_dcgm_ctr3[i]);
   stats_set(stats, "cpu_util_nice_accum_us", g_dcgm_ctr4[i]);
   /*
-   * Always publish util×freq cycle estimates. Under MONITOR_CPU_PAPI_FLOPS,
-   * PAPI overwrites these three keys only when measured cycles are nonzero.
+   * Always publish util×freq cycle estimates. Under MONITOR_CPU_LIKWID_OVERLAY,
+   * LIKWID overwrites these three keys only when measured cycles are nonzero.
    */
   stats_set(stats, "cpu_clock_est_cycles", g_dcgm_ctr5[i]);
   stats_set(stats, "aperf", g_dcgm_aperf[i]);
   stats_set(stats, "mperf", g_dcgm_mperf[i]);
-#ifndef MONITOR_CPU_PAPI_FLOPS
+#ifndef MONITOR_CPU_LIKWID_OVERLAY
   /* Match Intel LIKWID FIXC0..2 mapping (INSTR_RETIRED / core unhalted / ref). */
   stats_set(stats, "instr_retired", g_dcgm_inst[i]);
   stats_set(stats, "fp_arith_inst_retired_scalar_double", g_dcgm_fp_sca_d[i]);
@@ -100,13 +100,13 @@ void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *sample, lon
   g_dcgm_arm_dram_bytes[i] +=
       (unsigned long long)((act_cycles * ARM_APPROX_DRAM_BYTES_PER_ACTIVE_CYCLE) + 0.5);
 
-  /* Fail-soft under sparse PAPI: mperf=ref, aperf=act, ctr5=act (cpu_clock_est_cycles). */
+  /* Fail-soft under sparse LIKWID overlay: mperf=ref, aperf=act, ctr5=act. */
   g_dcgm_mperf[i] += (unsigned long long)(ref_cycles + 0.5);
   g_dcgm_aperf[i] += (unsigned long long)(act_cycles + 0.5);
   g_dcgm_ctr5[i] += (unsigned long long)(act_cycles + 0.5);
 
-#ifndef MONITOR_CPU_PAPI_FLOPS
-  /* Synthetic FLOPs/instr only when PAPI overlay is not compiled in. */
+#ifndef MONITOR_CPU_LIKWID_OVERLAY
+  /* Synthetic FLOPs/instr only when LIKWID overlay is not compiled in. */
   g_dcgm_inst[i] += (unsigned long long)((ref_cycles * (sample->util_user / 100.0)) + 0.5);
   g_dcgm_arm_est_flops[i] +=
       (unsigned long long)((act_cycles * ARM_APPROX_FLOPS_PER_ACTIVE_CYCLE) + 0.5);

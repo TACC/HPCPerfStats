@@ -22,7 +22,8 @@ typedef enum {
   SAPPHIRE_RAPIDS,
   EMERALD_RAPIDS,
   GRANITE_RAPIDS,
-  SIERRA_FOREST
+  SIERRA_FOREST,
+  ARM_GRACE /* Neoverse V2 / Grace; LIKWID overlay eventset */
 } processor_t;
 
 /* Return 1 for true and 0 for false */

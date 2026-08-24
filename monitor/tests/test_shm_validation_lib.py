@@ -1145,7 +1145,7 @@ class PapiShmValidateTests(unittest.TestCase):
         }
         if hybrid:
             doc["compile_capabilities"] = {
-                "configure": {"papi_hybrid": True, "cpu_backend": "dcgm"}
+                "configure": {"likwid_overlay": True, "cpu_backend": "dcgm"}
             }
         return doc
 
@@ -1176,10 +1176,19 @@ class PapiShmValidateTests(unittest.TestCase):
 
         man = {
             "types": {},
-            "compile_capabilities": {"configure": {"papi_hybrid": True}},
+            "compile_capabilities": {"configure": {"likwid_overlay": True}},
         }
         _, errors = check_papi_schema_contract(man)
         self.assertTrue(any("missing type" in e for e in errors))
+
+    def test_legacy_papi_hybrid_alias_still_accepted(self) -> None:
+        from lib.papi_shm_validate import check_papi_schema_contract
+
+        man = self._papi_manifest()
+        man["compile_capabilities"] = {"configure": {"papi_hybrid": True}}
+        notes, errors = check_papi_schema_contract(man)
+        self.assertEqual(errors, [])
+        self.assertTrue(any("PASS papi schema" in n for n in notes))
 
     def test_flops_invariant_warn(self) -> None:
         from lib.papi_shm_validate import check_papi_row_invariants
@@ -1364,26 +1373,26 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
                 "-DMONITOR_OPA_MAD_DLOPEN -DMONITOR_CPU_BACKEND_LIKWID -DDEBUG\n",
                 encoding="utf-8",
             )
-            features, cpu, debug, ibdyn, opadyn, papi = ebc._parse_src_makefile(td)
+            features, cpu, debug, ibdyn, opadyn, overlay = ebc._parse_src_makefile(td)
             self.assertIn("INTEL_GPU", features)
             self.assertTrue(ibdyn)
             self.assertTrue(opadyn)
             self.assertTrue(debug)
             self.assertEqual(cpu, "likwid")
-            self.assertFalse(papi)
+            self.assertFalse(overlay)
 
-    def test_parse_makefile_papi_hybrid(self) -> None:
+    def test_parse_makefile_likwid_overlay(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             td = Path(tmp)
             src = td / "src"
             src.mkdir()
             (src / "Makefile").write_text(
-                "DEFS = -DMONITOR_CPU_BACKEND_DCGM -DMONITOR_CPU_PAPI_FLOPS\n",
+                "DEFS = -DMONITOR_CPU_BACKEND_DCGM -DMONITOR_CPU_LIKWID_OVERLAY\n",
                 encoding="utf-8",
             )
-            _f, cpu, _d, _i, _o, papi = ebc._parse_src_makefile(td)
+            _f, cpu, _d, _i, _o, overlay = ebc._parse_src_makefile(td)
             self.assertEqual(cpu, "dcgm")
-            self.assertTrue(papi)
+            self.assertTrue(overlay)
 
 
 if __name__ == "__main__":

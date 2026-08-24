@@ -75,6 +75,17 @@ static const char *intel_spr_eventset(int n_pmcs)
   return intel_icx_eventset();
 }
 
+const char *likwid_arch_eventset_grace(void)
+{
+  /* 6 GPCs on Grace: CYC+INS only. Arming FLOPs/SVE INT on all CPUs starves PMU. */
+  return "CPU_CYCLES:PMC0,INST_RETIRED:PMC1";
+}
+
+const char *likwid_arch_eventset_grace_cyc_only(void)
+{
+  return "CPU_CYCLES:PMC0";
+}
+
 static const char *intel_srf_eventset(void)
 {
   /* Sierra Forest (Atom-server): LIKWID exposes MEM_LOAD_UOPS_RETIRED_* but not
@@ -100,6 +111,8 @@ const char *likwid_arch_eventset_for_processor(processor_t p, int n_pmcs)
     return intel_spr_eventset(n_pmcs);
   case SIERRA_FOREST:
     return intel_srf_eventset();
+  case ARM_GRACE:
+    return likwid_arch_eventset_grace();
   case SKYLAKE:
   case SKYLAKE_X:
   case CASCADE_LAKE:

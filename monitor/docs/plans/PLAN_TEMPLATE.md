@@ -87,7 +87,8 @@ Every behavior change needs at least one **regression and/or unit test** at the 
 | Pure helper / parser in `src/` | Targeted `tests/test_*.c` via `make check` |
 | Substantive monitor C / Autotools | `scripts/build_static_bundle.sh` + `make check` in `.build-static` on **arches that compile the change** (`monitor-dual-verify-cross-and-static.mdc` §3) |
 | Portable / multi-arch slice (shared daemon, Autotools-all-targets, **DCGM GPU**) | Also `scripts/cross_compile_test.sh --force-foreign --fail-fast` on a foreign family that **uses** the change |
-| x86-only LIKWID / uncore / RAPL-via-LIKWID | x86_64 static + check; **skip aarch64** (ARM never uses LIKWID) |
+| x86-only LIKWID uncore / RAPL / CPUID maps | x86_64 static + check; **skip aarch64** |
+| Shared LIKWID adapters / overlay / bundle that builds LIKWID on both families | **x86_64 and aarch64** |
 | DCGM **CPU** only (Grace backend; not GPU) | aarch64 static or `TARGETS=aarch64-linux-gnu`; **skip x86_64** |
 | Plan implementation closing (monitor C/tests/scripts) | Also `scripts/run_valgrind_check.sh` + `scripts/run_cpp_linter.sh` (logs under `test_runs/`) |
 | `hpcperfstats.spec` / version fields | `rpmspec -P hpcperfstats.spec` |

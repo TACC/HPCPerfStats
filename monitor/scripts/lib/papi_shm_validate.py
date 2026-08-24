@@ -1,12 +1,13 @@
-"""PAPI hybrid host_cpu_hw contract for shm validation (Grace / aarch64).
+"""DCGM+LIKWID overlay host_cpu_hw contract for shm validation (Grace / aarch64).
 
-When the build sets MONITOR_CPU_PAPI_FLOPS (capabilities configure.papi_hybrid),
-or when host_cpu_hw appears in the expectations schema, require the portable
-PAPI keys including arm_int8_ops / arm_int16_ops and check value invariants.
+When the build sets MONITOR_CPU_LIKWID_OVERLAY (capabilities configure.likwid_overlay
+or legacy configure.papi_hybrid), or when host_cpu_hw appears in the expectations
+schema, require the portable overlay keys including arm_int8_ops / arm_int16_ops
+and check value invariants.
 """
 from __future__ import annotations
 
-# Schema keys that PAPI hybrid must emit on host_cpu_hw (additive to DCGM keys).
+# Schema keys that DCGM+LIKWID overlay must emit on host_cpu_hw (additive to DCGM keys).
 HOST_CPU_HW_PAPI_REQUIRED_KEYS: frozenset[str] = frozenset(
     {
         "aperf",
@@ -23,17 +24,23 @@ HOST_CPU_HW_PAPI_REQUIRED_KEYS: frozenset[str] = frozenset(
 _ST_NAME = "host_cpu_hw"
 
 
+def _cfg_indicates_overlay(cfg: dict) -> bool:
+    return bool(cfg.get("likwid_overlay") or cfg.get("papi_hybrid"))
+
+
 def caps_indicate_papi_hybrid(caps: dict | None) -> bool:
-    """True when compile capabilities record MONITOR_CPU_PAPI_FLOPS."""
+    """True when compile capabilities record MONITOR_CPU_LIKWID_OVERLAY.
+
+    Accepts legacy configure.papi_hybrid as an alias.
+    """
     if not caps:
         return False
     cfg = caps.get("configure") or {}
-    if cfg.get("papi_hybrid"):
+    if _cfg_indicates_overlay(cfg):
         return True
-    # Manifest may nest the same blob under compile_capabilities.
     nested = caps.get("compile_capabilities") or {}
     nested_cfg = nested.get("configure") or {}
-    return bool(nested_cfg.get("papi_hybrid"))
+    return _cfg_indicates_overlay(nested_cfg)
 
 
 def host_cpu_hw_key_names(manifest: dict) -> list[str]:
@@ -55,9 +62,10 @@ def check_papi_schema_contract(
 ) -> tuple[list[str], list[str]]:
     """Return (notes, errors) for host_cpu_hw PAPI key presence.
 
-    When papi_hybrid is set in capabilities, host_cpu_hw and all required keys
-    are mandatory. When host_cpu_hw is present without the flag, still require
-    the full PAPI key set so Grace shm captures cannot drop int8/int16 quietly.
+    When likwid_overlay (or legacy papi_hybrid) is set in capabilities,
+    host_cpu_hw and all required keys are mandatory. When host_cpu_hw is
+    present without the flag, still require the full overlay key set so
+    Grace shm captures cannot drop int8/int16 quietly.
     """
     notes: list[str] = []
     errors: list[str] = []
@@ -67,7 +75,7 @@ def check_papi_schema_contract(
 
     if hybrid and not has_hw:
         errors.append(
-            f"FAIL papi: papi_hybrid build missing type {_ST_NAME!r} in schema/manifest"
+            f"FAIL papi: likwid_overlay build missing type {_ST_NAME!r} in schema/manifest"
         )
         return notes, errors
 

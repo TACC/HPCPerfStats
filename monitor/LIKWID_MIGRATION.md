@@ -107,3 +107,15 @@ search (`stats_registry.h`); AMD DF and `amd_x86_rapl` sort **before** `host_cpu
 alphabetically. **`stats_runtime.c`** therefore uses a two-phase begin: init all
 enabled types, then call `host_cpu_hw` `st_begin` before every other type's begin.
 Intel IMC types already sort after `host_cpu_hw` and are unchanged.
+
+## aarch64 Grace — DCGM + LIKWID overlay (no PAPI)
+
+`auto` on non-x86 stays `--with-cpu-counter-backend=dcgm`. Configure adds
+`-DMONITOR_CPU_LIKWID_OVERLAY` and links the same static LIKWID archives as
+x86. Overlay eventset is `CPU_CYCLES:PMC0,INST_RETIRED:PMC1` (CYC-only
+fallback). DCGM owns util/power and fail-soft cycle estimates; LIKWID
+overwrites `aperf`/`mperf`/`cpu_clock_est_cycles` only when measured cycles
+are nonzero. Overlay init failure does **not** disable `host_cpu_hw`.
+DCGM `UpdateAllFields` soft-reset must not `HPMfinalize`. Exclusive
+`--with-cpu-counter-backend=likwid` is allowed on ARM and loses DCGM
+watts/util (fail-closed). Keep `arm_imc.c` for DRAM CAS. PAPI is removed.

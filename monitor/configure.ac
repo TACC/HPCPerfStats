@@ -112,7 +112,7 @@ esac
 
 likwid=false
 dcgm_checked=false
-cpu_papi_flops=false
+cpu_likwid_overlay=false
 CPU_COUNTER_BACKEND_CPPFLAG=""
 MONITOR_ARCH_CPPFLAG=""
 
@@ -128,11 +128,16 @@ if test "x$cpu_counter_backend" = "xauto"; then
   fi
 fi
 
-if test "x$cpu_counter_backend" = "xlikwid" && test "x$is_x86" != "xtrue"; then
-  AC_MSG_ERROR([LIKWID CPU backend is only supported on x86 (host_cpu=${host_cpu}); use --with-cpu-counter-backend=dcgm on non-x86])
+need_likwid=false
+if test "x$cpu_counter_backend" = "xlikwid"; then
+  need_likwid=true
+fi
+if test "x$cpu_counter_backend" = "xdcgm" && test "x$is_x86" != "xtrue"; then
+  need_likwid=true
+  cpu_likwid_overlay=true
 fi
 
-if test "x$cpu_counter_backend" = "xlikwid"; then
+if test "x$need_likwid" = "xtrue"; then
   dnl Static liblikwid.a (prefix-static, foreign cross deps) needs hwloc/lua archives and -lm
   dnl plus -lpthread/-ldl/-lrt on some hosts (Lonestar6). AC_SEARCH_LIBS only adds -llikwid to
   dnl LIBS; extras are for the try link only. Unset cache before the shared-only retry (same
@@ -184,23 +189,10 @@ if test "x$cpu_counter_backend" = "xdcgm"; then
   dcgm_checked=true
   CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_DCGM"
   MONITOR_ARCH_CPPFLAG=""
-  dnl Grace / aarch64 hybrid: DCGM util+power + static PAPI for FLOPs/cycles.
-  cpu_papi_flops=false
-  if test "x$is_x86" != "xtrue"; then
-    AC_CHECK_HEADERS([papi.h], [],
-      [AC_MSG_ERROR([papi.h required for non-x86 DCGM CPU backend (PAPI FLOPs/cycles hybrid)])])
-    AC_SEARCH_LIBS([PAPI_library_init], [papi], [have_papi=yes],
-      [AC_MSG_ERROR([Unable to find libpapi (required for non-x86 DCGM+PAPI hybrid CPU path)])],
-      [-lpfm -lm])
-    case " ${LIBS} " in
-      *" -lpfm "*) ;;
-      *)
-        AC_CHECK_LIB([pfm], [pfm_initialize], [LIBS="$LIBS -lpfm"], [])
-        ;;
-    esac
-    CPU_COUNTER_BACKEND_CPPFLAG="${CPU_COUNTER_BACKEND_CPPFLAG} -DMONITOR_CPU_PAPI_FLOPS"
-    cpu_papi_flops=true
-    AC_MSG_NOTICE([CPU counter hybrid: DCGM util/power + PAPI FLOPs/cycles])
+  dnl Grace / aarch64 hybrid: DCGM util+power + LIKWID overlay for cycles/inst.
+  if test "x$cpu_likwid_overlay" = "xtrue"; then
+    CPU_COUNTER_BACKEND_CPPFLAG="${CPU_COUNTER_BACKEND_CPPFLAG} -DMONITOR_CPU_LIKWID_OVERLAY"
+    AC_MSG_NOTICE([CPU counter hybrid: DCGM util/power + LIKWID overlay])
   fi
 elif test "x$cpu_counter_backend" = "xlikwid"; then
   CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_LIKWID"
@@ -261,8 +253,8 @@ AM_CONDITIONAL([CPU_BACKEND_LIKWID],
   [test x$hardware = xtrue -a x$cpu_counter_backend = xlikwid])
 AM_CONDITIONAL([CPU_BACKEND_DCGM],
   [test x$hardware = xtrue -a x$cpu_counter_backend = xdcgm])
-AM_CONDITIONAL([CPU_PAPI_FLOPS],
-  [test x$hardware = xtrue -a x$cpu_counter_backend = xdcgm -a x$cpu_papi_flops = xtrue])
+AM_CONDITIONAL([CPU_LIKWID_OVERLAY],
+  [test x$hardware = xtrue -a x$cpu_counter_backend = xdcgm -a x$cpu_likwid_overlay = xtrue])
 
 AC_ARG_ENABLE([infiniband],
 [  --enable-infiniband	Enable InfiniBand MAD support (default is true; use --enable-ib-mad-dlopen for fleet)],

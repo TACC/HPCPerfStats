@@ -1,0 +1,46 @@
+---
+description: DCGM+LIKWID overlay on aarch64 host_cpu_hw (cycles/inst fail-soft)
+globs:
+  - HPCPerfStats/monitor/src/**/*likwid_overlay*
+  - HPCPerfStats/monitor/src/cpu_counter_metrics*
+alwaysApply: false
+---
+
+# Monitor: LIKWID overlay (Grace / aarch64 hybrid)
+
+**Activation:** when editing LIKWID overlay sources, `cpu_counter_metrics*`, or aarch64 static/configure paths that enable `MONITOR_CPU_LIKWID_OVERLAY`.
+
+## Hybrid ownership (same `host_cpu_hw` type)
+
+| Source | Keys |
+|--------|------|
+| **DCGM** | `cpu_util_*_accum_us`, `dcgm_cpu_power_util_w`, `dcgm_cpu_power_limit_w`, `arm_dram_bw_bytes`; **fail-soft** `cpu_clock_est_cycles` (= **active** util×freq), `aperf` (=act), `mperf` (=ref) |
+| **LIKWID overlay** | Overwrites `aperf` / `mperf` / `cpu_clock_est_cycles` **only when measured cycles &gt; 0**; owns `fp_arith_inst_retired_scalar_*`, `arm_est_flops` (= SP+DP only), `arm_int8_ops`, `arm_int16_ops`, optional `instr_retired` |
+
+- aarch64 **`auto` stays `--with-cpu-counter-backend=dcgm`**. LIKWID overlay is an additive layer (`MONITOR_CPU_LIKWID_OVERLAY`), not a separate exclusive backend. Exclusive `--with-cpu-counter-backend=likwid` is allowed on ARM and **loses DCGM watts/util**.
+- **Fail-soft cycles (mandatory on Grace):** always accumulate and publish DCGM util×freq estimates even when `MONITOR_CPU_LIKWID_OVERLAY` is set: **`cpu_clock_est_cycles` and `aperf` = active** (flat when util≈0); **`mperf` = reference** (wall×freq). Overlay must **not** clear those keys when measured cycles are 0. Do **not** publish DCGM-synthesized FLOPs/instr under overlay (SP/DP/`arm_est_flops` stay overlay-owned).
+- Emit contract: every overlay collect that has SP/DP must set **both** scalar keys **and** `arm_est_flops = SP + DP`. Do **not** fold int8/int16 into `arm_est_flops`.
+- Integer ops: map only when the eventset programs them; production Grace eventset is **CYC+INS only** (`CPU_CYCLES:PMC0,INST_RETIRED:PMC1`) with CYC-only fallback. Packed 128/256/512 FP buckets stay 0 unless a future event maps them.
+- **Keep `arm_imc.c`** for DRAM CAS until LIKWID Grace uncore is proven equivalent to DMC CAS.
+
+## Static link
+
+- Build static `liblikwid.a` (+ hwloc + lua) via `scripts/build_static_bundle.sh` `build_likwid()` on **all** arches (`STATIC_PIN_LIKWID_*`; pin **5.5.2**, `ACCESSMODE=perf_event`, `-fPIC`).
+- `configure.ac` probes `perfmon_init` for exclusive LIKWID **and** DCGM+non-x86 overlay.
+- `prepare_rpmbuild_dirs.sh` requires `liblikwid*.a` on **all** arches. Do **not** require `libpapi.a`.
+
+## Runtime
+
+- Eventset: `likwid_arch_eventset_grace()` then `likwid_arch_eventset_grace_cyc_only()` on setup failure.
+- Overlay init fail: **do not** disable `host_cpu_hw`; DCGM util/power stays. Exclusive ARM LIKWID still fail-closes the type (no DCGM fallback).
+- **Lifetime vs DCGM soft-fail:** overlay must **survive** DCGM `UpdateAllFields` soft-reset. Tear down DCGM only; do **not** `HPMfinalize` / `cpu_counter_metrics_likwid_overlay_cleanup()` when only the DCGM session is torn down.
+- Collect: one `prepare_collect` + `read_group` per tick; per-CPU `read_cpu_cycles_instr` must not re-`readGroupCounters`.
+- `HPCPERFSTATS_LIKWID_ACCESS=direct` is still rejected (PERF only) on ARM too.
+- Keep collect hot-path bounded; do not add unbounded per-sample work.
+
+## Overlap
+
+- **`monitor-dcgm-integration.mdc`** — DCGM sessions, GPU path, util/power; hybrid fail-soft cycles + LIKWID measured overwrite.
+- **`monitor-amd-epyc-likwid.mdc`** — exclusive x86 LIKWID (Intel/AMD); overlay does not own IMC/DF/RAPL.
+- **`monitor-local-build-deps.mdc`** / **`monitor-static-build-verification.mdc`** — static PREFIX pins.
+- **`monitor-emitted-variable-naming.mdc`** — portable key names.
