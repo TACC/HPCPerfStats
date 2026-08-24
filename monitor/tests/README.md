@@ -8,7 +8,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 
 | Artifact | Role |
 |----------|------|
-| `test_dict.c` | `dict_*` hash table (init/set/ref/remv/for_each) |
+| `test_dict.c` | `dict_*` hash table (init/set/ref/remv/for_each; null/zero/corrupt-table guards) |
 | `test_host_key_alias.c` | `host_key_alias_lookup` / `host_key_alias_emit` |
 | `test_proc_status_order.c` | `host_proc` deferred Uid/Vm*/Threads flush; Name: deny list |
 | `test_schema_emit.c` | `stats_format_emit_*` banner/schema/mark helpers |

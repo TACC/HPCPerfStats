@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "collect_tier.h"
 #include "dict.h"
@@ -184,6 +185,7 @@ struct stats *get_current_stats(struct stats_type *type, const char *dev)
   struct stats *stats = NULL;
   struct dict_entry *de;
   hash_t hash;
+  static time_t last_dict_warn;
 
   if (type == NULL)
     return NULL;
@@ -195,6 +197,17 @@ struct stats *get_current_stats(struct stats_type *type, const char *dev)
 
   hash = dict_strhash(dev);
   de = dict_entry_ref(&type->st_current_dict, hash, dev);
+  if (de == NULL) {
+    time_t now = time(NULL);
+
+    if (last_dict_warn == 0 || (now > last_dict_warn && now - last_dict_warn >= 60)) {
+      ERROR("get_current_stats: dict_entry_ref failed for %s %s (corrupt/empty dict); "
+            "skipping device this tick\n",
+            type->st_name != NULL ? type->st_name : "?", dev);
+      last_dict_warn = now;
+    }
+    return NULL;
+  }
   if (de->d_key != NULL)
     return key_to_stats(de->d_key);
 

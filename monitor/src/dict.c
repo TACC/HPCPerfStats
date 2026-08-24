@@ -119,12 +119,17 @@ void dict_shrink(struct dict *dict, size_t hint)
 
 struct dict_entry *dict_entry_ref(struct dict *dict, hash_t hash, const char *key)
 {
-  size_t mask, i, perturb;
+  size_t mask, i, perturb, steps, max_steps;
   struct dict_entry *table, *dummy, *ent;
+
+  /* ICX host_block GPF: never probe a null/zero table or strcmp(NULL). */
+  if (dict == NULL || dict->d_table == NULL || dict->d_table_len == 0 || key == NULL)
+    return NULL;
 
   mask = dict->d_table_len - 1;
   table = dict->d_table;
   dummy = NULL;
+  max_steps = dict->d_table_len;
 
   i = hash & mask;
   ent = &table[i];
@@ -138,7 +143,7 @@ struct dict_entry *dict_entry_ref(struct dict *dict, hash_t hash, const char *ke
     return ent;
 
   perturb = hash;
-  while (1) {
+  for (steps = 1; steps < max_steps; steps++) {
     i = (i << 2) + i + perturb + 1;
     ent = &table[i & mask];
 
@@ -153,11 +158,18 @@ struct dict_entry *dict_entry_ref(struct dict *dict, hash_t hash, const char *ke
 
     perturb >>= PERTURB_SHIFT;
   }
+
+  /* Corrupt / full table with no empty slot: fail closed instead of hang/SEGV. */
+  return NULL;
 }
 
 int dict_entry_set(struct dict *dict, struct dict_entry *ent, hash_t hash, char *key)
 {
   size_t new_load = 0;
+
+  if (dict == NULL || ent == NULL || key == NULL)
+    return -1;
+
   /* If we're overwriting an existing entry then we don't need to
      resize. */
   if (ent->d_key != NULL)
@@ -186,6 +198,10 @@ int dict_entry_set(struct dict *dict, struct dict_entry *ent, hash_t hash, char 
 
     /* Revalidate ent after resize. */
     ent = dict_entry_ref(dict, hash, key);
+    if (ent == NULL) {
+      errno = EINVAL;
+      return -1;
+    }
   }
 
   dict->d_load++;
@@ -200,7 +216,12 @@ out_exist:
 
 char *dict_entry_remv(struct dict *dict, struct dict_entry *ent, int may_resize)
 {
-  char *key = ent->d_key;
+  char *key;
+
+  if (dict == NULL || ent == NULL)
+    return NULL;
+
+  key = ent->d_key;
   if (key != NULL) {
     ent->d_hash = DICT_HASH_DUMMY;
     ent->d_key = NULL;
@@ -214,8 +235,15 @@ char *dict_entry_remv(struct dict *dict, struct dict_entry *ent, int may_resize)
 
 char *dict_remv(struct dict *dict, const char *key)
 {
-  hash_t hash = dict_strhash(key);
-  struct dict_entry *ent = dict_entry_ref(dict, hash, key);
+  hash_t hash;
+  struct dict_entry *ent;
+
+  if (dict == NULL || key == NULL)
+    return NULL;
+  hash = dict_strhash(key);
+  ent = dict_entry_ref(dict, hash, key);
+  if (ent == NULL)
+    return NULL;
 
   return dict_entry_remv(dict, ent, 1);
 }
@@ -229,6 +257,8 @@ char *dict_ref(struct dict *dict, const char *key)
     return NULL;
   hash = dict_strhash(key);
   ent = dict_entry_ref(dict, hash, key);
+  if (ent == NULL)
+    return NULL;
   return ent->d_key;
 }
 
@@ -241,6 +271,8 @@ int dict_set(struct dict *dict, char *key)
     return -1;
   hash = dict_strhash(key);
   ent = dict_entry_ref(dict, hash, key);
+  if (ent == NULL)
+    return -1;
 
   if (ent->d_key != NULL) {
     TRACE("overwriting old key `%s', hash %zu, with new key `%s' hash %zu\n", ent->d_key,

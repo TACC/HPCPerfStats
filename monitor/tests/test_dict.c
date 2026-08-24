@@ -109,6 +109,49 @@ static void test_resize_on_many_inserts(void)
   dict_destroy(&d, free);
 }
 
+/* ICX host_block GPF: dict_entry_ref must not SEGV on null/zero/corrupt tables. */
+static void test_entry_ref_null_and_zero_table(void)
+{
+  struct dict d;
+  hash_t h;
+
+  memset(&d, 0, sizeof(d));
+  h = dict_strhash("sda");
+  assert(dict_entry_ref(NULL, h, "sda") == NULL);
+  assert(dict_entry_ref(&d, h, "sda") == NULL); /* d_table NULL */
+
+  assert(dict_init(&d, 0) == 0);
+  free(d.d_table);
+  d.d_table = NULL;
+  d.d_table_len = 8;
+  assert(dict_entry_ref(&d, h, "sda") == NULL);
+  d.d_table_len = 0;
+  assert(dict_entry_ref(&d, h, "sda") == NULL);
+
+  assert(dict_init(&d, 0) == 0);
+  assert(dict_entry_ref(&d, h, NULL) == NULL);
+  assert(dict_ref(&d, NULL) == NULL);
+  dict_destroy(&d, NULL);
+}
+
+static void test_entry_ref_bounded_corrupt_full_table(void)
+{
+  struct dict d;
+  size_t i;
+  hash_t want;
+
+  assert(dict_init(&d, 0) == 0);
+  want = dict_strhash("probe-miss");
+  for (i = 0; i < d.d_table_len; i++) {
+    d.d_table[i].d_key = (char *)"fill";
+    d.d_table[i].d_hash = want ^ (hash_t)(i + 1);
+  }
+  /* No empty slot and no matching key — must return NULL, not hang/SEGV. */
+  assert(dict_entry_ref(&d, want, "probe-miss") == NULL);
+  assert(dict_ref(&d, "probe-miss") == NULL);
+  dict_destroy(&d, NULL);
+}
+
 int main(void)
 {
   test_strhash();
@@ -116,6 +159,8 @@ int main(void)
   test_set_ref_remv();
   test_for_each();
   test_resize_on_many_inserts();
+  test_entry_ref_null_and_zero_table();
+  test_entry_ref_bounded_corrupt_full_table();
   printf("test_dict passed\n");
   return 0;
 }
