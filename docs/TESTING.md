@@ -522,7 +522,7 @@ cd HPCPerfStats
 tests/run_sync_timedb_regression_battery.sh
 ```
 
-Logs to **`test_runs/day-close-loop-regression-battery-<timestamp>.log`**. After the queue-orchestrator cutover (slice 4), covers `job:v1` / reconstruct / discover helpers (`test_sync_timedb_job_queue.py`), exclusive flock + entry wiring (`test_sync_timedb_queue_orchestrator.py`), B-09 predicate `test_arch_*` (`test_sync_timedb_architecture_contract.py`), archive members Redis, GNU find, day-raw-removal samples, and **`--jid` ingest-only** (`test_sync_timedb_jid.py`). Retired supervisor/janitor two-queue tests are no longer in this battery. See **`sync-timedb-change-regression-gate.mdc`**, **`sync-timedb-queue-orchestrator-contract.mdc`**, and **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`** (T0/T1/T2 on backlog sites; `--jid` uses the smoke note there instead of stall tiers).
+Logs to **`test_runs/day-close-loop-regression-battery-<timestamp>.log`**. After the queue-orchestrator cutover, covers `job:v1` / reconstruct / discover helpers (`test_sync_timedb_job_queue.py`), exclusive flock + entry wiring (`test_sync_timedb_queue_orchestrator.py`), B-09 predicate `test_arch_*` (`test_sync_timedb_architecture_contract.py`), archive members Redis, GNU find, day-raw-removal samples, and **`--jid` ingest-only** (`test_sync_timedb_jid.py`). Retired supervisor/janitor two-queue tests are no longer in this battery. See **`sync-timedb-change-regression-gate.mdc`**, **`sync-timedb-queue-orchestrator-contract.mdc`**, and **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`** (**Queue orchestrator era** T0/T1/T2; `--jid` uses the smoke note there). Slice 5 trimmed B-only janitor/handoff rule prose and dual-mode docs.
 
 **sync_timedb `--jid` one-shot (host unit):**
 

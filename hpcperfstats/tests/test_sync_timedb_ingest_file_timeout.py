@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import os
 import signal
 import tarfile
 import threading
@@ -12,7 +11,9 @@ import time
 import pytest
 
 from hpcperfstats.dbload import sync_timedb as st
-from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ingest_timeout_mod
+from hpcperfstats.dbload.lib import (
+  sync_timedb_ingest_timeout as ingest_timeout_mod,
+)
 
 _SIGALRM_AVAILABLE = hasattr(signal, "SIGALRM")
 
@@ -252,7 +253,9 @@ def test_stall_abort_polls_for_sealed_archives_respects_ini_ceiling(monkeypatch,
   _default_timeout_getters(monkeypatch)
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
   monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100)
-  from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ingest_timeout_mod
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_ingest_timeout as ingest_timeout_mod,
+  )
 
   monkeypatch.setattr(
       ingest_timeout_mod,
@@ -399,14 +402,16 @@ def test_suspend_sigalrm_extends_deadline_monotonic(monkeypatch):
 def test_ingest_populate_wait_survives_sigalrm(monkeypatch, tmp_path):
   """Short per-file SIGALRM must not fire during Redis populate wait."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      _daily_archive_members_cache_key,
+    _daily_archive_members_cache_key,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      build_archive_members_redis_keys,
-      request_archive_members_populate_and_wait,
-      reset_archive_members_redis_client_for_tests,
+    build_archive_members_redis_keys,
+    request_archive_members_populate_and_wait,
+    reset_archive_members_redis_client_for_tests,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+    FakeRedis,
+  )
 
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.15)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s_per_mib", lambda: 0.0)

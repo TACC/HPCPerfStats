@@ -1,8 +1,49 @@
 # Operator sync_timedb stall verify (tiered catch-up)
 
-Backlog catch-up sites (months of `waiting_on_ingest` days) can run **many hours** of valid giant-archive work before an **idle spin** stall appears. Do **not** mark a deploy verified on a **15-minute T0 smoke alone**.
+Backlog catch-up sites (months of incomplete days) can run **many hours** of valid giant-archive work before an **idle spin** stall appears. Do **not** mark a deploy verified on a **15-minute T0 smoke alone**.
 
-See also: `sync-timedb-change-regression-gate.mdc`, [SYNC_TIMEDB_PARALLELISM.md](SYNC_TIMEDB_PARALLELISM.md) (spawn vs thread pool taxonomy), [day-close-ingest-loop-fix plan](.cursor/plans/day-close-ingest-loop-fix.plan.md) Phase 6, [june-ingest-stall-prevention plan](.cursor/plans/june-ingest-stall-prevention.plan.md).
+See also: `sync-timedb-change-regression-gate.mdc`, `sync-timedb-queue-orchestrator-contract.mdc`, [SYNC_TIMEDB_PARALLELISM.md](SYNC_TIMEDB_PARALLELISM.md), live plan [sync-timedb-queue-redesign](../.cursor/plans/sync-timedb-queue-redesign.plan.md).
+
+## Queue orchestrator era (2026-08 cutover)
+
+Production is **one** `sync_timedb.py` process per `archive_dir` (`run_sync_timedb_queue_orchestrator`, exclusive flock). Dual CLI ``backlog``/``current``, proximity heartbeat, `ArchiveJanitor` tick, handoff pins, and oldest-day **chunk gate** are **retired**. Operator census is Redis **`job:v1`** + disk/DB reconstruct predicates — empty job keys ≠ caught up.
+
+### Post-deploy tiers (orchestrator)
+
+| Tier | When | Pass criteria |
+|------|------|---------------|
+| **T0 smoke** | T+15 min after deploy | Pipeline up; **exactly one** orchestrator flock holder; Redis reachable; at least one ingest lease progress **or** reconstruct logged incomplete work with non-empty matching queue kind; no second `sync_timedb` CLI for the same `archive_dir` |
+| **T1 progress** | T+4 h **or** after first append/day_close progress on head day | Hot and/or catchup ingest ZSET depth trending (or reconstruct shows complete); append/day_close LISTs not wedged forever with filesystem remaining-raw; no dual-process flock fight |
+| **T2 catch-up** | T+24 h or when head day advances | Cadence of completed ingest leases continues; day_close jobs drain age-eligible days; no persistence wipe / contract bump used as “fix” |
+
+```bash
+# T0 — one process + job:v1 census (INI paths first; full logs never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+  su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as cfg
+print(\"archive_dir\", cfg.get_archive_dir_path())
+print(\"daily_archive_dir\", cfg.get_daily_archive_dir_path())
+"'
+
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+  su hpcperfstats -c 'sh -lc "ps -ef | grep -E \"[s]ync_timedb.py\" || true"'
+
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec redis \
+  sh -lc 'redis-cli --scan --pattern "*job:v1*" | head -50'
+
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+  grep -E 'queue orchestrator|job:v1|orchestrator flock|reconstruct|ZADD|day_close|Redis.*(down|unavailable)|sys.exit' | tail -80
+```
+
+**Pass (T0):** one `[main]` sync_timedb; flock acquired; job keys present or reconstruct explains empty; **Fail:** two orchestrators, Redis down without exit, or CLI `backlog`/`current` still in supervisord.
+
+**Pass (T1/T2):** head-day work advances without restoring chunk_gate / handoff_priority / janitor tick signatures as the only progress metric. Prefer `ZCOUNT`/`LLEN` + lease keys over historical `oldest_day_chunk_gate_stall` greps.
+
+Sections below marked **Historical B-era** document pre-cutover signatures for archaeology; do not treat them as production law after the queue cutover.
+
+---
+
+See also (listend note retained):
 
 **After listend Redis `monitor_identity` on `$` rotation (2026-08):** identity SET is **Redis-only** on the existing `$` schema-rotation / `recent_host` worker path. It must **not** change RabbitMQ ack timing, pause/resume watermarks, sample completeness, or the archive/DB-ingest gate. Pre-deploy still run `tests/run_sync_timedb_regression_battery.sh` as a **no-regression guard** when `listend.py` touched the `$` branch; post-deploy **no T2 stall campaign** is required for this feature alone — confirm listend still acks and archives `$` payloads, and Admin Monitor can join `monitor_identity:{fqdn}` when present (`$build` optional until monitor RPM).
 
@@ -58,9 +99,11 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
   su hpcperfstats -c 'sync_timedb.py --jid REPLACE_WITH_JOB_ID'
 ```
 
-**Pass:** exit **0**; logs show `sync_timedb --jid: jid=… hosts=…`, host-scoped discover counts, and `done … ok=…` (zero matching files is success). Discovery uses the ±1h padded job window **plus** one earlier and one later raw stats file per host. **Fail:** exit **1** (missing job / empty hosts / bad argv / all ingest failures). Expect **no** `ArchiveJanitor`, `day_close`, or archive dispatch lines from this process. Stall tiers above remain for continuous `backlog` / `current` deploys only.
+**Pass:** exit **0**; logs show `sync_timedb --jid: jid=… hosts=…`, host-scoped discover counts, and `done … ok=…` (zero matching files is success). Discovery uses the ±1h padded job window **plus** one earlier and later raw stats file per host. **Fail:** exit **1** (missing job / empty hosts / bad argv / all ingest failures). Expect **no** day_close / archive dispatch from this short-lived process. Continuous-deploy stall tiers are the **Queue orchestrator era** section above (not dual-mode ``backlog``/``current``).
 
-## Post-deploy tiers
+## Historical B-era — Post-deploy tiers (pre-queue cutover)
+
+> **Archaeology only.** Prefer **Queue orchestrator era** tiers. The table below and later B-era greps (`chunk_gate`, `handoff_priority`, `ArchiveJanitor`, dual-mode) apply to images **before** the greenfield coordinator cutover.
 
 | Tier | When | Pass criteria |
 |------|------|---------------|

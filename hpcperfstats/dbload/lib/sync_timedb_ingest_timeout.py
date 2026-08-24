@@ -17,7 +17,7 @@ Attributes:
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+from typing import Any
 
 
 # Former B giant-supplement thresholds (INI keys retired). Used only to label

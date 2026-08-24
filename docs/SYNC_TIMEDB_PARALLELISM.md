@@ -23,7 +23,7 @@ This document describes how `sync_timedb` uses **spawn process pools**, **day_cl
 
 **Factory:** `create_sync_timedb_spawn_pool()` in `multiprocessing_pool_health.py` — shared spawn context + recycle kwargs; **distinct initializers per pool kind** (do not unify initargs).
 
-**Archive dispatch:** `ArchiveDispatchCoordinator` uses `archive_pool.map_async(...)` with **one daily tar per slot**; concurrent slots follow **`sync_archive_pool_processes`**. Non-blocking slot finalize drains overflow heap before long `post_finalize_reconcile`. Do **not** replace with `ThreadPoolExecutor.submit` on the hot path without redesigning stall/finalize/fatal-exit semantics (`async_result_get_watch_pool`, `dead_pool_worker_pids`, exit **124**/**137**).
+**Archive dispatch:** append jobs use `archive_pool` with **one daily tar per slot**; concurrent slots follow **`sync_archive_pool_processes`**. Sliding-window refill on completion — never join an entire batch before the next hop. Do **not** replace with `ThreadPoolExecutor.submit` on the hot path without redesigning stall/finalize/fatal-exit semantics (`async_result_get_watch_pool`, exit **124**/**137**).
 
 **Ingest dispatch:** `imap_unordered_watch_pool` polls process liveness and aborts on worker death — thread pools have no equivalent worker-PID model.
 
@@ -118,11 +118,11 @@ Exit **124** / `Pool imap stalled` / `MultiprocessingWorkerExitError` come from 
 | `get_existing_archive_members_for_daily_archive` | Ingest lookup | L1 cache → populate wait → local scan fallback |
 | `sync_timedb_archive.py` backfill | Sealed-only CLI | `iter_sealed_daily_archive_member_paths` (no `.tar` restore) |
 
-**Dual-mode day-close ownership:** CLI ``current`` (and date-range) run the janitor day-close path (session thread executor **B** + seal/verify/delete). CLI ``backlog`` keeps ingest/archive append pools but sets ``day_close_enabled=False`` so it never discovers, enqueues, or executes ``DAY_CLOSE``. Proximity heartbeat stops ``backlog`` ingest near ``current``; it does not transfer day-close ownership.
+**Day-close ownership:** one orchestrator process owns ingest **and** day_close (Redis `day_close` LIST + thread pool). Dual CLI ``backlog``/``current`` is **retired**.
 
-**Archive CLI vs supervisor prewarm boundary:** `sync_timedb_archive.py` is an operator/CLI backfill tool — it scans **sealed** archives only and never calls `ensure_daily_tar_restored_for_append` or supervisor chunk prewarm. The supervisor and ingest workers own hot-path Redis populate via `request_archive_members_populate_and_wait`; janitor owns day-close seal/verify/delete on day-close-enabled modes. Do not route CLI scans through prewarm or maintenance snapshots.
+**Archive CLI vs orchestrator prewarm boundary:** `sync_timedb_archive.py` is an operator/CLI sealed-day tool (`all` / dates / paths) — it never calls `ensure_daily_tar_restored_for_append` or orchestrator chunk prewarm. The orchestrator and ingest workers own hot-path Redis populate via `request_archive_members_populate_and_wait`; day_close threads own seal/verify/delete. Do not route CLI scans through prewarm or maintenance snapshots.
 
-**Defer split:** janitor day-close defer checks `ingest_tar_hot` (ingest pool activity). Populate-pool tar scans **also** defer on `archive_append_inflight` (append worker holds day until merge). Both keys are intentional — see `sync-timedb-ingest-pool-io-coordination.mdc` §8b.
+**Defer split:** day_close defer checks `ingest_tar_hot` (ingest pool activity). Populate-pool tar scans **also** defer on `archive_append_inflight` (append worker holds day until merge). Both keys are intentional — see `sync-timedb-ingest-pool-io-coordination.mdc` §8b.
 
 ## zstd thread parameter naming
 

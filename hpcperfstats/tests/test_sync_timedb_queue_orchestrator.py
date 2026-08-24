@@ -2,16 +2,15 @@
 from __future__ import annotations
 
 import inspect
-import os
 from multiprocessing import Process
 
 import pytest
 
-from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
-    exclusive_archive_dir_flock,
-    orchestrator_lock_path,
-)
 import hpcperfstats.dbload.sync_timedb as st
+from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
+  exclusive_archive_dir_flock,
+  orchestrator_lock_path,
+)
 
 
 def test_exclusive_archive_dir_flock_rejects_second_nonblocking_holder(tmp_path):
@@ -65,8 +64,8 @@ def test_supervisor_loop_symbol_removed():
 
 def test_sliding_window_ingest_enqueues_append_while_other_inflight():
   """First completed ingest enqueues append while another ingest stays inflight."""
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
   from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 
   class _Ready:
     def ready(self):
@@ -249,8 +248,9 @@ def test_enqueue_day_closes_for_daily_dir_calls_reconstruct(tmp_path, monkeypatc
 
 def test_boot_stream_discover_does_not_call_run_find_stats():
   """Boot discover must stream stdout chunks, not capture-all run_find_stats."""
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
   import inspect
+
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 
   src = inspect.getsource(qo._boot_stream_discover)
   assert "run_find_stats(" not in src

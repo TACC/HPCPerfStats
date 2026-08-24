@@ -1,5 +1,5 @@
 ---
-description: Keep sync_timedb post-chunk archive hygiene non-blocking, per-day, and loss-safe
+description: Post-chunk archive hygiene retired; day_close owns seal/delete/tar-drop via queue orchestrator
 alwaysApply: false
 globs: hpcperfstats/dbload/sync_timedb*.py
 ---
@@ -8,74 +8,16 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-**Superseded by `sync-timedb-archive-janitor-contract.mdc` (2026-06).** Post-chunk hygiene (`_schedule_post_chunk_hygiene` / `_run_post_chunk_hygiene_body`) was removed. Chunk-end work is **ingest-only** on MainThread (`_finalize_archive_slots_if_needed`, `signal_work_available`, non-blocking `_maybe_enqueue_immediate_day_close`). Seal → verify → delete → tar drop runs on the **archival thread** (`ArchiveJanitor._close_one_day`, drain-until-empty). Do **not** reintroduce `signal_scheduled_maintenance_pass` every N chunks or `run_supervisor_day_raw_removal_delete_pass` at chunk boundaries.
+**Retired.** Post-chunk hygiene (`_schedule_post_chunk_hygiene` / `_run_post_chunk_hygiene_body`) and the B supervisor chunk-boundary seal schedule are **gone**.
 
-The contracts below remain valid for **janitor ticks** and shared helpers. When changing cold-path behavior, edit `sync_timedb_archive_janitor.py` and preserve these invariants.
+Production cold path is **Redis `day_close` jobs** drained by the **queue orchestrator** (`run_sync_timedb_queue_orchestrator`) on day_close threads. Do **not** reintroduce:
 
-## Canonical entry points
-
-| Concern | Location |
-|---|---|
-| Schedule single-flight background pass | `_schedule_post_chunk_hygiene` (closure in `run_sync_timedb_supervisor_loop`) |
-| Pipeline body (seal → raw → `.tar`) | `_run_post_chunk_hygiene_body` |
-| Preflight (any eligible work?) | `_post_chunk_hygiene_has_work` |
-| Recompute disqualified days | `_post_chunk_disqualified_daily_tars` → `build_day_close_disqualified_daily_tars` |
-| Snapshot supervisor state under lock | `_capture_disqualification_inputs` |
-| Per-day append cache bookkeeping | `_track_pending_append_groups`, `_discard_inflight_archive_path` |
-| Day-mapping helpers | `daily_tar_paths_from_pending_archive_tasks`, `daily_tar_paths_for_stats_paths`, `collect_days_with_unmapped_closed_raw` |
-
-## Non-blocking supervisor contract
-
-- Hygiene runs in a single-flight `ThreadPoolExecutor(max_workers=1)`; thread title `sync_timedb.py [thread:archive-post-chunk-hygiene]`.
-- The supervisor **never waits** on `post_chunk_hygiene_future`; it advances to the next chunk immediately. If a pass is still running, `_schedule_post_chunk_hygiene` is a no-op (single-flight). **Scheduled** maintenance must **defer** while `post_chunk_hygiene_future` is not `done()` to avoid overlapping seal/raw/`.tar` passes. Interval maintenance remains the backstop if hygiene is starved.
-- Schedule only when the chunk produced archival/finalize work.
-- `post_chunk_hygiene_executor.shutdown(wait=True)` on supervisor teardown.
-
-## Per-day append cache
-
-```python
-pending_append_by_daily_tar: dict[str, set[str]]  # daily_tar_path -> raw paths
-```
-
-- Merge each chunk's append groups into the cache (deduped) under `archive_state_lock` before dispatch.
-- **Do not change checkpoint rules:** the cache is pre-dispatch only. Paths are not marked `ARCHIVED` because they are cached; they follow the existing finalize path (same as `archive_job_deferred_paths`).
-- Remove a path from the cache only via `_discard_inflight_archive_path` on successful archive finalize for that path.
-
-## Day disqualification union (recompute before every mutating step)
-
-`build_day_close_disqualified_daily_tars` unions, as normalized `YYYY-MM-DD.tar` paths:
-
-1. ~~`pending_stats_files` mapped to daily tars~~ — **removed** from seal disqualifiers (2026-06); use **`_janitor_delete_disqualified_daily_tars`** for delete overlap with pending ingest instead.
-2. `inflight_archive_paths` mapped to daily tars.
-3. Non-empty `pending_append_by_daily_tar` keys.
-4. In-flight `archive_job` daily tars.
-5. **All** daily tars referenced by the `pending_archive_tasks` heap (`daily_tar_paths_from_pending_archive_tasks`).
-6. `collect_days_with_unmapped_closed_raw` (closed raw with no parseable first timestamp, bucketed by filename epoch / mtime).
-
-`remaining_raw_by_gz` is intentionally **not** a disqualifier here: closed, already-archived raw on disk is exactly what raw removal and `.tar` removal must act on. Disqualification covers only days with raw still to be ingested/appended, plus unmapped closed raw.
-
-Supervisor state is read under `archive_state_lock`; `heapq` push/pop on `pending_archive_tasks` and `inflight_archive_paths` mutation are also guarded so the hygiene thread never iterates a set/heap mid-mutation.
-
-## Pipeline body (`_run_post_chunk_hygiene_body`)
-
-1. `close_old_connections()`; one `build_archive_maintenance_snapshot` per pass (no rescan between steps).
-2. Compute disqualified + unmapped closed raw; **preflight** — return early if no non-disqualified day is dirty-sealable and no removable raw exists (no zstd, no mutation).
-3. `seal_dirty_daily_archives(..., seal_immediately_if_dirty=False, only_when_no_remaining_raw=True, skip_daily_tar_paths=disqualified)` — the **only** step that may run zstd this pass. Calendar-today waits **`archive_today_uncompressed_tar_grace_hours`**; prior dirty days seal only when closed raw for that day is gone from disk.
-4. Recompute disqualified; `remove_verified_archived_raw_files(..., ingest_ready_fn=stats_file_head_ingested_in_db, allow_auto_seal=False, skip_daily_tar_paths=disqualified)`. `allow_auto_seal=False` prevents a second `atomic_seal_tar_to_zst`.
-5. Recompute disqualified; `remove_verified_uncompressed_daily_tars(..., force_remove_uncompressed_tar=False, skip_daily_tar_paths=disqualified)`.
-6. `close_old_connections()` in `finally`.
-
-**Never** set `force_remove_uncompressed_tar=True`, reset `last_archive_maint`, or `finalize(force=True)` from hygiene.
-
-## Tests
-
-- Helper tests in `test_sync_timedb_archive.py`: `only_when_no_remaining_raw`, `allow_auto_seal=False` skips auto-seal, `daily_tar_paths_from_pending_archive_tasks`, `collect_days_with_unmapped_closed_raw`, `build_day_close_disqualified_daily_tars` union.
-- Supervisor test in `test_sync_timedb_supervisor.py`: hygiene is scheduled, runs canonical seal → raw → `.tar` order, passes `skip_daily_tar_paths`, sets `allow_auto_seal=False`, and the preflight skips with no eligible work.
-- Follow `every-error-regression-test.mdc`.
+- `signal_scheduled_maintenance_pass` every N chunks
+- `run_supervisor_day_raw_removal_delete_pass` at chunk boundaries
+- `ArchiveJanitor` tick debt as a second coordinator
 
 ## Overlap
 
-- **`sync-timedb-lock-and-archive-contract.mdc`** — seal/lock/recovery, seal-once, parallel seal worker safety.
-- **`sync-timedb-db-before-archive-contract.mdc`** — DB head-ingest gate and unmapped closed raw disqualification.
-- **`process-title-and-pool-labels.mdc`** — hygiene daemon thread title.
-- **`runtime-resource-and-metrics-safety.mdc`** — `close_old_connections()` at thread boundaries.
+- **`sync-timedb-queue-orchestrator-contract.mdc`** — production coordinator
+- **`sync-timedb-archive-janitor-contract.mdc`** — A day-close worker laws (B tick retired)
+- **`sync-timedb-lock-and-archive-contract.mdc`** — seal/unseal/delete contracts

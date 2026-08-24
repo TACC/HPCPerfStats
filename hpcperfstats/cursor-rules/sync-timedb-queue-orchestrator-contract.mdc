@@ -38,5 +38,6 @@ Production coordinator for `sync_timedb` is **`run_sync_timedb_queue_orchestrato
 
 - Persistence API: `sync-timedb-persistence-contract.mdc`
 - DB-before-archive / append unseal: `sync-timedb-db-before-archive-contract.mdc`, `sync-timedb-lock-and-archive-contract.mdc`
-- Regression battery: `sync-timedb-change-regression-gate.mdc` (battery composition updated for queue cutover)
-- Janitor rule prose trim is **slice 5** — do not rewrite the full janitor contract here
+- Regression battery: `sync-timedb-change-regression-gate.mdc`
+- Day-close A worker laws (B tick retired): `sync-timedb-archive-janitor-contract.mdc`
+- Hot-path yield: `sync-timedb-hot-path-janitor-lock-priority.mdc`

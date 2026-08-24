@@ -10,7 +10,6 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
-import hpcperfstats.dbload.lib.conf_parser as cfg
 
 SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS = 300.0
 

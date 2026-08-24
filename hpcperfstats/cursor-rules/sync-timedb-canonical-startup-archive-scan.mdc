@@ -1,5 +1,5 @@
 ---
-description: Single-flight canonical startup archive snapshot for sync_timedb
+description: Startup archive snapshot helpers are not the queue-orchestrator discover path
 alwaysApply: false
 globs: hpcperfstats/dbload/sync_timedb*.py
 ---
@@ -8,60 +8,36 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-At supervisor boot **when CLI `startdate == 'backlog'`**, **one** `collect_stats_files_in_range` (+ one head-metadata pass via `build_archive_maintenance_snapshot`) must be shared by janitor startup maintenance and the first supervisor rescan. Do not let each subsystem walk the full raw tree independently.
+**Production coordinator** is **`run_sync_timedb_queue_orchestrator`** (`sync-timedb-queue-orchestrator-contract.mdc`). Dual CLI ``backlog``/``current``, janitor startup heavy pass, and MainThread “blocking boot snapshot before ingest” are **retired**. Empty Redis job keys ≠ caught up — **reconstruct** from disk + Timescale + marks, then **stream** GNU `find -printf` into ingest `ZADD` (`sync_timedb_job_discover` / `sync_timedb_job_reconstruct`).
 
-**CLI `current` / date-range (ingest-first, 2026-07):** skip the **blocking** boot startup snapshot (`run_startup_maintenance` is False). Clear the ingest gate immediately so chunks may begin. After the **first non-empty chunk** (`ingest_going`), kick **one** async full `build_archive_maintenance_snapshot` on a dedicated `SessionSingleFlightExecutor` role `startup-snapshot` (not the janitor heavy pass — heavy defers while chunk/in-flight). Worker: `begin_build` → build → coordinator `publish` → janitor `adopt_published_startup_snapshot` → `mark_startup_heavy_maintenance_finished` → `signal_work_available`. MainThread **never waits**; later chunks may run while `_building`. Day-close discover/fill/`idle_finalize` unlock only when **`startup_snapshot_ready`** (implies `ingest_going`). Pre-`ingest_going`: no day-scoped MainThread census (`get_allow_day_scoped_closed_raw`); boot handoff is **manifest-only**.
+`StartupArchiveScanCoordinator` in `sync_timedb_startup_archive_scan.py` remains a **library helper** for single-flight snapshot build/publish if tooling still calls it. Do **not** rewire production ingest to wait on janitor `run_heavy_maintenance_pass(reason=startup)` or `handoff_priority_paths`.
 
-## Canonical modules
+## Canonical modules (queue era)
 
 | Concern | Location |
 |---|---|
-| Single-flight coordinator | `hpcperfstats/dbload/lib/sync_timedb_startup_archive_scan.py` → `StartupArchiveScanCoordinator` |
-| Deep copy helper | `copy_archive_maintenance_snapshot` in same module |
-| Snapshot builder | `build_archive_maintenance_snapshot` in `sync_timedb_archive_maint.py` |
-| Janitor publish | `ArchiveJanitor.run_heavy_maintenance_pass(reason=startup)` → adopt `coordinator.get_snapshot()` via `copy_archive_maintenance_snapshot` when already published, else `begin_build()` → build → `publish(..., from_janitor=True)` → `invalidate_unmapped_disqualify_cache()` before accrual trim |
-| Unmapped resolve | `resolve_unmapped_closed_raw_daily_tars` in `sync_timedb_archive_helpers.py` (coordinator → accrual if `closed_paths` non-empty → TTL collect) |
-| Supervisor wiring | `run_sync_timedb_supervisor_loop` in `sync_timedb.py` → `note_startup_maintenance_pending`, `_get_startup_snapshot_for_rescan`, `_rescan_pending_with_progress` |
+| Production discover / reconstruct | `sync_timedb_job_discover.py`, `sync_timedb_job_reconstruct.py`, `sync_timedb_queue_orchestrator.py` |
+| Optional single-flight snapshot helper | `sync_timedb_startup_archive_scan.py` → `StartupArchiveScanCoordinator` |
+| Snapshot builder (shared) | `build_archive_maintenance_snapshot` in `sync_timedb_archive_maint.py` |
+| Unmapped resolve | `resolve_unmapped_closed_raw_daily_tars` in `sync_timedb_archive_helpers.py` |
 
-## Required behavior
+## Required behavior (queue era)
 
-- **Janitor** `run_heavy_maintenance_pass(reason=startup)` adopts an already-published coordinator snapshot when present; otherwise calls `begin_build()` before `build_archive_maintenance_snapshot`; `abort_build()` on build failure; `publish` in success path. **Only when supervisor `startdate == 'backlog'`.**
-- **Supervisor rescan** (`_get_startup_snapshot_for_rescan`) may single-flight fallback-build after **`sync_startup_snapshot_wait_seconds`** (default **300**, min **120**). **Only when `startdate == 'backlog'`** for the blocking wait path; date-range / ``current`` idle refill may wait briefly on a published post-ingest snapshot but must not block first ingest.
-- **`note_startup_maintenance_pending()`** from supervisor on `signal_scheduled_maintenance_pass(reason=startup)` (backlog) **or** when kicking the post-ingest async snapshot (``current``/date-range) extends effective wait while the snapshot builds.
-- **Janitor tick when `day_close_enabled=False` (CLI `backlog`):** `_run_tick_body` must still drain `_pending_maintenance_pass_reason` via `run_scheduled_maintenance_pass` **before** returning — do **not** early-return past pending startup maintenance. Skipping that drain deadlocks supervisor `wait_for_snapshot` (pending extends the wait timeout forever while the snapshot never publishes). Day-close discover/enqueue/`_close_one_day` remain no-ops. Regression: **`test_disabled_day_close_tick_runs_pending_maintenance_pass`**.
-- While `_building` is true, waiters **must not** start parallel collects.
-- **Publish deep-copies** `mapping` / `remaining_raw_by_gz` list values via `copy_archive_maintenance_snapshot` — trim clears heavy lists on accrual object only; coordinator retains `closed_paths` for unmapped disqualify.
-- **Derive, do not rescan:** janitor **`DAY_CLOSE`** discover remaining map, first supervisor `rescan_pending_stats_files` (when range is full tree), and **`_cap_pending_after_rescan` / checkpoint reconcile** (`build_live_unprocessed_by_tar_for_reconcile`) use the shared snapshot — **coordinator** while startup ingest gate not cleared, **janitor accrual** when gate cleared and accrual `mapping` present; live `force_full_scan` only as fallback.
-- **Handoff/exclude derive (2026-07):** `day_raw_removal.get_maintenance_snapshot` prefers accrual `remaining_raw_by_gz`, else coordinator snapshot. MainThread `rescan_exclude_paths` / handoff must **not** nest `build_archive_maintenance_snapshot` when snapshot is None — use `allow_full_snapshot=False` + day-scoped listing. Heavy janitor/coordinator builds remain allowed.
-- **`build_remaining_raw_stats_by_daily_gz`** must accept `maintenance_snapshot=` and **never** nest `build_archive_maintenance_snapshot` when provided; when `allow_full_snapshot=False` and snapshot is None, return `{}` (caller uses day-scoped helper).
-- **Boot handoff discover:** supervisor **`_process_boot_handoffs_once()`** runs **once** at the first main-loop iteration **after** `_mark_startup_ingest_gate_cleared()` (not during the startup prep block). Uses **`discover_manifest_handoffs`** + **`discover_closed_raw_on_disk_handoffs`** (manifest-first predicates before **`paths_for_closed_raw_handoff_requeue`**). Handoff paths enter **`handoff_priority_paths`** via steady-chunk enqueue only (no synchronous giant-day ingest).
-- **DAY_CLOSE at startup:** janitor may **`_discover_and_enqueue_ready_day_close`** during startup heavy pass and tick discover; **`_close_one_day` execution** is deferred until **`get_startup_ingest_gate_cleared()`** returns true (`janitor: tick deferred day_close_execution reason=startup_prep`).
-- **`build_archive_maintenance_snapshot(build_ready_set=False)`** skips **`collect_gate_identities_for_paths`** (gate tail reads); mapping uses head metadata only.
-- **`collect_stats_files_in_range`** may parallelize per-host **`scandir`** within the single canonical collect using **`min(n_hosts, get_sync_ingest_pool_processes())`** threads; global oldest-first sort after merge.
-- **Ingest is not gated** on janitor startup heavy pass completion or **`DAY_CLOSE`** debt drain. Supervisor logs **`sync_timedb: startup ingest gate cleared; ingest may begin (heavy maintenance may still run on janitor thread)`** after snapshot wait + gate clear — this is **not** “heavy finished”. Janitor logs **`janitor: heavy maintenance begin|finished`** separately. First rescan may still wait on snapshot publish via **`_get_startup_snapshot_for_rescan`**.
-- **Heavy maintenance defer:** `run_heavy_maintenance_pass` re-queues when **`get_chunk_in_progress()`** or **`get_ingest_pool_in_flight_count()`** > 0 (light passes unchanged). Supervisor keeps **`chunk_in_progress`** true through chunk archive finalize — **does not** schedule `signal_scheduled_maintenance_pass(reason=day_ingest_complete:…)` at every chunk boundary (2026-06).
+- **Streaming discover:** enqueue ingest jobs as paths arrive; do not wait for full-tree collect before the first `ZADD`.
+- **Brownfield reconstruct:** on empty or incomplete `job:v1` structures, classify from disk+DB and enqueue incomplete identities only (skip already-complete).
+- **Day-close:** filesystem remaining-raw empty **and** `sync_day_close_min_age_hours` (default 32); not gated on a B startup snapshot flag.
+- **Ingest is not gated** on day_close completion (`TQ-09`).
 
 ## Forbidden patterns
 
-- Parallel full-tree `collect_stats_files_in_range` at boot from janitor + first rescan + **post-rescan reconcile cap**.
-- `wait_or_build_snapshot` / `wait_for_snapshot` returning `None` to consumers.
-- Janitor `build_archive_maintenance_snapshot` without `begin_build()` / `publish()` coordinator wiring.
-- Nested `with self._lock` while holding `Condition` lock (same non-reentrant lock).
-- Mutating the coordinator-published snapshot in place during janitor trim.
-- Reintroducing **`StartupDayClosePreflight`** or a parallel boot discover thread for **`DAY_CLOSE`**.
-
-## Tests
-
-- `hpcperfstats/tests/test_sync_timedb_startup_archive_scan.py`
-- `test_disabled_day_close_tick_runs_pending_maintenance_pass` in `test_sync_timedb_janitor.py` (backlog day_close-disabled tick still drains startup maintenance)
-- `test_build_remaining_raw_accepts_snapshot_no_nested_collect` in `test_sync_timedb_archive.py`
-- `test_unmapped_disqualify_uses_coordinator_after_accrual_trim` in `test_sync_timedb_archive.py`
-- `test_live_unprocessed_reconcile_uses_snapshot_no_collect` in `test_sync_timedb_archive.py`
-- `test_arch_no_startup_day_close_preflight_in_supervisor` in `test_sync_timedb_architecture_contract.py`
-- `test_run_scheduled_maintenance_pass_discovers_awaiting_janitor_discover_on_startup` in `test_sync_timedb_janitor.py`
-- `hpcperfstats/tests/test_sync_timedb_chunk_stall_faststart.py` (MainThread exclude/handoff no full snapshot; async pending rescan)
+- Dual-run of `run_sync_timedb_supervisor_loop` / `ArchiveJanitor` beside the queue orchestrator.
+- Treating empty Redis `job:v1` as “caught up.”
+- Restoring oldest-day **chunk gate** / `handoff_priority_paths` as production discover.
+- Parallel full-tree boot walks from multiple coordinators as the production discover path.
 
 ## Overlap
 
-- **`sync-timedb-archive-janitor-contract.mdc`** — maintenance pass publishes snapshot; boot **`DAY_CLOSE`** discover; debt budget uses `debt_tick_t0` after maintenance.
-- **`runtime-resource-and-metrics-safety.mdc`**.
+- Coordinator laws: **`sync-timedb-queue-orchestrator-contract.mdc`**
+- Day-close A laws: **`sync-timedb-archive-janitor-contract.mdc`**
+- Battery: **`sync-timedb-change-regression-gate.mdc`**
+- Historical B-era soak greps: `docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`

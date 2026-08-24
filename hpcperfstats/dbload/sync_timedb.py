@@ -64,17 +64,15 @@ Attributes:
 """
 from __future__ import annotations
 
-from typing import Any, Iterator
-
 import contextvars
 import ctypes
 import gc
 import itertools
-import heapq
 import json
 import multiprocessing
-from contextlib import contextmanager
 import os
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
 
@@ -82,24 +80,23 @@ configure_blas_thread_env()
 
 import shutil
 import signal
-import tempfile
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import types
 import warnings
-from collections import deque
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from functools import partial
+
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 from hpcperfstats.dbload.lib.process_title import (
-    apply_pool_worker_process_title,
-    set_daemon_process_title,
+  apply_pool_worker_process_title,
+  set_daemon_process_title,
 )
 
 ensure_django()
@@ -107,184 +104,132 @@ ensure_django()
 SYNC_TIMEDB_PROCESS_TITLE = "sync_timedb.py"
 
 from django.db import (
-    DEFAULT_DB_ALIAS,
-    IntegrityError,
-    InterfaceError,
-    close_old_connections,
-    connections,
+  DEFAULT_DB_ALIAS,
+  IntegrityError,
+  InterfaceError,
+  close_old_connections,
+  connections,
 )
 from django.db.utils import DatabaseError, OperationalError
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.dbload.lib.date_utils import log_date_range, parse_start_end_dates
-from hpcperfstats.dbload.lib.db_unavailable import (
-    DatabaseUnavailableExit,
-    is_database_unavailable_error,
-    log_and_raise_database_unavailable,
-    reraise_database_unavailable_chain,
-)
-from hpcperfstats.dbload.lib.io_helpers import host_data_instance_from_stats_row
-from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-    MultiprocessingPoolStallError,
-    MultiprocessingWorkerExitError,
-    alive_pool_worker_count,
-    async_result_get_watch_pool,
-    close_pool_bounded,
-    create_sync_timedb_spawn_pool,
-    dedupe_ingest_paths_preserve_order,
-    hard_exit_pool_worker_error,
-    imap_sliding_window_watch_pool,
-    imap_unordered_watch_pool,
-    maintain_ingest_pool_after_supervisor_retire,
-    pool_workers_all_idle,
-    probe_ingest_pool_dispatch,
-    reclaim_excess_ingest_pool_children,
-    reap_pool_worker_pids,
-    reap_zombie_children_of_self,
-    retire_pool_worker_pid,
-    warn_unreaped_zombie_children,
-    sync_timedb_spawn_pool_recycle_kwargs,
-    terminate_pool_bounded,
-)
-from hpcperfstats.dbload.lib.sync_timedb_queue_orchestrator import (
-    run_sync_timedb_queue_orchestrator,
-)
-from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
-        calendar_day_from_sealed_archive_path,
-            max_ingest_per_file_timeout_for_paths as _max_ingest_per_file_timeout_for_paths,
-    resolve_ingest_per_file_timeout_s,
-    stall_abort_polls_for_paths as _stall_abort_polls_for_batch,
-)
-from hpcperfstats.dbload.lib.process_memory import (
-    format_tree_rss_breakdown_mb,
-    read_process_rss_bytes,
-    read_sync_timedb_tree_rss_bytes,
-)
 from hpcperfstats.dbload.lib.archive_compress import (
-    compressed_sibling_paths,
-    daily_compressed_path_for_date,
-    daily_tar_path_from_compressed,
-    detect_compressed_format,
+  compressed_sibling_paths,
+  daily_compressed_path_for_date,
+  daily_tar_path_from_compressed,
+  detect_compressed_format,
 )
-from hpcperfstats.dbload.lib.print_utils import ingest_logging, janitorial_logging, log_print
-from hpcperfstats.dbload.lib.shutdown_utils import (
-    shutdown_requested,
-    send_sigchld_to_parent,
-    sleep_until_shutdown,
+from hpcperfstats.dbload.lib.date_utils import (
+  log_date_range,
+  parse_start_end_dates,
 )
-from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-    augment_unprocessed_by_tar_with_pending_paths,
-    build_archive_mapping,
-    build_chunk_day_histogram,
-    build_live_unprocessed_by_tar_for_reconcile,
-    build_day_close_disqualified_daily_tars,
-    build_unprocessed_raw_by_daily_tar,
-    build_tar_append_member_map,
-    clear_daily_archive_members_cache,
-    consume_archive_members_populate_source,
-    daily_tar_eligible_for_day_close_submit,
-    merge_daily_archive_members_l1_cache,
-    pending_minus_chunk,
-    select_ingest_chunk_paths,
-    try_reuse_pending_reconcile_unprocessed_cache,
-    resolve_unmapped_closed_raw_daily_tars,
-    daily_tar_path_for_stats_path,
-    calendar_date_from_daily_tar_path,
-    invalidate_after_daily_tar_mutation,
-    prepare_paths_for_giant_member_append,
-    days_ingest_complete_by_checkpoint,
-    oldest_checkpoint_incomplete_tar,
-    aligned_on_disk_unprocessed_paths_for_tar,
-    all_on_disk_unprocessed_paths,
-    prepend_checkpoint_incomplete_paths_to_pending,
-    reconcile_orphan_inflight_for_oldest_tar,
-    load_checkpoint_path_set,
-    checkpoint_entries_snapshot,
-    resolved_checkpoint_path_set,
-    daily_tar_paths_for_stats_paths,
-    daily_tar_paths_from_pending_archive_tasks,
-    filter_files_to_add_to_archive,
-    get_existing_archive_members,
-    get_existing_archive_members_for_daily_archive,
-    iter_daily_tar_paths,
-    replace_corrupt_tar_from_compressed_backup,
-    ensure_daily_tar_restored_for_append,
-    cap_pending_stats_file_list,
-    cap_pending_stats_with_blocked_retention,
-    merge_rescan_discovered_into_pending,
-    resolve_idle_rescan_closed_paths,
-    supplement_pending_paths_from_closed_paths,
-    chunk_was_cross_day_defer_dispatch,
-    all_ingest_outcomes_db_skip_head_tail,
-    sort_pending_stats_paths_oldest_first,
-    INGEST_PARSE_FAILED_QUARANTINE_REASON,
-    quarantine_ingest_failed_raw_path,
-    raw_stats_path_tar_append_decision,
-    rescan_pending_stats_files,
-    set_archive_members_invalidation_hook,
-    set_deferred_prewarm_flush_hook,
-    stats_file_is_active_segment,
-    stats_path_ingest_sort_epoch,
-    get_tar_member_name,
-    verify_tar_archive_readable,
-    _derive_stats_path_date,
-    normalize_daily_compressed_path,
-)
-from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-    apply_ingest_pool_worker_init,
-    clear_dispatch_worker_stages,
-    count_worker_registry_entries,
-    format_worker_stages_snapshot,
-    idle_pool_recover_skip_reason_for_registry_wait,
-    prune_stale_worker_stages,
-    record_worker_stage,
-    seed_dispatch_worker_stages,
-    update_worker_substage,
-    worker_registry_shows_member_match_wait,
-    worker_registry_shows_recent_progress,
-)
-from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
-    WorkerMemoryBatchAccumulator,
-    classify_supervisor_reap_kind,
-    increment_worker_tasks_on_worker,
-    measure_worker_rss_after_release,
-    resolve_worker_pid_from_meta_or_registry,
-    should_supervisor_retire_worker,
-    should_defer_supervisor_retire,
-)
-from hpcperfstats.dbload.lib.sync_timedb_day_close_manifest import (
-    DayCloseManifestCoordinator,
+from hpcperfstats.dbload.lib.db_unavailable import (
+  DatabaseUnavailableExit,
+  is_database_unavailable_error,
+  log_and_raise_database_unavailable,
 )
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
-from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-    DayRawRemovalCoordinator,
+from hpcperfstats.dbload.lib.io_helpers import host_data_instance_from_stats_row
+from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
+  MultiprocessingWorkerExitError,
+  alive_pool_worker_count,
+  close_pool_bounded,
+  create_sync_timedb_spawn_pool,
+  hard_exit_pool_worker_error,
+  maintain_ingest_pool_after_supervisor_retire,
+  pool_workers_all_idle,
+  reap_pool_worker_pids,
+  reap_zombie_children_of_self,
+  retire_pool_worker_pid,
+  sync_timedb_spawn_pool_recycle_kwargs,
+  terminate_pool_bounded,
+  warn_unreaped_zombie_children,
 )
-from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
-    StartupArchiveScanCoordinator,
+from hpcperfstats.dbload.lib.print_utils import (
+  ingest_logging,
+  log_print,
+)
+from hpcperfstats.dbload.lib.shutdown_utils import (
+  send_sigchld_to_parent,
+  shutdown_requested,
+)
+from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+  INGEST_PARSE_FAILED_QUARANTINE_REASON,
+  _derive_stats_path_date,
+  build_tar_append_member_map,
+  calendar_date_from_daily_tar_path,
+  cap_pending_stats_file_list,
+  checkpoint_entries_snapshot,
+  clear_daily_archive_members_cache,
+  consume_archive_members_populate_source,
+  ensure_daily_tar_restored_for_append,
+  filter_files_to_add_to_archive,
+  get_existing_archive_members_for_daily_archive,
+  invalidate_after_daily_tar_mutation,
+  iter_daily_tar_paths,
+  load_checkpoint_path_set,
+  merge_daily_archive_members_l1_cache,
+  normalize_daily_compressed_path,
+  prepare_paths_for_giant_member_append,
+  quarantine_ingest_failed_raw_path,
+  raw_stats_path_tar_append_decision,
+  replace_corrupt_tar_from_compressed_backup,
+  stats_file_is_active_segment,
+  verify_tar_archive_readable,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-    ArchiveMembersPopulateStalledError,
-    ArchiveMembersRedisConnectionError,
-    ArchiveMembersRedisUnavailableError,
-    IngestArchiveLookupBudgetExceededError,
-    archive_append_inflight_for_day,
-    archive_members_populate_shows_progress_for_day,
-    archive_members_redis_enabled,
-    build_archive_members_redis_keys,
-    describe_archive_members_populate_redis_for_day,
-    get_ingest_task_deadline_monotonic,
-    get_ingest_task_effective_timeout_s,
-    idle_pool_recover_skip_reason_for_paths,
-    is_populate_pool_unavailable_error,
-    is_transient_fnctl_populate_unavailable,
-    maybe_clear_orphan_incomplete_archive_members_redis,
-    redis_members_cache_is_fully_warm,
-    reset_ingest_task_deadline_monotonic,
-    reset_ingest_task_effective_timeout_s,
-    set_ingest_task_deadline_monotonic,
-    set_ingest_task_effective_timeout_s,
-    _raise_if_ingest_deadline_exceeded,
+  ArchiveMembersPopulateStalledError,
+  ArchiveMembersRedisConnectionError,
+  ArchiveMembersRedisUnavailableError,
+  IngestArchiveLookupBudgetExceededError,
+  _raise_if_ingest_deadline_exceeded,
+  archive_append_inflight_for_day,
+  archive_members_populate_shows_progress_for_day,
+  archive_members_redis_enabled,
+  build_archive_members_redis_keys,
+  describe_archive_members_populate_redis_for_day,
+  get_ingest_task_deadline_monotonic,
+  get_ingest_task_effective_timeout_s,
+  is_populate_pool_unavailable_error,
+  is_transient_fnctl_populate_unavailable,
+  maybe_clear_orphan_incomplete_archive_members_redis,
+  redis_members_cache_is_fully_warm,
+  reset_ingest_task_deadline_monotonic,
+  reset_ingest_task_effective_timeout_s,
+  set_ingest_task_deadline_monotonic,
+  set_ingest_task_effective_timeout_s,
 )
+from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
+  calendar_day_from_sealed_archive_path,
+  resolve_ingest_per_file_timeout_s,
+)
+from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
+  max_ingest_per_file_timeout_for_paths as _max_ingest_per_file_timeout_for_paths,
+)
+from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
+  stall_abort_polls_for_paths as _stall_abort_polls_for_batch,
+)
+from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+  count_worker_registry_entries,
+  format_worker_stages_snapshot,
+  prune_stale_worker_stages,
+  record_worker_stage,
+  update_worker_substage,
+  worker_registry_shows_member_match_wait,
+  worker_registry_shows_recent_progress,
+)
+from hpcperfstats.dbload.lib.sync_timedb_queue_orchestrator import (
+  run_sync_timedb_queue_orchestrator,
+)
+from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
+  classify_supervisor_reap_kind,
+  increment_worker_tasks_on_worker,
+  measure_worker_rss_after_release,
+  resolve_worker_pid_from_meta_or_registry,
+  should_defer_supervisor_retire,
+  should_supervisor_retire_worker,
+)
+
 
 # No-op stubs kept for monkeypatch stability in archive helper unit tests.
 def seal_dirty_daily_archives(*args: Any, **kwargs: Any) -> None:
@@ -358,42 +303,40 @@ def remove_verified_uncompressed_daily_tars(*args: Any, **kwargs: Any) -> None:
       "remove_verified_uncompressed_daily_tars is janitor-only; supervisor must not call this")
 from hpcperfstats.dbload.lib import sync_timedb_host_itimes
 from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
-    filter_paths_head_ingested,
-    head_timestamp_present_in_db,
-    reset_sync_ingest_readiness_caches,
-    stats_file_head_ingested_in_db,
-)
-from hpcperfstats.dbload.lib.sync_timedb_persistence import (
-    ensure_persistence_contract,
-    load_persistence_document,
-    save_persistence_document,
+  filter_paths_head_ingested,
+  head_timestamp_present_in_db,
+  reset_sync_ingest_readiness_caches,
 )
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-    EVENTMAPS_BY_TYPE,
-    HOST_PROC_KEYS,
-    HOST_PROC_PEAK_KEYS,
-    DeltaCarryState,
-    apply_proc_peak_attrs_from_earlier,
-    build_stats_dataframes,
-    compute_deltas_and_arc,
-    compute_deltas_and_arc_chunk,
-    exclude_types,
-    find_processing_start_index,
-    find_processing_start_index_streaming,
-    load_stats_file_lines,
-    parse_first_timestamp_line,
-    parse_first_timestamp_line_streaming,
-    parse_last_timestamp_line,
-    parse_last_timestamp_line_streaming,
-    parse_stats_file_path,
-    parse_stats_file_streaming,
-    parse_stats_file_streaming_incremental,
-    parse_stats_lines,
-    stats_file_size_bytes,
-    tail_window_timestamps_all_present_streaming,
+  EVENTMAPS_BY_TYPE,
+  HOST_PROC_KEYS,
+  HOST_PROC_PEAK_KEYS,
+  DeltaCarryState,
+  apply_proc_peak_attrs_from_earlier,
+  build_stats_dataframes,
+  compute_deltas_and_arc,
+  compute_deltas_and_arc_chunk,
+  exclude_types,
+  find_processing_start_index,
+  find_processing_start_index_streaming,
+  load_stats_file_lines,
+  parse_first_timestamp_line,
+  parse_first_timestamp_line_streaming,
+  parse_last_timestamp_line,
+  parse_last_timestamp_line_streaming,
+  parse_stats_file_path,
+  parse_stats_file_streaming,
+  parse_stats_file_streaming_incremental,
+  parse_stats_lines,
+  stats_file_size_bytes,
+  tail_window_timestamps_all_present_streaming,
+)
+from hpcperfstats.dbload.lib.sync_timedb_persistence import (
+  ensure_persistence_contract,
+  load_persistence_document,
+  save_persistence_document,
 )
 from hpcperfstats.site.lib.machine.models import host_data, proc_data
-
 
 # archive toggle
 should_archive = True
@@ -6250,13 +6193,13 @@ def _lookup_existing_members_for_archive_append(
         "tar_scan",
     )
   if cfg.get_sync_archive_members_redis_enabled():
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        archive_members_redis_enabled,
-        build_archive_members_redis_keys,
-        redis_members_cache_is_fully_warm,
-    )
     from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-        _daily_archive_members_cache_key,
+      _daily_archive_members_cache_key,
+    )
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      archive_members_redis_enabled,
+      build_archive_members_redis_keys,
+      redis_members_cache_is_fully_warm,
     )
     if archive_members_redis_enabled():
       keys = build_archive_members_redis_keys(
@@ -6862,15 +6805,9 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
   """
   from collections import deque
 
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      load_checkpoint_path_set,
-  )
   from hpcperfstats.dbload.lib.sync_timedb_jid_scope import (
       JobIngestScopeError,
       resolve_job_ingest_scope,
-  )
-  from hpcperfstats.dbload.lib.sync_timedb_persistence import (
-      ensure_persistence_contract,
   )
   from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
       collect_host_scoped_stats_paths,

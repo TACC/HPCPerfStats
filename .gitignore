@@ -118,3 +118,4 @@ hpcperfstats/test_runs/
 # Docker: Dockerfile frontend-builder runs npm run build and copies into the image.
 # -----------------------------------------------------------------------------
 hpcperfstats/site/hpcperfstats_site/static/frontend/
+scripts/unlazy*

@@ -24,7 +24,7 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `
 - Keep **zstd** parallelism bounded by **`archive_seal_parallel_workers`** (default **4** concurrent daily seals) and per-process **`-T`**: niced archive seal/restore uses **`archive_zstd_threads=0`** (default) → **`-T0`**; un-niced ingest/populate sealed streams use **`ingest_zstd_threads=4`** (default) → **`-T4`**. Archive (niced) zstd subprocesses may be wrapped with configured **`nice`/`ionice`**. Legacy `.tar.gz` reads use `zstd -d --format=gzip` only.
 - **Parallel multi-day seal:** `seal_dirty_daily_archives` collects all seal-ready days, then seals via a bounded `ThreadPoolExecutor`; per-day failures must not abort other days. Do not seal the same path from two workers.
 - **Per-day seal lock timeout:** `_seal_one_daily_tar` catches `TimeoutError` from `file_write_lock` (same as `CalledProcessError` / `RuntimeError`) so one contended daily `.tar` does not abort the whole maintenance pass.
-- **Supervisor blocking maintenance retired:** seal/raw/`.tar` execution runs only in **`ArchiveJanitor`** ticks (`sync-timedb-archive-janitor-contract.mdc`). Snapshot/hints refresh and `DAY_CLOSE` scheduling run on the janitor thread (startup heavy pass, explicit maintenance signals, drain-until-empty) — **not** `signal_scheduled_maintenance_pass` every `rescan_every_chunks` at chunk boundary (2026-06). Pending **stats discovery** uses GNU **`find -printf`** (`sync_timedb_stats_find`); do not reintroduce Python `scandir`+`stat` tree walks for path/mtime/size/inode. `archive_maintenance_interval_seconds` is deprecated and ignored.
+- **Supervisor blocking maintenance retired:** seal/raw/`.tar` execution runs on orchestrator **day_close** threads (`sync-timedb-queue-orchestrator-contract.mdc`, `sync-timedb-archive-janitor-contract.mdc` A laws). Do **not** restore `ArchiveJanitor` tick debt or post-chunk hygiene. Pending **stats discovery** uses GNU **`find -printf`** streamed into `job:v1` (`sync_timedb_job_discover`); do not reintroduce Python `scandir`+`stat` tree walks for path/mtime/size/inode as the discover worker without a measured reason. `archive_maintenance_interval_seconds` is deprecated and ignored.
 - **Legacy ``.tar.gz`` drop:** after sealing to ``.tar.zst``, remove the gzip sibling when every gzip member path exists in the zst archive with the same byte size (extra zst-only members are allowed). Reuse zst member snapshots from the seal path when available; async DAY_CLOSE must not skip gzip drop on seal-skip or tar-absent completion. At most one gzip stream plus one zst member resolution per drop attempt.
 - **Safe decompress:** `decompress_compressed_to_tar` writes to a temp tar, verifies with `tar tf`, replaces the sibling `.tar`, and only then unlinks the compressed file. Do not use in-place `zstd -d --rm` on archive paths.
 - **Fail-closed append:** when a sealed sibling exists but `.tar` is missing, abort append if decompress/restore fails; never `tar -c` over a missing tar when `.tar.zst` / `.tar.gz` is present. `replace_corrupt_tar_from_compressed_backup` must not return `True` when sealed siblings remain and `.tar` is still absent. `_archive_stats_files_body` must return `False` (not raise through the archive pool) when restore fails so the supervisor retries on a later chunk; call `ensure_daily_tar_restored_for_append` immediately before each append attempt.
@@ -40,16 +40,16 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `
 - **Dedupe invalidates members cache:** successful **`dedupe_tar_keep_largest_file_per_member`** (including janitor/async pre-seal dedupe) must call **`invalidate_after_daily_tar_mutation`** so L1/Redis member maps match the rewritten `.tar`.
 - **Restore from sealed invalidates members cache:** successful **`decompress_compressed_to_tar`** (all wrappers: `ensure_daily_tar_restored_for_append`, corrupt replace, gated prewarm restore) must call **`invalidate_after_daily_tar_mutation`** twice — **`reason=tar_restore_pre`** on the compressed path **before** `os.replace` (drop sealed / corrupt-tar identity keys) and **`reason=tar_restore`** on the restored `.tar` **after** replace (and optional sealed unlink). Sealed membership is untrusted; do not leave warm sealed+`tar=None` Redis maps that can skip populate. Failed decompress must not invalidate.
 
-## Janitor cold path (replaces post-chunk hygiene)
+## Day-close cold path (queue orchestrator)
 
-- **Entry point:** `archive_janitor.signal_work_available()` at chunk end; **`ArchiveJanitor._run_tick_body`** in `sync_timedb_archive_janitor.py`. Single-flight background thread; supervisor never waits on janitor completion.
-- **Pipeline order (canonical, loss-safe):** per debt item: seal (if `SEAL_PRIOR_DAY`) → raw remove / validate → `.tar` drop; **`allow_auto_seal=False`** on raw removal. Seal tries `_seal_skip_existing_zst_equivalent` before compress; at most one compress per day per debt cycle.
-- **Today policy:** prior days seal when dirty; calendar-today waits **`archive_today_uncompressed_tar_grace_hours`** (default 24h after local midnight) via `daily_tar_seal_calendar_eligible` / `effective_keep_uncompressed_tar`, and disqualification clears. Janitor never sets `force_remove_uncompressed_tar=True`.
-- **Locks / re-disqualify:** `get_disqualified_daily_tars()` unions pending ingest, in-flight append, heap tasks, append cache, and unmapped closed raw — recomputed before each mutating janitor step.
+- **Entry point:** Redis `job:v1` **day_close** jobs leased by `run_sync_timedb_queue_orchestrator` (`_run_day_close_job`). Cap inflight with **`sync_day_close_max_inflight`**. Do not restore `ArchiveJanitor` / `sync_timedb_archive_janitor.py`.
+- **Pipeline order (canonical, loss-safe):** seal → pre/post-seal verify → raw remove / validate → `.tar` drop; **`allow_auto_seal=False`** on raw removal when using `DayRawRemovalCoordinator`. Seal tries `_seal_skip_existing_zst_equivalent` before compress; at most one compress per day per attempt.
+- **Calendar min-age:** do not start day_close until **`sync_day_close_min_age_hours`** (default **32**) after that day’s local end (`daily_tar_seal_calendar_eligible` / reconstruct predicates). Never set `force_remove_uncompressed_tar=True` on the production path.
+- **Hot wins flock:** day_close **defers/yields** via `sync_timedb_day_close_cooperation` when ingest/populate needs the tar (`sync-timedb-hot-path-janitor-lock-priority.mdc`). Path-level recheck before `os.remove`.
 
 ## Required tests when behavior changes
 
-- Janitor + hot path: `test_sync_timedb_janitor.py`, `test_sync_timedb_supervisor.py` (debt accrual skip under backlog, finalize defer, no forced two-phase maintenance, janitor `signal_work_available` on chunk archival).
+- Queue orchestrator + day_close: `test_sync_timedb_queue_orchestrator.py`, `test_sync_timedb_architecture_contract.py` (B-09 predicates), regression battery (`sync-timedb-change-regression-gate.mdc`). Retired: `test_sync_timedb_janitor.py`, `test_sync_timedb_supervisor.py`.
 - Extend/add focused tests around:
  - lock path normalization/idempotence
  - lock file cleanup after success and exceptions
@@ -57,14 +57,13 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `
  - archive recovery/fallback paths
  - zstd thread-count selection (`archive_zstd_threads` → `-T0` default for niced paths; `ingest_zstd_threads` → `-T4` default for un-niced ingest) and parallel seal worker cap
  - parallel multi-day seal isolation (one day's failure does not abort others)
- - safe decompress, fail-closed append, **membership-before-restore noop sealed skip**, seal shrink guard, startup vs scheduled `.tar` removal
- - archive finalize/prune throttled zombie reap; backlog skips archive_finalize day_close defer noise
- - janitor debt burst scaling under high watermark (no supervisor forced two-phase)
+ - safe decompress, fail-closed append, **membership-before-restore noop sealed skip**, seal shrink guard, scheduled `.tar` removal
+ - archive finalize/prune throttled zombie reap
  - seal `TimeoutError` isolation during multi-day maintenance
- - janitor ticks: budget/days-per-tick caps, `allow_auto_seal=False`, disqualification skip set, RSS defer, hints persistence
+ - day_close: min-age, remaining-raw empty, path-level delete recheck, yield vs hot path
 
 ## Overlap
 
 - Complements `runtime-resource-and-metrics-safety.mdc` (resource limits) and `pipeline-metrics-e2e-maintenance.mdc` (pipeline-level regression coverage).
 - Complements **`sync-timedb-db-before-archive-contract.mdc`** — head-timestamp DB `exists()` gate before raw stats tar append or filesystem removal (when `sync_archive_require_db_ingest` is enabled).
-- Complements **`sync-timedb-archive-janitor-contract.mdc`** — canonical hot/cold split and debt queue.
+- Complements **`sync-timedb-archive-janitor-contract.mdc`** — A cold-path laws (B tick retired) and **`sync-timedb-queue-orchestrator-contract.mdc`**.

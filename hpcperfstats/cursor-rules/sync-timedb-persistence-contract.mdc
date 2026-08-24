@@ -15,7 +15,7 @@ All operator sidecars under `{archive_data_dir}` share one versioned persistence
 | Concern | Location |
 |---|---|
 | Contract version, registry, reset | `hpcperfstats/dbload/lib/sync_timedb_persistence.py` |
-| Startup gate | `ensure_persistence_contract()` in `run_sync_timedb_supervisor_loop` |
+| Startup gate | `ensure_persistence_contract()` in `run_sync_timedb_queue_orchestrator` (and `--jid` path) |
 
 ## Contract file
 

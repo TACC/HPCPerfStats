@@ -8,15 +8,14 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_*
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-Long-horizon ingest stalls (6h+ on backlog catch-up) are **not** caught by a 15-minute post-deploy soak. This rule enforces **pre-deploy** regression and **process** gates so handoff/chunk_gate/archive_finalize regressions fail in CI/agent close **before** production.
+Long-horizon ingest stalls (6h+ on backlog catch-up) are **not** caught by a 15-minute post-deploy smoke. This rule enforces **pre-deploy** regression and **process** gates so queue-orchestrator / reconstruct / day_close regressions fail in CI/agent close **before** production.
 
 ## Read before first edit (cross-plan intelligence)
 
-When the task touches ingest stall, day-close, chunk gate, handoff, or archive finalize:
+When the task touches ingest stall, day-close, Redis `job:v1`, or archive finalize:
 
-1. Read **Cross-plan intelligence** in [day-close-ingest-loop-fix](.cursor/plans/day-close-ingest-loop-fix.plan.md) (RC-G/H/I/K, architecture laws, Phase 1b battery command).
-2. Read related live plans when the signature matches: `june-ingest-stall-prevention`, `june04-post-archive-handoff-idle-stall`, `chunk-gate-cross-day-spin`, `oldest-day-chunk-gate-stall`, `sync-timedb-state-transitions`.
-3. Read [`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`](../../docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md) for T0/T1/T2 tiered verify (not T0-only on backlog sites).
+1. Read **`sync-timedb-queue-orchestrator-contract.mdc`** and the live plan [sync-timedb-queue-redesign](.cursor/plans/sync-timedb-queue-redesign.plan.md) **Execution slices** (do not re-litigate A vs B).
+2. Read [`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`](../../docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md) **Queue orchestrator era** T0/T1/T2 (not T0-only on backlog sites). Historical B-era sections are soak archaeology only.
 
 ## Mandatory regression battery
 
@@ -46,8 +45,8 @@ Retired B modules (`test_sync_timedb_supervisor.py`, `test_sync_timedb_janitor.p
 
 Ship and keep enabled on catch-up deployments:
 
-- **`ingest_stall_watchdog`** — ERROR when `incomplete_n>0`, no `chunk ingest summary` for **30 min**, not in active giant imap budget.
-- **`oldest_day_unprocessed_frozen`** — WARN when oldest `waiting_on_ingest` `unprocessed` unchanged across consecutive janitor candidate reports.
+- Operator census = Redis `job:v1` `ZCARD`/`ZCOUNT`/`LLEN`/leases (see OPERATOR doc). Empty Redis job structures ≠ caught up — reconstruct from disk+DB.
+- Do **not** port janitor candidate reports / `ingest_stall_watchdog` / chunk-gate stalls as coordinator products (B-11).
 
 ## Plan authoring (sync_timedb plans)
 

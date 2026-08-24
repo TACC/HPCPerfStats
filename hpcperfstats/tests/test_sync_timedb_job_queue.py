@@ -522,7 +522,6 @@ def test_streaming_discover_enqueues_before_iterator_exhausts():
 
 def test_streaming_discover_skips_complete_identities():
   from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
-  from hpcperfstats.dbload.lib.sync_timedb_stats_find import FindStatsRecord
 
   client = FakeRedis()
   stats = jd.stream_enqueue_ingest_from_find_stdout_chunks(
