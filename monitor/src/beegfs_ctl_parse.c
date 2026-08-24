@@ -2,8 +2,10 @@
 #include "beegfs_ctl_parse.h"
 
 #include <ctype.h>
-#include <string.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <strings.h>
 
 int beegfs_fstype_is_beegfs(const char *fstype)
 {
@@ -239,4 +241,114 @@ int beegfs_ctl_select_local_line(const char *text, const char *const *idents, si
       p++;
   }
   return 0;
+}
+
+int beegfs_path_is_safe(const char *path)
+{
+  const char *p;
+
+  if (path == NULL || path[0] != '/')
+    return 0;
+  for (p = path; *p != '\0'; p++) {
+    if (!(isalnum((unsigned char)*p) || *p == '/' || *p == '_' || *p == '-' || *p == '.'))
+      return 0;
+  }
+  return 1;
+}
+
+int beegfs_ctl_build_clientstats_argv(struct beegfs_ctl_argv *out, const char *nodetype,
+                                      const char *cfgfile, int rwunit_b)
+{
+  int ai = 0;
+
+  if (out == NULL || nodetype == NULL || cfgfile == NULL)
+    return -1;
+  if (strcmp(nodetype, "storage") != 0 && strcmp(nodetype, "meta") != 0)
+    return -1;
+  if (!beegfs_path_is_safe(cfgfile))
+    return -1;
+  if (strlen(cfgfile) + sizeof("--cfgFile=") > sizeof(out->cfgfile_eq))
+    return -1;
+
+  memset(out, 0, sizeof(*out));
+  snprintf(out->nodetype_eq, sizeof(out->nodetype_eq), "--nodetype=%s", nodetype);
+  snprintf(out->cfgfile_eq, sizeof(out->cfgfile_eq), "--cfgFile=%s", cfgfile);
+  if (rwunit_b)
+    snprintf(out->rwunit_eq, sizeof(out->rwunit_eq), "%s", "--rwunit=B");
+
+  out->argv[ai++] = "beegfs-ctl";
+  out->argv[ai++] = "--clientstats";
+  out->argv[ai++] = "--interval=0";
+  out->argv[ai++] = "--perinterval";
+  out->argv[ai++] = out->nodetype_eq;
+  out->argv[ai++] = out->cfgfile_eq;
+  out->argv[ai++] = "--names";
+  if (rwunit_b)
+    out->argv[ai++] = out->rwunit_eq;
+  out->argv[ai] = NULL;
+  out->argc = ai;
+  return ai;
+}
+
+static int beegfs_ident_looks_ipv4(const char *s)
+{
+  size_t i;
+  int dots = 0;
+  int digits = 0;
+
+  if (s == NULL || s[0] == '\0')
+    return 0;
+  for (i = 0; s[i] != '\0'; i++) {
+    if (s[i] == '.') {
+      if (digits == 0)
+        return 0;
+      dots++;
+      digits = 0;
+      continue;
+    }
+    if (!isdigit((unsigned char)s[i]))
+      return 0;
+    digits++;
+  }
+  return (dots == 3 && digits > 0) ? 1 : 0;
+}
+
+static int beegfs_ident_already_present(char idents[][BEEGFS_IDENT_LEN], size_t n, const char *cand)
+{
+  size_t i;
+
+  if (cand == NULL)
+    return 1;
+  for (i = 0; i < n; i++) {
+    if (strcasecmp(idents[i], cand) == 0)
+      return 1;
+  }
+  return 0;
+}
+
+size_t beegfs_idents_add_ib_aliases(char idents[][BEEGFS_IDENT_LEN], size_t n, size_t max_n)
+{
+  size_t i;
+  size_t base = n;
+  char alias[BEEGFS_IDENT_LEN];
+  size_t len;
+
+  if (idents == NULL || max_n == 0)
+    return n;
+
+  for (i = 0; i < base && n < max_n; i++) {
+    len = strlen(idents[i]);
+    if (len == 0 || beegfs_ident_looks_ipv4(idents[i]))
+      continue;
+    if (len >= 3 && strcasecmp(idents[i] + len - 3, "-ib") == 0)
+      continue;
+    if (len + 3 >= BEEGFS_IDENT_LEN)
+      continue;
+    snprintf(alias, sizeof(alias), "%s-ib", idents[i]);
+    if (beegfs_ident_already_present(idents, n, alias))
+      continue;
+    snprintf(idents[n], BEEGFS_IDENT_LEN, "%s", alias);
+    n++;
+  }
+  return n;
 }

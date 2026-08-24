@@ -356,7 +356,8 @@ Old→new llite event map lives under `type_events.lustre_llite` in
 |-------|----------|
 | Detection | Mounts with fstype `beegfs` / `beegfs_nodev`; device id = mount path |
 | Capacity | `statvfs` → `fs_bytes_*` / `fs_files_*` every sample |
-| I/O / metadata | Bounded `beegfs-ctl --clientstats` (storage + meta); local node only — **never** cluster `Sum:` |
+| I/O / metadata | Bounded `beegfs-ctl --clientstats` with **equals-form** `--nodetype=` / `--cfgFile=` (7.3.4+; no two-token `--mount`); local node only — **never** cluster `Sum:` |
+| Local line | Match `--names` id via hostname / short / **`*-ib`** / IPv4 |
 | Units | Prefer `--rwunit=B`; else `MiB-*` × 1048576 → `vfs_*_bytes` |
 | Cadence | Slow/full when `enable_slow_tier`; else ≤ once per `max(sample_freq, 30s)` + wall timeout |
 | Configure | `--enable-beegfs` (default yes); capability slug fragment `beegfs` |

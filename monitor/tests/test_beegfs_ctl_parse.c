@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 
 #include "beegfs_ctl_parse.h"
@@ -107,6 +108,63 @@ static void test_sum_parse_rejected(void)
   assert(beegfs_ctl_parse_stats_line(line, &c) != 0);
 }
 
+static int argv_has(const struct beegfs_ctl_argv *av, const char *tok)
+{
+  int i;
+
+  for (i = 0; i < av->argc; i++) {
+    if (av->argv[i] != NULL && strcmp(av->argv[i], tok) == 0)
+      return 1;
+  }
+  return 0;
+}
+
+static void test_clientstats_argv_equals_form(void)
+{
+  struct beegfs_ctl_argv av;
+  int i;
+
+  assert(beegfs_ctl_build_clientstats_argv(&av, "storage", "/etc/beegfs/beegfs-client.conf", 1) >
+         0);
+  assert(argv_has(&av, "--nodetype=storage"));
+  assert(argv_has(&av, "--cfgFile=/etc/beegfs/beegfs-client.conf"));
+  assert(argv_has(&av, "--rwunit=B"));
+  assert(argv_has(&av, "--names"));
+  assert(argv_has(&av, "--interval=0"));
+  assert(argv_has(&av, "--perinterval"));
+  for (i = 0; i < av.argc; i++) {
+    assert(strcmp(av.argv[i], "--nodetype") != 0);
+    assert(strcmp(av.argv[i], "--mount") != 0);
+    assert(strcmp(av.argv[i], "--cfgFile") != 0);
+  }
+  assert(beegfs_ctl_build_clientstats_argv(&av, "meta", "/etc/beegfs/beegfs-client.conf", 0) > 0);
+  assert(argv_has(&av, "--nodetype=meta"));
+  assert(!argv_has(&av, "--rwunit=B"));
+  assert(beegfs_ctl_build_clientstats_argv(&av, "storage", "relative.conf", 0) < 0);
+  assert(beegfs_ctl_build_clientstats_argv(&av, "bogus", "/etc/beegfs/beegfs-client.conf", 0) < 0);
+  assert(beegfs_path_is_safe("/etc/beegfs/beegfs-client.conf") == 1);
+  assert(beegfs_path_is_safe("etc/beegfs/beegfs-client.conf") == 0);
+}
+
+static void test_idents_add_ib_aliases(void)
+{
+  char idents[8][BEEGFS_IDENT_LEN];
+  size_t n;
+
+  memset(idents, 0, sizeof(idents));
+  snprintf(idents[0], BEEGFS_IDENT_LEN, "%s", "c317-016");
+  snprintf(idents[1], BEEGFS_IDENT_LEN, "%s", "c317-016.ls6.tacc.utexas.edu");
+  snprintf(idents[2], BEEGFS_IDENT_LEN, "%s", "192.168.43.10");
+  snprintf(idents[3], BEEGFS_IDENT_LEN, "%s", "already-ib");
+  n = beegfs_idents_add_ib_aliases(idents, 4, 8);
+  assert(n == 6);
+  assert(strcmp(idents[4], "c317-016-ib") == 0);
+  assert(strcmp(idents[5], "c317-016.ls6.tacc.utexas.edu-ib") == 0);
+  /* IPv4 and existing *-ib unchanged / not duplicated */
+  n = beegfs_idents_add_ib_aliases(idents, n, 8);
+  assert(n == 6);
+}
+
 int main(void)
 {
   test_fstype_and_cfgfile();
@@ -114,6 +172,8 @@ int main(void)
   test_hostname_meta_line();
   test_b_rd_no_scale();
   test_sum_parse_rejected();
+  test_clientstats_argv_equals_form();
+  test_idents_add_ib_aliases();
   puts("test_beegfs_ctl_parse: OK");
   return 0;
 }

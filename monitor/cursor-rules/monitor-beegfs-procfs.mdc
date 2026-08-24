@@ -23,12 +23,15 @@ alwaysApply: false
 
 ## I/O and metadata (bounded `beegfs-ctl`)
 
-- On 7.3.x there is **no public linkable clientstats library**; use **`beegfs-ctl --clientstats`** (`--nodetype=storage` and `--nodetype=meta`).
+- On 7.3.x there is **no public linkable clientstats library**; use **`beegfs-ctl --clientstats`**.
+- **Equals-form argv only (7.3.4+):** `--nodetype=storage|meta`, `--cfgFile=<path>`, `--interval=0`, `--perinterval`, `--names`, optional `--rwunit=B`. **Never** two-token `--nodetype storage` or `--mount /path` — on 7.3.4 the bare token is a `<nodeID>` / invalid mount and ctl fails (`Invalid NodeNumID` / `Given mountpoint is invalid`).
+- Prefer **`--cfgFile=`** from mount `cfgFile=` (fallback `/etc/beegfs/beegfs-client.conf`). Do not rely on two-token `--mount` for `beegfs_nodev`.
 - Prefer **`--rwunit=B`** when supported (`B-rd` / `B-wr`); else parse `MiB-rd` / `MiB-wr` (scientific notation OK) and scale **× 1048576** to `vfs_read_bytes` / `vfs_write_bytes`.
 - Map ctl abbreviations to portable **`vfs_*`** keys (see `beegfs_client.h`); never emit raw `MiB-rd` / `ops-rd` / `unlnk` as KEY names.
-- **Never** ingest the cluster **`Sum:`** line as this host’s counters — select the **local** line via hostname / short hostname / local IPv4.
-- Pass **`--mount=<mnt>`** when supported; keep wall-time budget on ctl (timeout → skip; first-fail log; capacity still works).
+- **Never** ingest the cluster **`Sum:`** line as this host’s counters — select the **local** line via hostname / short hostname / **`hostname-ib`** / local IPv4 (`--names` often prints InfiniBand hostnames).
+- Keep wall-time budget on ctl (timeout → skip; first-fail log; capacity still works).
 - **Jitter:** when `enable_slow_tier` is on, refresh ctl only on **`COLLECT_FULL`**; when off, at most once per `max(sample_freq, 30s)`. Emit ctl-derived keys only on refresh ticks (tier table marks `vfs_*` slow; `fs_*` stay fast).
+- **dmesg `beegfs: enabling unsafe global rkey`:** kernel log on **new RDMA protection domain** create (ThinkParQ FAQ). Working equals-form `clientstats` does not by itself reproduce a per-sample storm; do not “fix” it by rewriting site `beegfs-client.conf` / `connRDMAKeyType` from the monitor.
 
 ## Configure
 
@@ -38,5 +41,7 @@ alwaysApply: false
 ## Tests
 
 - Schema contract rejects raw ctl names; ctl parse fixtures cover Sum ignore, MiB→bytes, hostname match.
+- Argv builder tests assert equals-form tokens and absence of two-token `--nodetype` / `--mount`.
+- Ident helper tests assert `short-ib` / `fqdn-ib` aliases (not for IPv4).
 
 Cross-links: **monitor-jitter-and-fidelity-priority**, **monitor-emitted-variable-naming**, **monitor-collect-tier-gating**, **monitor-consumer-side-plan**.

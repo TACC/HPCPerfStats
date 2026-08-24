@@ -33,24 +33,10 @@
 #define BEEGFS_CTL_OUT_MAX (256 * 1024)
 #define BEEGFS_CTL_MIN_INTERVAL_S 30
 #define BEEGFS_MAX_IDENTS 64
-#define BEEGFS_IDENT_LEN 128
 
 static time_t g_beegfs_last_ctl_refresh;
 static int g_beegfs_ctl_fail_latched;
 static int g_beegfs_rwunit_b = -1; /* -1 unknown, 0 MiB, 1 bytes */
-
-static int beegfs_path_shell_safe(const char *path)
-{
-  const char *p;
-
-  if (path == NULL || path[0] != '/')
-    return 0;
-  for (p = path; *p != '\0'; p++) {
-    if (!(isalnum((unsigned char)*p) || *p == '/' || *p == '_' || *p == '-' || *p == '.'))
-      return 0;
-  }
-  return 1;
-}
 
 static void beegfs_collect_capacity(struct stats *stats, const char *mnt)
 {
@@ -160,7 +146,7 @@ static size_t beegfs_collect_local_idents(char idents[][BEEGFS_IDENT_LEN], size_
     }
     freeifaddrs(ifa_list);
   }
-  return n;
+  return beegfs_idents_add_ib_aliases(idents, n, max_n);
 }
 
 static int beegfs_ctl_read_fd(int fd, char *out, size_t out_cap, int timeout_ms)
@@ -205,16 +191,17 @@ static int beegfs_ctl_read_fd(int fd, char *out, size_t out_cap, int timeout_ms)
   return 0;
 }
 
-static int beegfs_ctl_capture(const char *mnt, const char *nodetype, int rwunit_b, char *out,
+static int beegfs_ctl_capture(const char *cfgfile, const char *nodetype, int rwunit_b, char *out,
                               size_t out_cap)
 {
   int pipefd[2];
   pid_t pid;
   int status = -1;
-  char *argv[16];
-  int ai = 0;
+  struct beegfs_ctl_argv av;
 
-  if (mnt == NULL || nodetype == NULL || out == NULL || !beegfs_path_shell_safe(mnt))
+  if (cfgfile == NULL || nodetype == NULL || out == NULL)
+    return -1;
+  if (beegfs_ctl_build_clientstats_argv(&av, nodetype, cfgfile, rwunit_b) < 0)
     return -1;
 
   if (pipe(pipefd) != 0)
@@ -239,19 +226,7 @@ static int beegfs_ctl_capture(const char *mnt, const char *nodetype, int rwunit_
         close(nullfd);
       }
     }
-    argv[ai++] = "beegfs-ctl";
-    argv[ai++] = "--clientstats";
-    argv[ai++] = "--interval=0";
-    argv[ai++] = "--perinterval";
-    argv[ai++] = "--nodetype";
-    argv[ai++] = (char *)nodetype;
-    argv[ai++] = "--mount";
-    argv[ai++] = (char *)mnt;
-    argv[ai++] = "--names";
-    if (rwunit_b)
-      argv[ai++] = "--rwunit=B";
-    argv[ai] = NULL;
-    execvp("beegfs-ctl", argv);
+    execvp(av.argv[0], av.argv);
     _exit(127);
   }
 
@@ -270,11 +245,11 @@ static int beegfs_ctl_capture(const char *mnt, const char *nodetype, int rwunit_
   return 0;
 }
 
-static int beegfs_ctl_capture_with_unit(const char *mnt, const char *nodetype, char *out,
+static int beegfs_ctl_capture_with_unit(const char *cfgfile, const char *nodetype, char *out,
                                         size_t out_cap)
 {
   if (g_beegfs_rwunit_b < 0) {
-    if (beegfs_ctl_capture(mnt, nodetype, 1, out, out_cap) == 0 &&
+    if (beegfs_ctl_capture(cfgfile, nodetype, 1, out, out_cap) == 0 &&
         (strstr(out, "[B-rd]") != NULL || strstr(out, "[B-wr]") != NULL ||
          strstr(out, "[ops-rd]") != NULL)) {
       g_beegfs_rwunit_b = 1;
@@ -282,7 +257,7 @@ static int beegfs_ctl_capture_with_unit(const char *mnt, const char *nodetype, c
     }
     g_beegfs_rwunit_b = 0;
   }
-  return beegfs_ctl_capture(mnt, nodetype, g_beegfs_rwunit_b == 1, out, out_cap);
+  return beegfs_ctl_capture(cfgfile, nodetype, g_beegfs_rwunit_b == 1, out, out_cap);
 }
 
 static void beegfs_note_ctl_failure(const char *mnt, const char *why)
@@ -295,7 +270,19 @@ static void beegfs_note_ctl_failure(const char *mnt, const char *why)
         mnt != NULL ? mnt : "?", why != NULL ? why : "error");
 }
 
-static int beegfs_refresh_ctl_for_mount(struct stats *stats, const char *mnt,
+static int beegfs_resolve_cfgfile(const char *mnt_opts, char *out, size_t out_sz)
+{
+  if (out == NULL || out_sz == 0)
+    return -1;
+  if (beegfs_cfgfile_from_mnt_opts(mnt_opts, out, out_sz) == 0 && beegfs_path_is_safe(out))
+    return 0;
+  if (strlen(BEEGFS_CTL_DEFAULT_CFGFILE) + 1 > out_sz)
+    return -1;
+  snprintf(out, out_sz, "%s", BEEGFS_CTL_DEFAULT_CFGFILE);
+  return beegfs_path_is_safe(out) ? 0 : -1;
+}
+
+static int beegfs_refresh_ctl_for_mount(struct stats *stats, const char *mnt, const char *cfgfile,
                                         const char *const *ident_ptrs, size_t n_idents)
 {
   char *buf;
@@ -303,6 +290,7 @@ static int beegfs_refresh_ctl_for_mount(struct stats *stats, const char *mnt,
   struct beegfs_ctl_counters meta;
   int ok = 0;
 
+  (void)mnt;
   buf = malloc(BEEGFS_CTL_OUT_MAX);
   if (buf == NULL)
     return -1;
@@ -310,11 +298,11 @@ static int beegfs_refresh_ctl_for_mount(struct stats *stats, const char *mnt,
   memset(&storage, 0, sizeof(storage));
   memset(&meta, 0, sizeof(meta));
 
-  if (beegfs_ctl_capture_with_unit(mnt, "storage", buf, BEEGFS_CTL_OUT_MAX) == 0) {
+  if (beegfs_ctl_capture_with_unit(cfgfile, "storage", buf, BEEGFS_CTL_OUT_MAX) == 0) {
     if (beegfs_ctl_select_local_line(buf, ident_ptrs, n_idents, &storage))
       ok = 1;
   }
-  if (beegfs_ctl_capture_with_unit(mnt, "meta", buf, BEEGFS_CTL_OUT_MAX) == 0) {
+  if (beegfs_ctl_capture_with_unit(cfgfile, "meta", buf, BEEGFS_CTL_OUT_MAX) == 0) {
     if (beegfs_ctl_select_local_line(buf, ident_ptrs, n_idents, &meta))
       ok = 1;
   }
@@ -378,10 +366,16 @@ static void beegfs_collect(struct stats_type *type)
       beegfs_collect_capacity(stats, me.mnt_dir);
 
       if (refresh && n_idents > 0) {
-        if (beegfs_refresh_ctl_for_mount(stats, me.mnt_dir, ident_ptrs, n_idents) != 0)
+        char cfgfile[BEEGFS_CTL_ARGSTR_LEN];
+
+        if (beegfs_resolve_cfgfile(me.mnt_opts, cfgfile, sizeof(cfgfile)) != 0) {
+          beegfs_note_ctl_failure(me.mnt_dir, "missing or unsafe cfgFile");
+        } else if (beegfs_refresh_ctl_for_mount(stats, me.mnt_dir, cfgfile, ident_ptrs, n_idents) !=
+                   0) {
           beegfs_note_ctl_failure(me.mnt_dir, "missing ctl, timeout, or no local line");
-        else
+        } else {
           g_beegfs_ctl_fail_latched = 0;
+        }
       }
     }
   }
