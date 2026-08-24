@@ -8,6 +8,7 @@ import time
 from typing import Any, Callable, Optional
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib import sync_timedb_retired_b_defaults as _bdef
 
 from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
     ArchiveMaintenanceSnapshot,
@@ -274,7 +275,7 @@ class StartupArchiveScanCoordinator:
     if timeout_s is None:
       timeout_s = max(
           600.0,
-          float(cfg.get_sync_startup_snapshot_wait_seconds()) * 4.0,
+          float(_bdef.SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS) * 4.0,
       )
     wait_t0 = time.time()
     while True:
@@ -300,7 +301,7 @@ class StartupArchiveScanCoordinator:
     Examples:
       >>> StartupArchiveScanCoordinator()._effective_wait_timeout_s_locked(0)
     """
-    base = cfg.get_sync_startup_snapshot_wait_seconds()
+    base = _bdef.SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS
     if self._startup_maintenance_pending and self._snapshot is None:
       return max(base, time.time() - wait_t0 + base)
     return base

@@ -19,6 +19,7 @@ from typing import Any, Iterator
 import os
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib import sync_timedb_retired_b_defaults as _bdef
 from hpcperfstats.dbload.lib.sync_timedb_parsing import stats_file_size_bytes
 
 _INGEST_TIMEOUT_MIB_BYTES = 1024 * 1024
@@ -177,7 +178,7 @@ def is_giant_ingest_budget(path: str, *, trigger_s: Any | None = None) -> Any:
     >>> is_giant_ingest_budget("x", None)  # doctest: +SKIP
   """
   if trigger_s is None:
-    trigger_s = float(cfg.get_sync_ingest_giant_pool_supplement_trigger_budget_s())
+    trigger_s = float(_bdef.SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S)
   if trigger_s <= 0.0:
     return False
   resolved = resolve_ingest_per_file_timeout_s(path)
@@ -203,7 +204,7 @@ def any_giant_ingest_budget_in_flight(
     >>> any_giant_ingest_budget_in_flight(None, None)  # doctest: +SKIP
   """
   if trigger_s is None:
-    trigger_s = float(cfg.get_sync_ingest_giant_pool_supplement_trigger_budget_s())
+    trigger_s = float(_bdef.SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S)
   for path in paths or ():
     if path and is_giant_ingest_budget(path, trigger_s=trigger_s):
       return True
@@ -241,9 +242,9 @@ def iter_giant_supplement_paths(
     >>> iter_giant_supplement_paths(None, None, None, None, None, True)
   """
   if max_bytes is None:
-    max_bytes = int(cfg.get_sync_ingest_giant_pool_supplement_max_bytes())
+    max_bytes = int(_bdef.SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES)
   if large_max_bytes is None:
-    large_max_bytes = int(cfg.get_sync_ingest_giant_pool_supplement_large_max_bytes())
+    large_max_bytes = int(_bdef.SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES)
   exclude_normpaths = {
       os.path.normpath(str(path))
       for path in (exclude or ())

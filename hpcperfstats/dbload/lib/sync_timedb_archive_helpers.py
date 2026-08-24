@@ -64,6 +64,7 @@ from collections import OrderedDict, defaultdict
 from datetime import date, datetime, time as dt_time, timedelta
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib import sync_timedb_retired_b_defaults as _bdef
 from hpcperfstats.dbload.lib.archive_compress import (
     DAILY_ARCHIVE_GZ_SUFFIX,
     DAILY_ARCHIVE_ZST_SUFFIX,
@@ -1964,7 +1965,7 @@ def log_day_close_candidate_report(
   Examples:
     >>> log_day_close_candidate_report(None, None, None, None)  # doctest: +SKIP
   """
-  if not cfg.get_sync_day_close_candidate_report():
+  if not _bdef.SYNC_DAY_CLOSE_CANDIDATE_REPORT:
     return
   queued = [e for e in entries if e.get("status") == "queued"]
   waiting = [e for e in entries if e.get("status") == "waiting_on_ingest"]
@@ -2276,56 +2277,6 @@ def raw_stats_path_needs_tar_append(
       first_ts=first_ts,
   )
   return needs_append
-
-
-def partition_day_close_handoff_paths_for_append_vs_ingest(
-  paths: Any,
-  tgz_archive_dir: str,
-  *,
-  ingest_ready_fn: Any | None = None,
-) -> Any:
-  """
-  Split day-close handoff pins into archive-append vs ingest requeue.
-  
-  DbReadyNotInArchive (hpcperfstats03): ``skipped_not_in_archive`` pins that
-  already pass the DB gate must drive **tar append**, not ingest-only handoff.
-  Re-ingest alone often ends as ``checkpoint_immediate`` without ensuring the
-  path lands in ``files_to_be_archived``, so Branch C reclassify never sees
-  membership and open daily ``.tar`` never seal/tar_drop.
-  
-  Returns ``(append_paths, ingest_paths)`` preserving input order within each
-  bucket. Missing on-disk paths are dropped. When ``ingest_ready_fn`` is set,
-  only paths that return true are eligible for the append bucket; not-ready
-  paths stay on ingest handoff.
-  
-  Args:
-    paths (Any): Iterable of filesystem paths as strings.
-    tgz_archive_dir (str): String for tgz archive dir.
-    ingest_ready_fn (Any | None): One of ``Any``, ``None``.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> partition_day_close_handoff_paths_for_append_vs_ingest(None, "x", None)
-  """
-  append_paths = []
-  ingest_paths = []
-  for path in paths or ():
-    path_norm = os.path.normpath(str(path or ""))
-    if not path_norm or not os.path.isfile(path_norm):
-      continue
-    db_ready = True
-    if ingest_ready_fn is not None:
-      try:
-        db_ready = bool(ingest_ready_fn(path_norm))
-      except Exception:
-        db_ready = False
-    if db_ready and raw_stats_path_needs_tar_append(path_norm, tgz_archive_dir):
-      append_paths.append(path_norm)
-    else:
-      ingest_paths.append(path_norm)
-  return append_paths, ingest_paths
 
 
 def daily_tar_paths_for_stats_paths(
@@ -4079,89 +4030,6 @@ def handoff_path_lacks_daily_archive(
     if daily_archive_populate_source_exists(zst_path):
       return False
   return True
-
-
-def age_misbucket_handoff_priority_paths(
-  handoff_priority_paths: Any,
-  *,
-  tgz_archive_dir: str,
-  handoff_source_tar_by_path: Any | None = None,
-  log_fn: Any | None = None,
-) -> Any:
-  """
-  Remove forward-misbucket handoff leads with ``no_daily_archive``.
-  
-  Only ages when the path's derived calendar day is **strictly after** the
-  source tar day that requeued it and that derived day has neither sealed nor
-  mutable daily archive. Same-day / backward-derived handoffs are kept so
-  legitimate cross-day retry and same-boot duplicate guards still work.
-  
-  Mutates ``handoff_priority_paths`` (and optional
-    ``handoff_source_tar_by_path``).
-  Returns source daily-tar paths that no longer have any handoff pin.
-  
-  Args:
-    handoff_priority_paths (Any): Iterable of filesystem paths as strings.
-    tgz_archive_dir (str): String for tgz archive dir.
-    handoff_source_tar_by_path (Any | None): One of ``Any``, ``None``.
-    log_fn (Any | None): One of ``Any``, ``None``.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> age_misbucket_handoff_priority_paths(None, "x", None, None)
-  """
-  if not handoff_priority_paths or not tgz_archive_dir:
-    return set()
-  source_map = handoff_source_tar_by_path
-  to_drop = []
-  for path in list(handoff_priority_paths):
-    if not handoff_path_lacks_daily_archive(path, tgz_archive_dir):
-      continue
-    source_tar = None
-    if source_map is not None:
-      source_tar = source_map.get(path)
-    if not source_tar:
-      continue
-    source_day = calendar_date_from_daily_tar_path(source_tar)
-    derived = _derive_stats_path_date(path)
-    if source_day is None or derived is None or derived <= source_day:
-      continue
-    to_drop.append(path)
-  if not to_drop:
-    return set()
-  candidate_sources = set()
-  for path in to_drop:
-    derived = _derive_stats_path_date(path)
-    derived_day = derived.isoformat() if derived is not None else ""
-    source_tar = None
-    source_day = ""
-    if source_map is not None:
-      source_tar = source_map.pop(path, None)
-    if source_tar:
-      source_tar = os.path.normpath(source_tar)
-      candidate_sources.add(source_tar)
-      src_date = calendar_date_from_daily_tar_path(source_tar)
-      source_day = src_date.isoformat() if src_date is not None else source_tar
-    handoff_priority_paths.discard(path)
-    if log_fn is not None:
-      log_fn(
-          "handoff_priority_age path=%s source_day=%s "
-          "derived_day=%s reason=no_daily_archive"
-          % (path, source_day, derived_day),
-      )
-  clear_sources = set()
-  for source_tar in candidate_sources:
-    still_pinned = False
-    if source_map is not None:
-      still_pinned = any(
-          os.path.normpath(source_map.get(p) or "") == source_tar
-          for p in handoff_priority_paths
-      )
-    if not still_pinned:
-      clear_sources.add(source_tar)
-  return clear_sources
 
 
 def select_ingest_chunk_paths(
@@ -11549,7 +11417,7 @@ def rescan_pending_stats_files(
     >>> rescan_pending_stats_files(0)  # doctest: +SKIP
   """
   if full_rescan_every is None:
-    full_rescan_every = cfg.get_sync_ingest_rescan_full_every()
+    full_rescan_every = _bdef.SYNC_INGEST_RESCAN_FULL_EVERY
   if mtime_days is None:
     mtime_days = cfg.get_sync_ingest_rescan_mtime_days()
   should_force_full = True

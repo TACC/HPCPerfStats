@@ -34,12 +34,14 @@ class StreamingDiscoverStats:
     enqueued_ingest: Paths that received an ingest ``ZADD``.
     enqueued_append: Paths that received an append ``RPUSH``.
     skipped_complete: Paths with neither ingest nor append needed.
+    enqueued_day_close: Days that received a day_close ``RPUSH``.
   """
 
   seen: int
   enqueued_ingest: int
   enqueued_append: int
   skipped_complete: int
+  enqueued_day_close: int = 0
 
 
 def find_record_mtime_ns(mtime: float) -> int:
@@ -145,8 +147,10 @@ def stream_enqueue_ingest_from_find_records(
   seen = 0
   enqueued_ingest = 0
   enqueued_append = 0
+  enqueued_day_close = 0
   skipped_complete = 0
   day_fn = calendar_day_fn
+  day_close_seen: set[str] = set()
 
   for rec in records:
     seen += 1
@@ -174,12 +178,22 @@ def stream_enqueue_ingest_from_find_records(
       enqueued_append += 1
     if not enqueued.get("ingest") and not enqueued.get("append"):
       skipped_complete += 1
+    tar = str(plan.tar_path or "").strip()
+    if tar and tar not in day_close_seen:
+      if jr.enqueue_day_close_if_needed(
+          client,
+          tar,
+          calendar_day=plan.calendar_day,
+      ):
+        day_close_seen.add(tar)
+        enqueued_day_close += 1
 
   return StreamingDiscoverStats(
       seen=seen,
       enqueued_ingest=enqueued_ingest,
       enqueued_append=enqueued_append,
       skipped_complete=skipped_complete,
+      enqueued_day_close=enqueued_day_close,
   )
 
 

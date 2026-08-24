@@ -20,7 +20,7 @@ from hpcperfstats.dbload.lib.process_title import (
 def test_resolve_script_path():
   assert (
       resolve_script_process_title_name(
-          argv=["/home/hpcperfstats/hpcperfstats/dbload/sync_timedb.py", "backlog"]
+          argv=["/home/hpcperfstats/hpcperfstats/dbload/sync_timedb.py"]
       )
       == "sync_timedb.py"
   )

@@ -476,6 +476,86 @@ def _run_find_capture(
   )
 
 
+def iter_find_stats_stdout_chunks(
+  archive_dir: str,
+  *,
+  mtime_days: Optional[int] = None,
+  find_bin: Optional[str] = None,
+  chunk_size: int = 65536,
+) -> Iterator[bytes]:
+  """
+  Run GNU find and yield stdout chunks as they arrive (streaming).
+
+  Does not buffer the entire find output before the first yield. Callers
+  should feed chunks into
+  :func:`iter_find_printf_records_streaming` / discover enqueue helpers.
+
+  Args:
+    archive_dir (str): Archive data directory (find root).
+    mtime_days (Optional[int]): Optional ``-mtime`` window.
+    find_bin (Optional[str]): Override find binary path.
+    chunk_size (int): Read size for ``stdout`` (minimum 1).
+
+  Yields:
+    bytes: Successive non-empty stdout chunks from GNU find.
+
+  Raises:
+    FindStatsDiscoveryError: When find is missing or exits non-zero
+      (except benign fnctl race exit 1).
+
+  Examples:
+    >>> list(iter_find_stats_stdout_chunks("/nope"))
+    []
+  """
+  if not archive_dir or not os.path.isdir(archive_dir):
+    return
+  bin_path = _resolve_find_bin(find_bin)
+  argv = build_find_stats_argv(
+      archive_dir, mtime_days=mtime_days, find_bin=bin_path
+  )
+  read_n = max(1, int(chunk_size))
+  try:
+    proc = subprocess.Popen(
+        list(argv),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+  except FileNotFoundError as exc:
+    raise FindStatsDiscoveryError(
+        "GNU find not found (required for stats discovery)"
+    ) from exc
+  assert proc.stdout is not None
+  try:
+    while True:
+      chunk = proc.stdout.read(read_n)
+      if not chunk:
+        break
+      yield chunk
+  finally:
+    stderr_b = b""
+    if proc.stderr is not None:
+      try:
+        stderr_b = proc.stderr.read() or b""
+      except Exception:
+        stderr_b = b""
+    rc = proc.wait()
+  stderr_text = stderr_b.decode("utf-8", errors="replace")
+  if rc == 0:
+    return
+  if rc == 1 and _stderr_is_only_fnctl_races(stderr_text):
+    return
+  lower = stderr_text.lower()
+  if "unknown primary" in lower or ("printf" in lower and "illegal" in lower):
+    raise FindStatsDiscoveryError(
+        "find does not support -printf (GNU findutils required): %s"
+        % stderr_text.strip()
+    )
+  raise FindStatsDiscoveryError(
+      "find failed exit=%d: %s"
+      % (rc, stderr_text.strip() or "(no stderr)")
+  )
+
+
 def run_find_stats(
   archive_dir: str,
   *,
@@ -485,16 +565,19 @@ def run_find_stats(
 ) -> List[FindStatsRecord]:
   """
   Run GNU find and return parsed stats records (fail-closed).
-  
+
+  Prefer :func:`iter_find_stats_stdout_chunks` for orchestrator boot so
+  enqueue can start before the scan finishes.
+
   Args:
     archive_dir (str): String for archive dir.
     mtime_days (Optional[int]): Mtime days, or None when absent.
     find_bin (Optional[str]): Find bin, or None when absent.
     log_fn (Optional[Callable[..., None]]): Log fn, or None when absent.
-  
+
   Returns:
     List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
-  
+
   Examples:
     >>> run_find_stats("x", None, None, None)  # doctest: +SKIP
   """

@@ -289,10 +289,7 @@ def test_raise_if_ingest_per_file_deadline_uses_effective_timeout(monkeypatch):
 def test_giant_trigger_budget_2gib_boundary(monkeypatch, tmp_path):
   """Trigger stays 6600s wall; with floor 3600, crossover is ~1078 MiB (not 2 GiB)."""
   _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(
-      st.cfg,
-      "get_sync_ingest_giant_pool_supplement_trigger_budget_s",
-      lambda: 6600.0,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S", 6600.0,
   )
   under = tmp_path / "under_trigger"
   at2g = tmp_path / "at2g"
@@ -313,8 +310,7 @@ def test_giant_trigger_budget_2gib_boundary(monkeypatch, tmp_path):
 
 def test_iter_giant_supplement_paths_exclude_normpath_variant(tmp_path, monkeypatch):
   _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", 10**9,
   )
   path = str(tmp_path / "tail0")
   (tmp_path / "tail0").write_bytes(b"x" * 100)
@@ -360,13 +356,11 @@ def test_imap_pending_tail_excludes_chunk_paths(monkeypatch, tmp_path, capsys):
   assert str(host_b / "head0") in pending_tail
 
   _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED", True)
   monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 2)
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 100.0,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S", 100.0,
   )
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", 10**9,
   )
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
   monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
@@ -434,7 +428,7 @@ def test_chunk_paths_deduped_before_imap(monkeypatch, tmp_path):
   monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 4)
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
   monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: False)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED", False)
   tracker = st._IngestPoolInFlightTracker(unique)
   gen = st._imap_ingest_paths_batched(
       pool,
@@ -468,13 +462,9 @@ def test_iter_giant_supplement_paths_skips_at_or_above_large_max_bytes(
 ):
   """Paths at/above large_max are never selected; soft max alone still allows second pass."""
   _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 1024,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", 1024,
   )
-  monkeypatch.setattr(
-      st.cfg,
-      "get_sync_ingest_giant_pool_supplement_large_max_bytes",
-      lambda: 1024,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES", 1024,
   )
   small = tmp_path / "small"
   large = tmp_path / "large"
@@ -501,13 +491,9 @@ def test_iter_giant_supplement_paths_two_pass_prefers_under_soft_max(
   _default_timeout_getters(monkeypatch)
   soft = 1024
   large_max = 8192
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: soft,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", soft,
   )
-  monkeypatch.setattr(
-      st.cfg,
-      "get_sync_ingest_giant_pool_supplement_large_max_bytes",
-      lambda: large_max,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES", large_max,
   )
   under = tmp_path / "under"
   mid = tmp_path / "mid"
@@ -565,13 +551,11 @@ def test_giant_supplement_replenish_uses_supplement_queue_excludes_inflight(
     return [refill_a, refill_b]
 
   _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED", True)
   monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 3)
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 100.0,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S", 100.0,
   )
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", 10**9,
   )
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
   monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
@@ -651,15 +635,13 @@ def test_idle_slots_supplement_dispatches_below_giant_budget(
   pool = mph_tests._ManualPool()
 
   _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_idle_slot_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED", True)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_IDLE_SLOT_SUPPLEMENT_ENABLED", True)
   monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 2)
   # Budget trigger is enormous so the small in-flight path is never a "giant".
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 1e9,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S", 1e9,
   )
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", 10**9,
   )
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
   monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
@@ -721,14 +703,12 @@ def test_imap_batch_terminates_with_ever_growing_closed_snapshot(
 
   pool = mph_tests._ManualPool()
   _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_idle_slot_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED", True)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_IDLE_SLOT_SUPPLEMENT_ENABLED", True)
   monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 2)
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 1e9,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S", 1e9,
   )
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", 10**9,
   )
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
   monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
@@ -799,14 +779,12 @@ def test_supplement_stops_when_only_supplements_in_flight(
 
   pool = mph_tests._ManualPool()
   _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_idle_slot_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED", True)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_IDLE_SLOT_SUPPLEMENT_ENABLED", True)
   monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 2)
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 1e9,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S", 1e9,
   )
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", 10**9,
   )
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
   monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
@@ -875,14 +853,12 @@ def test_supplement_continues_while_original_path_in_flight(
   pool = mph_tests._ManualPool()
 
   _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_idle_slot_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED", True)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_IDLE_SLOT_SUPPLEMENT_ENABLED", True)
   monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 2)
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 1e9,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S", 1e9,
   )
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", 10**9,
   )
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
   monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
@@ -937,13 +913,11 @@ def test_giant_in_flight_still_replenishes_mid_imap(monkeypatch, tmp_path, capsy
     return [refill_a]
 
   _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED", True)
   monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 3)
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 100.0,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S", 100.0,
   )
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", 10**9,
   )
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
   monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)
@@ -994,12 +968,11 @@ def test_build_giant_supplement_pending_tail_uses_supplement_queue(monkeypatch, 
   """Startup reservoir ceiling is supplement_queue (= queue * multiplier), not bare queue."""
   from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
 
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED", True)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_queue_max_size", lambda: 3000)
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_queue_multiplier", lambda: 2,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_QUEUE_MULTIPLIER", 2,
   )
-  assert st.cfg.get_sync_ingest_giant_pool_supplement_queue_size() == 6000
+  assert st._bdef.sync_ingest_giant_pool_supplement_queue_size(st.cfg.get_sync_ingest_queue_max_size()) == 6000
   base = []
   for i in range(50):
     p = tmp_path / f"base-{i:04d}"
@@ -1018,20 +991,16 @@ def test_build_giant_supplement_pending_tail_uses_supplement_queue(monkeypatch, 
   capped = helpers.build_giant_supplement_pending_tail(
       base,
       closed_paths=closed,
-      supplement_queue=st.cfg.get_sync_ingest_giant_pool_supplement_queue_size(),
+      supplement_queue=st._bdef.sync_ingest_giant_pool_supplement_queue_size(st.cfg.get_sync_ingest_queue_max_size()),
       log_fn=None,
   )
   assert len(capped) == 6000
 
 
 def test_ingest_pool_tracker_batch_seen_excludes_redispatch(tmp_path, monkeypatch):
-  monkeypatch.setattr(
-      ingest_timeout_mod.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  monkeypatch.setattr(ingest_timeout_mod._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", 10**9,
   )
-  monkeypatch.setattr(
-      ingest_timeout_mod.cfg,
-      "get_sync_ingest_giant_pool_supplement_large_max_bytes",
-      lambda: 10**9,
+  monkeypatch.setattr(ingest_timeout_mod._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES", 10**9,
   )
   tail0 = str(tmp_path / "tail0")
   tail1 = str(tmp_path / "tail1")
@@ -1088,13 +1057,11 @@ def test_giant_supplement_begin_log(monkeypatch, tmp_path, capsys):
   (tmp_path / "tail0").write_bytes(b"x" * 100)
   chunk = ["giant0", "giant1"]
   _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_giant_pool_supplement_enabled", lambda: True)
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED", True)
   monkeypatch.setattr(st, "_effective_ingest_imap_inflight_cap", lambda _tc, _pc: 4)
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_trigger_budget_s", lambda: 100.0,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S", 100.0,
   )
-  monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+  monkeypatch.setattr(st._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", 10**9,
   )
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 0.01)
   monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100000)

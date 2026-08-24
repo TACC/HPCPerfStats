@@ -40,7 +40,7 @@ def test_parse_sync_timedb_jid_cli_arg_happy_space_and_equals():
 
 def test_parse_sync_timedb_jid_cli_arg_mutual_exclusion_and_empty():
   jid, err = jid_scope.parse_sync_timedb_jid_cli_arg(
-      ["sync_timedb.py", "--jid", "1", "backlog"],
+      ["sync_timedb.py", "--jid", "1", "2026-01-01"],
   )
   assert jid is None
   assert "cannot be combined" in err
@@ -50,7 +50,7 @@ def test_parse_sync_timedb_jid_cli_arg_mutual_exclusion_and_empty():
   assert jid2 is None
   assert "empty" in err2
   jid3, err3 = jid_scope.parse_sync_timedb_jid_cli_arg(
-      ["sync_timedb.py", "backlog"],
+      ["sync_timedb.py"],
   )
   assert jid3 is None and err3 is None
 
@@ -295,7 +295,7 @@ def test_run_sync_timedb_jid_ingest_no_archive_or_janitor(monkeypatch, tmp_path)
     called["supervisor"] = True
     raise AssertionError("supervisor must not run for --jid")
 
-  monkeypatch.setattr(st, "run_sync_timedb_supervisor_loop", _boom_supervisor)
+  monkeypatch.setattr(st, "run_sync_timedb_queue_orchestrator", _boom_supervisor)
   monkeypatch.setattr(
       st,
       "create_sync_timedb_spawn_pool",

@@ -26,6 +26,7 @@ from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
 )
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib import sync_timedb_retired_b_defaults as _bdef
 from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     build_archive_mapping,
@@ -227,7 +228,7 @@ def load_archive_maint_hints(archive_data_dir: str) -> Optional[Dict[str, Any]]:
   Examples:
     >>> load_archive_maint_hints("x")  # doctest: +SKIP
   """
-  if not cfg.get_sync_archive_maint_hints():
+  if not _bdef.SYNC_ARCHIVE_MAINT_HINTS:
     return None
   from hpcperfstats.dbload.lib.sync_timedb_persistence import load_persistence_document
 
@@ -437,7 +438,7 @@ def save_archive_maint_hints(
   Examples:
     >>> save_archive_maint_hints("x", {}, {}, {}, None, None)  # doctest: +SKIP
   """
-  if not cfg.get_sync_archive_maint_hints():
+  if not _bdef.SYNC_ARCHIVE_MAINT_HINTS:
     return
   path = maint_hints_path(archive_data_dir)
   from hpcperfstats.dbload.lib.sync_timedb_persistence import save_persistence_document

@@ -468,25 +468,6 @@ def test_reap_supervisor_pool_children_isolates_pool_reap_failure(monkeypatch):
   )
 
 
-def test_pending_reconcile_cap_invokes_throttled_reap():
-  """Pending-reconcile MainThread windows must run throttled child hygiene."""
-  import inspect
-  import hpcperfstats.dbload.sync_timedb as sync_mod
-
-  source = inspect.getsource(sync_mod.run_sync_timedb_supervisor_loop)
-  cap_source = source.split("def _cap_pending_after_rescan_inner", 1)[1]
-  cap_source = cap_source.split("\n  def _cap_pending_after_rescan_body", 1)[0]
-  assert "_maybe_reap_supervisor_pool_children_throttled(" in cap_source
-  assert 'context="pending_reconcile"' in cap_source
-  assert "finally:" in cap_source
-  body = source.split("def _cap_pending_after_rescan_body", 1)[1]
-  body = body.split("\n  def ", 1)[0]
-  assert "pending reconcile cap begin" in body
-  assert 'context="pending_reconcile"' in source.split(
-      "def _cap_pending_after_rescan_inner", 1,
-  )[1].split("def _reconcile_pending_with_oldest_checkpoint_incomplete", 1)[0]
-
-
 def test_ingest_stall_defer_redis_populate_before_idle_ghost(monkeypatch):
   """redis_populate_active must win over idle_pool_ghost during Redis wait."""
   monkeypatch.setattr(st, "pool_workers_all_idle", lambda _pool: True)

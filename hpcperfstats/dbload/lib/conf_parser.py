@@ -3410,111 +3410,6 @@ def get_sync_ingest_per_file_timeout_s_per_mib() -> Any:
     return _SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT
 
 
-def get_sync_ingest_giant_pool_supplement_enabled() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_ingest_giant_pool_supplement_enabled()  # doctest: +SKIP
-  """
-  return False
-
-
-
-
-def get_sync_ingest_idle_slot_supplement_enabled() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_ingest_idle_slot_supplement_enabled()  # doctest: +SKIP
-  """
-  return False
-
-
-
-
-def get_sync_ingest_giant_pool_supplement_max_bytes() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_ingest_giant_pool_supplement_max_bytes()  # doctest: +SKIP
-  """
-  return 1024 * 1024 * 1024
-
-
-
-
-def get_sync_ingest_giant_pool_supplement_large_max_bytes() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_ingest_giant_pool_supplement_large_max_bytes()  # doctest: +SKIP
-  """
-  return 8 * 1024 * 1024 * 1024
-
-
-
-
-def get_sync_ingest_giant_pool_supplement_queue_multiplier() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_ingest_giant_pool_supplement_queue_multiplier()  # doctest: +SKIP
-  """
-  return 2
-
-
-
-
-def get_sync_ingest_giant_pool_supplement_queue_size() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_ingest_giant_pool_supplement_queue_size()  # doctest: +SKIP
-  """
-  return max(1, int(get_sync_ingest_pool_processes()) * 2)
-
-
-
-
-def get_sync_ingest_giant_pool_supplement_trigger_budget_s() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_ingest_giant_pool_supplement_trigger_budget_s()  # doctest: +SKIP
-  """
-  return 6600.0
-
-
-
-
 def get_metrics_run_stall_timeout_s() -> Any:
   """
   Max no-progress seconds allowed in ``Metrics.run`` before aborting batch.
@@ -3778,36 +3673,6 @@ def get_sync_ingest_rescan_mtime_days() -> Any:
   return max(1, _pipeline_getint("sync_ingest_rescan_mtime_days"))
 
 
-def get_sync_ingest_rescan_full_every() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_ingest_rescan_full_every()  # doctest: +SKIP
-  """
-  return 0
-
-
-
-
-def get_sync_ingest_current_proximity_days() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_ingest_current_proximity_days()  # doctest: +SKIP
-  """
-  return 2
-
-
-
-
 def get_sync_archive_queue_max_size() -> Any:
   """
   Bound for in-memory archive work queue (default 1000).
@@ -3998,21 +3863,6 @@ def get_sync_supervisor_rss_limit_mb() -> Any:
   return max(0, _pipeline_getint("sync_supervisor_rss_limit_mb"))
 
 
-def get_sync_supervisor_rss_check_every_n_chunks() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_supervisor_rss_check_every_n_chunks()  # doctest: +SKIP
-  """
-  return 1
-
-
-
-
 def get_sync_process_tree_rss_limit_mb() -> Any:
   """
   Process-tree RSS defer limit in MiB; 0 disables backpressure (default 110000).
@@ -4027,21 +3877,6 @@ def get_sync_process_tree_rss_limit_mb() -> Any:
   """
   _ensure_cfg_loaded()
   return max(0, _pipeline_getint("sync_process_tree_rss_limit_mb"))
-
-
-def get_sync_process_tree_rss_check_every_n_chunks() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_process_tree_rss_check_every_n_chunks()  # doctest: +SKIP
-  """
-  return 1
-
-
 
 
 def get_sync_process_tree_rss_exit_mb() -> Any:
@@ -4547,81 +4382,6 @@ def get_sync_enable_ingest_first_durability_mode() -> Any:
   )
 
 
-def get_archive_maintenance_idle_seconds() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_archive_maintenance_idle_seconds()  # doctest: +SKIP
-  """
-  return 300
-
-
-
-
-def get_archive_janitor_budget_seconds() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_archive_janitor_budget_seconds()  # doctest: +SKIP
-  """
-  return 30.0
-
-
-
-
-def get_archive_janitor_debt_high_watermark() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_archive_janitor_debt_high_watermark()  # doctest: +SKIP
-  """
-  return 50
-
-
-
-
-def get_archive_janitor_debt_burst_factor() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_archive_janitor_debt_burst_factor()  # doctest: +SKIP
-  """
-  return 1.5
-
-
-
-
-def get_archive_janitor_debt_max_entries() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_archive_janitor_debt_max_entries()  # doctest: +SKIP
-  """
-  return 200
-
-
-
-
 def get_sync_day_close_raw_paths_per_batch() -> Any:
   """
   Max raw paths processed per day_close batch (default 1000).
@@ -4667,36 +4427,6 @@ def get_sync_ingest_hot_days() -> Any:
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_ingest_hot_days"))
-
-
-def get_sync_day_close_candidate_report() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_day_close_candidate_report()  # doctest: +SKIP
-  """
-  return False
-
-
-
-
-def get_sync_startup_snapshot_wait_seconds() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_startup_snapshot_wait_seconds()  # doctest: +SKIP
-  """
-  return 300
-
-
 
 
 def get_sync_day_close_raw_removal_max_deletes_per_pass() -> Any:
@@ -4762,21 +4492,6 @@ def get_sync_day_close_manifest_stale_seconds() -> Any:
     return 7200.0
 
 
-def get_sync_archive_max_inflight_jobs() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_archive_max_inflight_jobs()  # doctest: +SKIP
-  """
-  return 2
-
-
-
-
 def get_sync_archive_worker_stall_seconds() -> Any:
   """
   Seconds before treating an archive pool job as stalled (default 600).
@@ -4812,21 +4527,6 @@ def get_sync_archive_require_db_ingest() -> Any:
   return _parse_bool(
       _pipeline_get("sync_archive_require_db_ingest"),
   )
-
-
-def get_sync_archive_maint_hints() -> Any:
-  """
-  Retired B INI tunable (hard-coded default; key removed from registry).
-
-  Returns:
-    Any: Fixed thrown default for leftover callers.
-
-  Examples:
-    >>> get_sync_archive_maint_hints()  # doctest: +SKIP
-  """
-  return False
-
-
 
 
 def get_listend_db_ingest_enabled() -> Any:

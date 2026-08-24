@@ -9,11 +9,12 @@ pools for ingest/append, and day_close threads (seal → raw removal → tar-dro
 The B ``run_sync_timedb_supervisor_loop`` / ``ArchiveJanitor`` coordinator is
 retired.
 
-CLI: no args uses a sliding window (see ``days_to_process``) through now. One
-``YYYY-MM-DD`` ingests that calendar day only. Two dates set an explicit range.
-First arg ``backlog`` scans every host stats dir under ``archive_dir``. Prefix
-``once`` to exit after one idle pass. ``--jid <JID>`` is a one-shot ingest-only
-path (no archival / day_close).
+CLI: no args (or default date window from ``days_to_process``) runs the
+single orchestrator with hot+catchup ingest bands over the archive. One
+``YYYY-MM-DD`` or two dates set an explicit discover range hint at entry
+(orchestrator reconstruct still uses full find). Prefix ``once`` to exit after
+one idle reconstruct pass. ``backlog`` / ``current`` dual-mode CLI is retired.
+``--jid <JID>`` is a one-shot ingest-only path (no archival / day_close).
 
 DB access is process-safe: pool workers use close_old_connections() at task
 start and connections.close_all() at task end. Writes are serialized with a
@@ -116,6 +117,7 @@ from django.db import (
 from django.db.utils import DatabaseError, OperationalError
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib import sync_timedb_retired_b_defaults as _bdef
 from hpcperfstats.dbload.lib.date_utils import log_date_range, parse_start_end_dates
 from hpcperfstats.dbload.lib.db_unavailable import (
     DatabaseUnavailableExit,
@@ -190,7 +192,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     pending_minus_chunk,
     select_ingest_chunk_paths,
     try_reuse_pending_reconcile_unprocessed_cache,
-    age_misbucket_handoff_priority_paths,
     resolve_unmapped_closed_raw_daily_tars,
     daily_tar_path_for_stats_path,
     calendar_date_from_daily_tar_path,
@@ -224,7 +225,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     sort_pending_stats_paths_oldest_first,
     INGEST_PARSE_FAILED_QUARANTINE_REASON,
     quarantine_ingest_failed_raw_path,
-    partition_day_close_handoff_paths_for_append_vs_ingest,
     raw_stats_path_tar_append_decision,
     rescan_pending_stats_files,
     set_archive_members_invalidation_hook,
@@ -262,7 +262,6 @@ from hpcperfstats.dbload.lib.sync_timedb_day_close_manifest import (
     DayCloseManifestCoordinator,
 )
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
-from hpcperfstats.dbload.lib.sync_timedb_archive_dispatch import ArchiveDispatchCoordinator
 # from hpcperfstats.dbload.lib.sync_timedb_archive_janitor import ArchiveJanitor  # retired S4
 from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
     DayRawRemovalCoordinator,
@@ -270,7 +269,6 @@ from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
 from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
     StartupArchiveScanCoordinator,
 )
-from hpcperfstats.dbload.lib import sync_timedb_mode_heartbeat as mode_heartbeat
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
     ArchiveMembersPopulateStalledError,
     ArchiveMembersRedisConnectionError,
@@ -2820,8 +2818,8 @@ def _imap_ingest_paths_batched(
     """
     if not pending_tail_state:
       return "exhausted"
-    soft = int(cfg.get_sync_ingest_giant_pool_supplement_max_bytes())
-    hard = int(cfg.get_sync_ingest_giant_pool_supplement_large_max_bytes())
+    soft = int(_bdef.SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES)
+    hard = int(_bdef.SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES)
     hard = max(soft, hard)
     saw_any = False
     for path in pending_tail_state:
@@ -2856,7 +2854,7 @@ def _imap_ingest_paths_batched(
     Examples:
       >>> _giant_pool_supplement_paths_fn(None, None)  # doctest: +SKIP
     """
-    if not cfg.get_sync_ingest_giant_pool_supplement_enabled():
+    if not _bdef.SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED:
       return []
     if slots_needed <= 0:
       return []
@@ -2880,7 +2878,7 @@ def _imap_ingest_paths_batched(
       return []
     # RC-3: idle slots (this callback only fires when the primary chunk
     # iterator is exhausted) OR the legacy giant-budget trigger.
-    idle_ok = cfg.get_sync_ingest_idle_slot_supplement_enabled()
+    idle_ok = _bdef.SYNC_INGEST_IDLE_SLOT_SUPPLEMENT_ENABLED
     if not (
         idle_ok
         or any_giant_ingest_budget_in_flight(in_flight_paths)
@@ -2902,7 +2900,7 @@ def _imap_ingest_paths_batched(
             "idle_slots=%d"
             % (
                 len(pending_tail_state),
-                int(cfg.get_sync_ingest_giant_pool_supplement_queue_size()),
+                int(_bdef.sync_ingest_giant_pool_supplement_queue_size(cfg.get_sync_ingest_queue_max_size())),
                 int(supplement_log_state["replenish_n"]),
                 int(slots_needed),
             ),
@@ -2943,7 +2941,7 @@ def _imap_ingest_paths_batched(
               _format_giant_in_flight_snapshot(in_flight_paths),
               [os.path.basename(str(path)) for path in selected],
               int(slots_needed),
-              float(cfg.get_sync_ingest_giant_pool_supplement_trigger_budget_s()),
+              float(_bdef.SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S),
           ),
           flush=True,
       )
@@ -3839,7 +3837,7 @@ DEFER_SYNC_PREWARM_INVALIDATION_REASONS = frozenset({
     "tar_restore",
 })
 
-# Match dispatch restore-skip backoff (sync_timedb_archive_dispatch).
+# Match former dispatch restore-skip backoff constant.
 ARCHIVE_RESTORE_SOFT_REQUEUE_BACKOFF_S = 15.0
 
 
@@ -3915,126 +3913,6 @@ def _archive_finalize_skip_invalidate_log_reason(result: Any) -> Any:
   return "no_tar_mutation_or_worker_invalidated"
 
 
-def archive_finalize_may_clear_handoff_pin(
-  *,
-  is_handoff_pin: bool,
-  skip_finalize_invalidate: bool,
-  stats_path: str,
-  open_tar_path: str | None,
-  open_tar_members: Any | None = None,
-) -> bool:
-  """
-  Whether archive finalize may discard a day-close handoff pin.
-
-  Skip-only ``to_add=0`` outcomes set ``skip_finalize_invalidate`` and must
-  not clear pins unless open-tar membership+size is proven (Branch C). Real
-  tar mutations (``skip_finalize_invalidate=False``) may clear pins. Non-pin
-  paths always clear (checkpoint / redis-merge warm path).
-
-  Args:
-    is_handoff_pin (bool): Path is in ``handoff_priority_paths``.
-    skip_finalize_invalidate (bool): Worker reported noop / warm skip.
-    stats_path (str): Closed raw path under consideration.
-    open_tar_path (str | None): Mutable daily ``.tar`` path, or None.
-    open_tar_members (Any | None): Optional ``member_name -> size`` map; when
-      None and ``open_tar_path`` exists, members are read from that tar.
-
-  Returns:
-    bool: True when finalize may call ``_add_processed_path`` for this pin.
-
-  Examples:
-    >>> archive_finalize_may_clear_handoff_pin(
-    ...     is_handoff_pin=False,
-    ...     skip_finalize_invalidate=True,
-    ...     stats_path="/x",
-    ...     open_tar_path=None,
-    ... )
-    True
-    >>> archive_finalize_may_clear_handoff_pin(
-    ...     is_handoff_pin=True,
-    ...     skip_finalize_invalidate=True,
-    ...     stats_path="/missing",
-    ...     open_tar_path=None,
-    ... )
-    False
-  """
-  if not is_handoff_pin:
-    return True
-  if not skip_finalize_invalidate:
-    return True
-  path = os.path.normpath(str(stats_path or ""))
-  if not path:
-    return False
-  tar_path = os.path.normpath(str(open_tar_path or "")) if open_tar_path else ""
-  if not tar_path:
-    return False
-  try:
-    if not os.path.isfile(path):
-      return False
-    expected_size = int(os.path.getsize(path))
-  except OSError:
-    return False
-  members = open_tar_members
-  if members is None:
-    if not os.path.isfile(tar_path):
-      return False
-    try:
-      members = get_existing_archive_members(tar_path) or {}
-    except Exception:
-      return False
-  member_name = get_tar_member_name(path)
-  try:
-    return members.get(member_name) == expected_size
-  except Exception:
-    return False
-
-
-def should_suppress_day_close_archive_append_rehandoff(
-  *,
-  archive_append_inflight: bool,
-  has_active_append: bool,
-  pending_archive_owns_tar: bool,
-) -> str | None:
-  """
-  Detail string when skip-only day-close must not re-enqueue archive_append.
-
-  While Redis ``archive_append_inflight``, heap/slot ownership, or pending
-  append buckets already own the daily tar, a second handoff thrash (soak:
-  flat ``paths=N`` + ``to_add=0``) must be suppressed.
-
-  Args:
-    archive_append_inflight (bool): Redis append-inflight for the day token.
-    has_active_append (bool): ``_has_active_append_for_tar`` (pending append
-      bucket or inflight archive paths for that tar).
-    pending_archive_owns_tar (bool): Daily tar appears on
-      ``pending_archive_tasks`` heap.
-
-  Returns:
-    str | None: Skip ``detail=`` token, or None when re-handoff may proceed.
-
-  Examples:
-    >>> should_suppress_day_close_archive_append_rehandoff(
-    ...     archive_append_inflight=True,
-    ...     has_active_append=False,
-    ...     pending_archive_owns_tar=False,
-    ... )
-    'archive_append_inflight'
-    >>> should_suppress_day_close_archive_append_rehandoff(
-    ...     archive_append_inflight=False,
-    ...     has_active_append=False,
-    ...     pending_archive_owns_tar=False,
-    ... ) is None
-    True
-  """
-  if archive_append_inflight:
-    return "archive_append_inflight"
-  if has_active_append:
-    return "active_append_or_inflight_paths"
-  if pending_archive_owns_tar:
-    return "pending_archive_heap"
-  return None
-
-
 def _shutdown_ingest_pools(
   ingest_pool: Any,
   *,
@@ -4093,7 +3971,7 @@ def _maybe_exit_on_supervisor_rss_limit(chunk_counter: Any) -> None:
   limit_mb = cfg.get_sync_supervisor_rss_limit_mb()
   if limit_mb <= 0:
     return
-  every_n = cfg.get_sync_supervisor_rss_check_every_n_chunks()
+  every_n = _bdef.SYNC_SUPERVISOR_RSS_CHECK_EVERY_N_CHUNKS
   if int(chunk_counter) % every_n != 0:
     return
   rss_bytes = read_process_rss_bytes()
@@ -4174,7 +4052,7 @@ def _maybe_apply_tree_rss_governor(
   Examples:
     >>> _maybe_apply_tree_rss_governor(None, None, None)  # doctest: +SKIP
   """
-  every_n = cfg.get_sync_process_tree_rss_check_every_n_chunks()
+  every_n = _bdef.SYNC_PROCESS_TREE_RSS_CHECK_EVERY_N_CHUNKS
   if int(chunk_counter) % every_n != 0:
     return
   exit_mb = cfg.get_sync_process_tree_rss_exit_mb()
@@ -7856,50 +7734,6 @@ def database_startup() -> None:
     raise
 
 
-def run_sync_timedb_supervisor_loop(
-  directory: Any,
-  startdate: Any,
-  enddate: Any,
-  host_name_ext: Any,
-  manager_lock: Any,
-  archive_pool: Any,
-  run_once: bool = False,
-) -> None:
-  """
-  Retired B coordinator — production uses the queue orchestrator.
-
-  Slice 4 cutover: ``run_sync_timedb_supervisor_from_parsed`` calls
-  ``run_sync_timedb_queue_orchestrator``. This stub exists so imports and
-  accidental calls fail closed instead of dual-running orchestrators.
-
-  Args:
-    directory (Any): Archive directory (unused).
-    startdate (Any): CLI start mode (unused).
-    enddate (Any): CLI end date (unused).
-    host_name_ext (Any): Host suffix (unused).
-    manager_lock (Any): Write lock (unused).
-    archive_pool (Any): Archive pool (unused).
-    run_once (bool): Once-mode flag (unused).
-
-  Returns:
-    None
-
-  Raises:
-    RuntimeError: Always — supervisor loop is retired.
-
-  Examples:
-    >>> run_sync_timedb_supervisor_loop(0)  # doctest: +SKIP
-  """
-  del directory, startdate, enddate, host_name_ext, manager_lock, archive_pool
-  del run_once
-  raise RuntimeError(
-      "run_sync_timedb_supervisor_loop is retired; "
-      "use run_sync_timedb_queue_orchestrator"
-  )
-
-
-
-
 def parse_sync_timedb_argv(argv: Any) -> Any:
   """
   Parse CLI argv into ``(run_once, startdate, enddate)`` (same rules as.
@@ -7932,16 +7766,18 @@ def parse_sync_timedb_argv(argv: Any) -> Any:
   startdate, enddate = parse_start_end_dates(
       argv_for_dates, default_start, default_end)
 
-  if len(argv_for_dates) > 1 and argv_for_dates[1] == "all":
+  if len(argv_for_dates) > 1 and argv_for_dates[1] in (
+      "all",
+      "backlog",
+      "current",
+  ):
     raise SystemExit(
-        "CLI mode 'all' was renamed to 'backlog' "
-        "(use: sync_timedb.py backlog)"
+        "CLI modes 'all'/'backlog'/'current' are retired; "
+        "run with no date args (hot+catchup bands), a YYYY-MM-DD, "
+        "or a start/end date range"
     )
 
-  if (
-      len(argv_for_dates) == 2
-      and argv_for_dates[1] not in ("backlog", "current")
-  ):
+  if len(argv_for_dates) == 2:
     try:
       single_day = datetime.strptime(argv_for_dates[1], "%Y-%m-%d")
     except ValueError:
@@ -7949,10 +7785,6 @@ def parse_sync_timedb_argv(argv: Any) -> Any:
     else:
       startdate = single_day
       enddate = datetime.combine(single_day.date(), datetime.max.time())
-
-  if len(argv_for_dates) > 1 and argv_for_dates[1] in ('backlog', 'current'):
-    startdate = argv_for_dates[1]
-    enddate = None
 
   return run_once, startdate, enddate
 
@@ -8142,14 +7974,10 @@ def run_sync_timedb_supervisor_from_parsed(
     >>> run_sync_timedb_supervisor_from_parsed(None, None, None)
   """
   _reset_sync_runtime_caches()
-  if startdate == 'backlog':
+  if startdate is None and enddate is None:
     log_print(
-        "###Date Range of stats files to ingest: entire archive directory "
-        "(no date filter)####")
-  elif startdate == 'current':
-    log_print(
-        "###Date Range of stats files to ingest: entire archive directory "
-        "(no date filter; newest-first / current mode)####")
+        "###Date Range of stats files to ingest: entire archive "
+        "(orchestrator hot+catchup bands)####")
   else:
     log_date_range("stats files to ingest", startdate, enddate)
 
@@ -8237,7 +8065,7 @@ def run_ingest_entire_archive_once_for_tests() -> None:
   os.environ[_SYNC_TIMEDB_INGEST_INLINE_ENV] = "1"
   try:
     database_startup()
-    run_sync_timedb_supervisor_from_parsed(True, "backlog", None)
+    run_sync_timedb_supervisor_from_parsed(True, None, None)
   finally:
     if old_inline is None:
       os.environ.pop(_SYNC_TIMEDB_INGEST_INLINE_ENV, None)

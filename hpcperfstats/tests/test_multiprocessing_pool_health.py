@@ -1498,7 +1498,7 @@ def test_supplement_dedupe_skips_batch_completed_paths(tmp_path, monkeypatch):
   from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ingest_timeout_mod
 
   monkeypatch.setattr(
-      ingest_timeout_mod.cfg, "get_sync_ingest_giant_pool_supplement_max_bytes", lambda: 10**9,
+      ingest_timeout_mod._bdef, "SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", lambda: 10**9,
   )
   tail0 = str(tmp_path / "tail0")
   tail1 = str(tmp_path / "tail1")

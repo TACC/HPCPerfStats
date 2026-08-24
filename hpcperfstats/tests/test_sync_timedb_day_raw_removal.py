@@ -2067,12 +2067,3 @@ def test_skip_only_apply_batch_delete_memos_day_scoped_closed_raw(
   )
 
 
-def test_skip_only_second_handoff_suppressed_predicate():
-  """Re-handoff suppress helper covers inflight / heap ownership (plan fix 2)."""
-  import hpcperfstats.dbload.sync_timedb as st
-
-  assert st.should_suppress_day_close_archive_append_rehandoff(
-      archive_append_inflight=True,
-      has_active_append=False,
-      pending_archive_owns_tar=False,
-  ) == "archive_append_inflight"

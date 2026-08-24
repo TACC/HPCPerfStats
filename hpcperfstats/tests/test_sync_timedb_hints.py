@@ -24,7 +24,7 @@ def test_prune_keeps_sealed_only_tar_dropped(tmp_path):
 
 def test_save_and_load_hints_v2_round_trip(tmp_path, monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint._bdef.SYNC_ARCHIVE_MAINT_HINTS",
       lambda: True,
   )
   archive_dir = str(tmp_path / "archive")
@@ -58,7 +58,7 @@ def test_load_hints_accepts_schema_version_without_legacy_version_key(
   restore / day_phases) when only ``schema_version`` is present.
   """
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint._bdef.SYNC_ARCHIVE_MAINT_HINTS",
       lambda: True,
   )
   archive_dir = str(tmp_path / "archive")
@@ -90,7 +90,7 @@ def test_load_hints_accepts_schema_version_without_legacy_version_key(
 
 def test_validated_days_hint_dropped_when_daily_tar_mtime_changes(tmp_path, monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint._bdef.SYNC_ARCHIVE_MAINT_HINTS",
       lambda: True,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
@@ -126,7 +126,7 @@ def test_validated_days_hint_dropped_when_daily_tar_mtime_changes(tmp_path, monk
 
 def test_load_hints_v1_still_supported(tmp_path, monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_maint.cfg.get_sync_archive_maint_hints",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint._bdef.SYNC_ARCHIVE_MAINT_HINTS",
       lambda: True,
   )
   archive_dir = str(tmp_path / "archive")

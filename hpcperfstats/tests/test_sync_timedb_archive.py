@@ -33,8 +33,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     daily_tar_paths_for_stats_paths,
     daily_tar_seal_calendar_eligible,
     daily_tar_needs_day_close_work,
-    partition_day_close_handoff_paths_for_append_vs_ingest,
-    raw_stats_path_needs_tar_append,
+        raw_stats_path_needs_tar_append,
     raw_stats_path_tar_append_decision,
     ARCHIVE_SKIP_MEMBER_EXISTS,
     ARCHIVE_SKIP_MISSING_PATH,
@@ -4791,87 +4790,6 @@ def test_raw_stats_path_needs_tar_append_no_tar_yet(tmp_path):
   )
 
 
-def test_partition_day_close_handoff_db_ready_not_in_archive_goes_append(
-    tmp_path, monkeypatch,
-):
-  """DbReadyNotInArchive: DB-ready + needs append → append bucket, not ingest."""
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  host_dir = tmp_path / "archive" / "node1.hpc"
-  host_dir.mkdir(parents=True)
-  ts = _local_day_epoch("2026-06-02")
-  raw_path = host_dir / ts
-  raw_path.write_text(f"{ts} job1 node1\n")
-  ready = {str(raw_path)}
-  append_paths, ingest_paths = partition_day_close_handoff_paths_for_append_vs_ingest(
-      [str(raw_path)],
-      str(daily_dir),
-      ingest_ready_fn=lambda p: p in ready,
-  )
-  assert append_paths == [os.path.normpath(str(raw_path))]
-  assert ingest_paths == []
-
-
-def test_partition_day_close_handoff_not_db_ready_stays_ingest(tmp_path):
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  host_dir = tmp_path / "archive" / "node1.hpc"
-  host_dir.mkdir(parents=True)
-  ts = _local_day_epoch("2026-06-02")
-  raw_path = host_dir / ts
-  raw_path.write_text(f"{ts} job1 node1\n")
-  append_paths, ingest_paths = partition_day_close_handoff_paths_for_append_vs_ingest(
-      [str(raw_path)],
-      str(daily_dir),
-      ingest_ready_fn=lambda _p: False,
-  )
-  assert append_paths == []
-  assert ingest_paths == [os.path.normpath(str(raw_path))]
-
-
-def test_partition_day_close_handoff_member_exists_stays_ingest(tmp_path):
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  host_dir = tmp_path / "archive" / "node1.hpc"
-  host_dir.mkdir(parents=True)
-  ts = _local_day_epoch("2026-06-02")
-  raw_path = host_dir / ts
-  payload = f"{ts} job1 node1\n".encode()
-  raw_path.write_bytes(payload)
-  tar_path = daily_dir / "2026-06-02.tar"
-  member_name = get_tar_member_name(str(raw_path))
-  with tarfile.open(tar_path, "w") as tf:
-    tf.add(str(raw_path), arcname=member_name)
-  append_paths, ingest_paths = partition_day_close_handoff_paths_for_append_vs_ingest(
-      [str(raw_path)],
-      str(daily_dir),
-      ingest_ready_fn=lambda _p: True,
-  )
-  assert append_paths == []
-  assert ingest_paths == [os.path.normpath(str(raw_path))]
-
-
-def test_partition_day_close_handoff_mixed_split(tmp_path):
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  host_dir = tmp_path / "archive" / "node1.hpc"
-  host_dir.mkdir(parents=True)
-  ts_a = _local_day_epoch("2026-06-02")
-  ts_b = str(int(ts_a) + 3600)
-  need_append = host_dir / ts_a
-  need_ingest = host_dir / ts_b
-  need_append.write_text(f"{ts_a} job1 node1\n")
-  need_ingest.write_text(f"{ts_b} job1 node1\n")
-  ready = {os.path.normpath(str(need_append))}
-  append_paths, ingest_paths = partition_day_close_handoff_paths_for_append_vs_ingest(
-      [str(need_append), str(need_ingest)],
-      str(daily_dir),
-      ingest_ready_fn=lambda p: p in ready,
-  )
-  assert append_paths == [os.path.normpath(str(need_append))]
-  assert ingest_paths == [os.path.normpath(str(need_ingest))]
-
-
 def test_raw_stats_path_needs_tar_append_skips_matching_member(tmp_path):
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
@@ -6984,7 +6902,10 @@ def test_log_day_close_candidate_report_omits_skipped_no_work(capsys, monkeypatc
 
   import hpcperfstats.dbload.lib.conf_parser as cfg_mod
 
-  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
+      True,
+  )
   log_day_close_candidate_report(
       [{
           "tar_path": "/arch/2020-01-01.tar",
@@ -7005,7 +6926,10 @@ def test_log_day_close_candidate_report_logs_queued_and_disqualified(capsys, mon
 
   import hpcperfstats.dbload.lib.conf_parser as cfg_mod
 
-  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
+      True,
+  )
   log_day_close_candidate_report(
       [
           {
@@ -7054,7 +6978,10 @@ def test_log_day_close_candidate_report_includes_async_progress(capsys, monkeypa
 
   import hpcperfstats.dbload.lib.conf_parser as cfg_mod
 
-  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
+      True,
+  )
 
   def progress(_tar):
     return {
@@ -7087,7 +7014,10 @@ def test_log_day_close_candidate_report_silent_when_empty(capsys, monkeypatch):
 
   import hpcperfstats.dbload.lib.conf_parser as cfg_mod
 
-  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
+      True,
+  )
   log_day_close_candidate_report([], reason="test")
   assert "day_close candidate report" not in capsys.readouterr().out
 
@@ -7102,7 +7032,10 @@ def test_oldest_day_unprocessed_frozen_logs_after_unchanged_reports(
 
   import hpcperfstats.dbload.lib.conf_parser as cfg_mod
 
-  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
+      True,
+  )
   reset_oldest_day_unprocessed_frozen_state_for_tests()
   waiting = [
       {
@@ -7435,26 +7368,6 @@ def test_remove_processed_path_clears_checkpoint_entry(tmp_path):
   assert file_states[raw_path] == st_mod.SyncFileState.DISCOVERED
   loaded = st_mod._load_sync_checkpoint(checkpoint_path)
   assert loaded == []
-
-
-def test_handoff_priority_cap_keeps_head_paths(tmp_path):
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      prepend_checkpoint_incomplete_paths_to_pending,
-  )
-
-  handoff = ["/h1", "/h2"]
-  pending = ["/t1", "/t2", "/t3", "/t4", "/t5"]
-  merged = prepend_checkpoint_incomplete_paths_to_pending(pending, handoff)
-  ingest_queue_max = 4
-  priority_n = len(handoff)
-  tail_budget = max(0, ingest_queue_max - priority_n)
-  head = merged[:priority_n]
-  tail = merged[priority_n:][:tail_budget]
-  capped = head + tail
-  assert capped[:2] == handoff
-  assert len(capped) == ingest_queue_max
-  assert "/t1" in capped
-  assert "/t5" not in capped
 
 
 def test_oldest_checkpoint_incomplete_tar_returns_oldest_on_disk_day(tmp_path):
@@ -8259,75 +8172,6 @@ def test_lookup_members_source_tar_scan_when_mutable_tar_exists(
   assert source == "tar_scan"
 
 
-def test_raw_stats_path_needs_tar_append_when_redis_claims_but_open_tar_missing(
-    monkeypatch, tmp_path,
-):
-  """Handoff partition must not trust Redis when mutable .tar lacks the member."""
-  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
-      build_archive_members_redis_keys,
-      store_complete_members_in_redis,
-  )
-
-  helpers.clear_mutable_tar_authority_members_cache()
-  helpers.clear_daily_archive_members_cache()
-  raw = tmp_path / "host" / "1709123456"
-  raw.parent.mkdir(parents=True)
-  raw.write_text("1709123456 job1 cn001\n")
-  archive_key = str(tmp_path / "daily" / "2024-03-05.tar.zst")
-  os.makedirs(os.path.dirname(archive_key), exist_ok=True)
-  tar_path = daily_tar_path_from_compressed(archive_key)
-  open(archive_key, "wb").write(b"zst")
-  open(tar_path, "wb").write(b"")
-
-  fake = FakeRedis()
-  cache_key = helpers._daily_archive_members_cache_key(
-      normalize_daily_compressed_path(archive_key),
-  )
-  keys = build_archive_members_redis_keys(cache_key)
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
-  member_name = helpers.get_tar_member_name(str(raw))
-  store_complete_members_in_redis(
-      keys,
-      {member_name: raw.stat().st_size},
-      saw_duplicates=False,
-  )
-
-  assert helpers.raw_stats_path_needs_tar_append(str(raw), str(tmp_path / "daily"))
-
-
-def test_pin_hold_after_open_tar_authority_noop(tmp_path):
-  """Skip-invalidate noop must not clear pins when open tar lacks the member."""
-  import hpcperfstats.dbload.sync_timedb as st
-
-  raw = tmp_path / "host" / "1709123456"
-  raw.parent.mkdir(parents=True)
-  raw.write_text("1709123456 job1 cn001\n")
-  tar_path = tmp_path / "2026-06-08.tar"
-  tar_path.write_bytes(b"")
-  assert not st.archive_finalize_may_clear_handoff_pin(
-      is_handoff_pin=True,
-      skip_finalize_invalidate=True,
-      stats_path=str(raw),
-      open_tar_path=str(tar_path),
-      open_tar_members={},
-  )
-  assert st.should_suppress_day_close_archive_append_rehandoff(
-      archive_append_inflight=False,
-      active_append_or_inflight_paths=False,
-      pending_archive_heap=False,
-  ) is None
-
-
 def test_get_existing_archive_members_empty_when_no_archive_despite_l1(
     tmp_path,
 ):
@@ -8501,37 +8345,6 @@ def test_lookup_members_source_sealed_stream_when_tar_missing(monkeypatch, tmp_p
   got, source = st._lookup_existing_members_for_archive_append(archive_key, tar_path)
   assert got == members
   assert source == "sealed_stream"
-
-
-def test_finalize_archive_slot_watch_pool_passes_stall_poll_reap():
-  """Long archive-finalize waits must periodically reap supervisor children."""
-  import inspect
-  import hpcperfstats.dbload.sync_timedb as st
-
-  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
-  slot_source = source.split("def _finalize_archive_slot", 1)[1]
-  slot_source = slot_source.split("\n  def ", 1)[0]
-  assert "def _archive_finalize_stall_poll_reap" in slot_source
-  assert "on_stall_poll=_archive_finalize_stall_poll_reap" in slot_source
-  assert "_maybe_reap_supervisor_pool_children_throttled(" in slot_source
-  assert 'context="archive_finalize_wait"' in slot_source
-
-
-def test_apply_archive_finalize_triggers_unthrottled_supervisor_reap():
-  """Each completed maxtasksperchild=1 archive slot gets an immediate reap."""
-  import inspect
-  import hpcperfstats.dbload.sync_timedb as st
-
-  source = inspect.getsource(st.run_sync_timedb_supervisor_loop)
-  slot_source = source.split("def _finalize_archive_slot", 1)[1]
-  slot_source = slot_source.split("\n  def ", 1)[0]
-  apply_index = slot_source.index(
-      "_apply_archive_finalize_results(slot.deferred_paths, results)"
-  )
-  reap_index = slot_source.index("_reap_supervisor_pool_children(", apply_index)
-  assert reap_index > apply_index
-  assert 'context="archive_finalize_slot"' in slot_source
-  assert 'context="archive_finalize"' in source
 
 
 def test_archive_append_cold_redis_completes_with_inflight_first(
@@ -8728,44 +8541,6 @@ def test_select_ingest_chunk_paths_no_pad_when_oldest_fills_chunk(tmp_path):
   assert not any("chunk_pad_n=" in line for line in logs)
 
 
-def test_select_ingest_chunk_paths_oldest_tar_1500_paths(tmp_path):
-  """Oldest blocked tar monopolizes chunk even with 1500+ handoff paths."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      select_ingest_chunk_paths,
-  )
-
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
-  tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
-  open(tar_a, "wb").close()
-  open(tar_b, "wb").close()
-  d1 = datetime(2020, 1, 1, 12, tzinfo=timezone.utc)
-  d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
-  handoff_paths = []
-  for i in range(1578):
-    path = tmp_path / ("h%d" % i)
-    path.write_text("x")
-    os.utime(path, (d1.timestamp(), d1.timestamp()))
-    handoff_paths.append(str(path))
-  tail_path = tmp_path / "tail"
-  tail_path.write_text("x")
-  os.utime(tail_path, (d2.timestamp(), d2.timestamp()))
-  pending = handoff_paths + [str(tail_path)]
-  unprocessed = {tar_a: list(handoff_paths)}
-  chunk = select_ingest_chunk_paths(
-      pending,
-      oldest_tar=tar_a,
-      unprocessed_by_tar=unprocessed,
-      inflight_archive_paths=set(),
-      tgz_archive_dir=str(daily_dir),
-      chunk_size=1000,
-  )
-  assert len(chunk) == 1000
-  assert str(tail_path) not in chunk
-  assert all(path in handoff_paths for path in chunk)
-
-
 def test_pending_reconcile_fingerprint_updates_when_incomplete_drops():
   """post_finalize live incomplete_n must refresh reuse fingerprint.
 
@@ -8892,25 +8667,6 @@ def test_try_reuse_pending_reconcile_unprocessed_cache_skip_vs_rescan():
   )
   assert stall_past_soft is not None
   assert stall_past_soft[3] == "oldest_day_gate_stall_unchanged"
-
-
-def test_handoff_priority_cap_explicit_wave_when_priority_exceeds_max():
-  """When handoff_priority_n >= ingest_queue_max, cap is an explicit head wave."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      prepend_checkpoint_incomplete_paths_to_pending,
-  )
-
-  handoff = ["/h%d" % i for i in range(2500)]
-  pending = ["/t%d" % i for i in range(100)]
-  merged = prepend_checkpoint_incomplete_paths_to_pending(pending, handoff)
-  ingest_queue_max = 2000
-  priority_n = len(handoff)
-  assert priority_n >= ingest_queue_max
-  capped = merged[:ingest_queue_max]
-  assert len(capped) == ingest_queue_max
-  assert capped[0] == "/h0"
-  assert capped[-1] == "/h1999"
-  assert "/t0" not in capped
 
 
 def test_reconcile_orphan_inflight_for_oldest_tar_reclaims_without_archive_job(
@@ -9142,177 +8898,6 @@ def test_select_ingest_chunk_paths_cross_day_only_empty_pending_uses_fallback(
   assert chunk == []
 
 
-def test_select_ingest_chunk_prefers_handoff_across_oldest_tar(tmp_path):
-  """Cross-day handoff paths dispatch before oldest_tar gate (May vs June stall)."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      select_ingest_chunk_paths,
-  )
-
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  may_tar = os.path.normpath(str(daily_dir / "2026-05-27.tar"))
-  jun_tar = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
-  open(may_tar, "wb").close()
-  open(jun_tar, "wb").close()
-  d_may = datetime(2026, 5, 27, 12, tzinfo=timezone.utc)
-  d_jun = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
-  may_handoff = tmp_path / "host" / "may_handoff"
-  may_handoff.parent.mkdir(parents=True)
-  may_handoff.write_text("1000 job cn001\n")
-  os.utime(may_handoff, (d_may.timestamp(), d_may.timestamp()))
-  jun_paths = []
-  for i in range(5):
-    path = tmp_path / "host" / ("jun_%d" % i)
-    path.write_text("2000 job cn002\n")
-    os.utime(path, (d_jun.timestamp(), d_jun.timestamp()))
-    jun_paths.append(str(path))
-  pending = list(jun_paths) + [str(may_handoff)]
-  chunk = select_ingest_chunk_paths(
-      pending,
-      oldest_tar=jun_tar,
-      unprocessed_by_tar={jun_tar: jun_paths},
-      inflight_archive_paths=set(),
-      tgz_archive_dir=str(daily_dir),
-      chunk_size=1000,
-      handoff_priority_paths={str(may_handoff)},
-  )
-  assert chunk[0] == str(may_handoff)
-  assert str(may_handoff) in chunk
-  assert all(path in jun_paths for path in chunk[1:])
-
-
-def test_select_ingest_chunk_skips_misbucket_handoff_without_daily_archive(tmp_path):
-  """Misbucket epoch path (e.g. 1783181172 → July) must not pin every June chunk."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      handoff_path_lacks_daily_archive,
-      select_ingest_chunk_paths,
-  )
-
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  may_tar = os.path.normpath(str(daily_dir / "2026-05-30.tar"))
-  jun_tar = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
-  open(may_tar, "wb").close()
-  open(jun_tar, "wb").close()
-  # Basename epoch 1783181172 → 2026-07-04; no July tar/zst on disk.
-  misbucket = tmp_path / "i617-114.vista.tacc.utexas.edu" / "1783181172"
-  misbucket.parent.mkdir(parents=True)
-  misbucket.write_text("1000 job cn001\n")
-  d_jun = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
-  jun_path = tmp_path / "host" / "jun_0"
-  jun_path.parent.mkdir(parents=True, exist_ok=True)
-  jun_path.write_text("2000 job cn002\n")
-  os.utime(jun_path, (d_jun.timestamp(), d_jun.timestamp()))
-  assert handoff_path_lacks_daily_archive(str(misbucket), str(daily_dir))
-  logs = []
-  chunk = select_ingest_chunk_paths(
-      [str(jun_path)],
-      oldest_tar=jun_tar,
-      unprocessed_by_tar={jun_tar: [str(jun_path)]},
-      inflight_archive_paths=set(),
-      tgz_archive_dir=str(daily_dir),
-      chunk_size=1000,
-      handoff_priority_paths={str(misbucket)},
-      log_fn=lambda msg, **_k: logs.append(str(msg)),
-  )
-  assert str(misbucket) not in chunk
-  assert chunk == [str(jun_path)]
-  assert any("handoff_cross_day_skip" in line and "no_daily_archive" in line for line in logs)
-
-
-def test_select_ingest_chunk_same_day_deferred_lead_under_youngest_gate(tmp_path):
-  """Deferred source-day handoff pins enter lead even when gate is a newer day."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      select_ingest_chunk_paths,
-  )
-
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  jun_tar = os.path.normpath(str(daily_dir / "2026-06-09.tar"))
-  jul_tar = os.path.normpath(str(daily_dir / "2026-07-15.tar"))
-  open(jun_tar, "wb").close()
-  open(jul_tar, "wb").close()
-  d_jun = datetime(2026, 6, 9, 12, tzinfo=timezone.utc)
-  d_jul = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
-  jun_handoff = tmp_path / "host" / "jun_handoff"
-  jun_handoff.parent.mkdir(parents=True)
-  jun_handoff.write_text("1000 job cn001\n")
-  os.utime(jun_handoff, (d_jun.timestamp(), d_jun.timestamp()))
-  jul_paths = []
-  for i in range(8):
-    path = tmp_path / "host" / ("jul_%d" % i)
-    path.write_text("2000 job cn002\n")
-    os.utime(path, (d_jul.timestamp(), d_jul.timestamp()))
-    jul_paths.append(str(path))
-  pending = list(jul_paths) + [str(jun_handoff)]
-  chunk = select_ingest_chunk_paths(
-      pending,
-      oldest_tar=jul_tar,
-      unprocessed_by_tar={jul_tar: jul_paths},
-      inflight_archive_paths=set(),
-      tgz_archive_dir=str(daily_dir),
-      chunk_size=3,
-      handoff_priority_paths={str(jun_handoff)},
-      handoff_source_tar_by_path={str(jun_handoff): jun_tar},
-      deferred_waiting_source_tars={jun_tar},
-      newest_first=True,
-  )
-  assert chunk[0] == str(jun_handoff)
-  assert str(jun_handoff) in chunk
-
-
-def test_select_ingest_chunk_additive_oldest_handoff_plus_chunk_size(tmp_path):
-  """Gate newer than oldest: uncapped oldest-day lead + full chunk_size (additive)."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      select_ingest_chunk_paths,
-  )
-
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  jun_tar = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
-  jul_tar = os.path.normpath(str(daily_dir / "2026-07-15.tar"))
-  open(jun_tar, "wb").close()
-  open(jul_tar, "wb").close()
-  d_jun = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
-  d_jul = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
-  host = tmp_path / "host"
-  host.mkdir()
-  lead_n = 50
-  chunk_size = 20
-  jun_paths = []
-  for i in range(lead_n):
-    path = host / ("jun_%d" % i)
-    path.write_text("1000 job cn001\n")
-    os.utime(path, (d_jun.timestamp(), d_jun.timestamp()))
-    jun_paths.append(str(path))
-  jul_paths = []
-  for i in range(chunk_size + 5):
-    path = host / ("jul_%d" % i)
-    path.write_text("2000 job cn002\n")
-    os.utime(path, (d_jul.timestamp(), d_jul.timestamp()))
-    jul_paths.append(str(path))
-  pending = list(jul_paths) + list(jun_paths)
-  handoff = set(jun_paths)
-  chunk = select_ingest_chunk_paths(
-      pending,
-      oldest_tar=jul_tar,
-      unprocessed_by_tar={
-          jul_tar: jul_paths,
-          jun_tar: jun_paths,
-      },
-      inflight_archive_paths=set(),
-      tgz_archive_dir=str(daily_dir),
-      chunk_size=chunk_size,
-      handoff_priority_paths=handoff,
-      handoff_source_tar_by_path={p: jun_tar for p in jun_paths},
-      newest_first=True,
-  )
-  assert len(chunk) == lead_n + chunk_size
-  assert set(chunk[:lead_n]) == set(jun_paths)
-  assert all(path in jul_paths for path in chunk[lead_n:])
-  assert len(chunk[lead_n:]) == chunk_size
-
-
 def test_select_ingest_chunk_no_additive_when_gate_is_oldest(tmp_path):
   """When gate tar is the oldest incomplete day, total stays ≤ chunk_size."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
@@ -9522,33 +9107,6 @@ def test_select_ingest_chunk_leads_one_older_day_at_a_time(tmp_path):
   assert len(chunk2) == 1 + 5
 
 
-def test_age_misbucket_handoff_priority_paths_clears_and_returns_source(tmp_path):
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      age_misbucket_handoff_priority_paths,
-  )
-
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  may_tar = os.path.normpath(str(daily_dir / "2026-05-30.tar"))
-  open(may_tar, "wb").close()
-  misbucket = tmp_path / "i617-114.vista.tacc.utexas.edu" / "1783181172"
-  misbucket.parent.mkdir(parents=True)
-  misbucket.write_text("x")
-  handoff = {str(misbucket)}
-  source_map = {str(misbucket): may_tar}
-  logs = []
-  clear_sources = age_misbucket_handoff_priority_paths(
-      handoff,
-      tgz_archive_dir=str(daily_dir),
-      handoff_source_tar_by_path=source_map,
-      log_fn=lambda msg, **_k: logs.append(str(msg)),
-  )
-  assert handoff == set()
-  assert source_map == {}
-  assert clear_sources == {may_tar}
-  assert any("handoff_priority_age" in line and "2026-07-04" in line for line in logs)
-
-
 def test_sort_pending_stats_paths_oldest_first(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       sort_pending_stats_paths_oldest_first,
@@ -9610,37 +9168,6 @@ def test_cap_pending_sort_retains_global_oldest_head():
   assert capped[0] == may_paths[0]
   assert len(capped) == 2000
   assert may_paths[-1] in capped
-
-
-def test_handoff_cap_preserves_oldest_blocked_head():
-  """Oldest-tar blocked paths stay in capped pending when handoff tail is trimmed."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      prepend_checkpoint_incomplete_paths_to_pending,
-  )
-
-  handoff = ["/handoff/%d" % i for i in range(1500)]
-  blocked = ["/blocked/%d" % i for i in range(5)]
-  tail = ["/tail/%d" % i for i in range(100)]
-  merged = prepend_checkpoint_incomplete_paths_to_pending(
-      tail,
-      blocked,
-  )
-  merged = prepend_checkpoint_incomplete_paths_to_pending(
-      merged,
-      handoff,
-  )
-  ingest_queue_max = 2000
-  priority_n = len(handoff)
-  reserved = blocked[:3]
-  reserved_set = set(reserved)
-  tail_budget = max(0, ingest_queue_max - priority_n - len(reserved))
-  head = merged[:priority_n]
-  tail_paths = [path for path in merged[priority_n:] if path not in reserved_set]
-  capped = reserved + head + tail_paths[:tail_budget]
-  assert all(path in capped for path in reserved)
-  assert capped[0] == "/blocked/0"
-  assert "/handoff/0" in capped
-  assert len(capped) <= ingest_queue_max
 
 
 def test_rescan_force_snapshot_paths_uses_closed_list_despite_rescan_count(
@@ -9952,7 +9479,10 @@ def test_log_day_close_candidate_report_date_order_across_statuses(
 
   import hpcperfstats.dbload.lib.conf_parser as cfg_mod
 
-  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
+      True,
+  )
   log_day_close_candidate_report(
       [
           {
@@ -10037,53 +9567,6 @@ def test_classify_reports_aligned_unprocessed_and_cross_day_n(tmp_path):
   assert by_tar[tar_path]["unprocessed_cross_day_n"] == 1
 
 
-def test_cross_day_remaining_raw_does_not_block_filesystem_complete(tmp_path):
-  """Filename-day misbucket under May-28 must not keep fs_complete false."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      day_close_filesystem_complete,
-      filter_remaining_raw_aligned_to_tar,
-      remaining_raw_on_disk_counts_for_tar,
-  )
-
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  tar_path = os.path.normpath(str(daily_dir / "2026-05-28.tar"))
-  zst_path = os.path.normpath(str(daily_dir / "2026-05-28.tar.zst"))
-  open(zst_path, "wb").write(b"sealed")
-  d_may = datetime(2026, 5, 28, 12, tzinfo=timezone.utc)
-  d_july = datetime(2026, 7, 6, 12, tzinfo=timezone.utc)
-  aligned = tmp_path / str(int(d_may.timestamp()))
-  cross = tmp_path / str(int(d_july.timestamp()))
-  aligned.write_text("x")
-  cross.write_text("x")
-  remaining = {zst_path: [str(aligned), str(cross)]}
-  filtered = filter_remaining_raw_aligned_to_tar(
-      remaining,
-      tar_path,
-      tgz_archive_dir=str(daily_dir),
-  )
-  assert filtered[zst_path] == [str(aligned)]
-  aligned_n, cross_n = remaining_raw_on_disk_counts_for_tar(
-      remaining,
-      tar_path,
-      tgz_archive_dir=str(daily_dir),
-  )
-  assert aligned_n == 1
-  assert cross_n == 1
-  assert day_close_filesystem_complete(
-      tar_path,
-      remaining_raw_by_gz={zst_path: [str(cross)]},
-      use_blocking_remaining=False,
-      tgz_archive_dir=str(daily_dir),
-  ) is True
-  assert day_close_filesystem_complete(
-      tar_path,
-      remaining_raw_by_gz={zst_path: [str(aligned)]},
-      use_blocking_remaining=False,
-      tgz_archive_dir=str(daily_dir),
-  ) is False
-
-
 def test_classify_reports_processed_but_on_disk_and_cross_day(tmp_path, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg_mod
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
@@ -10092,7 +9575,10 @@ def test_classify_reports_processed_but_on_disk_and_cross_day(tmp_path, monkeypa
       log_day_close_candidate_report,
   )
 
-  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
+      True,
+  )
   # Avoid live archive-dir scan from blocking map during needs_work.
   monkeypatch.setattr(
       helpers,
@@ -10724,7 +10210,10 @@ def test_classify_on_disk_equals_unprocessed_plus_processed(tmp_path, monkeypatc
       log_day_close_candidate_report,
   )
 
-  monkeypatch.setattr(cfg_mod, "get_sync_day_close_candidate_report", lambda: True)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
+      True,
+  )
   monkeypatch.setattr(
       helpers,
       "day_close_filesystem_complete",
@@ -10829,3 +10318,173 @@ def test_ingest_worker_never_streams_sealed_when_populate_pool_down(
   assert stream_calls["n"] == 0
   assert _POPULATE_QUEUE_KEY in fake._lists
   assert len(fake._lists[_POPULATE_QUEUE_KEY]) == 1
+
+def test_raw_stats_path_needs_tar_append_when_redis_claims_but_open_tar_missing(
+    monkeypatch, tmp_path,
+):
+  """Handoff partition must not trust Redis when mutable .tar lacks the member."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
+      FakeRedis,
+      build_archive_members_redis_keys,
+      store_complete_members_in_redis,
+  )
+
+  helpers.clear_mutable_tar_authority_members_cache()
+  helpers.clear_daily_archive_members_cache()
+  raw = tmp_path / "host" / "1709123456"
+  raw.parent.mkdir(parents=True)
+  raw.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "daily" / "2024-03-05.tar.zst")
+  os.makedirs(os.path.dirname(archive_key), exist_ok=True)
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  open(archive_key, "wb").write(b"zst")
+  open(tar_path, "wb").write(b"")
+
+  fake = FakeRedis()
+  cache_key = helpers._daily_archive_members_cache_key(
+      normalize_daily_compressed_path(archive_key),
+  )
+  keys = build_archive_members_redis_keys(cache_key)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      ".get_archive_members_redis_client",
+      lambda required=True: fake,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
+      lambda: True,
+  )
+  member_name = helpers.get_tar_member_name(str(raw))
+  store_complete_members_in_redis(
+      keys,
+      {member_name: raw.stat().st_size},
+      saw_duplicates=False,
+  )
+
+  assert helpers.raw_stats_path_needs_tar_append(str(raw), str(tmp_path / "daily"))
+
+def test_select_ingest_chunk_paths_oldest_tar_1500_paths(tmp_path):
+  """Oldest blocked tar monopolizes chunk even with 1500+ handoff paths."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
+  tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
+  open(tar_a, "wb").close()
+  open(tar_b, "wb").close()
+  d1 = datetime(2020, 1, 1, 12, tzinfo=timezone.utc)
+  d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
+  handoff_paths = []
+  for i in range(1578):
+    path = tmp_path / ("h%d" % i)
+    path.write_text("x")
+    os.utime(path, (d1.timestamp(), d1.timestamp()))
+    handoff_paths.append(str(path))
+  tail_path = tmp_path / "tail"
+  tail_path.write_text("x")
+  os.utime(tail_path, (d2.timestamp(), d2.timestamp()))
+  pending = handoff_paths + [str(tail_path)]
+  unprocessed = {tar_a: list(handoff_paths)}
+  chunk = select_ingest_chunk_paths(
+      pending,
+      oldest_tar=tar_a,
+      unprocessed_by_tar=unprocessed,
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=1000,
+  )
+  assert len(chunk) == 1000
+  assert str(tail_path) not in chunk
+  assert all(path in handoff_paths for path in chunk)
+
+def test_select_ingest_chunk_same_day_deferred_lead_under_youngest_gate(tmp_path):
+  """Deferred source-day handoff pins enter lead even when gate is a newer day."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      select_ingest_chunk_paths,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  jun_tar = os.path.normpath(str(daily_dir / "2026-06-09.tar"))
+  jul_tar = os.path.normpath(str(daily_dir / "2026-07-15.tar"))
+  open(jun_tar, "wb").close()
+  open(jul_tar, "wb").close()
+  d_jun = datetime(2026, 6, 9, 12, tzinfo=timezone.utc)
+  d_jul = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
+  jun_handoff = tmp_path / "host" / "jun_handoff"
+  jun_handoff.parent.mkdir(parents=True)
+  jun_handoff.write_text("1000 job cn001\n")
+  os.utime(jun_handoff, (d_jun.timestamp(), d_jun.timestamp()))
+  jul_paths = []
+  for i in range(8):
+    path = tmp_path / "host" / ("jul_%d" % i)
+    path.write_text("2000 job cn002\n")
+    os.utime(path, (d_jul.timestamp(), d_jul.timestamp()))
+    jul_paths.append(str(path))
+  pending = list(jul_paths) + [str(jun_handoff)]
+  chunk = select_ingest_chunk_paths(
+      pending,
+      oldest_tar=jul_tar,
+      unprocessed_by_tar={jul_tar: jul_paths},
+      inflight_archive_paths=set(),
+      tgz_archive_dir=str(daily_dir),
+      chunk_size=3,
+      handoff_priority_paths={str(jun_handoff)},
+      handoff_source_tar_by_path={str(jun_handoff): jun_tar},
+      deferred_waiting_source_tars={jun_tar},
+      newest_first=True,
+  )
+  assert chunk[0] == str(jun_handoff)
+  assert str(jun_handoff) in chunk
+
+def test_cross_day_remaining_raw_does_not_block_filesystem_complete(tmp_path):
+  """Filename-day misbucket under May-28 must not keep fs_complete false."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      day_close_filesystem_complete,
+      filter_remaining_raw_aligned_to_tar,
+      remaining_raw_on_disk_counts_for_tar,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  tar_path = os.path.normpath(str(daily_dir / "2026-05-28.tar"))
+  zst_path = os.path.normpath(str(daily_dir / "2026-05-28.tar.zst"))
+  open(zst_path, "wb").write(b"sealed")
+  d_may = datetime(2026, 5, 28, 12, tzinfo=timezone.utc)
+  d_july = datetime(2026, 7, 6, 12, tzinfo=timezone.utc)
+  aligned = tmp_path / str(int(d_may.timestamp()))
+  cross = tmp_path / str(int(d_july.timestamp()))
+  aligned.write_text("x")
+  cross.write_text("x")
+  remaining = {zst_path: [str(aligned), str(cross)]}
+  filtered = filter_remaining_raw_aligned_to_tar(
+      remaining,
+      tar_path,
+      tgz_archive_dir=str(daily_dir),
+  )
+  assert filtered[zst_path] == [str(aligned)]
+  aligned_n, cross_n = remaining_raw_on_disk_counts_for_tar(
+      remaining,
+      tar_path,
+      tgz_archive_dir=str(daily_dir),
+  )
+  assert aligned_n == 1
+  assert cross_n == 1
+  assert day_close_filesystem_complete(
+      tar_path,
+      remaining_raw_by_gz={zst_path: [str(cross)]},
+      use_blocking_remaining=False,
+      tgz_archive_dir=str(daily_dir),
+  ) is True
+  assert day_close_filesystem_complete(
+      tar_path,
+      remaining_raw_by_gz={zst_path: [str(aligned)]},
+      use_blocking_remaining=False,
+      tgz_archive_dir=str(daily_dir),
+  ) is False
+
+

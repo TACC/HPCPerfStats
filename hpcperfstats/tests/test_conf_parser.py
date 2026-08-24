@@ -763,8 +763,6 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_ingest_queue_max_size() == 3000
   assert cfg.get_sync_ingest_rescan_mtime_days() == 1
   # Thrown B keys: getters return hard-coded retired defaults (not INI).
-  assert cfg.get_sync_ingest_rescan_full_every() == 0
-  assert cfg.get_sync_ingest_current_proximity_days() == 2
   assert cfg.get_sync_ingest_chunk_size() == 3000
   assert cfg.get_sync_ingest_chunk_size() == cfg.get_sync_ingest_queue_max_size()
   assert cfg.get_sync_archive_queue_max_size() == 1000
@@ -782,17 +780,6 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_ingest_per_file_timeout_max_s() == 86400.0
   assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == pytest.approx(
       (86400.0 - 900.0) / 30720.0,
-  )
-  assert cfg.get_sync_ingest_giant_pool_supplement_enabled() is False
-  assert cfg.get_sync_ingest_idle_slot_supplement_enabled() is False
-  assert cfg.get_sync_ingest_giant_pool_supplement_max_bytes() == 1073741824
-  assert cfg.get_sync_ingest_giant_pool_supplement_large_max_bytes() == 8589934592
-  assert cfg.get_sync_ingest_giant_pool_supplement_queue_multiplier() == 2
-  assert cfg.get_sync_ingest_giant_pool_supplement_queue_size() == max(
-      1, int(cfg.get_sync_ingest_pool_processes()) * 2
-  )
-  assert cfg.get_sync_ingest_giant_pool_supplement_trigger_budget_s() == pytest.approx(
-      6600.0,
   )
   assert cfg.get_sync_archive_members_cache_enabled() is True
   assert cfg.get_sync_archive_members_cache_max_entries() == 64
@@ -813,9 +800,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
       "total_cores = 4\n"
       "sync_ingest_queue_max_size = 111\n"
       "sync_ingest_rescan_mtime_days = 3\n"
-      "sync_ingest_rescan_full_every = 50\n"
-      "sync_ingest_current_proximity_days = -3\n"
-      "sync_archive_queue_max_size = 222\n"
+            "sync_archive_queue_max_size = 222\n"
       "sync_archive_retry_max_attempts = 7\n"
       "sync_archive_retry_backoff_base_seconds = 2.5\n"
       "sync_archive_retry_backoff_max_seconds = 12.5\n"
@@ -846,8 +831,6 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_ingest_queue_max_size() == 111
   assert cfg.get_sync_ingest_rescan_mtime_days() == 3
   # Thrown: INI overrides ignored; hard-coded retired defaults.
-  assert cfg.get_sync_ingest_rescan_full_every() == 0
-  assert cfg.get_sync_ingest_current_proximity_days() == 2
   assert cfg.get_sync_ingest_chunk_size() == 111
   assert cfg.get_sync_archive_queue_max_size() == 222
   assert cfg.get_sync_archive_retry_max_attempts() == 7
@@ -876,37 +859,26 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_ingest_per_file_timeout_s() == 45.0
 
 
-def test_sync_ingest_rescan_mtime_and_full_every_clamp(temp_ini, monkeypatch):
-  """rescan mtime_days still INI-backed; full_every thrown (hard-coded 0)."""
+def test_sync_ingest_rescan_mtime_days_clamp(temp_ini, monkeypatch):
+  """rescan mtime_days remains INI-backed with minimum 1."""
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_rescan_mtime_days() == 1
-  assert cfg.get_sync_ingest_rescan_full_every() == 0
 
   with open(temp_ini) as f:
     content = f.read()
   content = content.replace(
       "total_cores = 4",
       "total_cores = 4\n"
-      "sync_ingest_rescan_mtime_days = 0\n"
-      "sync_ingest_rescan_full_every = -5\n",
+      "sync_ingest_rescan_mtime_days = 0\n",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_rescan_mtime_days() == 1
-  assert cfg.get_sync_ingest_rescan_full_every() == 0
-
-
-def test_sync_archive_max_inflight_jobs_thrown_constant(monkeypatch, temp_ini):
-  """Thrown max_inflight stub is constant 2 (capacity = archive pool)."""
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-
-  del temp_ini, monkeypatch
-  assert cfg.get_sync_archive_max_inflight_jobs() == 2
 
 
 def test_sync_host_itimes_cache_max_timestamps_per_entry(temp_ini, monkeypatch):
@@ -1167,23 +1139,20 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   # Thrown B janitor keys: hard-coded stubs; NEW day_close keys remain live.
-  assert cfg.get_archive_janitor_budget_seconds() == 30.0
-  assert cfg.get_archive_janitor_debt_high_watermark() == 50
-  assert cfg.get_archive_janitor_debt_burst_factor() == 1.5
-  assert cfg.get_archive_janitor_debt_max_entries() == 200
   assert cfg.get_sync_day_close_raw_paths_per_batch() == 1000
-  assert cfg.get_sync_day_close_candidate_report() is False
   assert cfg.get_sync_day_close_max_inflight() == 4
   assert cfg.get_sync_day_close_manifest_stale_seconds() == 7200.0
   assert cfg.get_sync_day_close_raw_removal_max_deletes_per_pass() == 0
   assert cfg.get_archive_keep_uncompressed_tar() is False
   assert cfg.get_archive_today_uncompressed_tar_grace_hours() == 24.0
-  assert cfg.get_archive_maintenance_idle_seconds() == 300
-  assert cfg.get_sync_archive_max_inflight_jobs() == 2
   assert cfg.get_sync_archive_worker_stall_seconds() == 600.0
   assert cfg.get_sync_enable_ingest_first_durability_mode() is True
   assert not hasattr(cfg, "get_archive_janitor_days_per_tick")
   assert not hasattr(cfg, "get_archive_janitor_raw_paths_per_tick")
+  assert not hasattr(cfg, "get_archive_janitor_budget_seconds")
+  assert not hasattr(cfg, "get_sync_ingest_current_proximity_days")
+  assert not hasattr(cfg, "get_sync_archive_maint_hints")
+  assert not hasattr(cfg, "get_sync_startup_snapshot_wait_seconds")
   assert not hasattr(cfg, "get_sync_startup_day_close_max_inflight")
   assert not hasattr(cfg, "get_archive_seal_idle_seconds")
   assert not hasattr(cfg, "get_archive_maintenance_max_defer_seconds")

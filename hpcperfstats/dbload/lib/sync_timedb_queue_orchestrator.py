@@ -10,6 +10,8 @@ retired supervisor loop.
 
 Attributes:
   DAY_CLOSE_THREAD_NAME_PREFIX: Thread name prefix for day_close workers.
+  _IDLE_RECONSTRUCT_MIN_INTERVAL_S: Min seconds between idle reconstruct passes.
+  _last_idle_reconstruct_mono: Monotonic timestamp of last idle reconstruct.
 """
 from __future__ import annotations
 
@@ -37,13 +39,17 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     ensure_persistence_contract,
 )
-from hpcperfstats.dbload.lib.sync_timedb_stats_find import run_find_stats
+from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
+    iter_find_stats_stdout_chunks,
+)
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     create_sync_timedb_spawn_pool,
 )
 from hpcperfstats.dbload.lib.process_title import apply_pool_worker_process_title
 
 DAY_CLOSE_THREAD_NAME_PREFIX = "day-close"
+_IDLE_RECONSTRUCT_MIN_INTERVAL_S = 30.0
+_last_idle_reconstruct_mono = 0.0
 
 
 def _log(msg: str, *, log_fn: Callable[..., None] | None = None) -> None:
@@ -122,9 +128,10 @@ def _boot_stream_discover(
   log_fn: Callable[..., None] | None = None,
 ) -> jd.StreamingDiscoverStats:
   """
-  Run GNU find and stream-classify incomplete ingest/append jobs.
+  Stream GNU find stdout into ingest/append/day_close jobs as paths arrive.
 
-  Empty Redis before or after this call does **not** mean caught up.
+  Does **not** call capture-all ``run_find_stats``. Empty Redis before or after
+  this call does **not** mean caught up.
 
   Args:
     client (Any): Redis client for ``job:v1``.
@@ -148,26 +155,152 @@ def _boot_stream_discover(
     True
   """
   today = date.today()
-  records = run_find_stats(archive_dir, log_fn=log_fn)
-  stats = jd.stream_enqueue_ingest_from_find_records(
+  chunks = iter_find_stats_stdout_chunks(archive_dir)
+  stats = jd.stream_enqueue_ingest_from_find_stdout_chunks(
       client,
-      records,
+      chunks,
       tgz_archive_dir=tgz_archive_dir,
       today=today,
       hot_days=_hot_days(),
       archive_data_dir=archive_dir,
   )
+  day_n = _enqueue_day_closes_for_daily_dir(
+      client,
+      tgz_archive_dir=tgz_archive_dir,
+  )
   _log(
-      "queue_orchestrator boot discover seen=%d ingest=%d append=%d skipped=%d"
+      "queue_orchestrator boot discover seen=%d ingest=%d append=%d "
+      "day_close=%d skipped=%d daily_scan_day_close=%d"
       % (
           stats.seen,
           stats.enqueued_ingest,
           stats.enqueued_append,
+          stats.enqueued_day_close,
           stats.skipped_complete,
+          day_n,
       ),
       log_fn=log_fn,
   )
   return stats
+
+
+def _enqueue_day_closes_for_daily_dir(
+  client: Any,
+  *,
+  tgz_archive_dir: str,
+) -> int:
+  """
+  Scan daily ``.tar`` siblings and enqueue incomplete day_close jobs.
+
+  Args:
+    client (Any): Redis client with ``rpush``.
+    tgz_archive_dir (str): Daily archive directory.
+
+  Returns:
+    int: Number of newly enqueued day_close identities.
+
+  Examples:
+    >>> class _C:
+    ...   def rpush(self, *a, **k):
+    ...     return 1
+    >>> _enqueue_day_closes_for_daily_dir(_C(), tgz_archive_dir="/nope")
+    0
+  """
+  root = str(tgz_archive_dir or "").strip()
+  if not root or not os.path.isdir(root):
+    return 0
+  enqueued = 0
+  for name in os.listdir(root):
+    if not name.endswith(".tar") or name.endswith(".tar.zst"):
+      continue
+    if len(name) < 14:
+      continue
+    day_token = name[:10]
+    try:
+      cal = date.fromisoformat(day_token)
+    except ValueError:
+      continue
+    tar_path = os.path.normpath(os.path.join(root, name))
+    if jr.enqueue_day_close_if_needed(
+        client,
+        tar_path,
+        calendar_day=cal,
+    ):
+      enqueued += 1
+  return enqueued
+
+
+def _idle_reconstruct_pass(
+  client: Any,
+  archive_dir: str,
+  *,
+  tgz_archive_dir: str,
+  log_fn: Callable[..., None] | None = None,
+  force: bool = False,
+) -> int:
+  """
+  Empty-queue reconstruct: rediscover via ``JOB_KIND_DISCOVER`` + day_close scan.
+
+  Empty Redis does **not** mean caught up — this pass re-classifies from disk.
+  Throttled to at most once per ``_IDLE_RECONSTRUCT_MIN_INTERVAL_S`` unless
+  ``force`` (``run_once`` exit path).
+
+  Args:
+    client (Any): Redis client.
+    archive_dir (str): Archive data directory.
+    tgz_archive_dir (str): Daily archive directory.
+    log_fn (Callable[..., None] | None): Optional logger.
+    force (bool): Bypass throttle when True.
+
+  Returns:
+    int: Approximate work units enqueued (discover runs + day_close pushes).
+
+  Examples:
+    >>> class _C:
+    ...   def rpush(self, *a, **k):
+    ...     return 1
+    ...   def lpop(self, *a, **k):
+    ...     return None
+    >>> _idle_reconstruct_pass(_C(), "/nope", tgz_archive_dir="/d", force=True)
+    0
+  """
+  global _last_idle_reconstruct_mono
+  now = time.monotonic()
+  if (
+      not force
+      and (now - _last_idle_reconstruct_mono) < _IDLE_RECONSTRUCT_MIN_INTERVAL_S
+  ):
+    return 0
+  _last_idle_reconstruct_mono = now
+  jq.enqueue_list_job(
+      client,
+      kind=jq.JOB_KIND_DISCOVER,
+      identity="rescan",
+  )
+  work = 0
+  while True:
+    identity = jq.pop_list_job(client, kind=jq.JOB_KIND_DISCOVER)
+    if identity is None:
+      break
+    work += 1
+    stats = _boot_stream_discover(
+        client,
+        archive_dir,
+        tgz_archive_dir=tgz_archive_dir,
+        log_fn=log_fn,
+    )
+    work += int(stats.enqueued_ingest) + int(stats.enqueued_append)
+    work += int(stats.enqueued_day_close)
+  work += _enqueue_day_closes_for_daily_dir(
+      client,
+      tgz_archive_dir=tgz_archive_dir,
+  )
+  if work:
+    _log(
+        "queue_orchestrator idle reconstruct work=%d" % work,
+        log_fn=log_fn,
+    )
+  return work
 
 
 def _ingest_worker(lock: Any, path: str) -> Any:
@@ -270,7 +403,10 @@ def _run_day_close_job(
     return "deferred_age"
   outcome = "skipped"
   try:
+    from django.db import close_old_connections
+
     from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+        dedupe_tar_keep_largest_file_per_member,
         seal_dirty_daily_archives,
     )
     from hpcperfstats.dbload.lib.conf_parser import (
@@ -280,6 +416,48 @@ def _run_day_close_job(
         get_host_name_ext,
         get_local_timezone,
     )
+    from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+        DayRawRemovalCoordinator,
+    )
+    from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
+        stats_file_head_ingested_in_db,
+    )
+
+    close_old_connections()
+    root = str(archive_data_dir or "").strip() or os.path.dirname(
+        os.path.normpath(tgz_archive_dir)
+    )
+    quiet = log_fn or (lambda *a, **k: None)
+    coord = DayRawRemovalCoordinator(
+        archive_data_dir=root,
+        host_name_ext=get_host_name_ext() or "",
+        tgz_archive_dir=tgz_archive_dir,
+        log_fn=quiet,
+        get_quarantine_skip_paths=lambda: set(),
+        ingest_ready_fn=stats_file_head_ingested_in_db,
+    )
+    # DC-01: pre-seal verify → dedupe → seal → post-seal verify → delete → tar-drop.
+    if os.path.isfile(tar_path):
+      try:
+        coord.run_pre_seal_verify_sync(tar_path)
+      except Exception as exc:
+        _log(
+            "queue_orchestrator day_close pre_seal_verify fail day=%s err=%s"
+            % (day_token, type(exc).__name__),
+            log_fn=log_fn,
+        )
+      try:
+        dedupe_tar_keep_largest_file_per_member(
+            tar_path,
+            log_fn=quiet,
+            tgz_archive_dir=tgz_archive_dir,
+        )
+      except Exception as exc:
+        _log(
+            "queue_orchestrator day_close dedupe fail day=%s err=%s"
+            % (day_token, type(exc).__name__),
+            log_fn=log_fn,
+        )
 
     seal_dirty_daily_archives(
         tgz_archive_dir,
@@ -291,32 +469,23 @@ def _run_day_close_job(
         seal_immediately_if_dirty=True,
         only_daily_tar_paths={tar_path},
         only_when_no_remaining_raw=True,
-        log_fn=log_fn or (lambda *a, **k: None),
+        log_fn=quiet,
     )
     outcome = "sealed"
 
-    root = str(archive_data_dir or "").strip() or os.path.dirname(
-        os.path.normpath(tgz_archive_dir)
-    )
-    from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-        DayRawRemovalCoordinator,
-    )
-    from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
-        stats_file_head_ingested_in_db,
-    )
+    if os.path.isfile(tar_path) or os.path.isfile(tar_path + ".zst"):
+      try:
+        coord.run_post_seal_verify_sync(tar_path)
+      except Exception as exc:
+        _log(
+            "queue_orchestrator day_close post_seal_verify fail day=%s err=%s"
+            % (day_token, type(exc).__name__),
+            log_fn=log_fn,
+        )
 
-    coord = DayRawRemovalCoordinator(
-        archive_data_dir=root,
-        host_name_ext=get_host_name_ext() or "",
-        tgz_archive_dir=tgz_archive_dir,
-        log_fn=log_fn or (lambda *a, **k: None),
-        get_quarantine_skip_paths=lambda: set(),
-        ingest_ready_fn=stats_file_head_ingested_in_db,
-    )
     deleted = int(coord.apply_batch_delete(tar_path) or 0)
     if deleted > 0:
       outcome = "raw_removed"
-    # Prefer filesystem complete + sealed sibling → tar_drop.
     zst_path = tar_path + ".zst"
     if (
         os.path.isfile(zst_path)
@@ -343,6 +512,13 @@ def _run_day_close_job(
         log_fn=log_fn,
     )
     return "skipped"
+  finally:
+    try:
+      from django.db import close_old_connections as _close
+
+      _close()
+    except Exception:
+      pass
   return outcome
 
 
@@ -549,15 +725,17 @@ def _drain_append_ready(
   *,
   inflight: dict[str, AsyncResult],
   leases: dict[str, str],
+  tgz_archive_dir: str,
   log_fn: Callable[..., None] | None = None,
 ) -> int:
   """
-  Collect finished append async results and release leases.
+  Collect finished append async results; enqueue day_close when needed.
 
   Args:
     client (Any): Redis client.
     inflight (dict[str, AsyncResult]): In-flight append map (mutated).
     leases (dict[str, str]): Lease tokens (mutated).
+    tgz_archive_dir (str): Daily archive directory for day_close identity.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -566,9 +744,10 @@ def _drain_append_ready(
   Examples:
     >>> _drain_append_ready(
     ...   type("C", (), {"eval": lambda *a: 1, "evalsha": lambda *a: 1,
-    ...                  "script_load": lambda s: "x"})(),
+    ...                  "script_load": lambda s: "x", "rpush": lambda *a: 1})(),
     ...   inflight={},
     ...   leases={},
+    ...   tgz_archive_dir="/d",
     ... )
     0
   """
@@ -591,6 +770,9 @@ def _drain_append_ready(
       jq.release_job_lease(
           client, kind=jq.JOB_KIND_APPEND, identity=path, owner_token=token
       )
+    tar = daily_tar_path_for_stats_path(path, tgz_archive_dir)
+    if tar:
+      jr.enqueue_day_close_if_needed(client, tar)
   return done
 
 
@@ -901,6 +1083,7 @@ def run_sync_timedb_queue_orchestrator(
               client,
               inflight=append_inflight,
               leases=append_leases,
+              tgz_archive_dir=tgz_archive_dir,
               log_fn=log_fn,
           )
           did += _fill_day_close_slots(
@@ -926,10 +1109,27 @@ def run_sync_timedb_queue_orchestrator(
             else:
               idle_rounds = 0
             if idle_rounds >= 1:
-              _log("queue_orchestrator run_once idle exit", log_fn=log_fn)
-              break
+              # One reconstruct pass before run_once exit (empty ≠ caught up).
+              recon = _idle_reconstruct_pass(
+                  client,
+                  directory,
+                  tgz_archive_dir=tgz_archive_dir,
+                  log_fn=log_fn,
+                  force=True,
+              )
+              if recon == 0 and _queues_appear_idle(client):
+                _log("queue_orchestrator run_once idle exit", log_fn=log_fn)
+                break
+              idle_rounds = 0
           elif did == 0 and not busy:
-            time.sleep(max(0.05, poll_s))
+            recon = _idle_reconstruct_pass(
+                client,
+                directory,
+                tgz_archive_dir=tgz_archive_dir,
+                log_fn=log_fn,
+            )
+            if recon == 0:
+              time.sleep(max(0.05, poll_s))
           else:
             if day_inflight:
               wait(
