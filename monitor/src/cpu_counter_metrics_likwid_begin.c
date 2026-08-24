@@ -68,4 +68,16 @@ int cpu_counter_metrics_likwid_ready(void)
   return g_likwid_ready;
 }
 
+#else /* MONITOR_CPU_BACKEND_DCGM */
+
+/* Exclusive LIKWID PMC session is not the DCGM CPU path. Uncore/RAPL begin
+ * call this under HAVE_LIKWID; return 0 so those types disable cleanly.
+ * Do not alias MONITOR_CPU_LIKWID_OVERLAY ready — Grace overlay is not the
+ * x86 uncore/RAPL session.
+ */
+int cpu_counter_metrics_likwid_ready(void)
+{
+  return 0;
+}
+
 #endif

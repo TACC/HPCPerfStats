@@ -52,7 +52,8 @@ check_PROGRAMS += test_dcgm_pkg_uniq
 endif
 # Pure DCGM util/publish math must run on LIKWID hosts too (blank watts, util@clock=0).
 check_PROGRAMS += test_cpu_counter_dcgm_util test_cpu_counter_dcgm_publish \
-	test_cpu_counter_dcgm_publish_likwid
+	test_cpu_counter_dcgm_publish_likwid \
+	test_cpu_counter_metrics_likwid_ready_dcgm
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer test_stats_buffer_collect test_stats_buffer_debug_shm test_debug_shm_emit_golden test_debug_shm_schema_mirror test_monitor_timing
 endif
@@ -239,6 +240,15 @@ test_cpu_counter_dcgm_util_SOURCES = \
 	test_cpu_counter_dcgm_util.c \
 	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
 test_cpu_counter_dcgm_util_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_CPU_BACKEND_DCGM
+
+# Horizon DCGM+HAVE_LIKWID: ready() must be declared and stub to 0 (no implicit-decl).
+test_cpu_counter_metrics_likwid_ready_dcgm_SOURCES = \
+	test_cpu_counter_metrics_likwid_ready_dcgm.c \
+	$(top_srcdir)/src/cpu_counter_metrics_likwid_begin.c
+test_cpu_counter_metrics_likwid_ready_dcgm_CPPFLAGS = $(AM_CPPFLAGS) \
+	-DMONITOR_CPU_BACKEND_DCGM
+test_cpu_counter_metrics_likwid_ready_dcgm_CFLAGS = $(AM_CFLAGS) \
+	-Werror=implicit-function-declaration
 
 test_cpu_counter_dcgm_publish_SOURCES = \
 	test_cpu_counter_dcgm_publish.c \
@@ -749,6 +759,7 @@ test_schema_emit_LDADD = $(LDADD)
 test_procfile_kv_LDADD = $(LDADD)
 test_collect_str_LDADD = $(LDADD)
 test_cpu_counter_dcgm_util_LDADD = $(LDADD)
+test_cpu_counter_metrics_likwid_ready_dcgm_LDADD = $(LDADD)
 test_cpu_counter_dcgm_publish_LDADD = $(LDADD)
 test_cpu_counter_dcgm_publish_likwid_LDADD = $(LDADD)
 test_likwid_overlay_map_LDADD = $(LDADD)
