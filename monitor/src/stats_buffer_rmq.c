@@ -14,10 +14,12 @@
 
 #include "stats_buffer.h"
 #include "stats_buffer_rmq_internal.h"
+#include "stats_buffer_rmq_policy.h"
 #include "trace.h"
 #include "monitor_release_log.h"
 
-/* RMQ send interval from monitor_daemon.c; reconnect backoff uses min(send_freq, cap) with a floor. */
+/* RMQ send interval from monitor_daemon.c; reconnect backoff uses send_freq via policy helpers.
+ * Heartbeat negotiation uses max(30, ceil(send_freq * 2)); backoff cap uses min(send_freq, 60). */
 extern double send_freq;
 
 #define RMQ_EXCHANGE "amq.direct"
@@ -31,14 +33,12 @@ extern double send_freq;
 #define RMQ_SOCK_IO_TIMEOUT_SEC 30
 #define RMQ_AMQP_HEARTBEAT_MIN_SEC 30
 
-/* Reconnect pacing: sample/send cadence still uses send_freq elsewhere; TCP retry delay is capped. */
-#define RMQ_RECONNECT_BACKOFF_CAP_SEC 30
-#define RMQ_RECONNECT_BACKOFF_MIN_SEC 2
-
 static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buffer *sf,
                                   amqp_socket_t **socket_out, int *channel_opened_out);
 static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn,
                                                   struct stats_buffer *sf);
+static int rmq_active_declare_and_bind(amqp_connection_state_t conn, struct stats_buffer *sf);
+static int rmq_reopen_channel(amqp_connection_state_t conn);
 
 #ifdef DEBUG
 /* Decode rabbitmq-c failures for DEBUG builds (ERROR -> stdout when RABBITMQ+DEBUG). */
@@ -105,20 +105,25 @@ static void rmq_debug_log_rpc_reply(const char *ctx, amqp_rpc_reply_t r)
 #endif /* DEBUG */
 
 /* One AMQP connection per process (libev single-threaded). Reconnect on credential mismatch or I/O failure.
- * When the broker is down, TCP reconnect attempts are rate-limited with a delay of
- * max(RMQ_RECONNECT_BACKOFF_MIN_SEC, min(send_freq, RMQ_RECONNECT_BACKOFF_CAP_SEC)) seconds so ring-buffer
- * resend loops in one libev tick do not storm the network, while large send_freq does not postpone retries
- * for many minutes. Stats sampling and payload scheduling still follow send_freq in the daemon. */
+ * When the broker is down, TCP reconnect uses exponential delay (2→4→8…, cap min(send_freq,60), floor 2s)
+ * plus hostname-hash jitter so fleet nodes do not align. Fail streak resets only after a stable publish
+ * window (STATS_BUFFER_RMQ_STABLE_WINDOW_SEC of connected time and ≥1 successful publish). */
 static amqp_connection_state_t rmq_conn;
 static int rmq_channel_open;
 static struct timespec rmq_backoff_until;
 static int rmq_backoff_until_valid;
+static unsigned rmq_fail_streak;
+static struct timespec rmq_connected_at;
+static int rmq_connected_valid;
+static int rmq_had_publish_since_connect;
 static unsigned long rmq_connect_failures;
 static unsigned long rmq_queue_failures;
 static unsigned long rmq_publish_failures;
 static int rmq_logged_connect_fail;
 static int rmq_logged_queue_fail;
 static int rmq_logged_publish_fail;
+static unsigned rmq_host_jitter_seed;
+static int rmq_host_jitter_seed_ready;
 
 void stats_buffer_rmq_get_failure_counts(unsigned long *connect_failures,
                                          unsigned long *queue_failures,
@@ -130,6 +135,34 @@ void stats_buffer_rmq_get_failure_counts(unsigned long *connect_failures,
     *queue_failures = rmq_queue_failures;
   if (publish_failures != NULL)
     *publish_failures = rmq_publish_failures;
+}
+
+int stats_buffer_rmq_in_recovery(void)
+{
+  return rmq_fail_streak > 0u;
+}
+
+static unsigned rmq_hostname_jitter_seed(void)
+{
+  char name[256];
+  unsigned h = 2166136261u;
+  size_t i;
+
+  if (rmq_host_jitter_seed_ready)
+    return rmq_host_jitter_seed;
+  if (gethostname(name, sizeof(name)) != 0) {
+    rmq_host_jitter_seed = 1u;
+    rmq_host_jitter_seed_ready = 1;
+    return rmq_host_jitter_seed;
+  }
+  name[sizeof(name) - 1] = '\0';
+  for (i = 0; name[i] != '\0'; i++) {
+    h ^= (unsigned char)name[i];
+    h *= 16777619u;
+  }
+  rmq_host_jitter_seed = h != 0u ? h : 1u;
+  rmq_host_jitter_seed_ready = 1;
+  return rmq_host_jitter_seed;
 }
 
 static int rmq_failure_log_first_only(void)
@@ -166,18 +199,14 @@ static int rmq_connect_backoff_active(void)
 static void rmq_arm_connect_backoff(void)
 {
   struct timespec now;
-  double f = send_freq;
   double delay;
 
   if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
     return;
-  if (f <= 0.0)
-    f = 1.0;
-  delay = f;
-  if (delay > (double)RMQ_RECONNECT_BACKOFF_CAP_SEC)
-    delay = (double)RMQ_RECONNECT_BACKOFF_CAP_SEC;
-  if (delay < (double)RMQ_RECONNECT_BACKOFF_MIN_SEC)
-    delay = (double)RMQ_RECONNECT_BACKOFF_MIN_SEC;
+  if (rmq_fail_streak < UINT_MAX)
+    rmq_fail_streak++;
+  delay = stats_buffer_rmq_compute_backoff_delay_sec(rmq_fail_streak, send_freq,
+                                                     rmq_hostname_jitter_seed());
   {
     time_t add_sec = (time_t)delay;
     double frac = delay - (double)add_sec;
@@ -197,11 +226,42 @@ static void rmq_arm_connect_backoff(void)
   rmq_backoff_until_valid = 1;
 }
 
+/* Reset fail streak only after stable window (connected ≥30s and ≥1 publish). */
+static void rmq_note_publish_success(void)
+{
+  struct timespec now;
+
+  rmq_had_publish_since_connect = 1;
+  if (!rmq_connected_valid)
+    return;
+  if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+    return;
+  if (now.tv_sec < rmq_connected_at.tv_sec)
+    return;
+  if ((now.tv_sec - rmq_connected_at.tv_sec) < (time_t)STATS_BUFFER_RMQ_STABLE_WINDOW_SEC)
+    return;
+  rmq_fail_streak = 0;
+  rmq_clear_connect_backoff();
+}
+
+static void rmq_mark_connected(void)
+{
+  if (clock_gettime(CLOCK_MONOTONIC, &rmq_connected_at) == 0)
+    rmq_connected_valid = 1;
+  else
+    rmq_connected_valid = 0;
+  rmq_had_publish_since_connect = 0;
+  /* Clear only the wait timer so the new socket can be used; keep fail_streak until stable. */
+  rmq_clear_connect_backoff();
+}
+
 static char *rmq_stored_host;
 static char *rmq_stored_port;
 static char *rmq_stored_user;
 static char *rmq_stored_pass;
 static char *rmq_declared_queue;
+/* Process-lifetime: after first successful active declare+bind, reconnect uses passive declare. */
+static char *rmq_warm_queue;
 
 static void rmq_timeval_seconds(struct timeval *tv, long sec)
 {
@@ -282,6 +342,9 @@ static void rmq_soft_disconnect(void)
   rmq_channel_open = 0;
   free(rmq_declared_queue);
   rmq_declared_queue = NULL;
+  rmq_connected_valid = 0;
+  rmq_had_publish_since_connect = 0;
+  /* Keep rmq_warm_queue across reconnects (SIGHUP/shutdown clears it). */
 }
 
 static int rmq_ensure_connected(struct stats_buffer *sf)
@@ -291,9 +354,10 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
 
   if (rmq_connect_backoff_active()) {
 #ifdef DEBUG
-    ERROR("RMQ: connect backoff active, skipping connect attempt (capped min(send_freq,%ds), floor "
-          "%ds)",
-          RMQ_RECONNECT_BACKOFF_CAP_SEC, RMQ_RECONNECT_BACKOFF_MIN_SEC);
+    ERROR("RMQ: connect backoff active, skipping connect attempt (exp+jitter, cap "
+          "min(send_freq,%ds), "
+          "floor %ds)",
+          STATS_BUFFER_RMQ_BACKOFF_CAP_ABS_SEC, STATS_BUFFER_RMQ_BACKOFF_MIN_SEC);
 #endif
     return -1;
   }
@@ -340,7 +404,7 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
 #ifdef DEBUG
   ERROR("RMQ: TCP + login + channel open OK");
 #endif
-  rmq_clear_connect_backoff();
+  rmq_mark_connected();
   return 0;
 }
 
@@ -453,15 +517,45 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
   return 0;
 }
 
-static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn,
-                                                  struct stats_buffer *sf)
+static int rmq_reopen_channel(amqp_connection_state_t conn)
 {
+  amqp_rpc_reply_t ret;
+
+  amqp_channel_open(conn, RMQ_CHANNEL);
+  ret = amqp_get_rpc_reply(conn);
+  if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
 #ifdef DEBUG
-  ERROR("Attempt declare queue on RMQ server\n");
+    rmq_debug_log_rpc_reply("RMQ amqp_channel_open (reopen)", ret);
 #endif
-  amqp_queue_declare_ok_t *r = amqp_queue_declare(
-      conn, RMQ_CHANNEL, amqp_cstring_bytes(sf->sf_queue), 0, 1, 0, 0, amqp_empty_table);
-  amqp_rpc_reply_t ret = amqp_get_rpc_reply(conn);
+    return -1;
+  }
+  return 0;
+}
+
+static int rmq_rpc_is_not_found(amqp_rpc_reply_t ret)
+{
+  amqp_channel_close_t *m;
+
+  if (ret.reply_type != AMQP_RESPONSE_SERVER_EXCEPTION)
+    return 0;
+  if (ret.reply.id != AMQP_CHANNEL_CLOSE_METHOD || ret.reply.decoded == NULL)
+    return 0;
+  m = (amqp_channel_close_t *)ret.reply.decoded;
+  return m->reply_code == AMQP_NOT_FOUND;
+}
+
+static int rmq_active_declare_and_bind(amqp_connection_state_t conn, struct stats_buffer *sf)
+{
+  amqp_queue_declare_ok_t *r;
+  amqp_rpc_reply_t ret;
+  amqp_bytes_t reply_to_queue;
+
+#ifdef DEBUG
+  ERROR("Attempt active declare queue on RMQ server\n");
+#endif
+  r = amqp_queue_declare(conn, RMQ_CHANNEL, amqp_cstring_bytes(sf->sf_queue), 0, 1, 0, 0,
+                         amqp_empty_table);
+  ret = amqp_get_rpc_reply(conn);
   if (ret.reply_type != AMQP_RESPONSE_NORMAL) {
 #ifdef DEBUG
     rmq_debug_log_rpc_reply("RMQ queue declare", ret);
@@ -469,7 +563,7 @@ static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn,
     return -1;
   }
 
-  amqp_bytes_t reply_to_queue = amqp_bytes_malloc_dup(r->queue);
+  reply_to_queue = amqp_bytes_malloc_dup(r->queue);
   if (reply_to_queue.bytes == NULL) {
 #ifdef DEBUG
     ERROR("Out of memory while copying queue name\n");
@@ -486,6 +580,44 @@ static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn,
     rmq_debug_log_rpc_reply("RMQ queue bind", ret);
 #endif
     return -1;
+  }
+  return 0;
+}
+
+static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn,
+                                                  struct stats_buffer *sf)
+{
+  int warm = (rmq_warm_queue != NULL && strcmp(rmq_warm_queue, sf->sf_queue) == 0);
+
+  if (warm) {
+    amqp_rpc_reply_t ret;
+
+#ifdef DEBUG
+    ERROR("Attempt passive declare queue on RMQ server\n");
+#endif
+    /* passive=1: verify queue exists; no create. On NOT_FOUND fall back to active. */
+    (void)amqp_queue_declare(conn, RMQ_CHANNEL, amqp_cstring_bytes(sf->sf_queue), 1, 1, 0, 0,
+                             amqp_empty_table);
+    ret = amqp_get_rpc_reply(conn);
+    if (ret.reply_type == AMQP_RESPONSE_NORMAL)
+      return 0;
+    if (!rmq_rpc_is_not_found(ret)) {
+#ifdef DEBUG
+      rmq_debug_log_rpc_reply("RMQ passive queue declare", ret);
+#endif
+      return -1;
+    }
+    /* Channel closed by broker after NOT_FOUND; reopen then create. */
+    if (rmq_reopen_channel(conn) < 0)
+      return -1;
+  }
+
+  if (rmq_active_declare_and_bind(conn, sf) < 0)
+    return -1;
+
+  if (rmq_warm_queue == NULL || strcmp(rmq_warm_queue, sf->sf_queue) != 0) {
+    free(rmq_warm_queue);
+    rmq_warm_queue = strdup(sf->sf_queue);
   }
   return 0;
 }
@@ -543,7 +675,7 @@ int stats_buffer_send_payload(struct stats_buffer *sf)
   monitor_release_log_clear_latch(&rmq_logged_connect_fail);
   monitor_release_log_clear_latch(&rmq_logged_queue_fail);
   monitor_release_log_clear_latch(&rmq_logged_publish_fail);
-  rmq_clear_connect_backoff();
+  rmq_note_publish_success();
   return 0;
 }
 #endif
@@ -551,6 +683,9 @@ void stats_buffer_rmq_shutdown(void)
 {
   rmq_soft_disconnect();
   rmq_stored_free();
+  free(rmq_warm_queue);
+  rmq_warm_queue = NULL;
+  rmq_fail_streak = 0;
   rmq_clear_connect_backoff();
 }
 

@@ -146,6 +146,8 @@ hpcperfstatsd_SOURCES += \
 	stats_buffer_debug_shm.c \
 	stats_buffer_debug_shm.h \
 	stats_buffer_rmq.c \
+	stats_buffer_rmq_policy.c \
+	stats_buffer_rmq_policy.h \
 	stats_buffer_rmq_internal.h \
 	stats_buffer_rows.c \
 	stats_buffer_rows.h \

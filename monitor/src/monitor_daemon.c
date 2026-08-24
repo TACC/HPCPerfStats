@@ -27,6 +27,7 @@
 #include "collect_tier.h"
 #include "stats_buffer.h"
 #include "stats_buffer_debug_shm.h"
+#include "stats_buffer_rmq_policy.h"
 #include "metric_profiler.h"
 #include "trace.h"
 #include "pscanf.h"
@@ -96,9 +97,6 @@ static void monitor_daemon_log_timer_drift(const char *name, double now_s, doubl
 #endif
 
 enum {
-  MONITOR_RESEND_MAX_BATCHES_PER_CALL = 64,
-  MONITOR_RESEND_MAX_RUNTIME_US = 12000,
-  MONITOR_RESEND_MAX_RUNTIME_US_BACKLOG = 25000,
   MONITOR_DUMPFILE_MAX_FILES_PER_CALL = 2,
   MONITOR_DUMPFILE_REPLAY_MAX_BATCHES_PER_FILE = 32,
   MONITOR_DUMPFILE_REPLAY_MAX_RUNTIME_US = 25000
@@ -228,17 +226,17 @@ static void monitor_daemon_resend_ring_buffer_if_nonempty(struct sf_ring_buffer 
   long elapsed_us;
   int q_before;
   int processed = 0;
-  long runtime_budget_us;
+  int max_batches = STATS_BUFFER_RMQ_RESEND_MAX_BATCHES;
+  long runtime_budget_us = STATS_BUFFER_RMQ_RESEND_RUNTIME_US;
 
   if (w->q_count <= 0)
     return;
   q_before = w->q_count;
-  runtime_budget_us = MONITOR_RESEND_MAX_RUNTIME_US;
-  if (q_before > MONITOR_RESEND_MAX_BATCHES_PER_CALL)
-    runtime_budget_us = MONITOR_RESEND_MAX_RUNTIME_US_BACKLOG;
+  stats_buffer_rmq_choose_resend_limits(stats_buffer_rmq_in_recovery(), q_before, &max_batches,
+                                        &runtime_budget_us);
   started_us = monitor_daemon_monotonic_us();
   monitor_daemon_log_ring_resend_line();
-  ring_buffer_resend_limited(w, MONITOR_RESEND_MAX_BATCHES_PER_CALL, runtime_budget_us, &processed);
+  ring_buffer_resend_limited(w, max_batches, runtime_budget_us, &processed);
   elapsed_us = (started_us > 0) ? monitor_daemon_monotonic_us() - started_us : -1;
   monitor_daemon_log_resend_stats(q_before, processed, elapsed_us, w->status, w->q_count);
   if (w->q_count > 0)

@@ -75,6 +75,9 @@ void stats_buffer_rmq_get_failure_counts(unsigned long *connect_failures,
                                          unsigned long *queue_failures,
                                          unsigned long *publish_failures);
 
+/*! Non-zero while fail streak > 0 (post-outage / reconnect recovery). */
+int stats_buffer_rmq_in_recovery(void);
+
 /*! Effective soft max for merge sizing (honors test override when set). */
 size_t stats_buffer_rmq_soft_max_bytes(void);
 
