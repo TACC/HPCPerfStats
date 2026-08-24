@@ -9,6 +9,7 @@ metadata is re-read on a cache miss.
 
 Attributes:
   SYNC_ARCHIVE_MAINT_HINTS_BASENAME: Attribute.
+  SYNC_ARCHIVE_MAINT_HINTS: Attribute.
   _ARCHIVE_METADATA_PROGRESS_EVERY_N: Attribute.
   _ARCHIVE_METADATA_PROGRESS_INTERVAL_S: Attribute.
   _ARCHIVE_METADATA_PROGRESS_MIN_PATHS: Attribute.
@@ -26,7 +27,6 @@ from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
 )
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.dbload.lib import sync_timedb_retired_b_defaults as _bdef
 from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     build_archive_mapping,
@@ -39,6 +39,8 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
 from hpcperfstats.dbload.lib.print_utils import log_print
 
 SYNC_ARCHIVE_MAINT_HINTS_BASENAME = ".sync_archive_maint_hints.json"
+# Retired B INI: permanently off; tests may monkeypatch this name.
+SYNC_ARCHIVE_MAINT_HINTS = False
 _MAINT_HINTS_VERSION = 2
 _ARCHIVE_METADATA_PROGRESS_MIN_PATHS = 1000
 _ARCHIVE_METADATA_PROGRESS_EVERY_N = 5000
@@ -228,7 +230,7 @@ def load_archive_maint_hints(archive_data_dir: str) -> Optional[Dict[str, Any]]:
   Examples:
     >>> load_archive_maint_hints("x")  # doctest: +SKIP
   """
-  if not _bdef.SYNC_ARCHIVE_MAINT_HINTS:
+  if not SYNC_ARCHIVE_MAINT_HINTS:
     return None
   from hpcperfstats.dbload.lib.sync_timedb_persistence import load_persistence_document
 
@@ -438,7 +440,7 @@ def save_archive_maint_hints(
   Examples:
     >>> save_archive_maint_hints("x", {}, {}, {}, None, None)  # doctest: +SKIP
   """
-  if not _bdef.SYNC_ARCHIVE_MAINT_HINTS:
+  if not SYNC_ARCHIVE_MAINT_HINTS:
     return
   path = maint_hints_path(archive_data_dir)
   from hpcperfstats.dbload.lib.sync_timedb_persistence import save_persistence_document

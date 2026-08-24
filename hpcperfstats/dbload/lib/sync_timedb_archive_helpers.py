@@ -44,6 +44,7 @@ Attributes:
   _UNMAPPED_DISQUALIFY_CACHE: Attribute.
   _UNMAPPED_DISQUALIFY_TTL_S: Attribute.
   _oldest_waiting_ingest_frozen_state: Attribute.
+  SYNC_DAY_CLOSE_CANDIDATE_REPORT: Attribute.
 """
 from __future__ import annotations
 
@@ -64,7 +65,6 @@ from collections import OrderedDict, defaultdict
 from datetime import date, datetime, time as dt_time, timedelta
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.dbload.lib import sync_timedb_retired_b_defaults as _bdef
 from hpcperfstats.dbload.lib.archive_compress import (
     DAILY_ARCHIVE_GZ_SUFFIX,
     DAILY_ARCHIVE_ZST_SUFFIX,
@@ -95,6 +95,9 @@ from hpcperfstats.dbload.lib.file_locking import (
 )
 from hpcperfstats.dbload.lib.print_utils import janitorial_logging, log_print
 
+
+# Retired B INI: permanently off; tests may monkeypatch this name.
+SYNC_DAY_CLOSE_CANDIDATE_REPORT = False
 
 def get_archive_zstd_thread_count() -> Any:
   """
@@ -1078,46 +1081,6 @@ def supplement_pending_paths_from_closed_paths(
   return capped
 
 
-def build_giant_supplement_pending_tail(
-  paths: Any,
-  *,
-  closed_paths: Any,
-  supplement_queue: Any,
-  processed_exclude: Any | None = None,
-  log_fn: Any = log_print,
-  newest_first: bool = False,
-) -> Any:
-  """
-  Build giant-supplement ``pending_tail`` capped at ``supplement_queue``.
-  
-  Used at giant-supplement batch start and for mid-imap refresh from a closed-
-    path
-  snapshot. Same ceiling for both (default queue*multiplier = 6000).
-  
-  Args:
-    paths (Any): Iterable of filesystem paths as strings.
-    closed_paths (Any): Iterable of filesystem paths as strings.
-    supplement_queue (Any): Supplement queue passed to this helper.
-    processed_exclude (Any | None): One of ``Any``, ``None``.
-    log_fn (Any): Callable invoked by this helper.
-    newest_first (bool): Boolean flag for newest first.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> build_giant_supplement_pending_tail(None, None, None, None, None, True)
-  """
-  return supplement_pending_paths_from_closed_paths(
-      paths,
-      closed_paths=closed_paths,
-      max_size=max(1, int(supplement_queue)),
-      processed_exclude=processed_exclude,
-      log_fn=log_fn,
-      newest_first=newest_first,
-  )
-
-
 def cap_pending_stats_with_blocked_retention(
   paths: Any,
   *,
@@ -1965,7 +1928,7 @@ def log_day_close_candidate_report(
   Examples:
     >>> log_day_close_candidate_report(None, None, None, None)  # doctest: +SKIP
   """
-  if not _bdef.SYNC_DAY_CLOSE_CANDIDATE_REPORT:
+  if not SYNC_DAY_CLOSE_CANDIDATE_REPORT:
     return
   queued = [e for e in entries if e.get("status") == "queued"]
   waiting = [e for e in entries if e.get("status") == "waiting_on_ingest"]
@@ -2391,7 +2354,7 @@ def collect_unmapped_closed_raw_daily_tars(
     return collect_days_with_unmapped_closed_raw(
         closed_paths, mapping, tgz_archive_dir)
   closed_paths = collect_stats_files_in_range(
-      archive_data_dir, "backlog", None, host_name_ext)
+      archive_data_dir, "all", None, host_name_ext)
   if not closed_paths:
     return frozenset()
   mapping = build_archive_mapping(closed_paths, tgz_archive_dir)
@@ -3202,7 +3165,7 @@ def build_unprocessed_raw_by_daily_tar(
   else:
     closed_paths = collect_stats_files_in_range(
         archive_data_dir,
-        "backlog",
+        "all",
         None,
         host_name_ext,
         force_full_scan=True,
@@ -8554,7 +8517,7 @@ def remove_verified_archived_raw_files(
     mapping = maintenance_snapshot.mapping
   else:
     paths = collect_stats_files_in_range(
-        archive_data_dir, "backlog", None, host_name_ext)
+        archive_data_dir, "all", None, host_name_ext)
     if not paths:
       return
     mapping = build_archive_mapping(paths, tgz_archive_dir)
@@ -9745,7 +9708,7 @@ def collect_sealed_daily_archive_paths_in_range(
   """
   Return ``(sealed_paths, skipped_tar_only_count)`` for the date range.
   
-  ``startdate`` may be ``'backlog'`` to scan every sealed day under
+  ``startdate`` may be ``'all'`` to scan every sealed day under
     ``daily_archive_dir``.
   Calendar-day ranges are inclusive on both ends.
   
@@ -9766,7 +9729,7 @@ def collect_sealed_daily_archive_paths_in_range(
 
   paths = []
   skipped_tar_only = 0
-  if startdate == "backlog":
+  if startdate == "all":
     for day in iter_daily_sealed_archive_calendar_days(daily_archive_dir):
       sealed = resolve_sealed_archive_path_for_ingest(
           day.strftime("%Y-%m-%d"),
@@ -11315,7 +11278,7 @@ def collect_stats_files_in_range(
   scanned. ``host_scan_hints`` still tracks ``__rescan_count__`` for callers;
   per-host dir-mtime skip is retired (find is cheap enough).
   
-  When startdate is ``'backlog'`` or ``'current'``, every eligible file is
+  When startdate is ``'all'``, ``'backlog'``, or ``'current'``, every eligible file is
     returned
   (no date filtering). Otherwise files are included if mtime or filename epoch
   falls in (startdate - 1 day, enddate]. Returns paths sorted oldest-first
@@ -11417,7 +11380,7 @@ def rescan_pending_stats_files(
     >>> rescan_pending_stats_files(0)  # doctest: +SKIP
   """
   if full_rescan_every is None:
-    full_rescan_every = _bdef.SYNC_INGEST_RESCAN_FULL_EVERY
+    full_rescan_every = 0
   if mtime_days is None:
     mtime_days = cfg.get_sync_ingest_rescan_mtime_days()
   should_force_full = True
@@ -11443,7 +11406,7 @@ def rescan_pending_stats_files(
   use_snapshot = (
       (should_force_full or force_snapshot_paths)
       and startup_closed_paths is not None
-      and startdate in ("backlog", "current", None, "")
+      and startdate in ("all", "backlog", "current", None, "")
       and enddate in (None, "")
   )
   if use_snapshot:

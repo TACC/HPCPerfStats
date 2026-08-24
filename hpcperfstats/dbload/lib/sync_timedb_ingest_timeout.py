@@ -7,6 +7,9 @@ reference size). Operators should tune ``sync_ingest_per_file_timeout_max_s``,
 ``per_mib``, and ``sync_pool_stall_abort_after_timeouts`` together.
 
 Attributes:
+  GIANT_SUPPLEMENT_LARGE_MAX_BYTES: Attribute.
+  GIANT_SUPPLEMENT_MAX_BYTES: Attribute.
+  GIANT_SUPPLEMENT_TRIGGER_BUDGET_S: Attribute.
   STALL_ABORT_GRACE_S: Attribute.
   _INGEST_TIMEOUT_MIB_BYTES: Attribute.
   _TYPICAL_SEALED_MEMBER_BYTES: Attribute.
@@ -16,10 +19,17 @@ from __future__ import annotations
 
 from typing import Any, Iterator
 
+
+# Former B giant-supplement thresholds (INI keys retired). Used only to label
+# oversized paths for worker-memory telemetry — not a coordinator supplement path.
+GIANT_SUPPLEMENT_TRIGGER_BUDGET_S = 6600.0
+GIANT_SUPPLEMENT_MAX_BYTES = 1024 * 1024 * 1024
+GIANT_SUPPLEMENT_LARGE_MAX_BYTES = 8 * 1024 * 1024 * 1024
+
+
 import os
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.dbload.lib import sync_timedb_retired_b_defaults as _bdef
 from hpcperfstats.dbload.lib.sync_timedb_parsing import stats_file_size_bytes
 
 _INGEST_TIMEOUT_MIB_BYTES = 1024 * 1024
@@ -178,132 +188,11 @@ def is_giant_ingest_budget(path: str, *, trigger_s: Any | None = None) -> Any:
     >>> is_giant_ingest_budget("x", None)  # doctest: +SKIP
   """
   if trigger_s is None:
-    trigger_s = float(_bdef.SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S)
+    trigger_s = float(GIANT_SUPPLEMENT_TRIGGER_BUDGET_S)
   if trigger_s <= 0.0:
     return False
   resolved = resolve_ingest_per_file_timeout_s(path)
   return resolved >= float(trigger_s)
-
-
-def any_giant_ingest_budget_in_flight(
-  paths: Any,
-  *,
-  trigger_s: Any | None = None,
-) -> Any:
-  """
-  True when any in-flight path qualifies as a giant for pool supplement.
-  
-  Args:
-    paths (Any): Iterable of filesystem paths as strings.
-    trigger_s (Any | None): One of ``Any``, ``None``.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> any_giant_ingest_budget_in_flight(None, None)  # doctest: +SKIP
-  """
-  if trigger_s is None:
-    trigger_s = float(_bdef.SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S)
-  for path in paths or ():
-    if path and is_giant_ingest_budget(path, trigger_s=trigger_s):
-      return True
-  return False
-
-
-def iter_giant_supplement_paths(
-  pending_tail: Any,
-  *,
-  max_bytes: Any | None = None,
-  large_max_bytes: Any | None = None,
-  limit: Any | None = None,
-  exclude: Any | None = None,
-  newest_first: bool = False,
-) -> Iterator[Any]:
-  """
-  Ordered two-pass supplement: ``<max_bytes`` then ``[max_bytes, large_max)``.
-  
-  Soft max defaults to 1 GiB; large max defaults to 8 GiB. Paths at/above
-  ``large_max_bytes`` are never selected. Each path is yielded at most once;
-  callers supply ``pending_tail`` in the intended dispatch order.
-  
-  Args:
-    pending_tail (Any): Pending tail passed to this helper.
-    max_bytes (Any | None): One of ``Any``, ``None``.
-    large_max_bytes (Any | None): One of ``Any``, ``None``.
-    limit (Any | None): One of ``Any``, ``None``.
-    exclude (Any | None): One of ``Any``, ``None``.
-    newest_first (bool): Boolean flag for newest first.
-  
-  Yields:
-    Iterator[Any]: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> iter_giant_supplement_paths(None, None, None, None, None, True)
-  """
-  if max_bytes is None:
-    max_bytes = int(_bdef.SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES)
-  if large_max_bytes is None:
-    large_max_bytes = int(_bdef.SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES)
-  exclude_normpaths = {
-      os.path.normpath(str(path))
-      for path in (exclude or ())
-      if path
-  }
-  soft_max = int(max_bytes)
-  hard_max = max(soft_max, int(large_max_bytes))
-  remaining = None if limit is None else max(0, int(limit))
-  yielded = set()
-
-  def _size_of(path: str) -> Any:
-    """
-    Internal helper to handle size of.
-    
-    Args:
-      path (str): String for path.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> _size_of("x")  # doctest: +SKIP
-    """
-    try:
-      return int(stats_file_size_bytes(path))
-    except (TypeError, ValueError, OSError):
-      return 0
-
-  for path in pending_tail or ():
-    if not path:
-      continue
-    if remaining is not None and remaining <= 0:
-      break
-    norm = os.path.normpath(str(path))
-    if norm in exclude_normpaths or norm in yielded:
-      continue
-    size = _size_of(path)
-    if size <= 0 or size >= soft_max:
-      continue
-    yielded.add(norm)
-    yield path
-    if remaining is not None:
-      remaining -= 1
-
-  for path in pending_tail or ():
-    if not path:
-      continue
-    if remaining is not None and remaining <= 0:
-      break
-    norm = os.path.normpath(str(path))
-    if norm in exclude_normpaths or norm in yielded:
-      continue
-    size = _size_of(path)
-    if size < soft_max or size >= hard_max:
-      continue
-    yielded.add(norm)
-    yield path
-    if remaining is not None:
-      remaining -= 1
 
 
 def calendar_day_from_sealed_archive_path(sealed_path: str) -> Any:

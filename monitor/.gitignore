@@ -48,3 +48,5 @@ Makefile.in
 # Opt-in fleet markers (created by prepare_rpmbuild_{stampede3,ls6}.sh; never commit)
 /scripts/fleet/stampede3.force
 /scripts/fleet/ls6.force
+# ignore scripts from the unlazy skill in cursor
+/scripts/unlazy*

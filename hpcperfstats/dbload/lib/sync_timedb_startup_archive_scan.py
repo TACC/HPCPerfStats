@@ -1,5 +1,8 @@
 """
 Single-flight canonical startup archive maintenance snapshot.
+
+Attributes:
+  SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS: Attribute.
 """
 from __future__ import annotations
 
@@ -8,7 +11,8 @@ import time
 from typing import Any, Callable, Optional
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.dbload.lib import sync_timedb_retired_b_defaults as _bdef
+
+SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS = 300.0
 
 from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
     ArchiveMaintenanceSnapshot,
@@ -275,7 +279,7 @@ class StartupArchiveScanCoordinator:
     if timeout_s is None:
       timeout_s = max(
           600.0,
-          float(_bdef.SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS) * 4.0,
+          float(SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS) * 4.0,
       )
     wait_t0 = time.time()
     while True:
@@ -301,7 +305,7 @@ class StartupArchiveScanCoordinator:
     Examples:
       >>> StartupArchiveScanCoordinator()._effective_wait_timeout_s_locked(0)
     """
-    base = _bdef.SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS
+    base = float(SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS)
     if self._startup_maintenance_pending and self._snapshot is None:
       return max(base, time.time() - wait_t0 + base)
     return base

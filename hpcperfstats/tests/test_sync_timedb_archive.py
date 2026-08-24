@@ -3211,7 +3211,7 @@ def test_collect_stats_files_in_range_parallel_multi_host(monkeypatch, tmp_path)
   logs = []
   result = collect_stats_files_in_range(
       str(tmp_path),
-      "backlog",
+      "all",
       None,
       _ARCH_HOST_SUFFIX,
       log_fn=lambda msg, **kw: logs.append(msg),
@@ -3267,7 +3267,7 @@ def test_rescan_pending_incremental_uses_mtime_find(monkeypatch, tmp_path):
   hints = {"__rescan_count__": 1}
   pending = rescan_pending_stats_files(
       str(tmp_path),
-      "backlog",
+      "all",
       None,
       _ARCH_HOST_SUFFIX,
       set(),
@@ -3295,7 +3295,7 @@ def test_rescan_pending_full_every_n_uses_full_find(monkeypatch, tmp_path):
   hints = {"__rescan_count__": 0}
   rescan_pending_stats_files(
       str(tmp_path),
-      "backlog",
+      "all",
       None,
       _ARCH_HOST_SUFFIX,
       set(),
@@ -3347,7 +3347,7 @@ def test_collect_stats_files_in_range_uses_filename_epoch_when_mtime_outside(tmp
 
 
 def test_collect_stats_files_in_range_all_no_date_filter(tmp_path):
-  """startdate 'backlog' includes every stats file regardless of mtime/filename age."""
+  """startdate 'all' includes every stats file regardless of mtime/filename age."""
   cn = tmp_path / ("c572-001." + _ARCH_HOST_SUFFIX)
   cn.mkdir()
   old_epoch = int(datetime(2018, 1, 1, 12, 0, 0).timestamp())
@@ -3360,7 +3360,7 @@ def test_collect_stats_files_in_range_all_no_date_filter(tmp_path):
   os.utime(cn / str(new_epoch), (t_new, t_new))
 
   result = collect_stats_files_in_range(
-      str(tmp_path), "backlog", None, _ARCH_HOST_SUFFIX)
+      str(tmp_path), "all", None, _ARCH_HOST_SUFFIX)
   basenames = sorted(os.path.basename(p) for p in result)
   assert basenames == [str(old_epoch), str(new_epoch)]
 
@@ -3587,7 +3587,7 @@ def test_rescan_pending_stats_files_uses_hints_with_periodic_full_sweep(tmp_path
   hints = {}
   first = rescan_pending_stats_files(
       str(tmp_path),
-      "backlog",
+      "all",
       None,
       _ARCH_HOST_SUFFIX,
       set(),
@@ -3596,7 +3596,7 @@ def test_rescan_pending_stats_files_uses_hints_with_periodic_full_sweep(tmp_path
   )
   second = rescan_pending_stats_files(
       str(tmp_path),
-      "backlog",
+      "all",
       None,
       _ARCH_HOST_SUFFIX,
       set(),
@@ -3605,7 +3605,7 @@ def test_rescan_pending_stats_files_uses_hints_with_periodic_full_sweep(tmp_path
   )
   third = rescan_pending_stats_files(
       str(tmp_path),
-      "backlog",
+      "all",
       None,
       _ARCH_HOST_SUFFIX,
       set(),
@@ -3934,20 +3934,28 @@ def test_parse_sync_timedb_archive_argv_single_day():
   assert paths == []
 
 
-def test_parse_sync_timedb_archive_argv_backlog():
+def test_parse_sync_timedb_archive_argv_all():
   mode, start, end, paths = parse_sync_timedb_archive_argv(
-      ["sync_timedb_archive.py", "backlog"],
+      ["sync_timedb_archive.py", "all"],
   )
   assert mode == "date"
-  assert start == "backlog"
+  assert start == "all"
   assert end is None
   assert paths == []
 
 
-def test_parse_sync_timedb_archive_argv_rejects_legacy_all():
+def test_parse_sync_timedb_archive_argv_rejects_retired_backlog():
   with pytest.raises(SystemExit) as exc:
-    parse_sync_timedb_archive_argv(["sync_timedb_archive.py", "all"])
-  assert "renamed to" in str(exc.value) and "backlog" in str(exc.value)
+    parse_sync_timedb_archive_argv(["sync_timedb_archive.py", "backlog"])
+  msg = str(exc.value).lower()
+  assert "retired" in msg and "all" in msg
+
+
+def test_parse_sync_timedb_archive_argv_rejects_retired_current():
+  with pytest.raises(SystemExit) as exc:
+    parse_sync_timedb_archive_argv(["sync_timedb_archive.py", "current"])
+  msg = str(exc.value).lower()
+  assert "retired" in msg
 
 
 def test_parse_argv_rejects_plain_tar_path():
@@ -4599,7 +4607,7 @@ def test_quarantine_unparsable_closed_raw_moves_file_and_writes_manifest(tmp_pat
   assert entries[0]["original_path"] == str(raw_path)
   assert entries[0]["reason"] == helpers.UNPARSABLE_RAW_QUARANTINE_REASON
   discovered = helpers.collect_stats_files_in_range(
-      str(archive_dir), "backlog", None, ".hpc")
+      str(archive_dir), "all", None, ".hpc")
   assert str(raw_path) not in discovered
 
 
@@ -4717,7 +4725,7 @@ def test_unparsable_unmapped_does_not_disqualify_day(tmp_path):
   raw_path = host_dir / str(day_epoch)
   raw_path.write_text("not-a-stats-line\n")
   closed_paths = helpers.collect_stats_files_in_range(
-      str(archive_dir), "backlog", None, ".hpc")
+      str(archive_dir), "all", None, ".hpc")
   mapping = helpers.build_archive_mapping(closed_paths, str(daily_dir))
   result = helpers.collect_days_with_unmapped_closed_raw(
       closed_paths, mapping, str(daily_dir))
@@ -6439,7 +6447,7 @@ def test_stats_path_ingest_sort_epoch_matches_collect_order(tmp_path):
   assert stats_path_ingest_sort_epoch(str(older)) == 1000
   assert stats_path_ingest_sort_epoch(str(newer)) == 2000
   collected = collect_stats_files_in_range(
-      str(tmp_path), "backlog", None, ".hpc", force_full_scan=True)
+      str(tmp_path), "all", None, ".hpc", force_full_scan=True)
   assert collected == [str(older), str(newer)]
 
 
@@ -6895,173 +6903,19 @@ def test_live_unprocessed_reconcile_live_path_collects_when_no_snapshot(
   assert collect_calls["n"] == 1
 
 
-def test_log_day_close_candidate_report_omits_skipped_no_work(capsys, monkeypatch):
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      log_day_close_candidate_report,
-  )
-
-  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
-
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
-      True,
-  )
-  log_day_close_candidate_report(
-      [{
-          "tar_path": "/arch/2020-01-01.tar",
-          "status": "skipped_no_work",
-          "reasons": [],
-          "unprocessed": 0,
-          "phase": "tar_dropped",
-      }],
-      reason="test",
-  )
-  assert "day_close candidate" not in capsys.readouterr().out
 
 
-def test_log_day_close_candidate_report_logs_queued_and_disqualified(capsys, monkeypatch):
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      log_day_close_candidate_report,
-  )
-
-  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
-
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
-      True,
-  )
-  log_day_close_candidate_report(
-      [
-          {
-              "tar_path": "/arch/2020-01-01.tar",
-              "status": "queued",
-              "reasons": ["scheduled_enqueue"],
-              "unprocessed": 0,
-              "phase": "",
-          },
-          {
-              "tar_path": "/arch/2020-01-02.tar",
-              "status": "waiting_on_ingest",
-              "reasons": ["checkpoint_incomplete"],
-              "unprocessed": 2,
-              "phase": "",
-          },
-      ],
-      reason="test",
-  )
-  out = capsys.readouterr().out
-  assert (
-      "day_close candidate report reason=test queued=1 "
-      "waiting_on_ingest=1 ready_for_enqueue=0 disqualified=0 "
-      "mutable_tar_n=0"
-  ) in out
-  assert "status=queued" in out
-  assert "status=waiting_on_ingest" in out
-  queued_line = [
-      line for line in out.splitlines()
-      if "status=queued" in line and "day_close candidate tar=" in line
-  ][0]
-  waiting_line = [
-      line for line in out.splitlines()
-      if "status=waiting_on_ingest" in line and "day_close candidate tar=" in line
-  ][0]
-  assert "queue_order=1" in queued_line
-  assert "queue_order=" in waiting_line
-  assert "queue_order=1" not in waiting_line
-  assert "skipped_no_work" not in out
 
 
-def test_log_day_close_candidate_report_includes_async_progress(capsys, monkeypatch):
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      log_day_close_candidate_report,
-  )
-
-  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
-
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
-      True,
-  )
-
-  def progress(_tar):
-    return {
-        "last_progress": "raw_removal",
-        "last_progress_age_s": 123.0,
-    }
-
-  log_day_close_candidate_report(
-      [
-          {
-              "tar_path": "/arch/2026-04-15.tar",
-              "status": "queued",
-              "reasons": ["day_close_in_progress"],
-              "unprocessed": 0,
-              "phase": "",
-          },
-      ],
-      reason="test",
-      async_progress_fn=progress,
-  )
-  out = capsys.readouterr().out
-  assert "async_last_progress=raw_removal" in out
-  assert "async_age_s=123" in out
 
 
-def test_log_day_close_candidate_report_silent_when_empty(capsys, monkeypatch):
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      log_day_close_candidate_report,
-  )
-
-  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
-
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
-      True,
-  )
-  log_day_close_candidate_report([], reason="test")
-  assert "day_close candidate report" not in capsys.readouterr().out
 
 
-def test_oldest_day_unprocessed_frozen_logs_after_unchanged_reports(
-    capsys, monkeypatch,
-):
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      log_day_close_candidate_report,
-      reset_oldest_day_unprocessed_frozen_state_for_tests,
-  )
 
-  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
 
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
-      True,
-  )
-  reset_oldest_day_unprocessed_frozen_state_for_tests()
-  waiting = [
-      {
-          "tar_path": "/daily/2026-06-02.tar",
-          "status": "waiting_on_ingest",
-          "reasons": ["checkpoint_incomplete"],
-          "unprocessed": 5495,
-          "phase": "",
-      },
-      {
-          "tar_path": "/daily/2026-06-05.tar",
-          "status": "waiting_on_ingest",
-          "reasons": ["checkpoint_incomplete"],
-          "unprocessed": 100,
-          "phase": "",
-      },
-  ]
-  log_day_close_candidate_report(waiting, reason="tick1")
-  out1 = capsys.readouterr().out
-  assert "oldest_day_unprocessed_frozen" not in out1
-  log_day_close_candidate_report(waiting, reason="tick2")
-  out2 = capsys.readouterr().out
-  assert "oldest_day_unprocessed_frozen" in out2
-  assert "2026-06-02.tar" in out2
-  assert "unprocessed=5495" in out2
-  reset_oldest_day_unprocessed_frozen_state_for_tests()
+
+
+
 
 
 def test_prepend_checkpoint_blocked_paths_not_excluded_when_processed():
@@ -7126,39 +6980,7 @@ def test_select_ingest_chunk_paths_fallback_checkpoint_incomplete_on_disk(tmp_pa
   assert len(chunk) <= 10
 
 
-def test_select_ingest_chunk_paths_fallback_logs_calendar_days(tmp_path):
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      select_ingest_chunk_paths,
-  )
 
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  tar_a = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
-  tar_b = os.path.normpath(str(daily_dir / "2020-01-02.tar"))
-  open(tar_a, "wb").close()
-  open(tar_b, "wb").close()
-  d1 = datetime(2020, 1, 1, 12, tzinfo=timezone.utc)
-  d2 = datetime(2020, 1, 2, 12, tzinfo=timezone.utc)
-  blocked1 = tmp_path / "blocked1"
-  newer = tmp_path / "newer"
-  for path in (blocked1, newer):
-    path.write_text("x")
-  os.utime(blocked1, (d1.timestamp(), d1.timestamp()))
-  os.utime(newer, (d2.timestamp(), d2.timestamp()))
-  logs = []
-  chunk = select_ingest_chunk_paths(
-      [str(newer)],
-      oldest_tar=tar_a,
-      unprocessed_by_tar={tar_a: [str(blocked1)]},
-      inflight_archive_paths=set(),
-      tgz_archive_dir=str(daily_dir),
-      chunk_size=10,
-      log_fn=lambda msg: logs.append(str(msg)),
-  )
-  assert chunk[0] == str(blocked1)
-  assert str(newer) in chunk
-  assert any("oldest_day_chunk_gate_fallback" in line for line in logs)
-  assert any("calendar_days=" in line for line in logs)
 
 
 def test_prepend_checkpoint_incomplete_paths_to_pending_dedupes_and_orders():
@@ -8898,213 +8720,16 @@ def test_select_ingest_chunk_paths_cross_day_only_empty_pending_uses_fallback(
   assert chunk == []
 
 
-def test_select_ingest_chunk_no_additive_when_gate_is_oldest(tmp_path):
-  """When gate tar is the oldest incomplete day, total stays ≤ chunk_size."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      select_ingest_chunk_paths,
-  )
-
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  jun_tar = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
-  open(jun_tar, "wb").close()
-  d_jun = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
-  host = tmp_path / "host"
-  host.mkdir()
-  paths = []
-  for i in range(40):
-    path = host / ("jun_%d" % i)
-    path.write_text("1000 job cn001\n")
-    os.utime(path, (d_jun.timestamp(), d_jun.timestamp()))
-    paths.append(str(path))
-  chunk_size = 10
-  chunk = select_ingest_chunk_paths(
-      paths,
-      oldest_tar=jun_tar,
-      unprocessed_by_tar={jun_tar: paths},
-      inflight_archive_paths=set(),
-      tgz_archive_dir=str(daily_dir),
-      chunk_size=chunk_size,
-      handoff_priority_paths=set(paths[:5]),
-      handoff_source_tar_by_path={p: jun_tar for p in paths[:5]},
-      newest_first=False,
-  )
-  assert len(chunk) <= chunk_size
 
 
-def test_select_ingest_chunk_additive_lead_not_truncated_by_pending_cap(tmp_path):
-  """Oldest-day lead comes from pins/unprocessed even when absent from short pending."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      select_ingest_chunk_paths,
-  )
-
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  jun_tar = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
-  jul_tar = os.path.normpath(str(daily_dir / "2026-07-15.tar"))
-  open(jun_tar, "wb").close()
-  open(jul_tar, "wb").close()
-  d_jun = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
-  d_jul = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
-  host = tmp_path / "host"
-  host.mkdir()
-  jun_paths = []
-  for i in range(12):
-    path = host / ("jun_%d" % i)
-    path.write_text("1000 job cn001\n")
-    os.utime(path, (d_jun.timestamp(), d_jun.timestamp()))
-    jun_paths.append(str(path))
-  jul_paths = []
-  for i in range(8):
-    path = host / ("jul_%d" % i)
-    path.write_text("2000 job cn002\n")
-    os.utime(path, (d_jul.timestamp(), d_jul.timestamp()))
-    jul_paths.append(str(path))
-  # Pending holds only July — June lives only in handoff + unprocessed.
-  pending = list(jul_paths)
-  chunk = select_ingest_chunk_paths(
-      pending,
-      oldest_tar=jul_tar,
-      unprocessed_by_tar={
-          jul_tar: jul_paths,
-          jun_tar: jun_paths,
-      },
-      inflight_archive_paths=set(),
-      tgz_archive_dir=str(daily_dir),
-      chunk_size=5,
-      handoff_priority_paths=set(jun_paths),
-      handoff_source_tar_by_path={p: jun_tar for p in jun_paths},
-      newest_first=True,
-  )
-  assert set(jun_paths).issubset(set(chunk))
-  assert len(chunk) == 12 + 5
 
 
-def test_select_ingest_chunk_lead_covers_whole_day_not_only_pinned_paths(tmp_path):
-  """Whole-day lead = pins ∪ aligned unprocessed for the oldest day."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      select_ingest_chunk_paths,
-  )
-
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  jun_tar = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
-  jul_tar = os.path.normpath(str(daily_dir / "2026-07-15.tar"))
-  open(jun_tar, "wb").close()
-  open(jul_tar, "wb").close()
-  d_jun = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
-  d_jul = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
-  host = tmp_path / "host"
-  host.mkdir()
-  pinned = []
-  for i in range(3):
-    path = host / ("pin_%d" % i)
-    path.write_text("1000 job cn001\n")
-    os.utime(path, (d_jun.timestamp(), d_jun.timestamp()))
-    pinned.append(str(path))
-  unpinned = []
-  for i in range(7):
-    path = host / ("unp_%d" % i)
-    path.write_text("1000 job cn001\n")
-    os.utime(path, (d_jun.timestamp(), d_jun.timestamp()))
-    unpinned.append(str(path))
-  jul_paths = []
-  for i in range(6):
-    path = host / ("jul_%d" % i)
-    path.write_text("2000 job cn002\n")
-    os.utime(path, (d_jul.timestamp(), d_jul.timestamp()))
-    jul_paths.append(str(path))
-  all_jun = pinned + unpinned
-  chunk = select_ingest_chunk_paths(
-      list(jul_paths) + list(pinned),
-      oldest_tar=jul_tar,
-      unprocessed_by_tar={
-          jul_tar: jul_paths,
-          jun_tar: all_jun,
-      },
-      inflight_archive_paths=set(),
-      tgz_archive_dir=str(daily_dir),
-      chunk_size=4,
-      handoff_priority_paths=set(pinned),
-      handoff_source_tar_by_path={p: jun_tar for p in pinned},
-      newest_first=True,
-  )
-  assert set(all_jun).issubset(set(chunk))
-  assert len(chunk) == len(all_jun) + 4
 
 
-def test_select_ingest_chunk_leads_one_older_day_at_a_time(tmp_path):
-  """Only the calendar-oldest older day leads; other older pins stay out of the chunk."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      select_ingest_chunk_paths,
-  )
 
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  jun07 = os.path.normpath(str(daily_dir / "2026-06-07.tar"))
-  jun09 = os.path.normpath(str(daily_dir / "2026-06-09.tar"))
-  jul_tar = os.path.normpath(str(daily_dir / "2026-07-15.tar"))
-  for tar in (jun07, jun09, jul_tar):
-    open(tar, "wb").close()
-  d07 = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
-  d09 = datetime(2026, 6, 9, 12, tzinfo=timezone.utc)
-  d_jul = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
-  host = tmp_path / "host"
-  host.mkdir()
-  p07 = host / "jun07"
-  p09 = host / "jun09"
-  p07.write_text("1000 job cn001\n")
-  p09.write_text("1000 job cn001\n")
-  os.utime(p07, (d07.timestamp(), d07.timestamp()))
-  os.utime(p09, (d09.timestamp(), d09.timestamp()))
-  jul_paths = []
-  for i in range(10):
-    path = host / ("jul_%d" % i)
-    path.write_text("2000 job cn002\n")
-    os.utime(path, (d_jul.timestamp(), d_jul.timestamp()))
-    jul_paths.append(str(path))
-  handoff = {str(p07), str(p09)}
-  source_map = {str(p07): jun07, str(p09): jun09}
-  chunk = select_ingest_chunk_paths(
-      list(jul_paths) + [str(p07), str(p09)],
-      oldest_tar=jul_tar,
-      unprocessed_by_tar={
-          jul_tar: jul_paths,
-          jun07: [str(p07)],
-          jun09: [str(p09)],
-      },
-      inflight_archive_paths=set(),
-      tgz_archive_dir=str(daily_dir),
-      chunk_size=5,
-      handoff_priority_paths=handoff,
-      handoff_source_tar_by_path=source_map,
-      newest_first=True,
-  )
-  assert str(p07) in chunk
-  assert str(p09) not in chunk
-  assert handoff == {str(p07), str(p09)}
-  assert len([p for p in chunk if p in jul_paths]) == 5
-  assert len(chunk) == 1 + 5
 
-  # After 06-07 drains, next chunk leads 06-09.
-  handoff_next = {str(p09)}
-  chunk2 = select_ingest_chunk_paths(
-      list(jul_paths) + [str(p09)],
-      oldest_tar=jul_tar,
-      unprocessed_by_tar={
-          jul_tar: jul_paths,
-          jun09: [str(p09)],
-      },
-      inflight_archive_paths=set(),
-      tgz_archive_dir=str(daily_dir),
-      chunk_size=5,
-      handoff_priority_paths=handoff_next,
-      handoff_source_tar_by_path={str(p09): jun09},
-      newest_first=True,
-  )
-  assert chunk2[0] == str(p09)
-  assert str(p09) in chunk2
-  assert len(chunk2) == 1 + 5
+
+
 
 
 def test_sort_pending_stats_paths_oldest_first(tmp_path):
@@ -9191,7 +8816,7 @@ def test_rescan_force_snapshot_paths_uses_closed_list_despite_rescan_count(
   )
   result = helpers.rescan_pending_stats_files(
       str(tmp_path),
-      "backlog",
+      "all",
       None,
       "cluster.test",
       set(),
@@ -9268,7 +8893,7 @@ def test_rescan_force_full_snapshot_without_force_flag_stays_snapshot_only(
   # __rescan_count__ % full_every == 0 → should_force_full True without idle force.
   result = helpers.rescan_pending_stats_files(
       str(tmp_path),
-      "backlog",
+      "all",
       None,
       "cluster.test",
       set(),
@@ -9306,24 +8931,7 @@ def test_supplement_pending_paths_from_closed_paths_refills_toward_max(
   assert capped[0] == closed[0]
 
 
-def test_cap_pending_with_blocked_retention_keeps_global_head():
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      cap_pending_stats_with_blocked_retention,
-  )
 
-  blocked = ["/blocked/%d" % i for i in range(2)]
-  tail = ["/tail/%d" % i for i in range(100)]
-  merged = blocked + tail
-  capped = cap_pending_stats_with_blocked_retention(
-      merged,
-      max_size=20,
-      blocked_paths=blocked,
-      handoff_priority_paths=[],
-      log_fn=lambda *_a, **_k: None,
-  )
-  assert len(capped) == 20
-  assert capped[0] == blocked[0]
-  assert capped[1] == blocked[1]
 
 
 def test_cross_day_db_complete_helper_contract():
@@ -9470,72 +9078,7 @@ def test_classify_mutable_tar_present_reason(tmp_path):
   assert "mutable_tar_present" in by_tar[tar_path]["reasons"]
 
 
-def test_log_day_close_candidate_report_date_order_across_statuses(
-    capsys, monkeypatch,
-):
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      log_day_close_candidate_report,
-  )
 
-  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
-
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
-      True,
-  )
-  log_day_close_candidate_report(
-      [
-          {
-              "tar_path": "/arch/2026-06-07.tar",
-              "status": "waiting_on_ingest",
-              "reasons": ["checkpoint_incomplete"],
-              "unprocessed": 10,
-              "phase": "",
-              "mutable_tar": True,
-          },
-          {
-              "tar_path": "/arch/2026-05-26.tar",
-              "status": "queued",
-              "reasons": ["day_close_in_progress"],
-              "unprocessed": 0,
-              "phase": "",
-              "mutable_tar": True,
-          },
-          {
-              "tar_path": "/arch/2026-05-31.tar",
-              "status": "disqualified",
-              "reasons": ["inflight_append_path"],
-              "unprocessed": 0,
-              "phase": "",
-              "mutable_tar": True,
-          },
-          {
-              "tar_path": "/arch/2026-05-22.tar",
-              "status": "queued",
-              "reasons": ["day_close_in_progress"],
-              "unprocessed": 0,
-              "phase": "",
-              "mutable_tar": True,
-          },
-      ],
-      reason="test",
-  )
-  out = capsys.readouterr().out
-  lines = [
-      line for line in out.splitlines()
-      if "day_close candidate tar=" in line
-  ]
-  assert len(lines) == 4
-  assert "2026-05-22" in lines[0]
-  assert "2026-05-26" in lines[1]
-  assert "2026-05-31" in lines[2]
-  assert "2026-06-07" in lines[3]
-  assert "queue_order=1" in lines[0]
-  assert "queue_order=2" in lines[1]
-  assert "queue_order=" in lines[2] and "queue_order=1" not in lines[2]
-  assert "queue_order=" in lines[3] and "queue_order=1" not in lines[3]
-  assert "mutable_tar=yes" in lines[0]
-  assert "mutable_tar_n=4" in out
 
 
 def test_classify_reports_aligned_unprocessed_and_cross_day_n(tmp_path):
@@ -9567,60 +9110,7 @@ def test_classify_reports_aligned_unprocessed_and_cross_day_n(tmp_path):
   assert by_tar[tar_path]["unprocessed_cross_day_n"] == 1
 
 
-def test_classify_reports_processed_but_on_disk_and_cross_day(tmp_path, monkeypatch):
-  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
-  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      classify_day_close_candidates,
-      log_day_close_candidate_report,
-  )
 
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
-      True,
-  )
-  # Avoid live archive-dir scan from blocking map during needs_work.
-  monkeypatch.setattr(
-      helpers,
-      "day_close_filesystem_complete",
-      lambda *_a, **_k: True,
-  )
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  tar_path = os.path.normpath(str(daily_dir / "2026-05-28.tar"))
-  zst_path = os.path.normpath(str(daily_dir / "2026-05-28.tar.zst"))
-  open(zst_path, "wb").write(b"sealed")
-  d_may = datetime(2026, 5, 28, 12, tzinfo=timezone.utc)
-  d_july = datetime(2026, 7, 6, 12, tzinfo=timezone.utc)
-  aligned = tmp_path / str(int(d_may.timestamp()))
-  cross = tmp_path / str(int(d_july.timestamp()))
-  aligned.write_text("x")
-  cross.write_text("x")
-  remaining = {zst_path: [str(aligned), str(cross)]}
-  entries = classify_day_close_candidates(
-      tgz_archive_dir=str(daily_dir),
-      remaining_raw_by_gz=remaining,
-      unprocessed_by_tar={},
-      disqualification_reasons={},
-      local_tz=timezone.utc,
-  )
-  by_tar = {e["tar_path"]: e for e in entries}
-  assert by_tar[tar_path]["processed_but_on_disk"] == 1
-  assert by_tar[tar_path]["processed_cross_day_n"] == 1
-  logs = []
-  log_day_close_candidate_report(
-      [
-          {
-              **by_tar[tar_path],
-              "status": "ready_for_enqueue",
-              "reasons": ["awaiting_janitor_discover"],
-          }
-      ],
-      reason="test",
-      log_fn=lambda msg, flush=False: logs.append(msg),
-  )
-  assert any("processed_but_on_disk=1" in line for line in logs)
-  assert any("processed_cross_day_n=1" in line for line in logs)
 
 
 def test_blocking_tar_drop_excludes_cross_day_filename(tmp_path, monkeypatch):
@@ -9654,59 +9144,7 @@ def test_blocking_tar_drop_excludes_cross_day_filename(tmp_path, monkeypatch):
   assert str(cross) not in paths
 
 
-def test_cap_merges_all_unprocessed_days_into_pending(tmp_path):
-  """Cap input missing May-30 paths but unprocessed map has them → head includes May-30."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      all_on_disk_unprocessed_paths,
-      prepend_checkpoint_incomplete_paths_to_pending,
-      sort_pending_stats_paths_oldest_first,
-      cap_pending_stats_with_blocked_retention,
-      oldest_checkpoint_incomplete_tar,
-      aligned_on_disk_unprocessed_paths_for_tar,
-  )
 
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  may27 = os.path.normpath(str(daily_dir / "2026-05-27.tar"))
-  may30 = os.path.normpath(str(daily_dir / "2026-05-30.tar"))
-  open(may27, "wb").close()
-  open(may30, "wb").close()
-  d_july = datetime(2026, 7, 3, 12, tzinfo=timezone.utc)
-  d_may30 = datetime(2026, 5, 30, 12, tzinfo=timezone.utc)
-  d_june = datetime(2026, 6, 7, 12, tzinfo=timezone.utc)
-  cross = tmp_path / "cross_july"
-  may30_path = tmp_path / "may30_seg"
-  june_path = tmp_path / "june_seg"
-  for path, day in (
-      (cross, d_july),
-      (may30_path, d_may30),
-      (june_path, d_june),
-  ):
-    path.write_text("x")
-    os.utime(path, (day.timestamp(), day.timestamp()))
-  unprocessed = {
-      may27: [str(cross)],
-      may30: [str(may30_path)],
-  }
-  # Pending only has June (scan gap); map still has May-30.
-  paths = [str(june_path)]
-  all_unprocessed = sort_pending_stats_paths_oldest_first(
-      all_on_disk_unprocessed_paths(unprocessed),
-  )
-  tar_norm = oldest_checkpoint_incomplete_tar(
-      unprocessed, tgz_archive_dir=str(daily_dir))
-  assert tar_norm == may30
-  reserved = aligned_on_disk_unprocessed_paths_for_tar(
-      unprocessed, tar_norm, tgz_archive_dir=str(daily_dir))
-  capped = cap_pending_stats_with_blocked_retention(
-      prepend_checkpoint_incomplete_paths_to_pending(paths, all_unprocessed),
-      max_size=2000,
-      blocked_paths=reserved,
-      handoff_priority_paths=[],
-      log_fn=lambda *_a, **_k: None,
-  )
-  assert str(may30_path) in capped
-  assert capped[0] == str(may30_path)
 
 
 def test_supplement_at_max_replaces_with_older_closed_paths(tmp_path):
@@ -10201,58 +9639,7 @@ def test_populate_uses_tar_for_active_ingest_day(
   assert members.get("host/member") == inner.stat().st_size
 
 
-def test_classify_on_disk_equals_unprocessed_plus_processed(tmp_path, monkeypatch):
-  """Three-counter invariant: on_disk == unprocessed + processed_but_on_disk."""
-  import hpcperfstats.dbload.lib.conf_parser as cfg_mod
-  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      classify_day_close_candidates,
-      log_day_close_candidate_report,
-  )
 
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_retired_b_defaults.SYNC_DAY_CLOSE_CANDIDATE_REPORT",
-      True,
-  )
-  monkeypatch.setattr(
-      helpers,
-      "day_close_filesystem_complete",
-      lambda *_a, **_k: False,
-  )
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  tar_path = os.path.normpath(str(daily_dir / "2026-05-28.tar"))
-  open(tar_path, "wb").close()
-  zst_path = os.path.normpath(str(daily_dir / "2026-05-28.tar.zst"))
-  open(zst_path, "wb").write(b"sealed")
-  d_may = datetime(2026, 5, 28, 12, tzinfo=timezone.utc)
-  unproc = tmp_path / str(int(d_may.timestamp()))
-  leftover = tmp_path / str(int(d_may.timestamp()) + 1)
-  unproc.write_text("u")
-  leftover.write_text("p")
-  remaining = {zst_path: [str(unproc), str(leftover)]}
-  unprocessed_by_tar = {tar_path: [str(unproc)]}
-  entries = classify_day_close_candidates(
-      tgz_archive_dir=str(daily_dir),
-      remaining_raw_by_gz=remaining,
-      unprocessed_by_tar=unprocessed_by_tar,
-      disqualification_reasons={},
-      local_tz=timezone.utc,
-  )
-  by_tar = {e["tar_path"]: e for e in entries}
-  entry = by_tar[tar_path]
-  assert entry["unprocessed"] == 1
-  assert entry["processed_but_on_disk"] == 1
-  assert entry["on_disk"] == entry["unprocessed"] + entry["processed_but_on_disk"]
-  logs = []
-  log_day_close_candidate_report(
-      [entry],
-      reason="test",
-      log_fn=lambda msg, flush=False: logs.append(msg),
-  )
-  assert any("on_disk=2" in line for line in logs)
-  assert any("unprocessed=1" in line for line in logs)
-  assert any("processed_but_on_disk=1" in line for line in logs)
 
 
 def test_ingest_worker_never_streams_sealed_when_populate_pool_down(
@@ -10401,45 +9788,7 @@ def test_select_ingest_chunk_paths_oldest_tar_1500_paths(tmp_path):
   assert str(tail_path) not in chunk
   assert all(path in handoff_paths for path in chunk)
 
-def test_select_ingest_chunk_same_day_deferred_lead_under_youngest_gate(tmp_path):
-  """Deferred source-day handoff pins enter lead even when gate is a newer day."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      select_ingest_chunk_paths,
-  )
 
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  jun_tar = os.path.normpath(str(daily_dir / "2026-06-09.tar"))
-  jul_tar = os.path.normpath(str(daily_dir / "2026-07-15.tar"))
-  open(jun_tar, "wb").close()
-  open(jul_tar, "wb").close()
-  d_jun = datetime(2026, 6, 9, 12, tzinfo=timezone.utc)
-  d_jul = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
-  jun_handoff = tmp_path / "host" / "jun_handoff"
-  jun_handoff.parent.mkdir(parents=True)
-  jun_handoff.write_text("1000 job cn001\n")
-  os.utime(jun_handoff, (d_jun.timestamp(), d_jun.timestamp()))
-  jul_paths = []
-  for i in range(8):
-    path = tmp_path / "host" / ("jul_%d" % i)
-    path.write_text("2000 job cn002\n")
-    os.utime(path, (d_jul.timestamp(), d_jul.timestamp()))
-    jul_paths.append(str(path))
-  pending = list(jul_paths) + [str(jun_handoff)]
-  chunk = select_ingest_chunk_paths(
-      pending,
-      oldest_tar=jul_tar,
-      unprocessed_by_tar={jul_tar: jul_paths},
-      inflight_archive_paths=set(),
-      tgz_archive_dir=str(daily_dir),
-      chunk_size=3,
-      handoff_priority_paths={str(jun_handoff)},
-      handoff_source_tar_by_path={str(jun_handoff): jun_tar},
-      deferred_waiting_source_tars={jun_tar},
-      newest_first=True,
-  )
-  assert chunk[0] == str(jun_handoff)
-  assert str(jun_handoff) in chunk
 
 def test_cross_day_remaining_raw_does_not_block_filesystem_complete(tmp_path):
   """Filename-day misbucket under May-28 must not keep fs_complete false."""

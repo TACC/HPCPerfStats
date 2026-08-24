@@ -104,7 +104,7 @@ def test_maint_fingerprints_prefer_find_printf_cache(tmp_path):
 
 
 def test_save_and_load_archive_maint_hints_roundtrip(tmp_path, monkeypatch):
-  monkeypatch.setattr("hpcperfstats.dbload.lib.sync_timedb_archive_maint._bdef.SYNC_ARCHIVE_MAINT_HINTS", True)
+  monkeypatch.setattr("hpcperfstats.dbload.lib.sync_timedb_archive_maint.SYNC_ARCHIVE_MAINT_HINTS", True)
   archive_dir = str(tmp_path)
   maint.save_archive_maint_hints(
       archive_dir,
@@ -200,7 +200,7 @@ def test_build_archive_maintenance_snapshot_skips_gate_when_build_ready_set_fals
     gate_calls["n"] += 1
     raise AssertionError("gate collect must not run when build_ready_set=False")
 
-  monkeypatch.setattr("hpcperfstats.dbload.lib.sync_timedb_archive_maint._bdef.SYNC_ARCHIVE_MAINT_HINTS", False)
+  monkeypatch.setattr("hpcperfstats.dbload.lib.sync_timedb_archive_maint.SYNC_ARCHIVE_MAINT_HINTS", False)
   monkeypatch.setattr(maint, "collect_gate_identities_for_paths", _forbidden_gate)
   snap = maint.build_archive_maintenance_snapshot(
       str(tmp_path),
@@ -237,7 +237,7 @@ def test_build_archive_maintenance_snapshot_collects_head_tail_gate_identities(
     gate_calls["n"] += 1
     return real_gate(*args, **kwargs)
 
-  monkeypatch.setattr("hpcperfstats.dbload.lib.sync_timedb_archive_maint._bdef.SYNC_ARCHIVE_MAINT_HINTS", False)
+  monkeypatch.setattr("hpcperfstats.dbload.lib.sync_timedb_archive_maint.SYNC_ARCHIVE_MAINT_HINTS", False)
   monkeypatch.setattr(maint, "collect_gate_identities_for_paths", _counting_gate)
   monkeypatch.setattr(
       readiness,
@@ -268,7 +268,7 @@ def test_build_archive_maintenance_snapshot_once_collects(monkeypatch, tmp_path)
     return real_collect(*args, **kwargs)
 
   monkeypatch.setattr(maint, "collect_stats_files_in_range", _counting_collect)
-  monkeypatch.setattr("hpcperfstats.dbload.lib.sync_timedb_archive_maint._bdef.SYNC_ARCHIVE_MAINT_HINTS", False)
+  monkeypatch.setattr("hpcperfstats.dbload.lib.sync_timedb_archive_maint.SYNC_ARCHIVE_MAINT_HINTS", False)
   monkeypatch.setattr(
       readiness,
       "build_head_ingest_ready_set",

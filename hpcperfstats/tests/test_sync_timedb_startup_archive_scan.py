@@ -44,8 +44,7 @@ def test_publish_deep_copy_isolated_from_mutations():
 
 def test_coordinator_wait_never_returns_none_parallel_build(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan._bdef."
-      "SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS",
+      "hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan.SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS",
       0.5,
   )
   collect_calls = {"n": 0}
@@ -86,8 +85,7 @@ def test_coordinator_wait_never_returns_none_parallel_build(monkeypatch):
 
 def test_janitor_begin_build_blocks_fallback_collect(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan._bdef."
-      "SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS",
+      "hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan.SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS",
       0.5,
   )
   collect_calls = {"n": 0}
@@ -120,8 +118,7 @@ def test_janitor_begin_build_blocks_fallback_collect(monkeypatch):
 def test_startup_single_archive_scan_shared_across_preflights(monkeypatch):
   """Three preflight-style waiters share one janitor publish (one collect)."""
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan._bdef."
-      "SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS",
+      "hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan.SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS",
       3.0,
   )
   collect_calls = {"n": 0}
@@ -161,8 +158,7 @@ def test_startup_single_archive_scan_shared_across_preflights(monkeypatch):
 def test_preflight_wait_never_fallback_builds(monkeypatch):
   """Preflight-style wait (allow_build=False) must not run fallback collect."""
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan._bdef."
-      "SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS",
+      "hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan.SYNC_STARTUP_SNAPSHOT_WAIT_SECONDS",
       0.2,
   )
   collect_calls = {"n": 0}

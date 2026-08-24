@@ -9,7 +9,7 @@ skipped.
 
 CLI (explicit dates required): sync_timedb_archive.py YYYY-MM-DD              #
 single sealed day sync_timedb_archive.py YYYY-MM-DD YYYY-MM-DD   # inclusive
-range sync_timedb_archive.py backlog                     # all sealed days under
+range sync_timedb_archive.py all                         # all sealed days under
 daily_archive_dir sync_timedb_archive.py /path/to/day.tar.zst    # explicit
 sealed path(s)
 
@@ -93,7 +93,7 @@ from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 
 _DATE_ARG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _USAGE = (
-    "usage: sync_timedb_archive.py <YYYY-MM-DD> [YYYY-MM-DD] | backlog | "
+    "usage: sync_timedb_archive.py <YYYY-MM-DD> [YYYY-MM-DD] | all | "
     "<path.tar.zst> | <path.tar.gz>"
 )
 
@@ -155,8 +155,8 @@ def parse_sync_timedb_archive_argv(argv: Any) -> Any:
   Parse argv into ``(mode, startdate, enddate, path_args)``.
   
   ``mode`` is ``'date'`` or ``'paths'``. For ``'date'``, ``startdate`` is
-  ``datetime`` or ``'backlog'``; ``enddate`` is ``datetime`` or ``None``
-    (all/range).
+  ``datetime`` or ``'all'``; ``enddate`` is ``datetime`` or ``None``
+    (full sealed scan / range).
   
   Args:
     argv (Any): CLI argument list (``sys.argv``-like).
@@ -174,14 +174,15 @@ def parse_sync_timedb_archive_argv(argv: Any) -> Any:
   if len(argv) < 2:
     raise SystemExit(_USAGE)
   args = list(argv[1:])
-  if args[0] == "all":
+  if args[0] in ("backlog", "current"):
     raise SystemExit(
-        "sync_timedb_archive: CLI mode 'all' was renamed to 'backlog'"
+        "sync_timedb_archive: CLI modes 'backlog'/'current' are retired; "
+        "use 'all' for every sealed day under daily_archive_dir"
     )
-  if args[0] == "backlog":
+  if args[0] == "all":
     if len(args) > 1:
       raise SystemExit(_USAGE)
-    return "date", "backlog", None, []
+    return "date", "all", None, []
 
   if len(args) <= 2 and all(_DATE_ARG_RE.match(a) for a in args):
     from datetime import datetime
