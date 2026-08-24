@@ -1,13 +1,13 @@
 # sync_timedb parallelism model
 
-This document describes how `sync_timedb` uses **spawn process pools**, **session thread executors**, **ephemeral burst thread pools**, and **subprocess CLI** (zstd/tar). It complements the archive janitor contract (`sync-timedb-archive-janitor-contract.mdc`) and operator stall verification (`OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`).
+This document describes how `sync_timedb` uses **spawn process pools**, **day_close thread executors**, **ephemeral burst thread pools**, and **subprocess CLI** (zstd/tar). Production coordinator is **`run_sync_timedb_queue_orchestrator`** (`sync-timedb-queue-orchestrator-contract.mdc`). Complements operator stall verification (`OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`).
 
 ## Four categories
 
 | Category | Mechanism | Lifetime | Typical work |
 |----------|-----------|----------|--------------|
-| **A. Hot-path spawn pools** | `multiprocessing.get_context("spawn").Pool` | Session-static (supervisor lifetime) | Ingest parse/DB, archive tar append |
-| **B. Session thread executors** | `ThreadPoolExecutor(max_workers=1)` in supervisor PID | Eager when role enabled; shutdown in supervisor `finally` | Janitor tick, startup preflights, day raw removal verify |
+| **A. Hot-path spawn pools** | `multiprocessing.get_context("spawn").Pool` | Session-static (orchestrator lifetime) | Ingest parse/DB, archive tar append |
+| **B. Session thread executors** | `ThreadPoolExecutor` for day_close (max `sync_day_close_max_inflight`) | Orchestrator lifetime | Seal → raw removal → tar-drop |
 | **C. Ephemeral burst threads** | `ThreadPoolExecutor` in `with` block | Per maintenance call | Archive metadata reads, parallel seal/validation/migrate |
 | **D. Subprocess CLI** | `subprocess` | Per command | `zstd`, GNU `tar -r`, decompress helpers |
 
@@ -27,18 +27,16 @@ This document describes how `sync_timedb` uses **spawn process pools**, **sessio
 
 **Ingest dispatch:** `imap_unordered_watch_pool` polls process liveness and aborts on worker death — thread pools have no equivalent worker-PID model.
 
-## B. Session thread executors (supervisor background roles)
+## B. Session thread executors (day_close + helpers)
 
-Single-flight (`max_workers=1`) roles share `SessionSingleFlightExecutor` (`sync_timedb_session_executor.py`):
+| Role | Module | Created |
+|------|--------|---------|
+| day_close workers | `sync_timedb_queue_orchestrator.py` | `ThreadPoolExecutor(max_workers=sync_day_close_max_inflight)` |
+| Day raw removal verify | `sync_timedb_day_raw_removal.py` | Eager when preflight enabled |
 
-| Role | Module | `thread_name_prefix` | Created |
-|------|--------|---------------------|---------|
-| Archive janitor tick | `sync_timedb_archive_janitor.py` | `archive-janitor` | Eager at `ArchiveJanitor.__init__` |
-| Day raw removal verify | `sync_timedb_day_raw_removal.py` | `day-raw-removal` | Eager when preflight enabled |
+**Two-queue law:** MainThread + ingest/append spawn pools own hot path; day_close threads own seal/validate/delete/tar-drop. day_close stays on **threads** (not spawn).
 
-**Two-queue law:** MainThread + ingest/archive pools own hot path; janitor thread owns seal/validate/delete/tar-drop. Janitor stays on **threads** (not spawn) — one queue, single-flight ticks.
-
-**Shutdown:** supervisor `finally` calls `shutdown(wait=not pool_worker_exit)` on each coordinator. Disabled roles create no executor.
+**Shutdown:** orchestrator `finally` shuts down day_close and spawn pools. The B **`ArchiveJanitor`** single-flight tick executor is **retired**.
 
 ## C. Ephemeral burst thread pools
 
@@ -136,4 +134,4 @@ Extracting prewarm, checkpoint, and stall diagnostics from `sync_timedb.py` into
 
 ## Supervisor maintenance stubs
 
-`sync_timedb.py` exposes `seal_dirty_daily_archives` / `remove_verified_*` as **RuntimeError stubs** so tests can monkeypatch names; real implementations live on `ArchiveJanitor` / helpers (`test_arch_supervisor_maintenance_stubs_raise_runtime_error`).
+`sync_timedb.py` may still expose **RuntimeError stubs** for retired supervisor maintenance names so older tests fail closed; seal/raw helpers live under **`sync_timedb_archive_helpers`** / day_close workers.

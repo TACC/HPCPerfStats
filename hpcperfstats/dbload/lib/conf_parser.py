@@ -115,8 +115,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_archive_pool_processes"),
     ("PIPELINE", "sync_ingest_queue_max_size"),
     ("PIPELINE", "sync_ingest_rescan_mtime_days"),
-    ("PIPELINE", "sync_ingest_rescan_full_every"),
-    ("PIPELINE", "sync_ingest_current_proximity_days"),
     ("PIPELINE", "sync_archive_queue_max_size"),
     ("PIPELINE", "sync_timedb_archive_max_concurrent_sealed_days"),
     ("PIPELINE", "sync_archive_retry_max_attempts"),
@@ -135,12 +133,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_per_file_timeout_s"),
     ("PIPELINE", "sync_ingest_per_file_timeout_max_s"),
     ("PIPELINE", "sync_ingest_per_file_timeout_s_per_mib"),
-    ("PIPELINE", "sync_ingest_giant_pool_supplement_enabled"),
-    ("PIPELINE", "sync_ingest_giant_pool_supplement_max_bytes"),
-    ("PIPELINE", "sync_ingest_giant_pool_supplement_large_max_bytes"),
-    ("PIPELINE", "sync_ingest_giant_pool_supplement_queue_multiplier"),
-    ("PIPELINE", "sync_ingest_giant_pool_supplement_trigger_budget_s"),
-    ("PIPELINE", "sync_ingest_idle_slot_supplement_enabled"),
     ("PIPELINE", "sync_archive_members_cache_enabled"),
     ("PIPELINE", "sync_archive_members_cache_max_entries"),
     ("PIPELINE", "sync_archive_members_redis_enabled"),
@@ -157,9 +149,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_write_lock_shards"),
     ("PIPELINE", "sync_bulk_create_batch_size"),
     ("PIPELINE", "sync_supervisor_rss_limit_mb"),
-    ("PIPELINE", "sync_supervisor_rss_check_every_n_chunks"),
     ("PIPELINE", "sync_process_tree_rss_limit_mb"),
-    ("PIPELINE", "sync_process_tree_rss_check_every_n_chunks"),
     ("PIPELINE", "sync_process_tree_rss_exit_mb"),
     ("PIPELINE", "sync_ingest_max_file_read_bytes"),
     ("PIPELINE", "sync_ingest_stream_duplicate_scan_bytes"),
@@ -173,7 +163,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_rss_recheck_delay_ms"),
     ("PIPELINE", "sync_enable_ingest_first_durability_mode"),
     ("PIPELINE", "sync_archive_require_db_ingest"),
-    ("PIPELINE", "sync_archive_maint_hints"),
     ("PIPELINE", "listend_db_ingest_enabled"),
     ("PIPELINE", "listend_db_ingest_backpressure"),
     ("PIPELINE", "listend_db_ingest_pool_processes"),
@@ -192,18 +181,12 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "archive_zstd_ionice_level"),
     ("PIPELINE", "archive_zstd_drop_page_cache"),
     ("PIPELINE", "archive_seal_parallel_workers"),
-    ("PIPELINE", "archive_maintenance_idle_seconds"),
-    ("PIPELINE", "archive_janitor_budget_seconds"),
-    ("PIPELINE", "archive_janitor_debt_high_watermark"),
-    ("PIPELINE", "archive_janitor_debt_burst_factor"),
-    ("PIPELINE", "archive_janitor_debt_max_entries"),
-    ("PIPELINE", "archive_janitor_raw_paths_per_tick"),
-    ("PIPELINE", "sync_day_close_candidate_report"),
-    ("PIPELINE", "sync_startup_snapshot_wait_seconds"),
+    ("PIPELINE", "sync_day_close_raw_paths_per_batch"),
+    ("PIPELINE", "sync_day_close_min_age_hours"),
+    ("PIPELINE", "sync_ingest_hot_days"),
     ("PIPELINE", "sync_day_close_max_inflight"),
     ("PIPELINE", "sync_day_close_manifest_stale_seconds"),
     ("PIPELINE", "sync_day_close_raw_removal_max_deletes_per_pass"),
-    ("PIPELINE", "sync_archive_max_inflight_jobs"),
     ("PIPELINE", "sync_archive_validation_max_workers"),
     ("PIPELINE", "sync_archive_worker_stall_seconds"),
     # [OAUTH2]
@@ -295,8 +278,6 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_pool_processes': '2',
         'sync_ingest_queue_max_size': '3000',
     'sync_ingest_rescan_mtime_days': '1',
-    'sync_ingest_rescan_full_every': '100',
-    'sync_ingest_current_proximity_days': '2',
     'sync_archive_queue_max_size': '1000',
     'sync_timedb_archive_max_concurrent_sealed_days': '1',
     'sync_archive_retry_max_attempts': '5',
@@ -315,12 +296,6 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_per_file_timeout_s': '3600',
     'sync_ingest_per_file_timeout_max_s': '86400',
     'sync_ingest_per_file_timeout_s_per_mib': '2.783203125',
-    'sync_ingest_giant_pool_supplement_enabled': 'yes',
-    'sync_ingest_giant_pool_supplement_max_bytes': '1073741824',
-    'sync_ingest_giant_pool_supplement_large_max_bytes': '8589934592',
-    'sync_ingest_giant_pool_supplement_queue_multiplier': '2',
-    'sync_ingest_giant_pool_supplement_trigger_budget_s': '6600',
-    'sync_ingest_idle_slot_supplement_enabled': 'yes',
     'sync_archive_members_cache_enabled': 'yes',
     'sync_archive_members_cache_max_entries': '64',
     'sync_archive_members_redis_enabled': 'yes',
@@ -337,9 +312,7 @@ INI_OPTION_DEFAULTS = {
     'sync_write_lock_shards': '8',
     'sync_bulk_create_batch_size': '10000',
     'sync_supervisor_rss_limit_mb': '0',
-    'sync_supervisor_rss_check_every_n_chunks': '1',
     'sync_process_tree_rss_limit_mb': '110000',
-    'sync_process_tree_rss_check_every_n_chunks': '1',
     'sync_process_tree_rss_exit_mb': '0',
     'sync_ingest_max_file_read_bytes': '536870912',
     'sync_ingest_stream_duplicate_scan_bytes': '8388608',
@@ -353,7 +326,6 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_rss_recheck_delay_ms': '50',
     'sync_enable_ingest_first_durability_mode': 'yes',
     'sync_archive_require_db_ingest': 'yes',
-    'sync_archive_maint_hints': 'yes',
     'listend_db_ingest_enabled': 'yes',
     'listend_db_ingest_backpressure': 'drop',
     'listend_db_ingest_pool_processes': '32',
@@ -372,18 +344,12 @@ INI_OPTION_DEFAULTS = {
     'archive_zstd_ionice_level': '6',
     'archive_zstd_drop_page_cache': 'yes',
     'archive_seal_parallel_workers': '4',
-    'archive_maintenance_idle_seconds': '300',
-    'archive_janitor_budget_seconds': '30',
-    'archive_janitor_debt_high_watermark': '50',
-    'archive_janitor_debt_burst_factor': '1.5',
-    'archive_janitor_debt_max_entries': '200',
-    'archive_janitor_raw_paths_per_tick': '1000',
-    'sync_day_close_candidate_report': 'yes',
-    'sync_startup_snapshot_wait_seconds': '300',
+    'sync_day_close_raw_paths_per_batch': '1000',
+    'sync_day_close_min_age_hours': '32',
+    'sync_ingest_hot_days': '2',
     'sync_day_close_max_inflight': '4',
     'sync_day_close_manifest_stale_seconds': '7200',
     'sync_day_close_raw_removal_max_deletes_per_pass': '0',
-    'sync_archive_max_inflight_jobs': '2',
     'sync_archive_validation_max_workers': '2',
     'sync_archive_worker_stall_seconds': '600',
     'client_id': None,
@@ -3446,209 +3412,107 @@ def get_sync_ingest_per_file_timeout_s_per_mib() -> Any:
 
 def get_sync_ingest_giant_pool_supplement_enabled() -> Any:
   """
-  Backfill idle ingest pool slots from pending tail while giants run.
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_ingest_giant_pool_supplement_enabled``: concrete type depends
-    on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_sync_ingest_giant_pool_supplement_enabled()  # doctest: +SKIP
   """
-  env = os.environ.get(
-      "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED", "",
-  ).strip().lower()
-  if env in ("1", "true", "yes", "on"):
-    return True
-  if env in ("0", "false", "no", "off"):
-    return False
-  _ensure_cfg_loaded()
-  try:
-    return _pipeline_get("sync_ingest_giant_pool_supplement_enabled").strip().lower() in ("1", "true", "yes", "on")
-  except (TypeError, ValueError, OverflowError):
-    return True
+  return False
+
+
 
 
 def get_sync_ingest_idle_slot_supplement_enabled() -> Any:
   """
-  Allow giant-pool supplement when idle slots exist without a giant budget.
-  
-  When enabled (default), ``supplement_paths_fn`` may dispatch from the pending
-  tail whenever the primary chunk iterator is exhausted and workers are idle,
-  even if no in-flight path meets the giant trigger budget (RC-3).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_ingest_idle_slot_supplement_enabled``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_sync_ingest_idle_slot_supplement_enabled()  # doctest: +SKIP
   """
-  env = os.environ.get(
-      "HPCPERFSTATS_SYNC_INGEST_IDLE_SLOT_SUPPLEMENT_ENABLED", "",
-  ).strip().lower()
-  if env in ("1", "true", "yes", "on"):
-    return True
-  if env in ("0", "false", "no", "off"):
-    return False
-  _ensure_cfg_loaded()
-  try:
-    return _pipeline_get(
-        "sync_ingest_idle_slot_supplement_enabled",
-    ).strip().lower() in ("1", "true", "yes", "on")
-  except (TypeError, ValueError, OverflowError):
-    return True
+  return False
+
+
 
 
 def get_sync_ingest_giant_pool_supplement_max_bytes() -> Any:
   """
-  Soft max (bytes): prefer supplement paths strictly under this size (default 1.
-  
-    GiB).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_ingest_giant_pool_supplement_max_bytes``: concrete type depends
-    on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_sync_ingest_giant_pool_supplement_max_bytes()  # doctest: +SKIP
   """
-  env = os.environ.get(
-      "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES", "",
-  ).strip()
-  if env:
-    try:
-      return max(1, int(env))
-    except (TypeError, ValueError, OverflowError):
-      return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        1,
-        int(_pipeline_get("sync_ingest_giant_pool_supplement_max_bytes")),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT
+  return 1024 * 1024 * 1024
+
+
 
 
 def get_sync_ingest_giant_pool_supplement_large_max_bytes() -> Any:
   """
-  Hard max (bytes) for second-pass supplement ([soft, large); default 8 GiB).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_ingest_giant_pool_supplement_large_max_bytes``: concrete type
-    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-    empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
-    >>> get_sync_ingest_giant_pool_supplement_large_max_bytes()
+    >>> get_sync_ingest_giant_pool_supplement_large_max_bytes()  # doctest: +SKIP
   """
-  env = os.environ.get(
-      "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES", "",
-  ).strip()
-  if env:
-    try:
-      return max(1, int(env))
-    except (TypeError, ValueError, OverflowError):
-      return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES_DEFAULT
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        1,
-        int(_pipeline_get("sync_ingest_giant_pool_supplement_large_max_bytes")),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES_DEFAULT
+  return 8 * 1024 * 1024 * 1024
+
+
 
 
 def get_sync_ingest_giant_pool_supplement_queue_multiplier() -> Any:
   """
-  Multiplier: supplement_queue = ingest_queue_max * this (default 2 → 6000).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_ingest_giant_pool_supplement_queue_multiplier``: concrete type
-    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-    empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
-    >>> get_sync_ingest_giant_pool_supplement_queue_multiplier()
+    >>> get_sync_ingest_giant_pool_supplement_queue_multiplier()  # doctest: +SKIP
   """
-  env = os.environ.get(
-      "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_QUEUE_MULTIPLIER", "",
-  ).strip()
-  if env:
-    try:
-      return max(1, int(env))
-    except (TypeError, ValueError, OverflowError):
-      return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_QUEUE_MULTIPLIER_DEFAULT
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        1,
-        int(_pipeline_get("sync_ingest_giant_pool_supplement_queue_multiplier")),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_QUEUE_MULTIPLIER_DEFAULT
+  return 2
+
+
 
 
 def get_sync_ingest_giant_pool_supplement_queue_size() -> Any:
   """
-  Ceiling for giant-supplement pending_tail reservoir (startup + mid-imap.
-  
-    refresh).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_ingest_giant_pool_supplement_queue_size``: concrete type
-    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-    empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_sync_ingest_giant_pool_supplement_queue_size()  # doctest: +SKIP
   """
-  return max(
-      1,
-      int(get_sync_ingest_queue_max_size())
-      * int(get_sync_ingest_giant_pool_supplement_queue_multiplier()),
-  )
+  return max(1, int(get_sync_ingest_pool_processes()) * 2)
+
+
 
 
 def get_sync_ingest_giant_pool_supplement_trigger_budget_s() -> Any:
   """
-  Min resolved per-file ingest budget (s) for an in-flight path to count as.
-  
-    giant.
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_ingest_giant_pool_supplement_trigger_budget_s``: concrete type
-    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-    empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
-    >>> get_sync_ingest_giant_pool_supplement_trigger_budget_s()
+    >>> get_sync_ingest_giant_pool_supplement_trigger_budget_s()  # doctest: +SKIP
   """
-  env = os.environ.get(
-      "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S", "",
-  ).strip()
-  if env:
-    try:
-      return max(0.0, float(env))
-    except (TypeError, ValueError, OverflowError):
-      return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S_DEFAULT
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        0.0,
-        float(_pipeline_get("sync_ingest_giant_pool_supplement_trigger_budget_s")),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S_DEFAULT
+  return 6600.0
+
+
 
 
 def get_metrics_run_stall_timeout_s() -> Any:
@@ -3916,38 +3780,32 @@ def get_sync_ingest_rescan_mtime_days() -> Any:
 
 def get_sync_ingest_rescan_full_every() -> Any:
   """
-  Force full-age find every N incremental rescans (default 100).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from ``get_sync_ingest_rescan_full_every``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_sync_ingest_rescan_full_every()  # doctest: +SKIP
   """
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_ingest_rescan_full_every"))
+  return 0
+
+
 
 
 def get_sync_ingest_current_proximity_days() -> Any:
   """
-  Days within which CLI ``backlog`` exits when near a live ``current``.
-  
-    heartbeat.
-  
-    (default 2).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_ingest_current_proximity_days``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_sync_ingest_current_proximity_days()  # doctest: +SKIP
   """
-  _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_ingest_current_proximity_days"))
+  return 2
+
+
 
 
 def get_sync_archive_queue_max_size() -> Any:
@@ -4142,18 +4000,17 @@ def get_sync_supervisor_rss_limit_mb() -> Any:
 
 def get_sync_supervisor_rss_check_every_n_chunks() -> Any:
   """
-  Check supervisor RSS every N processed chunks (default 1).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_supervisor_rss_check_every_n_chunks``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_sync_supervisor_rss_check_every_n_chunks()  # doctest: +SKIP
   """
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_supervisor_rss_check_every_n_chunks"))
+  return 1
+
+
 
 
 def get_sync_process_tree_rss_limit_mb() -> Any:
@@ -4174,18 +4031,17 @@ def get_sync_process_tree_rss_limit_mb() -> Any:
 
 def get_sync_process_tree_rss_check_every_n_chunks() -> Any:
   """
-  Check process-tree RSS every N ingest chunks (default 1).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_process_tree_rss_check_every_n_chunks``: concrete type depends
-    on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_sync_process_tree_rss_check_every_n_chunks()  # doctest: +SKIP
   """
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_process_tree_rss_check_every_n_chunks"))
+  return 1
+
+
 
 
 def get_sync_process_tree_rss_exit_mb() -> Any:
@@ -4693,144 +4549,154 @@ def get_sync_enable_ingest_first_durability_mode() -> Any:
 
 def get_archive_maintenance_idle_seconds() -> Any:
   """
-  Optional idle dwell before janitor tick budget bonus (default 300s).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_archive_maintenance_idle_seconds``: concrete type depends on inputs
-    and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_archive_maintenance_idle_seconds()  # doctest: +SKIP
   """
-  _ensure_cfg_loaded()
-  return max(
-      0.0,
-      float(_pipeline_get("archive_maintenance_idle_seconds")),
-  )
+  return 300
+
+
 
 
 def get_archive_janitor_budget_seconds() -> Any:
   """
-  Max wall seconds per archive janitor micro-batch tick (default 30).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from ``get_archive_janitor_budget_seconds``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_archive_janitor_budget_seconds()  # doctest: +SKIP
   """
-  _ensure_cfg_loaded()
-  return max(
-      1.0,
-      float(_pipeline_get("archive_janitor_budget_seconds")),
-  )
+  return 30.0
+
+
 
 
 def get_archive_janitor_debt_high_watermark() -> Any:
   """
-  Debt queue depth before temporary burst scaling (default 50).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_archive_janitor_debt_high_watermark``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_archive_janitor_debt_high_watermark()  # doctest: +SKIP
   """
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("archive_janitor_debt_high_watermark"))
+  return 50
+
+
 
 
 def get_archive_janitor_debt_burst_factor() -> Any:
   """
-  Budget multiplier when debt exceeds high watermark (default 1.5).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_archive_janitor_debt_burst_factor``: concrete type depends on inputs
-    and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_archive_janitor_debt_burst_factor()  # doctest: +SKIP
   """
-  _ensure_cfg_loaded()
-  return max(
-      1.0,
-      min(4.0, float(_pipeline_get("archive_janitor_debt_burst_factor"))),
-  )
+  return 1.5
+
+
 
 
 def get_archive_janitor_debt_max_entries() -> Any:
   """
-  Cap in-memory janitor debt queue size (default 200).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_archive_janitor_debt_max_entries``: concrete type depends on inputs
-    and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_archive_janitor_debt_max_entries()  # doctest: +SKIP
   """
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("archive_janitor_debt_max_entries"))
+  return 200
 
 
-def get_archive_janitor_raw_paths_per_tick() -> Any:
+
+
+def get_sync_day_close_raw_paths_per_batch() -> Any:
   """
-  Max raw stats file deletes per janitor RAW_REMOVE debt item (default 1000).
-  
+  Max raw paths processed per day_close batch (default 1000).
+
+  Renamed from ``archive_janitor_raw_paths_per_tick`` (same deploy).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_archive_janitor_raw_paths_per_tick``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    int: Positive batch size.
+
   Examples:
-    >>> get_archive_janitor_raw_paths_per_tick()  # doctest: +SKIP
+    >>> get_sync_day_close_raw_paths_per_batch() >= 1
+    True
   """
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("archive_janitor_raw_paths_per_tick"))
+  return max(1, _pipeline_getint("sync_day_close_raw_paths_per_batch"))
+
+
+def get_sync_day_close_min_age_hours() -> Any:
+  """
+  Hours after calendar day end before day_close seal/delete (default 32).
+
+  Returns:
+    float: Non-negative hours.
+
+  Examples:
+    >>> get_sync_day_close_min_age_hours() >= 0.0
+    True
+  """
+  _ensure_cfg_loaded()
+  return max(0.0, float(_pipeline_get("sync_day_close_min_age_hours")))
+
+
+def get_sync_ingest_hot_days() -> Any:
+  """
+  Inclusive hot-band window length for ingest ZSET scores (default 2).
+
+  Returns:
+    int: Hot window in calendar days (minimum 1).
+
+  Examples:
+    >>> get_sync_ingest_hot_days() >= 1
+    True
+  """
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_ingest_hot_days"))
 
 
 def get_sync_day_close_candidate_report() -> Any:
   """
-  Log day-close candidate report (queued/disqualified only; default on).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_day_close_candidate_report``: concrete type depends on inputs
-    and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_sync_day_close_candidate_report()  # doctest: +SKIP
   """
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _pipeline_get("sync_day_close_candidate_report"),
-  )
+  return False
+
+
 
 
 def get_sync_startup_snapshot_wait_seconds() -> Any:
   """
-  Max wait for canonical startup archive snapshot before single-flight build.
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_startup_snapshot_wait_seconds``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_sync_startup_snapshot_wait_seconds()  # doctest: +SKIP
   """
-  _ensure_cfg_loaded()
-  return max(
-      120.0,
-      float(_pipeline_get("sync_startup_snapshot_wait_seconds")),
-  )
+  return 300
+
+
 
 
 def get_sync_day_close_raw_removal_max_deletes_per_pass() -> Any:
@@ -4898,21 +4764,17 @@ def get_sync_day_close_manifest_stale_seconds() -> Any:
 
 def get_sync_archive_max_inflight_jobs() -> Any:
   """
-  Concurrent daily-tar append slots (= ``sync_archive_pool_processes``).
-  
-  Legacy INI key ``sync_archive_max_inflight_jobs`` is ignored. Capacity follows
-  ``get_sync_archive_pool_processes()`` so a narrow site inflight cannot leave
-  archive pool workers idle while overflow days sit on the heap.
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from ``get_sync_archive_max_inflight_jobs``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_sync_archive_max_inflight_jobs()  # doctest: +SKIP
   """
-  return max(1, int(get_sync_archive_pool_processes()))
+  return 2
+
+
 
 
 def get_sync_archive_worker_stall_seconds() -> Any:
@@ -4954,22 +4816,17 @@ def get_sync_archive_require_db_ingest() -> Any:
 
 def get_sync_archive_maint_hints() -> Any:
   """
-  Persist host-dir/path hints for faster archive maintenance restarts (default.
-  
-    on).
-  
+  Retired B INI tunable (hard-coded default; key removed from registry).
+
   Returns:
-    Any: Open return polymorphism from ``get_sync_archive_maint_hints``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Fixed thrown default for leftover callers.
+
   Examples:
     >>> get_sync_archive_maint_hints()  # doctest: +SKIP
   """
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _pipeline_get("sync_archive_maint_hints"),
-  )
+  return False
+
+
 
 
 def get_listend_db_ingest_enabled() -> Any:

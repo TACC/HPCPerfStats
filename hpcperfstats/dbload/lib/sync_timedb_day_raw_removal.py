@@ -1806,7 +1806,7 @@ class _DayRawRemovalState:
       self._manifest["phase"] = PHASE_VERIFYING
       if not self._manifest.get("started_at"):
         self._manifest["started_at"] = time.time()
-    paths_per_tick = max(1, int(cfg.get_archive_janitor_raw_paths_per_tick()))
+    paths_per_tick = max(1, int(cfg.get_sync_day_close_raw_paths_per_batch()))
     verify_started = time.time()
     if self.log_fn:
       self.log_fn(

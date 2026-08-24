@@ -235,7 +235,6 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max concurrent sealed-day streams for sync_timedb_archive backfill (default 1).
 # sync_timedb_archive_max_concurrent_sealed_days = 1
 
-
 # Max in-memory ingest work queue size (default 3000; also drives ingest chunk size).
 # sync_ingest_queue_max_size = 3000
 
@@ -243,10 +242,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # sync_ingest_rescan_mtime_days = 1
 
 # Force full-age find every N incremental pending rescans (default 100).
-# sync_ingest_rescan_full_every = 100
 
 # Days within which CLI backlog exits when near a live current heartbeat (default 2).
-# sync_ingest_current_proximity_days = 2
 
 # Max in-memory archive work queue size (default 1000).
 # sync_archive_queue_max_size = 1000
@@ -352,13 +349,11 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # sync_supervisor_rss_limit_mb = 0
 
 # Check supervisor RSS every N ingest chunks (default 1).
-# sync_supervisor_rss_check_every_n_chunks = 1
 
 # Process-tree RSS defer limit MiB (supervisor + pool workers); 0 off (default 110000).
 # sync_process_tree_rss_limit_mb = 110000
 
 # Check process-tree RSS every N ingest chunks (default 1).
-# sync_process_tree_rss_check_every_n_chunks = 1
 
 # Hard exit when process-tree RSS exceeds MiB; 0 off (default 0).
 # sync_process_tree_rss_exit_mb = 0
@@ -373,22 +368,16 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # sync_ingest_db_complete_tail_window_lines = 500
 
 # Backfill idle ingest pool slots from pending tail while >=2GiB giants run (default yes).
-# sync_ingest_giant_pool_supplement_enabled = yes
 
 # Soft max bytes for preferred supplement pass; exclusive upper bound (default 1 GiB).
-# sync_ingest_giant_pool_supplement_max_bytes = 1073741824
 
 # Hard max bytes for second-pass supplement; exclusive; paths at/above stay chunk-only (default 8 GiB).
-# sync_ingest_giant_pool_supplement_large_max_bytes = 8589934592
 
 # Supplement reservoir = ingest_queue_max * this at batch start and mid-imap refresh (default 2 => 6000).
-# sync_ingest_giant_pool_supplement_queue_multiplier = 2
 
 # Min resolved per-file ingest budget (s) for in-flight path to count as giant (default 6600 ~= 2 GiB).
-# sync_ingest_giant_pool_supplement_trigger_budget_s = 6600
 
 # Allow pending-tail supplement when workers are idle even without a giant budget (default yes).
-# sync_ingest_idle_slot_supplement_enabled = yes
 
 # Recycle ingest pool workers after N files; 0 unlimited (default 0).
 # Ingest pool only; archive and sealed-archive spawn pools always maxtasksperchild=1.
@@ -416,7 +405,6 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # sync_archive_require_db_ingest = yes
 
 # Persist archive maintenance hints for faster restarts (default yes).
-# sync_archive_maint_hints = yes
 
 # listend async dual-write of samples to Timescale after archive append (default yes).
 # listend_db_ingest_enabled = yes
@@ -471,25 +459,25 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # archive_zstd_drop_page_cache = yes
 
 # Optional idle dwell before janitor tick budget bonus (default 300).
-# archive_maintenance_idle_seconds = 300
 
 # Archive janitor micro-batch wall budget per tick seconds (default 30).
-# archive_janitor_budget_seconds = 30
 
 # Debt queue depth before temporary budget burst (default 50).
-# archive_janitor_debt_high_watermark = 50
 
 # Budget multiplier when debt exceeds high watermark (default 1.5).
-# archive_janitor_debt_burst_factor = 1.5
 
 # Cap in-memory janitor debt queue entries (default 200).
-# archive_janitor_debt_max_entries = 200
 
-# Max raw stats file deletes per janitor RAW_REMOVE debt item per tick (default 1000).
-# archive_janitor_raw_paths_per_tick = 1000
+# Max raw paths processed per day_close batch (default 1000; renamed from archive_janitor_raw_paths_per_tick).
+# sync_day_close_raw_paths_per_batch = 1000
 
 # Max wait for canonical startup archive snapshot before single-flight build (default 300s; min 120).
-# sync_startup_snapshot_wait_seconds = 300
+
+# Hours after calendar day end before day_close seal/delete (default 32).
+# sync_day_close_min_age_hours = 32
+
+# Inclusive hot-band window for ingest job scores (days; default 2).
+# sync_ingest_hot_days = 2
 
 # DAY_CLOSE pipeline occupancy and parallel worker count (default 4).
 # sync_day_close_max_inflight = 4
@@ -498,13 +486,11 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # sync_day_close_manifest_stale_seconds = 7200
 
 # Log day-close candidate report (queued/disqualified only; default yes).
-# sync_day_close_candidate_report = yes
 
 # Max deletes per day-close delete loop iteration; 0 = unlimited per iteration (default 0).
 # sync_day_close_raw_removal_max_deletes_per_pass = 0
 
 # Deprecated: ignored. Concurrent daily-tar append slots follow sync_archive_pool_processes.
-# sync_archive_max_inflight_jobs = 2
 
 # Seconds before logging an archive pool job as stalled (default 600).
 # sync_archive_worker_stall_seconds = 600

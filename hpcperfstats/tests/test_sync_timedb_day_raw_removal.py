@@ -1881,7 +1881,7 @@ def test_pre_seal_verify_slices_by_paths_per_tick(tmp_path, monkeypatch):
   open(tar_path, "wb").close()
   seg_paths = [str(seg) for seg in segs]
   members = {get_tar_member_name(path): os.path.getsize(path) for path in seg_paths}
-  monkeypatch.setattr(cfg, "get_archive_janitor_raw_paths_per_tick", lambda: 2)
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_paths_per_batch", lambda: 2)
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: False)
   logs = []
 
@@ -1932,7 +1932,7 @@ def test_pre_seal_verify_completes_large_day_without_budget_log(tmp_path, monkey
   open(tar_path, "wb").close()
   members = {get_tar_member_name(path): os.path.getsize(path) for path in seg_paths}
   paths_per_tick = 1000
-  monkeypatch.setattr(cfg, "get_archive_janitor_raw_paths_per_tick", lambda: paths_per_tick)
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_paths_per_batch", lambda: paths_per_tick)
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: False)
   logs = []
 

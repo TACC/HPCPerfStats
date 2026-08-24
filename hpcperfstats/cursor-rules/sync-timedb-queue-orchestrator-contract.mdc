@@ -1,0 +1,42 @@
+---
+description: Greenfield sync_timedb job:v1 queue orchestrator contracts (slice 4+)
+alwaysApply: false
+globs: hpcperfstats/dbload/sync_timedb.py,hpcperfstats/dbload/lib/sync_timedb_queue_orchestrator.py,hpcperfstats/dbload/lib/sync_timedb_job_*.py,hpcperfstats/dbload/lib/sync_timedb_archive_dir_lock.py,hpcperfstats/tests/test_sync_timedb_queue_orchestrator.py,hpcperfstats/tests/test_sync_timedb_architecture_contract.py
+---
+
+# sync_timedb queue orchestrator contract
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Production coordinator for `sync_timedb` is **`run_sync_timedb_queue_orchestrator`** (wired from `run_sync_timedb_supervisor_from_parsed`). The B supervisor loop / `ArchiveJanitor` tick coordinator are **retired** — do not dual-run orchestrators.
+
+## Laws
+
+| Law | Detail |
+|-----|--------|
+| One process / `archive_dir` | Exclusive flock on `{archive_dir}/.sync_timedb_orchestrator.fnctl.lock` |
+| Job kinds | Redis `job:v1`: ingest ZSET (hot/catchup ranges), append/discover/day_close LISTs, `SET NX EX` leases (TTL = ingest per-file max) |
+| Streaming submit | Discover → `ZADD` as paths arrive; never wait for full find to finish before first enqueue |
+| Sliding-window pools | Refill on completion; never join an entire batch before the next hop |
+| Reserved ingest slots | `hot_cap = max(1, (2*pool)//3)`, `catchup_cap = pool - hot_cap` (catchup floored to 1 when `pool >= 2`) |
+| No whole-key `ZPOPMIN` | Ranged pop only (else catchup starves) |
+| Idle poll | `sync_pool_poll_timeout_s` when slots free and ranges empty |
+| Empty Redis ≠ caught up | Reconstruct from disk + Timescale + marks; checkpoint `.sync_timedb_state.json` is **not** reconstruct SoT |
+| Skip completes | Do not enqueue identities whose complete predicates are already true |
+| day_close | Filesystem complete + `sync_day_close_min_age_hours` (default 32) after day end; threads (max `sync_day_close_max_inflight`); ingest/append stay spawn |
+| Redis down | Fail-closed (exit); no Postgres job table |
+| No persistence wipe on cutover | Do not bump contract / wipe sidecars as cutover (B-17) |
+| Anti-workaround | No dual CLI, no strangler wrapper of supervisor_loop, no janitor stall watchdogs as coordinator |
+
+## Predicates (B-09)
+
+- Discovered incomplete ingest → ingest job exists
+- Remaining-raw incomplete → ingest and/or append job exists
+- `day_close` complete = filesystem + 32h (manifest `phase=done` is not SoT)
+
+## Overlap
+
+- Persistence API: `sync-timedb-persistence-contract.mdc`
+- DB-before-archive / append unseal: `sync-timedb-db-before-archive-contract.mdc`, `sync-timedb-lock-and-archive-contract.mdc`
+- Regression battery: `sync-timedb-change-regression-gate.mdc` (battery composition updated for queue cutover)
+- Janitor rule prose trim is **slice 5** — do not rewrite the full janitor contract here

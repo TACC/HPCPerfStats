@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Consolidated sync_timedb stall-regression battery (day-close plan Phase 1b).
+# Consolidated sync_timedb stall-regression battery (queue-orchestrator cutover).
 # Host pytest only — no compose DB required for this -k filter scope.
 set -euo pipefail
 
@@ -37,6 +37,8 @@ Usage:
 Logs to: <workspace_root>/test_runs/day-close-loop-regression-battery-<timestamp>.log
 
 Mandatory before closing any sync_timedb ingest/archive stall fix (sync-timedb-change-regression-gate.mdc).
+Slice 4+: queue orchestrator + job:v1 + B-09 predicate architecture (supervisor/janitor B
+tests removed from this battery).
 EOF
       exit 0
       ;;
@@ -47,22 +49,21 @@ EOF
   esac
 done
 
-# prewarm_retries covers inflight + members_n>0 cold Redis; l1_cold_redis / fingerprint
-# cover L1-bypass-warm and post_finalize pending-reconcile fingerprint refresh.
-BATTERY_FILTER='handoff or handoff_priority or archive_finalize or post_finalize or phase_done or same_boot or closed_raw or chunk_gate or orphan_inflight or tar_drop or pipeline_complete or rescan or defer_day_close or manifest_fast or closed_raw_persists or reconcile_orphan or test_arch_ or architecture or ingest_stall_watchdog or oldest_day_unprocessed_frozen or budget_exit_nonblocking or reconcile_before_discover or on_disk_equals_unprocessed or never_streams_sealed_when_populate_pool_down or redis_populate_before_idle_ghost or lock_held_stall_recoverable or find_stats or printf or rescan_mtime or rescan_full or rescan_every_chunks or gfind or disabled_day_close or pending_maintenance or chunk_stall or allow_full or day_scoped or async_inflight or pending_rescan or identity_drift or prewarm_fails_loud or prewarm_retries or l1_cold_redis or fingerprint_updates or reconcile_fingerprint or jid or host_scoped or deque_mutation or idle_day_close_poll or throttled_child_hygiene'
+# Queue cutover battery: job schema, reconstruct/discover, orchestrator flock/entry,
+# B-09 predicates, plus durable archive/members/find/jid helpers still valid without
+# the retired supervisor_loop / ArchiveJanitor coordinator.
+BATTERY_FILTER='test_arch_ or architecture or find_stats or printf or rescan_mtime or rescan_full or gfind or jid or host_scoped or flock or orchestrator or job_queue or reconstruct or streaming or ingest_identity or lease or ranged or hot_cap or catchup or empty_job or checkpoint_sidecar or day_close_min_age or discovered_incomplete or remaining_raw_enqueues'
 
 set +e
 "$PYTHON" -m pytest -q \
-  hpcperfstats/tests/test_sync_timedb_supervisor.py \
-  hpcperfstats/tests/test_sync_timedb_day_raw_removal.py \
-  hpcperfstats/tests/test_sync_timedb_day_close_manifest.py \
+  hpcperfstats/tests/test_sync_timedb_job_queue.py \
+  hpcperfstats/tests/test_sync_timedb_queue_orchestrator.py \
+  hpcperfstats/tests/test_sync_timedb_architecture_contract.py \
   hpcperfstats/tests/test_sync_timedb_archive.py \
   hpcperfstats/tests/test_sync_timedb_archive_members_redis.py \
-  hpcperfstats/tests/test_sync_timedb_janitor.py \
-  hpcperfstats/tests/test_sync_timedb_architecture_contract.py \
   hpcperfstats/tests/test_sync_timedb_stats_find.py \
-  hpcperfstats/tests/test_sync_timedb_chunk_stall_faststart.py \
   hpcperfstats/tests/test_sync_timedb_jid.py \
+  hpcperfstats/tests/test_sync_timedb_day_raw_removal.py \
   -k "$BATTERY_FILTER" \
   "${PYTEST_EXTRA[@]}" \
   2>&1 | tee "$LOG"
