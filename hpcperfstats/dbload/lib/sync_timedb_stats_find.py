@@ -24,7 +24,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX
 
@@ -228,50 +228,91 @@ def build_find_current_inode_argv(
 
 def parse_find_printf_records(data: bytes) -> List[FindStatsRecord]:
   """
-  Parse NUL records produced by GNU find ``-printf`` with.
-  
-    ``FIND_PRINTF_FORMAT``.
-  
+  Parse NUL records produced by GNU find ``-printf`` with
+  ``FIND_PRINTF_FORMAT``.
+
   Args:
-    data (bytes): Data.
-  
+    data (bytes): Full find stdout buffer (may be empty).
+
   Returns:
-    List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
-  
+    List[FindStatsRecord]: Parsed records in stream order.
+
   Raises:
-    FindStatsDiscoveryError: Raised when ``parse_find_printf_records`` hits a
-    ``FindStatsDiscoveryError`` failure path.
-  
+    FindStatsDiscoveryError: When token count is not a multiple of 4 or a
+      field fails to parse.
+
   Examples:
-    >>> parse_find_printf_records(None)  # doctest: +SKIP
+    >>> parse_find_printf_records(b"/a\\x001.5\\x0010\\x009\\x00")[0].path
+    '/a'
   """
-  if not data:
-    return []
-  parts = data.split(b"\0")
-  # Trailing empty from final NUL is expected.
-  while parts and parts[-1] == b"":
-    parts.pop()
-  if len(parts) % 4 != 0:
+  return list(iter_find_printf_records_streaming([data] if data else []))
+
+
+def iter_find_printf_records_streaming(
+  chunks: Iterable[bytes],
+) -> Iterator[FindStatsRecord]:
+  """
+  Yield find ``-printf`` records as each four-field NUL group completes.
+
+  Does not wait for the producer to finish: the first complete record is
+  yielded as soon as its trailing NUL arrives, even when more chunks follow.
+  Trailing incomplete fields after the final chunk raise
+  :class:`FindStatsDiscoveryError`.
+
+  Args:
+    chunks (Iterable[bytes]): Successive stdout chunks (empty chunks allowed).
+
+  Yields:
+    FindStatsRecord: One record per complete ``path/mtime/size/inode`` group.
+
+  Raises:
+    FindStatsDiscoveryError: On invalid field values or leftover incomplete
+      fields at end of stream.
+
+  Examples:
+    >>> recs = list(
+    ...   iter_find_printf_records_streaming(
+    ...     [b"/a\\x001.0\\x001\\x002\\x00", b"/b\\x002.0\\x003\\x004\\x00"]
+    ...   )
+    ... )
+    >>> [r.path for r in recs]
+    ['/a', '/b']
+  """
+  buf = b""
+  fields: List[bytes] = []
+  index = 0
+  for chunk in chunks:
+    if chunk:
+      buf += chunk
+    while True:
+      nul = buf.find(b"\0")
+      if nul < 0:
+        break
+      fields.append(buf[:nul])
+      buf = buf[nul + 1 :]
+      if len(fields) < 4:
+        continue
+      path_b, mtime_b, size_b, inode_b = fields
+      fields = []
+      try:
+        path = os.fsdecode(path_b)
+        mtime = float(mtime_b)
+        size = int(size_b)
+        inode = int(inode_b)
+      except (ValueError, TypeError, UnicodeDecodeError) as exc:
+        raise FindStatsDiscoveryError(
+            "invalid find -printf record at index %d: %s" % (index, exc)
+        ) from exc
+      index += 1
+      yield FindStatsRecord(
+          path=path, mtime=mtime, size=size, inode=inode
+      )
+  if fields or buf:
     raise FindStatsDiscoveryError(
         "find -printf record stream length is not a multiple of 4 fields "
-        "(got %d tokens)" % len(parts)
+        "(got %d leftover tokens, %d leftover bytes)"
+        % (len(fields) + (1 if buf else 0), len(buf))
     )
-  records: List[FindStatsRecord] = []
-  for i in range(0, len(parts), 4):
-    path_b, mtime_b, size_b, inode_b = parts[i : i + 4]
-    try:
-      path = os.fsdecode(path_b)
-      mtime = float(mtime_b)
-      size = int(size_b)
-      inode = int(inode_b)
-    except (ValueError, TypeError) as exc:
-      raise FindStatsDiscoveryError(
-          "invalid find -printf record at index %d: %s" % (i // 4, exc)
-      ) from exc
-    records.append(
-        FindStatsRecord(path=path, mtime=mtime, size=size, inode=inode)
-    )
-  return records
 
 
 def parse_current_inode_records(data: bytes) -> Dict[str, int]:

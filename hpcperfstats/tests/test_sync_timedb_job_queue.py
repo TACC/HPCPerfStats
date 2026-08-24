@@ -467,3 +467,73 @@ def test_reconstruct_ingest_complete_ignores_head_tail_when_listend_on():
       )
       is True
   )
+
+
+# --- Slice 3: streaming discover → ZADD before scan exhaust ---
+
+
+def test_streaming_parse_yields_before_final_chunk():
+  from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
+      iter_find_printf_records_streaming,
+  )
+
+  chunks = [
+      b"/a\x001.0\x0010\x001\x00",
+      b"/b\x002.0\x0020\x002\x00",
+  ]
+  it = iter_find_printf_records_streaming(iter(chunks))
+  first = next(it)
+  assert first.path == "/a"
+  assert first.size == 10
+  second = next(it)
+  assert second.path == "/b"
+
+
+def test_streaming_discover_enqueues_before_iterator_exhausts():
+  from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
+  from hpcperfstats.dbload.lib.sync_timedb_stats_find import FindStatsRecord
+
+  client = FakeRedis()
+  mid_seen_ingest = []
+
+  def _gen():
+    yield FindStatsRecord(path="/archive/h/a", mtime=1.0, size=10, inode=1)
+    ingest_key = jq.job_queue_key("ingest")
+    # First path must already be ZADDed before the generator finishes.
+    assert client._zsets.get(ingest_key), "ingest empty mid-stream"
+    mid_seen_ingest.append(True)
+    yield FindStatsRecord(path="/archive/h/b", mtime=2.0, size=20, inode=2)
+
+  stats = jd.stream_enqueue_ingest_from_find_records(
+      client,
+      _gen(),
+      tgz_archive_dir="/daily",
+      today=date(2026, 8, 24),
+      ingest_is_complete_fn=lambda **_k: False,
+      append_is_complete_fn=lambda **_k: True,
+  )
+  assert mid_seen_ingest == [True]
+  assert stats.seen == 2
+  assert stats.enqueued_ingest == 2
+  assert stats.skipped_complete == 0
+  ingest_key = jq.job_queue_key("ingest")
+  assert len(client._zsets[ingest_key]) == 2
+
+
+def test_streaming_discover_skips_complete_identities():
+  from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
+  from hpcperfstats.dbload.lib.sync_timedb_stats_find import FindStatsRecord
+
+  client = FakeRedis()
+  stats = jd.stream_enqueue_ingest_from_find_stdout_chunks(
+      client,
+      [b"/archive/h/done\x001.0\x0010\x001\x00"],
+      tgz_archive_dir="/daily",
+      today=date(2026, 8, 24),
+      ingest_is_complete_fn=lambda **_k: True,
+      append_is_complete_fn=lambda **_k: True,
+  )
+  assert stats.seen == 1
+  assert stats.enqueued_ingest == 0
+  assert stats.skipped_complete == 1
+  assert not client._zsets
