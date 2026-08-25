@@ -202,6 +202,7 @@ services:
       - ./services-conf/rabbitmq_logging.conf:/etc/rabbitmq/conf.d/30-logging_settings.conf:ro
       - ./services-conf/rabbitmq_max_message_size.conf:/etc/rabbitmq/conf.d/20-max_message_size.conf:ro
       - ./services-conf/rabbitmq_default_queue_type.conf:/etc/rabbitmq/conf.d/25-default_queue_type.conf:ro
+      - ./services-conf/rabbitmq_vm_memory.conf:/etc/rabbitmq/conf.d/35-vm_memory.conf:ro
       - ./services-conf/rabbitmq_management.conf:/etc/rabbitmq/conf.d/40-management.conf:ro
     networks:
       hpcperfstats_net:

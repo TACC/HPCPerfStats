@@ -116,6 +116,29 @@ def test_docker_compose_rabbitmq_defaults_to_quorum_queue_type():
   assert "default_queue_type = classic" not in conf_text
 
 
+def test_docker_compose_rabbitmq_vm_memory_cap_is_96gib():
+  """Unbounded RMQ RSS OOM'd the host; cap the broker at 96 GiB (watermark + cgroup)."""
+  repo_root = Path(__file__).resolve().parents[2]
+  compose_path = repo_root / "docker-compose.yaml"
+  content = compose_path.read_text()
+  conf_path = repo_root / "services-conf" / "rabbitmq_vm_memory.conf"
+  rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[0]
+
+  assert (
+      "rabbitmq_vm_memory.conf:/etc/rabbitmq/conf.d/35-vm_memory.conf"
+      in content
+  )
+  assert "mem_limit: 96g" in rabbitmq_block
+  assert "memswap_limit: 96g" in rabbitmq_block
+  conf_text = conf_path.read_text()
+  assert "vm_memory_high_watermark.absolute = 96GiB" in conf_text
+  assert "vm_memory_high_watermark.relative" not in conf_text
+  readme = (repo_root / "README.md").read_text()
+  design = (repo_root / "docs" / "design-document.md").read_text()
+  assert "96GiB" in readme
+  assert "96GiB" in design
+
+
 def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
