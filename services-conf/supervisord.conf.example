@@ -39,7 +39,7 @@ stderr_logfile_maxbytes=0
 # DB-heavy programs are staggered so restart does not open all pools at once.
 # Lower priority number = supervisord starts earlier. Delays are wall-clock after shell starts.
 [program:sync_timedb]
-command=bash -lc 'sleep 20; exec /usr/local/bin/python3 /home/hpcperfstats/hpcperfstats/dbload/sync_timedb.py current'
+command=bash -lc 'sleep 20; exec /usr/local/bin/python3 /home/hpcperfstats/hpcperfstats/dbload/sync_timedb.py'
 user=hpcperfstats
 environment=HOME="/home/hpcperfstats",USER="hpcperfstats"
 priority=20
