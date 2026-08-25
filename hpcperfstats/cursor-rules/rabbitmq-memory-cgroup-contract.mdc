@@ -1,0 +1,39 @@
+---
+description: RabbitMQ compose mem_limit and vm_memory watermark must ship together with headroom
+alwaysApply: false
+globs:
+  - "**/docker-compose.yaml"
+  - "**/services-conf/rabbitmq_vm_memory.conf"
+  - "**/services-conf/rabbitmq_*.conf"
+---
+
+# RabbitMQ Memory Cgroup Contract
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+## Law
+
+1. **Compose `mem_limit` and `memswap_limit`** on the **`rabbitmq`** service must both be set (canonical production: **`96g`**).
+2. **`vm_memory_high_watermark.absolute`** in `services-conf/rabbitmq_vm_memory.conf` must be **strictly below** that cgroup limit (canonical: **`80GiB`** under **`96g`** — ~16 GiB headroom).
+3. Never ship absolute watermark **equal** to the cgroup wall — publishers must block before Erlang `binary_alloc` hits the hard limit.
+4. Prefer **absolute** watermarks over **relative** so huge hosts cannot use 40% of all RAM.
+5. After changing either compose limits or the conf file, **recreate** the `rabbitmq` service (`docker compose up -d --force-recreate rabbitmq` or podman equivalent).
+6. Do **not** “fix” quorum OOM / consume timeouts by converting durable monitor ingest queues to **classic**.
+7. On hosts with less than 96 GiB RAM, **lower mem_limit and watermark together**.
+
+## Operator verification
+
+- Prefer `docker compose exec rabbitmq rabbitmqctl status` — read **Alarms** and Memory sections.
+- Confirm cgroup: `memory.max` is numeric (not `max`) and matches the compose limit.
+- Do **not** use `rabbitmqctl list_alarms` on RabbitMQ **4.3.x** (command does not exist) — see **`compose-operator-terminal-commands.mdc`**.
+
+## Regression tests
+
+- `test_docker_compose_rabbitmq_vm_memory_cap_is_96gib` asserts compose `96g` limits + **80GiB** watermark + docs sync.
+
+## Overlap
+
+- **`readme-installation-sync.mdc`** / **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** — operator wording for limits.
+- **`compose-required-for-data-services-changes.mdc`** — RabbitMQ wiring changes.
+- **`compose-operator-terminal-commands.mdc`** — rabbitmqctl paste shapes.
+- **`runtime-resource-and-metrics-safety.mdc`** — broader resource safety.

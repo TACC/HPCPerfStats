@@ -320,6 +320,18 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "rabbitmq_memory_cgroup",
+        "patterns": [
+            "docker-compose.yaml",
+            "services-conf/rabbitmq_vm_memory.conf",
+            "services-conf/rabbitmq_*.conf",
+        ],
+        "rules": [
+            "rabbitmq-memory-cgroup-contract.mdc",
+            "readme-installation-sync.mdc",
+        ],
+    },
+    {
         "id": "docker_compose_app_example",
         "patterns": [
             "docker-compose.app.yaml",

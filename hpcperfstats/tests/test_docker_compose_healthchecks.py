@@ -97,7 +97,8 @@ def test_docker_compose_rabbitmq_allows_large_monitor_messages():
 
   assert "rabbitmq_max_message_size.conf:/etc/rabbitmq/conf.d/20-max_message_size.conf" in content
   conf_text = conf_path.read_text()
-  assert "max_message_size = 134217728" in conf_text
+  assert "max_message_size = 67108864" in conf_text
+  assert "max_message_size = 134217728" not in conf_text
 
 
 def test_docker_compose_rabbitmq_defaults_to_quorum_queue_type():
@@ -117,7 +118,7 @@ def test_docker_compose_rabbitmq_defaults_to_quorum_queue_type():
 
 
 def test_docker_compose_rabbitmq_vm_memory_cap_is_96gib():
-  """Unbounded RMQ RSS OOM'd the host; cap the broker at 96 GiB (watermark + cgroup)."""
+  """Unbounded RMQ RSS OOM'd the host; 96g cgroup + 80GiB watermark headroom."""
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
   content = compose_path.read_text()
@@ -131,12 +132,16 @@ def test_docker_compose_rabbitmq_vm_memory_cap_is_96gib():
   assert "mem_limit: 96g" in rabbitmq_block
   assert "memswap_limit: 96g" in rabbitmq_block
   conf_text = conf_path.read_text()
-  assert "vm_memory_high_watermark.absolute = 96GiB" in conf_text
+  assert "vm_memory_high_watermark.absolute = 80GiB" in conf_text
+  assert "vm_memory_high_watermark.absolute = 96GiB" not in conf_text
   assert "vm_memory_high_watermark.relative" not in conf_text
   readme = (repo_root / "README.md").read_text()
   design = (repo_root / "docs" / "design-document.md").read_text()
-  assert "96GiB" in readme
-  assert "96GiB" in design
+  deploy = (repo_root / "docs" / "DEPLOY_CONCURRENCY_AND_NUMA.md").read_text()
+  assert "80GiB" in readme
+  assert "mem_limit: 96g" in readme or "mem_limit` / `memswap_limit` 96g" in readme
+  assert "80GiB" in design
+  assert "80GiB" in deploy
 
 
 def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():

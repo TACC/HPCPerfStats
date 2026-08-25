@@ -69,7 +69,7 @@ Kernel OOM may kill an ingest pool worker (`[worker:ingest-pool]`) with a **tran
 |------------|------|
 | **`PR_SET_PDEATHSIG` (SIGKILL)** on pool workers | Workers exit when the supervisor dies so **supervisord** can restart a clean tree |
 | **`pipeline` `mem_limit` / `memswap_limit`** (Compose) | Cgroup cap before host global OOM on swapless hosts; **128 GiB** is a reasonable default on **192 GiB** RAM (see `docker-compose.app.yaml.example`) |
-| **`rabbitmq` `mem_limit` / `memswap_limit` 96g** plus **`vm_memory_high_watermark.absolute = 96GiB`** | Broker cap so RabbitMQ does not grow to 40% of host RAM; publishers block at 96 GiB (`services-conf/rabbitmq_vm_memory.conf`). Recreate `rabbitmq` after changing. |
+| **`rabbitmq` `mem_limit` / `memswap_limit` 96g** plus **`vm_memory_high_watermark.absolute = 80GiB`** | Cgroup hard wall at 96 GiB; publishers block at 80 GiB headroom (`services-conf/rabbitmq_vm_memory.conf`) before Erlang `binary_alloc`. Recreate `rabbitmq` after changing either. Lower both together on hosts with less than 96 GiB RAM. |
 | **`sync_ingest_max_file_read_bytes`** (default **512 MiB**) | Stream-parse larger segments instead of **`readlines()`** |
 | **`sync_bulk_create_batch_size`** (default **10000**) | Combined ingest: flush parse → delta/arc → **`bulk_create`** every N stats rows (complete time sample first); same knob sizes DB write batches |
 | **`sync_ingest_pool_processes`** (default **16**) | Cap live ingest pool width and archive metadata discovery threads; sliding-window **imap inflight equals pool size** (RSS guard for giant-file parse) — not sequential fixed sub-batches |

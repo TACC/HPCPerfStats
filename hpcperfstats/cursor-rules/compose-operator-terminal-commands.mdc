@@ -271,6 +271,15 @@ Login shells inside the **`rabbitmq:*-management-alpine`** image do **not** put 
 | `docker compose … exec rabbitmq rabbitmqctl list_queues name messages consumers` | `exec rabbitmq sh -lc 'rabbitmqctl …'` |
 | `exec rabbitmq rabbitmqctl status` for node health | Assume wrapping `sh` preserves sbin `PATH` |
 
+### Anti-pattern — `rabbitmqctl list_alarms` (hpcperfstats01 2026-08-25)
+
+RabbitMQ **4.3.4** has **no** `list_alarms` CLI (`Command 'list_alarms' not found` / exit **64**). Chaining it with **`&&`** after `rabbitmqctl status` **short-circuits** queues / conf.d / cgroup / mnesia probes. Alarms already appear under the **`Alarms`** section of **`rabbitmqctl status`**.
+
+| Do | Don't |
+|----|-------|
+| Read **`Alarms`** from `rabbitmqctl status` | `rabbitmqctl list_alarms` |
+| Chain follow-up `list_queues` / `cat conf.d` / cgroup with **`;`** (or separate `exec`) so a failed CLI cannot hide later probes | `status && list_alarms && list_queues …` |
+
 With the **`rabbitmq:*-management-alpine`** image, `rabbitmq-plugins list -e` should show **`rabbitmq_management`**. Absence of the management plugin means the non-management image is still running.
 
 ```bash
@@ -630,6 +639,7 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | Long **web** `python3 -c` census (f-strings, nested quotes, 20+ statements) | podman-compose **truncates** the `-c` payload (hpcperfstats04 2026-08-11, cut at `int("samples"…)`) | Short **pipeline** `su hpcperfstats -c 'python3 -c "…"'` one-liner, or a tiny script file in the container |
 | Mix listend `hardlink` + update_metrics tokens then `tail -80` | Hardlink flood drowns `Date Range` / `candidate_jids` (hpcperfstats04 2026-08-11) | Metrics-only `grep -E 'Date Range\|candidate_jids\|window_rollover\|empty_pass'` on the full log buffer, `tail` **after** grep |
 | `exec rabbitmq sh -lc 'rabbitmqctl …'` | Login `PATH` omits RabbitMQ sbin → **`rabbitmqctl: not found`** (hpcperfstats04 2026-08-11) | `exec rabbitmq rabbitmqctl list_queues name messages consumers` (no wrapping shell) |
+| `rabbitmqctl list_alarms` (+ `&&` chain) | **Not found** exit **64** on RabbitMQ **4.3.4**; short-circuits later probes (hpcperfstats01 2026-08-25) | Read **`Alarms`** from `rabbitmqctl status`; chain follow-ups with `;` |
 | Host mega-block chaining `su -c 'python3 -c … && sh -lc … && python …'` then host `docker compose logs` in one nested paste | Host shell stops at a `>` continuation prompt (nested quotes / unfinished `'`/`"`); census, fingerprint, and logs never run (hpcperfstats04 2026-08-12 update_metrics zombie discovery) | **Four separate host-side blocks:** (1) config getters `su -c 'python3 -c "…"'`; (2) in-container PPID/`ps` census `su -c 'sh -lc "…"'`; (3) source fingerprint `su -c 'python3 -c "…"'` (**no** outer `sh -lc`); (4) **host** `docker compose logs pipeline 2>&1 \| grep -cE '…' \|\| true`. Never nest host logs inside `exec`, and never wrap fingerprint Python in `sh -lc` |
 | Escaped-grep mega-block (`grep -E \"a\|b(c)\"` inside double-quoted host `bash -lc` / nested `\"`) | **`syntax error near '('`** or empty paste (hpcperfstats03 2026-08-21 skip-only append thrash census) | Tee full pipeline logs once (`… logs pipeline 2>&1 \| tee /tmp/pipeline-full.log`), then **separate** host lines: `grep -cE 'pattern' /tmp/pipeline-full.log \|\| true` and `grep -E '…' … \| tail -80` — **no** nested escaped-quote mega-block |
 

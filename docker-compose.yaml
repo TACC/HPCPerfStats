@@ -179,6 +179,10 @@ services:
     restart: always
     logging: *hpc-logging
     hostname: rabbitmq-prod
+    # Pair with services-conf/rabbitmq_vm_memory.conf (80GiB watermark headroom).
+    # Without mem_limit, CGROUP_MAX=max and Erlang binary_alloc can OOM the host.
+    mem_limit: 96g
+    memswap_limit: 96g
     environment:
       - RABBITMQ_NODENAME=rabbit@rabbitmq-prod
       - RABBITMQ_DEFAULT_USER=guest
