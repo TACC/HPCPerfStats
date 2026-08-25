@@ -602,6 +602,25 @@ def convert_daily_tar_to_pax_via_extract_recreate(
               flush=True,
           )
         return False
+      listed = subprocess.run(
+          [tar_bin, "tf", new_tar],
+          capture_output=True,
+          text=True,
+          check=False,
+          timeout=3600,
+      )
+      if listed.returncode != 0:
+        if log_fn:
+          log_fn(
+              "WARNING: convert_fail phase=tf tar=%s rc=%s stderr=%s"
+              % (
+                  tar_path,
+                  listed.returncode,
+                  (listed.stderr or "").strip(),
+              ),
+              flush=True,
+          )
+        return False
       os.replace(new_tar, tar_path)
     if log_fn:
       log_fn("INFO: convert_done tar=%s" % tar_path, flush=True)
@@ -6894,6 +6913,7 @@ def replace_corrupt_tar_from_compressed_backup(
             remove_compressed=remove_compressed,
             restore_reason="corrupt_tar",
             restore_caller="replace_corrupt_tar_from_compressed_backup",
+            already_locked=True,
         ):
           return True
       if os.path.isfile(gz_path):
@@ -6904,6 +6924,7 @@ def replace_corrupt_tar_from_compressed_backup(
             remove_compressed=remove_compressed,
             restore_reason="corrupt_tar",
             restore_caller="replace_corrupt_tar_from_compressed_backup",
+            already_locked=True,
         ):
           return True
       if os.path.isfile(tar_path):
@@ -6911,6 +6932,8 @@ def replace_corrupt_tar_from_compressed_backup(
       if os.path.isfile(zst_path) or os.path.isfile(gz_path):
         return False
       return True
+  except TimeoutError:
+    return False
   except OSError:
     return False
 

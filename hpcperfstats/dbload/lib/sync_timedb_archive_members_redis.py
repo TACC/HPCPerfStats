@@ -30,7 +30,12 @@ Attributes:
   _POPULATE_RECOVER_TTL_S: Attribute.
   _PROGRESS_SUFFIX: Attribute.
   _REDIS_CLIENT: Attribute.
+  _REDIS_CLIENT_LOCK: Attribute.
   _REDIS_CLIENT_URL: Attribute.
+  _REDIS_CONNECT_TIMEOUT_S: Attribute.
+  _REDIS_HEALTH_CHECK_INTERVAL_S: Attribute.
+  _REDIS_MAX_CONNECTIONS: Attribute.
+  _REDIS_SOCKET_TIMEOUT_S: Attribute.
   _SELF_INGEST_TAR_HOT_REASONS: Attribute.
   _STALE_INCOMPLETE_LOG_INTERVAL_S: Attribute.
   _STALE_INCOMPLETE_LOG_PREFIX: Attribute.
@@ -107,6 +112,14 @@ _archive_pre_append_member_lookup = contextvars.ContextVar(
 
 _REDIS_CLIENT = None
 _REDIS_CLIENT_URL = None
+_REDIS_CLIENT_LOCK = threading.Lock()
+# Bound every Redis round trip: a wedged socket must not pin the archive flock.
+_REDIS_CONNECT_TIMEOUT_S = 5.0
+_REDIS_SOCKET_TIMEOUT_S = 15.0
+_REDIS_HEALTH_CHECK_INTERVAL_S = 30
+# Ingest pool + append/day_close threads share this pool; cap it well below the
+# server maxclients so a leak surfaces as an error instead of starving Redis.
+_REDIS_MAX_CONNECTIONS = 128
 
 
 class ArchiveMembersRedisUnavailableError(RuntimeError):
@@ -583,6 +596,27 @@ def _populate_max_seconds() -> int:
   return cfg.get_sync_archive_members_redis_populate_max_seconds()
 
 
+def populate_wait_max_seconds() -> int:
+  """
+  Return the fail-closed wall-clock budget for a populate wait.
+
+  Args:
+    None.
+
+  Returns:
+    int: Positive seconds; never zero (an open wait is not allowed).
+
+  Examples:
+    >>> populate_wait_max_seconds() >= 1
+    True
+  """
+  try:
+    seconds = int(_populate_max_seconds() or 0)
+  except Exception:
+    seconds = 0
+  return max(1, seconds)
+
+
 def _wait_poll_seconds() -> float:
   """
   Internal helper to wait for the poll seconds.
@@ -622,10 +656,40 @@ def _max_payload_bytes() -> int:
   return cfg.get_sync_archive_members_redis_max_payload_bytes()
 
 
+def redis_client_connection_kwargs() -> Dict[str, Any]:
+  """
+  Return connection kwargs that bound every Redis call in time.
+
+  Without explicit socket timeouts a coordinator blocked on a wedged Redis
+  connection hangs forever holding the archive flock and its job leases; the
+  health check plus retry lets a reconnect happen on the next command instead
+  of surfacing a stale socket error to the caller.
+
+  Returns:
+    Dict[str, Any]: Kwargs for ``redis.from_url``.
+
+  Examples:
+    >>> redis_client_connection_kwargs()["socket_timeout"] > 0
+    True
+  """
+  return {
+      "decode_responses": True,
+      "socket_connect_timeout": _REDIS_CONNECT_TIMEOUT_S,
+      "socket_timeout": _REDIS_SOCKET_TIMEOUT_S,
+      "socket_keepalive": True,
+      "health_check_interval": _REDIS_HEALTH_CHECK_INTERVAL_S,
+      "retry_on_timeout": True,
+      "max_connections": _REDIS_MAX_CONNECTIONS,
+  }
+
+
 def get_archive_members_redis_client(*, required: bool = True) -> Any:
   """
   Return a shared ``redis.Redis`` client (decode_responses=True).
-  
+
+  Creation is serialized so concurrent threads cannot each build a client (and
+  its own connection pool) for the same URL.
+
   Args:
     required (bool): Boolean flag for required.
   
@@ -646,27 +710,58 @@ def get_archive_members_redis_client(*, required: bool = True) -> Any:
   url = cfg.get_redis_location()
   if _REDIS_CLIENT is not None and _REDIS_CLIENT_URL == url:
     return _REDIS_CLIENT
+  with _REDIS_CLIENT_LOCK:
+    if _REDIS_CLIENT is not None and _REDIS_CLIENT_URL == url:
+      return _REDIS_CLIENT
+    try:
+      import redis
+    except ImportError as exc:
+      if required:
+        raise ArchiveMembersRedisConnectionError(
+            "redis package is not installed",
+        ) from exc
+      return None
+    try:
+      client = redis.from_url(url, **redis_client_connection_kwargs())
+      client.ping()
+    except Exception as exc:
+      if required:
+        raise ArchiveMembersRedisConnectionError(
+            "Redis unreachable at [CACHE] redis_location=%s (%s)"
+            % (url, exc),
+        ) from exc
+      return None
+    _REDIS_CLIENT = client
+    _REDIS_CLIENT_URL = url
+    return client
+
+
+def drop_archive_members_redis_client() -> None:
+  """
+  Discard the cached client so the next call reconnects.
+
+  Call this after a connection-level failure; keeping a wedged client would
+  make every later command fail against the same dead socket.
+
+  Returns:
+    None
+
+  Examples:
+    >>> drop_archive_members_redis_client()
+  """
+  global _REDIS_CLIENT, _REDIS_CLIENT_URL
+  with _REDIS_CLIENT_LOCK:
+    client = _REDIS_CLIENT
+    _REDIS_CLIENT = None
+    _REDIS_CLIENT_URL = None
+  if client is None:
+    return
   try:
-    import redis
-  except ImportError as exc:
-    if required:
-      raise ArchiveMembersRedisConnectionError(
-          "redis package is not installed",
-      ) from exc
-    return None
-  try:
-    client = redis.from_url(url, decode_responses=True)
-    client.ping()
-  except Exception as exc:
-    if required:
-      raise ArchiveMembersRedisConnectionError(
-          "Redis unreachable at [CACHE] redis_location=%s (%s)"
-          % (url, exc),
-      ) from exc
-    return None
-  _REDIS_CLIENT = client
-  _REDIS_CLIENT_URL = url
-  return client
+    pool = getattr(client, "connection_pool", None)
+    if pool is not None:
+      pool.disconnect()
+  except Exception:
+    pass
 
 
 def reset_archive_members_redis_client_for_tests() -> None:
@@ -969,6 +1064,7 @@ def _verify_redis_ping_or_raise(client: Any) -> None:
   try:
     client.ping()
   except Exception as exc:
+    drop_archive_members_redis_client()
     raise ArchiveMembersRedisConnectionError(
         "Redis ping failed at [CACHE] redis_location=%s (%s)"
         % (cfg.get_redis_location(), exc),
@@ -4311,6 +4407,11 @@ def request_archive_members_populate_and_wait(
   Examples:
     >>> request_archive_members_populate_and_wait("x")  # doctest: +SKIP
   """
+  max_wait_s = populate_wait_max_seconds()
+  if max_wait_s <= 0:
+    raise ArchiveMembersRedisUnavailableError(
+        "populate wait budget is not finite",
+    )
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       _daily_archive_members_cache_key,
       _lookup_daily_archive_members_cache,

@@ -17,7 +17,7 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 | Mechanism | Module |
 |-----------|--------|
 | `daily_tar_janitor_mutation_should_defer` | `sync_timedb_day_close_cooperation.py` |
-| `day_close_yield_requested` + `DayCloseYieldError` | `sync_timedb_day_close_cooperation.py` |
+| `day_close_yield_requested` + `DayCloseYieldError` | `sync_timedb_day_close_cooperation.py`; orchestrator `_run_day_close_job` returns ``yielded`` and requeues |
 | `try_file_write_lock` (**context manager**, non-blocking; contended → `TimeoutError`) | `file_locking.py` |
 | Sticky `write_lock_contended` backoff (`JanitorDeferTracker`) | `sync_timedb_day_close_cooperation.py` |
 | `ingest_tar_hot` Redis key | `sync_timedb_archive_members_redis.py` |

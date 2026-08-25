@@ -344,29 +344,45 @@ def file_write_lock(
   target_path: str,
   timeout_seconds: int = READ_WAIT_TIMEOUT_SECONDS,
   expiry_seconds: int = LOCK_EXPIRY_SECONDS,
+  *,
+  already_held: bool = False,
 ) -> Iterator[Any]:
   """
   Acquire an exclusive file lock for writes.
-  
+
+  When ``already_held`` is True the caller already owns the exclusive flock
+  and this helper yields without opening a second sidecar. Nested acquire on
+  the same path deadlocks because the lock is non-reentrant.
+
   Raises TimeoutError after `timeout_seconds` if the lock cannot be acquired.
-  
+
   Args:
-    target_path (str): String for target path.
-    timeout_seconds (int): Integer value for timeout seconds.
-    expiry_seconds (int): Integer value for expiry seconds.
-  
+    target_path (str): Filesystem path whose sidecar flock is acquired.
+    timeout_seconds (int): Seconds to wait for a contended lock.
+    expiry_seconds (int): Stale-sidecar expiry used by the reset helper.
+    already_held (bool): Skip acquire when the caller already holds the lock.
+
   Yields:
-    Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+    None: Control returns to the caller while the lock is held (or skipped).
+
   Raises:
-    Exception: Raised when ``file_write_lock`` hits a ``Exception`` failure
-    path.
-    TimeoutError: Raised when ``file_write_lock`` hits a ``TimeoutError``
-    failure path.
-  
+    TimeoutError: When the exclusive flock cannot be acquired in time.
+    OSError: When opening the sidecar fails for a non-contention reason.
+    Exception: When a non-timeout error is re-raised from the acquire loop.
+
   Examples:
-    >>> file_write_lock("x", 0, 0)  # doctest: +SKIP
+    >>> from pathlib import Path
+    >>> import tempfile
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...   p = str(Path(d) / "x.tar")
+    ...   Path(p).write_bytes(b"x")
+    ...   with file_write_lock(p, already_held=True):
+    ...     True
+    True
   """
+  if already_held:
+    yield
+    return
   start = time.time()
   lock_fd = None
   while True:

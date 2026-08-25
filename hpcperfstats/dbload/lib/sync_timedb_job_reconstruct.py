@@ -415,7 +415,8 @@ class ClosedPathReconstructPlan:
 
   Attributes:
     path: Normalized closed raw path.
-    identity: Ingest ZSET identity (``path|size|mtime_ns``).
+    identity: Ingest ZSET identity (stable normalized path).
+    fingerprint: Size/mtime encoding stored on the payload HASH.
     needs_ingest: True when ingest complete predicate is false.
     needs_append: True when append complete predicate is false.
     calendar_day: Resolved calendar day, if known.
@@ -428,6 +429,7 @@ class ClosedPathReconstructPlan:
   needs_append: bool
   calendar_day: date | None
   tar_path: str | None
+  fingerprint: str = ""
 
   def kinds_to_enqueue(self) -> tuple[str, ...]:
     """
@@ -506,6 +508,7 @@ def classify_closed_raw_path(
   """
   norm = os.path.normpath(str(path or ""))
   identity = jq.ingest_identity(norm, size, mtime_ns)
+  fingerprint = jq.ingest_fingerprint(size, mtime_ns)
   archive = str(tgz_archive_dir or "").strip()
 
   if ingest_is_complete_fn is not None:
@@ -546,6 +549,7 @@ def classify_closed_raw_path(
       needs_append=not complete_append,
       calendar_day=calendar_day,
       tar_path=resolved_tar,
+      fingerprint=fingerprint,
   )
 
 
@@ -595,16 +599,25 @@ def enqueue_reconstruct_jobs_for_closed_path(
     return enqueued
 
   if plan.needs_ingest:
-    day = plan.calendar_day or today
-    band = select_ingest_band(day, today=today, hot_days=hot_days)
-    score = jq.encode_ingest_score(
-        band=band,
-        day=day,
-        today=today,
-        identity=plan.identity,
-    )
-    jq.zadd_ingest_job(client, identity=plan.identity, score=score)
-    enqueued["ingest"] = True
+    if plan.calendar_day is None:
+      # Refusing to substitute today: an unresolved day cannot be banded.
+      pass
+    else:
+      day = plan.calendar_day
+      band = select_ingest_band(day, today=today, hot_days=hot_days)
+      score = jq.encode_ingest_score(
+          band=band,
+          day=day,
+          today=today,
+          identity=plan.identity,
+      )
+      jq.zadd_ingest_job(
+          client,
+          identity=plan.identity,
+          score=score,
+          fingerprint=plan.fingerprint or None,
+      )
+      enqueued["ingest"] = True
 
   if plan.needs_append:
     jq.enqueue_list_job(

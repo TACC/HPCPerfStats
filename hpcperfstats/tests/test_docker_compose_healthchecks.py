@@ -43,6 +43,7 @@ def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
   assert 'test: ["' not in content
   assert "command:\n      - redis-server\n" in content
   assert "      - --maxmemory\n      - 16gb\n" in content
+  assert "      - --maxmemory-policy\n      - volatile-lru\n" in content
   assert "      - --io-threads\n      - \"4\"\n" in content
   assert "test:\n        - CMD\n        - redis-cli\n        - ping\n" in content
   assert "test:\n        - CMD-SHELL\n        - nc -z 127.0.0.1 80 || exit 1\n" in content
@@ -55,6 +56,27 @@ def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
       "        - pg_isready -U hpcperfstats -h 127.0.0.1 -p 5432\n"
   ) in content
   assert "command:\n      - -c\n      - max_connections=500\n" in content
+
+
+def test_docker_compose_redis_maxmemory_policy_is_volatile_lru():
+  """job:v1 keys are TTL-free; allkeys-* would evict them (Q9)."""
+  repo_root = Path(__file__).resolve().parents[2]
+  content = (repo_root / "docker-compose.yaml").read_text()
+  assert "      - --maxmemory-policy\n      - volatile-lru\n" in content
+  assert "allkeys-lru" not in content
+  assert "allkeys-lfu" not in content
+  assert "allkeys-random" not in content
+
+
+def test_readme_and_design_doc_redis_policy_is_volatile_lru():
+  """Operator install docs must match the compose Redis eviction policy."""
+  repo_root = Path(__file__).resolve().parents[2]
+  readme = (repo_root / "README.md").read_text()
+  design = (repo_root / "docs" / "design-document.md").read_text()
+  assert "volatile-lru" in readme
+  assert "allkeys-lru" not in readme
+  assert "volatile-lru" in design
+  assert "allkeys-lru" not in design
 
 
 def test_docker_compose_rabbitmq_defaults_to_guest_credentials():

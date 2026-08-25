@@ -9,6 +9,7 @@ Attributes:
   LogFn: Attribute.
   MAINT_HINTS_SCHEMA_VERSION: Attribute.
   MANIFEST_SCHEMA_VERSION: Attribute.
+  QUEUE_DEAD_LETTER_SCHEMA_VERSION: Attribute.
   PERSISTENCE_ARTIFACT_REGISTRY: Attribute.
   PERSISTENCE_CONTRACT_BASENAME: Attribute.
   SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION: Attribute.
@@ -41,6 +42,7 @@ LEGACY_ORPHAN_ARTIFACT_PATHS: Tuple[str, ...] = (
 PERSISTENCE_ARTIFACT_REGISTRY: Dict[str, str] = {
     "ingest_checkpoint": ".sync_timedb_state.json",
     "archive_dead_letter": ".sync_timedb_dead_letter.json",
+    "queue_dead_letter": ".sync_timedb_queue_dead_letter.json",
     "archive_maint_hints": ".sync_archive_maint_hints.json",
     "day_close_manifest": ".sync_timedb_async_day_close.json",
     "day_raw_removal_dir": ".sync_timedb_day_raw_removal",
@@ -54,6 +56,7 @@ MANIFEST_SCHEMA_VERSION = 1
 MAINT_HINTS_SCHEMA_VERSION = 2
 UNPARSABLE_RAW_SCHEMA_VERSION = 1
 DEAD_LETTER_SCHEMA_VERSION = 1
+QUEUE_DEAD_LETTER_SCHEMA_VERSION = 1
 ZERO_HOST_INGEST_MARK_SCHEMA_VERSION = 1
 FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION = 1
 
@@ -371,6 +374,8 @@ def _expected_schema_version(kind: str) -> Optional[int]:
     return INGEST_CHECKPOINT_SCHEMA_VERSION
   if kind == "archive_dead_letter":
     return DEAD_LETTER_SCHEMA_VERSION
+  if kind == "queue_dead_letter":
+    return QUEUE_DEAD_LETTER_SCHEMA_VERSION
   if kind == "unparsable_raw":
     return UNPARSABLE_RAW_SCHEMA_VERSION
   if kind == "archive_maint_hints":
@@ -405,7 +410,12 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
   if raw is None:
     return False
   expected = _expected_schema_version(kind)
-  if kind in ("ingest_checkpoint", "archive_dead_letter", "unparsable_raw"):
+  if kind in (
+      "ingest_checkpoint",
+      "archive_dead_letter",
+      "queue_dead_letter",
+      "unparsable_raw",
+  ):
     if isinstance(raw, list):
       return True
     if not isinstance(raw, dict):
@@ -539,7 +549,7 @@ def _unwrap_envelope(raw: Any, *, kind: str) -> Any:
     if isinstance(raw, dict) and isinstance(raw.get("entries"), list):
       return raw["entries"]
     return None
-  if kind == "archive_dead_letter":
+  if kind in ("archive_dead_letter", "queue_dead_letter"):
     if isinstance(raw, list):
       return raw
     if isinstance(raw, dict) and isinstance(raw.get("entries"), list):
@@ -601,7 +611,11 @@ def load_persistence_document(
   if default is None:
     if kind == "ingest_checkpoint":
       default = []
-    elif kind in ("archive_dead_letter", "unparsable_raw"):
+    elif kind in (
+        "archive_dead_letter",
+        "queue_dead_letter",
+        "unparsable_raw",
+    ):
       default = []
     elif kind == "archive_maint_hints":
       default = None
@@ -658,10 +672,14 @@ def save_persistence_document(
     }
     _save_json_atomic(path, envelope, compact=compact)
     return
-  if kind == "archive_dead_letter":
+  if kind in ("archive_dead_letter", "queue_dead_letter"):
     envelope = {
         "contract_version": contract_version,
-        "schema_version": DEAD_LETTER_SCHEMA_VERSION,
+        "schema_version": (
+            DEAD_LETTER_SCHEMA_VERSION
+            if kind == "archive_dead_letter"
+            else QUEUE_DEAD_LETTER_SCHEMA_VERSION
+        ),
         "entries": list(payload or []),
     }
     _save_json_atomic(path, envelope, compact=compact)

@@ -27,6 +27,17 @@ This document describes how `sync_timedb` uses **spawn process pools**, **day_cl
 
 **Ingest dispatch:** `imap_unordered_watch_pool` polls process liveness and aborts on worker death — thread pools have no equivalent worker-PID model.
 
+## Ingest band reservation (`job:v1`)
+
+The ingest ZSET is one key (`hpcperfstats:sync_timedb:job:v1:queue:ingest`) with two score bands. Fill paths never `ZPOPMIN` the whole set (catchup would starve).
+
+| Token | Formula | Score window |
+|-------|---------|--------------|
+| **`hot_cap`** | `max(1, (2 * pool) // 3)` | `-inf` … `CATCHUP_SCORE_BASE - 1` (`10**15 - 1`) — newest days first |
+| **`catchup_cap`** | `pool - hot_cap`, floored to **1** when `pool >= 2` | `10**15` … `+inf` — oldest days first |
+
+Catchup may use unused pool slots **only when the hot range is empty**. Reband at claim time (`ZADD` the same path identity with a new score). Calendar day comes from the daily tar basename (`YYYY-MM-DD.tar`); unresolved day skips ingest enqueue (never substitute today). Operator census: `ZCARD` plus per-band `ZCOUNT` on the prefixed queue key (not the short name `job:v1:ingest`).
+
 ## B. Session thread executors (day_close + helpers)
 
 | Role | Module | Created |

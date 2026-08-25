@@ -10,28 +10,12 @@ from datetime import date, datetime
 
 from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
 from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-
-
-class _FakeRedis:
-  """Minimal Redis stand-in for predicate enqueue tests."""
-
-  def __init__(self):
-    self.z = {}
-    self.lists = {}
-
-  def zadd(self, key, mapping):
-    self.z.setdefault(key, {}).update(mapping)
-    return len(mapping)
-
-  def rpush(self, key, *values):
-    bucket = self.lists.setdefault(key, [])
-    bucket.extend(values)
-    return len(bucket)
+from hpcperfstats.tests.fake_redis_queue import FakeRedis
 
 
 def test_arch_predicate_discovered_incomplete_enqueues_ingest_job():
   """Discovered closed raw with incomplete ingest must create an ingest job."""
-  client = _FakeRedis()
+  client = FakeRedis()
   plan = jr.classify_closed_raw_path(
       "/raw/host/1",
       tgz_archive_dir="/daily",
@@ -47,12 +31,12 @@ def test_arch_predicate_discovered_incomplete_enqueues_ingest_job():
   )
   assert enqueued["ingest"] is True
   ingest_key = jq.job_queue_key(jq.JOB_KIND_INGEST)
-  assert plan.identity in client.z.get(ingest_key, {})
+  assert client.zscore(ingest_key, plan.identity) is not None
 
 
 def test_arch_predicate_remaining_raw_enqueues_ingest_or_append_job():
   """Remaining-raw incomplete append must leave an append LIST job."""
-  client = _FakeRedis()
+  client = FakeRedis()
   plan = jr.classify_closed_raw_path(
       "/raw/host/2",
       tgz_archive_dir="/daily",
@@ -67,8 +51,8 @@ def test_arch_predicate_remaining_raw_enqueues_ingest_or_append_job():
       client, plan, today=date(2026, 8, 24), hot_days=2
   )
   assert enqueued["append"] is True
-  assert plan.path in client.lists.get(
-      jq.job_queue_key(jq.JOB_KIND_APPEND), []
+  assert plan.path in client.lrange(
+      jq.job_queue_key(jq.JOB_KIND_APPEND), 0, -1,
   )
 
 

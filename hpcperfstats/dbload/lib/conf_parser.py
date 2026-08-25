@@ -116,6 +116,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_queue_max_size"),
     ("PIPELINE", "sync_ingest_rescan_mtime_days"),
     ("PIPELINE", "sync_archive_queue_max_size"),
+    ("PIPELINE", "sync_job_queue_max_members"),
     ("PIPELINE", "sync_timedb_archive_max_concurrent_sealed_days"),
     ("PIPELINE", "sync_archive_retry_max_attempts"),
     ("PIPELINE", "sync_archive_retry_backoff_base_seconds"),
@@ -279,6 +280,7 @@ INI_OPTION_DEFAULTS = {
         'sync_ingest_queue_max_size': '3000',
     'sync_ingest_rescan_mtime_days': '1',
     'sync_archive_queue_max_size': '1000',
+    'sync_job_queue_max_members': '2000000',
     'sync_timedb_archive_max_concurrent_sealed_days': '1',
     'sync_archive_retry_max_attempts': '5',
     'sync_archive_retry_backoff_base_seconds': '1',
@@ -3687,6 +3689,22 @@ def get_sync_archive_queue_max_size() -> Any:
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_archive_queue_max_size"))
+
+
+def get_sync_job_queue_max_members() -> Any:
+  """
+  Capacity bound per durable ``job:v1`` queue key (default 2000000).
+  
+  Returns:
+    Any: Open return polymorphism from ``get_sync_job_queue_max_members``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+  
+  Examples:
+    >>> get_sync_job_queue_max_members()  # doctest: +SKIP
+  """
+  _ensure_cfg_loaded()
+  return max(1000, _pipeline_getint("sync_job_queue_max_members"))
 
 
 def get_sync_archive_retry_max_attempts() -> Any:

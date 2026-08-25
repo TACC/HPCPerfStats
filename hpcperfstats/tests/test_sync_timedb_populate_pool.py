@@ -106,3 +106,15 @@ def test_populate_pool_reap_waitpids_dead_worker(monkeypatch):
   controller.reap_and_restart()
   assert dead.joined is True
   assert 7001 in waitpids
+
+
+def test_populate_pool_started():
+  """T6: the orchestrator must start and reap the populate-pool controller."""
+  import inspect
+
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  source = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  assert "PopulatePoolController" in source
+  assert "reap_and_restart" in source
+  assert "set_populate_pool_controller" in source

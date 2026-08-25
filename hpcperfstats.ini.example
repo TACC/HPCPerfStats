@@ -248,6 +248,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max in-memory archive work queue size (default 1000).
 # sync_archive_queue_max_size = 1000
 
+# Capacity bound per durable Redis job:v1 queue key (default 2000000).
+# sync_job_queue_max_members = 2000000
+
 # Archive task retries before dead-letter behavior (default 5).
 # sync_archive_retry_max_attempts = 5
 

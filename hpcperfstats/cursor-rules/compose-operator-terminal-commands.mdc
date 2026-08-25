@@ -512,6 +512,14 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 Resolve **`N`** from `redis://…/N` in INI / Django settings when unsure.
 
+**Anti-pattern — short `job:v1:ingest` census keys (silent zero):** durable queue keys are prefixed `hpcperfstats:sync_timedb:job:v1:…`. `ZCARD job:v1:ingest` / `LLEN job:v1:append` always return **0** even when the orchestrator is healthy. Use the full keys and per-band `ZCOUNT` (hot `-inf`…`999999999999999`, catchup `1000000000000000`…`+inf`). Compose Redis must be **`volatile-lru`** (not **`allkeys-*`**) so TTL-free queue keys cannot be evicted. **Post-deploy only** — a pre-deploy all-zero census is a false negative.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec redis sh -lc 'P=hpcperfstats:sync_timedb:job:v1; redis-cli -n 1 --scan --pattern "${P}*" | head -50; echo ---; redis-cli -n 1 ZCARD ${P}:queue:ingest; redis-cli -n 1 ZCOUNT ${P}:queue:ingest -inf 999999999999999; redis-cli -n 1 ZCOUNT ${P}:queue:ingest 1000000000000000 +inf; redis-cli -n 1 LLEN ${P}:queue:append; redis-cli -n 1 LLEN ${P}:queue:discover; redis-cli -n 1 LLEN ${P}:queue:day_close; echo ---leases; redis-cli -n 1 --scan --pattern "${P}:lease:*" | wc -l'
+```
+
+Full keys: `hpcperfstats:sync_timedb:job:v1:queue:ingest`, `hpcperfstats:sync_timedb:job:v1:queue:append`, `hpcperfstats:sync_timedb:job:v1:queue:discover`, `hpcperfstats:sync_timedb:job:v1:queue:day_close`.
+
 **Anti-pattern — empty host+telemetry GPU probe means “no GPU job”:** a correct `host`+telemetry+`LIMIT` probe can return **0 rows** while `metrics_data` still has GPU poison (hpcperfstats01 JID `3351747`, 2026-07-31 — `detail_gpu_count=16`, `avg_gpu_mem_bw_gbps≈7.09e10` with units `GB/s`, but zero `nvidia_gpu` samples in window). Treat empty raw rows as **retention/purge or missing samples**, not absence of the job’s GPU metrics; ground the diagnosis on `metrics_data`.
 
 **Anti-pattern — no-artifact cohorts without metrics readiness:** listing jobs with empty `job_detail_artifact` ordered only by `-end_time` is dominated by **metrics-incomplete** rows (`metrics_distinct_time_count` None/0). Filter **`metrics_distinct_time_count__gte=N`** (site ops used **N=100**) to measure the **metrics-ready missing-detail** gap (857260-class).

@@ -29,7 +29,11 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
   su hpcperfstats -c 'sh -lc "ps -ef | grep -E \"[s]ync_timedb.py\" || true"'
 
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec redis \
-  sh -lc 'redis-cli --scan --pattern "*job:v1*" | head -50'
+  sh -lc 'P=hpcperfstats:sync_timedb:job:v1; redis-cli -n 1 --scan --pattern "${P}*" | head -50; echo ---; redis-cli -n 1 ZCARD ${P}:queue:ingest; redis-cli -n 1 ZCOUNT ${P}:queue:ingest -inf 999999999999999; redis-cli -n 1 ZCOUNT ${P}:queue:ingest 1000000000000000 +inf; redis-cli -n 1 LLEN ${P}:queue:append; redis-cli -n 1 LLEN ${P}:queue:discover; redis-cli -n 1 LLEN ${P}:queue:day_close; echo ---leases; redis-cli -n 1 --scan --pattern "${P}:lease:*" | wc -l'
+# Full keys: hpcperfstats:sync_timedb:job:v1:queue:ingest
+#            hpcperfstats:sync_timedb:job:v1:queue:append
+#            hpcperfstats:sync_timedb:job:v1:queue:discover
+#            hpcperfstats:sync_timedb:job:v1:queue:day_close
 
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
   grep -E 'queue orchestrator|job:v1|orchestrator flock|reconstruct|ZADD|day_close|Redis.*(down|unavailable)|sys.exit' | tail -80
@@ -37,7 +41,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 **Pass (T0):** one `[main]` sync_timedb; flock acquired; job keys present or reconstruct explains empty; **Fail:** two orchestrators, Redis down without exit, or CLI `backlog`/`current` still in supervisord.
 
-**Pass (T1/T2):** head-day work advances without restoring chunk_gate / handoff_priority / janitor tick signatures as the only progress metric. Prefer `ZCOUNT`/`LLEN` + lease keys over historical `oldest_day_chunk_gate_stall` greps.
+**Pass (T1/T2):** head-day work advances without restoring chunk_gate / handoff_priority / janitor tick signatures as the only progress metric. Prefer `ZCOUNT`/`LLEN` + lease keys over historical `oldest_day_chunk_gate_stall` greps. **T0/T1/T2 are post-deploy** — they cannot be claimed green until the orchestrator image is running; a pre-deploy `job:v1` census of all zeros is a false negative, not a pass. **Do not** `ZCARD job:v1:ingest` — that short name is always empty; use `hpcperfstats:sync_timedb:job:v1:queue:ingest` (hot `ZCOUNT -inf 999999999999999`, catchup `ZCOUNT 1000000000000000 +inf`).
 
 Sections below marked **Historical B-era** document pre-cutover signatures for archaeology; do not treat them as production law after the queue cutover.
 

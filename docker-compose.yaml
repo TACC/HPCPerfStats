@@ -39,7 +39,7 @@ services:
       - --maxmemory
       - 16gb
       - --maxmemory-policy
-      - allkeys-lru
+      - volatile-lru
       - --io-threads
       - "4"
       - --io-threads-do-reads

@@ -15,8 +15,11 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable, Iterator
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
+import os
 
+from hpcperfstats.dbload.lib import conf_parser as cfg
+from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
 from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
     FindStatsRecord,
@@ -35,6 +38,8 @@ class StreamingDiscoverStats:
     enqueued_append: Paths that received an append ``RPUSH``.
     skipped_complete: Paths with neither ingest nor append needed.
     enqueued_day_close: Days that received a day_close ``RPUSH``.
+    stopped_at_capacity: True when enqueue stopped because the ingest queue
+      hit its configured member cap.
   """
 
   seen: int
@@ -42,6 +47,7 @@ class StreamingDiscoverStats:
   enqueued_append: int
   skipped_complete: int
   enqueued_day_close: int = 0
+  stopped_at_capacity: bool = False
 
 
 def find_record_mtime_ns(mtime: float) -> int:
@@ -59,6 +65,148 @@ def find_record_mtime_ns(mtime: float) -> int:
     1500000000
   """
   return int(round(float(mtime) * 1_000_000_000))
+
+
+def calendar_day_from_find_record(
+  rec: FindStatsRecord,
+  tgz_archive_dir: str,
+) -> date | None:
+  """
+  Resolve a find record's calendar day from its daily tar path.
+
+  Returns ``None`` rather than substituting today when the tar day cannot be
+  derived — banding without a real day would mis-schedule catchup work.
+
+  Args:
+    rec (FindStatsRecord): One GNU find record.
+    tgz_archive_dir (str): Daily archive directory.
+
+  Returns:
+    date | None: Calendar day, or ``None`` when unresolved.
+
+  Examples:
+    >>> calendar_day_from_find_record(
+    ...   FindStatsRecord(path="/x", mtime=1.0, size=1, inode=1),
+    ...   "/nope",
+    ... ) is None
+    True
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      calendar_date_from_daily_tar_path,
+      daily_tar_path_for_stats_path,
+  )
+
+  if _basename_date(rec.path) is None:
+    return None
+  tar = daily_tar_path_for_stats_path(
+      rec.path, tgz_archive_dir, rec.mtime,
+  )
+  if not tar:
+    return None
+  return calendar_date_from_daily_tar_path(tar)
+
+
+def filter_find_records_for_date_range(
+  records: Iterable[FindStatsRecord],
+  *,
+  startdate: Any = None,
+  enddate: Any = None,
+) -> list[FindStatsRecord]:
+  """
+  Keep find records whose basename date falls in ``[startdate, enddate]``.
+
+  Args:
+    records (Iterable[FindStatsRecord]): Streaming or materialized records.
+    startdate (Any): Inclusive start ``datetime``/``date``, or ``None``.
+    enddate (Any): Inclusive end ``datetime``/``date``, or ``None``.
+
+  Returns:
+    list[FindStatsRecord]: Records that pass the date window.
+
+  Examples:
+    >>> filter_find_records_for_date_range([], startdate=None, enddate=None)
+    []
+  """
+  start_d = _coerce_filter_date(startdate)
+  end_d = _coerce_filter_date(enddate)
+  if start_d is None and end_d is None:
+    return list(records)
+  kept: list[FindStatsRecord] = []
+  for rec in records:
+    rec_day = _basename_date(rec.path)
+    if rec_day is None:
+      continue
+    if start_d is not None and rec_day < start_d:
+      continue
+    if end_d is not None and rec_day > end_d:
+      continue
+    kept.append(rec)
+  return kept
+
+
+def _coerce_filter_date(value: Any) -> date | None:
+  """
+  Coerce a CLI date bound to ``date`` or ``None``.
+
+  Args:
+    value (Any): ``date``, ``datetime``, or ignored sentinel.
+
+  Returns:
+    date | None: Calendar day, or ``None`` when the bound is unset.
+
+  Examples:
+    >>> _coerce_filter_date(None) is None
+    True
+  """
+  if isinstance(value, datetime):
+    return value.date()
+  if isinstance(value, date):
+    return value
+  return None
+
+
+def _basename_date(path: str) -> date | None:
+  """
+  Parse ``YYYY-MM-DD`` from a stats-file basename prefix.
+
+  Args:
+    path (str): Raw stats path.
+
+  Returns:
+    date | None: Parsed day, or ``None``.
+
+  Examples:
+    >>> _basename_date("/a/2026-08-05T00:00:00")
+    datetime.date(2026, 8, 5)
+  """
+  name = os.path.basename(str(path or ""))
+  if len(name) < 10:
+    return None
+  try:
+    return datetime.strptime(name[:10], "%Y-%m-%d").date()
+  except ValueError:
+    return None
+
+
+def discover_ingest_capacity_limit() -> int:
+  """
+  Return the tighter of the job-queue member cap and ingest queue max size.
+
+  Args:
+    None.
+
+  Returns:
+    int: Positive capacity used to stop streaming discover.
+
+  Examples:
+    >>> discover_ingest_capacity_limit() >= 1
+    True
+  """
+  try:
+    ingest_cap = int(cfg.get_sync_ingest_queue_max_size())
+  except Exception:
+    ingest_cap = 3000
+  return min(jq.queue_capacity_limit(), max(1, ingest_cap))
 
 
 def iter_find_records_from_stdout_chunks(
@@ -99,6 +247,8 @@ def stream_enqueue_ingest_from_find_records(
   calendar_day_fn: Callable[[FindStatsRecord], date | None] | None = None,
   ingest_is_complete_fn: Callable[..., bool] | None = None,
   append_is_complete_fn: Callable[..., bool] | None = None,
+  startdate: Any = None,
+  enddate: Any = None,
 ) -> StreamingDiscoverStats:
   """
   Classify and enqueue jobs for each find record as it arrives.
@@ -121,6 +271,8 @@ def stream_enqueue_ingest_from_find_records(
       complete predicate.
     append_is_complete_fn (Callable[..., bool] | None): Injectable append
       complete predicate.
+    startdate (Any): Inclusive CLI start date, or ``None``.
+    enddate (Any): Inclusive CLI end date, or ``None``.
 
   Returns:
     StreamingDiscoverStats: Seen / enqueued / skipped counters.
@@ -131,6 +283,12 @@ def stream_enqueue_ingest_from_find_records(
     ...     self.z = {}; self.l = {}
     ...   def zadd(self, key, mapping):
     ...     self.z.update(mapping); return 1
+    ...   def zscore(self, key, member):
+    ...     return self.z.get(member)
+    ...   def zcard(self, key):
+    ...     return len(self.z)
+    ...   def hset(self, *a, **k):
+    ...     return 1
     ...   def rpush(self, key, *vals):
     ...     self.l.setdefault(key, []).extend(vals); return len(vals)
     >>> stats = stream_enqueue_ingest_from_find_records(
@@ -138,6 +296,7 @@ def stream_enqueue_ingest_from_find_records(
     ...   [FindStatsRecord(path="/a", mtime=1.0, size=10, inode=1)],
     ...   tgz_archive_dir="/daily",
     ...   today=date(2026, 8, 24),
+    ...   calendar_day_fn=lambda rec: date(2026, 8, 20),
     ...   ingest_is_complete_fn=lambda **k: False,
     ...   append_is_complete_fn=lambda **k: True,
     ... )
@@ -149,10 +308,27 @@ def stream_enqueue_ingest_from_find_records(
   enqueued_append = 0
   enqueued_day_close = 0
   skipped_complete = 0
-  day_fn = calendar_day_fn
   day_close_seen: set[str] = set()
+  stopped_at_capacity = False
+  day_fn = calendar_day_fn or (
+      lambda rec: calendar_day_from_find_record(rec, tgz_archive_dir)
+  )
+  cap = discover_ingest_capacity_limit()
+  if startdate is not None or enddate is not None:
+    records = filter_find_records_for_date_range(
+        records, startdate=startdate, enddate=enddate,
+    )
 
   for rec in records:
+    try:
+      has_cap = jq.queue_has_capacity(
+          client, kind=jq.JOB_KIND_INGEST, limit=cap,
+      )
+    except Exception:
+      has_cap = True
+    if not has_cap:
+      stopped_at_capacity = True
+      break
     seen += 1
     cal = day_fn(rec) if day_fn is not None else None
     plan = jr.classify_closed_raw_path(
@@ -194,6 +370,7 @@ def stream_enqueue_ingest_from_find_records(
       enqueued_append=enqueued_append,
       skipped_complete=skipped_complete,
       enqueued_day_close=enqueued_day_close,
+      stopped_at_capacity=stopped_at_capacity,
   )
 
 
@@ -209,6 +386,8 @@ def stream_enqueue_ingest_from_find_stdout_chunks(
   calendar_day_fn: Callable[[FindStatsRecord], date | None] | None = None,
   ingest_is_complete_fn: Callable[..., bool] | None = None,
   append_is_complete_fn: Callable[..., bool] | None = None,
+  startdate: Any = None,
+  enddate: Any = None,
 ) -> StreamingDiscoverStats:
   """
   Parse find stdout chunks and enqueue ingest jobs as records complete.
@@ -227,6 +406,8 @@ def stream_enqueue_ingest_from_find_stdout_chunks(
       complete predicate.
     append_is_complete_fn (Callable[..., bool] | None): Injectable append
       complete predicate.
+    startdate (Any): Inclusive CLI start date, or ``None``.
+    enddate (Any): Inclusive CLI end date, or ``None``.
 
   Returns:
     StreamingDiscoverStats: Seen / enqueued / skipped counters.
@@ -237,6 +418,12 @@ def stream_enqueue_ingest_from_find_stdout_chunks(
     ...     self.z = {}; self.l = {}
     ...   def zadd(self, key, mapping):
     ...     self.z.update(mapping); return 1
+    ...   def zscore(self, key, member):
+    ...     return self.z.get(member)
+    ...   def zcard(self, key):
+    ...     return len(self.z)
+    ...   def hset(self, *a, **k):
+    ...     return 1
     ...   def rpush(self, key, *vals):
     ...     self.l.setdefault(key, []).extend(vals); return len(vals)
     >>> raw = b"/a\\x001.0\\x0010\\x001\\x00"
@@ -245,6 +432,7 @@ def stream_enqueue_ingest_from_find_stdout_chunks(
     ...   [raw],
     ...   tgz_archive_dir="/daily",
     ...   today=date(2026, 8, 24),
+    ...   calendar_day_fn=lambda rec: date(2026, 8, 20),
     ...   ingest_is_complete_fn=lambda **k: False,
     ...   append_is_complete_fn=lambda **k: True,
     ... ).seen
@@ -261,4 +449,6 @@ def stream_enqueue_ingest_from_find_stdout_chunks(
       calendar_day_fn=calendar_day_fn,
       ingest_is_complete_fn=ingest_is_complete_fn,
       append_is_complete_fn=append_is_complete_fn,
+      startdate=startdate,
+      enddate=enddate,
   )

@@ -8,6 +8,7 @@ Attributes:
 from __future__ import annotations
 
 import contextlib
+import io
 import os
 import shutil
 import signal
@@ -352,7 +353,7 @@ def _tar_readable_via_decompress_tar_pipe(
   p_decomp = subprocess.Popen(
       decompress_cmd,
       stdout=subprocess.PIPE,
-      stderr=subprocess.DEVNULL,
+      stderr=subprocess.PIPE,
   )
   try:
     p_tar = subprocess.Popen(
@@ -585,6 +586,7 @@ def decompress_compressed_to_tar(
   wait_for_other_owner: bool = True,
   zstd_threads: int | None = None,
   num_threads: int | None = None,
+  already_locked: bool = False,
 ) -> bool:
   """
   Decompress to a verified sibling ``.tar``; unlink compressed only on success.
@@ -607,8 +609,10 @@ def decompress_compressed_to_tar(
     restore_reason (str): String for restore reason.
     restore_caller (str): String for restore caller.
     wait_for_other_owner (bool): Boolean flag for wait for other owner.
-    zstd_threads (int | None): One of ``int``, ``None``.
-    num_threads (int | None): One of ``int``, ``None``.
+    zstd_threads (int | None): Deprecated alias for ``thread_count``.
+    num_threads (int | None): Deprecated alias for ``thread_count``.
+    already_locked (bool): Skip the inner ``file_write_lock`` on replace when
+      the caller already holds the tar write lock.
   
   Returns:
     bool: True or False for this check.
@@ -725,9 +729,12 @@ def decompress_compressed_to_tar(
         log_fn=log_print,
     )
     try:
-      with file_write_lock(tar_path):
+      if already_locked:
         os.replace(tmp_path, tar_path)
-    except OSError:
+      else:
+        with file_write_lock(tar_path):
+          os.replace(tmp_path, tar_path)
+    except (OSError, TimeoutError):
       try:
         if os.path.exists(tmp_path):
           os.remove(tmp_path)
@@ -758,9 +765,12 @@ def decompress_compressed_to_tar(
     decomp_lock_target = "%s.decomp" % tar_path
     lease_s = max(60.0, float(cfg.get_sync_daily_tar_restore_lease_seconds()))
     if wait_for_other_owner:
-      with file_write_lock(decomp_lock_target, timeout_seconds=lease_s):
-        held_file_lock = True
-        return _run_owned_restore()
+      try:
+        with file_write_lock(decomp_lock_target, timeout_seconds=lease_s):
+          held_file_lock = True
+          return _run_owned_restore()
+      except TimeoutError:
+        return False
     try:
       with try_file_write_lock(decomp_lock_target):
         held_file_lock = True
@@ -836,7 +846,7 @@ def _decompress_stdout(
   proc = _popen_zstd(
       cmd,
       stdout=subprocess.PIPE,
-      stderr=subprocess.DEVNULL,
+      stderr=subprocess.PIPE,
       apply_priority_wrap=apply_priority_wrap,
   )
   assert proc.stdout is not None
@@ -1085,6 +1095,102 @@ def zstd_gzip_test(
   return result
 
 
+def drain_subprocess_pipes(
+  proc: Any,
+  timeout_s: float = 1.0,
+) -> tuple[bytes, bytes]:
+  """
+  Read stdout and stderr so a cooperative poll loop cannot deadlock.
+
+  Uses ``os.read`` on real pipe fds and ``read()`` on file-like mocks
+  (unit tests). Reader threads are daemons so a wedged peer cannot hang
+  the caller past ``timeout_s``.
+
+  Args:
+    proc (Any): Subprocess or mock with ``stdout`` / ``stderr`` streams.
+    timeout_s (float): Join budget for the reader threads.
+
+  Returns:
+    tuple[bytes, bytes]: ``(stdout_bytes, stderr_bytes)`` drained so far.
+
+  Examples:
+    >>> import io
+    >>> from types import SimpleNamespace
+    >>> out, err = drain_subprocess_pipes(
+    ...   SimpleNamespace(stdout=io.BytesIO(b"a"), stderr=io.BytesIO(b"b")),
+    ...   timeout_s=0.5,
+    ... )
+    >>> out == b"a" and err == b"b"
+    True
+  """
+  stdout_chunks: list[bytes] = []
+  stderr_chunks: list[bytes] = []
+
+  def _read_stream(stream: Any, bucket: list[bytes]) -> None:
+    """
+    Drain one pipe or file-like into ``bucket``.
+
+    Args:
+      stream (Any): ``stdout``/``stderr`` handle or mock.
+      bucket (list[bytes]): Destination chunks.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _read_stream(None, [])
+    """
+    if stream is None:
+      return
+    try:
+      fileno = getattr(stream, "fileno", None)
+      fd = None
+      if callable(fileno):
+        try:
+          fd = int(fileno())
+        except (TypeError, ValueError, OSError, io.UnsupportedOperation):
+          fd = None
+      if fd is not None:
+        import select
+        deadline = time.monotonic() + max(0.0, float(timeout_s))
+        while True:
+          remaining = deadline - time.monotonic()
+          if remaining <= 0:
+            break
+          ready, _, _ = select.select([fd], [], [], min(0.05, remaining))
+          if not ready:
+            continue
+          chunk = os.read(fd, 65536)
+          if not chunk:
+            break
+          bucket.append(chunk)
+        return
+      data = stream.read()
+      if data:
+        bucket.append(data if isinstance(data, (bytes, bytearray)) else bytes(data))
+    except Exception:
+      return
+
+  readers = [
+      threading.Thread(
+          target=_read_stream,
+          args=(getattr(proc, "stdout", None), stdout_chunks),
+          daemon=True,
+      ),
+      threading.Thread(
+          target=_read_stream,
+          args=(getattr(proc, "stderr", None), stderr_chunks),
+          daemon=True,
+      ),
+  ]
+  for thread in readers:
+    thread.start()
+  join_s = max(0.01, float(timeout_s))
+  for thread in readers:
+    thread.join(timeout=join_s)
+  return b"".join(stdout_chunks), b"".join(stderr_chunks)
+
+
 def zstd_compress_tar_to_file(
   tar_path: str,
   zst_path: str,
@@ -1143,8 +1249,13 @@ def zstd_compress_tar_to_file(
   if tgz_archive_dir:
     proc = _popen_zstd(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     last_poll = time.monotonic()
+    stdout_acc = bytearray()
+    stderr_acc = bytearray()
     try:
       while proc.poll() is None:
+        out_chunk, err_chunk = drain_subprocess_pipes(proc, timeout_s=0.05)
+        stdout_acc.extend(out_chunk)
+        stderr_acc.extend(err_chunk)
         try:
           last_poll, _ = check_day_close_yield_or_continue(
               tar_path,
@@ -1159,6 +1270,7 @@ def zstd_compress_tar_to_file(
           except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5.0)
+          drain_subprocess_pipes(proc, timeout_s=0.5)
           try:
             if os.path.isfile(zst_path):
               os.remove(zst_path)
@@ -1166,8 +1278,11 @@ def zstd_compress_tar_to_file(
             pass
           raise
         time.sleep(0.25)
+      out_chunk, err_chunk = drain_subprocess_pipes(proc, timeout_s=1.0)
+      stdout_acc.extend(out_chunk)
+      stderr_acc.extend(err_chunk)
       if proc.returncode != 0:
-        stderr = proc.stderr.read() if proc.stderr is not None else b""
+        stderr = bytes(stderr_acc)
         raise subprocess.CalledProcessError(
             proc.returncode,
             cmd,

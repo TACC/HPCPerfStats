@@ -6056,19 +6056,13 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
   """
   if not file_paths:
     return
-  tar_exists = os.path.exists(tar_path)
-  zst_path, gz_path = compressed_sibling_paths(tar_path)
-  if not tar_exists and (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
-    raise RuntimeError(
-        "refusing to create daily tar while sealed archive exists without "
-        "restored sibling: %s" % tar_path,
-    )
   # Amortize subprocess overhead for large archive bursts.
   batch = max(1, int(cfg.get_sync_timedb_tar_append_batch_size()))
   if len(file_paths) >= 512:
     batch = max(batch, 256)
   elif len(file_paths) >= 128:
     batch = max(batch, 128)
+  tar_timeout_s = 3600.0
   for off in range(0, len(file_paths), batch):
     chunk = file_paths[off : off + batch]
     present = [p for p in chunk if os.path.lexists(p)]
@@ -6082,6 +6076,7 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
     if not present:
       continue
     fd, list_path = tempfile.mkstemp(prefix="hps_tar_append_", suffix=".lst")
+    result = None
     try:
       with os.fdopen(fd, "wb") as lf:
         for p in present:
@@ -6091,9 +6086,17 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
           lf.write(os.fsencode(rel) + b"\0")
       tar_bin = shutil.which("tar") or "/bin/tar"
       with file_write_lock(tar_path):
+        zst_path, gz_path = compressed_sibling_paths(tar_path)
+        if not os.path.exists(tar_path) and (
+            os.path.isfile(zst_path) or os.path.isfile(gz_path)
+        ):
+          raise RuntimeError(
+              "refusing to create daily tar while sealed archive exists "
+              "without restored sibling: %s" % tar_path,
+          )
         tar_args = [
             tar_bin,
-            "-r" if tar_exists else "-c",
+            "-r",
             "--posix",
             "-C",
             "/",
@@ -6108,12 +6111,19 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
             capture_output=True,
             text=True,
             check=False,
+            timeout=tar_timeout_s,
         )
+    except subprocess.TimeoutExpired as exc:
+      raise RuntimeError(
+          "tar append timed out after %ss: %s" % (tar_timeout_s, tar_path),
+      ) from exc
     finally:
       try:
         os.remove(list_path)
       except OSError:
         pass
+    if result is None:
+      continue
     if result.stdout:
       log_print(result.stdout, flush=True)
     if result.stderr:
@@ -6129,8 +6139,7 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
         "Archived batch %d-%d (%d file(s)) -> %s"
         % (off + 1, off + len(present), len(present), tar_path),
         flush=True,
-    )
-    tar_exists = True
+      )
 
 
 def archive_stats_files(archive_info: Any) -> Any:

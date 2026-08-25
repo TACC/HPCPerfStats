@@ -212,7 +212,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    Alternatively, add **`vm.overcommit_memory = 1`** to **`/etc/sysctl.conf`** and reboot (or run the **`sysctl -w`** command once). On Docker Desktop for macOS, host **`sysctl`** does not apply to the inner Linux VM; tune there only if your setup exposes it, or treat the warning as informational for small dev stacks.
 
-   **Upgrading the Compose Redis server:** `docker-compose.yaml` pins **Redis Open Source 8.10** (`redis:8.10.0-alpine3.23`) with **`maxmemory 16gb`**, **`allkeys-lru`**, and **`--io-threads 4`** / **`--io-threads-do-reads yes`**. Redis holds only **ephemeral cache** (no persistence volume; `appendonly no`), so upgrading clears cached pages/plots until they are recomputed. Size the host (or Colima) so Redis can use that cap alongside Postgres `shm_size` / `shared_buffers`. On the deployment host:
+   **Upgrading the Compose Redis server:** `docker-compose.yaml` pins **Redis Open Source 8.10** (`redis:8.10.0-alpine3.23`) with **`maxmemory 16gb`**, **`volatile-lru`** (Django cache keys keep TTL and remain evictable; TTL-free `job:v1` queue keys cannot be whole-key evicted), and **`--io-threads 4`** / **`--io-threads-do-reads yes`**. Do **not** use **`allkeys-*`**: `sync_timedb` fails closed at orchestrator boot if Redis can evict durable queue members. Redis has no persistence volume (`appendonly no`), so upgrading still clears cached pages/plots until they are recomputed. Size the host (or Colima) so Redis can use that cap alongside Postgres `shm_size` / `shared_buffers`. On the deployment host:
 
    ```bash
    docker compose pull redis

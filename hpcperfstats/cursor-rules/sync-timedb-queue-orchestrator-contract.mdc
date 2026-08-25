@@ -15,7 +15,15 @@ Production coordinator for `sync_timedb` is **`run_sync_timedb_queue_orchestrato
 | Law | Detail |
 |-----|--------|
 | One process / `archive_dir` | Exclusive flock on `{archive_dir}/.sync_timedb_orchestrator.fnctl.lock` |
-| Job kinds | Redis `job:v1`: ingest ZSET (hot/catchup ranges), append/discover/day_close LISTs, `SET NX EX` leases (TTL = ingest per-file max) |
+| Job kinds | Redis `job:v1`: ingest ZSET (hot/catchup ranges), append/discover/day_close LISTs, `SET NX EX` leases with **short TTL + coordinator renew**, in-flight HASH, path-only lease identity + payload fingerprint |
+| Atomic claim | Lua claim (ranged pop + SET NX + in-flight) / LIST claim; never `ZREM`/`LPOP` then lease. Fill paths must not call `pop_ingest_job_ranged` / `pop_list_job` |
+| Reaper / steal | Tick `reap_expired_inflight`; boot `steal_dead_owner_leases` (SCAN, never KEYS); host+boot scoped owner tokens |
+| Streaming submit | Discover → `ZADD` as paths arrive; never wait for full find to finish before first enqueue; stop at ingest queue cap |
+| Calendar day | Discover resolves day from the daily tar path; **do not** substitute today. Unresolved day → skip ingest enqueue |
+| Reserved ingest slots | `hot_cap = max(1, (2*pool)//3)`, `catchup_cap = pool - hot_cap` (catchup floored to 1 when `pool >= 2`). Catchup may use unused pool slots only when the hot range is empty |
+| Reband | Recompute band at claim time and `ZADD` the same identity with the new score |
+| Populate pool | Orchestrator starts `PopulatePoolController`, `reap_and_restart` each tick, `stop` on exit |
+| Redis eviction | Startup `assert_redis_queue_safety` **fails closed** on `allkeys-*`; accept `noeviction` or `volatile-*`. Queue keys are TTL-free |
 | Streaming submit | Discover → `ZADD` as paths arrive; never wait for full find to finish before first enqueue |
 | Sliding-window pools | Refill on completion; never join an entire batch before the next hop |
 | Reserved ingest slots | `hot_cap = max(1, (2*pool)//3)`, `catchup_cap = pool - hot_cap` (catchup floored to 1 when `pool >= 2`) |
