@@ -42,6 +42,7 @@ from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as it
 from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
 from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
 from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
     exclusive_archive_dir_flock,
 )
@@ -189,7 +190,10 @@ def install_cooperative_shutdown_handlers(
 
 def _log(msg: str, *, log_fn: Callable[..., None] | None = None) -> None:
   """
-  Emit an orchestrator log line via ``log_fn`` or stdout print.
+  Emit an orchestrator log line via ``log_fn`` or ``log_print``.
+
+  Falls back to ``log_print`` (role-prefixed atomic write) when ``log_fn`` is
+  None — never bare ``print``.
 
   Args:
     msg (str): Message body.
@@ -204,7 +208,7 @@ def _log(msg: str, *, log_fn: Callable[..., None] | None = None) -> None:
   if log_fn is not None:
     log_fn(msg, flush=True)
   else:
-    print(msg, flush=True)
+    log_print(msg, flush=True)
 
 
 def _path_from_ingest_identity(identity: str) -> str:

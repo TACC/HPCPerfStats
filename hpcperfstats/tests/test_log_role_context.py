@@ -1,6 +1,7 @@
 """Tests for log role context wired from process_title hooks."""
 
-import builtins
+import io
+import sys
 
 import pytest
 
@@ -34,7 +35,7 @@ def sync_timedb_main(monkeypatch):
 
 @pytest.mark.usefixtures("sync_timedb_main")
 def test_format_log_prefix_without_role():
-  assert format_log_prefix() == "[sync_timedb]"
+  assert format_log_prefix() == "[sync_timedb:main]"
 
 
 @pytest.mark.usefixtures("sync_timedb_main")
@@ -47,16 +48,19 @@ def test_format_log_prefix_with_role():
 
 @pytest.mark.usefixtures("sync_timedb_main")
 def test_log_print_includes_role_prefix(monkeypatch):
-  calls = []
+  writes: list[str] = []
+  buf = io.StringIO()
+  real_write = io.StringIO.write
 
-  def fake_print(*args, **kwargs):
-    calls.append((args, kwargs))
+  def tracking_write(data):
+    writes.append(data)
+    return real_write(buf, data)
 
-  monkeypatch.setattr(builtins, "print", fake_print)
+  buf.write = tracking_write  # type: ignore[method-assign]
+  monkeypatch.setattr(sys, "stdout", buf)
   set_log_role("worker:archive-pool")
   log_print("seal done", flush=True)
-  assert calls[0][0][0] == "[sync_timedb:worker:archive-pool]"
-  assert calls[0][0][1:] == ("seal done",)
+  assert writes == ["[sync_timedb:worker:archive-pool] seal done\n"]
 
 
 @pytest.mark.usefixtures("sync_timedb_main")
@@ -115,37 +119,51 @@ def test_gunicorn_skips_log_role_on_process_title(monkeypatch):
 
 @pytest.mark.usefixtures("sync_timedb_main")
 def test_janitor_body_prefix_respects_role(monkeypatch):
-  calls = []
+  writes: list[str] = []
+  buf = io.StringIO()
+  real_write = io.StringIO.write
 
-  def fake_print(*args, **kwargs):
-    calls.append(args)
+  def tracking_write(data):
+    writes.append(data)
+    return real_write(buf, data)
 
-  monkeypatch.setattr(builtins, "print", fake_print)
+  buf.write = tracking_write  # type: ignore[method-assign]
+  monkeypatch.setattr(sys, "stdout", buf)
   set_log_role("main")
   with janitorial_logging():
     log_print("day-scoped closed_raw")
-  assert calls[0][1] == "janitor: day-scoped closed_raw"
-  calls.clear()
+  assert writes[-1] == "[sync_timedb:main] janitor: day-scoped closed_raw\n"
+  writes.clear()
   set_log_role("thread:archive-janitor")
   with janitorial_logging():
     log_print("janitor: discover_ready_day_close")
-  assert calls[0][1] == "discover_ready_day_close"
+  assert writes[-1] == (
+      "[sync_timedb:thread:archive-janitor] discover_ready_day_close\n"
+  )
 
 
 @pytest.mark.usefixtures("sync_timedb_main")
 def test_ingest_body_prefix_main_only(monkeypatch):
-  calls = []
+  writes: list[str] = []
+  buf = io.StringIO()
+  real_write = io.StringIO.write
 
-  def fake_print(*args, **kwargs):
-    calls.append(args)
+  def tracking_write(data):
+    writes.append(data)
+    return real_write(buf, data)
 
-  monkeypatch.setattr(builtins, "print", fake_print)
+  buf.write = tracking_write  # type: ignore[method-assign]
+  monkeypatch.setattr(sys, "stdout", buf)
   set_log_role("main")
   with ingest_logging():
     log_print("post_finalize_reconcile")
-  assert calls[0][1] == "ingest: post_finalize_reconcile"
-  calls.clear()
+  assert writes[-1] == (
+      "[sync_timedb:main] ingest: post_finalize_reconcile\n"
+  )
+  writes.clear()
   set_log_role("worker:ingest-pool")
   with ingest_logging():
     log_print("File successfully added to DB")
-  assert calls[0][1] == "File successfully added to DB"
+  assert writes[-1] == (
+      "[sync_timedb:worker:ingest-pool] File successfully added to DB\n"
+  )

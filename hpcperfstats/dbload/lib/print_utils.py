@@ -8,7 +8,8 @@ code that is only imported uses the same label as the script that invoked it
 
 When a daemon role is set via set_log_role() (wired from process_title hooks),
 the prefix becomes [script_name:role], e.g. [sync_timedb:thread:archive-
-janitor].
+janitor]. When the role is unset, format_log_prefix defaults to ``main`` so
+lines are always [script_name:main] (never a bare [script_name] at runtime).
 
 Body facets (outside brackets):
 - janitorial_logging() / janitorial=True → add or strip leading ``janitor:``
@@ -152,18 +153,19 @@ def _script_prefix() -> Any:
 
 def format_log_prefix() -> str:
   """
-  Return [script] or [script:role] when a daemon role is active.
-  
+  Return ``[script:role]``, defaulting unset role to ``main``.
+
+  Always includes a role segment so operators never see a bare ``[script]``
+  prefix from ``log_print`` (``process-title-and-pool-labels.mdc``).
+
   Returns:
-    str: str produced by this call.
-  
+    str: Bracketed ``[script_name:role]`` prefix for the current context.
+
   Examples:
     >>> format_log_prefix()  # doctest: +SKIP
   """
   base = _script_prefix()
-  role = get_log_role()
-  if not role:
-    return base
+  role = get_log_role() or "main"
   script_name = base[1:-1]
   return f"[{script_name}:{role}]"
 

@@ -1054,3 +1054,49 @@ def test_renew_helper_not_called_from_loop():
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
   assert "_renew_active_claims(" not in src
 
+
+def test_orchestrator_log_fallback_uses_log_print(monkeypatch):
+  """``_log`` without ``log_fn`` must use ``log_print``, not bare ``print``."""
+  writes: list[str] = []
+  buf = __import__("io").StringIO()
+  real_write = __import__("io").StringIO.write
+
+  def tracking_write(data):
+    writes.append(data)
+    return real_write(buf, data)
+
+  buf.write = tracking_write  # type: ignore[method-assign]
+  monkeypatch.setattr(__import__("sys"), "stdout", buf)
+
+  class DummyMain:
+    __file__ = "/path/to/sync_timedb.py"
+
+  monkeypatch.setitem(__import__("sys").modules, "__main__", DummyMain)
+  from hpcperfstats.dbload.lib.print_utils import set_log_role
+
+  set_log_role(None)
+  qo._log("queue_orchestrator drained; exiting")
+  assert len(writes) == 1
+  assert writes[0].startswith("[sync_timedb:main] ")
+  assert "queue_orchestrator drained; exiting" in writes[0]
+
+
+def test_sync_timedb_modules_have_no_bare_print():
+  """Drift guard: sync_timedb entry + lib must not call bare ``print``."""
+  import ast
+
+  dbload = Path(__file__).resolve().parents[1] / "dbload"
+  paths = [dbload / "sync_timedb.py"]
+  paths.extend(sorted((dbload / "lib").glob("sync_timedb_*.py")))
+  offenders: list[str] = []
+  for path in paths:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+      if not isinstance(node, ast.Call):
+        continue
+      func = node.func
+      if isinstance(func, ast.Name) and func.id == "print":
+        offenders.append("%s:%d" % (path.name, node.lineno))
+  assert not offenders, "bare print() in sync_timedb modules: %s" % (
+      ", ".join(offenders),
+  )

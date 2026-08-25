@@ -1133,7 +1133,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 ## Log source attribution (`[sync_timedb:role]`)
 
-After deploy of log-role prefixes (2026-06), pipeline lines identify **which actor** emitted them. Greps for **`[sync_timedb]`** still match (substring).
+After deploy of log-role prefixes (2026-06), pipeline lines identify **which actor** emitted them. Greps for **`[sync_timedb]`** still match (substring). As of 2026-08, **`format_log_prefix` always includes a role** — unset role defaults to **`main`** (`[sync_timedb:main]`). Bare **`[sync_timedb]`** (no role) appears only in **legacy** pre-fix logs.
 
 ### Body facets (2026-07 — outside brackets)
 
@@ -1160,7 +1160,7 @@ Prefer: `grep -E 'janitor:|ingest:|thread:archive-janitor|thread:day-close-'`. D
 | `[sync_timedb:thread:startup-raw-removal-preflight]` | Daemon thread | Boot raw removal verify/delete |
 | `[sync_timedb:thread:startup-tail-ingest]` | Daemon thread | Optional tail ingest before steady state |
 | `[sync_timedb:thread:archive-discovery]` | Short-lived helper thread | Archive metadata scan during heavy maintenance |
-| `[sync_timedb]` (no role segment) | Legacy logs or non-daemon callers | Use message heuristics below |
+| `[sync_timedb]` (no role segment) | **Legacy only** (pre-2026-08 unset-role default) | Prefer message heuristics below; current runtime always has `:role` |
 
 **Naming note:** cpuset / process-bucket text **"sync_timedb archive workers"** means the **append pool** (`worker:archive-pool`), not the janitor thread. The janitor runs inside the supervisor process on **`thread:archive-janitor`**.
 

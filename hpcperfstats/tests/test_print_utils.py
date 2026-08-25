@@ -47,11 +47,11 @@ def test_log_print_single_atomic_write(monkeypatch):
 
   log_print("hello", 123)
 
-  assert writes == ["[tool] hello 123\n"], (
+  assert writes == ["[tool:main] hello 123\n"], (
       "log_print must one write() the full line so compose/podman logs "
       "do not inject a container prefix between prefix and body"
   )
-  assert buf.getvalue() == "[tool] hello 123\n"
+  assert buf.getvalue() == "[tool:main] hello 123\n"
 
 
 def test_log_print_prefixes_output(monkeypatch):
@@ -63,7 +63,7 @@ def test_log_print_prefixes_output(monkeypatch):
 
   log_print("hello", 123, end="!")
 
-  assert writes == ["[tool] hello 123!"]
+  assert writes == ["[tool:main] hello 123!"]
 
 
 def test_log_print_strips_redundant_script_body_prefix(monkeypatch):
@@ -223,4 +223,4 @@ def test_log_print_unset_role_treated_as_main_for_ingest(monkeypatch):
   writes, _buf = _capture_log_writes(monkeypatch)
   with ingest_logging():
     log_print("pending reconcile")
-  assert writes == ["[sync_timedb] ingest: pending reconcile\n"]
+  assert writes == ["[sync_timedb:main] ingest: pending reconcile\n"]
