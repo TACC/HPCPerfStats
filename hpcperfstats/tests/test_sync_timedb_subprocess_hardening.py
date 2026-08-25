@@ -67,6 +67,9 @@ def test_decompress_stderr_is_devnull_to_avoid_pipe_deadlock():
   assert "stderr=subprocess.DEVNULL" in pipe_src
   # Prefer DEVNULL over undrained PIPE on the decompress leg.
   assert pipe_src.count("stderr=subprocess.PIPE") == 0
+  stdout_src = inspect.getsource(zstd_cli._decompress_stdout)
+  assert "stderr=subprocess.DEVNULL" in stdout_src
+  assert stdout_src.count("stderr=subprocess.PIPE") == 0
 
 
 def test_tar_append_subprocess_has_timeout():

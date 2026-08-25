@@ -4,7 +4,8 @@ Redis ``job:v1`` work-queue helpers for the sync_timedb greenfield orchestrator.
 Provides key names, ingest ZSET band scores, reserved slot caps, and the
 atomic claim / ack / requeue / renew / reap primitives that make a claimed job
 crash-safe: every claim moves work out of the queue and into an in-flight hash
-under a short lease, and every terminal path either acks (drop) or requeues
+under a SET NX EX lease (EX = per-file ingest timeout max, default 86400s;
+OQ-1: no coordinator heartbeat renew), and every terminal path either acks (drop) or requeues
 (retry with attempt accounting).
 
 Attributes:
@@ -19,7 +20,7 @@ Attributes:
   JOB_KIND_INGEST: Job kind string for ingest ZSET queue.
   JOB_KINDS_ALL: Tuple of every durable job kind.
   JOB_KINDS_LIST: Tuple of kinds that use Redis LIST queues.
-  JOB_LEASE_TTL_CEILING_S: Hard ceiling for a renewable lease TTL.
+  JOB_LEASE_TTL_CEILING_S: Unused leftover ceiling (OQ-1 uses per-file max).
   JOB_LEASE_TTL_FLOOR_S: Minimum lease EX seconds when INI values are tiny.
   JOB_LEASE_TTL_POLL_MULTIPLIER: Lease TTL as a multiple of the pool poll.
   JOB_V1_PREFIX: Redis key prefix ``…:job:v1``.
@@ -134,7 +135,7 @@ _CLAIM_LIST_LUA = (
     "    redis.call('HSET', KEYS[2], member, ARGV[4] .. '|' .. ARGV[1] .. '|')\n"
     "    return member\n"
     "  end\n"
-    "  redis.call('LPUSH', KEYS[1], member)\n"
+    "  redis.call('RPUSH', KEYS[1], member)\n"
     "end\n"
     "return false\n"
 )
@@ -164,11 +165,16 @@ _ACK_LUA = (
     "return owned\n"
 )
 
-# KEYS: work list, pending set, inflight hash. ARGV: identity.
+# KEYS: work list, pending set, inflight hash. ARGV: identity, llen_cap.
 _ENQUEUE_LIST_DEDUPE_LUA = (
     "-- HPS_ENQUEUE_LIST\n"
     "if redis.call('HEXISTS', KEYS[3], ARGV[1]) == 1 then return 0 end\n"
     "if redis.call('SADD', KEYS[2], ARGV[1]) == 0 then return 0 end\n"
+    "local cap = tonumber(ARGV[2]) or 0\n"
+    "if cap > 0 and redis.call('LLEN', KEYS[1]) >= cap then\n"
+    "  redis.call('SREM', KEYS[2], ARGV[1])\n"
+    "  return 0\n"
+    "end\n"
     "redis.call('RPUSH', KEYS[1], ARGV[1])\n"
     "return 1\n"
 )
@@ -211,11 +217,11 @@ _STEAL_REQUEUE_LUA = (
     "  local stored = tonumber(string.match(cur, '^[^|]*|[^|]*|(.*)$') or '')\n"
     "  if stored ~= nil then score = stored end\n"
     "  redis.call('HDEL', KEYS[2], ARGV[1])\n"
-    "end\n"
-    "if ARGV[3] == 'z' then\n"
-    "  redis.call('ZADD', KEYS[3], score + tonumber(ARGV[5]), ARGV[1])\n"
-    "else\n"
-    "  redis.call('RPUSH', KEYS[3], ARGV[1])\n"
+    "  if ARGV[3] == 'z' then\n"
+    "    redis.call('ZADD', KEYS[3], score + tonumber(ARGV[5]), ARGV[1])\n"
+    "  else\n"
+    "    redis.call('RPUSH', KEYS[3], ARGV[1])\n"
+    "  end\n"
     "end\n"
     "return 1\n"
 )
@@ -1191,7 +1197,9 @@ def steal_job_lease_if_owner_dead(
     boot_id (str | None): Local boot id override (tests).
 
   Returns:
-    bool: True when a dead-owner lease was stolen and the job requeued.
+    bool: True when a dead-owner lease was stolen. The job is requeued
+    only when an inflight HASH entry existed; a nil inflight never
+    fabricates a LIST/ZSET member.
 
   Examples:
     >>> client = type("C", (), {})()  # doctest: +SKIP
@@ -1421,6 +1429,11 @@ def zadd_ingest_job(
   key = job_queue_key(JOB_KIND_INGEST)
   ident = str(identity)
   try:
+    if client.hexists(job_inflight_key(JOB_KIND_INGEST), ident):
+      return 0
+  except Exception:
+    pass
+  try:
     existing = client.zscore(key, ident)
   except Exception:
     existing = None
@@ -1512,6 +1525,13 @@ def enqueue_list_job(
   if str(kind) not in JOB_KINDS_LIST:
     raise ValueError("kind %r is not a LIST queue kind" % (kind,))
   if not dedupe:
+    cap = queue_capacity_limit()
+    try:
+      depth = int(client.llen(job_queue_key(kind)) or 0)
+    except Exception:
+      depth = 0
+    if cap > 0 and depth >= cap:
+      return 0
     return int(client.rpush(job_queue_key(kind), str(identity)))
   raw = eval_job_script(
       client,
@@ -1521,6 +1541,7 @@ def enqueue_list_job(
       job_pending_set_key(kind),
       job_inflight_key(kind),
       str(identity),
+      queue_capacity_limit(),
   )
   return int(raw or 0)
 
@@ -2203,6 +2224,53 @@ def append_queue_dead_letter(
   except OSError:
     return False
   return True
+
+
+def identity_in_queue_dead_letter(
+  archive_data_dir: str,
+  *,
+  kind: str,
+  identity: str,
+) -> bool:
+  """
+  Return True when ``kind``/``identity`` is already in the queue dead-letter.
+
+  Reconstruct and discover must not re-enqueue parked poison (P1-17).
+
+  Args:
+    archive_data_dir (str): Archive data directory root.
+    kind (str): Job kind.
+    identity (str): Job identity.
+
+  Returns:
+    bool: True when a matching dead-letter entry exists.
+
+  Examples:
+    >>> identity_in_queue_dead_letter("/nope", kind="ingest", identity="x")
+    False
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_persistence import (
+      load_persistence_document,
+  )
+
+  if not archive_data_dir or not identity:
+    return False
+  path = queue_dead_letter_path(archive_data_dir)
+  entries = load_persistence_document(
+      path, QUEUE_DEAD_LETTER_KIND, default=[],
+  )
+  if not isinstance(entries, list):
+    return False
+  want_kind = str(kind)
+  want_id = str(identity)
+  for entry in entries:
+    if not isinstance(entry, dict):
+      continue
+    if str(entry.get("kind") or "") != want_kind:
+      continue
+    if str(entry.get("identity") or "") == want_id:
+      return True
+  return False
 
 
 def queue_capacity_limit() -> int:

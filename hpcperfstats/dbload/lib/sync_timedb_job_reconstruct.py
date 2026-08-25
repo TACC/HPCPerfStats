@@ -559,6 +559,7 @@ def enqueue_reconstruct_jobs_for_closed_path(
   *,
   today: date,
   hot_days: int = DEFAULT_INGEST_HOT_DAYS,
+  archive_data_dir: str | None = None,
 ) -> dict[str, bool]:
   """
   Enqueue ingest/append jobs only for incomplete predicates on ``plan``.
@@ -572,6 +573,7 @@ def enqueue_reconstruct_jobs_for_closed_path(
     plan (ClosedPathReconstructPlan): Classify result for one closed path.
     today (date): Local today for hot/catchup score encode.
     hot_days (int): Hot-band window length.
+    archive_data_dir (str | None): Archive root for queue dead-letter skip.
 
   Returns:
     dict[str, bool]: ``{\"ingest\": bool, \"append\": bool}`` for what was
@@ -597,9 +599,14 @@ def enqueue_reconstruct_jobs_for_closed_path(
   enqueued = {"ingest": False, "append": False}
   if client is None or plan is None:
     return enqueued
+  root = str(archive_data_dir or "").strip()
 
   if plan.needs_ingest:
-    if plan.calendar_day is None:
+    if root and jq.identity_in_queue_dead_letter(
+        root, kind=jq.JOB_KIND_INGEST, identity=plan.identity,
+    ):
+      pass
+    elif plan.calendar_day is None:
       # Refusing to substitute today: an unresolved day cannot be banded.
       pass
     else:
@@ -620,12 +627,18 @@ def enqueue_reconstruct_jobs_for_closed_path(
       enqueued["ingest"] = True
 
   if plan.needs_append:
-    jq.enqueue_list_job(
-        client,
-        kind=jq.JOB_KIND_APPEND,
-        identity=plan.path,
-    )
-    enqueued["append"] = True
+    if root and jq.identity_in_queue_dead_letter(
+        root, kind=jq.JOB_KIND_APPEND, identity=plan.path,
+    ):
+      pass
+    else:
+      jq.enqueue_list_job(
+          client,
+          kind=jq.JOB_KIND_APPEND,
+          identity=plan.path,
+          dedupe=True,
+      )
+      enqueued["append"] = True
 
   return enqueued
 
@@ -689,5 +702,6 @@ def enqueue_day_close_if_needed(
       client,
       kind=jq.JOB_KIND_DAY_CLOSE,
       identity=os.path.normpath(str(tar_path)),
+      dedupe=True,
   )
   return True

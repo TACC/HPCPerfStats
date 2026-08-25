@@ -2753,6 +2753,16 @@ def _quarantine_one_closed_raw_path(
               flush=True,
           )
         return False
+      try:
+        shutil.move(path_norm, dest_path)
+      except OSError as exc:
+        if log_fn:
+          log_fn(
+              "Unparsable raw quarantine failed path=%s: %s"
+              % (path_norm, exc),
+              flush=True,
+          )
+        return False
       entry = {
           "original_path": path_norm,
           "quarantined_path": os.path.normpath(dest_path),
@@ -2766,24 +2776,13 @@ def _quarantine_one_closed_raw_path(
         _save_unparsable_raw_manifest_atomic(manifest_path, manifest_entries)
       except OSError as exc:
         manifest_entries.pop()
-        if log_fn:
-          log_fn(
-              "Unparsable raw quarantine manifest save failed path=%s: %s"
-              % (path_norm, exc),
-              flush=True,
-          )
-        return False
-      try:
-        shutil.move(path_norm, dest_path)
-      except OSError as exc:
-        manifest_entries.pop()
         try:
-          _save_unparsable_raw_manifest_atomic(manifest_path, manifest_entries)
+          shutil.move(dest_path, path_norm)
         except OSError:
           pass
         if log_fn:
           log_fn(
-              "Unparsable raw quarantine failed path=%s: %s"
+              "Unparsable raw quarantine manifest save failed path=%s: %s"
               % (path_norm, exc),
               flush=True,
           )
@@ -5051,26 +5050,12 @@ def verify_tar_archive_readable(
     with _archive_file_read_lock_wait(tar_path):
       return _locked_scan()
   except FileNotFoundError:
-    pass
+    return False
   except TimeoutError:
     raise
   except (OSError, subprocess.SubprocessError):
     return False
-  try:
-    if assume_write_lock_held:
-      with tarfile.open(tar_path, "r") as tf:
-        for _member in _iter_tar_members(tf):
-          pass
-      return True
-    with _archive_file_read_lock_wait(tar_path):
-      with tarfile.open(tar_path, "r") as tf:
-        for _member in _iter_tar_members(tf):
-          pass
-    return True
-  except TimeoutError:
-    raise
-  except (tarfile.TarError, OSError, EOFError):
-    return False
+  return False
 
 
 def get_file_member_sizes_from_gzip_archive(gz_path: str) -> Any:
@@ -5165,6 +5150,11 @@ def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
   Returns:
     dict[str, int]: Member name to byte size (largest when duplicated).
 
+  Raises:
+    RuntimeError: GNU ``tar tvf`` failed on a present daily tar.
+    Exception: Other read/lock failures are swallowed into an empty map
+      (not re-raised).
+
   Examples:
     >>> get_mutable_tar_authority_member_map("")  # doctest: +SKIP
   """
@@ -5179,6 +5169,8 @@ def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
     try:
       with file_read_lock_wait(tar_norm):
         members = _read_tar_file_member_sizes_unlocked(tar_norm)
+    except RuntimeError:
+      raise
     except Exception:
       members = {}
     finally:
@@ -7012,6 +7004,63 @@ def iter_archive_file_member_infos(
           yield member_info
 
 
+def _parse_tar_tvf_size_and_name(line: str) -> tuple[str, int] | None:
+  """
+  Parse one ``tar tvf`` listing line into ``(member_name, size)``.
+
+  Accepts GNU ``user/group`` listings and BSD ``uid gid`` listings.
+
+  Args:
+    line (str): One verbose tar list line.
+
+  Returns:
+    tuple[str, int] | None: Member name and byte size, or ``None`` when
+    the line is not a file member listing.
+
+  Examples:
+    >>> _parse_tar_tvf_size_and_name(
+    ...   "-rw-r--r-- 0/0 12 2026-01-01 00:00 host/file"
+    ... )
+    ('host/file', 12)
+  """
+  text = str(line or "").rstrip()
+  if not text or text.startswith("tar:"):
+    return None
+  if text[:1] not in ("-", "d", "l", "h"):
+    return None
+  if text.startswith("d") or text.startswith("l"):
+    return None
+  parts = text.split()
+  if len(parts) < 6:
+    return None
+  if "/" in parts[1]:
+    size_idx = 2
+    name_idx = 5
+  elif (
+      len(parts) >= 8
+      and parts[1].isdigit()
+      and parts[2].isdigit()
+      and parts[3].isdigit()
+  ):
+    size_idx = 3
+    name_idx = 7
+  elif len(parts) >= 9:
+    size_idx = 4
+    name_idx = 8
+  else:
+    return None
+  if size_idx >= len(parts) or name_idx >= len(parts):
+    return None
+  try:
+    size = int(parts[size_idx])
+  except ValueError:
+    return None
+  name = " ".join(parts[name_idx:])
+  if not name:
+    return None
+  return (name, size)
+
+
 def _read_tar_file_member_sizes_unlocked(tar_path: str) -> Any:
   """
   Read file member name -> max size from ``tar_path`` without a read lock.
@@ -7023,21 +7072,35 @@ def _read_tar_file_member_sizes_unlocked(tar_path: str) -> Any:
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
+  Raises:
+    RuntimeError: GNU ``tar tvf`` exited non-zero (truncated or unreadable).
+
   Examples:
     >>> _read_tar_file_member_sizes_unlocked("x")  # doctest: +SKIP
   """
   if not os.path.isfile(tar_path):
     return {}
-  try:
-    with _open_tarfile_for_read(tar_path, get_archive_zstd_thread_count()) as tf:
-      by_name = defaultdict(list)
-      for m in _iter_tar_members(tf):
-        if m.isfile():
-          by_name[m.name].append(m.size)
-      return {name: max(sizes) for name, sizes in by_name.items()}
-  except Exception:
-    return {}
+  tar_bin = _tar_list_executable()
+  result = subprocess.run(
+      [tar_bin, "tvf", tar_path],
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  if result.returncode != 0:
+    raise RuntimeError(
+        "gnu tar tvf failed path=%s rc=%s stderr=%s"
+        % (tar_path, result.returncode, (result.stderr or "")[:200])
+    )
+  by_name: dict[str, list[int]] = defaultdict(list)
+  for raw_line in (result.stdout or "").splitlines():
+    parsed = _parse_tar_tvf_size_and_name(raw_line)
+    if parsed is None:
+      continue
+    name, size = parsed
+    by_name[name].append(size)
+  return {name: max(sizes) for name, sizes in by_name.items()}
 
 
 def get_existing_archive_members(tar_path: str) -> Any:
@@ -8626,15 +8689,25 @@ def tar_has_duplicate_file_members(tar_path: str) -> Any:
     return False
   try:
     with file_read_lock_wait(tar_path):
-      with tarfile.open(tar_path, "r") as tf:
-        seen = set()
-        for m in _iter_tar_members(tf):
-          if not m.isfile():
-            continue
-          if m.name in seen:
-            return True
-          seen.add(m.name)
+      tar_bin = _tar_list_executable()
+      result = subprocess.run(
+          [tar_bin, "tvf", tar_path],
+          capture_output=True,
+          text=True,
+          check=False,
+      )
+      if result.returncode != 0:
         return False
+      seen = set()
+      for line in result.stdout.splitlines():
+        parsed = _parse_tar_tvf_size_and_name(line)
+        if parsed is None:
+          continue
+        name, _size = parsed
+        if name in seen:
+          return True
+        seen.add(name)
+      return False
   except Exception:
     return False
 

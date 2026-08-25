@@ -18,6 +18,7 @@ from typing import Dict, List
 
 import hashlib
 import threading
+import time
 
 
 class FakeRedis:
@@ -42,6 +43,8 @@ class FakeRedis:
     """
     self._kv: Dict[str, str] = {}
     self._ttl: Dict[str, int] = {}
+    self._expire_at: Dict[str, float] = {}
+    self._now_fn = time.monotonic
     self._lists: Dict[str, List[str]] = {}
     self._zsets: Dict[str, Dict[str, float]] = {}
     self._hashes: Dict[str, Dict[str, str]] = {}
@@ -49,6 +52,55 @@ class FakeRedis:
     self._scripts: Dict[str, str] = {}
     self._config: Dict[str, str] = {"maxmemory-policy": "noeviction"}
     self._lock = threading.RLock()
+
+  def _now(self) -> float:
+    """
+    Return the FakeRedis clock (monotonic seconds; tests may replace).
+
+    Returns:
+      float: Current clock value.
+
+    Examples:
+      >>> isinstance(FakeRedis()._now(), float)
+      True
+    """
+    return float(self._now_fn())
+
+  def _forget_key_locked(self, key: str) -> None:
+    """
+    Drop one key from every in-memory store.
+
+    Args:
+      key (str): Key name.
+
+    Returns:
+      None
+
+    Examples:
+      >>> c = FakeRedis(); c.set("k", "v"); c._forget_key_locked("k")
+    """
+    self._kv.pop(key, None)
+    self._ttl.pop(key, None)
+    self._expire_at.pop(key, None)
+    self._lists.pop(key, None)
+    self._zsets.pop(key, None)
+    self._hashes.pop(key, None)
+    self._sets.pop(key, None)
+
+  def _purge_expired_locked(self) -> None:
+    """
+    Delete keys whose recorded EX deadline has elapsed.
+
+    Returns:
+      None
+
+    Examples:
+      >>> FakeRedis()._purge_expired_locked()
+    """
+    now = self._now()
+    dead = [key for key, exp in self._expire_at.items() if exp <= now]
+    for key in dead:
+      self._forget_key_locked(key)
 
   # --- strings ---
 
@@ -70,11 +122,13 @@ class FakeRedis:
       True
     """
     with self._lock:
+      self._purge_expired_locked()
       if nx and key in self._kv:
         return False
       self._kv[key] = str(value)
       if ex is not None:
         self._ttl[key] = int(ex)
+        self._expire_at[key] = self._now() + int(ex)
       return True
 
   def get(self, key):
@@ -92,6 +146,7 @@ class FakeRedis:
       True
     """
     with self._lock:
+      self._purge_expired_locked()
       return self._kv.get(key)
 
   def ttl(self, key):
@@ -109,6 +164,10 @@ class FakeRedis:
       -2
     """
     with self._lock:
+      self._purge_expired_locked()
+      if key in self._expire_at:
+        remaining = int(self._expire_at[key] - self._now())
+        return remaining if remaining > 0 else -2
       if key in self._ttl:
         return self._ttl[key]
       exists = (
@@ -137,9 +196,11 @@ class FakeRedis:
       True
     """
     with self._lock:
+      self._purge_expired_locked()
       if key not in self._kv:
         return False
       self._ttl[key] = int(seconds)
+      self._expire_at[key] = self._now() + int(seconds)
       return True
 
   def delete(self, *keys):
@@ -167,6 +228,7 @@ class FakeRedis:
             del store[key]
             hit = True
         self._ttl.pop(key, None)
+        self._expire_at.pop(key, None)
         removed += 1 if hit else 0
     return removed
 
@@ -870,6 +932,7 @@ class FakeRedis:
     keys = [str(k) for k in args[:numkeys]]
     argv = [str(a) for a in args[numkeys:]]
     with self._lock:
+      self._purge_expired_locked()
       if "HPS_CLAIM_ZSET" in script:
         return self._lua_claim_zset(keys, argv)
       if "HPS_CLAIM_LIST" in script:
@@ -897,6 +960,7 @@ class FakeRedis:
           return 0
         self._kv.pop(keys[0], None)
         self._ttl.pop(keys[0], None)
+        self._expire_at.pop(keys[0], None)
         return 1
     raise AssertionError("unsupported lua in FakeRedis: %r" % (script[:60],))
 
@@ -916,10 +980,13 @@ class FakeRedis:
       >>> FakeRedis()._set_nx_ex_locked("k", "v", 5)
       True
     """
+    if key in self._expire_at and self._expire_at[key] <= self._now():
+      self._forget_key_locked(key)
     if key in self._kv:
       return False
     self._kv[key] = str(value)
     self._ttl[key] = int(ex)
+    self._expire_at[key] = self._now() + int(ex)
     return True
 
   def _lua_claim_zset(self, keys, argv):
@@ -982,7 +1049,7 @@ class FakeRedis:
             deadline, owner,
         )
         return member
-      self._lists.setdefault(work, []).insert(0, member)
+      self._lists.setdefault(work, []).append(member)
     return False
 
   def _lua_steal_requeue(self, keys, argv):
@@ -1007,6 +1074,7 @@ class FakeRedis:
       return 0
     self._kv.pop(lease, None)
     self._ttl.pop(lease, None)
+    self._expire_at.pop(lease, None)
     score = float(score_s or 0)
     current = (self._hashes.get(inflight) or {}).get(identity)
     if current is not None:
@@ -1017,10 +1085,10 @@ class FakeRedis:
         except ValueError:
           pass
       self._hdel_locked(inflight, identity)
-    if mode == "z":
-      self._zadd_locked(work, {identity: score + float(penalty_s or 0)})
-    else:
-      self._lists.setdefault(work, []).append(identity)
+      if mode == "z":
+        self._zadd_locked(work, {identity: score + float(penalty_s or 0)})
+      else:
+        self._lists.setdefault(work, []).append(identity)
     return 1
 
   def _lua_ack(self, keys, argv):
@@ -1048,6 +1116,7 @@ class FakeRedis:
     if self._kv.get(lease) == owner:
       self._kv.pop(lease, None)
       self._ttl.pop(lease, None)
+      self._expire_at.pop(lease, None)
     if owned == 1:
       self._hashes.pop(payload, None)
       self._srem_locked(pending, identity)
@@ -1078,6 +1147,7 @@ class FakeRedis:
     if self._kv.get(lease) == owner:
       self._kv.pop(lease, None)
       self._ttl.pop(lease, None)
+      self._expire_at.pop(lease, None)
     if owned:
       if mode == "z":
         self._zadd_locked(work, {identity: float(score)})
@@ -1105,6 +1175,7 @@ class FakeRedis:
     if self._kv.get(lease) != owner:
       return 0
     self._ttl[lease] = int(ttl)
+    self._expire_at[lease] = self._now() + int(ttl)
     current = (self._hashes.get(inflight) or {}).get(identity)
     if current is not None and _owner_of(current) == owner:
       self._hashes[inflight][identity] = "%s|%s|%s" % (
@@ -1131,10 +1202,16 @@ class FakeRedis:
     cutoff, limit, mode, prefix, penalty = argv[:5]
     cursor = argv[5] if len(argv) > 5 else "0"
     count = int(argv[6]) if len(argv) > 6 else 64
-    del cursor  # FakeRedis scans the whole hash in one page.
     items = list((self._hashes.get(inflight) or {}).items())
-    out: List[str] = ["0"]
-    for identity, value in items[: max(1, count)]:
+    start = 0
+    try:
+      start = max(0, int(cursor or 0))
+    except (TypeError, ValueError):
+      start = 0
+    page = items[start:start + max(1, count)]
+    next_c = 0 if (start + max(1, count)) >= len(items) else start + max(1, count)
+    out: List[str] = [str(next_c)]
+    for identity, value in page:
       try:
         deadline = float(value.split("|", 1)[0])
       except (IndexError, ValueError):
@@ -1148,6 +1225,7 @@ class FakeRedis:
       if self._kv.get(lease) == owner:
         self._kv.pop(lease, None)
         self._ttl.pop(lease, None)
+        self._expire_at.pop(lease, None)
       if mode == "z":
         base = float(score_text) if score_text else 0.0
         self._zadd_locked(work, {identity: base + float(penalty)})
@@ -1175,9 +1253,13 @@ class FakeRedis:
     """
     work, pending, inflight = keys[:3]
     identity = argv[0]
+    cap = int(argv[1]) if len(argv) > 1 else 0
     if identity in (self._hashes.get(inflight) or {}):
       return 0
     if self._sadd_locked(pending, identity) == 0:
+      return 0
+    if cap > 0 and len(self._lists.get(work) or []) >= cap:
+      self._sets.setdefault(pending, set()).discard(identity)
       return 0
     self._lists.setdefault(work, []).append(identity)
     return 1

@@ -9,7 +9,7 @@ pools for ingest/append, and day_close threads (seal → raw removal → tar-dro
 The B ``run_sync_timedb_supervisor_loop`` / ``ArchiveJanitor`` coordinator is
 retired.
 
-CLI: no args (or default date window from ``days_to_process``) runs the
+CLI: no args (``startdate=enddate=None``) streams the full GNU find into
 single orchestrator with hot+catchup ingest bands over the archive. One
 ``YYYY-MM-DD`` or two dates set an explicit discover range hint at entry
 (orchestrator reconstruct still uses full find). Prefix ``once`` to exit after
@@ -69,6 +69,7 @@ import ctypes
 import gc
 import itertools
 import json
+import hashlib
 import multiprocessing
 import os
 from contextlib import contextmanager
@@ -3363,7 +3364,11 @@ def _pick_write_lock_for_path(lock_or_locks: Any, stats_file: str) -> Any:
     >>> _pick_write_lock_for_path(None, "x")  # doctest: +SKIP
   """
   if isinstance(lock_or_locks, list) and lock_or_locks:
-    idx = abs(hash(stats_file)) % len(lock_or_locks)
+    digest = hashlib.blake2b(
+        os.path.basename(str(stats_file or "")).encode("utf-8"),
+        digest_size=8,
+    ).digest()
+    idx = int.from_bytes(digest, "big") % len(lock_or_locks)
     return lock_or_locks[idx]
   return lock_or_locks
 
@@ -3734,6 +3739,66 @@ def _is_psycopg_connection_desync(exc: Any) -> Any:
   )
 
 
+def _apply_ingest_session_statement_timeout() -> None:
+  """
+  Raise this worker's Postgres ``statement_timeout`` to the ingest file budget.
+
+  Default portal ``db_statement_timeout_ms`` (~120s) aborts multi-hour
+  ``bulk_create`` on giant files. Ingest workers use the per-file timeout
+  ceiling instead (P1-20).
+
+  Returns:
+    None
+
+  Examples:
+    >>> callable(_apply_ingest_session_statement_timeout)
+    True
+  """
+  try:
+    max_s = float(cfg.get_sync_ingest_per_file_timeout_max_s())
+  except Exception:
+    max_s = 86400.0
+  ms = max(0, int(max_s * 1000.0))
+  try:
+    from django.db import connection
+    with connection.cursor() as cursor:
+      cursor.execute("SET statement_timeout = %d" % ms)
+  except Exception:
+    return
+
+
+def _ingest_ok_from_host_write_path(
+  *,
+  individual_need_archival: bool | None,
+) -> bool:
+  """
+  Map host-write fallback outcome onto the packed ingest ``ingest_ok`` flag.
+
+  Bulk-create success leaves ``individual_need_archival`` unset (``None``) and
+  is ingest-ok. The individual-insert path returns ``need_archival=False``
+  when non-integrity errors occurred; that must not report ingest-ok.
+
+  Args:
+    individual_need_archival (bool | None): ``None`` when bulk host insert
+      succeeded; otherwise the boolean from
+      :func:`_insert_host_data_individually`.
+
+  Returns:
+    bool: True when host rows were written or skipped as duplicates only.
+
+  Examples:
+    >>> _ingest_ok_from_host_write_path(individual_need_archival=None)
+    True
+    >>> _ingest_ok_from_host_write_path(individual_need_archival=False)
+    False
+    >>> _ingest_ok_from_host_write_path(individual_need_archival=True)
+    True
+  """
+  if individual_need_archival is None:
+    return True
+  return bool(individual_need_archival)
+
+
 def _write_stats_payload_to_db(
   lock: Any,
   stats_file: str,
@@ -3763,6 +3828,7 @@ def _write_stats_payload_to_db(
   """
   update_worker_substage("db_write")
   write_lock = _pick_write_lock_for_path(lock, stats_file)
+  individual_need_archival = None
   try:
     try:
       proc_it = proc_stats.itertuples(index=False)
@@ -3825,13 +3891,20 @@ def _write_stats_payload_to_db(
       _reset_ingest_db_connection_after_write_error()
       with _held_ingest_write_lock(write_lock, stats_file, "host"):
         need_archival = _insert_host_data_individually(stats)
+        individual_need_archival = need_archival
   except Exception:
     raise
 
   _invalidate_jid_caches(stats, proc_stats)
   if DEBUG:
     log_print("File successfully added to DB")
-  return (stats_file, need_archival, True)
+  return (
+      stats_file,
+      need_archival,
+      _ingest_ok_from_host_write_path(
+          individual_need_archival=individual_need_archival,
+      ),
+  )
 
 
 def _ingest_remaining_count(
@@ -4196,6 +4269,58 @@ def _log_ingest_file_outcome(
   log_print(" ".join(parts), flush=True)
 
 
+def _record_ingest_marks_from_worker_result(result: Any) -> None:
+  """
+  Persist file-complete and zero-host ingest marks from a packed worker result.
+
+  Called from the spawn ingest worker, ``--jid``, and the orchestrator drain
+  before ACK so reconstruct complete predicates can skip the path.
+
+  Args:
+    result (Any): Packed ingest tuple from ``add_stats_file_to_db``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _record_ingest_marks_from_worker_result(
+    ...   ("", False, False, 0.0, {}),
+    ... ) is None
+    True
+  """
+  stats_file, need_archival, ingest_ok, elapsed_s, outcome_meta = (
+      _unpack_ingest_worker_result(result)
+  )
+  outcome = _ingest_file_outcome_from_worker(
+      stats_file,
+      need_archival,
+      ingest_ok,
+      elapsed_s,
+      outcome_meta,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_zero_host_ingest_mark import (
+      maybe_record_zero_host_ingest_mark_from_outcome,
+  )
+  maybe_record_zero_host_ingest_mark_from_outcome(
+      stats_file,
+      ingest_ok=outcome.ingest_ok,
+      outcome=outcome.outcome,
+      stats_rows=outcome.stats_rows,
+      stats_rows_parsed=outcome.stats_rows_parsed,
+      log_fn=log_print,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
+      maybe_record_file_complete_ingest_mark_from_outcome,
+  )
+  maybe_record_file_complete_ingest_mark_from_outcome(
+      stats_file,
+      ingest_ok=outcome.ingest_ok,
+      outcome=outcome.outcome,
+      db_skip=outcome.db_skip,
+      log_fn=log_print,
+  )
+
+
 def _log_ingest_worker_result(
   result: Any,
   *,
@@ -4231,27 +4356,7 @@ def _log_ingest_worker_result(
       remaining=remaining,
       supplement=supplement,
   )
-  from hpcperfstats.dbload.lib.sync_timedb_zero_host_ingest_mark import (
-      maybe_record_zero_host_ingest_mark_from_outcome,
-  )
-  maybe_record_zero_host_ingest_mark_from_outcome(
-      stats_file,
-      ingest_ok=outcome.ingest_ok,
-      outcome=outcome.outcome,
-      stats_rows=outcome.stats_rows,
-      stats_rows_parsed=outcome.stats_rows_parsed,
-      log_fn=log_print,
-  )
-  from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
-      maybe_record_file_complete_ingest_mark_from_outcome,
-  )
-  maybe_record_file_complete_ingest_mark_from_outcome(
-      stats_file,
-      ingest_ok=outcome.ingest_ok,
-      outcome=outcome.outcome,
-      db_skip=outcome.db_skip,
-      log_fn=log_print,
-  )
+  _record_ingest_marks_from_worker_result(result)
 
 
 def _quarantine_failed_ingest_parse(
@@ -5210,6 +5315,7 @@ def add_stats_file_to_db(
   """
   result = None
   record_worker_stage(stats_file, "ingest", substage="worker_entry")
+  _apply_ingest_session_statement_timeout()
   try:
     try:
       result = _run_ingest_timed(
@@ -6760,13 +6866,6 @@ def parse_sync_timedb_argv(argv: Any) -> Any:
     run_once = True
     argv_for_dates = [argv_for_dates[0]] + argv_for_dates[2:]
 
-  now_local = datetime.today()
-  default_start = datetime.combine(
-      now_local.date(), datetime.min.time()) - timedelta(days=days_to_process)
-  default_end = now_local
-  startdate, enddate = parse_start_end_dates(
-      argv_for_dates, default_start, default_end)
-
   if len(argv_for_dates) > 1 and argv_for_dates[1] in (
       "all",
       "backlog",
@@ -6777,6 +6876,16 @@ def parse_sync_timedb_argv(argv: Any) -> Any:
         "run with no date args (hot+catchup bands), a YYYY-MM-DD, "
         "or a start/end date range"
     )
+
+  if len(argv_for_dates) <= 1:
+    return run_once, None, None
+
+  now_local = datetime.today()
+  default_start = datetime.combine(
+      now_local.date(), datetime.min.time()) - timedelta(days=days_to_process)
+  default_end = now_local
+  startdate, enddate = parse_start_end_dates(
+      argv_for_dates, default_start, default_end)
 
   if len(argv_for_dates) == 2:
     try:
@@ -6844,7 +6953,9 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
       )
       return 1
 
-    ensure_persistence_contract(archive_dir, log_fn=log_print)
+    ensure_persistence_contract(
+        archive_dir, log_fn=log_print, allow_reset=False,
+    )
     checkpoint_path = os.path.join(archive_dir, SYNC_TIMEDB_CHECKPOINT_BASENAME)
 
     log_print(
@@ -6894,6 +7005,7 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
       stats_fname, _need_archival, ingest_ok, elapsed_s, outcome_meta = (
           _unpack_ingest_worker_result(result)
       )
+      _record_ingest_marks_from_worker_result(result)
       remaining = max(0, len(pending) - index - 1)
       log_print(
           "sync_timedb --jid: ingest path=%s ok=%s elapsed_s=%.3f remaining=%d "

@@ -111,27 +111,30 @@ def filter_find_records_for_date_range(
   *,
   startdate: Any = None,
   enddate: Any = None,
-) -> list[FindStatsRecord]:
+) -> Iterator[FindStatsRecord]:
   """
   Keep find records whose basename date falls in ``[startdate, enddate]``.
+
+  Yields one record at a time so GNU find is not materialized when the
+  caller streams. When both bounds are ``None``, records pass through.
 
   Args:
     records (Iterable[FindStatsRecord]): Streaming or materialized records.
     startdate (Any): Inclusive start ``datetime``/``date``, or ``None``.
     enddate (Any): Inclusive end ``datetime``/``date``, or ``None``.
 
-  Returns:
-    list[FindStatsRecord]: Records that pass the date window.
+  Yields:
+    FindStatsRecord: Records that pass the date window.
 
   Examples:
-    >>> filter_find_records_for_date_range([], startdate=None, enddate=None)
+    >>> list(filter_find_records_for_date_range([], startdate=None, enddate=None))
     []
   """
   start_d = _coerce_filter_date(startdate)
   end_d = _coerce_filter_date(enddate)
   if start_d is None and end_d is None:
-    return list(records)
-  kept: list[FindStatsRecord] = []
+    yield from records
+    return
   for rec in records:
     rec_day = _basename_date(rec.path)
     if rec_day is None:
@@ -140,8 +143,7 @@ def filter_find_records_for_date_range(
       continue
     if end_d is not None and rec_day > end_d:
       continue
-    kept.append(rec)
-  return kept
+    yield rec
 
 
 def _coerce_filter_date(value: Any) -> date | None:
@@ -347,6 +349,7 @@ def stream_enqueue_ingest_from_find_records(
         plan,
         today=today,
         hot_days=hot_days,
+        archive_data_dir=archive_data_dir,
     )
     if enqueued.get("ingest"):
       enqueued_ingest += 1

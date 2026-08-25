@@ -199,16 +199,65 @@ def test_orchestrator_boot_refuses_persistence_reset():
 
 
 def test_persistence_reset_refused_when_disallowed(tmp_path):
-  """allow_reset=False must not wipe sidecars on version mismatch."""
+  """allow_reset=False must fail closed on version mismatch."""
+  import pytest
   from hpcperfstats.dbload.lib import sync_timedb_persistence as pers
   archive = tmp_path / "a"
   archive.mkdir()
-  # Force mismatch by writing wrong version then refusing reset.
   pers._save_json_atomic(
       pers.persistence_contract_path(str(archive)),
       {"contract_version": -1, "written_at": 0},
   )
-  assert pers.ensure_persistence_contract(
-      str(archive), allow_reset=False,
-  ) is False
+  with pytest.raises(pers.PersistenceContractMismatchError):
+    pers.ensure_persistence_contract(
+        str(archive), allow_reset=False,
+    )
   assert pers._read_contract_version(str(archive)) == -1
+
+
+def test_persistence_missing_contract_allow_reset_false_initializes(tmp_path):
+  """Fresh archive with allow_reset=False must write the contract, not raise."""
+  from hpcperfstats.dbload.lib import sync_timedb_persistence as pers
+
+  archive = tmp_path / "a"
+  archive.mkdir()
+  assert pers.ensure_persistence_contract(str(archive), allow_reset=False) is False
+  assert (
+      pers._read_contract_version(str(archive))
+      == pers.SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION
+  )
+
+
+def test_mutable_tar_authority_uses_tar_tvf_not_tarfile():
+  """P1-11: open-tar membership maps must come from GNU tar tvf."""
+  import inspect
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as ah
+
+  src = inspect.getsource(ah._read_tar_file_member_sizes_unlocked)
+  assert "tvf" in src
+  assert "tarfile.open" not in src
+
+
+def test_orchestrator_omits_b_pending_cap_and_heartbeat_renew():
+  """P1-21 / P1-22: production loop must not restore B pending-cap or renew."""
+  import inspect
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  assert "_renew_active_claims" not in src
+  assert "cap_pending_stats" not in src
+  assert "_add_processed_path" not in src
+
+
+def test_ingest_worker_raises_session_statement_timeout():
+  """P1-20: ingest workers must lift Postgres statement_timeout to the file budget."""
+  import inspect
+  from hpcperfstats.dbload import sync_timedb as st
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  assert "_apply_ingest_session_statement_timeout" in inspect.getsource(
+      qo._ingest_worker,
+  )
+  src = inspect.getsource(st._apply_ingest_session_statement_timeout)
+  assert "SET statement_timeout" in src
+  assert "get_sync_ingest_per_file_timeout_max_s" in src

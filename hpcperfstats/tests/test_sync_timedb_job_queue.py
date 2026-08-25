@@ -708,3 +708,92 @@ def test_live_redis_lua_module_covers_loss_and_reap():
   assert "test_live_expired_inflight_reaped_back_onto_queue" in text
   assert "test_live_hot_range_does_not_starve_catchup" in text
   assert "test_live_concurrent_claim_does_not_drop_identity" in text
+
+
+def test_list_claim_lease_conflict_rpushes_tail():
+  """P1-2: NX miss must RPUSH the member to the tail, not HOL LPUSH."""
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  jq.enqueue_list_job(client, kind="append", identity="a")
+  jq.enqueue_list_job(client, kind="append", identity="b")
+  client.set(jq.job_lease_key("append", "a"), "n:other:boot:1", nx=True, ex=60)
+  claim = jq.claim_list_job(
+      client, kind="append", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+  )
+  assert claim is not None
+  assert claim.identity == "b"
+  remaining = client.lrange(jq.job_queue_key("append"), 0, -1)
+  assert remaining == ["a"]
+
+
+def test_reconstruct_append_dedupes_list():
+  """P1-1: double reconstruct must not grow the append LIST."""
+  from datetime import date
+
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  plan = jr.ClosedPathReconstructPlan(
+      path="/raw/a",
+      identity="/raw/a|1|2",
+      needs_ingest=False,
+      needs_append=True,
+      calendar_day=date(2026, 8, 20),
+      tar_path=None,
+  )
+  jr.enqueue_reconstruct_jobs_for_closed_path(
+      client, plan, today=date(2026, 8, 24),
+  )
+  jr.enqueue_reconstruct_jobs_for_closed_path(
+      client, plan, today=date(2026, 8, 24),
+  )
+  assert client.llen(jq.job_queue_key("append")) == 1
+
+
+def test_fakeredis_lease_ttl_elapses_for_set_nx():
+  """P1-13: FakeRedis EX must actually expire so NX reclaim is testable."""
+  client = FakeRedis()
+  clock = {"t": 1000.0}
+  client._now_fn = lambda: clock["t"]
+  assert client.set("lease", "owner", nx=True, ex=5) is True
+  clock["t"] = 1004.0
+  assert client.get("lease") == "owner"
+  clock["t"] = 1006.0
+  assert client.get("lease") is None
+  assert client.set("lease", "new", nx=True, ex=5) is True
+
+
+def test_reconstruct_skips_queue_dead_letter(tmp_path):
+  """P1-17: reconstruct must not re-enqueue a dead-lettered identity."""
+  from datetime import date
+
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  archive = tmp_path / "a"
+  archive.mkdir()
+  jq.append_queue_dead_letter(
+      str(archive),
+      kind="ingest",
+      identity="/raw/a|1|2",
+      attempt=9,
+      reason="poison",
+  )
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  plan = jr.ClosedPathReconstructPlan(
+      path="/raw/a",
+      identity="/raw/a|1|2",
+      needs_ingest=True,
+      needs_append=False,
+      calendar_day=date(2026, 8, 20),
+      tar_path=None,
+  )
+  enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
+      client,
+      plan,
+      today=date(2026, 8, 24),
+      archive_data_dir=str(archive),
+  )
+  assert enqueued["ingest"] is False
+  assert client.zcard(jq.job_queue_key("ingest")) == 0

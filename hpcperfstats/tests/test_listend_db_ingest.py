@@ -522,6 +522,20 @@ def test_flush_clears_batch_lists():
   assert pending_proc == []
 
 
+def test_flush_retains_pending_on_transient_db_error():
+  """P0-10: OperationalError must not drop the in-memory listend batch."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  class OperationalError(Exception):
+    pass
+
+  assert ldi._listend_flush_error_is_poison(OperationalError("x")) is False
+  assert ldi._listend_flush_error_is_poison(type("DataError", (Exception,), {})("x")) is True
+  src = __import__("inspect").getsource(ldi)
+  assert "pending_host = []" in src
+  assert "_listend_flush_error_is_poison" in src
+
+
 def test_dedupe_proc_objs_keep_last_for_upsert_batch():
   """Regression: duplicate (jid,host,proc) in one bulk_create upsert fails on Postgres."""
   from types import SimpleNamespace

@@ -846,7 +846,7 @@ def _decompress_stdout(
   proc = _popen_zstd(
       cmd,
       stdout=subprocess.PIPE,
-      stderr=subprocess.PIPE,
+      stderr=subprocess.DEVNULL,
       apply_priority_wrap=apply_priority_wrap,
   )
   assert proc.stdout is not None

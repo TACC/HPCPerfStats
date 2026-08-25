@@ -13,9 +13,16 @@ Attributes:
   DAY_CLOSE_THREAD_NAME_PREFIX: Thread name prefix for day_close workers.
   INGEST_WATCHDOG_GRACE_S: Slack added to the per-file ingest budget before a
     still-unready worker is treated as dead.
+  INGEST_FILL_SKIP_BUDGET: Max unsubmittable ingest claims processed per fill
+    tick before returning to the main loop.
   SHUTDOWN_DRAIN_TIMEOUT_S: Bounded wall clock for the cooperative drain.
   _IDLE_RECONSTRUCT_MIN_INTERVAL_S: Min seconds between idle reconstruct passes.
   _SHUTDOWN_REQUESTED: Event set by ``SIGTERM``/``SIGINT`` handlers.
+  _TRANSIENT_DAY_CLOSE_OUTCOMES: day_close results that requeue without
+    burning a retry attempt.
+  _discover_bg_executor: Single-worker executor for idle GNU find (P1-10).
+  _discover_bg_future: In-flight background discover future, or ``None``.
+  _discover_bg_lock: Serializes submit/shutdown of background discover.
   _last_idle_reconstruct_mono: Monotonic timestamp of last idle reconstruct.
 """
 from __future__ import annotations
@@ -53,25 +60,33 @@ from hpcperfstats.dbload.lib.process_title import (
     apply_pool_worker_process_title,
     set_daemon_thread_title,
 )
+from hpcperfstats.dbload.lib import shutdown_utils as _shutdown_utils
+from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
+    create_sync_timedb_spawn_pool,
+)
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     ensure_persistence_contract,
 )
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
     iter_find_stats_stdout_chunks,
 )
-from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-    create_sync_timedb_spawn_pool,
-)
 
 DAY_CLOSE_THREAD_NAME_PREFIX = "day-close"
 CENSUS_LOG_INTERVAL_S = 60.0
 SHUTDOWN_DRAIN_TIMEOUT_S = 120.0
+# Per-tick cap on fill continues (missing path, reband, fingerprint mismatch)
+# so MainThread cannot busy-spin a huge NFS-hole / reband storm.
+INGEST_FILL_SKIP_BUDGET = 8
+_TRANSIENT_DAY_CLOSE_OUTCOMES = frozenset({"deferred_age", "yielded", "skipped"})
 # Slack over the per-file budget: a worker that is merely slow (contended DB,
 # large file) must not be abandoned before the ingest path itself gives up.
 INGEST_WATCHDOG_GRACE_S = it.STALL_ABORT_GRACE_S
 _IDLE_RECONSTRUCT_MIN_INTERVAL_S = 30.0
 _last_idle_reconstruct_mono = 0.0
 _SHUTDOWN_REQUESTED = threading.Event()
+_discover_bg_lock = threading.Lock()
+_discover_bg_executor: ThreadPoolExecutor | None = None
+_discover_bg_future: Future | None = None
 
 
 def shutdown_requested() -> bool:
@@ -106,6 +121,7 @@ def request_shutdown() -> None:
     >>> reset_shutdown_for_tests()
   """
   _SHUTDOWN_REQUESTED.set()
+  _shutdown_utils.shutdown_requested[0] = True
 
 
 def reset_shutdown_for_tests() -> None:
@@ -119,6 +135,7 @@ def reset_shutdown_for_tests() -> None:
     >>> reset_shutdown_for_tests()
   """
   _SHUTDOWN_REQUESTED.clear()
+  _shutdown_utils.shutdown_requested[0] = False
 
 
 def install_cooperative_shutdown_handlers(
@@ -504,6 +521,162 @@ def _boot_stream_discover(
   return stats
 
 
+def _discover_executor() -> ThreadPoolExecutor:
+  """
+  Return the process-wide single-worker executor for idle discover.
+
+  Returns:
+    ThreadPoolExecutor: Shared executor with ``max_workers=1``.
+
+  Examples:
+    >>> callable(_discover_executor)
+    True
+  """
+  global _discover_bg_executor
+  with _discover_bg_lock:
+    if _discover_bg_executor is None:
+      _discover_bg_executor = ThreadPoolExecutor(
+          max_workers=1,
+          thread_name_prefix="discover-bg",
+      )
+    return _discover_bg_executor
+
+
+def _run_background_discover(
+  client: Any,
+  archive_dir: str,
+  *,
+  tgz_archive_dir: str,
+  log_fn: Callable[..., None] | None,
+  mtime_days: int | None,
+  startdate: Any,
+  enddate: Any,
+) -> None:
+  """
+  Claim one discover job and stream GNU find off the orchestrator MainThread.
+
+  Args:
+    client (Any): Redis client (pool-backed; command-safe across threads).
+    archive_dir (str): Archive data directory.
+    tgz_archive_dir (str): Daily archive directory.
+    log_fn (Callable[..., None] | None): Optional logger.
+    mtime_days (int | None): Incremental find window.
+    startdate (Any): Inclusive CLI start date, or ``None``.
+    enddate (Any): Inclusive CLI end date, or ``None``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> callable(_run_background_discover)
+    True
+  """
+  try:
+    claim = jq.claim_list_job(
+        client,
+        kind=jq.JOB_KIND_DISCOVER,
+        owner_token=jq.make_lease_owner_token(),
+    )
+  except Exception:
+    return
+  if claim is None:
+    return
+  try:
+    _boot_stream_discover(
+        client,
+        archive_dir,
+        tgz_archive_dir=tgz_archive_dir,
+        log_fn=log_fn,
+        mtime_days=mtime_days,
+        startdate=startdate,
+        enddate=enddate,
+    )
+  finally:
+    try:
+      jq.ack_job(
+          client,
+          kind=jq.JOB_KIND_DISCOVER,
+          identity=claim.identity,
+          owner_token=claim.owner_token,
+      )
+    except Exception:
+      pass
+
+
+def _submit_background_discover(
+  client: Any,
+  archive_dir: str,
+  *,
+  tgz_archive_dir: str,
+  log_fn: Callable[..., None] | None = None,
+  mtime_days: int | None = None,
+  startdate: Any = None,
+  enddate: Any = None,
+) -> None:
+  """
+  Submit idle discover to the background executor when none is already running.
+
+  Args:
+    client (Any): Redis client.
+    archive_dir (str): Archive data directory.
+    tgz_archive_dir (str): Daily archive directory.
+    log_fn (Callable[..., None] | None): Optional logger.
+    mtime_days (int | None): Incremental find window.
+    startdate (Any): Inclusive CLI start date, or ``None``.
+    enddate (Any): Inclusive CLI end date, or ``None``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> callable(_submit_background_discover)
+    True
+  """
+  global _discover_bg_future
+  with _discover_bg_lock:
+    if _discover_bg_future is not None and not _discover_bg_future.done():
+      return
+    _discover_bg_future = _discover_executor().submit(
+        _run_background_discover,
+        client,
+        archive_dir,
+        tgz_archive_dir=tgz_archive_dir,
+        log_fn=log_fn,
+        mtime_days=mtime_days,
+        startdate=startdate,
+        enddate=enddate,
+    )
+
+
+def _shutdown_background_discover() -> None:
+  """
+  Cancel in-flight idle discover and drop the background executor.
+
+  Returns:
+    None
+
+  Examples:
+    >>> callable(_shutdown_background_discover)
+    True
+  """
+  global _discover_bg_executor, _discover_bg_future
+  with _discover_bg_lock:
+    fut = _discover_bg_future
+    executor = _discover_bg_executor
+    _discover_bg_future = None
+    _discover_bg_executor = None
+  if fut is not None:
+    try:
+      fut.cancel()
+    except Exception:
+      pass
+  if executor is not None:
+    try:
+      executor.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+      pass
+
+
 def _enqueue_day_closes_for_daily_dir(
   client: Any,
   *,
@@ -566,7 +739,9 @@ def _idle_reconstruct_pass(
 
   Empty Redis does **not** mean caught up — this pass re-classifies from disk.
   Throttled to at most once per ``_IDLE_RECONSTRUCT_MIN_INTERVAL_S`` unless
-  ``force`` (``run_once`` exit path). Runs even while ingest/append are busy.
+  ``force`` (``run_once`` exit path). ``force=True`` claims discover on this
+  thread so tests and run_once can observe a complete pass; ``force=False``
+  enqueues discover and runs GNU find on the background executor (P1-10).
 
   Args:
     client (Any): Redis client.
@@ -607,28 +782,10 @@ def _idle_reconstruct_pass(
         dedupe=True,
     )
   except Exception:
-    try:
-      jq.enqueue_list_job(
-          client,
-          kind=jq.JOB_KIND_DISCOVER,
-          identity=identity,
-      )
-    except Exception:
-      pass
+    pass
   work = 0
-  while True:
-    try:
-      claim = jq.claim_list_job(
-          client,
-          kind=jq.JOB_KIND_DISCOVER,
-          owner_token=jq.make_lease_owner_token(),
-      )
-    except Exception:
-      break
-    if claim is None:
-      break
-    work += 1
-    stats = _boot_stream_discover(
+  if not force:
+    _submit_background_discover(
         client,
         archive_dir,
         tgz_archive_dir=tgz_archive_dir,
@@ -637,17 +794,39 @@ def _idle_reconstruct_pass(
         startdate=startdate,
         enddate=enddate,
     )
-    work += int(stats.enqueued_ingest) + int(stats.enqueued_append)
-    work += int(stats.enqueued_day_close)
-    try:
-      jq.ack_job(
+  else:
+    while True:
+      try:
+        claim = jq.claim_list_job(
+            client,
+            kind=jq.JOB_KIND_DISCOVER,
+            owner_token=jq.make_lease_owner_token(),
+        )
+      except Exception:
+        break
+      if claim is None:
+        break
+      work += 1
+      stats = _boot_stream_discover(
           client,
-          kind=jq.JOB_KIND_DISCOVER,
-          identity=claim.identity,
-          owner_token=claim.owner_token,
+          archive_dir,
+          tgz_archive_dir=tgz_archive_dir,
+          log_fn=log_fn,
+          mtime_days=mtime_days,
+          startdate=startdate,
+          enddate=enddate,
       )
-    except Exception:
-      pass
+      work += int(stats.enqueued_ingest) + int(stats.enqueued_append)
+      work += int(stats.enqueued_day_close)
+      try:
+        jq.ack_job(
+            client,
+            kind=jq.JOB_KIND_DISCOVER,
+            identity=claim.identity,
+            owner_token=claim.owner_token,
+        )
+      except Exception:
+        pass
   work += _enqueue_day_closes_for_daily_dir(
       client,
       tgz_archive_dir=tgz_archive_dir,
@@ -674,9 +853,16 @@ def _ingest_worker(lock: Any, path: str) -> Any:
   Examples:
     >>> _ingest_worker(None, "/x")  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.sync_timedb import add_stats_file_to_db
+  from hpcperfstats.dbload.sync_timedb import (
+      add_stats_file_to_db,
+      _apply_ingest_session_statement_timeout,
+      _record_ingest_marks_from_worker_result,
+  )
 
-  return add_stats_file_to_db(lock, path)
+  _apply_ingest_session_statement_timeout()
+  result = add_stats_file_to_db(lock, path)
+  _record_ingest_marks_from_worker_result(result)
+  return result
 
 
 def _append_worker(archive_info: Any) -> Any:
@@ -1099,6 +1285,46 @@ def _retry_or_dead_letter(
   return "dead_letter"
 
 
+def _requeue_claimed_job_without_attempt_bump(
+  client: Any,
+  *,
+  claim: Any,
+  log_fn: Callable[..., None] | None = None,
+) -> str:
+  """
+  Return a claim to its queue without incrementing the attempt counter.
+
+  Used for cooperative day_close outcomes (``deferred_age``, ``yielded``,
+  ``skipped``) that are not failures.
+
+  Args:
+    client (Any): Redis client.
+    claim (Any): :class:`sync_timedb_job_queue.ClaimedJob` to restore.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    str: ``\"requeued\"`` or ``\"dropped_no_claim\"``.
+
+  Examples:
+    >>> _requeue_claimed_job_without_attempt_bump(None, claim=None)
+    'dropped_no_claim'
+  """
+  if claim is None or client is None:
+    _log(
+        "queue_orchestrator requeue_without_bump missing claim",
+        log_fn=log_fn,
+    )
+    return "dropped_no_claim"
+  jq.requeue_job(
+      client,
+      kind=claim.kind,
+      identity=claim.identity,
+      owner_token=claim.owner_token,
+      score=getattr(claim, "score", None),
+  )
+  return "requeued"
+
+
 def _count_ingest_band_inflight(claims: dict[str, Any]) -> tuple[int, int]:
   """
   Count locally tracked ingest claims per band.
@@ -1326,6 +1552,8 @@ def _fill_ingest_band(
   manager_lock: Any,
   band_cap: int | None = None,
   tgz_archive_dir: str = "",
+  archive_data_dir: str | None = None,
+  ingest_is_complete_fn: Callable[..., bool] | None = None,
 ) -> int:
   """
   Claim ranged ingest jobs and submit until ``cap`` in-flight for ``band``.
@@ -1345,6 +1573,10 @@ def _fill_ingest_band(
     manager_lock (Any): Write lock for ingest workers.
     band_cap (int | None): Optional reserved cap for this band alone.
     tgz_archive_dir (str): Daily archive directory used to reband claims.
+    archive_data_dir (str | None): Archive root for ingest-complete marks.
+    ingest_is_complete_fn (Callable[..., bool] | None): Injectable complete
+      predicate (tests); defaults to
+      :func:`sync_timedb_job_reconstruct.ingest_is_complete`.
 
   Returns:
     int: Newly submitted job count.
@@ -1368,6 +1600,8 @@ def _fill_ingest_band(
     0
   """
   submitted_n = 0
+  skipped = 0
+  complete_fn = ingest_is_complete_fn or jr.ingest_is_complete
   while len(inflight) < cap:
     if band_cap is not None:
       hot_n, catch_n = _count_ingest_band_inflight(claims)
@@ -1382,17 +1616,38 @@ def _fill_ingest_band(
     if _reband_claimed_ingest_if_needed(
         client, claim, tgz_archive_dir,
     ):
+      skipped += 1
+      if skipped >= INGEST_FILL_SKIP_BUDGET:
+        break
       continue
     path = _path_from_ingest_identity(claim.identity)
     if not path or not os.path.isfile(path):
-      # Transient NFS / rename: never terminal-ack; requeue for reconstruct.
-      jq.requeue_job(
-          client,
-          kind=jq.JOB_KIND_INGEST,
-          identity=claim.identity,
-          owner_token=claim.owner_token,
-          score=claim.score,
-      )
+      complete = False
+      if path:
+        try:
+          complete = bool(
+              complete_fn(path, archive_data_dir=archive_data_dir),
+          )
+        except Exception:
+          complete = False
+      if complete:
+        jq.ack_job(
+            client,
+            kind=jq.JOB_KIND_INGEST,
+            identity=claim.identity,
+            owner_token=claim.owner_token,
+        )
+      else:
+        jq.requeue_job(
+            client,
+            kind=jq.JOB_KIND_INGEST,
+            identity=claim.identity,
+            owner_token=claim.owner_token,
+            score=claim.score,
+        )
+      skipped += 1
+      if skipped >= INGEST_FILL_SKIP_BUDGET:
+        break
       continue
     stored_fp = ""
     try:
@@ -1421,6 +1676,9 @@ def _fill_ingest_band(
           owner_token=claim.owner_token,
           score=claim.score,
       )
+      skipped += 1
+      if skipped >= INGEST_FILL_SKIP_BUDGET:
+        break
       continue
     try:
       async_res = ingest_pool.apply_async(_ingest_worker, (manager_lock, path))
@@ -1506,16 +1764,46 @@ def _drain_ingest_ready(
       continue
     ingest_ok = False
     need_archival = False
+    outcome = ""
     if isinstance(result, (tuple, list)) and len(result) >= 3:
       need_archival = bool(result[1])
       ingest_ok = bool(result[2])
+    if isinstance(result, (tuple, list)) and len(result) >= 5:
+      meta = result[4]
+      if isinstance(meta, dict):
+        outcome = str(meta.get("outcome") or "")
     if not ingest_ok:
+      if outcome in ("timeout", "lookup_budget"):
+        _requeue_claimed_job_without_attempt_bump(
+            client, claim=claim, log_fn=log_fn,
+        )
+      else:
+        _retry_or_dead_letter(
+            client,
+            kind=jq.JOB_KIND_INGEST,
+            claim=claim,
+            archive_data_dir=archive_data_dir,
+            reason=outcome or "ingest_incomplete",
+            log_fn=log_fn,
+        )
+      continue
+    try:
+      from hpcperfstats.dbload.sync_timedb import (
+          _record_ingest_marks_from_worker_result,
+      )
+      _record_ingest_marks_from_worker_result(result)
+    except Exception as exc:
+      _log(
+          "queue_orchestrator ingest mark fail identity=%s err=%s"
+          % (identity, type(exc).__name__),
+          log_fn=log_fn,
+      )
       _retry_or_dead_letter(
           client,
           kind=jq.JOB_KIND_INGEST,
           claim=claim,
           archive_data_dir=archive_data_dir,
-          reason="ingest_incomplete",
+          reason="ingest_mark_failed",
           log_fn=log_fn,
       )
       continue
@@ -1847,12 +2135,7 @@ def _drain_day_close_ready(
           % (identity, failure),
           log_fn=log_fn,
       )
-    if failure or outcome in (
-        "deferred_age",
-        "skipped",
-        "verify_failed",
-        "yielded",
-    ):
+    if failure or outcome == "verify_failed":
       _retry_or_dead_letter(
           client,
           kind=jq.JOB_KIND_DAY_CLOSE,
@@ -1860,6 +2143,11 @@ def _drain_day_close_ready(
           archive_data_dir=archive_data_dir,
           reason=failure or outcome,
           log_fn=log_fn,
+      )
+      continue
+    if outcome in _TRANSIENT_DAY_CLOSE_OUTCOMES:
+      _requeue_claimed_job_without_attempt_bump(
+          client, claim=claim, log_fn=log_fn,
       )
       continue
     if claim is not None:
@@ -1881,9 +2169,10 @@ def _renew_active_claims(
   """
   Compare-and-extend every lease this coordinator still owns.
 
-  A claim that stops renewing is treated as abandoned by
-  :func:`sync_timedb_job_queue.reap_expired_inflight`, so renewal must run on
-  every tick while work is outstanding.
+  **OQ-1 forbidden in the production loop.** Leases use per-file EX (default
+  86400s) with no heartbeat renew. This helper remains only for tests or an
+  explicit operator abandon path — ``run_sync_timedb_queue_orchestrator``
+  must not call it on each tick.
 
   Args:
     client (Any): Redis client.
@@ -2119,12 +2408,10 @@ def run_sync_timedb_queue_orchestrator(
     try:
       stolen = jq.steal_dead_owner_leases(client)
     except Exception as exc:
-      stolen = 0
-      _log(
-          "queue_orchestrator steal_dead_owner_leases err=%s"
-          % type(exc).__name__,
-          log_fn=log_fn,
-      )
+      raise RuntimeError(
+          "queue orchestrator steal_dead_owner_leases failed: %s"
+          % type(exc).__name__
+      ) from exc
     if stolen:
       _log(
           "queue_orchestrator stole dead-owner leases count=%d" % stolen,
@@ -2236,6 +2523,7 @@ def run_sync_timedb_queue_orchestrator(
                   manager_lock=manager_lock,
                   band_cap=hot_cap,
                   tgz_archive_dir=tgz_archive_dir,
+                  archive_data_dir=directory,
               )
               did += n
               if n == 0:
@@ -2247,8 +2535,11 @@ def run_sync_timedb_queue_orchestrator(
                       jq.job_queue_key(jq.JOB_KIND_INGEST), lo, hi,
                   ) or 0
               )
-            except Exception:
-              hot_queued = 1
+            except Exception as exc:
+              raise RuntimeError(
+                  "queue orchestrator redis zcount failed: %s"
+                  % type(exc).__name__
+              ) from exc
             catchup_limit = catchup_dispatch_cap(
                 hot_queued=hot_queued,
                 catchup_queued=0,
@@ -2268,6 +2559,7 @@ def run_sync_timedb_queue_orchestrator(
                   manager_lock=manager_lock,
                   band_cap=catchup_limit,
                   tgz_archive_dir=tgz_archive_dir,
+                  archive_data_dir=directory,
               )
               did += n
               if n == 0:
@@ -2284,6 +2576,7 @@ def run_sync_timedb_queue_orchestrator(
                   ingest_pool=ingest_pool,
                   manager_lock=manager_lock,
                   tgz_archive_dir=tgz_archive_dir,
+                  archive_data_dir=directory,
               )
               did += n
               if n == 0:
@@ -2398,9 +2691,6 @@ def run_sync_timedb_queue_orchestrator(
               _log("queue_orchestrator drained; exiting", log_fn=log_fn)
               break
             if time.monotonic() >= drain_deadline:
-              _release_claims_on_shutdown(
-                  client, claim_maps, log_fn=log_fn,
-              )
               for fut in list(day_inflight.values()):
                 try:
                   fut.cancel()
@@ -2411,8 +2701,13 @@ def run_sync_timedb_queue_orchestrator(
               except Exception:
                 pass
               _log(
-                  "queue_orchestrator drain timeout; requeued outstanding work",
+                  "queue_orchestrator drain timeout; dirty_tar_recovery "
+                  "append_inflight=%d ingest_inflight=%d"
+                  % (len(append_inflight), len(ingest_inflight)),
                   log_fn=log_fn,
+              )
+              _release_claims_on_shutdown(
+                  client, claim_maps, log_fn=log_fn,
               )
               break
             if day_inflight:
@@ -2458,6 +2753,7 @@ def run_sync_timedb_queue_orchestrator(
             else:
               time.sleep(min(0.05, poll_s))
     finally:
+      _shutdown_background_discover()
       try:
         populate.stop()
       except Exception:

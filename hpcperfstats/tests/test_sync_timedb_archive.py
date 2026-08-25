@@ -153,6 +153,34 @@ def test_verify_tar_archive_readable_rejects_truncated(tmp_path):
   assert not verify_tar_archive_readable(str(tar_path))
 
 
+def test_parse_tar_tvf_gnu_and_bsd_lines():
+  """P1-11: membership sizes come from GNU/BSD tar tvf, not tarfile."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      _parse_tar_tvf_size_and_name,
+  )
+  gnu = "-rw-r--r-- 0/0 12 2026-01-01 00:00 host/file"
+  assert _parse_tar_tvf_size_and_name(gnu) == ("host/file", 12)
+  bsd = "-rw-r--r--  0 0  12 Jan  1 00:00 host/file"
+  assert _parse_tar_tvf_size_and_name(bsd) == ("host/file", 12)
+  named = "-rw-r--r--  0 sharrell staff      11 Aug 25 00:35 host/file"
+  assert _parse_tar_tvf_size_and_name(named) == ("host/file", 11)
+
+
+def test_truncated_tar_member_map_fail_closed(tmp_path):
+  """P1-11: truncated GNU tar must not report an empty membership map."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      _read_tar_file_member_sizes_unlocked,
+  )
+  tar_path = tmp_path / "bad.tar"
+  inner = tmp_path / "z.txt"
+  inner.write_text("abcdefghij" * 500)
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(inner), arcname="z.txt")
+  tar_path.write_bytes(tar_path.read_bytes()[:200])
+  with pytest.raises(RuntimeError):
+    _read_tar_file_member_sizes_unlocked(str(tar_path))
+
+
 def test_verify_tar_archive_readable_rejects_garbage(tmp_path):
   tar_path = tmp_path / "garbage.tar"
   tar_path.write_bytes(b"not a tar archive" * 20)
@@ -4611,7 +4639,7 @@ def test_quarantine_unparsable_closed_raw_moves_file_and_writes_manifest(tmp_pat
   assert str(raw_path) not in discovered
 
 
-def test_quarantine_manifest_written_before_move(monkeypatch, tmp_path):
+def test_quarantine_move_before_manifest(monkeypatch, tmp_path):
   import json
 
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
@@ -4643,8 +4671,7 @@ def test_quarantine_manifest_written_before_move(monkeypatch, tmp_path):
   )
   assert moved == 1
   assert "move" in order
-  assert "manifest_has_entry" in order
-  assert order.index("manifest_has_entry") < order.index("move")
+  assert order[0] == "move"
 
 
 def test_remove_verified_skips_delete_when_fingerprint_changes(

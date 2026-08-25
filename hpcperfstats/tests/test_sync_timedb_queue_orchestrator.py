@@ -119,6 +119,57 @@ def test_sliding_window_ingest_enqueues_append_while_other_inflight():
   assert client.lrange(jq.job_queue_key(jq.JOB_KIND_APPEND), 0, -1) == ["/a"]
 
 
+def test_drain_records_ingest_marks_before_ack(monkeypatch):
+  """P0-1: drain must persist file-complete/zero-host marks before ACK."""
+  recorded = []
+
+  def _record(result):
+    recorded.append(result)
+
+  monkeypatch.setattr(st, "_record_ingest_marks_from_worker_result", _record)
+  acked = []
+
+  def _ack(*a, **k):
+    acked.append(k.get("identity"))
+    return True
+
+  monkeypatch.setattr(jq, "ack_job", _ack)
+
+  class _Ready:
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      del timeout
+      return ("/a", True, True, 0.1, {"outcome": "ingested"})
+
+  client = FakeRedis()
+  inflight = {"/a": _Ready()}
+  claims = {
+      "/a": jq.ClaimedJob(
+          kind=jq.JOB_KIND_INGEST,
+          identity="/a",
+          owner_token="n:h:b:1",
+          deadline=1.0,
+          score=5.0,
+      ),
+  }
+  done = qo._drain_ingest_ready(
+      client,
+      inflight=inflight,
+      claims=claims,
+      tgz_archive_dir="/daily",
+      archive_data_dir="/archive",
+  )
+  assert done == 1
+  assert recorded
+  assert acked == ["/a"]
+  worker_src = inspect.getsource(qo._ingest_worker)
+  assert "_record_ingest_marks_from_worker_result" in worker_src
+  jid_src = inspect.getsource(st.run_sync_timedb_jid_ingest)
+  assert "_record_ingest_marks_from_worker_result" in jid_src
+
+
 def test_day_close_job_wires_on_handoff_to_ingest():
   """Day-close must enqueue retryable raw via on_handoff_to_ingest (1.6)."""
   src = inspect.getsource(qo._run_day_close_job)
@@ -392,10 +443,47 @@ def test_idle_reconstruct_enqueues_discover_and_rescans(monkeypatch):
       "/archive",
       tgz_archive_dir="/daily",
       log_fn=lambda *a, **k: None,
+      force=True,
   )
   assert calls["boot"] == 1
   assert n >= 1
   assert any(str(v).startswith("rescan") for _k, v in calls["rpush"])
+
+
+def test_idle_reconstruct_off_main_does_not_run_boot_inline(monkeypatch):
+  """P1-10: periodic reconstruct must not block MainThread on GNU find."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  calls = {"boot": 0, "submit": 0}
+
+  class _C:
+    def rpush(self, *a, **k):
+      del a, k
+      return 1
+
+  monkeypatch.setattr(
+      qo, "_boot_stream_discover", lambda *a, **k: calls.__setitem__("boot", 1),
+  )
+  monkeypatch.setattr(qo, "_enqueue_day_closes_for_daily_dir", lambda *a, **k: 0)
+  monkeypatch.setattr(
+      jq, "enqueue_list_job", lambda *a, **k: True,
+  )
+  monkeypatch.setattr(
+      qo,
+      "_submit_background_discover",
+      lambda *a, **k: calls.__setitem__("submit", calls["submit"] + 1),
+  )
+  qo._last_idle_reconstruct_mono = 0.0
+  n = qo._idle_reconstruct_pass(
+      _C(),
+      "/archive",
+      tgz_archive_dir="/daily",
+      force=False,
+  )
+  assert calls["boot"] == 0
+  assert calls["submit"] == 1
+  assert n == 0
 
 
 def test_cli_backlog_current_retired():
@@ -406,6 +494,21 @@ def test_cli_backlog_current_retired():
   with pytest.raises(SystemExit) as ei:
     st.parse_sync_timedb_argv(["sync_timedb.py", "current"])
   assert "retired" in str(ei.value).lower()
+
+
+def test_cli_no_arg_does_not_default_five_day_window():
+  """P0-2: no-arg and `once` must stream the full find (startdate=enddate=None)."""
+  run_once, start, end = st.parse_sync_timedb_argv(["sync_timedb.py"])
+  assert run_once is False
+  assert start is None and end is None
+  run_once, start, end = st.parse_sync_timedb_argv(["sync_timedb.py", "once"])
+  assert run_once is True
+  assert start is None and end is None
+  run_once, start, end = st.parse_sync_timedb_argv(
+      ["sync_timedb.py", "2026-08-01"],
+  )
+  assert run_once is False
+  assert start is not None and start.date() == date(2026, 8, 1)
 
 
 def test_boot_steals_dead_owner_leases():
@@ -567,7 +670,7 @@ def test_ingest_deadline_requeues():
 
 
 def test_day_close_failure_requeues(tmp_path, monkeypatch):
-  """S3: a retryable day_close outcome is requeued with attempt+1."""
+  """S3: deferred_age requeues without burning a retry attempt."""
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
   client = FakeRedis()
   jq.reset_job_queue_script_cache_for_tests()
@@ -591,6 +694,38 @@ def test_day_close_failure_requeues(tmp_path, monkeypatch):
   )
   assert n == 1
   assert client.llen(jq.job_queue_key("day_close")) == 1
+  assert jq.read_job_attempt(
+      client, kind="day_close", identity="2026-08-01",
+  ) == 0
+
+
+def test_day_close_verify_failed_bumps_attempt(tmp_path, monkeypatch):
+  """P0-7: verify_failed is a real error and must increment attempts."""
+  monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  jq.enqueue_list_job(client, kind="day_close", identity="2026-08-02")
+  claim = jq.claim_list_job(
+      client, kind="day_close", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+  )
+
+  class _Done:
+    def done(self):
+      return True
+
+    def result(self):
+      return "verify_failed"
+
+  n = qo._drain_day_close_ready(
+      client,
+      inflight={"2026-08-02": _Done()},
+      leases={"2026-08-02": claim},
+      archive_data_dir=str(tmp_path),
+  )
+  assert n == 1
+  assert jq.read_job_attempt(
+      client, kind="day_close", identity="2026-08-02",
+  ) == 1
 
 
 def test_verify_failure_blocks_seal_and_delete(tmp_path, monkeypatch):
@@ -753,9 +888,169 @@ def test_missing_path_requeues_ingest_not_ack(monkeypatch, tmp_path):
   assert not acked
 
 
+def test_missing_path_acks_when_ingest_complete(monkeypatch, tmp_path):
+  """P0-3: gone + complete predicates → terminal ack, not infinite requeue."""
+  client = FakeRedis()
+  identity = "/gone/but/complete"
+  claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity=identity,
+      owner_token="n:h:b:1",
+      deadline=1060.0,
+      score=5.0,
+  )
+  calls = {"n": 0}
+
+  def _claim(*a, **k):
+    calls["n"] += 1
+    return claim if calls["n"] == 1 else None
+
+  requeued = []
+  acked = []
+  monkeypatch.setattr(
+      jq, "requeue_job", lambda *a, **k: requeued.append(k.get("identity")),
+  )
+  monkeypatch.setattr(
+      jq, "ack_job", lambda *a, **k: acked.append(k.get("identity")) or True,
+  )
+  monkeypatch.setattr(jq, "claim_ingest_job", _claim)
+  monkeypatch.setattr(os.path, "isfile", lambda p: False)
+
+  class _Pool:
+    def apply_async(self, *a, **k):
+      raise AssertionError("must not submit missing path")
+
+  qo._fill_ingest_band(
+      client,
+      band="hot",
+      cap=1,
+      inflight={},
+      claims={},
+      submitted={},
+      ingest_pool=_Pool(),
+      manager_lock=None,
+      band_cap=1,
+      tgz_archive_dir=str(tmp_path),
+      ingest_is_complete_fn=lambda *_a, **_k: True,
+  )
+  assert acked == [identity]
+  assert not requeued
+
+
+def test_fill_ingest_skip_budget_breaks(monkeypatch, tmp_path):
+  """P0-3: missing-path skips must not busy-spin the MainThread tick."""
+  client = FakeRedis()
+  claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity="/no/such/raw/file",
+      owner_token="n:h:b:1",
+      deadline=1060.0,
+      score=5.0,
+  )
+  calls = {"n": 0}
+
+  def _claim(*a, **k):
+    calls["n"] += 1
+    return claim
+
+  monkeypatch.setattr(jq, "claim_ingest_job", _claim)
+  monkeypatch.setattr(jq, "requeue_job", lambda *a, **k: True)
+  monkeypatch.setattr(jq, "ack_job", lambda *a, **k: True)
+  monkeypatch.setattr(os.path, "isfile", lambda p: False)
+
+  class _Pool:
+    def apply_async(self, *a, **k):
+      raise AssertionError("must not submit missing path")
+
+  qo._fill_ingest_band(
+      client,
+      band="hot",
+      cap=8,
+      inflight={},
+      claims={},
+      submitted={},
+      ingest_pool=_Pool(),
+      manager_lock=None,
+      tgz_archive_dir=str(tmp_path),
+      ingest_is_complete_fn=lambda *_a, **_k: False,
+  )
+  assert calls["n"] <= qo.INGEST_FILL_SKIP_BUDGET
+
+
+def test_request_shutdown_sets_list_flag():
+  """P0-4: SIGTERM Event and shutdown_utils.shutdown_requested[0] stay in sync."""
+  from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested as list_flag
+
+  qo.reset_shutdown_for_tests()
+  try:
+    assert qo.shutdown_requested() is False
+    assert list_flag[0] is False
+    qo.request_shutdown()
+    assert qo.shutdown_requested() is True
+    assert list_flag[0] is True
+  finally:
+    qo.reset_shutdown_for_tests()
+    assert list_flag[0] is False
+
+
 def test_retry_or_dead_letter_claim_none_not_silent_requeued():
   """F15: missing claim must not report success as requeued."""
   assert qo._retry_or_dead_letter(
       None, kind="ingest", claim=None, archive_data_dir="/a", reason="x",
   ) == "dropped_no_claim"
+
+
+def test_drain_timeout_terminates_before_requeue():
+  """P0-8: kill in-flight workers before Redis requeue (dirty-tar then recover)."""
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  timeout_idx = src.find("drain timeout")
+  assert timeout_idx != -1
+  window = src[max(0, timeout_idx - 800):timeout_idx + 800]
+  assert "day_executor.shutdown(wait=False" in window
+  assert window.find("day_executor.shutdown") < window.find(
+      "_release_claims_on_shutdown",
+  )
+
+
+def test_ingest_timeout_requeues_without_attempt_bump(tmp_path, monkeypatch):
+  """P1-18: timeout/lookup_budget must not burn the poison attempt counter."""
+  monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  identity = "/raw/timeout"
+  jq.zadd_ingest_job(client, identity=identity, score=1.0)
+  claim = jq.claim_ingest_job(
+      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+  )
+
+  class _Ready:
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      del timeout
+      return (identity, False, False, 1.0, {"outcome": "timeout"})
+
+  n = qo._drain_ingest_ready(
+      client,
+      inflight={identity: _Ready()},
+      claims={identity: claim},
+      tgz_archive_dir="/daily",
+      archive_data_dir=str(tmp_path),
+  )
+  assert n == 1
+  assert jq.read_job_attempt(client, kind="ingest", identity=identity) == 0
+
+
+def test_zcount_failure_is_fail_closed():
+  """P1-7: Redis zcount errors must not invent hot_queued=1."""
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  assert "hot_queued = 1" not in src
+  assert "queue orchestrator redis zcount failed" in src
+
+
+def test_renew_helper_not_called_from_loop():
+  """P1-21/OQ-1: production loop must not heartbeat-renew leases."""
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  assert "_renew_active_claims(" not in src
 

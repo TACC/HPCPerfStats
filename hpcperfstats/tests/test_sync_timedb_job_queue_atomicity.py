@@ -319,6 +319,27 @@ def test_steal_lease_requires_local_host_and_boot():
       boot_id="boot1",
   )
   assert client.get(key) is None
+  assert client.llen(jq.job_queue_key("append")) == 0
+
+
+def test_steal_list_without_inflight_does_not_rpush():
+  """P0-5: LIST steal with a nil inflight entry must not fabricate a job."""
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  identity = "/raw/ghost-append"
+  key = jq.job_lease_key("append", identity)
+  client.set(key, "n:host1:boot1:99999", nx=True, ex=60)
+  assert client.llen(jq.job_queue_key("append")) == 0
+  assert jq.steal_job_lease_if_owner_dead(
+      client,
+      kind="append",
+      identity=identity,
+      pid_alive_fn=lambda _pid: False,
+      hostname="host1",
+      boot_id="boot1",
+  )
+  assert client.get(key) is None
+  assert client.llen(jq.job_queue_key("append")) == 0
 
 
 def test_steal_lease_skips_legacy_two_field_token():

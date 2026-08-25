@@ -116,3 +116,23 @@ def test_date_range_honored_on_discover():
       records, startdate=start, enddate=end,
   )
   assert [rec.path for rec in kept] == ["/a/host.ext/2026-08-05T00:00:00"]
+
+
+def test_date_range_filter_streams_without_materializing():
+  """P0-2: both-None filter must yield, never list() the GNU find iterator."""
+  rec = FindStatsRecord(
+      path="/a/host.ext/2026-08-05T00:00:00", mtime=1.0, size=1, inode=1,
+  )
+  pulled = {"n": 0}
+
+  def _records():
+    pulled["n"] += 1
+    yield rec
+    raise AssertionError("filter must not pull remaining find records")
+
+  it = jd.filter_find_records_for_date_range(
+      _records(), startdate=None, enddate=None,
+  )
+  assert pulled["n"] == 0
+  assert next(it) is rec
+  assert pulled["n"] == 1

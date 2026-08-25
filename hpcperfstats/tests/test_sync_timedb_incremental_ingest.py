@@ -354,3 +354,12 @@ def test_small_file_combined_path_unchanged(monkeypatch, tmp_path):
 
   st._add_stats_file_to_db_impl(object(), str(stats_file))
   assert parse_calls["n"] == 1
+
+
+def test_ingest_ok_false_when_individual_host_insert_fails():
+  """P0-9: individual host insert non-integrity errors must not report ingest_ok."""
+  assert st._ingest_ok_from_host_write_path(individual_need_archival=None) is True
+  assert st._ingest_ok_from_host_write_path(individual_need_archival=True) is True
+  assert st._ingest_ok_from_host_write_path(individual_need_archival=False) is False
+  src = inspect.getsource(st._write_stats_payload_to_db)
+  assert "_ingest_ok_from_host_write_path" in src

@@ -15,6 +15,8 @@ Attributes:
   SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION: Attribute.
   UNPARSABLE_RAW_SCHEMA_VERSION: Attribute.
   ZERO_HOST_INGEST_MARK_SCHEMA_VERSION: Attribute.
+  PersistenceContractMismatchError: Raised when allow_reset=False and
+    on-disk contract_version disagrees.
 """
 from __future__ import annotations
 
@@ -288,6 +290,41 @@ def _read_contract_version(archive_data_dir: str) -> Optional[int]:
     return None
 
 
+class PersistenceContractMismatchError(RuntimeError):
+  """
+  On-disk persistence contract_version disagrees and reset is forbidden.
+
+  Subclasses ``RuntimeError`` so orchestrator / ``--jid`` boot fail closed
+  instead of running against mixed sidecar semantics.
+
+  Args:
+    message (str): Operator-facing mismatch description.
+
+  Attributes:
+    message: Stored error text.
+
+  Examples:
+    >>> str(PersistenceContractMismatchError("old=-1 new=8"))
+    'old=-1 new=8'
+  """
+
+  def __init__(self, message: str) -> None:
+    """
+    Store the mismatch description.
+
+    Args:
+      message (str): Operator-facing mismatch description.
+
+    Returns:
+      None
+
+    Examples:
+      >>> PersistenceContractMismatchError("x").args[0]
+      'x'
+    """
+    super().__init__(message)
+
+
 def ensure_persistence_contract(
   archive_data_dir: str,
   *,
@@ -302,10 +339,15 @@ def ensure_persistence_contract(
     log_fn (LogFn): Optional logger.
     allow_reset (bool): When False (queue orchestrator boot), never wipe
       sidecars on version mismatch — cutover must not call
-      ``reset_sync_timedb_persistence`` (OQ-1 / adversarial P-C).
+      ``reset_sync_timedb_persistence`` (OQ-1 / adversarial P-C). A missing
+      contract file is initialized without wiping sidecars.
 
   Returns:
     bool: True when a reset ran.
+
+  Raises:
+    PersistenceContractMismatchError: Version mismatch when
+      ``allow_reset`` is False.
 
   Examples:
     >>> ensure_persistence_contract("/tmp/archive", allow_reset=False)  # doctest: +SKIP
@@ -329,9 +371,14 @@ def _ensure_persistence_contract_inner(
     archive_data_dir (str): Archive data directory.
     log_fn (LogFn): Optional logger.
     allow_reset (bool): When False, refuse wipe on version mismatch.
+      A missing contract file is initialized in place (no sidecar reset).
 
   Returns:
     bool: True when a reset ran.
+
+  Raises:
+    PersistenceContractMismatchError: Version mismatch when
+      ``allow_reset`` is False.
 
   Examples:
     >>> _ensure_persistence_contract_inner("/tmp/a", allow_reset=False)  # doctest: +SKIP
@@ -349,13 +396,25 @@ def _ensure_persistence_contract_inner(
       )
     return False
   if not allow_reset:
+    if on_disk is None:
+      payload = {
+          "contract_version": current,
+          "written_at": time.time(),
+      }
+      _save_json_atomic(persistence_contract_path(archive_data_dir), payload)
+      if log_fn:
+        log_fn(
+            "persistence contract v%d active" % current,
+            flush=True,
+        )
+      return False
+    detail = "persistence contract mismatch old=%s new=%d (reset refused)" % (
+        on_disk,
+        current,
+    )
     if log_fn:
-      log_fn(
-          "persistence contract mismatch old=%s new=%d (reset refused)"
-          % (on_disk if on_disk is not None else "missing", current),
-          flush=True,
-      )
-    return False
+      log_fn(detail, flush=True)
+    raise PersistenceContractMismatchError(detail)
   reset_sync_timedb_persistence(archive_data_dir, log_fn=log_fn)
   payload = {
       "contract_version": current,

@@ -14,6 +14,7 @@ Attributes:
   _QUEUE_GET_TIMEOUT_S: Attribute.
   _RESUME_WATERMARK: Attribute.
   _SHUTDOWN_JOIN_TIMEOUT_S: Attribute.
+  _listend_flush_error_is_poison: Classify flush errors that drop the batch.
 """
 from __future__ import annotations
 
@@ -45,6 +46,29 @@ _COUNTER_NAMES = (
     "conn_recycle",
     "batch_flush",
 )
+
+
+def _listend_flush_error_is_poison(exc: BaseException) -> bool:
+  """
+  True when a flush error is classified poison and the batch must be dropped.
+
+  Transient Postgres/network errors keep ``pending_host`` / ``pending_proc``
+  so the next flush can retry. Schema/data/integrity errors are poison.
+
+  Args:
+    exc (BaseException): Exception raised from ``_flush_orm_batch``.
+
+  Returns:
+    bool: True when the pending batch should be discarded.
+
+  Examples:
+    >>> _listend_flush_error_is_poison(ValueError("x"))
+    False
+    >>> _listend_flush_error_is_poison(type("DataError", (Exception,), {})("x"))
+    True
+  """
+  name = type(exc).__name__
+  return name in ("DataError", "ProgrammingError", "IntegrityError")
 
 
 def compute_listend_db_queue_budgets(
@@ -727,6 +751,11 @@ def _worker_main(
           % (worker_idx, exc),
           flush=True,
       )
+      if _listend_flush_error_is_poison(exc):
+        pending_host = []
+        pending_proc = []
+        sample_count = 0
+      return
     pending_host = []
     pending_proc = []
     sample_count = 0

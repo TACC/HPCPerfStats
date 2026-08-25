@@ -32,7 +32,13 @@ Production coordinator for `sync_timedb` is **`run_sync_timedb_queue_orchestrato
 | Empty Redis ≠ caught up | Reconstruct from disk + Timescale + marks; checkpoint `.sync_timedb_state.json` is **not** reconstruct SoT |
 | Skip completes | Do not enqueue identities whose complete predicates are already true |
 | day_close | Filesystem complete + `sync_day_close_min_age_hours` (default 32) after day end; threads (max `sync_day_close_max_inflight`); ingest/append stay spawn |
-| Redis down | Fail-closed (exit); no Postgres job table |
+| Steal inflight | Dead-owner steal requeues **only when inflight HASH existed**; nil inflight deletes the lease and must not `RPUSH` a LIST duplicate |
+| Marks before ACK | Spawn ingest worker and `--jid` persist file-complete / zero-host marks from the packed outcome **before** Redis ACK |
+| No-arg CLI | `startdate=enddate=None` (whole archive hot+catchup); never default `days_to_process=5` |
+| `deferred_age` | Cooperative day_close outcome: requeue **without** bumping attempts |
+| Redis loop | Mid-loop Redis errors **fail closed** (raise/exit); never invent `hot_queued=1` |
+| Production membership | Open-tar member maps via GNU `tar tvf` / `zstd` CLI — not Python `tarfile` empty-on-truncate |
+| Persistence mismatch | `allow_reset=False` raises; never continue against mixed sidecar versions |
 | No persistence wipe on cutover | Do not bump contract / wipe sidecars as cutover (B-17) |
 | Anti-workaround | No dual CLI, no strangler wrapper of supervisor_loop, no janitor stall watchdogs as coordinator |
 
