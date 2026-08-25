@@ -41,6 +41,7 @@ Attributes:
   _REAP_LUA: Lua source for expired in-flight recovery.
   _RENEW_LUA: Lua source for compare-and-extend lease renewal.
   _REQUEUE_LUA: Lua source for owner-checked requeue.
+  _STEAL_REQUEUE_LUA: Lua source for dead-owner steal that requeues inflight.
   _SCRIPT_CACHE_LOCK: Guards ``_SCRIPT_SHA_CACHE`` mutation.
   _SCRIPT_SHA_CACHE: Lua source -> ``SCRIPT LOAD`` sha memo.
 """
@@ -50,7 +51,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import hashlib
-import math
 import os
 import secrets
 import socket
@@ -134,7 +134,7 @@ _CLAIM_LIST_LUA = (
     "    redis.call('HSET', KEYS[2], member, ARGV[4] .. '|' .. ARGV[1] .. '|')\n"
     "    return member\n"
     "  end\n"
-    "  redis.call('RPUSH', KEYS[1], member)\n"
+    "  redis.call('LPUSH', KEYS[1], member)\n"
     "end\n"
     "return false\n"
 )
@@ -155,8 +155,12 @@ _ACK_LUA = (
     "if redis.call('GET', KEYS[2]) == ARGV[2] then\n"
     "  redis.call('DEL', KEYS[2])\n"
     "end\n"
-    "redis.call('DEL', KEYS[3])\n"
-    "redis.call('SREM', KEYS[4], ARGV[1])\n"
+    "-- Payload + pending are owner-gated: a late ack from a reaped owner must\n"
+    "-- not wipe the new owner's attempt counter / fingerprint or clear dedupe.\n"
+    "if owned == 1 then\n"
+    "  redis.call('DEL', KEYS[3])\n"
+    "  redis.call('SREM', KEYS[4], ARGV[1])\n"
+    "end\n"
     "return owned\n"
 )
 
@@ -195,6 +199,27 @@ _REQUEUE_LUA = (
     "return owned\n"
 )
 
+# KEYS: lease, inflight hash, work key.
+# ARGV: identity, expected_owner, mode ('z'|'l'), score, penalty.
+_STEAL_REQUEUE_LUA = (
+    "-- HPS_STEAL_REQUEUE\n"
+    "if redis.call('GET', KEYS[1]) ~= ARGV[2] then return 0 end\n"
+    "redis.call('DEL', KEYS[1])\n"
+    "local cur = redis.call('HGET', KEYS[2], ARGV[1])\n"
+    "local score = tonumber(ARGV[4]) or 0\n"
+    "if cur then\n"
+    "  local stored = tonumber(string.match(cur, '^[^|]*|[^|]*|(.*)$') or '')\n"
+    "  if stored ~= nil then score = stored end\n"
+    "  redis.call('HDEL', KEYS[2], ARGV[1])\n"
+    "end\n"
+    "if ARGV[3] == 'z' then\n"
+    "  redis.call('ZADD', KEYS[3], score + tonumber(ARGV[5]), ARGV[1])\n"
+    "else\n"
+    "  redis.call('RPUSH', KEYS[3], ARGV[1])\n"
+    "end\n"
+    "return 1\n"
+)
+
 # KEYS: lease key, inflight hash. ARGV: identity, owner, ttl, deadline.
 _RENEW_LUA = (
     "-- HPS_RENEW\n"
@@ -213,11 +238,16 @@ _RENEW_LUA = (
 )
 
 # KEYS: inflight hash, work key.
-# ARGV: cutoff epoch, limit, mode ('z'|'l'), lease_prefix, penalty.
+# ARGV: cutoff, limit, mode ('z'|'l'), lease_prefix, penalty, cursor, count.
+# Uses HSCAN (never HGETALL) so large inflight maps do not block Redis.
 _REAP_LUA = (
     "-- HPS_REAP\n"
-    "local all = redis.call('HGETALL', KEYS[1])\n"
-    "local out = {}\n"
+    "local cursor = ARGV[6] or '0'\n"
+    "local count = tonumber(ARGV[7]) or 64\n"
+    "local scanned = redis.call('HSCAN', KEYS[1], cursor, 'COUNT', count)\n"
+    "local next_c = scanned[1]\n"
+    "local all = scanned[2]\n"
+    "local out = {next_c}\n"
     "local limit = tonumber(ARGV[2])\n"
     "local cutoff = tonumber(ARGV[1])\n"
     "local idx = 1\n"
@@ -241,7 +271,7 @@ _REAP_LUA = (
     "      redis.call('RPUSH', KEYS[2], member)\n"
     "    end\n"
     "    out[#out + 1] = member\n"
-    "    if #out >= limit then return out end\n"
+    "    if (#out - 1) >= limit then return out end\n"
     "  end\n"
     "  idx = idx + 2\n"
     "end\n"
@@ -646,56 +676,48 @@ def ingest_band_slot_caps(pool_size: int) -> tuple[int, int]:
 
 def job_lease_ttl_seconds() -> int:
   """
-  Return the short, renewable lease EX seconds for durable job leases.
+  Return lease EX seconds for durable job leases (OQ-1 option B).
 
-  Leases are sized to a small multiple of the coordinator poll interval so a
-  crashed owner frees its work within seconds, not hours. Long-running work
-  keeps its lease alive with :func:`renew_job_lease`, so the TTL is a
-  liveness signal rather than a worst-case runtime budget.
+  EX matches ``get_sync_ingest_per_file_timeout_max_s()`` (default 86400).
+  Coordinators do **not** heartbeat-renew these leases; recovery is dead-owner
+  steal plus :func:`reap_expired_inflight` after the deadline.
 
   Returns:
-    int: Positive EX seconds within
-    ``[JOB_LEASE_TTL_FLOOR_S, JOB_LEASE_TTL_CEILING_S]``.
+    int: Positive EX seconds (at least ``JOB_LEASE_TTL_FLOOR_S``).
 
   Examples:
     >>> job_lease_ttl_seconds() >= JOB_LEASE_TTL_FLOOR_S
     True
-    >>> job_lease_ttl_seconds() <= JOB_LEASE_TTL_CEILING_S
-    True
   """
   try:
-    poll = float(cfg.get_sync_pool_poll_timeout_s())
+    raw = int(cfg.get_sync_ingest_per_file_timeout_max_s())
   except Exception:
-    poll = 5.0
-  if not math.isfinite(poll) or poll <= 0:
-    poll = 5.0
-  ttl = int(math.ceil(poll * JOB_LEASE_TTL_POLL_MULTIPLIER))
-  ttl = max(JOB_LEASE_TTL_FLOOR_S, ttl)
-  return min(JOB_LEASE_TTL_CEILING_S, ttl)
+    raw = 86400
+  if raw < JOB_LEASE_TTL_FLOOR_S:
+    return JOB_LEASE_TTL_FLOOR_S
+  return int(raw)
 
 
 def inflight_reap_grace_seconds(ttl_s: int | None = None) -> int:
   """
-  Return the grace period added past an in-flight deadline before reaping.
+  Return the grace period past an in-flight deadline before reaping.
 
-  The grace absorbs a single missed renewal tick so a live but momentarily
-  stalled owner is not reaped underneath itself.
+  With OQ-1 long TTLs, grace stays small (not ``ttl // 2``) so a dead owner
+  is not invisible for half a day after the deadline.
 
   Args:
-    ttl_s (int | None): Lease TTL in seconds; defaults to
-      :func:`job_lease_ttl_seconds`.
+    ttl_s (int | None): Lease TTL in seconds; unused for grace sizing under
+      OQ-1 (kept so existing callers need no signature change).
 
   Returns:
-    int: Grace seconds (at least ``INFLIGHT_REAP_GRACE_FLOOR_S``).
+    int: Grace seconds (``INFLIGHT_REAP_GRACE_FLOOR_S``).
 
   Examples:
-    >>> inflight_reap_grace_seconds(120)
-    60
-    >>> inflight_reap_grace_seconds(10)
-    30
+    >>> inflight_reap_grace_seconds(86400) == INFLIGHT_REAP_GRACE_FLOOR_S
+    True
   """
-  ttl = int(job_lease_ttl_seconds() if ttl_s is None else ttl_s)
-  return max(INFLIGHT_REAP_GRACE_FLOOR_S, ttl // 2)
+  del ttl_s
+  return int(INFLIGHT_REAP_GRACE_FLOOR_S)
 
 
 def job_max_attempts() -> int:
@@ -1169,23 +1191,14 @@ def steal_job_lease_if_owner_dead(
     boot_id (str | None): Local boot id override (tests).
 
   Returns:
-    bool: True when a dead-owner lease was deleted.
+    bool: True when a dead-owner lease was stolen and the job requeued.
 
   Examples:
-    >>> class _C:
-    ...   def __init__(self):
-    ...     self.store = {}
-    ...   def get(self, key):
-    ...     return self.store.get(key)
-    ...   def delete(self, key):
-    ...     self.store.pop(key, None)
-    >>> c = _C()
-    >>> c.store[job_lease_key("ingest", "x")] = "n:h:b:1"
+    >>> client = type("C", (), {})()  # doctest: +SKIP
     >>> steal_job_lease_if_owner_dead(
-    ...     c, kind="ingest", identity="x", pid_alive_fn=lambda _p: False,
-    ...     hostname="h", boot_id="b",
+    ...     client, kind="ingest", identity="x", pid_alive_fn=lambda _p: False,
     ... )
-    True
+    False
   """
   if client is None:
     return False
@@ -1203,8 +1216,32 @@ def steal_job_lease_if_owner_dead(
   alive = (_pid_is_alive if pid_alive_fn is None else pid_alive_fn)(owner.pid)
   if alive:
     return False
-  client.delete(key)
-  return True
+  raw_owner = str(raw)
+  mode = "z" if str(kind) == JOB_KIND_INGEST else "l"
+  score = 0.0
+  if mode == "z":
+    try:
+      entries = read_inflight_entries(client, kind=kind)
+    except Exception:
+      entries = {}
+    if identity in entries:
+      _deadline, _own, stored_score = entries[identity]
+      if stored_score is not None:
+        score = float(stored_score)
+  stolen = eval_job_script(
+      client,
+      _STEAL_REQUEUE_LUA,
+      3,
+      key,
+      job_inflight_key(kind),
+      job_queue_key(kind),
+      str(identity),
+      raw_owner,
+      mode,
+      "%d" % int(score),
+      LEASE_CONFLICT_SCORE_PENALTY,
+  )
+  return bool(stolen)
 
 
 def _script_sha(client: Any, lua: str) -> str:
@@ -1931,24 +1968,37 @@ def reap_expired_inflight(
   now = time.time() if now_s is None else float(now_s)
   cutoff = now - inflight_reap_grace_seconds(ttl_s)
   mode = "z" if str(kind) == JOB_KIND_INGEST else "l"
-  raw = eval_job_script(
-      client,
-      _REAP_LUA,
-      2,
-      job_inflight_key(kind),
-      job_queue_key(kind),
-      "%.3f" % cutoff,
-      max(1, int(limit)),
-      mode,
-      job_lease_prefix(kind),
-      LEASE_CONFLICT_SCORE_PENALTY,
-  )
-  if not raw:
-    return []
+  want = max(1, int(limit))
+  cursor = "0"
+  scan_count = max(want, 64)
   out: List[str] = []
-  for item in raw:
-    out.append(item.decode() if isinstance(item, bytes) else str(item))
-  return out
+  # Bounded HSCAN pages — never one-shot HGETALL of the full inflight HASH.
+  for _ in range(256):
+    raw = eval_job_script(
+        client,
+        _REAP_LUA,
+        2,
+        job_inflight_key(kind),
+        job_queue_key(kind),
+        "%.3f" % cutoff,
+        want - len(out),
+        mode,
+        job_lease_prefix(kind),
+        LEASE_CONFLICT_SCORE_PENALTY,
+        cursor,
+        scan_count,
+    )
+    if not raw:
+      break
+    decoded = [
+        item.decode() if isinstance(item, bytes) else str(item)
+        for item in raw
+    ]
+    cursor = decoded[0]
+    out.extend(decoded[1:])
+    if len(out) >= want or cursor in ("0", 0, b"0"):
+      break
+  return out[:want]
 
 
 def read_inflight_entries(

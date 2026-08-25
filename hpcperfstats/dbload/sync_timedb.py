@@ -3214,8 +3214,6 @@ def _transition_file_state(
   file_states: Any,
   path: str,
   new_state: Any,
-  *,
-  handoff_priority_paths: Any | None = None,
 ) -> Any:
   """
   Best-effort state transition validator for per-file supervisor state.
@@ -3224,13 +3222,12 @@ def _transition_file_state(
     file_states (Any): File states passed to this helper.
     path (str): String for path.
     new_state (Any): New state passed to this helper.
-    handoff_priority_paths (Any | None): One of ``Any``, ``None``.
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> _transition_file_state(None, "x", None, None)  # doctest: +SKIP
+    >>> _transition_file_state(None, "x", None)  # doctest: +SKIP
   """
   current = file_states.get(path)
   if current is None:
@@ -5470,8 +5467,6 @@ def _add_processed_path(
   checkpoint_path: str,
   *,
   file_states: Any | None = None,
-  handoff_priority_paths: Any | None = None,
-  on_handoff_path_discarded: Any | None = None,
 ) -> Any:
   """
   Record processed path in memory and checkpoint buffer.
@@ -5483,14 +5478,12 @@ def _add_processed_path(
     checkpoint_entries (Any): Checkpoint entries passed to this helper.
     checkpoint_path (str): String for checkpoint path.
     file_states (Any | None): One of ``Any``, ``None``.
-    handoff_priority_paths (Any | None): One of ``Any``, ``None``.
-    on_handoff_path_discarded (Any | None): One of ``Any``, ``None``.
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> _add_processed_path("x", None, None, None, "x", None, None, None)
+    >>> _add_processed_path("x", None, None, None, "x", None)
   """
   fp = _path_fingerprint(path)
   if fp is None:
@@ -5498,13 +5491,6 @@ def _add_processed_path(
   processed_files.add(path)
   processed_files_order.append(path)
   checkpoint_entries.append(fp)
-  if handoff_priority_paths is not None and path in handoff_priority_paths:
-    handoff_priority_paths.discard(path)
-    if on_handoff_path_discarded is not None:
-      try:
-        on_handoff_path_discarded(path)
-      except Exception:
-        pass
   while len(processed_files_order) > processed_files_max_size:
     old_path = processed_files_order.popleft()
     processed_files.discard(old_path)
@@ -6065,27 +6051,30 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
   tar_timeout_s = 3600.0
   for off in range(0, len(file_paths), batch):
     chunk = file_paths[off : off + batch]
-    present = [p for p in chunk if os.path.lexists(p)]
-    n_missing = len(chunk) - len(present)
-    if n_missing:
-      log_print(
-          "Archive append: skipped %d missing path(s) in batch %d-%d"
-          % (n_missing, off + 1, off + len(chunk)),
-          flush=True,
-      )
-    if not present:
-      continue
     fd, list_path = tempfile.mkstemp(prefix="hps_tar_append_", suffix=".lst")
     result = None
     try:
-      with os.fdopen(fd, "wb") as lf:
-        for p in present:
-          # Member path relative to ``-C /`` (no leading slash in -T file).
-          abs_p = os.path.abspath(p)
-          rel = abs_p[1:] if abs_p.startswith(os.sep) else abs_p
-          lf.write(os.fsencode(rel) + b"\0")
       tar_bin = shutil.which("tar") or "/bin/tar"
       with file_write_lock(tar_path):
+        # F13: re-filter under the write lock so concurrent delete/day_close
+        # cannot race lexists → tar -r with a stale path list.
+        present = [p for p in chunk if os.path.lexists(p)]
+        n_missing = len(chunk) - len(present)
+        if n_missing:
+          log_print(
+              "Archive append: skipped %d missing path(s) in batch %d-%d"
+              % (n_missing, off + 1, off + len(chunk)),
+              flush=True,
+          )
+        if not present:
+          continue
+        with os.fdopen(fd, "wb") as lf:
+          fd = -1  # ownership transferred
+          for p in present:
+            # Member path relative to ``-C /`` (no leading slash in -T file).
+            abs_p = os.path.abspath(p)
+            rel = abs_p[1:] if abs_p.startswith(os.sep) else abs_p
+            lf.write(os.fsencode(rel) + b"\0")
         zst_path, gz_path = compressed_sibling_paths(tar_path)
         if not os.path.exists(tar_path) and (
             os.path.isfile(zst_path) or os.path.isfile(gz_path)
@@ -6118,6 +6107,11 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
           "tar append timed out after %ss: %s" % (tar_timeout_s, tar_path),
       ) from exc
     finally:
+      if fd >= 0:
+        try:
+          os.close(fd)
+        except OSError:
+          pass
       try:
         os.remove(list_path)
       except OSError:

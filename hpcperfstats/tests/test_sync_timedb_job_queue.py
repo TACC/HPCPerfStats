@@ -496,14 +496,17 @@ def test_steal_refuses_foreign_host():
   assert client.get(key) == "n:otherhost:boot1:1"
 
 
-def test_lease_ttl_is_short():
-  """Q6: lease TTL is a short renewable window, not the per-file max."""
-  assert jq.JOB_LEASE_TTL_CEILING_S <= 900
-  assert jq.job_lease_ttl_seconds() <= jq.JOB_LEASE_TTL_CEILING_S
+def test_lease_ttl_matches_oq1_per_file_max(monkeypatch):
+  """OQ-1: lease EX follows ingest per-file max (not a short renew window)."""
+  monkeypatch.setattr(
+      jq.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 86400,
+  )
+  assert jq.job_lease_ttl_seconds() == 86400
+  assert jq.inflight_reap_grace_seconds(86400) == jq.INFLIGHT_REAP_GRACE_FLOOR_S
 
 
 def test_renew_lease_extends_deadline():
-  """Q6: compare-and-extend renewal keeps a live owner off the reaper."""
+  """Renew helper remains for tests; orchestrator must not require it (OQ-1)."""
   client = FakeRedis()
   jq.reset_job_queue_script_cache_for_tests()
   jq.zadd_ingest_job(client, identity="/raw/a", score=5)

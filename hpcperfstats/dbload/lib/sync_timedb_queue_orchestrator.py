@@ -1064,7 +1064,12 @@ def _retry_or_dead_letter(
     'requeued'
   """
   if claim is None or client is None:
-    return "requeued"
+    _log(
+        "queue_orchestrator retry_or_dead_letter missing claim kind=%s reason=%s"
+        % (kind, reason),
+        log_fn=log_fn,
+    )
+    return "dropped_no_claim"
   identity = claim.identity
   attempt = jq.bump_job_attempt(client, kind=kind, identity=identity)
   if attempt < jq.job_max_attempts():
@@ -1286,14 +1291,26 @@ def _recycle_ingest_pool(pool: Any, *, factory: Callable[[], Any]) -> Any:
     >>> _recycle_ingest_pool(None, factory=lambda: "fresh")
     'fresh'
   """
-  for method in ("terminate", "join"):
-    call = getattr(pool, method, None)
-    if call is None:
-      continue
-    try:
-      call()
-    except Exception:
-      pass
+  try:
+    from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
+        terminate_pool_bounded,
+    )
+    if pool is not None:
+      terminate_pool_bounded(
+          pool,
+          join_timeout_s=5.0,
+          abandon_after_kill=True,
+          context="queue_orchestrator_ingest_recycle",
+      )
+  except Exception:
+    for method in ("terminate", "join"):
+      call = getattr(pool, method, None)
+      if call is None:
+        continue
+      try:
+        call()
+      except Exception:
+        pass
   return factory()
 
 
@@ -1368,12 +1385,13 @@ def _fill_ingest_band(
       continue
     path = _path_from_ingest_identity(claim.identity)
     if not path or not os.path.isfile(path):
-      # File already archived or removed: terminal, not retryable.
-      jq.ack_job(
+      # Transient NFS / rename: never terminal-ack; requeue for reconstruct.
+      jq.requeue_job(
           client,
           kind=jq.JOB_KIND_INGEST,
           identity=claim.identity,
           owner_token=claim.owner_token,
+          score=claim.score,
       )
       continue
     stored_fp = ""
@@ -1569,7 +1587,7 @@ def _fill_append_slots(
         break
       path = claim.identity
       if not path or not os.path.isfile(path):
-        jq.ack_job(
+        jq.requeue_job(
             client,
             kind=jq.JOB_KIND_APPEND,
             identity=path,
@@ -1578,7 +1596,7 @@ def _fill_append_slots(
         continue
       this_tar = daily_tar_path_for_stats_path(path, tgz_archive_dir)
       if not this_tar:
-        jq.ack_job(
+        jq.requeue_job(
             client,
             kind=jq.JOB_KIND_APPEND,
             identity=path,
@@ -2086,7 +2104,7 @@ def run_sync_timedb_queue_orchestrator(
     raise ValueError("archive_dir is required")
 
   with exclusive_archive_dir_flock(directory, blocking=True):
-    ensure_persistence_contract(directory, log_fn=log_fn)
+    ensure_persistence_contract(directory, log_fn=log_fn, allow_reset=False)
     try:
       client = get_archive_members_redis_client(required=True)
     except Exception as exc:
@@ -2342,8 +2360,6 @@ def run_sync_timedb_queue_orchestrator(
           )
 
           busy = bool(ingest_inflight or append_inflight or day_inflight)
-          if busy:
-            _renew_active_claims(client, claim_maps, log_fn=log_fn)
           now_mono = time.monotonic()
           if now_mono - last_reap_mono >= max(poll_s, 5.0):
             last_reap_mono = now_mono

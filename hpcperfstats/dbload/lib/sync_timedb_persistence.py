@@ -292,43 +292,49 @@ def ensure_persistence_contract(
   archive_data_dir: str,
   *,
   log_fn: LogFn = None,
+  allow_reset: bool = True,
 ) -> bool:
   """
-  Ensure on-disk contract matches current version; reset sidecars when stale.
-  
-  Returns True when a reset ran (operators should expect full reprocess).
-  
+  Ensure on-disk contract matches current version; optionally reset sidecars.
+
   Args:
-    archive_data_dir (str): String for archive data dir.
-    log_fn (LogFn): Log fn.
-  
+    archive_data_dir (str): Archive data directory.
+    log_fn (LogFn): Optional logger.
+    allow_reset (bool): When False (queue orchestrator boot), never wipe
+      sidecars on version mismatch — cutover must not call
+      ``reset_sync_timedb_persistence`` (OQ-1 / adversarial P-C).
+
   Returns:
-    bool: True or False for this check.
-  
+    bool: True when a reset ran.
+
   Examples:
-    >>> ensure_persistence_contract("x", None)  # doctest: +SKIP
+    >>> ensure_persistence_contract("/tmp/archive", allow_reset=False)  # doctest: +SKIP
   """
   with ingest_logging():
-    return _ensure_persistence_contract_inner(archive_data_dir, log_fn=log_fn)
+    return _ensure_persistence_contract_inner(
+        archive_data_dir, log_fn=log_fn, allow_reset=allow_reset,
+    )
 
 
 def _ensure_persistence_contract_inner(
   archive_data_dir: str,
   *,
   log_fn: LogFn = None,
+  allow_reset: bool = True,
 ) -> bool:
   """
   Internal helper to ensure the persistence contract inner.
-  
+
   Args:
-    archive_data_dir (str): String for archive data dir.
-    log_fn (LogFn): Log fn.
-  
+    archive_data_dir (str): Archive data directory.
+    log_fn (LogFn): Optional logger.
+    allow_reset (bool): When False, refuse wipe on version mismatch.
+
   Returns:
-    bool: True or False for this check.
-  
+    bool: True when a reset ran.
+
   Examples:
-    >>> _ensure_persistence_contract_inner("x", None)  # doctest: +SKIP
+    >>> _ensure_persistence_contract_inner("/tmp/a", allow_reset=False)  # doctest: +SKIP
   """
   if not archive_data_dir:
     return False
@@ -339,6 +345,14 @@ def _ensure_persistence_contract_inner(
     if log_fn:
       log_fn(
           "persistence contract v%d active" % current,
+          flush=True,
+      )
+    return False
+  if not allow_reset:
+    if log_fn:
+      log_fn(
+          "persistence contract mismatch old=%s new=%d (reset refused)"
+          % (on_disk if on_disk is not None else "missing", current),
           flush=True,
       )
     return False

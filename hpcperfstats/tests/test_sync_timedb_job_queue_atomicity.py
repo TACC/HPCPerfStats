@@ -99,6 +99,10 @@ def test_reaped_job_reclaim_survives_late_ack_from_dead_owner():
       client, band="hot", owner_token=OWNER_B, ttl_s=60, now_s=1200.0,
   )
   assert second is not None and second.owner_token == OWNER_B
+  jq.bump_job_attempt(client, kind="ingest", identity="p|1|1")
+  jq.write_job_fingerprint(
+      client, kind="ingest", identity="p|1|1", fingerprint="9|9",
+  )
 
   assert not jq.ack_job(
       client, kind="ingest", identity="p|1|1", owner_token=OWNER_A,
@@ -107,6 +111,38 @@ def test_reaped_job_reclaim_survives_late_ack_from_dead_owner():
   inflight = jq.read_inflight_entries(client, kind="ingest")
   assert inflight["p|1|1"][1] == OWNER_B
   assert client.get(jq.job_lease_key("ingest", "p|1|1")) == OWNER_B
+  assert jq.read_job_attempt(client, kind="ingest", identity="p|1|1") == 1
+  assert jq.read_job_fingerprint(
+      client, kind="ingest", identity="p|1|1",
+  ) == "9|9"
+
+
+def test_late_ack_non_owner_preserves_list_pending_and_payload():
+  """F1: non-owner ACK must not SREM pending or DEL payload for LIST jobs."""
+  client = FakeRedis()
+  jq.enqueue_list_job(client, kind="append", identity="/raw/a", dedupe=True)
+  first = jq.claim_list_job(
+      client, kind="append", owner_token=OWNER_A, ttl_s=60, now_s=1000.0,
+  )
+  assert first is not None
+  jq.reap_expired_inflight(client, kind="append", now_s=1200.0, ttl_s=60)
+  second = jq.claim_list_job(
+      client, kind="append", owner_token=OWNER_B, ttl_s=60, now_s=1200.0,
+  )
+  assert second is not None
+  jq.bump_job_attempt(client, kind="append", identity="/raw/a")
+
+  assert not jq.ack_job(
+      client, kind="append", identity="/raw/a", owner_token=OWNER_A,
+  )
+
+  assert jq.read_job_attempt(client, kind="append", identity="/raw/a") == 1
+  # Pending was cleared at claim time only via ACK of owner; non-owner must
+  # not SREM. After claim the identity is in inflight, not pending — ensure
+  # a re-enqueue still dedupes against inflight (HEXISTS), not a wiped set.
+  assert jq.enqueue_list_job(
+      client, kind="append", identity="/raw/a", dedupe=True,
+  ) == 0
 
 
 def test_ack_clears_inflight_lease_payload_and_pending():
@@ -200,16 +236,40 @@ def test_renew_fails_for_non_owner():
   )
 
 
-def test_lease_ttl_is_short_and_bounded(monkeypatch):
-  """A day-long lease would strand a crashed worker's file for a day."""
-  monkeypatch.setattr(jq.cfg, "get_sync_pool_poll_timeout_s", lambda: 5)
-  assert jq.job_lease_ttl_seconds() == jq.JOB_LEASE_TTL_FLOOR_S
-  monkeypatch.setattr(jq.cfg, "get_sync_pool_poll_timeout_s", lambda: 600)
-  assert jq.job_lease_ttl_seconds() == jq.JOB_LEASE_TTL_CEILING_S
+def test_lease_ttl_matches_oq1_and_grace_is_small(monkeypatch):
+  """OQ-1: lease EX follows per-file max; reap grace stays floor-sized."""
   monkeypatch.setattr(
-      jq.cfg, "get_sync_pool_poll_timeout_s", lambda: 0,
+      jq.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 86400,
+  )
+  assert jq.job_lease_ttl_seconds() == 86400
+  assert jq.inflight_reap_grace_seconds(86400) == jq.INFLIGHT_REAP_GRACE_FLOOR_S
+  monkeypatch.setattr(
+      jq.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 10,
   )
   assert jq.job_lease_ttl_seconds() == jq.JOB_LEASE_TTL_FLOOR_S
+
+
+def test_steal_dead_owner_requeues_inflight():
+  """F3: steal must clear inflight and restore the ZSET member immediately."""
+  client = FakeRedis()
+  _seed_ingest(client, "/raw/steal", 7)
+  claim = jq.claim_ingest_job(
+      client, band="hot", owner_token=OWNER_A, ttl_s=60, now_s=1000.0,
+  )
+  assert claim is not None
+  assert client.zcard(jq.job_queue_key("ingest")) == 0
+
+  assert jq.steal_job_lease_if_owner_dead(
+      client,
+      kind="ingest",
+      identity="/raw/steal",
+      pid_alive_fn=lambda _p: False,
+      hostname="host1",
+      boot_id="boot1",
+  )
+  assert client.get(jq.job_lease_key("ingest", "/raw/steal")) is None
+  assert jq.read_inflight_entries(client, kind="ingest") == {}
+  assert client.zscore(jq.job_queue_key("ingest"), "/raw/steal") is not None
 
 
 def test_hot_range_claims_negative_scores():
@@ -300,8 +360,8 @@ def test_eval_job_script_reloads_once_on_noscript():
 
   client = _FlushingRedis()
   out = jq.eval_job_script(client, "-- HPS_REAP\n", 2, "i", "w", "0", "1",
-                           "z", "L:", "1")
-  assert out == []
+                           "z", "L:", "1", "0", "64")
+  assert out == ["0"]
   assert client.loads == 2
 
 

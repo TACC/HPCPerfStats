@@ -268,14 +268,16 @@ def _populate_pool_worker_entry(
   apply_ingest_pool_worker_init(script_name, "populate-pool", registry)
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       archive_members_populate_queue_brpop,
-      clear_populate_queued,
-      reset_archive_members_redis_client_for_tests,
+      complete_populate_queue_job,
+      drop_archive_members_redis_client,
+      requeue_populate_queue_job,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       execute_archive_members_populate_for_canonical,
   )
 
-  del reset_archive_members_redis_client_for_tests
+  # Spawn must not inherit a parent-process Redis connection pool (F14).
+  drop_archive_members_redis_client()
   while not shutdown.is_set():
     record_worker_stage("", "populate_queue_wait")
     job = archive_members_populate_queue_brpop(timeout_s=1.0)
@@ -284,21 +286,20 @@ def _populate_pool_worker_entry(
     canonical = str(job.get("canonical") or "")
     day_token = str(job.get("day_token") or "")
     if not canonical:
-      if day_token:
-        clear_populate_queued(day_token)
+      requeue_populate_queue_job(job)
       continue
     try:
       record_worker_stage(canonical, "populate_scan")
       execute_archive_members_populate_for_canonical(canonical)
+      complete_populate_queue_job(job)
     except Exception as exc:
       log_print(
-          "ERROR: populate-pool scan failed canonical=%s: %s"
-          % (canonical, exc),
+          "ERROR: populate-pool scan failed canonical=%s day=%s: %s"
+          % (canonical, day_token or "?", exc),
           flush=True,
       )
+      requeue_populate_queue_job(job)
     finally:
-      if day_token:
-        clear_populate_queued(day_token)
       clear_worker_stage()
       from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
           release_spawn_pool_worker_memory,

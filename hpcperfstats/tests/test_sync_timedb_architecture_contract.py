@@ -99,3 +99,116 @@ def test_arch_checkpoint_sidecar_not_reconstruct_source_of_truth():
   """``.sync_timedb_state.json`` is not reconstruct source of truth."""
   assert jr.checkpoint_sidecar_is_reconstruct_source_of_truth() is False
   assert "disk" in jr.reconstruct_sources_of_truth()
+
+
+def test_oq1_no_heartbeat_renew_in_orchestrator_source():
+  """OQ-1: orchestrator must not renew job leases on every busy tick."""
+  import inspect
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  assert "_renew_active_claims" not in src
+
+
+def test_handoff_priority_paths_not_in_orchestrator():
+  """B drop: orchestrator must not use handoff_priority_paths pins."""
+  import inspect
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  src = inspect.getsource(qo)
+  assert "handoff_priority_paths" not in src
+
+
+def test_handoff_priority_paths_removed_from_legacy_helpers():
+  """P-D: residual B handoff pins must not remain on processed-path helpers."""
+  import inspect
+  from hpcperfstats.dbload import sync_timedb as st
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as ah
+
+  assert "handoff_priority_paths" not in inspect.signature(
+      st._add_processed_path,
+  ).parameters
+  assert "handoff_priority_paths" not in inspect.signature(
+      st._transition_file_state,
+  ).parameters
+  assert "handoff_priority_paths" not in inspect.signature(
+      ah.cap_pending_stats_with_blocked_retention,
+  ).parameters
+
+
+def test_reap_lua_never_hgetall():
+  """F7: expired inflight recovery must not HGETALL the full hash."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+
+  assert "HGETALL" not in jq._REAP_LUA
+  assert "HSCAN" in jq._REAP_LUA
+
+
+def test_append_to_tar_refilters_under_write_lock():
+  """F13: lexists filter for tar -r must run under file_write_lock."""
+  import inspect
+  from hpcperfstats.dbload import sync_timedb as st
+
+  src = inspect.getsource(st._append_to_tar)
+  lock_idx = src.find("file_write_lock")
+  lexists_idx = src.find("os.path.lexists")
+  assert lock_idx >= 0 and lexists_idx >= 0
+  assert lock_idx < lexists_idx
+
+
+def test_populate_processing_ack_parks_inflight_until_complete(monkeypatch):
+  """F5: claim must park inflight and only clear NX on complete."""
+  from hpcperfstats.dbload.lib import sync_timedb_archive_members_redis as amr
+
+  class _C:
+    def __init__(self):
+      self.inflight = []
+      self.queued_cleared = []
+
+    def rpush(self, key, raw):
+      self.inflight.append((key, raw))
+      return 1
+
+    def lrem(self, key, count, raw):
+      self.inflight = [x for x in self.inflight if x != (key, raw)]
+      return 1
+
+  client = _C()
+  monkeypatch.setattr(amr, "get_archive_members_redis_client", lambda **k: client)
+  cleared = []
+
+  def _clear(day):
+    cleared.append(day)
+
+  monkeypatch.setattr(amr, "clear_populate_queued", _clear)
+  job = {"day_token": "2026-08-01", "canonical": "/a.tar.zst"}
+  raw = '{"day_token":"2026-08-01"}'
+  out = amr._claim_populate_queue_job(job, raw=raw)
+  assert out is job
+  assert client.inflight
+  assert cleared == []
+  amr.complete_populate_queue_job({**job, "_queue_raw": raw})
+  assert cleared == ["2026-08-01"]
+  assert not client.inflight
+
+
+def test_orchestrator_boot_refuses_persistence_reset():
+  """P-C: orchestrator must call ensure_persistence_contract(allow_reset=False)."""
+  import inspect
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  assert "allow_reset=False" in src
+
+
+def test_persistence_reset_refused_when_disallowed(tmp_path):
+  """allow_reset=False must not wipe sidecars on version mismatch."""
+  from hpcperfstats.dbload.lib import sync_timedb_persistence as pers
+  archive = tmp_path / "a"
+  archive.mkdir()
+  # Force mismatch by writing wrong version then refusing reset.
+  pers._save_json_atomic(
+      pers.persistence_contract_path(str(archive)),
+      {"contract_version": -1, "written_at": 0},
+  )
+  assert pers.ensure_persistence_contract(
+      str(archive), allow_reset=False,
+  ) is False
+  assert pers._read_contract_version(str(archive)) == -1

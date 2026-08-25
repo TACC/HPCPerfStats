@@ -154,6 +154,15 @@ def apply_ingest_pool_worker_init(
   set_worker_pool_kind(pool_kind)
   set_worker_diagnostics_registry(registry)
   try:
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        drop_archive_members_redis_client,
+    )
+
+    # F14: drop any inherited process-global Redis client after spawn.
+    drop_archive_members_redis_client()
+  except Exception:
+    pass
+  try:
     from multiprocessing import current_process
 
     current_process()._hpc_worker_diagnostics_registry = registry

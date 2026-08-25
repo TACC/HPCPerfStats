@@ -21,10 +21,12 @@ Attributes:
   _KEY_PREFIX: Attribute.
   _LOCK_PREFIX: Attribute.
   _POPULATE_PREFER_INGEST_HOT_REASONS: Attribute.
+  _POPULATE_PREFER_HOT_LUA: Attribute.
   _POPULATE_PREFER_REASON_RANK: Attribute.
   _POPULATE_QUEUED_PREFIX: Attribute.
   _POPULATE_QUEUED_TTL_SECONDS: Attribute.
   _POPULATE_QUEUE_KEY: Attribute.
+  _POPULATE_INFLIGHT_KEY: Attribute.
   _POPULATE_QUEUE_PREFER_PEEK_N: Attribute.
   _POPULATE_RECOVER_PREFIX: Attribute.
   _POPULATE_RECOVER_TTL_S: Attribute.
@@ -71,6 +73,9 @@ _DAY_SKIP_PREFIX = "%s:archive_day_ingest_skip:v1" % _KEY_PREFIX
 _INVALIDATE_PENDING_PREFIX = "%s:archive_members:invalidate_pending:v1" % _KEY_PREFIX
 _PROGRESS_SUFFIX = ":progress"
 _POPULATE_QUEUE_KEY = "%s:archive_members:populate_queue:v1" % _KEY_PREFIX
+_POPULATE_INFLIGHT_KEY = (
+    "%s:archive_members:populate_inflight:v1" % _KEY_PREFIX
+)
 _POPULATE_QUEUED_PREFIX = "%s:archive_members:populate_queued:v1" % _KEY_PREFIX
 _INGEST_TAR_HOT_PREFIX = "%s:ingest_tar_hot:v1" % _KEY_PREFIX
 _ARCHIVE_APPEND_INFLIGHT_PREFIX = "%s:archive_append_inflight:v1" % _KEY_PREFIX
@@ -89,6 +94,39 @@ _POPULATE_PREFER_REASON_RANK = {
     "populate_wait": 2,
     "populate_enqueue": 1,
 }
+# Atomic prefer-hot: LRANGE peek + rank via ingest_tar_hot GET + LREM + RPUSH inflight.
+# KEYS[1]=queue LIST, KEYS[2]=inflight LIST.
+# ARGV[1]=peek_n, ARGV[2]=ingest_tar_hot key prefix (…:ingest_tar_hot:v1:).
+_POPULATE_PREFER_HOT_LUA = (
+    "-- HPS_POPULATE_PREFER_HOT\n"
+    "local peek = tonumber(ARGV[1]) or 64\n"
+    "local items = redis.call('LRANGE', KEYS[1], -peek, -1)\n"
+    "if #items == 0 then return false end\n"
+    "local fifo_head = items[#items]\n"
+    "local best_rank = 0\n"
+    "local best_raw = false\n"
+    "for i = #items, 1, -1 do\n"
+    "  local raw = items[i]\n"
+    "  local day = string.match(raw, '\"day_token\"%s*:%s*\"([^\"]+)\"')\n"
+    "  if day then\n"
+    "    local reason = redis.call('GET', ARGV[2] .. day) or ''\n"
+    "    local rank = 0\n"
+    "    if reason == 'chunk_prewarm' then rank = 3\n"
+    "    elseif reason == 'populate_wait' then rank = 2\n"
+    "    elseif reason == 'populate_enqueue' then rank = 1 end\n"
+    "    if rank > best_rank then\n"
+    "      best_rank = rank\n"
+    "      best_raw = raw\n"
+    "    end\n"
+    "  end\n"
+    "end\n"
+    "if best_rank <= 0 or best_raw == false then return false end\n"
+    "if best_raw == fifo_head then return false end\n"
+    "local removed = redis.call('LREM', KEYS[1], 1, best_raw)\n"
+    "if removed <= 0 then return false end\n"
+    "redis.call('RPUSH', KEYS[2], best_raw)\n"
+    "return best_raw\n"
+)
 _IDENTITY_DRIFT_LOG_INTERVAL_S = 120.0
 _STALE_INCOMPLETE_LOG_INTERVAL_S = 60.0
 # Cluster-wide WARN gate (spawn pool cannot share process-local state).
@@ -722,7 +760,14 @@ def get_archive_members_redis_client(*, required: bool = True) -> Any:
         ) from exc
       return None
     try:
-      client = redis.from_url(url, **redis_client_connection_kwargs())
+      kwargs = redis_client_connection_kwargs()
+      max_conn = int(kwargs.pop("max_connections", _REDIS_MAX_CONNECTIONS))
+      pool = redis.ConnectionPool.from_url(
+          url,
+          max_connections=max_conn,
+          **kwargs,
+      )
+      client = redis.Redis(connection_pool=pool)
       client.ping()
     except Exception as exc:
       if required:
@@ -4201,112 +4246,187 @@ def _try_pop_populate_prefer_ingest_hot(
   peek_n: Any | None = None,
 ) -> Any:
   """
-  Pop highest-rank ingest-hot job within a bounded FIFO peek, or None.
-  
-  LPUSH + BRPOP is oldest-first. Day-close cold jobs share this queue with
-  chunk prewarm; prefer ``chunk_prewarm`` / ``populate_wait`` over bare
-  ``populate_enqueue``, and any ingest-hot over days with no hot key.
-  
+  Atomically pop highest-rank ingest-hot job within a bounded FIFO peek.
+
+  Uses one Lua script (LRANGE + hot-key rank + LREM + RPUSH inflight) so two
+  workers cannot race on the same preferred payload. Returns ``None`` when the
+  preferred job is already the FIFO head (plain BRPOP claims it) or no hot
+  jobs exist in the peek window.
+
   Args:
     client (Any): Live handle (pool, client, or connection).
     peek_n (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: Job dict already parked on inflight, or ``None``.
+
   Examples:
     >>> _try_pop_populate_prefer_ingest_hot(None, None)  # doctest: +SKIP
   """
   peek_n = max(1, int(peek_n if peek_n is not None else _POPULATE_QUEUE_PREFER_PEEK_N))
-  lrange = getattr(client, "lrange", None)
-  lrem = getattr(client, "lrem", None)
-  if not callable(lrange) or not callable(lrem):
+  eval_fn = getattr(client, "eval", None)
+  if not callable(eval_fn):
     return None
-  # LPUSH list: index 0 = newest, -1 = oldest (next BRPOP). LRANGE -n -1 is
-  # left-to-right within that window (newer … older).
-  items = list(lrange(_POPULATE_QUEUE_KEY, -peek_n, -1) or ())
-  if not items:
+  try:
+    raw = eval_fn(
+        _POPULATE_PREFER_HOT_LUA,
+        2,
+        _POPULATE_QUEUE_KEY,
+        _POPULATE_INFLIGHT_KEY,
+        peek_n,
+        "%s:" % _INGEST_TAR_HOT_PREFIX,
+    )
+  except Exception:
     return None
-  fifo_head_raw = items[-1]
-  best_rank = 0
-  best_job = None
-  best_raw = None
-  # Oldest-first so equal ranks keep FIFO order.
-  for raw in reversed(items):
-    job = _parse_populate_queue_job(raw)
-    if job is None:
-      continue
-    day = str(job.get("day_token") or "")
-    rank = _populate_prefer_reason_rank(day)
-    if rank <= 0:
-      continue
-    if rank > best_rank:
-      best_rank = rank
-      best_job = job
-      best_raw = raw
-  if best_job is None or best_raw is None or best_rank <= 0:
+  if raw in (None, False, b""):
     return None
-  # Preferred job is already the FIFO head — let BRPOP take it.
-  if best_raw == fifo_head_raw:
+  if isinstance(raw, bytes):
+    raw = raw.decode()
+  job = _parse_populate_queue_job(raw)
+  if not isinstance(job, dict):
     return None
-  removed = int(lrem(_POPULATE_QUEUE_KEY, 1, best_raw) or 0)
-  if removed <= 0:
-    return None
-  return best_job
+  job = dict(job)
+  job["_queue_raw"] = raw
+  job["_inflight_parked"] = True
+  return job
 
 
-def _claim_populate_queue_job(job: Any) -> Any:
+def _claim_populate_queue_job(job: Any, *, raw: Any = None) -> Any:
   """
-  Clear populate_queued NX when a job is claimed from the queue.
-  
+  Record a claimed populate job on the inflight LIST (processing ACK).
+
+  Does **not** clear ``populate_queued`` NX here — that happens only after a
+  successful scan via :func:`complete_populate_queue_job` so a crash after
+  BRPOP cannot drop the day forever without a redelivery path.
+
   Args:
-    job (Any): Job record (Django ``job_data`` or job-like mapping).
-  
+    job (Any): Parsed job dict.
+    raw (Any): Original queue payload to park on the inflight LIST.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: The job mapping (or unchanged input).
+
   Examples:
-    >>> _claim_populate_queue_job(None)  # doctest: +SKIP
+    >>> _claim_populate_queue_job({"day_token": "x"}, raw="{}")  # doctest: +SKIP
   """
   if not isinstance(job, dict):
     return job
+  if job.get("_inflight_parked"):
+    return job
+  client = get_archive_members_redis_client(required=False)
+  if client is not None and raw is not None:
+    try:
+      client.rpush(_POPULATE_INFLIGHT_KEY, raw)
+    except Exception:
+      pass
+  return job
+
+
+def complete_populate_queue_job(job: Any) -> None:
+  """
+  ACK a finished populate job: clear NX + remove one inflight copy.
+
+  Args:
+    job (Any): Job dict with ``day_token`` / optional ``raw``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> complete_populate_queue_job({"day_token": "x"})  # doctest: +SKIP
+  """
+  if not isinstance(job, dict):
+    return
   day_token = str(job.get("day_token") or "")
   if day_token:
     clear_populate_queued(day_token)
-  return job
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return
+  raw = job.get("_queue_raw")
+  if raw is not None:
+    try:
+      client.lrem(_POPULATE_INFLIGHT_KEY, 1, raw)
+    except Exception:
+      pass
+
+
+def requeue_populate_queue_job(job: Any) -> None:
+  """
+  Return a failed/crashed populate job to the work LIST for redelivery.
+
+  Args:
+    job (Any): Job dict previously claimed.
+
+  Returns:
+    None
+
+  Examples:
+    >>> requeue_populate_queue_job({"day_token": "x"})  # doctest: +SKIP
+  """
+  if not isinstance(job, dict):
+    return
+  client = get_archive_members_redis_client(required=False)
+  if client is None:
+    return
+  raw = job.get("_queue_raw")
+  if raw is None:
+    # Rebuild a minimal payload so the day can be retried.
+    day_token = str(job.get("day_token") or "")
+    canonical = str(job.get("canonical") or "")
+    if not day_token:
+      return
+    import json
+    raw = json.dumps({
+        "day_token": day_token,
+        "canonical": canonical,
+    })
+  try:
+    client.lrem(_POPULATE_INFLIGHT_KEY, 1, raw)
+    client.lpush(_POPULATE_QUEUE_KEY, raw)
+  except Exception:
+    pass
 
 
 def archive_members_populate_queue_brpop(*, timeout_s: float = 1.0) -> Any:
   """
   Blocking pop for populate-pool worker; returns job dict or None.
-  
-  Prefers ingest-hot calendar days (``chunk_prewarm`` / ``populate_wait`` over
-  ``populate_enqueue``) within a bounded peek so day-close cold populate cannot
-  indefinitely starve July chunk prewarm on the shared FIFO queue.
-  
-  Clears ``populate_queued`` NX on successful claim so a dead populate worker
-  cannot strand re-enqueue for the NX TTL (~1h).
-  
+
+  Prefers ingest-hot calendar days within a bounded peek. Parks the raw
+  payload on the inflight LIST before returning so a worker crash can be
+  redelivered (processing ACK). Does not clear ``populate_queued`` until
+  :func:`complete_populate_queue_job`.
+
   Args:
-    timeout_s (float): Floating-point value for timeout s.
-  
+    timeout_s (float): BRPOP timeout seconds.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: Job dict or ``None``.
+
   Examples:
-    >>> archive_members_populate_queue_brpop(0)  # doctest: +SKIP
+    >>> archive_members_populate_queue_brpop(timeout_s=0.1)  # doctest: +SKIP
   """
   client = get_archive_members_redis_client(required=True)
   preferred = _try_pop_populate_prefer_ingest_hot(client)
   if preferred is not None:
-    return _claim_populate_queue_job(preferred)
+    import json
+    raw = preferred.get("_queue_raw")
+    if raw is None:
+      raw = json.dumps(preferred)
+      preferred = dict(preferred)
+      preferred["_queue_raw"] = raw
+    return _claim_populate_queue_job(preferred, raw=raw)
   timeout_s = max(0.1, float(timeout_s))
   result = client.brpop(_POPULATE_QUEUE_KEY, timeout=timeout_s)
   if not result:
     return None
   _key, raw = result
   del _key
-  return _claim_populate_queue_job(_parse_populate_queue_job(raw))
+  job = _parse_populate_queue_job(raw)
+  if isinstance(job, dict):
+    job = dict(job)
+    job["_queue_raw"] = raw
+  return _claim_populate_queue_job(job, raw=raw)
 
 
 def _ensure_populate_pool_running_for_enqueue() -> Any:

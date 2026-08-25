@@ -15,7 +15,7 @@ Production coordinator for `sync_timedb` is **`run_sync_timedb_queue_orchestrato
 | Law | Detail |
 |-----|--------|
 | One process / `archive_dir` | Exclusive flock on `{archive_dir}/.sync_timedb_orchestrator.fnctl.lock` |
-| Job kinds | Redis `job:v1`: ingest ZSET (hot/catchup ranges), append/discover/day_close LISTs, `SET NX EX` leases with **short TTL + coordinator renew**, in-flight HASH, path-only lease identity + payload fingerprint |
+| Job kinds | Redis `job:v1`: ingest ZSET (hot/catchup ranges), append/discover/day_close LISTs, `SET NX EX` leases with **OQ-1 EX = per-file timeout max (default 86400) and no coordinator heartbeat renew**, in-flight HASH, path-only lease identity + payload fingerprint; dead-owner steal must requeue inflight |
 | Atomic claim | Lua claim (ranged pop + SET NX + in-flight) / LIST claim; never `ZREM`/`LPOP` then lease. Fill paths must not call `pop_ingest_job_ranged` / `pop_list_job` |
 | Reaper / steal | Tick `reap_expired_inflight`; boot `steal_dead_owner_leases` (SCAN, never KEYS); host+boot scoped owner tokens |
 | Streaming submit | Discover → `ZADD` as paths arrive; never wait for full find to finish before first enqueue; stop at ingest queue cap |

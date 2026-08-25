@@ -353,14 +353,14 @@ def _tar_readable_via_decompress_tar_pipe(
   p_decomp = subprocess.Popen(
       decompress_cmd,
       stdout=subprocess.PIPE,
-      stderr=subprocess.PIPE,
+      stderr=subprocess.DEVNULL,
   )
   try:
     p_tar = subprocess.Popen(
         [tar_bin, "tf", "-"],
         stdin=p_decomp.stdout,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         text=True,
     )
   except Exception:

@@ -1105,18 +1105,16 @@ def cap_pending_stats_with_blocked_retention(
   *,
   max_size: int,
   blocked_paths: Any | None = None,
-  handoff_priority_paths: Any | None = None,
   log_fn: Any = log_print,
   newest_first: bool = False,
 ) -> Any:
   """
-  Cap pending while preserving blocked head and handoff priority paths.
+  Cap pending while preserving blocked head paths.
   
   Args:
     paths (Any): Iterable of filesystem paths as strings.
     max_size (int): Integer value for max size.
     blocked_paths (Any | None): One of ``Any``, ``None``.
-    handoff_priority_paths (Any | None): One of ``Any``, ``None``.
     log_fn (Any): Callable invoked by this helper.
     newest_first (bool): Boolean flag for newest first.
   
@@ -1137,8 +1135,7 @@ def cap_pending_stats_with_blocked_retention(
         blocked,
         newest_first=True,
     )
-  handoff = list(handoff_priority_paths or ())
-  if not blocked and not handoff:
+  if not blocked:
     return cap_pending_stats_file_list(
         merged,
         max_size,
@@ -1147,21 +1144,12 @@ def cap_pending_stats_with_blocked_retention(
     )
   reserved = list(blocked)
   reserved_set = set(reserved)
-  priority_n = len(handoff)
-  tail_budget = max(0, max_size - priority_n - len(reserved))
-  head = [path for path in handoff if path in merged or path in set(handoff)]
-  if len(head) < priority_n:
-    for path in merged:
-      if path in head or path in reserved_set:
-        continue
-      head.append(path)
-      if len(head) >= priority_n:
-        break
+  tail_budget = max(0, max_size - len(reserved))
   tail_paths = [
       path for path in merged
-      if path not in reserved_set and path not in set(head)
+      if path not in reserved_set
   ]
-  capped = reserved + head + tail_paths[:tail_budget]
+  capped = reserved + tail_paths[:tail_budget]
   if len(capped) > max_size:
     capped = capped[:max_size]
   if len(merged) > len(capped) and log_fn is not None:

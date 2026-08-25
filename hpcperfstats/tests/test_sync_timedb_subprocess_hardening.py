@@ -61,12 +61,12 @@ def test_pax_convert_verifies_tar_before_replace():
   assert tf_idx < replace_idx
 
 
-def test_decompress_stderr_is_captured_not_devnull():
-  """A5: decompress helpers must not send zstd stderr to DEVNULL."""
+def test_decompress_stderr_is_devnull_to_avoid_pipe_deadlock():
+  """F11/A5: zstd|tar pipe must not leave stderr=PIPE undrained (deadlock)."""
   pipe_src = inspect.getsource(zstd_cli._tar_readable_via_decompress_tar_pipe)
-  stdout_src = inspect.getsource(zstd_cli._decompress_stdout)
-  assert "DEVNULL" not in pipe_src.split("stderr")[1][:80]
-  assert "stderr=subprocess.PIPE" in pipe_src or "stderr=subprocess.PIPE" in stdout_src
+  assert "stderr=subprocess.DEVNULL" in pipe_src
+  # Prefer DEVNULL over undrained PIPE on the decompress leg.
+  assert pipe_src.count("stderr=subprocess.PIPE") == 0
 
 
 def test_tar_append_subprocess_has_timeout():

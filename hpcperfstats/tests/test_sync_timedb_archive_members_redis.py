@@ -210,15 +210,89 @@ class FakeRedis:
   def pipeline(self):
     return _FakePipeline(self)
 
-  def eval(self, script, _numkeys, key, *argv):
+  def rpush(self, key, value):
     with self._lock:
-      if not argv:
+      self._lists.setdefault(key, []).append(value)
+      return len(self._lists[key])
+
+  def eval(self, script, numkeys, *args):
+    with self._lock:
+      if "HPS_POPULATE_PREFER_HOT" in script:
+        keys = list(args[:numkeys])
+        argv = list(args[numkeys:])
+        queue, inflight = keys[0], keys[1]
+        peek = int(argv[0]) if argv else 64
+        hot_prefix = str(argv[1]) if len(argv) > 1 else ""
+        bucket = list(self._lists.get(queue) or ())
+        if not bucket:
+          return False
+        n = len(bucket)
+        start = max(0, n - peek)
+        items = bucket[start:]
+        fifo_head = items[-1]
+        best_rank = 0
+        best_raw = None
+        for raw in reversed(items):
+          text = raw.decode() if isinstance(raw, bytes) else str(raw)
+          day = None
+          marker = '"day_token"'
+          idx = text.find(marker)
+          if idx >= 0:
+            rest = text[idx + len(marker) :]
+            colon = rest.find(":")
+            if colon >= 0:
+              rest = rest[colon + 1 :].lstrip()
+              if rest.startswith('"'):
+                end = rest.find('"', 1)
+                if end > 0:
+                  day = rest[1:end]
+          if not day:
+            continue
+          reason = self._kv.get(hot_prefix + day) or ""
+          if isinstance(reason, bytes):
+            reason = reason.decode()
+          rank = {
+              "chunk_prewarm": 3,
+              "populate_wait": 2,
+              "populate_enqueue": 1,
+          }.get(str(reason), 0)
+          if rank > best_rank:
+            best_rank = rank
+            best_raw = raw if not isinstance(raw, bytes) else text
+            if isinstance(raw, bytes) and not isinstance(best_raw, bytes):
+              # Keep original list element for LREM identity.
+              best_raw = raw
+        if best_rank <= 0 or best_raw is None:
+          return False
+        if best_raw == fifo_head:
+          return False
+        # LREM 1
+        removed = 0
+        kept = []
+        for item in bucket:
+          if removed < 1 and item == best_raw:
+            removed += 1
+            continue
+          kept.append(item)
+        if removed <= 0:
+          return False
+        if kept:
+          self._lists[queue] = kept
+        else:
+          self._lists.pop(queue, None)
+        self._lists.setdefault(inflight, []).append(best_raw)
+        return best_raw if not isinstance(best_raw, bytes) else best_raw.decode()
+      # Legacy compare-and-del / renew for populate lock scripts.
+      if not args:
+        return 0
+      key = args[0] if numkeys >= 1 else None
+      argv = args[numkeys:]
+      if not argv or key is None:
         return 0
       token = argv[0]
       if self._kv.get(key) != token:
         return 0
       if "expire" in script and len(argv) >= 2:
-        # Lease renew: keep value, pretend EXPIRE succeeded.
         return 1
       self._kv.pop(key, None)
       return 1
@@ -2346,11 +2420,12 @@ def test_populate_queue_brpop_prefers_ingest_hot_over_cold_fifo(
   assert job2.get("day_token") == "2026-06-02"
 
 
-def test_populate_queued_cleared_on_brpop(_redis_test_env, tmp_path):
-  """BRPOP must clear populate_queued NX so a dead worker can re-enqueue."""
+def test_populate_queued_cleared_on_complete_not_brpop(_redis_test_env, tmp_path):
+  """F5: NX stays until complete_populate_queue_job, not BRPOP claim."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
       _populate_queued_key,
       archive_members_populate_queue_brpop,
+      complete_populate_queue_job,
       enqueue_archive_members_populate,
       get_archive_members_redis_client,
   )
@@ -2363,9 +2438,37 @@ def test_populate_queued_cleared_on_brpop(_redis_test_env, tmp_path):
   job = archive_members_populate_queue_brpop(timeout_s=0.2)
   assert job is not None
   assert job.get("day_token") == day
+  assert client.exists(_populate_queued_key(day))
+  complete_populate_queue_job(job)
   assert not client.exists(_populate_queued_key(day))
-  # Re-enqueue must succeed after claim (NX no longer held).
+  # Re-enqueue must succeed after complete (NX no longer held).
   assert enqueue_archive_members_populate(tar, day) is True
+
+
+def test_prefer_hot_lua_parks_inflight_atomically(_redis_test_env, tmp_path):
+  """F6: prefer-hot path must LREM+RPUSH inflight in one eval, not LRANGE+LREM."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _POPULATE_INFLIGHT_KEY,
+      _POPULATE_PREFER_HOT_LUA,
+      archive_members_populate_queue_brpop,
+      enqueue_archive_members_populate,
+      get_archive_members_redis_client,
+      set_ingest_tar_hot,
+  )
+
+  june_tar = str(tmp_path / "2026-06-02.tar")
+  july_tar = str(tmp_path / "2026-07-17.tar")
+  assert enqueue_archive_members_populate(june_tar, "2026-06-02")
+  assert enqueue_archive_members_populate(july_tar, "2026-07-17")
+  set_ingest_tar_hot("2026-07-17", reason="chunk_prewarm")
+  client = get_archive_members_redis_client(required=True)
+  assert "HPS_POPULATE_PREFER_HOT" in _POPULATE_PREFER_HOT_LUA
+  job = archive_members_populate_queue_brpop(timeout_s=0.2)
+  assert job is not None
+  assert job.get("day_token") == "2026-07-17"
+  assert job.get("_inflight_parked") is True
+  inflight = client.lrange(_POPULATE_INFLIGHT_KEY, 0, -1)
+  assert any("2026-07-17" in str(item) for item in inflight)
 
 
 def test_idle_pool_recover_skip_reason_for_registry_redis_wait():

@@ -874,6 +874,8 @@ class FakeRedis:
         return self._lua_claim_zset(keys, argv)
       if "HPS_CLAIM_LIST" in script:
         return self._lua_claim_list(keys, argv)
+      if "HPS_STEAL_REQUEUE" in script:
+        return self._lua_steal_requeue(keys, argv)
       if "HPS_ACK" in script:
         return self._lua_ack(keys, argv)
       if "HPS_REQUEUE" in script:
@@ -980,8 +982,46 @@ class FakeRedis:
             deadline, owner,
         )
         return member
-      self._lists.setdefault(work, []).append(member)
+      self._lists.setdefault(work, []).insert(0, member)
     return False
+
+  def _lua_steal_requeue(self, keys, argv):
+    """
+    Emulate dead-owner steal that clears inflight and restores the job.
+
+    Args:
+      keys (list): ``[lease, inflight, work]``.
+      argv (list): ``[identity, expected_owner, mode, score, penalty]``.
+
+    Returns:
+      int: ``1`` when stolen and requeued.
+
+    Examples:
+      >>> FakeRedis()._lua_steal_requeue(
+      ...   ["l", "i", "w"], ["id", "tok", "l", "0", "1"])
+      0
+    """
+    lease, inflight, work = keys[:3]
+    identity, expected, mode, score_s, penalty_s = argv[:5]
+    if self._kv.get(lease) != expected:
+      return 0
+    self._kv.pop(lease, None)
+    self._ttl.pop(lease, None)
+    score = float(score_s or 0)
+    current = (self._hashes.get(inflight) or {}).get(identity)
+    if current is not None:
+      parts = str(current).split("|")
+      if len(parts) >= 3 and parts[2] != "":
+        try:
+          score = float(parts[2])
+        except ValueError:
+          pass
+      self._hdel_locked(inflight, identity)
+    if mode == "z":
+      self._zadd_locked(work, {identity: score + float(penalty_s or 0)})
+    else:
+      self._lists.setdefault(work, []).append(identity)
+    return 1
 
   def _lua_ack(self, keys, argv):
     """
@@ -1008,8 +1048,9 @@ class FakeRedis:
     if self._kv.get(lease) == owner:
       self._kv.pop(lease, None)
       self._ttl.pop(lease, None)
-    self._hashes.pop(payload, None)
-    self._srem_locked(pending, identity)
+    if owned == 1:
+      self._hashes.pop(payload, None)
+      self._srem_locked(pending, identity)
     return owned
 
   def _lua_requeue(self, keys, argv):
@@ -1073,23 +1114,27 @@ class FakeRedis:
 
   def _lua_reap(self, keys, argv):
     """
-    Emulate expired in-flight recovery.
+    Emulate expired in-flight recovery via HSCAN pages.
 
     Args:
       keys (list): ``[inflight, work]``.
-      argv (list): ``[cutoff, limit, mode, lease_prefix, penalty]``.
+      argv (list): ``[cutoff, limit, mode, lease_prefix, penalty, cursor, count]``.
 
     Returns:
-      list: Recovered identities.
+      list: ``[next_cursor, ...recovered_identities]``.
 
     Examples:
-      >>> FakeRedis()._lua_reap(["i", "w"], ["0", "1", "z", "L:", "1"])
-      []
+      >>> FakeRedis()._lua_reap(["i", "w"], ["0", "1", "z", "L:", "1", "0", "64"])
+      ['0']
     """
     inflight, work = keys[:2]
     cutoff, limit, mode, prefix, penalty = argv[:5]
-    out: List[str] = []
-    for identity, value in list((self._hashes.get(inflight) or {}).items()):
+    cursor = argv[5] if len(argv) > 5 else "0"
+    count = int(argv[6]) if len(argv) > 6 else 64
+    del cursor  # FakeRedis scans the whole hash in one page.
+    items = list((self._hashes.get(inflight) or {}).items())
+    out: List[str] = ["0"]
+    for identity, value in items[: max(1, count)]:
       try:
         deadline = float(value.split("|", 1)[0])
       except (IndexError, ValueError):
@@ -1109,7 +1154,7 @@ class FakeRedis:
       else:
         self._lists.setdefault(work, []).append(identity)
       out.append(identity)
-      if len(out) >= int(limit):
+      if (len(out) - 1) >= int(limit):
         break
     return out
 

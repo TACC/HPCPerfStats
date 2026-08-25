@@ -692,3 +692,70 @@ def test_run_once_exits_with_future_dated_file_present():
   )
   assert lo <= score <= hi
 
+
+def test_oq1_lease_no_heartbeat_renew_in_orchestrator_loop():
+  """OQ-1 / F2: main loop must not renew job leases each tick."""
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  assert "_renew_active_claims" not in src
+
+
+def test_missing_path_requeues_ingest_not_ack(monkeypatch, tmp_path):
+  """F4: missing raw must requeue, never terminal-ack."""
+  client = FakeRedis()
+  identity = "/no/such/raw/file"
+  claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity=identity,
+      owner_token="n:h:b:1",
+      deadline=1060.0,
+      score=5.0,
+  )
+  calls = {"n": 0}
+
+  def _claim(*a, **k):
+    calls["n"] += 1
+    return claim if calls["n"] == 1 else None
+
+  requeued = []
+
+  def _requeue(*a, **k):
+    requeued.append(k.get("identity") or identity)
+    return True
+
+  acked = []
+
+  def _ack(*a, **k):
+    acked.append(k.get("identity"))
+    return True
+
+  monkeypatch.setattr(jq, "requeue_job", _requeue)
+  monkeypatch.setattr(jq, "ack_job", _ack)
+  monkeypatch.setattr(jq, "claim_ingest_job", _claim)
+  monkeypatch.setattr(os.path, "isfile", lambda p: False)
+
+  class _Pool:
+    def apply_async(self, *a, **k):
+      raise AssertionError("must not submit missing path")
+
+  qo._fill_ingest_band(
+      client,
+      band="hot",
+      cap=1,
+      inflight={},
+      claims={},
+      submitted={},
+      ingest_pool=_Pool(),
+      manager_lock=None,
+      band_cap=1,
+      tgz_archive_dir=str(tmp_path),
+  )
+  assert requeued
+  assert not acked
+
+
+def test_retry_or_dead_letter_claim_none_not_silent_requeued():
+  """F15: missing claim must not report success as requeued."""
+  assert qo._retry_or_dead_letter(
+      None, kind="ingest", claim=None, archive_data_dir="/a", reason="x",
+  ) == "dropped_no_claim"
+
