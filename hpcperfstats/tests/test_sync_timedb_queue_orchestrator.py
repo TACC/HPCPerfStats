@@ -541,6 +541,89 @@ def test_orchestrator_starts_pools_before_boot_discover_submit():
   assert "_boot_stream_discover(" not in before_submit
 
 
+def test_orchestrator_boot_discover_submitted_log_after_submit():
+  """Post-boot silence: 'submitted' must not log before _submit returns."""
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  i_sub = src.find("_submit_background_discover(")
+  i_log = src.find("boot discover submitted")
+  assert i_sub > 0 and i_log > i_sub
+
+
+def test_submit_background_discover_does_not_deadlock_on_lock():
+  """Nested Lock+_discover_executor must not hang MainThread (hpcperfstats03)."""
+  import threading
+
+  qo._shutdown_background_discover()
+  client = FakeRedis()
+  done = {"ok": False}
+
+  def _run() -> None:
+    qo._submit_background_discover(
+        client,
+        "/tmp/archive-does-not-need-to-exist",
+        tgz_archive_dir="/tmp/daily",
+        log_fn=None,
+        mtime_days=None,
+        startdate=None,
+        enddate=None,
+    )
+    done["ok"] = True
+
+  thr = threading.Thread(target=_run, name="submit-deadlock-probe")
+  thr.start()
+  thr.join(timeout=5.0)
+  assert not thr.is_alive(), "submit deadlocked on nested discover_bg Lock"
+  assert done["ok"] is True
+  assert qo._discover_bg_future is not None
+  qo._shutdown_background_discover()
+
+
+def test_fill_append_slots_missing_paths_ack_and_bounded(monkeypatch, tmp_path):
+  """Missing append identities ACK-drop with skip budget (not unbounded requeue)."""
+  client = FakeRedis()
+  claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_APPEND,
+      identity="/no/such/raw/file",
+      owner_token="n:h:b:1",
+      deadline=1060.0,
+      score=0.0,
+  )
+  calls = {"claim": 0, "ack": 0, "requeue": 0}
+
+  def _claim(*a, **k):
+    calls["claim"] += 1
+    return claim
+
+  def _ack(*a, **k):
+    calls["ack"] += 1
+    return True
+
+  def _requeue(*a, **k):
+    calls["requeue"] += 1
+    return True
+
+  monkeypatch.setattr(jq, "claim_list_job", _claim)
+  monkeypatch.setattr(jq, "ack_job", _ack)
+  monkeypatch.setattr(jq, "requeue_job", _requeue)
+  monkeypatch.setattr(os.path, "isfile", lambda p: False)
+
+  class _Pool:
+    def apply_async(self, *a, **k):
+      raise AssertionError("must not submit missing path")
+
+  qo._fill_append_slots(
+      client,
+      cap=8,
+      inflight={},
+      claims={},
+      archive_pool=_Pool(),
+      tgz_archive_dir=str(tmp_path),
+  )
+  assert calls["claim"] <= qo.APPEND_FILL_SKIP_BUDGET
+  assert calls["ack"] >= 1
+  assert calls["requeue"] == 0
+
+
 def test_boot_stream_discover_uses_discover_append_complete():
   """Discover skip-complete must use discover_append_is_complete (no sealed wait)."""
   src = inspect.getsource(qo._boot_stream_discover)

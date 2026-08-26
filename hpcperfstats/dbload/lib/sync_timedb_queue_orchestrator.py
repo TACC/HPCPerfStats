@@ -17,6 +17,8 @@ Attributes:
     still-unready worker is treated as dead.
   INGEST_FILL_SKIP_BUDGET: Max unsubmittable ingest claims processed per fill
     tick before returning to the main loop.
+  APPEND_FILL_SKIP_BUDGET: Max impossible append claims (missing path /
+    unresolved daily tar) ACK-dropped per fill tick before yielding.
   SHUTDOWN_DRAIN_TIMEOUT_S: Bounded wall clock for the cooperative drain.
   _IDLE_RECONSTRUCT_MIN_INTERVAL_S: Min seconds between idle reconstruct passes.
   _SHUTDOWN_REQUESTED: Event set by ``SIGTERM``/``SIGINT`` handlers.
@@ -80,6 +82,9 @@ SHUTDOWN_DRAIN_TIMEOUT_S = 120.0
 # Per-tick cap on fill continues (missing path, reband, fingerprint mismatch)
 # so MainThread cannot busy-spin a huge NFS-hole / reband storm.
 INGEST_FILL_SKIP_BUDGET = 8
+# Same bound for append fill: missing/unresolved identities are ACK-dropped
+# (not requeued) so a deep LIST of gone paths cannot livelock MainThread.
+APPEND_FILL_SKIP_BUDGET = 8
 _TRANSIENT_DAY_CLOSE_OUTCOMES = frozenset({"deferred_age", "yielded", "skipped"})
 # Slack over the per-file budget: a worker that is merely slow (contended DB,
 # large file) must not be abandoned before the ingest path itself gives up.
@@ -641,11 +646,20 @@ def _submit_background_discover(
     >>> callable(_submit_background_discover)
     True
   """
-  global _discover_bg_future
+  global _discover_bg_future, _discover_bg_executor
+  # Create executor + submit under one Lock hold. Do NOT call the locked
+  # discover-executor helper from here — that helper also takes
+  # ``_discover_bg_lock`` (non-reentrant), which deadlocks MainThread forever
+  # (hpcperfstats03 2026-08-26: py-spy idle under submit on nested Lock).
   with _discover_bg_lock:
     if _discover_bg_future is not None and not _discover_bg_future.done():
       return
-    _discover_bg_future = _discover_executor().submit(
+    if _discover_bg_executor is None:
+      _discover_bg_executor = ThreadPoolExecutor(
+          max_workers=1,
+          thread_name_prefix="discover-bg",
+      )
+    _discover_bg_future = _discover_bg_executor.submit(
         _run_background_discover,
         client,
         archive_dir,
@@ -1842,6 +1856,10 @@ def _fill_append_slots(
   """
   Claim append LIST jobs and submit grouped ``archive_stats_files`` tasks.
 
+  Missing paths and unresolved daily-tar identities are ``ack_job``-dropped
+  (impossible work), bounded by ``APPEND_FILL_SKIP_BUDGET`` per tick. Inflight /
+  other-tar collisions still ``requeue`` + ``break`` (correct queue semantics).
+
   Args:
     client (Any): Redis client.
     cap (int): Max concurrent append jobs.
@@ -1870,11 +1888,14 @@ def _fill_append_slots(
     0
   """
   submitted = 0
+  skipped = 0
   batch_size = max(1, int(cfg.get_sync_timedb_tar_append_batch_size()))
   while len(inflight) < cap:
     batch_claims: list[Any] = []
     tar_path = ""
     while len(batch_claims) < batch_size:
+      if skipped >= APPEND_FILL_SKIP_BUDGET:
+        break
       claim = jq.claim_list_job(
           client,
           kind=jq.JOB_KIND_APPEND,
@@ -1884,21 +1905,23 @@ def _fill_append_slots(
         break
       path = claim.identity
       if not path or not os.path.isfile(path):
-        jq.requeue_job(
+        jq.ack_job(
             client,
             kind=jq.JOB_KIND_APPEND,
             identity=path,
             owner_token=claim.owner_token,
         )
+        skipped += 1
         continue
       this_tar = daily_tar_path_for_stats_path(path, tgz_archive_dir)
       if not this_tar:
-        jq.requeue_job(
+        jq.ack_job(
             client,
             kind=jq.JOB_KIND_APPEND,
             identity=path,
             owner_token=claim.owner_token,
         )
+        skipped += 1
         continue
       if this_tar in inflight:
         jq.requeue_job(
@@ -1919,6 +1942,8 @@ def _fill_append_slots(
         )
         break
       batch_claims.append(claim)
+    if skipped >= APPEND_FILL_SKIP_BUDGET and not batch_claims:
+      break
     if not batch_claims or not tar_path:
       break
     paths = [job.identity for job in batch_claims]
@@ -2501,7 +2526,6 @@ def run_sync_timedb_queue_orchestrator(
           % type(exc).__name__,
           log_fn=log_fn,
       )
-    _log("queue_orchestrator boot discover submitted", log_fn=log_fn)
     _submit_background_discover(
         client,
         directory,
@@ -2511,6 +2535,9 @@ def run_sync_timedb_queue_orchestrator(
         startdate=startdate,
         enddate=enddate,
     )
+    # Log only after submit returns — a pre-submit line lied when MainThread
+    # deadlocked inside nested ``_discover_bg_lock`` acquire (hpcperfstats03).
+    _log("queue_orchestrator boot discover submitted", log_fn=log_fn)
     try:
       with ThreadPoolExecutor(
           max_workers=day_close_workers,

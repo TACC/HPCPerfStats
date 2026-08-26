@@ -71,6 +71,7 @@ If the failure reveals a **recurring** gap (not a one-off typo), also add a one-
 - **`rabbitmqctl list_alarms`** — **not found** / exit **64** on RabbitMQ **4.3.4** (hpcperfstats01 2026-08-25); **`&&`** then skips queues/cgroup/mnesia. Use **`Alarms`** from **`rabbitmqctl status`**; do not chain fallible `list_alarms` (see **Anti-pattern — `rabbitmqctl list_alarms`** in `compose-operator-terminal-commands.mdc`).
 - Host mega-block nesting `su -c 'python && sh -lc && python'` plus host logs — shell stuck at `>` continuation; no census/fingerprint/logs (hpcperfstats04 2026-08-12); use **four separate** host-side blocks (see **Podman-compose sites** mega-block row in `compose-operator-terminal-commands.mdc`).
 - Escaped-grep mega-block with `\"` inside double-quoted host `bash -lc` / nested `grep -E \"…\"` — **`syntax error near '('`** or empty paste (hpcperfstats03 2026-08-21 skip-only append thrash census); use **separate** host `grep -cE` / `grep -E … | tail` on a teed full log (no mega-block of escaped quotes) — see **Podman-compose sites** escaped-grep mega-block row in `compose-operator-terminal-commands.mdc`.
+- Nested `sh -lc` + `awk` `/[main]/` + `for … done` for sync_timedb MainThread census — **`syntax error near unexpected token \`done'`** (hpcperfstats03 2026-08-26); use single `su … python3 -c` subprocess census (see **Podman-compose sites** row in `compose-operator-terminal-commands.mdc`).
 
 ## Same-task checklist
 
