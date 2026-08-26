@@ -250,6 +250,134 @@ def append_is_complete(
   return not needs
 
 
+def discover_raw_needs_tar_append(
+  stats_path: str,
+  tgz_archive_dir: str,
+  *,
+  first_ts: Any | None = None,
+  enqueue_populate_on_cold: bool = True,
+) -> bool:
+  """
+  Discover/reconstruct skip-complete probe that never waits on sealed populate.
+
+  Open mutable ``.tar`` and warm Redis ``HGET`` may still skip enqueue. Cold
+  Redis (or Redis disabled with sealed-only day) returns ``True`` so discover
+  enqueues append (at-least-once). Workers keep
+  :func:`raw_stats_path_needs_tar_append` / ``populate_and_wait``.
+
+  Args:
+    stats_path (str): Closed raw stats path.
+    tgz_archive_dir (str): Daily archive directory.
+    first_ts (Any | None): Optional first timestamp hint for day derive.
+    enqueue_populate_on_cold (bool): When True and Redis L2 is cold with a
+      populate source, fire-and-forget enqueue populate-pool work.
+
+  Returns:
+    bool: True when discover should enqueue an append job for ``stats_path``.
+
+  Examples:
+    >>> discover_raw_needs_tar_append("/nope", "/daily")
+    False
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      _daily_archive_members_cache_key,
+      _derive_stats_path_date,
+      _lookup_daily_archive_members_cache,
+      daily_archive_populate_source_exists,
+      daily_compressed_path_for_date,
+      daily_tar_path_from_compressed,
+      get_mutable_tar_authority_member_map,
+      get_tar_member_name,
+      normalize_daily_compressed_path,
+      stats_file_is_active_segment,
+  )
+
+  text = str(stats_path or "").strip()
+  archive = str(tgz_archive_dir or "").strip()
+  if not text or not archive:
+    return False
+  if not os.path.isfile(text):
+    return False
+  if stats_file_is_active_segment(text):
+    return False
+  file_date = _derive_stats_path_date(text, first_ts)
+  if file_date is None:
+    return False
+  try:
+    expected_size = os.path.getsize(text)
+  except OSError:
+    return True
+  member_name = get_tar_member_name(text)
+  compressed_path = daily_compressed_path_for_date(archive, file_date)
+  canonical = normalize_daily_compressed_path(compressed_path)
+  tar_path = daily_tar_path_from_compressed(canonical)
+  if os.path.isfile(tar_path):
+    open_members = get_mutable_tar_authority_member_map(tar_path)
+    if open_members.get(member_name) == expected_size:
+      return False
+    return True
+  if not daily_archive_populate_source_exists(canonical):
+    return True
+  members = _lookup_daily_archive_members_cache(compressed_path)
+  if members is not None:
+    return members.get(member_name) != expected_size
+  try:
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        archive_members_redis_enabled,
+        build_archive_members_redis_keys,
+        enqueue_archive_members_populate,
+        get_archive_members_redis_client,
+        redis_member_match_when_warm,
+    )
+  except Exception:
+    return True
+  if not archive_members_redis_enabled():
+    return True
+  warm: bool | None = None
+  try:
+    cache_key = _daily_archive_members_cache_key(canonical)
+    keys = build_archive_members_redis_keys(cache_key)
+    client = get_archive_members_redis_client(required=True)
+    warm = redis_member_match_when_warm(
+        keys, member_name, expected_size, client=client,
+    )
+    if warm is True:
+      return False
+    if warm is False:
+      return True
+  except Exception:
+    warm = None
+  if enqueue_populate_on_cold:
+    try:
+      enqueue_archive_members_populate(canonical, file_date.isoformat())
+    except Exception:
+      pass
+  return True
+
+
+def discover_append_is_complete(
+  path: str,
+  tgz_archive_dir: str,
+  **_kwargs: Any,
+) -> bool:
+  """
+  Discover-scoped ``append_is_complete`` that never blocks on sealed populate.
+
+  Args:
+    path (str): Closed raw stats path.
+    tgz_archive_dir (str): Daily archive directory.
+    **_kwargs (Any): Extra kwargs from classify injectables (ignored).
+
+  Returns:
+    bool: True when discover must **not** enqueue append for ``path``.
+
+  Examples:
+    >>> discover_append_is_complete("/nope", "/daily")
+    True
+  """
+  return not discover_raw_needs_tar_append(path, tgz_archive_dir)
+
+
 def select_ingest_band(
   day: date,
   *,

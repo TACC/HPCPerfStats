@@ -22,7 +22,9 @@ Production coordinator for `sync_timedb` is **`run_sync_timedb_queue_orchestrato
 | Calendar day | Discover resolves day from the daily tar path; **do not** substitute today. Unresolved day → skip ingest enqueue |
 | Reserved ingest slots | `hot_cap = max(1, (2*pool)//3)`, `catchup_cap = pool - hot_cap` (catchup floored to 1 when `pool >= 2`). Catchup may use unused pool slots only when the hot range is empty |
 | Reband | Recompute band at claim time and `ZADD` the same identity with the new score |
-| Populate pool | Orchestrator starts `PopulatePoolController`, `reap_and_restart` each tick, `stop` on exit |
+| Populate pool | Orchestrator starts `PopulatePoolController` **before** boot discover submit, `reap_and_restart` each tick, `stop` on exit |
+| Boot discover | After steal/reap and **after** ingest-pool + `populate.start()`, enqueue discover identity and `_submit_background_discover` (same executor as idle reconstruct). Log `queue_orchestrator boot discover submitted`. MainThread must **not** call `_boot_stream_discover` synchronously before the fill loop — that inlines sealed populate when the controller is still None (hpcperfstats03 2026-08-25: 13h `[main]` sealed `populate_source=*`, zero ingest-pool) |
+| Discover append skip-complete | `_boot_stream_discover` injects `jr.discover_append_is_complete` (open-tar + warm Redis HGET only; cold → enqueue append + fire-and-forget populate). Workers keep `raw_stats_path_needs_tar_append` / `populate_and_wait` |
 | Redis eviction | Startup `assert_redis_queue_safety` **fails closed** on `allkeys-*`; accept `noeviction` or `volatile-*`. Queue keys are TTL-free |
 | Streaming submit | Discover → `ZADD` as paths arrive; never wait for full find to finish before first enqueue |
 | Sliding-window pools | Refill on completion; never join an entire batch before the next hop |

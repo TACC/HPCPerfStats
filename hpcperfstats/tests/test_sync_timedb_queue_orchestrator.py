@@ -529,6 +529,76 @@ def test_boot_steals_dead_owner_leases():
   assert client.get(key) is None
 
 
+def test_orchestrator_starts_pools_before_boot_discover_submit():
+  """Boot populate stall: populate.start before _submit_background_discover."""
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  i_pop = src.find("populate.start")
+  i_sub = src.find("_submit_background_discover")
+  assert i_pop > 0 and i_sub > 0 and i_pop < i_sub
+  assert "boot discover submitted" in src
+  # Sync discover must not run on MainThread before fill; only via background.
+  before_submit = src.split("_submit_background_discover", 1)[0]
+  assert "_boot_stream_discover(" not in before_submit
+
+
+def test_boot_stream_discover_uses_discover_append_complete():
+  """Discover skip-complete must use discover_append_is_complete (no sealed wait)."""
+  src = inspect.getsource(qo._boot_stream_discover)
+  assert "discover_append_is_complete" in src
+
+
+def test_discover_raw_needs_tar_append_cold_never_calls_populate_wait(
+  tmp_path, monkeypatch,
+):
+  """Cold Redis: discover probe enqueues append without populate_and_wait."""
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as ah
+  from hpcperfstats.dbload.lib import sync_timedb_archive_members_redis as amr
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  raw = tmp_path / "host" / "2026-06-03.123456"
+  raw.parent.mkdir(parents=True)
+  raw.write_bytes(b"x" * 64)
+  sealed = daily / "2026-06-03.tar.zst"
+  sealed.write_bytes(b"fake-zst")
+
+  calls = {"wait": 0, "enqueue": 0}
+
+  monkeypatch.setattr(ah, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(
+      ah, "_derive_stats_path_date",
+      lambda _p, _ts=None: date(2026, 6, 3),
+  )
+  monkeypatch.setattr(ah, "daily_archive_populate_source_exists", lambda _c: True)
+  monkeypatch.setattr(ah, "_lookup_daily_archive_members_cache", lambda _c: None)
+  monkeypatch.setattr(amr, "archive_members_redis_enabled", lambda: True)
+  monkeypatch.setattr(
+      amr, "build_archive_members_redis_keys",
+      lambda key: type("K", (), {"hash_key": "h", "complete_key": "c"})(),
+  )
+  monkeypatch.setattr(
+      amr, "get_archive_members_redis_client", lambda required=True: object(),
+  )
+  monkeypatch.setattr(amr, "redis_member_match_when_warm", lambda *a, **k: None)
+  monkeypatch.setattr(
+      amr,
+      "request_archive_members_populate_and_wait",
+      lambda *a, **k: calls.__setitem__("wait", calls["wait"] + 1),
+  )
+  monkeypatch.setattr(
+      amr,
+      "enqueue_archive_members_populate",
+      lambda *a, **k: calls.__setitem__("enqueue", calls["enqueue"] + 1) or True,
+  )
+
+  needs = jr.discover_raw_needs_tar_append(str(raw), str(daily))
+  assert needs is True
+  assert calls["wait"] == 0
+  assert calls["enqueue"] == 1
+  assert jr.discover_append_is_complete(path=str(raw), tgz_archive_dir=str(daily)) is False
+
+
 def test_populate_pool_started_in_orchestrator():
   """T6: production loop starts PopulatePoolController and reaps it."""
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)

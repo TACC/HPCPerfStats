@@ -2,11 +2,13 @@
 Greenfield Redis ``job:v1`` queue orchestrator for ``sync_timedb``.
 
 Replaces ``run_sync_timedb_supervisor_loop`` as the sole coordinator inside
-the same CLI entry. Holds an exclusive ``archive_dir`` flock, boots streaming
-discover into ``job:v1``, then fills reserved hot/catchup ingest slots,
-append slots, and day_close threads with sliding-window refill (never join
-an entire batch before the next hop). Never starts ``ArchiveJanitor`` or the
-retired supervisor loop.
+the same CLI entry. Holds an exclusive ``archive_dir`` flock, starts ingest
+and populate pools, then submits streaming boot discover onto the background
+executor (same path as idle reconstruct) so MainThread fill never blocks on
+GNU find or sealed populate. Fills reserved hot/catchup ingest slots, append
+slots, and day_close threads with sliding-window refill (never join an entire
+batch before the next hop). Never starts ``ArchiveJanitor`` or the retired
+supervisor loop.
 
 Attributes:
   CENSUS_LOG_INTERVAL_S: Minimum seconds between structured census log lines.
@@ -460,7 +462,9 @@ def _boot_stream_discover(
 
   Does **not** call capture-all ``run_find_stats``. Empty Redis before or after
   this call does **not** mean caught up. ``mtime_days=None`` is a full scan
-  (boot); a positive window is the periodic reconstruct rescan.
+  (boot); a positive window is the periodic reconstruct rescan. Append
+  skip-complete uses :func:`jr.discover_append_is_complete` (warm Redis /
+  open-tar only; never ``populate_and_wait``).
 
   Args:
     client (Any): Redis client for ``job:v1``.
@@ -504,6 +508,7 @@ def _boot_stream_discover(
       ),
       startdate=startdate,
       enddate=enddate,
+      append_is_complete_fn=jr.discover_append_is_complete,
   )
   day_n = _enqueue_day_closes_for_daily_dir(
       client,
@@ -2422,15 +2427,6 @@ def run_sync_timedb_queue_orchestrator(
           log_fn=log_fn,
       )
     _reap_stale_inflight(client, log_fn=log_fn)
-    _boot_stream_discover(
-        client,
-        directory,
-        tgz_archive_dir=tgz_archive_dir,
-        log_fn=log_fn,
-        mtime_days=None,
-        startdate=startdate,
-        enddate=enddate,
-    )
 
     ingest_pool_size = max(1, int(cfg.get_sync_ingest_pool_processes()))
     hot_cap, catchup_cap = jq.ingest_band_slot_caps(ingest_pool_size)
@@ -2476,6 +2472,8 @@ def run_sync_timedb_queue_orchestrator(
           pool_kind_log_label="ingest-pool",
       )
 
+    # Start ingest + populate before boot discover so classify never inlines
+    # sealed populate on MainThread (populate controller None → execute_…).
     # Not a `with` block: a watchdog abandonment recycles the pool, and the
     # `with` statement would only ever close the pool it first entered.
     ingest_pool = _new_ingest_pool()
@@ -2489,6 +2487,30 @@ def run_sync_timedb_queue_orchestrator(
           % type(exc).__name__,
           log_fn=log_fn,
       )
+    # Boot discover off MainThread (same executor as idle reconstruct).
+    try:
+      jq.enqueue_list_job(
+          client,
+          kind=jq.JOB_KIND_DISCOVER,
+          identity=discover_job_identity(directory, None),
+          dedupe=True,
+      )
+    except Exception as exc:
+      _log(
+          "queue_orchestrator boot discover enqueue err=%s"
+          % type(exc).__name__,
+          log_fn=log_fn,
+      )
+    _log("queue_orchestrator boot discover submitted", log_fn=log_fn)
+    _submit_background_discover(
+        client,
+        directory,
+        tgz_archive_dir=tgz_archive_dir,
+        log_fn=log_fn,
+        mtime_days=None,
+        startdate=startdate,
+        enddate=enddate,
+    )
     try:
       with ThreadPoolExecutor(
           max_workers=day_close_workers,
