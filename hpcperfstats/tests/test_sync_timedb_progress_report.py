@@ -111,3 +111,27 @@ def test_decode_catchup_calendar_day_roundtrip():
   )
   assert jq.decode_catchup_calendar_day(score) == d
   assert jq.decode_catchup_calendar_day(0) is None
+
+
+def test_day_token_from_day_close_identity_parses_tar_path():
+  assert pr.day_token_from_day_close_identity(
+      "/hpcperfstats/daily_archive/2026-06-07.tar",
+  ) == "2026-06-07"
+  assert pr.day_token_from_day_close_identity("2026-06-07") == "2026-06-07"
+  assert pr.day_token_from_day_close_identity("/hpcperfst") is None
+
+
+def test_resolve_oldest_queued_day_from_day_close_tar_path():
+  class _C:
+    def zrangebyscore(self, *a, **k):
+      return []
+
+    def lindex(self, *a, **k):
+      return "/hpcperfstats/daily_archive/2026-07-15.tar"
+
+  day, age = pr.resolve_oldest_queued_day(
+      _C(),
+      now=datetime(2026, 7, 16, tzinfo=timezone.utc),
+  )
+  assert day == "2026-07-15"
+  assert age == 86400

@@ -16,11 +16,10 @@ Attributes:
 """
 from __future__ import annotations
 
-from typing import Any, Callable
-
+import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-import os
+from typing import Any, Callable
 
 from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
 
@@ -851,21 +850,22 @@ def enqueue_cheap_day_close_if_needed(
   ``day_close_filesystem_complete`` (archive-wide find). Inject
   ``filesystem_complete=False`` so Redis LIST dedupe can keep at most one
   queued/inflight identity per tar; day_close **workers** own the full FS
-  probe.
+  probe. Skip enqueue when the calendar day (basename ``YYYY-MM-DD`` or
+  ``calendar_day``) is younger than ``sync_day_close_min_age_hours`` so
+  today's tar is not RPUSH'd onto the LIST head.
 
   Args:
     client (Any): Redis client with ``rpush``.
     tar_path (str): Daily tar identity / path.
-    calendar_day (date | None): Day for min-age when not injected (unused
-      while FS is forced incomplete; retained for API parity).
+    calendar_day (date | None): Day for min-age when not parsed from
+      ``tar_path`` basename.
     phase_name (str | None): Ignored removal/manifest phase.
-    min_age_elapsed (bool | None): Injected min-age (unused while FS is
-      forced incomplete; retained for API parity).
-    now (datetime | None): Clock for min-age (unused on cheap path).
+    min_age_elapsed (bool | None): Injected min-age; when ``None``, computed
+      from the calendar day and ``sync_day_close_min_age_hours``.
+    now (datetime | None): Clock for min-age.
 
   Returns:
-    bool: True when a day_close identity was enqueued (or would be after
-      dedupe skip still returns True from the complete check path).
+    bool: True when a day_close identity was enqueued.
 
   Examples:
     >>> class _C:
@@ -883,15 +883,37 @@ def enqueue_cheap_day_close_if_needed(
     ...   _C(),
     ...   "/d/2026-08-01.tar",
     ...   calendar_day=date(2026, 8, 1),
+    ...   now=datetime(2026, 8, 27, 12, 0, 0),
     ... )
     True
   """
+  cal = calendar_day
+  if cal is None:
+    base = os.path.basename(os.path.normpath(str(tar_path or "")))
+    stem = base[:-4] if base.endswith(".tar") else base
+    try:
+      cal = date.fromisoformat(stem[:10]) if len(stem) >= 10 else None
+    except ValueError:
+      cal = None
+  elapsed = min_age_elapsed
+  if elapsed is None and cal is not None:
+    from hpcperfstats.dbload.lib.conf_parser import (
+        get_sync_day_close_min_age_hours,
+    )
+
+    elapsed = day_close_min_age_elapsed(
+        cal,
+        now=now,
+        min_age_hours=get_sync_day_close_min_age_hours(),
+    )
+  if elapsed is False:
+    return False
   return enqueue_day_close_if_needed(
       client,
       tar_path,
-      calendar_day=calendar_day,
+      calendar_day=cal,
       phase_name=phase_name,
       filesystem_complete=False,
-      min_age_elapsed=min_age_elapsed,
+      min_age_elapsed=elapsed,
       now=now,
   )

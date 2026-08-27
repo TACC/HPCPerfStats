@@ -35,50 +35,49 @@ Attributes:
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable
-
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from datetime import date, datetime
-from multiprocessing.pool import AsyncResult
 import os
 import signal
 import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from datetime import date, datetime
+from multiprocessing.pool import AsyncResult
+from typing import Any, Callable, Iterable
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
+from hpcperfstats.dbload.lib import shutdown_utils as _shutdown_utils
 from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as it
 from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
 from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
 from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 from hpcperfstats.dbload.lib import sync_timedb_progress_report as progress
+from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
+  create_sync_timedb_spawn_pool,
+)
 from hpcperfstats.dbload.lib.print_utils import log_print
+from hpcperfstats.dbload.lib.process_title import (
+  apply_pool_worker_process_title,
+  set_daemon_thread_title,
+)
 from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
-    exclusive_archive_dir_flock,
+  exclusive_archive_dir_flock,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-    calendar_date_from_daily_tar_path,
-    daily_tar_path_for_stats_path,
+  calendar_date_from_daily_tar_path,
+  daily_tar_path_for_stats_path,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-    get_archive_members_redis_client,
-)
-from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
-    PopulatePoolController,
-    set_populate_pool_controller,
-)
-from hpcperfstats.dbload.lib.process_title import (
-    apply_pool_worker_process_title,
-    set_daemon_thread_title,
-)
-from hpcperfstats.dbload.lib import shutdown_utils as _shutdown_utils
-from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-    create_sync_timedb_spawn_pool,
+  get_archive_members_redis_client,
 )
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
-    ensure_persistence_contract,
+  ensure_persistence_contract,
+)
+from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
+  PopulatePoolController,
+  set_populate_pool_controller,
 )
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
-    iter_find_stats_stdout_chunks,
+  iter_find_stats_stdout_chunks,
 )
 
 DAY_CLOSE_THREAD_NAME_PREFIX = "day-close"
@@ -91,7 +90,12 @@ INGEST_FILL_SKIP_BUDGET = 8
 # Same bound for append fill: missing/unresolved identities are ACK-dropped
 # (not requeued) so a deep LIST of gone paths cannot livelock MainThread.
 APPEND_FILL_SKIP_BUDGET = 8
-_TRANSIENT_DAY_CLOSE_OUTCOMES = frozenset({"deferred_age", "yielded", "skipped"})
+_TRANSIENT_DAY_CLOSE_OUTCOMES = frozenset({
+    "deferred_age",
+    "yielded",
+    "skipped",
+    "incomplete_raw",
+})
 # Slack over the per-file budget: a worker that is merely slow (contended DB,
 # large file) must not be abandoned before the ingest path itself gives up.
 INGEST_WATCHDOG_GRACE_S = it.STALL_ABORT_GRACE_S
@@ -1418,6 +1422,9 @@ def _run_day_close_job(
   """
   Day-close thread body: age gate, seal, raw removal, tar-drop when ready.
 
+  Returns ``complete`` only when filesystem-complete plus min-age hold (or
+  this job dropped the mutable tar after remaining raw was gone). Remaining
+  closed raw returns ``incomplete_raw`` so drain requeues without ACK.
   Re-enqueues when the age gate is not yet satisfied. Does not start
   ``ArchiveJanitor``. Wires ``on_handoff_to_ingest`` so retryable raw is
   requeued onto ``job:v1`` ingest/append.
@@ -1430,9 +1437,8 @@ def _run_day_close_job(
     redis_client (Any | None): Queue Redis client for ingest handoff.
 
   Returns:
-    str: Outcome token (``complete``, ``deferred_age``, ``sealed``,
-    ``raw_removed``, ``tar_dropped``, ``skipped``, ``verify_failed``,
-    ``yielded``).
+    str: Outcome token (``complete``, ``deferred_age``, ``incomplete_raw``,
+    ``skipped``, ``verify_failed``, ``yielded``).
 
   Examples:
     >>> _run_day_close_job(
@@ -1440,19 +1446,20 @@ def _run_day_close_job(
     ...   tgz_archive_dir="/tmp",
     ...   log_fn=lambda *a, **k: None,
     ... ) in (
-    ...   "complete", "deferred_age", "sealed", "raw_removed",
-    ...   "tar_dropped", "skipped", "verify_failed", "yielded",
+    ...   "complete", "deferred_age", "incomplete_raw",
+    ...   "skipped", "verify_failed", "yielded",
     ... )
     True
   """
   text = str(identity or "").strip()
   if not text:
     return "skipped"
+  day_token = progress.day_token_from_day_close_identity(text)
+  if not day_token:
+    return "skipped"
   if text.endswith(".tar"):
     tar_path = os.path.normpath(text)
-    day_token = os.path.basename(tar_path)[:10]
   else:
-    day_token = text[:10]
     tar_path = os.path.normpath(
         os.path.join(tgz_archive_dir, "%s.tar" % day_token)
     )
@@ -1486,20 +1493,21 @@ def _run_day_close_job(
     return "complete"
   if not jr.day_close_min_age_elapsed(cal, min_age_hours=min_age_h):
     return "deferred_age"
-  outcome = "skipped"
+  remaining_raw = False
+  tar_dropped = False
   try:
     from django.db import close_old_connections
 
-    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-        dedupe_tar_keep_largest_file_per_member,
-        seal_dirty_daily_archives,
-    )
     from hpcperfstats.dbload.lib.conf_parser import (
         get_archive_keep_uncompressed_tar,
         get_archive_zstd_level,
         get_archive_zstd_threads,
         get_host_name_ext,
         get_local_timezone,
+    )
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+        dedupe_tar_keep_largest_file_per_member,
+        seal_dirty_daily_archives,
     )
     from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
         DayRawRemovalCoordinator,
@@ -1569,7 +1577,7 @@ def _run_day_close_job(
         only_when_no_remaining_raw=True,
         log_fn=quiet,
     )
-    outcome = "sealed"
+    remaining_raw = bool(coord.has_closed_raw_on_disk(tar_path))
 
     if os.path.isfile(tar_path) or os.path.isfile(tar_path + ".zst"):
       try:
@@ -1583,16 +1591,18 @@ def _run_day_close_job(
 
     deleted = int(coord.apply_batch_delete(tar_path) or 0)
     if deleted > 0:
-      outcome = "raw_removed"
+      remaining_raw = bool(coord.has_closed_raw_on_disk(tar_path))
+      progress.record(day_token, "raw_delete", 1)
     zst_path = tar_path + ".zst"
     if (
         os.path.isfile(zst_path)
         and os.path.isfile(tar_path)
-        and not coord.has_closed_raw_on_disk(tar_path)
+        and not remaining_raw
     ):
       try:
         os.remove(tar_path)
-        outcome = "tar_dropped"
+        tar_dropped = True
+        progress.record(day_token, "tar_delete", 1)
         _log(
             "queue_orchestrator day_close tar_drop day=%s" % day_token,
             log_fn=log_fn,
@@ -1617,7 +1627,17 @@ def _run_day_close_job(
       _close()
     except Exception:
       pass
-  return outcome
+  if remaining_raw:
+    return "incomplete_raw"
+  if jr.day_close_is_complete(
+      tar_path,
+      calendar_day=cal,
+      min_age_hours=min_age_h,
+  ):
+    return "complete"
+  if tar_dropped:
+    return "complete"
+  return "incomplete_raw"
 
 
 def _retry_or_dead_letter(
@@ -1663,9 +1683,7 @@ def _retry_or_dead_letter(
   identity = claim.identity
   day_tok = None
   if kind == jq.JOB_KIND_DAY_CLOSE:
-    text = str(identity or "")
-    if len(text) >= 10 and text[:10].count("-") == 2:
-      day_tok = text[:10]
+    day_tok = progress.day_token_from_day_close_identity(str(identity or ""))
   attempt = jq.bump_job_attempt(client, kind=kind, identity=identity)
   if attempt < jq.job_max_attempts():
     progress.record(day_tok, "attempt_bump", 1)
@@ -1706,7 +1724,7 @@ def _requeue_claimed_job_without_attempt_bump(
   Return a claim to its queue without incrementing the attempt counter.
 
   Used for cooperative day_close outcomes (``deferred_age``, ``yielded``,
-  ``skipped``) that are not failures.
+  ``skipped``, ``incomplete_raw``) that are not failures.
 
   Args:
     client (Any): Redis client.
@@ -2616,6 +2634,11 @@ def _fill_day_close_slots(
       break
     inflight[claim.identity] = fut
     leases[claim.identity] = claim
+    progress.record(
+        progress.day_token_from_day_close_identity(claim.identity),
+        "dc_run",
+        1,
+    )
     submitted += 1
   return submitted
 
@@ -2629,11 +2652,11 @@ def _drain_day_close_ready(
   log_fn: Callable[..., None] | None = None,
 ) -> int:
   """
-  Collect finished day_close futures; retry retryable outcomes.
+  Collect finished day_close futures; ACK only filesystem+age complete.
 
-  ``deferred_age`` and ``skipped`` are retryable (the day is simply not ready
-  or hit a transient error), so they go back on the queue with an attempt
-  bump instead of being acked away.
+  ``deferred_age``, ``incomplete_raw``, ``yielded``, and ``skipped`` requeue
+  without an attempt bump. ``verify_failed`` and exceptions retry or
+  dead-letter. Fake ``sealed`` after a no-op seal is never an ACK.
 
   Args:
     client (Any): Redis client.
@@ -2648,7 +2671,8 @@ def _drain_day_close_ready(
   Examples:
     >>> _drain_day_close_ready(
     ...   type("C", (), {"eval": lambda *a: 1, "evalsha": lambda *a: 1,
-    ...                  "script_load": lambda s: "x", "rpush": lambda *a: 1})(),
+    ...                  "script_load": lambda s: "x",
+    ...                  "rpush": lambda *a: 1})(),
     ...   inflight={},
     ...   leases={},
     ... )
@@ -2673,6 +2697,11 @@ def _drain_day_close_ready(
           log_fn=log_fn,
       )
     if failure or outcome == "verify_failed":
+      progress.record(
+          progress.day_token_from_day_close_identity(identity),
+          "verify_failed",
+          1,
+      )
       _retry_or_dead_letter(
           client,
           kind=jq.JOB_KIND_DAY_CLOSE,
@@ -2682,24 +2711,23 @@ def _drain_day_close_ready(
           log_fn=log_fn,
       )
       continue
-    if outcome in _TRANSIENT_DAY_CLOSE_OUTCOMES:
-      day_tok = str(identity)[:10] if str(identity)[:10].count("-") == 2 else None
+    day_tok = progress.day_token_from_day_close_identity(identity)
+    if outcome != "complete":
       if outcome == "deferred_age":
         progress.record(day_tok, "deferred_age", 1)
       elif outcome == "yielded":
         progress.record(day_tok, "yielded", 1)
+      elif (
+          outcome == "incomplete_raw"
+          or outcome not in _TRANSIENT_DAY_CLOSE_OUTCOMES
+      ):
+        progress.record(day_tok, "incomplete_raw", 1)
       _requeue_claimed_job_without_attempt_bump(
           client, claim=claim, log_fn=log_fn,
       )
       continue
     if claim is not None:
-      day_tok = str(identity)[:10] if str(identity)[:10].count("-") == 2 else None
-      if outcome == "sealed":
-        progress.record(day_tok, "sealed", 1)
-      elif outcome == "raw_removed":
-        progress.record(day_tok, "raw_delete", 1)
-      elif outcome == "tar_dropped":
-        progress.record(day_tok, "tar_delete", 1)
+      progress.record(day_tok, "complete", 1)
       jq.ack_job(
           client,
           kind=jq.JOB_KIND_DAY_CLOSE,

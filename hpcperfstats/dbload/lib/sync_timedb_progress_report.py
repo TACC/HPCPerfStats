@@ -13,16 +13,28 @@ Attributes:
   WindowHealthCounters: Cross-cut / undated counters for one window.
   _BUSY_KIND_ORDER: Stable kind order for ``busy=`` tokens.
   _DAY_COUNTER_KEYS: Ordered day-line counter token names.
+  day_token_from_day_close_identity: Calendar day from tar path or YYYY-MM-DD.
   _STATE: Process-wide :class:`ProgressReportState` singleton.
   _STATE_LOCK: Guards lazy creation of ``_STATE``.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections import defaultdict
 from datetime import date, datetime, timezone
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Set,
+    Tuple,
+)
 
 PROGRESS_REPORT_INTERVAL_S = 600.0
 
@@ -46,6 +58,10 @@ _DAY_COUNTER_KEYS = (
     "dedupe",
     "raw_delete",
     "tar_delete",
+    "dc_run",
+    "complete",
+    "incomplete_raw",
+    "verify_failed",
     "deferred_age",
     "yielded",
     "dead_letter",
@@ -189,6 +205,44 @@ def format_busy_token(busy_kinds: Iterable[str]) -> str:
   return "busy=%s" % ",".join(ordered)
 
 
+def day_token_from_day_close_identity(identity: str) -> str | None:
+  """
+  Parse a calendar day from a day_close LIST identity.
+
+  Identities are a bare ``YYYY-MM-DD`` token or a daily tar path whose
+  basename is ``YYYY-MM-DD.tar``. A prefix slice of a full path (for
+  example ``/hpcperfst``) is not an ISO day.
+
+  Args:
+    identity (str): Redis day_close LIST member.
+
+  Returns:
+    str | None: ``YYYY-MM-DD`` when parseable, otherwise None.
+
+  Examples:
+    >>> day_token_from_day_close_identity(
+    ...   "/hpcperfstats/daily_archive/2026-06-07.tar",
+    ... )
+    '2026-06-07'
+    >>> day_token_from_day_close_identity("2026-06-07")
+    '2026-06-07'
+    >>> day_token_from_day_close_identity("/hpcperfst") is None
+    True
+  """
+  text = str(identity or "").strip()
+  if not text:
+    return None
+  base = os.path.basename(text)
+  if base.endswith(".tar"):
+    base = base[:-4]
+  if len(base) < 10:
+    return None
+  try:
+    return date.fromisoformat(base[:10]).isoformat()
+  except ValueError:
+    return None
+
+
 def resolve_oldest_queued_day(
   client: Any,
   *,
@@ -198,7 +252,8 @@ def resolve_oldest_queued_day(
   Resolve the oldest queued catchup ingest or day_close day and its age.
 
   Prefers the catchup ZSET head (oldest calendar day first). Falls back to the
-  day_close LIST head when it looks like ``YYYY-MM-DD``.
+  day_close LIST head when it is a ``YYYY-MM-DD`` token or a daily tar path
+  whose basename is ``YYYY-MM-DD.tar``.
 
   Args:
     client (Any): Redis client.
@@ -237,9 +292,9 @@ def resolve_oldest_queued_day(
   try:
     lkey = jq.job_queue_key(jq.JOB_KIND_DAY_CLOSE)
     head = client.lindex(lkey, 0)
-    text = str(head or "").strip()
-    if len(text) >= 10 and text[:10].count("-") == 2:
-      candidates.append(date.fromisoformat(text[:10]))
+    tok = day_token_from_day_close_identity(str(head or ""))
+    if tok is not None:
+      candidates.append(date.fromisoformat(tok))
   except Exception:
     pass
   if not candidates:

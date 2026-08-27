@@ -3,19 +3,20 @@ from __future__ import annotations
 
 import inspect
 import os
-from datetime import date
+from datetime import date, datetime
 from multiprocessing import Process
 from pathlib import Path
 
 import pytest
 
 import hpcperfstats.dbload.sync_timedb as st
+from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+from hpcperfstats.dbload.lib import sync_timedb_progress_report as pr
+from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
   exclusive_archive_dir_flock,
   orchestrator_lock_path,
 )
-from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
-from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 from hpcperfstats.tests.fake_redis_queue import FakeRedis
 
 
@@ -278,7 +279,7 @@ def test_day_close_job_tar_drops_when_sealed_and_no_raw(tmp_path, monkeypatch):
       archive_data_dir=str(tmp_path),
       log_fn=lambda *a, **k: None,
   )
-  assert outcome == "tar_dropped"
+  assert outcome == "complete"
   assert not tar.exists()
   assert zst.exists()
 
@@ -338,8 +339,109 @@ def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
       archive_data_dir=str(tmp_path),
       log_fn=lambda *a, **k: None,
   )
-  assert outcome == "tar_dropped"
+  assert outcome == "complete"
   assert stages == ["pre_seal", "dedupe", "seal", "post_seal", "delete"]
+
+
+def test_day_close_job_returns_complete_after_tar_drop(tmp_path, monkeypatch):
+  """Tar-path identity returns complete after tar-drop with no remaining raw."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  tar = daily / "2020-01-01.tar"
+  zst = daily / "2020-01-01.tar.zst"
+  tar.write_bytes(b"tar")
+  zst.write_bytes(b"zst")
+  ident = str(tar)
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: None,
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def apply_batch_delete(self, _tar_path):
+      return 0
+
+    def run_pre_seal_verify_sync(self, _tar_path):
+      return True
+
+    def run_post_seal_verify_sync(self, _tar_path):
+      return True
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return False
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      ident,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+  )
+  assert outcome == "complete"
+  assert not tar.exists()
+
+
+def test_day_close_job_remaining_raw_returns_incomplete_raw_not_fake_sealed(
+    tmp_path, monkeypatch,
+):
+  """No-op seal with remaining raw must not report sealed."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  tar = daily / "2020-01-01.tar"
+  tar.write_bytes(b"tar")
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: None,
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def apply_batch_delete(self, _tar_path):
+      return 0
+
+    def run_pre_seal_verify_sync(self, _tar_path):
+      return True
+
+    def run_post_seal_verify_sync(self, _tar_path):
+      return True
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return True
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      "2020-01-01",
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+  )
+  assert outcome == "incomplete_raw"
+  assert tar.exists()
 
 
 def test_enqueue_day_closes_for_daily_dir_calls_reconstruct(tmp_path, monkeypatch):
@@ -891,6 +993,142 @@ def test_day_close_verify_failed_bumps_attempt(tmp_path, monkeypatch):
   ) == 1
 
 
+def test_day_close_path_identity_records_complete_on_calendar_day(tmp_path):
+  """Tar-path identity ACKs complete onto the calendar day, not undated."""
+  pr.reset_progress_state_for_tests()
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  ident = "/d/2026-06-07.tar"
+  jq.enqueue_list_job(client, kind="day_close", identity=ident)
+  claim = jq.claim_list_job(
+      client, kind="day_close", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+  )
+
+  class _Done:
+    def done(self):
+      return True
+
+    def result(self):
+      return "complete"
+
+  n = qo._drain_day_close_ready(
+      client,
+      inflight={ident: _Done()},
+      leases={ident: claim},
+      archive_data_dir=str(tmp_path),
+  )
+  assert n == 1
+  assert client.llen(jq.job_queue_key("day_close")) == 0
+  days = pr.get_progress_state().snapshot_days()
+  assert days["2026-06-07"].counters["complete"] == 1
+  line = pr.format_day_progress_line("2026-06-07", days["2026-06-07"])
+  assert "complete=1" in line
+  undated = pr.get_progress_state().window.undated
+  assert int(undated.get("complete", 0) or 0) == 0
+
+
+def test_day_close_incomplete_raw_requeues_without_ack(tmp_path):
+  """Remaining-raw outcome stays on the LIST with attempt 0 and no sealed=."""
+  pr.reset_progress_state_for_tests()
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  ident = "/d/2026-06-07.tar"
+  jq.enqueue_list_job(client, kind="day_close", identity=ident)
+  claim = jq.claim_list_job(
+      client, kind="day_close", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+  )
+
+  class _Done:
+    def done(self):
+      return True
+
+    def result(self):
+      return "incomplete_raw"
+
+  n = qo._drain_day_close_ready(
+      client,
+      inflight={ident: _Done()},
+      leases={ident: claim},
+      archive_data_dir=str(tmp_path),
+  )
+  assert n == 1
+  assert client.llen(jq.job_queue_key("day_close")) == 1
+  assert jq.read_job_attempt(
+      client, kind="day_close", identity=ident,
+  ) == 0
+  days = pr.get_progress_state().snapshot_days()
+  assert days["2026-06-07"].counters["incomplete_raw"] == 1
+  assert days["2026-06-07"].counters["sealed"] == 0
+  assert days["2026-06-07"].counters["complete"] == 0
+
+
+def test_day_close_fake_sealed_requeues_without_ack(tmp_path):
+  """Leftover sealed outcome must not ACK (hpcperfstats03 fake-sealed)."""
+  pr.reset_progress_state_for_tests()
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  ident = "/d/2026-07-15.tar"
+  jq.enqueue_list_job(client, kind="day_close", identity=ident)
+  claim = jq.claim_list_job(
+      client, kind="day_close", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+  )
+
+  class _Done:
+    def done(self):
+      return True
+
+    def result(self):
+      return "sealed"
+
+  n = qo._drain_day_close_ready(
+      client,
+      inflight={ident: _Done()},
+      leases={ident: claim},
+      archive_data_dir=str(tmp_path),
+  )
+  assert n == 1
+  assert client.llen(jq.job_queue_key("day_close")) == 1
+  assert jq.read_job_attempt(
+      client, kind="day_close", identity=ident,
+  ) == 0
+  days = pr.get_progress_state().snapshot_days()
+  assert days["2026-07-15"].counters["complete"] == 0
+  assert days["2026-07-15"].counters["sealed"] == 0
+  assert days["2026-07-15"].counters["incomplete_raw"] == 1
+
+
+def test_fill_day_close_records_dc_run_for_tar_path_identity(
+    tmp_path, monkeypatch,
+):
+  """Fill records dc_run= on the calendar day before the worker finishes."""
+  from concurrent.futures import ThreadPoolExecutor
+
+  pr.reset_progress_state_for_tests()
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  ident = "/d/2026-06-07.tar"
+  jq.enqueue_list_job(client, kind="day_close", identity=ident)
+  monkeypatch.setattr(qo, "_run_day_close_job", lambda *a, **k: "deferred_age")
+  monkeypatch.setattr(qo.cfg, "get_sync_day_close_max_inflight", lambda: 1)
+  inflight = {}
+  leases = {}
+  with ThreadPoolExecutor(max_workers=1) as ex:
+    n = qo._fill_day_close_slots(
+        client,
+        executor=ex,
+        inflight=inflight,
+        leases=leases,
+        tgz_archive_dir=str(tmp_path),
+        archive_data_dir=str(tmp_path),
+        log_fn=lambda *a, **k: None,
+    )
+  assert n == 1
+  days = pr.get_progress_state().snapshot_days()
+  assert days["2026-06-07"].counters["dc_run"] == 1
+  line = pr.format_day_progress_line("2026-06-07", days["2026-06-07"])
+  assert "dc_run=1" in line
+
+
 def test_verify_failure_blocks_seal_and_delete(tmp_path, monkeypatch):
   """S4: pre-seal verify failure must skip seal and raw delete."""
   daily = tmp_path / "daily"
@@ -1137,7 +1375,9 @@ def test_fill_ingest_skip_budget_breaks(monkeypatch, tmp_path):
 
 def test_request_shutdown_sets_list_flag():
   """P0-4: SIGTERM Event and shutdown_utils.shutdown_requested[0] stay in sync."""
-  from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested as list_flag
+  from hpcperfstats.dbload.lib.shutdown_utils import (
+    shutdown_requested as list_flag,
+  )
 
   qo.reset_shutdown_for_tests()
   try:
@@ -1465,6 +1705,30 @@ def test_tar_dedup_day_close_uses_list_dedupe(monkeypatch):
   jr.enqueue_cheap_day_close_if_needed(client, tar)
   depth = int(client.llen(jq.job_queue_key(jq.JOB_KIND_DAY_CLOSE)) or 0)
   assert depth <= 1
+
+
+def test_cheap_day_close_age_skips_today_and_yesterday(monkeypatch):
+  """Cheap enqueue must not RPUSH days younger than min-age (find-free)."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  now = datetime(2026, 8, 27, 12, 0, 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_day_close_min_age_hours",
+      lambda: 32.0,
+  )
+  assert jr.enqueue_cheap_day_close_if_needed(
+      client, "/d/2026-08-27.tar", now=now,
+  ) is False
+  assert jr.enqueue_cheap_day_close_if_needed(
+      client, "/d/2026-08-26.tar", now=now,
+  ) is False
+  assert int(client.llen(jq.job_queue_key(jq.JOB_KIND_DAY_CLOSE)) or 0) == 0
+  assert jr.enqueue_cheap_day_close_if_needed(
+      client, "/d/2026-08-01.tar", now=now,
+  ) is True
+  assert int(client.llen(jq.job_queue_key(jq.JOB_KIND_DAY_CLOSE)) or 0) == 1
 
 
 def test_pause_protocol_AtomicPoolRef_recycle():

@@ -15,6 +15,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 ```
 
 - **`progress day=`** — omit-zeros day counters (`gate_skip`, `ingest_handoff`, ingest outcomes, archive, day_close, reconstruct, …).
+- **Day-close on `progress day=`** — LIST identities are full daily tar paths. Expect `dc_run=` when a day_close slot is filled (covers long pre-seal verify), `complete=` when filesystem + 32h ACK, `incomplete_raw=` when remaining closed raw (requeued, not ACK), `deferred_age=` / `yielded=` / `ingest_handoff=` / `verify_failed=`. `sealed=` / `tar_delete=` only when those steps ran. Status `day_close=4/61` is inflight/queued, not a calendar day.
 - **`status`** — Redis `current/queued` (`ingest_hot` / `ingest_catchup` / …), `busy=` (incl discover), `orphan_inflight`, queue `*_q_delta`, `oldest_day` / `oldest_age_s`.
 - **`census`** — 60s depth; ratios are **inflight/queued**; `busy=` replaces opaque `local=I/A/D`.
 - **`archive_job_done`** — single INFO per append job (`tar_bytes`, `members_source`, `mapped`/`to_add`/`appended`, `outcome=`). Do not require `archive_job_begin` / `archive_job_duty` / `Archived batch` at INFO.
@@ -32,7 +33,7 @@ Production is **one** `sync_timedb.py` process per `archive_dir` (`run_sync_time
 | Tier | When | Pass criteria |
 |------|------|---------------|
 | **T0 smoke** | T+15 min after deploy | Pipeline up; **exactly one** orchestrator flock holder; Redis reachable; at least one ingest lease progress **or** reconstruct logged incomplete work with non-empty matching queue kind; no second `sync_timedb` CLI for the same `archive_dir` |
-| **T1 progress** | T+4 h **or** after first append/day_close progress on head day | Hot and/or catchup ingest ZSET depth trending (or reconstruct shows complete); append/day_close LISTs not wedged forever with filesystem remaining-raw; no dual-process flock fight |
+| **T1 progress** | T+4 h **or** after first append/day_close progress on head day | Hot and/or catchup ingest ZSET depth trending (or reconstruct shows complete); append/day_close LISTs not wedged forever with filesystem remaining-raw; `progress day=` shows `complete=` cadence on age-eligible no-remaining-raw days (not fake `sealed` ACK); no dual-process flock fight |
 | **T2 catch-up** | T+24 h or when head day advances | Cadence of completed ingest leases continues; day_close jobs drain age-eligible days; no persistence wipe / contract bump used as “fix” |
 
 ```bash
@@ -59,6 +60,13 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 ```
 
 **Pass (T0):** one `[main]` sync_timedb; flock acquired; job keys present or reconstruct explains empty; SIGTERM of the process yields exit **143** (not 0); ingest success logs / file-complete marks grow when listend is on. **Local agent T0** is `tests/run_sync_timedb_regression_battery.sh` (host pytest). **T1/T2** remain post-deploy on the backlog site (this Mac cannot claim production catch-up). **Fail:** two orchestrators, Redis down without exit, CLI `backlog`/`current` still in supervisord, no-arg run that only walks the last 5 days, or `deferred_age` burning day_close attempts.
+
+**Fail (T0 — day-close never completes, hpcperfstats03 2026-08-27):** census `day_close=4/61` with **no** `complete=` on `progress day=` lines; drain parsed `identity[:10]` as `/hpcperfst` (LIST identities are `/…/YYYY-MM-DD.tar`); workers ACK fake `sealed` after `only_when_no_remaining_raw` no-op seal; `tar_drop` count 0. **Pass after fix:** age-eligible no-remaining-raw days show `complete=` (and `tar_delete=` when tar-drop ran); remaining-raw days show `incomplete_raw=` and stay on the LIST (attempt 0); `dc_run=` appears for tar-path identities while verify is in flight; cheap enqueue does not RPUSH today/yesterday when `sync_day_close_min_age_hours=32`.
+
+```bash
+# T0 — day-close complete vs remaining-raw (full logs never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator progress day=.*(dc_run=|complete=|incomplete_raw=|deferred_age=|yielded=|verify_failed=|tar_delete=)|queue_orchestrator day_close tar_drop' | tail -80
+```
 
 **Fail (T0 — boot sealed-populate stall, hpcperfstats03 2026-08-25):** hours of `[sync_timedb:main]` sealed `populate_source_decision` / `populate_source=sealed` **without** `queue_orchestrator boot discover submitted` / `boot discover seen=` / ingest fill; `ps` shows **archive-pool only** (no `ingest-pool`, no `populate-pool`); Redis ingest ZCARD/bands **0** while append LIST may already be deep. Root cause was sync boot discover **before** pools + worker `populate_and_wait` on classify. After fix: expect `boot discover submitted` early, populate-pool + ingest-pool alive within minutes, and fill/leases without MainThread sealed streams.
 
