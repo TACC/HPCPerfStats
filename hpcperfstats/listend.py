@@ -326,6 +326,34 @@ def _ensure_current_hardlinked_to_timestamp(
   )
 
 
+def _digit_epoch_start_ts_for_new_current(
+    current_path: str,
+    *,
+    fallback_ts: int,
+) -> int:
+  """Return digit epoch start for a newly written ``current`` file.
+
+  Prefers the first plausible sample unix second in ``current_path``.
+  Falls back to ``fallback_ts`` when the ``$`` payload has no sample
+  timestamp yet (schema-only rotate).
+
+  Args:
+    current_path (str): Path to the live ``current`` file (already written).
+    fallback_ts (int): Wall-clock unix seconds when no sample ts is found.
+
+  Returns:
+    int: Starting digit epoch seconds (caller steps +1 on name conflict).
+
+  Examples:
+    >>> _digit_epoch_start_ts_for_new_current("/no/file", fallback_ts=9)
+    9
+  """
+  first = _get_first_timestamp_seconds(current_path, use_lock=False)
+  if first is not None:
+    return int(first)
+  return int(fallback_ts)
+
+
 def _get_recent_host_redis_client() -> Any:
   """
   Get or create the Redis client used for recent-host timestamps.
@@ -529,14 +557,15 @@ def append_monitor_payload_to_archive(message: Any) -> Any:
   current_path = os.path.join(host_dir, "current")
   unlinked_current = False
   if message[0] == "$":
-    # Use a single epoch timestamp for both the pre-unlink check and the
-    # post-unlink epoch hardlink to keep time.time() call counts stable.
-    epoch_ts = int(time.time())
+    # Wall clock is only the safety-link cutoff / fallback when the ``$``
+    # payload has no sample timestamp. New digit names prefer the first
+    # plausible sample second in the newly written ``current`` file.
+    rotate_wall_ts = int(time.time())
     with file_write_lock(current_path):
       if os.path.exists(current_path):
         if not _current_is_hardlinked_to_digit_epoch(host_dir, current_path):
           _ensure_current_hardlinked_to_timestamp(
-              host_dir, current_path, epoch_ts)
+              host_dir, current_path, rotate_wall_ts)
           if not _current_is_hardlinked_to_digit_epoch(
               host_dir, current_path):
             raise RuntimeError(
@@ -546,13 +575,15 @@ def append_monitor_payload_to_archive(message: Any) -> Any:
         unlinked_current = True
 
       with open(current_path, "w") as fd:
-        _link_current_to_unique_digit_epoch(
-            host_dir, current_path, epoch_ts, step=1)
-        # Epoch name and current share an inode until the next ``$`` rotation.
-        # sync_timedb skips epoch files same-inode-as-current to avoid read races.
-
-      with open(current_path, "a") as fd:
         fd.write(message)
+      # Name the new segment from first sample ts in the file; +1 on conflict.
+      epoch_ts = _digit_epoch_start_ts_for_new_current(
+          current_path, fallback_ts=rotate_wall_ts,
+      )
+      _link_current_to_unique_digit_epoch(
+          host_dir, current_path, epoch_ts, step=1)
+      # Epoch name and current share an inode until the next ``$`` rotation.
+      # sync_timedb skips epoch files same-inode-as-current to avoid read races.
   else:
     with file_write_lock(current_path):
       with open(current_path, "a") as fd:

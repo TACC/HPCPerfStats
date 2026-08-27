@@ -349,7 +349,7 @@ def test_on_message_hardlinks_missing_epoch_before_unlink(tmp_path, monkeypatch)
   # After unlink+rotate, `current` must contain only the new segment.
   assert (host_dir / "current").read_bytes() == msg
 
-  # And the new `current` should be hardlinked under the cutoff epoch filename.
+  # Schema-only `$` has no sample ts → fallback digit name is wall-clock cutoff.
   assert (host_dir / str(cutoff_epoch_ts)).read_bytes() == msg
 
   # Confirm listend counted exactly one unlink during rotation.
@@ -478,6 +478,94 @@ def test_on_message_same_second_double_dollar_preserves_closed_epoch(
       p for p in epoch_files if p.read_bytes() == msg2
   ][0])
   assert not os.path.samefile(first_epoch, host_dir / "current")
+
+
+def test_dollar_rotate_digit_epoch_from_first_timestamp(tmp_path, monkeypatch):
+  """New ``$`` current digit name uses first sample ts in the file, not wall clock."""
+  import os
+
+  import hpcperfstats.listend as listend
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  wall_clock = 1900000000
+  monkeypatch.setattr(listend.time, "time", lambda: float(wall_clock))
+
+  with listend._timestamps_lock:
+    listend._message_timestamps.clear()
+    listend._unlink_timestamps.clear()
+    listend._last_message_time = None
+
+  host = "c104-028.horizon.tacc.utexas.edu"
+  sample_ts = 1786487860
+  msg = (
+      "$\n"
+      "1 %s\n"
+      "!cpu a,E\n"
+      "%s.470903 2946877 %s\n"
+      "cpu 0 1 2\n"
+  ) % (host, sample_ts, host)
+
+  channel = _FakeChannel()
+  listend.on_message(
+      channel, _FakeMethodFrame(delivery_tag=21), None, msg.encode("ascii")
+  )
+
+  assert channel.acked == [21]
+  assert channel.nacked == []
+  host_dir = tmp_path / host
+  current = host_dir / "current"
+  digit = host_dir / str(sample_ts)
+  assert digit.is_file()
+  assert digit.read_text() == msg
+  assert os.path.samefile(current, digit)
+  assert not (host_dir / str(wall_clock)).exists()
+
+
+def test_dollar_rotate_digit_epoch_collision_plus_one(tmp_path, monkeypatch):
+  """When first-sample digit name exists, new ``$`` current uses sample_ts + 1."""
+  import os
+
+  import hpcperfstats.listend as listend
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  wall_clock = 1900000000
+  monkeypatch.setattr(listend.time, "time", lambda: float(wall_clock))
+
+  with listend._timestamps_lock:
+    listend._message_timestamps.clear()
+    listend._unlink_timestamps.clear()
+    listend._last_message_time = None
+
+  host = "c104-028.horizon.tacc.utexas.edu"
+  sample_ts = 1786487860
+  host_dir = tmp_path / host
+  host_dir.mkdir()
+  (host_dir / str(sample_ts)).write_text("occupied-other-inode\n")
+
+  msg = (
+      "$\n"
+      "1 %s\n"
+      "!cpu a,E\n"
+      "%s.470903 2946877 %s\n"
+      "cpu 0 1 2\n"
+  ) % (host, sample_ts, host)
+
+  channel = _FakeChannel()
+  listend.on_message(
+      channel, _FakeMethodFrame(delivery_tag=22), None, msg.encode("ascii")
+  )
+
+  assert channel.acked == [22]
+  assert channel.nacked == []
+  current = host_dir / "current"
+  conflicted = host_dir / str(sample_ts)
+  stepped = host_dir / str(sample_ts + 1)
+  assert conflicted.read_text() == "occupied-other-inode\n"
+  assert stepped.is_file()
+  assert stepped.read_text() == msg
+  assert os.path.samefile(current, stepped)
+  assert not os.path.samefile(current, conflicted)
+  assert not (host_dir / str(wall_clock)).exists()
 
 
 def test_get_first_timestamp_seconds_skips_dollar_host_line(tmp_path):
