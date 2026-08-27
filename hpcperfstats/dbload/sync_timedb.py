@@ -50,6 +50,8 @@ Attributes:
   _SYNC_STATE_TRANSITIONS: Attribute.
   _SYNC_TIMEDB_INGEST_INLINE_ENV: Attribute.
   _TREE_RSS_DEFER_SLEEP_SECONDS: Attribute.
+  _ingest_db_shard_lock_s: Attribute.
+  _ingest_postgres_s: Attribute.
   _last_supervisor_child_reap_mono: Attribute.
   _sealed_archive_ingest_progress: Attribute.
   archive_thread_count: Attribute.
@@ -2914,18 +2916,22 @@ def _count_daily_tars(daily_archive_dir: str) -> Any:
 
 def _log_db_lock_wait(batch_kind: Any, stats_file: str, lock_wait: Any) -> None:
   """
-  Log DB lock contention only when wait exceeds threshold.
-  
+  Log Manager write-shard acquire waits above the threshold.
+
+  Log text keeps the historical ``DB lock wait`` token; this is **not**
+  Postgres ``lock_timeout`` — it is multiprocessing ``Manager`` shard
+  ``acquire`` wait time (``sync_write_lock_shards``).
+
   Args:
-    batch_kind (Any): Batch kind passed to this helper.
-    stats_file (str): String for stats file.
-    lock_wait (Any): Lock wait passed to this helper.
-  
+    batch_kind (Any): Batch kind token (``proc`` / ``host``).
+    stats_file (str): Stats file path for the waiting worker.
+    lock_wait (Any): Seconds spent waiting to acquire the shard lock.
+
   Returns:
     None
-  
+
   Examples:
-    >>> _log_db_lock_wait(None, "x", None)  # doctest: +SKIP
+    >>> _log_db_lock_wait("proc", "/x", 0.0)
   """
   if lock_wait <= LOCK_WAIT_LOG_THRESHOLD_SECONDS:
     return
@@ -2935,6 +2941,108 @@ def _log_db_lock_wait(batch_kind: Any, stats_file: str, lock_wait: Any) -> None:
       ),
       flush=True,
   )
+
+
+_ingest_db_shard_lock_s: contextvars.ContextVar[float] = contextvars.ContextVar(
+    "ingest_db_shard_lock_s",
+    default=0.0,
+)
+_ingest_postgres_s: contextvars.ContextVar[float] = contextvars.ContextVar(
+    "ingest_postgres_s",
+    default=0.0,
+)
+
+
+def _reset_ingest_write_timing() -> None:
+  """
+  Zero per-file Manager-acquire and Postgres-hold timing accumulators.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _reset_ingest_write_timing()
+  """
+  _ingest_db_shard_lock_s.set(0.0)
+  _ingest_postgres_s.set(0.0)
+
+
+def _add_ingest_db_shard_lock_s(delta_s: float) -> None:
+  """
+  Add Manager write-shard acquire wait seconds for this file.
+
+  Args:
+    delta_s (float): Non-negative seconds to accumulate.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _reset_ingest_write_timing()
+    >>> _add_ingest_db_shard_lock_s(1.25)
+  """
+  delta = float(delta_s)
+  if delta <= 0.0:
+    return
+  _ingest_db_shard_lock_s.set(float(_ingest_db_shard_lock_s.get()) + delta)
+
+
+def _add_ingest_postgres_s(delta_s: float) -> None:
+  """
+  Add seconds spent holding the Manager shard during ORM writes.
+
+  Args:
+    delta_s (float): Non-negative hold seconds to accumulate.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _reset_ingest_write_timing()
+    >>> _add_ingest_postgres_s(0.5)
+  """
+  delta = float(delta_s)
+  if delta <= 0.0:
+    return
+  _ingest_postgres_s.set(float(_ingest_postgres_s.get()) + delta)
+
+
+def _snapshot_ingest_write_timing() -> dict[str, float]:
+  """
+  Return accumulated ``db_shard_lock_s`` and ``postgres_s`` for this file.
+
+  Returns:
+    dict[str, float]: Timing keys for outcome meta / logs.
+
+  Examples:
+    >>> _reset_ingest_write_timing()
+    >>> _snapshot_ingest_write_timing()["db_shard_lock_s"]
+    0.0
+  """
+  return {
+      "db_shard_lock_s": float(_ingest_db_shard_lock_s.get()),
+      "postgres_s": float(_ingest_postgres_s.get()),
+  }
+
+
+def _merge_ingest_write_timing_into_meta(meta: Any) -> dict[str, Any]:
+  """
+  Copy outcome meta and attach write-path timing snapshot keys.
+
+  Args:
+    meta (Any): Existing outcome meta mapping or ``None``.
+
+  Returns:
+    dict[str, Any]: Meta with ``db_shard_lock_s`` / ``postgres_s`` set.
+
+  Examples:
+    >>> _reset_ingest_write_timing()
+    >>> _merge_ingest_write_timing_into_meta({})["postgres_s"]
+    0.0
+  """
+  out = dict(meta or {})
+  out.update(_snapshot_ingest_write_timing())
+  return out
 
 
 
@@ -3717,25 +3825,41 @@ def _held_ingest_write_lock(
   kind: Any,
 ) -> Iterator[Any]:
   """
-  Acquire write lock; always release (including deadline raises inside).
-  
+  Acquire Manager write shard; always release (including deadline raises).
+
+  Acquire wait suspends per-file SIGALRM and extends the monotonic deadline
+  (same class as Redis populate wait). Hold time during ORM/bulk_create is
+  charged to the budget and summed into the ``postgres_s`` timing token.
+
   Args:
-    write_lock (Any): Write lock passed to this helper.
-    stats_file (str): String for stats file.
-    kind (Any): Mode or kind token selecting a code path.
-  
+    write_lock (Any): Multiprocessing Manager lock (or shard) to acquire.
+    stats_file (str): Stats file path for lock-wait logging.
+    kind (Any): Batch kind token (``proc`` / ``host``).
+
   Yields:
-    Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+    Iterator[Any]: Control while the shard lock is held.
+
   Examples:
-    >>> _held_ingest_write_lock(None, "x", None)  # doctest: +SKIP
+    >>> with _held_ingest_write_lock(type("L", (), {
+    ...   "acquire": lambda self: None, "release": lambda self: None,
+    ... })(), "/x", "proc"):
+    ...   pass
   """
-  lock_wait_t0 = time.time()
-  write_lock.acquire()
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
+      suspend_ingest_sigalrm_for_non_work_wait,
+  )
+
+  wait_t0 = time.monotonic()
+  with suspend_ingest_sigalrm_for_non_work_wait():
+    write_lock.acquire()
+  wait_s = time.monotonic() - wait_t0
+  _add_ingest_db_shard_lock_s(wait_s)
+  hold_t0 = time.monotonic()
   try:
-    _log_db_lock_wait(kind, stats_file, time.time() - lock_wait_t0)
+    _log_db_lock_wait(kind, stats_file, wait_s)
     yield
   finally:
+    _add_ingest_postgres_s(time.monotonic() - hold_t0)
     write_lock.release()
 
 
@@ -4047,21 +4171,23 @@ def _ingest_outcome_meta(**kwargs: Any) -> Any:
 @dataclass
 class IngestFileOutcome:
   """
-  Hold IngestFileOutcome state and behavior.
-  
+  Packed per-file ingest outcome for logging and mark recording.
+
   Attributes:
-    archive_skip: ``archive_skip``.
-    db_skip: ``db_skip``.
-    elapsed_s: ``elapsed_s``.
-    fail_reason: ``fail_reason``.
-    ingest_ok: ``ingest_ok``.
-    need_archival: ``need_archival``.
-    outcome: ``outcome``.
-    parse_elapsed_s: ``parse_elapsed_s``.
-    path: ``path``.
-    proc_rows: ``proc_rows``.
-    stats_rows: ``stats_rows``.
-    stats_rows_parsed: ``stats_rows_parsed``.
+    archive_skip: Archive skip token when archival was skipped.
+    db_shard_lock_s: Sum of Manager shard acquire waits (seconds).
+    db_skip: DB-complete skip token (``no`` when not skipped).
+    elapsed_s: Total wall seconds for the worker task.
+    fail_reason: Failure / timeout stage token when present.
+    ingest_ok: Whether the path finished ingest-ok.
+    need_archival: Whether tar append is still needed.
+    outcome: Outcome token (``ingested``, ``timeout``, …).
+    parse_elapsed_s: Parse/load stage seconds when known.
+    path: Stats file path.
+    postgres_s: Sum of shard-hold / ORM write seconds.
+    proc_rows: Proc row count when known.
+    stats_rows: Host stats row count when known.
+    stats_rows_parsed: Parsed stats rows when known.
   """
   path: str
   elapsed_s: float
@@ -4070,6 +4196,8 @@ class IngestFileOutcome:
   outcome: str
   db_skip: str = "no"
   parse_elapsed_s: float | None = None
+  db_shard_lock_s: float | None = None
+  postgres_s: float | None = None
   stats_rows: int | None = None
   stats_rows_parsed: int | None = None
   proc_rows: int | None = None
@@ -4258,6 +4386,8 @@ def _ingest_file_outcome_from_worker(
       outcome=outcome,
       db_skip=db_skip,
       parse_elapsed_s=meta.get("parse_elapsed_s"),
+      db_shard_lock_s=meta.get("db_shard_lock_s"),
+      postgres_s=meta.get("postgres_s"),
       stats_rows=meta.get("stats_rows"),
       stats_rows_parsed=meta.get("stats_rows_parsed"),
       proc_rows=meta.get("proc_rows"),
@@ -4297,6 +4427,10 @@ def _log_ingest_file_outcome(
   ]
   if outcome.parse_elapsed_s is not None:
     parts.append("parse_elapsed_s=%.1f" % float(outcome.parse_elapsed_s))
+  if outcome.db_shard_lock_s is not None:
+    parts.append("db_shard_lock_s=%.1f" % float(outcome.db_shard_lock_s))
+  if outcome.postgres_s is not None:
+    parts.append("postgres_s=%.1f" % float(outcome.postgres_s))
   if outcome.stats_rows is not None:
     parts.append("stats_rows=%d" % int(outcome.stats_rows))
   if outcome.stats_rows_parsed is not None:
@@ -4316,15 +4450,22 @@ def _log_ingest_file_outcome(
   log_print(" ".join(parts), flush=True)
 
 
-def _record_ingest_marks_from_worker_result(result: Any) -> None:
+def _record_ingest_marks_from_worker_result(
+  result: Any,
+  *,
+  log_fn: Any = log_print,
+) -> None:
   """
   Persist file-complete and zero-host ingest marks from a packed worker result.
 
   Called from the spawn ingest worker, ``--jid``, and the orchestrator drain
-  before ACK so reconstruct complete predicates can skip the path.
+  before ACK so reconstruct complete predicates can skip the path. Pass
+  ``log_fn=None`` from the coordinator drain to avoid a second INFO line when
+  the worker already logged the mark.
 
   Args:
     result (Any): Packed ingest tuple from ``add_stats_file_to_db``.
+    log_fn (Any): Logger for mark INFO lines; ``None`` suppresses INFO.
 
   Returns:
     None
@@ -4354,7 +4495,7 @@ def _record_ingest_marks_from_worker_result(result: Any) -> None:
       outcome=outcome.outcome,
       stats_rows=outcome.stats_rows,
       stats_rows_parsed=outcome.stats_rows_parsed,
-      log_fn=log_print,
+      log_fn=log_fn,
   )
   from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
       maybe_record_file_complete_ingest_mark_from_outcome,
@@ -4364,7 +4505,7 @@ def _record_ingest_marks_from_worker_result(result: Any) -> None:
       ingest_ok=outcome.ingest_ok,
       outcome=outcome.outcome,
       db_skip=outcome.db_skip,
-      log_fn=log_print,
+      log_fn=log_fn,
   )
 
 
@@ -5050,7 +5191,11 @@ def _add_stats_file_to_db_streaming_incremental(
           proc_rows=total_proc_rows,
       )
       return _pack_ingest_worker_result(
-          stats_file, need_archival, ingest_ok, elapsed, meta,
+          stats_file,
+          need_archival,
+          ingest_ok,
+          elapsed,
+          _merge_ingest_write_timing_into_meta(meta),
       )
     except FileNotFoundError:
       failure = _parse_failure_after_quarantine(
@@ -5379,10 +5524,12 @@ def add_stats_file_to_db(
           False,
           False,
           exc.elapsed_s,
-          _ingest_outcome_meta(
-              outcome="timeout",
-              fail_reason=exc.stage,
-              archive_skip="timeout",
+          _merge_ingest_write_timing_into_meta(
+              _ingest_outcome_meta(
+                  outcome="timeout",
+                  fail_reason=exc.stage,
+                  archive_skip="timeout",
+              ),
           ),
       )
     except IngestArchiveLookupBudgetExceededError as exc:
@@ -5392,7 +5539,12 @@ def add_stats_file_to_db(
           False,
           False,
           0.0,
-          _ingest_outcome_meta(outcome="lookup_budget", archive_skip="lookup_budget"),
+          _merge_ingest_write_timing_into_meta(
+              _ingest_outcome_meta(
+                  outcome="lookup_budget",
+                  archive_skip="lookup_budget",
+              ),
+          ),
       )
   finally:
     mem_meta = _release_ingest_worker_memory(stats_file)
@@ -5428,6 +5580,7 @@ def _add_stats_file_to_db_impl(
   proc_stats = None
   payload = None
   t0 = time.time()
+  _reset_ingest_write_timing()
   if _should_stream_stats_file(stats_file, stats_file_contents):
     return _add_stats_file_to_db_streaming_incremental(
         lock, stats_file, t0,
@@ -5471,7 +5624,11 @@ def _add_stats_file_to_db_impl(
           proc_rows=proc_rows,
       )
       return _pack_ingest_worker_result(
-          stats_file, need_archival, ingest_ok, elapsed_total, meta,
+          stats_file,
+          need_archival,
+          ingest_ok,
+          elapsed_total,
+          _merge_ingest_write_timing_into_meta(meta),
       )
     except (OperationalError, DatabaseError) as exc:
       if is_database_unavailable_error(exc):

@@ -1477,6 +1477,23 @@ docker compose logs pipeline 2>&1 | grep -E 'dispatch_probe failed|proactive swa
 
 **Pass (T0):** `child_ingest` equals configured processes shortly after any `proactive swap` / idle recover. **Pass (T1):** census stays ≤ configured across further per-file timeouts; thin `in_flight_n` under long budgets is a separate utilization question, not proof of orphans.
 
+### T0 / T1 — Manager `DB lock wait` vs Postgres + ingest timing tokens (2026-08-27)
+
+**Failure signature (pre-fix):** multi-hour `DB lock wait proc|host batch file=… wait=…` immediately before `ERROR: ingest per-file timeout` and coordinator `queue_orchestrator ingest fail … err=TimeoutError`, while `ingest_catchup` queued depth rises under a saturated pool. Operators may misread `DB lock wait` as Postgres `lock_timeout`.
+
+**What the token means:** `DB lock wait` is **multiprocessing Manager write-shard `acquire` wait** (`sync_write_lock_shards`), **not** Postgres. Per-file SIGALRM / monotonic deadline now **suspends/extends during acquire** (same class as Redis populate wait); time **holding** the shard for ORM/`bulk_create` remains charged.
+
+**Acceptance (post-deploy):**
+
+- Long `DB lock wait … wait=` lines may still appear under shard contention, but they must **not** alone exhaust the per-file budget into false timeouts.
+- Packed timeouts soft-requeue (`outcome=timeout`) — prefer **no** `queue_orchestrator ingest fail … TimeoutError` for per-file budget expiry (coordinator may log `ingest timeout` then soft-requeue).
+- Success / outcome lines include timing tokens: `parse_elapsed_s=`, `db_shard_lock_s=` (sum of acquire waits), `postgres_s=` (sum of hold/`bulk_create`), `elapsed_s=` (total wall). Residual wall time may remain (populate wait, duplicate scan).
+- One INFO `file_complete_ingest_mark recorded` per successful path (worker); coordinator persists without a second INFO.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'DB lock wait|ingest per-file timeout|ingest timeout identity=|ingest fail .*TimeoutError|file_complete_ingest_mark recorded|db_shard_lock_s=|postgres_s=|parse_elapsed_s=' | tail -80
+```
+
 ### T0 / T1 — ingest per-file timeout floor 3600 (throughput near-miss, 2026-07)
 
 **Failure signature (pre-fix / old floor 900):** under `ingest_pool_processes=32`, many paths die with `ERROR: ingest per-file timeout … stage=ingest` / `outcome=timeout` at **elapsed == size-scaled budget** (~925–1654s for small/mid files). Slow cohort can still finish on retry (e.g. ~14 MiB in **2304.7s**). Not an idle/stall class if `remaining` advances.

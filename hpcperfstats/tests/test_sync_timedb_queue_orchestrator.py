@@ -123,7 +123,7 @@ def test_drain_records_ingest_marks_before_ack(monkeypatch):
   """P0-1: drain must persist file-complete/zero-host marks before ACK."""
   recorded = []
 
-  def _record(result):
+  def _record(result, **_kwargs):
     recorded.append(result)
 
   monkeypatch.setattr(st, "_record_ingest_marks_from_worker_result", _record)
@@ -1556,3 +1556,81 @@ def test_mainthread_forbid_fill_drain():
   assert "_ingest_coordinator_loop" in src
   assert "_append_coordinator_loop" in src
 
+
+
+def test_drain_TimeoutError_soft_requeues_without_fail(tmp_path, monkeypatch):
+  """Bare TimeoutError on AsyncResult.get must soft-requeue, not ingest fail."""
+  monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  identity = "/raw/timeout_escape"
+  jq.zadd_ingest_job(client, identity=identity, score=1.0)
+  claim = jq.claim_ingest_job(
+      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+  )
+  logs = []
+
+  class _Ready:
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      del timeout
+      raise TimeoutError("pickled per-file timeout")
+
+  n = qo._drain_ingest_ready(
+      client,
+      inflight={identity: _Ready()},
+      claims={identity: claim},
+      tgz_archive_dir="/daily",
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: logs.append(" ".join(str(x) for x in a)),
+  )
+  assert n == 1
+  assert jq.read_job_attempt(client, kind="ingest", identity=identity) == 0
+  joined = "\n".join(logs)
+  assert "ingest timeout" in joined
+  assert "ingest fail" not in joined
+
+
+def test_drain_ingest_marks_quiet_log_fn_none(monkeypatch, tmp_path):
+  """Coordinator mark record must pass log_fn=None (one INFO from worker)."""
+  recorded = []
+
+  def _record(result, *, log_fn=st.log_print):
+    recorded.append({"result": result, "log_fn": log_fn})
+
+  monkeypatch.setattr(st, "_record_ingest_marks_from_worker_result", _record)
+  monkeypatch.setattr(jq, "ack_job", lambda *a, **k: True)
+
+  class _Ready:
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      del timeout
+      return ("/a", True, True, 0.1, {"outcome": "ingested"})
+
+  client = FakeRedis()
+  inflight = {"/a": _Ready()}
+  claims = {
+      "/a": jq.ClaimedJob(
+          kind=jq.JOB_KIND_INGEST,
+          identity="/a",
+          owner_token="n:h:b:1",
+          deadline=1.0,
+          score=5.0,
+      ),
+  }
+  done = qo._drain_ingest_ready(
+      client,
+      inflight=inflight,
+      claims=claims,
+      tgz_archive_dir="/daily",
+      archive_data_dir=str(tmp_path),
+  )
+  assert done == 1
+  assert recorded
+  assert recorded[0]["log_fn"] is None
+  src = inspect.getsource(qo._drain_ingest_ready)
+  assert "log_fn=None" in src

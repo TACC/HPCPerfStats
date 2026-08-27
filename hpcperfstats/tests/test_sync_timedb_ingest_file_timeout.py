@@ -605,3 +605,109 @@ def test_log_ingest_per_file_timeout_includes_size_and_rate(capsys, tmp_path):
   assert "bytes_per_s=100" in out
   assert "elapsed=10.0s" in out
   assert "stage=ingest" in out
+
+
+def test_suspend_sigalrm_for_non_work_extends_deadline_monotonic(monkeypatch):
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      get_ingest_task_deadline_monotonic,
+      reset_ingest_task_deadline_monotonic,
+      set_ingest_task_deadline_monotonic,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
+      suspend_ingest_sigalrm_for_non_work_wait,
+  )
+
+  if not _SIGALRM_AVAILABLE:
+    pytest.skip("SIGALRM not available")
+
+  base = time.monotonic() + 2.0
+  token = set_ingest_task_deadline_monotonic(base)
+  arm_calls = []
+  original_setitimer = signal.setitimer
+
+  def counting_setitimer(which, seconds, interval=0.0):
+    arm_calls.append(float(seconds))
+    return original_setitimer(which, seconds, interval)
+
+  monkeypatch.setattr(signal, "setitimer", counting_setitimer)
+  signal.signal(signal.SIGALRM, lambda *_a: None)
+  signal.setitimer(signal.ITIMER_REAL, 2.0)
+  try:
+    with suspend_ingest_sigalrm_for_non_work_wait():
+      time.sleep(0.15)
+    extended = get_ingest_task_deadline_monotonic()
+    assert extended is not None
+    assert extended > base
+    assert math.isclose(extended - base, 0.15, abs_tol=0.08)
+    assert any(value > 0.0 for value in arm_calls)
+  finally:
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    reset_ingest_task_deadline_monotonic(token)
+
+
+def test_write_lock_wait_extends_deadline_and_accumulates_timing(monkeypatch):
+  """Manager acquire wait must extend deadline and count into db_shard_lock_s."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      get_ingest_task_deadline_monotonic,
+      reset_ingest_task_deadline_monotonic,
+      set_ingest_task_deadline_monotonic,
+  )
+
+  class _SlowLock:
+    def acquire(self):
+      time.sleep(0.12)
+
+    def release(self):
+      return None
+
+  st._reset_ingest_write_timing()
+  base = time.monotonic() + 5.0
+  token = set_ingest_task_deadline_monotonic(base)
+  try:
+    with st._held_ingest_write_lock(_SlowLock(), "/tmp/seg", "proc"):
+      time.sleep(0.05)
+    snap = st._snapshot_ingest_write_timing()
+    extended = get_ingest_task_deadline_monotonic()
+    assert extended is not None
+    assert extended > base
+    assert snap["db_shard_lock_s"] >= 0.08
+    assert snap["postgres_s"] >= 0.03
+  finally:
+    reset_ingest_task_deadline_monotonic(token)
+    st._reset_ingest_write_timing()
+
+
+def test_ingest_file_outcome_timing_breakdown_tokens():
+  """Outcome log must emit parse / db_shard_lock / postgres / elapsed tokens."""
+  outcome = st.IngestFileOutcome(
+      path="/archive/host/seg",
+      elapsed_s=12.5,
+      ingest_ok=True,
+      need_archival=False,
+      outcome="ingested",
+      parse_elapsed_s=1.5,
+      db_shard_lock_s=3.25,
+      postgres_s=4.0,
+      stats_rows=10,
+      proc_rows=2,
+  )
+  logged = []
+
+  def _capture(*args, **kwargs):
+    del kwargs
+    logged.append(" ".join(str(a) for a in args))
+
+  import hpcperfstats.dbload.sync_timedb as mod
+
+  old = mod.log_print
+  mod.log_print = _capture
+  try:
+    st._log_ingest_file_outcome(outcome)
+  finally:
+    mod.log_print = old
+  assert logged
+  joined = " ".join(logged)
+  assert "parse_elapsed_s=1.5" in joined
+  assert "db_shard_lock_s=3.2" in joined
+  assert "postgres_s=4.0" in joined
+  assert "elapsed_s=12.5" in joined

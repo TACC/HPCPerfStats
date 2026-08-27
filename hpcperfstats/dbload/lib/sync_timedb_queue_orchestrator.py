@@ -1219,13 +1219,38 @@ def _ingest_worker(lock: Any, path: str) -> Any:
     >>> _ingest_worker(None, "/x")  # doctest: +SKIP
   """
   from hpcperfstats.dbload.sync_timedb import (
-      add_stats_file_to_db,
+      IngestPerFileTimeoutError,
       _apply_ingest_session_statement_timeout,
+      _ingest_outcome_meta,
+      _log_ingest_per_file_timeout,
+      _merge_ingest_write_timing_into_meta,
+      _pack_ingest_worker_result,
       _record_ingest_marks_from_worker_result,
+      add_stats_file_to_db,
   )
 
   _apply_ingest_session_statement_timeout()
-  result = add_stats_file_to_db(lock, path)
+  try:
+    result = add_stats_file_to_db(lock, path)
+  except TimeoutError as exc:
+    # Multiprocessing may surface IngestPerFileTimeoutError as TimeoutError.
+    elapsed = float(getattr(exc, "elapsed_s", 0.0) or 0.0)
+    stage = str(getattr(exc, "stage", "ingest") or "ingest")
+    if isinstance(exc, IngestPerFileTimeoutError):
+      _log_ingest_per_file_timeout(exc)
+    result = _pack_ingest_worker_result(
+        path,
+        False,
+        False,
+        elapsed,
+        _merge_ingest_write_timing_into_meta(
+            _ingest_outcome_meta(
+                outcome="timeout",
+                fail_reason=stage,
+                archive_skip="timeout",
+            ),
+        ),
+    )
   _record_ingest_marks_from_worker_result(result)
   return result
 
@@ -2132,6 +2157,22 @@ def _drain_ingest_ready(
     path = _path_from_ingest_identity(identity)
     try:
       result = async_res.get(timeout=0)
+    except TimeoutError as exc:
+      # Bare TimeoutError / IngestPerFileTimeoutError escape → soft requeue.
+      _log(
+          "queue_orchestrator ingest timeout identity=%s err=%s"
+          % (identity, type(exc).__name__),
+          log_fn=log_fn,
+      )
+      day_tok = _day_token_from_date(
+          _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
+      )
+      progress.record(day_tok, "ingest", 1)
+      progress.record(day_tok, "timeout", 1)
+      _requeue_claimed_job_without_attempt_bump(
+          client, claim=claim, log_fn=log_fn,
+      )
+      continue
     except Exception as exc:
       _log(
           "queue_orchestrator ingest fail identity=%s err=%s"
@@ -2187,7 +2228,8 @@ def _drain_ingest_ready(
       from hpcperfstats.dbload.sync_timedb import (
           _record_ingest_marks_from_worker_result,
       )
-      _record_ingest_marks_from_worker_result(result)
+      # Worker already logged mark INFO; coordinator persists quietly.
+      _record_ingest_marks_from_worker_result(result, log_fn=None)
     except Exception as exc:
       _log(
           "queue_orchestrator ingest mark fail identity=%s err=%s"
