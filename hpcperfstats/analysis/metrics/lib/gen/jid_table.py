@@ -3960,34 +3960,55 @@ class HostDataProvider:
     val_col: Any,
     events: Any,
     conv: float = 1.0,
+    *,
+    group_by_dev: bool = False,
   ) -> Any:
     """
-    Aggregate val_col for type and events; returns DataFrame with host, time,.
-    
-      sum_val (sum * conv).
-    
+    Aggregate ``val_col`` for type and events into host×time rows.
+
+    Returns a DataFrame with ``host``, ``time``, and ``sum_val``
+    (sum * ``conv``). When ``group_by_dev`` is True, keep ``dev`` and
+    GROUP BY host/time/dev (same grain as ``jid_table.get_aggregate_df``
+    for GPU roofline and Grace DCGM unique-watt). This provider is
+    single-host; NULL sums stay NULL (``coalesce_zero=False``), unlike
+    job-scoped aggregates that mirror pandas ``sum() == 0.0``.
+
     Args:
-      typ (Any): Typ passed to this helper.
-      val_col (Any): Val col passed to this helper.
-      events (Any): Events passed to this helper.
-      conv (float): Floating-point value for conv.
-    
+      typ (Any): ``host_data.type`` probe name or alias.
+      val_col (Any): Metric column (``arc``, ``value``, or ``delta``).
+      events (Any): Event name or sequence of event names.
+      conv (float): Multiplier applied to ``sum_val``.
+      group_by_dev (bool): When True, one row per (host, time, dev).
+
     Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
+      Any: DataFrame with ``host``, ``time``, ``sum_val``, and ``dev``
+      when ``group_by_dev`` is True.
+
     Examples:
-      >>> HostDataProvider().get_aggregate_df(None, None, None, 0)
+      >>> HostDataProvider().get_aggregate_df(  # doctest: +SKIP
+      ...     "nvidia_gpu", "arc", ["gpu_util"], 1.0, group_by_dev=True
+      ... )
     """
     _incr_summary_aggregate_count_if_active()
     _ALLOWED_METRICS = ("arc", "value", "delta")
     if val_col not in _ALLOWED_METRICS:
       val_col = "arc"
     probed_events = events_probe_names(events, typ=typ)
+    empty_cols = (
+        ["host", "time", "dev", "sum_val"]
+        if group_by_dev
+        else ["host", "time", "sum_val"]
+    )
+    agg_qs = (
+        host_data_sum_val_per_sample_dev_queryset
+        if group_by_dev
+        else host_data_sum_val_per_sample_queryset
+    )
     df = None
     for candidate_typ in type_probe_names(typ):
       # Single-host provider: keep NULL (missing) for all-NULL sample groups,
       # unlike the job-scoped aggregates that mirror pandas ``sum() == 0.0``.
-      qs = host_data_sum_val_per_sample_queryset(
+      qs = agg_qs(
           self._host_data_qs(
               type=candidate_typ,
               event__in=probed_events,
@@ -3997,11 +4018,18 @@ class HostDataProvider:
       )
       candidate = host_data_restore_time_column(queryset_to_dataframe(qs))
       if not candidate.empty and "sum_val" in candidate.columns:
+        if group_by_dev:
+          if "dev" not in candidate.columns:
+            candidate = candidate.copy()
+            candidate["dev"] = ""
+          else:
+            candidate = candidate.copy()
+            candidate["dev"] = candidate["dev"].fillna("").astype(str)
         df = candidate
         break
     if df is None:
       import pandas as pd
-      df = pd.DataFrame(columns=["host", "time", "sum_val"])
+      df = pd.DataFrame(columns=empty_cols)
     if not df.empty and "sum_val" in df.columns:
       df["sum_val"] = df["sum_val"] * conv
     return df

@@ -1811,3 +1811,66 @@ def test_type_detail_get_host_time_df_uses_time_slices(monkeypatch):
   )
   assert seen["batch_size"] == TYPE_DETAIL_HOST_QUERY_BATCH
   assert not out.empty
+
+
+@pytest.mark.machine_unit_mock
+def test_host_data_provider_get_aggregate_df_accepts_group_by_dev(monkeypatch):
+  """HostDataProvider must accept group_by_dev and switch queryset grain."""
+  import inspect
+
+  from hpcperfstats.analysis.metrics.lib.gen import jid_table as jt_mod
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import HostDataProvider
+
+  sig = inspect.signature(HostDataProvider.get_aggregate_df)
+  assert "group_by_dev" in sig.parameters
+  assert sig.parameters["group_by_dev"].kind is inspect.Parameter.KEYWORD_ONLY
+
+  calls = {"host": 0, "dev": 0}
+  empty_host = pd.DataFrame(columns=["host", "time", "sum_val"])
+  empty_dev = pd.DataFrame(columns=["host", "time", "dev", "sum_val"])
+
+  def host_qs(*_a, **_k):
+    calls["host"] += 1
+    return MagicMock()
+
+  def dev_qs(*_a, **_k):
+    calls["dev"] += 1
+    return MagicMock()
+
+  monkeypatch.setattr(jt_mod, "host_data_sum_val_per_sample_queryset", host_qs)
+  monkeypatch.setattr(
+      jt_mod, "host_data_sum_val_per_sample_dev_queryset", dev_qs
+  )
+  monkeypatch.setattr(
+      jt_mod,
+      "queryset_to_dataframe",
+      lambda qs: empty_dev.copy() if calls["dev"] else empty_host.copy(),
+  )
+  monkeypatch.setattr(jt_mod, "host_data_restore_time_column", lambda df: df)
+  monkeypatch.setattr(
+      jt_mod, "events_probe_names", lambda events, typ=None: list(events)
+  )
+  monkeypatch.setattr(jt_mod, "type_probe_names", lambda typ: [typ])
+  monkeypatch.setattr(
+      jt_mod, "_incr_summary_aggregate_count_if_active", lambda: None
+  )
+
+  provider = HostDataProvider.__new__(HostDataProvider)
+  provider.jid = "h"
+  provider.host_list = ["h.fqdn"]
+  provider._base_filter = {"host": "h.fqdn"}
+  provider._host_data_qs = lambda **_extra: MagicMock()
+
+  host_df = provider.get_aggregate_df("nvidia_gpu", "arc", ["gpu_util"], 1.0)
+  assert calls["host"] >= 1
+  assert calls["dev"] == 0
+  assert "dev" not in host_df.columns
+
+  calls["host"] = 0
+  calls["dev"] = 0
+  dev_df = provider.get_aggregate_df(
+      "nvidia_gpu", "arc", ["gpu_util"], 1.0, group_by_dev=True
+  )
+  assert calls["dev"] >= 1
+  assert "dev" in list(dev_df.columns)
+

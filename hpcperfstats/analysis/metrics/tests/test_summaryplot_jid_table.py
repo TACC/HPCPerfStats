@@ -107,8 +107,8 @@ def test_summaryplot_schema_skips_aggregates_for_absent_types():
   lock = threading.Lock()
   types_seen = []
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv, events, val_col
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, events, val_col, group_by_dev
     with lock:
       types_seen.append(typ)
     if _is_cpu_type(typ):
@@ -138,8 +138,8 @@ def test_summaryplot_plot_includes_mbw_from_first_intel_imc_with_data():
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
   hsw_types = ("intel_x86_uncore_imc_hsw", "intel_hsw_imc")
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     if val_col == "arc" and _is_cpu_type(typ) and "user" in events:
       return pd.DataFrame(
           [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
@@ -179,8 +179,8 @@ def test_summaryplot_mbw_from_spr_hbm_cas_only():
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
   spr = "intel_x86_uncore_imc_spr"
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     if val_col == "arc" and _is_cpu_type(typ) and "user" in events:
       return pd.DataFrame(
           [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
@@ -221,8 +221,8 @@ def test_summaryplot_mbw_sums_spr_dram_and_hbm_cas():
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   spr = "intel_x86_uncore_imc_spr"
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv, val_col
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, val_col, group_by_dev
     if typ != spr:
       return empty
     if _cas_events_match(events):
@@ -250,8 +250,8 @@ def test_summaryplot_skips_freq_plot_when_ghz_never_exceeds_500():
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     if val_col != "arc":
       return empty
     if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_INTEL_RAPL_TYPES, *_IB_FABRIC_TYPES, "lustre_llite", "llite"):
@@ -298,8 +298,8 @@ def test_summaryplot_includes_nvidia_gpu_util_and_mem_used_mb_columns():
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     if val_col == "value" and typ == "nvidia_gpu":
       ev = list(events)
       if ev == ["gpu_util"]:
@@ -389,8 +389,8 @@ def test_summaryplot_nv_gpu_util_falls_back_to_utilization_event():
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     if val_col == "value" and typ == "nvidia_gpu":
       ev = list(events)
       if ev == ["gpu_util"]:
@@ -467,8 +467,8 @@ def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     if val_col == "value" and typ == "nvidia_gpu":
       ev = list(events)
       if ev == ["gpu_util"]:
@@ -605,8 +605,8 @@ def test_summaryplot_uses_job_window_for_x_range():
   base = pd.DataFrame([("n1.cluster", t0), ("n1.cluster", t1)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     if _is_cpu_type(typ) and val_col == "arc" and list(events) == ["user", "system", "nice"]:
       return pd.DataFrame(
           [("n1.cluster", t0, 1.0), ("n1.cluster", t1, 1.2)],
@@ -700,8 +700,8 @@ def test_summaryplot_orders_cpu_then_gpu_then_ibbw():
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     ev = list(events)
     if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
       return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
@@ -749,8 +749,8 @@ def test_summaryplot_orders_buckets_cpu_memory_compute_gpu_subblocks_network():
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     ev = list(events)
     if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
       return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
@@ -821,8 +821,8 @@ def test_summaryplot_prefers_tensor_splits_over_lumped_pipe():
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     ev = list(events)
     if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
       return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
@@ -866,8 +866,8 @@ def test_summaryplot_lumped_tensor_fallback_when_splits_absent():
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     ev = list(events)
     if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
       return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
@@ -907,8 +907,8 @@ def test_summaryplot_orders_lustre_nfs_before_network():
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
   llite_meta_events = list(LLITE_METADATA_IOPS_EVENTS)
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     ev = list(events)
     if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
       return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
@@ -1004,8 +1004,8 @@ def test_summaryplot_lustre_and_nfs_read_write_use_per_host_time_series():
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     ev = list(events)
     if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
       return pd.DataFrame(
@@ -1081,8 +1081,8 @@ def test_summaryplot_liops_and_nfs_iops_are_separate_per_host():
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
   llite_meta = list(LLITE_METADATA_IOPS_EVENTS)
 
-  def get_aggregate_df(typ, val_col, events, conv=1.0):
-    del conv
+  def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
+    del conv, group_by_dev
     ev = list(events)
     if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
       return pd.DataFrame(

@@ -92,7 +92,7 @@ def test_fingerprint_changes_when_telemetry_first_time_moves():
 def test_app_plot_artifact_schema_version_bumped_for_telemetry_bounds():
   from hpcperfstats.site.lib.machine import job_plot_artifacts as plot_cfg
 
-  assert plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION == 19
+  assert plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION == 20
 
 
 @pytest.mark.django_db
@@ -328,7 +328,9 @@ def test_persist_job_plot_artifacts_persists_fresh_unavailable_rows(monkeypatch)
       import pandas as pd
       return pd.DataFrame({"host": ["n1"], "time": [now]})
 
-    def get_aggregate_df(self, _typ, _metric_column, _events, _conv):
+    def get_aggregate_df(
+        self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
+    ):
       import pandas as pd
       return pd.DataFrame({"host": ["n1"], "time": [now], "sum_val": [0.0]})
 
@@ -376,7 +378,9 @@ def test_persist_job_plot_artifacts_marks_plot_exceptions_unavailable(monkeypatc
       import pandas as pd
       return pd.DataFrame({"host": ["n1"], "time": [now]})
 
-    def get_aggregate_df(self, _typ, _metric_column, _events, _conv):
+    def get_aggregate_df(
+        self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
+    ):
       import pandas as pd
       return pd.DataFrame({"host": ["n1"], "time": [now], "sum_val": [0.0]})
 
@@ -428,7 +432,9 @@ def test_persist_job_plot_artifacts_skips_interpreter_shutdown_poison(monkeypatc
       import pandas as pd
       return pd.DataFrame({"host": ["n1"], "time": [now]})
 
-    def get_aggregate_df(self, _typ, _metric_column, _events, _conv):
+    def get_aggregate_df(
+        self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
+    ):
       import pandas as pd
       return pd.DataFrame({"host": ["n1"], "time": [now], "sum_val": [0.0]})
 
@@ -473,7 +479,9 @@ def test_persist_job_plot_artifacts_reuses_context_rows_map(monkeypatch):
       import pandas as pd
       return pd.DataFrame({"host": ["n1"], "time": [now]})
 
-    def get_aggregate_df(self, _typ, _metric_column, _events, _conv):
+    def get_aggregate_df(
+        self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
+    ):
       import pandas as pd
       return pd.DataFrame({"host": ["n1"], "time": [now], "sum_val": [1.0]})
 
@@ -519,7 +527,9 @@ def test_jt_memo_proxy_telemetry_counts_hits():
       self.host_calls += 1
       return pd.DataFrame({"host": ["n1"], "time": [timezone.now()]})
 
-    def get_aggregate_df(self, _typ, _metric_column, _events, _conv):
+    def get_aggregate_df(
+        self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
+    ):
       self.agg_calls += 1
       return pd.DataFrame({"host": ["n1"], "time": [timezone.now()], "sum_val": [1.0]})
 
@@ -534,6 +544,79 @@ def test_jt_memo_proxy_telemetry_counts_hits():
   assert telemetry["plot_jt_memo_host_time_hits"] == 1
   assert telemetry["plot_jt_memo_aggregate_misses"] == 2
   assert telemetry["plot_jt_memo_aggregate_hits"] == 2
+
+
+@pytest.mark.machine_unit_mock
+def test_jt_memo_proxy_forwards_group_by_dev():
+  """Proxy must accept group_by_dev and forward it to inner jid_table."""
+  from hpcperfstats.site.lib.machine.job_plot_artifacts import _JtMemoProxy
+  import pandas as pd
+
+  class _FakeJt:
+    def __init__(self):
+      self.calls = []
+
+    def get_aggregate_df(
+        self, typ, metric_column, events, conv, *, group_by_dev=False
+    ):
+      self.calls.append(
+          {
+              "typ": typ,
+              "metric_column": metric_column,
+              "events": events,
+              "conv": conv,
+              "group_by_dev": group_by_dev,
+          }
+      )
+      return pd.DataFrame(
+          {"host": ["n1"], "time": [timezone.now()], "sum_val": [1.0]}
+      )
+
+  inner = _FakeJt()
+  proxy = _JtMemoProxy(inner)
+  proxy.get_aggregate_df("nvidia_gpu", "arc", ["gpu_util"], 1.0, group_by_dev=True)
+  assert len(inner.calls) == 1
+  assert inner.calls[0]["group_by_dev"] is True
+  assert inner.calls[0]["typ"] == "nvidia_gpu"
+
+
+@pytest.mark.machine_unit_mock
+def test_jt_memo_proxy_cache_key_includes_group_by_dev():
+  """Host-sum and per-dev requests must not share a memo entry."""
+  from hpcperfstats.site.lib.machine.job_plot_artifacts import _JtMemoProxy
+  import pandas as pd
+
+  class _FakeJt:
+    def __init__(self):
+      self.calls = []
+
+    def get_aggregate_df(
+        self, typ, metric_column, events, conv, *, group_by_dev=False
+    ):
+      del typ, metric_column, events, conv
+      self.calls.append(bool(group_by_dev))
+      if group_by_dev:
+        return pd.DataFrame(
+            {
+                "host": ["n1"],
+                "time": [timezone.now()],
+                "dev": ["0"],
+                "sum_val": [2.0],
+            }
+        )
+      return pd.DataFrame(
+          {"host": ["n1"], "time": [timezone.now()], "sum_val": [1.0]}
+      )
+
+  inner = _FakeJt()
+  proxy = _JtMemoProxy(inner)
+  host_df = proxy.get_aggregate_df("t", "arc", ["a"], 1.0, group_by_dev=False)
+  dev_df = proxy.get_aggregate_df("t", "arc", ["a"], 1.0, group_by_dev=True)
+  proxy.get_aggregate_df("t", "arc", ["a"], 1.0, group_by_dev=False)
+  proxy.get_aggregate_df("t", "arc", ["a"], 1.0, group_by_dev=True)
+  assert inner.calls == [False, True]
+  assert "dev" not in host_df.columns
+  assert "dev" in dev_df.columns
 
 
 @pytest.mark.machine_unit_mock

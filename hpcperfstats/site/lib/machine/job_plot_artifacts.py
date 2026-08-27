@@ -102,7 +102,7 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 
 # Bump when plot artifact semantics change (independent of Bokeh version).
 # See hpcperfstats/cursor-rules/job-plot-artifacts-caching.mdc and machine/tests/test_job_plot_artifacts.py.
-APP_PLOT_ARTIFACT_SCHEMA_VERSION = 19
+APP_PLOT_ARTIFACT_SCHEMA_VERSION = 20
 
 JOB_PLOT_JSON_KEYS: Dict[str, Tuple[str, str]] = {
     kind: (spec.json_item_key, spec.unavailable_reason_key)
@@ -654,30 +654,49 @@ class _JtMemoProxy:
     metric_column: Any,
     events: Any,
     conv: Any,
+    *,
+    group_by_dev: bool = False,
   ) -> Any:
     """
-    Return the aggregate DataFrame.
-    
+    Return a memoized copy of the inner ``jid_table`` aggregate DataFrame.
+
+    Signature stays keyword-compatible with
+    ``jid_table.get_aggregate_df``, including grain flags. Memo keys
+    include ``group_by_dev`` so host-sum Summary rows and per-device GPU
+    roofline rows for the same type/events/conv do not collide.
+
     Args:
-      typ (Any): Typ passed to this helper.
-      metric_column (Any): Metric column passed to this helper.
-      events (Any): Events passed to this helper.
-      conv (Any): Conv passed to this helper.
-    
+      typ (Any): ``host_data.type`` probe name or alias.
+      metric_column (Any): Metric column (``arc``, ``value``, or
+      ``delta``).
+      events (Any): Event name or sequence of event names.
+      conv (Any): Multiplier applied to summed values.
+      group_by_dev (bool): When True, one row per (host, time, dev);
+      when False, sum devices at host×time grain.
+
     Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
+      Any: Copy of the cached aggregate DataFrame from the inner table.
+
     Examples:
-      >>> _JtMemoProxy().get_aggregate_df(None, None, None, None)
+      >>> proxy.get_aggregate_df(  # doctest: +SKIP
+      ...     "nvidia_gpu", "arc", ["gpu_util"], 1.0, group_by_dev=True
+      ... )
     """
     key = (
         str(typ),
         str(metric_column),
         self._normalize_events(events),
         self._normalize_conv(conv),
+        bool(group_by_dev),
     )
     if key not in self._aggregate_cache:
-      self._aggregate_cache[key] = self._jt.get_aggregate_df(typ, metric_column, events, conv)
+      self._aggregate_cache[key] = self._jt.get_aggregate_df(
+          typ,
+          metric_column,
+          events,
+          conv,
+          group_by_dev=group_by_dev,
+      )
       if self._telemetry is not None:
         self._telemetry["plot_jt_memo_aggregate_misses"] = int(
             self._telemetry.get("plot_jt_memo_aggregate_misses", 0)

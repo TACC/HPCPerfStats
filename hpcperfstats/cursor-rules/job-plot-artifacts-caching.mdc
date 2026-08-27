@@ -58,11 +58,13 @@ alwaysApply: false
 - **Progressive Job Detail merge:** When `job_plots?progressive=1` returns `partial`, never flip a completed plot kind (`summary_plot` / `roofline` / `gpu_roofline`) back to loading solely because that kind’s item field is omitted. Cap progressive SPA polls; fail closed with Retry.
 - **Pub vs Job List hist:** Stabilizing Job List distribution embeds does **not** automatically fix `/pub/cluster-dashboard/` expansion histograms — those use `usePubExpansionPeriod` + `LazyExpansionHistogram` (`previewMode` + fingerprint-stable `initialBlock`).
 - **Aggregate host-chunk timeout:** Summary/roofline builders call `jid_table.get_aggregate_df`. That path must split/retry on PostgreSQL statement timeout (TypeDetail twin), chunk **hosts and time**, and keep materialised host×time rows under the plot budget — see **`update-metrics-batch-resilience.mdc`** (design capacity **`5000×48×60`**). SPA progressive merge does not fix a stuck backend aggregate.
+- **`_JtMemoProxy` grain flags:** Prewarm wraps `jid_table` in `_JtMemoProxy`. `get_aggregate_df` must stay **keyword-compatible** with `jid_table.get_aggregate_df`, including grain flags such as **`group_by_dev`**. Memo keys must include those flags so host-sum Summary rows and per-device GPU roofline / Grace DCGM unique-watt rows for the same type/events/conv do not collide. Prefetch (`COMMON_PLOT_AGGREGATE_BUNDLE`) stays host-grain; per-dev remains an on-demand miss. Staff `host_plot` uses `HostDataProvider.get_aggregate_df` (same keyword). See **`gpu-host-data-source-priority.mdc`** and **`monitor-analysis-architecture-sync.mdc`**.
 - **Prewarm persist:** `persist_job_plot_artifacts_for_jid` must probe warm L2 (fingerprint-matching payloads for all kinds) **before** constructing `jid_table` / aggregate prefetch. Prewarm shares **`metrics_pool_processes`** (no secondary ThreadPool / `metrics_prewarm_*` / `Future.cancel`). Under prewarm, summary aggregate prefetch is serial (`serial_summary_aggregate_prefetch_context`) to bound RSS.
 
 ## Overlap
 
-- Complements **`runtime-resource-and-metrics-safety.mdc`** (metrics recompute) and **`monitor-analysis-architecture-sync.mdc`** (plot inputs from `host_data` / `jid_table`).
+- Complements **`runtime-resource-and-metrics-safety.mdc`** (metrics recompute) and **`monitor-analysis-architecture-sync.mdc`** (plot inputs from `host_data` / `jid_table`; GPU roofline `group_by_dev=True`).
+- Complements **`gpu-host-data-source-priority.mdc`** (`get_aggregate_df(..., group_by_dev=True)` for GPU scatter).
 - Complements **`interactive-ready-controls.mdc`** (lazy-mount list/dashboard histograms; no embed in hidden tabpanels).
 - Complements **`bokeh-version-and-vendor-patch-upgrade.mdc`** when upgrading Bokeh.
 - Complements **`update-metrics-job-listing-new-data-type.mdc`** when plot artifacts imply new or changed **`_jobs_queryset`** candidacy.
