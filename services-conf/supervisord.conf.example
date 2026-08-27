@@ -10,6 +10,9 @@ environment=HOME="/home/hpcperfstats",USER="hpcperfstats"
 priority=10
 autorestart=true
 startretries=20
+; Wait past sync_timedb SHUTDOWN_DRAIN_TIMEOUT_S (120s) so Docker/supervisor SIGKILL
+; does not undercut cooperative drain on sibling programs during container stop.
+stopwaitsecs=130
 stdout_redirect=true
 stdout_logfile=/dev/fd/1
 stdout_logfile_maxbytes=0
@@ -45,6 +48,8 @@ environment=HOME="/home/hpcperfstats",USER="hpcperfstats"
 priority=20
 autorestart=true
 startretries=20
+; Must be >= SHUTDOWN_DRAIN_TIMEOUT_S (120). Default supervisord stopwaitsecs is 10.
+stopwaitsecs=130
 stopasgroup=true
 killasgroup=true
 stdout_redirect=true
@@ -61,6 +66,8 @@ environment=HOME="/home/hpcperfstats",USER="hpcperfstats"
 priority=30
 autorestart=true
 startretries=20
+; Align with pipeline stopwaitsecs so container stop does not SIGKILL early.
+stopwaitsecs=130
 stdout_redirect=true
 stdout_logfile=/dev/fd/1
 stdout_logfile_maxbytes=0
