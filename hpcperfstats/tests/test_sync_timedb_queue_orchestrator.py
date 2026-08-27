@@ -450,6 +450,16 @@ def test_idle_reconstruct_enqueues_discover_and_rescans(monkeypatch):
   assert any(str(v).startswith("rescan") for _k, v in calls["rpush"])
 
 
+def test_idle_reconstruct_does_not_log_work_total():
+  """Day-line reconstruct_enq owns visibility; no undated work= INFO."""
+  import inspect
+
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  src = inspect.getsource(qo._idle_reconstruct_pass)
+  assert "idle reconstruct work=" not in src
+
+
 def test_idle_reconstruct_off_main_does_not_run_boot_inline(monkeypatch):
   """P1-10: periodic reconstruct must not block MainThread on GNU find."""
   from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq

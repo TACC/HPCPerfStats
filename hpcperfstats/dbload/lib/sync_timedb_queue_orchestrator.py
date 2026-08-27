@@ -1201,11 +1201,6 @@ def _idle_reconstruct_pass(
       client,
       tgz_archive_dir=tgz_archive_dir,
   )
-  if work:
-    _log(
-        "queue_orchestrator idle reconstruct work=%d" % work,
-        log_fn=log_fn,
-    )
   return work
 
 

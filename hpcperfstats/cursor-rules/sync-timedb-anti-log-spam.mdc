@@ -16,7 +16,7 @@ Prefer **Redis `SET NX EX`** when N processes (ingest-pool / populate waiters / 
 
 Canonical helper: `_rate_limited_day_info_log` (+ day-specific wrappers) in `sync_timedb_archive_members_redis.py`.
 
-**Deliberate INFO (not spam):** `reconstruct-coordinator` **600s** `queue_orchestrator progress day=` / `status` rollup (`sync_timedb_progress_report.py`) and single-line `archive_job_done` are intentional operator surfaces — do not rate-limit those. Do **not** restore per-batch `Archive/delete gate: skipped` or per-job `handoff_to_ingest … reason=gate_skip` INFO (day-line counters own that visibility).
+**Deliberate INFO (not spam):** `reconstruct-coordinator` **600s** `queue_orchestrator progress day=` / `status` rollup (`sync_timedb_progress_report.py`) and single-line `archive_job_done` are intentional operator surfaces — do not rate-limit those. Do **not** restore per-batch `Archive/delete gate: skipped`, per-job `handoff_to_ingest … reason=gate_skip`, or undated `queue_orchestrator idle reconstruct work=` INFO (day-line `gate_skip=` / `ingest_handoff=` / `reconstruct_enq=` / `incomplete_seen=` own that visibility).
 
 ## Motivating regression (RC-ER, 2026-07-29)
 
