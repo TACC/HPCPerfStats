@@ -1855,6 +1855,75 @@ def test_drain_TimeoutError_soft_requeues_without_fail(tmp_path, monkeypatch):
   joined = "\n".join(logs)
   assert "ingest timeout" in joined
   assert "ingest fail" not in joined
+  assert "size_bytes=" in joined
+  assert "timeout_s=" in joined
+  assert "elapsed_s=" in joined
+  assert "stage=" in joined
+  assert "err=TimeoutError" in joined
+
+
+def test_drain_packed_timeout_rich_log(tmp_path, monkeypatch):
+  """Packed outcome=timeout soft-requeue must emit rich coordinator timeout line."""
+  monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
+  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 42)
+  monkeypatch.setattr(st, "resolve_ingest_per_file_timeout_s", lambda _p: 3600.0)
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  identity = "/raw/packed_timeout"
+  jq.zadd_ingest_job(client, identity=identity, score=1.0)
+  claim = jq.claim_ingest_job(
+      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+  )
+  logs = []
+
+  class _Ready:
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      del timeout
+      return (
+          identity,
+          False,
+          False,
+          12.5,
+          {
+              "outcome": "timeout",
+              "fail_reason": "write",
+              "timeout_s": 8000.2,
+              "db_shard_lock_s": 3.0,
+              "postgres_s": 4.0,
+              "parse_elapsed_s": 1.5,
+          },
+      )
+
+  n = qo._drain_ingest_ready(
+      client,
+      inflight={identity: _Ready()},
+      claims={identity: claim},
+      tgz_archive_dir="/daily",
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: logs.append(" ".join(str(x) for x in a)),
+  )
+  assert n == 1
+  assert jq.read_job_attempt(client, kind="ingest", identity=identity) == 0
+  joined = "\n".join(logs)
+  assert "queue_orchestrator ingest timeout" in joined
+  assert "timeout_s=8000.2" in joined
+  assert "stage=write" in joined
+  assert "db_shard_lock_s=3.0" in joined
+  assert "postgres_s=4.0" in joined
+  assert "parse_elapsed_s=1.5" in joined
+
+
+def test_ingest_worker_logs_outcome_before_marks():
+  """Orchestrator ingest worker must log outcome then record marks."""
+  src = inspect.getsource(qo._ingest_worker)
+  assert "_log_ingest_outcome_from_packed_result" in src
+  assert src.index("_log_ingest_outcome_from_packed_result") < src.index(
+      "_record_ingest_marks_from_worker_result",
+  )
+  assert "_log_ingest_worker_result" not in src
 
 
 def test_drain_ingest_marks_quiet_log_fn_none(monkeypatch, tmp_path):

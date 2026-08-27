@@ -1506,11 +1506,12 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 **Failure signature (pre-fix / old floor 900):** under `ingest_pool_processes=32`, many paths die with `ERROR: ingest per-file timeout … stage=ingest` / `outcome=timeout` at **elapsed == size-scaled budget** (~925–1654s for small/mid files). Slow cohort can still finish on retry (e.g. ~14 MiB in **2304.7s**). Not an idle/stall class if `remaining` advances.
 
-**Acceptance (post-deploy with floor 3600 + WARN min 7200):**
+**Acceptance (post-deploy with floor 3600):**
 
 - `sync_ingest_per_file_timeout_s` reads **3600** (or site override ≥3600) inside the pipeline image.
 - Timeout rate drops vs pre-deploy; slow successes with `elapsed_s` in the 1800–3600 band complete as `outcome=ingested`.
-- `WARN: ingest per-file timeout budget` is uncommon except for multi‑GiB / ≥7200s budgets (not every file).
+- Per-file **`ingest file path=… outcome=… size_bytes=… timeout_s=…`** (and timing tokens) is the SOP report — large-file budgets are not logged as a separate pre-work warning.
+- Soft-requeue timeouts also log `queue_orchestrator ingest timeout … size_bytes=… timeout_s=… stage=…`.
 - `remaining=` still trends down; no `ERROR: Pool imap stalled` / exit **124** from this alone.
 
 ```bash
@@ -1521,7 +1522,7 @@ print(\"per_mib\", cfg.get_sync_ingest_per_file_timeout_s_per_mib())
 print(\"max_s\", cfg.get_sync_ingest_per_file_timeout_max_s())
 "'
 
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'ingest per-file timeout|outcome=timeout|outcome=ingested|WARN: ingest per-file timeout budget|remaining=' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'ingest file path=|queue_orchestrator ingest timeout|outcome=timeout|outcome=ingested|ERROR: ingest per-file timeout|remaining=' | tail -80
 ```
 
 ### T0 / T1 — post_retire timeout→quarantine thrash → exit 124 (2026-07-17)

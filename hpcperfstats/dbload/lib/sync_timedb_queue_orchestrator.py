@@ -1226,6 +1226,7 @@ def _ingest_worker(lock: Any, path: str) -> Any:
       IngestPerFileTimeoutError,
       _apply_ingest_session_statement_timeout,
       _ingest_outcome_meta,
+      _log_ingest_outcome_from_packed_result,
       _log_ingest_per_file_timeout,
       _merge_ingest_write_timing_into_meta,
       _pack_ingest_worker_result,
@@ -1255,6 +1256,7 @@ def _ingest_worker(lock: Any, path: str) -> Any:
             ),
         ),
     )
+  _log_ingest_outcome_from_packed_result(result)
   _record_ingest_marks_from_worker_result(result)
   return result
 
@@ -2127,6 +2129,103 @@ def _fill_ingest_band(
   return submitted_n
 
 
+def _log_orchestrator_ingest_timeout(
+  *,
+  identity: str,
+  path: str,
+  log_fn: Callable[..., None] | None = None,
+  exc: BaseException | None = None,
+  result: Any | None = None,
+  outcome: str = "timeout",
+) -> None:
+  """
+  Log a rich coordinator soft-requeue timeout line (size/budget/stage/timing).
+
+  Args:
+    identity (str): Ingest job identity.
+    path (str): Resolved raw stats path when known.
+    log_fn (Callable[..., None] | None): Optional logger.
+    exc (BaseException | None): Exception from ``AsyncResult.get`` when present.
+    result (Any | None): Packed worker result when ``get`` succeeded.
+    outcome (str): Outcome token (``timeout`` / ``lookup_budget``).
+
+  Returns:
+    None
+
+  Examples:
+    >>> _log_orchestrator_ingest_timeout(
+    ...   identity="/x", path="/x",
+    ... )  # doctest: +SKIP
+  """
+  from hpcperfstats.dbload.sync_timedb import (
+      _unpack_ingest_worker_result,
+      resolve_ingest_per_file_timeout_s,
+      stats_file_size_bytes,
+  )
+
+  size_bytes = 0
+  timeout_s = 0.0
+  elapsed_s = 0.0
+  stage = "unknown"
+  db_shard_lock_s = None
+  postgres_s = None
+  parse_elapsed_s = None
+  err = outcome
+  path_s = str(path or identity or "")
+  if exc is not None:
+    err = type(exc).__name__
+    size_bytes = int(getattr(exc, "size_bytes", 0) or 0)
+    elapsed_s = float(getattr(exc, "elapsed_s", 0.0) or 0.0)
+    stage = str(getattr(exc, "stage", "") or "unknown")
+    db_shard_lock_s = getattr(exc, "db_shard_lock_s", None)
+    postgres_s = getattr(exc, "postgres_s", None)
+    parse_elapsed_s = getattr(exc, "parse_elapsed_s", None)
+  if result is not None:
+    _sf, _na, _ok, elapsed_packed, meta = _unpack_ingest_worker_result(result)
+    if _sf:
+      path_s = str(_sf)
+    elapsed_s = float(elapsed_packed or elapsed_s)
+    if isinstance(meta, dict):
+      stage = str(meta.get("fail_reason") or meta.get("outcome") or stage)
+      if meta.get("db_shard_lock_s") is not None:
+        db_shard_lock_s = meta.get("db_shard_lock_s")
+      if meta.get("postgres_s") is not None:
+        postgres_s = meta.get("postgres_s")
+      if meta.get("parse_elapsed_s") is not None:
+        parse_elapsed_s = meta.get("parse_elapsed_s")
+      if meta.get("timeout_s") is not None:
+        timeout_s = float(meta.get("timeout_s"))
+      if meta.get("size_bytes") is not None:
+        size_bytes = int(meta.get("size_bytes"))
+  if not size_bytes and path_s:
+    try:
+      size_bytes = int(stats_file_size_bytes(path_s))
+    except Exception:
+      size_bytes = 0
+  if timeout_s <= 0.0 and path_s:
+    try:
+      timeout_s = float(resolve_ingest_per_file_timeout_s(path_s))
+    except Exception:
+      timeout_s = 0.0
+  parts = [
+      "queue_orchestrator ingest timeout",
+      "identity=%s" % identity,
+      "path=%s" % path_s,
+      "size_bytes=%d" % int(size_bytes),
+      "timeout_s=%.1f" % float(timeout_s),
+      "elapsed_s=%.1f" % float(elapsed_s),
+      "stage=%s" % stage,
+  ]
+  if db_shard_lock_s is not None:
+    parts.append("db_shard_lock_s=%.1f" % float(db_shard_lock_s))
+  if postgres_s is not None:
+    parts.append("postgres_s=%.1f" % float(postgres_s))
+  if parse_elapsed_s is not None:
+    parts.append("parse_elapsed_s=%.1f" % float(parse_elapsed_s))
+  parts.append("err=%s" % err)
+  _log(" ".join(parts), log_fn=log_fn)
+
+
 def _drain_ingest_ready(
   client: Any,
   *,
@@ -2177,10 +2276,11 @@ def _drain_ingest_ready(
       result = async_res.get(timeout=0)
     except TimeoutError as exc:
       # Bare TimeoutError / IngestPerFileTimeoutError escape → soft requeue.
-      _log(
-          "queue_orchestrator ingest timeout identity=%s err=%s"
-          % (identity, type(exc).__name__),
+      _log_orchestrator_ingest_timeout(
+          identity=identity,
+          path=path or identity,
           log_fn=log_fn,
+          exc=exc,
       )
       day_tok = _day_token_from_date(
           _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
@@ -2228,6 +2328,13 @@ def _drain_ingest_ready(
       progress.record(day_tok, "ingest", 1)
       if outcome in ("timeout", "lookup_budget"):
         progress.record(day_tok, "timeout", 1)
+        _log_orchestrator_ingest_timeout(
+            identity=identity,
+            path=path or identity,
+            log_fn=log_fn,
+            result=result,
+            outcome=outcome or "timeout",
+        )
         _requeue_claimed_job_without_attempt_bump(
             client, claim=claim, log_fn=log_fn,
         )

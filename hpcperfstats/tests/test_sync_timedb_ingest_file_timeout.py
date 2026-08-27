@@ -118,23 +118,27 @@ def test_c672_017_class_budget_covers_slow_cohort_success(monkeypatch, tmp_path)
   )
 
 
-def test_long_timeout_budget_logs_warning(monkeypatch, tmp_path, capsys):
+def test_long_timeout_budget_no_warn_log(monkeypatch, tmp_path, capsys):
+  """Large budgets update registry only — no WARN (SOP on outcome line)."""
   _default_timeout_getters(monkeypatch)
   stats_file = tmp_path / "segment"
-  # Budget must exceed WARN min 7200: 3600 + MiB×per_mib ≥ 7200 → ≥~1294 MiB.
   size_bytes = _mib_bytes(1500)
   stats_file.write_bytes(b"x")
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
-  monkeypatch.setattr(st, "update_worker_substage", lambda *_a, **_k: None)
+  substages = []
+  monkeypatch.setattr(
+      st, "update_worker_substage",
+      lambda *a, **k: substages.append((a, k)),
+  )
 
   timeout_s = st.resolve_ingest_per_file_timeout_s(str(stats_file))
   assert timeout_s >= st.INGEST_PER_FILE_TIMEOUT_LOG_MIN_S
   st._log_long_ingest_timeout_budget_if_needed(str(stats_file), timeout_s)
   out = capsys.readouterr().out
-  assert "WARN: ingest per-file timeout budget" in out
-  assert str(size_bytes) in out
-  assert "timeout_s=" in out
+  assert "WARN: ingest per-file timeout budget" not in out
+  assert substages
+  assert substages[0][0][0] == "long_timeout_budget"
 
 
 def test_long_timeout_budget_skips_small_files(monkeypatch, tmp_path, capsys):
@@ -677,8 +681,9 @@ def test_write_lock_wait_extends_deadline_and_accumulates_timing(monkeypatch):
     st._reset_ingest_write_timing()
 
 
-def test_ingest_file_outcome_timing_breakdown_tokens():
-  """Outcome log must emit parse / db_shard_lock / postgres / elapsed tokens."""
+def test_ingest_file_outcome_timing_breakdown_tokens(monkeypatch):
+  """Outcome log must emit parse / lock / postgres / elapsed / timeout_s."""
+  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 1657207171)
   outcome = st.IngestFileOutcome(
       path="/archive/host/seg",
       elapsed_s=12.5,
@@ -688,6 +693,7 @@ def test_ingest_file_outcome_timing_breakdown_tokens():
       parse_elapsed_s=1.5,
       db_shard_lock_s=3.25,
       postgres_s=4.0,
+      timeout_s=8000.2,
       stats_rows=10,
       proc_rows=2,
   )
@@ -711,3 +717,24 @@ def test_ingest_file_outcome_timing_breakdown_tokens():
   assert "db_shard_lock_s=3.2" in joined
   assert "postgres_s=4.0" in joined
   assert "elapsed_s=12.5" in joined
+  assert "timeout_s=8000.2" in joined
+  assert "size_bytes=1657207171" in joined
+
+
+def test_timeout_s_on_outcome_from_meta():
+  """Packed meta timeout_s flows into IngestFileOutcome."""
+  outcome = st._ingest_file_outcome_from_worker(
+      "/p",
+      False,
+      False,
+      10.0,
+      {
+          "outcome": "timeout",
+          "fail_reason": "write",
+          "timeout_s": 7200.0,
+          "db_shard_lock_s": 1.0,
+          "postgres_s": 2.0,
+      },
+  )
+  assert outcome.timeout_s == 7200.0
+  assert outcome.fail_reason == "write"

@@ -561,29 +561,27 @@ def _log_long_ingest_timeout_budget_if_needed(
   timeout_s: Any,
 ) -> None:
   """
-  Internal helper to log the long ingest timeout budget if needed.
-  
+  Record long per-file budgets on the worker registry only (no WARN log).
+
+  Size and ``timeout_s`` belong on the end-of-file ``ingest file`` outcome
+  line (SOP). Do not emit a pre-work budget warning line.
+
   Args:
-    stats_file (str): String for stats file.
-    timeout_s (Any): Timeout s passed to this helper.
-  
+    stats_file (str): Stats file path for size lookup.
+    timeout_s (Any): Resolved per-file timeout budget (seconds).
+
   Returns:
     None
-  
+
   Examples:
-    >>> _log_long_ingest_timeout_budget_if_needed("x", None)  # doctest: +SKIP
+    >>> _log_long_ingest_timeout_budget_if_needed("x", 8000.0)  # doctest: +SKIP
   """
-  if timeout_s < INGEST_PER_FILE_TIMEOUT_LOG_MIN_S:
+  if float(timeout_s) < INGEST_PER_FILE_TIMEOUT_LOG_MIN_S:
     return
   size_bytes = stats_file_size_bytes(stats_file)
-  log_print(
-      "WARN: ingest per-file timeout budget path=%s size_bytes=%s timeout_s=%.1f"
-      % (stats_file, size_bytes, timeout_s),
-      flush=True,
-  )
   update_worker_substage(
       "long_timeout_budget",
-      timeout_s="%.1f" % timeout_s,
+      timeout_s="%.1f" % float(timeout_s),
       size_bytes=str(size_bytes),
   )
 
@@ -4188,6 +4186,7 @@ class IngestFileOutcome:
     proc_rows: Proc row count when known.
     stats_rows: Host stats row count when known.
     stats_rows_parsed: Parsed stats rows when known.
+    timeout_s: Resolved per-file timeout budget (seconds) when known.
   """
   path: str
   elapsed_s: float
@@ -4198,6 +4197,7 @@ class IngestFileOutcome:
   parse_elapsed_s: float | None = None
   db_shard_lock_s: float | None = None
   postgres_s: float | None = None
+  timeout_s: float | None = None
   stats_rows: int | None = None
   stats_rows_parsed: int | None = None
   proc_rows: int | None = None
@@ -4283,6 +4283,17 @@ def _pack_ingest_worker_result(
     >>> _pack_ingest_worker_result("x", None, None, None, None)
   """
   meta = dict(outcome_meta or {})
+  if meta.get("timeout_s") is None:
+    effective = get_ingest_task_effective_timeout_s()
+    if effective is not None:
+      meta["timeout_s"] = float(effective)
+    else:
+      try:
+        meta["timeout_s"] = float(
+            resolve_ingest_per_file_timeout_s(str(stats_file or "")),
+        )
+      except Exception:
+        pass
   return (stats_file, need_archival, ingest_ok, float(elapsed_s), meta)
 
 
@@ -4378,6 +4389,11 @@ def _ingest_file_outcome_from_worker(
     else:
       outcome = "parse_fail"
   db_skip = str(meta.get("db_skip") or "no")
+  timeout_s = meta.get("timeout_s")
+  if timeout_s is None:
+    effective = get_ingest_task_effective_timeout_s()
+    if effective is not None:
+      timeout_s = float(effective)
   return IngestFileOutcome(
       path=str(stats_file or ""),
       elapsed_s=float(elapsed_s),
@@ -4388,12 +4404,49 @@ def _ingest_file_outcome_from_worker(
       parse_elapsed_s=meta.get("parse_elapsed_s"),
       db_shard_lock_s=meta.get("db_shard_lock_s"),
       postgres_s=meta.get("postgres_s"),
+      timeout_s=(
+          float(timeout_s) if timeout_s is not None else None
+      ),
       stats_rows=meta.get("stats_rows"),
       stats_rows_parsed=meta.get("stats_rows_parsed"),
       proc_rows=meta.get("proc_rows"),
       fail_reason=meta.get("fail_reason"),
       archive_skip=meta.get("archive_skip"),
   )
+
+
+def _resolve_outcome_timeout_s(outcome: Any) -> float:
+  """
+  Resolve the per-file timeout budget for an outcome log line.
+
+  Prefers ``outcome.timeout_s``, then the task effective timeout, then
+  ``resolve_ingest_per_file_timeout_s(path)``.
+
+  Args:
+    outcome (Any): ``IngestFileOutcome`` (or duck-typed) instance.
+
+  Returns:
+    float: Timeout budget in seconds (``0.0`` when disabled/unknown).
+
+  Examples:
+    >>> class _O:
+    ...   timeout_s = 3600.0
+    ...   path = "/x"
+    >>> _resolve_outcome_timeout_s(_O())
+    3600.0
+  """
+  if getattr(outcome, "timeout_s", None) is not None:
+    return float(outcome.timeout_s)
+  effective = get_ingest_task_effective_timeout_s()
+  if effective is not None:
+    return float(effective)
+  path = str(getattr(outcome, "path", "") or "")
+  if path:
+    try:
+      return float(resolve_ingest_per_file_timeout_s(path))
+    except Exception:
+      return 0.0
+  return 0.0
 
 
 def _log_ingest_file_outcome(
@@ -4403,23 +4456,25 @@ def _log_ingest_file_outcome(
   supplement: bool = False,
 ) -> None:
   """
-  Internal helper to log the ingest file outcome.
-  
+  Log one end-of-file ingest outcome line (SOP size/budget/timing).
+
   Args:
-    outcome (Any): Outcome passed to this helper.
-    remaining (Any | None): One of ``Any``, ``None``.
-    supplement (bool): Boolean flag for supplement.
-  
+    outcome (Any): ``IngestFileOutcome`` for this path.
+    remaining (Any | None): Optional remaining-file counter.
+    supplement (bool): When True, append ``supplement=yes``.
+
   Returns:
     None
-  
+
   Examples:
     >>> _log_ingest_file_outcome(None, None, True)  # doctest: +SKIP
   """
+  timeout_s = _resolve_outcome_timeout_s(outcome)
   parts = [
       "ingest file path=%s" % outcome.path,
       "outcome=%s" % outcome.outcome,
       "elapsed_s=%.1f" % float(outcome.elapsed_s),
+      "timeout_s=%.1f" % float(timeout_s),
       "ingest_ok=%s" % ("yes" if outcome.ingest_ok else "no"),
       "archive=%s" % _archive_skip_token_for_outcome(outcome),
       "db_skip=%s" % (outcome.db_skip or "no"),
@@ -4448,6 +4503,45 @@ def _log_ingest_file_outcome(
     sealed_remaining, sealed_total = remaining_pair
     parts.append("sealed_remaining=%d/%d" % (sealed_remaining, sealed_total))
   log_print(" ".join(parts), flush=True)
+
+
+def _log_ingest_outcome_from_packed_result(
+  result: Any,
+  *,
+  remaining: Any | None = None,
+  supplement: bool = False,
+) -> None:
+  """
+  Log ``ingest file`` outcome from a packed worker result (no mark side effects).
+
+  Args:
+    result (Any): Packed ingest tuple from ``add_stats_file_to_db``.
+    remaining (Any | None): Optional remaining-file counter.
+    supplement (bool): When True, append ``supplement=yes``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _log_ingest_outcome_from_packed_result(
+    ...   ("", False, True, 0.0, {"outcome": "ingested"}),
+    ... )  # doctest: +SKIP
+  """
+  stats_file, need_archival, ingest_ok, elapsed_s, outcome_meta = (
+      _unpack_ingest_worker_result(result)
+  )
+  outcome = _ingest_file_outcome_from_worker(
+      stats_file,
+      need_archival,
+      ingest_ok,
+      elapsed_s,
+      outcome_meta,
+  )
+  _log_ingest_file_outcome(
+      outcome,
+      remaining=remaining,
+      supplement=supplement,
+  )
 
 
 def _record_ingest_marks_from_worker_result(
