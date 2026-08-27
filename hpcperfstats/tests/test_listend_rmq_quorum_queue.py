@@ -6,16 +6,19 @@ from unittest.mock import MagicMock
 import pytest
 
 
-def test_declare_durable_quorum_queue_passes_x_queue_type():
+def test_declare_existing_queue_uses_passive_without_x_queue_type():
   from hpcperfstats.lib.rmq_quorum_queue import declare_durable_quorum_queue
 
   channel = MagicMock()
-  declare_durable_quorum_queue(channel, "stampede3")
+  out = declare_durable_quorum_queue(channel, "stampede3")
+  assert out is channel
   channel.queue_declare.assert_called_once_with(
       queue="stampede3",
       durable=True,
-      arguments={"x-queue-type": "quorum"},
+      passive=True,
   )
+  kwargs = channel.queue_declare.call_args.kwargs
+  assert "arguments" not in kwargs or kwargs.get("arguments") in (None, {})
 
 
 def test_is_quorum_consume_setup_error_detects_541_text():
@@ -208,22 +211,108 @@ def test_classify_amqp_outer_error_logs_establishing_for_tcp(monkeypatch):
   assert any("Error establishing RabbitMQ connection" in m for m in logs)
 
 
-def test_declare_quorum_on_classic_raises_precondition_error():
+def test_declare_missing_queue_creates_durable_quorum_on_replacement_channel():
+  from hpcperfstats.lib.rmq_quorum_queue import declare_durable_quorum_queue
+
+  created = MagicMock()
+  connection = MagicMock()
+  connection.channel.return_value = created
+
+  class _NotFound(Exception):
+    reply_code = 404
+
+  def _passive_missing(**kwargs):
+    if kwargs.get("passive"):
+      raise _NotFound(
+          "(404, \"NOT_FOUND - no queue 'stampede3' in vhost '/'\")"
+      )
+    return MagicMock()
+
+  original = MagicMock()
+  original.connection = connection
+  original.queue_declare.side_effect = _passive_missing
+
+  out = declare_durable_quorum_queue(original, "stampede3")
+  assert out is created
+  created.queue_declare.assert_called_once_with(
+      queue="stampede3",
+      durable=True,
+      arguments={"x-queue-type": "quorum"},
+  )
+
+
+def test_declare_create_path_x_queue_type_mismatch_passive_attaches():
+  from hpcperfstats.lib.rmq_quorum_queue import declare_durable_quorum_queue
+
+  attached = MagicMock()
+  create_ch = MagicMock()
+  connection = MagicMock()
+  connection.channel.side_effect = [create_ch, attached]
+
+  class _NotFound(Exception):
+    reply_code = 404
+
+  class _TypeMismatch(Exception):
+    reply_code = 406
+
+  original = MagicMock()
+  original.connection = connection
+
+  def _passive_missing(**_kwargs):
+    raise _NotFound("NOT_FOUND - no queue 'stampede3'")
+
+  original.queue_declare.side_effect = _passive_missing
+
+  def _quorum_mismatch(**kwargs):
+    if kwargs.get("arguments", {}).get("x-queue-type") == "quorum":
+      raise _TypeMismatch(
+          "(406, \"PRECONDITION_FAILED - inequivalent arg 'x-queue-type' "
+          "for queue 'stampede3' in vhost '/': received 'quorum' but "
+          "current is 'classic'\")"
+      )
+    return MagicMock()
+
+  create_ch.queue_declare.side_effect = _quorum_mismatch
+  create_ch.connection = connection
+
+  out = declare_durable_quorum_queue(original, "stampede3")
+  assert out is attached
+  attached.queue_declare.assert_called_with(
+      queue="stampede3",
+      durable=True,
+      passive=True,
+  )
+
+
+def test_declare_unrelated_precondition_still_fails_closed():
   from hpcperfstats.lib.rmq_quorum_queue import (
       QuorumQueuePreconditionError,
       declare_durable_quorum_queue,
   )
 
-  class _Ch:
-    def queue_declare(self, **_kwargs):
-      raise Exception(
-          "(406, \"PRECONDITION_FAILED - inequivalent arg 'x-queue-type' "
-          "for queue 'stampede3'\")"
-      )
+  class _NotFound(Exception):
+    reply_code = 404
+
+  class _DurableMismatch(Exception):
+    reply_code = 406
+
+  create_ch = MagicMock()
+  connection = MagicMock()
+  connection.channel.return_value = create_ch
+
+  original = MagicMock()
+  original.connection = connection
+  original.queue_declare.side_effect = _NotFound("NOT_FOUND")
+  create_ch.queue_declare.side_effect = _DurableMismatch(
+      "(406, \"PRECONDITION_FAILED - inequivalent arg 'durable' "
+      "for queue 'stampede3'\")"
+  )
 
   with pytest.raises(QuorumQueuePreconditionError) as ei:
-    declare_durable_quorum_queue(_Ch(), "stampede3")
-  assert "Do not convert to classic" in str(ei.value)
+    declare_durable_quorum_queue(original, "stampede3")
+  assert "inequivalent arg" in str(ei.value).lower() or "durable" in str(
+      ei.value
+  ).lower()
 
 
 def test_drain_declares_quorum_queue(monkeypatch):
@@ -258,5 +347,5 @@ def test_drain_declares_quorum_queue(monkeypatch):
   channel.queue_declare.assert_called_with(
       queue="test-q",
       durable=True,
-      arguments={"x-queue-type": "quorum"},
+      passive=True,
   )

@@ -37,7 +37,7 @@ def drain_queue_to_archive() -> Any:
   connection = pika.BlockingConnection(parameters)
   channel = connection.channel()
   queue_name = cfg.get_rmq_queue()
-  declare_durable_quorum_queue(channel, queue_name)
+  channel = declare_durable_quorum_queue(channel, queue_name)
   drained = 0
   try:
     while True:

@@ -1201,7 +1201,7 @@ def main() -> None:
 
           channel = connection.channel()
           queue_name = cfg.get_rmq_queue()
-          declare_durable_quorum_queue(channel, queue_name)
+          channel = declare_durable_quorum_queue(channel, queue_name)
           # Report how many messages are waiting to be consumed at startup.
           try:
             q = channel.queue_declare(
