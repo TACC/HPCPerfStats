@@ -1293,6 +1293,124 @@ def test_drain_append_no_find_uses_cheap_day_close(monkeypatch):
   assert "enqueue_day_close_if_needed(client, tar)" not in src
 
 
+def test_drain_append_gate_skip_handoffs_before_ack(monkeypatch):
+  """Gate-skipped append must handoff to ingest before ACK."""
+  from hpcperfstats.dbload.sync_timedb import ArchiveAppendOutcome
+
+  handoffs: list[tuple] = []
+  acks: list[str] = []
+
+  def _handoff(client, tar, paths, **kwargs):
+    handoffs.append((tar, tuple(paths), kwargs.get("reason")))
+    return len(paths)
+
+  def _ack(client, *, kind, identity, owner_token):
+    acks.append(identity)
+
+  monkeypatch.setattr(qo, "_handoff_retryable_paths_to_ingest", _handoff)
+  monkeypatch.setattr(qo.jq, "ack_job", _ack)
+  monkeypatch.setattr(
+      qo.jr, "enqueue_cheap_day_close_if_needed", lambda *a, **k: True,
+  )
+
+  skipped = ("/raw/a",)
+  outcome = ArchiveAppendOutcome(
+      ok=False,
+      gate_skipped=True,
+      skipped_paths=skipped,
+      skip_finalize_invalidate=True,
+  )
+
+  class _Ready:
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      return outcome
+
+  class _Claim:
+    identity = "/raw/a"
+    owner_token = "tok"
+
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  n = qo._drain_append_ready(
+      client,
+      inflight={"/d/2026-07-17.tar": _Ready()},
+      claims={"/d/2026-07-17.tar": _Claim()},
+      tgz_archive_dir="/d",
+      archive_data_dir="/a",
+  )
+  assert n == 1
+  assert handoffs == [("/d/2026-07-17.tar", skipped, "gate_skip")]
+  assert acks == ["/raw/a"]
+
+
+def test_drain_append_soft_requeue_requeues_without_ack(monkeypatch):
+  """Restore soft_requeue must requeue append without ACK."""
+  from hpcperfstats.dbload.sync_timedb import ArchiveAppendOutcome
+
+  requeues: list[str] = []
+  acks: list[str] = []
+
+  def _requeue(client, *, kind, identity, owner_token):
+    requeues.append(identity)
+
+  def _ack(client, *, kind, identity, owner_token):
+    acks.append(identity)
+
+  monkeypatch.setattr(qo.jq, "requeue_job", _requeue)
+  monkeypatch.setattr(qo.jq, "ack_job", _ack)
+
+  outcome = ArchiveAppendOutcome(
+      ok=False,
+      soft_requeue=True,
+      skip_finalize_invalidate=True,
+  )
+
+  class _Ready:
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      return outcome
+
+  class _Claim:
+    identity = "/raw/a"
+    owner_token = "tok"
+
+  client = FakeRedis()
+  n = qo._drain_append_ready(
+      client,
+      inflight={"/d/2026-07-17.tar": _Ready()},
+      claims={"/d/2026-07-17.tar": _Claim()},
+      tgz_archive_dir="/d",
+      archive_data_dir="/a",
+  )
+  assert n == 1
+  assert requeues == ["/raw/a"]
+  assert acks == []
+
+
+def test_reconstruct_coordinator_reaps_discover_kind():
+  """Discover orphan inflight leases are reaped on reconstruct-coordinator."""
+  src = inspect.getsource(qo._reconstruct_coordinator_loop)
+  assert "JOB_KIND_DISCOVER" in src
+  assert "_reap_stale_inflight" in src
+
+
+def test_coordinator_roles_no_double_thread_prefix():
+  """set_daemon_thread_title already prefixes thread: — role= must not repeat."""
+  for fn_name in (
+      "_ingest_coordinator_loop",
+      "_append_coordinator_loop",
+      "_day_close_coordinator_loop",
+      "_reconstruct_coordinator_loop",
+  ):
+    src = inspect.getsource(getattr(qo, fn_name))
+    assert 'role="thread:' not in src, fn_name
+
+
 def test_cheap_day_close_helper_rejects_blocking_filesystem_complete():
   """Cheap helper always injects filesystem_complete=False (no archive find)."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr

@@ -2934,6 +2934,7 @@ class ArchiveAppendOutcome:
     skip_finalize_invalidate: Attribute.
     skipped_paths: Attribute.
     soft_requeue: Attribute.
+    gate_skipped: Attribute.
   """
 
   ok: bool = True
@@ -2943,6 +2944,8 @@ class ArchiveAppendOutcome:
   skipped_paths: tuple = ()
   # Restore race: requeue on heap without burning archive_retry attempts.
   soft_requeue: bool = False
+  # DB ingest gate blocked every path; hand off to ingest before append ACK.
+  gate_skipped: bool = False
 
   def __bool__(self) -> Any:
     """
@@ -3001,6 +3004,22 @@ def _archive_append_outcome_is_soft_requeue(result: Any) -> Any:
   return isinstance(result, ArchiveAppendOutcome) and bool(result.soft_requeue)
 
 
+def _archive_append_outcome_is_gate_skip(result: Any) -> Any:
+  """
+  Internal helper: append worker returned gate-skipped paths only.
+  
+  Args:
+    result (Any): Result passed to this helper.
+  
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+  
+  Examples:
+    >>> _archive_append_outcome_is_gate_skip(None)  # doctest: +SKIP
+  """
+  return isinstance(result, ArchiveAppendOutcome) and bool(result.gate_skipped)
+
+
 def _archive_task_succeeded(result: Any) -> Any:
   """
   Internal helper to archive the task succeeded.
@@ -3017,7 +3036,7 @@ def _archive_task_succeeded(result: Any) -> Any:
   if result is False or result is None:
     return False
   if isinstance(result, ArchiveAppendOutcome):
-    if result.soft_requeue:
+    if result.soft_requeue or result.gate_skipped:
       return False
     return result.ok
   return bool(result)
@@ -6392,10 +6411,17 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       job_begin_logged = True
 
   try:
-    stats_files, _skipped = filter_paths_head_ingested(stats_files, log_fn=log_print)
+    stats_files, gate_skipped = filter_paths_head_ingested(
+        stats_files, log_fn=log_print,
+    )
     if not stats_files:
-      job_outcome = "ok"
-      return ArchiveAppendOutcome(skip_finalize_invalidate=True)
+      job_outcome = "gate_skip"
+      return ArchiveAppendOutcome(
+          ok=False,
+          gate_skipped=True,
+          skipped_paths=tuple(gate_skipped or ()),
+          skip_finalize_invalidate=True,
+      )
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         daily_tar_restore_in_progress_for_day,
         set_archive_append_inflight,

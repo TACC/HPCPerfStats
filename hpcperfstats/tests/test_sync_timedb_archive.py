@@ -7875,6 +7875,30 @@ def test_archive_append_soft_requeue_keeps_attempt():
   )
 
 
+def test_archive_stats_files_body_gate_skip_returns_handoff_outcome(
+    monkeypatch, tmp_path,
+):
+  """All gate-skipped paths must not return silent ok — carry skipped_paths."""
+  import hpcperfstats.dbload.sync_timedb as st
+
+  raw = tmp_path / "1709123456"
+  raw.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-06.tar.zst")
+  skipped = [str(raw)]
+  monkeypatch.setattr(
+      st,
+      "filter_paths_head_ingested",
+      lambda paths, **_: ([], list(skipped)),
+  )
+  result = st._archive_stats_files_body((archive_key, skipped))
+  assert isinstance(result, st.ArchiveAppendOutcome)
+  assert result.gate_skipped is True
+  assert result.ok is False
+  assert result.skipped_paths == tuple(skipped)
+  assert st._archive_append_outcome_is_gate_skip(result)
+  assert st._archive_task_succeeded(result) is False
+
+
 def test_archive_stats_files_restores_when_to_add_positive_sealed(
     monkeypatch, tmp_path,
 ):

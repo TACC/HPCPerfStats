@@ -47,6 +47,16 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 **Fail (T0 — ingest empty + append flood / MainThread day_close find, hpcperfstats03 2026-08-26):** after Lock fix: one census, hours of populate/archive skips, **zero** `ingest file path=`, **zero** `boot discover seen=`, append LIST ~70k. py-spy MainThread in `_drain_append_ready` → `enqueue_day_close_if_needed` (default FS probe) → archive-wide `iter_find_printf_records_streaming`. **Pass after subsystem-threads fix:** `ps`/`top` show titled `thread:ingest-coordinator`, `thread:append-coordinator`, `thread:day-close-coordinator`, `thread:reconstruct-coordinator` (plus `discover-bg`); MainThread only populate reap / pause recycle / death watch; append drain uses **cheap** day_close (`filesystem_complete=False`, Redis dedupe ≤1 per tar); ingest ZADD/fill resumes while append drains; day_close **workers** own remaining-raw find. Do **not** paste `REPLACE_WITH` / `SAMPLE_PATH` placeholders into classify commands — use a real baked path from Redis/append LIST.
 
+**Fail (T0 — gate-skip append ACK thrash, hpcperfstats03 2026-08-26 evening):** census `ingest=0/0` while append LIST ~68k slowly falling (~11 paths/min); flood of `Archive/delete gate: skipped`; **zero** `ingest file path=` in full pipeline log buffer; sticky `discover=0/2` with orphan `rescan|…|mtime=*` inflight leases; optional cosmetic `thread:thread:reconstruct-coordinator` double prefix. Classify append LIST head: `needs_ingest=True`, `gate_ready=False`, `listend_db_ingest=True` — gate is **correct**; bug is append ACK without ingest ZADD handoff. **Pass after gate-skip handoff fix:** gate skips still log; append drain calls ingest handoff before ACK; ingest ZCARD/leases grow; discover inflight orphans reaped by reconstruct-coordinator; coordinator titles show single `thread:` prefix.
+
+```bash
+# T0 — gate-skip ACK thrash (INI paths first; full logs never --tail before grep)
+grep -cE 'Archive/delete gate: skipped|ingest file path=|queue_orchestrator census' /tmp/pipeline-full.log || true
+# Append head classify (use real path from LRANGE job:v1:queue:append 0 0)
+# Expect gate_ready=False needs_ingest=True before fix; ingest ZADD after fix
+redis-cli -n 0 HGETALL 'hpcperfstats:sync_timedb:job:v1:inflight:discover'
+```
+
 **Pass (T1/T2):** head-day work advances without restoring chunk_gate / handoff_priority / janitor tick signatures as the only progress metric. Prefer `ZCOUNT`/`LLEN` + lease keys over historical `oldest_day_chunk_gate_stall` greps. **T0/T1/T2 are post-deploy** — they cannot be claimed green until the orchestrator image is running; a pre-deploy `job:v1` census of all zeros is a false negative, not a pass. **Do not** `ZCARD job:v1:ingest` — that short name is always empty; use `hpcperfstats:sync_timedb:job:v1:queue:ingest` (hot `ZCOUNT -inf 999999999999999`, catchup `ZCOUNT 1000000000000000 +inf`).
 
 Sections below marked **Historical B-era** document pre-cutover signatures for archaeology; do not treat them as production law after the queue cutover.

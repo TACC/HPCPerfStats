@@ -2202,6 +2202,12 @@ def _drain_append_ready(
     ... )
     0
   """
+  from hpcperfstats.dbload.sync_timedb import (
+      ArchiveAppendOutcome,
+      _archive_append_outcome_is_gate_skip,
+      _archive_append_outcome_is_soft_requeue,
+  )
+
   done = 0
   for key, async_res in list(inflight.items()):
     if not async_res.ready():
@@ -2211,8 +2217,9 @@ def _drain_append_ready(
     done += 1
     jobs = _iter_claim_jobs(claim)
     failed = False
+    result = None
     try:
-      async_res.get(timeout=0)
+      result = async_res.get(timeout=0)
     except Exception as exc:
       failed = True
       _log(
@@ -2231,6 +2238,58 @@ def _drain_append_ready(
         )
     if failed:
       continue
+    if _archive_append_outcome_is_soft_requeue(result):
+      _log(
+          "queue_orchestrator append soft_requeue path=%s"
+          % key,
+          log_fn=log_fn,
+      )
+      for job in jobs:
+        jq.requeue_job(
+            client,
+            kind=jq.JOB_KIND_APPEND,
+            identity=job.identity,
+            owner_token=job.owner_token,
+        )
+      continue
+    if isinstance(result, ArchiveAppendOutcome) and not result.ok:
+      if not _archive_append_outcome_is_gate_skip(result):
+        for job in jobs:
+          _retry_or_dead_letter(
+              client,
+              kind=jq.JOB_KIND_APPEND,
+              claim=job,
+              archive_data_dir=archive_data_dir,
+              reason="append_failed",
+              log_fn=log_fn,
+          )
+        continue
+    elif result is False:
+      for job in jobs:
+        _retry_or_dead_letter(
+            client,
+            kind=jq.JOB_KIND_APPEND,
+            claim=job,
+            archive_data_dir=archive_data_dir,
+            reason="append_failed",
+            log_fn=log_fn,
+        )
+      continue
+    tar = key if str(key).endswith(".tar") else daily_tar_path_for_stats_path(
+        key, tgz_archive_dir,
+    )
+    if _archive_append_outcome_is_gate_skip(result):
+      skipped = tuple(getattr(result, "skipped_paths", ()) or ())
+      if skipped and tar:
+        _handoff_retryable_paths_to_ingest(
+            client,
+            tar,
+            skipped,
+            tgz_archive_dir=tgz_archive_dir,
+            archive_data_dir=archive_data_dir,
+            reason="gate_skip",
+            log_fn=log_fn,
+        )
     for job in jobs:
       jq.ack_job(
           client,
@@ -2238,9 +2297,6 @@ def _drain_append_ready(
           identity=job.identity,
           owner_token=job.owner_token,
       )
-    tar = key if str(key).endswith(".tar") else daily_tar_path_for_stats_path(
-        key, tgz_archive_dir,
-    )
     if tar:
       # Append coordinator must never run remaining-raw / archive find.
       jr.enqueue_cheap_day_close_if_needed(client, tar)
@@ -2711,7 +2767,7 @@ def _ingest_coordinator_loop(
   set_daemon_thread_title(
       "ingest-coordinator",
       script_name="sync_timedb.py",
-      role="thread:ingest-coordinator",
+      role="ingest-coordinator",
   )
   role = "ingest-coordinator"
   last_reap = time.monotonic()
@@ -2914,7 +2970,7 @@ def _append_coordinator_loop(
   set_daemon_thread_title(
       "append-coordinator",
       script_name="sync_timedb.py",
-      role="thread:append-coordinator",
+      role="append-coordinator",
   )
   role = "append-coordinator"
   last_reap = time.monotonic()
@@ -3007,7 +3063,7 @@ def _day_close_coordinator_loop(
   set_daemon_thread_title(
       "day-close-coordinator",
       script_name="sync_timedb.py",
-      role="thread:day-close-coordinator",
+      role="day-close-coordinator",
   )
   role = "day-close-coordinator"
   last_reap = time.monotonic()
@@ -3091,8 +3147,8 @@ def _reconstruct_coordinator_loop(
   """
   Own idle reconstruct, census logs, and run_once idle exit signaling.
 
-  Does not submit discover while discover-bg is busy; does not reap foreign
-  job kinds.
+  Does not submit discover while discover-bg is busy. Reaps orphan discover
+  inflight leases on an interval (kind-scoped ``JOB_KIND_DISCOVER`` only).
 
   Args:
     client (Any): Redis job client.
@@ -3119,10 +3175,11 @@ def _reconstruct_coordinator_loop(
   set_daemon_thread_title(
       "reconstruct-coordinator",
       script_name="sync_timedb.py",
-      role="thread:reconstruct-coordinator",
+      role="reconstruct-coordinator",
   )
   role = "reconstruct-coordinator"
   last_census = 0.0
+  last_reap = time.monotonic()
   idle_rounds = 0
   try:
     while True:
@@ -3187,6 +3244,14 @@ def _reconstruct_coordinator_loop(
           idle_rounds = 0
       else:
         idle_rounds = 0
+      now = time.monotonic()
+      if now - last_reap >= max(poll_s, 5.0):
+        last_reap = now
+        _reap_stale_inflight(
+            client,
+            kinds=(jq.JOB_KIND_DISCOVER,),
+            log_fn=log_fn,
+        )
       time.sleep(max(0.05, poll_s))
   finally:
     barrier.mark_drained(role)
