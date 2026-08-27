@@ -4,10 +4,13 @@ Greenfield Redis ``job:v1`` queue orchestrator for ``sync_timedb``.
 Replaces ``run_sync_timedb_supervisor_loop`` as the sole coordinator inside
 the same CLI entry. Holds an exclusive ``archive_dir`` flock, starts ingest
 and populate pools, then submits streaming boot discover onto the background
-executor (same path as idle reconstruct) so MainThread fill never blocks on
-GNU find or sealed populate. Fills reserved hot/catchup ingest slots, append
-slots, and day_close threads with sliding-window refill (never join an entire
-batch before the next hop). Never starts ``ArchiveJanitor`` or the retired
+executor. **MainThread** only does pool/thread maintenance (populate reap,
+pause-protocol ingest recycle via ``AtomicPoolRef``, fail-closed coordinator
+death, shutdown drain barrier). Fill/drain/classify run on titled subsystem
+threads: ``ingest-coordinator``, ``append-coordinator``,
+``day-close-coordinator``, ``discover-bg``, ``reconstruct-coordinator``.
+Append drain enqueues day_close via cheap tar-deduped enqueue (no archive
+find on the coordinator). Never starts ``ArchiveJanitor`` or the retired
 supervisor loop.
 
 Attributes:
@@ -95,6 +98,201 @@ _SHUTDOWN_REQUESTED = threading.Event()
 _discover_bg_lock = threading.Lock()
 _discover_bg_executor: ThreadPoolExecutor | None = None
 _discover_bg_future: Future | None = None
+
+
+class AtomicPoolRef:
+  """
+  Thread-safe holder for the current ingest ``multiprocessing.Pool``.
+
+  MainThread publishes replacements after the pause protocol; coordinators
+  only ``get()`` before ``apply_async``.
+
+  Attributes:
+    _lock: Guards ``_pool``.
+    _pool: Current pool object.
+  """
+
+  def __init__(self, pool: Any) -> None:
+    """
+    Wrap an initial pool object.
+
+    Args:
+      pool (Any): Initial spawn pool (may be ``None`` in tests).
+
+    Returns:
+      None
+
+    Examples:
+      >>> AtomicPoolRef(None).get() is None
+      True
+    """
+    self._lock = threading.Lock()
+    self._pool = pool
+
+  def get(self) -> Any:
+    """
+    Return the current pool reference.
+
+    Returns:
+      Any: Pool last published via ``set``.
+
+    Examples:
+      >>> AtomicPoolRef("p").get()
+      'p'
+    """
+    with self._lock:
+      return self._pool
+
+  def set(self, pool: Any) -> None:
+    """
+    Publish a replacement pool for coordinators.
+
+    Args:
+      pool (Any): New pool object.
+
+    Returns:
+      None
+
+    Examples:
+      >>> r = AtomicPoolRef(None); r.set("n"); r.get()
+      'n'
+    """
+    with self._lock:
+      self._pool = pool
+
+
+class IngestRecycleGate:
+  """
+  Pause protocol between ingest-coordinator and MainThread pool recycle.
+
+  Attributes:
+    recycle_requested: Set by ingest-coordinator when a recycle is needed.
+    paused: Set when ingest-coordinator has stopped ``apply_async``.
+  """
+
+  def __init__(self) -> None:
+    """
+    Create unset recycle/paused events (coordinator not paused).
+
+    Returns:
+      None
+
+    Examples:
+      >>> g = IngestRecycleGate(); g.recycle_requested.is_set()
+      False
+    """
+    self.recycle_requested = threading.Event()
+    self.paused = threading.Event()
+
+
+class SubsystemShutdownBarrier:
+  """
+  MainThread ``draining`` plus per-coordinator ``drained`` events.
+
+  Attributes:
+    draining: Set when cooperative shutdown begins.
+    drained: Map of coordinator role → Event set when that role finished.
+  """
+
+  def __init__(self, names: Iterable[str]) -> None:
+    """
+    Allocate one ``drained`` Event per coordinator name.
+
+    Args:
+      names (Iterable[str]): Coordinator role names.
+
+    Returns:
+      None
+
+    Examples:
+      >>> SubsystemShutdownBarrier(["ingest"]).draining.is_set()
+      False
+    """
+    self.draining = threading.Event()
+    self.drained: dict[str, threading.Event] = {
+        str(name): threading.Event() for name in names
+    }
+
+  def mark_drained(self, name: str) -> None:
+    """
+    Signal that one coordinator finished its drain.
+
+    Args:
+      name (str): Coordinator role name.
+
+    Returns:
+      None
+
+    Examples:
+      >>> b = SubsystemShutdownBarrier(["x"]); b.mark_drained("x")
+      >>> b.drained["x"].is_set()
+      True
+    """
+    ev = self.drained.get(str(name))
+    if ev is not None:
+      ev.set()
+
+  def all_drained(self) -> bool:
+    """
+    True when every registered coordinator has marked drained.
+
+    Returns:
+      bool: All ``drained`` events set.
+
+    Examples:
+      >>> SubsystemShutdownBarrier([]).all_drained()
+      True
+    """
+    return all(ev.is_set() for ev in self.drained.values())
+
+
+def _discover_bg_is_busy() -> bool:
+  """
+  True when a background discover future is still running.
+
+  Returns:
+    bool: True when ``_discover_bg_future`` exists and is not done.
+
+  Examples:
+    >>> isinstance(_discover_bg_is_busy(), bool)
+    True
+  """
+  with _discover_bg_lock:
+    fut = _discover_bg_future
+  return fut is not None and not fut.done()
+
+
+def fail_closed_on_coordinator_death(
+  *,
+  role: str,
+  log_fn: Callable[..., None] | None = None,
+  exit_fn: Callable[[int], None] | None = None,
+) -> None:
+  """
+  Exit the process when a subsystem thread dies unexpectedly.
+
+  Silent restart with empty local inflight maps is forbidden (Principal C2).
+
+  Args:
+    role (str): Dead coordinator role name for logs.
+    log_fn (Callable[..., None] | None): Optional logger.
+    exit_fn (Callable[[int], None] | None): Process exit hook (tests inject).
+
+  Returns:
+    None
+
+  Examples:
+    >>> fail_closed_on_coordinator_death(  # doctest: +SKIP
+    ...   role="ingest-coordinator", exit_fn=lambda c: None
+    ... )
+  """
+  _log(
+      "queue_orchestrator fail-closed coordinator death role=%s"
+      % role,
+      log_fn=log_fn,
+  )
+  request_shutdown()
+  (exit_fn or os._exit)(1)
 
 
 def shutdown_requested() -> bool:
@@ -737,7 +935,7 @@ def _enqueue_day_closes_for_daily_dir(
     except ValueError:
       continue
     tar_path = os.path.normpath(os.path.join(root, name))
-    if jr.enqueue_day_close_if_needed(
+    if jr.enqueue_cheap_day_close_if_needed(
         client,
         tar_path,
         calendar_day=cal,
@@ -794,6 +992,10 @@ def _idle_reconstruct_pass(
       not force
       and (now - _last_idle_reconstruct_mono) < _IDLE_RECONSTRUCT_MIN_INTERVAL_S
   ):
+    return 0
+  # H8: do not enqueue/submit discover while discover-bg is already running.
+  # Skip without burning the throttle so the next tick can retry promptly.
+  if not force and _discover_bg_is_busy():
     return 0
   _last_idle_reconstruct_mono = now
   identity = discover_job_identity(archive_dir, mtime_days)
@@ -2040,7 +2242,8 @@ def _drain_append_ready(
         key, tgz_archive_dir,
     )
     if tar:
-      jr.enqueue_day_close_if_needed(client, tar)
+      # Append coordinator must never run remaining-raw / archive find.
+      jr.enqueue_cheap_day_close_if_needed(client, tar)
   return done
 
 
@@ -2295,16 +2498,81 @@ def _release_claims_on_shutdown(
   return released
 
 
+def _protect_local_inflight_deadlines(
+  client: Any,
+  *,
+  kind: str,
+  identities: Iterable[str],
+  extend_s: float = 600.0,
+) -> int:
+  """
+  Push in-flight deadlines forward for local identities before a Redis reap.
+
+  Kind-scoped coordinators must not let ``reap_expired_inflight`` steal
+  identities still held in local claim maps. Extending the inflight HASH
+  deadline (not a lease heartbeat renew loop) keeps those members above the
+  reap cutoff for this tick.
+
+  Args:
+    client (Any): Redis client with ``hget`` / ``hset``.
+    kind (str): Job kind whose inflight HASH is updated.
+    identities (Iterable[str]): Local identities to protect.
+    extend_s (float): Seconds added to ``time.time()`` for the new deadline.
+
+  Returns:
+    int: Number of HASH fields rewritten.
+
+  Examples:
+    >>> _protect_local_inflight_deadlines(None, kind="ingest", identities=())
+    0
+  """
+  if client is None:
+    return 0
+  idents = [str(x) for x in identities if str(x)]
+  if not idents:
+    return 0
+  key = jq.job_inflight_key(kind)
+  deadline = "%.3f" % (time.time() + float(extend_s))
+  protected = 0
+  for ident in idents:
+    try:
+      raw = client.hget(key, ident)
+    except Exception:
+      continue
+    if raw is None:
+      continue
+    text = raw.decode() if isinstance(raw, bytes) else str(raw)
+    parts = text.split("|", 2)
+    owner = parts[1] if len(parts) > 1 else ""
+    score = parts[2] if len(parts) > 2 else ""
+    try:
+      client.hset(key, ident, "%s|%s|%s" % (deadline, owner, score))
+      protected += 1
+    except Exception:
+      continue
+  return protected
+
+
 def _reap_stale_inflight(
   client: Any,
   *,
+  kinds: Iterable[str] | None = None,
+  skip_identities: Iterable[str] | None = None,
   log_fn: Callable[..., None] | None = None,
 ) -> int:
   """
   Recover in-flight jobs abandoned by a dead or hung owner.
 
+  Kind-scoped: each subsystem coordinator reaps only its own kinds and
+  protects identities still held in its local claim/inflight maps so a
+  cross-thread reaper cannot steal live work.
+
   Args:
     client (Any): Redis client.
+    kinds (Iterable[str] | None): Kinds to reap; default all job kinds
+      (boot path only).
+    skip_identities (Iterable[str] | None): Local identities to leave
+      alone even if Redis reports them expired.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -2316,8 +2584,13 @@ def _reap_stale_inflight(
   """
   if client is None:
     return 0
+  skip = frozenset(str(x) for x in (skip_identities or ()))
   total = 0
-  for kind in jq.JOB_KINDS_ALL:
+  for kind in (kinds if kinds is not None else jq.JOB_KINDS_ALL):
+    if skip:
+      _protect_local_inflight_deadlines(
+          client, kind=str(kind), identities=skip,
+      )
     try:
       recovered = jq.reap_expired_inflight(client, kind=kind)
     except Exception as exc:
@@ -2327,6 +2600,8 @@ def _reap_stale_inflight(
           log_fn=log_fn,
       )
       continue
+    if skip and recovered:
+      recovered = [ident for ident in recovered if str(ident) not in skip]
     if recovered:
       total += len(recovered)
       _log(
@@ -2375,6 +2650,546 @@ def _queues_appear_idle(client: Any) -> bool:
       return False
   return True
 
+
+def _ingest_coordinator_loop(
+  *,
+  client: Any,
+  directory: str,
+  tgz_archive_dir: str,
+  manager_lock: Any,
+  pool_ref: AtomicPoolRef,
+  recycle_gate: IngestRecycleGate,
+  barrier: SubsystemShutdownBarrier,
+  hot_cap: int,
+  catchup_cap: int,
+  ingest_pool_size: int,
+  poll_s: float,
+  ingest_inflight: dict[str, AsyncResult],
+  ingest_leases: dict[str, Any],
+  ingest_submitted: dict[str, float],
+  busy_flags: dict[str, bool],
+  busy_lock: threading.Lock,
+  log_fn: Callable[..., None] | None,
+) -> None:
+  """
+  Own ingest fill/drain/abandon and kind-scoped ingest reap.
+
+  Requests pool recycle via ``IngestRecycleGate``; never terminates the
+  pool on this thread. Marks ``busy_flags["ingest"]`` and ``drained`` on
+  shutdown.
+
+  Args:
+    client (Any): Redis job client.
+    directory (str): Archive data directory.
+    tgz_archive_dir (str): Daily archive directory.
+    manager_lock (Any): Write lock passed to ingest workers.
+    pool_ref (AtomicPoolRef): Current ingest pool published by MainThread.
+    recycle_gate (IngestRecycleGate): Pause protocol with MainThread.
+    barrier (SubsystemShutdownBarrier): Shared draining/drained Events.
+    hot_cap (int): Reserved hot ingest slots.
+    catchup_cap (int): Reserved catchup ingest slots.
+    ingest_pool_size (int): Total ingest pool process count.
+    poll_s (float): Idle poll seconds.
+    ingest_inflight (dict[str, AsyncResult]): Local ingest AsyncResult map.
+    ingest_leases (dict[str, Any]): Local ingest claim map.
+    ingest_submitted (dict[str, float]): Submit monotonic times.
+    busy_flags (dict[str, bool]): Shared busy flags (mutated under lock).
+    busy_lock (threading.Lock): Guards ``busy_flags``.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    None
+
+  Raises:
+    RuntimeError: When Redis ``zcount`` fails (fail-closed mid-tick).
+    Exception: Re-raises unexpected coordinator crashes after logging.
+
+  Examples:
+    >>> callable(_ingest_coordinator_loop)
+    True
+  """
+  set_daemon_thread_title(
+      "ingest-coordinator",
+      script_name="sync_timedb.py",
+      role="thread:ingest-coordinator",
+  )
+  role = "ingest-coordinator"
+  last_reap = time.monotonic()
+  try:
+    while True:
+      draining = barrier.draining.is_set() or shutdown_requested()
+      if draining:
+        barrier.draining.set()
+      # Pause protocol: stop apply_async until MainThread recycles; keep
+      # draining ready results so slots free while the pool is replaced.
+      if recycle_gate.recycle_requested.is_set():
+        recycle_gate.paused.set()
+        while recycle_gate.recycle_requested.is_set() and not (
+            barrier.draining.is_set() or shutdown_requested()
+        ):
+          _drain_ingest_ready(
+              client,
+              inflight=ingest_inflight,
+              claims=ingest_leases,
+              submitted=ingest_submitted,
+              tgz_archive_dir=tgz_archive_dir,
+              archive_data_dir=directory,
+              log_fn=log_fn,
+          )
+          time.sleep(min(0.05, max(0.01, poll_s)))
+        recycle_gate.paused.clear()
+      did = 0
+      if not draining and not recycle_gate.recycle_requested.is_set():
+        pool = pool_ref.get()
+        while len(ingest_inflight) < hot_cap:
+          n = _fill_ingest_band(
+              client,
+              band="hot",
+              cap=hot_cap,
+              inflight=ingest_inflight,
+              claims=ingest_leases,
+              submitted=ingest_submitted,
+              ingest_pool=pool,
+              manager_lock=manager_lock,
+              band_cap=hot_cap,
+              tgz_archive_dir=tgz_archive_dir,
+              archive_data_dir=directory,
+          )
+          did += n
+          if n == 0:
+            break
+        try:
+          lo, hi = jq.ingest_score_range("hot")
+          hot_queued = int(
+              client.zcount(jq.job_queue_key(jq.JOB_KIND_INGEST), lo, hi) or 0
+          )
+        except Exception as exc:
+          raise RuntimeError(
+              "queue orchestrator redis zcount failed: %s" % type(exc).__name__
+          ) from exc
+        catchup_limit = catchup_dispatch_cap(
+            hot_queued=hot_queued,
+            catchup_queued=0,
+            hot_cap=hot_cap,
+            catchup_cap=catchup_cap,
+            pool=ingest_pool_size,
+        )
+        while len(ingest_inflight) < ingest_pool_size:
+          n = _fill_ingest_band(
+              client,
+              band="catchup",
+              cap=ingest_pool_size,
+              inflight=ingest_inflight,
+              claims=ingest_leases,
+              submitted=ingest_submitted,
+              ingest_pool=pool_ref.get(),
+              manager_lock=manager_lock,
+              band_cap=catchup_limit,
+              tgz_archive_dir=tgz_archive_dir,
+              archive_data_dir=directory,
+          )
+          did += n
+          if n == 0:
+            break
+        while len(ingest_inflight) < ingest_pool_size:
+          n = _fill_ingest_band(
+              client,
+              band="hot",
+              cap=ingest_pool_size,
+              inflight=ingest_inflight,
+              claims=ingest_leases,
+              submitted=ingest_submitted,
+              ingest_pool=pool_ref.get(),
+              manager_lock=manager_lock,
+              tgz_archive_dir=tgz_archive_dir,
+              archive_data_dir=directory,
+          )
+          did += n
+          if n == 0:
+            break
+      did += _drain_ingest_ready(
+          client,
+          inflight=ingest_inflight,
+          claims=ingest_leases,
+          submitted=ingest_submitted,
+          tgz_archive_dir=tgz_archive_dir,
+          archive_data_dir=directory,
+          log_fn=log_fn,
+      )
+      abandoned = _abandon_timed_out_ingest(
+          client,
+          inflight=ingest_inflight,
+          claims=ingest_leases,
+          submitted=ingest_submitted,
+          archive_data_dir=directory,
+          log_fn=log_fn,
+      )
+      if abandoned:
+        _requeue_pool_collateral(
+            client,
+            inflight=ingest_inflight,
+            claims=ingest_leases,
+            submitted=ingest_submitted,
+            log_fn=log_fn,
+        )
+        recycle_gate.recycle_requested.set()
+        recycle_gate.paused.set()
+        _log(
+            "queue_orchestrator ingest recycle requested abandoned=%d"
+            % len(abandoned),
+            log_fn=log_fn,
+        )
+      now = time.monotonic()
+      if now - last_reap >= max(poll_s, 5.0):
+        last_reap = now
+        _reap_stale_inflight(
+            client,
+            kinds=(jq.JOB_KIND_INGEST,),
+            skip_identities=tuple(ingest_inflight) + tuple(ingest_leases),
+            log_fn=log_fn,
+        )
+      with busy_lock:
+        busy_flags["ingest"] = bool(ingest_inflight)
+      if draining and not ingest_inflight:
+        barrier.mark_drained(role)
+        return
+      if draining:
+        time.sleep(min(0.25, max(0.05, poll_s)))
+      elif did == 0 and not ingest_inflight:
+        time.sleep(max(0.05, poll_s))
+      else:
+        time.sleep(min(0.05, poll_s))
+  except Exception as exc:
+    _log(
+        "queue_orchestrator ingest-coordinator crash err=%s"
+        % type(exc).__name__,
+        log_fn=log_fn,
+    )
+    raise
+  finally:
+    barrier.mark_drained(role)
+
+
+def _append_coordinator_loop(
+  *,
+  client: Any,
+  directory: str,
+  tgz_archive_dir: str,
+  archive_pool: Any,
+  append_cap: int,
+  poll_s: float,
+  barrier: SubsystemShutdownBarrier,
+  append_inflight: dict[str, AsyncResult],
+  append_leases: dict[str, Any],
+  busy_flags: dict[str, bool],
+  busy_lock: threading.Lock,
+  log_fn: Callable[..., None] | None,
+) -> None:
+  """
+  Own append fill/drain and tar-deduped cheap day_close enqueue.
+
+  Never runs remaining-raw / archive-wide find on this thread.
+
+  Args:
+    client (Any): Redis job client.
+    directory (str): Archive data directory.
+    tgz_archive_dir (str): Daily archive directory.
+    archive_pool (Any): Spawn pool for append workers.
+    append_cap (int): Max concurrent append batches.
+    poll_s (float): Idle poll seconds.
+    barrier (SubsystemShutdownBarrier): Shared draining/drained Events.
+    append_inflight (dict[str, AsyncResult]): Local append AsyncResult map.
+    append_leases (dict[str, Any]): Local append claim map.
+    busy_flags (dict[str, bool]): Shared busy flags (mutated under lock).
+    busy_lock (threading.Lock): Guards ``busy_flags``.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    None
+
+  Examples:
+    >>> callable(_append_coordinator_loop)
+    True
+  """
+  set_daemon_thread_title(
+      "append-coordinator",
+      script_name="sync_timedb.py",
+      role="thread:append-coordinator",
+  )
+  role = "append-coordinator"
+  last_reap = time.monotonic()
+  try:
+    while True:
+      draining = barrier.draining.is_set() or shutdown_requested()
+      if draining:
+        barrier.draining.set()
+      did = 0
+      if not draining:
+        did += _fill_append_slots(
+            client,
+            cap=append_cap,
+            inflight=append_inflight,
+            claims=append_leases,
+            archive_pool=archive_pool,
+            tgz_archive_dir=tgz_archive_dir,
+        )
+      did += _drain_append_ready(
+          client,
+          inflight=append_inflight,
+          claims=append_leases,
+          tgz_archive_dir=tgz_archive_dir,
+          archive_data_dir=directory,
+          log_fn=log_fn,
+      )
+      now = time.monotonic()
+      if now - last_reap >= max(poll_s, 5.0):
+        last_reap = now
+        _reap_stale_inflight(
+            client,
+            kinds=(jq.JOB_KIND_APPEND,),
+            skip_identities=tuple(append_inflight) + tuple(append_leases),
+            log_fn=log_fn,
+        )
+      with busy_lock:
+        busy_flags["append"] = bool(append_inflight)
+      if draining and not append_inflight:
+        barrier.mark_drained(role)
+        return
+      if draining:
+        time.sleep(min(0.25, max(0.05, poll_s)))
+      elif did == 0 and not append_inflight:
+        time.sleep(max(0.05, poll_s))
+      else:
+        time.sleep(min(0.05, poll_s))
+  finally:
+    barrier.mark_drained(role)
+
+
+def _day_close_coordinator_loop(
+  *,
+  client: Any,
+  directory: str,
+  tgz_archive_dir: str,
+  day_executor: ThreadPoolExecutor,
+  poll_s: float,
+  barrier: SubsystemShutdownBarrier,
+  day_inflight: dict[str, Future],
+  day_leases: dict[str, Any],
+  busy_flags: dict[str, bool],
+  busy_lock: threading.Lock,
+  log_fn: Callable[..., None] | None,
+) -> None:
+  """
+  Own day_close LIST fill/drain into the day_close worker executor.
+
+  Full filesystem remaining-raw probes run only on day_close **workers**.
+
+  Args:
+    client (Any): Redis job client.
+    directory (str): Archive data directory.
+    tgz_archive_dir (str): Daily archive directory.
+    day_executor (ThreadPoolExecutor): Worker pool for ``_run_day_close_job``.
+    poll_s (float): Idle poll seconds.
+    barrier (SubsystemShutdownBarrier): Shared draining/drained Events.
+    day_inflight (dict[str, Future]): Local day_close Future map.
+    day_leases (dict[str, Any]): Local day_close claim map.
+    busy_flags (dict[str, bool]): Shared busy flags (mutated under lock).
+    busy_lock (threading.Lock): Guards ``busy_flags``.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    None
+
+  Examples:
+    >>> callable(_day_close_coordinator_loop)
+    True
+  """
+  set_daemon_thread_title(
+      "day-close-coordinator",
+      script_name="sync_timedb.py",
+      role="thread:day-close-coordinator",
+  )
+  role = "day-close-coordinator"
+  last_reap = time.monotonic()
+  try:
+    while True:
+      draining = barrier.draining.is_set() or shutdown_requested()
+      if draining:
+        barrier.draining.set()
+      did = 0
+      if not draining:
+        did += _fill_day_close_slots(
+            client,
+            executor=day_executor,
+            inflight=day_inflight,
+            leases=day_leases,
+            tgz_archive_dir=tgz_archive_dir,
+            archive_data_dir=directory,
+            log_fn=log_fn,
+        )
+      did += _drain_day_close_ready(
+          client,
+          inflight=day_inflight,
+          leases=day_leases,
+          archive_data_dir=directory,
+          log_fn=log_fn,
+      )
+      now = time.monotonic()
+      if now - last_reap >= max(poll_s, 5.0):
+        last_reap = now
+        _reap_stale_inflight(
+            client,
+            kinds=(jq.JOB_KIND_DAY_CLOSE,),
+            skip_identities=tuple(day_inflight) + tuple(day_leases),
+            log_fn=log_fn,
+        )
+      with busy_lock:
+        busy_flags["day_close"] = bool(day_inflight)
+      if draining and not day_inflight:
+        barrier.mark_drained(role)
+        return
+      if draining:
+        if day_inflight:
+          wait(
+              list(day_inflight.values()),
+              timeout=min(poll_s, 0.5),
+              return_when=FIRST_COMPLETED,
+          )
+        else:
+          time.sleep(min(0.25, max(0.05, poll_s)))
+      elif did == 0 and not day_inflight:
+        time.sleep(max(0.05, poll_s))
+      else:
+        if day_inflight:
+          wait(
+              list(day_inflight.values()),
+              timeout=min(poll_s, 0.5),
+              return_when=FIRST_COMPLETED,
+          )
+        else:
+          time.sleep(min(0.05, poll_s))
+  finally:
+    barrier.mark_drained(role)
+
+
+def _reconstruct_coordinator_loop(
+  *,
+  client: Any,
+  directory: str,
+  tgz_archive_dir: str,
+  poll_s: float,
+  barrier: SubsystemShutdownBarrier,
+  rescan_mtime_days: int,
+  startdate: Any,
+  enddate: Any,
+  run_once: bool,
+  run_once_exit: threading.Event,
+  busy_flags: dict[str, bool],
+  busy_lock: threading.Lock,
+  log_fn: Callable[..., None] | None,
+) -> None:
+  """
+  Own idle reconstruct, census logs, and run_once idle exit signaling.
+
+  Does not submit discover while discover-bg is busy; does not reap foreign
+  job kinds.
+
+  Args:
+    client (Any): Redis job client.
+    directory (str): Archive data directory.
+    tgz_archive_dir (str): Daily archive directory.
+    poll_s (float): Idle poll seconds.
+    barrier (SubsystemShutdownBarrier): Shared draining/drained Events.
+    rescan_mtime_days (int): Incremental find window for idle reconstruct.
+    startdate (Any): Inclusive CLI start date, or ``None``.
+    enddate (Any): Inclusive CLI end date, or ``None``.
+    run_once (bool): When True, signal ``run_once_exit`` after idle reconstruct.
+    run_once_exit (threading.Event): Set when run_once should exit.
+    busy_flags (dict[str, bool]): Shared busy flags (read under lock).
+    busy_lock (threading.Lock): Guards ``busy_flags``.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    None
+
+  Examples:
+    >>> callable(_reconstruct_coordinator_loop)
+    True
+  """
+  set_daemon_thread_title(
+      "reconstruct-coordinator",
+      script_name="sync_timedb.py",
+      role="thread:reconstruct-coordinator",
+  )
+  role = "reconstruct-coordinator"
+  last_census = 0.0
+  idle_rounds = 0
+  try:
+    while True:
+      draining = barrier.draining.is_set() or shutdown_requested()
+      if draining:
+        barrier.draining.set()
+        barrier.mark_drained(role)
+        return
+      _idle_reconstruct_pass(
+          client,
+          directory,
+          tgz_archive_dir=tgz_archive_dir,
+          log_fn=log_fn,
+          mtime_days=rescan_mtime_days,
+          startdate=startdate,
+          enddate=enddate,
+      )
+      now = time.monotonic()
+      if now - last_census >= CENSUS_LOG_INTERVAL_S:
+        last_census = now
+        try:
+          census = jq.queue_census(client)
+        except Exception:
+          census = {}
+        with busy_lock:
+          local_i = 1 if busy_flags.get("ingest") else 0
+          local_a = 1 if busy_flags.get("append") else 0
+          local_d = 1 if busy_flags.get("day_close") else 0
+        if census:
+          _log(
+              "queue_orchestrator census %s local=%d/%d/%d"
+              % (
+                  jq.format_queue_census(census),
+                  local_i,
+                  local_a,
+                  local_d,
+              ),
+              log_fn=log_fn,
+          )
+      with busy_lock:
+        busy = any(busy_flags.values())
+      if run_once and not busy and _queues_appear_idle(client):
+        idle_rounds += 1
+        if idle_rounds >= 1:
+          recon = _idle_reconstruct_pass(
+              client,
+              directory,
+              tgz_archive_dir=tgz_archive_dir,
+              log_fn=log_fn,
+              force=True,
+              mtime_days=None,
+              startdate=startdate,
+              enddate=enddate,
+          )
+          with busy_lock:
+            busy = any(busy_flags.values())
+          if recon == 0 and not busy and _queues_appear_idle(client):
+            _log("queue_orchestrator run_once idle exit", log_fn=log_fn)
+            run_once_exit.set()
+            barrier.mark_drained(role)
+            return
+          idle_rounds = 0
+      else:
+        idle_rounds = 0
+      time.sleep(max(0.05, poll_s))
+  finally:
+    barrier.mark_drained(role)
 
 def run_sync_timedb_queue_orchestrator(
   archive_dir: str,
@@ -2538,273 +3353,203 @@ def run_sync_timedb_queue_orchestrator(
     # Log only after submit returns — a pre-submit line lied when MainThread
     # deadlocked inside nested ``_discover_bg_lock`` acquire (hpcperfstats03).
     _log("queue_orchestrator boot discover submitted", log_fn=log_fn)
+    pool_ref = AtomicPoolRef(ingest_pool)
+    recycle_gate = IngestRecycleGate()
+    barrier = SubsystemShutdownBarrier(
+        (
+            "ingest-coordinator",
+            "append-coordinator",
+            "day-close-coordinator",
+            "reconstruct-coordinator",
+        )
+    )
+    busy_flags: dict[str, bool] = {
+        "ingest": False,
+        "append": False,
+        "day_close": False,
+    }
+    busy_lock = threading.Lock()
+    run_once_exit = threading.Event()
+    day_executor = ThreadPoolExecutor(
+        max_workers=day_close_workers,
+        thread_name_prefix=DAY_CLOSE_THREAD_NAME_PREFIX,
+    )
+    threads: list[tuple[str, threading.Thread]] = []
+
+    def _spawn(name: str, target: Callable[..., None], kwargs: dict) -> None:
+      """
+      Start one titled subsystem coordinator thread.
+
+      Args:
+        name (str): Thread / role name.
+        target (Callable[..., None]): Coordinator loop entry.
+        kwargs (dict): Keyword args for ``target``.
+
+      Returns:
+        None
+
+      Examples:
+        >>> callable(_spawn)
+        True
+      """
+      thr = threading.Thread(
+          target=target,
+          name=name,
+          kwargs=kwargs,
+          daemon=True,
+      )
+      threads.append((name, thr))
+      thr.start()
+
+    _spawn(
+        "ingest-coordinator",
+        _ingest_coordinator_loop,
+        {
+            "client": client,
+            "directory": directory,
+            "tgz_archive_dir": tgz_archive_dir,
+            "manager_lock": manager_lock,
+            "pool_ref": pool_ref,
+            "recycle_gate": recycle_gate,
+            "barrier": barrier,
+            "hot_cap": hot_cap,
+            "catchup_cap": catchup_cap,
+            "ingest_pool_size": ingest_pool_size,
+            "poll_s": poll_s,
+            "ingest_inflight": ingest_inflight,
+            "ingest_leases": ingest_leases,
+            "ingest_submitted": ingest_submitted,
+            "busy_flags": busy_flags,
+            "busy_lock": busy_lock,
+            "log_fn": log_fn,
+        },
+    )
+    _spawn(
+        "append-coordinator",
+        _append_coordinator_loop,
+        {
+            "client": client,
+            "directory": directory,
+            "tgz_archive_dir": tgz_archive_dir,
+            "archive_pool": archive_pool,
+            "append_cap": append_cap,
+            "poll_s": poll_s,
+            "barrier": barrier,
+            "append_inflight": append_inflight,
+            "append_leases": append_leases,
+            "busy_flags": busy_flags,
+            "busy_lock": busy_lock,
+            "log_fn": log_fn,
+        },
+    )
+    _spawn(
+        "day-close-coordinator",
+        _day_close_coordinator_loop,
+        {
+            "client": client,
+            "directory": directory,
+            "tgz_archive_dir": tgz_archive_dir,
+            "day_executor": day_executor,
+            "poll_s": poll_s,
+            "barrier": barrier,
+            "day_inflight": day_inflight,
+            "day_leases": day_leases,
+            "busy_flags": busy_flags,
+            "busy_lock": busy_lock,
+            "log_fn": log_fn,
+        },
+    )
+    _spawn(
+        "reconstruct-coordinator",
+        _reconstruct_coordinator_loop,
+        {
+            "client": client,
+            "directory": directory,
+            "tgz_archive_dir": tgz_archive_dir,
+            "poll_s": poll_s,
+            "barrier": barrier,
+            "rescan_mtime_days": rescan_mtime_days,
+            "startdate": startdate,
+            "enddate": enddate,
+            "run_once": run_once,
+            "run_once_exit": run_once_exit,
+            "busy_flags": busy_flags,
+            "busy_lock": busy_lock,
+            "log_fn": log_fn,
+        },
+    )
     try:
-      with ThreadPoolExecutor(
-          max_workers=day_close_workers,
-          thread_name_prefix=DAY_CLOSE_THREAD_NAME_PREFIX,
-      ) as day_executor:
-        idle_rounds = 0
-        while True:
-          did = 0
-          draining = shutdown_requested()
-          if draining and drain_deadline == 0.0:
+      while True:
+        if shutdown_requested() and not barrier.draining.is_set():
+          barrier.draining.set()
+          if drain_deadline == 0.0:
             drain_deadline = time.monotonic() + SHUTDOWN_DRAIN_TIMEOUT_S
-            _log(
-                "queue_orchestrator shutdown requested; draining inflight=%d"
-                % (
-                    len(ingest_inflight)
-                    + len(append_inflight)
-                    + len(day_inflight)
-                ),
-                log_fn=log_fn,
-            )
-          if not draining:
-            try:
-              populate.reap_and_restart()
-            except Exception:
-              pass
-            # Reserved hot/catchup slots; an empty band may use free slots.
-            while len(ingest_inflight) < hot_cap:
-              n = _fill_ingest_band(
-                  client,
-                  band="hot",
-                  cap=hot_cap,
-                  inflight=ingest_inflight,
-                  claims=ingest_leases,
-                  submitted=ingest_submitted,
-                  ingest_pool=ingest_pool,
-                  manager_lock=manager_lock,
-                  band_cap=hot_cap,
-                  tgz_archive_dir=tgz_archive_dir,
-                  archive_data_dir=directory,
-              )
-              did += n
-              if n == 0:
-                break
-            try:
-              lo, hi = jq.ingest_score_range("hot")
-              hot_queued = int(
-                  client.zcount(
-                      jq.job_queue_key(jq.JOB_KIND_INGEST), lo, hi,
-                  ) or 0
-              )
-            except Exception as exc:
-              raise RuntimeError(
-                  "queue orchestrator redis zcount failed: %s"
-                  % type(exc).__name__
-              ) from exc
-            catchup_limit = catchup_dispatch_cap(
-                hot_queued=hot_queued,
-                catchup_queued=0,
-                hot_cap=hot_cap,
-                catchup_cap=catchup_cap,
-                pool=ingest_pool_size,
-            )
-            while len(ingest_inflight) < ingest_pool_size:
-              n = _fill_ingest_band(
-                  client,
-                  band="catchup",
-                  cap=ingest_pool_size,
-                  inflight=ingest_inflight,
-                  claims=ingest_leases,
-                  submitted=ingest_submitted,
-                  ingest_pool=ingest_pool,
-                  manager_lock=manager_lock,
-                  band_cap=catchup_limit,
-                  tgz_archive_dir=tgz_archive_dir,
-                  archive_data_dir=directory,
-              )
-              did += n
-              if n == 0:
-                break
-            # When catchup is empty, let hot use remaining pool slots.
-            while len(ingest_inflight) < ingest_pool_size:
-              n = _fill_ingest_band(
-                  client,
-                  band="hot",
-                  cap=ingest_pool_size,
-                  inflight=ingest_inflight,
-                  claims=ingest_leases,
-                  submitted=ingest_submitted,
-                  ingest_pool=ingest_pool,
-                  manager_lock=manager_lock,
-                  tgz_archive_dir=tgz_archive_dir,
-                  archive_data_dir=directory,
-              )
-              did += n
-              if n == 0:
-                break
-          did += _drain_ingest_ready(
-              client,
-              inflight=ingest_inflight,
-              claims=ingest_leases,
-              submitted=ingest_submitted,
-              tgz_archive_dir=tgz_archive_dir,
-              archive_data_dir=directory,
+          with busy_lock:
+            local_n = sum(1 for v in busy_flags.values() if v)
+          _log(
+              "queue_orchestrator shutdown requested; draining inflight=%d"
+              % local_n,
               log_fn=log_fn,
           )
-          abandoned = _abandon_timed_out_ingest(
-              client,
-              inflight=ingest_inflight,
-              claims=ingest_leases,
-              submitted=ingest_submitted,
-              archive_data_dir=directory,
+        try:
+          populate.reap_and_restart()
+        except Exception:
+          pass
+        if (
+            recycle_gate.recycle_requested.is_set()
+            and recycle_gate.paused.is_set()
+        ):
+          old_pool = pool_ref.get()
+          new_pool = _recycle_ingest_pool(
+              old_pool, factory=_new_ingest_pool,
+          )
+          pool_ref.set(new_pool)
+          recycle_gate.recycle_requested.clear()
+          recycle_gate.paused.clear()
+          _log(
+              "queue_orchestrator ingest pool recycled via pause protocol",
               log_fn=log_fn,
           )
-          if abandoned:
-            # A Pool with a presumed-dead worker cannot be trusted to schedule
-            # the next task, so replace it before refilling the freed slots.
-            did += len(abandoned)
-            collateral = _requeue_pool_collateral(
-                client,
-                inflight=ingest_inflight,
-                claims=ingest_leases,
-                submitted=ingest_submitted,
-                log_fn=log_fn,
+        for name, thr in threads:
+          if thr.is_alive():
+            continue
+          if barrier.draining.is_set() or run_once_exit.is_set():
+            continue
+          fail_closed_on_coordinator_death(role=name, log_fn=log_fn)
+        if run_once_exit.is_set():
+          barrier.draining.set()
+          if barrier.all_drained():
+            break
+        if barrier.draining.is_set():
+          if barrier.all_drained():
+            _log("queue_orchestrator drained; exiting", log_fn=log_fn)
+            _release_claims_on_shutdown(
+                client, claim_maps, log_fn=log_fn,
             )
-            ingest_pool = _recycle_ingest_pool(
-                ingest_pool, factory=_new_ingest_pool,
-            )
-            _log(
-                "queue_orchestrator ingest pool recycled abandoned=%d requeued=%d"
-                % (len(abandoned), collateral),
-                log_fn=log_fn,
-            )
-          if not draining:
-            did += _fill_append_slots(
-                client,
-                cap=append_cap,
-                inflight=append_inflight,
-                claims=append_leases,
-                archive_pool=archive_pool,
-                tgz_archive_dir=tgz_archive_dir,
-            )
-          did += _drain_append_ready(
-              client,
-              inflight=append_inflight,
-              claims=append_leases,
-              tgz_archive_dir=tgz_archive_dir,
-              archive_data_dir=directory,
-              log_fn=log_fn,
-          )
-          if not draining:
-            did += _fill_day_close_slots(
-                client,
-                executor=day_executor,
-                inflight=day_inflight,
-                leases=day_leases,
-                tgz_archive_dir=tgz_archive_dir,
-                archive_data_dir=directory,
-                log_fn=log_fn,
-            )
-          did += _drain_day_close_ready(
-              client,
-              inflight=day_inflight,
-              leases=day_leases,
-              archive_data_dir=directory,
-              log_fn=log_fn,
-          )
-
-          busy = bool(ingest_inflight or append_inflight or day_inflight)
-          now_mono = time.monotonic()
-          if now_mono - last_reap_mono >= max(poll_s, 5.0):
-            last_reap_mono = now_mono
-            _reap_stale_inflight(client, log_fn=log_fn)
-          if now_mono - last_census_mono >= CENSUS_LOG_INTERVAL_S:
-            last_census_mono = now_mono
-            try:
-              census = jq.queue_census(client)
-            except Exception:
-              census = {}
-            if census:
-              _log(
-                  "queue_orchestrator census %s local=%d/%d/%d"
-                  % (
-                      jq.format_queue_census(census),
-                      len(ingest_inflight),
-                      len(append_inflight),
-                      len(day_inflight),
-                  ),
-                  log_fn=log_fn,
-              )
-
-          if not draining:
-            _idle_reconstruct_pass(
-                client,
-                directory,
-                tgz_archive_dir=tgz_archive_dir,
-                log_fn=log_fn,
-                mtime_days=rescan_mtime_days,
-                startdate=startdate,
-                enddate=enddate,
-            )
-
-          if draining:
-            if not busy:
-              _log("queue_orchestrator drained; exiting", log_fn=log_fn)
-              break
-            if time.monotonic() >= drain_deadline:
-              for fut in list(day_inflight.values()):
-                try:
-                  fut.cancel()
-                except Exception:
-                  pass
+            break
+          if drain_deadline and time.monotonic() >= drain_deadline:
+            for fut in list(day_inflight.values()):
               try:
-                day_executor.shutdown(wait=False, cancel_futures=True)
+                fut.cancel()
               except Exception:
                 pass
-              _log(
-                  "queue_orchestrator drain timeout; dirty_tar_recovery "
-                  "append_inflight=%d ingest_inflight=%d"
-                  % (len(append_inflight), len(ingest_inflight)),
-                  log_fn=log_fn,
-              )
-              _release_claims_on_shutdown(
-                  client, claim_maps, log_fn=log_fn,
-              )
-              break
-            if day_inflight:
-              wait(
-                  list(day_inflight.values()),
-                  timeout=min(poll_s, 0.5),
-                  return_when=FIRST_COMPLETED,
-              )
-            else:
-              time.sleep(min(0.25, max(0.05, poll_s)))
-            continue
-
-          if run_once and not busy and _queues_appear_idle(client):
-            if did == 0:
-              idle_rounds += 1
-            else:
-              idle_rounds = 0
-            if idle_rounds >= 1:
-              # One reconstruct pass before run_once exit (empty ≠ caught up).
-              recon = _idle_reconstruct_pass(
-                  client,
-                  directory,
-                  tgz_archive_dir=tgz_archive_dir,
-                  log_fn=log_fn,
-                  force=True,
-                  mtime_days=None,
-                  startdate=startdate,
-                  enddate=enddate,
-              )
-              if recon == 0 and _queues_appear_idle(client):
-                _log("queue_orchestrator run_once idle exit", log_fn=log_fn)
-                break
-              idle_rounds = 0
-          elif did == 0 and not busy:
-            time.sleep(max(0.05, poll_s))
-          else:
-            if day_inflight:
-              wait(
-                  list(day_inflight.values()),
-                  timeout=min(poll_s, 0.5),
-                  return_when=FIRST_COMPLETED,
-              )
-            else:
-              time.sleep(min(0.05, poll_s))
+            try:
+              day_executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+              pass
+            _log(
+                "queue_orchestrator drain timeout; dirty_tar_recovery "
+                "append_inflight=%d ingest_inflight=%d"
+                % (len(append_inflight), len(ingest_inflight)),
+                log_fn=log_fn,
+            )
+            _release_claims_on_shutdown(
+                client, claim_maps, log_fn=log_fn,
+            )
+            break
+          time.sleep(min(0.25, max(0.05, poll_s)))
+          continue
+        time.sleep(max(0.05, poll_s))
     finally:
       _shutdown_background_discover()
       try:
@@ -2812,10 +3557,15 @@ def run_sync_timedb_queue_orchestrator(
       except Exception:
         pass
       set_populate_pool_controller(None)
+      try:
+        day_executor.shutdown(wait=False, cancel_futures=True)
+      except Exception:
+        pass
       # Closes whichever pool object is current, including one installed by a
       # watchdog recycle (a `with` block would only close the first).
+      current_pool = pool_ref.get() if "pool_ref" in locals() else ingest_pool
       for method in ("terminate", "join"):
-        call = getattr(ingest_pool, method, None)
+        call = getattr(current_pool, method, None)
         if call is None:
           continue
         try:

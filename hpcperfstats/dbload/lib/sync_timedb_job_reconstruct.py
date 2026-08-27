@@ -833,3 +833,65 @@ def enqueue_day_close_if_needed(
       dedupe=True,
   )
   return True
+
+
+def enqueue_cheap_day_close_if_needed(
+  client: Any,
+  tar_path: str,
+  *,
+  calendar_day: date | None = None,
+  phase_name: str | None = None,
+  min_age_elapsed: bool | None = None,
+  now: datetime | None = None,
+) -> bool:
+  """
+  Enqueue day_close without a blocking filesystem remaining-raw find.
+
+  Append/reconstruct coordinators must not call
+  ``day_close_filesystem_complete`` (archive-wide find). Inject
+  ``filesystem_complete=False`` so Redis LIST dedupe can keep at most one
+  queued/inflight identity per tar; day_close **workers** own the full FS
+  probe.
+
+  Args:
+    client (Any): Redis client with ``rpush``.
+    tar_path (str): Daily tar identity / path.
+    calendar_day (date | None): Day for min-age when not injected (unused
+      while FS is forced incomplete; retained for API parity).
+    phase_name (str | None): Ignored removal/manifest phase.
+    min_age_elapsed (bool | None): Injected min-age (unused while FS is
+      forced incomplete; retained for API parity).
+    now (datetime | None): Clock for min-age (unused on cheap path).
+
+  Returns:
+    bool: True when a day_close identity was enqueued (or would be after
+      dedupe skip still returns True from the complete check path).
+
+  Examples:
+    >>> class _C:
+    ...   def __init__(self):
+    ...     self.n = 0
+    ...   def rpush(self, key, *vals):
+    ...     self.n += len(vals); return self.n
+    ...   def eval(self, *a, **k):
+    ...     return 1
+    ...   def evalsha(self, *a, **k):
+    ...     return 1
+    ...   def script_load(self, s):
+    ...     return "x"
+    >>> enqueue_cheap_day_close_if_needed(
+    ...   _C(),
+    ...   "/d/2026-08-01.tar",
+    ...   calendar_day=date(2026, 8, 1),
+    ... )
+    True
+  """
+  return enqueue_day_close_if_needed(
+      client,
+      tar_path,
+      calendar_day=calendar_day,
+      phase_name=phase_name,
+      filesystem_complete=False,
+      min_age_elapsed=min_age_elapsed,
+      now=now,
+  )

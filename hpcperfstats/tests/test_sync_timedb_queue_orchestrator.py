@@ -954,18 +954,13 @@ def test_idle_includes_discover():
 
 
 def test_reconstruct_runs_while_busy():
-  """B6: reconstruct is interval-gated, not full-idle-only."""
-  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
-  busy_idx = src.find("busy = bool")
-  recon_idx = src.find("_idle_reconstruct_pass")
-  assert busy_idx != -1
-  assert recon_idx != -1
-  # A later reconstruct call must exist outside the `did == 0 and not busy` arm,
-  # or the busy arm itself must invoke reconstruct.
-  assert "if not draining:" in src
-  body = src[src.find("while True:"):]
-  assert "_idle_reconstruct_pass" in body
-  assert "not draining" in body
+  """B6: reconstruct is interval-gated on reconstruct-coordinator, not idle-only."""
+  src = inspect.getsource(qo._reconstruct_coordinator_loop)
+  assert "_idle_reconstruct_pass" in src
+  assert "run_once" in src
+  run_src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  assert "_reconstruct_coordinator_loop" in run_src
+  assert "_fill_ingest_band" not in run_src
 
 
 def test_run_once_exits_with_future_dated_file_present():
@@ -1158,7 +1153,13 @@ def test_drain_timeout_terminates_before_requeue():
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
   timeout_idx = src.find("drain timeout")
   assert timeout_idx != -1
-  window = src[max(0, timeout_idx - 800):timeout_idx + 800]
+  # Include the cancel/shutdown lines immediately above the log, stop before finally.
+  arm_start = src.rfind("if drain_deadline", 0, timeout_idx)
+  finally_idx = src.find("\n    finally:", timeout_idx)
+  window = src[
+      arm_start if arm_start != -1 else max(0, timeout_idx - 400)
+      : finally_idx if finally_idx != -1 else timeout_idx + 800
+  ]
   assert "day_executor.shutdown(wait=False" in window
   assert window.find("day_executor.shutdown") < window.find(
       "_release_claims_on_shutdown",
@@ -1197,7 +1198,7 @@ def test_ingest_timeout_requeues_without_attempt_bump(tmp_path, monkeypatch):
 
 def test_zcount_failure_is_fail_closed():
   """P1-7: Redis zcount errors must not invent hot_queued=1."""
-  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  src = inspect.getsource(qo._ingest_coordinator_loop)
   assert "hot_queued = 1" not in src
   assert "queue orchestrator redis zcount failed" in src
 
@@ -1253,3 +1254,177 @@ def test_sync_timedb_modules_have_no_bare_print():
   assert not offenders, "bare print() in sync_timedb modules: %s" % (
       ", ".join(offenders),
   )
+
+
+def test_drain_append_no_find_uses_cheap_day_close(monkeypatch):
+  """Append drain must not call remaining-raw / filesystem_complete find."""
+  calls: list[tuple] = []
+
+  def _cheap(client, tar, **kwargs):
+    calls.append((tar, kwargs))
+    return True
+
+  monkeypatch.setattr(qo.jr, "enqueue_cheap_day_close_if_needed", _cheap)
+
+  class _Ready:
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      return None
+
+  class _Claim:
+    identity = "/raw/a"
+    owner_token = "tok"
+
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  n = qo._drain_append_ready(
+      client,
+      inflight={"/d/2026-07-17.tar": _Ready()},
+      claims={"/d/2026-07-17.tar": _Claim()},
+      tgz_archive_dir="/d",
+      archive_data_dir="/a",
+  )
+  assert n == 1
+  assert calls == [("/d/2026-07-17.tar", {})]
+  src = inspect.getsource(qo._drain_append_ready)
+  assert "enqueue_cheap_day_close_if_needed" in src
+  assert "enqueue_day_close_if_needed(client, tar)" not in src
+
+
+def test_cheap_day_close_helper_rejects_blocking_filesystem_complete():
+  """Cheap helper always injects filesystem_complete=False (no archive find)."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  seen: list[dict] = []
+
+  def _capture(client, tar_path, **kwargs):
+    seen.append(kwargs)
+    return True
+
+  # Call through real helper with patched underlying enqueue.
+  import hpcperfstats.dbload.lib.sync_timedb_job_reconstruct as jrmod
+
+  orig = jrmod.enqueue_day_close_if_needed
+
+  def _wrapped(client, tar_path, **kwargs):
+    seen.append(dict(kwargs))
+    return True
+
+  jrmod.enqueue_day_close_if_needed = _wrapped  # type: ignore[assignment]
+  try:
+    assert jr.enqueue_cheap_day_close_if_needed(
+        object(), "/d/2026-08-01.tar", calendar_day=date(2026, 8, 1),
+    ) is True
+  finally:
+    jrmod.enqueue_day_close_if_needed = orig  # type: ignore[assignment]
+  assert seen and seen[0].get("filesystem_complete") is False
+
+
+def test_tar_dedup_day_close_uses_list_dedupe(monkeypatch):
+  """Burst appends for one tar enqueue day_close at most once (Redis dedupe)."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  tar = "/d/2026-07-17.tar"
+  assert jr.enqueue_cheap_day_close_if_needed(client, tar) is True
+  # Second enqueue is dedupe-skipped at Redis; complete check still True-path
+  # returns True from enqueue_day_close_if_needed only when push happens.
+  # With FakeRedis dedupe Lua may no-op; assert LIST depth stays 1.
+  jr.enqueue_cheap_day_close_if_needed(client, tar)
+  jr.enqueue_cheap_day_close_if_needed(client, tar)
+  depth = int(client.llen(jq.job_queue_key(jq.JOB_KIND_DAY_CLOSE)) or 0)
+  assert depth <= 1
+
+
+def test_pause_protocol_AtomicPoolRef_recycle():
+  """C1: MainThread publishes new pool only via AtomicPoolRef after pause."""
+  ref = qo.AtomicPoolRef("old")
+  assert ref.get() == "old"
+  ref.set("new")
+  assert ref.get() == "new"
+  gate = qo.IngestRecycleGate()
+  assert not gate.recycle_requested.is_set()
+  gate.recycle_requested.set()
+  gate.paused.set()
+  # Simulate MainThread recycle handoff.
+  ref.set("recycled")
+  gate.recycle_requested.clear()
+  gate.paused.clear()
+  assert ref.get() == "recycled"
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  assert "recycle_gate.paused.is_set()" in src
+  assert "_recycle_ingest_pool" in src
+  assert "pool_ref.set" in src
+
+
+def test_fail_closed_coordinator_death_no_empty_map_restart(monkeypatch):
+  """C2: coordinator death must fail-closed, not silently restart."""
+  exits: list[int] = []
+  qo.reset_shutdown_for_tests()
+  try:
+    qo.fail_closed_on_coordinator_death(
+        role="ingest-coordinator",
+        log_fn=lambda *a, **k: None,
+        exit_fn=exits.append,
+    )
+  finally:
+    qo.reset_shutdown_for_tests()
+  assert exits == [1]
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  assert "fail_closed_on_coordinator_death" in src
+  # No empty-map restart helper in MainThread allowlist path.
+  assert "threading.Thread(" in src
+  assert "empty_map" not in src.lower()
+
+
+def test_kind_scoped_reaper_skips_local_inflight(monkeypatch):
+  """C3: reaper protects local identities before Redis reclaim."""
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  protected: list[str] = []
+
+  def _fake_protect(client, *, kind, identities, extend_s=600.0):
+    protected.extend(str(x) for x in identities)
+    return len(protected)
+
+  calls: list[str] = []
+
+  def _fake_reap(client, *, kind):
+    calls.append(kind)
+    return ["remote-b"]
+
+  monkeypatch.setattr(qo, "_protect_local_inflight_deadlines", _fake_protect)
+  monkeypatch.setattr(jq, "reap_expired_inflight", _fake_reap)
+  n = qo._reap_stale_inflight(
+      client,
+      kinds=(jq.JOB_KIND_INGEST,),
+      skip_identities=("local-a",),
+      log_fn=lambda *a, **k: None,
+  )
+  assert "local-a" in protected
+  assert calls == [jq.JOB_KIND_INGEST]
+  assert n == 1
+  append_src = inspect.getsource(qo._append_coordinator_loop)
+  assert "JOB_KIND_APPEND" in append_src
+  assert "skip_identities" in append_src
+
+
+def test_mainthread_forbid_fill_drain():
+  """MainThread maintenance must not call fill/drain helpers directly."""
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  for banned in (
+      "_fill_ingest_band(",
+      "_fill_append_slots(",
+      "_fill_day_close_slots(",
+      "_drain_append_ready(",
+      "_drain_ingest_ready(",
+      "_idle_reconstruct_pass(",
+  ):
+    assert banned not in src, banned
+  assert "populate.reap_and_restart" in src
+  assert "_ingest_coordinator_loop" in src
+  assert "_append_coordinator_loop" in src
+
