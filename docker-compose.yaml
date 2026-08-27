@@ -187,6 +187,7 @@ services:
       - RABBITMQ_NODENAME=rabbit@rabbitmq-prod
       - RABBITMQ_DEFAULT_USER=guest
       - RABBITMQ_DEFAULT_PASS=guest
+    stop_grace_period: 2m 
     healthcheck:
       # `rabbitmq-diagnostics ping` returns non-zero if the node is not ready.
       test:
