@@ -6,6 +6,25 @@ See also: `sync-timedb-change-regression-gate.mdc`, `sync-timedb-queue-orchestra
 
 ## Queue orchestrator era (2026-08 cutover)
 
+### T0 — 10-minute progress + status (primary)
+
+Prefer these lines over firehose greps for backlog diagnosis:
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator progress day=|queue_orchestrator status |queue_orchestrator census |archive_job_done |ingest per-file timeout' | tail -80
+```
+
+- **`progress day=`** — omit-zeros day counters (`gate_skip`, `ingest_handoff`, ingest outcomes, archive, day_close, reconstruct, …).
+- **`status`** — Redis `current/queued` (`ingest_hot` / `ingest_catchup` / …), `busy=` (incl discover), `orphan_inflight`, queue `*_q_delta`, `oldest_day` / `oldest_age_s`.
+- **`census`** — 60s depth; ratios are **inflight/queued**; `busy=` replaces opaque `local=I/A/D`.
+- **`archive_job_done`** — single INFO per append job (`tar_bytes`, `members_source`, `mapped`/`to_add`/`appended`, `outcome=`). Do not require `archive_job_begin` / `archive_job_duty` / `Archived batch` at INFO.
+- **`ingest per-file timeout`** — includes `size_bytes=` and `bytes_per_s=` for size/time judgment.
+- **Not primary:** `Archive/delete gate: skipped` and `handoff_to_ingest … reason=gate_skip` (demoted; use day `gate_skip=` / `ingest_handoff=`).
+
+**Agent stall heuristics (2–3 status lines):** (1) queues non-zero + Δqueued≈0 + no day acks → stall; (2) inflight without `busy=` → orphan; (3) `gate_skip` without `ingest_handoff` → ACK thrash class; (4) empty queues + no `reconstruct_enq`/`incomplete_seen` on backlog site → false done.
+
+## Queue orchestrator era — remaining tiers
+
 Production is **one** `sync_timedb.py` process per `archive_dir` (`run_sync_timedb_queue_orchestrator`, exclusive flock). Dual CLI ``backlog``/``current``, proximity heartbeat, `ArchiveJanitor` tick, handoff pins, and oldest-day **chunk gate** are **retired**. Operator census is Redis **`job:v1`** + disk/DB reconstruct predicates — empty job keys ≠ caught up.
 
 ### Post-deploy tiers (orchestrator)

@@ -31,6 +31,7 @@ Attributes:
   _discover_bg_future: In-flight background discover future, or ``None``.
   _discover_bg_lock: Serializes submit/shutdown of background discover.
   _last_idle_reconstruct_mono: Monotonic timestamp of last idle reconstruct.
+  PROGRESS_REPORT_INTERVAL_S: Alias of progress module 600s emit interval.
 """
 from __future__ import annotations
 
@@ -49,6 +50,7 @@ from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as it
 from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
 from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
 from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+from hpcperfstats.dbload.lib import sync_timedb_progress_report as progress
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
     exclusive_archive_dir_flock,
@@ -81,6 +83,7 @@ from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
 
 DAY_CLOSE_THREAD_NAME_PREFIX = "day-close"
 CENSUS_LOG_INTERVAL_S = 60.0
+PROGRESS_REPORT_INTERVAL_S = progress.PROGRESS_REPORT_INTERVAL_S
 SHUTDOWN_DRAIN_TIMEOUT_S = 120.0
 # Per-tick cap on fill continues (missing path, reband, fingerprint mismatch)
 # so MainThread cannot busy-spin a huge NFS-hole / reband storm.
@@ -414,6 +417,146 @@ def _log(msg: str, *, log_fn: Callable[..., None] | None = None) -> None:
     log_fn(msg, flush=True)
   else:
     log_print(msg, flush=True)
+
+
+def _day_token_from_date(cal: Any) -> str | None:
+  """
+  Render an ISO day token from a ``date`` (or None).
+
+  Args:
+    cal (Any): ``date`` instance or None.
+
+  Returns:
+    str | None: ``YYYY-MM-DD`` or None.
+
+  Examples:
+    >>> _day_token_from_date(None) is None
+    True
+  """
+  if cal is None:
+    return None
+  try:
+    return cal.isoformat()
+  except Exception:
+    return None
+
+
+def _status_band_ratios(client: Any) -> dict[str, dict[str, int]]:
+  """
+  Build status footer band ratios (current/queued) including ingest hot/catchup.
+
+  Args:
+    client (Any): Redis client.
+
+  Returns:
+    dict[str, dict[str, int]]: Name → ``inflight`` / ``queued``.
+
+  Examples:
+    >>> _status_band_ratios(type("C", (), {})())  # doctest: +SKIP
+    {}
+  """
+  out: dict[str, dict[str, int]] = {}
+  try:
+    census = jq.queue_census(client)
+  except Exception:
+    census = {}
+  try:
+    hot_i, catch_i = jq.count_inflight_by_band(client)
+  except Exception:
+    hot_i, catch_i = 0, 0
+  hot_q = catch_q = 0
+  try:
+    zkey = jq.job_queue_key(jq.JOB_KIND_INGEST)
+    hot_lo, hot_hi = jq.ingest_score_range("hot")
+    catch_lo, catch_hi = jq.ingest_score_range("catchup")
+    hot_q = int(client.zcount(zkey, jq._score_arg(hot_lo), jq._score_arg(hot_hi)) or 0)
+    catch_q = int(
+        client.zcount(zkey, jq._score_arg(catch_lo), jq._score_arg(catch_hi)) or 0,
+    )
+  except Exception:
+    pass
+  out["ingest_hot"] = {"inflight": int(hot_i), "queued": int(hot_q)}
+  out["ingest_catchup"] = {"inflight": int(catch_i), "queued": int(catch_q)}
+  for kind in (jq.JOB_KIND_APPEND, jq.JOB_KIND_DISCOVER, jq.JOB_KIND_DAY_CLOSE):
+    entry = census.get(kind) or {}
+    out[kind] = {
+        "inflight": int(entry.get("inflight", 0) or 0),
+        "queued": int(entry.get("queued", 0) or 0),
+    }
+  return out
+
+
+def _emit_progress_report_if_due(
+  client: Any,
+  *,
+  busy_flags: dict[str, bool],
+  busy_lock: Any,
+  log_fn: Callable[..., None] | None = None,
+  force: bool = False,
+) -> bool:
+  """
+  Emit 10-minute progress+status lines when the interval has elapsed.
+
+  Args:
+    client (Any): Redis client.
+    busy_flags (dict[str, bool]): Local coordinator busy map.
+    busy_lock (Any): Lock guarding ``busy_flags``.
+    log_fn (Callable[..., None] | None): Optional logger.
+    force (bool): Bypass interval (tests / shutdown).
+
+  Returns:
+    bool: True when a report was emitted.
+
+  Examples:
+    >>> _emit_progress_report_if_due(None, busy_flags={}, busy_lock=threading.Lock())
+    False
+  """
+  state = progress.get_progress_state()
+  with busy_lock:
+    busy_kinds = [k for k, v in busy_flags.items() if v]
+  if _discover_bg_is_busy() and "discover" not in busy_kinds:
+    busy_kinds = list(busy_kinds) + ["discover"]
+  try:
+    census = jq.queue_census(client)
+  except Exception:
+    census = {}
+  band = _status_band_ratios(client)
+  depth_now = {
+      kind: int((census.get(kind) or {}).get("queued", 0) or 0)
+      for kind in jq.JOB_KINDS_ALL
+  }
+  depth_now["ingest_hot"] = int((band.get("ingest_hot") or {}).get("queued", 0) or 0)
+  depth_now["ingest_catchup"] = int(
+      (band.get("ingest_catchup") or {}).get("queued", 0) or 0,
+  )
+  inflight_map = {
+      kind: int((census.get(kind) or {}).get("inflight", 0) or 0)
+      for kind in jq.JOB_KINDS_ALL
+  }
+  oldest_day, oldest_age_s = progress.resolve_oldest_queued_day(client)
+  if force:
+    lines = state.emit_lines(
+        band_ratios=band,
+        busy_kinds=busy_kinds,
+        census_inflight=inflight_map,
+        queue_depth_now=depth_now,
+        oldest_day=oldest_day,
+        oldest_age_s=oldest_age_s,
+    )
+    for line in lines:
+      _log(line, log_fn=log_fn)
+    state.reset_window(queue_depth_start=depth_now)
+    return True
+  return state.maybe_emit_and_reset(
+      interval_s=PROGRESS_REPORT_INTERVAL_S,
+      band_ratios=band,
+      busy_kinds=busy_kinds,
+      census_inflight=inflight_map,
+      queue_depth_now=depth_now,
+      oldest_day=oldest_day,
+      oldest_age_s=oldest_age_s,
+      log_fn=lambda msg, flush=False: _log(msg, log_fn=log_fn),
+  )
 
 
 def _path_from_ingest_identity(identity: str) -> str:
@@ -941,6 +1084,8 @@ def _enqueue_day_closes_for_daily_dir(
         calendar_day=cal,
     ):
       enqueued += 1
+      progress.record(day_token, "incomplete_seen", 1)
+      progress.record(day_token, "reconstruct_enq", 1)
   return enqueued
 
 
@@ -1221,11 +1366,24 @@ def _handoff_retryable_paths_to_ingest(
     if result.get("ingest") or result.get("append"):
       enqueued_n += 1
   if enqueued_n:
-    quiet(
-        "queue_orchestrator day_close handoff_to_ingest n=%s tar=%s reason=%s"
-        % (enqueued_n, tar_path, reason),
-        flush=True,
-    )
+    day_tok = _day_token_from_date(calendar_date_from_daily_tar_path(tar_path))
+    progress.record(day_tok, "ingest_handoff", enqueued_n)
+    reason_text = str(reason or "")
+    if reason_text == "gate_skip":
+      from hpcperfstats.dbload.sync_timedb import DEBUG as _ST_DEBUG
+      if _ST_DEBUG:
+        quiet(
+            "DEBUG: queue_orchestrator day_close handoff_to_ingest n=%s tar=%s "
+            "reason=%s"
+            % (enqueued_n, tar_path, reason),
+            flush=True,
+        )
+    else:
+      quiet(
+          "queue_orchestrator day_close handoff_to_ingest n=%s tar=%s reason=%s"
+          % (enqueued_n, tar_path, reason),
+          flush=True,
+      )
   return enqueued_n
 
 
@@ -1371,6 +1529,7 @@ def _run_day_close_job(
             log_fn=quiet,
             tgz_archive_dir=tgz_archive_dir,
         )
+        progress.record(day_token, "dedupe", 1)
       except Exception as exc:
         _log(
             "queue_orchestrator day_close dedupe fail day=%s err=%s"
@@ -1482,8 +1641,14 @@ def _retry_or_dead_letter(
     )
     return "dropped_no_claim"
   identity = claim.identity
+  day_tok = None
+  if kind == jq.JOB_KIND_DAY_CLOSE:
+    text = str(identity or "")
+    if len(text) >= 10 and text[:10].count("-") == 2:
+      day_tok = text[:10]
   attempt = jq.bump_job_attempt(client, kind=kind, identity=identity)
   if attempt < jq.job_max_attempts():
+    progress.record(day_tok, "attempt_bump", 1)
     jq.requeue_job(
         client,
         kind=kind,
@@ -1492,6 +1657,7 @@ def _retry_or_dead_letter(
         score=getattr(claim, "score", None),
     )
     return "requeued"
+  progress.get_progress_state().record_dead_letter(day_tok, kind, 1)
   jq.append_queue_dead_letter(
       archive_data_dir,
       kind=kind,
@@ -1959,7 +2125,6 @@ def _drain_ingest_ready(
     ... )
     0
   """
-  del tgz_archive_dir
   done = 0
   for identity, async_res in list(inflight.items()):
     if not async_res.ready():
@@ -1978,6 +2143,11 @@ def _drain_ingest_ready(
           % (identity, type(exc).__name__),
           log_fn=log_fn,
       )
+      day_tok = _day_token_from_date(
+          _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
+      )
+      progress.record(day_tok, "ingest", 1)
+      progress.record(day_tok, "fail", 1)
       _retry_or_dead_letter(
           client,
           kind=jq.JOB_KIND_INGEST,
@@ -1998,11 +2168,17 @@ def _drain_ingest_ready(
       if isinstance(meta, dict):
         outcome = str(meta.get("outcome") or "")
     if not ingest_ok:
+      day_tok = _day_token_from_date(
+          _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
+      )
+      progress.record(day_tok, "ingest", 1)
       if outcome in ("timeout", "lookup_budget"):
+        progress.record(day_tok, "timeout", 1)
         _requeue_claimed_job_without_attempt_bump(
             client, claim=claim, log_fn=log_fn,
         )
       else:
+        progress.record(day_tok, "fail", 1)
         _retry_or_dead_letter(
             client,
             kind=jq.JOB_KIND_INGEST,
@@ -2032,6 +2208,14 @@ def _drain_ingest_ready(
           log_fn=log_fn,
       )
       continue
+    day_tok = _day_token_from_date(
+        _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
+    )
+    progress.record(day_tok, "ingest", 1)
+    if outcome == "db_skip":
+      progress.record(day_tok, "db_skip", 1)
+    else:
+      progress.record(day_tok, "ingested", 1)
     if need_archival and path:
       jq.enqueue_list_job(
           client, kind=jq.JOB_KIND_APPEND, identity=path, dedupe=True,
@@ -2244,6 +2428,13 @@ def _drain_append_ready(
           % key,
           log_fn=log_fn,
       )
+      day_tok = _day_token_from_date(calendar_date_from_daily_tar_path(
+          key if str(key).endswith(".tar") else daily_tar_path_for_stats_path(
+              key, tgz_archive_dir,
+          ),
+      ))
+      progress.record(day_tok, "soft_requeue", 1)
+      progress.record(day_tok, "requeue_noprogress", 1)
       for job in jobs:
         jq.requeue_job(
             client,
@@ -2254,6 +2445,12 @@ def _drain_append_ready(
       continue
     if isinstance(result, ArchiveAppendOutcome) and not result.ok:
       if not _archive_append_outcome_is_gate_skip(result):
+        day_tok = _day_token_from_date(calendar_date_from_daily_tar_path(
+            key if str(key).endswith(".tar") else daily_tar_path_for_stats_path(
+                key, tgz_archive_dir,
+            ),
+        ))
+        progress.record(day_tok, "append_drop", 1)
         for job in jobs:
           _retry_or_dead_letter(
               client,
@@ -2265,6 +2462,12 @@ def _drain_append_ready(
           )
         continue
     elif result is False:
+      day_tok = _day_token_from_date(calendar_date_from_daily_tar_path(
+          key if str(key).endswith(".tar") else daily_tar_path_for_stats_path(
+              key, tgz_archive_dir,
+          ),
+      ))
+      progress.record(day_tok, "append_drop", 1)
       for job in jobs:
         _retry_or_dead_letter(
             client,
@@ -2278,8 +2481,10 @@ def _drain_append_ready(
     tar = key if str(key).endswith(".tar") else daily_tar_path_for_stats_path(
         key, tgz_archive_dir,
     )
+    day_tok = _day_token_from_date(calendar_date_from_daily_tar_path(tar))
     if _archive_append_outcome_is_gate_skip(result):
       skipped = tuple(getattr(result, "skipped_paths", ()) or ())
+      progress.record(day_tok, "gate_skip", len(skipped) or 1)
       if skipped and tar:
         _handoff_retryable_paths_to_ingest(
             client,
@@ -2290,6 +2495,8 @@ def _drain_append_ready(
             reason="gate_skip",
             log_fn=log_fn,
         )
+    else:
+      progress.record(day_tok, "archive", 1)
     for job in jobs:
       jq.ack_job(
           client,
@@ -2439,11 +2646,23 @@ def _drain_day_close_ready(
       )
       continue
     if outcome in _TRANSIENT_DAY_CLOSE_OUTCOMES:
+      day_tok = str(identity)[:10] if str(identity)[:10].count("-") == 2 else None
+      if outcome == "deferred_age":
+        progress.record(day_tok, "deferred_age", 1)
+      elif outcome == "yielded":
+        progress.record(day_tok, "yielded", 1)
       _requeue_claimed_job_without_attempt_bump(
           client, claim=claim, log_fn=log_fn,
       )
       continue
     if claim is not None:
+      day_tok = str(identity)[:10] if str(identity)[:10].count("-") == 2 else None
+      if outcome == "sealed":
+        progress.record(day_tok, "sealed", 1)
+      elif outcome == "raw_removed":
+        progress.record(day_tok, "raw_delete", 1)
+      elif outcome == "tar_dropped":
+        progress.record(day_tok, "tar_delete", 1)
       jq.ack_job(
           client,
           kind=jq.JOB_KIND_DAY_CLOSE,
@@ -3205,20 +3424,25 @@ def _reconstruct_coordinator_loop(
         except Exception:
           census = {}
         with busy_lock:
-          local_i = 1 if busy_flags.get("ingest") else 0
-          local_a = 1 if busy_flags.get("append") else 0
-          local_d = 1 if busy_flags.get("day_close") else 0
+          busy_kinds = [k for k, v in busy_flags.items() if v]
+        if _discover_bg_is_busy() and "discover" not in busy_kinds:
+          busy_kinds = list(busy_kinds) + ["discover"]
+        busy_tok = progress.format_busy_token(busy_kinds)
         if census:
           _log(
-              "queue_orchestrator census %s local=%d/%d/%d"
+              "queue_orchestrator census %s%s"
               % (
                   jq.format_queue_census(census),
-                  local_i,
-                  local_a,
-                  local_d,
+                  (" " + busy_tok) if busy_tok else "",
               ),
               log_fn=log_fn,
           )
+      _emit_progress_report_if_due(
+          client,
+          busy_flags=busy_flags,
+          busy_lock=busy_lock,
+          log_fn=log_fn,
+      )
       with busy_lock:
         busy = any(busy_flags.values())
       if run_once and not busy and _queues_appear_idle(client):

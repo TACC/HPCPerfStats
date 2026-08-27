@@ -477,7 +477,7 @@ def test_queue_census_counts_queued_and_inflight():
   census = jq.queue_census(client)
   assert census["ingest"] == {"queued": 1, "inflight": 1}
   assert census["append"] == {"queued": 1, "inflight": 0}
-  assert "ingest=1/1" in jq.format_queue_census(census)
+  assert "ingest=1/1" in jq.format_queue_census(census)  # current/queued
 
 
 def test_count_inflight_by_band_uses_recorded_scores():

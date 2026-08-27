@@ -7646,11 +7646,10 @@ def test_archive_stats_files_body_uses_open_tar_not_redis_when_mutable_tar_exist
   assert st._archive_stats_files_body((archive_key, [str(new_raw)]))
   assert append_calls["n"] == 1
   assert any(
-      "archive_job_begin" in line and "members_source=tar_scan" in line
-      for line in logs
-  )
-  assert any(
-      "archive_job_duty" in line and "to_add=1" in line and "appended=1" in line
+      "archive_job_done" in line
+      and "members_source=tar_scan" in line
+      and "to_add=1" in line
+      and "appended=1" in line
       for line in logs
   )
 
@@ -7732,11 +7731,9 @@ def test_archive_stats_files_body_noop_when_open_tar_contains_all_batch_members(
   assert result.skip_finalize_invalidate
   assert append_calls["n"] == 0
   assert any(
-      "archive_job_begin" in line and "members_source=tar_scan" in line
-      for line in logs
-  )
-  assert any(
-      "archive_job_duty" in line and "to_add=0" in line
+      "archive_job_done" in line
+      and "members_source=tar_scan" in line
+      and "to_add=0" in line
       for line in logs
   )
 
@@ -7816,11 +7813,10 @@ def test_archive_stats_files_skips_restore_when_to_add_zero_sealed(
   assert tar_scan_calls["n"] == 0
   assert not os.path.exists(tar_path)
   assert any(
-      "archive_job_begin" in line and "members_source=redis" in line
-      for line in logs
-  )
-  assert any(
-      "archive_job_duty" in line and "to_add=0" in line and "appended=0" in line
+      "archive_job_done" in line
+      and "members_source=redis" in line
+      and "to_add=0" in line
+      and "appended=0" in line
       for line in logs
   )
 
@@ -8081,7 +8077,7 @@ def test_archive_stats_files_body_to_add_when_redis_warm_no_archive_on_disk(
   assert st._archive_stats_files_body((archive_key, [str(raw)]))
   assert append_calls["n"] == 1
   assert any(
-      "archive_job_duty" in line and "to_add=1" in line and "appended=1" in line
+      "archive_job_done" in line and "to_add=1" in line and "appended=1" in line
       for line in logs
   )
 
@@ -8249,7 +8245,7 @@ def test_archive_append_cold_redis_completes_with_inflight_first(
   assert st._archive_stats_files_body((archive_key, [str(new_raw)]))
   assert "inflight" in call_order
   combined = "\n".join(logs) + capsys.readouterr().out
-  assert "archive_job_begin" in combined and "members_source=tar_scan" in combined
+  assert "archive_job_done" in combined and "members_source=tar_scan" in combined
   assert "archive_job_done" in combined
 
 def test_pending_reconcile_fingerprint_updates_when_incomplete_drops():

@@ -591,6 +591,35 @@ def decode_ingest_band(score: float | int) -> str:
   return "catchup"
 
 
+def decode_catchup_calendar_day(score: float | int) -> date | None:
+  """
+  Recover the calendar day encoded in a catchup-band ingest ZSET score.
+
+  Args:
+    score (float | int): Score from :func:`encode_ingest_score` (catchup).
+
+  Returns:
+    date | None: Calendar day, or ``None`` when the score is hot or invalid.
+
+  Examples:
+    >>> d = date(2025, 5, 5)
+    >>> s = encode_ingest_score(
+    ...   band="catchup", day=d, today=d, identity="a",
+    ... )
+    >>> decode_catchup_calendar_day(s) == d
+    True
+  """
+  if decode_ingest_band(score) != "catchup":
+    return None
+  day_ord = int(
+      (float(score) - float(CATCHUP_SCORE_BASE)) // float(SCORE_STRIDE),
+  )
+  try:
+    return date.fromordinal(day_ord)
+  except (ValueError, OverflowError):
+    return None
+
+
 def ingest_score_range(band: str) -> tuple[float, float]:
   """
   Return inclusive ``(min_score, max_score)`` for a ranged ingest pop.
@@ -2390,11 +2419,11 @@ def format_queue_census(census: Dict[str, Dict[str, int]]) -> str:
     census (Dict[str, Dict[str, int]]): Census mapping.
 
   Returns:
-    str: ``kind=queued/inflight`` pairs joined by spaces.
+    str: ``kind=current/queued`` (inflight/queued) pairs joined by spaces.
 
   Examples:
     >>> format_queue_census({"ingest": {"queued": 2, "inflight": 1}})
-    'ingest=2/1'
+    'ingest=1/2'
   """
   parts = []
   for kind in JOB_KINDS_ALL:
@@ -2402,7 +2431,8 @@ def format_queue_census(census: Dict[str, Dict[str, int]]) -> str:
     if not entry:
       continue
     parts.append(
-        "%s=%d/%d" % (kind, entry.get("queued", 0), entry.get("inflight", 0)),
+        "%s=%d/%d"
+        % (kind, entry.get("inflight", 0), entry.get("queued", 0)),
     )
   return " ".join(parts)
 

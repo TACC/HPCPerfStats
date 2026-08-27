@@ -321,6 +321,8 @@ def stream_enqueue_ingest_from_find_records(
         records, startdate=startdate, enddate=enddate,
     )
 
+  from hpcperfstats.dbload.lib import sync_timedb_progress_report as progress
+
   for rec in records:
     try:
       has_cap = jq.queue_has_capacity(
@@ -333,6 +335,15 @@ def stream_enqueue_ingest_from_find_records(
       break
     seen += 1
     cal = day_fn(rec) if day_fn is not None else None
+    day_tok = None
+    if cal is None:
+      progress.record(None, "unresolved_day", 1)
+    else:
+      try:
+        day_tok = cal.isoformat()
+      except Exception:
+        day_tok = None
+        progress.record(None, "unresolved_day", 1)
     plan = jr.classify_closed_raw_path(
         rec.path,
         tgz_archive_dir=tgz_archive_dir,
@@ -355,8 +366,11 @@ def stream_enqueue_ingest_from_find_records(
       enqueued_ingest += 1
     if enqueued.get("append"):
       enqueued_append += 1
-    if not enqueued.get("ingest") and not enqueued.get("append"):
+    if enqueued.get("ingest") or enqueued.get("append"):
+      progress.record(day_tok, "discover", 1)
+    else:
       skipped_complete += 1
+      progress.record(day_tok, "skip_complete", 1)
     tar = str(plan.tar_path or "").strip()
     if tar and tar not in day_close_seen:
       if jr.enqueue_day_close_if_needed(

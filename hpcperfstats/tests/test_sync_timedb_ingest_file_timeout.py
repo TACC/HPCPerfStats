@@ -592,3 +592,16 @@ def test_parse_exception_still_quarantines_non_timeout(monkeypatch, tmp_path):
   assert meta.get("outcome") == "quarantine"
   assert "corrupt stats line" in str(meta.get("fail_reason") or "")
   assert not raw_path.exists()
+
+
+def test_log_ingest_per_file_timeout_includes_size_and_rate(capsys, tmp_path):
+  target = tmp_path / "segment"
+  target.write_bytes(b"x" * 1000)
+  exc = st.IngestPerFileTimeoutError(str(target), "ingest", 10.0)
+  assert exc.size_bytes == 1000
+  st._log_ingest_per_file_timeout(exc)
+  out = capsys.readouterr().out
+  assert "size_bytes=1000" in out
+  assert "bytes_per_s=100" in out
+  assert "elapsed=10.0s" in out
+  assert "stage=ingest" in out

@@ -382,34 +382,58 @@ INGEST_PER_FILE_TIMEOUT_LOG_MIN_S = 7200.0
 class IngestPerFileTimeoutError(TimeoutError):
   """
   Raised when one ingest pool task exceeds its resolved per-file budget.
-  
+
   Attributes:
-    elapsed_s: Attribute.
-    path: Attribute.
-    stage: Attribute.
+    elapsed_s: Elapsed seconds at timeout.
+    path: Stats file path.
+    size_bytes: On-disk size captured at raise (0 if missing).
+    stage: Worker stage token.
   """
 
-  def __init__(self, path: str, stage: Any, elapsed_s: Any) -> None:
+  def __init__(
+    self,
+    path: str,
+    stage: Any,
+    elapsed_s: Any,
+    size_bytes: Any = None,
+  ) -> None:
     """
     Initialize a new instance.
-    
+
     Args:
       path (str): String for path.
       stage (Any): Mode or kind token selecting a code path.
       elapsed_s (Any): Elapsed s passed to this helper.
-    
+      size_bytes (Any): Optional pre-stat size; otherwise ``stats_file_size_bytes``.
+
     Returns:
       None
-    
+
     Examples:
       >>> IngestPerFileTimeoutError("x", None, None)  # doctest: +SKIP
     """
     self.path = str(path)
     self.stage = str(stage)
     self.elapsed_s = float(elapsed_s)
+    if size_bytes is None:
+      try:
+        self.size_bytes = int(stats_file_size_bytes(self.path))
+      except Exception:
+        self.size_bytes = 0
+    else:
+      try:
+        self.size_bytes = int(size_bytes)
+      except (TypeError, ValueError):
+        self.size_bytes = 0
+    rate = (
+        float(self.size_bytes) / float(self.elapsed_s)
+        if float(self.elapsed_s) > 0.0
+        else 0.0
+    )
     super().__init__(
-        "ingest per-file timeout path=%s stage=%s elapsed_s=%.3f"
-        % (self.path, self.stage, self.elapsed_s)
+        "ingest per-file timeout path=%s size_bytes=%s elapsed_s=%.3f "
+        "bytes_per_s=%.0f stage=%s"
+        % (self.path, self.size_bytes, self.elapsed_s, rate, self.stage)
     )
 
 
@@ -827,19 +851,23 @@ def _handle_ingest_worker_memory_after_imap(
 def _log_ingest_per_file_timeout(exc: Any) -> None:
   """
   Internal helper to log the ingest per file timeout.
-  
+
   Args:
     exc (Any): Exception instance being classified or logged.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _log_ingest_per_file_timeout(None)  # doctest: +SKIP
   """
+  size_bytes = int(getattr(exc, "size_bytes", 0) or 0)
+  elapsed_s = float(getattr(exc, "elapsed_s", 0.0) or 0.0)
+  rate = (float(size_bytes) / elapsed_s) if elapsed_s > 0.0 else 0.0
   log_print(
-      "ERROR: ingest per-file timeout path=%s elapsed=%.1fs stage=%s"
-      % (exc.path, exc.elapsed_s, exc.stage),
+      "ERROR: ingest per-file timeout path=%s size_bytes=%s elapsed=%.1fs "
+      "bytes_per_s=%.0f stage=%s"
+      % (exc.path, size_bytes, elapsed_s, rate, exc.stage),
       flush=True,
   )
 
@@ -6254,10 +6282,11 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
           output=result.stdout,
           stderr=result.stderr,
       )
-    log_print(
-        "Archived batch %d-%d (%d file(s)) -> %s"
-        % (off + 1, off + len(present), len(present), tar_path),
-        flush=True,
+    if DEBUG:
+      log_print(
+          "Archived batch %d-%d (%d file(s)) -> %s"
+          % (off + 1, off + len(present), len(present), tar_path),
+          flush=True,
       )
 
 
@@ -6346,27 +6375,29 @@ def _lookup_existing_members_for_archive_append(
   return members, ("sealed_stream" if members else "tar_scan")
 
 
-def _log_archive_job_begin(archive_tar_fname: Any, members_source: Any) -> None:
+def _log_archive_job_begin(archive_tar_fname: Any, members_source: Any) -> int:
   """
-  Internal helper to log the archive job begin.
-  
+  Capture tar size for archive_job_done; DEBUG-only begin line.
+
   Args:
     archive_tar_fname (Any): Archive tar fname passed to this helper.
     members_source (Any): Members source passed to this helper.
-  
+
   Returns:
-    None
-  
+    int: On-disk tar size in bytes (0 when missing).
+
   Examples:
     >>> _log_archive_job_begin(None, None)  # doctest: +SKIP
   """
   day_token = calendar_date_from_daily_tar_path(archive_tar_fname) or "?"
   tar_bytes = os.path.getsize(archive_tar_fname) if os.path.isfile(archive_tar_fname) else 0
-  log_print(
-      "INFO: archive_job_begin day=%s tar_bytes=%s members_source=%s"
-      % (day_token, tar_bytes, members_source),
-      flush=True,
-  )
+  if DEBUG:
+    log_print(
+        "DEBUG: archive_job_begin day=%s tar_bytes=%s members_source=%s"
+        % (day_token, tar_bytes, members_source),
+        flush=True,
+    )
+  return int(tar_bytes)
 
 
 def _archive_stats_files_body(archive_info: Any) -> Any:
@@ -6389,25 +6420,30 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
   job_begin_logged = False
   job_outcome = "fail"
   members_source = "tar_scan"
+  tar_bytes = 0
+  mapped_n = 0
+  to_add_n = 0
+  appended_n = 0
   append_inflight_set = False
   skipped_oversized = ()
 
   def _ensure_job_begin_logged(source: Any) -> None:
     """
     Internal helper to ensure the job begin logged.
-    
+
     Args:
       source (Any): Source passed to this helper.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _ensure_job_begin_logged(None)  # doctest: +SKIP
     """
-    nonlocal job_begin_logged
+    nonlocal job_begin_logged, members_source, tar_bytes
     if not job_begin_logged:
-      _log_archive_job_begin(archive_tar_fname, source)
+      members_source = source
+      tar_bytes = _log_archive_job_begin(archive_tar_fname, source)
       job_begin_logged = True
 
   try:
@@ -6499,11 +6535,12 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
     appended_n = 0
     if not stats_files_to_tar:
       job_outcome = "ok"
-      log_print(
-          "INFO: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
-          % (day_token, mapped_n, to_add_n, appended_n),
-          flush=True,
-      )
+      if DEBUG:
+        log_print(
+            "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
+            % (day_token, mapped_n, to_add_n, appended_n),
+            flush=True,
+        )
       return ArchiveAppendOutcome(
           skip_finalize_invalidate=True,
           skipped_paths=skipped_oversized,
@@ -6583,11 +6620,12 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         to_add_n = len(stats_files_to_tar)
         if not stats_files_to_tar:
           job_outcome = "ok"
-          log_print(
-              "INFO: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
-              % (day_token, mapped_n, to_add_n, appended_n),
-              flush=True,
-          )
+          if DEBUG:
+            log_print(
+                "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
+                % (day_token, mapped_n, to_add_n, appended_n),
+                flush=True,
+            )
           return ArchiveAppendOutcome(
               skip_finalize_invalidate=True,
               skipped_paths=skipped_oversized,
@@ -6707,14 +6745,15 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       if merged:
         merge_daily_archive_members_l1_cache(canonical, member_map)
         day_date = calendar_date_from_daily_tar_path(archive_tar_fname)
-        log_print(
-            "INFO: tar_append redis merge day=%s members=%d"
-            % (
-                day_date.isoformat() if day_date is not None else canonical,
-                len(member_map),
-            ),
-            flush=True,
-        )
+        if DEBUG:
+          log_print(
+              "DEBUG: tar_append redis merge day=%s members=%d"
+              % (
+                  day_date.isoformat() if day_date is not None else canonical,
+                  len(member_map),
+              ),
+              flush=True,
+          )
       else:
         invalidate_after_daily_tar_mutation(
             archive_fname,
@@ -6727,22 +6766,24 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       )
       clear_zero_host_ingest_marks(stats_files_to_tar, log_fn=log_print)
       job_outcome = "ok"
-      log_print(
-          "INFO: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
-          % (day_token, mapped_n, to_add_n, appended_n),
-          flush=True,
-      )
+      if DEBUG:
+        log_print(
+            "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
+            % (day_token, mapped_n, to_add_n, appended_n),
+            flush=True,
+        )
       return ArchiveAppendOutcome(
           redis_merge_ok=merged,
           skip_finalize_invalidate=merged or worker_invalidated,
           skipped_paths=skipped_oversized,
       )
     job_outcome = "ok"
-    log_print(
-        "INFO: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
-        % (day_token, mapped_n, to_add_n, appended_n),
-        flush=True,
-    )
+    if DEBUG:
+      log_print(
+          "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
+          % (day_token, mapped_n, to_add_n, appended_n),
+          flush=True,
+      )
     return ArchiveAppendOutcome(
         skip_finalize_invalidate=True,
         skipped_paths=skipped_oversized,
@@ -6755,8 +6796,18 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       clear_archive_append_inflight(day_token)
     if job_begin_logged:
       log_print(
-          "INFO: archive_job_done day=%s elapsed_s=%.3f outcome=%s"
-          % (day_token, time.monotonic() - job_start, job_outcome),
+          "INFO: archive_job_done day=%s elapsed_s=%.3f outcome=%s "
+          "tar_bytes=%s members_source=%s mapped=%d to_add=%d appended=%d"
+          % (
+              day_token,
+              time.monotonic() - job_start,
+              job_outcome,
+              tar_bytes,
+              members_source,
+              mapped_n,
+              to_add_n,
+              appended_n,
+          ),
           flush=True,
       )
 

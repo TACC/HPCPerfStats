@@ -1259,6 +1259,12 @@ def _set_populate_degraded(client: Any, keys: ArchiveMembersRedisKeys) -> None:
     return
   ttl = _redis_ttl_seconds()
   client.set(keys.degraded_key, "1", ex=ttl if ttl > 0 else None)
+  try:
+    from hpcperfstats.dbload.lib import sync_timedb_progress_report as progress
+
+    progress.record(str(keys.day_token or "").strip() or None, "populate_degraded", 1)
+  except Exception:
+    pass
 
 
 def _encode_day_skip_value(kind: str, detail: str) -> str:
@@ -2750,6 +2756,12 @@ def _log_append_inflight_defer_if_allowed(day_token: str) -> None:
       "populate: defer tar scan day=%s reason=archive_append_inflight" % day_token,
       interval_s=_IDENTITY_DRIFT_LOG_INTERVAL_S,
   )
+  try:
+    from hpcperfstats.dbload.lib import sync_timedb_progress_report as progress
+
+    progress.record(str(day_token or "").strip() or None, "populate_wait", 1)
+  except Exception:
+    pass
 
 
 def _empty_recover_defer_reason(

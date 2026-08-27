@@ -52,6 +52,9 @@ Production coordinator for `sync_timedb` is **`run_sync_timedb_queue_orchestrato
 | Persistence mismatch | `allow_reset=False` raises; never continue against mixed sidecar versions |
 | No persistence wipe on cutover | Do not bump contract / wipe sidecars as cutover (B-17) |
 | Anti-workaround | No dual CLI, no strangler wrapper of supervisor_loop, no janitor stall watchdogs as coordinator |
+| Progress report | Every **600s** `reconstruct-coordinator` emits omit-zeros `queue_orchestrator progress day=` lines + one `status` footer (`sync_timedb_progress_report.py`). Prefer day tokens; status holds Redis/process cross-cuts (`busy=` incl discover, orphan_inflight, q_delta, ingest_hot/catchup as current/queued). 60s census kept with `busy=` (replaces `local=I/A/D`); census ratios are **current/queued** |
+| Archive job INFO | One INFO `archive_job_done` per job with `tar_bytes`/`members_source`/`mapped`/`to_add`/`appended`; begin/duty/`Archived batch`/successful redis merge are DEBUG-only |
+| Gate-skip INFO | No INFO `Archive/delete gate: skipped` or `handoff_to_ingest … reason=gate_skip`; day-line `gate_skip=` / `ingest_handoff=` own visibility |
 
 ## Predicates (B-09)
 

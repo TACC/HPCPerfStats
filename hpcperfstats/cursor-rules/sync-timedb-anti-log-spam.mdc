@@ -16,6 +16,8 @@ Prefer **Redis `SET NX EX`** when N processes (ingest-pool / populate waiters / 
 
 Canonical helper: `_rate_limited_day_info_log` (+ day-specific wrappers) in `sync_timedb_archive_members_redis.py`.
 
+**Deliberate INFO (not spam):** `reconstruct-coordinator` **600s** `queue_orchestrator progress day=` / `status` rollup (`sync_timedb_progress_report.py`) and single-line `archive_job_done` are intentional operator surfaces — do not rate-limit those. Do **not** restore per-batch `Archive/delete gate: skipped` or per-job `handoff_to_ingest … reason=gate_skip` INFO (day-line counters own that visibility).
+
 ## Motivating regression (RC-ER, 2026-07-29)
 
 Bare `log_print("INFO: populate empty recover deferred … reason=archive_append_inflight")` in `wait_for_complete_members` fired on every empty-recover trip while append was inflight. Concurrent ingest-pool waiters produced tens of identical INFO lines per second.

@@ -551,12 +551,8 @@ def filter_paths_head_ingested(
     )
     ready = [p for p in paths if p in ready_set]
     skipped = [p for p in paths if p not in ready_set]
-    if skipped and log_fn is not None:
-      log_fn(
-          "Archive/delete gate: skipped %d path(s) without %s in DB"
-          % (len(skipped), _archive_gate_skip_label()),
-          flush=True,
-      )
+    # INFO flood removed: day-line gate_skip=/ingest_handoff= owns visibility.
+    del log_fn
     return ready, skipped
 
   ready = []
@@ -566,10 +562,5 @@ def filter_paths_head_ingested(
       ready.append(path)
     else:
       skipped.append(path)
-  if skipped and log_fn is not None:
-    log_fn(
-        "Archive/delete gate: skipped %d path(s) without %s in DB"
-        % (len(skipped), _archive_gate_skip_label()),
-        flush=True,
-    )
+  # INFO flood removed: day-line gate_skip=/ingest_handoff= owns visibility.
   return ready, skipped
