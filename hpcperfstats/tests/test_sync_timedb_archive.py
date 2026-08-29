@@ -156,6 +156,18 @@ def test_verify_tar_archive_readable_rejects_truncated(tmp_path):
   assert not verify_tar_archive_readable(str(tar_path))
 
 
+def test_gnu_tf_member_map_despite_fail_parses_listing(tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "day.tar"
+  with tarfile.open(tar_path, "w") as tf:
+    inner = tmp_path / "a.txt"
+    inner.write_text("abc")
+    tf.add(str(inner), arcname="hpcperfstats/archive/host/1787501621")
+  members = helpers._gnu_tf_file_member_map_despite_fail(str(tar_path))
+  assert "hpcperfstats/archive/host/1787501621" in members
+
+
 def test_repair_truncated_tar_missing_eof_blocks_in_place(tmp_path, monkeypatch):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
@@ -174,6 +186,7 @@ def test_repair_truncated_tar_missing_eof_blocks_in_place(tmp_path, monkeypatch)
     return real_verify(path, **kwargs)
 
   monkeypatch.setattr(helpers, "verify_tar_archive_readable", _verify_once_unreadable)
+  monkeypatch.setattr(helpers, "_gnu_tvf_file_member_map_despite_fail", lambda _path: {})
   assert repair_truncated_daily_tar_in_place(str(tar_path), log_fn=None)
   assert verify_tar_archive_readable(str(tar_path))
   with tarfile.open(tar_path, "r") as tf:
@@ -198,7 +211,31 @@ def _strip_trailing_eof_blocks(tar_path: Path, *, blocks: int = 2) -> None:
   tar_path.write_bytes(raw[: max(0, len(raw) - 512 * blocks)])
 
 
-def test_tar_members_recoverable_via_partial_gnu_listing_eof(tmp_path, monkeypatch):
+def test_tar_members_recoverable_prefers_gnu_listing_before_tarfile(
+    tmp_path, monkeypatch,
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "eof.tar"
+  inner = tmp_path / "inner.txt"
+  inner.write_text("payload")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(
+        str(inner),
+        arcname="hpcperfstats/archive/host.vista/1787501621",
+    )
+  monkeypatch.setattr(
+      helpers,
+      "verify_tar_archive_readable",
+      lambda _path, **kwargs: False,
+  )
+  monkeypatch.setattr(
+      helpers,
+      "tar_members_recoverable_via_tarfile",
+      lambda _path: (_ for _ in ()).throw(AssertionError("tarfile probe")),
+  )
+  assert helpers.tar_members_recoverable_despite_gnu_tf_fail(str(tar_path))
+
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "eof.tar"

@@ -8774,12 +8774,97 @@ def _gnu_tvf_file_member_map_despite_fail(tar_path: str) -> dict[str, int]:
       continue
     name, size = parsed
     by_name[name].append(size)
-  return {name: max(sizes) for name, sizes in by_name.items()}
+  member_map = {name: max(sizes) for name, sizes in by_name.items()}
+  if member_map:
+    return member_map
+  return _gnu_tf_file_member_map_despite_fail(tar_path)
+
+
+def _gnu_tf_file_member_map_despite_fail(tar_path: str) -> dict[str, int]:
+  """
+  Parse file member names from ``tar tf`` stdout when ``tvf`` parsing fails.
+
+  Byte sizes are unknown (``0``); callers use name counts for extract checks.
+
+  Args:
+    tar_path (str): Path to daily ``.tar``.
+
+  Returns:
+    dict[str, int]: Member name to ``0`` placeholder size.
+
+  Examples:
+    >>> _gnu_tf_file_member_map_despite_fail("/missing.tar")  # doctest: +SKIP
+  """
+  if not os.path.isfile(tar_path):
+    return {}
+  tar_bin = _tar_list_executable()
+  result = subprocess.run(
+      [tar_bin, "tf", tar_path],
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  members: dict[str, int] = {}
+  for raw_line in (result.stdout or "").splitlines():
+    name = str(raw_line or "").strip()
+    if not name or name.startswith("tar:"):
+      continue
+    members[name] = 0
+  return members
+
+
+def _dir_tree_file_byte_sum(root_dir: str) -> tuple[int, int]:
+  """
+  Return ``(file_count, byte_sum)`` under ``root_dir``.
+
+  Args:
+    root_dir (str): Directory tree root.
+
+  Returns:
+    tuple[int, int]: File count and total byte size.
+
+  Examples:
+    >>> _dir_tree_file_byte_sum("/missing")  # doctest: +SKIP
+  """
+  count = 0
+  total = 0
+  for dirpath, _dirs, filenames in os.walk(root_dir):
+    for filename in filenames:
+      count += 1
+      try:
+        total += int(os.path.getsize(os.path.join(dirpath, filename)))
+      except OSError:
+        pass
+  return count, total
+
+
+def _repair_extract_recreate_required_free_bytes(
+  tar_size: int,
+  expected_members: dict[str, int],
+) -> int:
+  """
+  Estimate free bytes required for extract + recreate repair.
+
+  Args:
+    tar_size (int): Current ``.tar`` byte size on disk.
+    expected_members (dict[str, int]): GNU-listed member map.
+
+  Returns:
+    int: Required free bytes on the tar filesystem.
+
+  Examples:
+    >>> _repair_extract_recreate_required_free_bytes(100, {"a": 50})
+    178257920
+  """
+  payload = sum(int(v) for v in (expected_members or {}).values())
+  if payload <= 0:
+    payload = max(0, int(tar_size))
+  return payload + max(0, int(tar_size)) + (128 << 20)
 
 
 def tar_members_recoverable_via_partial_gnu_listing(tar_path: str) -> bool:
   """
-  Return True when GNU ``tar tvf`` listed file members before a failed scan exit.
+  Return True when GNU ``tar tvf``/``tf`` listed file members before a failed scan.
 
   Args:
     tar_path (str): Path to daily ``.tar``.
@@ -8790,7 +8875,7 @@ def tar_members_recoverable_via_partial_gnu_listing(tar_path: str) -> bool:
   Examples:
     >>> tar_members_recoverable_via_partial_gnu_listing("/missing.tar")
   """
-  if not os.path.isfile(tar_path) or verify_tar_archive_readable(tar_path):
+  if not os.path.isfile(tar_path):
     return False
   return bool(_gnu_tvf_file_member_map_despite_fail(tar_path))
 
@@ -8832,20 +8917,64 @@ def tar_members_recoverable_despite_gnu_tf_fail(tar_path: str) -> bool:
   """
   Return True when a daily tar can be repaired despite GNU ``tar tf`` failure.
 
+  Callers must only invoke this after ``verify_tar_archive_readable`` failed.
+
   Args:
     tar_path (str): Path to daily ``.tar``.
 
   Returns:
-    bool: True when tarfile or partial GNU listing proves recoverability.
+    bool: True when partial GNU listing or tarfile proves recoverability.
 
   Examples:
     >>> tar_members_recoverable_despite_gnu_tf_fail("/missing.tar")
   """
   if not os.path.isfile(tar_path):
     return False
-  if tar_members_recoverable_via_tarfile(tar_path):
+  # Prefer a cheap GNU listing probe before streaming a large tar via tarfile.
+  if bool(_gnu_tvf_file_member_map_despite_fail(tar_path)):
     return True
-  return tar_members_recoverable_via_partial_gnu_listing(tar_path)
+  return tar_members_recoverable_via_tarfile(tar_path)
+
+
+def _log_truncated_tar_recoverability(
+  tar_path: str,
+  *,
+  log_fn: Any = log_print,
+) -> None:
+  """
+  Log why a truncated daily tar was classified unrecoverable.
+
+  Args:
+    tar_path (str): Daily ``.tar`` path.
+    log_fn (Any): Logger callable; no-op when ``None``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _log_truncated_tar_recoverability("/no.tar", log_fn=None)  # doctest: +SKIP
+  """
+  if not log_fn:
+    return
+  gnu_map = _gnu_tvf_file_member_map_despite_fail(tar_path)
+  tf_map = _gnu_tf_file_member_map_despite_fail(tar_path)
+  tarfile_ok = tar_members_recoverable_via_tarfile(tar_path)
+  try:
+    tar_size = int(os.path.getsize(tar_path))
+  except OSError:
+    tar_size = -1
+  log_fn(
+      "WARNING: tar_unrecoverable tar=%s size=%d gnu_members=%d tf_members=%d "
+      "tarfile_ok=%s"
+      % (
+          tar_path,
+          tar_size,
+          len(gnu_map),
+          len(tf_map),
+          tarfile_ok,
+      ),
+      flush=True,
+  )
 
 
 def _rewrite_daily_tar_largest_member_wins(
@@ -8952,13 +9081,17 @@ def _repair_truncated_daily_tar_via_extract_recreate(
   if not expected_members:
     return False
   tar_size = os.path.getsize(tar_path)
+  required_free = _repair_extract_recreate_required_free_bytes(
+      tar_size,
+      expected_members,
+  )
   free = free_bytes_for_path(tar_path)
-  if free < tar_size * 2:
+  if free < required_free:
     if log_fn:
       log_fn(
           "WARNING: repair_fail reason=insufficient_free_space tar=%s "
-          "size=%d free=%d"
-          % (tar_path, tar_size, free),
+          "size=%d required=%d free=%d"
+          % (tar_path, tar_size, required_free, free),
           flush=True,
       )
     return False
@@ -8975,20 +9108,28 @@ def _repair_truncated_daily_tar_via_extract_recreate(
         text=True,
         check=False,
     )
-    extracted_count = 0
-    for root, _dirs, files in os.walk(extract_dir):
-      extracted_count += len(files)
-    if extracted_count < len(expected_members):
+    extracted_count, extracted_bytes = _dir_tree_file_byte_sum(extract_dir)
+    expected_count = len(expected_members)
+    expected_bytes = sum(int(v) for v in expected_members.values())
+    extract_ok = extracted_count >= expected_count
+    if expected_bytes > 0:
+      extract_ok = extract_ok and extracted_bytes >= int(expected_bytes * 0.98)
+    stderr_text = (extract.stderr or "").strip()
+    if not extract_ok and "Unexpected EOF" in stderr_text:
+      extract_ok = extracted_count >= expected_count
+    if not extract_ok:
       if log_fn:
         log_fn(
             "WARNING: repair_fail phase=extract tar=%s rc=%s extracted=%d "
-            "expected=%d stderr=%s"
+            "bytes=%d expected_count=%d expected_bytes=%d stderr=%s"
             % (
                 tar_path,
                 extract.returncode,
                 extracted_count,
-                len(expected_members),
-                (extract.stderr or "").strip()[:200],
+                extracted_bytes,
+                expected_count,
+                expected_bytes,
+                stderr_text[:200],
             ),
             flush=True,
         )
@@ -9066,46 +9207,78 @@ def repair_truncated_daily_tar_in_place(
     return True
   if not tar_members_recoverable_despite_gnu_tf_fail(tar_path):
     return False
-  use_gnu_extract = (
-      not tar_members_recoverable_via_tarfile(tar_path)
-      and tar_members_recoverable_via_partial_gnu_listing(tar_path)
-  )
+  partial_gnu = tar_members_recoverable_via_partial_gnu_listing(tar_path)
   tmp_path = "%s.repair.tmp" % tar_path
   try:
     if os.path.exists(tmp_path):
       os.remove(tmp_path)
   except OSError:
     pass
+
+  def _repair_via_gnu_extract() -> bool:
+    """
+    Repair using GNU extract + recreate when partial listing succeeded.
+
+    Returns:
+      bool: True when repair completed.
+    """
+    expected = _gnu_tvf_file_member_map_despite_fail(tar_path)
+    if not expected:
+      return False
+    return _repair_truncated_daily_tar_via_extract_recreate(
+        tar_path,
+        expected,
+        log_fn=log_fn,
+    )
+
+  def _repair_via_tarfile_rewrite() -> bool:
+    """
+    Repair by streaming members through Python tarfile into a temp tar.
+
+    Returns:
+      bool: True when rewrite + verify succeeded.
+    """
+    _rewrite_daily_tar_largest_member_wins(
+        tar_path,
+        tmp_path,
+        tgz_archive_dir=tgz_archive_dir,
+        yield_phase=yield_phase,
+    )
+    if not verify_tar_archive_readable(tmp_path):
+      try:
+        os.remove(tmp_path)
+      except OSError:
+        pass
+      return False
+    os.replace(tmp_path, tar_path)
+    return True
+
   try:
     with file_write_lock(tar_path):
-      if use_gnu_extract:
-        expected = _gnu_tvf_file_member_map_despite_fail(tar_path)
-        if not _repair_truncated_daily_tar_via_extract_recreate(
-            tar_path,
-            expected,
-            log_fn=log_fn,
-        ):
-          return False
+      ok = False
+      if partial_gnu:
+        ok = _repair_via_gnu_extract()
       else:
-        _rewrite_daily_tar_largest_member_wins(
-            tar_path,
-            tmp_path,
-            tgz_archive_dir=tgz_archive_dir,
-            yield_phase=yield_phase,
-        )
-        if not verify_tar_archive_readable(tmp_path):
-          try:
-            os.remove(tmp_path)
-          except OSError:
-            pass
-          return False
-        os.replace(tmp_path, tar_path)
+        try:
+          ok = _repair_via_tarfile_rewrite()
+        except Exception as exc:
+          if log_fn:
+            log_fn(
+                "WARNING: repair_fail tarfile_rewrite tar=%s exc=%s"
+                % (tar_path, exc),
+                flush=True,
+            )
+          ok = False
+        if not ok and tar_members_recoverable_via_partial_gnu_listing(tar_path):
+          ok = _repair_via_gnu_extract()
+      if not ok:
+        return False
     invalidate_after_daily_tar_mutation(
         tar_path,
         reason="repair_truncated_tar",
         log_fn=log_fn,
     )
-    if log_fn and not use_gnu_extract:
+    if log_fn and not partial_gnu:
       log_fn(
           "Repaired truncated daily tar in place: %s" % tar_path,
           flush=True,
@@ -9418,6 +9591,7 @@ def reconcile_open_tar_with_sealed_zst(
     return ReconcileResult(False, "skip", "tar_verify_timeout")
   if not tar_gnu_readable:
     if not tar_members_recoverable_despite_gnu_tf_fail(tar_path):
+      _log_truncated_tar_recoverability(tar_path, log_fn=log_fn)
       return ReconcileResult(False, "skip", "tar_unrecoverable")
     if not repair_truncated_daily_tar_in_place(
         tar_path,
@@ -9425,9 +9599,14 @@ def reconcile_open_tar_with_sealed_zst(
         tgz_archive_dir=tgz_archive_dir,
         yield_phase="tar_repair",
     ):
-      return ReconcileResult(False, "skip", "tar_unrecoverable")
+      return ReconcileResult(False, "skip", "tar_repair_failed")
     tar_gnu_readable = bool(verify_tar_archive_readable(tar_path))
     if not tar_gnu_readable:
+      if log_fn:
+        log_fn(
+            "WARNING: tar still unreadable after repair tar=%s" % tar_path,
+            flush=True,
+        )
       return ReconcileResult(False, "skip", "tar_unrecoverable")
   try:
     tar_members = get_mutable_tar_authority_member_map(tar_path)
