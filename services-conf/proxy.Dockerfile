@@ -21,23 +21,15 @@ RUN nginx -v
 
 RUN mkdir -p /usr/local/lib/hpcperfstats-proxy /etc/nginx /etc/ssl/hpcperfstats
 
-# Bake PEMs from BuildKit context "ssl_certs" (absolute symlinks to host PEMs from
-# resolve_proxy_ssl_certs_dir.py). Bind + cp -L follows LE archive targets; do not
-# COPY symlinks into the image (relative live/ links break; absolute host paths
-# are not present at runtime either).
-# Alpine nginx.conf uses ``user nginx;`` for workers; the master stays root and is
-# what loads ssl_certificate_key — so privkey is root:root mode 0400 (not nginx-owned).
-RUN --mount=type=bind,from=ssl_certs,source=.,target=/mnt/ssl_certs,ro \
-    set -eu; \
-    cp -L /mnt/ssl_certs/fullchain.pem /mnt/ssl_certs/privkey.pem \
-      /etc/ssl/hpcperfstats/; \
+# Bake PEMs from BuildKit context "ssl_certs" (real files from
+# resolve_proxy_ssl_certs_dir.py, modes preserved from host). COPY keeps
+# context file modes; do not chmod away from the source archive perms.
+# Alpine nginx.conf uses ``user nginx;`` for workers; the master stays root and
+# loads ssl_certificate_key.
+COPY --from=ssl_certs . /etc/ssl/hpcperfstats/
+RUN set -eu; \
     test -f /etc/ssl/hpcperfstats/fullchain.pem; \
-    test -f /etc/ssl/hpcperfstats/privkey.pem; \
-    chown -R root:root /etc/ssl/hpcperfstats; \
-    find /etc/ssl/hpcperfstats -type d -exec chmod 755 {} +; \
-    find /etc/ssl/hpcperfstats -type f -name '*.pem' ! -name 'privkey.pem' \
-      -exec chmod 644 {} +; \
-    chmod 400 /etc/ssl/hpcperfstats/privkey.pem
+    test -f /etc/ssl/hpcperfstats/privkey.pem
 
 # Shared nginx snippets (static-files, edge headers, CSP, django-proxy-common) are
 # compose bind-mounts only — do not COPY them here or they drift from mounts.

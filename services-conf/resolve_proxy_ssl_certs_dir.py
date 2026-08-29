@@ -4,17 +4,16 @@ Resolve and validate ``[DEFAULT] ssl_certs_dir`` for proxy image builds.
 
 Reads the path from ``hpcperfstats.ini`` (not from operator ``.env`` / shell
 exports). Materializes the gitignored Compose BuildKit context directory
-``.hpcperfstats_ssl_certs/`` with **absolute symlinks** to the resolved PEM
-files (so Let’s Encrypt ``live/`` relative links into ``archive/`` are not
-copied as broken relative symlinks). Compose needs **no**
-``HPCPERFSTATS_SSL_CERTS_DIR``. Prints the absolute host ``ssl_certs_dir`` path
-to stdout. Does **not** copy PEM file contents into the checkout.
+``.hpcperfstats_ssl_certs/`` by **copying** required PEMs (following Let’s
+Encrypt ``live/`` → ``archive/`` symlinks) while preserving source file and
+directory mode/uid/gid. Compose needs **no** ``HPCPERFSTATS_SSL_CERTS_DIR``.
+Prints the absolute host ``ssl_certs_dir`` path to stdout.
 
 Attributes:
   REQUIRED_PEM_NAMES: Basename tuple that must exist under ``ssl_certs_dir``.
   FIXTURE_REL: Checkout-relative path of the committed self-signed fixture.
   COMPOSE_SSL_CERTS_CONTEXT_REL: Gitignored directory Compose ``additional_contexts``
-    points at (contains absolute PEM symlinks).
+    points at (real PEM files, modes matching the source).
 """
 
 from __future__ import annotations
@@ -23,6 +22,7 @@ import argparse
 import configparser
 import os
 import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -104,9 +104,71 @@ def find_default_ini_path(*, cwd: Path | None = None) -> Path:
   )
 
 
+def apply_stat_ownership_and_mode(path: Path, st: os.stat_result) -> None:
+  """
+  Apply *st* mode bits and uid/gid to *path* (best-effort for ownership).
+
+  Args:
+    path (Path): File or directory to update.
+    st (os.stat_result): Source ``stat`` result to mirror.
+
+  Returns:
+    None: This function mutates *path* in place.
+
+  Examples:
+    >>> import tempfile
+    >>> from pathlib import Path
+    >>> p = Path(tempfile.mkdtemp()) / "f"
+    >>> _ = p.write_text("x", encoding="utf-8")
+    >>> apply_stat_ownership_and_mode(p, p.stat())
+  """
+  os.chmod(path, stat.S_IMODE(st.st_mode))
+  try:
+    os.chown(path, st.st_uid, st.st_gid)
+  except PermissionError:
+    pass
+
+
+def resolve_readable_pem(certs_dir: Path, name: str) -> Path:
+  """
+  Resolve *name* under *certs_dir* to a readable regular file.
+
+  Follows Let’s Encrypt ``live/`` symlinks into ``archive/``.
+
+  Args:
+    certs_dir (Path): Absolute certificate directory.
+    name (str): Basename such as ``fullchain.pem``.
+
+  Returns:
+    Path: Absolute path of the readable PEM file (symlink target when linked).
+
+  Raises:
+    ValueError: When the path is missing, a broken symlink, not a file, or
+      not readable.
+
+  Examples:
+    >>> resolve_readable_pem(fixture_ssl_certs_dir(), "fullchain.pem").is_file()
+    True
+  """
+  link = certs_dir / name
+  try:
+    real = link.resolve(strict=True)
+  except FileNotFoundError as exc:
+    if link.is_symlink():
+      raise ValueError(
+          f"{name} is a broken symlink: {link} -> {os.readlink(link)}"
+      ) from exc
+    raise ValueError(f"missing {name} under {certs_dir}") from exc
+  if not real.is_file():
+    raise ValueError(f"{name} resolves to a non-file: {link} -> {real}")
+  if not os.access(real, os.R_OK):
+    raise ValueError(f"{name} is not readable: {real}")
+  return real
+
+
 def validate_ssl_certs_dir(certs_dir: Path) -> Path:
   """
-  Require *certs_dir* to be a directory containing required PEMs.
+  Require *certs_dir* to be a directory containing readable required PEMs.
 
   Args:
     certs_dir (Path): Candidate host directory (may be relative).
@@ -115,7 +177,7 @@ def validate_ssl_certs_dir(certs_dir: Path) -> Path:
     Path: Absolute resolved directory path.
 
   Raises:
-    ValueError: When the path is missing, not a directory, or lacks
+    ValueError: When the path is missing, not a directory, or lacks readable
       ``fullchain.pem`` / ``privkey.pem``.
 
   Examples:
@@ -126,13 +188,19 @@ def validate_ssl_certs_dir(certs_dir: Path) -> Path:
   resolved = certs_dir.expanduser().resolve()
   if not resolved.is_dir():
     raise ValueError(f"ssl_certs_dir is not a directory: {resolved}")
-  missing = [
-      name for name in REQUIRED_PEM_NAMES if not (resolved / name).is_file()
-  ]
-  if missing:
+  errors: list[str] = []
+  for name in REQUIRED_PEM_NAMES:
+    try:
+      resolve_readable_pem(resolved, name)
+    except ValueError as exc:
+      errors.append(str(exc))
+  if errors:
+    listing = sorted(resolved.iterdir()) if os.access(resolved, os.R_OK) else []
+    names = ", ".join(p.name for p in listing) or "(unreadable or empty)"
     raise ValueError(
-        f"ssl_certs_dir {resolved} missing required PEM(s): "
-        + ", ".join(missing)
+        f"ssl_certs_dir {resolved} PEM check failed: "
+        + "; ".join(errors)
+        + f"; directory entries: {names}"
     )
   return resolved
 
@@ -204,13 +272,11 @@ def ensure_compose_ssl_certs_context(
     checkout_root: Path | None = None,
 ) -> Path:
   """
-  Materialize absolute PEM symlinks for the Compose BuildKit SSL context.
+  Copy required PEMs into ``.hpcperfstats_ssl_certs/`` with exact source perms.
 
-  Let’s Encrypt ``live/*.pem`` entries are relative symlinks into ``archive/``.
-  Pointing Compose at ``live/`` directly copies those relative links into the
-  image (broken). This helper builds ``.hpcperfstats_ssl_certs/`` with
-  **absolute** symlinks to each resolved PEM path — no PEM content is copied
-  into the checkout.
+  Follows Let’s Encrypt ``live/`` symlinks so BuildKit receives real files.
+  Destination directory mode/uid/gid match *certs_dir*; each PEM mode/uid/gid
+  matches the resolved source file (archive target).
 
   Args:
     certs_dir (Path): Absolute validated host directory with required PEMs.
@@ -221,9 +287,9 @@ def ensure_compose_ssl_certs_context(
     Path: Absolute path of ``.hpcperfstats_ssl_certs``.
 
   Raises:
-    ValueError: When a required PEM cannot be resolved to a real file, or an
-      unexpected path blocks the context directory name.
-    OSError: When the directory or symlinks cannot be created.
+    ValueError: When a required PEM cannot be resolved, or an unexpected path
+      blocks the context directory name.
+    OSError: When the directory or copies cannot be created.
 
   Examples:
     >>> import tempfile
@@ -231,7 +297,7 @@ def ensure_compose_ssl_certs_context(
     >>> fix = fixture_ssl_certs_dir()
     >>> td = Path(tempfile.mkdtemp())
     >>> dest = ensure_compose_ssl_certs_context(fix, checkout_root=td)
-    >>> (dest / "fullchain.pem").is_symlink()
+    >>> (dest / "fullchain.pem").is_file() and not (dest / "fullchain.pem").is_symlink()
     True
   """
   validated = validate_ssl_certs_dir(certs_dir)
@@ -245,15 +311,15 @@ def ensure_compose_ssl_certs_context(
     raise ValueError(
         f"refuse to replace unexpected compose SSL context path: {dest}"
     )
-  dest.mkdir(mode=0o700)
+  dir_st = validated.stat()
+  dest.mkdir()
+  apply_stat_ownership_and_mode(dest, dir_st)
   for name in REQUIRED_PEM_NAMES:
-    src = (validated / name).resolve()
-    if not src.is_file():
-      raise ValueError(
-          f"ssl_certs_dir PEM does not resolve to a file: {validated / name} "
-          f"-> {src}"
-      )
-    os.symlink(src, dest / name)
+    src = resolve_readable_pem(validated, name)
+    src_st = src.stat()
+    out = dest / name
+    shutil.copy2(src, out)
+    apply_stat_ownership_and_mode(out, src_st)
   return dest
 
 
@@ -284,7 +350,7 @@ def _default_compose_link_repo_root(
 
 def main(argv: list[str] | None = None) -> int:
   """
-  Print a validated TLS certs directory and refresh Compose PEM symlinks.
+  Print a validated TLS certs directory and refresh Compose PEM copies.
 
   Args:
     argv (list[str] | None): CLI arguments without the program name, or
@@ -335,7 +401,8 @@ def main(argv: list[str] | None = None) -> int:
       link_root = _default_compose_link_repo_root(repo_root_arg=args.repo_root)
       dest = ensure_compose_ssl_certs_context(path, checkout_root=link_root)
       print(
-          f"compose SSL context: {dest} (absolute PEM symlinks from {path})",
+          f"compose SSL context: {dest} (PEM copies from {path}, "
+          f"mode/uid/gid preserved)",
           file=sys.stderr,
       )
   except ValueError as exc:

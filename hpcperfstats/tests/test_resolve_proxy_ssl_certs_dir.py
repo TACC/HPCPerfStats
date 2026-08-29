@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import stat
 import sys
 from pathlib import Path
 
@@ -54,6 +55,13 @@ def test_validate_fails_when_not_a_directory(resolve_mod, tmp_path: Path):
     resolve_mod.validate_ssl_certs_dir(missing)
 
 
+def test_validate_reports_broken_symlink(resolve_mod, tmp_path: Path):
+  (tmp_path / "fullchain.pem").symlink_to("missing-target.pem")
+  (tmp_path / "privkey.pem").write_text("k", encoding="utf-8")
+  with pytest.raises(ValueError, match="broken symlink"):
+    resolve_mod.validate_ssl_certs_dir(tmp_path)
+
+
 def test_load_from_ini_success(resolve_mod, tmp_path: Path):
   fix = resolve_mod.fixture_ssl_certs_dir()
   ini = tmp_path / "hpcperfstats.ini"
@@ -85,47 +93,61 @@ def test_main_fails_closed_on_bad_ini(resolve_mod, tmp_path: Path, capsys):
   assert "error:" in err
 
 
-def test_ensure_compose_ssl_certs_context_creates_absolute_pem_symlinks(
+def test_ensure_compose_copies_pems_preserving_mode(
     resolve_mod, tmp_path: Path
 ):
-  fix = resolve_mod.fixture_ssl_certs_dir()
-  dest = resolve_mod.ensure_compose_ssl_certs_context(fix, checkout_root=tmp_path)
-  assert dest == tmp_path / resolve_mod.COMPOSE_SSL_CERTS_CONTEXT_REL
+  src = tmp_path / "src"
+  src.mkdir(mode=0o750)
+  os.chmod(src, 0o750)
+  fullchain = src / "fullchain.pem"
+  privkey = src / "privkey.pem"
+  fullchain.write_text("CHAIN", encoding="utf-8")
+  privkey.write_text("KEY", encoding="utf-8")
+  os.chmod(fullchain, 0o644)
+  os.chmod(privkey, 0o600)
+
+  dest = resolve_mod.ensure_compose_ssl_certs_context(src, checkout_root=tmp_path)
   assert dest.is_dir()
   assert not dest.is_symlink()
-  for name in resolve_mod.REQUIRED_PEM_NAMES:
-    link = dest / name
-    assert link.is_symlink()
-    assert link.resolve() == (fix / name).resolve()
-    assert os.readlink(link).startswith("/")
+  assert stat.S_IMODE(dest.stat().st_mode) == 0o750
+  out_full = dest / "fullchain.pem"
+  out_key = dest / "privkey.pem"
+  assert out_full.is_file() and not out_full.is_symlink()
+  assert out_key.is_file() and not out_key.is_symlink()
+  assert out_full.read_text(encoding="utf-8") == "CHAIN"
+  assert out_key.read_text(encoding="utf-8") == "KEY"
+  assert stat.S_IMODE(out_full.stat().st_mode) == 0o644
+  assert stat.S_IMODE(out_key.stat().st_mode) == 0o600
 
 
-def test_ensure_compose_dereferences_letsencrypt_live_relative_symlinks(
+def test_ensure_compose_copies_through_letsencrypt_live_relative_symlinks(
     resolve_mod, tmp_path: Path
 ):
-  """LE live/*.pem are relative links into archive/; bake context must not keep those."""
+  """LE live/*.pem are relative links into archive/; materialize real files."""
   archive = tmp_path / "archive" / "host.example"
   live = tmp_path / "live" / "host.example"
   archive.mkdir(parents=True)
   live.mkdir(parents=True)
-  (archive / "fullchain1.pem").write_text("CHAIN", encoding="utf-8")
-  (archive / "privkey1.pem").write_text("KEY", encoding="utf-8")
+  os.chmod(live, 0o755)
+  full_src = archive / "fullchain1.pem"
+  key_src = archive / "privkey1.pem"
+  full_src.write_text("CHAIN", encoding="utf-8")
+  key_src.write_text("KEY", encoding="utf-8")
+  os.chmod(full_src, 0o644)
+  os.chmod(key_src, 0o600)
   (live / "fullchain.pem").symlink_to("../../archive/host.example/fullchain1.pem")
   (live / "privkey.pem").symlink_to("../../archive/host.example/privkey1.pem")
 
   dest = resolve_mod.ensure_compose_ssl_certs_context(live, checkout_root=tmp_path)
   fullchain = dest / "fullchain.pem"
   privkey = dest / "privkey.pem"
-  assert fullchain.is_symlink()
-  assert privkey.is_symlink()
-  assert Path(os.readlink(fullchain)).is_absolute()
-  assert Path(os.readlink(privkey)).is_absolute()
-  assert fullchain.resolve() == (archive / "fullchain1.pem").resolve()
-  assert privkey.resolve() == (archive / "privkey1.pem").resolve()
-  # Relative live-style targets must not be preserved (broken after COPY).
-  assert ".." not in os.readlink(fullchain)
+  assert fullchain.is_file() and not fullchain.is_symlink()
+  assert privkey.is_file() and not privkey.is_symlink()
   assert fullchain.read_text(encoding="utf-8") == "CHAIN"
   assert privkey.read_text(encoding="utf-8") == "KEY"
+  assert stat.S_IMODE(dest.stat().st_mode) == 0o755
+  assert stat.S_IMODE(fullchain.stat().st_mode) == 0o644
+  assert stat.S_IMODE(privkey.stat().st_mode) == 0o600
 
 
 def test_ensure_compose_ssl_certs_context_replaces_stale_dir_symlink(
@@ -136,7 +158,8 @@ def test_ensure_compose_ssl_certs_context_replaces_stale_dir_symlink(
   dest.symlink_to(tmp_path / "old-missing-target")
   resolve_mod.ensure_compose_ssl_certs_context(fix, checkout_root=tmp_path)
   assert dest.is_dir()
-  assert (dest / "fullchain.pem").resolve() == (fix / "fullchain.pem").resolve()
+  assert (dest / "fullchain.pem").is_file()
+  assert not (dest / "fullchain.pem").is_symlink()
 
 
 def test_main_from_ini_updates_compose_context(
@@ -158,7 +181,8 @@ def test_main_from_ini_updates_compose_context(
   assert Path(out) == fix
   dest = tmp_path / resolve_mod.COMPOSE_SSL_CERTS_CONTEXT_REL
   assert dest.is_dir()
-  assert (dest / "fullchain.pem").is_symlink()
+  assert (dest / "fullchain.pem").is_file()
+  assert not (dest / "fullchain.pem").is_symlink()
 
 
 def test_main_no_link_skips_materialize(resolve_mod, tmp_path: Path):

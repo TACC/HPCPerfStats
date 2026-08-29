@@ -190,14 +190,13 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   assert "COPY services-conf/nginx-django-proxy-common.inc" not in dockerfile
   assert "nginx.conf.example" not in dockerfile
   assert "COPY services-conf/nginx.conf /build/nginx.conf" in dockerfile
-  assert "COPY --from=ssl_certs" not in dockerfile
-  assert "--mount=type=bind,from=ssl_certs" in dockerfile
-  assert "cp -L /mnt/ssl_certs/fullchain.pem" in dockerfile
+  assert "COPY --from=ssl_certs" in dockerfile
+  assert "--mount=type=bind,from=ssl_certs" not in dockerfile
   assert "test -f /etc/ssl/hpcperfstats/fullchain.pem" in dockerfile
   assert "test -f /etc/ssl/hpcperfstats/privkey.pem" in dockerfile
-  # Alpine ``user nginx;`` for workers; master (root) loads ssl_certificate_key.
-  assert "chown -R root:root /etc/ssl/hpcperfstats" in dockerfile
-  assert "chmod 400 /etc/ssl/hpcperfstats/privkey.pem" in dockerfile
+  # Host archive modes preserved via resolve copy + COPY; do not rewrite in Dockerfile.
+  assert "chown -R root:root /etc/ssl/hpcperfstats" not in dockerfile
+  assert "chmod 400 /etc/ssl/hpcperfstats/privkey.pem" not in dockerfile
   assert "chmod 600 /etc/ssl/hpcperfstats/privkey.pem" not in dockerfile
   assert "chown nginx:" not in dockerfile
   assert "services-conf/proxy-ssl" not in dockerfile

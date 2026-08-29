@@ -353,19 +353,18 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    Before building **`proxy`** (or a full stack build that includes it):
 
    ```bash
-   # Read [DEFAULT] ssl_certs_dir from hpcperfstats.ini; create
-   # .hpcperfstats_ssl_certs/ with **absolute** symlinks to the resolved PEM
-   # files (Let’s Encrypt ``live/`` relative links into ``archive/`` must not be
-   # used as the BuildKit context). No PEM content is copied into the checkout;
-   # no export / .env needed:
+   # Read [DEFAULT] ssl_certs_dir from hpcperfstats.ini; copy
+   # fullchain.pem + privkey.pem into .hpcperfstats_ssl_certs/ (follows Let’s
+   # Encrypt live→archive symlinks; preserves source file and directory
+   # mode/uid/gid). No export / .env needed:
    python3 services-conf/resolve_proxy_ssl_certs_dir.py
    docker compose build proxy
    docker compose up -d --force-recreate proxy
    ```
 
    Re-run **`resolve_proxy_ssl_certs_dir.py`** after changing **`ssl_certs_dir`**
-   in the INI or after Let’s Encrypt renew (new archive filenames). Never point
-   production at **`tests/fixtures/proxy-ssl`** (Firefox
+   in the INI or after Let’s Encrypt renew. Never point production at
+   **`tests/fixtures/proxy-ssl`** (Firefox
    **`MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT`** under HSTS). Test/CI workflows use
    **`tests/docker-compose.test-overlay.yaml`** (**`./tests/fixtures/proxy-ssl`**).
    **`./scripts/rebuild_pipeline.sh`** does **not** rebuild **`proxy`**.
