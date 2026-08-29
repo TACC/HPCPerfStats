@@ -8,6 +8,7 @@
 # This overlay remaps every bind-backed named volume to a plain Docker named
 # volume so macOS/Colima and CI do not need operator paths under /data.
 # Production deploys use base compose only (settings included; no app overlay).
+# TLS PEMs are baked into the proxy image (no runtime TLS cert volume).
 
 services:
   web:
@@ -21,7 +22,6 @@ services:
       - test_ssh_keys:/hpcperfstats/.ssh/:ro
   proxy:
     volumes:
-      - test_ssl_certs:/etc/ssl/hpcperfstats:ro
       - test_staticfiles_data:/srv/static:ro
       - test_media_data:/srv/media:ro
   db:
@@ -38,4 +38,3 @@ volumes:
   test_postgres_data:
   test_rabbitmq_messages:
   test_ssh_keys:
-  test_ssl_certs:

@@ -16,7 +16,7 @@ cp docker-compose.settings.yaml.example docker-compose.settings.yaml
 
 **`docker-compose.settings.yaml` is gitignored**. The **committed** operator template is **`docker-compose.settings.yaml.example`**. Base **`docker-compose.yaml`** `include`s the settings file automatically — do **not** pass a separate `-f` for settings, and do **not** use obsolete **`docker-compose.app.yaml`**.
 
-Local settings hold site-specific bind **`device:`** paths (`hpcperfstatsdata`, `staticfiles_data`, `media_data`, `postgres_data`, `rabbitmq_messages`, `ssh_keys`, `ssl_certs`) and optional commented knobs (host ports, `SYS_PTRACE`, mem/grace overrides). **Every operator-facing change** made in the local file **must** be mirrored into **`.example` in the same task** or the next `cp` will drop it for other operators and fresh clones.
+Local settings hold site-specific bind **`device:`** paths (`hpcperfstatsdata`, `staticfiles_data`, `media_data`, `postgres_data`, `rabbitmq_messages`, `ssh_keys`) and optional commented knobs (host ports, `SYS_PTRACE`, mem/grace overrides). TLS PEMs are **not** a settings volume — they come from **`[DEFAULT] ssl_certs_dir`** baked into the **proxy** image. **Every operator-facing change** made in the local file **must** be mirrored into **`.example` in the same task** or the next `cp` will drop it for other operators and fresh clones.
 
 ## Law (non-dev → example)
 
@@ -26,7 +26,8 @@ When you change **`docker-compose.settings.yaml`** in a way operators need after
 
 | Field | Notes |
 |---|---|
-| Top-level **`volumes:`** bind **`device:`** paths | All seven named volumes; keep comments for SSH / Let’s Encrypt live dir |
+| Top-level **`volumes:`** bind **`device:`** paths | All six named volumes; keep comments for SSH keys |
+
 | Commented optional **`services:`** knobs | `web`/`db`/`rabbitmq` host ports, pipeline `cap_add`, mem/grace overrides |
 | Volume **names** used by base compose | Service mounts in **`docker-compose.yaml`** must match volume keys in settings; **do not** put empty/null volume stubs in base (podman-compose cannot merge `None` with settings dicts) |
 

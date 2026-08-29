@@ -13,7 +13,7 @@ Documentation and defaults should let a fresh deployment succeed with **few touc
 
 ## Required behavior
 
-- Treat **`docker-compose.yaml`** as the **canonical stack wiring** (services, ports, volume **names**, healthchecks). Prefer **not** to instruct operators to edit it for routine site customization (bind `device:` paths, optional port publishes, branding-only knobs) when those concerns belong in **`docker-compose.settings.yaml`** (from **`.example`**), **`hpcperfstats.ini`**, committed **`services-conf/nginx.conf`** (TLS PEMs via **`ssl_certs`**), or other **`services-conf/`** artifacts called out in **`README.md`**.
+- Treat **`docker-compose.yaml`** as the **canonical stack wiring** (services, ports, volume **names**, healthchecks). Prefer **not** to instruct operators to edit it for routine site customization (bind `device:` paths, optional port publishes, branding-only knobs) when those concerns belong in **`docker-compose.settings.yaml`** (from **`.example`**), **`hpcperfstats.ini`**, committed **`services-conf/nginx.conf`** (TLS PEMs via **`[DEFAULT] ssl_certs_dir`** bake into **proxy**), or other **`services-conf/`** artifacts called out in **`README.md`**.
 - When adding a new deployment-time knob, first ask: **can this live in INI or `services-conf/` consumed at image build or container startup** without forking compose?
 - Keep **`README.md` Installation** steps short: favor **`cp …example …`** flows (INI, nginx template, supervisord) over editing tracked compose YAML unless the change truly requires new services, published ports, or volume mounts.
 

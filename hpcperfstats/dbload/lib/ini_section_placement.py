@@ -36,6 +36,7 @@ DEFAULT_INSTALL_OPTIONS = frozenset({
     "host_name_ext",
     "data_dir",
     "server",
+    "ssl_certs_dir",
     "restricted_queue_keywords",
     "debug",
     "staff_email_domain",

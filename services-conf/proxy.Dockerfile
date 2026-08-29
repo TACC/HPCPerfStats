@@ -1,3 +1,6 @@
+# syntax=docker/dockerfile:1
+# TLS PEMs come from BuildKit additional context "ssl_certs" (host ssl_certs_dir),
+# not from a checkout staging copy and not from a runtime volume.
 FROM alpine:3.24.1
 
 # Pin nginx from Alpine edge main (stable packages lag); bump NGINX_EDGE_VERSION on proxy rebuilds.
@@ -16,12 +19,25 @@ RUN apk add --no-cache \
 
 RUN nginx -v
 
-RUN mkdir -p /usr/local/lib/hpcperfstats-proxy /etc/nginx
+RUN mkdir -p /usr/local/lib/hpcperfstats-proxy /etc/nginx /etc/ssl/hpcperfstats
+
+# Bake PEMs directly from host [DEFAULT] ssl_certs_dir (Compose additional_contexts).
+# Alpine nginx.conf uses ``user nginx;`` for workers; the master stays root and is
+# what loads ssl_certificate_key — so privkey is root:root mode 0400 (not nginx-owned).
+COPY --from=ssl_certs . /etc/ssl/hpcperfstats/
+RUN set -eu; \
+    test -f /etc/ssl/hpcperfstats/fullchain.pem; \
+    test -f /etc/ssl/hpcperfstats/privkey.pem; \
+    chown -R root:root /etc/ssl/hpcperfstats; \
+    find /etc/ssl/hpcperfstats -type d -exec chmod 755 {} +; \
+    find /etc/ssl/hpcperfstats -type f -name '*.pem' ! -name 'privkey.pem' \
+      -exec chmod 644 {} +; \
+    chmod 400 /etc/ssl/hpcperfstats/privkey.pem
 
 # Shared nginx snippets (static-files, edge headers, CSP, django-proxy-common) are
 # compose bind-mounts only — do not COPY them here or they drift from mounts.
-# Image bakes: Python helpers, entrypoint, default.conf baseline, hosts include,
-# and a placeholder OCSP resolver (entrypoint overwrites at start).
+# Image bakes: TLS PEMs, Python helpers, entrypoint, default.conf baseline, hosts
+# include, and a placeholder OCSP resolver (entrypoint overwrites at start).
 COPY services-conf/parse_hpcperfstats_proxy_hosts.py \
     services-conf/write_nginx_proxy_allowed_hosts_include.py \
     services-conf/write_nginx_resolver_include.py \

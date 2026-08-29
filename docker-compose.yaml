@@ -100,7 +100,13 @@ services:
     build:
       context: ./
       dockerfile: services-conf/proxy.Dockerfile
+      # Host dir with fullchain.pem + privkey.pem ([DEFAULT] ssl_certs_dir).
+      # Export via: export HPCPERFSTATS_SSL_CERTS_DIR="$(python3 services-conf/resolve_proxy_ssl_certs_dir.py)"
+      # Default fixture enables CI/Colima builds without Let’s Encrypt.
+      additional_contexts:
+        ssl_certs: ${HPCPERFSTATS_SSL_CERTS_DIR:-./tests/fixtures/proxy-ssl}
     image: hpcperfstats-proxy
+
     restart: always
     logging: *hpc-logging
     depends_on:
@@ -119,7 +125,7 @@ services:
       - 80:80
       - 443:443
     volumes:
-      # Main vhost (TLS paths fixed under /etc/ssl/hpcperfstats via ssl_certs volume).
+      # Main vhost (TLS PEMs baked into the proxy image at /etc/ssl/hpcperfstats).
       # Shared routing/security snippets: compose mounts are the only source of truth
       # (proxy.Dockerfile does not COPY these — avoid bake+mount duplication).
       # hps-proxy-allowed-hosts.inc and nginx-resolver.inc stay image/runtime-managed.
@@ -129,7 +135,6 @@ services:
       - ./services-conf/nginx-edge-security-headers.inc:/etc/nginx/nginx-edge-security-headers.inc:ro
       - ./services-conf/nginx-csp-no-active.inc:/etc/nginx/nginx-csp-no-active.inc:ro
       - ./services-conf/nginx-csp-django-html.inc:/etc/nginx/nginx-csp-django-html.inc:ro
-      - ssl_certs:/etc/ssl/hpcperfstats:ro
       - staticfiles_data:/srv/static:ro
       - media_data:/srv/media:ro
     networks:

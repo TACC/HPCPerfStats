@@ -12,7 +12,7 @@ All **`tests/run_*_workflow.sh`** scripts source **`tests/compose_test_cmd.sh`**
 
 `docker-compose -f docker-compose.yaml -f tests/docker-compose.test-overlay.yaml`
 
-That overlay remaps **all** production bind-backed volumes from **`docker-compose.settings.yaml`** (site_data, Postgres, RabbitMQ, static/media, SSH, TLS certs under **`/data/...`**) to named Docker volumes so macOS/Colima and CI do not need those host paths. **`compose_test_cmd.sh`** ensures settings and the test overlay exist (`cp` from each **`.example`** when missing). **`tests/docker-compose.test-overlay.yaml`** is gitignored; the committed template is **`tests/docker-compose.test-overlay.yaml.example`**. Production deploys use base **`docker compose`** / **`docker compose -p hpcperfstats`** only (settings `include`d; no app overlay).
+That overlay remaps **all** production bind-backed volumes from **`docker-compose.settings.yaml`** (site_data, Postgres, RabbitMQ, static/media, SSH under **`/data/...`**) to named Docker volumes so macOS/Colima and CI do not need those host paths. TLS PEMs are baked into the **proxy** image at build (no **`ssl_certs`** / **`test_ssl_certs`** overlay volume). **`compose_test_cmd.sh`** ensures settings and the test overlay exist (`cp` from each **`.example`** when missing). **`tests/docker-compose.test-overlay.yaml`** is gitignored; the committed template is **`tests/docker-compose.test-overlay.yaml.example`**. Production deploys use base **`docker compose`** / **`docker compose -p hpcperfstats`** only (settings `include`d; no app overlay).
 
 ## Default runners (from `HPCPerfStats/` containing `docker-compose.yaml`)
 

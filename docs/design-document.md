@@ -149,7 +149,7 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 | **db** | TimescaleDB on PostgreSQL 15 (`timescale/timescaledb:2.28.3-pg15`); primary system of record. Compose sets large **`shm_size`** and Postgres tuning (`shared_buffers`, timeouts, WAL) for concurrent Django + pipeline load. |
 | **redis** | **Dedicated Compose container** (`redis:8.10.0-alpine3.23` in `docker-compose.yaml`). Network alias **`redis`**. Shared instance: Django cache (TTL keys) plus pipeline **`job:v1`** queues (TTL-free). **`maxmemory` 16gb** with **`volatile-lru`** (not **`allkeys-*`**, which would evict durable queue members). `appendonly no`; multi **`io-threads`**. Healthcheck: `redis-cli ping`. Cache pages/plots remain ephemeral; `job:v1` keys are the in-flight work record while the orchestrator is running. |
 | **rabbitmq** | Broker for monitor→site message delivery (`rabbitmq:4.3.4-management-alpine`, AMQP **5672** published; management HTTP **15672** compose-internal only). Admin Monitor queue/node stats use the management API from `web`, not AMQP. Memory cap: Compose **`mem_limit` / `memswap_limit` 96g** plus **`vm_memory_high_watermark.absolute = 80GiB`** (`services-conf/rabbitmq_vm_memory.conf`) so publishers block ~16 GiB below the cgroup wall instead of growing unbounded or hitting Erlang `binary_alloc`. |
-| **proxy** | Nginx TLS/front door; **`docker-compose.yaml`** mounts committed **`services-conf/nginx.conf`** as **`default.conf`**; image build **`cp`**s **`nginx.conf`** plus generated **`hps-proxy-allowed-hosts.inc`** from INI (see workspace guardrails). TLS PEMs via **`ssl_certs`** volume (`/etc/ssl/hpcperfstats`). Serves staticfiles/media and proxies API/HTML to **`web`**. |
+| **proxy** | Nginx TLS/front door; **`docker-compose.yaml`** mounts committed **`services-conf/nginx.conf`** as **`default.conf`**; image build **`cp`**s **`nginx.conf`**, bakes TLS PEMs from host **`[DEFAULT] ssl_certs_dir`** (BuildKit **`additional_contexts`**), and generates **`hps-proxy-allowed-hosts.inc`** from INI (see workspace guardrails). Fixed PEM paths under **`/etc/ssl/hpcperfstats`** (no runtime **`ssl_certs`** volume). Serves staticfiles/media and proxies API/HTML to **`web`**. |
 
 ### 5.3 Python package layout (concise)
 
@@ -248,7 +248,7 @@ Operator tuning for this container (memory cap, LRU, threads) is in **`docker-co
 ## 9. Security, configuration, and operations
 
 - **Configuration** is driven by `hpcperfstats.ini` (container path commonly `/home/hpcperfstats/hpcperfstats.ini`) and files under `services-conf/`. `*.example` files document intended shapes; copy/rename per `README.md`. **Immutable-image policy:** bake INI into the image; do not bind-mount a mutable INI over production containers unless an explicit local-dev exception applies.
-- **Secrets** (TLS certs, API keys) are environment- and deployment-specific; nginx and Django settings consume paths defined in compose and `services-conf/`.
+- **Secrets** (TLS certs, API keys) are environment- and deployment-specific; TLS PEMs are baked into the **proxy** image from **`[DEFAULT] ssl_certs_dir`** at build; Django settings and nginx consume fixed in-image / compose paths defined in `services-conf/`.
 - **CSP** changes should be minimal and scoped when touching frontend pages (React workspace rule).
 - **Redis** holds no durable user data; flushing Redis is safe for correctness after a cold start (expect temporary cache misses and higher DB/plot rebuild cost). Archive files and Postgres remain authoritative.
 

@@ -341,6 +341,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         "rules": [
             "docker-compose-settings-example-sync.mdc",
             "readme-installation-sync.mdc",
+            "minimal-compose-install-footprint.mdc",
         ],
     },
     {
@@ -408,6 +409,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         "rules": [
             "readme-installation-sync.mdc",
             "compose-operator-terminal-commands.mdc",
+            "minimal-compose-install-footprint.mdc",
         ],
     },
     {

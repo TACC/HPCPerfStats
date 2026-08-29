@@ -15,11 +15,13 @@ This repository uses an immutable-image deployment policy for `hpcperfstats.ini`
 - Build images so `/home/hpcperfstats/hpcperfstats.ini` is present at image build time.
 - Keep `HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini` as the runtime path unless explicitly changed project-wide.
 - If compose/examples currently mount `./hpcperfstats.ini`, remove those mounts and update docs/tests in the same task.
+- **Proxy TLS PEMs:** bake from host **`[DEFAULT] ssl_certs_dir`** into the **proxy** image via BuildKit **`additional_contexts`** / **`COPY --from=ssl_certs`** at `/etc/ssl/hpcperfstats`. **Do not** stage PEMs into the git checkout. **Do not** use a runtime **`ssl_certs`** Compose bind. After Let’s Encrypt renew, **rebuild and recreate `proxy`**.
 
 ## Why
 
 - Runtime behavior should be deterministic from the built image.
 - Deployments should not rely on host-local mutable config files for required startup config.
+- TLS material in the proxy image matches the same immutable-artifact model as the baked INI.
 
 ## Validation
 

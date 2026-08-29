@@ -150,7 +150,9 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   content = compose_path.read_text()
 
   assert "./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro" in content
-  assert "ssl_certs:/etc/ssl/hpcperfstats:ro" in content
+  assert "ssl_certs:/etc/ssl/hpcperfstats:ro" not in content
+  assert "additional_contexts:" in content
+  assert "ssl_certs: ${HPCPERFSTATS_SSL_CERTS_DIR:-./tests/fixtures/proxy-ssl}" in content
   assert "/etc/letsencrypt/:/etc/letsencrypt/:ro" not in content
   assert "services-conf/proxy.Dockerfile" in content
   assert "NGINX_SSL_CERT" not in content
@@ -166,8 +168,12 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   assert (repo_root / "services-conf" / "parse_hpcperfstats_proxy_hosts.py").exists()
   assert (repo_root / "services-conf" / "write_nginx_proxy_allowed_hosts_include.py").exists()
   assert (repo_root / "services-conf" / "write_nginx_resolver_include.py").exists()
+  assert (repo_root / "services-conf" / "resolve_proxy_ssl_certs_dir.py").exists()
   assert (repo_root / "services-conf" / "proxy_entrypoint.sh").exists()
   assert (repo_root / "services-conf" / "nginx.conf").exists()
+  fixture = repo_root / "tests" / "fixtures" / "proxy-ssl"
+  assert (fixture / "fullchain.pem").is_file()
+  assert (fixture / "privkey.pem").is_file()
   assert not (repo_root / "services-conf" / "nginx.conf.example").exists()
   nginx = (repo_root / "services-conf" / "nginx.conf").read_text()
   assert "ssl_certificate /etc/ssl/hpcperfstats/fullchain.pem;" in nginx
@@ -181,6 +187,17 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   assert "COPY services-conf/nginx-django-proxy-common.inc" not in dockerfile
   assert "nginx.conf.example" not in dockerfile
   assert "COPY services-conf/nginx.conf /build/nginx.conf" in dockerfile
+  assert "COPY --from=ssl_certs" in dockerfile
+  assert "test -f /etc/ssl/hpcperfstats/fullchain.pem" in dockerfile
+  assert "test -f /etc/ssl/hpcperfstats/privkey.pem" in dockerfile
+  # Alpine ``user nginx;`` for workers; master (root) loads ssl_certificate_key.
+  assert "chown -R root:root /etc/ssl/hpcperfstats" in dockerfile
+  assert "chmod 400 /etc/ssl/hpcperfstats/privkey.pem" in dockerfile
+  assert "chmod 600 /etc/ssl/hpcperfstats/privkey.pem" not in dockerfile
+  assert "chown nginx:" not in dockerfile
+  assert "services-conf/proxy-ssl" not in dockerfile
+  assert not (repo_root / "services-conf" / "proxy-ssl").exists()
+  assert not (repo_root / "services-conf" / "proxy-ssl.fixture").exists()
 
 
 def test_proxy_dockerfile_pins_nginx_and_brotli_to_same_edge_version():
@@ -240,12 +257,13 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
       "postgres_data",
       "rabbitmq_messages",
       "ssh_keys",
-      "ssl_certs",
   ):
     assert f"{name}:" in settings
     assert "driver: local" in settings
     # Service mounts in base still reference the volume names.
     assert name in base
+  assert "ssl_certs:" not in settings
+  assert "ssl_certs:/etc/ssl/hpcperfstats" not in base
 
 
 def test_docker_compose_pipeline_ssh_uses_ssh_keys_volume():
@@ -279,10 +297,6 @@ _OPERATOR_SETTINGS_SHARED_BIND_DEVICES = (
 
 _OPERATOR_SETTINGS_EXAMPLE_SSH_DEVICE = "device: /keys_directory/.ssh"
 
-_OPERATOR_SETTINGS_SSL_DEVICE = (
-    "device: /etc/letsencrypt/live/stats.stampede3.tacc.utexas.edu"
-)
-
 _OPERATOR_SETTINGS_VOLUME_NAMES = (
     "hpcperfstatsdata:",
     "staticfiles_data:",
@@ -290,7 +304,6 @@ _OPERATOR_SETTINGS_VOLUME_NAMES = (
     "postgres_data:",
     "rabbitmq_messages:",
     "ssh_keys:",
-    "ssl_certs:",
 )
 
 
@@ -302,7 +315,8 @@ def test_docker_compose_settings_example_operator_markers():
   for marker in _OPERATOR_SETTINGS_SHARED_BIND_DEVICES:
     assert marker in example_content, "example missing bind device: %s" % marker
   assert _OPERATOR_SETTINGS_EXAMPLE_SSH_DEVICE in example_content
-  assert _OPERATOR_SETTINGS_SSL_DEVICE in example_content
+  assert "ssl_certs:" not in example_content
+  assert "letsencrypt" not in example_content
   assert "SYS_PTRACE" in example_content
   assert "15672:15672" in example_content
   assert "5432:5432" in example_content
@@ -323,6 +337,7 @@ def test_docker_compose_settings_example_operator_parity():
   for name in _OPERATOR_SETTINGS_VOLUME_NAMES:
     assert name in settings_content
     assert name in example_content
+  assert "ssl_certs:" not in settings_content
   assert re.search(
       r"(?ms)^  ssh_keys:.*?^\s+device:\s+\S+",
       settings_content,
@@ -345,9 +360,9 @@ def test_docker_compose_test_overlay_clears_host_binds():
         "test_postgres_data",
         "test_rabbitmq_messages",
         "test_ssh_keys",
-        "test_ssl_certs",
     ):
       assert name in overlay_path.read_text()
+    assert "test_ssl_certs" not in overlay_path.read_text()
   for name in (
       "test_hpcperfstatsdata",
       "test_staticfiles_data",
@@ -355,8 +370,9 @@ def test_docker_compose_test_overlay_clears_host_binds():
       "test_postgres_data",
       "test_rabbitmq_messages",
       "test_ssh_keys",
-      "test_ssl_certs",
   ):
     assert name in overlay
+  assert "test_ssl_certs" not in overlay
   assert "/data/hpcperfstats" not in overlay
   assert "/opt/hpcperfstats" not in overlay
+  assert "/etc/ssl/hpcperfstats" not in overlay
