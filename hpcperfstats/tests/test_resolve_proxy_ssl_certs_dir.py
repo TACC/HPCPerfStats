@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -84,24 +85,58 @@ def test_main_fails_closed_on_bad_ini(resolve_mod, tmp_path: Path, capsys):
   assert "error:" in err
 
 
-def test_ensure_compose_ssl_certs_context_creates_symlink(
+def test_ensure_compose_ssl_certs_context_creates_absolute_pem_symlinks(
     resolve_mod, tmp_path: Path
 ):
   fix = resolve_mod.fixture_ssl_certs_dir()
-  link = resolve_mod.ensure_compose_ssl_certs_context(fix, checkout_root=tmp_path)
-  assert link == tmp_path / resolve_mod.COMPOSE_SSL_CERTS_CONTEXT_REL
-  assert link.is_symlink()
-  assert link.resolve() == fix
+  dest = resolve_mod.ensure_compose_ssl_certs_context(fix, checkout_root=tmp_path)
+  assert dest == tmp_path / resolve_mod.COMPOSE_SSL_CERTS_CONTEXT_REL
+  assert dest.is_dir()
+  assert not dest.is_symlink()
+  for name in resolve_mod.REQUIRED_PEM_NAMES:
+    link = dest / name
+    assert link.is_symlink()
+    assert link.resolve() == (fix / name).resolve()
+    assert os.readlink(link).startswith("/")
 
 
-def test_ensure_compose_ssl_certs_context_replaces_stale_symlink(
+def test_ensure_compose_dereferences_letsencrypt_live_relative_symlinks(
+    resolve_mod, tmp_path: Path
+):
+  """LE live/*.pem are relative links into archive/; bake context must not keep those."""
+  archive = tmp_path / "archive" / "host.example"
+  live = tmp_path / "live" / "host.example"
+  archive.mkdir(parents=True)
+  live.mkdir(parents=True)
+  (archive / "fullchain1.pem").write_text("CHAIN", encoding="utf-8")
+  (archive / "privkey1.pem").write_text("KEY", encoding="utf-8")
+  (live / "fullchain.pem").symlink_to("../../archive/host.example/fullchain1.pem")
+  (live / "privkey.pem").symlink_to("../../archive/host.example/privkey1.pem")
+
+  dest = resolve_mod.ensure_compose_ssl_certs_context(live, checkout_root=tmp_path)
+  fullchain = dest / "fullchain.pem"
+  privkey = dest / "privkey.pem"
+  assert fullchain.is_symlink()
+  assert privkey.is_symlink()
+  assert Path(os.readlink(fullchain)).is_absolute()
+  assert Path(os.readlink(privkey)).is_absolute()
+  assert fullchain.resolve() == (archive / "fullchain1.pem").resolve()
+  assert privkey.resolve() == (archive / "privkey1.pem").resolve()
+  # Relative live-style targets must not be preserved (broken after COPY).
+  assert ".." not in os.readlink(fullchain)
+  assert fullchain.read_text(encoding="utf-8") == "CHAIN"
+  assert privkey.read_text(encoding="utf-8") == "KEY"
+
+
+def test_ensure_compose_ssl_certs_context_replaces_stale_dir_symlink(
     resolve_mod, tmp_path: Path
 ):
   fix = resolve_mod.fixture_ssl_certs_dir()
-  link = tmp_path / resolve_mod.COMPOSE_SSL_CERTS_CONTEXT_REL
-  link.symlink_to(tmp_path / "old-missing-target")
+  dest = tmp_path / resolve_mod.COMPOSE_SSL_CERTS_CONTEXT_REL
+  dest.symlink_to(tmp_path / "old-missing-target")
   resolve_mod.ensure_compose_ssl_certs_context(fix, checkout_root=tmp_path)
-  assert link.resolve() == fix
+  assert dest.is_dir()
+  assert (dest / "fullchain.pem").resolve() == (fix / "fullchain.pem").resolve()
 
 
 def test_main_from_ini_updates_compose_context(
@@ -121,12 +156,12 @@ def test_main_from_ini_updates_compose_context(
   )
   out = capsys.readouterr().out.strip()
   assert Path(out) == fix
-  link = tmp_path / resolve_mod.COMPOSE_SSL_CERTS_CONTEXT_REL
-  assert link.is_symlink()
-  assert link.resolve() == fix
+  dest = tmp_path / resolve_mod.COMPOSE_SSL_CERTS_CONTEXT_REL
+  assert dest.is_dir()
+  assert (dest / "fullchain.pem").is_symlink()
 
 
-def test_main_no_link_skips_symlink(resolve_mod, tmp_path: Path):
+def test_main_no_link_skips_materialize(resolve_mod, tmp_path: Path):
   fix = resolve_mod.fixture_ssl_certs_dir()
   ini = tmp_path / "hpcperfstats.ini"
   ini.write_text(

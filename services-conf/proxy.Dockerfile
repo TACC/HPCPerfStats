@@ -21,11 +21,16 @@ RUN nginx -v
 
 RUN mkdir -p /usr/local/lib/hpcperfstats-proxy /etc/nginx /etc/ssl/hpcperfstats
 
-# Bake PEMs directly from host [DEFAULT] ssl_certs_dir (Compose additional_contexts).
+# Bake PEMs from BuildKit context "ssl_certs" (absolute symlinks to host PEMs from
+# resolve_proxy_ssl_certs_dir.py). Bind + cp -L follows LE archive targets; do not
+# COPY symlinks into the image (relative live/ links break; absolute host paths
+# are not present at runtime either).
 # Alpine nginx.conf uses ``user nginx;`` for workers; the master stays root and is
 # what loads ssl_certificate_key — so privkey is root:root mode 0400 (not nginx-owned).
-COPY --from=ssl_certs . /etc/ssl/hpcperfstats/
-RUN set -eu; \
+RUN --mount=type=bind,from=ssl_certs,source=.,target=/mnt/ssl_certs,ro \
+    set -eu; \
+    cp -L /mnt/ssl_certs/fullchain.pem /mnt/ssl_certs/privkey.pem \
+      /etc/ssl/hpcperfstats/; \
     test -f /etc/ssl/hpcperfstats/fullchain.pem; \
     test -f /etc/ssl/hpcperfstats/privkey.pem; \
     chown -R root:root /etc/ssl/hpcperfstats; \

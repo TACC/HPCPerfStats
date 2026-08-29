@@ -3,16 +3,18 @@
 Resolve and validate ``[DEFAULT] ssl_certs_dir`` for proxy image builds.
 
 Reads the path from ``hpcperfstats.ini`` (not from operator ``.env`` / shell
-exports). Updates the gitignored Compose BuildKit context symlink
-``.hpcperfstats_ssl_certs`` so ``docker compose`` / ``podman-compose`` can bake
-PEMs with **no** ``HPCPERFSTATS_SSL_CERTS_DIR`` requirement. Prints the absolute
-host directory path to stdout. Does **not** copy PEM files into the git checkout.
+exports). Materializes the gitignored Compose BuildKit context directory
+``.hpcperfstats_ssl_certs/`` with **absolute symlinks** to the resolved PEM
+files (so Let’s Encrypt ``live/`` relative links into ``archive/`` are not
+copied as broken relative symlinks). Compose needs **no**
+``HPCPERFSTATS_SSL_CERTS_DIR``. Prints the absolute host ``ssl_certs_dir`` path
+to stdout. Does **not** copy PEM file contents into the checkout.
 
 Attributes:
   REQUIRED_PEM_NAMES: Basename tuple that must exist under ``ssl_certs_dir``.
   FIXTURE_REL: Checkout-relative path of the committed self-signed fixture.
-  COMPOSE_SSL_CERTS_CONTEXT_REL: Gitignored symlink Compose ``additional_contexts``
-    points at.
+  COMPOSE_SSL_CERTS_CONTEXT_REL: Gitignored directory Compose ``additional_contexts``
+    points at (contains absolute PEM symlinks).
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from __future__ import annotations
 import argparse
 import configparser
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -179,7 +182,7 @@ def compose_ssl_certs_context_path(
     checkout_root: Path | None = None,
 ) -> Path:
   """
-  Return the absolute path of the Compose TLS BuildKit context symlink.
+  Return the absolute path of the Compose TLS BuildKit context directory.
 
   Args:
     checkout_root (Path | None): Checkout root; defaults to this script's repo.
@@ -201,44 +204,57 @@ def ensure_compose_ssl_certs_context(
     checkout_root: Path | None = None,
 ) -> Path:
   """
-  Point the gitignored Compose context symlink at a validated certs directory.
+  Materialize absolute PEM symlinks for the Compose BuildKit SSL context.
 
-  Compose ``additional_contexts.ssl_certs`` uses this symlink so production
-  builds need **no** ``.env`` / ``HPCPERFSTATS_SSL_CERTS_DIR`` export — only
-  ``[DEFAULT] ssl_certs_dir`` in the INI plus this materialization step.
+  Let’s Encrypt ``live/*.pem`` entries are relative symlinks into ``archive/``.
+  Pointing Compose at ``live/`` directly copies those relative links into the
+  image (broken). This helper builds ``.hpcperfstats_ssl_certs/`` with
+  **absolute** symlinks to each resolved PEM path — no PEM content is copied
+  into the checkout.
 
   Args:
     certs_dir (Path): Absolute validated host directory with required PEMs.
-    checkout_root (Path | None): Checkout root that owns the symlink; defaults to
-      this script's repo root.
+    checkout_root (Path | None): Checkout root that owns the context dir;
+      defaults to this script's repo root.
 
   Returns:
-    Path: Absolute path of the symlink (``.hpcperfstats_ssl_certs``).
+    Path: Absolute path of ``.hpcperfstats_ssl_certs``.
 
   Raises:
-    ValueError: When an existing non-symlink path blocks the link name.
-    OSError: When the symlink cannot be created.
+    ValueError: When a required PEM cannot be resolved to a real file, or an
+      unexpected path blocks the context directory name.
+    OSError: When the directory or symlinks cannot be created.
 
   Examples:
     >>> import tempfile
     >>> from pathlib import Path
     >>> fix = fixture_ssl_certs_dir()
     >>> td = Path(tempfile.mkdtemp())
-    >>> link = ensure_compose_ssl_certs_context(fix, checkout_root=td)
-    >>> link.is_symlink() and link.resolve() == fix
+    >>> dest = ensure_compose_ssl_certs_context(fix, checkout_root=td)
+    >>> (dest / "fullchain.pem").is_symlink()
     True
   """
   validated = validate_ssl_certs_dir(certs_dir)
   root = (checkout_root if checkout_root is not None else repo_root()).resolve()
-  link = root / COMPOSE_SSL_CERTS_CONTEXT_REL
-  if link.is_symlink() or link.is_file():
-    link.unlink()
-  elif link.exists():
+  dest = root / COMPOSE_SSL_CERTS_CONTEXT_REL
+  if dest.is_symlink() or dest.is_file():
+    dest.unlink()
+  elif dest.is_dir():
+    shutil.rmtree(dest)
+  elif dest.exists():
     raise ValueError(
-        f"refuse to replace non-symlink compose SSL context path: {link}"
+        f"refuse to replace unexpected compose SSL context path: {dest}"
     )
-  os.symlink(validated, link, target_is_directory=True)
-  return link
+  dest.mkdir(mode=0o700)
+  for name in REQUIRED_PEM_NAMES:
+    src = (validated / name).resolve()
+    if not src.is_file():
+      raise ValueError(
+          f"ssl_certs_dir PEM does not resolve to a file: {validated / name} "
+          f"-> {src}"
+      )
+    os.symlink(src, dest / name)
+  return dest
 
 
 def _default_compose_link_repo_root(
@@ -252,7 +268,7 @@ def _default_compose_link_repo_root(
     repo_root_arg (Path | None): Explicit ``--repo-root`` value, if any.
 
   Returns:
-    Path: Absolute directory for the Compose SSL context symlink.
+    Path: Absolute directory for the Compose SSL context directory.
 
   Examples:
     >>> _default_compose_link_repo_root(repo_root_arg=None).is_dir()
@@ -268,7 +284,7 @@ def _default_compose_link_repo_root(
 
 def main(argv: list[str] | None = None) -> int:
   """
-  Print a validated TLS certs directory and refresh the Compose context symlink.
+  Print a validated TLS certs directory and refresh Compose PEM symlinks.
 
   Args:
     argv (list[str] | None): CLI arguments without the program name, or
@@ -302,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
       "--repo-root",
       type=Path,
       default=None,
-      help="checkout root for the compose context symlink (default: cwd or script repo)",
+      help="checkout root for the compose context dir (default: cwd or script repo)",
   )
   args = parser.parse_args(argv)
   try:
@@ -317,9 +333,9 @@ def main(argv: list[str] | None = None) -> int:
       path = load_ssl_certs_dir_from_ini(ini_path)
     if not args.no_link:
       link_root = _default_compose_link_repo_root(repo_root_arg=args.repo_root)
-      link = ensure_compose_ssl_certs_context(path, checkout_root=link_root)
+      dest = ensure_compose_ssl_certs_context(path, checkout_root=link_root)
       print(
-          f"compose SSL context: {link} -> {path}",
+          f"compose SSL context: {dest} (absolute PEM symlinks from {path})",
           file=sys.stderr,
       )
   except ValueError as exc:

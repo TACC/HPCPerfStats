@@ -22,7 +22,7 @@ If a knob is (or should be) in the INI — for example **`[DEFAULT] ssl_certs_di
 | Run **`python3 services-conf/resolve_proxy_ssl_certs_dir.py`** to materialize **`.hpcperfstats_ssl_certs`** from the INI | Teaching operators to maintain a project **`.env`** with that path |
 | Test/CI overlay + **`resolve --fixture`** for self-signed PEMs | Defaulting base compose to **`tests/fixtures/proxy-ssl`** (silent prod self-signed under HSTS) |
 
-Compose may use a **gitignored** symlink or other INI-derived materialization so BuildKit **`additional_contexts`** works. That is **not** an operator `.env` flag.
+Compose may use a **gitignored** directory of **absolute PEM symlinks** (``.hpcperfstats_ssl_certs/`` from **`resolve_proxy_ssl_certs_dir.py`**) so BuildKit **`additional_contexts`** works without copying PEM bytes into the checkout. That is **not** an operator `.env` flag. Do **not** point the context at Let’s Encrypt **`live/`** itself (relative ``archive/`` links break inside the image).
 
 ## Allowed env uses (narrow)
 

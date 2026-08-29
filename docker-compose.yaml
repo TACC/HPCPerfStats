@@ -100,8 +100,9 @@ services:
     build:
       context: ./
       dockerfile: services-conf/proxy.Dockerfile
-      # Host dir with fullchain.pem + privkey.pem from [DEFAULT] ssl_certs_dir.
-      # Materialize (no .env / no HPCPERFSTATS_SSL_CERTS_DIR):
+      # Host PEMs from [DEFAULT] ssl_certs_dir via absolute symlinks in
+      # .hpcperfstats_ssl_certs/ (not a symlink to LE live/ — those relative
+      # archive links break inside the image). Materialize:
       #   python3 services-conf/resolve_proxy_ssl_certs_dir.py
       # Never default to the CI self-signed fixture (HSTS / MOZILLA_PKIX_ERROR_*).
       # CI/Colima: tests/docker-compose.test-overlay.yaml pins ./tests/fixtures/proxy-ssl.
