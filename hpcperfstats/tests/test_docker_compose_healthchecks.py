@@ -151,8 +151,8 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
 
   assert "./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro" in content
   assert "ssl_certs:/etc/ssl/hpcperfstats:ro" not in content
-  assert "additional_contexts:" in content
-  assert "ssl_certs: ./.hpcperfstats_ssl_certs" in content
+  assert "additional_contexts:" not in content
+  assert "ssl_certs: ./.hpcperfstats_ssl_certs" not in content
   assert "${HPCPERFSTATS_SSL_CERTS_DIR" not in content
   assert ":-./tests/fixtures/proxy-ssl}" not in content
   assert ".hpcperfstats_ssl_certs" in (repo_root / ".gitignore").read_text()
@@ -190,11 +190,14 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   assert "COPY services-conf/nginx-django-proxy-common.inc" not in dockerfile
   assert "nginx.conf.example" not in dockerfile
   assert "COPY services-conf/nginx.conf /build/nginx.conf" in dockerfile
-  assert "COPY --from=ssl_certs" in dockerfile
-  assert "--mount=type=bind,from=ssl_certs" not in dockerfile
+  assert "COPY --from=ssl_certs" not in dockerfile
+  assert "--mount=type=bind,source=/,target=/host,ro" in dockerfile
+  assert "--host-prefix /host" in dockerfile
+  assert "--dest-dir /etc/ssl/hpcperfstats" in dockerfile
+  assert "resolve_proxy_ssl_certs_dir.py" in dockerfile
   assert "test -f /etc/ssl/hpcperfstats/fullchain.pem" in dockerfile
   assert "test -f /etc/ssl/hpcperfstats/privkey.pem" in dockerfile
-  # Host archive modes preserved via resolve copy + COPY; do not rewrite in Dockerfile.
+  # Host archive modes preserved via resolve copy; do not rewrite in Dockerfile.
   assert "chown -R root:root /etc/ssl/hpcperfstats" not in dockerfile
   assert "chmod 400 /etc/ssl/hpcperfstats/privkey.pem" not in dockerfile
   assert "chmod 600 /etc/ssl/hpcperfstats/privkey.pem" not in dockerfile
@@ -380,4 +383,5 @@ def test_docker_compose_test_overlay_clears_host_binds():
   assert "/data/hpcperfstats" not in overlay
   assert "/opt/hpcperfstats" not in overlay
   assert "/etc/ssl/hpcperfstats" not in overlay
-  assert "ssl_certs: ./tests/fixtures/proxy-ssl" in overlay
+  assert "additional_contexts:" not in overlay
+  assert "ssl_certs: ./tests/fixtures/proxy-ssl" not in overlay

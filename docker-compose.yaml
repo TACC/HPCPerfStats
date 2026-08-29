@@ -100,14 +100,8 @@ services:
     build:
       context: ./
       dockerfile: services-conf/proxy.Dockerfile
-      # Host PEMs from [DEFAULT] ssl_certs_dir: resolve copies fullchain.pem +
-      # privkey.pem into .hpcperfstats_ssl_certs/ (follows LE live→archive links;
-      # preserves source file + directory mode/uid/gid). Materialize:
-      #   python3 services-conf/resolve_proxy_ssl_certs_dir.py
-      # Never default to the CI self-signed fixture (HSTS / MOZILLA_PKIX_ERROR_*).
-      # CI/Colima: tests/docker-compose.test-overlay.yaml pins ./tests/fixtures/proxy-ssl.
-      additional_contexts:
-        ssl_certs: ./.hpcperfstats_ssl_certs
+      # TLS PEMs baked in proxy.Dockerfile from [DEFAULT] ssl_certs_dir (host bind).
+      # No additional_contexts / no manual resolve / no .env.
     image: hpcperfstats-proxy
 
     restart: always

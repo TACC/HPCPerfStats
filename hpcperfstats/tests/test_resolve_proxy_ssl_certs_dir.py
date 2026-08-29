@@ -185,17 +185,32 @@ def test_main_from_ini_updates_compose_context(
   assert not (dest / "fullchain.pem").is_symlink()
 
 
-def test_main_no_link_skips_materialize(resolve_mod, tmp_path: Path):
+def test_under_host_prefix_maps_absolute_path(resolve_mod):
+  assert resolve_mod.under_host_prefix(Path("/etc/x"), Path("/host")) == Path(
+      "/host/etc/x"
+  )
+  assert resolve_mod.under_host_prefix(Path("/etc/x"), None) == Path("/etc/x")
+
+
+def test_main_dest_dir_bakes_pems(resolve_mod, tmp_path: Path, capsys):
   fix = resolve_mod.fixture_ssl_certs_dir()
   ini = tmp_path / "hpcperfstats.ini"
-  ini.write_text(
-      f"[DEFAULT]\nssl_certs_dir = {fix}\n",
-      encoding="utf-8",
-  )
+  ini.write_text(f"[DEFAULT]\nssl_certs_dir = {fix}\n", encoding="utf-8")
+  dest = tmp_path / "image-ssl"
   assert (
       resolve_mod.main(
-          ["--ini", str(ini), "--repo-root", str(tmp_path), "--no-link"]
+          [
+              "--ini",
+              str(ini),
+              "--dest-dir",
+              str(dest),
+              "--host-prefix",
+              "/",
+          ]
       )
       == 0
   )
+  # host-prefix / keeps paths as-is on a normal host
+  assert (dest / "fullchain.pem").is_file()
+  assert (dest / "privkey.pem").is_file()
   assert not (tmp_path / resolve_mod.COMPOSE_SSL_CERTS_CONTEXT_REL).exists()

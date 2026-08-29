@@ -41,9 +41,8 @@ compose_ensure_test_overlay_yaml() {
   fi
 }
 
-# Base compose uses .hpcperfstats_ssl_certs (INI materialization). Test overlay
-# pins ./tests/fixtures/proxy-ssl; also refresh the symlink to the fixture so
-# base-only builds cannot silently miss a context path.
+# Base compose bakes TLS from INI inside proxy.Dockerfile (host / bind). For CI,
+# point the work-copy / checkout hpcperfstats.ini ssl_certs_dir at the fixture.
 compose_ensure_proxy_ssl_certs_dir_for_tests() {
   local repo_root
   repo_root="$(compose_repo_root)"
@@ -52,11 +51,25 @@ compose_ensure_proxy_ssl_certs_dir_for_tests() {
     echo "compose_ensure_proxy_ssl_certs_dir_for_tests: missing PEMs under ${fixture}" >&2
     return 1
   fi
-  if ! python3 "${repo_root}/services-conf/resolve_proxy_ssl_certs_dir.py" \
-      --fixture --repo-root "${repo_root}" >/dev/null; then
-    echo "compose_ensure_proxy_ssl_certs_dir_for_tests: resolve --fixture failed" >&2
-    return 1
+  local ini="${repo_root}/hpcperfstats.ini"
+  if [[ ! -f "${ini}" ]]; then
+    cp "${repo_root}/hpcperfstats.ini.example" "${ini}"
   fi
+  python3 - "${ini}" "${fixture}" <<'PY'
+import re
+import sys
+from pathlib import Path
+ini_path = Path(sys.argv[1])
+fixture = Path(sys.argv[2]).resolve()
+text = ini_path.read_text(encoding="utf-8")
+pat = re.compile(r"(?m)^(ssl_certs_dir\s*=\s*).*$")
+if pat.search(text):
+  text = pat.sub(rf"\g<1>{fixture}", text, count=1)
+else:
+  text = text.rstrip() + f"\n\nssl_certs_dir = {fixture}\n"
+ini_path.write_text(text, encoding="utf-8")
+print(f"compose_ensure_proxy_ssl_certs_dir_for_tests: ssl_certs_dir={fixture}", file=sys.stderr)
+PY
 }
 
 

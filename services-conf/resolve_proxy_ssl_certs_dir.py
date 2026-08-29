@@ -3,17 +3,15 @@
 Resolve and validate ``[DEFAULT] ssl_certs_dir`` for proxy image builds.
 
 Reads the path from ``hpcperfstats.ini`` (not from operator ``.env`` / shell
-exports). Materializes the gitignored Compose BuildKit context directory
-``.hpcperfstats_ssl_certs/`` by **copying** required PEMs (following Let’s
-Encrypt ``live/`` → ``archive/`` symlinks) while preserving source file and
-directory mode/uid/gid. Compose needs **no** ``HPCPERFSTATS_SSL_CERTS_DIR``.
-Prints the absolute host ``ssl_certs_dir`` path to stdout.
+exports). The **proxy Dockerfile** invokes this helper during ``docker compose
+build`` / ``podman build`` with ``--host-prefix /host --dest-dir
+/etc/ssl/hpcperfstats`` so operators do not run a separate materialize step.
+Optionally can still write ``.hpcperfstats_ssl_certs/`` on the host.
 
 Attributes:
   REQUIRED_PEM_NAMES: Basename tuple that must exist under ``ssl_certs_dir``.
   FIXTURE_REL: Checkout-relative path of the committed self-signed fixture.
-  COMPOSE_SSL_CERTS_CONTEXT_REL: Gitignored directory Compose ``additional_contexts``
-    points at (real PEM files, modes matching the source).
+  COMPOSE_SSL_CERTS_CONTEXT_REL: Optional gitignored host-side bake directory.
 """
 
 from __future__ import annotations
@@ -205,15 +203,42 @@ def validate_ssl_certs_dir(certs_dir: Path) -> Path:
   return resolved
 
 
-def load_ssl_certs_dir_from_ini(ini_path: Path) -> Path:
+def under_host_prefix(path: Path, host_prefix: Path | None) -> Path:
+  """
+  Map an absolute host path into a BuildKit ``/host`` bind mount.
+
+  Args:
+    path (Path): Absolute path as written in ``hpcperfstats.ini``.
+    host_prefix (Path | None): Prefix such as ``/host`` when baking inside
+      a container build; ``None`` leaves *path* unchanged.
+
+  Returns:
+    Path: Path visible inside the build environment.
+
+  Examples:
+    >>> under_host_prefix(Path('/etc/x'), Path('/host')) == Path('/host/etc/x')
+    True
+  """
+  if host_prefix is None:
+    return path
+  abs_path = path if path.is_absolute() else path.resolve()
+  return host_prefix.joinpath(*abs_path.parts[1:])
+
+
+def load_ssl_certs_dir_from_ini(
+    ini_path: Path,
+    *,
+    host_prefix: Path | None = None,
+) -> Path:
   """
   Read ``[DEFAULT] ssl_certs_dir`` from *ini_path* and validate PEMs.
 
   Args:
     ini_path (Path): Path to ``hpcperfstats.ini`` or the example.
+    host_prefix (Path | None): Optional BuildKit host bind prefix (``/host``).
 
   Returns:
-    Path: Absolute validated certificate directory.
+    Path: Absolute validated certificate directory (under *host_prefix* when set).
 
   Raises:
     ValueError: When the ini cannot be read, the key is empty, or PEMs are
@@ -242,7 +267,45 @@ def load_ssl_certs_dir_from_ini(ini_path: Path) -> Path:
     raise ValueError(
         f"missing or empty [DEFAULT] ssl_certs_dir= in {ini_path}"
     )
-  return validate_ssl_certs_dir(Path(raw))
+  return validate_ssl_certs_dir(under_host_prefix(Path(raw), host_prefix))
+
+
+def copy_pems_preserving_meta(certs_dir: Path, dest_dir: Path) -> Path:
+  """
+  Copy required PEMs into *dest_dir*, preserving source file and dir metadata.
+
+  Args:
+    certs_dir (Path): Validated source directory (may be under ``/host``).
+    dest_dir (Path): Destination directory (created if needed).
+
+  Returns:
+    Path: *dest_dir* after PEMs are copied.
+
+  Raises:
+    ValueError: When a required PEM cannot be resolved.
+    OSError: When copies fail.
+
+  Examples:
+    >>> import tempfile
+    >>> from pathlib import Path
+    >>> fix = fixture_ssl_certs_dir()
+    >>> td = Path(tempfile.mkdtemp()) / "out"
+    >>> copy_pems_preserving_meta(fix, td)
+    >>> (td / "fullchain.pem").is_file()
+    True
+  """
+  validated = validate_ssl_certs_dir(certs_dir)
+  dest_dir.mkdir(parents=True, exist_ok=True)
+  apply_stat_ownership_and_mode(dest_dir, validated.stat())
+  for name in REQUIRED_PEM_NAMES:
+    src = resolve_readable_pem(validated, name)
+    src_st = src.stat()
+    out = dest_dir / name
+    if out.exists() or out.is_symlink():
+      out.unlink()
+    shutil.copy2(src, out)
+    apply_stat_ownership_and_mode(out, src_st)
+  return dest_dir
 
 
 def compose_ssl_certs_context_path(
@@ -250,7 +313,7 @@ def compose_ssl_certs_context_path(
     checkout_root: Path | None = None,
 ) -> Path:
   """
-  Return the absolute path of the Compose TLS BuildKit context directory.
+  Return the absolute path of the optional host-side TLS bake directory.
 
   Args:
     checkout_root (Path | None): Checkout root; defaults to this script's repo.
@@ -274,9 +337,9 @@ def ensure_compose_ssl_certs_context(
   """
   Copy required PEMs into ``.hpcperfstats_ssl_certs/`` with exact source perms.
 
-  Follows Let’s Encrypt ``live/`` symlinks so BuildKit receives real files.
-  Destination directory mode/uid/gid match *certs_dir*; each PEM mode/uid/gid
-  matches the resolved source file (archive target).
+  Optional host-side helper; production proxy builds bake via the Dockerfile
+  (``--host-prefix`` / ``--dest-dir``) instead. Never ``rm -rf`` through a
+  symlink into ``/etc/letsencrypt``.
 
   Args:
     certs_dir (Path): Absolute validated host directory with required PEMs.
@@ -304,6 +367,7 @@ def ensure_compose_ssl_certs_context(
   root = (checkout_root if checkout_root is not None else repo_root()).resolve()
   dest = root / COMPOSE_SSL_CERTS_CONTEXT_REL
   if dest.is_symlink() or dest.is_file():
+    # Unlink only — never follow a symlink into Let's Encrypt live/.
     dest.unlink()
   elif dest.is_dir():
     shutil.rmtree(dest)
@@ -311,16 +375,7 @@ def ensure_compose_ssl_certs_context(
     raise ValueError(
         f"refuse to replace unexpected compose SSL context path: {dest}"
     )
-  dir_st = validated.stat()
-  dest.mkdir()
-  apply_stat_ownership_and_mode(dest, dir_st)
-  for name in REQUIRED_PEM_NAMES:
-    src = resolve_readable_pem(validated, name)
-    src_st = src.stat()
-    out = dest / name
-    shutil.copy2(src, out)
-    apply_stat_ownership_and_mode(out, src_st)
-  return dest
+  return copy_pems_preserving_meta(validated, dest)
 
 
 def _default_compose_link_repo_root(
@@ -350,7 +405,7 @@ def _default_compose_link_repo_root(
 
 def main(argv: list[str] | None = None) -> int:
   """
-  Print a validated TLS certs directory and refresh Compose PEM copies.
+  Print a validated TLS certs directory; optionally bake PEMs to a destination.
 
   Args:
     argv (list[str] | None): CLI arguments without the program name, or
@@ -384,20 +439,41 @@ def main(argv: list[str] | None = None) -> int:
       "--repo-root",
       type=Path,
       default=None,
-      help="checkout root for the compose context dir (default: cwd or script repo)",
+      help="checkout root for optional .hpcperfstats_ssl_certs (default: cwd)",
+  )
+  parser.add_argument(
+      "--host-prefix",
+      type=Path,
+      default=None,
+      help="BuildKit bind prefix for host paths (e.g. /host in proxy.Dockerfile)",
+  )
+  parser.add_argument(
+      "--dest-dir",
+      type=Path,
+      default=None,
+      help="copy PEMs here (proxy image bake); skips .hpcperfstats_ssl_certs",
   )
   args = parser.parse_args(argv)
   try:
+    host_prefix = args.host_prefix
     if args.fixture:
-      path = validate_ssl_certs_dir(fixture_ssl_certs_dir())
+      path = validate_ssl_certs_dir(
+          under_host_prefix(fixture_ssl_certs_dir(), host_prefix)
+      )
     else:
       ini_path = (
           args.ini.resolve()
           if args.ini is not None
           else find_default_ini_path()
       )
-      path = load_ssl_certs_dir_from_ini(ini_path)
-    if not args.no_link:
+      path = load_ssl_certs_dir_from_ini(ini_path, host_prefix=host_prefix)
+    if args.dest_dir is not None:
+      copy_pems_preserving_meta(path, args.dest_dir)
+      print(
+          f"baked PEMs into {args.dest_dir} from {path}",
+          file=sys.stderr,
+      )
+    elif not args.no_link:
       link_root = _default_compose_link_repo_root(repo_root_arg=args.repo_root)
       dest = ensure_compose_ssl_certs_context(path, checkout_root=link_root)
       print(

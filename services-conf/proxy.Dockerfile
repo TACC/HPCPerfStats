@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
-# TLS PEMs come from BuildKit additional context "ssl_certs" (host ssl_certs_dir),
-# not from a checkout staging copy and not from a runtime volume.
+# TLS PEMs: bake at image build from [DEFAULT] ssl_certs_dir in hpcperfstats.ini
+# (host bind / + resolve_proxy_ssl_certs_dir.py). No Compose additional_contexts,
+# no manual resolve step, no runtime ssl_certs volume.
 FROM alpine:3.24.1
 
 # Pin nginx from Alpine edge main (stable packages lag); bump NGINX_EDGE_VERSION on proxy rebuilds.
@@ -21,15 +22,19 @@ RUN nginx -v
 
 RUN mkdir -p /usr/local/lib/hpcperfstats-proxy /etc/nginx /etc/ssl/hpcperfstats
 
-# Bake PEMs from BuildKit context "ssl_certs" (real files from
-# resolve_proxy_ssl_certs_dir.py, modes preserved from host). COPY keeps
-# context file modes; do not chmod away from the source archive perms.
-# Alpine nginx.conf uses ``user nginx;`` for workers; the master stays root and
-# loads ssl_certificate_key.
-COPY --from=ssl_certs . /etc/ssl/hpcperfstats/
-RUN set -eu; \
+# Bake PEMs during build: read ssl_certs_dir from INI, follow LE live→archive
+# links on the host, copy into the image with source mode/uid/gid preserved.
+COPY hpcperfstats.ini /bake/hpcperfstats.ini
+COPY services-conf/resolve_proxy_ssl_certs_dir.py /bake/resolve_proxy_ssl_certs_dir.py
+RUN --mount=type=bind,source=/,target=/host,ro \
+    set -eu; \
+    python3 /bake/resolve_proxy_ssl_certs_dir.py \
+      --ini /bake/hpcperfstats.ini \
+      --host-prefix /host \
+      --dest-dir /etc/ssl/hpcperfstats; \
     test -f /etc/ssl/hpcperfstats/fullchain.pem; \
-    test -f /etc/ssl/hpcperfstats/privkey.pem
+    test -f /etc/ssl/hpcperfstats/privkey.pem; \
+    rm -rf /bake
 
 # Shared nginx snippets (static-files, edge headers, CSP, django-proxy-common) are
 # compose bind-mounts only — do not COPY them here or they drift from mounts.
