@@ -313,7 +313,8 @@ def _seal_and_drop_tar(
     None
 
   Raises:
-    Exception: Propagates seal failures from ``atomic_seal_tar_to_zst``.
+    RuntimeError: When seal returns no snapshot or the tar remains after seal.
+    Exception: Propagates unexpected seal failures from ``atomic_seal_tar_to_zst``.
 
   Examples:
     >>> _seal_and_drop_tar("/no.tar", "/no.zst", zstd_threads=1, compress_level=3,
@@ -364,6 +365,10 @@ def _process_one_tar(
 
   Returns:
     tuple[str, str]: ``(STATUS_*, detail)`` outcome for summary counts.
+
+  Raises:
+    RuntimeError: When nested seal/drop reports an incomplete seal.
+    Exception: Propagates unexpected reconcile/seal failures when not caught.
 
   Examples:
     >>> _process_one_tar("/no.tar", daily_archive_dir="/x", zstd_threads=1,

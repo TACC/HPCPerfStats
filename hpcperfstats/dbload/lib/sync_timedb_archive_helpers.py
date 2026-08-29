@@ -45,6 +45,10 @@ Attributes:
   _UNMAPPED_DISQUALIFY_TTL_S: Attribute.
   _oldest_waiting_ingest_frozen_state: Attribute.
   SYNC_DAY_CLOSE_CANDIDATE_REPORT: Attribute.
+  RECONCILE_STALL_WARN_S: Attribute.
+  RECONCILE_STALL_YIELD_S: Attribute.
+  RECONCILE_STAGE_PROGRESS_LOG_INTERVAL_S: Attribute.
+  _reconcile_stage_progress_log_state: Attribute.
 """
 from __future__ import annotations
 
@@ -9193,6 +9197,7 @@ def repair_truncated_daily_tar_in_place(
 
   Raises:
     DayCloseYieldError: When cooperative yield is required mid-rewrite.
+    Exception: Unexpected I/O failures during GNU extract repair.
 
   Examples:
     >>> repair_truncated_daily_tar_in_place("/no.tar")  # doctest: +SKIP
@@ -9221,6 +9226,11 @@ def repair_truncated_daily_tar_in_place(
 
     Returns:
       bool: True when repair completed.
+
+    Examples:
+      >>> # nested repair helper; invoked from repair_truncated_daily_tar_in_place
+      >>> True
+      True
     """
     expected = _gnu_tvf_file_member_map_despite_fail(tar_path)
     if not expected:
@@ -9237,6 +9247,11 @@ def repair_truncated_daily_tar_in_place(
 
     Returns:
       bool: True when rewrite + verify succeeded.
+
+    Examples:
+      >>> # nested rewrite helper; invoked from repair_truncated_daily_tar_in_place
+      >>> True
+      True
     """
     _rewrite_daily_tar_largest_member_wins(
         tar_path,
@@ -9389,6 +9404,96 @@ def _copy_union_member_into_tar(
   return False
 
 
+# Conservative reconcile stall confirm (not wall-clock from merge start).
+# Warn then yield only after continuous no-progress at safe checkpoints.
+RECONCILE_STALL_WARN_S = 120.0
+RECONCILE_STALL_YIELD_S = 1800.0
+RECONCILE_STAGE_PROGRESS_LOG_INTERVAL_S = 60.0
+_reconcile_stage_progress_log_state: dict[str, dict[str, float]] = {}
+
+
+def _day_token_for_reconcile_progress(tar_path: str) -> str:
+  """
+  Calendar day token for reconcile progress logs, or ``unknown``.
+
+  Args:
+    tar_path (str): Daily tar path.
+
+  Returns:
+    str: ``YYYY-MM-DD`` or ``unknown``.
+
+  Examples:
+    >>> _day_token_for_reconcile_progress("/d/2020-01-01.tar")
+    '2020-01-01'
+  """
+  day = calendar_date_from_daily_tar_path(tar_path)
+  return day.isoformat() if day is not None else "unknown"
+
+
+def _emit_reconcile_stage_progress(
+  day_token: str,
+  *,
+  members_done: int,
+  members_total: int,
+  elapsed_s: float,
+  advancing: bool,
+  stuck_s: float,
+  log_fn: Any,
+  force: bool = False,
+) -> None:
+  """
+  Rate-limited INFO for reconcile merge progress / non-progress.
+
+  Args:
+    day_token (str): Calendar day token.
+    members_done (int): Members copied so far.
+    members_total (int): Union member count.
+    elapsed_s (float): Wall seconds since merge start.
+    advancing (bool): True when the progress counter just moved.
+    stuck_s (float): Seconds since last ``members_done`` increment.
+    log_fn (Any): Logger callable.
+    force (bool): Bypass rate limit (warn / stall yield breadcrumbs).
+
+  Returns:
+    None
+
+  Examples:
+    >>> _emit_reconcile_stage_progress("2020-01-01", members_done=0,
+    ...     members_total=1, elapsed_s=0.0, advancing=True, stuck_s=0.0,
+    ...     log_fn=lambda *a, **k: None)
+  """
+  if log_fn is None:
+    return
+  msg = (
+      "queue_orchestrator day_close stage_progress day=%s stage=reconcile_merge "
+      "members_done=%d members_total=%d elapsed_s=%.1f advancing=%s"
+      % (
+          day_token,
+          int(members_done),
+          int(members_total),
+          float(elapsed_s),
+          "true" if advancing else "false",
+      )
+  )
+  if not advancing:
+    msg = "%s stuck_s=%.1f" % (msg, float(stuck_s))
+  if force:
+    log_fn(msg, flush=True)
+    return
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      _rate_limited_day_info_log,
+  )
+
+  _rate_limited_day_info_log(
+      _reconcile_stage_progress_log_state,
+      day_token,
+      msg,
+      interval_s=RECONCILE_STAGE_PROGRESS_LOG_INTERVAL_S,
+      log_fn=log_fn,
+      skip_unknown_day=False,
+  )
+
+
 def rebuild_daily_tar_member_union_in_place(
   tar_path: str,
   zst_path: str,
@@ -9397,9 +9502,18 @@ def rebuild_daily_tar_member_union_in_place(
   log_fn: Any = log_print,
   tgz_archive_dir: str = "",
   yield_phase: str = "tar_merge",
+  monotonic_fn: Any | None = None,
+  stall_warn_s: float | None = None,
+  stall_yield_s: float | None = None,
+  on_merge_progress: Any | None = None,
 ) -> bool:
   """
   Rebuild open daily tar to match a union member map.
+
+  Emits rate-limited ``stage_progress`` lines. Yields cooperatively when
+  ``members_done`` is unchanged for ``stall_yield_s`` (default 1800s) at a
+  safe checkpoint between member copies — not because total merge elapsed
+  time is large while the counter still advances.
 
   Args:
     tar_path (str): Daily ``.tar`` path to rewrite.
@@ -9408,12 +9522,19 @@ def rebuild_daily_tar_member_union_in_place(
     log_fn (Any): Logger callable.
     tgz_archive_dir (str): Daily archive root for yield checks.
     yield_phase (str): Cooperative yield phase label.
+    monotonic_fn (Any | None): Clock for stall windows (tests inject).
+    stall_warn_s (float | None): Seconds of no progress before warn log.
+    stall_yield_s (float | None): Seconds of no progress before yield.
+    on_merge_progress (Any | None): Optional
+      ``(done, total, last_progress_mono)`` callback for manifest updates.
 
   Returns:
     bool: True on success; False on failure.
 
   Raises:
-    DayCloseYieldError: When cooperative yield is required mid-rewrite.
+    DayCloseYieldError: When cooperative yield is required mid-rewrite
+      (hot-path or stall-confirmed).
+    Exception: Unexpected I/O failures during the rewrite (cleaned up).
 
   Examples:
     >>> rebuild_daily_tar_member_union_in_place("x", "y", {})  # doctest: +SKIP
@@ -9426,23 +9547,103 @@ def rebuild_daily_tar_member_union_in_place(
 
   if not union_members:
     return False
+  clock = monotonic_fn if callable(monotonic_fn) else time.monotonic
+  warn_s = float(
+      RECONCILE_STALL_WARN_S if stall_warn_s is None else stall_warn_s,
+  )
+  yield_s = float(
+      RECONCILE_STALL_YIELD_S if stall_yield_s is None else stall_yield_s,
+  )
+  day_token = _day_token_for_reconcile_progress(tar_path)
+  members_total = len(union_members)
+  members_done = 0
+  merge_started = float(clock())
+  last_progress_mono = merge_started
+  warn_emitted = False
   tmp_path = "%s.merge.tmp" % tar_path
   try:
     if os.path.exists(tmp_path):
       os.remove(tmp_path)
   except OSError:
     pass
-  last_yield_poll = time.monotonic()
+  last_yield_poll = float(clock())
+  if callable(on_merge_progress):
+    try:
+      on_merge_progress(members_done, members_total, last_progress_mono)
+    except Exception:
+      pass
+
+  def _maybe_stall_yield_at_checkpoint() -> None:
+    """
+    Raise ``DayCloseYieldError`` when merge progress is stalled too long.
+
+    Returns:
+      None
+
+    Raises:
+      DayCloseYieldError: On stall-confirmed or hot-path yield.
+
+    Examples:
+      >>> # nested checkpoint; invoked from rebuild_daily_tar_member_union_in_place
+      >>> None is None
+      True
+    """
+    nonlocal warn_emitted, last_yield_poll
+    now = float(clock())
+    stuck_s = now - last_progress_mono
+    elapsed_s = now - merge_started
+    if stuck_s >= yield_s:
+      _emit_reconcile_stage_progress(
+          day_token,
+          members_done=members_done,
+          members_total=members_total,
+          elapsed_s=elapsed_s,
+          advancing=False,
+          stuck_s=stuck_s,
+          log_fn=log_fn,
+          force=True,
+      )
+      raise DayCloseYieldError(
+          tar_path,
+          phase=yield_phase,
+          reason="stall_confirmed",
+      )
+    if stuck_s >= warn_s:
+      if not warn_emitted:
+        _emit_reconcile_stage_progress(
+            day_token,
+            members_done=members_done,
+            members_total=members_total,
+            elapsed_s=elapsed_s,
+            advancing=False,
+            stuck_s=stuck_s,
+            log_fn=log_fn,
+            force=True,
+        )
+        warn_emitted = True
+      else:
+        _emit_reconcile_stage_progress(
+            day_token,
+            members_done=members_done,
+            members_total=members_total,
+            elapsed_s=elapsed_s,
+            advancing=False,
+            stuck_s=stuck_s,
+            log_fn=log_fn,
+            force=False,
+        )
+    last_yield_poll, _ = check_day_close_yield_or_continue(
+        tar_path,
+        last_poll_monotonic=last_yield_poll,
+        tgz_archive_dir=tgz_archive_dir,
+        phase=yield_phase,
+    )
+
   try:
     with file_write_lock(tar_path):
       with tarfile.open(tmp_path, "w") as tout:
         for member_name in sorted(union_members):
-          last_yield_poll, _ = check_day_close_yield_or_continue(
-              tar_path,
-              last_poll_monotonic=last_yield_poll,
-              tgz_archive_dir=tgz_archive_dir,
-              phase=yield_phase,
-          )
+          _maybe_stall_yield_at_checkpoint()
           if not _copy_union_member_into_tar(
               tout,
               member_name,
@@ -9455,6 +9656,26 @@ def rebuild_daily_tar_member_union_in_place(
             except OSError:
               pass
             return False
+          members_done += 1
+          last_progress_mono = float(clock())
+          warn_emitted = False
+          if callable(on_merge_progress):
+            try:
+              on_merge_progress(
+                  members_done, members_total, last_progress_mono,
+              )
+            except Exception:
+              pass
+          _emit_reconcile_stage_progress(
+              day_token,
+              members_done=members_done,
+              members_total=members_total,
+              elapsed_s=last_progress_mono - merge_started,
+              advancing=True,
+              stuck_s=0.0,
+              log_fn=log_fn,
+              force=False,
+          )
       requested, reason = day_close_yield_requested(
           tar_path,
           tgz_archive_dir=tgz_archive_dir,
@@ -9555,6 +9776,10 @@ def reconcile_open_tar_with_sealed_zst(
   log_fn: Any = log_print,
   tgz_archive_dir: str = "",
   keep_uncompressed_tar: bool = False,
+  monotonic_fn: Any | None = None,
+  stall_warn_s: float | None = None,
+  stall_yield_s: float | None = None,
+  on_merge_progress: Any | None = None,
 ) -> ReconcileResult:
   """
   Repair, merge, seal, and optionally drop an open daily tar against its zst.
@@ -9569,6 +9794,10 @@ def reconcile_open_tar_with_sealed_zst(
     log_fn (Any): Logger callable.
     tgz_archive_dir (str): Daily archive root.
     keep_uncompressed_tar (bool): Retain tar after seal when True.
+    monotonic_fn (Any | None): Optional clock for merge stall windows.
+    stall_warn_s (float | None): Override reconcile stall warn seconds.
+    stall_yield_s (float | None): Override reconcile stall yield seconds.
+    on_merge_progress (Any | None): Optional merge progress callback.
 
   Returns:
     ReconcileResult: Structured reconcile outcome.
@@ -9641,6 +9870,10 @@ def reconcile_open_tar_with_sealed_zst(
         log_fn=log_fn,
         tgz_archive_dir=tgz_archive_dir,
         yield_phase="tar_merge",
+        monotonic_fn=monotonic_fn,
+        stall_warn_s=stall_warn_s,
+        stall_yield_s=stall_yield_s,
+        on_merge_progress=on_merge_progress,
     ):
       return ReconcileResult(False, action, "merge_failed")
     tar_members = get_mutable_tar_authority_member_map(tar_path)

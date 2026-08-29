@@ -1497,6 +1497,7 @@ def _run_day_close_job(
     return "deferred_age"
   remaining_raw = False
   tar_dropped = False
+  stage = "init"
   try:
     from django.db import close_old_connections
 
@@ -1511,6 +1512,9 @@ def _run_day_close_job(
         dedupe_tar_keep_largest_file_per_member,
         reconcile_open_tar_with_sealed_zst,
         seal_dirty_daily_archives,
+    )
+    from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+        DayCloseYieldError,
     )
     from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
         DayRawRemovalCoordinator,
@@ -1543,37 +1547,176 @@ def _run_day_close_job(
             )
         ),
     )
+
+    def _stage_enter(name: str) -> None:
+      """
+      Log day-close stage_enter and track current stage name.
+
+      Args:
+        name (str): Stage label.
+
+      Returns:
+        None
+
+      Examples:
+        >>> # nested logger; invoked from _run_day_close_job
+        >>> None is None
+        True
+      """
+      nonlocal stage
+      stage = name
+      _log(
+          "queue_orchestrator day_close stage_enter day=%s stage=%s"
+          % (day_token, name),
+          log_fn=log_fn,
+      )
+
+    def _stage_exit(name: str, *, result: str, reason: str = "") -> None:
+      """
+      Log day-close stage_exit with result and optional reason.
+
+      Args:
+        name (str): Stage label.
+        result (str): Outcome token (``ok``, ``yielded``, ``fail``).
+        reason (str): Optional reason token.
+
+      Returns:
+        None
+
+      Examples:
+        >>> # nested logger; invoked from _run_day_close_job
+        >>> None is None
+        True
+      """
+      if reason:
+        _log(
+            "queue_orchestrator day_close stage_exit day=%s stage=%s "
+            "result=%s reason=%s" % (day_token, name, result, reason),
+            log_fn=log_fn,
+        )
+      else:
+        _log(
+            "queue_orchestrator day_close stage_exit day=%s stage=%s result=%s"
+            % (day_token, name, result),
+            log_fn=log_fn,
+        )
+
     # DC-01: reconcile/repair → pre-seal verify → dedupe → seal → post-seal → delete → tar-drop.
     if os.path.isfile(tar_path):
+      _stage_enter("reconcile_merge")
       try:
+        updater = getattr(coord, "update_reconcile_progress", None)
+        if callable(updater):
+          updater(
+              tar_path,
+              worker_stage="reconcile_merge",
+              members_done=0,
+              members_total=0,
+              last_progress_ts=time.monotonic(),
+          )
+
+        def _on_merge_progress(done: int, total: int, last_mono: float) -> None:
+          """
+          Persist reconcile merge counters on the day_raw_removal manifest.
+
+          Args:
+            done (int): Members copied so far.
+            total (int): Union member count.
+            last_mono (float): Monotonic timestamp of last progress.
+
+          Returns:
+            None
+
+          Examples:
+            >>> # nested callback; invoked from rebuild_daily_tar_member_union_in_place
+            >>> None is None
+            True
+          """
+          if callable(updater):
+            updater(
+                tar_path,
+                worker_stage="reconcile_merge",
+                members_done=done,
+                members_total=total,
+                last_progress_ts=last_mono,
+            )
+
+        remaining_fn = getattr(
+            coord, "remaining_raw_paths_blocking_tar_drop", None,
+        )
+        remaining_raw_by_gz = (
+            remaining_fn(tar_path) if callable(remaining_fn) else {}
+        )
         reconcile_open_tar_with_sealed_zst(
             tar_path,
             zstd_threads=get_archive_zstd_threads(),
             compress_level=get_archive_zstd_level(),
-            remaining_raw_by_gz=coord.remaining_raw_paths_blocking_tar_drop(
-                tar_path,
-            ),
+            remaining_raw_by_gz=remaining_raw_by_gz,
             force_remove_uncompressed_tar=False,
             log_fn=quiet,
             tgz_archive_dir=tgz_archive_dir,
             keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
+            on_merge_progress=_on_merge_progress,
         )
         progress.record(day_token, "reconcile", 1)
+        _stage_exit("reconcile_merge", result="ok")
+      except DayCloseYieldError as exc:
+        reason = str(getattr(exc, "reason", "") or "yield_requested")
+        _stage_exit("reconcile_merge", result="yielded", reason=reason)
+        return "yielded"
       except Exception as exc:
         _log(
             "queue_orchestrator day_close reconcile fail day=%s err=%s"
             % (day_token, type(exc).__name__),
             log_fn=log_fn,
         )
+        _stage_exit(
+            "reconcile_merge",
+            result="fail",
+            reason=type(exc).__name__,
+        )
+      _stage_enter("pre_seal_verify")
       try:
-        coord.run_pre_seal_verify_sync(tar_path)
+        try:
+          pre_seal_ok = coord.run_pre_seal_verify_sync(
+              tar_path,
+              max_classify_batches=1,
+          )
+        except TypeError:
+          pre_seal_ok = coord.run_pre_seal_verify_sync(tar_path)
       except Exception as exc:
         _log(
             "queue_orchestrator day_close pre_seal_verify fail day=%s err=%s"
             % (day_token, type(exc).__name__),
             log_fn=log_fn,
         )
+        _stage_exit(
+            "pre_seal_verify",
+            result="fail",
+            reason=type(exc).__name__,
+        )
         return "verify_failed"
+      if not pre_seal_ok:
+        _stage_exit(
+            "pre_seal_verify",
+            result="yielded",
+            reason="classify_batch_resume",
+        )
+        return "yielded"
+      _stage_exit("pre_seal_verify", result="ok")
+      handoff_fn = getattr(coord, "should_handoff_to_ingest", None)
+      if callable(handoff_fn) and handoff_fn(tar_path):
+        _stage_enter("wait_on_ingest")
+        complete_fn = getattr(coord, "complete_handoff_to_ingest", None)
+        if callable(complete_fn):
+          complete_fn(tar_path, reason="day_close_wait_on_ingest")
+        _stage_exit(
+            "wait_on_ingest",
+            result="yielded",
+            reason="wait_on_ingest",
+        )
+        return "yielded"
+      _stage_enter("dedupe")
       try:
         dedupe_tar_keep_largest_file_per_member(
             tar_path,
@@ -1581,13 +1724,20 @@ def _run_day_close_job(
             tgz_archive_dir=tgz_archive_dir,
         )
         progress.record(day_token, "dedupe", 1)
+        _stage_exit("dedupe", result="ok")
+      except DayCloseYieldError as exc:
+        reason = str(getattr(exc, "reason", "") or "yield_requested")
+        _stage_exit("dedupe", result="yielded", reason=reason)
+        return "yielded"
       except Exception as exc:
         _log(
             "queue_orchestrator day_close dedupe fail day=%s err=%s"
             % (day_token, type(exc).__name__),
             log_fn=log_fn,
         )
+        _stage_exit("dedupe", result="fail", reason=type(exc).__name__)
 
+    _stage_enter("seal")
     seal_dirty_daily_archives(
         tgz_archive_dir,
         local_tz=get_local_timezone(),
@@ -1600,28 +1750,39 @@ def _run_day_close_job(
         only_when_no_remaining_raw=True,
         log_fn=quiet,
     )
+    _stage_exit("seal", result="ok")
     remaining_raw = bool(coord.has_closed_raw_on_disk(tar_path))
 
     if os.path.isfile(tar_path) or os.path.isfile(tar_path + ".zst"):
+      _stage_enter("post_seal_verify")
       try:
         coord.run_post_seal_verify_sync(tar_path)
+        _stage_exit("post_seal_verify", result="ok")
       except Exception as exc:
         _log(
             "queue_orchestrator day_close post_seal_verify fail day=%s err=%s"
             % (day_token, type(exc).__name__),
             log_fn=log_fn,
         )
+        _stage_exit(
+            "post_seal_verify",
+            result="fail",
+            reason=type(exc).__name__,
+        )
 
+    _stage_enter("raw_delete")
     deleted = int(coord.apply_batch_delete(tar_path) or 0)
     if deleted > 0:
       remaining_raw = bool(coord.has_closed_raw_on_disk(tar_path))
       progress.record(day_token, "raw_delete", 1)
+    _stage_exit("raw_delete", result="ok")
     zst_path = tar_path + ".zst"
     if (
         os.path.isfile(zst_path)
         and os.path.isfile(tar_path)
         and not remaining_raw
     ):
+      _stage_enter("tar_drop")
       try:
         os.remove(tar_path)
         tar_dropped = True
@@ -1630,12 +1791,22 @@ def _run_day_close_job(
             "queue_orchestrator day_close tar_drop day=%s" % day_token,
             log_fn=log_fn,
         )
+        _stage_exit("tar_drop", result="ok")
       except OSError as exc:
         _log(
             "queue_orchestrator day_close tar_drop fail day=%s err=%s"
             % (day_token, type(exc).__name__),
             log_fn=log_fn,
         )
+        _stage_exit("tar_drop", result="fail", reason=type(exc).__name__)
+  except DayCloseYieldError as exc:
+    reason = str(getattr(exc, "reason", "") or "yield_requested")
+    _log(
+        "queue_orchestrator day_close stage_exit day=%s stage=%s "
+        "result=yielded reason=%s" % (day_token, stage, reason),
+        log_fn=log_fn,
+    )
+    return "yielded"
   except Exception as exc:
     _log(
         "queue_orchestrator day_close error day=%s err=%s"
@@ -2767,6 +2938,14 @@ def _fill_day_close_slots(
         "dc_run",
         1,
     )
+    _log(
+        "queue_orchestrator day_close claim day=%s identity=%s"
+        % (
+            progress.day_token_from_day_close_identity(claim.identity),
+            claim.identity,
+        ),
+        log_fn=log_fn,
+    )
     submitted += 1
   return submitted
 
@@ -2824,9 +3003,15 @@ def _drain_day_close_ready(
           % (identity, failure),
           log_fn=log_fn,
       )
+    day_tok = progress.day_token_from_day_close_identity(identity)
+    _log(
+        "queue_orchestrator day_close vacate day=%s identity=%s outcome=%s"
+        % (day_tok, identity, failure or outcome),
+        log_fn=log_fn,
+    )
     if failure or outcome == "verify_failed":
       progress.record(
-          progress.day_token_from_day_close_identity(identity),
+          day_tok,
           "verify_failed",
           1,
       )
@@ -2839,7 +3024,6 @@ def _drain_day_close_ready(
           log_fn=log_fn,
       )
       continue
-    day_tok = progress.day_token_from_day_close_identity(identity)
     if outcome != "complete":
       if outcome == "deferred_age":
         progress.record(day_tok, "deferred_age", 1)

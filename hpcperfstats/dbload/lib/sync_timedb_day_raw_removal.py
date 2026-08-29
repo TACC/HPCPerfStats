@@ -163,6 +163,10 @@ def _new_manifest(tar_path: str) -> Dict[str, Any]:
       "tar_path": os.path.normpath(tar_path),
       "phase": PHASE_VERIFYING,
       "verify_stage": VERIFY_STAGE_NONE,
+      "worker_stage": "",
+      "members_done": 0,
+      "members_total": 0,
+      "last_progress_ts": None,
       "started_at": time.time(),
       "completed_at": None,
       "verified_count": 0,
@@ -1564,6 +1568,10 @@ class _DayRawRemovalState:
           pending_delete += 1
       return {
           "phase": str(self._manifest.get("phase") or ""),
+          "worker_stage": str(self._manifest.get("worker_stage") or ""),
+          "members_done": int(self._manifest.get("members_done", 0) or 0),
+          "members_total": int(self._manifest.get("members_total", 0) or 0),
+          "last_progress_ts": self._manifest.get("last_progress_ts"),
           "verified_count": int(self._manifest.get("verified_count", 0)),
           "pending_delete": pending_delete,
           "deleted_count": int(self._manifest.get("deleted_count", 0)),
@@ -1789,13 +1797,59 @@ class _DayRawRemovalState:
           flush=True,
       )
 
-  def _pre_seal_verify_body(self) -> bool:
+  def update_reconcile_progress(
+    self,
+    *,
+    worker_stage: str = "",
+    members_done: int | None = None,
+    members_total: int | None = None,
+    last_progress_ts: float | None = None,
+  ) -> None:
     """
-    Run pre-seal verify to completion on the day-close worker; batch internally.
-    
+    Persist day-close reconcile progress fields on the raw-removal manifest.
+
+    Args:
+      worker_stage (str): Stage label (for example ``reconcile_merge``).
+      members_done (int | None): Members copied so far.
+      members_total (int | None): Union member count.
+      last_progress_ts (float | None): Monotonic or wall progress timestamp.
+
     Returns:
-      bool: True or False for this check.
-    
+      None
+
+    Examples:
+      >>> _DayRawRemovalState().update_reconcile_progress(
+      ...   worker_stage="reconcile_merge")  # doctest: +SKIP
+    """
+    with self._lock:
+      if worker_stage:
+        self._manifest["worker_stage"] = str(worker_stage)
+      if members_done is not None:
+        self._manifest["members_done"] = int(members_done)
+      if members_total is not None:
+        self._manifest["members_total"] = int(members_total)
+      if last_progress_ts is not None:
+        self._manifest["last_progress_ts"] = float(last_progress_ts)
+      _save_manifest(self._manifest_path, self._manifest)
+
+  def _pre_seal_verify_body(
+    self,
+    *,
+    max_classify_batches: int | None = None,
+  ) -> bool:
+    """
+    Run pre-seal verify; optionally stop after ``max_classify_batches``.
+
+    When ``max_classify_batches`` is set (day-close claim), classify at most
+    that many path batches and return False so the worker can yield/requeue
+    with cursor resume. ``None`` runs all batches to completion.
+
+    Args:
+      max_classify_batches (int | None): Max classify batches this call.
+
+    Returns:
+      bool: True when pre-seal verify is complete.
+
     Examples:
       >>> _DayRawRemovalState()._pre_seal_verify_body()  # doctest: +SKIP
     """
@@ -1870,7 +1924,13 @@ class _DayRawRemovalState:
         if cfg.get_sync_archive_require_db_ingest()
         else None
     )
+    batches_run = 0
     while cursor < len(filtered) and not shutdown_requested[0]:
+      if (
+          max_classify_batches is not None
+          and batches_run >= int(max_classify_batches)
+      ):
+        break
       batch_end = min(cursor + paths_per_tick, len(filtered))
       batch = filtered[cursor:batch_end]
       classify_paths = batch
@@ -1907,13 +1967,13 @@ class _DayRawRemovalState:
           def _gate_one(path: str) -> Any:
             """
             Internal helper to handle gate one.
-            
+
             Args:
               path (str): String for path.
-            
+
             Returns:
               Any: Value produced by this call (type depends on inputs).
-            
+
             Examples:
               >>> _DayRawRemovalState()._gate_one("x")  # doctest: +SKIP
             """
@@ -1950,6 +2010,7 @@ class _DayRawRemovalState:
         ):
           self._record_entry(path, zst_path, status, reason)
       cursor = batch_end
+      batches_run += 1
       with self._lock:
         self._manifest["pre_seal_classify_index"] = cursor
         _save_manifest(self._manifest_path, self._manifest)
@@ -2806,16 +2867,23 @@ class DayRawRemovalCoordinator:
     """
     return bool(self._get_or_create_day(tar_path).handoff_paths_for_ingest())
 
-  def run_pre_seal_verify_sync(self, tar_path: str) -> bool:
+  def run_pre_seal_verify_sync(
+    self,
+    tar_path: str,
+    *,
+    max_classify_batches: int | None = None,
+  ) -> bool:
     """
     Run the pre seal verify sync.
-    
+
     Args:
       tar_path (str): String for tar path.
-    
+      max_classify_batches (int | None): When set, classify at most this many
+        batches then return False for cursor resume (day-close claim).
+
     Returns:
       bool: True or False for this check.
-    
+
     Examples:
       >>> DayRawRemovalCoordinator().run_pre_seal_verify_sync("x")
     """
@@ -2824,7 +2892,41 @@ class DayRawRemovalCoordinator:
     state = self._get_or_create_day(tar_path)
     if state.pre_seal_verification_complete():
       return True
-    return state._pre_seal_verify_body()
+    return state._pre_seal_verify_body(max_classify_batches=max_classify_batches)
+
+  def update_reconcile_progress(
+    self,
+    tar_path: str,
+    *,
+    worker_stage: str = "",
+    members_done: int | None = None,
+    members_total: int | None = None,
+    last_progress_ts: float | None = None,
+  ) -> None:
+    """
+    Persist reconcile progress on the day raw-removal manifest.
+
+    Args:
+      tar_path (str): Daily tar path.
+      worker_stage (str): Stage label.
+      members_done (int | None): Members copied.
+      members_total (int | None): Union size.
+      last_progress_ts (float | None): Progress timestamp.
+
+    Returns:
+      None
+
+    Examples:
+      >>> DayRawRemovalCoordinator().update_reconcile_progress("x")
+    """
+    if not self.enabled:
+      return
+    self._get_or_create_day(tar_path).update_reconcile_progress(
+        worker_stage=worker_stage,
+        members_done=members_done,
+        members_total=members_total,
+        last_progress_ts=last_progress_ts,
+    )
 
   def run_post_seal_verify_sync(self, tar_path: str) -> bool:
     """

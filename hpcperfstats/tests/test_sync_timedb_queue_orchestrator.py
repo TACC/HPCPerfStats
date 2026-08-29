@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import time
 from datetime import date, datetime
 from multiprocessing import Process
 from pathlib import Path
@@ -1202,6 +1203,194 @@ def test_day_close_error_detail_is_logged(monkeypatch):
   src = inspect.getsource(qo._drain_day_close_ready)
   assert "type(exc).__name__" in src
   assert "failure" in src
+
+
+def test_day_close_claim_vacate_and_stage_enter_logged(tmp_path, monkeypatch):
+  """Fill/drain and job body emit claim/vacate/stage_enter breadcrumbs."""
+  from concurrent.futures import Future
+
+  from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      DayCloseYieldError,
+  )
+
+  logs = []
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2020-01-01"
+  tar = daily / ("%s.tar" % day)
+  zst = daily / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  zst.write_bytes(b"zst")
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+      lambda *a, **k: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+      lambda *a, **k: (_ for _ in ()).throw(
+          DayCloseYieldError(str(tar), phase="tar_merge", reason="stall_confirmed"),
+      ),
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def run_pre_seal_verify_sync(self, _tar_path, **_kw):
+      return True
+
+    def run_post_seal_verify_sync(self, _tar_path):
+      return True
+
+    def apply_batch_delete(self, _tar_path):
+      return 0
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return False
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      return {}
+
+    def update_reconcile_progress(self, *_a, **_k):
+      pass
+
+    def should_handoff_to_ingest(self, _tar_path):
+      return False
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda msg, **k: logs.append(str(msg)),
+  )
+  assert outcome == "yielded"
+  joined = "\n".join(logs)
+  assert "stage_enter" in joined and "reconcile_merge" in joined
+  assert "stall_confirmed" in joined
+  assert "stage_exit" in joined and "result=yielded" in joined
+
+  client = FakeRedis()
+  claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_DAY_CLOSE,
+      identity=str(tar),
+      owner_token="owner-test",
+      deadline=time.time() + 3600,
+      score=None,
+  )
+  fut = Future()
+  fut.set_result("yielded")
+  qo._drain_day_close_ready(
+      client,
+      inflight={str(tar): fut},
+      leases={str(tar): claim},
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda msg, **k: logs.append(str(msg)),
+  )
+  assert any("day_close vacate" in line for line in logs)
+
+  class _Ex:
+    def submit(self, fn, *a, **k):
+      f = Future()
+      f.set_result("complete")
+      return f
+
+  monkeypatch.setattr(
+      jq,
+      "claim_list_job",
+      lambda *a, **k: claim,
+  )
+  monkeypatch.setattr(qo.cfg, "get_sync_day_close_max_inflight", lambda: 1)
+  fill_logs = []
+  submitted = qo._fill_day_close_slots(
+      client,
+      executor=_Ex(),
+      inflight={},
+      leases={},
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda msg, **k: fill_logs.append(str(msg)),
+  )
+  assert submitted == 1
+  assert any("day_close claim" in line for line in fill_logs)
+
+
+def test_day_close_wait_on_ingest_yield(tmp_path, monkeypatch):
+  """Only-waiting-on-ingest must handoff and return yielded (release slot)."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import ReconcileResult
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2020-01-01"
+  tar = daily / ("%s.tar" % day)
+  zst = daily / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  zst.write_bytes(b"zst")
+  handoffs = []
+  logs = []
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+      lambda *a, **k: ReconcileResult(True, "noop", "already_equivalent"),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+      lambda *a, **k: True,
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def run_pre_seal_verify_sync(self, _tar_path, **_kw):
+      return True
+
+    def should_handoff_to_ingest(self, _tar_path):
+      return True
+
+    def complete_handoff_to_ingest(self, tar_path, reason=""):
+      handoffs.append((tar_path, reason))
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      return {}
+
+    def update_reconcile_progress(self, *_a, **_k):
+      pass
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda msg, **k: logs.append(str(msg)),
+  )
+  assert outcome == "yielded"
+  assert handoffs and handoffs[0][1] == "day_close_wait_on_ingest"
+  assert any("wait_on_ingest" in line for line in logs)
 
 
 def test_startup_rejects_allkeys_eviction_policy():

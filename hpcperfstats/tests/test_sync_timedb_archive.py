@@ -467,6 +467,197 @@ def test_reconcile_noop_when_maps_equivalent(tmp_path):
   assert not tar_path.is_file()
 
 
+def test_rebuild_union_stage_progress_advancing_true(tmp_path, monkeypatch):
+  """Advancing member copies emit stage_progress advancing=true."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      rebuild_daily_tar_member_union_in_place,
+  )
+
+  tar_path = tmp_path / "2024-04-01.tar"
+  zst_path = tmp_path / "2024-04-01.tar.zst"
+  a = tmp_path / "a.txt"
+  b = tmp_path / "b.txt"
+  a.write_text("aaa")
+  b.write_text("bbbb")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(a), arcname="a.txt")
+    tf.add(str(b), arcname="b.txt")
+  logs = []
+  monkeypatch.setattr(
+      helpers, "verify_tar_archive_readable", lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      helpers, "invalidate_after_daily_tar_mutation", lambda *_a, **_k: None,
+  )
+  ok = rebuild_daily_tar_member_union_in_place(
+      str(tar_path),
+      str(zst_path),
+      {"a.txt": len("aaa"), "b.txt": len("bbbb")},
+      log_fn=lambda msg, **k: logs.append(str(msg)),
+      stall_warn_s=9999,
+      stall_yield_s=99999,
+  )
+  assert ok is True
+  progress_lines = [line for line in logs if "stage_progress" in line]
+  assert progress_lines
+  assert any("advancing=true" in line for line in progress_lines)
+
+
+def test_rebuild_union_stall_warn_without_yield(tmp_path, monkeypatch):
+  """Frozen counter past warn but under yield logs advancing=false and keeps going."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      rebuild_daily_tar_member_union_in_place,
+  )
+
+  tar_path = tmp_path / "2024-04-02.tar"
+  zst_path = tmp_path / "2024-04-02.tar.zst"
+  a = tmp_path / "a.txt"
+  b = tmp_path / "b.txt"
+  a.write_text("aaa")
+  b.write_text("bbbb")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(a), arcname="a.txt")
+    tf.add(str(b), arcname="b.txt")
+  clock = {"t": 0.0}
+
+  def _mono():
+    return float(clock["t"])
+
+  def _on_progress(done, total, last_mono):
+    if done == 1:
+      clock["t"] = 150.0
+
+  monkeypatch.setattr(
+      helpers, "verify_tar_archive_readable", lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      helpers, "invalidate_after_daily_tar_mutation", lambda *_a, **_k: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation."
+      "check_day_close_yield_or_continue",
+      lambda *a, **k: (_mono(), False),
+  )
+  logs = []
+  ok = rebuild_daily_tar_member_union_in_place(
+      str(tar_path),
+      str(zst_path),
+      {"a.txt": len("aaa"), "b.txt": len("bbbb")},
+      log_fn=lambda msg, **k: logs.append(str(msg)),
+      monotonic_fn=_mono,
+      stall_warn_s=120.0,
+      stall_yield_s=1800.0,
+      on_merge_progress=_on_progress,
+  )
+  assert ok is True
+  assert any("advancing=false" in line and "stuck_s=" in line for line in logs)
+  assert not any("stall_confirmed" in line for line in logs)
+
+
+def test_rebuild_union_stall_confirm_yield(tmp_path, monkeypatch):
+  """Frozen counter past yield window raises DayCloseYieldError stall_confirmed."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      rebuild_daily_tar_member_union_in_place,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      DayCloseYieldError,
+  )
+
+  tar_path = tmp_path / "2024-04-03.tar"
+  zst_path = tmp_path / "2024-04-03.tar.zst"
+  a = tmp_path / "a.txt"
+  b = tmp_path / "b.txt"
+  a.write_text("aaa")
+  b.write_text("bbbb")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(a), arcname="a.txt")
+    tf.add(str(b), arcname="b.txt")
+  clock = {"t": 0.0}
+
+  def _mono():
+    return float(clock["t"])
+
+  def _on_progress(done, total, last_mono):
+    if done == 1:
+      clock["t"] = 2000.0
+
+  monkeypatch.setattr(
+      helpers, "verify_tar_archive_readable", lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation."
+      "check_day_close_yield_or_continue",
+      lambda *a, **k: (_mono(), False),
+  )
+  with pytest.raises(DayCloseYieldError) as caught:
+    rebuild_daily_tar_member_union_in_place(
+        str(tar_path),
+        str(zst_path),
+        {"a.txt": len("aaa"), "b.txt": len("bbbb")},
+        log_fn=lambda *a, **k: None,
+        monotonic_fn=_mono,
+        stall_warn_s=120.0,
+        stall_yield_s=1800.0,
+        on_merge_progress=_on_progress,
+    )
+  assert caught.value.reason == "stall_confirmed"
+
+
+def test_rebuild_union_progress_resets_stall_timer(tmp_path, monkeypatch):
+  """Progress after a warn window resets stuck path; no stall yield."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      rebuild_daily_tar_member_union_in_place,
+  )
+
+  tar_path = tmp_path / "2024-04-04.tar"
+  zst_path = tmp_path / "2024-04-04.tar.zst"
+  files = []
+  for name in ("a.txt", "b.txt", "c.txt"):
+    p = tmp_path / name
+    p.write_text(name)
+    files.append(p)
+  with tarfile.open(tar_path, "w") as tf:
+    for p in files:
+      tf.add(str(p), arcname=p.name)
+  clock = {"t": 0.0}
+
+  def _mono():
+    return float(clock["t"])
+
+  def _on_progress(done, total, last_mono):
+    if done == 1:
+      clock["t"] = 150.0
+    elif done == 2:
+      clock["t"] = 160.0
+
+  monkeypatch.setattr(
+      helpers, "verify_tar_archive_readable", lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      helpers, "invalidate_after_daily_tar_mutation", lambda *_a, **_k: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation."
+      "check_day_close_yield_or_continue",
+      lambda *a, **k: (_mono(), False),
+  )
+  ok = rebuild_daily_tar_member_union_in_place(
+      str(tar_path),
+      str(zst_path),
+      {p.name: p.stat().st_size for p in files},
+      log_fn=lambda *a, **k: None,
+      monotonic_fn=_mono,
+      stall_warn_s=120.0,
+      stall_yield_s=1800.0,
+      on_merge_progress=_on_progress,
+  )
+  assert ok is True
+
+
 def test_append_repairs_truncated_tar_before_restore_from_zst(
     monkeypatch, tmp_path,
 ):
