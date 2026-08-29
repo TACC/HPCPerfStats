@@ -269,14 +269,18 @@ def test_docker_compose_web_build_uses_hpcperfstats_full_target():
 
 # Operator-facing bind devices that must stay in docker-compose.settings.yaml.example
 # (see docker-compose-settings-example-sync.mdc).
-_OPERATOR_SETTINGS_BIND_DEVICES = (
+_OPERATOR_SETTINGS_SHARED_BIND_DEVICES = (
     "device: /data/hpcperfstats_data/site_data",
     "device: /data/hpcperfstats_site/staticfiles",
     "device: /data/hpcperfstats_site/media",
     "device: /data/hpcperfstats_db/pg15",
     "device: /data/hpcperfstats_data/rabbitmq",
-    "device: /home/sharrell/.ssh",
-    "device: /etc/letsencrypt/live/stats.stampede3.tacc.utexas.edu",
+)
+
+_OPERATOR_SETTINGS_EXAMPLE_SSH_DEVICE = "device: /keys_directory/.ssh"
+
+_OPERATOR_SETTINGS_SSL_DEVICE = (
+    "device: /etc/letsencrypt/live/stats.stampede3.tacc.utexas.edu"
 )
 
 _OPERATOR_SETTINGS_VOLUME_NAMES = (
@@ -295,15 +299,17 @@ def test_docker_compose_settings_example_operator_markers():
   example_content = (repo_root / "docker-compose.settings.yaml.example").read_text()
   for marker in _OPERATOR_SETTINGS_VOLUME_NAMES:
     assert marker in example_content, "example missing volume: %s" % marker
-  for marker in _OPERATOR_SETTINGS_BIND_DEVICES:
+  for marker in _OPERATOR_SETTINGS_SHARED_BIND_DEVICES:
     assert marker in example_content, "example missing bind device: %s" % marker
+  assert _OPERATOR_SETTINGS_EXAMPLE_SSH_DEVICE in example_content
+  assert _OPERATOR_SETTINGS_SSL_DEVICE in example_content
   assert "SYS_PTRACE" in example_content
   assert "15672:15672" in example_content
   assert "5432:5432" in example_content
 
 
 def test_docker_compose_settings_example_operator_parity():
-  """When local docker-compose.settings.yaml exists, bind devices must match .example."""
+  """Shared /data binds must match .example; ssh device may differ per site."""
   repo_root = Path(__file__).resolve().parents[2]
   settings_path = repo_root / "docker-compose.settings.yaml"
   example_path = repo_root / "docker-compose.settings.yaml.example"
@@ -311,9 +317,17 @@ def test_docker_compose_settings_example_operator_parity():
     return
   settings_content = settings_path.read_text()
   example_content = example_path.read_text()
-  for marker in _OPERATOR_SETTINGS_BIND_DEVICES:
+  for marker in _OPERATOR_SETTINGS_SHARED_BIND_DEVICES:
     assert marker in settings_content, "settings yaml missing bind: %s" % marker
     assert marker in example_content, "example missing bind: %s" % marker
+  for name in _OPERATOR_SETTINGS_VOLUME_NAMES:
+    assert name in settings_content
+    assert name in example_content
+  assert re.search(
+      r"(?ms)^  ssh_keys:.*?^\s+device:\s+\S+",
+      settings_content,
+  ), "settings must set ssh_keys device"
+  assert _OPERATOR_SETTINGS_EXAMPLE_SSH_DEVICE in example_content
 
 
 def test_docker_compose_test_overlay_clears_host_binds():

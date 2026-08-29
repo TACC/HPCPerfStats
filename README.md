@@ -243,7 +243,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    cp docker-compose.settings.yaml.example docker-compose.settings.yaml
    ```
 
-   **`docker-compose.settings.yaml` is gitignored** — treat **`docker-compose.settings.yaml.example`** as the committed operator template. Base **`docker-compose.yaml`** `include`s the settings file automatically; you do **not** pass a second `-f` for settings. After `cp`, edit site-specific **`device:`** paths below; any new bind volumes or optional knobs must be added to **`.example`** in the repo (see **`hpcperfstats/cursor-rules/docker-compose-settings-example-sync.mdc`**) so the next clone gets them.
+   **`docker-compose.settings.yaml` is gitignored** — treat **`docker-compose.settings.yaml.example`** as the committed operator template. Base **`docker-compose.yaml`** `include`s the settings file automatically; you do **not** pass a second `-f` for settings. Named volume definitions (bind `device:` paths) live **only** in settings — base compose mounts them by name and must not declare empty volume stubs (podman-compose cannot merge null stubs with settings dicts). After `cp`, edit site-specific **`device:`** paths below; any new bind volumes or optional knobs must be added to **`.example`** in the repo (see **`hpcperfstats/cursor-rules/docker-compose-settings-example-sync.mdc`**) so the next clone gets them.
 
    Edit `docker-compose.settings.yaml` and set at least:
 
