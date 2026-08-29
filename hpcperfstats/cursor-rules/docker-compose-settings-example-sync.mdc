@@ -28,7 +28,7 @@ When you change **`docker-compose.settings.yaml`** in a way operators need after
 |---|---|
 | Top-level **`volumes:`** bind **`device:`** paths | All seven named volumes; keep comments for SSH / Let’s Encrypt live dir |
 | Commented optional **`services:`** knobs | `web`/`db`/`rabbitmq` host ports, pipeline `cap_add`, mem/grace overrides |
-| Volume **names** used by base compose | Must stay aligned with **`docker-compose.yaml`** `volumes:` name-only block |
+| Volume **names** used by base compose | Service mounts in **`docker-compose.yaml`** must match volume keys in settings; **do not** put empty/null volume stubs in base (podman-compose cannot merge `None` with settings dicts) |
 
 Service bodies for **`web`** / **`pipeline`** / infra live in **`docker-compose.yaml`** — do not reintroduce an app overlay.
 

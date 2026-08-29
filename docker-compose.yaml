@@ -252,15 +252,6 @@ services:
         aliases:
           - rabbitmq
 
-# Volume names only — bind devices live in docker-compose.settings.yaml.
-volumes:
-  hpcperfstatsdata:
-  staticfiles_data:
-  media_data:
-  postgres_data:
-  rabbitmq_messages:
-  ssh_keys:
-  ssl_certs:
 
 networks:
   hpcperfstats_net:

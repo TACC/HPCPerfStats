@@ -212,8 +212,40 @@ def test_docker_compose_includes_settings_not_app_or_pinning():
   assert "cpu-pinning" not in content
   assert not (repo_root / "docker-compose.app.yaml.example").exists()
   assert not (repo_root / "scripts" / "apply_compose_cpu_pinning.py").exists()
-  assert not (repo_root / "hpcperfstats" / "dbload" / "lib" / "compose_cpu_layout.py").exists()
-  assert not (repo_root / "hpcperfstats" / "dbload" / "lib" / "numa_topology.py").exists()
+  assert not (
+      repo_root / "hpcperfstats" / "dbload" / "lib" / "compose_cpu_layout.py"
+  ).exists()
+  assert not (
+      repo_root / "hpcperfstats" / "dbload" / "lib" / "numa_topology.py"
+  ).exists()
+
+
+def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
+  """Regression: podman-compose fails merging null volume stubs with settings dicts.
+
+  Signature (hpcperfstats04): ValueError: can't merge value of [hpcperfstatsdata]
+  of type <class 'NoneType'> and <class 'dict'> during include merge / down.
+  """
+  repo_root = Path(__file__).resolve().parents[2]
+  base = (repo_root / "docker-compose.yaml").read_text()
+  settings = (repo_root / "docker-compose.settings.yaml.example").read_text()
+  # Top-level volumes live only in settings (include). Bare `name:` under volumes
+  # parses as null and breaks podman-compose rec_merge_one.
+  assert re.search(r"(?m)^volumes:\s*$", base) is None
+  assert re.search(r"(?m)^volumes:\s*$", settings) is not None
+  for name in (
+      "hpcperfstatsdata",
+      "staticfiles_data",
+      "media_data",
+      "postgres_data",
+      "rabbitmq_messages",
+      "ssh_keys",
+      "ssl_certs",
+  ):
+    assert f"{name}:" in settings
+    assert "driver: local" in settings
+    # Service mounts in base still reference the volume names.
+    assert name in base
 
 
 def test_docker_compose_pipeline_ssh_uses_ssh_keys_volume():
