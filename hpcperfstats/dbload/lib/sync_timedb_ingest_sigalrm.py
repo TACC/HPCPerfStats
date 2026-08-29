@@ -22,10 +22,12 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
 @contextmanager
 def suspend_ingest_sigalrm_for_non_work_wait() -> Iterator[Any]:
   """
-  Disarm per-file SIGALRM during a non-work wait; extend deadline on exit.
+  Disarm per-file SIGALRM during a non-work wait; reset idle on exit.
 
   Use for Redis populate wait and Manager write-lock *acquire* only — not
-  while holding the lock during ``bulk_create``.
+  while holding the lock during ``bulk_create``. On exit, touch progress so
+  lock wait time does not count toward idle stall, then re-arm any remaining
+  wall deadline.
 
   Yields:
     Iterator[Any]: Control to the wait body; no value is produced.
@@ -34,8 +36,14 @@ def suspend_ingest_sigalrm_for_non_work_wait() -> Iterator[Any]:
     >>> with suspend_ingest_sigalrm_for_non_work_wait():
     ...   pass  # doctest: +SKIP
   """
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_progress import (
+      get_ingest_idle_stall_s,
+      touch_ingest_progress,
+  )
+
   deadline = get_ingest_task_deadline_monotonic()
-  if deadline is None or not hasattr(signal, "SIGALRM"):
+  idle_active = get_ingest_idle_stall_s()
+  if (deadline is None and idle_active is None) or not hasattr(signal, "SIGALRM"):
     yield
     return
   wait_t0 = time.monotonic()
@@ -47,14 +55,21 @@ def suspend_ingest_sigalrm_for_non_work_wait() -> Iterator[Any]:
     yield
   finally:
     elapsed = time.monotonic() - wait_t0
-    if elapsed > 0.0:
+    if elapsed > 0.0 and deadline is not None:
       extend_ingest_task_deadline_monotonic(elapsed)
+    touch_ingest_progress()
     new_deadline = get_ingest_task_deadline_monotonic()
-    if new_deadline is None:
+    candidates = []
+    if new_deadline is not None:
+      rem_wall = float(new_deadline) - time.monotonic()
+      if rem_wall > 0.0:
+        candidates.append(rem_wall)
+    idle_s = get_ingest_idle_stall_s()
+    if idle_s is not None and float(idle_s) > 0.0:
+      candidates.append(float(idle_s))
+    if not candidates:
       return
-    remaining = float(new_deadline) - time.monotonic()
-    if remaining <= 0.0:
-      return
+    remaining = min(candidates)
     if hasattr(signal, "setitimer"):
       signal.setitimer(signal.ITIMER_REAL, remaining)
     else:

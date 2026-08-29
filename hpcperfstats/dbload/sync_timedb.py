@@ -592,23 +592,28 @@ def _raise_if_ingest_per_file_deadline_exceeded(
   stage: Any,
 ) -> None:
   """
-  Monotonic deadline check for DB phases SIGALRM cannot interrupt.
-  
+  Monotonic deadline / idle-stall check for DB phases SIGALRM may miss.
+
   Args:
-    stats_file (str): String for stats file.
-    stage (Any): Mode or kind token selecting a code path.
-  
+    stats_file (str): Absolute closed raw stats path.
+    stage (Any): Worker stage token for timeout errors.
+
   Returns:
     None
-  
+
   Raises:
-    IngestPerFileTimeoutError: Raised when
-    ``_raise_if_ingest_per_file_deadline_exceeded`` hits a
-    ``IngestPerFileTimeoutError`` failure path.
-  
+    IngestPerFileTimeoutError: When wall deadline or idle stall is exceeded.
+
   Examples:
     >>> _raise_if_ingest_per_file_deadline_exceeded("x", None)  # doctest: +SKIP
   """
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_progress import (
+      raise_if_ingest_idle_stalled,
+      touch_ingest_progress,
+  )
+
+  touch_ingest_progress()
+  raise_if_ingest_idle_stalled(stats_file, "idle_stall")
   deadline = get_ingest_task_deadline_monotonic()
   if deadline is None:
     return
@@ -652,23 +657,39 @@ def _run_ingest_timed(
   enable_sigalrm: bool = True,
 ) -> Any:
   """
-  Run ingest worker body with optional Unix wall-clock cap.
-  
+  Run ingest worker body with optional wall-clock and/or idle-stall caps.
+
+  Wall-clock SIGALRM (B) runs only when ``resolve_ingest_per_file_timeout_s``
+  is ``> 0``. Idle stall arms a re-arming SIGALRM from
+  ``sync_ingest_stall_idle_s`` (progress heartbeats reset it). Coordinator
+  submit-age watchdog is retired — do not fall back to it.
+
   Args:
-    stats_file (str): String for stats file.
-    stage (Any): Mode or kind token selecting a code path.
+    stats_file (str): Absolute closed raw stats path.
+    stage (Any): Worker stage token for timeout errors.
     fn (Any): Callable invoked by this helper.
-    enable_sigalrm (bool): Whether to enable enable sigalrm.
-  
+    enable_sigalrm (bool): When False, skip SIGALRM (deadline checks remain).
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: Value produced by ``fn``.
+
   Examples:
     >>> _run_ingest_timed("x", None, None, True)  # doctest: +SKIP
   """
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_progress import (
+      begin_ingest_progress,
+      end_ingest_progress,
+      get_ingest_idle_stall_s,
+      get_ingest_last_progress_mono,
+      raise_if_ingest_idle_stalled,
+      touch_ingest_progress,
+  )
+
   timeout_s = resolve_ingest_per_file_timeout_s(stats_file)
+  idle_s = float(cfg.get_sync_ingest_stall_idle_s())
   deadline_token = None
   effective_token = None
+  progress_tokens = begin_ingest_progress(stats_file, idle_s=idle_s)
   if timeout_s > 0.0:
     effective_token = set_ingest_task_effective_timeout_s(timeout_s)
     deadline_token = set_ingest_task_deadline_monotonic(
@@ -677,7 +698,12 @@ def _run_ingest_timed(
   record_worker_stage(stats_file, stage, timeout_s=timeout_s)
   _log_long_ingest_timeout_budget_if_needed(stats_file, timeout_s)
   try:
-    if timeout_s <= 0.0 or not enable_sigalrm or not hasattr(signal, "SIGALRM"):
+    use_sigalrm = (
+        enable_sigalrm
+        and hasattr(signal, "SIGALRM")
+        and (timeout_s > 0.0 or idle_s > 0.0)
+    )
+    if not use_sigalrm:
       return fn()
 
     path_label = str(stats_file)
@@ -685,36 +711,92 @@ def _run_ingest_timed(
 
     def _handler(signum: Any, frame: Any) -> None:
       """
-      Internal helper to handle handler.
-      
+      SIGALRM handler: wall budget or idle-stall soft-kill.
+
       Args:
-        signum (Any): Signum passed to this helper.
-        frame (Any): Frame passed to this helper.
-      
+        signum (Any): Signal number (unused).
+        frame (Any): Interrupted frame (unused).
+
       Returns:
         None
-      
+
       Raises:
-        IngestPerFileTimeoutError: Raised when ``_handler`` hits a
-        ``IngestPerFileTimeoutError`` failure path.
-      
+        IngestPerFileTimeoutError: When wall or idle budget is exceeded.
+
       Examples:
         >>> _handler(None, None)  # doctest: +SKIP
       """
       del signum, frame
-      raise IngestPerFileTimeoutError(
-          path_label,
-          stage,
-          time.monotonic() - t0,
-      )
+      if timeout_s > 0.0 and (time.monotonic() - t0) >= float(timeout_s):
+        raise IngestPerFileTimeoutError(
+            path_label,
+            stage,
+            time.monotonic() - t0,
+        )
+      idle_active = get_ingest_idle_stall_s()
+      if idle_active is not None and float(idle_active) > 0.0:
+        raise_if_ingest_idle_stalled(path_label, "idle_stall")
+        last = get_ingest_last_progress_mono()
+        if last is not None:
+          remaining = float(idle_active) - (time.monotonic() - float(last))
+          if remaining > 0.0:
+            if hasattr(signal, "setitimer"):
+              signal.setitimer(signal.ITIMER_REAL, remaining)
+            else:
+              signal.alarm(max(1, int(remaining)))
+            return
+        raise IngestPerFileTimeoutError(
+            path_label, "idle_stall", time.monotonic() - t0,
+        )
+      if timeout_s > 0.0:
+        remaining_wall = float(timeout_s) - (time.monotonic() - t0)
+        if remaining_wall > 0.0:
+          if hasattr(signal, "setitimer"):
+            signal.setitimer(signal.ITIMER_REAL, remaining_wall)
+          else:
+            signal.alarm(max(1, int(remaining_wall)))
+          return
+        raise IngestPerFileTimeoutError(
+            path_label, stage, time.monotonic() - t0,
+        )
+
+    def _arm_timer() -> None:
+      """
+      Arm SIGALRM for the nearer of wall remaining and idle window.
+
+      Returns:
+        None
+
+      Examples:
+        >>> _arm_timer()  # doctest: +SKIP
+      """
+      candidates = []
+      if timeout_s > 0.0:
+        rem = float(timeout_s) - (time.monotonic() - t0)
+        if rem > 0.0:
+          candidates.append(rem)
+      idle_active = get_ingest_idle_stall_s()
+      if idle_active is not None and float(idle_active) > 0.0:
+        last = get_ingest_last_progress_mono()
+        if last is None:
+          candidates.append(float(idle_active))
+        else:
+          rem_idle = float(idle_active) - (time.monotonic() - float(last))
+          if rem_idle > 0.0:
+            candidates.append(rem_idle)
+      if not candidates:
+        return
+      next_s = min(candidates)
+      if hasattr(signal, "setitimer"):
+        signal.setitimer(signal.ITIMER_REAL, next_s)
+      else:
+        signal.alarm(max(1, int(next_s)))
 
     previous = signal.getsignal(signal.SIGALRM)
     signal.signal(signal.SIGALRM, _handler)
     try:
-      if hasattr(signal, "setitimer"):
-        signal.setitimer(signal.ITIMER_REAL, timeout_s)
-      else:
-        signal.alarm(max(1, int(timeout_s)))
+      touch_ingest_progress()
+      _arm_timer()
       return fn()
     finally:
       if hasattr(signal, "setitimer"):
@@ -723,6 +805,7 @@ def _run_ingest_timed(
         signal.alarm(0)
       signal.signal(signal.SIGALRM, previous)
   finally:
+    end_ingest_progress(progress_tokens)
     if effective_token is not None:
       reset_ingest_task_effective_timeout_s(effective_token)
     if deadline_token is not None:

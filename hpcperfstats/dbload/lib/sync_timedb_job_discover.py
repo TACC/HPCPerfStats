@@ -25,6 +25,7 @@ from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
     FindStatsRecord,
     is_internal_archive_stats_path,
     iter_find_printf_records_streaming,
+    _is_lock_name,
 )
 
 
@@ -328,6 +329,8 @@ def stream_enqueue_ingest_from_find_records(
 
   for rec in records:
     if is_internal_archive_stats_path(rec.path):
+      continue
+    if _is_lock_name(os.path.basename(rec.path)):
       continue
     try:
       has_cap = jq.queue_has_capacity(

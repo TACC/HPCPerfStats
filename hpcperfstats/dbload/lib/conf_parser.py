@@ -134,6 +134,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_per_file_timeout_s"),
     ("PIPELINE", "sync_ingest_per_file_timeout_max_s"),
     ("PIPELINE", "sync_ingest_per_file_timeout_s_per_mib"),
+    ("PIPELINE", "sync_ingest_stall_idle_s"),
     ("PIPELINE", "sync_archive_members_cache_enabled"),
     ("PIPELINE", "sync_archive_members_cache_max_entries"),
     ("PIPELINE", "sync_archive_members_redis_enabled"),
@@ -295,9 +296,10 @@ INI_OPTION_DEFAULTS = {
     'sync_pool_worker_recycle_grace_seconds': '60',
     'sync_pool_idle_reconcile_max_rounds': '3',
     'sync_pool_idle_reconcile_polls_per_round': '4',
-    'sync_ingest_per_file_timeout_s': '3600',
+    'sync_ingest_per_file_timeout_s': '0',
     'sync_ingest_per_file_timeout_max_s': '86400',
     'sync_ingest_per_file_timeout_s_per_mib': '2.783203125',
+    'sync_ingest_stall_idle_s': '1800',
     'sync_archive_members_cache_enabled': 'yes',
     'sync_archive_members_cache_max_entries': '64',
     'sync_archive_members_redis_enabled': 'yes',
@@ -3308,12 +3310,13 @@ def get_sync_archive_members_populate_pool_processes() -> Any:
 def get_sync_ingest_per_file_timeout_s() -> Any:
   """
   Wall-clock floor per ingest pool task in seconds (0 = disabled).
-  
+
+  Default is ``0`` (SIGALRM soft-kill demoted). Idle stall uses
+  ``sync_ingest_stall_idle_s``; Postgres statement_timeout remains the ceiling.
+
   Returns:
-    Any: Open return polymorphism from ``get_sync_ingest_per_file_timeout_s``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Non-negative float seconds from INI/env, or ``0.0`` on parse failure.
+
   Examples:
     >>> get_sync_ingest_per_file_timeout_s()  # doctest: +SKIP
   """
@@ -3333,8 +3336,34 @@ def get_sync_ingest_per_file_timeout_s() -> Any:
     return 0.0
 
 
+def get_sync_ingest_stall_idle_s() -> Any:
+  """
+  Seconds without parse/write progress before ingest soft-requeues (idle stall).
+
+  ``0`` disables idle-stall soft-kill. Default ``1800``. Lock waits suspend the
+  idle clock via ``touch_ingest_progress`` on wait exit.
+
+  Returns:
+    Any: Non-negative float seconds from INI/env, or ``1800.0`` on parse failure.
+
+  Examples:
+    >>> get_sync_ingest_stall_idle_s()  # doctest: +SKIP
+  """
+  env = os.environ.get("HPCPERFSTATS_SYNC_INGEST_STALL_IDLE_S", "").strip()
+  if env:
+    try:
+      return max(0.0, float(env))
+    except (TypeError, ValueError, OverflowError):
+      return 1800.0
+  _ensure_cfg_loaded()
+  try:
+    return max(0.0, float(_pipeline_get("sync_ingest_stall_idle_s")))
+  except (TypeError, ValueError, OverflowError):
+    return 1800.0
+
+
 # 30 GiB × per_mib + historical floor-900 slope reaches max at default slope.
-# Floor default (3600) is independent; keep per_mib anchored to (86400−900)/30720.
+# Floor default (0 = wall B off); keep per_mib anchored to (86400−900)/30720.
 _SYNC_INGEST_PER_FILE_TIMEOUT_REFERENCE_MIB = 30720  # 30 GiB
 _SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT = 86400.0  # 24h at reference size
 _SYNC_INGEST_PER_FILE_TIMEOUT_SLOPE_FLOOR_S = 900.0  # historical slope anchor

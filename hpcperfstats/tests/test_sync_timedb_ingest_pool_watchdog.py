@@ -1,13 +1,10 @@
-"""Regression tests for the ingest pool watchdog (T2/T3).
+"""Regression tests: coordinator ingest wall-clock watchdog is retired.
 
-A ``multiprocessing.Pool`` worker killed mid-task leaves its ``AsyncResult``
-never ready, so the old drain loop held the slot and the Redis lease forever
-while still reporting ``busy``. These tests lock per-entry deadlines, slot
-release, requeue with ``attempt+1``, and the pool-recycle signal.
+Soft-kill is idle-stall + Postgres statement_timeout. Submit-age abandon must
+not reclaim slots or trigger recycle. Collateral requeue / pool recycle helpers
+remain for other recycle paths.
 """
 from __future__ import annotations
-
-import pytest
 
 from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
 from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
@@ -57,27 +54,15 @@ def _claim(identity, *, score=5.0, owner="n:h:b:1"):
   )
 
 
-def test_ingest_deadline_uses_per_file_timeout_plus_grace(tmp_path, monkeypatch):
+def test_ingest_watchdog_budget_retired_always_zero(tmp_path):
   path = tmp_path / "stats"
   path.write_bytes(b"x" * 1024)
-  monkeypatch.setattr(
-      qo.it, "resolve_ingest_per_file_timeout_s", lambda p: 300.0,
-  )
-  budget = qo._ingest_watchdog_budget_s(str(path))
-  assert budget > 300.0
-  assert budget == pytest.approx(300.0 + qo.INGEST_WATCHDOG_GRACE_S)
+  assert qo._ingest_watchdog_budget_s(str(path)) == 0.0
+  assert qo._ingest_watchdog_budget_s("/missing/path") == 0.0
 
 
-def test_ingest_deadline_survives_unreadable_path(monkeypatch):
-  def _boom(_path):
-    raise OSError("stat failed")
-
-  monkeypatch.setattr(qo.it, "resolve_ingest_per_file_timeout_s", _boom)
-  budget = qo._ingest_watchdog_budget_s("/missing/path")
-  assert budget >= qo.INGEST_WATCHDOG_GRACE_S
-
-
-def test_hung_worker_frees_slot_and_requeues_with_attempt_increment(monkeypatch):
+def test_abandon_timed_out_ingest_is_noop_even_past_budget(monkeypatch):
+  """Retired watchdog must not free slots or bump attempts."""
   client = FakeRedis()
   identity = "/raw/a|1|1"
   claim = _real_claim(client, identity, score=5.0)
@@ -96,92 +81,18 @@ def test_hung_worker_frees_slot_and_requeues_with_attempt_increment(monkeypatch)
       log_fn=lambda *a, **k: None,
   )
 
-  assert abandoned == [identity]
-  assert inflight == {}
-  assert claims == {}
-  assert submitted == {}
-  # Lease released and job back on the ingest queue for another attempt.
-  assert client.get(jq.job_lease_key(jq.JOB_KIND_INGEST, identity)) is None
-  assert client.zscore(jq.job_queue_key(jq.JOB_KIND_INGEST), identity) is not None
-  assert jq.read_job_attempt(client, kind=jq.JOB_KIND_INGEST, identity=identity) == 1
-  assert client.hget(jq.job_inflight_key(jq.JOB_KIND_INGEST), identity) is None
-
-
-def test_worker_inside_budget_is_left_alone(monkeypatch):
-  client = FakeRedis()
-  identity = "/raw/a|1|1"
-  inflight = {identity: _NeverReady()}
-  claims = {identity: _claim(identity)}
-  submitted = {identity: 100.0}
-  monkeypatch.setattr(qo, "_ingest_watchdog_budget_s", lambda _p: 600.0)
-
-  abandoned = qo._abandon_timed_out_ingest(
-      client,
-      inflight=inflight,
-      claims=claims,
-      submitted=submitted,
-      archive_data_dir="/archive",
-      now=100.0 + 59.0,
-      log_fn=lambda *a, **k: None,
-  )
-
   assert abandoned == []
   assert identity in inflight
   assert identity in claims
+  assert submitted == {identity: 100.0}
+  assert client.get(jq.job_lease_key(jq.JOB_KIND_INGEST, identity)) is not None
+  assert jq.read_job_attempt(client, kind=jq.JOB_KIND_INGEST, identity=identity) == 0
 
 
-def test_ready_worker_is_never_abandoned_even_past_budget(monkeypatch):
-  """A finished-but-undrained result must go through the normal drain path."""
-  client = FakeRedis()
-  identity = "/raw/a|1|1"
-  inflight = {identity: _Ready(("/raw/a", True, True, 0.1, {}))}
-  claims = {identity: _claim(identity)}
-  submitted = {identity: 0.0}
-  monkeypatch.setattr(qo, "_ingest_watchdog_budget_s", lambda _p: 1.0)
-
-  abandoned = qo._abandon_timed_out_ingest(
-      client,
-      inflight=inflight,
-      claims=claims,
-      submitted=submitted,
-      archive_data_dir="/archive",
-      now=1e9,
-      log_fn=lambda *a, **k: None,
-  )
-
-  assert abandoned == []
-  assert identity in inflight
-
-
-def test_repeated_timeouts_dead_letter_instead_of_looping(tmp_path, monkeypatch):
-  client = FakeRedis()
-  identity = "/raw/a|1|1"
-  monkeypatch.setattr(qo, "_ingest_watchdog_budget_s", lambda _p: 1.0)
-  monkeypatch.setattr(jq, "job_max_attempts", lambda: 2)
-  archive = tmp_path / "archive"
-  archive.mkdir()
-
-  for _ in range(4):
-    inflight = {identity: _NeverReady()}
-    claims = {identity: _real_claim(client, identity)}
-    submitted = {identity: 0.0}
-    qo._abandon_timed_out_ingest(
-        client,
-        inflight=inflight,
-        claims=claims,
-        submitted=submitted,
-        archive_data_dir=str(archive),
-        now=1e9,
-        log_fn=lambda *a, **k: None,
-    )
-
-  dead = jq.queue_dead_letter_path(str(archive))
-  assert dead
-  import os
-
-  assert os.path.exists(dead)
-  # Poison stops re-entering the queue once attempts are exhausted.
-  assert client.zscore(jq.job_queue_key(jq.JOB_KIND_INGEST), identity) is None
+def test_ingest_coordinator_loop_does_not_call_abandon():
+  """Ingest-coordinator must not invoke the retired submit-age watchdog."""
+  src = __import__("inspect").getsource(qo._ingest_coordinator_loop)
+  assert "_abandon_timed_out_ingest" not in src
 
 
 def test_drain_ingest_ready_clears_submitted_timestamps():
@@ -201,8 +112,6 @@ def test_drain_ingest_ready_clears_submitted_timestamps():
   )
 
   assert done == 1
-  # A stale submitted entry would make the watchdog abandon a future claim
-  # that happens to reuse the same identity.
   assert submitted == {}
 
 
@@ -279,7 +188,6 @@ def test_recycle_requeues_healthy_survivors_without_burning_an_attempt():
   assert requeued == 1
   assert inflight == {} and claims == {} and submitted == {}
   assert client.zscore(jq.job_queue_key(jq.JOB_KIND_INGEST), survivor) == -3.0
-  # Preemption is not the job's fault, so its retry budget is untouched.
   assert jq.read_job_attempt(client, kind=jq.JOB_KIND_INGEST, identity=survivor) == 0
 
 

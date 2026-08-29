@@ -139,12 +139,17 @@ def stall_abort_polls_for_paths(paths: Any) -> Any:
   if poll_s <= 0.0:
     return max(1, ceiling_polls)
   floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
+  max_s = float(cfg.get_sync_ingest_per_file_timeout_max_s())
   if not paths:
-    batch_max_s = floor_s if floor_s > 0.0 else poll_s
+    batch_max_s = floor_s if floor_s > 0.0 else (
+        max_s if max_s > 0.0 else poll_s
+    )
   else:
     batch_max_s = max_ingest_per_file_timeout_for_paths(paths)
     if batch_max_s <= 0.0:
-      batch_max_s = floor_s if floor_s > 0.0 else poll_s
+      batch_max_s = floor_s if floor_s > 0.0 else (
+          max_s if max_s > 0.0 else poll_s
+      )
   grace_s = float(STALL_ABORT_GRACE_S)
   dynamic_polls = int((batch_max_s + grace_s) / poll_s) + 1
   min_polls = (

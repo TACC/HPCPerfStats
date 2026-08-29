@@ -776,7 +776,8 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_pool_poll_timeout_s() == 5.0
   assert cfg.get_sync_pool_worker_recycle_grace_seconds() == 60.0
   assert cfg.get_sync_pool_stall_defer_log_interval_s() == 60.0
-  assert cfg.get_sync_ingest_per_file_timeout_s() == 3600.0
+  assert cfg.get_sync_ingest_per_file_timeout_s() == 0.0
+  assert cfg.get_sync_ingest_stall_idle_s() == 1800.0
   assert cfg.get_sync_ingest_per_file_timeout_max_s() == 86400.0
   assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == pytest.approx(
       (86400.0 - 900.0) / 30720.0,

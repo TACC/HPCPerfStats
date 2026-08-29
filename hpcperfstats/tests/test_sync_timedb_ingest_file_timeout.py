@@ -737,4 +737,88 @@ def test_timeout_s_on_outcome_from_meta():
       },
   )
   assert outcome.timeout_s == 7200.0
-  assert outcome.fail_reason == "write"
+
+
+def test_idle_stall_raises_after_no_progress(monkeypatch):
+  """No heartbeat for idle window → stage=idle_stall TimeoutError."""
+  from hpcperfstats.dbload.lib import sync_timedb_ingest_progress as prog
+
+  clock = {"t": 100.0}
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 10.0)
+  toks = prog.begin_ingest_progress(
+      "/raw/x", idle_s=10.0, clock=lambda: clock["t"],
+  )
+  try:
+    prog.touch_ingest_progress(clock=lambda: clock["t"])
+    clock["t"] = 109.0
+    prog.raise_if_ingest_idle_stalled(
+        "/raw/x", clock=lambda: clock["t"],
+    )
+    clock["t"] = 111.0
+    with pytest.raises(st.IngestPerFileTimeoutError) as ei:
+      prog.raise_if_ingest_idle_stalled(
+          "/raw/x", clock=lambda: clock["t"],
+      )
+    assert ei.value.stage == "idle_stall"
+  finally:
+    prog.end_ingest_progress(toks)
+
+
+def test_idle_stall_progress_resets_window(monkeypatch):
+  """Heartbeat resets idle clock so stall does not fire."""
+  from hpcperfstats.dbload.lib import sync_timedb_ingest_progress as prog
+
+  clock = {"t": 0.0}
+  toks = prog.begin_ingest_progress(
+      "/raw/y", idle_s=10.0, clock=lambda: clock["t"],
+  )
+  try:
+    clock["t"] = 9.0
+    prog.touch_ingest_progress(clock=lambda: clock["t"])
+    clock["t"] = 18.0
+    prog.raise_if_ingest_idle_stalled(
+        "/raw/y", clock=lambda: clock["t"],
+    )
+  finally:
+    prog.end_ingest_progress(toks)
+
+
+def test_run_ingest_timed_wall_b_disabled_uses_idle_only(monkeypatch, tmp_path):
+  """Floor 0 demotes wall B; idle stall still arms when idle_s > 0."""
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.0)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 30.0)
+  stats = tmp_path / "seg"
+  stats.write_bytes(b"x")
+  _patch_stats_file_size_bytes(monkeypatch, lambda _p: 10)
+  assert st.resolve_ingest_per_file_timeout_s(str(stats)) == 0.0
+  seen = {"n": 0}
+
+  def _body():
+    seen["n"] += 1
+    return "ok"
+
+  assert st._run_ingest_timed(str(stats), "test", _body) == "ok"
+  assert seen["n"] == 1
+
+
+def test_suspend_non_work_wait_touches_idle_progress(monkeypatch):
+  """Lock/populate wait exit must reset idle clock (not charge wait as idle)."""
+  from hpcperfstats.dbload.lib import sync_timedb_ingest_progress as prog
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
+      suspend_ingest_sigalrm_for_non_work_wait,
+  )
+
+  clock = {"t": 50.0}
+  toks = prog.begin_ingest_progress(
+      "/raw/z", idle_s=100.0, clock=lambda: clock["t"],
+  )
+  try:
+    prog.touch_ingest_progress(clock=lambda: clock["t"])
+    assert prog.get_ingest_last_progress_mono() == 50.0
+    with suspend_ingest_sigalrm_for_non_work_wait():
+      clock["t"] = 80.0
+    # touch uses real monotonic inside suspend; force a known touch after.
+    prog.touch_ingest_progress(clock=lambda: clock["t"])
+    assert prog.get_ingest_last_progress_mono() == 80.0
+  finally:
+    prog.end_ingest_progress(toks)

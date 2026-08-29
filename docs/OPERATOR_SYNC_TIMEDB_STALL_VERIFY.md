@@ -1508,13 +1508,39 @@ docker compose logs pipeline 2>&1 | grep -E 'dispatch_probe failed|proactive swa
 docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'DB lock wait|ingest per-file timeout|ingest timeout identity=|ingest fail .*TimeoutError|file_complete_ingest_mark recorded|db_shard_lock_s=|postgres_s=|parse_elapsed_s=' | tail -80
 ```
 
+### T0 / T1 — sticky ingest 0/N + bare TimeoutError thrash (H7) + idle stall (2026-08-29)
+
+**Failure signature (pre-fix):** status sticky `ingest_hot=0/N` with deep Redis ingest ZSET; mass `queue_orchestrator ingest timeout … elapsed_s=0.0 stage=unknown err=TimeoutError` while workers still log `ingest file path=`. Optional `*.fnctl.lock` identity on ZRANGE.
+
+**Acceptance (post-deploy):**
+
+- Bare drain `TimeoutError` must **not** soft-requeue or clear local inflight (no thrash sticky 0/N).
+- Soft-requeue uses packed/rich timeout or `stage=idle_stall`; coordinator submit-age watchdog is **retired** (no fallback).
+- Image defaults: `sync_ingest_per_file_timeout_s=0` (wall B demoted), `sync_ingest_stall_idle_s=1800`.
+- Discover/fill do not keep `*.fnctl.lock` on the ingest ZSET.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'elapsed_s=0\.0 stage=unknown|idle_stall|ingest fill empty deep_queue|queue_orchestrator ingest timeout|fnctl\.lock' | tail -80
+```
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as cfg
+print(\"per_file_timeout_s\", cfg.get_sync_ingest_per_file_timeout_s())
+print(\"stall_idle_s\", cfg.get_sync_ingest_stall_idle_s())
+print(\"max_s\", cfg.get_sync_ingest_per_file_timeout_max_s())
+"'
+```
+
 ### T0 / T1 — ingest per-file timeout floor 3600 (throughput near-miss, 2026-07)
+
+**Archaeology / optional wall B:** current default floor is **0** + idle stall. Re-enable wall B only with `sync_ingest_per_file_timeout_s > 0`.
 
 **Failure signature (pre-fix / old floor 900):** under `ingest_pool_processes=32`, many paths die with `ERROR: ingest per-file timeout … stage=ingest` / `outcome=timeout` at **elapsed == size-scaled budget** (~925–1654s for small/mid files). Slow cohort can still finish on retry (e.g. ~14 MiB in **2304.7s**). Not an idle/stall class if `remaining` advances.
 
-**Acceptance (post-deploy with floor 3600):**
+**Acceptance (when wall floor re-enabled ≥3600):**
 
-- `sync_ingest_per_file_timeout_s` reads **3600** (or site override ≥3600) inside the pipeline image.
+- `sync_ingest_per_file_timeout_s` reads the configured floor inside the pipeline image.
 - Timeout rate drops vs pre-deploy; slow successes with `elapsed_s` in the 1800–3600 band complete as `outcome=ingested`.
 - Per-file **`ingest file path=… outcome=… size_bytes=… timeout_s=…`** (and timing tokens) is the SOP report — large-file budgets are not logged as a separate pre-work warning.
 - Soft-requeue timeouts also log `queue_orchestrator ingest timeout … size_bytes=… timeout_s=… stage=…`.

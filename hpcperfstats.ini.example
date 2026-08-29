@@ -295,11 +295,16 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Idle polls between reconcile redispatch rounds when workers are idle (default 4).
 # sync_pool_idle_reconcile_polls_per_round = 4
 
-# Per ingest pool task wall-clock floor seconds; 0 disables all per-file timeouts (default 3600).
-# sync_ingest_per_file_timeout_s = 3600
+# Per ingest pool task wall-clock floor seconds; 0 disables wall soft-kill
+# (default 0). Idle stall uses sync_ingest_stall_idle_s; statement_timeout stays.
+# sync_ingest_per_file_timeout_s = 0
+
+# Seconds without parse/write progress before soft-requeue (default 1800).
+# sync_ingest_stall_idle_s = 1800
 
 # Size-proportional ingest timeout: resolved = clamp(floor + ceil_mib(size) * per_mib, floor, max).
 # Default per_mib ((86400-900)/30720) maps 30 GiB to max; larger files cap at max (no file-size reject).
+# Only applies when sync_ingest_per_file_timeout_s > 0.
 # sync_ingest_per_file_timeout_s_per_mib = 2.783203125
 
 # Ceiling seconds for size-proportional per-file ingest timeout (default 86400 = 24h at 30 GiB).

@@ -1975,25 +1975,23 @@ def _count_ingest_band_inflight(claims: dict[str, Any]) -> tuple[int, int]:
 
 def _ingest_watchdog_budget_s(path: str) -> float:
   """
-  Return the wall-clock budget after which an ingest worker is presumed dead.
+  Retired: coordinator wall-clock abandon budget (always unused).
+
+  Soft-kill is idle-stall + Postgres statement_timeout; this helper remains
+  only so older tests can import the name.
 
   Args:
-    path (str): Absolute closed raw stats path.
+    path (str): Absolute closed raw stats path (ignored).
 
   Returns:
-    float: Seconds from submission before the slot is reclaimed.
+    float: ``0.0`` (watchdog disabled).
 
   Examples:
-    >>> _ingest_watchdog_budget_s("/missing") >= INGEST_WATCHDOG_GRACE_S
-    True
+    >>> _ingest_watchdog_budget_s("/missing")
+    0.0
   """
-  try:
-    budget = float(it.resolve_ingest_per_file_timeout_s(path))
-  except Exception:
-    budget = 0.0
-  if budget <= 0.0:
-    budget = 0.0
-  return budget + float(INGEST_WATCHDOG_GRACE_S)
+  del path
+  return 0.0
 
 
 def _abandon_timed_out_ingest(
@@ -2007,25 +2005,23 @@ def _abandon_timed_out_ingest(
   log_fn: Callable[..., None] | None = None,
 ) -> list[str]:
   """
-  Reclaim slots held by ingest workers that blew their per-file budget.
+  Retired no-op: do not wall-clock abandon ingest slots.
 
-  A pool worker killed by the OOM killer never marks its ``AsyncResult``
-  ready, so without this the slot, the Redis lease, and the reported ``busy``
-  state persist for the life of the process. Abandoned jobs are requeued with
-  ``attempt+1`` (or dead-lettered once attempts are exhausted) and the caller
-  must recycle the pool, since a ``Pool`` with a dead worker cannot be trusted.
+  Formerly reclaimed slots when submit age exceeded per-file budget + grace.
+  That path is removed — idle-stall soft-requeue and statement_timeout own
+  give-up; do not fall back to this watchdog.
 
   Args:
-    client (Any): Redis client.
-    inflight (dict[str, AsyncResult]): In-flight ingest map (mutated).
-    claims (dict[str, Any]): Claim map (mutated).
-    submitted (dict[str, float]): Identity → submit monotonic time (mutated).
-    archive_data_dir (str): Archive root for the dead-letter sidecar.
-    now (float | None): Monotonic override for tests.
-    log_fn (Callable[..., None] | None): Optional logger.
+    client (Any): Redis client (unused).
+    inflight (dict[str, AsyncResult]): In-flight ingest map (unused).
+    claims (dict[str, Any]): Claim map (unused).
+    submitted (dict[str, float]): Submit-time map (unused).
+    archive_data_dir (str): Archive root (unused).
+    now (float | None): Monotonic override (unused).
+    log_fn (Callable[..., None] | None): Optional logger (unused).
 
   Returns:
-    list[str]: Identities abandoned during this tick.
+    list[str]: Always empty.
 
   Examples:
     >>> _abandon_timed_out_ingest(
@@ -2033,40 +2029,8 @@ def _abandon_timed_out_ingest(
     ... )
     []
   """
-  stamp = time.monotonic() if now is None else float(now)
-  abandoned: list[str] = []
-  for identity, async_res in list(inflight.items()):
-    started = submitted.get(identity)
-    if started is None:
-      # No submission stamp: adopt it now so the next tick can judge it.
-      submitted[identity] = stamp
-      continue
-    try:
-      if async_res.ready():
-        continue
-    except Exception:
-      pass
-    path = _path_from_ingest_identity(identity) or identity
-    if stamp - started <= _ingest_watchdog_budget_s(path):
-      continue
-    claim = claims.pop(identity, None)
-    inflight.pop(identity, None)
-    submitted.pop(identity, None)
-    abandoned.append(identity)
-    _log(
-        "queue_orchestrator ingest watchdog abandon identity=%s held_s=%d"
-        % (identity, int(stamp - started)),
-        log_fn=log_fn,
-    )
-    _retry_or_dead_letter(
-        client,
-        kind=jq.JOB_KIND_INGEST,
-        claim=claim,
-        archive_data_dir=archive_data_dir,
-        reason="ingest_watchdog_timeout",
-        log_fn=log_fn,
-    )
-  return abandoned
+  del client, inflight, claims, submitted, archive_data_dir, now, log_fn
+  return []
 
 
 def _requeue_pool_collateral(
@@ -2244,6 +2208,17 @@ def _fill_ingest_band(
         break
       continue
     path = _path_from_ingest_identity(claim.identity)
+    if _is_ingest_lock_sidecar_path(path or claim.identity):
+      jq.ack_job(
+          client,
+          kind=jq.JOB_KIND_INGEST,
+          identity=claim.identity,
+          owner_token=claim.owner_token,
+      )
+      skipped += 1
+      if skipped >= INGEST_FILL_SKIP_BUDGET:
+        break
+      continue
     if not path or not os.path.isfile(path):
       complete = False
       if path:
@@ -2319,6 +2294,56 @@ def _fill_ingest_band(
     submitted[claim.identity] = time.monotonic()
     submitted_n += 1
   return submitted_n
+
+
+def _is_ingest_lock_sidecar_path(path: str) -> bool:
+  """
+  Return True when ``path`` basename is an advisory lock sidecar.
+
+  Args:
+    path (str): Candidate ingest identity / filesystem path.
+
+  Returns:
+    bool: True for ``*.fnctl.lock`` / ``*.lock`` basenames.
+
+  Examples:
+    >>> _is_ingest_lock_sidecar_path("/a/1.fnctl.lock")
+    True
+    >>> _is_ingest_lock_sidecar_path("/a/1")
+    False
+  """
+  name = os.path.basename(str(path or ""))
+  return name.endswith(".fnctl.lock") or name.endswith(".lock")
+
+
+def _is_rich_ingest_timeout_exc(exc: BaseException) -> bool:
+  """
+  Return True when a drain ``TimeoutError`` carries real per-file timeout meta.
+
+  Bare ``TimeoutError`` (no stage / elapsed) must not soft-requeue — that is the
+  H7 thrash path that clears local inflight while the ZSET stays deep.
+
+  Args:
+    exc (BaseException): Exception raised by ``AsyncResult.get``.
+
+  Returns:
+    bool: True when soft-requeue is appropriate for a packed/rich timeout.
+
+  Examples:
+    >>> _is_rich_ingest_timeout_exc(TimeoutError("x"))
+    False
+  """
+  if not isinstance(exc, TimeoutError):
+    return False
+  stage = str(getattr(exc, "stage", "") or "").strip()
+  if stage and stage not in ("unknown",):
+    return True
+  try:
+    if float(getattr(exc, "elapsed_s", 0.0) or 0.0) > 0.0:
+      return True
+  except (TypeError, ValueError):
+    pass
+  return False
 
 
 def _log_orchestrator_ingest_timeout(
@@ -2431,6 +2456,11 @@ def _drain_ingest_ready(
   """
   Collect finished ingest async results; enqueue append on success.
 
+  Pop local claim/inflight maps only after a terminal ``get``. Bare
+  ``TimeoutError`` (no rich stage/elapsed) leaves maps intact and does **not**
+  soft-requeue (H7 thrash). Packed ``outcome=timeout`` / rich timeout escapes
+  soft-requeue without attempt bump.
+
   Args:
     client (Any): Redis client.
     inflight (dict[str, AsyncResult]): In-flight ingest map (mutated).
@@ -2458,16 +2488,20 @@ def _drain_ingest_ready(
   for identity, async_res in list(inflight.items()):
     if not async_res.ready():
       continue
-    claim = claims.pop(identity, None)
-    inflight.pop(identity, None)
-    if submitted is not None:
-      submitted.pop(identity, None)
-    done += 1
     path = _path_from_ingest_identity(identity)
     try:
       result = async_res.get(timeout=0)
     except TimeoutError as exc:
-      # Bare TimeoutError / IngestPerFileTimeoutError escape → soft requeue.
+      # Bare TimeoutError must not soft-requeue (H7): leave local maps so we
+      # do not thrash sticky 0/N while workers still finish / ZSET stays deep.
+      # Rich / IngestPerFileTimeoutError escape still soft-requeues.
+      if not _is_rich_ingest_timeout_exc(exc):
+        continue
+      claim = claims.pop(identity, None)
+      inflight.pop(identity, None)
+      if submitted is not None:
+        submitted.pop(identity, None)
+      done += 1
       _log_orchestrator_ingest_timeout(
           identity=identity,
           path=path or identity,
@@ -2484,6 +2518,11 @@ def _drain_ingest_ready(
       )
       continue
     except Exception as exc:
+      claim = claims.pop(identity, None)
+      inflight.pop(identity, None)
+      if submitted is not None:
+        submitted.pop(identity, None)
+      done += 1
       _log(
           "queue_orchestrator ingest fail identity=%s err=%s"
           % (identity, type(exc).__name__),
@@ -2503,6 +2542,11 @@ def _drain_ingest_ready(
           log_fn=log_fn,
       )
       continue
+    claim = claims.pop(identity, None)
+    inflight.pop(identity, None)
+    if submitted is not None:
+      submitted.pop(identity, None)
+    done += 1
     ingest_ok = False
     need_archival = False
     outcome = ""
@@ -2567,6 +2611,7 @@ def _drain_ingest_ready(
     )
     progress.record(day_tok, "ingest", 1)
     if outcome == "db_skip":
+      # Keep existing success-path handling below for db_skip / append.
       progress.record(day_tok, "db_skip", 1)
     else:
       progress.record(day_tok, "ingested", 1)
@@ -3367,6 +3412,7 @@ def _ingest_coordinator_loop(
   )
   role = "ingest-coordinator"
   last_reap = time.monotonic()
+  last_fill_empty_log = 0.0
   try:
     while True:
       draining = barrier.draining.is_set() or shutdown_requested()
@@ -3391,6 +3437,7 @@ def _ingest_coordinator_loop(
           time.sleep(min(0.05, max(0.01, poll_s)))
         recycle_gate.paused.clear()
       did = 0
+      hot_queued = 0
       if not draining and not recycle_gate.recycle_requested.is_set():
         pool = pool_ref.get()
         while len(ingest_inflight) < hot_cap:
@@ -3459,6 +3506,26 @@ def _ingest_coordinator_loop(
           did += n
           if n == 0:
             break
+        if (
+            did == 0
+            and not ingest_inflight
+            and not ingest_submitted
+        ):
+          try:
+            zcard = int(
+                client.zcard(jq.job_queue_key(jq.JOB_KIND_INGEST)) or 0,
+            )
+          except Exception:
+            zcard = 0
+          now_bc = time.monotonic()
+          if zcard > 0 and (now_bc - last_fill_empty_log) >= 60.0:
+            last_fill_empty_log = now_bc
+            _log(
+                "queue_orchestrator ingest fill empty deep_queue "
+                "zcard=%d hot_q=%d local_inflight=0 submitted=0"
+                % (zcard, hot_queued),
+                log_fn=log_fn,
+            )
       did += _drain_ingest_ready(
           client,
           inflight=ingest_inflight,
@@ -3468,29 +3535,8 @@ def _ingest_coordinator_loop(
           archive_data_dir=directory,
           log_fn=log_fn,
       )
-      abandoned = _abandon_timed_out_ingest(
-          client,
-          inflight=ingest_inflight,
-          claims=ingest_leases,
-          submitted=ingest_submitted,
-          archive_data_dir=directory,
-          log_fn=log_fn,
-      )
-      if abandoned:
-        _requeue_pool_collateral(
-            client,
-            inflight=ingest_inflight,
-            claims=ingest_leases,
-            submitted=ingest_submitted,
-            log_fn=log_fn,
-        )
-        recycle_gate.recycle_requested.set()
-        recycle_gate.paused.set()
-        _log(
-            "queue_orchestrator ingest recycle requested abandoned=%d"
-            % len(abandoned),
-            log_fn=log_fn,
-        )
+      # Coordinator wall-clock ingest watchdog retired (idle stall + statement
+      # timeout own give-up; do not fall back to submit-age abandon).
       now = time.monotonic()
       if now - last_reap >= max(poll_s, 5.0):
         last_reap = now

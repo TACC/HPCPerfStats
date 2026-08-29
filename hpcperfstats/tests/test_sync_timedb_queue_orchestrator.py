@@ -925,7 +925,7 @@ def test_executor_shutdown_cancels():
 
 
 def test_dead_pool_worker_frees_slot_and_requeues(monkeypatch):
-  """T2: a hung ingest worker is abandoned, requeued, and the pool recycled."""
+  """T2 retired: submit-age abandon is a no-op (idle stall owns soft-kill)."""
   client = FakeRedis()
   jq.reset_job_queue_script_cache_for_tests()
   jq.zadd_ingest_job(client, identity="/raw/a", score=1)
@@ -938,24 +938,31 @@ def test_dead_pool_worker_frees_slot_and_requeues(monkeypatch):
       return False
 
   monkeypatch.setattr(qo, "_ingest_watchdog_budget_s", lambda path: 1.0)
+  inflight = {"/raw/a": _Pending()}
+  claims = {"/raw/a": claim}
+  submitted = {"/raw/a": 0.0}
   abandoned = qo._abandon_timed_out_ingest(
       client,
-      inflight={"/raw/a": _Pending()},
-      claims={"/raw/a": claim},
-      submitted={"/raw/a": 0.0},
+      inflight=inflight,
+      claims=claims,
+      submitted=submitted,
       archive_data_dir="/archive",
       now=10.0,
       log_fn=lambda *a, **k: None,
   )
-  assert abandoned == ["/raw/a"]
-  assert client.zscore(jq.job_queue_key("ingest"), "/raw/a") is not None
+  assert abandoned == []
+  assert "/raw/a" in inflight
+  assert client.get(jq.job_lease_key("ingest", "/raw/a")) is not None
 
 
 def test_ingest_deadline_requeues():
-  """T3: per-file deadline abandonment requeues rather than leaking the slot."""
+  """T3 retired: abandon helper must not soft-requeue via retry/dead-letter."""
   src = inspect.getsource(qo._abandon_timed_out_ingest)
-  assert "_retry_or_dead_letter" in src
-
+  assert "return []" in src
+  assert "_retry_or_dead_letter" not in src
+  assert "_abandon_timed_out_ingest" not in inspect.getsource(
+      qo._ingest_coordinator_loop,
+  )
 
 def test_day_close_failure_requeues(tmp_path, monkeypatch):
   """S3: deferred_age requeues without burning a retry attempt."""
@@ -1544,6 +1551,56 @@ def test_missing_path_acks_when_ingest_complete(monkeypatch, tmp_path):
   assert not requeued
 
 
+def test_fill_ingest_ack_drops_fnctl_lock_sidecar(monkeypatch, tmp_path):
+  """H6: fill must ACK-drop claimed *.fnctl.lock identities, not submit."""
+  lock_path = tmp_path / "host" / "123.fnctl.lock"
+  lock_path.parent.mkdir()
+  lock_path.write_bytes(b"x")
+  identity = str(lock_path)
+  claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity=identity,
+      owner_token="n:h:b:1",
+      deadline=1060.0,
+      score=5.0,
+  )
+  calls = {"n": 0}
+
+  def _claim(*a, **k):
+    calls["n"] += 1
+    return claim if calls["n"] == 1 else None
+
+  acked = []
+  monkeypatch.setattr(
+      jq, "ack_job", lambda *a, **k: acked.append(k.get("identity")) or True,
+  )
+  monkeypatch.setattr(jq, "claim_ingest_job", _claim)
+  monkeypatch.setattr(
+      jq, "requeue_job", lambda *a, **k: (_ for _ in ()).throw(
+          AssertionError("must not requeue lock sidecar"),
+      ),
+  )
+
+  class _Pool:
+    def apply_async(self, *a, **k):
+      raise AssertionError("must not submit lock sidecar")
+
+  n = qo._fill_ingest_band(
+      FakeRedis(),
+      band="hot",
+      cap=1,
+      inflight={},
+      claims={},
+      submitted={},
+      ingest_pool=_Pool(),
+      manager_lock=None,
+      band_cap=1,
+      tgz_archive_dir=str(tmp_path),
+  )
+  assert n == 0
+  assert acked == [identity]
+
+
 def test_fill_ingest_skip_budget_breaks(monkeypatch, tmp_path):
   """P0-3: missing-path skips must not busy-spin the MainThread tick."""
   client = FakeRedis()
@@ -2033,8 +2090,10 @@ def test_mainthread_forbid_fill_drain():
 
 
 
-def test_drain_TimeoutError_soft_requeues_without_fail(tmp_path, monkeypatch):
-  """Bare TimeoutError on AsyncResult.get must soft-requeue, not ingest fail."""
+def test_drain_bare_TimeoutError_leaves_inflight_no_soft_requeue(
+  tmp_path, monkeypatch,
+):
+  """Bare TimeoutError on get must not soft-requeue or clear local inflight."""
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
   client = FakeRedis()
   jq.reset_job_queue_script_cache_for_tests()
@@ -2053,6 +2112,57 @@ def test_drain_TimeoutError_soft_requeues_without_fail(tmp_path, monkeypatch):
       del timeout
       raise TimeoutError("pickled per-file timeout")
 
+  async_res = _Ready()
+  inflight = {identity: async_res}
+  claims = {identity: claim}
+  submitted = {identity: 1.0}
+  n = qo._drain_ingest_ready(
+      client,
+      inflight=inflight,
+      claims=claims,
+      submitted=submitted,
+      tgz_archive_dir="/daily",
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: logs.append(" ".join(str(x) for x in a)),
+  )
+  assert n == 0
+  assert identity in inflight
+  assert identity in claims
+  assert identity in submitted
+  assert client.get(jq.job_lease_key("ingest", identity)) is not None
+  assert client.zscore(jq.job_queue_key("ingest"), identity) is None
+  joined = "\n".join(logs)
+  assert "ingest fail" not in joined
+  assert "queue_orchestrator ingest timeout" not in joined
+
+
+def test_drain_rich_TimeoutError_soft_requeues_without_fail(tmp_path, monkeypatch):
+  """Rich IngestPerFileTimeoutError escape still soft-requeues (Wave 1)."""
+  monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  identity = "/raw/timeout_rich"
+  jq.zadd_ingest_job(client, identity=identity, score=1.0)
+  claim = jq.claim_ingest_job(
+      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+  )
+  logs = []
+
+  class _RichTimeout(TimeoutError):
+    def __init__(self):
+      super().__init__("rich")
+      self.elapsed_s = 12.5
+      self.stage = "write"
+      self.size_bytes = 99
+
+  class _Ready:
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      del timeout
+      raise _RichTimeout()
+
   n = qo._drain_ingest_ready(
       client,
       inflight={identity: _Ready()},
@@ -2066,11 +2176,8 @@ def test_drain_TimeoutError_soft_requeues_without_fail(tmp_path, monkeypatch):
   joined = "\n".join(logs)
   assert "ingest timeout" in joined
   assert "ingest fail" not in joined
-  assert "size_bytes=" in joined
-  assert "timeout_s=" in joined
-  assert "elapsed_s=" in joined
-  assert "stage=" in joined
-  assert "err=TimeoutError" in joined
+  assert "stage=write" in joined
+  assert "err=" in joined
 
 
 def test_drain_packed_timeout_rich_log(tmp_path, monkeypatch):

@@ -273,8 +273,9 @@ Chunk handlers call **`hard_exit_pool_worker_error`** (`os._exit`) immediately a
 | `sync_pool_worker_recycle_grace_seconds` | 60 | Wall-clock seconds before WARN on slow per-PID maxtasksperchild replacement |
 | `sync_pool_idle_reconcile_max_rounds` | 3 | Redispatch rounds for idle-pool ghost `pending_async` before exit **124** last resort |
 | `sync_pool_idle_reconcile_polls_per_round` | 4 | Idle polls between reconcile redispatch attempts |
-| `sync_ingest_per_file_timeout_s` | 3600 | Floor seconds for size-proportional per-file ingest budget (`0` disables) |
-| `sync_ingest_per_file_timeout_s_per_mib` | (86400−900)/30720 | Added seconds per ceiling MiB (default maps **30 GiB → max**; slope uses historical 900s floor anchor) |
+| `sync_ingest_per_file_timeout_s` | 0 | Floor seconds for size-proportional per-file wall soft-kill (`0` disables wall B; idle stall owns soft-kill) |
+| `sync_ingest_stall_idle_s` | 1800 | Soft-requeue when parse/write shows no progress for this many seconds (`0` disables) |
+| `sync_ingest_per_file_timeout_s_per_mib` | (86400−900)/30720 | Added seconds per ceiling MiB when wall floor `> 0` (default maps **30 GiB → max**) |
 | `sync_ingest_per_file_timeout_max_s` | 86400 | Ceiling seconds (**24h**) for any file; no hard file-size reject |
 | `sync_ingest_giant_pool_supplement_enabled` | yes | Backfill idle pool slots from pending tail while **≥ 2 GiB** giants run |
 | `sync_ingest_queue_max_size` | 3000 | No-supplement in-memory pending/process queue; **also** ingest chunk size (`get_sync_ingest_chunk_size` alias — no separate INI key) |
@@ -330,9 +331,9 @@ Expect `sync_timedb:worker:populate-pool` with **`populate_source=tar`** when si
 
 Duplicate file members detected during populate set a Redis **`dedupe_hint`**; the archive janitor enqueues **`DAY_CLOSE`** (inline `.tar` dedupe or sealed-only `dedupe_sealed_daily_archive` last resort).
 
-**Backlog concurrency margin (2026-07):** default floor is **3600s** so slow-cohort retries under a 32-wide ingest pool (observed ~6–15 KB/s on small files; e.g. ~14 MiB needing ~2300s) finish before SIGALRM. Budget WARN logs fire at **≥7200s**. Keep `per_mib` / `max` unless raising the ceiling for multi-GiB stragglers. Apply on the **same redeploy** as the code release (no pre-code INI restart).
+**Backlog concurrency margin (2026-08):** default wall floor is **0** (SIGALRM soft-kill demoted). Soft-requeue uses **`sync_ingest_stall_idle_s`** (default **1800**) when parse/write heartbeats stop; Postgres **`statement_timeout`** remains the absolute DB ceiling. Coordinator submit-age ingest watchdog is **retired** (do not fall back to it). Apply on the **same redeploy** as the code release (no pre-code INI restart).
 
-For large DB sites with slow duplicate-detection or bulk writes, rely on **size-proportional** per-file budgets (`sync_ingest_per_file_timeout_s` floor + `sync_ingest_per_file_timeout_s_per_mib`, capped by `sync_ingest_per_file_timeout_max_s`) so one multi‑GiB straggler does not hit the flat floor and retry forever. Raise the **`sync_pool_stall_abort_after_timeouts` ceiling** together with **`sync_ingest_per_file_timeout_max_s`** when increasing the per-file max. Dynamic abort follows the largest file in the **current in-flight sliding window**; the ceiling only caps multi‑GiB stragglers. Catch-up mitigations for sealed-only archives: **`archive_keep_uncompressed_tar=yes`**, tune **`sync_ingest_pool_processes`**, and rely on Redis **single-flight populate** warming the day map (not N parallel `zstd` per worker). Ingest-time DLO quarantine for permanently corrupt raw is separate from exit **124**.
+For large DB sites with slow duplicate-detection or bulk writes, prefer **idle stall** over wall B. Optionally re-enable size-proportional wall (`sync_ingest_per_file_timeout_s` floor + `per_mib`, capped by `max`) only when you need an absolute soft-kill; raise **`sync_pool_stall_abort_after_timeouts`** together with **`sync_ingest_per_file_timeout_max_s`** when increasing the per-file max. Dynamic pool imap abort follows the largest in-flight budget (or `max` when wall floor is 0). Catch-up mitigations for sealed-only archives: **`archive_keep_uncompressed_tar=yes`**, tune **`sync_ingest_pool_processes`**, and rely on Redis **single-flight populate** warming the day map (not N parallel `zstd` per worker). Ingest-time DLO quarantine for permanently corrupt raw is separate from exit **124**.
 
 **Unmapped closed raw:** when ingest backlog prevents full accrual snapshots, the supervisor unions a cached unmapped-closed-raw scan into janitor disqualification so `.tar` drop cannot proceed while unparseable closed raw remains on disk.
 

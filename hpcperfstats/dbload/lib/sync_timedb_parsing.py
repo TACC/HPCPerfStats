@@ -834,25 +834,37 @@ _READ_LOOP_DEADLINE_EVERY_BYTES = 1 << 20
 
 def _maybe_raise_ingest_read_deadline(line_idx: Any, bytes_read: Any) -> None:
   """
-  Internal helper to handle maybe raise ingest read deadline.
-  
+  Check wall/idle ingest deadlines periodically during stats file reads.
+
+  Also heartbeats progress so idle-stall does not fire while lines are
+  advancing.
+
   Args:
-    line_idx (Any): Line idx passed to this helper.
-    bytes_read (Any): Bytes read passed to this helper.
-  
+    line_idx (Any): 1-based line count so far.
+    bytes_read (Any): Cumulative bytes read so far.
+
   Returns:
     None
-  
+
   Examples:
     >>> _maybe_raise_ingest_read_deadline(None, None)  # doctest: +SKIP
   """
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_progress import (
+      raise_if_ingest_idle_stalled,
+      touch_ingest_progress,
+  )
+
   if line_idx and line_idx % _READ_LOOP_DEADLINE_EVERY_LINES == 0:
+    touch_ingest_progress()
+    raise_if_ingest_idle_stalled(stage="idle_stall")
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         _raise_if_ingest_deadline_exceeded,
     )
 
     _raise_if_ingest_deadline_exceeded()
   if bytes_read and bytes_read % _READ_LOOP_DEADLINE_EVERY_BYTES == 0:
+    touch_ingest_progress()
+    raise_if_ingest_idle_stalled(stage="idle_stall")
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
         _raise_if_ingest_deadline_exceeded,
     )
