@@ -51,6 +51,7 @@ volumes:
     driver_opts:
       type: none
       # Host directory with fullchain.pem + privkey.pem at this path (edit for your site).
+      # See below for extra configuration for symlinks outside of this directory (Lets Encrypt)
       device: /opt/certs
       o: bind
 
