@@ -333,13 +333,13 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
-        "id": "docker_compose_app_example",
+        "id": "docker_compose_settings_example",
         "patterns": [
-            "docker-compose.app.yaml",
-            "docker-compose.app.yaml.example",
+            "docker-compose.settings.yaml",
+            "docker-compose.settings.yaml.example",
         ],
         "rules": [
-            "docker-compose-app-example-sync.mdc",
+            "docker-compose-settings-example-sync.mdc",
             "readme-installation-sync.mdc",
         ],
     },

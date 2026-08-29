@@ -88,7 +88,7 @@ flowchart LR
 
 ### 3.2 Compose containers (central stack)
 
-All central services run on the Compose network **`hpcperfstats_net`**. Application images are defined in **`docker-compose.app.yaml`**; shared data-plane containers (**`db`**, **`redis`**, **`rabbitmq`**, **`proxy`**) live in **`docker-compose.yaml`**, which also `include`s the app file and optional CPU-pinning fragments.
+All central services run on the Compose network **`hpcperfstats_net`**. Service definitions live in **`docker-compose.yaml`**, which `include`s site-local **`docker-compose.settings.yaml`** (bind volumes and optional knobs; bootstrap from **`.example`**).
 
 ```mermaid
 flowchart TB
@@ -116,7 +116,7 @@ flowchart TB
 **Deployment split:**
 
 - **On nodes:** C monitor (`HPCPerfStats/monitor/`), typically via RPM/systemd (`hpcperfstats` service).
-- **Central stack:** Docker Compose (`docker-compose.yaml` includes `docker-compose.app.yaml` plus optional `docker-compose.cpu-pinning.infra.yaml` and `docker-compose.cpu-pinning.app.yaml`): **`web`**, **`pipeline`**, **`db`**, **`redis`**, **`rabbitmq`**, **`proxy`**.
+- **Central stack:** Docker Compose (`docker-compose.yaml` includes `docker-compose.settings.yaml`): **`web`**, **`pipeline`**, **`db`**, **`redis`**, **`rabbitmq`**, **`proxy`**.
 
 ---
 
@@ -145,11 +145,11 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 | Service | Role |
 |---------|------|
 | **web** | Builds from repo `Dockerfile` (`hpcperfstats-full`); runs Django via `services-conf/django_startup.sh`; exposes app port (default host `8000` via `HPCPERFSTATS_WEB_PORT`). **Depends on healthy `db` and healthy `redis`.** |
-| **pipeline** | Same image as `web`; runs `supervisor_startup.sh` to supervise long-running ingest/processing programs (see §6). Uses the **`hpcperfstatsdata`** bind for archive, accounting, daily archive, and **cluster syslog** under **`/hpcperfstats/logs/`** (`docker-compose.app.yaml`). Reaches **`db`**, **`redis`**, and **`rabbitmq`** on `hpcperfstats_net`. |
+| **pipeline** | Same image as `web`; runs `supervisor_startup.sh` to supervise long-running ingest/processing programs (see §6). Uses the **`hpcperfstatsdata`** bind for archive, accounting, daily archive, and **cluster syslog** under **`/hpcperfstats/logs/`** (bind `device:` in **`docker-compose.settings.yaml`**). Reaches **`db`**, **`redis`**, and **`rabbitmq`** on `hpcperfstats_net`. |
 | **db** | TimescaleDB on PostgreSQL 15 (`timescale/timescaledb:2.28.3-pg15`); primary system of record. Compose sets large **`shm_size`** and Postgres tuning (`shared_buffers`, timeouts, WAL) for concurrent Django + pipeline load. |
 | **redis** | **Dedicated Compose container** (`redis:8.10.0-alpine3.23` in `docker-compose.yaml`). Network alias **`redis`**. Shared instance: Django cache (TTL keys) plus pipeline **`job:v1`** queues (TTL-free). **`maxmemory` 16gb** with **`volatile-lru`** (not **`allkeys-*`**, which would evict durable queue members). `appendonly no`; multi **`io-threads`**. Healthcheck: `redis-cli ping`. Cache pages/plots remain ephemeral; `job:v1` keys are the in-flight work record while the orchestrator is running. |
 | **rabbitmq** | Broker for monitor→site message delivery (`rabbitmq:4.3.4-management-alpine`, AMQP **5672** published; management HTTP **15672** compose-internal only). Admin Monitor queue/node stats use the management API from `web`, not AMQP. Memory cap: Compose **`mem_limit` / `memswap_limit` 96g** plus **`vm_memory_high_watermark.absolute = 80GiB`** (`services-conf/rabbitmq_vm_memory.conf`) so publishers block ~16 GiB below the cgroup wall instead of growing unbounded or hitting Erlang `binary_alloc`. |
-| **proxy** | Nginx TLS/front door; **`docker-compose.yaml`** mounts **`services-conf/nginx.conf`** as **`default.conf`**; image build **`cp`**s **`nginx.conf`** or **`nginx.conf.example`** plus generated **`hps-proxy-allowed-hosts.inc`** from INI (see workspace guardrails). Serves staticfiles/media and proxies API/HTML to **`web`**. |
+| **proxy** | Nginx TLS/front door; **`docker-compose.yaml`** mounts committed **`services-conf/nginx.conf`** as **`default.conf`**; image build **`cp`**s **`nginx.conf`** plus generated **`hps-proxy-allowed-hosts.inc`** from INI (see workspace guardrails). TLS PEMs via **`ssl_certs`** volume (`/etc/ssl/hpcperfstats`). Serves staticfiles/media and proxies API/HTML to **`web`**. |
 
 ### 5.3 Python package layout (concise)
 
@@ -294,10 +294,10 @@ This section records **typical** tradeoffs implicit in the design—not a formal
 | Regenerate / augment `MONITOR_VARIABLES.md` | `docs/regenerate_monitor_variables_catalog.py`, `docs/augment_monitor_variables_diagnostics.py` |
 | Researcher-facing web UI guide | `docs/using-the-website-as-a-researcher.md` |
 | Architecture-agnostic analysis | `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md` |
-| Compose topology (app + **redis** / db / rabbitmq / proxy) | `docker-compose.yaml`, `docker-compose.app.yaml` |
+| Compose topology (**redis** / db / rabbitmq / proxy / web / pipeline) | `docker-compose.yaml`, `docker-compose.settings.yaml.example` |
 | Supervisor programs (example) | `services-conf/supervisord.conf.example` |
 | Job plot / detail caching | `hpcperfstats/cursor-rules/job-plot-artifacts-caching.mdc`, `site/lib/machine/job_plot_artifacts.py` |
 | Workspace guardrails (monitor/tools/nginx/redis) | `HPCPerfStats/hpcperfstats/cursor-rules/workspace-guardrails.mdc` |
 | Monitor message contract | `HPCPerfStats/monitor/cursor-rules/monitor-workspace-contract.mdc` |
 | Monitor ↔ analysis type sync | `HPCPerfStats/hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc` |
-| Deploy concurrency / NUMA | `docs/DEPLOY_CONCURRENCY_AND_NUMA.md` |
+| Deploy concurrency / pool sizing | `docs/DEPLOY_CONCURRENCY_AND_NUMA.md` |

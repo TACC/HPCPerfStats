@@ -1,0 +1,80 @@
+# Site-local Compose settings (bind volumes + optional knobs).
+#
+# Operators: cp this file to docker-compose.settings.yaml (gitignored).
+# Any operator-facing change must update this .example in the same task —
+# see hpcperfstats/cursor-rules/docker-compose-settings-example-sync.mdc.
+#
+# Base stack: docker-compose.yaml (includes this file).
+
+volumes:
+  hpcperfstatsdata:
+    driver: local
+    driver_opts:
+      type: none
+      device: /data/hpcperfstats_data/site_data
+      o: bind
+  staticfiles_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: /data/hpcperfstats_site/staticfiles
+      o: bind
+  media_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: /data/hpcperfstats_site/media
+      o: bind
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: /data/hpcperfstats_db/pg15
+      o: bind
+  rabbitmq_messages:
+    driver: local
+    driver_opts:
+      type: none
+      device: /data/hpcperfstats_data/rabbitmq
+      o: bind
+  ssh_keys:
+    driver: local
+    driver_opts:
+      type: none
+      # Host directory with pipeline SSH keys (edit for your site).
+      device: /keys_directory/.ssh
+      o: bind
+  ssl_certs:
+    driver: local
+    driver_opts:
+      type: none
+      # Change the the directory for your certs here, the certs should include
+      # all hostnames listed in the hpcperfstats.ini. This dir is mounted read-only 
+      # at /etc/ssl/hpcperfstats in the proxy container.
+      device: /etc/letsencrypt/live/stats.stampede3.tacc.utexas.edu
+      o: bind
+
+# Optional knobs — copy a block under `services:` in your local
+# docker-compose.settings.yaml and uncomment as needed for this site.
+#
+# services:
+#   web:
+#     # Publish Django/gunicorn directly on the host (normally only via proxy 80/443).
+#     ports:
+#       - "${HPCPERFSTATS_WEB_PORT:-8000}:8000"
+#   db:
+#     # Allow the database to be open to the world.
+#     ports:
+#       - "5432:5432"
+#   rabbitmq:
+#     # Allow the rabbitmq management interface to be open to the world.
+#     ports:
+#       - "15672:15672"
+#   pipeline:
+#     # Debugging only — normal usage should never need this.
+#     cap_add:
+#       - SYS_PTRACE
+#     # Per-site cgroup overrides (defaults are 128g in docker-compose.yaml):
+#     # mem_limit: 128g
+#     # memswap_limit: 128g
+#     # stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-2m}

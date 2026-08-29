@@ -11,7 +11,7 @@ When changing compose, config, startup, or migration behavior that affects local
 web/DB availability, keep local runtime and data lifecycle consistent for UI tests.
 
 ## Trigger conditions
-- Changes to `docker-compose.yaml` or `docker-compose.app.yaml`.
+- Changes to `docker-compose.yaml` or `docker-compose.settings.yaml` (+ `.example`).
 - Changes to startup/config paths (for example `HPCPERFSTATS_INI`, host allowlists, env wiring).
 - Changes that affect migration order or DB readiness checks.
 

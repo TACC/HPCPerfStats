@@ -1,13 +1,11 @@
-# this file runs all of the services that support the django app and data proccessing
-# all app components are in the docker-compose.app.yaml file
-# Optional cpuset fragments (default empty services): cpu-pinning.infra + cpu-pinning.app
+# Base stack: infra + web/pipeline definitions.
+# Site bind volumes and optional knobs: docker-compose.settings.yaml
+# (cp docker-compose.settings.yaml.example docker-compose.settings.yaml).
 
 name: hpcperfstats
 
 include:
-  - docker-compose.app.yaml
-  - docker-compose.cpu-pinning.infra.yaml
-  - docker-compose.cpu-pinning.app.yaml
+  - docker-compose.settings.yaml
 
 # Container stdout/stderr for `docker compose logs` (not host syslog/journald).
 # Use json-file (not Docker-only ``local``) so Podman accept the driver too.
@@ -21,13 +19,54 @@ x-logging: &hpc-logging
 
 services:
   web:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+      target: hpcperfstats-full
+      # Optional override for staff SPA commit link. Primary bake uses context .git
+      # (frontend-builder COPY + git rev-parse). Default unknown falls back to .git.
+      args:
+        HPCPERFSTATS_GIT_COMMIT: ${HPCPERFSTATS_GIT_COMMIT:-unknown}
+    image: hpcperfstats
+    restart: always
     logging: *hpc-logging
+    command: /home/hpcperfstats/services-conf/django_startup.sh
+    environment:
+      - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
+      - STATIC_ROOT=/home/hpcperfstats/staticfiles
     volumes:
       - staticfiles_data:/home/hpcperfstats/staticfiles
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
+      - hpcperfstatsdata:/hpcperfstats/
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - web
 
   pipeline:
+    image: hpcperfstats
+    restart: always
     logging: *hpc-logging
+    # cgroup memory.max for sync_timedb / supervisord (Podman/Docker --memory).
+    # Tune from host MemTotal minus db, web, redis; 128g fits ~192 GiB hosts with no swap.
+    mem_limit: 128g
+    memswap_limit: 128g
+    stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-2m}
+    depends_on:
+      - web
+    command: /home/hpcperfstats/services-conf/supervisor_startup.sh
+    environment:
+      - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
+    ports:
+      - 514:514/udp
+      - 514:514/tcp
+    volumes:
+      - hpcperfstatsdata:/hpcperfstats/
+      - ssh_keys:/hpcperfstats/.ssh/:ro
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - pipeline
 
   redis:
     image: redis:8.10.0-alpine3.23
@@ -80,8 +119,7 @@ services:
       - 80:80
       - 443:443
     volumes:
-      # Main vhost (TLS paths, listen, includes): host file replaces image-baked default.conf.
-      # Create with: cp services-conf/nginx.conf.example services-conf/nginx.conf
+      # Main vhost (TLS paths fixed under /etc/ssl/hpcperfstats via ssl_certs volume).
       # Shared routing/security snippets: compose mounts are the only source of truth
       # (proxy.Dockerfile does not COPY these — avoid bake+mount duplication).
       # hps-proxy-allowed-hosts.inc and nginx-resolver.inc stay image/runtime-managed.
@@ -91,7 +129,7 @@ services:
       - ./services-conf/nginx-edge-security-headers.inc:/etc/nginx/nginx-edge-security-headers.inc:ro
       - ./services-conf/nginx-csp-no-active.inc:/etc/nginx/nginx-csp-no-active.inc:ro
       - ./services-conf/nginx-csp-django-html.inc:/etc/nginx/nginx-csp-django-html.inc:ro
-      - /etc/letsencrypt/:/etc/letsencrypt/:ro
+      - ssl_certs:/etc/ssl/hpcperfstats:ro
       - staticfiles_data:/srv/static:ro
       - media_data:/srv/media:ro
     networks:
@@ -162,7 +200,6 @@ services:
       retries: 10
     stop_signal: SIGINT  # Preferred for faster, yet still graceful, shutdowns
     stop_grace_period: 2m
-    # Host publish optional: # ports: ["5432:5432"]
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     environment:
@@ -199,10 +236,11 @@ services:
     ports:
       - 5672:5672
       # Management HTTP API / UI — keep compose-internal only (Django uses
-      # http://rabbitmq:15672). Do not publish 15672 on the host.
-      # - 15672:15672
+      # http://rabbitmq:15672). Do not publish 15672 on the host by default;
+      # uncomment in docker-compose.settings.yaml if needed.
     volumes:
       - rabbitmq_messages:/var/lib/rabbitmq/
+      # Host-local RMQ logs (not in settings volume table — site-specific path).
       - /var/log/rabbitmq:/var/log/rabbitmq
       - ./services-conf/rabbitmq_logging.conf:/etc/rabbitmq/conf.d/30-logging_settings.conf:ro
       - ./services-conf/rabbitmq_max_message_size.conf:/etc/rabbitmq/conf.d/20-max_message_size.conf:ro
@@ -214,11 +252,15 @@ services:
         aliases:
           - rabbitmq
 
+# Volume names only — bind devices live in docker-compose.settings.yaml.
 volumes:
+  hpcperfstatsdata:
   staticfiles_data:
   media_data:
   postgres_data:
   rabbitmq_messages:
+  ssh_keys:
+  ssl_certs:
 
 networks:
   hpcperfstats_net:

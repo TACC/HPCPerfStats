@@ -73,4 +73,4 @@ Read this file in the **same task** when you:
 - **`every-error-regression-test.mdc`** — guard test failures when patterns drift.
 - **`test-runs-output-directory.mdc`** — `test_runs/` belongs in dockerignore and stays gitignored locally.
 - **`frontend-prod-test-build-boundary.mdc`** — prod vs test build commands and static export exclusions
-- **`docker-compose-app-example-sync.mdc`** — compose build `target:` is separate from context exclusions.
+- **`docker-compose-settings-example-sync.mdc`** — compose build `target:` is separate from context exclusions.

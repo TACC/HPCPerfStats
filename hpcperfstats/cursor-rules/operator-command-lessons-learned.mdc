@@ -42,7 +42,7 @@ If the failure reveals a **recurring** gap (not a one-off typo), also add a one-
 - Wrong Redis key names for archive populate degraded / day skip — bare `*populate_degraded*` / `…:populate_degraded:v1:` returns empty while real keys are **`archive_populate_degraded`** / **`archive_day_ingest_skip`** (see **Anti-pattern — wrong archive_populate Redis key names** in `compose-operator-terminal-commands.mdc`).
 - Hardcoded `/hpcperfstats/…` or raw ConfigParser for `archive_dir` in Pending blocks — preToolUse deny (`check-live-plan-operator-discovery.py`).
 - Introspection misuse — unbounded `strace`, `gdb` left attached, or `py-spy` without a target PID when `pgrep`/`ps` should run first (see **Container introspection tools** in `compose-operator-terminal-commands.mdc`).
-- Missing `-f docker-compose.app.yaml` (or other overlay) when production uses it.
+- Missing **`docker-compose.settings.yaml`** (or running compose from the wrong checkout) when production uses settings `include` — ensure `cp docker-compose.settings.yaml.example docker-compose.settings.yaml` before `up`. Do **not** pass obsolete `-f docker-compose.app.yaml`.
 - Duplicate command blocks that already failed in an earlier plan for the same site.
 - Treat `ls *.fnctl.lock` / sidecar presence as a held lock — orphans are common; `fuser` often missing in pipeline image; use `try_file_write_lock` (see **Podman-compose sites** `fnctl.lock` row in `compose-operator-terminal-commands.mdc`).
 - `docker compose … up -d web` after a crash-loop on **podman-compose** — **name already in use** / exit **125**; use `podman start hpcperfstats_web_1` or `podman rm -f` then up (see **Podman-compose sites** in `compose-operator-terminal-commands.mdc`).

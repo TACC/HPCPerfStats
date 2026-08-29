@@ -44,7 +44,7 @@ def test_script_help_imports_without_editable_install():
   """Regression: bare ``python3 scripts/...`` must not raise ModuleNotFoundError.
 
   Production hosts often lack ``pip install -e``; scripts bootstrap repo root onto
-  ``sys.path`` (same pattern as ``apply_compose_cpu_pinning.py``).
+  ``sys.path`` (same pattern as other ``scripts/*.py`` CLIs).
   """
   env = {k: v for k, v in __import__("os").environ.items() if k != "PYTHONPATH"}
   completed = subprocess.run(

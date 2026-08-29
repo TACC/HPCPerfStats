@@ -1,8 +1,8 @@
-# Deployment: concurrency, PostgreSQL, and NUMA pinning
+# Deployment: concurrency and PostgreSQL
 
-This document summarizes how **thread/process counts** and **Docker Compose CPU sets** relate to **PostgreSQL `max_connections`** and large hosts (including multi-NUMA systems).
+This document summarizes how **thread/process counts** relate to **PostgreSQL `max_connections`** and large hosts.
 
-**Ini sections:** **`[DEFAULT]`** — install identity, PostgreSQL connection, compose NUMA/cpuset (pinning keys last). **`[PORTAL]`** — Gunicorn/Django web tuning. **`[PIPELINE]`** — `sync_timedb`, archive/seal, `update_metrics`, and accounting paths. Integration sections **`[RMQ]`**, **`[SYSLOG]`**, **`[CACHE]`**, **`[XALT]`**, **`[OAUTH2]`** are unchanged. See **`hpcperfstats.ini.example`** and **`hpcperfstats/cursor-rules/hpcperfstats-ini-format.mdc`**.
+**Ini sections:** **`[DEFAULT]`** — install identity, PostgreSQL connection, **`total_cores`**. **`[PORTAL]`** — Gunicorn/Django web tuning. **`[PIPELINE]`** — `sync_timedb`, archive/seal, `update_metrics`, and accounting paths. Integration sections **`[RMQ]`**, **`[SYSLOG]`**, **`[CACHE]`**, **`[XALT]`**, **`[OAUTH2]`** are unchanged. See **`hpcperfstats.ini.example`** and **`hpcperfstats/cursor-rules/hpcperfstats-ini-format.mdc`**.
 
 ## Services and parallelism (compose)
 
@@ -18,11 +18,11 @@ This document summarizes how **thread/process counts** and **Docker Compose CPU 
 
 **Sizing rule:** **`effective_cores = min(ini total_cores, os.cpu_count())`**. If **`[DEFAULT] total_cores`** is **missing** in `hpcperfstats.ini`, the code uses **40** as the ini budget. If the host has more CPUs than **`total_cores`**, the ini value **caps** app parallelism. If **ini > host**, **`os.cpu_count()`** (including cgroup/cpuset limits) wins.
 
-**Ini reference:** optional tuning keys and defaults are documented in **`hpcperfstats.ini.example`** (one comment per key). The canonical list of wired options is **`INI_OPTION_REGISTRY`** in **`hpcperfstats/dbload/lib/dbload/lib/conf_parser.py`**; drift tests in **`hpcperfstats/tests/test_hpcperfstats_ini_example.py`** keep the example aligned.
+**Ini reference:** optional tuning keys and defaults are documented in **`hpcperfstats.ini.example`** (one comment per key). The canonical list of wired options is **`INI_OPTION_REGISTRY`** in **`hpcperfstats/dbload/lib/conf_parser.py`**; drift tests in **`hpcperfstats/tests/test_hpcperfstats_ini_example.py`** keep the example aligned.
 
-## Archive zstd priority (unpinned hosts)
+## Archive zstd priority (shared hosts)
 
-Daily monitor archives are sealed inside the **`pipeline`** container. On hosts **without** Docker CPU pinning, **`web`**, **`db`**, and **`pipeline`** share the same CPU scheduler and often the same physical disk (`postgres_data` vs `/opt/hpcperfstats_data/`).
+Daily monitor archives are sealed inside the **`pipeline`** container. **`web`**, **`db`**, and **`pipeline`** share the same CPU scheduler and often the same physical disk (`postgres_data` vs `/data/hpcperfstats_data/site_data`).
 
 | `[PIPELINE]` key | Default | Role |
 |----------------|---------|------|
@@ -59,8 +59,6 @@ Progress and day_close eligibility are driven by Redis **`job:v1`** queues plus 
 
 **Multi-week backlog / disk pressure:** raise **`sync_day_close_max_inflight`** and keep **`sync_day_close_raw_paths_per_batch`** high enough for your daily file count (e.g. 15k/day may need several internal batches within one day-close worker pass). Default **`archive_keep_uncompressed_tar=no`** drops prior-day `.tar` at seal once raw is gone; calendar-today keeps `.tar` for **`archive_today_uncompressed_tar_grace_hours`** (default 24h after local midnight). Set global **`archive_keep_uncompressed_tar=yes`** during heavy same-day append if you need the uncompressed `.tar` for late raw appends.
 
-**Hard isolation (recommended long-term):** run [`scripts/apply_compose_cpu_pinning.py`](../scripts/apply_compose_cpu_pinning.py) so **`pipeline`** gets a dedicated cpuset; you can then run zstd at lower nice/ionice with less impact on **`web`**/**`db`**.
-
 ## OOM and `sync_timedb` process tree
 
 Kernel OOM may kill an ingest pool worker (`[worker:ingest-pool]`) with a **transient multi‑GiB anon spike** while parsing giant raw segments (`readlines()` on multi‑GiB–28 GiB files). **`sync_supervisor_rss_limit_mb`** checks **supervisor `/proc/self` only** — it does not see worker RSS. Spawn pool workers used to survive as orphans when the supervisor died first; **`PR_SET_PDEATHSIG`** addresses that case.
@@ -68,7 +66,7 @@ Kernel OOM may kill an ingest pool worker (`[worker:ingest-pool]`) with a **tran
 | Mitigation | Role |
 |------------|------|
 | **`PR_SET_PDEATHSIG` (SIGKILL)** on pool workers | Workers exit when the supervisor dies so **supervisord** can restart a clean tree |
-| **`pipeline` `mem_limit` / `memswap_limit`** (Compose) | Cgroup cap before host global OOM on swapless hosts; **128 GiB** is a reasonable default on **192 GiB** RAM (see `docker-compose.app.yaml.example`) |
+| **`pipeline` `mem_limit` / `memswap_limit`** (Compose) | Cgroup cap before host global OOM on swapless hosts; **128 GiB** is a reasonable default on **192 GiB** RAM (see `docker-compose.yaml`; optional overrides in `docker-compose.settings.yaml`) |
 | **`rabbitmq` `mem_limit` / `memswap_limit` 96g** plus **`vm_memory_high_watermark.absolute = 80GiB`** | Cgroup hard wall at 96 GiB; publishers block at 80 GiB headroom (`services-conf/rabbitmq_vm_memory.conf`) before Erlang `binary_alloc`. Recreate `rabbitmq` after changing either. Lower both together on hosts with less than 96 GiB RAM. |
 | **`sync_ingest_max_file_read_bytes`** (default **512 MiB**) | Stream-parse larger segments instead of **`readlines()`** |
 | **`sync_bulk_create_batch_size`** (default **10000**) | Combined ingest: flush parse → delta/arc → **`bulk_create`** every N stats rows (complete time sample first); same knob sizes DB write batches |
@@ -173,46 +171,11 @@ Jobs with long monitor prolog gaps (telemetry begins hours after Slurm start) st
 
 - Run **`python hpcperfstats/site/manage.py pg_connection_stats`** from the repo root (with **`HPCPERFSTATS_INI`** / config and DB reachable) to print **`pg_stat_activity`** totals for the current database (`machine` app management command).
 
-## Docker Compose CPU pinning (all services)
-
-The stack **includes** two optional merge fragments (committed as **`services: {}`** so clones stay **unbound** by default):
-
-- [`docker-compose.cpu-pinning.infra.yaml`](../docker-compose.cpu-pinning.infra.yaml) — **`db`**, **`redis`**, **`proxy`**, **`rabbitmq`**
-- [`docker-compose.cpu-pinning.app.yaml`](../docker-compose.cpu-pinning.app.yaml) — **`web`**, **`pipeline`**
-
-Both fragments are **`include`d from [`docker-compose.yaml`](../docker-compose.yaml)** (same directory as [`docker-compose.app.yaml`](../docker-compose.app.yaml)); use `docker compose -f docker-compose.yaml ...` from the repo root so merges apply.
-
-**Unbound (default):** empty fragments let the host scheduler place containers (often best on small or uneven hosts).
-
-**Pinned:** run [`scripts/apply_compose_cpu_pinning.py`](../scripts/apply_compose_cpu_pinning.py) on the **Linux deployment host**. It uses **`min([DEFAULT] total_cores, os.cpu_count())`** and [`hpcperfstats/compose_cpu_layout.py`](../hpcperfstats/compose_cpu_layout.py) to assign **contiguous** cpusets with **db** and **web** first, small slices for **Redis** / **RabbitMQ**, **pipeline** last. **`proxy`** uses the same cpuset string as **`web`** (allowed overlap). To force **unbound** fragments again: `python scripts/apply_compose_cpu_pinning.py --inactive`.
-
-```bash
-export HPCPERFSTATS_INI=/path/to/hpcperfstats.ini
-python scripts/apply_compose_cpu_pinning.py --dry-run   # prints infra + app YAML, separated by ---
-python scripts/apply_compose_cpu_pinning.py             # overwrites both fragment files
-# If the host reports fewer logical CPUs than your ini budget (e.g. cgroup), pin layout to 40:
-python scripts/apply_compose_cpu_pinning.py --total-cpus 40
-```
-
-Then start the stack as usual (no extra `-f` flags):
-
-```bash
-docker compose -f docker-compose.yaml up -d
-```
-
-**Note:** The old **`docker-compose.numa-pinning.yaml`** overlay is obsolete; use the fragments above only. The filename remains in **`.gitignore`** so local experiments do not get committed; no workflow scripts reference that compose file.
-
-## NUMA overrides (web / pipeline / proxy)
-
-Topology is read from **Linux sysfs**: `/sys/devices/system/node/node*/cpulist` (not hardcoded).
-
-When [`should_apply_numa_pinning`](../hpcperfstats/numa_topology.py) is true **and** **two different** NUMA nodes are selected for web vs pipeline, the generator **replaces** the linear **`web`**, **`pipeline`**, and optionally **`proxy`** cpusets with those nodes’ sysfs **`cpulist`** values. On a **single** NUMA node, web and pipeline would otherwise each get the **full** socket and erase the db/web/pipeline split — the script **keeps** the **linear** layout from [`compose_cpu_layout.py`](../hpcperfstats/compose_cpu_layout.py) instead. **`db`**, **Redis**, and **RabbitMQ** always use the linear layout in this phase — on multi-NUMA hosts their cpusets may **overlap** numerically with the web node’s CPUs; Docker allows overlapping `cpuset`s between containers. Tighter **Postgres-on-socket** placement is a possible future refinement.
-
 ## Archive janitor and seal/append lock contention
 
 The queue orchestrator runs up to **`sync_day_close_max_inflight`** (default **4**) **day_close** jobs in parallel (continuous refill; seal → raw → tar-drop per day). Tune **`sync_day_close_raw_paths_per_batch`** on sites ingesting **~15k raw files/day**.
 
-**Seal vs append:** `atomic_seal_tar_to_zst` holds an exclusive **`file_write_lock`** on the daily `.tar` for the full compress/replace window. Hot-path append uses the same lock (default **60s** timeout). Large-day seals during ingest can surface append **`TimeoutError`** (fail-closed). Mitigations: use **`archive_keep_uncompressed_tar=yes`** (or rely on today's grace window) during heavy same-day append, isolate **`sync_timedb`** archive work on a dedicated cpuset (see above), and rely on janitor disqualification for in-flight days.
+**Seal vs append:** `atomic_seal_tar_to_zst` holds an exclusive **`file_write_lock`** on the daily `.tar` for the full compress/replace window. Hot-path append uses the same lock (default **60s** timeout). Large-day seals during ingest can surface append **`TimeoutError`** (fail-closed). Mitigations: use **`archive_keep_uncompressed_tar=yes`** (or rely on today's grace window) during heavy same-day append, isolate **`pipeline`** CPU budget from **`web`**/**`db`** when possible, and rely on janitor disqualification for in-flight days.
 
 **Validation read locks:** parallel raw-remove validation defaults to **`sync_archive_validation_max_workers=2`** (INI `[PIPELINE]`). Raise only when append/read-lock contention is acceptable.
 
@@ -339,10 +302,8 @@ For large DB sites with slow duplicate-detection or bulk writes, prefer **idle s
 
 ## Related files
 
-- [`hpcperfstats/dbload/lib/dbload/lib/conf_parser.py`](../hpcperfstats/dbload/lib/conf_parser.py) — `get_effective_cores()`, caps, NUMA compose flags
-- [`hpcperfstats/compose_cpu_layout.py`](../hpcperfstats/compose_cpu_layout.py) — linear responsive `cpuset` partition
-- [`hpcperfstats/numa_topology.py`](../hpcperfstats/numa_topology.py) — sysfs parse and node-pair selection
-- [`scripts/apply_compose_cpu_pinning.py`](../scripts/apply_compose_cpu_pinning.py) — writes CPU pinning fragments
+- [`hpcperfstats/dbload/lib/conf_parser.py`](../hpcperfstats/dbload/lib/conf_parser.py) — `get_effective_cores()`, pool and concurrency caps
 - [`services-conf/django_startup.sh`](../services-conf/django_startup.sh) — Gunicorn worker count
 - [`hpcperfstats/site/hpcperfstats_site/settings.py`](../hpcperfstats/site/hpcperfstats_site/settings.py) — `CONN_MAX_AGE`, PostgreSQL `OPTIONS`
-- [`docker-compose.yaml`](../docker-compose.yaml) — Postgres `max_connections`, `statement_timeout`, `idle_in_transaction_session_timeout`
+- [`docker-compose.yaml`](../docker-compose.yaml) — Postgres `max_connections`, `statement_timeout`, `idle_in_transaction_session_timeout`; pipeline `mem_limit`
+- [`docker-compose.settings.yaml.example`](../docker-compose.settings.yaml.example) — site bind volumes and optional knobs

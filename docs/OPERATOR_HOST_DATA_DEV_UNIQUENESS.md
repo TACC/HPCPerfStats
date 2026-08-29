@@ -29,7 +29,7 @@ Do **not** copy one `LIMIT` across sites: ~3 GB/chunk on 02 vs ~34 GB/chunk on 0
 ## Progress check
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks, count(*) AS chunks FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';"
+docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks, count(*) AS chunks FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';"
 ```
 
 
@@ -39,7 +39,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 Repeat until `compressed_chunks = 0`. Set `LIMIT` from the table above (example uses 5 for 04/01).
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; SELECT decompress_chunk(format('%I.%I', chunk_schema, chunk_name)::regclass, true) FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data' AND is_compressed ORDER BY range_start LIMIT 5;"
+docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; SELECT decompress_chunk(format('%I.%I', chunk_schema, chunk_name)::regclass, true) FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data' AND is_compressed ORDER BY range_start LIMIT 5;"
 ```
 
 
@@ -57,7 +57,7 @@ Pass concurrency as the first argument (default **10**). Suggested starts: **02 
 ## Disk watch
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db df -h /var/lib/postgresql/data
+docker compose -p hpcperfstats -f docker-compose.yaml exec db df -h /var/lib/postgresql/data
 ```
 
 Run between batches. On **hpcperfstats03**, run every batch (mount is shared with non-Postgres archive data).
@@ -65,7 +65,7 @@ Run between batches. On **hpcperfstats03**, run every batch (mount is shared wit
 ## Done gate (Phase 2 prerequisite)
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';"
+docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';"
 ```
 
 When this prints `compressed_chunks = 0`, sites 01, 03, and 04 are ready for Phase 2 (`0032`). On hpcperfstats02, run the normalization command below first.
@@ -77,7 +77,7 @@ Run this **only on hpcperfstats02** and only after its done gate prints `compres
 The guarded block drops the primary key only when it is exactly `(time, host, type, event)` **and** the equivalent 4-column UNIQUE is present. It is a no-op if no primary key remains and aborts on any unexpected constraint shape. `lock_timeout` prevents the metadata change from waiting indefinitely; if it times out, retry during a quieter period.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -v ON_ERROR_STOP=1 -c "SET lock_timeout = '30s'; DO \$\$ DECLARE pk_name text; pk_columns text[]; has_matching_unique boolean; BEGIN SELECT c.conname, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) INTO pk_name, pk_columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype = 'p'; IF pk_name IS NULL THEN RAISE NOTICE 'host_data already has no primary key'; RETURN; END IF; SELECT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype = 'u' AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) = ARRAY['time','host','type','event']::text[]) INTO has_matching_unique; IF pk_columns <> ARRAY['time','host','type','event']::text[] THEN RAISE EXCEPTION 'refusing to drop unexpected host_data PK % on columns %', pk_name, pk_columns; END IF; IF NOT has_matching_unique THEN RAISE EXCEPTION 'refusing to drop host_data PK: equivalent 4-column UNIQUE is absent'; END IF; EXECUTE format('ALTER TABLE public.host_data DROP CONSTRAINT %I', pk_name); RAISE NOTICE 'dropped redundant host_data PK %', pk_name; END \$\$;" -c "SELECT c.conname, c.contype, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) AS columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype IN ('p', 'u') ORDER BY c.contype, c.conname;"
+docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -v ON_ERROR_STOP=1 -c "SET lock_timeout = '30s'; DO \$\$ DECLARE pk_name text; pk_columns text[]; has_matching_unique boolean; BEGIN SELECT c.conname, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) INTO pk_name, pk_columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype = 'p'; IF pk_name IS NULL THEN RAISE NOTICE 'host_data already has no primary key'; RETURN; END IF; SELECT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype = 'u' AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) = ARRAY['time','host','type','event']::text[]) INTO has_matching_unique; IF pk_columns <> ARRAY['time','host','type','event']::text[] THEN RAISE EXCEPTION 'refusing to drop unexpected host_data PK % on columns %', pk_name, pk_columns; END IF; IF NOT has_matching_unique THEN RAISE EXCEPTION 'refusing to drop host_data PK: equivalent 4-column UNIQUE is absent'; END IF; EXECUTE format('ALTER TABLE public.host_data DROP CONSTRAINT %I', pk_name); RAISE NOTICE 'dropped redundant host_data PK %', pk_name; END \$\$;" -c "SELECT c.conname, c.contype, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) AS columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype IN ('p', 'u') ORDER BY c.contype, c.conname;"
 ```
 
 The verification output must contain the 4-column UNIQUE and no `contype = p` row. After that, hpcperfstats02 has the same constraint shape as the other sites, and Phase 2 only needs to replace the 4-column UNIQUE by discovered `conname`, add `UNIQUE (time, host, type, event, dev)`, and restore the compression policy at 8 days.
@@ -87,7 +87,7 @@ The verification output must contain the 4-column UNIQUE and no `contype = p` ro
 `migrate machine 0030 --fake` skips policy removal. Un-fake before deploying Phase 1:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec web bash -lc 'python3 hpcperfstats/site/manage.py migrate machine 0029 --fake'
+docker compose -p hpcperfstats -f docker-compose.yaml exec web bash -lc 'python3 hpcperfstats/site/manage.py migrate machine 0029 --fake'
 ```
 
 Then redeploy the Phase 1 image and let `migrate` apply `0030` for real.
@@ -107,7 +107,7 @@ Stay on the **2.28.x** line while on PostgreSQL 15 — Timescale **2.29+ drops P
 ### 1. Check installed vs available
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T db psql -h localhost -U hpcperfstats -X -c "SELECT e.extversion AS installed, a.default_version AS available_in_image, version() FROM pg_extension e JOIN pg_available_extensions a ON a.name = e.extname WHERE e.extname = 'timescaledb';"
+docker compose -p hpcperfstats -f docker-compose.yaml exec -T db psql -h localhost -U hpcperfstats -X -c "SELECT e.extversion AS installed, a.default_version AS available_in_image, version() FROM pg_extension e JOIN pg_available_extensions a ON a.name = e.extname WHERE e.extname = 'timescaledb';"
 ```
 
 If `installed` already equals `available_in_image` (both `2.28.3` with the current pin), skip the rest. If `available_in_image` is still old, the running `db` container is not on the pinned image — fix that with step 2 before `ALTER EXTENSION`.
@@ -117,11 +117,11 @@ If `installed` already equals `available_in_image` (both `2.28.3` with the curre
 Briefly stop writers so they are not mid-transaction across the recreate (optional but safer on busy sites):
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml stop -t 300 pipeline && docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml stop -t 120 web
+docker compose -p hpcperfstats -f docker-compose.yaml stop -t 300 pipeline && docker compose -p hpcperfstats -f docker-compose.yaml stop -t 120 web
 ```
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml pull db && docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml up -d --force-recreate --no-deps db
+docker compose -p hpcperfstats -f docker-compose.yaml pull db && docker compose -p hpcperfstats -f docker-compose.yaml up -d --force-recreate --no-deps db
 ```
 
 Wait until healthy (`pg_isready`), then continue. Bring `web` / `pipeline` back only after step 3 succeeds (or after you decide to defer the catalog bump).
@@ -131,13 +131,13 @@ Wait until healthy (`pg_isready`), then continue. Bring `web` / `pipeline` back 
 `ALTER EXTENSION` must be the **first** statement in the session (`psql -X`). `POSTGRES_USER` is `hpcperfstats` (superuser in this image). Repeat until `installed` matches `available_in_image` — large jumps (e.g. 2.17 → 2.28) often need several `UPDATE` hops along Timescale’s upgrade path:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T db psql -h localhost -U hpcperfstats -X -v ON_ERROR_STOP=1 -c "ALTER EXTENSION timescaledb UPDATE;"
+docker compose -p hpcperfstats -f docker-compose.yaml exec -T db psql -h localhost -U hpcperfstats -X -v ON_ERROR_STOP=1 -c "ALTER EXTENSION timescaledb UPDATE;"
 ```
 
 Re-check after each hop:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T db psql -h localhost -U hpcperfstats -X -c "SELECT e.extversion AS installed, a.default_version AS available_in_image FROM pg_extension e JOIN pg_available_extensions a ON a.name = e.extname WHERE e.extname = 'timescaledb';"
+docker compose -p hpcperfstats -f docker-compose.yaml exec -T db psql -h localhost -U hpcperfstats -X -c "SELECT e.extversion AS installed, a.default_version AS available_in_image FROM pg_extension e JOIN pg_available_extensions a ON a.name = e.extname WHERE e.extname = 'timescaledb';"
 ```
 
 If `UPDATE` errors asking for a specific intermediate version, run `ALTER EXTENSION timescaledb UPDATE TO '<that_version>';` then continue with plain `UPDATE` until you reach **2.28.3**. If the image lacks an intermediate `.so`, see Timescale’s Docker upgrade notes (HA images ship more historical libraries than the slim `timescale/timescaledb` tag this compose uses).
@@ -147,7 +147,7 @@ This fleet does not require `timescaledb_toolkit` for Stage 1/2; skip toolkit un
 ### 4. Restart app containers
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml up -d --no-deps web pipeline
+docker compose -p hpcperfstats -f docker-compose.yaml up -d --no-deps web pipeline
 ```
 
 Catalog upgrade is **independent** of Stage 1 decompress / Stage 2 `0032`; do it whenever operators want fleet Timescale versions aligned. Prefer finishing decompress (or at least avoiding a recreate mid-`decompress_chunk` batch) before step 2.
@@ -169,7 +169,7 @@ Stage 2 ships in a **separate image** that includes migration `0032_host_data_un
 **db — confirm decompress gate still zero and constraint shape:**
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';" -c "SELECT c.conname, c.contype, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) AS columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype IN ('p', 'u') ORDER BY c.contype, c.conname;" -c "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
+docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';" -c "SELECT c.conname, c.contype, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) AS columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype IN ('p', 'u') ORDER BY c.contype, c.conname;" -c "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
 ```
 
 Expect: `compressed_chunks = 0`; one 4-column UNIQUE on `(time, host, type, event)`; **no** primary-key row (especially on 02); `null_dev_rows` ideally `0`. If `null_dev_rows` is huge, backfill **before** migrate.
@@ -193,7 +193,7 @@ First argument is worker concurrency (default **30**). Other knobs (optional env
 Optional post-run verify:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
+docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
 ```
 
 Expect `null_dev_rows = 0` before running Stage 2 migrate.
@@ -201,7 +201,7 @@ Expect `null_dev_rows = 0` before running Stage 2 migrate.
 Serial one-shot (small sites only):
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; UPDATE host_data SET dev = '' WHERE dev IS NULL;"
+docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; UPDATE host_data SET dev = '' WHERE dev IS NULL;"
 ```
 
 
@@ -213,19 +213,19 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 2. Stop `pipeline` and `web` so nothing restarts mid-DDL and ingest is not writing during the UNIQUE rewrite:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml stop -t 300 pipeline && docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml stop -t 120 web
+docker compose -p hpcperfstats -f docker-compose.yaml stop -t 300 pipeline && docker compose -p hpcperfstats -f docker-compose.yaml stop -t 120 web
 ```
 
 3. Run migrate once:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml run --rm web bash -lc 'python3 hpcperfstats/site/manage.py migrate machine 0032'
+docker compose -p hpcperfstats -f docker-compose.yaml run --rm web bash -lc 'python3 hpcperfstats/site/manage.py migrate machine 0032'
 ```
 
 4. Start `web` and `pipeline` again:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml up -d --no-deps web pipeline
+docker compose -p hpcperfstats -f docker-compose.yaml up -d --no-deps web pipeline
 ```
 
 If you accidentally start `web` before the gates pass, `0032` is written to **soft-skip** (NOTICE + success) when compressed chunks remain or a multi-column PK is still present — uniqueness will not change until you fix the gate and re-run migrate (one-shot again).
@@ -235,7 +235,7 @@ If you accidentally start `web` before the gates pass, `0032` is written to **so
 **db — 5-col UNIQUE present; compression policy/job restored:**
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT c.conname, c.contype, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) AS columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype IN ('p', 'u') ORDER BY c.contype, c.conname;" -c "SELECT job_id, proc_name, schedule_interval, config FROM timescaledb_information.jobs WHERE hypertable_name = 'host_data' AND proc_name LIKE '%compress%' ORDER BY job_id;"
+docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT c.conname, c.contype, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) AS columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype IN ('p', 'u') ORDER BY c.contype, c.conname;" -c "SELECT job_id, proc_name, schedule_interval, config FROM timescaledb_information.jobs WHERE hypertable_name = 'host_data' AND proc_name LIKE '%compress%' ORDER BY job_id;"
 ```
 
 Expect a UNIQUE on `(time, host, type, event, dev)` (name may be `host_data_time_host_type_event_dev_uniq`) and a compression policy/job for `host_data` at **8 days**. After the policy ages in, `compressed_chunks` may become non-zero again — that is expected; do not re-run Stage 1 decompress unless you intentionally remove the policy again.

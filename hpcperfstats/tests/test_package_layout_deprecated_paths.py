@@ -30,8 +30,6 @@ DEPRECATED_ROOT_MODULES = [
     "django_bootstrap.py",
     "dbwait.py",
     "rediswait.py",
-    "numa_topology.py",
-    "compose_cpu_layout.py",
     "ini_section_placement.py",
 ]
 

@@ -12,7 +12,7 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 
 ## P2 — Hardening and hygiene
 
-- **Audit workflow compose overlay (F9):** optional hardening for `tests/run_security_audit_workflow.sh` — run `pip-audit` via `docker run --rm` on the built `hpcperfstats` image (no `hpcperfstatsdata` volume) so local machines with gitignored `docker-compose.app.yaml` do not block audits. CI behavior unchanged.
+- **Audit workflow compose overlay (F9):** mitigated — workflows use **`docker-compose.settings.yaml`** (from example) plus **`tests/docker-compose.test-overlay.yaml`** so local machines do not need production `/data` binds. Optional: still run `pip-audit` via `docker run --rm` on the built image.
 
 ## Done
 

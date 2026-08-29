@@ -37,7 +37,7 @@ if ! [[ "$DAYS" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
-COMPOSE=(docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml)
+COMPOSE=(docker compose -p hpcperfstats -f docker-compose.yaml)
 
 psql_cmd() {
   "${COMPOSE[@]}" exec -T db psql -h localhost -U hpcperfstats \

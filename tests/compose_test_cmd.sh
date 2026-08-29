@@ -11,6 +11,37 @@ compose_repo_root() {
   cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
 }
 
+compose_ensure_settings_yaml() {
+  local repo_root
+  repo_root="$(compose_repo_root)"
+  local settings="${repo_root}/docker-compose.settings.yaml"
+  local example="${repo_root}/docker-compose.settings.yaml.example"
+  if [[ ! -f "$settings" ]]; then
+    if [[ ! -f "$example" ]]; then
+      echo "compose_ensure_settings_yaml: missing ${example}" >&2
+      return 1
+    fi
+    cp "$example" "$settings"
+    echo "compose_ensure_settings_yaml: created ${settings} from example" >&2
+  fi
+}
+
+compose_ensure_test_overlay_yaml() {
+  local repo_root
+  repo_root="$(compose_repo_root)"
+  local overlay="${repo_root}/tests/docker-compose.test-overlay.yaml"
+  local example="${repo_root}/tests/docker-compose.test-overlay.yaml.example"
+  if [[ ! -f "$overlay" ]]; then
+    if [[ ! -f "$example" ]]; then
+      echo "compose_ensure_test_overlay_yaml: missing ${example}" >&2
+      return 1
+    fi
+    cp "$example" "$overlay"
+    echo "compose_ensure_test_overlay_yaml: created ${overlay} from example" >&2
+  fi
+}
+
+
 # virtiofs bind mounts from cloud-sync paths (CloudStorage, iCloud, etc.) can deny listdir/open in
 # the Linux VM (pip, bash, cp all hit EPERM). Rsync to a host work tree first,
 # then bind-mount that tree (not the cloud-sync checkout). Default work copy:
@@ -63,9 +94,7 @@ compose_rsync_repo_to_work_copy() {
       "${repo_root}/pyproject.toml" \
       "${repo_root}/conftest.py" \
       "${repo_root}/docker-compose.yaml" \
-      "${repo_root}/docker-compose.app.yaml" \
-      "${repo_root}/docker-compose.cpu-pinning.infra.yaml" \
-      "${repo_root}/docker-compose.cpu-pinning.app.yaml" \
+      "${repo_root}/docker-compose.settings.yaml.example" \
       "${repo_root}/Dockerfile" \
       "${dest}/"
     rsync -a --timeout=120 "${excludes[@]}" \
@@ -102,6 +131,8 @@ compose_rsync_docs_contract_files() {
 }
 
 compose_prepare_bind_mount() {
+  compose_ensure_settings_yaml || return 1
+  compose_ensure_test_overlay_yaml || return 1
   local repo_root
   repo_root="$(compose_repo_root)"
   local use_work_copy="${COMPOSE_BIND_MOUNT_WORK_COPY:-}"
@@ -132,6 +163,28 @@ compose_prepare_bind_mount() {
       fi
       if [[ -f "${_COMPOSE_BIND_MOUNT_WORK_COPY}/pyproject.toml" ]]; then
         compose_ensure_work_copy_ini "$repo_root" "${_COMPOSE_BIND_MOUNT_WORK_COPY}"
+        if [[ ! -f "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.settings.yaml" ]]; then
+          if [[ -f "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.settings.yaml.example" ]]; then
+            cp "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.settings.yaml.example" \
+              "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.settings.yaml"
+          elif [[ -f "${repo_root}/docker-compose.settings.yaml" ]]; then
+            cp -f "${repo_root}/docker-compose.settings.yaml" \
+              "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.settings.yaml"
+          fi
+        fi
+        if [[ ! -f "${_COMPOSE_BIND_MOUNT_WORK_COPY}/tests/docker-compose.test-overlay.yaml" ]]; then
+          mkdir -p "${_COMPOSE_BIND_MOUNT_WORK_COPY}/tests"
+          if [[ -f "${_COMPOSE_BIND_MOUNT_WORK_COPY}/tests/docker-compose.test-overlay.yaml.example" ]]; then
+            cp "${_COMPOSE_BIND_MOUNT_WORK_COPY}/tests/docker-compose.test-overlay.yaml.example" \
+              "${_COMPOSE_BIND_MOUNT_WORK_COPY}/tests/docker-compose.test-overlay.yaml"
+          elif [[ -f "${repo_root}/tests/docker-compose.test-overlay.yaml" ]]; then
+            cp -f "${repo_root}/tests/docker-compose.test-overlay.yaml" \
+              "${_COMPOSE_BIND_MOUNT_WORK_COPY}/tests/docker-compose.test-overlay.yaml"
+          elif [[ -f "${repo_root}/tests/docker-compose.test-overlay.yaml.example" ]]; then
+            cp -f "${repo_root}/tests/docker-compose.test-overlay.yaml.example" \
+              "${_COMPOSE_BIND_MOUNT_WORK_COPY}/tests/docker-compose.test-overlay.yaml"
+          fi
+        fi
         break
       fi
       echo "compose_prepare_bind_mount: rsync incomplete (attempt ${attempt}/3), retrying..." >&2
@@ -173,6 +226,8 @@ compose_test_project_args() {
 }
 
 compose_test() {
+  compose_ensure_settings_yaml || return 1
+  compose_ensure_test_overlay_yaml || return 1
   local project_args=()
   if [[ -n "${COMPOSE_BIND_MOUNT_DIR:-}" ]]; then
     project_args=(--project-directory "${COMPOSE_BIND_MOUNT_DIR}")
@@ -200,7 +255,7 @@ compose_run_inner_script() {
     return 1
   fi
   if [[ -n "${COMPOSE_BIND_MOUNT_DIR:-}" ]]; then
-    # Overlay docker-compose.app.yaml ./hpcperfstats.ini (cloud virtiofs) after the tree mount.
+    # Overlay ./hpcperfstats.ini (cloud virtiofs) after the tree mount.
     docker_args+=(
       -v "${COMPOSE_BIND_MOUNT_DIR}:/home/hpcperfstats:rw"
       -v "${COMPOSE_BIND_MOUNT_DIR}/hpcperfstats.ini:/home/hpcperfstats/hpcperfstats.ini:ro"

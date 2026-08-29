@@ -13,12 +13,9 @@ htmlcov/
 .tools/
 node_modules/
 hpcperfstats.ini
-docker-compose.numa-pinning.yaml
-# docker-compose.cpu-pinning.*.yaml are committed with services: {} by default;
-# operators may overwrite locally after running apply_compose_cpu_pinning.py.
-docker-compose.app.yaml
+docker-compose.settings.yaml
+tests/docker-compose.test-overlay.yaml
 services-conf/supervisord.conf
-services-conf/nginx.conf
 services-conf/rsync_data.sh
 dist/
 hpcperfstats/site/hpcperfstats_site/edge_nginx/

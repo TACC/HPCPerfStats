@@ -57,8 +57,8 @@ def test_write_nginx_resolver_include_roundtrip(tmp_path: Path):
   assert "resolver 127.0.0.11" in out.read_text(encoding="utf-8")
 
 
-def test_nginx_conf_example_and_proxy_dockerfile_complete_ocsp_contract():
-  example = (_repo_root() / "services-conf" / "nginx.conf.example").read_text(
+def test_nginx_conf_and_proxy_dockerfile_complete_ocsp_contract():
+  example = (_repo_root() / "services-conf" / "nginx.conf").read_text(
       encoding="utf-8"
   )
   assert "ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;" in example

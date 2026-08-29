@@ -1,5 +1,0 @@
-# Optional CPU pinning for app services (web, pipeline).
-# Included from docker-compose.yaml (root). Default: unbound. On the Linux host run:
-#   python scripts/apply_compose_cpu_pinning.py
-# See docs/DEPLOY_CONCURRENCY_AND_NUMA.md.
-services: {}

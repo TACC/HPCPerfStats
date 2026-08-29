@@ -32,7 +32,7 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 
 **Host dev venv** (not shipped): `idna` 3.13 (CVE-2026-45409 → 3.15+), `pip` 26.1.1 (PYSEC-2026-196 → 26.1.2+). Treat as developer-workstation hygiene only.
 
-**Workflow note:** `tests/run_security_audit_workflow.sh` uses `docker-compose run web`. On machines with a local (gitignored) `docker-compose.app.yaml` but no `/opt/hpcperfstats_data/` bind mount, compose can fail before `pip-audit` runs. CI (no app overlay) is unaffected; direct `docker run --rm hpcperfstats pip-audit` is a valid local fallback.
+**Workflow note:** `tests/run_security_audit_workflow.sh` uses `docker-compose run web` via the test overlay + settings. On machines missing **`docker-compose.settings.yaml`**, `compose_test_cmd.sh` copies it from **`.example`**. Direct `docker run --rm hpcperfstats pip-audit` remains a valid local fallback.
 
 ### npm audit (frontend)
 
@@ -80,7 +80,7 @@ No high-severity issues. Production-code medium B608 locations (2026-06-05): `an
 | F6 | Medium | Observability | `/csp-report/` returned **403** for browser-style POSTs when CSRF checks apply (no CSRF token on CSP reports). | **Fixed** (csrf_exempt + body cap; tests) |
 | F7 | Low | API keys | Stored as SHA-256 of high-entropy raw key; consider a pepper if policy requires. | Open (optional) |
 | F8 | Low | Subprocess/SQL | Ingest/archive uses subprocess and raw SQL with parameters; keep arguments non-user-controlled. | Ongoing review |
-| F9 | Low | Operations | Local `run_security_audit_workflow.sh` can fail when gitignored `docker-compose.app.yaml` is present without `hpcperfstatsdata` host path; CI path unaffected. | Open (workflow hardening optional) |
+| F9 | Low | Operations | Local `run_security_audit_workflow.sh` historically failed when a gitignored app overlay lacked host bind paths; workflows now use settings + test overlay. | **Mitigated** (settings + overlay) |
 | F10 | Medium | CSRF | Session-authenticated POST endpoints (`drop-staff`, `invalidate-cache`, `sacct_ingest`, `user-api-key/rotate`) now share `_require_csrf_for_session_post`; `session_info` sets `csrftoken` via `@ensure_csrf_cookie`; client mutator fails closed without cookie. | **Fixed** |
 | F11 | Medium | Input validation | Orval `@orval/zod` response parsing at `customFetch` boundary; hand-written `bokehJsonItemSchema` at embed boundaries. | **Fixed** |
 | F12 | Low | XSS (href) | `isSafeHttpUrl` guards `client_url` / `server_url` in Job Detail; entity paths use `encodeURIComponent`. | **Fixed** |

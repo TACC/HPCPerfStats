@@ -1,0 +1,53 @@
+---
+description: Keep docker-compose.settings.yaml.example aligned when settings or bind volumes change
+globs: docker-compose.settings.yaml,docker-compose.settings.yaml.example,.gitignore
+alwaysApply: false
+---
+
+# docker-compose.settings.yaml Example Sync
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Operators bootstrap site bind volumes from a copy/edit flow documented in **`HPCPerfStats/README.md`**:
+
+```bash
+cp docker-compose.settings.yaml.example docker-compose.settings.yaml
+```
+
+**`docker-compose.settings.yaml` is gitignored**. The **committed** operator template is **`docker-compose.settings.yaml.example`**. Base **`docker-compose.yaml`** `include`s the settings file automatically — do **not** pass a separate `-f` for settings, and do **not** use obsolete **`docker-compose.app.yaml`**.
+
+Local settings hold site-specific bind **`device:`** paths (`hpcperfstatsdata`, `staticfiles_data`, `media_data`, `postgres_data`, `rabbitmq_messages`, `ssh_keys`, `ssl_certs`) and optional commented knobs (host ports, `SYS_PTRACE`, mem/grace overrides). **Every operator-facing change** made in the local file **must** be mirrored into **`.example` in the same task** or the next `cp` will drop it for other operators and fresh clones.
+
+## Law (non-dev → example)
+
+When you change **`docker-compose.settings.yaml`** in a way operators need after `cp …example …settings.yaml`, you **must** apply the **same change** to **`docker-compose.settings.yaml.example` in the same task**. Do not treat the gitignored file as the only source of truth for bind devices or optional knobs.
+
+## Must mirror (operator / deploy contract)
+
+| Field | Notes |
+|---|---|
+| Top-level **`volumes:`** bind **`device:`** paths | All seven named volumes; keep comments for SSH / Let’s Encrypt live dir |
+| Commented optional **`services:`** knobs | `web`/`db`/`rabbitmq` host ports, pipeline `cap_add`, mem/grace overrides |
+| Volume **names** used by base compose | Must stay aligned with **`docker-compose.yaml`** `volumes:` name-only block |
+
+Service bodies for **`web`** / **`pipeline`** / infra live in **`docker-compose.yaml`** — do not reintroduce an app overlay.
+
+## Required behavior
+
+1. Edit **`.example` first** when the change is meant for all operators; then copy or align local **`docker-compose.settings.yaml`**.
+2. If you edited local settings first, **backport** operator-facing deltas to **`.example` before closing the task**.
+3. Keep the example **copy-pasteable**: no secrets; use documented placeholders and comments.
+4. Extend **`hpcperfstats/tests/test_docker_compose_healthchecks.py`** settings markers when adding new operator-facing binds or knobs.
+5. If install steps change, update **`README.md`** per **`readme-installation-sync.mdc`**.
+
+## Validation checklist
+
+- Every bind **`device:`** operators need appears in **`.example`** (or README documents a mandatory post-`cp` edit).
+- Test overlay remaps all binds without host `/data` paths (`tests/docker-compose.test-overlay.yaml.example`; runtime copy is gitignored).
+- Run **`test_docker_compose_settings_example_operator_markers`** / **`test_docker_compose_settings_example_operator_parity`**.
+
+## Overlap
+
+- **`readme-installation-sync.mdc`** — Installation prose when compose wiring or volume layout changes.
+- **`minimal-compose-install-footprint.mdc`** — prefer settings example + `cp` over hand-editing base compose.
+- **`docker-compose-non-unit-testing.mdc`** — test overlay clears settings binds for CI/Colima.

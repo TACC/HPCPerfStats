@@ -1,0 +1,41 @@
+# Compose overlay for local/CI test workflows (tests/run_*_workflow.sh).
+#
+# Operators / agents: cp this file to tests/docker-compose.test-overlay.yaml
+# (gitignored). compose_test_cmd.sh copies automatically when missing.
+#
+# Production bind devices live in docker-compose.settings.yaml (from
+# docker-compose.settings.yaml.example; included by docker-compose.yaml).
+# This overlay remaps every bind-backed named volume to a plain Docker named
+# volume so macOS/Colima and CI do not need operator paths under /data.
+# Production deploys use base compose only (settings included; no app overlay).
+
+services:
+  web:
+    volumes:
+      - test_hpcperfstatsdata:/hpcperfstats/
+      - test_staticfiles_data:/home/hpcperfstats/staticfiles
+      - test_media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
+  pipeline:
+    volumes:
+      - test_hpcperfstatsdata:/hpcperfstats/
+      - test_ssh_keys:/hpcperfstats/.ssh/:ro
+  proxy:
+    volumes:
+      - test_ssl_certs:/etc/ssl/hpcperfstats:ro
+      - test_staticfiles_data:/srv/static:ro
+      - test_media_data:/srv/media:ro
+  db:
+    volumes:
+      - test_postgres_data:/var/lib/postgresql/data/
+  rabbitmq:
+    volumes:
+      - test_rabbitmq_messages:/var/lib/rabbitmq/
+
+volumes:
+  test_hpcperfstatsdata:
+  test_staticfiles_data:
+  test_media_data:
+  test_postgres_data:
+  test_rabbitmq_messages:
+  test_ssh_keys:
+  test_ssl_certs:

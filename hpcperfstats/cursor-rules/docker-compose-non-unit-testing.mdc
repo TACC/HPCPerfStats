@@ -12,7 +12,7 @@ All **`tests/run_*_workflow.sh`** scripts source **`tests/compose_test_cmd.sh`**
 
 `docker-compose -f docker-compose.yaml -f tests/docker-compose.test-overlay.yaml`
 
-That overlay swaps the production **`hpcperfstatsdata`** bind mount (**`/opt/hpcperfstats_data/`** on the host) for a named volume so macOS/Colima dev machines and CI do not need operator paths under **`/opt`**. Production deploys still use **`docker-compose.app.yaml`** unchanged.
+That overlay remaps **all** production bind-backed volumes from **`docker-compose.settings.yaml`** (site_data, Postgres, RabbitMQ, static/media, SSH, TLS certs under **`/data/...`**) to named Docker volumes so macOS/Colima and CI do not need those host paths. **`compose_test_cmd.sh`** ensures settings and the test overlay exist (`cp` from each **`.example`** when missing). **`tests/docker-compose.test-overlay.yaml`** is gitignored; the committed template is **`tests/docker-compose.test-overlay.yaml.example`**. Production deploys use base **`docker compose`** / **`docker compose -p hpcperfstats`** only (settings `include`d; no app overlay).
 
 ## Default runners (from `HPCPerfStats/` containing `docker-compose.yaml`)
 

@@ -65,12 +65,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("DEFAULT", "password"),
     ("DEFAULT", "host"),
     ("DEFAULT", "port"),
-    ("DEFAULT", "cpuset_pin_min_total_cores"),
-    ("DEFAULT", "cpuset_pin_min_cores_per_node"),
-    ("DEFAULT", "numa_pin_max_nodes_auto"),
-    ("DEFAULT", "pin_proxy_in_compose"),
-    ("DEFAULT", "web_numa_node"),
-    ("DEFAULT", "pipeline_numa_node"),
     # [PORTAL] — Gunicorn / Django web stack tuning
     ("PORTAL", "cors_origin_scheme"),
     ("PORTAL", "gunicorn_workers"),
@@ -229,12 +223,6 @@ INI_OPTION_DEFAULTS = {
     'password': None,
     'host': None,
     'port': None,
-    'cpuset_pin_min_total_cores': '32',
-    'cpuset_pin_min_cores_per_node': '16',
-    'numa_pin_max_nodes_auto': '16',
-    'pin_proxy_in_compose': 'no',
-    'web_numa_node': None,
-    'pipeline_numa_node': None,
     'cors_origin_scheme': '',
     'gunicorn_workers': '32',
     'summary_aggregate_prefetch_max_threads': '2',
@@ -919,37 +907,6 @@ def _env_or_cfg_bounded_float(
           section, option, fallback=str(fallback), legacy_sections=legacy_sections,
       ))),
   )
-
-
-def _optional_default_int_option(
-  option_name: Any,
-  *,
-  legacy_sections: tuple[Any, ...] = (),
-) -> Any:
-  """
-  Internal helper to handle optional default int option.
-  
-  Args:
-    option_name (Any): Option name passed to this helper.
-    legacy_sections (tuple[Any, ...]): Sequence for legacy sections.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _optional_default_int_option(None, [])  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  if not _ini_has_option_any("DEFAULT", option_name, legacy_sections):
-    return None
-  value = _ini_get(
-      "DEFAULT",
-      option_name,
-      legacy_sections=legacy_sections,
-  ).strip()
-  if not value:
-    return None
-  return int(value)
 
 
 def get_db_name() -> Any:
@@ -1989,99 +1946,6 @@ def get_metrics_pool_process_count() -> Any:
     >>> get_metrics_pool_process_count()  # doctest: +SKIP
   """
   return get_metrics_pool_processes()
-
-def get_cpuset_pin_min_total_cores() -> Any:
-  """
-  Return the cpuset pin min total cores.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> get_cpuset_pin_min_total_cores()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return int(_ini_get_from_registry("DEFAULT", "cpuset_pin_min_total_cores"))
-
-
-def get_cpuset_pin_min_cores_per_node() -> Any:
-  """
-  Return the cpuset pin min cores per node.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> get_cpuset_pin_min_cores_per_node()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return int(_ini_get_from_registry("DEFAULT", "cpuset_pin_min_cores_per_node"))
-
-
-def get_web_numa_node() -> Any:
-  """
-  Optional explicit sysfs node id for web+proxy; None if unset.
-  
-  Returns:
-    Any: Open return polymorphism from ``get_web_numa_node``: concrete type
-    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-    empty).
-  
-  Examples:
-    >>> get_web_numa_node()  # doctest: +SKIP
-  """
-  return _optional_default_int_option("web_numa_node")
-
-
-def get_pipeline_numa_node() -> Any:
-  """
-  Optional explicit sysfs node id for pipeline; None if unset.
-  
-  Returns:
-    Any: Open return polymorphism from ``get_pipeline_numa_node``: concrete
-    type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_pipeline_numa_node()  # doctest: +SKIP
-  """
-  return _optional_default_int_option("pipeline_numa_node")
-
-
-def get_pin_proxy_in_compose() -> Any:
-  """
-  If True, NUMA pinning script also sets ``cpuset`` on ``proxy`` (match web.
-  
-    node).
-  
-  Returns:
-    Any: Open return polymorphism from ``get_pin_proxy_in_compose``: concrete
-    type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_pin_proxy_in_compose()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _ini_get_from_registry("DEFAULT", "pin_proxy_in_compose"),
-  )
-
-
-def get_numa_pin_max_nodes_auto() -> Any:
-  """
-  Auto compose pinning supports up to this many NUMA nodes without explicit ids.
-  
-  Returns:
-    Any: Open return polymorphism from ``get_numa_pin_max_nodes_auto``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_numa_pin_max_nodes_auto()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return int(_ini_get_from_registry("DEFAULT", "numa_pin_max_nodes_auto"))
 
 
 def get_parallel_db_prefetch_max() -> Any:
@@ -4303,12 +4167,6 @@ def _iter_sync_timedb_config_audit_getters() -> Iterator[Any]:
   """
   yield ("total_cores", get_ini_total_cores_int)
   yield ("effective_cores", get_effective_cores)
-  yield ("cpuset_pin_min_total_cores", get_cpuset_pin_min_total_cores)
-  yield ("cpuset_pin_min_cores_per_node", get_cpuset_pin_min_cores_per_node)
-  yield ("numa_pin_max_nodes_auto", get_numa_pin_max_nodes_auto)
-  yield ("pin_proxy_in_compose", get_pin_proxy_in_compose)
-  yield ("web_numa_node", get_web_numa_node)
-  yield ("pipeline_numa_node", get_pipeline_numa_node)
   for _section, option, _default in INI_OPTION_REGISTRY:
     if _section != "PIPELINE":
       continue

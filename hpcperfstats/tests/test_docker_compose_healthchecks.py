@@ -150,6 +150,8 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   content = compose_path.read_text()
 
   assert "./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro" in content
+  assert "ssl_certs:/etc/ssl/hpcperfstats:ro" in content
+  assert "/etc/letsencrypt/:/etc/letsencrypt/:ro" not in content
   assert "services-conf/proxy.Dockerfile" in content
   assert "NGINX_SSL_CERT" not in content
   assert "PROXY_NGINX_TLS" not in content
@@ -165,7 +167,11 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   assert (repo_root / "services-conf" / "write_nginx_proxy_allowed_hosts_include.py").exists()
   assert (repo_root / "services-conf" / "write_nginx_resolver_include.py").exists()
   assert (repo_root / "services-conf" / "proxy_entrypoint.sh").exists()
-  assert (repo_root / "services-conf" / "nginx.conf.example").exists()
+  assert (repo_root / "services-conf" / "nginx.conf").exists()
+  assert not (repo_root / "services-conf" / "nginx.conf.example").exists()
+  nginx = (repo_root / "services-conf" / "nginx.conf").read_text()
+  assert "ssl_certificate /etc/ssl/hpcperfstats/fullchain.pem;" in nginx
+  assert "ssl_certificate_key /etc/ssl/hpcperfstats/privkey.pem;" in nginx
   dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
   # Mount-only snippets must not also be COPY'd (single source of truth = compose volumes).
   assert "COPY services-conf/nginx-static-files.conf" not in dockerfile
@@ -173,6 +179,8 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   assert "COPY services-conf/nginx-csp-no-active.inc" not in dockerfile
   assert "COPY services-conf/nginx-csp-django-html.inc" not in dockerfile
   assert "COPY services-conf/nginx-django-proxy-common.inc" not in dockerfile
+  assert "nginx.conf.example" not in dockerfile
+  assert "COPY services-conf/nginx.conf /build/nginx.conf" in dockerfile
 
 
 def test_proxy_dockerfile_pins_nginx_and_brotli_to_same_edge_version():
@@ -196,67 +204,113 @@ def test_proxy_dockerfile_pins_nginx_and_brotli_to_same_edge_version():
   assert 'CMD ["/usr/local/bin/proxy_entrypoint.sh"]' in dockerfile
 
 
-def test_docker_compose_app_uses_configurable_pipeline_ssh_mount():
+def test_docker_compose_includes_settings_not_app_or_pinning():
   repo_root = Path(__file__).resolve().parents[2]
-  app_compose_path = repo_root / "docker-compose.app.yaml"
-  app_example_path = repo_root / "docker-compose.app.yaml.example"
-
-  app_content = app_compose_path.read_text()
-  app_example_content = app_example_path.read_text()
-
-  expected_mount = (
-    "${HPCPERFSTATS_PIPELINE_SSH_DIR:-/tmp/hpcperfstats-pipeline-ssh}:/hpcperfstats/.ssh/:ro"
-  )
-  assert expected_mount in app_content
-  assert expected_mount in app_example_content
-
-  for content in (app_content, app_example_content):
-    assert "HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini" in content
-    assert "./hpcperfstats.ini:/home/hpcperfstats/hpcperfstats.ini:ro" not in content
-    assert "target: hpcperfstats-full" in content
+  content = (repo_root / "docker-compose.yaml").read_text()
+  assert "docker-compose.settings.yaml" in content
+  assert "docker-compose.app.yaml" not in content
+  assert "cpu-pinning" not in content
+  assert not (repo_root / "docker-compose.app.yaml.example").exists()
+  assert not (repo_root / "scripts" / "apply_compose_cpu_pinning.py").exists()
+  assert not (repo_root / "hpcperfstats" / "dbload" / "lib" / "compose_cpu_layout.py").exists()
+  assert not (repo_root / "hpcperfstats" / "dbload" / "lib" / "numa_topology.py").exists()
 
 
-def test_docker_compose_app_web_build_uses_hpcperfstats_full_target():
+def test_docker_compose_pipeline_ssh_uses_ssh_keys_volume():
+  repo_root = Path(__file__).resolve().parents[2]
+  content = (repo_root / "docker-compose.yaml").read_text()
+  assert "ssh_keys:/hpcperfstats/.ssh/:ro" in content
+  assert "HPCPERFSTATS_PIPELINE_SSH_DIR" not in content
+  assert "HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini" in content
+  assert "./hpcperfstats.ini:/home/hpcperfstats/hpcperfstats.ini:ro" not in content
+  assert "target: hpcperfstats-full" in content
+
+
+def test_docker_compose_web_build_uses_hpcperfstats_full_target():
   """Compose must request full image; rebuild_pipeline.sh uses pipeline-refresh explicitly."""
   repo_root = Path(__file__).resolve().parents[2]
-  app_compose_path = repo_root / "docker-compose.app.yaml"
-  content = app_compose_path.read_text()
-
+  content = (repo_root / "docker-compose.yaml").read_text()
   assert "dockerfile: Dockerfile" in content
   assert "target: hpcperfstats-full" in content
   assert content.index("target: hpcperfstats-full") < content.index("image: hpcperfstats")
 
 
-# Operator-facing keys that must stay aligned between the gitignored app overlay
-# and docker-compose.app.yaml.example (see docker-compose-app-example-sync.mdc).
-_OPERATOR_APP_COMPOSE_MARKERS = (
-    "CPU pinning fragments: see docker-compose.yaml",
-    "${HPCPERFSTATS_WEB_PORT:-8000}:8000",
-    "mem_limit: 128g",
-    "memswap_limit: 128g",
-    "${HPCPERFSTATS_PIPELINE_STOP_GRACE:-2m}",
-    "${HPCPERFSTATS_PIPELINE_SSH_DIR:-/tmp/hpcperfstats-pipeline-ssh}:/hpcperfstats/.ssh/:ro",
-    "device: /opt/hpcperfstats_data/",
+# Operator-facing bind devices that must stay in docker-compose.settings.yaml.example
+# (see docker-compose-settings-example-sync.mdc).
+_OPERATOR_SETTINGS_BIND_DEVICES = (
+    "device: /data/hpcperfstats_data/site_data",
+    "device: /data/hpcperfstats_site/staticfiles",
+    "device: /data/hpcperfstats_site/media",
+    "device: /data/hpcperfstats_db/pg15",
+    "device: /data/hpcperfstats_data/rabbitmq",
+    "device: /home/sharrell/.ssh",
+    "device: /etc/letsencrypt/live/stats.stampede3.tacc.utexas.edu",
+)
+
+_OPERATOR_SETTINGS_VOLUME_NAMES = (
+    "hpcperfstatsdata:",
+    "staticfiles_data:",
+    "media_data:",
+    "postgres_data:",
+    "rabbitmq_messages:",
+    "ssh_keys:",
+    "ssl_certs:",
 )
 
 
-def test_docker_compose_app_example_operator_markers():
+def test_docker_compose_settings_example_operator_markers():
   repo_root = Path(__file__).resolve().parents[2]
-  example_content = (repo_root / "docker-compose.app.yaml.example").read_text()
-  for marker in _OPERATOR_APP_COMPOSE_MARKERS:
-    assert marker in example_content, "example missing operator marker: %s" % marker
+  example_content = (repo_root / "docker-compose.settings.yaml.example").read_text()
+  for marker in _OPERATOR_SETTINGS_VOLUME_NAMES:
+    assert marker in example_content, "example missing volume: %s" % marker
+  for marker in _OPERATOR_SETTINGS_BIND_DEVICES:
+    assert marker in example_content, "example missing bind device: %s" % marker
+  assert "SYS_PTRACE" in example_content
+  assert "15672:15672" in example_content
+  assert "5432:5432" in example_content
 
 
-def test_docker_compose_app_example_operator_parity():
-  """When local docker-compose.app.yaml exists, operator fields must match .example."""
+def test_docker_compose_settings_example_operator_parity():
+  """When local docker-compose.settings.yaml exists, bind devices must match .example."""
   repo_root = Path(__file__).resolve().parents[2]
-  app_path = repo_root / "docker-compose.app.yaml"
-  example_path = repo_root / "docker-compose.app.yaml.example"
-  if not app_path.is_file():
+  settings_path = repo_root / "docker-compose.settings.yaml"
+  example_path = repo_root / "docker-compose.settings.yaml.example"
+  if not settings_path.is_file():
     return
-  app_content = app_path.read_text()
+  settings_content = settings_path.read_text()
   example_content = example_path.read_text()
-  for marker in _OPERATOR_APP_COMPOSE_MARKERS:
-    assert marker in app_content, "app yaml missing operator marker: %s" % marker
-    assert marker in example_content, "example missing operator marker: %s" % marker
+  for marker in _OPERATOR_SETTINGS_BIND_DEVICES:
+    assert marker in settings_content, "settings yaml missing bind: %s" % marker
+    assert marker in example_content, "example missing bind: %s" % marker
 
+
+def test_docker_compose_test_overlay_clears_host_binds():
+  repo_root = Path(__file__).resolve().parents[2]
+  example = repo_root / "tests" / "docker-compose.test-overlay.yaml.example"
+  overlay_path = repo_root / "tests" / "docker-compose.test-overlay.yaml"
+  assert example.is_file(), "committed test overlay template missing"
+  overlay = example.read_text()
+  if overlay_path.is_file():
+    # Local (gitignored) copy must keep the same bind-clearing contract.
+    for name in (
+        "test_hpcperfstatsdata",
+        "test_staticfiles_data",
+        "test_media_data",
+        "test_postgres_data",
+        "test_rabbitmq_messages",
+        "test_ssh_keys",
+        "test_ssl_certs",
+    ):
+      assert name in overlay_path.read_text()
+  for name in (
+      "test_hpcperfstatsdata",
+      "test_staticfiles_data",
+      "test_media_data",
+      "test_postgres_data",
+      "test_rabbitmq_messages",
+      "test_ssh_keys",
+      "test_ssl_certs",
+  ):
+    assert name in overlay
+  assert "/data/hpcperfstats" not in overlay
+  assert "/opt/hpcperfstats" not in overlay

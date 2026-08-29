@@ -20,7 +20,7 @@ The **hpcperfstats** package is split into two parts:
 | Document | What it is for |
 |----------|----------------|
 | [**MONITOR_VARIABLES.md**](docs/MONITOR_VARIABLES.md) | **Canonical reference** for monitor-reported variables: names, types, units, and semantics. Use this instead of any legacy “attributes definition” doc. |
-| [**DEPLOY_CONCURRENCY_AND_NUMA.md**](docs/DEPLOY_CONCURRENCY_AND_NUMA.md) | Thread/process limits vs PostgreSQL, **`effective_cores`**, optional Compose **`cpuset`** fragments via `scripts/apply_compose_cpu_pinning.py` (all services + NUMA overrides). |
+| [**DEPLOY_CONCURRENCY_AND_NUMA.md**](docs/DEPLOY_CONCURRENCY_AND_NUMA.md) | Thread/process limits vs PostgreSQL, **`total_cores`** / **`effective_cores`**, and pool sizing for web and pipeline. |
 | [**design-document.md**](docs/design-document.md) | As-built system design: architecture, data flow, components, contracts, and operations context. |
 | [**measurements/**](docs/measurements/) | Recorded ops measurements (for example node-daemon CPU overhead on Stampede3 SPR). |
 | [**using-the-website-as-a-researcher.md**](docs/using-the-website-as-a-researcher.md) | How to read the Django/React job UI—plots, metrics, and diagnostic themes—for HPC users and researchers. |
@@ -237,33 +237,38 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    cd hpcperfstats
    ```
 
-4. **Compose file:**
+4. **Compose settings (site bind volumes):**
 
    ```bash
-   cp docker-compose.app.yaml.example docker-compose.app.yaml
+   cp docker-compose.settings.yaml.example docker-compose.settings.yaml
    ```
 
-   **`docker-compose.app.yaml` is gitignored** — treat **`docker-compose.app.yaml.example`** as the committed operator template. After `cp`, edit only site-specific paths below; any new ports, grace periods, memory caps, or volume wiring must be added to **`.example`** in the repo (see **`hpcperfstats/cursor-rules/docker-compose-app-example-sync.mdc`**) so the next clone gets them.
+   **`docker-compose.settings.yaml` is gitignored** — treat **`docker-compose.settings.yaml.example`** as the committed operator template. Base **`docker-compose.yaml`** `include`s the settings file automatically; you do **not** pass a second `-f` for settings. After `cp`, edit site-specific **`device:`** paths below; any new bind volumes or optional knobs must be added to **`.example`** in the repo (see **`hpcperfstats/cursor-rules/docker-compose-settings-example-sync.mdc`**) so the next clone gets them.
 
-   Edit `docker-compose.app.yaml` and set:
+   Edit `docker-compose.settings.yaml` and set at least:
 
-   - **pipeline → volumes:** path to a `.ssh` directory with valid keys and permissions  
-   - **volumes → hpcperfstatsdata → device:** path for data (your user and directory)  
+   - **`volumes → ssh_keys → device`:** host directory with pipeline SSH keys (permissions suitable for mount as `/hpcperfstats/.ssh/`)
+   - **`volumes → ssl_certs → device`:** host Let’s Encrypt **live** cert directory for this hostname (mounted read-only at `/etc/ssl/hpcperfstats` in **`proxy`**)
 
-   Create the directories (e.g.):
+   Create host directories for **every** bind `device:` before `up` (defaults from the example):
 
    ```bash
-   sudo mkdir -p /opt/hpcperfstats_data
-   sudo mkdir -p /opt/hpcperfstats_data/accounting
-   sudo mkdir -p /opt/hpcperfstats_data/archive
-   sudo mkdir -p /opt/hpcperfstats_data/daily_archive
-   sudo mkdir -p /opt/hpcperfstats_data/logs/current
-   sudo mkdir -p /opt/hpcperfstats_data/logs/log_archive
+   sudo mkdir -p /data/hpcperfstats_data/site_data
+   sudo mkdir -p /data/hpcperfstats_data/site_data/accounting
+   sudo mkdir -p /data/hpcperfstats_data/site_data/archive
+   sudo mkdir -p /data/hpcperfstats_data/site_data/daily_archive
+   sudo mkdir -p /data/hpcperfstats_data/site_data/logs/current
+   sudo mkdir -p /data/hpcperfstats_data/site_data/logs/log_archive
+   sudo mkdir -p /data/hpcperfstats_data/rabbitmq
+   sudo mkdir -p /data/hpcperfstats_site/staticfiles
+   sudo mkdir -p /data/hpcperfstats_site/media
+   sudo mkdir -p /data/hpcperfstats_db/pg15
+   # Also ensure the ssh_keys and ssl_certs device paths you set above exist.
    ```
 
-   The host bind mount for `hpcperfstatsdata` maps to **`/hpcperfstats/`** in the `pipeline` and `web` containers (for example `/hpcperfstats/accounting`, `/hpcperfstats/archive`, `/hpcperfstats/daily_archive`, and **`/hpcperfstats/logs/`** for cluster syslog).
+   The `hpcperfstatsdata` bind maps to **`/hpcperfstats/`** in the `pipeline` and `web` containers (for example `/hpcperfstats/accounting`, `/hpcperfstats/archive`, `/hpcperfstats/daily_archive`, and **`/hpcperfstats/logs/`** for cluster syslog).
 
-   **Daily monitor archive compression:** `sync_timedb` seals each day’s `YYYY-MM-DD.tar` to **`YYYY-MM-DD.tar.zst`** with **zstd**. Defaults: **`archive_zstd_threads=0`** (**`-T0`**, niced seal/restore), **`ingest_zstd_threads=4`** (**`-T4`**, un-niced ingest/populate streams), **`archive_seal_parallel_workers=4`** (concurrent daily seals), **`nice`/`ionice`** deprioritization for web/db on unpinned hosts — see **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** (Archive zstd priority). Other **`[PIPELINE]`** keys: `archive_zstd_level`, `archive_zstd_nice`, `archive_zstd_ionice_class`, `archive_zstd_ionice_level` in `hpcperfstats.ini.example`. When inspecting archives by hand, use for example `zstd -d -o YYYY-MM-DD.tar YYYY-MM-DD.tar.zst` (legacy `.tar.gz` uses `zstd -d --format=gzip`). Before raising `archive_zstd_level` above **9** on production data, benchmark a representative daily tar on the pipeline host: `zstd -b3 -e12 -T0 -S -- ./YYYY-MM-DD.tar`.
+   **Daily monitor archive compression:** `sync_timedb` seals each day’s `YYYY-MM-DD.tar` to **`YYYY-MM-DD.tar.zst`** with **zstd**. Defaults: **`archive_zstd_threads=0`** (**`-T0`**, niced seal/restore), **`ingest_zstd_threads=4`** (**`-T4`**, un-niced ingest/populate streams), **`archive_seal_parallel_workers=4`** (concurrent daily seals), **`nice`/`ionice`** deprioritization so seal yields to web/db on shared hosts — see **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** (Archive zstd priority). Other **`[PIPELINE]`** keys: `archive_zstd_level`, `archive_zstd_nice`, `archive_zstd_ionice_class`, `archive_zstd_ionice_level` in `hpcperfstats.ini.example`. When inspecting archives by hand, use for example `zstd -d -o YYYY-MM-DD.tar YYYY-MM-DD.tar.zst` (legacy `.tar.gz` uses `zstd -d --format=gzip`). Before raising `archive_zstd_level` above **9** on production data, benchmark a representative daily tar on the pipeline host: `zstd -b3 -e12 -T0 -S -- ./YYYY-MM-DD.tar`.
 
    **Daily archive member cache (Redis):** when **`sync_archive_members_redis_enabled=yes`** (default), `sync_timedb` requires a reachable Redis at **`[CACHE] redis_location`** (Compose default `redis://redis:6379/1`) for cross-worker sealed-archive member lookups. Startup exits non-zero if Redis is down. Ingest duplicate-check zstd runs at normal priority; janitor seal paths keep archive `nice`/`ionice`. Member maps are invalidated after tar append, dedupe, seal, and archive finalize — stale Redis/L1 must not drive delete/duplicate-check decisions. See **`sync_archive_members_redis_*`** keys in `hpcperfstats.ini.example` and **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`**.
 
@@ -283,7 +288,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    **Operational notes:** `syslog-ng` emits periodic internal **stats** (`stats(freq(3600))` in `services-conf/syslog-ng.conf`); operators can run **`syslog-ng-ctl stats`** (as root) inside `pipeline` for counters. Monitor **disk use** on the data volume (`logs/log_archive` grows with cluster size and retention). **Troubleshooting:** if packets reach the host but nothing is logged, check **firewall rules**, that traffic targets the **published 514** on the host running `pipeline`, **`allow_from`** includes the sender’s IPv4 address, and (for filenames) that forwarders preserve a sensible hostname/FQDN.
 
-   **Migrating from the old layout:** if you previously used a separate host path for node logs (for example `/opt/hpcperfstats_log` mounted at `/hpcperfstatslog/`), copy any `cluster.log` into **`/opt/hpcperfstats_data/logs/current/`** if you need the history, then drop the extra compose volume.
+   **Migrating from the old layout:** if you previously used a separate host path for node logs (for example `/opt/hpcperfstats_log` mounted at `/hpcperfstatslog/`), copy any `cluster.log` into **`/data/hpcperfstats_data/site_data/logs/current/`** (or your edited `hpcperfstatsdata` device) if you need the history, then drop the extra compose volume. If you still have a local **`docker-compose.app.yaml`**, delete it — the app overlay is obsolete; use settings + base compose only.
 
 5. **Application config:**
 
@@ -302,7 +307,6 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    - `total_cores` - CPU budget for app parallelism (omit to use code default **40**; see `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`)
    - `secret_key` - a random string
    - PostgreSQL connection: `engine_name`, `dbname`, `username`, `password`, `host`, `port` (Compose uses `host=db` in the image-built ini)
-   - Optional compose NUMA/cpuset overrides (`cpuset_pin_min_*`, `web_numa_node`, `pipeline_numa_node`, …) appear **last** in `[DEFAULT]` in the example file
 
    Optional tuning lives in other sections (see `hpcperfstats.ini.example`):
 
@@ -320,7 +324,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    For memory-constrained deployments, start with the conservative baseline values documented in `hpcperfstats.ini.example`, then scale up gradually after observing stable DB checkpoints and container RSS headroom.
 
-   **`pipeline` memory cap (`docker-compose.app.yaml`):** on hosts with **~192 GiB RAM and no swap**, set **`mem_limit: 128g`** and **`memswap_limit: 128g`** on the **`pipeline`** service so ingest spikes cgroup-OOM inside the container before starving **`db`**/**`web`**. **`stop_grace_period`** (default **2m** in **`.example`**) allows `sync_timedb` to drain on `docker compose stop`; override with **`HPCPERFSTATS_PIPELINE_STOP_GRACE`**. After changing limits or grace, recreate the container (`docker compose up -d --force-recreate pipeline`) and verify **`memory.max`** inside the cgroup is numeric (not `max`). Pair with **`[PIPELINE]`** RSS knobs documented in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § OOM.
+   **`pipeline` memory cap (`docker-compose.yaml`):** on hosts with **~192 GiB RAM and no swap**, set **`mem_limit: 128g`** and **`memswap_limit: 128g`** on the **`pipeline`** service (defaults in base compose; override in **`docker-compose.settings.yaml`** if needed) so ingest spikes cgroup-OOM inside the container before starving **`db`**/**`web`**. **`stop_grace_period`** (default **2m**) allows `sync_timedb` to drain on `docker compose stop`; override with **`HPCPERFSTATS_PIPELINE_STOP_GRACE`**. After changing limits or grace, recreate the container (`docker compose up -d --force-recreate pipeline`) and verify **`memory.max`** inside the cgroup is numeric (not `max`). Pair with **`[PIPELINE]`** RSS knobs documented in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § OOM.
 
    **Graceful stop (listend / sync_timedb / update_metrics):** Prefer `docker compose stop -t 180 pipeline` (or rebuild’s default **300s** via `HPCPERFSTATS_PIPELINE_STOP_TIMEOUT`) so wall clock exceeds sync_timedb’s **`SHUTDOWN_DRAIN_TIMEOUT_S` (120s)**. Keep compose **`stop_grace_period` ≥ 2m**. In **`services-conf/supervisord.conf.example`**, the three Python programs set **`stopwaitsecs=130`** so supervisord does not SIGKILL after the default **10s** wait. Approximate solo budgets: listend ~**20s** (15s DB pool join), update_metrics ~**30–60s**, sync_timedb up to **120s**. Expected SIGTERM-driven exit **143** (see **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`**). Do **not** `docker kill` / SIGKILL unless wedged past grace. Start `sleep` lines in supervisord are boot stagger only; stop has no sleep.
 
@@ -337,30 +341,21 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
 7. **Web server (nginx):**
 
-   Set **`ssl_certificate`** and **`ssl_certificate_key`** in the nginx template to the
-   **`fullchain.pem`** / **`privkey.pem`** paths that match certificates mounted into the
-   **`proxy`** container (compose publishes host **`/etc/letsencrypt/`** at
-   **`/etc/letsencrypt/`**). Recommended: copy once so upgrades never clash with Git:
-
-   ```bash
-   cp services-conf/nginx.conf.example services-conf/nginx.conf
-   ```
+   Committed **`services-conf/nginx.conf`** uses fixed in-container TLS paths
+   (**`/etc/ssl/hpcperfstats/fullchain.pem`** and **`privkey.pem`**). Cert PEMs come from the
+   **`ssl_certs`** volume in **`docker-compose.settings.yaml`** (host Let’s Encrypt live
+   directory → `/etc/ssl/hpcperfstats` in **`proxy`**). **Do not** copy an nginx example or
+   edit TLS paths in nginx for a fresh deploy — edit the **`ssl_certs`** `device:` only.
 
    Compose bind-mounts **`./services-conf/nginx.conf`** to **`/etc/nginx/http.d/default.conf`**
    on **`proxy`**, and bind-mounts the shared snippets (**`nginx-static-files.conf`**,
    **`nginx-django-proxy-common.inc`**, **`nginx-edge-security-headers.inc`**,
    **`nginx-csp-no-active.inc`**, **`nginx-csp-django-html.inc`**) as the **only**
    runtime source for those files (they are **not** baked into **`proxy.Dockerfile`**).
-   The **`cp`** of **`nginx.conf.example`** → **`nginx.conf`** is **required** before
-   **`docker compose up`**. Edit **`nginx.conf`** for TLS paths.
-   When upgrading, merge **`ssl_trusted_certificate`**, **`include /etc/nginx/nginx-resolver.inc`**,
-   and related OCSP comments from **`nginx.conf.example`** into the deployment-local
-   **`nginx.conf`** (gitignored) so stapling stays complete after template changes.
 
-   The proxy image **`cp`**s **`nginx.conf`** (or **`nginx.conf.example`**) into
-   **`default.conf`** at **build** time for a non-Compose baseline, bakes
-   **`hps-proxy-allowed-hosts.inc`** from **`[DEFAULT] server=`**, and ships
-   **`proxy_entrypoint.sh`** plus the resolver helper. Compose still replaces
+   The proxy image **`cp`**s **`nginx.conf`** into **`default.conf`** at **build** time for a
+   non-Compose baseline, bakes **`hps-proxy-allowed-hosts.inc`** from **`[DEFAULT] server=`**,
+   and ships **`proxy_entrypoint.sh`** plus the resolver helper. Compose still replaces
    **`default.conf`** with the host **`nginx.conf`** mount. Runtime
    **`proxy_entrypoint.sh`** regenerates the OCSP **`resolver`** include from
    container **`/etc/resolv.conf`**, waits for SPA HTML under
@@ -379,9 +374,9 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    **`/etc/nginx/hps-proxy-allowed-hosts.inc`**, which the main config **`include`**s
    for **`server_name`**. Requests whose **`Host`** header does not match receive **404**
    on port 80; on port 443, unknown names get TLS handshake rejection
-   (**`ssl_reject_handshake`**). Rebuild **`proxy`** after changing **`server=`**,
-   **`nginx.conf`**, or **`nginx.conf.example`**. No **`docker-compose.yaml`** edits
-   are required for TLS paths or hostnames.
+   (**`ssl_reject_handshake`**). Rebuild **`proxy`** after changing **`server=`** or
+   **`nginx.conf`**. No **`docker-compose.yaml`** edits are required for TLS paths or hostnames
+   (TLS paths are fixed; certs via **`ssl_certs`**).
 
    Static/media routing is split into a reusable include mounted at
    **`services-conf/nginx-static-files.conf`**; nginx serves **`/static/`** and
@@ -452,7 +447,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 | Rebuild SPA in running stack (optional hot path; no pipeline restart) | `./scripts/rebuild_frontend.sh` |
 | Rebuild web/pipeline image after Python-only changes (preserves live frontend, no npm) | `./scripts/rebuild_pipeline.sh` |
 | Temporary pipeline-only rebuild (no running web; recreate pipeline only) | `./scripts/rebuild_pipeline.sh --no-web` |
-| Rebuild just the app and keep persistent services running | `docker compose -f docker-compose.app.yaml down && docker compose stop -t 120 db proxy && docker compose start db && docker compose -f docker-compose.app.yaml up --build -d && docker compose start proxy` |
+| Rebuild just the app and keep persistent services running | `docker compose stop -t 120 web pipeline proxy && docker compose up --build -d web pipeline && docker compose start proxy` |
 | View logs  | `sudo docker compose logs` |
 | PostgreSQL shell | `docker compose exec db psql -h localhost -U hpcperfstats` |
 | Pipeline shell (data/processing) | `docker compose exec pipeline su hpcperfstats` |

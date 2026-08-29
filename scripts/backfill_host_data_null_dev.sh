@@ -34,7 +34,7 @@ if ! [[ "$VACUUM_PARALLEL" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
-COMPOSE=(docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml)
+COMPOSE=(docker compose -p hpcperfstats -f docker-compose.yaml)
 
 declare -A vacuum_inflight=()
 

@@ -88,7 +88,6 @@ script-files = [
   "hpcperfstats/dbload/sync_timedb_archive.py",
   "hpcperfstats/listend.py",
   "hpcperfstats/listend_drain.py",
-  "scripts/apply_compose_cpu_pinning.py",
   "scripts/invalidate_archive_members.py",
 ]
 

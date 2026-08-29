@@ -49,8 +49,8 @@ def test_write_allowed_hosts_include_emits_server_name_line(tmp_path):
   assert "server_name a.example.com b.example.org;" in text
 
 
-def test_committed_nginx_conf_example_includes_generated_fragment():
-  example = (_repo_root() / "services-conf" / "nginx.conf.example").read_text(encoding="utf-8")
+def test_committed_nginx_conf_includes_generated_fragment():
+  example = (_repo_root() / "services-conf" / "nginx.conf").read_text(encoding="utf-8")
   assert "include /etc/nginx/hps-proxy-allowed-hosts.inc;" in example
   assert "ssl_certificate " in example
   assert "ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;" in example

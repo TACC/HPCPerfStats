@@ -7,7 +7,6 @@ import pytest
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.dbload.lib.ini_section_placement import (
-    DEFAULT_PINNING_OPTIONS,
     validate_registry_sections,
 )
 
@@ -150,32 +149,6 @@ def test_sync_archive_require_db_ingest_under_pipeline_not_portal():
         "sync_archive_require_db_ingest must be under [PIPELINE], not [%s]"
         % current
     )
-
-
-def test_default_pinning_keys_are_last_in_section():
-  path = _repo_ini_example_path()
-  lines = path.read_text(encoding="utf-8").splitlines()
-  in_default = False
-  default_keys = []
-  for line in lines:
-    stripped = line.strip()
-    if stripped == "[DEFAULT]":
-      in_default = True
-      continue
-    if in_default and stripped.startswith("[") and stripped.endswith("]"):
-      break
-    match = _OPTION_LINE_RE.match(line)
-    if in_default and match:
-      default_keys.append(match.group(1))
-  assert default_keys, "expected documented keys under [DEFAULT]"
-  pinning = [k for k in default_keys if k in DEFAULT_PINNING_OPTIONS]
-  non_pinning = [k for k in default_keys if k not in DEFAULT_PINNING_OPTIONS]
-  assert pinning, "expected cpuset/pinning keys documented in [DEFAULT]"
-  assert default_keys[-len(pinning):] == pinning, (
-      "cpuset/pinning keys must be last in [DEFAULT]; order was %s"
-      % default_keys
-  )
-  assert not any(k in DEFAULT_PINNING_OPTIONS for k in non_pinning[len(non_pinning):])
 
 
 def test_no_duplicate_options_across_sections_in_example():

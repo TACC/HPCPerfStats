@@ -16,7 +16,7 @@
 #   ./scripts/decompress_host_data_chunks.sh 2          # hpcperfstats03 (tight disk)
 #
 # Watch free space (especially site 03):
-#   docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml \
+#   docker compose -p hpcperfstats -f docker-compose.yaml \
 #     exec db df -h /var/lib/postgresql/data
 set -euo pipefail
 
@@ -30,7 +30,7 @@ fi
 # Consecutive completions without a drop in compressed_chunks before giving up.
 STALL_LIMIT="${HPCPERFSTATS_DECOMPRESS_STALL_LIMIT:-5}"
 
-COMPOSE=(docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml)
+COMPOSE=(docker compose -p hpcperfstats -f docker-compose.yaml)
 
 STATUS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/decompress_host_data.XXXXXX")"
 cleanup() {

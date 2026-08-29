@@ -49,24 +49,6 @@ host = db
 # PostgreSQL port.
 port = 5432
 
-# Minimum total_cores before auto NUMA pinning in compose (default 32).
-# cpuset_pin_min_total_cores = 32
-
-# Minimum cores per node for auto NUMA pinning (default 16).
-# cpuset_pin_min_cores_per_node = 16
-
-# Max NUMA nodes for auto pin without explicit ids (default 16).
-# numa_pin_max_nodes_auto = 16
-
-# Also pin proxy container to web NUMA node (default no).
-# pin_proxy_in_compose = no
-
-# Explicit sysfs NUMA node id for web+proxy when set.
-# web_numa_node =
-
-# Explicit sysfs NUMA node id for pipeline when set.
-# pipeline_numa_node =
-
 [OAUTH2]
 # OAuth2 client id from your identity provider.
 client_id =

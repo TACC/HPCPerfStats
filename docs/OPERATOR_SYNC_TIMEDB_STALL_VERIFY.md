@@ -11,7 +11,7 @@ See also: `sync-timedb-change-regression-gate.mdc`, `sync-timedb-queue-orchestra
 Prefer these lines over firehose greps for backlog diagnosis:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator progress day=|queue_orchestrator status |queue_orchestrator census |archive_job_done |ingest per-file timeout' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator progress day=|queue_orchestrator status |queue_orchestrator census |archive_job_done |ingest per-file timeout' | tail -80
 ```
 
 - **`progress day=`** — omit-zeros day counters (`gate_skip`, `ingest_handoff`, ingest outcomes, archive, day_close, reconstruct, …).
@@ -38,24 +38,24 @@ Production is **one** `sync_timedb.py` process per `archive_dir` (`run_sync_time
 
 ```bash
 # T0 — one process + job:v1 census (INI paths first; full logs never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
   su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
 print(\"archive_dir\", cfg.get_archive_dir_path())
 print(\"daily_archive_dir\", cfg.get_daily_archive_dir_path())
 "'
 
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
   su hpcperfstats -c 'sh -lc "ps -ef | grep -E \"[s]ync_timedb.py\" || true"'
 
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec redis \
+docker compose -p hpcperfstats -f docker-compose.yaml exec redis \
   sh -lc 'P=hpcperfstats:sync_timedb:job:v1; redis-cli -n 1 --scan --pattern "${P}*" | head -50; echo ---; redis-cli -n 1 ZCARD ${P}:queue:ingest; redis-cli -n 1 ZCOUNT ${P}:queue:ingest -inf 999999999999999; redis-cli -n 1 ZCOUNT ${P}:queue:ingest 1000000000000000 +inf; redis-cli -n 1 LLEN ${P}:queue:append; redis-cli -n 1 LLEN ${P}:queue:discover; redis-cli -n 1 LLEN ${P}:queue:day_close; echo ---leases; redis-cli -n 1 --scan --pattern "${P}:lease:*" | wc -l'
 # Full keys: hpcperfstats:sync_timedb:job:v1:queue:ingest
 #            hpcperfstats:sync_timedb:job:v1:queue:append
 #            hpcperfstats:sync_timedb:job:v1:queue:discover
 #            hpcperfstats:sync_timedb:job:v1:queue:day_close
 
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'queue orchestrator|job:v1|orchestrator flock|reconstruct|ZADD|day_close|Redis.*(down|unavailable)|sys.exit' | tail -80
 ```
 
@@ -69,10 +69,10 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 ```bash
 # T0 — day-close complete vs remaining-raw (full logs never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator progress day=.*(dc_run=|complete=|incomplete_raw=|deferred_age=|yielded=|verify_failed=|tar_delete=)|queue_orchestrator day_close tar_drop' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator progress day=.*(dc_run=|complete=|incomplete_raw=|deferred_age=|yielded=|verify_failed=|tar_delete=)|queue_orchestrator day_close tar_drop' | tail -80
 
 # T0 — day-close H6 progress / stall-confirm (full logs never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator day_close (claim|vacate|stage_enter|stage_exit|stage_progress)|stall_confirmed' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator day_close (claim|vacate|stage_enter|stage_exit|stage_progress)|stall_confirmed' | tail -80
 ```
 **Fail (T0 — boot sealed-populate stall, hpcperfstats03 2026-08-25):** hours of `[sync_timedb:main]` sealed `populate_source_decision` / `populate_source=sealed` **without** `queue_orchestrator boot discover submitted` / `boot discover seen=` / ingest fill; `ps` shows **archive-pool only** (no `ingest-pool`, no `populate-pool`); Redis ingest ZCARD/bands **0** while append LIST may already be deep. Root cause was sync boot discover **before** pools + worker `populate_and_wait` on classify. After fix: expect `boot discover submitted` early, populate-pool + ingest-pool alive within minutes, and fill/leases without MainThread sealed streams.
 
@@ -139,7 +139,7 @@ Pair every `chunk_elapsed_s` sample with:
 
 ```bash
 # T0 — cadence attribution (full pipeline log; never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'chunk_elapsed_s|chunk_prewarm_elapsed_s|chunk_ingest_elapsed_s|chunk dispatch begin|pending reconcile cap|pending cap supplement|post_finalize_reconcile|giant pool supplement|stats_rows_parsed|collapsed to empty' | tail -80
 ```
 
@@ -148,7 +148,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 Surgical re-ingest for one job is **not** a backlog catch-up stall verify. Use this smoke instead of T0/T1/T2:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
   su hpcperfstats -c 'sync_timedb.py --jid REPLACE_WITH_JOB_ID'
 ```
 
@@ -171,7 +171,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 ```bash
 # T0 — order of operations (full pipeline log; never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'chunk dispatch begin|ingest_going=yes|post-ingest startup archive scan|idle_finalize deferred|day_close_not_allowed|day_ingest_complete:idle_finalize|day-scoped closed_raw' | head -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'chunk dispatch begin|ingest_going=yes|post-ingest startup archive scan|idle_finalize deferred|day_close_not_allowed|day_ingest_complete:idle_finalize|day-scoped closed_raw' | head -80
 ```
 
 **Fail (T0):** `idle_finalize` / `day_close_not_allowed` absent while `day-scoped closed_raw` or `day_ingest_complete:idle_finalize` appears **before** the first `chunk dispatch begin`.
@@ -186,7 +186,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 ```bash
 # T0 — empty-queue unlock + stay-alive (full pipeline log; never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'ingest_going=yes reason=empty_pending_after_rescan|kicking async post-ingest|awaiting startup_snapshot|day_close work remaining|idle_finalize deferred|Sleeping .* before exiting sync_timedb' | head -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'ingest_going=yes reason=empty_pending_after_rescan|kicking async post-ingest|awaiting startup_snapshot|day_close work remaining|idle_finalize deferred|Sleeping .* before exiting sync_timedb' | head -80
 ```
 
 **Fail (T0):** empty pending + deferred forever with `ingest_going=False` and 30s exit while `daily_tar_count` &gt; 0 (INI `daily_archive_dir` still has `.tar` files).
@@ -201,7 +201,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 ```bash
 # T0 — idle stay-alive vs premature exit (full pipeline log; never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'day_close work remaining|Sleeping .* before exiting sync_timedb|once mode: no pending files|janitor: day_close|Archive janitor tick done|janitor_debt' | head -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'day_close work remaining|Sleeping .* before exiting sync_timedb|once mode: no pending files|janitor: day_close|Archive janitor tick done|janitor_debt' | head -80
 ```
 
 **Fail (T0):** `Sleeping 30 s before exiting sync_timedb` (or process exit) while the same window still shows active `janitor: day_close` / non-zero debt / in-flight day-close workers — without intervening `day_close work remaining` poll lines.
@@ -218,11 +218,11 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 ```bash
 # T0 — false completion + ghost thrash (full pipeline log; never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 grep -E 'ghost manifest reconcile|Archive janitor tick done|debt_drain_begin|tar drop|day_close' /tmp/pipeline-full.log | tail -120
 
 # T0 — past-day open tar vs sealed sibling (INI paths; calendar-today may keep live .tar)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
   su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as c
 import glob, os, datetime as dt
@@ -252,13 +252,13 @@ print(\"past_open_n\", sum(1 for r in rows if not r[3]))
 
 ```bash
 # T0 — day-close thrash + tick summary (full pipeline log; never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'Archive janitor tick done|day_close defer.*write_lock_contended|deferred_preflight_n|deferred_reason_top|pending reconcile deferred|async pending reconcile|async pending rescan|kicked async pending rescan' | head -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'Archive janitor tick done|day_close defer.*write_lock_contended|deferred_preflight_n|deferred_reason_top|pending reconcile deferred|async pending reconcile|async pending rescan|kicked async pending rescan' | head -80
 ```
 
 **Authoritative write_lock probe** (`try_file_write_lock` is a **context manager** — no `timeout_seconds=` kwarg, no `.release()`):
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
   su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.dbload.lib.file_locking import try_file_write_lock
@@ -282,7 +282,7 @@ for day in (\"2026-06-08\", \"2026-06-09\"):
 
 ```bash
 # T0 — chunk_in_progress_day vs active chunk (full pipeline log; never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'Archive janitor tick done|deferred_reason_top=chunk_in_progress_day|chunk dispatch begin|chunk ingest summary|chunk_elapsed_s' | tail -80
 ```
 
@@ -300,7 +300,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 ```bash
 # T0 — stall / exit124 signatures (full pipeline log; never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'Pool imap stalled|defer_reason=redis_warm|defer_reason=member_match_wait|hard exit code=124|effective_ingest_timeout_s=' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'Pool imap stalled|defer_reason=redis_warm|defer_reason=member_match_wait|hard exit code=124|effective_ingest_timeout_s=' | tail -80
 ```
 
 **Pass (T0):** no new `ERROR: Pool imap stalled` + `defer_reason=redis_warm` while workers are in member-match wait. Expect either imap completions, `stall deferred` with `defer_reason=member_match_wait` / `worker_progress_active` / `long_ingest_budget`, or `effective_ingest_timeout_s` numeric (not `-`). Stall wall should exceed in-flight `batch_max` by ~120s grace.
@@ -382,11 +382,11 @@ grep -c 'ingest_stall_watchdog' /tmp/pipeline-full.log
 
 ```bash
 # T0 — fake-enqueue / honest counters (full pipeline log; never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 grep -E 'discover_ready_day_close|deferred_noop|deferred cleared|immediate day_close defer|delete deferred|zero_pop|populate incomplete after lock release|mutation proceed reason=defer_cap_exceeded' /tmp/pipeline-full.log | tail -80
 
 # T0 — open mutable daily tar census (INI paths first; single python3 -c — no nested sh -lc)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
   su hpcperfstats -c 'python3 -c "from hpcperfstats.dbload.lib import conf_parser as c; import os,glob; d=c.get_daily_archive_dir_path(); tars=sorted(glob.glob(os.path.join(d,\"????-??-??.tar\"))); print(\"daily\",d,\"open_tar_n\",len(tars)); print(\"sample\",tars[:8])"'
 ```
 
@@ -402,11 +402,11 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 ```bash
 # T0 — stuck verifying day vs handoff / histogram / orphan deferred
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 grep -E 'day-scoped closed_raw|day_close handoff requeue|verifying stuck handoff|post-ingest_going closed-raw|orphan deferred|chunk_day_histogram|youngest_day_chunk_gate|handoff_priority_age|deferred_noop|delete deferred.*delete_disqualified|defer_cap_exceeded' /tmp/pipeline-full.log | tail -120
 
 # T0 — day-raw-removal phase + async day_close for a stuck ISO day
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
   su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as c
 import json, os, glob
@@ -442,7 +442,7 @@ if os.path.isfile(asyncp):
 
 ```bash
 # T0 — open tar census + sticky handoff / delete_disqualified / Branch H overlay
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
   su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as c
 import glob, os
@@ -451,11 +451,11 @@ open_n=len(glob.glob(os.path.join(d,\"????-??-??.tar\")))
 zst_n=len(glob.glob(os.path.join(d,\"????-??-??.tar.zst\")))
 print(\"open_tar_n\", open_n, \"sealed_zst_n\", zst_n, \"daily_archive_dir\", d)
 "'
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 grep -E 'batch_delete_waiting_on_ingest|handoff_mode=archive_append|delete deferred.*delete_disqualified|chunk_in_progress_day|day_close reclassify upgraded|Day raw removal reclassify' /tmp/pipeline-full.log | tail -80
 
 # T0 — day_raw_removal census for a sticky ISO day (replace DAY=)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
   su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as c
 import json, os
@@ -486,7 +486,7 @@ Do **not** mark this class verified on **T0 smoke alone**. Use T0 then T1 then T
 
 ```bash
 # T0 — skip-status histogram (Path.read_text fingerprint; no Django import of day_raw_removal)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline \
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
   su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as c
 from collections import Counter
@@ -502,7 +502,7 @@ for day in (\"2026-06-02\", \"2026-06-10\", \"2026-08-16\"):
   print(\"phase\", m.get(\"phase\"), \"entries\", len(ents), \"deleted_count\", m.get(\"deleted_count\"))
   print(Counter((e or {}).get(\"status\") for e in ents.values() if isinstance(e, dict)))
 "'
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'handoff_mode=archive_append|batch_delete_waiting_on_ingest|day_close reclassify|Archive janitor tick done|oldest_checkpoint_incomplete_tar' | tail -80
 ```
 
@@ -517,7 +517,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 **Signature (hpcperfstats03 soak after finding #8):** `handoff_mode=archive_append` works, but skip-only `phase=deleting` cycles forever: `archive_job_duty … to_add=0 appended=0` → `archive_finalize skip invalidate reason=no_tar_mutation_or_worker_invalidated` → deferred/pins clear → delete again with **flat** `retryable_skips` / handoff `paths=N`. Open-tar `member_hit False`. Massive `day-scoped closed_raw` spam. `Archive soft_requeue=0`, `same_boot_duplicate=0`. Not heap starvation.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 
 # T0 — thrash census (filtered; no --tail before grep)
 grep -cE 'handoff_mode=archive_append' /tmp/pipeline-full.log || true
@@ -547,7 +547,7 @@ grep -E 'archive_job_duty|archive_finalize skip invalidate|handoff_pin_hold|hand
 **Deploy:** ship **open-tar authority** + **skip-only pin-hold** in **one** pipeline image refresh (`rebuild_pipeline.sh` or site equivalent).
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T pipeline \
+docker compose -p hpcperfstats -f docker-compose.yaml exec -T pipeline \
   su hpcperfstats -c 'python3 -c "
 import glob, os
 from hpcperfstats.dbload.lib import conf_parser as c
@@ -555,7 +555,7 @@ d = c.get_daily_archive_dir_path()
 print(\"open_tar_n\", len(glob.glob(os.path.join(d, \"????-??-??.tar\"))))
 "'
 
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | awk '\''
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | awk '\''
 /archive_finalize handoff_pin_hold/ { hp++ }
 /archive_job_duty.*to_add=0/ { tz++ }
 /archive_job_begin.*members_source=redis/ { mr++ }
@@ -564,7 +564,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 /archive_job_duty.*appended=[1-9]/ { ap++ }
 END { printf "handoff_pin_hold %d\nto_add_zero %d\nmembers_source_redis %d\nopen_tar_redis_divergence %d\nskip_invalidate %d\nappended_positive %d\n", hp+0, tz+0, mr+0, div+0, si+0, ap+0 }'\''
 
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'archive_job_duty|archive_job_begin|handoff_pin_hold|open_tar_redis_divergence|handoff_mode=archive_append|day_close reclassify' | tail -25
 ```
 
@@ -581,7 +581,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 **Signature (pre-fix):** all open daily `.tar` mtimes stale >3d (`tars_mtime_older_than_3d` equals `tar_count`); **`Archived batch=0`**; **`archive_job_duty` with `to_add=0`** on every job (e.g. 47/47); newest calendar days (e.g. **2026-08-20+**) have **no** `.tar`; June days occupy oldest-first archive slots with **`mapped>0`** but **`appended=0`**. Often coexists with open-tar/redis divergence on older mutable tars and skip-invalidate thrash when pin-hold is not deployed.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T pipeline \
+docker compose -p hpcperfstats -f docker-compose.yaml exec -T pipeline \
   su hpcperfstats -c 'python3 -c "
 import glob, os, time
 from hpcperfstats.dbload.lib import conf_parser as c
@@ -596,14 +596,14 @@ for day in (\"2026-08-20\", \"2026-08-21\", \"2026-08-22\", \"2026-08-23\"):
     print(day, \"tar_exists\", os.path.isfile(os.path.join(d, day + \".tar\")))
 "'
 
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | awk '\''
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | awk '\''
 /archive_job_duty.*to_add=0/ { tz++ }
 /archive_job_duty.*appended=[1-9]/ { ap++ }
 /Archived batch/ { ab++ }
 /archive_finalize skip invalidate/ { si++ }
 END { printf "to_add_zero %d\nappended_positive %d\narchived_batch %d\nskip_invalidate %d\n", tz+0, ap+0, ab+0, si+0 }'\''
 
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'archive_job_duty|Archived batch|archive_job_begin|handoff_pin_hold|open_tar_redis_divergence' | tail -30
 ```
 
@@ -620,7 +620,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 Members larger than **8 GiB − 1** fail classic ustar without pax headers (`value N out of off_t range 0..8589934591`). Production always passes **`--posix`** on tar create/append (`-C /` + relative `-T` members). When the daily tar is **not pax-capable** (bare `POSIX tar archive` without pax headers; GNU labels need no convert), the **archive pool** job logs **`must_convert`**, attempts **extract + `tar --format=pax` recreate**, then appends. On convert failure: **`convert_fail_skip`** oversized members (original tar untouched) and continue with remaining paths. **`archive_job_done`** includes **`outcome=ok|fail`** (do not treat `archive_job_done` alone as success).
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 
 # T0 — failure signatures
 grep -E 'ERROR: (retry )?tar append failed|tar append stderr:|out of off_t range|marker=off_t_range' /tmp/pipeline-full.log | tail -40
@@ -645,7 +645,7 @@ Soft ingest/archive **queue watermarks** and adaptive archive dispatch/janitor b
 - Overflow: when mapping days exceed pool size, remaining days sit on **`pending_archive_heap`** and **must** get `archive_job_begin` when a slot frees — **without** waiting for the next ingest chunk IMAP. Operator grep: `pending_archive_heap`, `archive_job_duty`, `Archive dispatch submitted=`.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 
 # Must be absent after deploy
 grep -E 'Queue watermarks|high watermark|low watermark|adaptive_dispatch' /tmp/pipeline-full.log | tail -20 || true
@@ -664,7 +664,7 @@ grep -E 'Archive dispatch submitted=|pending_archive_heap|archive_job_duty|disco
 
 ```bash
 # T0 — restore self-wait (unhealthy) vs clear+deferred prewarm (healthy)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'daily_tar_restore begin|daily_tar_restore end|populate: wait daily_tar_restore|deferred prewarm flush|Archive dispatch skip|archive_job_begin|archive_job soft_skip' | tail -120
 ```
 
@@ -679,7 +679,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 **Healthy (post-fix):** membership from Redis/sealed **before** decompress. When candidates are already members:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'archive_job_begin|archive_job_duty|archive decompress restore|Archive worker stall detected|Zombie child reap|archive_finalize_prune' | tail -80
 ```
 
@@ -691,11 +691,11 @@ Measure closed-segment production rate vs full-ingest and archive-done consumpti
 
 ```bash
 # Live compose logs (recommended: full dump, not --tail)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs --timestamps pipeline 2>&1 \
+docker compose -p hpcperfstats -f docker-compose.yaml logs --timestamps pipeline 2>&1 \
   | python3 scripts/measure_pipeline_ingest_rate.py
 
 # Saved log file; optional last-N-minutes window
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs --timestamps pipeline 2>&1 > /tmp/pipeline-full.log
+docker compose -p hpcperfstats -f docker-compose.yaml logs --timestamps pipeline 2>&1 > /tmp/pipeline-full.log
 python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-full.log --since-minutes 240
 
 # Default window starts at last ``startup ingest gate cleared`` (excludes supervisor startup).
@@ -781,7 +781,7 @@ Up to **`sync_day_close_max_inflight`** (default **4**) janitor workers run as *
 **T0 (pre-deploy baseline):** `preflight_n=0` with massive **`delete defer reason=active_ingest`** means verified paths self-blocked via global **`paths_pending_delete`** in the quarantine skip union (RC-S).
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 
 grep -c 'removing stats file (day raw removal preflight)' /tmp/pipeline-full.log
 grep -c 'janitor: day_close delete defer' /tmp/pipeline-full.log
@@ -791,19 +791,19 @@ grep -E 'janitor: day_close delete (start|defer)' /tmp/pipeline-full.log | tail 
 **T1 (post-deploy RC-S fix):** preflight count **> 0**; defer lines carry **`tar=`**, **`day=`**, **`skip_class=`** (`handoff`, `pending_stats`, `inflight`, `pending_append`, `paths_pending_delete`, `chunk_dispatch`). Legitimate ingest overlap (RC-P) still defers with **`skip_class=pending_stats`** or **`chunk_dispatch`** until the path leaves live ingest sets.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'day raw removal preflight|day_close delete defer.*skip_class=|Day raw removal delete complete' | tail -60
 ```
 
 **T2 (June-4 retryable-skip stall, RC-J4):** after RC-S deploy, sealed days with all verified paths deleted but retryable skips on disk should handoff (`day_close handoff requeue day=2026-06-04`) and manifest **`phase=done`** when skips clear.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c "sh -lc '
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c "sh -lc '
 python3 -c \"import json, os; from hpcperfstats.dbload.lib.conf_parser import get_archive_dir_path
 p=os.path.join(get_archive_dir_path(), \\\".sync_timedb_day_raw_removal\\\", \\\"2026-06-04.json\\\")
 print(open(p).read() if os.path.isfile(p) else \\\"missing\\\")\"'"
 
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'day_close handoff requeue day=2026-06-04|Day raw removal delete complete day=2026-06-04' | tail -20
 ```
 
@@ -900,7 +900,7 @@ grep -E 'oldest_day_chunk_gate .*chunk_len=|youngest_day_chunk_gate .*chunk_len=
 
 ```bash
 # T0 — lead vs archive day (full pipeline log; never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 grep -E 'handoff_lead_uncapped|youngest_day_chunk_gate |chunk_day_histogram|chunk ingest summary|Archived batch|archive_job_duty|soft_skip' /tmp/pipeline-full.log | tail -120
 ```
 
@@ -1093,7 +1093,7 @@ grep -E 'discover_ready_day_close|Archive janitor tick done|janitor: tick zero_p
 - When `debt_remaining>0` and `free_slots>0`, expect **`debt_popped>0`** / **`days_started>0`** (or zero_pop with **`disqualified_on_heap>0`** + sample tars + **`budget_remaining_s=`**), not endless `sample_tars=-` starvation.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'debt_drain_begin|tick zero_pop|Archive janitor tick done|days_started=' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'debt_drain_begin|tick zero_pop|Archive janitor tick done|days_started=' | tail -80
 ```
 
 ### T1 verify — day-close idle threads + discover cap split (2026-07)
@@ -1161,7 +1161,7 @@ After deploy of **discover enqueue reject logging** and **tick wait heartbeat**,
 ```bash
 cd HPCPerfStats
 
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'discover_ready_day_close|discover_enqueue_reject|skipped_eligible|janitor: tick (budget_exit|waiting)|Archive janitor tick done' | \
   tail -60
 ```
@@ -1240,7 +1240,7 @@ When the prefix has no `:role` segment, use message substrings:
 
 ```bash
 # T0/T1 — RC-E supplement stop vs unbounded replenish (full log; never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 \
   | tee /tmp/pipeline-full.log >/dev/null
 echo "=== RC-E counts ==="
 grep -cE 'giant pool supplement stop reason=batch_paths_complete' /tmp/pipeline-full.log || true
@@ -1252,12 +1252,12 @@ grep -E 'giant pool supplement|chunk_elapsed_s|chunk dispatch begin|chunk imap s
 
 ```bash
 # Full pipeline log first (no --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 \
   | tee /tmp/pipeline-full.log
 
 grep -E 'long_ingest_budget|stall deferred|Pool imap stalled|chunk ingest summary|giant pool supplement|populate_queue_wait' /tmp/pipeline-full.log | tail -80
 
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec -T pipeline \
+docker compose -p hpcperfstats -f docker-compose.yaml exec -T pipeline \
   sh -c 'ps -eLo pid,pcpu,args | grep -E "worker:ingest-pool|sync_timedb.py" | grep -v grep | head -40'
 ```
 
@@ -1271,7 +1271,7 @@ After deploy of quarantine-transparent waiting_on_ingest + phase promote:
 - On-disk mix of **`skipped_not_in_archive` + `skipped_quarantine`** after verified delete must reach **`phase=done`** (waiting_on_ingest) + handoff retryables — not seal↔delete reloop.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 \
   | grep -E 'promote phase=verification_complete|day_close delete start|delete deferred tar=.*delete_disqualified|Day raw removal delete complete|waiting_on_ingest' \
   | tail -60
 ```
@@ -1280,17 +1280,17 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 ```bash
 cd HPCPerfStats   # checkout with docker-compose.yaml on site
-docker compose -f docker-compose.app.yaml -f docker-compose.yaml -p hpcperfstats exec -T pipeline \
+docker compose -f docker-compose.yaml -p hpcperfstats exec -T pipeline \
   sh -c 'ps -eLo pid,tid,pcpu,stat,args | grep -E "sync_timedb|worker:|thread:" | grep -v grep | head -30'
 ```
 
 Filter live logs by role:
 
 ```bash
-docker compose -f docker-compose.app.yaml -f docker-compose.yaml -p hpcperfstats logs --names pipeline 2>&1 \
+docker compose -f docker-compose.yaml -p hpcperfstats logs --names pipeline 2>&1 \
   | grep --line-buffered '\[sync_timedb:thread:archive-janitor\]'
 
-docker compose -f docker-compose.app.yaml -f docker-compose.yaml -p hpcperfstats logs --names pipeline 2>&1 \
+docker compose -f docker-compose.yaml -p hpcperfstats logs --names pipeline 2>&1 \
   | grep --line-buffered '\[sync_timedb:main\]'
 ```
 
@@ -1505,7 +1505,7 @@ docker compose logs pipeline 2>&1 | grep -E 'dispatch_probe failed|proactive swa
 - One INFO `file_complete_ingest_mark recorded` per successful path (worker); coordinator persists without a second INFO.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'DB lock wait|ingest per-file timeout|ingest timeout identity=|ingest fail .*TimeoutError|file_complete_ingest_mark recorded|db_shard_lock_s=|postgres_s=|parse_elapsed_s=' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'DB lock wait|ingest per-file timeout|ingest timeout identity=|ingest fail .*TimeoutError|file_complete_ingest_mark recorded|db_shard_lock_s=|postgres_s=|parse_elapsed_s=' | tail -80
 ```
 
 ### T0 / T1 — sticky ingest 0/N + bare TimeoutError thrash (H7) + idle stall (2026-08-29)
@@ -1521,11 +1521,11 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 - Progress SOP: `progress stage=… advancing=true|false idle_s=… metric=bytes|lines|members`; tar append idle stall → `tar append idle stall`.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'elapsed_s=0\.0 stage=unknown|idle_stall|advancing=false|tar append idle stall|ingest fill empty deep_queue|queue_orchestrator ingest timeout|fnctl\.lock' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'elapsed_s=0\.0 stage=unknown|idle_stall|advancing=false|tar append idle stall|ingest fill empty deep_queue|queue_orchestrator ingest timeout|fnctl\.lock' | tail -80
 ```
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'python3 -c "
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
 print(\"per_file_timeout_s\", cfg.get_sync_ingest_per_file_timeout_s())
 print(\"stall_idle_s\", cfg.get_sync_ingest_stall_idle_s())
@@ -1549,14 +1549,14 @@ print(\"max_s\", cfg.get_sync_ingest_per_file_timeout_max_s())
 - `remaining=` still trends down; no `ERROR: Pool imap stalled` / exit **124** from this alone.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'python3 -c "
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
 print(\"per_file_timeout_s\", cfg.get_sync_ingest_per_file_timeout_s())
 print(\"per_mib\", cfg.get_sync_ingest_per_file_timeout_s_per_mib())
 print(\"max_s\", cfg.get_sync_ingest_per_file_timeout_max_s())
 "'
 
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'ingest file path=|queue_orchestrator ingest timeout|outcome=timeout|outcome=ingested|ERROR: ingest per-file timeout|remaining=' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'ingest file path=|queue_orchestrator ingest timeout|outcome=timeout|outcome=ingested|ERROR: ingest per-file timeout|remaining=' | tail -80
 ```
 
 ### T0 / T1 — post_retire timeout→quarantine thrash → exit 124 (2026-07-17)
@@ -1570,7 +1570,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 - `child_ingest` returns to configured `ingest_pool_processes` without SIGKILL thrash of registered keep; no hard exit **124** from this cascade.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'dispatch_probe failed|skip_probe reason=workers_busy|post_retire_maintenance coalesced|child_ingest over cap|outcome=quarantine|fail_reason=ingest per-file timeout|idle_pool_ghost_inflight|idle_pool_taskqueue_dead|hard exit code=124|Pool terminate SIGKILL' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'dispatch_probe failed|skip_probe reason=workers_busy|post_retire_maintenance coalesced|child_ingest over cap|outcome=quarantine|fail_reason=ingest per-file timeout|idle_pool_ghost_inflight|idle_pool_taskqueue_dead|hard exit code=124|Pool terminate SIGKILL' | tail -80
 ```
 
 **Duplicate dispatch suppressed flood (T1, post-fix 2026-07-09):** dense `WARN: pool imap duplicate dispatch suppressed path=<timestamp>` lines (basename-only) during fast `db_skip` usually meant **non-prefix chunk accounting** — `pending[len(chunk):]` re-offered in-flight paths after `select_ingest_chunk_paths` (oldest-tar / handoff). **Post-fix:** pending advance and giant-supplement tail use **`pending_minus_chunk`** (normpath set-difference); chunk paths are deduped before imap; WARN shows **`path=host/basename`** (and `suppressed_n=` on first hit). Steady-state expect **near-zero** duplicate-suppressed WARNs; shared timestamp basenames across hosts are distinct (`c637-051/1780788583` vs `c637-062/1780788583`). Occasional single WARNs during idle reconcile redispatch remain benign.
@@ -1596,7 +1596,7 @@ Replace `YYYY-MM-DD` with the failing calendar day. Expect **`lock acquire timeo
 **Bucket E — No daily archive (T1/T2 post-fix):** thousands of alternating `archive members populate incomplete after lock release` / `clearing stale incomplete archive members Redis` for hash suffix **`…:YYYY-MM-DD:none:none:none:none`** (`hlen=0 complete=- lock=0`) from **`[sync_timedb:worker:ingest-pool]`**, ending in **`ERROR: Timed out waiting for archive members populate (max_seconds=7200)`** when **no** `.tar`/`.tar.zst`/`.tar.gz` exists on disk for that day.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'python3 -c "
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cp
 import os
 day = \"YYYY-MM-DD\"
@@ -1610,7 +1610,7 @@ for name in (\"%s.tar\" % day, \"%s.tar.zst\" % day, \"%s.tar.gz\" % day):
 **Pre-fix:** populate wait loop with no on-disk source. **Post-fix pass:** chunk prewarm shows **`no_daily_archive`** for that day; ingest resumes (`Begining Chunk` / `chunk ingest summary`); **no** 7200s populate timeout storm for days with no archive. Grep:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'YYYY-MM-DD|no_daily_archive|populate incomplete|Timed out waiting for archive members populate|Begining Chunk|chunk prewarm days=' | \
   tail -40
 ```
@@ -1620,11 +1620,11 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 **Post-fix pass:** at most **one** orphan clear WARN; **at most one** stale-incomplete WARN per day within Redis NX TTL (~300s); **one** recovery re-enqueue (peers wait only); noop clears are silent; populate recovers to `complete=1` without WARN stampede. Redis census keys (correct names):
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec redis sh -lc 'echo "=== scan"; redis-cli --scan --pattern "*archive_members:hash:v1:YYYY-MM-DD*" | head -20; echo "=== degraded"; redis-cli GET "hpcperfstats:sync_timedb:archive_populate_degraded:v1:YYYY-MM-DD"; echo "=== day_skip"; redis-cli GET "hpcperfstats:sync_timedb:archive_day_ingest_skip:v1:YYYY-MM-DD"'
+docker compose -p hpcperfstats -f docker-compose.yaml exec redis sh -lc 'echo "=== scan"; redis-cli --scan --pattern "*archive_members:hash:v1:YYYY-MM-DD*" | head -20; echo "=== degraded"; redis-cli GET "hpcperfstats:sync_timedb:archive_populate_degraded:v1:YYYY-MM-DD"; echo "=== day_skip"; redis-cli GET "hpcperfstats:sync_timedb:archive_day_ingest_skip:v1:YYYY-MM-DD"'
 ```
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'YYYY-MM-DD|lock owner pid=|clearing orphan incomplete|clearing stale incomplete|populate incomplete after lock release|pool imap idle reconcile' | \
   grep -v 'suppressed_n=' | head -80
 ```
@@ -1632,7 +1632,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 **Bucket E2 — Dirty-tar populate EOF thrash + self-hot + exit 124 (T0/T1, 2026-06-07 class):** pre-fix loop shows `populate_source_decision … dirty=True sealed_exists=True use_tar=True` then `transient tar populate EOF during hot/append` while Redis census has **`tar_hot=True`** / **`append_inflight=False`** (waiter self-hot alone), orphan clear `hlen≈6500`, stale clear `hlen=0`, forever retry; workers wchan-idle in populate wait → **`pool_recover exceeded wall_s=30.0`** → exit **124** `idle_pool_taskqueue_dead`. Candidate counters `unprocessed_cross_day_n` / `processed_cross_day_n` are **diagnostic only** (misbucket census) — they do **not** set `waiting_on_ingest` by themselves. Flood of `Unable to find first timestamp in N path(s)` after day-close delete is rate-limited/summarized (not the crash driver).
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'python3 -c "
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
 import os
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import is_daily_tar_sealed_dirty
@@ -1651,7 +1651,7 @@ print(\"zst_size\", os.path.getsize(zst) if os.path.isfile(zst) else \"-\")
 ```
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'YYYY-MM-DD|populate_source_decision|prefer sealed fallback|sealed fallback after dirty-tar|transient tar populate EOF|clearing orphan incomplete|pool_recover skipped|redispatch skipped|redispatch round=|pool_recover exceeded wall|idle_pool_taskqueue_dead|Unable to find first timestamp' | \
   tail -80
 ```
@@ -1666,7 +1666,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 **Populate-pool unavailable / refuse sealed stream (T1 — exit status 1 class):** grep for `populate-pool unavailable`, `refusing sealed stream`, `not an immediate L2 fatal`, and `archive members Redis L2 contract failed`.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'populate-pool unavailable|refusing sealed stream|not an immediate L2 fatal|L2 contract failed|populate-pool worker restarted|chunk prewarm|exit status' | \
   tail -80
 ```
@@ -1687,7 +1687,7 @@ docker compose logs pipeline --since 24h 2>&1 | grep -E 'day_close defer|day_clo
 
 ```bash
 # T0 — flock probe vs orphan sidecar (INI paths; prefer try_file_write_lock over fuser)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'python3 -c "
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.dbload.lib.file_locking import try_file_write_lock
 import os, shutil
@@ -1708,7 +1708,7 @@ for day in (\"YYYY-MM-DD\",):
 
 ```bash
 # T0 — day_close defer / lock_cleanup greps (full pipeline log; never --tail before grep)
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'janitor: day_close defer.*write_lock_contended|janitor: lock_cleanup|day_close seal start' | tail -40
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'janitor: day_close defer.*write_lock_contended|janitor: lock_cleanup|day_close seal start' | tail -40
 ```
 
 **Unhealthy:** populate waits full **`populate_max_seconds`** with **`daily_tar_restore`** stuck (no `daily_tar_restore end`); gated prewarm with **`gated_tar_restore=True`** and no **`archive decompress restore begin`** / no `zstd -d` for that day while MainThread is busy; repeated fnctl timeout without preceding defer/yield/restore-wait logs; defer streak with no progress past **`defer_cap_exceeded`** without seal/dedupe completion; multi-hour `write_lock_contended` **with** `try_file_write_lock` still failing (true live holder stuck) — distinct from leftover orphan sidecars where the probe returns `OK_uncontended`.
@@ -1728,24 +1728,24 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 ```bash
 # pipeline — stop, clear stale decomp.tmp under INI daily_archive_dir, up
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml stop pipeline && \
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml run --rm --no-deps pipeline su hpcperfstats -c 'python3 -c "
+docker compose -p hpcperfstats -f docker-compose.yaml stop pipeline && \
+docker compose -p hpcperfstats -f docker-compose.yaml run --rm --no-deps pipeline su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
 print(cfg.get_daily_archive_dir_path())
 "' && \
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml run --rm --no-deps pipeline su hpcperfstats -c 'sh -lc "
+docker compose -p hpcperfstats -f docker-compose.yaml run --rm --no-deps pipeline su hpcperfstats -c 'sh -lc "
 rm -f \"$(python3 -c \"from hpcperfstats.dbload.lib import conf_parser as cfg; print(cfg.get_daily_archive_dir_path())\")\"/*.tar.decomp.tmp
 "' && \
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml up -d pipeline
+docker compose -p hpcperfstats -f docker-compose.yaml up -d pipeline
 ```
 
 **Post-restart verify (paste back):**
 
 ```bash
 # pipeline — restore lease logs + live zstd census
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | \
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'daily_tar_restore begin|daily_tar_restore end|day_close defer reason=daily_tar_restore|day_close pre_seal_verify' | tail -60 && \
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml exec pipeline su hpcperfstats -c 'sh -lc "
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c 'sh -lc "
 ps -eo pid,lstart,etime,cmd | grep -E \"zstd -d\" | grep -v grep || true
 "'
 ```

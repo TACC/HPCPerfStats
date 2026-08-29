@@ -233,8 +233,8 @@ def test_nginx_django_proxy_common_hides_upstream_security_headers():
   assert "include /etc/nginx/nginx-csp-django-html.inc" in conf
 
 
-def test_nginx_conf_example_completes_ocsp_stapling_contract():
-  conf = (_SERVICES / "nginx.conf.example").read_text(encoding="utf-8")
+def test_nginx_conf_completes_ocsp_stapling_contract():
+  conf = (_SERVICES / "nginx.conf").read_text(encoding="utf-8")
   assert "ssl_stapling on;" in conf
   assert "ssl_stapling_verify on;" in conf
   assert "ssl_trusted_certificate" in conf

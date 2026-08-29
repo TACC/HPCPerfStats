@@ -8,7 +8,6 @@ format.mdc.
 Attributes:
   CACHE_OPTIONS: Attribute.
   DEFAULT_INSTALL_OPTIONS: Attribute.
-  DEFAULT_PINNING_OPTIONS: Attribute.
   DEFAULT_POSTGRES_OPTIONS: Attribute.
   EXPLICIT_OPTION_SECTION: Attribute.
   OAUTH2_OPTIONS: Attribute.
@@ -22,15 +21,6 @@ Attributes:
 from __future__ import annotations
 
 from typing import Any
-
-DEFAULT_PINNING_OPTIONS = frozenset({
-    "cpuset_pin_min_total_cores",
-    "cpuset_pin_min_cores_per_node",
-    "numa_pin_max_nodes_auto",
-    "pin_proxy_in_compose",
-    "web_numa_node",
-    "pipeline_numa_node",
-})
 
 DEFAULT_POSTGRES_OPTIONS = frozenset({
     "engine_name",
@@ -135,8 +125,6 @@ def expected_section(option: str) -> str:
   if option in DEFAULT_INSTALL_OPTIONS:
     return "DEFAULT"
   if option in DEFAULT_POSTGRES_OPTIONS:
-    return "DEFAULT"
-  if option in DEFAULT_PINNING_OPTIONS:
     return "DEFAULT"
   if option in PORTAL_WEB_TUNING_OPTIONS:
     return "PORTAL"
