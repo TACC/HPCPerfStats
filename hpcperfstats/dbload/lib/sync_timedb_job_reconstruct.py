@@ -22,6 +22,9 @@ from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
 from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
+    is_internal_archive_stats_path,
+)
 
 RECONSTRUCT_CHECKPOINT_BASENAME = ".sync_timedb_state.json"
 RECONSTRUCT_SOURCES = frozenset({"disk", "timescale", "marks"})
@@ -634,6 +637,16 @@ def classify_closed_raw_path(
     True
   """
   norm = os.path.normpath(str(path or ""))
+  if is_internal_archive_stats_path(norm):
+    return ClosedPathReconstructPlan(
+        path=norm,
+        identity=jq.ingest_identity(norm, size, mtime_ns),
+        needs_ingest=False,
+        needs_append=False,
+        calendar_day=calendar_day,
+        tar_path=tar_path,
+        fingerprint=jq.ingest_fingerprint(size, mtime_ns),
+    )
   identity = jq.ingest_identity(norm, size, mtime_ns)
   fingerprint = jq.ingest_fingerprint(size, mtime_ns)
   archive = str(tgz_archive_dir or "").strip()

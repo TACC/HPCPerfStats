@@ -47,6 +47,42 @@ def test_find_stats_argv_excludes_dot_and_current():
   assert "current*" in argv
   assert "-name" in argv
   assert ".*" in joined and "current*" in joined
+  assert "-prune" in argv
+  prune_name_idx = argv.index("-prune") - 1
+  assert argv[prune_name_idx] == ".*"
+
+
+def test_is_internal_archive_stats_path_dot_prefixed_host_dir():
+  assert sf.is_internal_archive_stats_path(
+      "/archive/.sync_timedb_day_raw_removal/2026-08-07.json",
+  )
+  assert sf.is_internal_archive_stats_path("/archive/.any_sidecar/file")
+  host = "/archive/i614-023.vista.tacc.utexas.edu"
+  assert not sf.host_dir_is_internal_for_stats_discovery(host)
+
+
+def test_filter_skips_internal_sidecar_paths():
+  host_suffix = ".vista.tacc.utexas.edu"
+  internal = sf.FindStatsRecord(
+      path="/archive/.sync_timedb_day_raw_removal/2026-08-07.json",
+      mtime=1700000000.0,
+      size=0,
+      inode=1,
+  )
+  real = sf.FindStatsRecord(
+      path="/archive/i614.host" + host_suffix + "/1787359835",
+      mtime=1700000000.0,
+      size=10,
+      inode=2,
+  )
+  out = sf.filter_and_sort_find_records(
+      [internal, real],
+      host_suffix,
+      "backlog",
+      None,
+      {},
+  )
+  assert [r.path for r in out] == [real.path]
 
 
 def test_parse_find_printf_records_roundtrip():

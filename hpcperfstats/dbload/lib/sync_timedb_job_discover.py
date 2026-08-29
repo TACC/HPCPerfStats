@@ -23,6 +23,7 @@ from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
 from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
     FindStatsRecord,
+    is_internal_archive_stats_path,
     iter_find_printf_records_streaming,
 )
 
@@ -182,6 +183,8 @@ def _basename_date(path: str) -> date | None:
     datetime.date(2026, 8, 5)
   """
   name = os.path.basename(str(path or ""))
+  if name.endswith(".json"):
+    return None
   if len(name) < 10:
     return None
   try:
@@ -324,6 +327,8 @@ def stream_enqueue_ingest_from_find_records(
   from hpcperfstats.dbload.lib import sync_timedb_progress_report as progress
 
   for rec in records:
+    if is_internal_archive_stats_path(rec.path):
+      continue
     try:
       has_cap = jq.queue_has_capacity(
           client, kind=jq.JOB_KIND_INGEST, limit=cap,

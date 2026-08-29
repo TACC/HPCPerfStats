@@ -5343,6 +5343,23 @@ def _parse_stats_file_payload_impl(
 
   with _sync_worker_db_task():
     try:
+      from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
+          is_internal_archive_stats_path,
+      )
+
+      if is_internal_archive_stats_path(stats_file):
+        return (
+            stats_file,
+            None,
+            False,
+            False,
+            _parse_elapsed(),
+            _ingest_outcome_meta(
+                outcome="skip",
+                fail_reason="internal_archive_sidecar",
+                archive_skip="internal_archive_sidecar",
+            ),
+        )
       hostname, _ = parse_stats_file_path(stats_file)
       if hostname is None:
         return (

@@ -2697,6 +2697,12 @@ def _closed_raw_eligible_for_quarantine(path_norm: Any) -> Any:
   """
   if not path_norm:
     return False
+  from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
+      is_internal_archive_stats_path,
+  )
+
+  if is_internal_archive_stats_path(str(path_norm)):
+    return False
   base = os.path.basename(path_norm)
   if base.startswith("current"):
     return False

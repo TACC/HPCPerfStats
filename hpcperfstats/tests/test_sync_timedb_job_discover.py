@@ -9,6 +9,36 @@ from hpcperfstats.dbload.lib.sync_timedb_stats_find import FindStatsRecord
 from hpcperfstats.tests.fake_redis_queue import FakeRedis
 
 
+def test_basename_date_rejects_day_raw_removal_manifest_json():
+  path = "/archive/.sync_timedb_day_raw_removal/2026-08-07.json"
+  assert jd._basename_date(path) is None
+
+
+def test_stream_enqueue_skips_internal_sidecar_paths():
+  client = FakeRedis()
+  records = [
+      FindStatsRecord(
+          path="/archive/.sync_timedb_day_raw_removal/2026-08-07.json",
+          mtime=1.0,
+          size=0,
+          inode=1,
+      ),
+      FindStatsRecord(path="/archive/h/a", mtime=2.0, size=10, inode=2),
+  ]
+  stats = jd.stream_enqueue_ingest_from_find_records(
+      client,
+      records,
+      tgz_archive_dir="/daily",
+      today=date(2026, 8, 24),
+      calendar_day_fn=lambda _r: date(2026, 8, 7),
+      ingest_is_complete_fn=lambda **_k: False,
+      append_is_complete_fn=lambda **_k: True,
+  )
+  assert stats.seen == 1
+  assert stats.enqueued_ingest == 1
+  assert client.zcard(jq.job_queue_key("ingest")) == 1
+
+
 def test_calendar_day_from_find_record_uses_daily_tar(tmp_path):
   """B1: discover must resolve the calendar day from the daily tar path."""
   daily = tmp_path / "daily"

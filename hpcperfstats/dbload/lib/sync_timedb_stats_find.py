@@ -145,6 +145,58 @@ def update_fingerprint_caches_from_records(
     _host_fp_cache[host_dir] = (max_mtime, count)
 
 
+def host_dir_is_internal_for_stats_discovery(host_dir: str) -> bool:
+  """
+  Return True when the archive child dir is dot-prefixed (not a monitor host).
+
+  Monitor host directories never start with ``.``; sidecars and metadata trees
+  under ``archive/`` do (``.sync_timedb_day_raw_removal``, etc.).
+
+  Args:
+    host_dir (str): Parent directory of a depth-2 stats file under ``archive/``.
+
+  Returns:
+    bool: True when ``host_dir`` basename starts with ``.``.
+
+  Examples:
+    >>> host_dir_is_internal_for_stats_discovery("/a/.sync_timedb_day_raw_removal")
+    True
+    >>> host_dir_is_internal_for_stats_discovery("/a/.hidden_sidecar")
+    True
+    >>> host_dir_is_internal_for_stats_discovery("/a/i614.host.example.edu")
+    False
+  """
+  base = os.path.basename(os.path.normpath(str(host_dir or "")))
+  if not base or base in (".", ".."):
+    return True
+  return base.startswith(".")
+
+
+def is_internal_archive_stats_path(path: str) -> bool:
+  """
+  Return True when ``path`` is under a dot-prefixed archive child (not a host).
+
+  Args:
+    path (str): Candidate closed raw stats path under ``archive/``.
+
+  Returns:
+    bool: True when discover/ingest must ignore the path.
+
+  Examples:
+    >>> is_internal_archive_stats_path(
+    ...   "/archive/.sync_timedb_day_raw_removal/2026-08-07.json"
+    ... )
+    True
+    >>> is_internal_archive_stats_path(
+    ...   "/archive/i614.host.example.edu/1787359835"
+    ... )
+    False
+  """
+  if not path:
+    return False
+  return host_dir_is_internal_for_stats_discovery(os.path.dirname(path))
+
+
 def build_find_stats_argv(
   archive_dir: str,
   *,
@@ -168,6 +220,17 @@ def build_find_stats_argv(
   argv = [
       find_bin,
       archive_dir,
+      "(",
+      "-mindepth",
+      "1",
+      "-maxdepth",
+      "1",
+      "-name",
+      ".*",
+      "-prune",
+      ")",
+      "-o",
+      "(",
       "-mindepth",
       "2",
       "-maxdepth",
@@ -187,6 +250,7 @@ def build_find_stats_argv(
           "current*",
           "-printf",
           FIND_PRINTF_FORMAT,
+          ")",
       ]
   )
   return argv
@@ -685,6 +749,8 @@ def filter_and_sort_find_records(
     name = os.path.basename(path)
     host_dir = os.path.dirname(path)
     host_base = os.path.basename(host_dir)
+    if host_dir_is_internal_for_stats_discovery(host_dir):
+      continue
     if not host_base.endswith(suffix):
       continue
     if name.startswith(".") or name.startswith("current"):
@@ -903,6 +969,8 @@ def filter_host_scoped_window_records(
     name = os.path.basename(path)
     host_dir = os.path.dirname(path)
     host_base = os.path.basename(host_dir)
+    if host_dir_is_internal_for_stats_discovery(host_dir):
+      continue
     if host_base not in allow:
       continue
     if name.startswith(".") or name.startswith("current"):
