@@ -249,7 +249,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    - **`volumes → ssh_keys → device`:** host directory with pipeline SSH keys (permissions suitable for mount as `/hpcperfstats/.ssh/`)
 
-   TLS certificates are **not** a Compose volume. Set **`[DEFAULT] ssl_certs_dir`** in **`hpcperfstats.ini`** (next step) to a host directory that contains at least **`fullchain.pem`** and **`privkey.pem`** (typically the Let’s Encrypt **live** dir for this hostname). Those PEMs are baked into the **`proxy`** image at build time.
+   TLS certificates are **not** a Compose volume. Set **`[DEFAULT] ssl_certs_dir`** in **`hpcperfstats.ini`** (next step) to a host directory that contains at least **`fullchain.pem`** and **`privkey.pem`** (typically the Let’s Encrypt **live** dir for this hostname). Those PEMs are baked into the **`proxy`** image at build time via **`python3 services-conf/resolve_proxy_ssl_certs_dir.py`** (no **`.env`**).
 
    Create host directories for **every** bind `device:` before `up` (defaults from the example):
 
@@ -344,30 +344,31 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    (**`/etc/ssl/hpcperfstats/fullchain.pem`** and **`privkey.pem`**). Cert PEMs are
    **baked into the proxy image** at build from the host directory in
    **`[DEFAULT] ssl_certs_dir`** (BuildKit **`additional_contexts.ssl_certs`** →
-   **`COPY --from=ssl_certs`**). There is **no** Compose **`ssl_certs`** volume and
-   **no** checkout staging copy of PEMs. **Do not** edit TLS paths in nginx for a
-   fresh deploy — set **`ssl_certs_dir`**, export it for the build, and rebuild
-   **`proxy`**.
+   **`COPY --from=ssl_certs`**). There is **no** Compose **`ssl_certs`** volume,
+   **no** checkout staging copy of PEMs, and **no** production **`.env`** /
+   **`HPCPERFSTATS_SSL_CERTS_DIR`** requirement. **Do not** edit TLS paths in
+   nginx for a fresh deploy — set **`ssl_certs_dir`** in the INI, materialize
+   the Compose context, and rebuild **`proxy`**.
 
    Before building **`proxy`** (or a full stack build that includes it):
 
    ```bash
-   # Validate PEMs and print the absolute path for Compose (required — no silent default):
-   export HPCPERFSTATS_SSL_CERTS_DIR="$(python3 services-conf/resolve_proxy_ssl_certs_dir.py)"
+   # Read [DEFAULT] ssl_certs_dir from hpcperfstats.ini; update
+   # .hpcperfstats_ssl_certs (gitignored). No export / .env needed:
+   python3 services-conf/resolve_proxy_ssl_certs_dir.py
    docker compose build proxy
    docker compose up -d --force-recreate proxy
    ```
 
-   Compose **requires** **`HPCPERFSTATS_SSL_CERTS_DIR`** (fails closed if unset) so a
-   production rebuild cannot accidentally bake the CI self-signed fixture (Firefox
-   **`MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT`** under HSTS). Test/CI workflows set the
-   fixture via **`tests/docker-compose.test-overlay.yaml`**
-   (**`./tests/fixtures/proxy-ssl`**). After Let’s Encrypt renew: **rebuild and
-   recreate `proxy` only** (immutable bake — no restage into the repo).
+   Re-run **`resolve_proxy_ssl_certs_dir.py`** after changing **`ssl_certs_dir`**
+   in the INI (same directory after Let’s Encrypt renew needs only a proxy
+   rebuild). Never point production at **`tests/fixtures/proxy-ssl`** (Firefox
+   **`MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT`** under HSTS). Test/CI workflows use
+   **`tests/docker-compose.test-overlay.yaml`** (**`./tests/fixtures/proxy-ssl`**).
    **`./scripts/rebuild_pipeline.sh`** does **not** rebuild **`proxy`**.
    Requires BuildKit / Compose **`additional_contexts`** (Docker Compose v2+). On
    Podman sites without that Compose key, bake with an equivalent build context
-   (for example **`podman build --build-context ssl_certs="$HPCPERFSTATS_SSL_CERTS_DIR"`**
+   (for example **`podman build --build-context ssl_certs="$(python3 services-conf/resolve_proxy_ssl_certs_dir.py --no-link)"`**
    against **`services-conf/proxy.Dockerfile`**) then recreate **`proxy`**.
 
    Compose bind-mounts **`./services-conf/nginx.conf`** to **`/etc/nginx/http.d/default.conf`**
@@ -472,7 +473,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 | Rebuild web/pipeline image after Python-only changes (preserves live frontend, no npm) | `./scripts/rebuild_pipeline.sh` |
 | Temporary pipeline-only rebuild (no running web; recreate pipeline only) | `./scripts/rebuild_pipeline.sh --no-web` |
 | Rebuild just the app and keep persistent services running | `docker compose stop -t 120 web pipeline proxy && docker compose up --build -d web pipeline && docker compose start proxy` |
-| Rebuild proxy after `ssl_certs_dir` / cert renew or `server=` change | `export HPCPERFSTATS_SSL_CERTS_DIR="$(python3 services-conf/resolve_proxy_ssl_certs_dir.py)" && docker compose build proxy && docker compose up -d --force-recreate proxy` |
+| Rebuild proxy after `ssl_certs_dir` / cert renew or `server=` change | `python3 services-conf/resolve_proxy_ssl_certs_dir.py && docker compose build proxy && docker compose up -d --force-recreate proxy` |
 | View logs  | `sudo docker compose logs` |
 | PostgreSQL shell | `docker compose exec db psql -h localhost -U hpcperfstats` |
 | Pipeline shell (data/processing) | `docker compose exec pipeline su hpcperfstats` |

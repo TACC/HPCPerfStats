@@ -216,10 +216,12 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "hpcperfstats.ini*",
             "hpcperfstats/hpcperfstats.ini*",
             "docker-compose*.yaml",
+            "services-conf/resolve_proxy_ssl_certs_dir.py",
         ],
         "rules": [
             "immutable-image-ini-policy.mdc",
             "hpcperfstats-ini-format.mdc",
+            "no-production-env-for-ini-config.mdc",
         ],
     },
     {
@@ -410,6 +412,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "readme-installation-sync.mdc",
             "compose-operator-terminal-commands.mdc",
             "minimal-compose-install-footprint.mdc",
+            "no-production-env-for-ini-config.mdc",
         ],
     },
     {

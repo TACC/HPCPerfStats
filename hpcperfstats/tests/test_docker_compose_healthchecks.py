@@ -152,11 +152,10 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   assert "./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro" in content
   assert "ssl_certs:/etc/ssl/hpcperfstats:ro" not in content
   assert "additional_contexts:" in content
-  assert (
-      "ssl_certs: ${HPCPERFSTATS_SSL_CERTS_DIR:?set HPCPERFSTATS_SSL_CERTS_DIR "
-      "to ssl_certs_dir from hpcperfstats.ini}"
-  ) in content
+  assert "ssl_certs: ./.hpcperfstats_ssl_certs" in content
+  assert "${HPCPERFSTATS_SSL_CERTS_DIR" not in content
   assert ":-./tests/fixtures/proxy-ssl}" not in content
+  assert ".hpcperfstats_ssl_certs" in (repo_root / ".gitignore").read_text()
   assert "/etc/letsencrypt/:/etc/letsencrypt/:ro" not in content
   assert "services-conf/proxy.Dockerfile" in content
   assert "NGINX_SSL_CERT" not in content

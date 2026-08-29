@@ -1,0 +1,43 @@
+---
+description: Production must not require .env or shell env flags for site config already in hpcperfstats.ini
+alwaysApply: false
+globs: docker-compose*.yaml,hpcperfstats.ini.example,services-conf/resolve_proxy_ssl_certs_dir.py,HPCPerfStats/README.md,README.md
+---
+
+# No Production `.env` For INI Config
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+## Law (non-negotiable)
+
+**Production deploys must not require operators to create a Compose `.env` file or export shell environment variables for site configuration that already lives in `hpcperfstats.ini`.**
+
+If a knob is (or should be) in the INI — for example **`[DEFAULT] ssl_certs_dir`**, **`server=`**, paths, pool sizes — Compose / image bake / install docs must consume it from the INI (directly or via a small host helper that reads the INI). Do **not** make **`export FOO=…`**, **`.env`**, or **`${FOO:?…}`** the production contract for that knob.
+
+## Proxy TLS bake (canonical example)
+
+| Allowed | Forbidden in production docs / base compose |
+|---------|-----------------------------------------------|
+| Set **`ssl_certs_dir`** in **`hpcperfstats.ini`** | Requiring **`HPCPERFSTATS_SSL_CERTS_DIR`** for `up` / `down` / `build` |
+| Run **`python3 services-conf/resolve_proxy_ssl_certs_dir.py`** to materialize **`.hpcperfstats_ssl_certs`** from the INI | Teaching operators to maintain a project **`.env`** with that path |
+| Test/CI overlay + **`resolve --fixture`** for self-signed PEMs | Defaulting base compose to **`tests/fixtures/proxy-ssl`** (silent prod self-signed under HSTS) |
+
+Compose may use a **gitignored** symlink or other INI-derived materialization so BuildKit **`additional_contexts`** works. That is **not** an operator `.env` flag.
+
+## Allowed env uses (narrow)
+
+- **Process titles / container runtime** already set in compose (`HPCPERFSTATS_INI=…` inside the image path).
+- **Test/CI-only** exports inside **`tests/compose_test_cmd.sh`** / workflow scripts (never the production install path).
+- **One-shot diagnostics** where the operator pastes a command that substitutes an INI-resolved path — prefer the resolve helper over a standing env var.
+
+## Agent requirements
+
+- When adding Compose interpolation for site identity/paths, prefer INI + helper over new **`HPCPERFSTATS_*`** production env contracts.
+- Update **`README.md` Installation** in the same task (`readme-installation-sync.mdc`).
+- Dual-register this rule when triggers change (`agent-discipline-core.mdc` + `hook_task_router.py`).
+
+## Overlap
+
+- **`immutable-image-ini-policy.mdc`** — bake INI and TLS into images; no runtime INI bind.
+- **`hpcperfstats-ini-format.mdc`** — INI is the site config surface.
+- **`minimal-compose-install-footprint.mdc`** — keep operator compose edits minimal.

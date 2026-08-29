@@ -100,13 +100,13 @@ services:
     build:
       context: ./
       dockerfile: services-conf/proxy.Dockerfile
-      # Host dir with fullchain.pem + privkey.pem ([DEFAULT] ssl_certs_dir).
-      # REQUIRED for production builds — never default to the CI self-signed fixture
-      # (that would serve MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT under HSTS).
-      # export HPCPERFSTATS_SSL_CERTS_DIR="$(python3 services-conf/resolve_proxy_ssl_certs_dir.py)"
-      # CI/Colima: tests/docker-compose.test-overlay.yaml sets the fixture path.
+      # Host dir with fullchain.pem + privkey.pem from [DEFAULT] ssl_certs_dir.
+      # Materialize (no .env / no HPCPERFSTATS_SSL_CERTS_DIR):
+      #   python3 services-conf/resolve_proxy_ssl_certs_dir.py
+      # Never default to the CI self-signed fixture (HSTS / MOZILLA_PKIX_ERROR_*).
+      # CI/Colima: tests/docker-compose.test-overlay.yaml pins ./tests/fixtures/proxy-ssl.
       additional_contexts:
-        ssl_certs: ${HPCPERFSTATS_SSL_CERTS_DIR:?set HPCPERFSTATS_SSL_CERTS_DIR to ssl_certs_dir from hpcperfstats.ini}
+        ssl_certs: ./.hpcperfstats_ssl_certs
     image: hpcperfstats-proxy
 
     restart: always

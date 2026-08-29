@@ -2,24 +2,30 @@
 """
 Resolve and validate ``[DEFAULT] ssl_certs_dir`` for proxy image builds.
 
-Prints the absolute host directory path to stdout for
-``HPCPERFSTATS_SSL_CERTS_DIR`` / Compose ``additional_contexts``. Does **not**
-copy PEM files into the git checkout.
+Reads the path from ``hpcperfstats.ini`` (not from operator ``.env`` / shell
+exports). Updates the gitignored Compose BuildKit context symlink
+``.hpcperfstats_ssl_certs`` so ``docker compose`` / ``podman-compose`` can bake
+PEMs with **no** ``HPCPERFSTATS_SSL_CERTS_DIR`` requirement. Prints the absolute
+host directory path to stdout. Does **not** copy PEM files into the git checkout.
 
 Attributes:
   REQUIRED_PEM_NAMES: Basename tuple that must exist under ``ssl_certs_dir``.
   FIXTURE_REL: Checkout-relative path of the committed self-signed fixture.
+  COMPOSE_SSL_CERTS_CONTEXT_REL: Gitignored symlink Compose ``additional_contexts``
+    points at.
 """
 
 from __future__ import annotations
 
 import argparse
 import configparser
+import os
 import sys
 from pathlib import Path
 
 REQUIRED_PEM_NAMES: tuple[str, ...] = ("fullchain.pem", "privkey.pem")
 FIXTURE_REL: str = "tests/fixtures/proxy-ssl"
+COMPOSE_SSL_CERTS_CONTEXT_REL: str = ".hpcperfstats_ssl_certs"
 
 
 def services_conf_dir() -> Path:
@@ -168,9 +174,101 @@ def load_ssl_certs_dir_from_ini(ini_path: Path) -> Path:
   return validate_ssl_certs_dir(Path(raw))
 
 
+def compose_ssl_certs_context_path(
+    *,
+    checkout_root: Path | None = None,
+) -> Path:
+  """
+  Return the absolute path of the Compose TLS BuildKit context symlink.
+
+  Args:
+    checkout_root (Path | None): Checkout root; defaults to this script's repo.
+
+  Returns:
+    Path: Absolute path of ``.hpcperfstats_ssl_certs``.
+
+  Examples:
+    >>> compose_ssl_certs_context_path().name == COMPOSE_SSL_CERTS_CONTEXT_REL
+    True
+  """
+  root = (checkout_root if checkout_root is not None else repo_root()).resolve()
+  return root / COMPOSE_SSL_CERTS_CONTEXT_REL
+
+
+def ensure_compose_ssl_certs_context(
+    certs_dir: Path,
+    *,
+    checkout_root: Path | None = None,
+) -> Path:
+  """
+  Point the gitignored Compose context symlink at a validated certs directory.
+
+  Compose ``additional_contexts.ssl_certs`` uses this symlink so production
+  builds need **no** ``.env`` / ``HPCPERFSTATS_SSL_CERTS_DIR`` export — only
+  ``[DEFAULT] ssl_certs_dir`` in the INI plus this materialization step.
+
+  Args:
+    certs_dir (Path): Absolute validated host directory with required PEMs.
+    checkout_root (Path | None): Checkout root that owns the symlink; defaults to
+      this script's repo root.
+
+  Returns:
+    Path: Absolute path of the symlink (``.hpcperfstats_ssl_certs``).
+
+  Raises:
+    ValueError: When an existing non-symlink path blocks the link name.
+    OSError: When the symlink cannot be created.
+
+  Examples:
+    >>> import tempfile
+    >>> from pathlib import Path
+    >>> fix = fixture_ssl_certs_dir()
+    >>> td = Path(tempfile.mkdtemp())
+    >>> link = ensure_compose_ssl_certs_context(fix, checkout_root=td)
+    >>> link.is_symlink() and link.resolve() == fix
+    True
+  """
+  validated = validate_ssl_certs_dir(certs_dir)
+  root = (checkout_root if checkout_root is not None else repo_root()).resolve()
+  link = root / COMPOSE_SSL_CERTS_CONTEXT_REL
+  if link.is_symlink() or link.is_file():
+    link.unlink()
+  elif link.exists():
+    raise ValueError(
+        f"refuse to replace non-symlink compose SSL context path: {link}"
+    )
+  os.symlink(validated, link, target_is_directory=True)
+  return link
+
+
+def _default_compose_link_repo_root(
+    *,
+    repo_root_arg: Path | None,
+) -> Path:
+  """
+  Choose the checkout root that should own ``.hpcperfstats_ssl_certs``.
+
+  Args:
+    repo_root_arg (Path | None): Explicit ``--repo-root`` value, if any.
+
+  Returns:
+    Path: Absolute directory for the Compose SSL context symlink.
+
+  Examples:
+    >>> _default_compose_link_repo_root(repo_root_arg=None).is_dir()
+    True
+  """
+  if repo_root_arg is not None:
+    return repo_root_arg.resolve()
+  cwd = Path.cwd().resolve()
+  if (cwd / "docker-compose.yaml").is_file():
+    return cwd
+  return repo_root()
+
+
 def main(argv: list[str] | None = None) -> int:
   """
-  Print a validated TLS certs directory path for Compose build wiring.
+  Print a validated TLS certs directory and refresh the Compose context symlink.
 
   Args:
     argv (list[str] | None): CLI arguments without the program name, or
@@ -180,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
     int: ``0`` on success; ``1`` when validation fails.
 
   Examples:
-    >>> main(["--fixture"])
+    >>> main(["--fixture", "--no-link"])
     0
   """
   parser = argparse.ArgumentParser(description=__doc__)
@@ -193,7 +291,18 @@ def main(argv: list[str] | None = None) -> int:
   parser.add_argument(
       "--fixture",
       action="store_true",
-      help="print the committed tests/fixtures/proxy-ssl path (ignore --ini)",
+      help="use committed tests/fixtures/proxy-ssl (ignore --ini); CI only",
+  )
+  parser.add_argument(
+      "--no-link",
+      action="store_true",
+      help="print path only; do not update .hpcperfstats_ssl_certs",
+  )
+  parser.add_argument(
+      "--repo-root",
+      type=Path,
+      default=None,
+      help="checkout root for the compose context symlink (default: cwd or script repo)",
   )
   args = parser.parse_args(argv)
   try:
@@ -206,6 +315,13 @@ def main(argv: list[str] | None = None) -> int:
           else find_default_ini_path()
       )
       path = load_ssl_certs_dir_from_ini(ini_path)
+    if not args.no_link:
+      link_root = _default_compose_link_repo_root(repo_root_arg=args.repo_root)
+      link = ensure_compose_ssl_certs_context(path, checkout_root=link_root)
+      print(
+          f"compose SSL context: {link} -> {path}",
+          file=sys.stderr,
+      )
   except ValueError as exc:
     print(f"error: {exc}", file=sys.stderr)
     return 1

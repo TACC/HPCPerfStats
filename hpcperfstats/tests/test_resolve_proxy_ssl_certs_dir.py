@@ -71,7 +71,7 @@ def test_load_from_ini_missing_key(resolve_mod, tmp_path: Path):
 
 
 def test_main_fixture_prints_path(resolve_mod, capsys):
-  assert resolve_mod.main(["--fixture"]) == 0
+  assert resolve_mod.main(["--fixture", "--no-link"]) == 0
   out = capsys.readouterr().out.strip()
   assert Path(out) == resolve_mod.fixture_ssl_certs_dir()
 
@@ -82,3 +82,61 @@ def test_main_fails_closed_on_bad_ini(resolve_mod, tmp_path: Path, capsys):
   assert resolve_mod.main(["--ini", str(ini)]) == 1
   err = capsys.readouterr().err
   assert "error:" in err
+
+
+def test_ensure_compose_ssl_certs_context_creates_symlink(
+    resolve_mod, tmp_path: Path
+):
+  fix = resolve_mod.fixture_ssl_certs_dir()
+  link = resolve_mod.ensure_compose_ssl_certs_context(fix, checkout_root=tmp_path)
+  assert link == tmp_path / resolve_mod.COMPOSE_SSL_CERTS_CONTEXT_REL
+  assert link.is_symlink()
+  assert link.resolve() == fix
+
+
+def test_ensure_compose_ssl_certs_context_replaces_stale_symlink(
+    resolve_mod, tmp_path: Path
+):
+  fix = resolve_mod.fixture_ssl_certs_dir()
+  link = tmp_path / resolve_mod.COMPOSE_SSL_CERTS_CONTEXT_REL
+  link.symlink_to(tmp_path / "old-missing-target")
+  resolve_mod.ensure_compose_ssl_certs_context(fix, checkout_root=tmp_path)
+  assert link.resolve() == fix
+
+
+def test_main_from_ini_updates_compose_context(
+    resolve_mod, tmp_path: Path, capsys
+):
+  fix = resolve_mod.fixture_ssl_certs_dir()
+  ini = tmp_path / "hpcperfstats.ini"
+  ini.write_text(
+      f"[DEFAULT]\nssl_certs_dir = {fix}\n",
+      encoding="utf-8",
+  )
+  assert (
+      resolve_mod.main(
+          ["--ini", str(ini), "--repo-root", str(tmp_path)]
+      )
+      == 0
+  )
+  out = capsys.readouterr().out.strip()
+  assert Path(out) == fix
+  link = tmp_path / resolve_mod.COMPOSE_SSL_CERTS_CONTEXT_REL
+  assert link.is_symlink()
+  assert link.resolve() == fix
+
+
+def test_main_no_link_skips_symlink(resolve_mod, tmp_path: Path):
+  fix = resolve_mod.fixture_ssl_certs_dir()
+  ini = tmp_path / "hpcperfstats.ini"
+  ini.write_text(
+      f"[DEFAULT]\nssl_certs_dir = {fix}\n",
+      encoding="utf-8",
+  )
+  assert (
+      resolve_mod.main(
+          ["--ini", str(ini), "--repo-root", str(tmp_path), "--no-link"]
+      )
+      == 0
+  )
+  assert not (tmp_path / resolve_mod.COMPOSE_SSL_CERTS_CONTEXT_REL).exists()

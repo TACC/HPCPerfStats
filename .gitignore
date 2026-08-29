@@ -8,6 +8,8 @@ htmlcov/
 .pytest*
 .pytest*/
 .env.dev
+# Compose BuildKit context symlink → [DEFAULT] ssl_certs_dir (from resolve_proxy_ssl_certs_dir.py).
+.hpcperfstats_ssl_certs
 .venv/
 .ruff*/
 .tools/

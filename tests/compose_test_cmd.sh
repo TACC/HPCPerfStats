@@ -41,20 +41,21 @@ compose_ensure_test_overlay_yaml() {
   fi
 }
 
-# Base docker-compose.yaml requires HPCPERFSTATS_SSL_CERTS_DIR (no silent fixture
-# default — that baked CI self-signed PEMs into production under HSTS). Test
-# workflows pin the committed fixture when the env is unset.
+# Base compose uses .hpcperfstats_ssl_certs (INI materialization). Test overlay
+# pins ./tests/fixtures/proxy-ssl; also refresh the symlink to the fixture so
+# base-only builds cannot silently miss a context path.
 compose_ensure_proxy_ssl_certs_dir_for_tests() {
   local repo_root
   repo_root="$(compose_repo_root)"
   local fixture="${repo_root}/tests/fixtures/proxy-ssl"
-  if [[ -z "${HPCPERFSTATS_SSL_CERTS_DIR:-}" ]]; then
-    if [[ ! -f "${fixture}/fullchain.pem" || ! -f "${fixture}/privkey.pem" ]]; then
-      echo "compose_ensure_proxy_ssl_certs_dir_for_tests: missing PEMs under ${fixture}" >&2
-      return 1
-    fi
-    export HPCPERFSTATS_SSL_CERTS_DIR="${fixture}"
-    echo "compose_ensure_proxy_ssl_certs_dir_for_tests: HPCPERFSTATS_SSL_CERTS_DIR=${fixture}" >&2
+  if [[ ! -f "${fixture}/fullchain.pem" || ! -f "${fixture}/privkey.pem" ]]; then
+    echo "compose_ensure_proxy_ssl_certs_dir_for_tests: missing PEMs under ${fixture}" >&2
+    return 1
+  fi
+  if ! python3 "${repo_root}/services-conf/resolve_proxy_ssl_certs_dir.py" \
+      --fixture --repo-root "${repo_root}" >/dev/null; then
+    echo "compose_ensure_proxy_ssl_certs_dir_for_tests: resolve --fixture failed" >&2
+    return 1
   fi
 }
 
