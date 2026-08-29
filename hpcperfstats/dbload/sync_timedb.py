@@ -176,6 +176,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   prepare_paths_for_giant_member_append,
   quarantine_ingest_failed_raw_path,
   raw_stats_path_tar_append_decision,
+  repair_truncated_daily_tar_in_place,
   replace_corrupt_tar_from_compressed_backup,
   stats_file_is_active_segment,
   verify_tar_archive_readable,
@@ -6848,11 +6849,19 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         return False
     if tar_unreadable:
       log_print(
-          "Daily tar unreadable before append; recovering from sealed archive or "
-          "clearing: %s" % archive_tar_fname,
+          "Daily tar unreadable before append; attempting in-place repair then "
+          "sealed restore: %s" % archive_tar_fname,
           flush=True,
       )
-      if not replace_corrupt_tar_from_compressed_backup(
+      repaired = repair_truncated_daily_tar_in_place(
+          archive_tar_fname,
+          log_fn=log_print,
+          tgz_archive_dir=os.path.dirname(archive_tar_fname),
+          yield_phase="append_tar_repair",
+      )
+      if repaired and verify_tar_archive_readable(archive_tar_fname):
+        tar_unreadable = False
+      if tar_unreadable and not replace_corrupt_tar_from_compressed_backup(
           archive_tar_fname, zst_path, gz_path, cfg.get_archive_zstd_threads(),
       ):
         log_print(
@@ -6861,7 +6870,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
             flush=True,
         )
         return False
-      if os.path.exists(archive_tar_fname):
+      if tar_unreadable and os.path.exists(archive_tar_fname):
         existing_members, members_source = _lookup_existing_members_for_archive_append(
             archive_fname, archive_tar_fname,
         )

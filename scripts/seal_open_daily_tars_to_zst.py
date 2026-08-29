@@ -113,19 +113,25 @@ def classify_tar_for_operator_seal(
     ('seal', 'tar_superset_of_zst')
   """
   from hpcperfstats.dbload.lib.archive_compress import (
-      archive_gz_members_contained_in_zst,
-      archive_member_maps_equivalent,
+      classify_daily_tar_zst_reconcile,
   )
 
   if not zst_exists:
     return ACTION_SEAL, "missing_zst"
   if not zst_readable or not zst_members:
     return ACTION_SEAL, "zst_unreadable"
-  if not archive_gz_members_contained_in_zst(zst_members, tar_members):
-    return ACTION_SKIP, "zst_not_subset_of_tar"
-  if archive_member_maps_equivalent(tar_members, zst_members):
-    return ACTION_DROP_TAR_ONLY, "already_equivalent"
-  return ACTION_SEAL, "tar_superset_of_zst"
+  action, reason = classify_daily_tar_zst_reconcile(
+      tar_members,
+      zst_members,
+      zst_exists=zst_exists,
+      zst_readable=zst_readable,
+      tar_gnu_readable=True,
+  )
+  if action == "noop":
+    return ACTION_DROP_TAR_ONLY, reason
+  if action == "skip":
+    return ACTION_SKIP, reason
+  return ACTION_SEAL, reason
 
 
 def _archive_date_from_tar_path(tar_path: str) -> date | None:
@@ -366,6 +372,7 @@ def _process_one_tar(
   """
   from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      reconcile_open_tar_with_sealed_zst,
       verify_tar_archive_readable,
   )
   from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
@@ -378,7 +385,23 @@ def _process_one_tar(
   zst_path, _gz_path = compressed_sibling_paths(tar_path)
 
   if not verify_tar_archive_readable(tar_path):
-    return STATUS_SKIPPED, "tar_unreadable"
+    reconcile_result = reconcile_open_tar_with_sealed_zst(
+        tar_path,
+        zstd_threads=zstd_threads,
+        compress_level=compress_level,
+        remaining_raw_by_gz=None,
+        force_remove_uncompressed_tar=True,
+        log_fn=log_fn,
+        tgz_archive_dir=daily_archive_dir,
+    )
+    if not reconcile_result.success:
+      return STATUS_SKIPPED, reconcile_result.reason
+    if reconcile_result.tar_removed:
+      return STATUS_DROPPED_TAR, reconcile_result.reason
+    if reconcile_result.sealed:
+      return STATUS_SEALED, reconcile_result.reason
+    if not verify_tar_archive_readable(tar_path):
+      return STATUS_SKIPPED, "tar_unreadable"
 
   defer, defer_reason = daily_tar_janitor_mutation_should_defer(
       tar_path,
@@ -429,22 +452,33 @@ def _process_one_tar(
 
   try:
     if action == ACTION_DROP_TAR_ONLY:
-      _drop_equivalent_tar(
+      reconcile_result = reconcile_open_tar_with_sealed_zst(
           tar_path,
-          zst_path,
           zstd_threads=zstd_threads,
-          lock_timeout_seconds=lock_timeout_seconds,
+          compress_level=compress_level,
+          remaining_raw_by_gz=None,
+          force_remove_uncompressed_tar=True,
           log_fn=log_fn,
+          tgz_archive_dir=daily_archive_dir,
       )
+      if not reconcile_result.success:
+        return STATUS_SKIPPED, reconcile_result.reason
+      if reconcile_result.tar_removed:
+        return STATUS_DROPPED_TAR, reason
       return STATUS_DROPPED_TAR, reason
-    _seal_and_drop_tar(
+    reconcile_result = reconcile_open_tar_with_sealed_zst(
         tar_path,
-        zst_path,
         zstd_threads=zstd_threads,
         compress_level=compress_level,
-        daily_archive_dir=daily_archive_dir,
+        remaining_raw_by_gz=None,
+        force_remove_uncompressed_tar=True,
         log_fn=log_fn,
+        tgz_archive_dir=daily_archive_dir,
     )
+    if not reconcile_result.success:
+      return STATUS_FAILED, reconcile_result.reason
+    if os.path.isfile(tar_path):
+      raise RuntimeError("tar still present after reconcile: %s" % tar_path)
     return STATUS_SEALED, reason
   except TimeoutError as exc:
     if log_fn:

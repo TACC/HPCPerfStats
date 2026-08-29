@@ -20,7 +20,9 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `
 
 ## Archival recovery and compression behavior
 
-- If archive reads fail due to known corruption/recovery scenarios, recover from paired compressed sources when available before hard failure.
+- If archive reads fail due to known corruption/recovery scenarios, recover from paired compressed sources when available before hard failure. **Truncated-but-recoverable** daily `.tar` files (GNU `tar tf` fails but `tarfile` can still extract members) are repaired **in place** via **`repair_truncated_daily_tar_in_place`** before **`replace_corrupt_tar_from_compressed_backup`** on the append hot path.
+- **Tar/zst reconcile:** when open `.tar` and `.tar.zst` member maps diverge, **`reconcile_open_tar_with_sealed_zst`** union-merges (**largest byte size wins** per basename; tie → tar per AR-06), re-seals, and drops tar only under existing janitor gates (`remaining_raw_by_gz`, `force_remove_uncompressed_tar` for operator runs only).
+- **Maintenance order (day_close):** **repair/reconcile → dedupe → seal → verify → raw delete → tar-drop**. Do **not** wrap **`atomic_seal_tar_to_zst`** in an outer **`file_write_lock`** (reconcile holds at most one tar lock; seal acquires its own).
 - Keep **zstd** parallelism bounded by **`archive_seal_parallel_workers`** (default **4** concurrent daily seals) and per-process **`-T`**: niced archive seal/restore uses **`archive_zstd_threads=0`** (default) → **`-T0`**; un-niced ingest/populate sealed streams use **`ingest_zstd_threads=4`** (default) → **`-T4`**. Archive (niced) zstd subprocesses may be wrapped with configured **`nice`/`ionice`**. Legacy `.tar.gz` reads use `zstd -d --format=gzip` only.
 - **Parallel multi-day seal:** `seal_dirty_daily_archives` collects all seal-ready days, then seals via a bounded `ThreadPoolExecutor`; per-day failures must not abort other days. Do not seal the same path from two workers.
 - **Per-day seal lock timeout:** `_seal_one_daily_tar` catches `TimeoutError` from `file_write_lock` (same as `CalledProcessError` / `RuntimeError`) so one contended daily `.tar` does not abort the whole maintenance pass.
@@ -43,7 +45,7 @@ When changing ingest/archive paths under `hpcperfstats/dbload/sync_timedb.py`, `
 ## Day-close cold path (queue orchestrator)
 
 - **Entry point:** Redis `job:v1` **day_close** jobs leased by `run_sync_timedb_queue_orchestrator` (`_run_day_close_job`). Cap inflight with **`sync_day_close_max_inflight`**. Do not restore `ArchiveJanitor` / `sync_timedb_archive_janitor.py`.
-- **Pipeline order (canonical, loss-safe):** seal → pre/post-seal verify → raw remove / validate → `.tar` drop; **`allow_auto_seal=False`** on raw removal when using `DayRawRemovalCoordinator`. Seal tries `_seal_skip_existing_zst_equivalent` before compress; at most one compress per day per attempt.
+- **Pipeline order (canonical, loss-safe):** **repair/reconcile** → pre-seal verify → dedupe → seal → post-seal verify → raw remove / validate → `.tar` drop; **`allow_auto_seal=False`** on raw removal when using `DayRawRemovalCoordinator`. Seal tries `_seal_skip_existing_zst_equivalent` before compress; at most one compress per day per attempt.
 - **Calendar min-age:** do not start day_close until **`sync_day_close_min_age_hours`** (default **32**) after that day’s local end (`daily_tar_seal_calendar_eligible` / reconstruct predicates). Never set `force_remove_uncompressed_tar=True` on the production path.
 - **Hot wins flock:** day_close **defers/yields** via `sync_timedb_day_close_cooperation` when ingest/populate needs the tar (`sync-timedb-hot-path-janitor-lock-priority.mdc`). Path-level recheck before `os.remove`.
 

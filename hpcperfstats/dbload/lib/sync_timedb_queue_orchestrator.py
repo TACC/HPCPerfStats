@@ -1509,6 +1509,7 @@ def _run_day_close_job(
     )
     from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
         dedupe_tar_keep_largest_file_per_member,
+        reconcile_open_tar_with_sealed_zst,
         seal_dirty_daily_archives,
     )
     from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
@@ -1542,8 +1543,28 @@ def _run_day_close_job(
             )
         ),
     )
-    # DC-01: pre-seal verify → dedupe → seal → post-seal verify → delete → tar-drop.
+    # DC-01: reconcile/repair → pre-seal verify → dedupe → seal → post-seal → delete → tar-drop.
     if os.path.isfile(tar_path):
+      try:
+        reconcile_open_tar_with_sealed_zst(
+            tar_path,
+            zstd_threads=get_archive_zstd_threads(),
+            compress_level=get_archive_zstd_level(),
+            remaining_raw_by_gz=coord.remaining_raw_paths_blocking_tar_drop(
+                tar_path,
+            ),
+            force_remove_uncompressed_tar=False,
+            log_fn=quiet,
+            tgz_archive_dir=tgz_archive_dir,
+            keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
+        )
+        progress.record(day_token, "reconcile", 1)
+      except Exception as exc:
+        _log(
+            "queue_orchestrator day_close reconcile fail day=%s err=%s"
+            % (day_token, type(exc).__name__),
+            log_fn=log_fn,
+        )
       try:
         coord.run_pre_seal_verify_sync(tar_path)
       except Exception as exc:

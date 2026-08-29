@@ -16,6 +16,7 @@ import pytest
 from hpcperfstats.dbload.lib.archive_compress import (
     DAILY_ARCHIVE_ZST_SUFFIX,
     archive_gz_members_contained_in_zst,
+    archive_member_maps_union,
     daily_tar_path_from_compressed,
     normalize_daily_compressed_path,
 )
@@ -64,6 +65,8 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     parse_archive_date_from_daily_tar_path,
     remove_verified_archived_raw_files,
     remove_verified_uncompressed_daily_tars,
+    repair_truncated_daily_tar_in_place,
+    reconcile_open_tar_with_sealed_zst,
     replace_corrupt_tar_from_compressed_backup,
     rescan_pending_stats_files,
     resolve_preferred_archive_path_for_read,
@@ -151,6 +154,242 @@ def test_verify_tar_archive_readable_rejects_truncated(tmp_path):
   raw = tar_path.read_bytes()
   tar_path.write_bytes(raw[:200])
   assert not verify_tar_archive_readable(str(tar_path))
+
+
+def test_repair_truncated_tar_missing_eof_blocks_in_place(tmp_path, monkeypatch):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "eof.tar"
+  inner = tmp_path / "inner.txt"
+  inner.write_text("hello world")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(inner), arcname="inner.txt")
+  real_verify = helpers.verify_tar_archive_readable
+  calls = {"n": 0}
+
+  def _verify_once_unreadable(path: str, **kwargs: object) -> bool:
+    if os.path.normpath(path) == os.path.normpath(str(tar_path)) and calls["n"] == 0:
+      calls["n"] += 1
+      return False
+    return real_verify(path, **kwargs)
+
+  monkeypatch.setattr(helpers, "verify_tar_archive_readable", _verify_once_unreadable)
+  assert repair_truncated_daily_tar_in_place(str(tar_path), log_fn=None)
+  assert verify_tar_archive_readable(str(tar_path))
+  with tarfile.open(tar_path, "r") as tf:
+    names = [m.name for m in tf.getmembers() if m.isfile()]
+  assert names == ["inner.txt"]
+
+
+def test_repair_truncated_tar_mid_member_not_recoverable(tmp_path):
+  tar_path = tmp_path / "bad.tar"
+  inner = tmp_path / "z.txt"
+  inner.write_text("abcdefghij" * 500)
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(inner), arcname="z.txt")
+  original = tar_path.read_bytes()[:200]
+  tar_path.write_bytes(original)
+  assert not repair_truncated_daily_tar_in_place(str(tar_path), log_fn=None)
+  assert tar_path.read_bytes() == original
+
+
+def test_archive_member_maps_union_largest_wins():
+  assert archive_member_maps_union({"a": 10}, {"a": 20}) == {"a": 20}
+  assert archive_member_maps_union({"a": 100, "b": 1}, {"a": 50, "c": 2}) == {
+      "a": 100,
+      "b": 1,
+      "c": 2,
+  }
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_reconcile_merge_tar_and_zst_only_members(tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2024-01-01.tar"
+  zst_path = tmp_path / "2024-01-01.tar.zst"
+  a_file = tmp_path / "a.txt"
+  b_file = tmp_path / "b.txt"
+  c_file = tmp_path / "c.txt"
+  a_file.write_text("aaa")
+  b_file.write_text("bbbb")
+  c_file.write_text("cc")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(a_file), arcname="a.txt")
+    tf.add(str(b_file), arcname="b.txt")
+  with tarfile.open(tmp_path / "zst_src.tar", "w") as tf:
+    tf.add(str(a_file), arcname="a.txt")
+    tf.add(str(c_file), arcname="c.txt")
+  atomic_seal_tar_to_zst(
+      str(tmp_path / "zst_src.tar"),
+      str(zst_path),
+      num_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=False,
+      log_fn=None,
+  )
+  result = reconcile_open_tar_with_sealed_zst(
+      str(tar_path),
+      zstd_threads=1,
+      compress_level=3,
+      force_remove_uncompressed_tar=True,
+      log_fn=None,
+      tgz_archive_dir=str(tmp_path),
+  )
+  assert result.success
+  assert result.action == "merge_and_seal"
+  assert not tar_path.is_file()
+  assert zst_path.is_file()
+  sealed_members = helpers.get_existing_archive_members(str(zst_path))
+  assert sealed_members.get("a.txt") == len("aaa")
+  assert sealed_members.get("b.txt") == len("bbbb")
+  assert sealed_members.get("c.txt") == len("cc")
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_reconcile_larger_size_wins_on_conflict(tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2024-02-01.tar"
+  zst_path = tmp_path / "2024-02-01.tar.zst"
+  big = tmp_path / "big.txt"
+  small = tmp_path / "small.txt"
+  big.write_text("tar-wins-by-size")
+  small.write_text("x")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(big), arcname="member.txt")
+  with tarfile.open(tmp_path / "zst_src.tar", "w") as tf:
+    tf.add(str(small), arcname="member.txt")
+  atomic_seal_tar_to_zst(
+      str(tmp_path / "zst_src.tar"),
+      str(zst_path),
+      num_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=False,
+      log_fn=None,
+  )
+  result = reconcile_open_tar_with_sealed_zst(
+      str(tar_path),
+      zstd_threads=1,
+      compress_level=3,
+      force_remove_uncompressed_tar=True,
+      log_fn=None,
+      tgz_archive_dir=str(tmp_path),
+  )
+  assert result.success
+  sealed_members = helpers.get_existing_archive_members(str(zst_path))
+  assert sealed_members["member.txt"] == len("tar-wins-by-size")
+
+  tar_path2 = tmp_path / "2024-02-02.tar"
+  zst_path2 = tmp_path / "2024-02-02.tar.zst"
+  zbig = tmp_path / "zbig.txt"
+  tsmall = tmp_path / "tsmall.txt"
+  zbig.write_text("zst-wins-by-size-long")
+  tsmall.write_text("y")
+  with tarfile.open(tar_path2, "w") as tf:
+    tf.add(str(tsmall), arcname="member.txt")
+  with tarfile.open(tmp_path / "zst_src2.tar", "w") as tf:
+    tf.add(str(zbig), arcname="member.txt")
+  atomic_seal_tar_to_zst(
+      str(tmp_path / "zst_src2.tar"),
+      str(zst_path2),
+      num_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=False,
+      log_fn=None,
+  )
+  result2 = reconcile_open_tar_with_sealed_zst(
+      str(tar_path2),
+      zstd_threads=1,
+      compress_level=3,
+      force_remove_uncompressed_tar=True,
+      log_fn=None,
+      tgz_archive_dir=str(tmp_path),
+  )
+  assert result2.success
+  sealed_members2 = helpers.get_existing_archive_members(str(zst_path2))
+  assert sealed_members2["member.txt"] == len("zst-wins-by-size-long")
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_reconcile_noop_when_maps_equivalent(tmp_path):
+  tar_path = tmp_path / "2024-03-01.tar"
+  zst_path = tmp_path / "2024-03-01.tar.zst"
+  member = tmp_path / "same.txt"
+  member.write_text("same")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(member), arcname="same.txt")
+  atomic_seal_tar_to_zst(
+      str(tar_path),
+      str(zst_path),
+      num_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  result = reconcile_open_tar_with_sealed_zst(
+      str(tar_path),
+      zstd_threads=1,
+      compress_level=3,
+      force_remove_uncompressed_tar=True,
+      log_fn=None,
+      tgz_archive_dir=str(tmp_path),
+  )
+  assert result.success
+  assert result.action == "noop"
+  assert not tar_path.is_file()
+
+
+def test_append_repairs_truncated_tar_before_restore_from_zst(
+    monkeypatch, tmp_path,
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.sync_timedb import _archive_stats_files_body
+
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-02.tar.zst")
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  os.makedirs(os.path.dirname(tar_path), exist_ok=True)
+  inner = tmp_path / "inner.txt"
+  inner.write_text("payload")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(inner), arcname="host/existing")
+  open(archive_key, "wb").write(b"sealed-placeholder")
+
+  restore_calls = []
+  real_verify = helpers.verify_tar_archive_readable
+  unreadable_once = {"done": False}
+
+  def _verify_once_unreadable(path: str, **kwargs: object) -> bool:
+    if (
+        not unreadable_once["done"]
+        and os.path.normpath(path) == os.path.normpath(tar_path)
+    ):
+      unreadable_once["done"] = True
+      return False
+    return real_verify(path, **kwargs)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb.filter_paths_head_ingested",
+      lambda paths, log_fn=None: (paths, []),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb._append_to_tar",
+      lambda *a, **k: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb.verify_tar_archive_readable",
+      _verify_once_unreadable,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.sync_timedb.replace_corrupt_tar_from_compressed_backup",
+      lambda *a, **k: restore_calls.append(1) or False,
+  )
+  result = _archive_stats_files_body((archive_key, [str(raw_file)]))
+  assert result is not False
+  assert restore_calls == []
+  assert verify_tar_archive_readable(tar_path)
 
 
 def test_parse_tar_tvf_gnu_and_bsd_lines():

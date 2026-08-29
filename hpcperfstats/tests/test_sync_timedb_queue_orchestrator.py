@@ -285,9 +285,10 @@ def test_day_close_job_tar_drops_when_sealed_and_no_raw(tmp_path, monkeypatch):
 
 
 def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
-  """DC-01 order: pre-seal verify → dedupe → seal → post-seal → delete → tar-drop."""
+  """DC-01 order: reconcile → pre-seal verify → dedupe → seal → post-seal → delete."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
   from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import ReconcileResult
 
   daily = tmp_path / "daily"
   daily.mkdir()
@@ -309,6 +310,12 @@ def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
       "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
       lambda *a, **k: stages.append("dedupe") or True,
   )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+      lambda *a, **k: stages.append("reconcile") or ReconcileResult(
+          True, "noop", "already_equivalent",
+      ),
+  )
 
   class _Coord:
     def __init__(self, **_kw):
@@ -329,6 +336,9 @@ def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
     def has_closed_raw_on_disk(self, _tar_path):
       return False
 
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      return {}
+
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
       _Coord,
@@ -340,7 +350,19 @@ def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
       log_fn=lambda *a, **k: None,
   )
   assert outcome == "complete"
-  assert stages == ["pre_seal", "dedupe", "seal", "post_seal", "delete"]
+  assert stages == ["reconcile", "pre_seal", "dedupe", "seal", "post_seal", "delete"]
+
+
+def test_day_close_reconcile_invoked_before_dedupe():
+  """Regression: reconcile hook runs before dedupe in day_close."""
+  import inspect
+
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  src = inspect.getsource(qo._run_day_close_job)
+  assert src.index("reconcile_open_tar_with_sealed_zst(") < src.index(
+      "dedupe_tar_keep_largest_file_per_member(",
+  )
 
 
 def test_day_close_job_returns_complete_after_tar_drop(tmp_path, monkeypatch):

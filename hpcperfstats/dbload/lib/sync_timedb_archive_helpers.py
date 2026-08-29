@@ -48,6 +48,7 @@ Attributes:
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Iterator
 
 import contextlib
@@ -69,6 +70,9 @@ from hpcperfstats.dbload.lib.archive_compress import (
     DAILY_ARCHIVE_GZ_SUFFIX,
     DAILY_ARCHIVE_ZST_SUFFIX,
     archive_gz_members_contained_in_zst,
+    archive_member_maps_equivalent,
+    archive_member_maps_union,
+    classify_daily_tar_zst_reconcile,
     compressed_sibling_paths,
     daily_compressed_path_for_date,
     daily_tar_path_from_compressed,
@@ -8712,6 +8716,606 @@ def tar_has_duplicate_file_members(tar_path: str) -> Any:
     return False
 
 
+@dataclass(frozen=True)
+class ReconcileResult:
+  """
+  Outcome of ``reconcile_open_tar_with_sealed_zst``.
+
+  Attributes:
+    success (bool): Whether reconcile completed without fatal skip.
+    action (str): Classifier action taken or attempted.
+    reason (str): Diagnostic reason string.
+    sealed (bool): Whether a seal step ran or was already valid.
+    tar_removed (bool): Whether the open tar was removed when gated.
+  """
+
+  success: bool
+  action: str
+  reason: str
+  sealed: bool = False
+  tar_removed: bool = False
+
+
+def tar_members_recoverable_via_tarfile(tar_path: str) -> bool:
+  """
+  Return True when ``tarfile`` can read every file member despite GNU scan fail.
+
+  Args:
+    tar_path (str): Path to daily ``.tar``.
+
+  Returns:
+    bool: True when all file members extract successfully.
+
+  Examples:
+    >>> tar_members_recoverable_via_tarfile("/missing.tar")  # doctest: +SKIP
+  """
+  if not os.path.isfile(tar_path):
+    return False
+  try:
+    with tarfile.open(tar_path, "r") as tf:
+      for member in _iter_tar_members(tf):
+        if not member.isfile():
+          continue
+        fobj = tf.extractfile(member)
+        if fobj is None:
+          return False
+        try:
+          while fobj.read(65536):
+            pass
+        finally:
+          fobj.close()
+    return True
+  except (tarfile.TarError, OSError, EOFError):
+    return False
+
+
+def _rewrite_daily_tar_largest_member_wins(
+  tar_path: str,
+  tmp_path: str,
+  *,
+  tgz_archive_dir: str,
+  yield_phase: str,
+) -> bool:
+  """
+  Rewrite ``tar_path`` to ``tmp_path`` keeping largest file member per name.
+
+  Args:
+    tar_path (str): Source daily tar.
+    tmp_path (str): Destination temp tar path.
+    tgz_archive_dir (str): Daily archive directory for yield checks.
+    yield_phase (str): Cooperative yield phase label.
+
+  Returns:
+    bool: True when rewrite completed.
+
+  Raises:
+    DayCloseYieldError: When day-close cooperative yield is requested.
+
+  Examples:
+    >>> _rewrite_daily_tar_largest_member_wins("x", "y")  # doctest: +SKIP
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      DayCloseYieldError,
+      check_day_close_yield_or_continue,
+      day_close_yield_requested,
+  )
+
+  file_keep: dict[str, tuple[int, int]] = {}
+  last_yield_poll = time.monotonic()
+  with tarfile.open(tar_path, "r") as tin:
+    for idx, member in enumerate(_iter_tar_members(tin)):
+      last_yield_poll, _ = check_day_close_yield_or_continue(
+          tar_path,
+          last_poll_monotonic=last_yield_poll,
+          tgz_archive_dir=tgz_archive_dir,
+          phase=yield_phase,
+      )
+      if not member.isfile():
+        continue
+      prev = file_keep.get(member.name)
+      if prev is None or member.size > prev[0] or (
+          member.size == prev[0] and idx > prev[1]
+      ):
+        file_keep[member.name] = (member.size, idx)
+  with tarfile.open(tar_path, "r") as tin:
+    with tarfile.open(tmp_path, "w") as tout:
+      for idx, member in enumerate(_iter_tar_members(tin)):
+        last_yield_poll, _ = check_day_close_yield_or_continue(
+            tar_path,
+            last_poll_monotonic=last_yield_poll,
+            tgz_archive_dir=tgz_archive_dir,
+            phase=yield_phase,
+        )
+        if member.isfile():
+          keep = file_keep.get(member.name)
+          if keep is None or keep[1] != idx:
+            continue
+          fobj = tin.extractfile(member)
+          if fobj is None:
+            continue
+          try:
+            tout.addfile(member, fobj)
+          finally:
+            fobj.close()
+          continue
+        tout.addfile(member)
+  requested, reason = day_close_yield_requested(
+      tar_path,
+      tgz_archive_dir=tgz_archive_dir,
+      phase=yield_phase,
+  )
+  if requested:
+    raise DayCloseYieldError(tar_path, phase=yield_phase, reason=reason)
+  return True
+
+
+def repair_truncated_daily_tar_in_place(
+  tar_path: str,
+  *,
+  log_fn: Any = log_print,
+  tgz_archive_dir: str = "",
+  yield_phase: str = "tar_repair",
+) -> bool:
+  """
+  Rewrite a truncated-but-recoverable daily tar in place.
+
+  Args:
+    tar_path (str): Daily ``.tar`` path.
+    log_fn (Any): Logger callable.
+    tgz_archive_dir (str): Daily archive root for yield checks.
+    yield_phase (str): Cooperative yield phase label.
+
+  Returns:
+    bool: True on success or when repair is not needed; False on failure.
+
+  Raises:
+    DayCloseYieldError: When cooperative yield is required mid-rewrite.
+
+  Examples:
+    >>> repair_truncated_daily_tar_in_place("/no.tar")  # doctest: +SKIP
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      DayCloseYieldError,
+  )
+
+  if not os.path.isfile(tar_path):
+    return True
+  if verify_tar_archive_readable(tar_path):
+    return True
+  if not tar_members_recoverable_via_tarfile(tar_path):
+    return False
+  tmp_path = "%s.repair.tmp" % tar_path
+  try:
+    if os.path.exists(tmp_path):
+      os.remove(tmp_path)
+  except OSError:
+    pass
+  try:
+    with file_write_lock(tar_path):
+      _rewrite_daily_tar_largest_member_wins(
+          tar_path,
+          tmp_path,
+          tgz_archive_dir=tgz_archive_dir,
+          yield_phase=yield_phase,
+      )
+      if not verify_tar_archive_readable(tmp_path):
+        try:
+          os.remove(tmp_path)
+        except OSError:
+          pass
+        return False
+      os.replace(tmp_path, tar_path)
+    invalidate_after_daily_tar_mutation(
+        tar_path,
+        reason="repair_truncated_tar",
+        log_fn=log_fn,
+    )
+    if log_fn:
+      log_fn(
+          "Repaired truncated daily tar in place: %s" % tar_path,
+          flush=True,
+      )
+    return True
+  except DayCloseYieldError:
+    try:
+      if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    except OSError:
+      pass
+    raise
+  except Exception:
+    try:
+      if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    except OSError:
+      pass
+    return False
+
+
+def _tarfile_member_map(tar_path: str) -> dict[str, int]:
+  """
+  Read file member sizes from a plain ``.tar`` via tarfile.
+
+  Args:
+    tar_path (str): Path to an uncompressed tar.
+
+  Returns:
+    dict[str, int]: Member name to byte size (largest when duplicated).
+
+  Examples:
+    >>> _tarfile_member_map("/no.tar")  # doctest: +SKIP
+  """
+  members: dict[str, int] = {}
+  if not os.path.isfile(tar_path):
+    return members
+  with tarfile.open(tar_path, "r") as tf:
+    for member in _iter_tar_members(tf):
+      if not member.isfile():
+        continue
+      prev = members.get(member.name)
+      if prev is None or member.size >= prev:
+        members[member.name] = int(member.size)
+  return members
+
+
+def _copy_union_member_into_tar(
+  dest_tf: tarfile.TarFile,
+  member_name: str,
+  expected_size: int,
+  *,
+  tar_path: str,
+  zst_path: str,
+) -> bool:
+  """
+  Copy one union member from tar or zst into an open tar writer.
+
+  Args:
+    dest_tf (tarfile.TarFile): Open destination tar writer.
+    member_name (str): Member basename to copy.
+    expected_size (int): Expected byte size in the union map.
+    tar_path (str): Open daily tar path.
+    zst_path (str): Sealed zst sibling path.
+
+  Returns:
+    bool: True when the member was copied.
+
+  Examples:
+    >>> _copy_union_member_into_tar(None, "a", 1, tar_path="x", zst_path="y")
+  """
+  if os.path.isfile(tar_path):
+    try:
+      with tarfile.open(tar_path, "r") as tin:
+        member = tin.getmember(member_name)
+        if member.isfile() and int(member.size) == int(expected_size):
+          fobj = tin.extractfile(member)
+          if fobj is not None:
+            try:
+              dest_tf.addfile(member, fobj)
+              return True
+            finally:
+              fobj.close()
+    except (KeyError, tarfile.TarError, OSError):
+      pass
+  if os.path.isfile(zst_path):
+    try:
+      with _open_tarfile_for_read(
+          zst_path,
+          get_archive_zstd_thread_count(),
+          apply_priority_wrap=True,
+      ) as tin:
+        for member in _iter_tar_members(tin):
+          if (
+              member.isfile()
+              and member.name == member_name
+              and int(member.size) == int(expected_size)
+          ):
+            fobj = tin.extractfile(member)
+            if fobj is not None:
+              try:
+                dest_tf.addfile(member, fobj)
+                return True
+              finally:
+                fobj.close()
+    except (tarfile.TarError, OSError):
+      pass
+  return False
+
+
+def rebuild_daily_tar_member_union_in_place(
+  tar_path: str,
+  zst_path: str,
+  union_members: dict[str, int],
+  *,
+  log_fn: Any = log_print,
+  tgz_archive_dir: str = "",
+  yield_phase: str = "tar_merge",
+) -> bool:
+  """
+  Rebuild open daily tar to match a union member map.
+
+  Args:
+    tar_path (str): Daily ``.tar`` path to rewrite.
+    zst_path (str): Sealed ``.tar.zst`` sibling for zst-sourced members.
+    union_members (dict[str, int]): Canonical basename → byte size map.
+    log_fn (Any): Logger callable.
+    tgz_archive_dir (str): Daily archive root for yield checks.
+    yield_phase (str): Cooperative yield phase label.
+
+  Returns:
+    bool: True on success; False on failure.
+
+  Raises:
+    DayCloseYieldError: When cooperative yield is required mid-rewrite.
+
+  Examples:
+    >>> rebuild_daily_tar_member_union_in_place("x", "y", {})  # doctest: +SKIP
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      DayCloseYieldError,
+      check_day_close_yield_or_continue,
+      day_close_yield_requested,
+  )
+
+  if not union_members:
+    return False
+  tmp_path = "%s.merge.tmp" % tar_path
+  try:
+    if os.path.exists(tmp_path):
+      os.remove(tmp_path)
+  except OSError:
+    pass
+  last_yield_poll = time.monotonic()
+  try:
+    with file_write_lock(tar_path):
+      with tarfile.open(tmp_path, "w") as tout:
+        for member_name in sorted(union_members):
+          last_yield_poll, _ = check_day_close_yield_or_continue(
+              tar_path,
+              last_poll_monotonic=last_yield_poll,
+              tgz_archive_dir=tgz_archive_dir,
+              phase=yield_phase,
+          )
+          if not _copy_union_member_into_tar(
+              tout,
+              member_name,
+              union_members[member_name],
+              tar_path=tar_path,
+              zst_path=zst_path,
+          ):
+            try:
+              os.remove(tmp_path)
+            except OSError:
+              pass
+            return False
+      requested, reason = day_close_yield_requested(
+          tar_path,
+          tgz_archive_dir=tgz_archive_dir,
+          phase=yield_phase,
+      )
+      if requested:
+        raise DayCloseYieldError(tar_path, phase=yield_phase, reason=reason)
+      if not verify_tar_archive_readable(tmp_path):
+        try:
+          os.remove(tmp_path)
+        except OSError:
+          pass
+        return False
+      os.replace(tmp_path, tar_path)
+    invalidate_after_daily_tar_mutation(
+        tar_path,
+        reason="rebuild_tar_member_union",
+        log_fn=log_fn,
+    )
+    if log_fn:
+      log_fn(
+          "Rebuilt daily tar union (%d members): %s"
+          % (len(union_members), tar_path),
+          flush=True,
+      )
+    return True
+  except DayCloseYieldError:
+    try:
+      if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    except OSError:
+      pass
+    raise
+  except Exception:
+    try:
+      if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    except OSError:
+      pass
+    return False
+
+
+def _maybe_clear_stale_day_ingest_skip_after_reconcile(
+  tar_path: str,
+  zst_path: str,
+  gz_path: str,
+) -> None:
+  """
+  Best-effort clear of sticky ingest skip after tar repair/reconcile.
+
+  Args:
+    tar_path (str): Daily tar path.
+    zst_path (str): Sealed zst sibling.
+    gz_path (str): Legacy gzip sibling.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _maybe_clear_stale_day_ingest_skip_after_reconcile("x", "y", "z")
+  """
+  try:
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        archive_members_redis_enabled,
+        build_archive_members_redis_keys,
+        get_archive_members_redis_client,
+    )
+  except Exception:
+    return
+  if not archive_members_redis_enabled():
+    return
+  try:
+    client = get_archive_members_redis_client(required=False)
+  except Exception:
+    return
+  if client is None:
+    return
+  cache_key = _daily_archive_members_cache_key(normalize_daily_compressed_path(zst_path))
+  keys = build_archive_members_redis_keys(cache_key)
+  sealed_path = zst_path if os.path.isfile(zst_path) else ""
+  _clear_stale_day_ingest_skip_if_tar_repaired(
+      client,
+      keys,
+      tar_path,
+      zst_path,
+      gz_path,
+      sealed_path,
+  )
+
+
+def reconcile_open_tar_with_sealed_zst(
+  tar_path: str,
+  *,
+  zstd_threads: Any,
+  compress_level: Any,
+  remaining_raw_by_gz: Any | None = None,
+  force_remove_uncompressed_tar: bool = False,
+  log_fn: Any = log_print,
+  tgz_archive_dir: str = "",
+  keep_uncompressed_tar: bool = False,
+) -> ReconcileResult:
+  """
+  Repair, merge, seal, and optionally drop an open daily tar against its zst.
+
+  Args:
+    tar_path (str): Open daily ``.tar`` path.
+    zstd_threads (Any): ``zstd -T`` thread count for seal/verify.
+    compress_level (Any): Zstd compression level for seal.
+    remaining_raw_by_gz (Any | None): Closed raw paths blocking tar drop.
+    force_remove_uncompressed_tar (bool): Operator-style unconditional tar drop
+      after successful seal/noop when safe.
+    log_fn (Any): Logger callable.
+    tgz_archive_dir (str): Daily archive root.
+    keep_uncompressed_tar (bool): Retain tar after seal when True.
+
+  Returns:
+    ReconcileResult: Structured reconcile outcome.
+
+  Raises:
+    DayCloseYieldError: When cooperative yield is required.
+
+  Examples:
+    >>> reconcile_open_tar_with_sealed_zst("/no.tar", zstd_threads=1,
+    ...     compress_level=3)  # doctest: +SKIP
+  """
+  tar_path = os.path.normpath(str(tar_path or ""))
+  if not tar_path or not os.path.isfile(tar_path):
+    return ReconcileResult(False, "skip", "tar_missing")
+  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  zst_exists = os.path.isfile(zst_path)
+  try:
+    tar_gnu_readable = bool(verify_tar_archive_readable(tar_path))
+  except TimeoutError:
+    return ReconcileResult(False, "skip", "tar_verify_timeout")
+  if not tar_gnu_readable:
+    if tar_members_recoverable_via_tarfile(tar_path):
+      if not repair_truncated_daily_tar_in_place(
+          tar_path,
+          log_fn=log_fn,
+          tgz_archive_dir=tgz_archive_dir,
+          yield_phase="tar_repair",
+      ):
+        return ReconcileResult(False, "skip", "tar_unrecoverable")
+      tar_gnu_readable = bool(verify_tar_archive_readable(tar_path))
+    else:
+      return ReconcileResult(False, "skip", "tar_unrecoverable")
+  try:
+    tar_members = get_mutable_tar_authority_member_map(tar_path)
+  except RuntimeError:
+    tar_members = _tarfile_member_map(tar_path)
+  zst_members: dict[str, int] = {}
+  zst_readable = False
+  if zst_exists:
+    zst_readable, zst_members = _sealed_archive_members_via_redis_or_scan(
+        zst_path,
+        apply_priority_wrap=False,
+    )
+  action, reason = classify_daily_tar_zst_reconcile(
+      tar_members,
+      zst_members,
+      zst_exists=zst_exists,
+      zst_readable=zst_readable,
+      tar_gnu_readable=tar_gnu_readable,
+  )
+  if action == "skip":
+    return ReconcileResult(False, action, reason)
+  if action == "merge_and_seal":
+    union_members = archive_member_maps_union(tar_members, zst_members)
+    if not rebuild_daily_tar_member_union_in_place(
+        tar_path,
+        zst_path,
+        union_members,
+        log_fn=log_fn,
+        tgz_archive_dir=tgz_archive_dir,
+        yield_phase="tar_merge",
+    ):
+      return ReconcileResult(False, action, "merge_failed")
+    tar_members = get_mutable_tar_authority_member_map(tar_path)
+  if action == "noop":
+    if force_remove_uncompressed_tar and zst_exists and zst_readable:
+      try:
+        zstd_test(zst_path, zstd_threads)
+        zstd_drop_page_cache_for_paths(tar_path)
+        with file_write_lock(tar_path):
+          os.remove(tar_path)
+        invalidate_after_daily_tar_mutation(
+            zst_path,
+            reason="reconcile_drop_equivalent_tar",
+            log_fn=log_fn,
+        )
+        _maybe_clear_stale_day_ingest_skip_after_reconcile(
+            tar_path, zst_path, gz_path,
+        )
+        return ReconcileResult(
+            True,
+            action,
+            reason,
+            sealed=True,
+            tar_removed=True,
+        )
+      except Exception:
+        return ReconcileResult(False, action, "drop_failed")
+    return ReconcileResult(True, action, reason)
+  seal_snapshot = atomic_seal_tar_to_zst(
+      tar_path,
+      zst_path,
+      zstd_threads,
+      compress_level,
+      keep_uncompressed_tar=keep_uncompressed_tar,
+      log_fn=log_fn,
+      remaining_raw_by_gz=remaining_raw_by_gz,
+      force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+      tgz_archive_dir=tgz_archive_dir,
+  )
+  if seal_snapshot is None and action in ("seal_from_tar", "merge_and_seal"):
+    return ReconcileResult(False, action, "seal_failed")
+  tar_removed = force_remove_uncompressed_tar and not os.path.isfile(tar_path)
+  _maybe_clear_stale_day_ingest_skip_after_reconcile(
+      tar_path, zst_path, gz_path,
+  )
+  return ReconcileResult(
+      True,
+      action,
+      reason,
+      sealed=seal_snapshot is not None or action == "noop",
+      tar_removed=tar_removed,
+  )
+
+
 def _dedupe_member_indices_keep_largest_file_per_name(members: Any) -> Any:
   """
   Indices to keep: all non-file members; for each file name, one entry with max.
@@ -9881,7 +10485,6 @@ def _seal_skip_existing_zst_equivalent(
     return False, None
   zst_members = dict(existing_members)
   tar_members = get_existing_archive_members(tar_path)
-  from hpcperfstats.dbload.lib.archive_compress import archive_member_maps_equivalent
   if archive_member_maps_equivalent(zst_members, tar_members):
     if log_fn:
       log_fn(
