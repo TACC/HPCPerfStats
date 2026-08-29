@@ -352,16 +352,17 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    Before building **`proxy`** (or a full stack build that includes it):
 
    ```bash
-   # Validate PEMs and print the absolute path for Compose:
+   # Validate PEMs and print the absolute path for Compose (required — no silent default):
    export HPCPERFSTATS_SSL_CERTS_DIR="$(python3 services-conf/resolve_proxy_ssl_certs_dir.py)"
    docker compose build proxy
    docker compose up -d --force-recreate proxy
    ```
 
-   Compose defaults **`HPCPERFSTATS_SSL_CERTS_DIR`** to
-   **`./tests/fixtures/proxy-ssl`** (committed self-signed PEMs for CI/dev) when unset,
-   so CI/Colima can build without Let’s Encrypt. Production must export the path
-   from **`ssl_certs_dir`** as above. After Let’s Encrypt renew: **rebuild and
+   Compose **requires** **`HPCPERFSTATS_SSL_CERTS_DIR`** (fails closed if unset) so a
+   production rebuild cannot accidentally bake the CI self-signed fixture (Firefox
+   **`MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT`** under HSTS). Test/CI workflows set the
+   fixture via **`tests/docker-compose.test-overlay.yaml`**
+   (**`./tests/fixtures/proxy-ssl`**). After Let’s Encrypt renew: **rebuild and
    recreate `proxy` only** (immutable bake — no restage into the repo).
    **`./scripts/rebuild_pipeline.sh`** does **not** rebuild **`proxy`**.
    Requires BuildKit / Compose **`additional_contexts`** (Docker Compose v2+). On

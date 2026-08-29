@@ -41,6 +41,23 @@ compose_ensure_test_overlay_yaml() {
   fi
 }
 
+# Base docker-compose.yaml requires HPCPERFSTATS_SSL_CERTS_DIR (no silent fixture
+# default — that baked CI self-signed PEMs into production under HSTS). Test
+# workflows pin the committed fixture when the env is unset.
+compose_ensure_proxy_ssl_certs_dir_for_tests() {
+  local repo_root
+  repo_root="$(compose_repo_root)"
+  local fixture="${repo_root}/tests/fixtures/proxy-ssl"
+  if [[ -z "${HPCPERFSTATS_SSL_CERTS_DIR:-}" ]]; then
+    if [[ ! -f "${fixture}/fullchain.pem" || ! -f "${fixture}/privkey.pem" ]]; then
+      echo "compose_ensure_proxy_ssl_certs_dir_for_tests: missing PEMs under ${fixture}" >&2
+      return 1
+    fi
+    export HPCPERFSTATS_SSL_CERTS_DIR="${fixture}"
+    echo "compose_ensure_proxy_ssl_certs_dir_for_tests: HPCPERFSTATS_SSL_CERTS_DIR=${fixture}" >&2
+  fi
+}
+
 
 # virtiofs bind mounts from cloud-sync paths (CloudStorage, iCloud, etc.) can deny listdir/open in
 # the Linux VM (pip, bash, cp all hit EPERM). Rsync to a host work tree first,
@@ -133,6 +150,7 @@ compose_rsync_docs_contract_files() {
 compose_prepare_bind_mount() {
   compose_ensure_settings_yaml || return 1
   compose_ensure_test_overlay_yaml || return 1
+  compose_ensure_proxy_ssl_certs_dir_for_tests || return 1
   local repo_root
   repo_root="$(compose_repo_root)"
   local use_work_copy="${COMPOSE_BIND_MOUNT_WORK_COPY:-}"
@@ -228,6 +246,7 @@ compose_test_project_args() {
 compose_test() {
   compose_ensure_settings_yaml || return 1
   compose_ensure_test_overlay_yaml || return 1
+  compose_ensure_proxy_ssl_certs_dir_for_tests || return 1
   local project_args=()
   if [[ -n "${COMPOSE_BIND_MOUNT_DIR:-}" ]]; then
     project_args=(--project-directory "${COMPOSE_BIND_MOUNT_DIR}")

@@ -9,6 +9,9 @@
 # volume so macOS/Colima and CI do not need operator paths under /data.
 # Production deploys use base compose only (settings included; no app overlay).
 # TLS PEMs are baked into the proxy image (no runtime TLS cert volume).
+# Test/CI: compose_test_cmd.sh exports HPCPERFSTATS_SSL_CERTS_DIR to
+# ./tests/fixtures/proxy-ssl when unset (base compose requires that env).
+# This overlay also pins additional_contexts for clarity when the env is set.
 
 services:
   web:
@@ -21,6 +24,9 @@ services:
       - test_hpcperfstatsdata:/hpcperfstats/
       - test_ssh_keys:/hpcperfstats/.ssh/:ro
   proxy:
+    build:
+      additional_contexts:
+        ssl_certs: ./tests/fixtures/proxy-ssl
     volumes:
       - test_staticfiles_data:/srv/static:ro
       - test_media_data:/srv/media:ro
