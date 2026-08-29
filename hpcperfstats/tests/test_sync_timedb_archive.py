@@ -193,6 +193,96 @@ def test_repair_truncated_tar_mid_member_not_recoverable(tmp_path):
   assert tar_path.read_bytes() == original
 
 
+def _strip_trailing_eof_blocks(tar_path: Path, *, blocks: int = 2) -> None:
+  raw = tar_path.read_bytes()
+  tar_path.write_bytes(raw[: max(0, len(raw) - 512 * blocks)])
+
+
+def test_tar_members_recoverable_via_partial_gnu_listing_eof(tmp_path, monkeypatch):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "eof.tar"
+  for idx in range(3):
+    member = tmp_path / ("m%d.txt" % idx)
+    member.write_text("payload-%d" % idx)
+    with tarfile.open(tar_path, "a" if idx else "w") as tf:
+      tf.add(str(member), arcname="host/m%d.txt" % idx)
+  real_verify = helpers.verify_tar_archive_readable
+
+  def _verify_unreadable(_path: str, **kwargs: object) -> bool:
+    return False
+
+  monkeypatch.setattr(helpers, "verify_tar_archive_readable", _verify_unreadable)
+  assert helpers.tar_members_recoverable_via_partial_gnu_listing(str(tar_path))
+  assert helpers.tar_members_recoverable_despite_gnu_tf_fail(str(tar_path))
+  monkeypatch.setattr(helpers, "verify_tar_archive_readable", real_verify)
+
+
+@pytest.mark.skipif(not shutil.which("tar"), reason="tar not on PATH")
+def test_repair_truncated_tar_eof_via_gnu_extract_recreate(tmp_path, monkeypatch):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "eof.tar"
+  for idx in range(3):
+    member = tmp_path / ("f%d.txt" % idx)
+    member.write_text("payload-%d-%s" % (idx, "x" * 40))
+    with tarfile.open(tar_path, "a" if idx else "w") as tf:
+      tf.add(str(member), arcname="host/f%d.txt" % idx)
+  real_verify = helpers.verify_tar_archive_readable
+  calls = {"n": 0}
+
+  def _verify_until_repaired(path: str, **kwargs: object) -> bool:
+    if os.path.normpath(path) == os.path.normpath(str(tar_path)) and calls["n"] < 2:
+      calls["n"] += 1
+      return False
+    return real_verify(path, **kwargs)
+
+  monkeypatch.setattr(helpers, "verify_tar_archive_readable", _verify_until_repaired)
+  monkeypatch.setattr(
+      helpers,
+      "tar_members_recoverable_via_tarfile",
+      lambda _path: False,
+  )
+  assert repair_truncated_daily_tar_in_place(str(tar_path), log_fn=None)
+  assert real_verify(str(tar_path))
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_reconcile_repairs_eof_truncated_tar_and_seals(tmp_path, monkeypatch):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2026-08-21.tar"
+  for idx in range(2):
+    member = tmp_path / ("d%d.txt" % idx)
+    member.write_text("day-%d" % idx)
+    with tarfile.open(tar_path, "a" if idx else "w") as tf:
+      tf.add(
+          str(member),
+          arcname="hpcperfstats/archive/host/%d" % idx,
+      )
+  real_verify = helpers.verify_tar_archive_readable
+  calls = {"n": 0}
+
+  def _verify_until_repaired(path: str, **kwargs: object) -> bool:
+    if os.path.normpath(path) == os.path.normpath(str(tar_path)) and calls["n"] < 2:
+      calls["n"] += 1
+      return False
+    return real_verify(path, **kwargs)
+
+  monkeypatch.setattr(helpers, "verify_tar_archive_readable", _verify_until_repaired)
+  result = reconcile_open_tar_with_sealed_zst(
+      str(tar_path),
+      zstd_threads=1,
+      compress_level=3,
+      force_remove_uncompressed_tar=True,
+      log_fn=None,
+      tgz_archive_dir=str(tmp_path),
+  )
+  assert result.success, result.reason
+  assert not tar_path.is_file()
+  assert (tmp_path / "2026-08-21.tar.zst").is_file()
+
+
 def test_archive_member_maps_union_largest_wins():
   assert archive_member_maps_union({"a": 10}, {"a": 20}) == {"a": 20}
   assert archive_member_maps_union({"a": 100, "b": 1}, {"a": 50, "c": 2}) == {

@@ -401,7 +401,7 @@ def _process_one_tar(
     if reconcile_result.sealed:
       return STATUS_SEALED, reconcile_result.reason
     if not verify_tar_archive_readable(tar_path):
-      return STATUS_SKIPPED, "tar_unreadable"
+      return STATUS_SKIPPED, "tar_still_unreadable_after_reconcile"
 
   defer, defer_reason = daily_tar_janitor_mutation_should_defer(
       tar_path,

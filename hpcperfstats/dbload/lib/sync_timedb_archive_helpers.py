@@ -8736,6 +8736,59 @@ class ReconcileResult:
   tar_removed: bool = False
 
 
+def _gnu_tvf_file_member_map_despite_fail(tar_path: str) -> dict[str, int]:
+  """
+  Parse file member sizes from ``tar tvf`` stdout even when GNU tar exits non-zero.
+
+  Used for truncated daily tars where ``tar tf``/``tvf`` lists complete members
+  then fails with ``Unexpected EOF in archive``.
+
+  Args:
+    tar_path (str): Path to daily ``.tar``.
+
+  Returns:
+    dict[str, int]: Member name to byte size (largest when duplicated).
+
+  Examples:
+    >>> _gnu_tvf_file_member_map_despite_fail("/missing.tar")  # doctest: +SKIP
+  """
+  if not os.path.isfile(tar_path):
+    return {}
+  tar_bin = _tar_list_executable()
+  result = subprocess.run(
+      [tar_bin, "tvf", tar_path],
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  by_name: dict[str, list[int]] = defaultdict(list)
+  for raw_line in (result.stdout or "").splitlines():
+    parsed = _parse_tar_tvf_size_and_name(raw_line)
+    if parsed is None:
+      continue
+    name, size = parsed
+    by_name[name].append(size)
+  return {name: max(sizes) for name, sizes in by_name.items()}
+
+
+def tar_members_recoverable_via_partial_gnu_listing(tar_path: str) -> bool:
+  """
+  Return True when GNU ``tar tvf`` listed file members before a failed scan exit.
+
+  Args:
+    tar_path (str): Path to daily ``.tar``.
+
+  Returns:
+    bool: True for EOF-truncated archives with intact member headers.
+
+  Examples:
+    >>> tar_members_recoverable_via_partial_gnu_listing("/missing.tar")
+  """
+  if not os.path.isfile(tar_path) or verify_tar_archive_readable(tar_path):
+    return False
+  return bool(_gnu_tvf_file_member_map_despite_fail(tar_path))
+
+
 def tar_members_recoverable_via_tarfile(tar_path: str) -> bool:
   """
   Return True when ``tarfile`` can read every file member despite GNU scan fail.
@@ -8767,6 +8820,26 @@ def tar_members_recoverable_via_tarfile(tar_path: str) -> bool:
     return True
   except (tarfile.TarError, OSError, EOFError):
     return False
+
+
+def tar_members_recoverable_despite_gnu_tf_fail(tar_path: str) -> bool:
+  """
+  Return True when a daily tar can be repaired despite GNU ``tar tf`` failure.
+
+  Args:
+    tar_path (str): Path to daily ``.tar``.
+
+  Returns:
+    bool: True when tarfile or partial GNU listing proves recoverability.
+
+  Examples:
+    >>> tar_members_recoverable_despite_gnu_tf_fail("/missing.tar")
+  """
+  if not os.path.isfile(tar_path):
+    return False
+  if tar_members_recoverable_via_tarfile(tar_path):
+    return True
+  return tar_members_recoverable_via_partial_gnu_listing(tar_path)
 
 
 def _rewrite_daily_tar_largest_member_wins(
@@ -8849,6 +8922,109 @@ def _rewrite_daily_tar_largest_member_wins(
   return True
 
 
+def _repair_truncated_daily_tar_via_extract_recreate(
+  tar_path: str,
+  expected_members: dict[str, int],
+  *,
+  log_fn: Any = log_print,
+) -> bool:
+  """
+  Rewrite a truncated daily tar via GNU extract + ``--posix`` recreate.
+
+  Args:
+    tar_path (str): Daily ``.tar`` path to repair in place.
+    expected_members (dict[str, int]): File members GNU ``tvf`` listed pre-EOF.
+    log_fn (Any): Logger callable.
+
+  Returns:
+    bool: True when recreate + ``tar tf`` verify succeeded.
+
+  Examples:
+    >>> _repair_truncated_daily_tar_via_extract_recreate("/no.tar", {})  # doctest: +SKIP
+  """
+  tar_path = os.path.abspath(str(tar_path or ""))
+  if not expected_members:
+    return False
+  tar_size = os.path.getsize(tar_path)
+  free = free_bytes_for_path(tar_path)
+  if free < tar_size * 2:
+    if log_fn:
+      log_fn(
+          "WARNING: repair_fail reason=insufficient_free_space tar=%s "
+          "size=%d free=%d"
+          % (tar_path, tar_size, free),
+          flush=True,
+      )
+    return False
+  tar_bin = shutil.which("tar") or "/bin/tar"
+  parent = os.path.dirname(tar_path) or "."
+  work_root = tempfile.mkdtemp(prefix="hps_tar_repair_", dir=parent)
+  extract_dir = os.path.join(work_root, "extract")
+  new_tar = os.path.join(work_root, "new.tar")
+  os.makedirs(extract_dir, exist_ok=True)
+  try:
+    extract = subprocess.run(
+        [tar_bin, "-xf", tar_path, "-C", extract_dir],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    extracted_count = 0
+    for root, _dirs, files in os.walk(extract_dir):
+      extracted_count += len(files)
+    if extracted_count < len(expected_members):
+      if log_fn:
+        log_fn(
+            "WARNING: repair_fail phase=extract tar=%s rc=%s extracted=%d "
+            "expected=%d stderr=%s"
+            % (
+                tar_path,
+                extract.returncode,
+                extracted_count,
+                len(expected_members),
+                (extract.stderr or "").strip()[:200],
+            ),
+            flush=True,
+        )
+      return False
+    recreate = subprocess.run(
+        [tar_bin, "--posix", "-cf", new_tar, "-C", extract_dir, "."],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if recreate.returncode != 0 or not os.path.isfile(new_tar):
+      if log_fn:
+        log_fn(
+            "WARNING: repair_fail phase=recreate tar=%s rc=%s stderr=%s"
+            % (
+                tar_path,
+                recreate.returncode,
+                (recreate.stderr or "").strip()[:200],
+            ),
+            flush=True,
+        )
+      return False
+    if not verify_tar_archive_readable(new_tar):
+      return False
+    os.replace(new_tar, tar_path)
+    if log_fn:
+      log_fn(
+          "Repaired truncated daily tar via extract+recreate: %s" % tar_path,
+          flush=True,
+      )
+    return True
+  except (OSError, subprocess.SubprocessError, TimeoutError) as exc:
+    if log_fn:
+      log_fn("WARNING: repair_fail tar=%s exc=%s" % (tar_path, exc), flush=True)
+    return False
+  finally:
+    try:
+      shutil.rmtree(work_root, ignore_errors=True)
+    except OSError:
+      pass
+
+
 def repair_truncated_daily_tar_in_place(
   tar_path: str,
   *,
@@ -8882,8 +9058,12 @@ def repair_truncated_daily_tar_in_place(
     return True
   if verify_tar_archive_readable(tar_path):
     return True
-  if not tar_members_recoverable_via_tarfile(tar_path):
+  if not tar_members_recoverable_despite_gnu_tf_fail(tar_path):
     return False
+  use_gnu_extract = (
+      not tar_members_recoverable_via_tarfile(tar_path)
+      and tar_members_recoverable_via_partial_gnu_listing(tar_path)
+  )
   tmp_path = "%s.repair.tmp" % tar_path
   try:
     if os.path.exists(tmp_path):
@@ -8892,25 +9072,34 @@ def repair_truncated_daily_tar_in_place(
     pass
   try:
     with file_write_lock(tar_path):
-      _rewrite_daily_tar_largest_member_wins(
-          tar_path,
-          tmp_path,
-          tgz_archive_dir=tgz_archive_dir,
-          yield_phase=yield_phase,
-      )
-      if not verify_tar_archive_readable(tmp_path):
-        try:
-          os.remove(tmp_path)
-        except OSError:
-          pass
-        return False
-      os.replace(tmp_path, tar_path)
+      if use_gnu_extract:
+        expected = _gnu_tvf_file_member_map_despite_fail(tar_path)
+        if not _repair_truncated_daily_tar_via_extract_recreate(
+            tar_path,
+            expected,
+            log_fn=log_fn,
+        ):
+          return False
+      else:
+        _rewrite_daily_tar_largest_member_wins(
+            tar_path,
+            tmp_path,
+            tgz_archive_dir=tgz_archive_dir,
+            yield_phase=yield_phase,
+        )
+        if not verify_tar_archive_readable(tmp_path):
+          try:
+            os.remove(tmp_path)
+          except OSError:
+            pass
+          return False
+        os.replace(tmp_path, tar_path)
     invalidate_after_daily_tar_mutation(
         tar_path,
         reason="repair_truncated_tar",
         log_fn=log_fn,
     )
-    if log_fn:
+    if log_fn and not use_gnu_extract:
       log_fn(
           "Repaired truncated daily tar in place: %s" % tar_path,
           flush=True,
@@ -9222,21 +9411,24 @@ def reconcile_open_tar_with_sealed_zst(
   except TimeoutError:
     return ReconcileResult(False, "skip", "tar_verify_timeout")
   if not tar_gnu_readable:
-    if tar_members_recoverable_via_tarfile(tar_path):
-      if not repair_truncated_daily_tar_in_place(
-          tar_path,
-          log_fn=log_fn,
-          tgz_archive_dir=tgz_archive_dir,
-          yield_phase="tar_repair",
-      ):
-        return ReconcileResult(False, "skip", "tar_unrecoverable")
-      tar_gnu_readable = bool(verify_tar_archive_readable(tar_path))
-    else:
+    if not tar_members_recoverable_despite_gnu_tf_fail(tar_path):
+      return ReconcileResult(False, "skip", "tar_unrecoverable")
+    if not repair_truncated_daily_tar_in_place(
+        tar_path,
+        log_fn=log_fn,
+        tgz_archive_dir=tgz_archive_dir,
+        yield_phase="tar_repair",
+    ):
+      return ReconcileResult(False, "skip", "tar_unrecoverable")
+    tar_gnu_readable = bool(verify_tar_archive_readable(tar_path))
+    if not tar_gnu_readable:
       return ReconcileResult(False, "skip", "tar_unrecoverable")
   try:
     tar_members = get_mutable_tar_authority_member_map(tar_path)
   except RuntimeError:
-    tar_members = _tarfile_member_map(tar_path)
+    tar_members = _gnu_tvf_file_member_map_despite_fail(tar_path)
+    if not tar_members:
+      tar_members = _tarfile_member_map(tar_path)
   zst_members: dict[str, int] = {}
   zst_readable = False
   if zst_exists:
@@ -9252,6 +9444,8 @@ def reconcile_open_tar_with_sealed_zst(
       tar_gnu_readable=tar_gnu_readable,
   )
   if action == "skip":
+    return ReconcileResult(False, action, reason)
+  if action == "repair_tar_only":
     return ReconcileResult(False, action, reason)
   if action == "merge_and_seal":
     union_members = archive_member_maps_union(tar_members, zst_members)
