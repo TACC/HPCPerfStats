@@ -9,6 +9,9 @@ import pytest
 STARTUP_SCRIPTS = (
   "services-conf/django_startup.sh",
   "services-conf/supervisor_startup.sh",
+  "services-conf/rsync_data_wrapper.sh",
+  "services-conf/rsync_data.sh",
+  "services-conf/rsync_data.sh.example",
 )
 
 

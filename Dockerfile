@@ -115,7 +115,10 @@ RUN rm -rf /home/hpcperfstats/.git
 # a from-scratch image rebuild (image collectstatic alone cannot write the volume).
 RUN chmod +x \
     /home/hpcperfstats/services-conf/django_startup.sh \
-    /home/hpcperfstats/services-conf/supervisor_startup.sh
+    /home/hpcperfstats/services-conf/supervisor_startup.sh \
+    /home/hpcperfstats/services-conf/rsync_data_wrapper.sh \
+    /home/hpcperfstats/services-conf/rsync_data.sh \
+    /home/hpcperfstats/services-conf/rsync_data.sh.example
 
 # Install the hpcperfstats package (deps already installed above).
 RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --no-deps . && pip cache purge"

@@ -15,8 +15,6 @@ node_modules/
 hpcperfstats.ini
 docker-compose.settings.yaml
 tests/docker-compose.test-overlay.yaml
-services-conf/supervisord.conf
-services-conf/rsync_data.sh
 dist/
 hpcperfstats/site/hpcperfstats_site/edge_nginx/
 rabbitmq-c/
@@ -29,10 +27,12 @@ tacc_stats.egg-info/
 !monitor/tests/*.sh
 !monitor/tests/**/*.sh
 !tests/**/*.sh
-# Compose service startup scripts under services-conf/ (rsync_data.sh stays ignored above).
+# Compose service startup scripts under services-conf/ (tracked despite root *.sh).
 !services-conf/django_startup.sh
 !services-conf/supervisor_startup.sh
 !services-conf/proxy_entrypoint.sh
+!services-conf/rsync_data.sh
+!services-conf/rsync_data_wrapper.sh
 *.so
 *.d
 .project

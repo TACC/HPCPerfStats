@@ -326,18 +326,15 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    **`pipeline` memory cap (`docker-compose.yaml`):** on hosts with **~192 GiB RAM and no swap**, set **`mem_limit: 128g`** and **`memswap_limit: 128g`** on the **`pipeline`** service (defaults in base compose; override in **`docker-compose.settings.yaml`** if needed) so ingest spikes cgroup-OOM inside the container before starving **`db`**/**`web`**. **`stop_grace_period`** (default **2m**) allows `sync_timedb` to drain on `docker compose stop`; override with **`HPCPERFSTATS_PIPELINE_STOP_GRACE`**. After changing limits or grace, recreate the container (`docker compose up -d --force-recreate pipeline`) and verify **`memory.max`** inside the cgroup is numeric (not `max`). Pair with **`[PIPELINE]`** RSS knobs documented in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § OOM.
 
-   **Graceful stop (listend / sync_timedb / update_metrics):** Prefer `docker compose stop -t 180 pipeline` (or rebuild’s default **300s** via `HPCPERFSTATS_PIPELINE_STOP_TIMEOUT`) so wall clock exceeds sync_timedb’s **`SHUTDOWN_DRAIN_TIMEOUT_S` (120s)**. Keep compose **`stop_grace_period` ≥ 2m**. In **`services-conf/supervisord.conf.example`**, the three Python programs set **`stopwaitsecs=130`** so supervisord does not SIGKILL after the default **10s** wait. Approximate solo budgets: listend ~**20s** (15s DB pool join), update_metrics ~**30–60s**, sync_timedb up to **120s**. Expected SIGTERM-driven exit **143** (see **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`**). Do **not** `docker kill` / SIGKILL unless wedged past grace. Start `sleep` lines in supervisord are boot stagger only; stop has no sleep.
+   **Graceful stop (listend / sync_timedb / update_metrics):** Prefer `docker compose stop -t 180 pipeline` (or rebuild’s default **300s** via `HPCPERFSTATS_PIPELINE_STOP_TIMEOUT`) so wall clock exceeds sync_timedb’s **`SHUTDOWN_DRAIN_TIMEOUT_S` (120s)**. Keep compose **`stop_grace_period` ≥ 2m**. In **`services-conf/supervisord.conf`**, the three Python programs set **`stopwaitsecs=130`** so supervisord does not SIGKILL after the default **10s** wait. Approximate solo budgets: listend ~**20s** (15s DB pool join), update_metrics ~**30–60s**, sync_timedb up to **120s**. Expected SIGTERM-driven exit **143** (see **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`**). Do **not** `docker kill` / SIGKILL unless wedged past grace. Start `sleep` lines in supervisord are boot stagger only; stop has no sleep.
 
    **RabbitMQ memory cap (`docker-compose.yaml` `rabbitmq` service):** default `vm_memory_high_watermark` is **40% of detected host RAM**, which can OOM the box under thousands of monitor publishers. Compose sets **`mem_limit: 96g`** / **`memswap_limit: 96g`** and mounts `services-conf/rabbitmq_vm_memory.conf` (`vm_memory_high_watermark.absolute = 80GiB`) so publishers block ~16 GiB below the cgroup hard wall (avoids Erlang `binary_alloc` at the limit). Recreate the service after changing either value (`docker compose up -d --force-recreate rabbitmq`). On hosts with less than 96 GiB RAM, lower **both** `mem_limit`/`memswap_limit` and the absolute watermark together.
 
 6. **Supervisord and rsync:**
 
-   ```bash
-   cp services-conf/supervisord.conf.example services-conf/supervisord.conf
-   cp services-conf/rsync_data.sh.example services-conf/rsync_data.sh
-   ```
+   Tracked **`services-conf/supervisord.conf`** is baked into the image — **do not** copy a supervisord `.example`. The **`rsync_data`** program always runs **`rsync_data_wrapper.sh`**, which prefers **`rsync_data.sh`** if present, otherwise **`rsync_data.sh.example`**.
 
-   Edit `rsync_data.sh` for your site.
+   Both scripts ship with a top-of-file guard (`sleep 43200`, `echo "rsync not yet configured"`, `exit`) so default deploys idle for 12 hours and never SSH/rsync to remote hosts. To enable site rsync: edit **`rsync_data.sh`** (the wrapper-preferred file), remove those three guard lines, put your rsync commands in the `while true` loop, and **put `sleep 43200` at the end of the loop** so a configured site does not tight-loop. Ensure SSH keys are configured in compose as documented for the pipeline service.
 
 7. **Web server (nginx):**
 

@@ -166,15 +166,15 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 
 ## 6. Runtime processes (pipeline)
 
-The example supervisor configuration (`services-conf/supervisord.conf.example`) defines long-running programs including:
+The tracked supervisor configuration (`services-conf/supervisord.conf`) defines long-running programs including:
 
 - **`listend.py`** — RabbitMQ listener (archive append/rotation).
 - **`sync_timedb.py backlog`** — Imports node-level data from the archive into the database; runs until stopped, rescans for new files after each wave, and sleeps when the queue is empty. Startup still runs the archive snapshot + boot handoff for ingest catch-up. Under dual-mode with ``current``, CLI **`all` is ingest-only for day-close** (no day-close discover / seal / delete). Date-window runs and CLI ``current`` own day-close. When enabled, **archive-members Redis** prewarm/coordination reduces repeated tar member scans (see `sync_timedb_archive_members_redis`).
 - **`update_metrics.py`** — Builds/updates job-indexed and secondary metrics from DB state; persists **`job_plot_artifact`** / **`job_detail_artifact`** and invalidates related Redis keys.
 
-It also includes **syslog-ng** (with **`render_syslog_ng_generated`** from **`[SYSLOG]`** in `hpcperfstats.ini`), **`seal_syslog_daily`** to pack prior-day per-host logs into **`logs/log_archive/YYYY-MM-DD-syslog.tar.gz`**, and related operational logging.
+It also includes **`rsync_data`** (via **`rsync_data_wrapper.sh`**, preferring guarded **`rsync_data.sh`** then **`rsync_data.sh.example`**), **syslog-ng** (with **`render_syslog_ng_generated`** from **`[SYSLOG]`** in `hpcperfstats.ini`), **`seal_syslog_daily`** to pack prior-day per-host logs into **`logs/log_archive/YYYY-MM-DD-syslog.tar.gz`**, and related operational logging.
 
-**Accounting (job-level) ingest** is **not** listed in that example file: operators either:
+**Accounting (job-level) ingest** is **not** a separate supervisord program: operators either:
 
 - Run **`sync_acct.py`** on a schedule against pipe-delimited files under the configured accounting directory (date-prefixed filenames), and/or  
 - Use **`hpcperfstats-sacct-gen`** from **hpcperfstats-tools** to run `sacct` and **POST** results to the API ingest path (`README.md`).
@@ -295,7 +295,7 @@ This section records **typical** tradeoffs implicit in the design—not a formal
 | Researcher-facing web UI guide | `docs/using-the-website-as-a-researcher.md` |
 | Architecture-agnostic analysis | `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md` |
 | Compose topology (**redis** / db / rabbitmq / proxy / web / pipeline) | `docker-compose.yaml`, `docker-compose.settings.yaml.example` |
-| Supervisor programs (example) | `services-conf/supervisord.conf.example` |
+| Supervisor programs | `services-conf/supervisord.conf` (rsync via `rsync_data_wrapper.sh`) |
 | Job plot / detail caching | `hpcperfstats/cursor-rules/job-plot-artifacts-caching.mdc`, `site/lib/machine/job_plot_artifacts.py` |
 | Workspace guardrails (monitor/tools/nginx/redis) | `HPCPerfStats/hpcperfstats/cursor-rules/workspace-guardrails.mdc` |
 | Monitor message contract | `HPCPerfStats/monitor/cursor-rules/monitor-workspace-contract.mdc` |

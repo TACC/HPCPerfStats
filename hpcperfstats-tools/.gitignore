@@ -11,9 +11,7 @@ patch
 node_modules/
 hpcperfstats.ini
 docker-compose.app.yaml
-services-conf/supervisord.conf
 services-conf/nginx.conf
-services-conf/rsync_data.sh
 dist/
 rabbitmq-c/
 tacc_stats.egg-info/
