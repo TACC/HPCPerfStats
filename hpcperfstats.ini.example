@@ -279,10 +279,6 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Minimum seconds between repeated pool imap stall defer WARN lines (default 60; 0 = every poll).
 # sync_pool_stall_defer_log_interval_s = 60
 
-# Maximum consecutive pool poll timeouts before exit 124 (ceiling 17320 x 5s = 86600s).
-# Per-batch abort is computed from the largest file in the current imap sub-batch (floor .. ceiling).
-# sync_pool_stall_abort_after_timeouts = 17320
-
 # Polls to tolerate maxtasksperchild worker recycle (deprecated; use grace_seconds).
 # sync_pool_worker_recycle_grace_polls = 2
 
@@ -295,20 +291,21 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Idle polls between reconcile redispatch rounds when workers are idle (default 4).
 # sync_pool_idle_reconcile_polls_per_round = 4
 
-# Per ingest pool task wall-clock floor seconds; 0 disables wall soft-kill
-# (default 0). Idle stall uses sync_ingest_stall_idle_s; statement_timeout stays.
+# Retired: internal per-file wall soft-kill (always off; cannot re-arm).
+# Idle stall uses sync_ingest_stall_idle_s; statement_timeout stays.
 # sync_ingest_per_file_timeout_s = 0
 
 # Seconds without parse/write progress before soft-requeue (default 1800).
 # sync_ingest_stall_idle_s = 1800
 
-# Size-proportional ingest timeout: resolved = clamp(floor + ceil_mib(size) * per_mib, floor, max).
-# Default per_mib ((86400-900)/30720) maps 30 GiB to max; larger files cap at max (no file-size reject).
-# Only applies when sync_ingest_per_file_timeout_s > 0.
-# sync_ingest_per_file_timeout_s_per_mib = 2.783203125
+# Retired: size-proportional wall slope (always 0; cannot re-arm).
+# sync_ingest_per_file_timeout_s_per_mib = 0
 
-# Ceiling seconds for size-proportional per-file ingest timeout (default 86400 = 24h at 30 GiB).
+# Redis job lease EX / external ceiling reference (not an ingest soft-kill wall).
 # sync_ingest_per_file_timeout_max_s = 86400
+
+# Retired: pool poll-count stall abort wall (always 0; dead-worker / idle only).
+# sync_pool_stall_abort_after_timeouts = 0
 
 # Cache daily tar member maps per worker on DB-complete ingest checks (default yes).
 # sync_archive_members_cache_enabled = yes
@@ -328,9 +325,10 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Waiter abort when populate shows no HASH/lock-renewal progress (default 120).
 # sync_archive_members_redis_populate_stall_seconds = 120
 
-# Absolute cap for populate/waiter loops; 0 disables (default 7200).
+# Absolute populate wait wall; 0 = disabled (idle+heartbeat only; default 0).
+# Redis lease EX uses max(60, value or 14400) when absolute kill is retired.
 # Tar populate fnctl read-lock wait uses this value when > 0 (else fnctl INI below).
-# sync_archive_members_redis_populate_max_seconds = 7200
+# sync_archive_members_redis_populate_max_seconds = 0
 
 # Exclusive sealed→tar restore lease TTL (SET NX); renewed while zstd -o runs (default 14400).
 # sync_daily_tar_restore_lease_seconds = 14400

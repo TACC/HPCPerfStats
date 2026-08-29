@@ -1,0 +1,41 @@
+---
+description: Forbid internal sync_timedb wall soft-kills; require progress kinds + idle kill/yield
+alwaysApply: false
+globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_*.py,hpcperfstats/dbload/lib/multiprocessing_pool_health.py,hpcperfstats/dbload/lib/zstd_cli.py,hpcperfstats/tests/test_sync_timedb*.py
+---
+
+# sync_timedb no internal wall timers
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+**Scope:** `sync_timedb` ingest/archive/discover/pool paths only. Do **not** unify with metrics `metrics_run_stall_timeout_s` in this rule.
+
+## Law
+
+1. **No internal wall soft-kill** of own work — not even as INI-rearmable fallbacks. Forbidden: per-file SIGALRM wall budgets, monotonic deadline soft-kill from size-proportional timeouts, pool imap exit-124 driven by poll-count × timeout_max, `subprocess.run(..., timeout=N)` as the **sole** guard on long tar/zstd/pax/find work, absolute `populate_max` kill of waiting populate.
+2. **Progress + idle kill/yield required** for long I/O and subprocesses. Semantic progress only:
+   - **byte/size** — tar append, zstd compress/decompress out
+   - **unit** — lines parsed, rows flushed, members sealed, find lines
+   - **Liveness alone** (PID alive) **never** resets the idle clock
+3. **Suspend catalog** — idle clock must suspend on: flock wait, Manager shard acquire, Redis populate wait, restore lease wait, day_close yield. New wait classes must opt in.
+4. **Subprocess kill contract** — `start_new_session` / process group → SIGTERM → grace → SIGKILL → reap; never leave exclusive flock held across kill without `finally`. Prefer `run_subprocess_with_progress` in `sync_timedb_progress_io.py`.
+5. **Pool reclaim** — dead worker / packed `idle_stall` / registry no-progress only. Do not restore `stall_abort_polls_for_paths` max_s fallback walls.
+6. **External timeouts OK** — Postgres `statement_timeout`, Redis lease EX, contention wait budgets, shutdown drain.
+
+## Progress log SOP
+
+Greppable shape:
+
+```text
+progress stage=… path=… advancing=true|false idle_s=… last_progress=… metric=bytes|lines|members
+```
+
+## Allowed non-blocking timeouts
+
+`async_result.get(timeout=0)`, short join/reap waits, poll intervals — these are not work soft-kill walls.
+
+## Overlap
+
+- **`sync-timedb-queue-orchestrator-contract.mdc`** — idle stall soft-kill; submit-age abandon retired
+- **`runtime-resource-and-metrics-safety.mdc`** — rewrite stale SIGALRM / stall-abort wall prose when touching that rule
+- **`sync-timedb-change-regression-gate.mdc`** — battery required

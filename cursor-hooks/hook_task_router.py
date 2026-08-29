@@ -38,6 +38,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "sync-timedb-change-regression-gate.mdc",
             "sync-timedb-hot-path-janitor-lock-priority.mdc",
             "sync-timedb-queue-orchestrator-contract.mdc",
+            "sync-timedb-no-timers.mdc",
             "runtime-resource-and-metrics-safety.mdc",
             "process-title-and-pool-labels.mdc",
             "bugfix-and-perf-change-playbook.mdc",

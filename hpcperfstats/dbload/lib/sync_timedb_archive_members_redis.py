@@ -359,25 +359,18 @@ def get_ingest_task_effective_timeout_s() -> Any:
 
 def _raise_if_ingest_deadline_exceeded() -> None:
   """
-  Internal helper to handle raise if ingest deadline exceeded.
-  
+  Wall-budget archive-lookup abort — retired (no-op).
+
+  Idle stall and Postgres statement_timeout remain the soft/hard caps.
+  ContextVar deadlines are no longer set by ingest workers.
+
   Returns:
     None
-  
-  Raises:
-    IngestArchiveLookupBudgetExceededError: Raised when
-    ``_raise_if_ingest_deadline_exceeded`` hits a
-    ``IngestArchiveLookupBudgetExceededError`` failure path.
-  
+
   Examples:
-    >>> _raise_if_ingest_deadline_exceeded()  # doctest: +SKIP
+    >>> _raise_if_ingest_deadline_exceeded()
   """
-  deadline = get_ingest_task_deadline_monotonic()
-  if deadline is not None and time.monotonic() >= float(deadline):
-    raise IngestArchiveLookupBudgetExceededError(
-        "ingest archive lookup budget exceeded (deadline_monotonic=%s)"
-        % deadline,
-    )
+  return
 
 
 def _raise_if_ingest_deadline_exceeded_when_enabled(
@@ -623,36 +616,46 @@ def _populate_heartbeat_seconds() -> float:
 
 def _populate_max_seconds() -> int:
   """
-  Internal helper to populate the max seconds.
-  
+  Absolute populate wait wall seconds (``0`` = disabled / idle only).
+
   Returns:
-    int: int produced by this call.
-  
+    int: Seconds from INI (default ``0``).
+
   Examples:
     >>> _populate_max_seconds()  # doctest: +SKIP
   """
-  return cfg.get_sync_archive_members_redis_populate_max_seconds()
+  return int(cfg.get_sync_archive_members_redis_populate_max_seconds() or 0)
+
+
+def _populate_lease_ex_seconds() -> int:
+  """
+  Redis EX for populate-related keys (external lease; never zero).
+
+  Returns:
+    int: At least 60; defaults to 14400 when absolute max is retired.
+
+  Examples:
+    >>> _populate_lease_ex_seconds() >= 60
+    True
+  """
+  return max(60, int(_populate_max_seconds()) or 14400)
 
 
 def populate_wait_max_seconds() -> int:
   """
-  Return the fail-closed wall-clock budget for a populate wait.
-
-  Args:
-    None.
+  Absolute populate wait wall (``0`` = no absolute kill; idle+heartbeat only).
 
   Returns:
-    int: Positive seconds; never zero (an open wait is not allowed).
+    int: Non-negative seconds (``0`` means unlimited absolute wait).
 
   Examples:
-    >>> populate_wait_max_seconds() >= 1
+    >>> populate_wait_max_seconds() >= 0
     True
   """
   try:
-    seconds = int(_populate_max_seconds() or 0)
+    return max(0, int(_populate_max_seconds() or 0))
   except Exception:
-    seconds = 0
-  return max(1, seconds)
+    return 0
 
 
 def _wait_poll_seconds() -> float:
@@ -2014,6 +2017,7 @@ def _check_populate_wait_limits(
   _raise_if_ingest_deadline_exceeded_when_enabled(respect_ingest_deadline)
   _raise_if_archive_day_ingest_skip(keys, sealed_path, client)
   max_seconds = _populate_max_seconds()
+  # Absolute populate wait wall retired when max_seconds <= 0 (idle+heartbeat only).
   if max_seconds > 0 and (time.monotonic() - started_monotonic) >= max_seconds:
     raise ArchiveMembersPopulateStalledError(
         "Timed out waiting for archive members populate (max_seconds=%s): %s"
@@ -2033,18 +2037,17 @@ def _check_populate_wait_limits(
     if (time.monotonic() - last_progress_monotonic) >= float(
         _populate_stall_seconds(),
     ):
-      # Owner still alive within populate_max_seconds: keep waiting (heartbeat
-      # may have failed briefly). Fatal only after max_seconds or dead owner.
+      # Owner still alive: keep waiting while heartbeating (absolute max retired
+      # when max_seconds <= 0). Fatal only after max_seconds (>0) or dead owner.
       owner_pid = _parse_populate_lock_owner_pid(client.get(keys.lock_key))
       owner_alive = (
           owner_pid is not None and _process_is_alive(owner_pid)
       )
-      if (
-          owner_alive
-          and max_seconds > 0
-          and (time.monotonic() - started_monotonic) < max_seconds
-      ):
-        return False
+      if owner_alive:
+        if max_seconds <= 0:
+          return False
+        if (time.monotonic() - started_monotonic) < max_seconds:
+          return False
       raise ArchiveMembersPopulateStalledError(
           "Archive members populate stalled (no progress for %ss): %s"
           % (_populate_stall_seconds(), keys.hash_key),
@@ -2057,15 +2060,9 @@ def _check_populate_wait_limits(
       if redis_members_populate_is_orphaned_incomplete(keys, client=client):
         maybe_clear_orphan_incomplete_archive_members_redis(keys, client=client)
         return True
-      # Empty incomplete (hlen=0): recover within populate_max_seconds rather
-      # than fatal on first stall — caller re-enqueues and may re-resolve identity.
-      # When max_seconds is 0 (unlimited / tests), keep fail-closed on first stall.
+      # Empty incomplete (hlen=0): recover rather than fatal on first stall —
+      # caller re-enqueues. Absolute max no longer gates this (idle+heartbeat).
       clear_stale_incomplete_archive_members_redis(keys, client=client)
-      if max_seconds <= 0:
-        raise ArchiveMembersPopulateStalledError(
-            "Archive members populate incomplete after lock release: %s"
-            % keys.hash_key,
-        )
       _log_stale_incomplete_if_allowed(
           keys.day_token,
           "WARNING: archive members populate incomplete after lock release; "
@@ -3487,7 +3484,7 @@ def set_ingest_tar_hot(day_token: str, *, reason: str = "populate") -> None:
   client.set(
       _ingest_tar_hot_key(day_token),
       reason or "populate",
-      ex=_populate_max_seconds(),
+      ex=_populate_lease_ex_seconds(),
   )
 
 
@@ -3738,7 +3735,7 @@ def set_archive_append_inflight(
   client.set(
       _archive_append_inflight_key(day_token),
       reason or "archive_job",
-      ex=_populate_max_seconds(),
+      ex=_populate_lease_ex_seconds(),
   )
 
 
@@ -4118,10 +4115,11 @@ def wait_for_daily_tar_restore_before_populate(
   day_token = day.isoformat()
   if not daily_tar_restore_in_progress_for_day(day_token):
     return
-  deadline = time.monotonic() + float(_populate_max_seconds())
+  max_wait = float(_populate_max_seconds())
+  deadline = (time.monotonic() + max_wait) if max_wait > 0.0 else None
   last_log = 0.0
   while daily_tar_restore_in_progress_for_day(day_token):
-    if time.monotonic() >= deadline:
+    if deadline is not None and time.monotonic() >= deadline:
       break
     now = time.monotonic()
     if log_fn and (now - last_log) >= 5.0:
@@ -4539,11 +4537,6 @@ def request_archive_members_populate_and_wait(
   Examples:
     >>> request_archive_members_populate_and_wait("x")  # doctest: +SKIP
   """
-  max_wait_s = populate_wait_max_seconds()
-  if max_wait_s <= 0:
-    raise ArchiveMembersRedisUnavailableError(
-        "populate wait budget is not finite",
-    )
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       _daily_archive_members_cache_key,
       _lookup_daily_archive_members_cache,

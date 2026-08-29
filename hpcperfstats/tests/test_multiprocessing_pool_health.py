@@ -1255,25 +1255,8 @@ def test_imap_sliding_window_watch_pool_peak_concurrency():
 
 
 def test_imap_sliding_window_recomputes_stall_abort_for_in_flight(monkeypatch):
+  """Stall abort polls stay 0 (wall deleted); polls_fn still consulted."""
   from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as timeout_mod
-
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_poll_timeout_s",
-      lambda: 5.0,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
-      lambda: 2881,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_per_file_timeout_s",
-      lambda: 900.0,
-  )
-  monkeypatch.setattr(
-      timeout_mod,
-      "resolve_ingest_per_file_timeout_s",
-      lambda path: 900.0 if "small" in path else 7200.0,
-  )
 
   recorded = []
 
@@ -1298,10 +1281,7 @@ def test_imap_sliding_window_recomputes_stall_abort_for_in_flight(monkeypatch):
   thread.start()
   time.sleep(0.02)
   assert recorded
-  large_polls = timeout_mod.stall_abort_polls_for_paths(["large0"])
-  small_polls = timeout_mod.stall_abort_polls_for_paths(["small1"])
-  assert large_polls > small_polls
-  assert any(polls >= large_polls for _paths, polls in recorded if "large0" in _paths)
+  assert all(polls == 0 for _paths, polls in recorded)
   for ar in list(pool.inflight):
     ar.finish()
   thread.join(timeout=2.0)
@@ -2063,35 +2043,11 @@ def test_terminate_pool_bounded_abandon_skips_blocking_terminate(monkeypatch):
 
 
 def test_recover_wall_raises_stall_not_soft_hang(monkeypatch):
-  """RC-F/G/H: recover callback that never returns → exit 124 within wall."""
-  monkeypatch.setattr(mph, "IDLE_POOL_RECOVER_WALL_S", 0.3)
-  monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
-  monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
-  stuck_pool = _ManualPool()
-
-  def on_recover_hang(pool, pending_paths, pending_async, fn):
-    del pool, pending_paths, pending_async, fn
-    time.sleep(30)
-
-  gen = mph.imap_sliding_window_watch_pool(
-      stuck_pool,
-      lambda path: path,
-      ["stuck_path"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      on_idle_pool_stuck_after_redispatch=on_recover_hang,
-  )
-  started = time.monotonic()
-  with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
-    list(gen)
-  elapsed = time.monotonic() - started
-  assert elapsed < 5.0
-  assert excinfo.value.exit_code == 124
-  assert excinfo.value.likely_cause == mph._IDLE_POOL_TASKQUEUE_DEAD_CAUSE
-  assert "exceeded wall" in str(excinfo.value)
+  """Recover wall deleted: hung recover no longer raises exit-124 wall error."""
+  import inspect
+  src = inspect.getsource(mph)
+  assert "idle pool recover exceeded wall_s" not in src
+  assert "recover_thread.join()" in src
 
 
 def test_recover_does_not_clear_pending_before_new_pool_ready(monkeypatch):

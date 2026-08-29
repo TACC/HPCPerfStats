@@ -69,9 +69,9 @@ from __future__ import annotations
 import contextvars
 import ctypes
 import gc
+import hashlib
 import itertools
 import json
-import hashlib
 import multiprocessing
 import os
 from contextlib import contextmanager
@@ -192,16 +192,11 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
   archive_members_redis_enabled,
   build_archive_members_redis_keys,
   describe_archive_members_populate_redis_for_day,
-  get_ingest_task_deadline_monotonic,
   get_ingest_task_effective_timeout_s,
   is_populate_pool_unavailable_error,
   is_transient_fnctl_populate_unavailable,
   maybe_clear_orphan_incomplete_archive_members_redis,
   redis_members_cache_is_fully_warm,
-  reset_ingest_task_deadline_monotonic,
-  reset_ingest_task_effective_timeout_s,
-  set_ingest_task_deadline_monotonic,
-  set_ingest_task_effective_timeout_s,
 )
 from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
   calendar_day_from_sealed_archive_path,
@@ -592,21 +587,22 @@ def _raise_if_ingest_per_file_deadline_exceeded(
   stage: Any,
 ) -> None:
   """
-  Monotonic deadline / idle-stall check for DB phases SIGALRM may miss.
+  Idle-stall check for DB phases (wall deadline deleted).
 
   Args:
     stats_file (str): Absolute closed raw stats path.
-    stage (Any): Worker stage token for timeout errors.
+    stage (Any): Worker stage token (unused; idle uses ``idle_stall``).
 
   Returns:
     None
 
   Raises:
-    IngestPerFileTimeoutError: When wall deadline or idle stall is exceeded.
+    IngestPerFileTimeoutError: When idle stall is exceeded.
 
   Examples:
     >>> _raise_if_ingest_per_file_deadline_exceeded("x", None)  # doctest: +SKIP
   """
+  del stage
   from hpcperfstats.dbload.lib.sync_timedb_ingest_progress import (
       raise_if_ingest_idle_stalled,
       touch_ingest_progress,
@@ -614,21 +610,6 @@ def _raise_if_ingest_per_file_deadline_exceeded(
 
   touch_ingest_progress()
   raise_if_ingest_idle_stalled(stats_file, "idle_stall")
-  deadline = get_ingest_task_deadline_monotonic()
-  if deadline is None:
-    return
-  if time.monotonic() >= float(deadline):
-    effective = get_ingest_task_effective_timeout_s()
-    if effective is not None and float(effective) > 0.0:
-      timeout_s = float(effective)
-    else:
-      timeout_s = float(cfg.get_sync_ingest_per_file_timeout_s())
-    elapsed_s = (
-        timeout_s
-        if timeout_s > 0.0
-        else max(0.0, time.monotonic() - float(deadline))
-    )
-    raise IngestPerFileTimeoutError(str(stats_file), stage, elapsed_s)
 
 
 def _imap_ingest_result_path(result: Any) -> Any:
@@ -657,159 +638,42 @@ def _run_ingest_timed(
   enable_sigalrm: bool = True,
 ) -> Any:
   """
-  Run ingest worker body with optional wall-clock and/or idle-stall caps.
+  Run ingest worker body under idle-stall progress tracking (no wall timers).
 
-  Wall-clock SIGALRM (B) runs only when ``resolve_ingest_per_file_timeout_s``
-  is ``> 0``. Idle stall arms a re-arming SIGALRM from
-  ``sync_ingest_stall_idle_s`` (progress heartbeats reset it). Coordinator
-  submit-age watchdog is retired — do not fall back to it.
+  Internal wall soft-kill is deleted. Idle stall uses heartbeats from
+  ``touch_ingest_progress`` / checkpoint ``raise_if_ingest_idle_stalled``.
+  Postgres ``statement_timeout`` remains the external ceiling.
+  ``enable_sigalrm`` is retained for API compatibility and ignored.
 
   Args:
     stats_file (str): Absolute closed raw stats path.
-    stage (Any): Worker stage token for timeout errors.
+    stage (Any): Worker stage token for registry / logs.
     fn (Any): Callable invoked by this helper.
-    enable_sigalrm (bool): When False, skip SIGALRM (deadline checks remain).
+    enable_sigalrm (bool): Ignored (wall SIGALRM removed).
 
   Returns:
     Any: Value produced by ``fn``.
 
   Examples:
-    >>> _run_ingest_timed("x", None, None, True)  # doctest: +SKIP
+    >>> _run_ingest_timed("x", None, lambda: 1)  # doctest: +SKIP
   """
+  del enable_sigalrm
   from hpcperfstats.dbload.lib.sync_timedb_ingest_progress import (
       begin_ingest_progress,
       end_ingest_progress,
-      get_ingest_idle_stall_s,
-      get_ingest_last_progress_mono,
-      raise_if_ingest_idle_stalled,
       touch_ingest_progress,
   )
 
-  timeout_s = resolve_ingest_per_file_timeout_s(stats_file)
+  timeout_s = 0.0
   idle_s = float(cfg.get_sync_ingest_stall_idle_s())
-  deadline_token = None
-  effective_token = None
   progress_tokens = begin_ingest_progress(stats_file, idle_s=idle_s)
-  if timeout_s > 0.0:
-    effective_token = set_ingest_task_effective_timeout_s(timeout_s)
-    deadline_token = set_ingest_task_deadline_monotonic(
-        time.monotonic() + timeout_s,
-    )
   record_worker_stage(stats_file, stage, timeout_s=timeout_s)
   _log_long_ingest_timeout_budget_if_needed(stats_file, timeout_s)
   try:
-    use_sigalrm = (
-        enable_sigalrm
-        and hasattr(signal, "SIGALRM")
-        and (timeout_s > 0.0 or idle_s > 0.0)
-    )
-    if not use_sigalrm:
-      return fn()
-
-    path_label = str(stats_file)
-    t0 = time.monotonic()
-
-    def _handler(signum: Any, frame: Any) -> None:
-      """
-      SIGALRM handler: wall budget or idle-stall soft-kill.
-
-      Args:
-        signum (Any): Signal number (unused).
-        frame (Any): Interrupted frame (unused).
-
-      Returns:
-        None
-
-      Raises:
-        IngestPerFileTimeoutError: When wall or idle budget is exceeded.
-
-      Examples:
-        >>> _handler(None, None)  # doctest: +SKIP
-      """
-      del signum, frame
-      if timeout_s > 0.0 and (time.monotonic() - t0) >= float(timeout_s):
-        raise IngestPerFileTimeoutError(
-            path_label,
-            stage,
-            time.monotonic() - t0,
-        )
-      idle_active = get_ingest_idle_stall_s()
-      if idle_active is not None and float(idle_active) > 0.0:
-        raise_if_ingest_idle_stalled(path_label, "idle_stall")
-        last = get_ingest_last_progress_mono()
-        if last is not None:
-          remaining = float(idle_active) - (time.monotonic() - float(last))
-          if remaining > 0.0:
-            if hasattr(signal, "setitimer"):
-              signal.setitimer(signal.ITIMER_REAL, remaining)
-            else:
-              signal.alarm(max(1, int(remaining)))
-            return
-        raise IngestPerFileTimeoutError(
-            path_label, "idle_stall", time.monotonic() - t0,
-        )
-      if timeout_s > 0.0:
-        remaining_wall = float(timeout_s) - (time.monotonic() - t0)
-        if remaining_wall > 0.0:
-          if hasattr(signal, "setitimer"):
-            signal.setitimer(signal.ITIMER_REAL, remaining_wall)
-          else:
-            signal.alarm(max(1, int(remaining_wall)))
-          return
-        raise IngestPerFileTimeoutError(
-            path_label, stage, time.monotonic() - t0,
-        )
-
-    def _arm_timer() -> None:
-      """
-      Arm SIGALRM for the nearer of wall remaining and idle window.
-
-      Returns:
-        None
-
-      Examples:
-        >>> _arm_timer()  # doctest: +SKIP
-      """
-      candidates = []
-      if timeout_s > 0.0:
-        rem = float(timeout_s) - (time.monotonic() - t0)
-        if rem > 0.0:
-          candidates.append(rem)
-      idle_active = get_ingest_idle_stall_s()
-      if idle_active is not None and float(idle_active) > 0.0:
-        last = get_ingest_last_progress_mono()
-        if last is None:
-          candidates.append(float(idle_active))
-        else:
-          rem_idle = float(idle_active) - (time.monotonic() - float(last))
-          if rem_idle > 0.0:
-            candidates.append(rem_idle)
-      if not candidates:
-        return
-      next_s = min(candidates)
-      if hasattr(signal, "setitimer"):
-        signal.setitimer(signal.ITIMER_REAL, next_s)
-      else:
-        signal.alarm(max(1, int(next_s)))
-
-    previous = signal.getsignal(signal.SIGALRM)
-    signal.signal(signal.SIGALRM, _handler)
-    try:
-      touch_ingest_progress()
-      _arm_timer()
-      return fn()
-    finally:
-      if hasattr(signal, "setitimer"):
-        signal.setitimer(signal.ITIMER_REAL, 0)
-      else:
-        signal.alarm(0)
-      signal.signal(signal.SIGALRM, previous)
+    touch_ingest_progress()
+    return fn()
   finally:
     end_ingest_progress(progress_tokens)
-    if effective_token is not None:
-      reset_ingest_task_effective_timeout_s(effective_token)
-    if deadline_token is not None:
-      reset_ingest_task_deadline_monotonic(deadline_token)
 
 
 def _merge_worker_memory_meta(result: Any, mem_meta: Any) -> Any:
@@ -1059,7 +923,7 @@ def _signal_ingest_hot_for_populate(
       set_ingest_tar_hot,
   )
 
-  del tar_path  # retained for call-site compatibility
+  del tar_path  # retained for API compatibility
   if day_token:
     set_ingest_tar_hot(day_token, reason=reason)
 
@@ -6538,13 +6402,18 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
   
   Raises:
     RuntimeError: Raised when ``_append_to_tar`` hits a ``RuntimeError``
-    failure path.
+    failure path (including idle stall with no tar size growth).
     subprocess.CalledProcessError: Raised when ``_append_to_tar`` hits a
     ``subprocess.CalledProcessError`` failure path.
   
   Examples:
     >>> _append_to_tar("x", None)  # doctest: +SKIP
   """
+  from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
+      ProgressIdleError,
+      run_subprocess_with_progress,
+  )
+
   if not file_paths:
     return
   # Amortize subprocess overhead for large archive bursts.
@@ -6553,7 +6422,6 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
     batch = max(batch, 256)
   elif len(file_paths) >= 128:
     batch = max(batch, 128)
-  tar_timeout_s = 3600.0
   for off in range(0, len(file_paths), batch):
     chunk = file_paths[off : off + batch]
     fd, list_path = tempfile.mkstemp(prefix="hps_tar_append_", suffix=".lst")
@@ -6600,17 +6468,21 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
             "-T",
             list_path,
         ]
-        result = subprocess.run(
-            tar_args,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=tar_timeout_s,
-        )
-    except subprocess.TimeoutExpired as exc:
-      raise RuntimeError(
-          "tar append timed out after %ss: %s" % (tar_timeout_s, tar_path),
-      ) from exc
+        try:
+          result = run_subprocess_with_progress(
+              tar_args,
+              progress_path=tar_path,
+              stage="tar_append",
+              metric="bytes",
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              text=True,
+          )
+        except ProgressIdleError as exc:
+          raise RuntimeError(
+              "tar append idle stall path=%s idle_s=%s"
+              % (tar_path, getattr(exc, "idle_s", None)),
+          ) from exc
     finally:
       if fd >= 0:
         try:

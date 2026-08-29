@@ -1220,6 +1220,7 @@ def zstd_compress_tar_to_file(
   Raises:
     Exception: Raised when ``zstd_compress_tar_to_file`` hits a ``Exception``
     failure path.
+    ProgressIdleError: When zstd output size is idle for the stall window.
     subprocess.CalledProcessError: Raised when ``zstd_compress_tar_to_file``
     hits a ``subprocess.CalledProcessError`` failure path.
   
@@ -1247,8 +1248,27 @@ def zstd_compress_tar_to_file(
       tar_path,
   ]
   if tgz_archive_dir:
-    proc = _popen_zstd(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
+        ProgressIdleError,
+        log_progress_sop,
+        _kill_process_group,
+    )
+    import hpcperfstats.dbload.lib.conf_parser as cfg
+
+    proc = _popen_zstd(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
     last_poll = time.monotonic()
+    last_size = 0
+    try:
+      last_size = int(os.path.getsize(zst_path)) if os.path.isfile(zst_path) else 0
+    except OSError:
+      last_size = 0
+    last_progress = time.monotonic()
+    idle_s = float(cfg.get_sync_ingest_stall_idle_s())
     stdout_acc = bytearray()
     stderr_acc = bytearray()
     try:
@@ -1257,6 +1277,31 @@ def zstd_compress_tar_to_file(
         stdout_acc.extend(out_chunk)
         stderr_acc.extend(err_chunk)
         try:
+          cur = int(os.path.getsize(zst_path)) if os.path.isfile(zst_path) else 0
+        except OSError:
+          cur = last_size
+        now = time.monotonic()
+        advancing = cur > last_size
+        if advancing:
+          last_size = cur
+          last_progress = now
+        log_progress_sop(
+            stage="zstd_compress",
+            path=zst_path,
+            advancing=advancing,
+            idle_s=now - last_progress,
+            last_progress=last_progress,
+            metric="bytes",
+        )
+        if idle_s > 0.0 and (now - last_progress) >= idle_s:
+          _kill_process_group(proc)
+          raise ProgressIdleError(
+              "zstd compress idle stall path=%s idle_s=%.1f"
+              % (zst_path, now - last_progress),
+              idle_s=now - last_progress,
+              path=zst_path,
+          )
+        try:
           last_poll, _ = check_day_close_yield_or_continue(
               tar_path,
               last_poll_monotonic=last_poll,
@@ -1264,12 +1309,7 @@ def zstd_compress_tar_to_file(
               phase=yield_phase,
           )
         except DayCloseYieldError:
-          proc.terminate()
-          try:
-            proc.wait(timeout=5.0)
-          except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5.0)
+          _kill_process_group(proc)
           drain_subprocess_pipes(proc, timeout_s=0.5)
           try:
             if os.path.isfile(zst_path):
@@ -1294,6 +1334,8 @@ def zstd_compress_tar_to_file(
       if proc.stdout is not None:
         proc.stdout.close()
   else:
+    # Non-cooperative callers (unit / one-shot): keep ``_run_zstd``. Production
+    # seal passes ``tgz_archive_dir`` and uses progress + idle kill above.
     result = _run_zstd(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
       raise subprocess.CalledProcessError(

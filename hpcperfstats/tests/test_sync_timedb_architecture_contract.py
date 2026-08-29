@@ -261,3 +261,19 @@ def test_ingest_worker_raises_session_statement_timeout():
   src = inspect.getsource(st._apply_ingest_session_statement_timeout)
   assert "SET statement_timeout" in src
   assert "get_sync_ingest_per_file_timeout_max_s" in src
+
+
+def test_arch_no_internal_wall_timers_append_and_ingest():
+  """Forbidden: wall soft-kill on tar append / ingest timed / stall abort."""
+  import inspect
+  from hpcperfstats.dbload import sync_timedb as st
+  from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ito
+
+  append_src = inspect.getsource(st._append_to_tar)
+  timed_src = inspect.getsource(st._run_ingest_timed)
+  assert "run_subprocess_with_progress" in append_src
+  assert "timeout=3600" not in append_src
+  assert "setitimer" not in timed_src
+  assert "signal.alarm" not in timed_src
+  assert ito.stall_abort_polls_for_paths(["/x"]) == 0
+  assert ito.resolve_ingest_per_file_timeout_s("/x") == 0.0

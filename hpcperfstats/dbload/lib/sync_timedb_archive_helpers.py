@@ -592,12 +592,29 @@ def convert_daily_tar_to_pax_via_extract_recreate(
             "INFO: convert_start phase=recreate tar=%s" % tar_path,
             flush=True,
         )
-      recreate = subprocess.run(
-          [tar_bin, "--format=pax", "-cf", new_tar, "-C", extract_dir, "."],
-          capture_output=True,
-          text=True,
-          check=False,
+      from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
+          ProgressIdleError,
+          run_subprocess_with_progress,
       )
+
+      try:
+        recreate = run_subprocess_with_progress(
+            [tar_bin, "--format=pax", "-cf", new_tar, "-C", extract_dir, "."],
+            progress_path=new_tar,
+            stage="pax_recreate",
+            metric="bytes",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+      except ProgressIdleError as exc:
+        if log_fn:
+          log_fn(
+              "WARNING: convert_fail phase=recreate idle_stall tar=%s exc=%s"
+              % (tar_path, exc),
+              flush=True,
+          )
+        return False
       if recreate.returncode != 0 or not os.path.isfile(new_tar):
         if log_fn:
           log_fn(
@@ -610,13 +627,29 @@ def convert_daily_tar_to_pax_via_extract_recreate(
               flush=True,
           )
         return False
-      listed = subprocess.run(
-          [tar_bin, "tf", new_tar],
-          capture_output=True,
-          text=True,
-          check=False,
-          timeout=3600,
-      )
+      line_count = {"n": 0}
+
+      try:
+        listed = run_subprocess_with_progress(
+            [tar_bin, "tf", new_tar],
+            progress_path=new_tar,
+            stage="pax_tf",
+            metric="lines",
+            progress_fn=lambda: int(line_count["n"]),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        # Count listed members as unit progress after completion (tf is fast).
+        line_count["n"] = len((listed.stdout or "").splitlines())
+      except ProgressIdleError as exc:
+        if log_fn:
+          log_fn(
+              "WARNING: convert_fail phase=tf idle_stall tar=%s exc=%s"
+              % (tar_path, exc),
+              flush=True,
+          )
+        return False
       if listed.returncode != 0:
         if log_fn:
           log_fn(

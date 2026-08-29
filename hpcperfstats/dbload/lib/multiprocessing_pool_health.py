@@ -2856,10 +2856,12 @@ def imap_unordered_watch_pool(
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   if stall_abort_after_timeouts is None:
-    stall_abort_after = cfg.get_sync_pool_stall_abort_after_timeouts()
+    stall_abort_after = max(0, int(cfg.get_sync_pool_stall_abort_after_timeouts()))
   else:
-    stall_abort_after = max(1, int(stall_abort_after_timeouts))
-  warn_thresholds = _stall_warning_thresholds(stall_abort_after)
+    stall_abort_after = max(0, int(stall_abort_after_timeouts))
+  warn_thresholds = (
+      _stall_warning_thresholds(stall_abort_after) if stall_abort_after > 0 else ()
+  )
   warned_thresholds = set()
   consecutive_timeouts = 0
   while True:
@@ -2898,7 +2900,7 @@ def imap_unordered_watch_pool(
               poll_timeout_s,
               context,
           )
-      if consecutive_timeouts >= stall_abort_after:
+      if stall_abort_after > 0 and consecutive_timeouts >= stall_abort_after:
         estimated_stall_s = consecutive_timeouts * poll_timeout_s
         message = (
             "Pool imap stalled after %d consecutive poll timeouts "
@@ -3070,8 +3072,10 @@ def imap_sliding_window_watch_pool(
   max_reconcile_rounds = get_sync_pool_idle_reconcile_max_rounds()
   polls_per_reconcile_round = get_sync_pool_idle_reconcile_polls_per_round()
   warned_thresholds = set()
-  stall_abort_after = max(1, int(default_stall_abort))
-  warn_thresholds = _stall_warning_thresholds(stall_abort_after)
+  stall_abort_after = max(0, int(default_stall_abort))
+  warn_thresholds = (
+      _stall_warning_thresholds(stall_abort_after) if stall_abort_after > 0 else ()
+  )
   full_redispatch_thrash_seen = False
   pool_recover_attempted = False
   pool_recover_count = 0
@@ -3254,10 +3258,10 @@ def imap_sliding_window_watch_pool(
     in_flight = _in_flight_paths()
     if callable(stall_abort_polls_fn):
       if in_flight:
-        stall_abort_after = max(1, int(stall_abort_polls_fn(in_flight)))
+        stall_abort_after = max(0, int(stall_abort_polls_fn(in_flight)))
       else:
-        stall_abort_after = max(1, int(default_stall_abort))
-    warn_thresholds = _stall_warning_thresholds(stall_abort_after)
+        stall_abort_after = max(0, int(default_stall_abort))
+    warn_thresholds = _stall_warning_thresholds(stall_abort_after) if stall_abort_after > 0 else ()
     if callable(on_in_flight_change):
       on_in_flight_change(in_flight)
 
@@ -3400,11 +3404,11 @@ def imap_sliding_window_watch_pool(
         sample_fn = ctx.get("in_flight_sample_fn")
         if callable(sample_fn):
           ctx["in_flight_sample"] = sample_fn()
-    try:
-      deferred = bool(on_stall_poll(consecutive_timeouts, context, ctx))
-    except Exception as exc:
-      _log_on_stall_poll_failure(exc, context=context)
-      deferred = False
+      try:
+        deferred = bool(on_stall_poll(consecutive_timeouts, context, ctx))
+      except Exception as exc:
+        _log_on_stall_poll_failure(exc, context=context)
+        deferred = False
     if deferred:
       consecutive_timeouts = 0
     else:
@@ -3422,7 +3426,7 @@ def imap_sliding_window_watch_pool(
             poll_timeout_s,
             context,
         )
-    if consecutive_timeouts >= stall_abort_after:
+    if stall_abort_after > 0 and consecutive_timeouts >= stall_abort_after:
       estimated_stall_s = consecutive_timeouts * poll_timeout_s
       message = (
           "Pool imap stalled after %d consecutive poll timeouts "
@@ -3588,21 +3592,8 @@ def imap_sliding_window_watch_pool(
         daemon=True,
     )
     recover_thread.start()
-    recover_thread.join(timeout=float(IDLE_POOL_RECOVER_WALL_S))
-    if recover_thread.is_alive():
-      log_print(
-          "ERROR: pool imap idle reconcile pool_recover exceeded wall_s=%.1f "
-          "context=%s"
-          % (IDLE_POOL_RECOVER_WALL_S, context or "pool"),
-          flush=True,
-      )
-      raise MultiprocessingPoolStallError(
-          "idle pool recover exceeded wall_s=%.1f" % IDLE_POOL_RECOVER_WALL_S,
-          dead_pids=[],
-          context=context,
-          exit_code=124,
-          likely_cause=_IDLE_POOL_TASKQUEUE_DEAD_CAUSE,
-      )
+    # No internal recover wall: wait for reclaim to finish (dead-worker path).
+    recover_thread.join()
     if "exc" in recover_error:
       exc = recover_error["exc"]
       if isinstance(exc, MultiprocessingPoolStallError):

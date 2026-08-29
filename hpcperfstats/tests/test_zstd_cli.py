@@ -89,7 +89,7 @@ def test_wrap_archive_zstd_cmd_skips_when_disabled(monkeypatch):
 def test_zstd_compress_tar_to_file_uses_t0_when_thread_count_zero(monkeypatch, tmp_path):
   captured = []
 
-  def _fake_run(cmd, _capture_output, text, _check):
+  def _fake_run(cmd, *args, **kwargs):
     captured.append(cmd)
     return subprocess.CompletedProcess(cmd, 0)
 
@@ -106,7 +106,7 @@ def test_zstd_compress_tar_to_file_uses_t0_when_thread_count_zero(monkeypatch, t
 def test_zstd_gzip_decompress_verbose_invokes_zstd_gzip_format(monkeypatch):
   captured = []
 
-  def _fake_run(cmd, _capture_output, text, _check):
+  def _fake_run(cmd, *args, **kwargs):
     captured.append(cmd)
     return subprocess.CompletedProcess(cmd, 0, stdout="out\n", stderr="err\n")
 
@@ -141,7 +141,7 @@ def test_zstd_decompress_verbose_native_decompress_path(monkeypatch):
 def test_zstd_compress_tar_to_file_command_shape(monkeypatch, tmp_path):
   captured = []
 
-  def _fake_run(cmd, _capture_output, text, _check):
+  def _fake_run(cmd, *args, **kwargs):
     captured.append(cmd)
     return subprocess.CompletedProcess(cmd, 0)
 
@@ -160,7 +160,7 @@ def test_zstd_compress_tar_to_file_command_shape(monkeypatch, tmp_path):
 def test_zstd_test_command_shape(monkeypatch):
   captured = []
 
-  def _fake_run(cmd, _capture_output, text, _check):
+  def _fake_run(cmd, *args, **kwargs):
     captured.append(cmd)
     return subprocess.CompletedProcess(cmd, 0)
 
@@ -253,7 +253,7 @@ def test_zstd_test_applies_page_cache_hints_on_linux(monkeypatch, tmp_path):
       lambda p: dropped.append(p),
   )
 
-  def _fake_run(cmd, _capture_output, text, _check, apply_priority_wrap=True):
+  def _fake_run(cmd, *args, apply_priority_wrap=True, **kwargs):
     return subprocess.CompletedProcess(cmd, 0)
 
   with patch("hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run):

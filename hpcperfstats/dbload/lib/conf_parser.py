@@ -291,14 +291,14 @@ INI_OPTION_DEFAULTS = {
     'sync_host_itimes_cache_max_timestamps_per_entry': '100000',
     'sync_pool_poll_timeout_s': '5',
     'sync_pool_stall_defer_log_interval_s': '60',
-    'sync_pool_stall_abort_after_timeouts': '17320',
+    'sync_pool_stall_abort_after_timeouts': '0',
     'sync_pool_worker_recycle_grace_polls': '2',
     'sync_pool_worker_recycle_grace_seconds': '60',
     'sync_pool_idle_reconcile_max_rounds': '3',
     'sync_pool_idle_reconcile_polls_per_round': '4',
     'sync_ingest_per_file_timeout_s': '0',
     'sync_ingest_per_file_timeout_max_s': '86400',
-    'sync_ingest_per_file_timeout_s_per_mib': '2.783203125',
+    'sync_ingest_per_file_timeout_s_per_mib': '0',
     'sync_ingest_stall_idle_s': '1800',
     'sync_archive_members_cache_enabled': 'yes',
     'sync_archive_members_cache_max_entries': '64',
@@ -306,7 +306,7 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_members_redis_ttl_seconds': '86400',
     'sync_archive_members_redis_populate_lock_seconds': '3600',
     'sync_archive_members_redis_populate_stall_seconds': '120',
-    'sync_archive_members_redis_populate_max_seconds': '7200',
+    'sync_archive_members_redis_populate_max_seconds': '0',
     'sync_daily_tar_restore_lease_seconds': '14400',
     'sync_archive_members_fnctl_read_lock_timeout_seconds': '180',
     'sync_archive_members_redis_wait_poll_seconds': '0.25',
@@ -2856,33 +2856,20 @@ def get_sync_archive_validation_max_workers() -> Any:
 
 def get_sync_pool_stall_abort_after_timeouts() -> Any:
   """
-  Maximum consecutive pool poll timeouts before aborting imap wait (ceiling).
-  
-  Per-batch abort counts are computed from the largest resolved per-file ingest
-  budget in the current imap sub-batch and clamped to this ceiling.
-  
+  Consecutive pool poll timeouts before imap exit-124 (``0`` = disabled).
+
+  Internal stall-wall reclaim is retired; default is ``0``. Dead-worker and
+  packed ``idle_stall`` soft-requeue remain. Site INI values are ignored for
+  soft-kill (always disabled).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_pool_stall_abort_after_timeouts``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    int: Always ``0`` (poll-count wall abort deleted).
+
   Examples:
-    >>> get_sync_pool_stall_abort_after_timeouts()  # doctest: +SKIP
+    >>> get_sync_pool_stall_abort_after_timeouts() == 0
+    True
   """
-  env = os.environ.get("HPCPERFSTATS_SYNC_POOL_STALL_ABORT_AFTER_TIMEOUTS", "").strip()
-  if env:
-    try:
-      return max(1, int(env))
-    except (TypeError, ValueError, OverflowError):
-      return 17320
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        1,
-        int(_pipeline_get("sync_pool_stall_abort_after_timeouts")),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return 17320
+  return 0
 
 
 def get_sync_pool_worker_recycle_grace_polls() -> Any:
@@ -3167,7 +3154,7 @@ def get_sync_archive_members_redis_populate_max_seconds() -> Any:
   try:
     return max(0, int(_pipeline_get("sync_archive_members_redis_populate_max_seconds")))
   except (TypeError, ValueError, OverflowError):
-    return 7200
+    return 0
 
 
 def get_sync_daily_tar_restore_lease_seconds() -> Any:
@@ -3309,31 +3296,19 @@ def get_sync_archive_members_populate_pool_processes() -> Any:
 
 def get_sync_ingest_per_file_timeout_s() -> Any:
   """
-  Wall-clock floor per ingest pool task in seconds (0 = disabled).
+  Retired internal wall floor — always ``0`` (cannot re-arm soft-kill).
 
-  Default is ``0`` (SIGALRM soft-kill demoted). Idle stall uses
-  ``sync_ingest_stall_idle_s``; Postgres statement_timeout remains the ceiling.
+  Idle stall uses ``sync_ingest_stall_idle_s``; Postgres statement_timeout
+  remains the external ceiling.
 
   Returns:
-    Any: Non-negative float seconds from INI/env, or ``0.0`` on parse failure.
+    float: Always ``0.0``.
 
   Examples:
-    >>> get_sync_ingest_per_file_timeout_s()  # doctest: +SKIP
+    >>> get_sync_ingest_per_file_timeout_s() == 0.0
+    True
   """
-  env = os.environ.get("HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S", "").strip()
-  if env:
-    try:
-      return max(0.0, float(env))
-    except (TypeError, ValueError, OverflowError):
-      return 0.0
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        0.0,
-        float(_pipeline_get("sync_ingest_per_file_timeout_s")),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return 0.0
+  return 0.0
 
 
 def get_sync_ingest_stall_idle_s() -> Any:
@@ -3413,32 +3388,16 @@ def get_sync_ingest_per_file_timeout_max_s() -> Any:
 
 def get_sync_ingest_per_file_timeout_s_per_mib() -> Any:
   """
-  Added seconds per ceiling MiB for size-proportional ingest timeout.
-  
+  Retired size-proportional wall slope — always ``0`` (cannot re-arm).
+
   Returns:
-    Any: Open return polymorphism from
-    ``get_sync_ingest_per_file_timeout_s_per_mib``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+    float: Always ``0.0``.
+
   Examples:
-    >>> get_sync_ingest_per_file_timeout_s_per_mib()  # doctest: +SKIP
+    >>> get_sync_ingest_per_file_timeout_s_per_mib() == 0.0
+    True
   """
-  env = os.environ.get(
-      "HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB", "",
-  ).strip()
-  if env:
-    try:
-      return max(0.0, float(env))
-    except (TypeError, ValueError, OverflowError):
-      return 0.0
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        0.0,
-        float(_pipeline_get("sync_ingest_per_file_timeout_s_per_mib")),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return _SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT
+  return 0.0
 
 
 def get_metrics_run_stall_timeout_s() -> Any:

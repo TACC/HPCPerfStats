@@ -1516,11 +1516,12 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 
 - Bare drain `TimeoutError` must **not** soft-requeue or clear local inflight (no thrash sticky 0/N).
 - Soft-requeue uses packed/rich timeout or `stage=idle_stall`; coordinator submit-age watchdog is **retired** (no fallback).
-- Image defaults: `sync_ingest_per_file_timeout_s=0` (wall B demoted), `sync_ingest_stall_idle_s=1800`.
+- Image defaults: `sync_ingest_per_file_timeout_s` always **0** (wall soft-kill **deleted**, cannot re-arm), `sync_ingest_stall_idle_s=1800`, `sync_pool_stall_abort_after_timeouts=0`.
 - Discover/fill do not keep `*.fnctl.lock` on the ingest ZSET.
+- Progress SOP: `progress stage=… advancing=true|false idle_s=… metric=bytes|lines|members`; tar append idle stall → `tar append idle stall`.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'elapsed_s=0\.0 stage=unknown|idle_stall|ingest fill empty deep_queue|queue_orchestrator ingest timeout|fnctl\.lock' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml logs pipeline 2>&1 | grep -E 'elapsed_s=0\.0 stage=unknown|idle_stall|advancing=false|tar append idle stall|ingest fill empty deep_queue|queue_orchestrator ingest timeout|fnctl\.lock' | tail -80
 ```
 
 ```bash
@@ -1528,13 +1529,14 @@ docker compose -p hpcperfstats -f docker-compose.yaml -f docker-compose.app.yaml
 from hpcperfstats.dbload.lib import conf_parser as cfg
 print(\"per_file_timeout_s\", cfg.get_sync_ingest_per_file_timeout_s())
 print(\"stall_idle_s\", cfg.get_sync_ingest_stall_idle_s())
+print(\"stall_abort\", cfg.get_sync_pool_stall_abort_after_timeouts())
 print(\"max_s\", cfg.get_sync_ingest_per_file_timeout_max_s())
 "'
 ```
 
 ### T0 / T1 — ingest per-file timeout floor 3600 (throughput near-miss, 2026-07)
 
-**Archaeology / optional wall B:** current default floor is **0** + idle stall. Re-enable wall B only with `sync_ingest_per_file_timeout_s > 0`.
+**Archaeology (wall B deleted 2026-08-29):** internal per-file SIGALRM / size-proportional soft-kill is **removed** — not demoted. Grep `advancing=false` / `idle_stall` / `tar append idle stall` instead of wall-timeout primary signatures. Postgres `statement_timeout` remains the external ceiling.
 
 **Failure signature (pre-fix / old floor 900):** under `ingest_pool_processes=32`, many paths die with `ERROR: ingest per-file timeout … stage=ingest` / `outcome=timeout` at **elapsed == size-scaled budget** (~925–1654s for small/mid files). Slow cohort can still finish on retry (e.g. ~14 MiB in **2304.7s**). Not an idle/stall class if `remaining` advances.
 

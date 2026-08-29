@@ -1,10 +1,9 @@
 """
-Per-file ingest timeout and pool stall-abort helpers (shared by sync_timedb and
-pool dispatch).
+Per-file ingest timeout helpers (shared by sync_timedb and pool dispatch).
 
-Default INI fallbacks map **30 GiB → max** per-file ingest budget (24h at
-reference size). Operators should tune ``sync_ingest_per_file_timeout_max_s``,
-``per_mib``, and ``sync_pool_stall_abort_after_timeouts`` together.
+Internal wall soft-kill is deleted: ``resolve_*`` and ``stall_abort_polls_*``
+always return ``0``. Idle stall + Postgres ``statement_timeout`` remain.
+``get_sync_ingest_per_file_timeout_max_s`` is retained for Redis lease EX only.
 
 Attributes:
   GIANT_SUPPLEMENT_LARGE_MAX_BYTES: Attribute.
@@ -19,7 +18,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 # Former B giant-supplement thresholds (INI keys retired). Used only to label
 # oversized paths for worker-memory telemetry — not a coordinator supplement path.
 GIANT_SUPPLEMENT_TRIGGER_BUDGET_S = 6600.0
@@ -30,7 +28,6 @@ GIANT_SUPPLEMENT_LARGE_MAX_BYTES = 8 * 1024 * 1024 * 1024
 import os
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.dbload.lib.sync_timedb_parsing import stats_file_size_bytes
 
 _INGEST_TIMEOUT_MIB_BYTES = 1024 * 1024
 # Conservative proxy when Redis hlen is unavailable (typical spooled member size).
@@ -39,22 +36,23 @@ _TYPICAL_SEALED_MEMBER_BYTES = 32 * 1024 * 1024
 
 def resolve_ingest_per_file_timeout_s(stats_file: str) -> Any:
   """
-  Size-proportional wall-clock budget for one ingest worker task.
-  
+  Per-file internal wall budget — always ``0`` (wall soft-kill deleted).
+
+  Idle stall + Postgres ``statement_timeout`` remain. INI/env floor keys are
+  ignored so wall soft-kill cannot be re-armed.
+
   Args:
-    stats_file (str): String for stats file.
-  
+    stats_file (str): Stats path (unused; kept for API compatibility).
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    float: Always ``0.0``.
+
   Examples:
-    >>> resolve_ingest_per_file_timeout_s("x")  # doctest: +SKIP
+    >>> resolve_ingest_per_file_timeout_s("/x") == 0.0
+    True
   """
-  base = float(cfg.get_sync_ingest_per_file_timeout_s())
-  if base <= 0.0:
-    return 0.0
-  size = stats_file_size_bytes(stats_file)
-  return resolve_ingest_per_file_timeout_for_size_bytes(size, base=base)
+  del stats_file
+  return 0.0
 
 
 def resolve_ingest_per_file_timeout_for_size_bytes(
@@ -63,99 +61,63 @@ def resolve_ingest_per_file_timeout_for_size_bytes(
   base: Any | None = None,
 ) -> Any:
   """
-  Size-proportional ingest budget for a byte count (not necessarily a path).
-  
+  Size-proportional wall budget — always ``0`` (wall soft-kill deleted).
+
   Args:
-    size_bytes (Any): Size bytes passed to this helper.
-    base (Any | None): One of ``Any``, ``None``.
-  
+    size_bytes (Any): Unused; kept for API compatibility.
+    base (Any | None): Unused; kept for API compatibility.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    float: Always ``0.0``.
+
   Examples:
-    >>> resolve_ingest_per_file_timeout_for_size_bytes(None, None)
+    >>> resolve_ingest_per_file_timeout_for_size_bytes(1 << 30) == 0.0
+    True
   """
-  if base is None:
-    base = float(cfg.get_sync_ingest_per_file_timeout_s())
-  if base <= 0.0:
-    return 0.0
-  size = int(size_bytes or 0)
-  if size <= 0:
-    return base
-  mib = (size + (_INGEST_TIMEOUT_MIB_BYTES - 1)) // _INGEST_TIMEOUT_MIB_BYTES
-  per_mib = float(cfg.get_sync_ingest_per_file_timeout_s_per_mib())
-  cap = float(cfg.get_sync_ingest_per_file_timeout_max_s())
-  scaled = base + float(mib) * per_mib
-  if cap > 0.0:
-    scaled = min(scaled, cap)
-  return max(base, scaled)
+  del size_bytes, base
+  return 0.0
 
 
 def max_ingest_per_file_timeout_for_paths(paths: Any) -> Any:
   """
-  Largest resolved per-file ingest budget for a set of stats paths.
-  
+  Largest per-file wall budget for paths — always ``0`` (walls deleted).
+
   Args:
-    paths (Any): Iterable of filesystem paths as strings.
-  
+    paths (Any): Unused; kept for API compatibility.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    float: Always ``0.0``.
+
   Examples:
-    >>> max_ingest_per_file_timeout_for_paths(None)  # doctest: +SKIP
+    >>> max_ingest_per_file_timeout_for_paths(["/a"]) == 0.0
+    True
   """
-  floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
-  if floor_s <= 0.0:
-    return 0.0
-  best = floor_s
-  for path in paths or ():
-    if not path:
-      continue
-    resolved = resolve_ingest_per_file_timeout_s(path)
-    if resolved > best:
-      best = resolved
-  return best
+  del paths
+  return 0.0
 
 
-# Extra wall beyond in-flight batch_max so per-file SIGALRM / imap results can land.
+# Retained for tests that still name the constant; no longer drives stall abort.
 STALL_ABORT_GRACE_S = 120.0
 
 
 def stall_abort_polls_for_paths(paths: Any) -> Any:
   """
-  Poll-timeout abort count for in-flight paths (floor .. INI ceiling).
-  
+  Pool poll-count stall abort — always ``0`` (disabled; no wall reclaim).
+
+  Dead-worker / packed ``idle_stall`` reclaim only. INI ceiling is ignored.
+
   Args:
-    paths (Any): Iterable of filesystem paths as strings.
-  
+    paths (Any): Unused; kept for API compatibility.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    int: Always ``0`` (callers must skip poll-count abort when ``<= 0``).
+
   Examples:
-    >>> stall_abort_polls_for_paths(None)  # doctest: +SKIP
+    >>> stall_abort_polls_for_paths(["/a"]) == 0
+    True
   """
-  poll_s = float(cfg.get_sync_pool_poll_timeout_s())
-  ceiling_polls = int(cfg.get_sync_pool_stall_abort_after_timeouts())
-  if poll_s <= 0.0:
-    return max(1, ceiling_polls)
-  floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
-  max_s = float(cfg.get_sync_ingest_per_file_timeout_max_s())
-  if not paths:
-    batch_max_s = floor_s if floor_s > 0.0 else (
-        max_s if max_s > 0.0 else poll_s
-    )
-  else:
-    batch_max_s = max_ingest_per_file_timeout_for_paths(paths)
-    if batch_max_s <= 0.0:
-      batch_max_s = floor_s if floor_s > 0.0 else (
-          max_s if max_s > 0.0 else poll_s
-      )
-  grace_s = float(STALL_ABORT_GRACE_S)
-  dynamic_polls = int((batch_max_s + grace_s) / poll_s) + 1
-  min_polls = (
-      int((floor_s + grace_s) / poll_s) + 1 if floor_s > 0.0 else 1
-  )
-  return max(1, min(ceiling_polls, max(min_polls, dynamic_polls)))
+  del paths
+  return 0
 
 
 def default_giant_supplement_trigger_budget_s() -> Any:
@@ -264,10 +226,12 @@ def _redis_member_count_for_sealed_day(day_token: Any) -> Any:
   try:
     from datetime import date as date_cls
 
-    from hpcperfstats.dbload.lib.archive_compress import daily_compressed_path_for_date
+    from hpcperfstats.dbload.lib.archive_compress import (
+      daily_compressed_path_for_date,
+    )
     from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-        _daily_archive_members_cache_key,
-        normalize_daily_compressed_path,
+      _daily_archive_members_cache_key,
+      normalize_daily_compressed_path,
     )
 
     day_date = date_cls.fromisoformat(day_token)
@@ -407,35 +371,18 @@ def stall_abort_polls_for_sealed_archives(
   member_counts: Any | None = None,
 ) -> Any:
   """
-  Poll-timeout abort count for in-flight sealed archives (floor .. INI ceiling).
-  
+  Pool poll-count stall abort for sealed archives — always ``0`` (disabled).
+
   Args:
-    sealed_paths (Any): Iterable of filesystem paths as strings.
-    member_counts (Any | None): One of ``Any``, ``None``.
-  
+    sealed_paths (Any): Unused; kept for API compatibility.
+    member_counts (Any | None): Unused; kept for API compatibility.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    int: Always ``0``.
+
   Examples:
-    >>> stall_abort_polls_for_sealed_archives(None, None)  # doctest: +SKIP
+    >>> stall_abort_polls_for_sealed_archives(["/a.tar.zst"]) == 0
+    True
   """
-  poll_s = float(cfg.get_sync_pool_poll_timeout_s())
-  ceiling_polls = int(cfg.get_sync_pool_stall_abort_after_timeouts())
-  if poll_s <= 0.0:
-    return max(1, ceiling_polls)
-  floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
-  if not sealed_paths:
-    batch_max_s = floor_s if floor_s > 0.0 else poll_s
-  else:
-    batch_max_s = max_sealed_archive_ingest_budget_for_paths(
-        sealed_paths,
-        member_counts=member_counts,
-    )
-    if batch_max_s <= 0.0:
-      batch_max_s = floor_s if floor_s > 0.0 else poll_s
-  grace_s = float(STALL_ABORT_GRACE_S)
-  dynamic_polls = int((batch_max_s + grace_s) / poll_s) + 1
-  min_polls = (
-      int((floor_s + grace_s) / poll_s) + 1 if floor_s > 0.0 else 1
-  )
-  return max(1, min(ceiling_polls, max(min_polls, dynamic_polls)))
+  del sealed_paths, member_counts
+  return 0

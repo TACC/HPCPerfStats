@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX
+import hpcperfstats.dbload.lib.conf_parser as cfg
 
 # -printf format string for argv: find interprets \0 as NUL (do not embed real NULs —
 # Python subprocess rejects embedded null bytes in argv on some platforms).
@@ -589,12 +590,33 @@ def iter_find_stats_stdout_chunks(
         "GNU find not found (required for stats discovery)"
     ) from exc
   assert proc.stdout is not None
+  last_progress = time.monotonic()
+  idle_s = float(cfg.get_sync_ingest_stall_idle_s())
+  bytes_seen = 0
   try:
     while True:
       chunk = proc.stdout.read(read_n)
       if not chunk:
         break
+      bytes_seen += len(chunk)
+      now = time.monotonic()
+      # Unit progress = bytes streamed from find stdout.
+      last_progress = now
+      from hpcperfstats.dbload.lib.sync_timedb_progress_io import log_progress_sop
+
+      log_progress_sop(
+          stage="find_stats",
+          path=str(archive_dir),
+          advancing=True,
+          idle_s=0.0,
+          last_progress=last_progress,
+          metric="bytes",
+          force=False,
+      )
       yield chunk
+      if idle_s > 0.0 and (now - last_progress) >= idle_s:
+        # Unreachable while chunks arrive; kept for contract clarity.
+        pass
   finally:
     stderr_b = b""
     if proc.stderr is not None:
