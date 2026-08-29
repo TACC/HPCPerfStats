@@ -19,10 +19,10 @@ If a knob is (or should be) in the INI — for example **`[DEFAULT] ssl_certs_di
 | Allowed | Forbidden in production docs / base compose |
 |---------|-----------------------------------------------|
 | Set **`ssl_certs_dir`** in **`hpcperfstats.ini`** | Requiring **`HPCPERFSTATS_SSL_CERTS_DIR`** for `up` / `down` / `build` |
-| Run **`python3 services-conf/resolve_proxy_ssl_certs_dir.py`** to materialize **`.hpcperfstats_ssl_certs`** from the INI | Teaching operators to maintain a project **`.env`** with that path |
-| Test/CI overlay + **`resolve --fixture`** for self-signed PEMs | Defaulting base compose to **`tests/fixtures/proxy-ssl`** (silent prod self-signed under HSTS) |
+| **`docker compose up --build`** (proxy Dockerfile bakes PEMs from the INI) | Teaching operators to maintain a project **`.env`** or a mandatory pre-build resolve for TLS |
+| Test/CI: set **`ssl_certs_dir`** to **`tests/fixtures/proxy-ssl`** in the build-context INI | Defaulting production INI to the CI self-signed fixture |
 
-Compose may use a **gitignored** bake directory (``.hpcperfstats_ssl_certs/`` from **`resolve_proxy_ssl_certs_dir.py`**) that **copies** PEMs from INI **`ssl_certs_dir`** (following LE `live/`→`archive/` links; preserving source file + directory mode/uid/gid) so BuildKit **`additional_contexts`** works. That is **not** an operator `.env` flag. Do **not** point the Compose context at Let’s Encrypt **`live/`** itself (relative ``archive/`` links break inside the image).
+The proxy image build binds the host root and runs **`resolve_proxy_ssl_certs_dir.py`** so Compose needs **no** ``additional_contexts`` and **no** operator ``.env``. That is **not** an excuse to ``rm -rf`` paths that might symlink into ``/etc/letsencrypt``.
 
 ## Allowed env uses (narrow)
 

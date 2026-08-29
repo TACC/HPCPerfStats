@@ -15,7 +15,7 @@ This repository uses an immutable-image deployment policy for `hpcperfstats.ini`
 - Build images so `/home/hpcperfstats/hpcperfstats.ini` is present at image build time.
 - Keep `HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini` as the runtime path unless explicitly changed project-wide.
 - If compose/examples currently mount `./hpcperfstats.ini`, remove those mounts and update docs/tests in the same task.
-- **Proxy TLS PEMs:** bake from host **`[DEFAULT] ssl_certs_dir`** into the **proxy** image via BuildKit **`additional_contexts`** / **`COPY --from=ssl_certs`**. Materialize **`.hpcperfstats_ssl_certs/`** by copying PEMs with **`python3 services-conf/resolve_proxy_ssl_certs_dir.py`** (follows LE `live/`→`archive/`; preserves source file + directory mode/uid/gid). **Do not** require operators to set **`.env`** / **`HPCPERFSTATS_SSL_CERTS_DIR`**. **Do not** use Let’s Encrypt **`live/`** as the BuildKit context. **Do not** use a runtime **`ssl_certs`** Compose bind. After Let’s Encrypt renew, **re-run resolve**, then **rebuild and recreate `proxy`**.
+- **Proxy TLS PEMs:** bake from host **`[DEFAULT] ssl_certs_dir`** inside **`proxy.Dockerfile`** at build time (`RUN --mount=type=bind,source=/,target=/host` + **`resolve_proxy_ssl_certs_dir.py --host-prefix /host --dest-dir /etc/ssl/hpcperfstats`**). **Do not** require a manual resolve step, **`.env`**, or Compose **`additional_contexts`**. **Do not** use a runtime **`ssl_certs`** Compose bind. After Let’s Encrypt renew, **rebuild and recreate `proxy`**. Never instruct **`rm -rf .hpcperfstats_ssl_certs`** when that path might be a symlink into **`/etc/letsencrypt`**.
 
 ## Why
 
