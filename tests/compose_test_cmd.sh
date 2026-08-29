@@ -41,38 +41,6 @@ compose_ensure_test_overlay_yaml() {
   fi
 }
 
-# Base compose bakes TLS from INI inside proxy.Dockerfile (host / bind). For CI,
-# point the work-copy / checkout hpcperfstats.ini ssl_certs_dir at the fixture.
-compose_ensure_proxy_ssl_certs_dir_for_tests() {
-  local repo_root
-  repo_root="$(compose_repo_root)"
-  local fixture="${repo_root}/tests/fixtures/proxy-ssl"
-  if [[ ! -f "${fixture}/fullchain.pem" || ! -f "${fixture}/privkey.pem" ]]; then
-    echo "compose_ensure_proxy_ssl_certs_dir_for_tests: missing PEMs under ${fixture}" >&2
-    return 1
-  fi
-  local ini="${repo_root}/hpcperfstats.ini"
-  if [[ ! -f "${ini}" ]]; then
-    cp "${repo_root}/hpcperfstats.ini.example" "${ini}"
-  fi
-  python3 - "${ini}" "${fixture}" <<'PY'
-import re
-import sys
-from pathlib import Path
-ini_path = Path(sys.argv[1])
-fixture = Path(sys.argv[2]).resolve()
-text = ini_path.read_text(encoding="utf-8")
-pat = re.compile(r"(?m)^(ssl_certs_dir\s*=\s*).*$")
-if pat.search(text):
-  text = pat.sub(rf"\g<1>{fixture}", text, count=1)
-else:
-  text = text.rstrip() + f"\n\nssl_certs_dir = {fixture}\n"
-ini_path.write_text(text, encoding="utf-8")
-print(f"compose_ensure_proxy_ssl_certs_dir_for_tests: ssl_certs_dir={fixture}", file=sys.stderr)
-PY
-}
-
-
 # virtiofs bind mounts from cloud-sync paths (CloudStorage, iCloud, etc.) can deny listdir/open in
 # the Linux VM (pip, bash, cp all hit EPERM). Rsync to a host work tree first,
 # then bind-mount that tree (not the cloud-sync checkout). Default work copy:
@@ -164,7 +132,6 @@ compose_rsync_docs_contract_files() {
 compose_prepare_bind_mount() {
   compose_ensure_settings_yaml || return 1
   compose_ensure_test_overlay_yaml || return 1
-  compose_ensure_proxy_ssl_certs_dir_for_tests || return 1
   local repo_root
   repo_root="$(compose_repo_root)"
   local use_work_copy="${COMPOSE_BIND_MOUNT_WORK_COPY:-}"
@@ -260,7 +227,6 @@ compose_test_project_args() {
 compose_test() {
   compose_ensure_settings_yaml || return 1
   compose_ensure_test_overlay_yaml || return 1
-  compose_ensure_proxy_ssl_certs_dir_for_tests || return 1
   local project_args=()
   if [[ -n "${COMPOSE_BIND_MOUNT_DIR:-}" ]]; then
     project_args=(--project-directory "${COMPOSE_BIND_MOUNT_DIR}")

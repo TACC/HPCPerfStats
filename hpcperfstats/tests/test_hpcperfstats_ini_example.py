@@ -75,6 +75,14 @@ def _parse_documented_ini_options(path):
   return documented
 
 
+def test_ssl_certs_dir_removed_from_registry_and_example():
+  """TLS authority moved to docker-compose.settings.yaml proxy_ssl_source volume."""
+  registry_options = {option for _section, option, _default in cfg.INI_OPTION_REGISTRY}
+  assert "ssl_certs_dir" not in registry_options
+  text = _repo_ini_example_path().read_text(encoding="utf-8")
+  assert "ssl_certs_dir" not in text
+
+
 def test_dead_day_close_knobs_removed_from_registry_and_example():
   """Startup inflight, days_per_tick, and dead seal/defer/wait knobs stay gone."""
   dead = {

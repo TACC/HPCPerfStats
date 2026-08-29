@@ -10,34 +10,36 @@ globs: docker-compose*.yaml,hpcperfstats.ini.example,services-conf/resolve_proxy
 
 ## Law (non-negotiable)
 
-**Production deploys must not require operators to create a Compose `.env` file or export shell environment variables for site configuration that already lives in `hpcperfstats.ini`.**
+**Production deploys must not require operators to create a Compose `.env` file or export shell environment variables for site configuration that already lives in `hpcperfstats.ini` or `docker-compose.settings.yaml`.**
 
-If a knob is (or should be) in the INI — for example **`[DEFAULT] ssl_certs_dir`**, **`server=`**, paths, pool sizes — Compose / image bake / install docs must consume it from the INI (directly or via a small host helper that reads the INI). Do **not** make **`export FOO=…`**, **`.env`**, or **`${FOO:?…}`** the production contract for that knob.
+If a knob belongs in INI or settings — for example **`server=`**, paths, pool sizes, or TLS **`proxy_ssl_source.device`** — Compose / install docs must consume it from those files. Do **not** make **`export FOO=…`**, **`.env`**, or **`${FOO:?…}`** the production contract for that knob.
 
-## Proxy TLS bake (canonical example)
+## Proxy TLS (canonical example)
 
 | Allowed | Forbidden in production docs / base compose |
 |---------|-----------------------------------------------|
-| Set **`ssl_certs_dir`** in **`hpcperfstats.ini`** | Requiring **`HPCPERFSTATS_SSL_CERTS_DIR`** for `up` / `down` / `build` |
-| **`docker compose up --build`** (proxy Dockerfile bakes PEMs from the INI) | Teaching operators to maintain a project **`.env`** or a mandatory pre-build resolve for TLS |
-| Test/CI: set **`ssl_certs_dir`** to **`tests/fixtures/proxy-ssl`** in the build-context INI | Defaulting production INI to the CI self-signed fixture |
+| Set **`proxy_ssl_source.device`** in **`docker-compose.settings.yaml`** | Requiring **`HPCPERFSTATS_SSL_CERTS_DIR`** for `up` / `down` / `build` |
+| Optional **`HPCPERFSTATS_SSL_CERTS_REL`** in settings for LE **`live/hostname`** only | Teaching operators to maintain a project **`.env`** or mandatory pre-start resolve for TLS |
+| **`docker compose up --build`** (entrypoint materializes PEMs at start) | Defaulting production settings to the CI self-signed fixture |
+| Test/CI: **`test_proxy_ssl_source`** overlay bind to **`tests/fixtures/proxy-ssl`** | Build-time host **`/`** bind or **`additional_contexts`** for TLS |
 
-The proxy image build binds the host root and runs **`resolve_proxy_ssl_certs_dir.py`** so Compose needs **no** ``additional_contexts`` and **no** operator ``.env``. That is **not** an excuse to ``rm -rf`` paths that might symlink into ``/etc/letsencrypt``.
+**`resolve_proxy_ssl_certs_dir.py`** runs inside **`proxy_entrypoint.sh`** at container start so Compose needs **no** ``additional_contexts`` and **no** operator ``.env``. That is **not** an excuse to ``rm -rf`` paths that might symlink into ``/etc/letsencrypt``.
 
 ## Allowed env uses (narrow)
 
 - **Process titles / container runtime** already set in compose (`HPCPERFSTATS_INI=…` inside the image path).
+- **Optional LE subpath** via **`HPCPERFSTATS_SSL_CERTS_REL`** in **`docker-compose.settings.yaml`** (commented in `.example`); unset for flat PEM dirs.
 - **Test/CI-only** exports inside **`tests/compose_test_cmd.sh`** / workflow scripts (never the production install path).
-- **One-shot diagnostics** where the operator pastes a command that substitutes an INI-resolved path — prefer the resolve helper over a standing env var.
+- **One-shot diagnostics** where the operator pastes a command that substitutes a resolved path — prefer the resolve helper over a standing env var.
 
 ## Agent requirements
 
-- When adding Compose interpolation for site identity/paths, prefer INI + helper over new **`HPCPERFSTATS_*`** production env contracts.
+- When adding Compose interpolation for site identity/paths, prefer settings + INI over new **`HPCPERFSTATS_*`** production env contracts.
 - Update **`README.md` Installation** in the same task (`readme-installation-sync.mdc`).
 - Dual-register this rule when triggers change (`agent-discipline-core.mdc` + `hook_task_router.py`).
 
 ## Overlap
 
-- **`immutable-image-ini-policy.mdc`** — bake INI and TLS into images; no runtime INI bind.
-- **`hpcperfstats-ini-format.mdc`** — INI is the site config surface.
+- **`immutable-image-ini-policy.mdc`** — bake INI into images; no runtime INI bind; TLS via settings volume + entrypoint.
+- **`hpcperfstats-ini-format.mdc`** — INI is the site config surface (TLS path is **not** in INI).
 - **`minimal-compose-install-footprint.mdc`** — keep operator compose edits minimal.

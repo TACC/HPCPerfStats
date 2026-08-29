@@ -15,13 +15,13 @@ This repository uses an immutable-image deployment policy for `hpcperfstats.ini`
 - Build images so `/home/hpcperfstats/hpcperfstats.ini` is present at image build time.
 - Keep `HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini` as the runtime path unless explicitly changed project-wide.
 - If compose/examples currently mount `./hpcperfstats.ini`, remove those mounts and update docs/tests in the same task.
-- **Proxy TLS PEMs:** bake from host **`[DEFAULT] ssl_certs_dir`** inside **`proxy.Dockerfile`** at build time (`RUN --mount=type=bind,source=/,target=/host` + **`resolve_proxy_ssl_certs_dir.py --host-prefix /host --dest-dir /etc/ssl/hpcperfstats`**). **Do not** require a manual resolve step, **`.env`**, or Compose **`additional_contexts`**. **Do not** use a runtime **`ssl_certs`** Compose bind. After Let’s Encrypt renew, **rebuild and recreate `proxy`**. Never instruct **`rm -rf .hpcperfstats_ssl_certs`** when that path might be a symlink into **`/etc/letsencrypt`**.
+- **Proxy TLS PEMs:** settings volume **`proxy_ssl_source`** (bind **`device:`** in **`docker-compose.settings.yaml`**) mounted read-only at **`/mnt/ssl-source`** on **`proxy`**. **`proxy_entrypoint.sh`** runs **`resolve_proxy_ssl_certs_dir.py`** to copy real PEMs into **`/etc/ssl/hpcperfstats`** before **`nginx -t`**. Optional **`HPCPERFSTATS_SSL_CERTS_REL`** in settings for Let's Encrypt **`live/hostname`** layouts (mount parent **`/etc/letsencrypt`**, not the leaf). **Do not** require **`.env`**, Compose **`additional_contexts`**, or build-time host **`/`** bind. **Do not** bind PEMs directly at nginx paths (symlink hazard). After Let's Encrypt renew, **`docker compose restart proxy`** (no image rebuild). Never **`rm -rf`** paths that might be symlinks into **`/etc/letsencrypt`**.
 
 ## Why
 
 - Runtime behavior should be deterministic from the built image.
 - Deployments should not rely on host-local mutable config files for required startup config.
-- TLS material in the proxy image matches the same immutable-artifact model as the baked INI.
+- TLS material is read from the host via the settings volume at container start; nginx paths stay fixed in the image.
 
 ## Validation
 

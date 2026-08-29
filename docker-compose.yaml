@@ -100,8 +100,8 @@ services:
     build:
       context: ./
       dockerfile: services-conf/proxy.Dockerfile
-      # TLS PEMs baked in proxy.Dockerfile from [DEFAULT] ssl_certs_dir (host bind).
-      # No additional_contexts / no manual resolve / no .env.
+      # TLS PEMs materialized at container start from proxy_ssl_source settings volume.
+      # No additional_contexts / no .env for TLS paths.
     image: hpcperfstats-proxy
 
     restart: always
@@ -122,9 +122,11 @@ services:
       - 80:80
       - 443:443
     volumes:
-      # Main vhost (TLS PEMs baked into the proxy image at /etc/ssl/hpcperfstats).
-      # Shared routing/security snippets: compose mounts are the only source of truth
-      # (proxy.Dockerfile does not COPY these — avoid bake+mount duplication).
+      # TLS source mount (device: in docker-compose.settings.yaml → proxy_ssl_source).
+      # Entrypoint materializes PEMs into /etc/ssl/hpcperfstats before nginx -t.
+      - proxy_ssl_source:/mnt/ssl-source:ro
+      # Main vhost. Shared routing/security snippets: compose mounts are the only
+      # source of truth (proxy.Dockerfile does not COPY these).
       # hps-proxy-allowed-hosts.inc and nginx-resolver.inc stay image/runtime-managed.
       - ./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro
       - ./services-conf/nginx-static-files.conf:/etc/nginx/nginx-static-files.conf:ro

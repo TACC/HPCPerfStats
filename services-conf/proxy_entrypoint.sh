@@ -67,5 +67,12 @@ python3 /usr/local/lib/hpcperfstats-proxy/write_nginx_spa_csp_includes.py \
 validate_csp_include "${CSP_MACHINE}" "machine"
 validate_csp_include "${CSP_PUB}" "pub"
 
+python3 /usr/local/lib/hpcperfstats-proxy/resolve_proxy_ssl_certs_dir.py \
+  --ssl-source-mount /mnt/ssl-source \
+  ${HPCPERFSTATS_SSL_CERTS_REL:+--ssl-certs-rel "$HPCPERFSTATS_SSL_CERTS_REL"} \
+  --dest-dir /etc/ssl/hpcperfstats
+test -f /etc/ssl/hpcperfstats/fullchain.pem
+test -f /etc/ssl/hpcperfstats/privkey.pem
+
 nginx -t
 exec nginx -g "daemon off;"

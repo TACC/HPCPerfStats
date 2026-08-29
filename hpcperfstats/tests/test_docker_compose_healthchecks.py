@@ -144,18 +144,19 @@ def test_docker_compose_rabbitmq_vm_memory_cap_is_96gib():
   assert "80GiB" in deploy
 
 
-def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
+def test_docker_compose_proxy_runtime_tls_mount_and_entrypoint_materialize():
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
   content = compose_path.read_text()
 
   assert "./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro" in content
+  assert "proxy_ssl_source:/mnt/ssl-source:ro" in content
   assert "ssl_certs:/etc/ssl/hpcperfstats:ro" not in content
   assert "additional_contexts:" not in content
   assert "ssl_certs: ./.hpcperfstats_ssl_certs" not in content
   assert "${HPCPERFSTATS_SSL_CERTS_DIR" not in content
   assert ":-./tests/fixtures/proxy-ssl}" not in content
-  assert ".hpcperfstats_ssl_certs" in (repo_root / ".gitignore").read_text()
+  assert ".hpcperfstats_ssl_certs" not in (repo_root / ".gitignore").read_text()
   assert "/etc/letsencrypt/:/etc/letsencrypt/:ro" not in content
   assert "services-conf/proxy.Dockerfile" in content
   assert "NGINX_SSL_CERT" not in content
@@ -182,6 +183,7 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   assert "ssl_certificate /etc/ssl/hpcperfstats/fullchain.pem;" in nginx
   assert "ssl_certificate_key /etc/ssl/hpcperfstats/privkey.pem;" in nginx
   dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
+  entrypoint = (repo_root / "services-conf" / "proxy_entrypoint.sh").read_text()
   # Mount-only snippets must not also be COPY'd (single source of truth = compose volumes).
   assert "COPY services-conf/nginx-static-files.conf" not in dockerfile
   assert "COPY services-conf/nginx-edge-security-headers.inc" not in dockerfile
@@ -191,12 +193,18 @@ def test_docker_compose_proxy_bakes_default_conf_and_mounts_shared_includes():
   assert "nginx.conf.example" not in dockerfile
   assert "COPY services-conf/nginx.conf /build/nginx.conf" in dockerfile
   assert "COPY --from=ssl_certs" not in dockerfile
-  assert "--mount=type=bind,source=/,target=/host,ro" in dockerfile
-  assert "--host-prefix /host" in dockerfile
-  assert "--dest-dir /etc/ssl/hpcperfstats" in dockerfile
   assert "resolve_proxy_ssl_certs_dir.py" in dockerfile
-  assert "test -f /etc/ssl/hpcperfstats/fullchain.pem" in dockerfile
-  assert "test -f /etc/ssl/hpcperfstats/privkey.pem" in dockerfile
+  assert "--mount=type=bind,source=/,target=/host" not in dockerfile
+  assert "--host-prefix /host" not in dockerfile
+  assert "--dest-dir /etc/ssl/hpcperfstats" not in dockerfile
+  assert "test -f /etc/ssl/hpcperfstats/fullchain.pem" not in dockerfile
+  assert "test -f /etc/ssl/hpcperfstats/privkey.pem" not in dockerfile
+  assert "resolve_proxy_ssl_certs_dir.py" in entrypoint
+  assert "--ssl-source-mount /mnt/ssl-source" in entrypoint
+  assert "--dest-dir /etc/ssl/hpcperfstats" in entrypoint
+  assert "test -f /etc/ssl/hpcperfstats/fullchain.pem" in entrypoint
+  assert "test -f /etc/ssl/hpcperfstats/privkey.pem" in entrypoint
+  assert "HPCPERFSTATS_SSL_CERTS_REL" in entrypoint
   # Host archive modes preserved via resolve copy; do not rewrite in Dockerfile.
   assert "chown -R root:root /etc/ssl/hpcperfstats" not in dockerfile
   assert "chmod 400 /etc/ssl/hpcperfstats/privkey.pem" not in dockerfile
@@ -264,6 +272,7 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
       "postgres_data",
       "rabbitmq_messages",
       "ssh_keys",
+      "proxy_ssl_source",
   ):
     assert f"{name}:" in settings
     assert "driver: local" in settings
@@ -271,6 +280,7 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
     assert name in base
   assert "ssl_certs:" not in settings
   assert "ssl_certs:/etc/ssl/hpcperfstats" not in base
+  assert "proxy_ssl_source:/mnt/ssl-source:ro" in base
 
 
 def test_docker_compose_pipeline_ssh_uses_ssh_keys_volume():
@@ -303,6 +313,7 @@ _OPERATOR_SETTINGS_SHARED_BIND_DEVICES = (
 )
 
 _OPERATOR_SETTINGS_EXAMPLE_SSH_DEVICE = "device: /keys_directory/.ssh"
+_OPERATOR_SETTINGS_EXAMPLE_SSL_DEVICE = "device: /opt/certs"
 
 _OPERATOR_SETTINGS_VOLUME_NAMES = (
     "hpcperfstatsdata:",
@@ -311,6 +322,7 @@ _OPERATOR_SETTINGS_VOLUME_NAMES = (
     "postgres_data:",
     "rabbitmq_messages:",
     "ssh_keys:",
+    "proxy_ssl_source:",
 )
 
 
@@ -322,8 +334,9 @@ def test_docker_compose_settings_example_operator_markers():
   for marker in _OPERATOR_SETTINGS_SHARED_BIND_DEVICES:
     assert marker in example_content, "example missing bind device: %s" % marker
   assert _OPERATOR_SETTINGS_EXAMPLE_SSH_DEVICE in example_content
+  assert _OPERATOR_SETTINGS_EXAMPLE_SSL_DEVICE in example_content
+  assert "HPCPERFSTATS_SSL_CERTS_REL" in example_content
   assert "ssl_certs:" not in example_content
-  assert "letsencrypt" not in example_content
   assert "SYS_PTRACE" in example_content
   assert "15672:15672" in example_content
   assert "5432:5432" in example_content
@@ -367,6 +380,7 @@ def test_docker_compose_test_overlay_clears_host_binds():
         "test_postgres_data",
         "test_rabbitmq_messages",
         "test_ssh_keys",
+        "test_proxy_ssl_source",
     ):
       assert name in overlay_path.read_text()
     assert "test_ssl_certs" not in overlay_path.read_text()
@@ -377,8 +391,11 @@ def test_docker_compose_test_overlay_clears_host_binds():
       "test_postgres_data",
       "test_rabbitmq_messages",
       "test_ssh_keys",
+      "test_proxy_ssl_source",
   ):
     assert name in overlay
+  assert "test_proxy_ssl_source:/mnt/ssl-source:ro" in overlay
+  assert "device: ./tests/fixtures/proxy-ssl" in overlay
   assert "test_ssl_certs" not in overlay
   assert "/data/hpcperfstats" not in overlay
   assert "/opt/hpcperfstats" not in overlay

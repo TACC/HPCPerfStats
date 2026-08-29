@@ -1,7 +1,6 @@
 # syntax=docker/dockerfile:1
-# TLS PEMs: bake at image build from [DEFAULT] ssl_certs_dir in hpcperfstats.ini
-# (host bind / + resolve_proxy_ssl_certs_dir.py). No Compose additional_contexts,
-# no manual resolve step, no runtime ssl_certs volume.
+# TLS PEMs: materialized at container start from proxy_ssl_source settings volume
+# via resolve_proxy_ssl_certs_dir.py in proxy_entrypoint.sh (not baked at build).
 FROM alpine:3.24.1
 
 # Pin nginx from Alpine edge main (stable packages lag); bump NGINX_EDGE_VERSION on proxy rebuilds.
@@ -22,28 +21,15 @@ RUN nginx -v
 
 RUN mkdir -p /usr/local/lib/hpcperfstats-proxy /etc/nginx /etc/ssl/hpcperfstats
 
-# Bake PEMs during build: read ssl_certs_dir from INI, follow LE live→archive
-# links on the host, copy into the image with source mode/uid/gid preserved.
-COPY hpcperfstats.ini /bake/hpcperfstats.ini
-COPY services-conf/resolve_proxy_ssl_certs_dir.py /bake/resolve_proxy_ssl_certs_dir.py
-RUN --mount=type=bind,source=/,target=/host,ro \
-    set -eu; \
-    python3 /bake/resolve_proxy_ssl_certs_dir.py \
-      --ini /bake/hpcperfstats.ini \
-      --host-prefix /host \
-      --dest-dir /etc/ssl/hpcperfstats; \
-    test -f /etc/ssl/hpcperfstats/fullchain.pem; \
-    test -f /etc/ssl/hpcperfstats/privkey.pem; \
-    rm -rf /bake
-
 # Shared nginx snippets (static-files, edge headers, CSP, django-proxy-common) are
 # compose bind-mounts only — do not COPY them here or they drift from mounts.
-# Image bakes: TLS PEMs, Python helpers, entrypoint, default.conf baseline, hosts
-# include, and a placeholder OCSP resolver (entrypoint overwrites at start).
+# Image ships: Python helpers, entrypoint, default.conf baseline, hosts include,
+# and a placeholder OCSP resolver (entrypoint overwrites at start).
 COPY services-conf/parse_hpcperfstats_proxy_hosts.py \
     services-conf/write_nginx_proxy_allowed_hosts_include.py \
     services-conf/write_nginx_resolver_include.py \
     services-conf/write_nginx_spa_csp_includes.py \
+    services-conf/resolve_proxy_ssl_certs_dir.py \
     hpcperfstats/site/lib/spa_csp_meta.py \
     /usr/local/lib/hpcperfstats-proxy/
 
@@ -54,6 +40,7 @@ ENV PYTHONPATH=/usr/local/lib/hpcperfstats-proxy
 RUN chmod 755 /usr/local/lib/hpcperfstats-proxy/write_nginx_proxy_allowed_hosts_include.py \
     /usr/local/lib/hpcperfstats-proxy/write_nginx_resolver_include.py \
     /usr/local/lib/hpcperfstats-proxy/write_nginx_spa_csp_includes.py \
+    /usr/local/lib/hpcperfstats-proxy/resolve_proxy_ssl_certs_dir.py \
     /usr/local/bin/proxy_entrypoint.sh
 
 WORKDIR /build

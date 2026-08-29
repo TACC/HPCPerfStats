@@ -95,7 +95,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `hpcperfstats/site/frontend/package.json`, `next.config.ts`, `tsconfig*.json`, `scripts/copy-next-export.mjs`, `frontend/test/**`, `app/bokeh-playwright-smoke/**`, `scripts/rebuild_frontend.sh` | `frontend-prod-test-build-boundary.mdc`, `frontend-static-prod-serve-only.mdc` |
 | `hpcperfstats/site/hpcperfstats_site/static/frontend/**`, `services-conf/proxy_entrypoint.sh`, `services-conf/nginx-static-files.conf`, `services-conf/nginx*.conf` (when static serve / CSP handoff) | `frontend-static-prod-serve-only.mdc`, `nginx-static-url-prefix.mdc` |
 | `services-conf/nginx*` | `nginx-static-url-prefix.mdc`, `nginx-django-route-allowlist-sync.mdc` |
-| `services-conf/resolve_proxy_ssl_certs_dir.py`, `hpcperfstats.ini` / `hpcperfstats.ini.example` (TLS / site bake knobs) | `no-production-env-for-ini-config.mdc`, `immutable-image-ini-policy.mdc`, `hpcperfstats-ini-format.mdc` |
+| `services-conf/resolve_proxy_ssl_certs_dir.py`, `docker-compose.settings.yaml.example` (TLS settings mount) | `no-production-env-for-ini-config.mdc`, `immutable-image-ini-policy.mdc`, `docker-compose-settings-example-sync.mdc` |
 | `HPCPerfStats/README.md` or workspace-root `README.md` only (not other `README.md` paths) | `readme-installation-sync.mdc`, `compose-operator-terminal-commands.mdc`, `minimal-compose-install-footprint.mdc`, `no-production-env-for-ini-config.mdc` |
 | `docs/TESTING.md`, test runners | `testing-doc-sync.mdc`, `compose-operator-terminal-commands.mdc` |
 | `cursor-hooks/*`, `hpcperfstats/tests/test_cursor_hooks.py` | `testing-best-practices.mdc` |

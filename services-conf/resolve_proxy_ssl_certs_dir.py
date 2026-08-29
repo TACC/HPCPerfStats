@@ -1,23 +1,19 @@
 #!/usr/bin/env python3
 """
-Resolve and validate ``[DEFAULT] ssl_certs_dir`` for proxy image builds.
+Materialize proxy TLS PEMs from a read-only settings mount into nginx paths.
 
-Reads the path from ``hpcperfstats.ini`` (not from operator ``.env`` / shell
-exports). The **proxy Dockerfile** invokes this helper during ``docker compose
-build`` / ``podman build`` with ``--host-prefix /host --dest-dir
-/etc/ssl/hpcperfstats`` so operators do not run a separate materialize step.
-Optionally can still write ``.hpcperfstats_ssl_certs/`` on the host.
+Reads ``fullchain.pem`` and ``privkey.pem`` from ``--ssl-source-mount`` (typically
+``/mnt/ssl-source`` from the ``proxy_ssl_source`` Compose volume). Optional
+``--ssl-certs-rel`` selects a subpath for Let's Encrypt ``live/hostname`` layouts.
 
 Attributes:
-  REQUIRED_PEM_NAMES: Basename tuple that must exist under ``ssl_certs_dir``.
+  REQUIRED_PEM_NAMES: Basename tuple that must exist under the source directory.
   FIXTURE_REL: Checkout-relative path of the committed self-signed fixture.
-  COMPOSE_SSL_CERTS_CONTEXT_REL: Optional gitignored host-side bake directory.
 """
 
 from __future__ import annotations
 
 import argparse
-import configparser
 import os
 import shutil
 import stat
@@ -26,7 +22,6 @@ from pathlib import Path
 
 REQUIRED_PEM_NAMES: tuple[str, ...] = ("fullchain.pem", "privkey.pem")
 FIXTURE_REL: str = "tests/fixtures/proxy-ssl"
-COMPOSE_SSL_CERTS_CONTEXT_REL: str = ".hpcperfstats_ssl_certs"
 
 
 def services_conf_dir() -> Path:
@@ -71,37 +66,6 @@ def fixture_ssl_certs_dir() -> Path:
   return (repo_root() / FIXTURE_REL).resolve()
 
 
-def find_default_ini_path(*, cwd: Path | None = None) -> Path:
-  """
-  Locate ``hpcperfstats.ini`` or ``hpcperfstats.ini.example`` under *cwd*.
-
-  Prefers the deployment ini when both exist.
-
-  Args:
-    cwd (Path | None): Directory to search; defaults to the process cwd.
-
-  Returns:
-    Path: Absolute path of the first matching ini file.
-
-  Raises:
-    ValueError: When neither file exists in *cwd*.
-
-  Examples:
-    >>> p = find_default_ini_path(cwd=repo_root())
-    >>> p.name in ("hpcperfstats.ini", "hpcperfstats.ini.example")
-    True
-  """
-  base = (cwd if cwd is not None else Path.cwd()).resolve()
-  for name in ("hpcperfstats.ini", "hpcperfstats.ini.example"):
-    candidate = base / name
-    if candidate.is_file():
-      return candidate
-  raise ValueError(
-      "missing hpcperfstats.ini or hpcperfstats.ini.example under "
-      f"{base} (pass --ini)"
-  )
-
-
 def apply_stat_ownership_and_mode(path: Path, st: os.stat_result) -> None:
   """
   Apply *st* mode bits and uid/gid to *path* (best-effort for ownership).
@@ -127,22 +91,107 @@ def apply_stat_ownership_and_mode(path: Path, st: os.stat_result) -> None:
     pass
 
 
-def resolve_readable_pem(certs_dir: Path, name: str) -> Path:
+def assert_path_under_mount(path: Path, mount_root: Path) -> None:
+  """
+  Require *path* to resolve inside *mount_root*.
+
+  Args:
+    path (Path): Candidate path (may be a symlink target).
+    mount_root (Path): Absolute resolved mount root.
+
+  Raises:
+    ValueError: When *path* escapes *mount_root*.
+
+  Returns:
+    None: This function validates in place.
+
+  Examples:
+    >>> import tempfile
+    >>> from pathlib import Path
+    >>> td = Path(tempfile.mkdtemp())
+    >>> root = (td / "mount").resolve()
+    >>> root.mkdir()
+    >>> inner = root / "live" / "host"
+    >>> inner.mkdir(parents=True)
+    >>> assert_path_under_mount(inner.resolve(), root)
+  """
+  resolved_mount = mount_root.resolve()
+  resolved_path = path.resolve()
+  try:
+    resolved_path.relative_to(resolved_mount)
+  except ValueError as exc:
+    raise ValueError(
+        f"PEM path {resolved_path} is outside ssl source mount {resolved_mount}; "
+        "widen proxy_ssl_source.device to include archive symlinks"
+    ) from exc
+
+
+def resolve_source_certs_dir(
+    ssl_source_mount: Path,
+    ssl_certs_rel: str | None = None,
+) -> Path:
+  """
+  Join the settings mount with an optional relative certificate subpath.
+
+  Args:
+    ssl_source_mount (Path): Read-only mount root (for example ``/mnt/ssl-source``).
+    ssl_certs_rel (str | None): Optional subpath under the mount for LE ``live/…``.
+
+  Returns:
+    Path: Absolute resolved source directory containing PEMs.
+
+  Raises:
+    ValueError: When the joined path escapes the mount or is not a directory.
+
+  Examples:
+    >>> import tempfile
+    >>> from pathlib import Path
+    >>> td = Path(tempfile.mkdtemp())
+    >>> mount = td / "mount"
+    >>> mount.mkdir()
+    >>> (mount / "fullchain.pem").write_text("c", encoding="utf-8")
+    >>> (mount / "privkey.pem").write_text("k", encoding="utf-8")
+    >>> resolve_source_certs_dir(mount) == mount.resolve()
+    True
+  """
+  mount_root = ssl_source_mount.expanduser().resolve()
+  if not mount_root.is_dir():
+    raise ValueError(f"ssl source mount is not a directory: {mount_root}")
+  rel = (ssl_certs_rel or "").strip().strip("/")
+  if rel:
+    candidate = (mount_root / rel).resolve()
+    assert_path_under_mount(candidate, mount_root)
+  else:
+    candidate = mount_root
+  if not candidate.is_dir():
+    raise ValueError(f"ssl certs source is not a directory: {candidate}")
+  return candidate
+
+
+def resolve_readable_pem(
+    certs_dir: Path,
+    name: str,
+    *,
+    mount_root: Path | None = None,
+) -> Path:
   """
   Resolve *name* under *certs_dir* to a readable regular file.
 
-  Follows Let’s Encrypt ``live/`` symlinks into ``archive/``.
+  Follows Let's Encrypt ``live/`` symlinks into ``archive/`` when *mount_root*
+  is set, the resolved target must remain under *mount_root*.
 
   Args:
     certs_dir (Path): Absolute certificate directory.
     name (str): Basename such as ``fullchain.pem``.
+    mount_root (Path | None): When set, resolved targets must stay under this
+      mount root.
 
   Returns:
     Path: Absolute path of the readable PEM file (symlink target when linked).
 
   Raises:
-    ValueError: When the path is missing, a broken symlink, not a file, or
-      not readable.
+    ValueError: When the path is missing, a broken symlink, not a file, not
+      readable, or escapes *mount_root*.
 
   Examples:
     >>> resolve_readable_pem(fixture_ssl_certs_dir(), "fullchain.pem").is_file()
@@ -157,6 +206,8 @@ def resolve_readable_pem(certs_dir: Path, name: str) -> Path:
           f"{name} is a broken symlink: {link} -> {os.readlink(link)}"
       ) from exc
     raise ValueError(f"missing {name} under {certs_dir}") from exc
+  if mount_root is not None:
+    assert_path_under_mount(real, mount_root)
   if not real.is_file():
     raise ValueError(f"{name} resolves to a non-file: {link} -> {real}")
   if not os.access(real, os.R_OK):
@@ -164,12 +215,18 @@ def resolve_readable_pem(certs_dir: Path, name: str) -> Path:
   return real
 
 
-def validate_ssl_certs_dir(certs_dir: Path) -> Path:
+def validate_ssl_certs_dir(
+    certs_dir: Path,
+    *,
+    mount_root: Path | None = None,
+) -> Path:
   """
   Require *certs_dir* to be a directory containing readable required PEMs.
 
   Args:
-    certs_dir (Path): Candidate host directory (may be relative).
+    certs_dir (Path): Candidate directory (may be relative).
+    mount_root (Path | None): When set, PEM symlink targets must stay under this
+      mount root.
 
   Returns:
     Path: Absolute resolved directory path.
@@ -185,98 +242,40 @@ def validate_ssl_certs_dir(certs_dir: Path) -> Path:
   """
   resolved = certs_dir.expanduser().resolve()
   if not resolved.is_dir():
-    raise ValueError(f"ssl_certs_dir is not a directory: {resolved}")
+    raise ValueError(f"ssl certs source is not a directory: {resolved}")
   errors: list[str] = []
   for name in REQUIRED_PEM_NAMES:
     try:
-      resolve_readable_pem(resolved, name)
+      resolve_readable_pem(resolved, name, mount_root=mount_root)
     except ValueError as exc:
       errors.append(str(exc))
   if errors:
     listing = sorted(resolved.iterdir()) if os.access(resolved, os.R_OK) else []
     names = ", ".join(p.name for p in listing) or "(unreadable or empty)"
     raise ValueError(
-        f"ssl_certs_dir {resolved} PEM check failed: "
+        f"ssl certs source {resolved} PEM check failed: "
         + "; ".join(errors)
         + f"; directory entries: {names}"
     )
   return resolved
 
 
-def under_host_prefix(path: Path, host_prefix: Path | None) -> Path:
-  """
-  Map an absolute host path into a BuildKit ``/host`` bind mount.
-
-  Args:
-    path (Path): Absolute path as written in ``hpcperfstats.ini``.
-    host_prefix (Path | None): Prefix such as ``/host`` when baking inside
-      a container build; ``None`` leaves *path* unchanged.
-
-  Returns:
-    Path: Path visible inside the build environment.
-
-  Examples:
-    >>> under_host_prefix(Path('/etc/x'), Path('/host')) == Path('/host/etc/x')
-    True
-  """
-  if host_prefix is None:
-    return path
-  abs_path = path if path.is_absolute() else path.resolve()
-  return host_prefix.joinpath(*abs_path.parts[1:])
-
-
-def load_ssl_certs_dir_from_ini(
-    ini_path: Path,
+def copy_pems_preserving_meta(
+    certs_dir: Path,
+    dest_dir: Path,
     *,
-    host_prefix: Path | None = None,
+    mount_root: Path | None = None,
 ) -> Path:
-  """
-  Read ``[DEFAULT] ssl_certs_dir`` from *ini_path* and validate PEMs.
-
-  Args:
-    ini_path (Path): Path to ``hpcperfstats.ini`` or the example.
-    host_prefix (Path | None): Optional BuildKit host bind prefix (``/host``).
-
-  Returns:
-    Path: Absolute validated certificate directory (under *host_prefix* when set).
-
-  Raises:
-    ValueError: When the ini cannot be read, the key is empty, or PEMs are
-      missing.
-
-  Examples:
-    >>> import tempfile
-    >>> from pathlib import Path
-    >>> fix = fixture_ssl_certs_dir()
-    >>> td = Path(tempfile.mkdtemp())
-    >>> ini = td / "t.ini"
-    >>> _ = ini.write_text(
-    ...     "[DEFAULT]\\nssl_certs_dir = %s\\n" % fix, encoding="utf-8"
-    ... )
-    >>> load_ssl_certs_dir_from_ini(ini) == fix
-    True
-  """
-  cfg = configparser.ConfigParser(
-      interpolation=configparser.ExtendedInterpolation()
-  )
-  read_ok = cfg.read(ini_path, encoding="utf-8")
-  if not read_ok:
-    raise ValueError(f"could not read ini: {ini_path}")
-  raw = cfg.get("DEFAULT", "ssl_certs_dir", fallback="").strip()
-  if not raw:
-    raise ValueError(
-        f"missing or empty [DEFAULT] ssl_certs_dir= in {ini_path}"
-    )
-  return validate_ssl_certs_dir(under_host_prefix(Path(raw), host_prefix))
-
-
-def copy_pems_preserving_meta(certs_dir: Path, dest_dir: Path) -> Path:
   """
   Copy required PEMs into *dest_dir*, preserving source file and dir metadata.
 
+  Materialized destination files are regular files, not symlinks.
+
   Args:
-    certs_dir (Path): Validated source directory (may be under ``/host``).
+    certs_dir (Path): Validated source directory.
     dest_dir (Path): Destination directory (created if needed).
+    mount_root (Path | None): When set, PEM symlink targets must stay under this
+      mount root.
 
   Returns:
     Path: *dest_dir* after PEMs are copied.
@@ -294,11 +293,11 @@ def copy_pems_preserving_meta(certs_dir: Path, dest_dir: Path) -> Path:
     >>> (td / "fullchain.pem").is_file()
     True
   """
-  validated = validate_ssl_certs_dir(certs_dir)
+  validated = validate_ssl_certs_dir(certs_dir, mount_root=mount_root)
   dest_dir.mkdir(parents=True, exist_ok=True)
   apply_stat_ownership_and_mode(dest_dir, validated.stat())
   for name in REQUIRED_PEM_NAMES:
-    src = resolve_readable_pem(validated, name)
+    src = resolve_readable_pem(validated, name, mount_root=mount_root)
     src_st = src.stat()
     out = dest_dir / name
     if out.exists() or out.is_symlink():
@@ -308,183 +307,105 @@ def copy_pems_preserving_meta(certs_dir: Path, dest_dir: Path) -> Path:
   return dest_dir
 
 
-def compose_ssl_certs_context_path(
+def materialize_ssl_certs(
+    ssl_source_mount: Path,
+    dest_dir: Path,
     *,
-    checkout_root: Path | None = None,
+    ssl_certs_rel: str | None = None,
 ) -> Path:
   """
-  Return the absolute path of the optional host-side TLS bake directory.
+  Copy PEMs from the settings mount into the nginx certificate directory.
 
   Args:
-    checkout_root (Path | None): Checkout root; defaults to this script's repo.
+    ssl_source_mount (Path): Read-only mount root (for example ``/mnt/ssl-source``).
+    dest_dir (Path): Destination directory (for example ``/etc/ssl/hpcperfstats``).
+    ssl_certs_rel (str | None): Optional subpath under the mount for LE layouts.
 
   Returns:
-    Path: Absolute path of ``.hpcperfstats_ssl_certs``.
-
-  Examples:
-    >>> compose_ssl_certs_context_path().name == COMPOSE_SSL_CERTS_CONTEXT_REL
-    True
-  """
-  root = (checkout_root if checkout_root is not None else repo_root()).resolve()
-  return root / COMPOSE_SSL_CERTS_CONTEXT_REL
-
-
-def ensure_compose_ssl_certs_context(
-    certs_dir: Path,
-    *,
-    checkout_root: Path | None = None,
-) -> Path:
-  """
-  Copy required PEMs into ``.hpcperfstats_ssl_certs/`` with exact source perms.
-
-  Optional host-side helper; production proxy builds bake via the Dockerfile
-  (``--host-prefix`` / ``--dest-dir``) instead. Never ``rm -rf`` through a
-  symlink into ``/etc/letsencrypt``.
-
-  Args:
-    certs_dir (Path): Absolute validated host directory with required PEMs.
-    checkout_root (Path | None): Checkout root that owns the context dir;
-      defaults to this script's repo root.
-
-  Returns:
-    Path: Absolute path of ``.hpcperfstats_ssl_certs``.
+    Path: Absolute *dest_dir* after materialization.
 
   Raises:
-    ValueError: When a required PEM cannot be resolved, or an unexpected path
-      blocks the context directory name.
-    OSError: When the directory or copies cannot be created.
+    ValueError: When the source path is invalid or PEMs are missing.
 
   Examples:
     >>> import tempfile
     >>> from pathlib import Path
     >>> fix = fixture_ssl_certs_dir()
     >>> td = Path(tempfile.mkdtemp())
-    >>> dest = ensure_compose_ssl_certs_context(fix, checkout_root=td)
-    >>> (dest / "fullchain.pem").is_file() and not (dest / "fullchain.pem").is_symlink()
+    >>> dest = td / "nginx-ssl"
+    >>> materialize_ssl_certs(fix, dest) == dest.resolve()
     True
   """
-  validated = validate_ssl_certs_dir(certs_dir)
-  root = (checkout_root if checkout_root is not None else repo_root()).resolve()
-  dest = root / COMPOSE_SSL_CERTS_CONTEXT_REL
-  if dest.is_symlink() or dest.is_file():
-    # Unlink only — never follow a symlink into Let's Encrypt live/.
-    dest.unlink()
-  elif dest.is_dir():
-    shutil.rmtree(dest)
-  elif dest.exists():
-    raise ValueError(
-        f"refuse to replace unexpected compose SSL context path: {dest}"
-    )
-  return copy_pems_preserving_meta(validated, dest)
-
-
-def _default_compose_link_repo_root(
-    *,
-    repo_root_arg: Path | None,
-) -> Path:
-  """
-  Choose the checkout root that should own ``.hpcperfstats_ssl_certs``.
-
-  Args:
-    repo_root_arg (Path | None): Explicit ``--repo-root`` value, if any.
-
-  Returns:
-    Path: Absolute directory for the Compose SSL context directory.
-
-  Examples:
-    >>> _default_compose_link_repo_root(repo_root_arg=None).is_dir()
-    True
-  """
-  if repo_root_arg is not None:
-    return repo_root_arg.resolve()
-  cwd = Path.cwd().resolve()
-  if (cwd / "docker-compose.yaml").is_file():
-    return cwd
-  return repo_root()
+  mount_root = ssl_source_mount.expanduser().resolve()
+  source = resolve_source_certs_dir(mount_root, ssl_certs_rel)
+  return copy_pems_preserving_meta(
+      source,
+      dest_dir,
+      mount_root=mount_root,
+  )
 
 
 def main(argv: list[str] | None = None) -> int:
   """
-  Print a validated TLS certs directory; optionally bake PEMs to a destination.
+  Materialize TLS PEMs from a settings mount into ``--dest-dir``.
 
   Args:
     argv (list[str] | None): CLI arguments without the program name, or
       ``None`` to use ``sys.argv[1:]``.
 
   Returns:
-    int: ``0`` on success; ``1`` when validation fails.
+    int: ``0`` on success; ``1`` when validation or materialization fails.
 
   Examples:
-    >>> main(["--fixture", "--no-link"])
+    >>> import tempfile
+    >>> from pathlib import Path
+    >>> fix = fixture_ssl_certs_dir()
+    >>> td = Path(tempfile.mkdtemp())
+    >>> dest = td / "out"
+    >>> main(["--ssl-source-mount", str(fix), "--dest-dir", str(dest)])
     0
   """
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument(
-      "--ini",
+      "--ssl-source-mount",
       type=Path,
       default=None,
-      help="hpcperfstats.ini path (default: cwd ini or .example)",
+      help="read-only TLS source mount (e.g. /mnt/ssl-source)",
   )
   parser.add_argument(
-      "--fixture",
-      action="store_true",
-      help="use committed tests/fixtures/proxy-ssl (ignore --ini); CI only",
-  )
-  parser.add_argument(
-      "--no-link",
-      action="store_true",
-      help="print path only; do not update .hpcperfstats_ssl_certs",
-  )
-  parser.add_argument(
-      "--repo-root",
-      type=Path,
+      "--ssl-certs-rel",
       default=None,
-      help="checkout root for optional .hpcperfstats_ssl_certs (default: cwd)",
-  )
-  parser.add_argument(
-      "--host-prefix",
-      type=Path,
-      default=None,
-      help="BuildKit bind prefix for host paths (e.g. /host in proxy.Dockerfile)",
+      help="optional subpath under the mount (LE live/hostname)",
   )
   parser.add_argument(
       "--dest-dir",
       type=Path,
-      default=None,
-      help="copy PEMs here (proxy image bake); skips .hpcperfstats_ssl_certs",
+      required=True,
+      help="destination directory for materialized PEMs",
+  )
+  parser.add_argument(
+      "--fixture",
+      action="store_true",
+      help="use committed tests/fixtures/proxy-ssl as --ssl-source-mount",
   )
   args = parser.parse_args(argv)
+  if not args.fixture and args.ssl_source_mount is None:
+    parser.error("--ssl-source-mount is required unless --fixture is set")
   try:
-    host_prefix = args.host_prefix
-    if args.fixture:
-      path = validate_ssl_certs_dir(
-          under_host_prefix(fixture_ssl_certs_dir(), host_prefix)
-      )
-    else:
-      ini_path = (
-          args.ini.resolve()
-          if args.ini is not None
-          else find_default_ini_path()
-      )
-      path = load_ssl_certs_dir_from_ini(ini_path, host_prefix=host_prefix)
-    if args.dest_dir is not None:
-      copy_pems_preserving_meta(path, args.dest_dir)
-      print(
-          f"baked PEMs into {args.dest_dir} from {path}",
-          file=sys.stderr,
-      )
-    elif not args.no_link:
-      link_root = _default_compose_link_repo_root(repo_root_arg=args.repo_root)
-      dest = ensure_compose_ssl_certs_context(path, checkout_root=link_root)
-      print(
-          f"compose SSL context: {dest} (PEM copies from {path}, "
-          f"mode/uid/gid preserved)",
-          file=sys.stderr,
-      )
+    mount = (
+        fixture_ssl_certs_dir()
+        if args.fixture
+        else args.ssl_source_mount
+    )
+    dest = materialize_ssl_certs(
+        mount,
+        args.dest_dir,
+        ssl_certs_rel=args.ssl_certs_rel,
+    )
   except ValueError as exc:
     print(f"error: {exc}", file=sys.stderr)
     return 1
-  print(path)
+  print(dest, file=sys.stderr)
   return 0
 
 

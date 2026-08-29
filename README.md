@@ -248,8 +248,9 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    Edit `docker-compose.settings.yaml` and set at least:
 
    - **`volumes → ssh_keys → device`:** host directory with pipeline SSH keys (permissions suitable for mount as `/hpcperfstats/.ssh/`)
+   - **`volumes → proxy_ssl_source → device`:** host directory containing **`fullchain.pem`** and **`privkey.pem`** (flat PEM dir; default example uses **`/opt/certs`**). For Let's Encrypt, set **`device: /etc/letsencrypt`** and uncomment the optional **`services.proxy.environment`** block in the settings example with **`HPCPERFSTATS_SSL_CERTS_REL=live/your.hostname`** — do **not** bind only the **`live/hostname`** leaf (archive symlinks break).
 
-   TLS certificates are **not** a Compose volume. Set **`[DEFAULT] ssl_certs_dir`** in **`hpcperfstats.ini`** (next step) to a host directory that contains at least **`fullchain.pem`** and **`privkey.pem`** (typically the Let’s Encrypt **live** dir for this hostname). Those PEMs are baked into the **`proxy`** image automatically during **`docker compose build`** / **`up --build`** (no **`.env`**, no manual resolve step).
+   TLS PEMs are **not** baked into the image. The **`proxy`** service mounts **`proxy_ssl_source`** read-only at **`/mnt/ssl-source`**; **`proxy_entrypoint.sh`** materializes real PEM files into **`/etc/ssl/hpcperfstats`** before nginx starts (no **`.env`**, no manual resolve step). After cert renew, **`docker compose restart proxy`** (no image rebuild).
 
    Create host directories for **every** bind `device:` before `up` (defaults from the example):
 
@@ -264,7 +265,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    sudo mkdir -p /data/hpcperfstats_site/staticfiles
    sudo mkdir -p /data/hpcperfstats_site/media
    sudo mkdir -p /data/hpcperfstats_db/pg15
-   # Also ensure the ssh_keys device path you set above exists.
+   # Also ensure the ssh_keys and proxy_ssl_source device paths you set above exist.
    ```
 
    The `hpcperfstatsdata` bind maps to **`/hpcperfstats/`** in the `pipeline` and `web` containers (for example `/hpcperfstats/accounting`, `/hpcperfstats/archive`, `/hpcperfstats/daily_archive`, and **`/hpcperfstats/logs/`** for cluster syslog).
@@ -302,7 +303,6 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    - `machine` — cluster name  
    - `host_name_ext` — FQDN of the cluster  
    - `server` — FQDN of the host running the containers
-   - `ssl_certs_dir` — host directory with **`fullchain.pem`** + **`privkey.pem`** (Let’s Encrypt live dir or equivalent); baked into **`proxy`** at build (not a Compose bind)
    - `restricted_queue_keywords` - queues you want to filter out and prevent jobs in them from being displayed 
    - `staff_email_domain` - the email domain of the institution/organization so authorized staff can see all jobs
    - `timezone` - your machine's local timezone
@@ -342,23 +342,19 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    Committed **`services-conf/nginx.conf`** uses fixed in-container TLS paths
    (**`/etc/ssl/hpcperfstats/fullchain.pem`** and **`privkey.pem`**). Cert PEMs are
-   **baked into the proxy image during the image build** from host
-   **`[DEFAULT] ssl_certs_dir`** (Dockerfile runs **`resolve_proxy_ssl_certs_dir.py`**
-   with a host ``/`` bind). There is **no** Compose **`ssl_certs`** volume,
+   **materialized at container start** from the **`proxy_ssl_source`** settings
+   volume (mounted at **`/mnt/ssl-source`**) via
+   **`resolve_proxy_ssl_certs_dir.py`** in **`proxy_entrypoint.sh`**. There is
+   **no** Compose **`ssl_certs`** volume, **no** build-time host **`/`** bind,
    **no** ``additional_contexts`` / manual resolve step, and **no** production
-   **`.env`**. **Do not** edit TLS paths in nginx — set **`ssl_certs_dir`** in the
-   INI and rebuild **`proxy`**.
+   **`.env`**. **Do not** edit TLS paths in nginx — set
+   **`proxy_ssl_source.device`** in **`docker-compose.settings.yaml`** (and for
+   Let's Encrypt, optional **`HPCPERFSTATS_SSL_CERTS_REL`** in settings).
 
-   ```bash
-   docker compose build proxy
-   docker compose up -d --force-recreate proxy
-   ```
-
-   After Let’s Encrypt renew (or changing **`ssl_certs_dir`**): rebuild/recreate
-   **`proxy`** only. Never point production **`ssl_certs_dir`** at
-   **`tests/fixtures/proxy-ssl`**. **`./scripts/rebuild_pipeline.sh`** does **not**
-   rebuild **`proxy`**. Requires BuildKit (Docker Compose v2+ / Podman with
-   buildah bind mounts from the host root during build).
+   After Let's Encrypt renew (or changing the TLS source path): restart
+   **`proxy`** only — **`docker compose restart proxy`**. Never point production
+   **`proxy_ssl_source.device`** at **`tests/fixtures/proxy-ssl`**.
+   **`./scripts/rebuild_pipeline.sh`** does **not** restart **`proxy`**.
 
    Compose bind-mounts **`./services-conf/nginx.conf`** to **`/etc/nginx/http.d/default.conf`**
    on **`proxy`**, and bind-mounts the shared snippets (**`nginx-static-files.conf`**,
@@ -367,10 +363,11 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    runtime source for those files (they are **not** baked into **`proxy.Dockerfile`**).
 
    The proxy image **`cp`**s **`nginx.conf`** into **`default.conf`** at **build** time for a
-   non-Compose baseline, bakes TLS PEMs + **`hps-proxy-allowed-hosts.inc`** from
-   **`[DEFAULT] server=`**, and ships **`proxy_entrypoint.sh`** plus the resolver
-   helper. Compose still replaces **`default.conf`** with the host **`nginx.conf`**
-   mount. Runtime **`proxy_entrypoint.sh`** regenerates the OCSP **`resolver`** include
+   non-Compose baseline, generates **`hps-proxy-allowed-hosts.inc`** from
+   **`[DEFAULT] server=`**, and ships **`proxy_entrypoint.sh`** plus the TLS/resolver
+   helpers. Compose still replaces **`default.conf`** with the host **`nginx.conf`**
+   mount. Runtime **`proxy_entrypoint.sh`** materializes TLS PEMs from
+   **`/mnt/ssl-source`**, regenerates the OCSP **`resolver`** include
    from container **`/etc/resolv.conf`**, waits for SPA HTML under
    **`/srv/static/frontend/{machine,pub}/index.html`**, and may write private
    diagnostic CSP includes under **`/etc/nginx/`** (never under **`/srv/static`**).
@@ -387,10 +384,10 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    **`/etc/nginx/hps-proxy-allowed-hosts.inc`**, which the main config **`include`**s
    for **`server_name`**. Requests whose **`Host`** header does not match receive **404**
    on port 80; on port 443, unknown names get TLS handshake rejection
-   (**`ssl_reject_handshake`**). Rebuild **`proxy`** after changing **`server=`**,
-   **`ssl_certs_dir`** / cert PEMs, or **`nginx.conf`**. No **`docker-compose.yaml`**
+   (**`ssl_reject_handshake`**). Restart **`proxy`** after changing **`server=`**,
+   TLS cert PEMs, or **`nginx.conf`**. No **`docker-compose.yaml`**
    edits are required for TLS paths or hostnames (TLS paths are fixed; certs via
-   **`ssl_certs_dir`** bake).
+   **`proxy_ssl_source`** settings volume + entrypoint materialization).
 
    Static/media routing is split into a reusable include mounted at
    **`services-conf/nginx-static-files.conf`**; nginx serves **`/static/`** and
@@ -462,7 +459,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 | Rebuild web/pipeline image after Python-only changes (preserves live frontend, no npm) | `./scripts/rebuild_pipeline.sh` |
 | Temporary pipeline-only rebuild (no running web; recreate pipeline only) | `./scripts/rebuild_pipeline.sh --no-web` |
 | Rebuild just the app and keep persistent services running | `docker compose stop -t 120 web pipeline proxy && docker compose up --build -d web pipeline && docker compose start proxy` |
-| Rebuild proxy after `ssl_certs_dir` / cert renew or `server=` change | `docker compose build proxy && docker compose up -d --force-recreate proxy` |
+| Restart proxy after cert renew or `server=` change | `docker compose restart proxy` |
 | View logs  | `sudo docker compose logs` |
 | PostgreSQL shell | `docker compose exec db psql -h localhost -U hpcperfstats` |
 | Pipeline shell (data/processing) | `docker compose exec pipeline su hpcperfstats` |

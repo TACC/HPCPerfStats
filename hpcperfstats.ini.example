@@ -13,9 +13,6 @@ data_dir = /hpcperfstats/
 # Comma-separated FQDNs for the web/proxy host (TLS allowlist and Django ALLOWED_HOSTS).
 server = servername.domain.edu, stats.cluster.domain.edu
 
-# Host directory with fullchain.pem + privkey.pem; baked into the proxy image at build (not a Compose volume).
-ssl_certs_dir = /etc/letsencrypt/live/hostname.example.edu
-
 # Queue name substrings that exclude jobs from listings (Python list syntax).
 restricted_queue_keywords = ['secure', 'secret']
 

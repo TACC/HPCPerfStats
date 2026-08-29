@@ -53,7 +53,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("DEFAULT", "host_name_ext"),
     ("DEFAULT", "data_dir"),
     ("DEFAULT", "server"),
-    ("DEFAULT", "ssl_certs_dir"),
     ("DEFAULT", "restricted_queue_keywords"),
     ("DEFAULT", "debug"),
     ("DEFAULT", "staff_email_domain"),
@@ -212,7 +211,6 @@ INI_OPTION_DEFAULTS = {
     'host_name_ext': None,
     'data_dir': None,
     'server': None,
-    'ssl_certs_dir': None,
     'restricted_queue_keywords': None,
     'debug': 'no',
     'staff_email_domain': None,
@@ -1316,25 +1314,6 @@ def get_server_name() -> Any:
     >>> get_server_name()  # doctest: +SKIP
   """
   return _get('DEFAULT', 'server')
-
-
-def get_ssl_certs_dir() -> Any:
-  """
-  Return the host TLS certificate directory from ``[DEFAULT] ssl_certs_dir``.
-
-  This path is the BuildKit ``additional_contexts`` source for baking PEMs
-  into the proxy image at ``/etc/ssl/hpcperfstats`` (not a runtime volume).
-
-  Returns:
-    Any: Configured directory string, or the registry ``None`` default when
-    unset.
-
-  Examples:
-    >>> from hpcperfstats.dbload.lib import conf_parser as cp
-    >>> isinstance(cp.get_ssl_certs_dir(), (str, type(None)))
-    True
-  """
-  return _get('DEFAULT', 'ssl_certs_dir')
 
 
 def get_cors_origin_scheme() -> Any:

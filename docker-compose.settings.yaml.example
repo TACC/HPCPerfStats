@@ -5,8 +5,8 @@
 # see hpcperfstats/cursor-rules/docker-compose-settings-example-sync.mdc.
 #
 # Base stack: docker-compose.yaml (includes this file).
-# TLS PEMs are baked into the proxy image from [DEFAULT] ssl_certs_dir — there
-# is no ssl_certs Compose volume.
+# TLS PEMs: proxy_ssl_source volume (flat PEM dir default); entrypoint copies
+# real files into /etc/ssl/hpcperfstats before nginx starts.
 
 volumes:
   hpcperfstatsdata:
@@ -46,6 +46,13 @@ volumes:
       # Host directory with pipeline SSH keys (edit for your site).
       device: /keys_directory/.ssh
       o: bind
+  proxy_ssl_source:
+    driver: local
+    driver_opts:
+      type: none
+      # Host directory with fullchain.pem + privkey.pem at this path (edit for your site).
+      device: /opt/certs
+      o: bind
 
 # Optional knobs — copy a block under `services:` in your local
 # docker-compose.settings.yaml and uncomment as needed for this site.
@@ -63,6 +70,11 @@ volumes:
 #     # Allow the rabbitmq management interface to be open to the world.
 #     ports:
 #       - "15672:15672"
+#   proxy:
+#     # Let's Encrypt only — PEMs under live/hostname with archive symlinks.
+#     # Set proxy_ssl_source.device to /etc/letsencrypt (parent tree), then uncomment:
+#     environment:
+#       - HPCPERFSTATS_SSL_CERTS_REL=live/hpcperfstats02.example.com
 #   pipeline:
 #     # Debugging only — normal usage should never need this.
 #     cap_add:
