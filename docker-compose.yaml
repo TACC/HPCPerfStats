@@ -241,7 +241,6 @@ services:
     volumes:
       - rabbitmq_messages:/var/lib/rabbitmq/
       # Host-local RMQ logs (not in settings volume table — site-specific path).
-      - /var/log/rabbitmq:/var/log/rabbitmq
       - ./services-conf/rabbitmq_logging.conf:/etc/rabbitmq/conf.d/30-logging_settings.conf:ro
       - ./services-conf/rabbitmq_max_message_size.conf:/etc/rabbitmq/conf.d/20-max_message_size.conf:ro
       - ./services-conf/rabbitmq_default_queue_type.conf:/etc/rabbitmq/conf.d/25-default_queue_type.conf:ro
