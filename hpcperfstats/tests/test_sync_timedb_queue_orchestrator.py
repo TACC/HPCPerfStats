@@ -1579,6 +1579,10 @@ def test_missing_path_requeues_ingest_not_ack(monkeypatch, tmp_path):
     calls["n"] += 1
     return claim if calls["n"] == 1 else None
 
+  def _claim_jobs(*a, **k):
+    one = _claim(*a, **k)
+    return [one] if one is not None else []
+
   requeued = []
 
   def _requeue(*a, **k):
@@ -1594,6 +1598,7 @@ def test_missing_path_requeues_ingest_not_ack(monkeypatch, tmp_path):
   monkeypatch.setattr(jq, "requeue_job", _requeue)
   monkeypatch.setattr(jq, "ack_job", _ack)
   monkeypatch.setattr(jq, "claim_ingest_job", _claim)
+  monkeypatch.setattr(jq, "claim_ingest_jobs", _claim_jobs)
   monkeypatch.setattr(os.path, "isfile", lambda p: False)
 
   class _Pool:
@@ -1633,6 +1638,10 @@ def test_missing_path_acks_when_ingest_complete(monkeypatch, tmp_path):
     calls["n"] += 1
     return claim if calls["n"] == 1 else None
 
+  def _claim_jobs(*a, **k):
+    one = _claim(*a, **k)
+    return [one] if one is not None else []
+
   requeued = []
   acked = []
   monkeypatch.setattr(
@@ -1642,6 +1651,7 @@ def test_missing_path_acks_when_ingest_complete(monkeypatch, tmp_path):
       jq, "ack_job", lambda *a, **k: acked.append(k.get("identity")) or True,
   )
   monkeypatch.setattr(jq, "claim_ingest_job", _claim)
+  monkeypatch.setattr(jq, "claim_ingest_jobs", _claim_jobs)
   monkeypatch.setattr(os.path, "isfile", lambda p: False)
 
   class _Pool:
@@ -1684,11 +1694,16 @@ def test_fill_ingest_ack_drops_fnctl_lock_sidecar(monkeypatch, tmp_path):
     calls["n"] += 1
     return claim if calls["n"] == 1 else None
 
+  def _claim_jobs(*a, **k):
+    one = _claim(*a, **k)
+    return [one] if one is not None else []
+
   acked = []
   monkeypatch.setattr(
       jq, "ack_job", lambda *a, **k: acked.append(k.get("identity")) or True,
   )
   monkeypatch.setattr(jq, "claim_ingest_job", _claim)
+  monkeypatch.setattr(jq, "claim_ingest_jobs", _claim_jobs)
   monkeypatch.setattr(
       jq, "requeue_job", lambda *a, **k: (_ for _ in ()).throw(
           AssertionError("must not requeue lock sidecar"),
@@ -1731,7 +1746,16 @@ def test_fill_ingest_skip_budget_breaks(monkeypatch, tmp_path):
     calls["n"] += 1
     return claim
 
+  def _claim_jobs(*a, **k):
+    max_n = int(k.get("max_n", 1))
+    out = []
+    for _ in range(max_n):
+      calls["n"] += 1
+      out.append(claim)
+    return out
+
   monkeypatch.setattr(jq, "claim_ingest_job", _claim)
+  monkeypatch.setattr(jq, "claim_ingest_jobs", _claim_jobs)
   monkeypatch.setattr(jq, "requeue_job", lambda *a, **k: True)
   monkeypatch.setattr(jq, "ack_job", lambda *a, **k: True)
   monkeypatch.setattr(os.path, "isfile", lambda p: False)
@@ -1880,7 +1904,7 @@ def test_ingest_coordinator_uses_runtime_steal_on_fill_empty():
   assert "steal_dead_owner_leases" in hy
   assert "ingest runtime steal" in hy
   assert "reconcile_this_owner_orphan_leases" in hy
-  assert "len(ingest_inflight) >= int(ingest_pool_size)" in hy
+  assert "redis_underfull" in hy or "redis_hlen" in hy
   assert "zcard" in hy
   fill_src = inspect.getsource(qo._ingest_coordinator_loop)
   first_fill = fill_src.find(
@@ -2469,3 +2493,98 @@ def test_drain_ingest_marks_quiet_log_fn_none(monkeypatch, tmp_path):
   assert recorded[0]["log_fn"] is None
   src = inspect.getsource(qo._drain_ingest_ready)
   assert "log_fn=None" in src
+
+
+def test_rc8_reconcile_prunes_local_when_redis_hlen_low():
+  """RC8: phantom local maps prune when Redis has no inflight/lease."""
+  class _Client:
+    def hget(self, key, field):
+      del key, field
+      return None
+
+    def get(self, key):
+      del key
+      return None
+
+  class _NotReady:
+    def ready(self):
+      return False
+
+  inflight = {"/phantom": _NotReady()}
+  leases = {
+      "/phantom": type("C", (), {"score": 1.0})(),
+  }
+  submitted = {"/phantom": 1.0}
+  band_used = {"hot": 1, "catchup": 0}
+  pruned = qo._reconcile_local_ingest_maps_to_redis(
+      _Client(),
+      ingest_inflight=inflight,
+      ingest_leases=leases,
+      ingest_submitted=submitted,
+      band_used=band_used,
+  )
+  assert pruned == 1
+  assert inflight == {}
+  assert leases == {}
+  assert submitted == {}
+  assert band_used["hot"] == 0
+
+
+def test_rc8_hygiene_runs_when_local_full_redis_underfull(monkeypatch):
+  """RC8: hygiene must not skip when local looks full but Redis HLEN is low."""
+  calls = {"steal": 0}
+
+  def fake_steal(client):
+    del client
+    calls["steal"] += 1
+    return 0
+
+  monkeypatch.setattr(jq, "steal_dead_owner_leases", fake_steal)
+  monkeypatch.setattr(
+      jq, "reconcile_this_owner_orphan_leases", lambda **k: 0,
+  )
+  class _Ready:
+    pass
+
+  inflight = {("/x%d" % i): _Ready() for i in range(24)}
+  now = qo._ingest_runtime_lease_hygiene(
+      client=object(),
+      ingest_inflight=inflight,
+      ingest_leases={},
+      ingest_pool_size=24,
+      zcard=100,
+      last_runtime_steal=0.0,
+      log_fn=None,
+      redis_hlen=5,
+  )
+  assert now > 0
+  assert calls["steal"] == 1
+
+
+def test_rc8_band_cap_uses_counters_not_full_scan():
+  """RC8 #9: fill loop must not walk claims via _count_ingest_band_inflight."""
+  src = inspect.getsource(qo._fill_ingest_band)
+  assert "band_used" in src
+  # Per-claim recount removed from the hot loop body.
+  assert src.count("_count_ingest_band_inflight(claims)") <= 1
+
+
+def test_rc8e_no_50ms_sleep_on_zero_submit_deep_zset():
+  """RC8e: 0-submit deep ZSET under pool sleeps <<50ms."""
+  s = qo._ingest_coordinator_tick_sleep_s(
+      zcard=100, poll_s=5.0, fill_submitted=0, local_n=2, pool=24,
+  )
+  assert s <= 0.005
+  s2 = qo._ingest_coordinator_tick_sleep_s(
+      zcard=100, poll_s=5.0, fill_submitted=3, local_n=5, pool=24,
+  )
+  assert s2 == 0.05
+
+
+def test_rc8e_census_wired_in_fill_tick():
+  """RC8e: fill tick uses pipelined ingest_zset_census."""
+  src = inspect.getsource(qo._ingest_coordinator_fill_tick)
+  assert "ingest_zset_census" in src
+  loop = inspect.getsource(qo._ingest_coordinator_loop)
+  assert "_ingest_coordinator_tick_sleep_s" in loop
+  assert "_reconcile_local_ingest_maps_to_redis" in loop

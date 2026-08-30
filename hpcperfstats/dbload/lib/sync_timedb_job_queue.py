@@ -36,6 +36,7 @@ Attributes:
   _BOOT_ID_CACHE: Memoized host boot identifier.
   _CLAIM_LIST_LUA: Lua source for atomic LIST claim (pop + lease + in-flight).
   _CLAIM_ZSET_LUA: Lua source for atomic ranged ZSET claim.
+  _CLAIM_ZSET_MULTI_LUA: Lua source for multi ranged ZSET claim (RC8c).
   _ENQUEUE_LIST_DEDUPE_LUA: Lua source for dedupe-guarded LIST enqueue.
   _INGEST_RANGED_POP_LUA: Lua source for one atomic ranged ZSET pop.
   _LEASE_COMPARE_DEL_LUA: Lua source for compare-and-del lease release.
@@ -103,7 +104,8 @@ _LEASE_COMPARE_DEL_LUA = (
 )
 
 # KEYS: work zset, inflight hash.
-# ARGV: lo, hi, owner, ttl, lease_prefix, deadline, penalty, probe.
+# ARGV: lo, hi, owner, ttl, lease_prefix, deadline, penalty, probe,
+#       payload_prefix (optional; fingerprint HGET on success).
 _CLAIM_ZSET_LUA = (
     "-- HPS_CLAIM_ZSET\n"
     "for _ = 1, tonumber(ARGV[8]) do\n"
@@ -118,12 +120,59 @@ _CLAIM_ZSET_LUA = (
     "    redis.call('ZREM', KEYS[1], member)\n"
     "    redis.call('HSET', KEYS[2], member,"
     " ARGV[6] .. '|' .. ARGV[3] .. '|' .. score)\n"
-    "    return {member, score}\n"
+    "    local fp = ''\n"
+    "    if ARGV[9] and ARGV[9] ~= '' then\n"
+    "      local raw = redis.call('HGET', ARGV[9] .. member, 'fingerprint')\n"
+    "      if raw then fp = raw end\n"
+    "    end\n"
+    "    return {member, score, fp}\n"
     "  end\n"
     "  redis.call('ZADD', KEYS[1], tonumber(score) + tonumber(ARGV[7]),"
     " member)\n"
     "end\n"
     "return false\n"
+)
+
+# KEYS: work zset, inflight hash.
+# ARGV: lo, hi, owner, ttl, lease_prefix, deadline, penalty, probe,
+#       payload_prefix, max_n.
+_CLAIM_ZSET_MULTI_LUA = (
+    "-- HPS_CLAIM_ZSET_MULTI\n"
+    "local out = {}\n"
+    "local max_n = tonumber(ARGV[10]) or 1\n"
+    "local payload_pfx = ARGV[9] or ''\n"
+    "for _i = 1, max_n do\n"
+    "  local claimed = false\n"
+    "  for _ = 1, tonumber(ARGV[8]) do\n"
+    "    local res = redis.call('ZRANGEBYSCORE', KEYS[1], ARGV[1], ARGV[2],"
+    " 'WITHSCORES', 'LIMIT', 0, 1)\n"
+    "    if #res == 0 then return out end\n"
+    "    local member = res[1]\n"
+    "    local score = res[2]\n"
+    "    local lease = ARGV[5] .. member\n"
+    "    if redis.call('SET', lease, ARGV[3], 'NX', 'EX', tonumber(ARGV[4]))"
+    " then\n"
+    "      redis.call('ZREM', KEYS[1], member)\n"
+    "      redis.call('HSET', KEYS[2], member,"
+    " ARGV[6] .. '|' .. ARGV[3] .. '|' .. score)\n"
+    "      local fp = ''\n"
+    "      if payload_pfx ~= '' then\n"
+    "        local raw = redis.call('HGET', payload_pfx .. member,"
+    " 'fingerprint')\n"
+    "        if raw then fp = raw end\n"
+    "      end\n"
+    "      out[#out + 1] = member\n"
+    "      out[#out + 1] = score\n"
+    "      out[#out + 1] = fp\n"
+    "      claimed = true\n"
+    "      break\n"
+    "    end\n"
+    "    redis.call('ZADD', KEYS[1], tonumber(score) + tonumber(ARGV[7]),"
+    " member)\n"
+    "  end\n"
+    "  if not claimed then break end\n"
+    "end\n"
+    "return out\n"
 )
 
 # KEYS: work list, inflight hash.
@@ -1237,11 +1286,11 @@ def _steal_requeue_owned_lease(
   score = 0.0
   if mode == "z":
     try:
-      entries = read_inflight_entries(client, kind=kind)
+      entry = read_inflight_entry(client, kind=kind, identity=identity)
     except Exception:
-      entries = {}
-    if identity in entries:
-      _deadline, _own, stored_score = entries[identity]
+      entry = None
+    if entry is not None:
+      _deadline, _own, stored_score = entry
       if stored_score is not None:
         score = float(stored_score)
   stolen = eval_job_script(
@@ -1790,6 +1839,8 @@ class ClaimedJob:
     owner_token: Lease owner token proving this claim.
     deadline: Epoch seconds after which a reaper may recover the job.
     score: Original ingest score, or ``None`` for LIST kinds.
+    fingerprint: Optional payload fingerprint from the claim EVAL
+      (RC8b); empty when absent.
   """
 
   kind: str
@@ -1797,6 +1848,7 @@ class ClaimedJob:
   owner_token: str
   deadline: float
   score: Optional[float]
+  fingerprint: str = ""
 
 
 def _claim_probe_depth() -> int:
@@ -1885,6 +1937,7 @@ def claim_ingest_job(
   now = time.time() if now_s is None else float(now_s)
   deadline = now + ttl
   depth = int(probe_depth if probe_depth is not None else _claim_probe_depth())
+  payload_pfx = "%s:payload:%s:" % (JOB_V1_PREFIX, JOB_KIND_INGEST)
   raw = eval_job_script(
       client,
       _CLAIM_ZSET_LUA,
@@ -1899,23 +1952,195 @@ def claim_ingest_job(
       "%.3f" % deadline,
       LEASE_CONFLICT_SCORE_PENALTY,
       depth,
+      payload_pfx,
   )
   if not raw:
     return None
   member = raw[0] if isinstance(raw, (list, tuple)) else raw
   score_raw = raw[1] if isinstance(raw, (list, tuple)) and len(raw) > 1 else None
+  fp_raw = raw[2] if isinstance(raw, (list, tuple)) and len(raw) > 2 else ""
   identity = member.decode() if isinstance(member, bytes) else str(member)
   try:
     score = float(score_raw) if score_raw is not None else None
   except (TypeError, ValueError):
     score = None
+  if isinstance(fp_raw, bytes):
+    fingerprint = fp_raw.decode()
+  else:
+    fingerprint = str(fp_raw or "")
   return ClaimedJob(
       kind=JOB_KIND_INGEST,
       identity=identity,
       owner_token=owner_token,
       deadline=deadline,
       score=score,
+      fingerprint=fingerprint,
   )
+
+
+def claim_ingest_jobs(
+  client: Any,
+  *,
+  band: str,
+  owner_token: str,
+  max_n: int,
+  ttl_s: int | None = None,
+  now_s: float | None = None,
+  probe_depth: int | None = None,
+) -> list[ClaimedJob]:
+  """
+  Atomically claim up to ``max_n`` ingest jobs in one Lua EVAL (RC8c).
+
+  Each successful claim also returns the payload fingerprint (RC8b) so the
+  fill path does not need a follow-up ``HGET`` per identity. One owner token
+  is shared across the batch (same process / host / boot / pid).
+
+  Args:
+    client (Any): Redis client with ``script_load`` / ``evalsha``.
+    band (str): ``\"hot\"`` or ``\"catchup\"``.
+    owner_token (str): Token from :func:`make_lease_owner_token`.
+    max_n (int): Maximum number of jobs to claim this call.
+    ttl_s (int | None): Lease TTL override; default
+      :func:`job_lease_ttl_seconds`.
+    now_s (float | None): Clock override (tests).
+    probe_depth (int | None): Lua skip depth override; default
+      :func:`_claim_probe_depth`.
+
+  Returns:
+    list[ClaimedJob]: Zero or more claims (length ``<= max_n``).
+
+  Raises:
+    ValueError: When ``band`` is unknown, ``owner_token`` is empty, or
+      ``max_n`` is less than 1.
+
+  Examples:
+    >>> class _C:
+    ...   def script_load(self, s):
+    ...     return "sha"
+    ...   def evalsha(self, *a, **k):
+    ...     return []
+    >>> claim_ingest_jobs(
+    ...   _C(), band="hot", owner_token="t:h:b:1", max_n=2,
+    ... )
+    []
+  """
+  if not owner_token:
+    raise ValueError("owner_token is required to claim a job")
+  want = int(max_n)
+  if want < 1:
+    raise ValueError("max_n must be >= 1")
+  lo, hi = ingest_score_range(band)
+  ttl = int(job_lease_ttl_seconds() if ttl_s is None else ttl_s)
+  now = time.time() if now_s is None else float(now_s)
+  deadline = now + ttl
+  depth = int(probe_depth if probe_depth is not None else _claim_probe_depth())
+  payload_pfx = "%s:payload:%s:" % (JOB_V1_PREFIX, JOB_KIND_INGEST)
+  raw = eval_job_script(
+      client,
+      _CLAIM_ZSET_MULTI_LUA,
+      2,
+      job_queue_key(JOB_KIND_INGEST),
+      job_inflight_key(JOB_KIND_INGEST),
+      _score_arg(lo),
+      _score_arg(hi),
+      owner_token,
+      ttl,
+      job_lease_prefix(JOB_KIND_INGEST),
+      "%.3f" % deadline,
+      LEASE_CONFLICT_SCORE_PENALTY,
+      depth,
+      payload_pfx,
+      want,
+  )
+  if not raw:
+    return []
+  rows = list(raw) if isinstance(raw, (list, tuple)) else []
+  out: list[ClaimedJob] = []
+  idx = 0
+  while idx + 2 < len(rows):
+    member, score_raw, fp_raw = rows[idx], rows[idx + 1], rows[idx + 2]
+    idx += 3
+    identity = member.decode() if isinstance(member, bytes) else str(member)
+    try:
+      score = float(score_raw) if score_raw is not None else None
+    except (TypeError, ValueError):
+      score = None
+    if isinstance(fp_raw, bytes):
+      fingerprint = fp_raw.decode()
+    else:
+      fingerprint = str(fp_raw or "")
+    out.append(
+        ClaimedJob(
+            kind=JOB_KIND_INGEST,
+            identity=identity,
+            owner_token=owner_token,
+            deadline=deadline,
+            score=score,
+            fingerprint=fingerprint,
+        ),
+    )
+  return out
+
+
+def ingest_zset_census(client: Any) -> tuple[int, int, int]:
+  """
+  Return ``(hot_queued, catchup_queued, zcard)`` in one Redis pipeline (RC8e).
+
+  Args:
+    client (Any): Redis client with ``pipeline`` or sequential
+      ``zcount`` / ``zcard``.
+
+  Returns:
+    tuple[int, int, int]: Hot depth, catchup depth, total ZSET cardinality.
+
+  Raises:
+    RuntimeError: When Redis census commands fail.
+
+  Examples:
+    >>> class _Pipe:
+    ...   def __init__(self):
+    ...     self._n = 0
+    ...   def zcount(self, *a):
+    ...     self._n += 1
+    ...     return self
+    ...   def zcard(self, *a):
+    ...     self._n += 1
+    ...     return self
+    ...   def execute(self):
+    ...     return [1, 2, 3]
+    >>> class _C:
+    ...   def pipeline(self, transaction=False):
+    ...     return _Pipe()
+    >>> ingest_zset_census(_C())
+    (1, 2, 3)
+  """
+  if client is None:
+    return (0, 0, 0)
+  zkey = job_queue_key(JOB_KIND_INGEST)
+  hot_lo, hot_hi = ingest_score_range("hot")
+  catch_lo, catch_hi = ingest_score_range("catchup")
+  try:
+    pipe = client.pipeline(transaction=False)
+    pipe.zcount(zkey, _score_arg(hot_lo), _score_arg(hot_hi))
+    pipe.zcount(zkey, _score_arg(catch_lo), _score_arg(catch_hi))
+    pipe.zcard(zkey)
+    hot_q, catch_q, zcard = pipe.execute()
+  except AttributeError:
+    try:
+      hot_q = client.zcount(zkey, _score_arg(hot_lo), _score_arg(hot_hi))
+      catch_q = client.zcount(
+          zkey, _score_arg(catch_lo), _score_arg(catch_hi),
+      )
+      zcard = client.zcard(zkey)
+    except Exception as exc:
+      raise RuntimeError(
+          "ingest_zset_census failed: %s" % type(exc).__name__,
+      ) from exc
+  except Exception as exc:
+    raise RuntimeError(
+        "ingest_zset_census failed: %s" % type(exc).__name__,
+    ) from exc
+  return (int(hot_q or 0), int(catch_q or 0), int(zcard or 0))
 
 
 def claim_list_job(
@@ -2210,6 +2435,56 @@ def reap_expired_inflight(
   return out[:want]
 
 
+def read_inflight_entry(
+  client: Any,
+  *,
+  kind: str,
+  identity: str,
+) -> Optional[Tuple[float, str, Optional[float]]]:
+  """
+  Return one in-flight HASH field as ``(deadline, owner, score)`` (RC8d).
+
+  Uses a single ``HGET`` — never ``HGETALL``.
+
+  Args:
+    client (Any): Redis client with ``hget``.
+    kind (str): Job kind.
+    identity (str): Job identity field.
+
+  Returns:
+    Optional[Tuple[float, str, Optional[float]]]: Parsed tuple, or ``None``
+    when the field is missing.
+
+  Examples:
+    >>> class _C:
+    ...   def hget(self, key, field):
+    ...     return "1.5|tok|7"
+    >>> read_inflight_entry(_C(), kind="ingest", identity="a")[1]
+    'tok'
+  """
+  if client is None or not str(identity or ""):
+    return None
+  try:
+    raw = client.hget(job_inflight_key(kind), str(identity))
+  except Exception:
+    return None
+  if raw is None:
+    return None
+  text = raw.decode() if isinstance(raw, bytes) else str(raw)
+  parts = text.split("|", 2)
+  try:
+    deadline = float(parts[0])
+  except (IndexError, ValueError):
+    deadline = 0.0
+  owner = parts[1] if len(parts) > 1 else ""
+  score: Optional[float]
+  try:
+    score = float(parts[2]) if len(parts) > 2 and parts[2] else None
+  except ValueError:
+    score = None
+  return (deadline, owner, score)
+
+
 def read_inflight_entries(
   client: Any,
   *,
@@ -2217,6 +2492,9 @@ def read_inflight_entries(
 ) -> Dict[str, Tuple[float, str, Optional[float]]]:
   """
   Return the in-flight map for a kind as parsed tuples.
+
+  Prefer :func:`read_inflight_entry` on steal/hot paths. Full-map reads are
+  for status/census helpers only.
 
   Args:
     client (Any): Redis client with ``hgetall``.

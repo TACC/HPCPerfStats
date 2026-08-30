@@ -1974,6 +1974,9 @@ def _count_ingest_band_inflight(claims: dict[str, Any]) -> tuple[int, int]:
   """
   Count locally tracked ingest claims per band.
 
+  Prefer maintained ``band_used`` counters on the fill hot path (RC8 #9);
+  this full walk is for bootstrap / tests only.
+
   Args:
     claims (dict[str, Any]): Identity → claim map.
 
@@ -1993,6 +1996,158 @@ def _count_ingest_band_inflight(claims: dict[str, Any]) -> tuple[int, int]:
     else:
       catchup += 1
   return (hot, catchup)
+
+
+def _ingest_claim_band_key(claim: Any) -> str:
+  """
+  Return ``\"hot\"`` or ``\"catchup\"`` for a claimed ingest job.
+
+  Args:
+    claim (Any): Claim with optional ``score``.
+
+  Returns:
+    str: Band name.
+
+  Examples:
+    >>> _ingest_claim_band_key(type("C", (), {"score": 0})())
+    'hot'
+  """
+  score = getattr(claim, "score", None)
+  if score is None or jq.decode_ingest_band(score) == "hot":
+    return "hot"
+  return "catchup"
+
+
+def _redis_ingest_hlen(client: Any) -> int:
+  """
+  Return Redis ingest inflight HASH cardinality (capacity authority).
+
+  Args:
+    client (Any): Redis client with ``hlen``.
+
+  Returns:
+    int: ``HLEN`` of the ingest inflight HASH, or ``0`` on error/None.
+
+  Examples:
+    >>> _redis_ingest_hlen(None)
+    0
+  """
+  if client is None:
+    return 0
+  try:
+    return int(client.hlen(jq.job_inflight_key(jq.JOB_KIND_INGEST)) or 0)
+  except Exception:
+    return 0
+
+
+def _reconcile_local_ingest_maps_to_redis(
+  client: Any,
+  *,
+  ingest_inflight: dict[str, AsyncResult],
+  ingest_leases: dict[str, Any],
+  ingest_submitted: dict[str, float],
+  band_used: dict[str, int] | None = None,
+  log_fn: Callable[..., None] | None = None,
+) -> int:
+  """
+  Drop local ingest maps that no longer hold Redis inflight/lease (RC8).
+
+  Never prunes an identity that still has a Redis inflight HASH field or a
+  live lease GET. Ready AsyncResults are left for ``_drain_ingest_ready``.
+
+  Args:
+    client (Any): Redis job client.
+    ingest_inflight (dict[str, AsyncResult]): Local Future map (mutated).
+    ingest_leases (dict[str, Any]): Local claim map (mutated).
+    ingest_submitted (dict[str, float]): Submit-time map (mutated).
+    band_used (dict[str, int] | None): Optional hot/catchup counters.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    int: Number of phantom local identities pruned.
+
+  Examples:
+    >>> _reconcile_local_ingest_maps_to_redis(
+    ...   None, ingest_inflight={}, ingest_leases={}, ingest_submitted={},
+    ... )
+    0
+  """
+  if client is None:
+    return 0
+  pruned = 0
+  for identity in list(ingest_inflight.keys()) + [
+      i for i in ingest_leases if i not in ingest_inflight
+  ]:
+    identity = str(identity)
+    async_res = ingest_inflight.get(identity)
+    if async_res is not None:
+      try:
+        if async_res.ready():
+          continue
+      except Exception:
+        pass
+    try:
+      entry = jq.read_inflight_entry(
+          client, kind=jq.JOB_KIND_INGEST, identity=identity,
+      )
+    except Exception:
+      entry = None
+    lease_live = False
+    try:
+      lease_raw = client.get(jq.job_lease_key(jq.JOB_KIND_INGEST, identity))
+      lease_live = lease_raw is not None
+    except Exception:
+      lease_live = False
+    if entry is not None or lease_live:
+      continue
+    claim = ingest_leases.pop(identity, None)
+    ingest_inflight.pop(identity, None)
+    ingest_submitted.pop(identity, None)
+    if band_used is not None and claim is not None:
+      key = _ingest_claim_band_key(claim)
+      band_used[key] = max(0, int(band_used.get(key, 0)) - 1)
+    pruned += 1
+  if pruned:
+    _log(
+        "queue_orchestrator local_inflight_desync pruned=%d" % pruned,
+        log_fn=log_fn,
+    )
+  return pruned
+
+
+def _ingest_coordinator_tick_sleep_s(
+  *,
+  zcard: int,
+  poll_s: float,
+  fill_submitted: int,
+  local_n: int,
+  pool: int,
+) -> float:
+  """
+  Return sleep seconds after an ingest coordinator tick (RC8e).
+
+  Zero-submit ticks with a deep ZSET and free local capacity use a short
+  poll (``<<50ms``) so skip-budget storms recover faster.
+
+  Args:
+    zcard (int): Ingest ZSET depth.
+    poll_s (float): Configured pool poll timeout.
+    fill_submitted (int): Jobs submitted this tick.
+    local_n (int): Local inflight count after the tick.
+    pool (int): Ingest pool size.
+
+  Returns:
+    float: Sleep duration in seconds.
+
+  Examples:
+    >>> _ingest_coordinator_tick_sleep_s(
+    ...   zcard=100, poll_s=5.0, fill_submitted=0, local_n=2, pool=24,
+    ... ) <= 0.005
+    True
+  """
+  if int(fill_submitted) == 0 and int(zcard) > 0 and int(local_n) < int(pool):
+    return min(0.005, float(poll_s))
+  return min(0.05, float(poll_s))
 
 
 def _ingest_watchdog_budget_s(path: str) -> float:
@@ -2283,6 +2438,7 @@ def _fill_ingest_band(
   ingest_pool: Any,
   manager_lock: Any,
   band_cap: int | None = None,
+  band_used: dict[str, int] | None = None,
   tgz_archive_dir: str = "",
   archive_data_dir: str | None = None,
   ingest_is_complete_fn: Callable[..., bool] | None = None,
@@ -2293,9 +2449,9 @@ def _fill_ingest_band(
   """
   Claim ranged ingest jobs and submit until ``cap`` in-flight for ``band``.
 
-  Each claim is atomic (ranged pop + lease + in-flight record), so a crash
-  between claiming and submitting leaves the job recoverable by the reaper
-  rather than lost.
+  Uses multi-claim (RC8c) and claim-returned fingerprints (RC8b). Band
+  capacity uses maintained ``band_used`` counters (RC8 #9) — not a per-claim
+  full-map walk.
 
   Args:
     client (Any): Redis client.
@@ -2307,6 +2463,7 @@ def _fill_ingest_band(
     ingest_pool (Any): Spawn ``multiprocessing.Pool``.
     manager_lock (Any): Write lock for ingest workers.
     band_cap (int | None): Optional reserved cap for this band alone.
+    band_used (dict[str, int] | None): Hot/catchup used counters (mutated).
     tgz_archive_dir (str): Daily archive directory used to reband claims.
     archive_data_dir (str | None): Archive root for ingest-complete marks.
     ingest_is_complete_fn (Callable[..., bool] | None): Injectable complete
@@ -2342,60 +2499,39 @@ def _fill_ingest_band(
   budget = int(skip_budget if skip_budget is not None else INGEST_FILL_SKIP_BUDGET)
   stats = fill_stats if fill_stats is not None else _empty_ingest_fill_stats()
   complete_fn = ingest_is_complete_fn or jr.ingest_is_complete
+  used_map = band_used if band_used is not None else {
+      "hot": 0, "catchup": 0,
+  }
+  if band_used is None:
+    hot_n, catch_n = _count_ingest_band_inflight(claims)
+    used_map["hot"] = hot_n
+    used_map["catchup"] = catch_n
+
   while len(inflight) < cap:
     if band_cap is not None:
-      hot_n, catch_n = _count_ingest_band_inflight(claims)
-      used = hot_n if band == "hot" else catch_n
+      used = int(used_map.get(band, 0))
       if used >= band_cap:
         stats["band_cap"] += 1
         break
-    claim = jq.claim_ingest_job(
+    free_total = int(cap) - len(inflight)
+    free_band = (
+        int(band_cap) - int(used_map.get(band, 0))
+        if band_cap is not None else free_total
+    )
+    batch_n = max(1, min(free_total, free_band, max(1, budget - skipped)))
+    owner = jq.make_lease_owner_token()
+    batch = jq.claim_ingest_jobs(
         client,
         band=band,
-        owner_token=jq.make_lease_owner_token(),
+        owner_token=owner,
+        max_n=batch_n,
         probe_depth=probe_depth,
     )
-    if claim is None:
+    if not batch:
       stats["claim_none"] += 1
       break
-    if _reband_claimed_ingest_if_needed(
-        client, claim, tgz_archive_dir,
-    ):
-      skipped += 1
-      stats["skip_reband"] += 1
-      if skipped >= budget:
-        break
-      continue
-    path = _path_from_ingest_identity(claim.identity)
-    if _is_ingest_lock_sidecar_path(path or claim.identity):
-      jq.ack_job(
-          client,
-          kind=jq.JOB_KIND_INGEST,
-          identity=claim.identity,
-          owner_token=claim.owner_token,
-      )
-      skipped += 1
-      stats["skip_lock"] += 1
-      if skipped >= budget:
-        break
-      continue
-    if not path or not os.path.isfile(path):
-      complete = False
-      if path:
-        try:
-          complete = bool(
-              complete_fn(path, archive_data_dir=archive_data_dir),
-          )
-        except Exception:
-          complete = False
-      if complete:
-        jq.ack_job(
-            client,
-            kind=jq.JOB_KIND_INGEST,
-            identity=claim.identity,
-            owner_token=claim.owner_token,
-        )
-      else:
+    for claim in batch:
+      if len(inflight) >= cap:
         jq.requeue_job(
             client,
             kind=jq.JOB_KIND_INGEST,
@@ -2403,59 +2539,121 @@ def _fill_ingest_band(
             owner_token=claim.owner_token,
             score=claim.score,
         )
-      skipped += 1
-      stats["skip_missing"] += 1
-      if skipped >= budget:
-        break
-      continue
-    stored_fp = ""
-    try:
-      stored_fp = jq.read_job_fingerprint(
-          client, kind=jq.JOB_KIND_INGEST, identity=claim.identity,
-      )
-    except Exception:
-      stored_fp = ""
-    if stored_fp and not jq.fingerprint_matches_path(path, stored_fp):
-      try:
-        st_now = os.stat(path)
-        jq.write_job_fingerprint(
+        continue
+      if band_cap is not None and int(used_map.get(band, 0)) >= int(band_cap):
+        jq.requeue_job(
             client,
             kind=jq.JOB_KIND_INGEST,
             identity=claim.identity,
-            fingerprint=jq.ingest_fingerprint(
-                st_now.st_size, st_now.st_mtime_ns,
-            ),
+            owner_token=claim.owner_token,
+            score=claim.score,
         )
-      except OSError:
-        pass
-      jq.requeue_job(
-          client,
-          kind=jq.JOB_KIND_INGEST,
-          identity=claim.identity,
-          owner_token=claim.owner_token,
-          score=claim.score,
-      )
-      skipped += 1
-      stats["skip_fp"] += 1
-      if skipped >= budget:
+        stats["band_cap"] += 1
         break
-      continue
-    try:
-      async_res = ingest_pool.apply_async(_ingest_worker, (manager_lock, path))
-    except Exception:
-      stats["submit_err"] += 1
-      jq.requeue_job(
-          client,
-          kind=jq.JOB_KIND_INGEST,
-          identity=claim.identity,
-          owner_token=claim.owner_token,
-          score=claim.score,
-      )
-      raise
-    inflight[claim.identity] = async_res
-    claims[claim.identity] = claim
-    submitted[claim.identity] = time.monotonic()
-    submitted_n += 1
+      if _reband_claimed_ingest_if_needed(
+          client, claim, tgz_archive_dir,
+      ):
+        skipped += 1
+        stats["skip_reband"] += 1
+        if skipped >= budget:
+          break
+        continue
+      path = _path_from_ingest_identity(claim.identity)
+      if _is_ingest_lock_sidecar_path(path or claim.identity):
+        jq.ack_job(
+            client,
+            kind=jq.JOB_KIND_INGEST,
+            identity=claim.identity,
+            owner_token=claim.owner_token,
+        )
+        skipped += 1
+        stats["skip_lock"] += 1
+        if skipped >= budget:
+          break
+        continue
+      st_now = None
+      if path:
+        try:
+          st_now = os.stat(path)
+        except OSError:
+          st_now = None
+      if not path or st_now is None:
+        complete = False
+        if path:
+          try:
+            complete = bool(
+                complete_fn(path, archive_data_dir=archive_data_dir),
+            )
+          except Exception:
+            complete = False
+        if complete:
+          jq.ack_job(
+              client,
+              kind=jq.JOB_KIND_INGEST,
+              identity=claim.identity,
+              owner_token=claim.owner_token,
+          )
+        else:
+          jq.requeue_job(
+              client,
+              kind=jq.JOB_KIND_INGEST,
+              identity=claim.identity,
+              owner_token=claim.owner_token,
+              score=claim.score,
+          )
+        skipped += 1
+        stats["skip_missing"] += 1
+        if skipped >= budget:
+          break
+        continue
+      stored_fp = str(getattr(claim, "fingerprint", "") or "")
+      if stored_fp and stored_fp != jq.ingest_fingerprint(
+          st_now.st_size, st_now.st_mtime_ns,
+      ):
+        try:
+          jq.write_job_fingerprint(
+              client,
+              kind=jq.JOB_KIND_INGEST,
+              identity=claim.identity,
+              fingerprint=jq.ingest_fingerprint(
+                  st_now.st_size, st_now.st_mtime_ns,
+              ),
+          )
+        except OSError:
+          pass
+        jq.requeue_job(
+            client,
+            kind=jq.JOB_KIND_INGEST,
+            identity=claim.identity,
+            owner_token=claim.owner_token,
+            score=claim.score,
+        )
+        skipped += 1
+        stats["skip_fp"] += 1
+        if skipped >= budget:
+          break
+        continue
+      try:
+        async_res = ingest_pool.apply_async(
+            _ingest_worker, (manager_lock, path),
+        )
+      except Exception:
+        stats["submit_err"] += 1
+        jq.requeue_job(
+            client,
+            kind=jq.JOB_KIND_INGEST,
+            identity=claim.identity,
+            owner_token=claim.owner_token,
+            score=claim.score,
+        )
+        raise
+      inflight[claim.identity] = async_res
+      claims[claim.identity] = claim
+      submitted[claim.identity] = time.monotonic()
+      used_map[band] = int(used_map.get(band, 0)) + 1
+      submitted_n += 1
+    if skipped >= budget:
+      break
   return submitted_n
 
 
@@ -3520,12 +3718,14 @@ def _ingest_runtime_lease_hygiene(
   zcard: int,
   last_runtime_steal: float,
   log_fn: Callable[..., None] | None,
+  redis_hlen: int | None = None,
 ) -> float:
   """
   Rate-limit this-owner orphan reconcile and dead-PID steal.
 
-  Runs when local inflight is below pool size and the ingest ZSET is
-  non-empty (not only when local maps are empty).
+  Runs when local inflight is below pool size **or** Redis HLEN is below
+  pool while the ingest ZSET is non-empty (RC8: do not skip solely because
+  local maps look full).
 
   Args:
     client (Any): Redis job client.
@@ -3535,6 +3735,7 @@ def _ingest_runtime_lease_hygiene(
     zcard (int): Ingest ZSET depth.
     last_runtime_steal (float): Monotonic time of last hygiene pass.
     log_fn (Callable[..., None] | None): Optional logger.
+    redis_hlen (int | None): Optional precomputed inflight HLEN.
 
   Returns:
     float: Updated ``last_runtime_steal`` (unchanged when skipped).
@@ -3553,7 +3754,16 @@ def _ingest_runtime_lease_hygiene(
   """
   if client is None:
     return last_runtime_steal
-  if len(ingest_inflight) >= int(ingest_pool_size) or int(zcard) <= 0:
+  if int(zcard) <= 0:
+    return last_runtime_steal
+  hlen = (
+      int(redis_hlen)
+      if redis_hlen is not None
+      else _redis_ingest_hlen(client)
+  )
+  local_full = len(ingest_inflight) >= int(ingest_pool_size)
+  redis_underfull = hlen < int(ingest_pool_size)
+  if local_full and not redis_underfull:
     return last_runtime_steal
   now_steal = time.monotonic()
   if (now_steal - last_runtime_steal) < INGEST_RUNTIME_STEAL_INTERVAL_S:
@@ -3652,15 +3862,7 @@ def _ingest_coordinator_fill_tick(
   zcard = 0
   hot_submitted = 0
   try:
-    lo, hi = jq.ingest_score_range("hot")
-    hot_queued = int(
-        client.zcount(jq.job_queue_key(jq.JOB_KIND_INGEST), lo, hi) or 0
-    )
-    clo, chi = jq.ingest_score_range("catchup")
-    catchup_queued = int(
-        client.zcount(jq.job_queue_key(jq.JOB_KIND_INGEST), clo, chi) or 0
-    )
-    zcard = int(client.zcard(jq.job_queue_key(jq.JOB_KIND_INGEST)) or 0)
+    hot_queued, catchup_queued, zcard = jq.ingest_zset_census(client)
   except Exception as exc:
     raise RuntimeError(
         "queue orchestrator redis zcount failed: %s" % type(exc).__name__
@@ -3669,12 +3871,15 @@ def _ingest_coordinator_fill_tick(
       hot_q=hot_queued, pool=ingest_pool_size,
   )
   pool = pool_ref.get()
+  hot_n, catch_n = _count_ingest_band_inflight(ingest_leases)
+  band_used = {"hot": hot_n, "catchup": catch_n}
   fill_kw = {
       "skip_budget": skip_budget,
       "probe_depth": probe_depth,
       "fill_stats": fill_stats,
       "tgz_archive_dir": tgz_archive_dir,
       "archive_data_dir": directory,
+      "band_used": band_used,
   }
   while len(ingest_inflight) < hot_cap:
     n = _fill_ingest_band(
@@ -3878,15 +4083,29 @@ def _ingest_coordinator_loop(
       fill_stats = _empty_ingest_fill_stats()
       if not draining and not recycle_gate.recycle_requested.is_set():
         try:
-          zcard = int(
-              client.zcard(jq.job_queue_key(jq.JOB_KIND_INGEST)) or 0,
-          )
+          _hq, _cq, zcard = jq.ingest_zset_census(client)
         except Exception as exc:
           raise RuntimeError(
               "queue orchestrator redis zcard failed: %s"
               % type(exc).__name__
           ) from exc
         skip_budget = _ingest_fill_skip_budget_for_zcard(zcard)
+        redis_hlen = _redis_ingest_hlen(client)
+        if (
+            zcard > 0
+            and (
+                redis_hlen < ingest_pool_size
+                or len(ingest_inflight) > redis_hlen
+                or len(ingest_inflight) >= ingest_pool_size
+            )
+        ):
+          _reconcile_local_ingest_maps_to_redis(
+              client,
+              ingest_inflight=ingest_inflight,
+              ingest_leases=ingest_leases,
+              ingest_submitted=ingest_submitted,
+              log_fn=log_fn,
+          )
         last_runtime_steal = _ingest_runtime_lease_hygiene(
             client=client,
             ingest_inflight=ingest_inflight,
@@ -3895,6 +4114,7 @@ def _ingest_coordinator_loop(
             zcard=zcard,
             last_runtime_steal=last_runtime_steal,
             log_fn=log_fn,
+            redis_hlen=redis_hlen,
         )
         fill_tick_kw = {
             "client": client,
@@ -4012,14 +4232,20 @@ def _ingest_coordinator_loop(
       elif did == 0 and not ingest_inflight:
         if zcard <= 0:
           try:
-            zcard = int(
-                client.zcard(jq.job_queue_key(jq.JOB_KIND_INGEST)) or 0,
-            )
+            _hq, _cq, zcard = jq.ingest_zset_census(client)
           except Exception:
             zcard = 0
         time.sleep(_ingest_coordinator_idle_sleep_s(zcard=zcard, poll_s=poll_s))
       else:
-        time.sleep(min(0.05, poll_s))
+        time.sleep(
+            _ingest_coordinator_tick_sleep_s(
+                zcard=zcard,
+                poll_s=poll_s,
+                fill_submitted=fill_submitted,
+                local_n=len(ingest_inflight),
+                pool=ingest_pool_size,
+            ),
+        )
   except Exception as exc:
     _log(
         "queue_orchestrator ingest-coordinator crash err=%s"

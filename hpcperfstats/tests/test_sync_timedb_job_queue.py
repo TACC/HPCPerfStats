@@ -833,3 +833,110 @@ def test_reconstruct_skips_queue_dead_letter(tmp_path):
   )
   assert enqueued["ingest"] is False
   assert client.zcard(jq.job_queue_key("ingest")) == 0
+
+
+def test_rc8b_claim_returns_fingerprint(tmp_path):
+  """RC8b: claim EVAL returns payload fingerprint without a follow-up HGET."""
+  raw = tmp_path / "host" / "stats"
+  raw.parent.mkdir()
+  raw.write_bytes(b"abc")
+  st = raw.stat()
+  fp = jq.ingest_fingerprint(st.st_size, st.st_mtime_ns)
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  identity = str(raw)
+  jq.zadd_ingest_job(client, identity=identity, score=1.0, fingerprint=fp)
+  claim = jq.claim_ingest_job(
+      client, band="hot", owner_token=jq.make_lease_owner_token(pid=1, hostname="h", boot_id="b"),
+  )
+  assert claim is not None
+  assert claim.fingerprint == fp
+  hget_calls = {"n": 0}
+  real_hget = client.hget
+
+  def counting_hget(key, field):
+    hget_calls["n"] += 1
+    return real_hget(key, field)
+
+  client.hget = counting_hget  # type: ignore[method-assign]
+  # Fingerprint already on claim; fill path should not need another read.
+  assert claim.fingerprint == fp
+  assert hget_calls["n"] == 0
+
+
+def test_rc8c_multi_claim_fills_free_slots(tmp_path):
+  """RC8c: one multi-claim EVAL returns multiple ClaimedJob rows."""
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  paths = []
+  for i in range(3):
+    p = tmp_path / ("f%d" % i)
+    p.write_bytes(b"x" * (i + 1))
+    paths.append(str(p))
+    st = p.stat()
+    jq.zadd_ingest_job(
+        client,
+        identity=str(p),
+        score=float(i + 1),
+        fingerprint=jq.ingest_fingerprint(st.st_size, st.st_mtime_ns),
+    )
+  claims = jq.claim_ingest_jobs(
+      client,
+      band="hot",
+      owner_token=jq.make_lease_owner_token(pid=1, hostname="h", boot_id="b"),
+      max_n=3,
+  )
+  assert len(claims) == 3
+  assert {c.identity for c in claims} == set(paths)
+  assert all(c.fingerprint for c in claims)
+
+
+def test_rc8d_steal_does_not_hgetall_inflight():
+  """RC8d: steal path must HGET one inflight field, never HGETALL."""
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  identity = "/raw/a"
+  owner = "n:h:b:1"
+  client.set(jq.job_lease_key("ingest", identity), owner, ex=60)
+  client.hset(
+      jq.job_inflight_key("ingest"),
+      identity,
+      "9999999999.0|%s|12" % owner,
+  )
+  calls = {"hgetall": 0, "hget": 0}
+  real_hget = client.hget
+
+  def boom_hgetall(key):
+    calls["hgetall"] += 1
+    raise AssertionError("HGETALL forbidden on steal path")
+
+  def count_hget(key, field):
+    calls["hget"] += 1
+    return real_hget(key, field)
+
+  client.hgetall = boom_hgetall  # type: ignore[method-assign]
+  client.hget = count_hget  # type: ignore[method-assign]
+  assert jq._steal_requeue_owned_lease(
+      client, kind="ingest", identity=identity, raw_owner=owner,
+  )
+  assert calls["hgetall"] == 0
+  assert calls["hget"] >= 1
+
+
+def test_rc8e_census_uses_pipeline():
+  """RC8e: ingest_zset_census must go through client.pipeline()."""
+  client = FakeRedis()
+  jq.reset_job_queue_script_cache_for_tests()
+  jq.zadd_ingest_job(client, identity="/a", score=1.0)
+  pipes = {"n": 0}
+  real_pipeline = client.pipeline
+
+  def counting_pipeline(transaction=False):
+    pipes["n"] += 1
+    return real_pipeline(transaction=transaction)
+
+  client.pipeline = counting_pipeline  # type: ignore[method-assign]
+  hot, catch, zcard = jq.ingest_zset_census(client)
+  assert pipes["n"] == 1
+  assert zcard == 1
+  assert hot + catch == 1

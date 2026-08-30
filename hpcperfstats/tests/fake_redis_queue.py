@@ -933,6 +933,8 @@ class FakeRedis:
     argv = [str(a) for a in args[numkeys:]]
     with self._lock:
       self._purge_expired_locked()
+      if "HPS_CLAIM_ZSET_MULTI" in script:
+        return self._lua_claim_zset_multi(keys, argv)
       if "HPS_CLAIM_ZSET" in script:
         return self._lua_claim_zset(keys, argv)
       if "HPS_CLAIM_LIST" in script:
@@ -996,10 +998,10 @@ class FakeRedis:
     Args:
       keys (list): ``[work_zset, inflight_hash]``.
       argv (list): ``[lo, hi, owner, ttl, lease_prefix, deadline, penalty,
-        probe]``.
+        probe, payload_prefix?]``.
 
     Returns:
-      Any: ``[member, score]`` on success, else ``False``.
+      Any: ``[member, score, fingerprint]`` on success, else ``False``.
 
     Examples:
       >>> FakeRedis()._lua_claim_zset(["w", "i"],
@@ -1008,6 +1010,7 @@ class FakeRedis:
     """
     work, inflight = keys[0], keys[1]
     lo, hi, owner, ttl, prefix, deadline, penalty, probe = argv[:8]
+    payload_pfx = argv[8] if len(argv) > 8 else ""
     for _ in range(int(probe)):
       members = self._zrangebyscore_locked(work, lo, hi, 0, 1)
       if not members:
@@ -1019,9 +1022,80 @@ class FakeRedis:
         self._hashes.setdefault(inflight, {})[member] = "%s|%s|%s" % (
             deadline, owner, _fmt_score(score),
         )
-        return [member, _fmt_score(score)]
+        fp = ""
+        if payload_pfx:
+          fp = (self._hashes.get(payload_pfx + member) or {}).get(
+              "fingerprint", "",
+          ) or ""
+        return [member, _fmt_score(score), fp]
       self._zadd_locked(work, {member: score + float(penalty)})
     return False
+
+  def _lua_claim_zset_multi(self, keys, argv):
+    """
+    Emulate multi ranged ZSET claim (RC8c).
+
+    Args:
+      keys (list): ``[work_zset, inflight_hash]``.
+      argv (list): Same as claim plus ``payload_prefix``, ``max_n``.
+
+    Returns:
+      list: Flat ``[member, score, fp, ...]`` triples.
+
+    Examples:
+      >>> FakeRedis()._lua_claim_zset_multi(
+      ...   ["w", "i"],
+      ...   ["-inf", "+inf", "t", "60", "L:", "1.0", "10", "8", "P:", "2"],
+      ... )
+      []
+    """
+    work, inflight = keys[0], keys[1]
+    lo, hi, owner, ttl, prefix, deadline, penalty, probe = argv[:8]
+    payload_pfx = argv[8] if len(argv) > 8 else ""
+    max_n = int(argv[9]) if len(argv) > 9 else 1
+    out: List[str] = []
+    for _i in range(max(1, max_n)):
+      claimed = False
+      for _ in range(int(probe)):
+        members = self._zrangebyscore_locked(work, lo, hi, 0, 1)
+        if not members:
+          return out
+        member = members[0]
+        score = self._zsets[work][member]
+        if self._set_nx_ex_locked(prefix + member, owner, int(ttl)):
+          self._zrem_locked(work, member)
+          self._hashes.setdefault(inflight, {})[member] = "%s|%s|%s" % (
+              deadline, owner, _fmt_score(score),
+          )
+          fp = ""
+          if payload_pfx:
+            fp = (self._hashes.get(payload_pfx + member) or {}).get(
+                "fingerprint", "",
+            ) or ""
+          out.extend([member, _fmt_score(score), fp])
+          claimed = True
+          break
+        self._zadd_locked(work, {member: score + float(penalty)})
+      if not claimed:
+        break
+    return out
+
+  def pipeline(self, transaction=False):
+    """
+    Return a minimal pipeline that runs queued commands on ``execute``.
+
+    Args:
+      transaction (bool): Ignored (no MULTI/EXEC); kept for redis-py parity.
+
+    Returns:
+      _FakePipeline: Queuing stand-in.
+
+    Examples:
+      >>> p = FakeRedis().pipeline(); p.zcard("k"); p.execute()
+      [0]
+    """
+    del transaction
+    return _FakePipeline(self)
 
   def _lua_claim_list(self, keys, argv):
     """
@@ -1289,6 +1363,60 @@ class FakeRedis:
       names = [key for key in sorted(universe) if key.startswith(prefix)]
     for key in names:
       yield key
+
+
+class _FakePipeline:
+  """
+  Minimal redis-py-like pipeline for FakeRedis census/claim helpers.
+
+  Attributes:
+    _client: Parent :class:`FakeRedis`.
+    _ops: Queued ``(method_name, args, kwargs)`` tuples.
+  """
+
+  def __init__(self, client: FakeRedis) -> None:
+    """
+    Bind to a FakeRedis instance.
+
+    Args:
+      client (FakeRedis): Parent client.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _FakePipeline(FakeRedis()).execute()
+      []
+    """
+    self._client = client
+    self._ops: List[tuple] = []
+
+  def zcount(self, *args, **kwargs):
+    """Queue ``zcount``; return self for chaining."""
+    self._ops.append(("zcount", args, kwargs))
+    return self
+
+  def zcard(self, *args, **kwargs):
+    """Queue ``zcard``; return self for chaining."""
+    self._ops.append(("zcard", args, kwargs))
+    return self
+
+  def execute(self):
+    """
+    Run queued commands in order.
+
+    Returns:
+      list: Per-command results.
+
+    Examples:
+      >>> p = FakeRedis().pipeline(); p.zcard("k"); p.execute()
+      [0]
+    """
+    out = []
+    for name, args, kwargs in self._ops:
+      out.append(getattr(self._client, name)(*args, **kwargs))
+    self._ops.clear()
+    return out
 
 
 def _fmt_score(score: float) -> str:
