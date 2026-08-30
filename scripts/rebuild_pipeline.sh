@@ -22,6 +22,8 @@ source "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"
 PIPELINE_BUILD_TARGET="hpcperfstats-pipeline-refresh"
 PRESERVE_FRONTEND_DIR="${REPO_ROOT}/.build/pipeline-rebuild-frontend"
 FRONTEND_BACKUP_TAR=""
+FRONTEND_RESTORE_DIR=""
+_PIPELINE_REBUILD_CLEANUP_DONE=0
 PIPELINE_STOP_TIMEOUT="${HPCPERFSTATS_PIPELINE_STOP_TIMEOUT:-300}"
 WEB_STOP_TIMEOUT="${HPCPERFSTATS_WEB_STOP_TIMEOUT:-120}"
 WEB_WAIT_TIMEOUT="${HPCPERFSTATS_WEB_WAIT_TIMEOUT:-600}"
@@ -263,14 +265,14 @@ restore_frontend_volume_if_drifted() {
     return 0
   fi
   echo "WARN: collectstatic changed frontend fingerprint (${LIVE_FRONTEND_FINGERPRINT} -> ${post_fp}); restoring backup volume ..."
-  local restore_dir
-  restore_dir="$(mktemp -d /tmp/hps-pipeline-frontend-restore.XXXXXX)"
-  tar -xf "${FRONTEND_BACKUP_TAR}" -C "${restore_dir}"
+  FRONTEND_RESTORE_DIR="$(mktemp -d /tmp/hps-pipeline-frontend-restore.XXXXXX)"
+  tar -xf "${FRONTEND_BACKUP_TAR}" -C "${FRONTEND_RESTORE_DIR}"
   copy_tree_into_container_from_dir \
-    "${restore_dir}" \
+    "${FRONTEND_RESTORE_DIR}" \
     "${CONTAINER_STATIC_ROOT_FRONTEND}" \
-    "${restore_dir}/machine/index.html"
-  rm -rf "${restore_dir}"
+    "${FRONTEND_RESTORE_DIR}/machine/index.html"
+  rm -rf "${FRONTEND_RESTORE_DIR}"
+  FRONTEND_RESTORE_DIR=""
   post_fp="$(fingerprint_in_container web "${CONTAINER_STATIC_ROOT_FRONTEND}/machine/index.html")"
   if [[ "${post_fp}" != "${LIVE_FRONTEND_FINGERPRINT}" ]]; then
     echo "rebuild_pipeline.sh: frontend restore failed (expected ${LIVE_FRONTEND_FINGERPRINT}, got ${post_fp})" >&2
@@ -355,9 +357,14 @@ start_app_containers() {
 }
 
 cleanup() {
-  if [[ -n "${FRONTEND_BACKUP_TAR:-}" && -f "${FRONTEND_BACKUP_TAR}" ]]; then
-    rm -f "${FRONTEND_BACKUP_TAR}"
+  if [[ "${_PIPELINE_REBUILD_CLEANUP_DONE}" -eq 1 ]]; then
+    return 0
   fi
+  _PIPELINE_REBUILD_CLEANUP_DONE=1
+  cleanup_pipeline_rebuild_scratch \
+    "${PRESERVE_FRONTEND_DIR:-}" \
+    "${FRONTEND_BACKUP_TAR:-}" \
+    "${FRONTEND_RESTORE_DIR:-}"
 }
 
 main() {
@@ -387,13 +394,11 @@ main() {
     if [[ "${NO_WEB}" -eq 1 ]]; then
       warn_no_web_temporary
     fi
-    cleanup
     return 0
   fi
 
   if [[ "${NO_WEB}" -eq 1 ]]; then
     start_pipeline_only
-    cleanup
     warn_no_web_temporary
     echo "Pipeline-only rebuild complete. Confirm with:"
     echo "  docker compose logs -f pipeline | grep -E 'pending reconcile cap|startup maintenance idle|Number of host stats files'"
@@ -401,7 +406,6 @@ main() {
   fi
 
   start_app_containers
-  cleanup
   echo "Pipeline rebuild complete. Confirm ingest with:"
   echo "  docker compose logs -f pipeline | grep -E 'pending reconcile cap|startup maintenance idle|Number of host stats files'"
 }

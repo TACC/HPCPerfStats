@@ -572,6 +572,48 @@ compose_recreate_pipeline_after_image_refresh() {
   docker compose up -d --force-recreate --no-deps pipeline
 }
 
+# Remove host scratch created for hpcperfstats-pipeline-refresh (preserve dir,
+# backup tar, restore dir). rmdir .build only when empty so monitor/other
+# sibling trees under .build/ are left intact.
+cleanup_pipeline_rebuild_scratch() {
+  local preserve_dir="${1:-}"
+  local backup_tar="${2:-}"
+  local restore_dir="${3:-}"
+  local build_root=""
+  local restore_base=""
+
+  if [[ -n "${backup_tar}" && -f "${backup_tar}" ]]; then
+    rm -f "${backup_tar}"
+  fi
+
+  if [[ -n "${restore_dir}" && -d "${restore_dir}" ]]; then
+    restore_base="$(basename "${restore_dir}")"
+    if [[ "${restore_base}" == hps-pipeline-frontend-restore.* ]]; then
+      rm -rf "${restore_dir}"
+    fi
+  fi
+
+  if [[ -z "${preserve_dir}" ]]; then
+    return 0
+  fi
+
+  case "${preserve_dir}" in
+    */.build/pipeline-rebuild-frontend)
+      if [[ -e "${preserve_dir}" ]]; then
+        echo "Removing pipeline rebuild scratch ${preserve_dir}"
+        rm -rf "${preserve_dir}"
+      fi
+      build_root="$(dirname "${preserve_dir}")"
+      if [[ "$(basename "${build_root}")" == ".build" ]]; then
+        rmdir "${build_root}" 2>/dev/null || true
+      fi
+      ;;
+    *)
+      echo "cleanup_pipeline_rebuild_scratch: refusing unexpected preserve dir: ${preserve_dir}" >&2
+      ;;
+  esac
+}
+
 compose_restore_proxy_if_was_running() {
   if [[ "${COMPOSE_PROXY_WAS_RUNNING:-0}" -ne 1 ]]; then
     return 0

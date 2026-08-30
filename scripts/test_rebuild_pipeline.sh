@@ -215,6 +215,27 @@ if ! grep -q 'compose_frontend_helpers.sh' "${FRONTEND_SCRIPT}"; then
   exit 1
 fi
 
+if ! grep -q 'cleanup_pipeline_rebuild_scratch' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must define cleanup_pipeline_rebuild_scratch" >&2
+  exit 1
+fi
+
+if ! grep -q 'cleanup_pipeline_rebuild_scratch' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must call cleanup_pipeline_rebuild_scratch on exit" >&2
+  exit 1
+fi
+
+if ! grep -q 'trap cleanup EXIT' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must trap cleanup EXIT so scratch is removed after success or failure" >&2
+  exit 1
+fi
+
+if grep -q 'rm -rf "${REPO_ROOT}/.build"' "${PIPELINE_SCRIPT}" \
+  || grep -q 'rm -rf "${REPO_ROOT}/.build"' "${HELPERS}"; then
+  echo "must not rm -rf entire .build (monitor/other sibling scratch must survive)" >&2
+  exit 1
+fi
+
 # shellcheck source=lib/compose_frontend_helpers.sh
 source "${HELPERS}"
 if ! declare -F build_web_image_with_target >/dev/null; then
@@ -229,6 +250,66 @@ fi
 
 if ! declare -F compose_recreate_pipeline_after_image_refresh >/dev/null; then
   echo "compose_recreate_pipeline_after_image_refresh must be defined in compose_frontend_helpers.sh" >&2
+  exit 1
+fi
+
+if ! declare -F cleanup_pipeline_rebuild_scratch >/dev/null; then
+  echo "cleanup_pipeline_rebuild_scratch must be defined in compose_frontend_helpers.sh" >&2
+  exit 1
+fi
+
+scratch_root="$(mktemp -d /tmp/hps-test-pipeline-rebuild-scratch.XXXXXX)"
+scratch_cleanup() { rm -rf "${scratch_root}"; }
+trap scratch_cleanup EXIT
+
+mkdir -p "${scratch_root}/keep/.build/pipeline-rebuild-frontend/machine"
+echo "spa" >"${scratch_root}/keep/.build/pipeline-rebuild-frontend/machine/index.html"
+echo "monitor-prefix" >"${scratch_root}/keep/.build/keep-me"
+touch "${scratch_root}/keep/backup.tar"
+restore_dir="${scratch_root}/keep/restore-parent/hps-pipeline-frontend-restore.abc123"
+mkdir -p "${restore_dir}"
+echo "restore" >"${restore_dir}/file"
+
+cleanup_pipeline_rebuild_scratch \
+  "${scratch_root}/keep/.build/pipeline-rebuild-frontend" \
+  "${scratch_root}/keep/backup.tar" \
+  "${restore_dir}"
+
+if [[ -e "${scratch_root}/keep/.build/pipeline-rebuild-frontend" ]]; then
+  echo "cleanup must remove .build/pipeline-rebuild-frontend" >&2
+  exit 1
+fi
+if [[ ! -f "${scratch_root}/keep/.build/keep-me" ]]; then
+  echo "cleanup must keep sibling .build contents (e.g. monitor prefix)" >&2
+  exit 1
+fi
+if [[ -e "${scratch_root}/keep/backup.tar" ]]; then
+  echo "cleanup must remove the frontend backup tar" >&2
+  exit 1
+fi
+if [[ -e "${restore_dir}" ]]; then
+  echo "cleanup must remove the frontend restore dir" >&2
+  exit 1
+fi
+
+empty_root="${scratch_root}/empty-build"
+mkdir -p "${empty_root}/.build/pipeline-rebuild-frontend/machine"
+echo "spa" >"${empty_root}/.build/pipeline-rebuild-frontend/machine/index.html"
+cleanup_pipeline_rebuild_scratch \
+  "${empty_root}/.build/pipeline-rebuild-frontend" \
+  "" \
+  ""
+if [[ -d "${empty_root}/.build" ]]; then
+  echo "cleanup must rmdir .build when it is empty after removing staging" >&2
+  exit 1
+fi
+
+refuse_root="${scratch_root}/refuse"
+mkdir -p "${refuse_root}/not-staging"
+echo "keep" >"${refuse_root}/not-staging/file"
+cleanup_pipeline_rebuild_scratch "${refuse_root}/not-staging" "" "" >/dev/null 2>&1 || true
+if [[ ! -f "${refuse_root}/not-staging/file" ]]; then
+  echo "cleanup must refuse to delete an unexpected preserve path" >&2
   exit 1
 fi
 
