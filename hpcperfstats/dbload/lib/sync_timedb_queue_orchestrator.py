@@ -20,6 +20,11 @@ Attributes:
     still-unready worker is treated as dead.
   INGEST_FILL_SKIP_BUDGET: Max unsubmittable ingest claims processed per fill
     tick before returning to the main loop.
+  INGEST_FILL_SKIP_BUDGET_MAX: Hard cap on escalated skip budget for deep queues.
+  INGEST_RUNTIME_STEAL_INTERVAL_S: Minimum seconds between runtime dead-owner
+    lease steals on fill-empty deep queue.
+  INGEST_FILL_BLOCK_LOG_INTERVAL_S: Rate limit for fill-block / deep-queue logs.
+  _FILL_BLOCK_KEYS: Ordered ingest fill failure counter names for telemetry.
   APPEND_FILL_SKIP_BUDGET: Max impossible append claims (missing path /
     unresolved daily tar) ACK-dropped per fill tick before yielding.
   SHUTDOWN_DRAIN_TIMEOUT_S: Bounded wall clock for the cooperative drain.
@@ -87,6 +92,9 @@ SHUTDOWN_DRAIN_TIMEOUT_S = 120.0
 # Per-tick cap on fill continues (missing path, reband, fingerprint mismatch)
 # so MainThread cannot busy-spin a huge NFS-hole / reband storm.
 INGEST_FILL_SKIP_BUDGET = 8
+INGEST_FILL_SKIP_BUDGET_MAX = 64
+INGEST_RUNTIME_STEAL_INTERVAL_S = 60.0
+INGEST_FILL_BLOCK_LOG_INTERVAL_S = 60.0
 # Same bound for append fill: missing/unresolved identities are ACK-dropped
 # (not requeued) so a deep LIST of gone paths cannot livelock MainThread.
 APPEND_FILL_SKIP_BUDGET = 8
@@ -2127,6 +2135,129 @@ def _recycle_ingest_pool(pool: Any, *, factory: Callable[[], Any]) -> Any:
   return factory()
 
 
+_FILL_BLOCK_KEYS = (
+    "claim_none",
+    "skip_reband",
+    "skip_missing",
+    "skip_lock",
+    "skip_fp",
+    "band_cap",
+    "submit_err",
+)
+
+
+def _empty_ingest_fill_stats() -> dict[str, int]:
+  """
+  Return zeroed per-tick ingest fill failure counters.
+
+  Returns:
+    dict[str, int]: Counter map keyed by :data:`_FILL_BLOCK_KEYS`.
+
+  Examples:
+    >>> _empty_ingest_fill_stats()["claim_none"]
+    0
+  """
+  return {k: 0 for k in _FILL_BLOCK_KEYS}
+
+
+def _merge_ingest_fill_stats(
+  base: dict[str, int],
+  extra: dict[str, int],
+) -> dict[str, int]:
+  """
+  Merge two fill-stat maps in place and return ``base``.
+
+  Args:
+    base (dict[str, int]): Accumulator.
+    extra (dict[str, int]): Delta counters.
+
+  Returns:
+    dict[str, int]: ``base`` after merge.
+
+  Examples:
+    >>> _merge_ingest_fill_stats({"claim_none": 1}, {"claim_none": 2})["claim_none"]
+    3
+  """
+  for key, n in extra.items():
+    if key in base:
+      base[key] += int(n or 0)
+  return base
+
+
+def _dominant_ingest_fill_block(stats: dict[str, int]) -> str | None:
+  """
+  Pick the highest-count fill-block reason for status telemetry.
+
+  Args:
+    stats (dict[str, int]): Per-tick fill failure counters.
+
+  Returns:
+    str | None: Reason token or ``None`` when all zero.
+
+  Examples:
+    >>> _dominant_ingest_fill_block({"claim_none": 3, "skip_missing": 1})
+    'claim_none'
+    >>> _dominant_ingest_fill_block({"claim_none": 0}) is None
+    True
+  """
+  best_key: str | None = None
+  best_n = 0
+  for key in _FILL_BLOCK_KEYS:
+    n = int(stats.get(key, 0) or 0)
+    if n > best_n:
+      best_n = n
+      best_key = key
+  return best_key
+
+
+def _ingest_fill_skip_budget_for_zcard(zcard: int) -> int:
+  """
+  Scale skip budget when the ingest ZSET is deep.
+
+  Args:
+    zcard (int): Total ingest queue depth.
+
+  Returns:
+    int: Bounded skip budget for one fill tick.
+
+  Examples:
+    >>> _ingest_fill_skip_budget_for_zcard(0)
+    8
+    >>> _ingest_fill_skip_budget_for_zcard(500)
+    10
+  """
+  if int(zcard or 0) <= 0:
+    return INGEST_FILL_SKIP_BUDGET
+  return max(
+      INGEST_FILL_SKIP_BUDGET,
+      min(int(zcard) // 50, INGEST_FILL_SKIP_BUDGET_MAX),
+  )
+
+
+def _ingest_coordinator_idle_sleep_s(*, zcard: int, poll_s: float) -> float:
+  """
+  Return idle sleep seconds for the ingest coordinator tick.
+
+  Deep queues use short poll; empty queues use ``sync_pool_poll_timeout_s``.
+
+  Args:
+    zcard (int): Total ingest ZSET depth.
+    poll_s (float): Configured pool poll timeout.
+
+  Returns:
+    float: Sleep duration in seconds.
+
+  Examples:
+    >>> _ingest_coordinator_idle_sleep_s(zcard=100, poll_s=5.0)
+    0.05
+    >>> _ingest_coordinator_idle_sleep_s(zcard=0, poll_s=5.0)
+    5.0
+  """
+  if int(zcard or 0) > 0:
+    return min(0.05, float(poll_s))
+  return max(0.05, float(poll_s))
+
+
 def _fill_ingest_band(
   client: Any,
   *,
@@ -2141,6 +2272,9 @@ def _fill_ingest_band(
   tgz_archive_dir: str = "",
   archive_data_dir: str | None = None,
   ingest_is_complete_fn: Callable[..., bool] | None = None,
+  skip_budget: int | None = None,
+  probe_depth: int | None = None,
+  fill_stats: dict[str, int] | None = None,
 ) -> int:
   """
   Claim ranged ingest jobs and submit until ``cap`` in-flight for ``band``.
@@ -2164,6 +2298,9 @@ def _fill_ingest_band(
     ingest_is_complete_fn (Callable[..., bool] | None): Injectable complete
       predicate (tests); defaults to
       :func:`sync_timedb_job_reconstruct.ingest_is_complete`.
+    skip_budget (int | None): Max skip/requeue iterations this tick.
+    probe_depth (int | None): Lua claim probe depth override.
+    fill_stats (dict[str, int] | None): Optional per-tick failure counters.
 
   Returns:
     int: Newly submitted job count.
@@ -2188,23 +2325,31 @@ def _fill_ingest_band(
   """
   submitted_n = 0
   skipped = 0
+  budget = int(skip_budget if skip_budget is not None else INGEST_FILL_SKIP_BUDGET)
+  stats = fill_stats if fill_stats is not None else _empty_ingest_fill_stats()
   complete_fn = ingest_is_complete_fn or jr.ingest_is_complete
   while len(inflight) < cap:
     if band_cap is not None:
       hot_n, catch_n = _count_ingest_band_inflight(claims)
       used = hot_n if band == "hot" else catch_n
       if used >= band_cap:
+        stats["band_cap"] += 1
         break
     claim = jq.claim_ingest_job(
-        client, band=band, owner_token=jq.make_lease_owner_token(),
+        client,
+        band=band,
+        owner_token=jq.make_lease_owner_token(),
+        probe_depth=probe_depth,
     )
     if claim is None:
+      stats["claim_none"] += 1
       break
     if _reband_claimed_ingest_if_needed(
         client, claim, tgz_archive_dir,
     ):
       skipped += 1
-      if skipped >= INGEST_FILL_SKIP_BUDGET:
+      stats["skip_reband"] += 1
+      if skipped >= budget:
         break
       continue
     path = _path_from_ingest_identity(claim.identity)
@@ -2216,7 +2361,8 @@ def _fill_ingest_band(
           owner_token=claim.owner_token,
       )
       skipped += 1
-      if skipped >= INGEST_FILL_SKIP_BUDGET:
+      stats["skip_lock"] += 1
+      if skipped >= budget:
         break
       continue
     if not path or not os.path.isfile(path):
@@ -2244,7 +2390,8 @@ def _fill_ingest_band(
             score=claim.score,
         )
       skipped += 1
-      if skipped >= INGEST_FILL_SKIP_BUDGET:
+      stats["skip_missing"] += 1
+      if skipped >= budget:
         break
       continue
     stored_fp = ""
@@ -2275,12 +2422,14 @@ def _fill_ingest_band(
           score=claim.score,
       )
       skipped += 1
-      if skipped >= INGEST_FILL_SKIP_BUDGET:
+      stats["skip_fp"] += 1
+      if skipped >= budget:
         break
       continue
     try:
       async_res = ingest_pool.apply_async(_ingest_worker, (manager_lock, path))
     except Exception:
+      stats["submit_err"] += 1
       jq.requeue_job(
           client,
           kind=jq.JOB_KIND_INGEST,
@@ -3348,6 +3497,131 @@ def _queues_appear_idle(client: Any) -> bool:
   return True
 
 
+def _ingest_coordinator_fill_tick(
+  *,
+  client: Any,
+  pool_ref: AtomicPoolRef,
+  manager_lock: Any,
+  directory: str,
+  tgz_archive_dir: str,
+  hot_cap: int,
+  catchup_cap: int,
+  ingest_pool_size: int,
+  ingest_inflight: dict[str, AsyncResult],
+  ingest_leases: dict[str, Any],
+  ingest_submitted: dict[str, float],
+  skip_budget: int,
+  fill_stats: dict[str, int],
+) -> tuple[int, int, int]:
+  """
+  Run one ingest-coordinator fill pass (hot, catchup, hot spillover).
+
+  Args:
+    client (Any): Redis job client.
+    pool_ref (AtomicPoolRef): Current ingest pool holder.
+    manager_lock (Any): Write lock for ingest workers.
+    directory (str): Archive data directory.
+    tgz_archive_dir (str): Daily archive directory.
+    hot_cap (int): Reserved hot ingest slots.
+    catchup_cap (int): Reserved catchup ingest slots.
+    ingest_pool_size (int): Total ingest pool process count.
+    ingest_inflight (dict[str, AsyncResult]): Local inflight map.
+    ingest_leases (dict[str, Any]): Local claim map.
+    ingest_submitted (dict[str, float]): Submit monotonic times.
+    skip_budget (int): Max skip iterations per band fill.
+    fill_stats (dict[str, int]): Per-tick failure counters (mutated).
+
+  Returns:
+    tuple[int, int, int]: ``(submitted_count, hot_queued, zcard)``.
+
+  Raises:
+    RuntimeError: When Redis ``zcount`` fails.
+
+  Examples:
+    >>> isinstance(_ingest_coordinator_fill_tick, type(lambda: None))
+    True
+  """
+  did = 0
+  hot_queued = 0
+  zcard = 0
+  try:
+    lo, hi = jq.ingest_score_range("hot")
+    hot_queued = int(
+        client.zcount(jq.job_queue_key(jq.JOB_KIND_INGEST), lo, hi) or 0
+    )
+    zcard = int(client.zcard(jq.job_queue_key(jq.JOB_KIND_INGEST)) or 0)
+  except Exception as exc:
+    raise RuntimeError(
+        "queue orchestrator redis zcount failed: %s" % type(exc).__name__
+    ) from exc
+  probe_depth = jq.ingest_claim_probe_depth(
+      hot_q=hot_queued, pool=ingest_pool_size,
+  )
+  pool = pool_ref.get()
+  fill_kw = {
+      "skip_budget": skip_budget,
+      "probe_depth": probe_depth,
+      "fill_stats": fill_stats,
+      "tgz_archive_dir": tgz_archive_dir,
+      "archive_data_dir": directory,
+  }
+  while len(ingest_inflight) < hot_cap:
+    n = _fill_ingest_band(
+        client,
+        band="hot",
+        cap=hot_cap,
+        inflight=ingest_inflight,
+        claims=ingest_leases,
+        submitted=ingest_submitted,
+        ingest_pool=pool,
+        manager_lock=manager_lock,
+        band_cap=hot_cap,
+        **fill_kw,
+    )
+    did += n
+    if n == 0:
+      break
+  catchup_limit = catchup_dispatch_cap(
+      hot_queued=hot_queued,
+      catchup_queued=0,
+      hot_cap=hot_cap,
+      catchup_cap=catchup_cap,
+      pool=ingest_pool_size,
+  )
+  while len(ingest_inflight) < ingest_pool_size:
+    n = _fill_ingest_band(
+        client,
+        band="catchup",
+        cap=ingest_pool_size,
+        inflight=ingest_inflight,
+        claims=ingest_leases,
+        submitted=ingest_submitted,
+        ingest_pool=pool_ref.get(),
+        manager_lock=manager_lock,
+        band_cap=catchup_limit,
+        **fill_kw,
+    )
+    did += n
+    if n == 0:
+      break
+  while len(ingest_inflight) < ingest_pool_size:
+    n = _fill_ingest_band(
+        client,
+        band="hot",
+        cap=ingest_pool_size,
+        inflight=ingest_inflight,
+        claims=ingest_leases,
+        submitted=ingest_submitted,
+        ingest_pool=pool_ref.get(),
+        manager_lock=manager_lock,
+        **fill_kw,
+    )
+    did += n
+    if n == 0:
+      break
+  return did, hot_queued, zcard
+
+
 def _ingest_coordinator_loop(
   *,
   client: Any,
@@ -3413,6 +3687,8 @@ def _ingest_coordinator_loop(
   role = "ingest-coordinator"
   last_reap = time.monotonic()
   last_fill_empty_log = 0.0
+  last_fill_block_log = 0.0
+  last_runtime_steal = 0.0
   try:
     while True:
       draining = barrier.draining.is_set() or shutdown_requested()
@@ -3438,92 +3714,105 @@ def _ingest_coordinator_loop(
         recycle_gate.paused.clear()
       did = 0
       hot_queued = 0
+      zcard = 0
+      fill_stats = _empty_ingest_fill_stats()
       if not draining and not recycle_gate.recycle_requested.is_set():
-        pool = pool_ref.get()
-        while len(ingest_inflight) < hot_cap:
-          n = _fill_ingest_band(
-              client,
-              band="hot",
-              cap=hot_cap,
-              inflight=ingest_inflight,
-              claims=ingest_leases,
-              submitted=ingest_submitted,
-              ingest_pool=pool,
-              manager_lock=manager_lock,
-              band_cap=hot_cap,
-              tgz_archive_dir=tgz_archive_dir,
-              archive_data_dir=directory,
-          )
-          did += n
-          if n == 0:
-            break
         try:
-          lo, hi = jq.ingest_score_range("hot")
-          hot_queued = int(
-              client.zcount(jq.job_queue_key(jq.JOB_KIND_INGEST), lo, hi) or 0
+          zcard = int(
+              client.zcard(jq.job_queue_key(jq.JOB_KIND_INGEST)) or 0,
           )
         except Exception as exc:
           raise RuntimeError(
-              "queue orchestrator redis zcount failed: %s" % type(exc).__name__
+              "queue orchestrator redis zcard failed: %s"
+              % type(exc).__name__
           ) from exc
-        catchup_limit = catchup_dispatch_cap(
-            hot_queued=hot_queued,
-            catchup_queued=0,
+        skip_budget = _ingest_fill_skip_budget_for_zcard(zcard)
+        did, hot_queued, zcard = _ingest_coordinator_fill_tick(
+            client=client,
+            pool_ref=pool_ref,
+            manager_lock=manager_lock,
+            directory=directory,
+            tgz_archive_dir=tgz_archive_dir,
             hot_cap=hot_cap,
             catchup_cap=catchup_cap,
-            pool=ingest_pool_size,
+            ingest_pool_size=ingest_pool_size,
+            ingest_inflight=ingest_inflight,
+            ingest_leases=ingest_leases,
+            ingest_submitted=ingest_submitted,
+            skip_budget=skip_budget,
+            fill_stats=fill_stats,
         )
-        while len(ingest_inflight) < ingest_pool_size:
-          n = _fill_ingest_band(
-              client,
-              band="catchup",
-              cap=ingest_pool_size,
-              inflight=ingest_inflight,
-              claims=ingest_leases,
-              submitted=ingest_submitted,
-              ingest_pool=pool_ref.get(),
-              manager_lock=manager_lock,
-              band_cap=catchup_limit,
-              tgz_archive_dir=tgz_archive_dir,
-              archive_data_dir=directory,
-          )
-          did += n
-          if n == 0:
-            break
-        while len(ingest_inflight) < ingest_pool_size:
-          n = _fill_ingest_band(
-              client,
-              band="hot",
-              cap=ingest_pool_size,
-              inflight=ingest_inflight,
-              claims=ingest_leases,
-              submitted=ingest_submitted,
-              ingest_pool=pool_ref.get(),
-              manager_lock=manager_lock,
-              tgz_archive_dir=tgz_archive_dir,
-              archive_data_dir=directory,
-          )
-          did += n
-          if n == 0:
-            break
         if (
             did == 0
             and not ingest_inflight
             and not ingest_submitted
+            and zcard > 0
         ):
-          try:
-            zcard = int(
-                client.zcard(jq.job_queue_key(jq.JOB_KIND_INGEST)) or 0,
-            )
-          except Exception:
-            zcard = 0
+          now_steal = time.monotonic()
+          if (now_steal - last_runtime_steal) >= INGEST_RUNTIME_STEAL_INTERVAL_S:
+            last_runtime_steal = now_steal
+            try:
+              stolen = jq.steal_dead_owner_leases(client)
+            except Exception as exc:
+              _log(
+                  "queue_orchestrator ingest runtime steal failed: %s"
+                  % type(exc).__name__,
+                  log_fn=log_fn,
+              )
+              stolen = 0
+            if stolen:
+              _log(
+                  "queue_orchestrator ingest runtime steal count=%d"
+                  % stolen,
+                  log_fn=log_fn,
+              )
+              retry_did, hot_queued, zcard = _ingest_coordinator_fill_tick(
+                  client=client,
+                  pool_ref=pool_ref,
+                  manager_lock=manager_lock,
+                  directory=directory,
+                  tgz_archive_dir=tgz_archive_dir,
+                  hot_cap=hot_cap,
+                  catchup_cap=catchup_cap,
+                  ingest_pool_size=ingest_pool_size,
+                  ingest_inflight=ingest_inflight,
+                  ingest_leases=ingest_leases,
+                  ingest_submitted=ingest_submitted,
+                  skip_budget=skip_budget,
+                  fill_stats=fill_stats,
+              )
+              did += retry_did
+          fill_block = _dominant_ingest_fill_block(fill_stats)
+          if fill_block:
+            progress.get_progress_state().set_fill_block(fill_block)
           now_bc = time.monotonic()
-          if zcard > 0 and (now_bc - last_fill_empty_log) >= 60.0:
+          if (now_bc - last_fill_empty_log) >= INGEST_FILL_BLOCK_LOG_INTERVAL_S:
             last_fill_empty_log = now_bc
+            reason_bits = ",".join(
+                "%s=%d" % (k, fill_stats[k])
+                for k in _FILL_BLOCK_KEYS
+                if fill_stats.get(k)
+            )
             _log(
                 "queue_orchestrator ingest fill empty deep_queue "
                 "zcard=%d hot_q=%d local_inflight=0 submitted=0"
-                % (zcard, hot_queued),
+                " fill_block=%s stats=%s"
+                % (
+                    zcard,
+                    hot_queued,
+                    fill_block or "unknown",
+                    reason_bits or "-",
+                ),
+                log_fn=log_fn,
+            )
+          elif fill_block and (
+              (now_bc - last_fill_block_log)
+              >= INGEST_FILL_BLOCK_LOG_INTERVAL_S
+          ):
+            last_fill_block_log = now_bc
+            _log(
+                "queue_orchestrator ingest fill_block=%s zcard=%d hot_q=%d"
+                % (fill_block, zcard, hot_queued),
                 log_fn=log_fn,
             )
       did += _drain_ingest_ready(
@@ -3554,7 +3843,14 @@ def _ingest_coordinator_loop(
       if draining:
         time.sleep(min(0.25, max(0.05, poll_s)))
       elif did == 0 and not ingest_inflight:
-        time.sleep(max(0.05, poll_s))
+        if zcard <= 0:
+          try:
+            zcard = int(
+                client.zcard(jq.job_queue_key(jq.JOB_KIND_INGEST)) or 0,
+            )
+          except Exception:
+            zcard = 0
+        time.sleep(_ingest_coordinator_idle_sleep_s(zcard=zcard, poll_s=poll_s))
       else:
         time.sleep(min(0.05, poll_s))
   except Exception as exc:

@@ -16,7 +16,8 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 
 - **`progress day=`** — omit-zeros day counters (`gate_skip`, `ingest_handoff`, ingest outcomes, archive, day_close, reconstruct, …).
 - **Day-close on `progress day=`** — LIST identities are full daily tar paths. Expect `dc_run=` when a day_close slot is filled (covers long pre-seal verify), `complete=` when filesystem + 32h ACK, `incomplete_raw=` when remaining closed raw (requeued, not ACK), `deferred_age=` / `yielded=` / `ingest_handoff=` / `verify_failed=`. `sealed=` / `tar_delete=` only when those steps ran. Status `day_close=4/61` is inflight/queued, not a calendar day.
-- **`status`** — Redis `current/queued` (`ingest_hot` / `ingest_catchup` / …), `busy=` (incl discover), `orphan_inflight`, queue `*_q_delta`, `oldest_day` / `oldest_age_s`.
+- **`status`** — Redis `current/queued` (`ingest_hot` / `ingest_catchup` / …), `busy=` (incl discover), `orphan_inflight`, queue `*_q_delta`, `oldest_day` / `oldest_age_s`, optional **`fill_block=`** (dominant ingest fill failure: `claim_none`, `skip_missing`, `skip_reband`, `skip_lock`, `skip_fp`, `band_cap`, `submit_err`).
+- **`ingest fill empty deep_queue`** — rate-limited when local inflight is zero but Redis ingest ZSET is deep; includes `fill_block=` and per-reason `stats=` counters.
 - **`census`** — 60s depth; ratios are **inflight/queued**; `busy=` replaces opaque `local=I/A/D`.
 - **`archive_job_done`** — single INFO per append job (`tar_bytes`, `members_source`, `mapped`/`to_add`/`appended`, `outcome=`). Do not require `archive_job_begin` / `archive_job_duty` / `Archived batch` at INFO.
 - **`ingest per-file timeout`** — includes `size_bytes=` and `bytes_per_s=` for size/time judgment.

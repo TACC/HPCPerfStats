@@ -1716,9 +1716,58 @@ def test_ingest_timeout_requeues_without_attempt_bump(tmp_path, monkeypatch):
 
 def test_zcount_failure_is_fail_closed():
   """P1-7: Redis zcount errors must not invent hot_queued=1."""
+  loop_src = inspect.getsource(qo._ingest_coordinator_loop)
+  fill_src = inspect.getsource(qo._ingest_coordinator_fill_tick)
+  assert "hot_queued = 1" not in loop_src
+  assert "hot_queued = 1" not in fill_src
+  assert "queue orchestrator redis zcount failed" in fill_src
+
+
+def test_ingest_coordinator_idle_sleep_deep_queue():
+  """B1: deep ZSET uses short poll, not sync_pool_poll_timeout_s."""
+  assert qo._ingest_coordinator_idle_sleep_s(zcard=452, poll_s=5.0) == 0.05
+
+
+def test_ingest_coordinator_idle_sleep_empty_queue():
+  """B1: empty ZSET keeps long idle poll."""
+  assert qo._ingest_coordinator_idle_sleep_s(zcard=0, poll_s=5.0) == 5.0
+
+
+def test_ingest_fill_skip_budget_scales_with_zcard():
+  """B2: deep queue escalates skip budget with a hard cap."""
+  assert qo._ingest_fill_skip_budget_for_zcard(0) == qo.INGEST_FILL_SKIP_BUDGET
+  assert qo._ingest_fill_skip_budget_for_zcard(500) == 10
+  assert qo._ingest_fill_skip_budget_for_zcard(5000) == qo.INGEST_FILL_SKIP_BUDGET_MAX
+
+
+def test_ingest_claim_probe_depth_elevates_when_hot_deep():
+  """B2: claim probe depth rises when hot queue exceeds pool."""
+  assert jq.ingest_claim_probe_depth(hot_q=0, pool=16) == 8
+  assert jq.ingest_claim_probe_depth(hot_q=500, pool=16) == 31
+
+
+def test_dominant_ingest_fill_block_picks_max():
+  """B4: telemetry chooses the highest-count fill-block reason."""
+  stats = qo._empty_ingest_fill_stats()
+  stats["skip_missing"] = 2
+  stats["claim_none"] = 5
+  assert qo._dominant_ingest_fill_block(stats) == "claim_none"
+
+
+def test_ingest_coordinator_uses_runtime_steal_on_fill_empty():
+  """B3: fill-empty deep queue may steal dead-owner leases before retry."""
   src = inspect.getsource(qo._ingest_coordinator_loop)
-  assert "hot_queued = 1" not in src
-  assert "queue orchestrator redis zcount failed" in src
+  assert "steal_dead_owner_leases" in src
+  assert "ingest runtime steal" in src
+
+
+def test_ingest_coordinator_loop_uses_zcard_for_idle_sleep():
+  """B1: idle sleep branch must consult ZSET depth."""
+  src = inspect.getsource(qo._ingest_coordinator_loop)
+  assert "_ingest_coordinator_idle_sleep_s" in src
+  assert "time.sleep(max(0.05, poll_s))" not in src.split(
+      "elif did == 0 and not ingest_inflight:",
+  )[1].split("else:")[0]
 
 
 def test_renew_helper_not_called_from_loop():

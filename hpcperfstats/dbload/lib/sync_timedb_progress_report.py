@@ -403,6 +403,7 @@ def format_status_line(
   oldest_age_s: Optional[int] = None,
   undated: Optional[Mapping[str, int]] = None,
   dead_letter_by_kind: Optional[Mapping[str, int]] = None,
+  fill_block: Optional[str] = None,
 ) -> str:
   """
   Format omit-zeros ``queue_orchestrator status`` footer (always one line).
@@ -417,6 +418,7 @@ def format_status_line(
     oldest_age_s (Optional[int]): Age of oldest head in seconds.
     undated (Optional[Mapping[str, int]]): Undated fallback counters.
     dead_letter_by_kind (Optional[Mapping[str, int]]): Undated dead letters.
+    fill_block (Optional[str]): Last ingest fill-block reason token.
 
   Returns:
     str: Status line (``status idle`` when nothing else).
@@ -461,6 +463,8 @@ def format_status_line(
   busy = format_busy_token(busy_kinds)
   if busy:
     parts.append(busy)
+  if fill_block:
+    parts.append("fill_block=%s" % str(fill_block))
   for kind, n in sorted((dead_letter_by_kind or {}).items()):
     if int(n or 0):
       parts.append("dead_letter_%s=%d" % (kind, int(n)))
@@ -481,6 +485,7 @@ class ProgressReportState:
     _days: Calendar day → :class:`DayActivityLedger`.
     window: :class:`WindowHealthCounters` for the open window.
     _window_started_mono: Monotonic time when the current window opened.
+    _fill_block: Latest ingest fill-block reason for status footers.
   """
 
   def __init__(self) -> None:
@@ -498,6 +503,23 @@ class ProgressReportState:
     self._days: Dict[str, DayActivityLedger] = {}
     self.window = WindowHealthCounters()
     self._window_started_mono = time.monotonic()
+    self._fill_block: Optional[str] = None
+
+  def set_fill_block(self, block: Optional[str]) -> None:
+    """
+    Store the latest ingest fill-block reason for status footers.
+
+    Args:
+      block (Optional[str]): Reason token or ``None`` to clear.
+
+    Returns:
+      None
+
+    Examples:
+      >>> ProgressReportState().set_fill_block("claim_none")
+    """
+    with self._lock:
+      self._fill_block = str(block).strip() if block else None
 
   def reset_window(
     self,
@@ -637,6 +659,7 @@ class ProgressReportState:
       undated = dict(self.window.undated)
       dead = dict(self.window.dead_letter_by_kind)
       start = dict(self.window.queue_depth_start)
+      fill_block = self._fill_block
     lines: List[str] = []
     for day, ledger in day_items:
       line = format_day_progress_line(day, ledger)
@@ -663,6 +686,7 @@ class ProgressReportState:
             oldest_age_s=oldest_age_s,
             undated=undated,
             dead_letter_by_kind=dead,
+            fill_block=fill_block,
         ),
     )
     return lines

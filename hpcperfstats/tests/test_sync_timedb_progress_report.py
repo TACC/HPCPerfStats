@@ -47,6 +47,30 @@ def test_format_status_idle_and_busy_includes_discover():
   assert "oldest_day=2025-05-05" in line
 
 
+def test_format_status_includes_fill_block():
+  line = pr.format_status_line(
+      band_ratios={"ingest_hot": {"inflight": 0, "queued": 452}},
+      queue_deltas={},
+      busy_kinds=["append"],
+      orphan_inflight={},
+      fill_block="claim_none",
+  )
+  assert "fill_block=claim_none" in line
+  assert "ingest_hot=0/452" in line
+
+
+def test_progress_state_set_fill_block():
+  state = pr.reset_progress_state_for_tests()
+  state.set_fill_block("skip_missing")
+  lines = state.emit_lines(
+      band_ratios={},
+      busy_kinds=[],
+      census_inflight={},
+      queue_depth_now={},
+  )
+  assert any("fill_block=skip_missing" in line for line in lines)
+
+
 def test_format_queue_census_is_current_over_queued():
   census = {
       "ingest": {"queued": 2, "inflight": 1},

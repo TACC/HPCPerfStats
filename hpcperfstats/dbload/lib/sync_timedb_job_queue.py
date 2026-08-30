@@ -1682,6 +1682,30 @@ def _claim_probe_depth() -> int:
   return 8
 
 
+def ingest_claim_probe_depth(*, hot_q: int = 0, pool: int = 1) -> int:
+  """
+  Return claim probe depth, elevated when the hot queue exceeds pool size.
+
+  Args:
+    hot_q (int): Hot-band queued depth.
+    pool (int): Ingest pool process count.
+
+  Returns:
+    int: Bounded probe depth for :func:`claim_ingest_job`.
+
+  Examples:
+    >>> ingest_claim_probe_depth(hot_q=0, pool=16)
+    8
+    >>> ingest_claim_probe_depth(hot_q=500, pool=16) > 8
+    True
+  """
+  base = _claim_probe_depth()
+  if int(hot_q or 0) <= int(pool or 1):
+    return base
+  elevated = max(base, int(hot_q) // max(1, int(pool)))
+  return min(64, elevated)
+
+
 def claim_ingest_job(
   client: Any,
   *,
@@ -1689,6 +1713,7 @@ def claim_ingest_job(
   owner_token: str,
   ttl_s: int | None = None,
   now_s: float | None = None,
+  probe_depth: int | None = None,
 ) -> Optional[ClaimedJob]:
   """
   Atomically claim one ingest job: ranged pop + lease + in-flight record.
@@ -1704,6 +1729,8 @@ def claim_ingest_job(
     ttl_s (int | None): Lease TTL override; default
       :func:`job_lease_ttl_seconds`.
     now_s (float | None): Clock override (tests).
+    probe_depth (int | None): Lua skip depth override; default
+      :func:`_claim_probe_depth`.
 
   Returns:
     Optional[ClaimedJob]: Claim, or ``None`` when the band has no free work.
@@ -1726,6 +1753,7 @@ def claim_ingest_job(
   ttl = int(job_lease_ttl_seconds() if ttl_s is None else ttl_s)
   now = time.time() if now_s is None else float(now_s)
   deadline = now + ttl
+  depth = int(probe_depth if probe_depth is not None else _claim_probe_depth())
   raw = eval_job_script(
       client,
       _CLAIM_ZSET_LUA,
@@ -1739,7 +1767,7 @@ def claim_ingest_job(
       job_lease_prefix(JOB_KIND_INGEST),
       "%.3f" % deadline,
       LEASE_CONFLICT_SCORE_PENALTY,
-      _claim_probe_depth(),
+      depth,
   )
   if not raw:
     return None

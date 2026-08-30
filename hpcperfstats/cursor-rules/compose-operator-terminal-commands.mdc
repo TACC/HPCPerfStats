@@ -529,6 +529,30 @@ Resolve **`N`** from `redis://…/N` in INI / Django settings when unsure.
 
 **Anti-pattern — short `job:v1:ingest` census keys (silent zero):** durable queue keys are prefixed `hpcperfstats:sync_timedb:job:v1:…`. `ZCARD job:v1:ingest` / `LLEN job:v1:append` always return **0** even when the orchestrator is healthy. Use the full keys and per-band `ZCOUNT` (hot `-inf`…`999999999999999`, catchup `1000000000000000`…`+inf`). Compose Redis must be **`volatile-lru`** (not **`allkeys-*`**) so TTL-free queue keys cannot be evicted. **Post-deploy only** — a pre-deploy all-zero census is a false negative.
 
+**Anti-pattern — `count_inflight_by_band(client, kind=…)` (hpcperfstats04 2026-08-29):** API is **`hot_infl, catch_infl = count_inflight_by_band(client)`** — ingest-only, **no** `kind=` kwarg. Correct census one-liner:
+
+```bash
+docker compose exec pipeline su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as cfg
+from hpcperfstats.dbload.lib.sync_timedb_job_queue import (
+    count_inflight_by_band,
+    get_archive_members_redis_client,
+    job_queue_key,
+    JOB_KIND_INGEST,
+    ingest_score_range,
+)
+client = get_archive_members_redis_client(required=True)
+zcard = int(client.zcard(job_queue_key(JOB_KIND_INGEST)) or 0)
+lo, hi = ingest_score_range(\"hot\")
+hot_q = int(client.zcount(job_queue_key(JOB_KIND_INGEST), lo, hi) or 0)
+lo, hi = ingest_score_range(\"catchup\")
+catchup_q = int(client.zcount(job_queue_key(JOB_KIND_INGEST), lo, hi) or 0)
+hot_infl, catch_infl = count_inflight_by_band(client)
+print(\"zcard\", zcard, \"hot_q\", hot_q, \"catchup_q\", catchup_q)
+print(\"hot_infl\", hot_infl, \"catch_infl\", catch_infl)
+"'
+```
+
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml exec redis sh -lc 'P=hpcperfstats:sync_timedb:job:v1; redis-cli -n 1 --scan --pattern "${P}*" | head -50; echo ---; redis-cli -n 1 ZCARD ${P}:queue:ingest; redis-cli -n 1 ZCOUNT ${P}:queue:ingest -inf 999999999999999; redis-cli -n 1 ZCOUNT ${P}:queue:ingest 1000000000000000 +inf; redis-cli -n 1 LLEN ${P}:queue:append; redis-cli -n 1 LLEN ${P}:queue:discover; redis-cli -n 1 LLEN ${P}:queue:day_close; echo ---leases; redis-cli -n 1 --scan --pattern "${P}:lease:*" | wc -l'
 ```
