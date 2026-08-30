@@ -3616,8 +3616,9 @@ def _ingest_coordinator_fill_tick(
 
   Order: fill hot to ``hot_cap``; catchup under reserved
   ``catchup_dispatch_cap`` (``hot_submitted`` omitted); hot spillover to
-  pool; if hot still submitted 0 with free slots, elevated-probe hot
-  retry then catchup with ``hot_submitted=0``.
+  pool; when free slots remain, elevated-probe hot retry (if hot queued)
+  then catchup with ``hot_submitted=0`` expand (if catchup queued) —
+  even when this tick already submitted hot (RC7).
 
   Args:
     client (Any): Redis job client.
@@ -3731,7 +3732,7 @@ def _ingest_coordinator_fill_tick(
     hot_submitted += n
     if n == 0:
       break
-  if hot_submitted == 0 and len(ingest_inflight) < ingest_pool_size:
+  if len(ingest_inflight) < ingest_pool_size:
     if hot_queued > 0:
       retry_probe = min(64, max(int(probe_depth), 32))
       retry_kw = dict(fill_kw)
@@ -3752,11 +3753,7 @@ def _ingest_coordinator_fill_tick(
         hot_submitted += n
         if n == 0:
           break
-    if (
-        hot_submitted == 0
-        and len(ingest_inflight) < ingest_pool_size
-        and catchup_queued > 0
-    ):
+    if len(ingest_inflight) < ingest_pool_size and catchup_queued > 0:
       catchup_limit = catchup_dispatch_cap(
           hot_queued=hot_queued,
           catchup_queued=catchup_queued,

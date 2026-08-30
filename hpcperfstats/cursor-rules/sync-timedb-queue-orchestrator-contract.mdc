@@ -20,7 +20,7 @@ Production coordinator for `sync_timedb` is **`run_sync_timedb_queue_orchestrato
 | Reaper / steal | Tick `reap_expired_inflight`; boot **and** rate-limited runtime `steal_dead_owner_leases` **plus** `reconcile_this_owner_orphan_leases` when `len(local) < pool` and ingest ZSET is deep (SCAN, never KEYS) — not only when local maps are empty; host+boot scoped owner tokens; this-owner orphan leases (no local Future) are requeued |
 | Streaming submit | Discover → `ZADD` as paths arrive; never wait for full find to finish before first enqueue; stop at ingest queue cap |
 | Calendar day | Discover resolves day from the daily tar path; **do not** substitute today. Unresolved day → skip ingest enqueue |
-| Reserved ingest slots | `hot_cap = max(1, (2*pool)//3)`, `catchup_cap = pool - hot_cap` (catchup floored to 1 when `pool >= 2`). Catchup may use unused pool slots when the hot range is empty **or** when hot fill+spillover submitted **0** this tick while the pool has free slots (hot unsubmittable). While hot still submits, reserved `catchup_cap` holds |
+| Reserved ingest slots | `hot_cap = max(1, (2*pool)//3)`, `catchup_cap = pool - hot_cap` (catchup floored to 1 when `pool >= 2`). Catchup may use unused pool slots when the hot range is empty **or** when free slots remain after hot→cap / reserved catchup / hot spillover — elevated hot retry then catchup with `catchup_dispatch_cap(..., hot_submitted=0)` (**RC7**: do **not** require `hot_submitted==0` this tick). While hot still submits into reserved/spillover passes, reserved `catchup_cap` holds for that earlier pass |
 | Reband | Recompute band at claim time and `ZADD` the same identity with the new score |
 | Ingest tick order | ingest-coordinator: **fill → drain → fill** (same tick) so completions refill before sleep; then reap / idle poll |
 | Reband | Recompute band at claim time and `ZADD` the same identity with the new score |
@@ -42,7 +42,7 @@ Production coordinator for `sync_timedb` is **`run_sync_timedb_queue_orchestrato
 | Redis eviction | Startup `assert_redis_queue_safety` **fails closed** on `allkeys-*`; accept `noeviction` or `volatile-*`. Queue keys are TTL-free |
 | Streaming submit | Discover → `ZADD` as paths arrive; never wait for full find to finish before first enqueue |
 | Sliding-window pools | Refill on completion; never join an entire batch before the next hop |
-| Reserved ingest slots | `hot_cap = max(1, (2*pool)//3)`, `catchup_cap = pool - hot_cap` (catchup floored to 1 when `pool >= 2`). Catchup overflow: empty hot **or** hot-unsubmittable this tick (see law above) |
+| Reserved ingest slots | `hot_cap = max(1, (2*pool)//3)`, `catchup_cap = pool - hot_cap` (catchup floored to 1 when `pool >= 2`). Catchup overflow: empty hot **or** unused slots after hot/spillover even when `hot_submitted>0` this tick (**RC7**; see reserved-slot law above) |
 | No whole-key `ZPOPMIN` | Ranged pop only (else catchup starves) |
 | Idle poll | `sync_pool_poll_timeout_s` when slots free **and ingest ZSET empty**; when ZSET is deep but unclaimable, ingest-coordinator uses **short** poll (`min(0.05, poll_s)`) |
 | Empty Redis ≠ caught up | Reconstruct from disk + Timescale + marks; checkpoint `.sync_timedb_state.json` is **not** reconstruct SoT |

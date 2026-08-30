@@ -854,6 +854,100 @@ def test_catchup_dispatch_cap_expands_when_hot_submitted_zero():
   ) == 8
 
 
+def test_rc7_unused_slot_catchup_when_hot_submitted_nonzero(monkeypatch, tmp_path):
+  """RC7: after one hot submit, unused slots still expand catchup (and elevated hot)."""
+  pool = 3
+  hot_cap = 2
+  catchup_cap = 1
+  inflight: dict[str, object] = {}
+  fill_log: list[dict[str, object]] = []
+
+  class _Client:
+    def zcount(self, key, lo, hi):
+      del key
+      hi_f = float(hi)
+      # Hot scores are below the catchup floor (1e15).
+      if hi_f < 1e15:
+        return 50
+      return 200
+
+    def zcard(self, key):
+      del key
+      return 250
+
+  def _fake_fill(
+      client,
+      *,
+      band,
+      cap,
+      inflight,
+      claims,
+      submitted,
+      ingest_pool,
+      manager_lock,
+      band_cap=None,
+      **kw,
+  ):
+    del client, claims, submitted, ingest_pool, manager_lock, cap
+    fill_log.append({
+        "band": band,
+        "band_cap": band_cap,
+        "probe_depth": kw.get("probe_depth"),
+        "inflight_before": len(inflight),
+    })
+    # Reserved hot: one successful submit then stop.
+    if (
+        band == "hot"
+        and band_cap == hot_cap
+        and not any(k.startswith("hot-res-") for k in inflight)
+    ):
+      inflight["hot-res-0"] = object()
+      return 1
+    # Reserved catchup + spillover: claim nothing (hot still queued).
+    if band == "catchup" and band_cap == catchup_cap:
+      return 0
+    if band == "hot" and band_cap is None and int(kw.get("probe_depth") or 0) < 32:
+      return 0
+    # Elevated hot retry: still nothing claimable.
+    if band == "hot" and int(kw.get("probe_depth") or 0) >= 32:
+      return 0
+    # Expanded catchup into remaining pool slots (RC7).
+    if band == "catchup" and band_cap == pool:
+      if "catch-expand-0" not in inflight:
+        inflight["catch-expand-0"] = object()
+        return 1
+      return 0
+    return 0
+
+  monkeypatch.setattr(qo, "_fill_ingest_band", _fake_fill)
+  did, hot_q, zcard, hot_n = qo._ingest_coordinator_fill_tick(
+      client=_Client(),
+      pool_ref=qo.AtomicPoolRef(object()),
+      manager_lock=None,
+      directory=str(tmp_path),
+      tgz_archive_dir=str(tmp_path),
+      hot_cap=hot_cap,
+      catchup_cap=catchup_cap,
+      ingest_pool_size=pool,
+      ingest_inflight=inflight,
+      ingest_leases={},
+      ingest_submitted={},
+      skip_budget=8,
+      fill_stats=qo._empty_ingest_fill_stats(),
+  )
+  assert hot_n >= 1
+  assert did >= 2
+  assert "catch-expand-0" in inflight
+  assert any(
+      c["band"] == "catchup" and c["band_cap"] == pool for c in fill_log
+  ), fill_log
+  assert any(
+      c["band"] == "hot" and int(c.get("probe_depth") or 0) >= 32 for c in fill_log
+  ), fill_log
+  assert hot_q == 50
+  assert zcard == 250
+
+
 def test_reband_at_claim_moves_stale_hot_to_catchup(monkeypatch):
   """B5: a claimed job whose day aged out of hot is requeued with a catchup score."""
   from datetime import date
