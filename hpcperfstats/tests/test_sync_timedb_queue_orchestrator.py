@@ -834,6 +834,26 @@ def test_reserved_band_slots_under_mixed_inflight():
   ) == 16
 
 
+def test_catchup_dispatch_cap_expands_when_hot_submitted_zero():
+  """RC1: unused pool slots go to catchup when hot is queued but unsubmittable."""
+  assert qo.catchup_dispatch_cap(
+      hot_queued=531,
+      catchup_queued=2010,
+      hot_cap=16,
+      catchup_cap=8,
+      pool=24,
+      hot_submitted=0,
+  ) == 24
+  assert qo.catchup_dispatch_cap(
+      hot_queued=531,
+      catchup_queued=2010,
+      hot_cap=16,
+      catchup_cap=8,
+      pool=24,
+      hot_submitted=3,
+  ) == 8
+
+
 def test_reband_at_claim_moves_stale_hot_to_catchup(monkeypatch):
   """B5: a claimed job whose day aged out of hot is requeued with a catchup score."""
   from datetime import date
@@ -1744,6 +1764,9 @@ def test_ingest_claim_probe_depth_elevates_when_hot_deep():
   """B2: claim probe depth rises when hot queue exceeds pool."""
   assert jq.ingest_claim_probe_depth(hot_q=0, pool=16) == 8
   assert jq.ingest_claim_probe_depth(hot_q=500, pool=16) == 31
+  fill_src = inspect.getsource(qo._ingest_coordinator_fill_tick)
+  assert "min(64, max(int(probe_depth), 32))" in fill_src
+  assert "hot_submitted=0" in fill_src
 
 
 def test_dominant_ingest_fill_block_picks_max():
@@ -1755,10 +1778,28 @@ def test_dominant_ingest_fill_block_picks_max():
 
 
 def test_ingest_coordinator_uses_runtime_steal_on_fill_empty():
-  """B3: fill-empty deep queue may steal dead-owner leases before retry."""
+  """B3/RC2: under-capacity deep queue steals and reconciles this-owner leases."""
   src = inspect.getsource(qo._ingest_coordinator_loop)
-  assert "steal_dead_owner_leases" in src
-  assert "ingest runtime steal" in src
+  assert "_ingest_runtime_lease_hygiene" in src
+  assert "reconcile_this_owner_orphan_leases" not in src
+  hy = inspect.getsource(qo._ingest_runtime_lease_hygiene)
+  assert "steal_dead_owner_leases" in hy
+  assert "ingest runtime steal" in hy
+  assert "reconcile_this_owner_orphan_leases" in hy
+  assert "len(ingest_inflight) >= int(ingest_pool_size)" in hy
+  assert "zcard" in hy
+  fill_src = inspect.getsource(qo._ingest_coordinator_loop)
+  first_fill = fill_src.find(
+      "did, hot_queued, zcard, _hot_n = _ingest_coordinator_fill_tick",
+  )
+  drain_at = fill_src.find("did += _drain_ingest_ready")
+  second_fill = fill_src.find(
+      "extra, hot_queued, zcard, _hot_n2 = _ingest_coordinator_fill_tick",
+  )
+  assert 0 < first_fill < drain_at < second_fill
+  assert "fill under-capacity" in fill_src
+  assert "set_fill_block(None)" in fill_src
+  assert "len(ingest_inflight) < ingest_pool_size" in fill_src
 
 
 def test_ingest_coordinator_loop_uses_zcard_for_idle_sleep():

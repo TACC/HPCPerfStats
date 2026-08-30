@@ -141,6 +141,42 @@ def test_steal_lease_when_owner_pid_dead():
   assert client.get(key) == "livetoken:host1:boot1:1"
 
 
+def test_reconcile_this_owner_orphan_lease_requeues():
+  """RC2/RC4: this-pid lease not in local maps is stolen and requeued."""
+  import os
+
+  client = FakeRedis()
+  identity = "/raw/orphan-future"
+  jq.zadd_ingest_job(client, identity=identity, score=5)
+  token = "n:host1:boot1:%d" % os.getpid()
+  claim = jq.claim_ingest_job(
+      client, band="hot", owner_token=token, ttl_s=60, now_s=1000.0,
+  )
+  assert claim is not None
+  assert client.zcard(jq.job_queue_key("ingest")) == 0
+  kept = jq.reconcile_this_owner_orphan_leases(
+      client,
+      local_identities=frozenset({identity}),
+      kind=jq.JOB_KIND_INGEST,
+      hostname="host1",
+      boot_id="boot1",
+      pid=os.getpid(),
+  )
+  assert kept == 0
+  assert client.get(jq.job_lease_key("ingest", identity)) is not None
+  n = jq.reconcile_this_owner_orphan_leases(
+      client,
+      local_identities=frozenset(),
+      kind=jq.JOB_KIND_INGEST,
+      hostname="host1",
+      boot_id="boot1",
+      pid=os.getpid(),
+  )
+  assert n == 1
+  assert client.get(jq.job_lease_key("ingest", identity)) is None
+  assert client.zscore(jq.job_queue_key("ingest"), identity) is not None
+
+
 def test_ranged_lua_pop_prefers_hot_range_without_starving_catchup():
   client = FakeRedis()
   today = date(2026, 8, 24)

@@ -43,6 +43,10 @@ Attributes:
   _RENEW_LUA: Lua source for compare-and-extend lease renewal.
   _REQUEUE_LUA: Lua source for owner-checked requeue.
   _STEAL_REQUEUE_LUA: Lua source for dead-owner steal that requeues inflight.
+  _steal_requeue_owned_lease: Shared Lua steal/requeue used by dead-PID
+    steal and this-owner orphan reconcile.
+  reconcile_this_owner_orphan_leases: SCAN this-process leases whose
+    identity is missing from local inflight maps and requeue them.
   _SCRIPT_CACHE_LOCK: Guards ``_SCRIPT_SHA_CACHE`` mutation.
   _SCRIPT_SHA_CACHE: Lua source -> ``SCRIPT LOAD`` sha memo.
 """
@@ -1198,6 +1202,64 @@ def steal_dead_owner_leases(
   return stolen
 
 
+def _steal_requeue_owned_lease(
+  client: Any,
+  *,
+  kind: str,
+  identity: str,
+  raw_owner: str,
+) -> bool:
+  """
+  Run the steal/requeue Lua for a lease this caller has already validated.
+
+  Deletes the lease. When an inflight HASH entry exists, the identity is
+  returned to the ZSET or LIST with the stored score (ingest) plus the
+  conflict penalty. A nil inflight never fabricates a queue member.
+
+  Args:
+    client (Any): Redis client with ``eval`` / ``evalsha``.
+    kind (str): Job kind for inflight and queue keys.
+    identity (str): Job identity to steal.
+    raw_owner (str): Exact lease value that must still match GET.
+
+  Returns:
+    bool: True when Lua reported a successful steal.
+
+  Examples:
+    >>> _steal_requeue_owned_lease(
+    ...     None, kind="ingest", identity="/a", raw_owner="n:h:b:1",
+    ... )
+    False
+  """
+  if client is None:
+    return False
+  mode = "z" if str(kind) == JOB_KIND_INGEST else "l"
+  score = 0.0
+  if mode == "z":
+    try:
+      entries = read_inflight_entries(client, kind=kind)
+    except Exception:
+      entries = {}
+    if identity in entries:
+      _deadline, _own, stored_score = entries[identity]
+      if stored_score is not None:
+        score = float(stored_score)
+  stolen = eval_job_script(
+      client,
+      _STEAL_REQUEUE_LUA,
+      3,
+      job_lease_key(kind, identity),
+      job_inflight_key(kind),
+      job_queue_key(kind),
+      str(identity),
+      raw_owner,
+      mode,
+      "%d" % int(score),
+      LEASE_CONFLICT_SCORE_PENALTY,
+  )
+  return bool(stolen)
+
+
 def steal_job_lease_if_owner_dead(
   client: Any,
   *,
@@ -1253,32 +1315,101 @@ def steal_job_lease_if_owner_dead(
   alive = (_pid_is_alive if pid_alive_fn is None else pid_alive_fn)(owner.pid)
   if alive:
     return False
-  raw_owner = str(raw)
-  mode = "z" if str(kind) == JOB_KIND_INGEST else "l"
-  score = 0.0
-  if mode == "z":
-    try:
-      entries = read_inflight_entries(client, kind=kind)
-    except Exception:
-      entries = {}
-    if identity in entries:
-      _deadline, _own, stored_score = entries[identity]
-      if stored_score is not None:
-        score = float(stored_score)
-  stolen = eval_job_script(
+  return _steal_requeue_owned_lease(
       client,
-      _STEAL_REQUEUE_LUA,
-      3,
-      key,
-      job_inflight_key(kind),
-      job_queue_key(kind),
-      str(identity),
-      raw_owner,
-      mode,
-      "%d" % int(score),
-      LEASE_CONFLICT_SCORE_PENALTY,
+      kind=kind,
+      identity=identity,
+      raw_owner=str(raw),
   )
-  return bool(stolen)
+
+
+def reconcile_this_owner_orphan_leases(
+  client: Any,
+  *,
+  local_identities: frozenset[str] | set[str],
+  kind: str = JOB_KIND_INGEST,
+  hostname: str | None = None,
+  boot_id: str | None = None,
+  pid: int | None = None,
+  max_scan: int = 500,
+) -> int:
+  """
+  Requeue this process's leases whose identity is not in local maps.
+
+  SCAN MATCH lease keys (never KEYS). A lease is reconciled only when the
+  owner token is locally evaluable (same host and boot), the PID suffix
+  matches this process, the kind matches, and the identity is absent from
+  ``local_identities``. That covers lost ``AsyncResult`` maps while Redis
+  HASH/leases still hold the claim. Foreign-host and other-boot tokens are
+  left for TTL plus the in-flight reaper.
+
+  Args:
+    client (Any): Redis client with ``scan_iter`` / ``get``.
+    local_identities (frozenset[str] | set[str]): Identities this
+      coordinator still tracks (inflight Futures and local claims).
+    kind (str): Job kind to reconcile; defaults to ingest.
+    hostname (str | None): Local hostname override (tests).
+    boot_id (str | None): Local boot id override (tests).
+    pid (int | None): Local PID override (tests); default ``os.getpid()``.
+    max_scan (int): Max lease keys to inspect this call.
+
+  Returns:
+    int: Number of leases successfully stolen/requeued.
+
+  Examples:
+    >>> reconcile_this_owner_orphan_leases(None, local_identities=frozenset())
+    0
+    >>> client = type("C", (), {})()  # doctest: +SKIP
+    >>> reconcile_this_owner_orphan_leases(
+    ...     client,
+    ...     local_identities=frozenset(),
+    ...     hostname="h",
+    ...     boot_id="b",
+    ...     pid=1,
+    ... )
+    0
+  """
+  if client is None:
+    return 0
+  scan = getattr(client, "scan_iter", None)
+  if scan is None:
+    return 0
+  local_pid = os.getpid() if pid is None else int(pid)
+  owned = frozenset(str(x) for x in local_identities)
+  want_kind = str(kind)
+  reconciled = 0
+  scanned = 0
+  limit = max(0, int(max_scan))
+  for key in scan(match=job_lease_scan_pattern(), count=200):
+    if scanned >= limit:
+      break
+    scanned += 1
+    parsed = parse_job_lease_key(str(key))
+    if parsed is None:
+      continue
+    found_kind, identity = parsed
+    if found_kind != want_kind:
+      continue
+    if identity in owned:
+      continue
+    raw = client.get(key)
+    if raw is None:
+      continue
+    owner = parse_lease_owner(str(raw))
+    if owner.pid is None or owner.pid != local_pid:
+      continue
+    if not lease_owner_is_locally_evaluable(
+        owner, hostname=hostname, boot_id=boot_id,
+    ):
+      continue
+    if _steal_requeue_owned_lease(
+        client,
+        kind=found_kind,
+        identity=identity,
+        raw_owner=str(raw),
+    ):
+      reconciled += 1
+  return reconciled
 
 
 def _script_sha(client: Any, lua: str) -> str:
