@@ -16,9 +16,9 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 
 - **`progress day=`** — omit-zeros day counters (`gate_skip`, `ingest_handoff`, ingest outcomes, archive, day_close, reconstruct, …).
 - **Day-close on `progress day=`** — LIST identities are full daily tar paths. Expect `dc_run=` when a day_close slot is filled (covers long pre-seal verify), `complete=` when filesystem + 32h ACK, `incomplete_raw=` when remaining closed raw (requeued, not ACK), `deferred_age=` / `yielded=` / `ingest_handoff=` / `verify_failed=`. `sealed=` / `tar_delete=` only when those steps ran. Status `day_close=4/61` is inflight/queued, not a calendar day.
-- **`status`** — Redis `current/queued` (`ingest_hot` / `ingest_catchup` / …), `busy=` (incl discover), `orphan_inflight`, queue `*_q_delta`, `oldest_day` / `oldest_age_s`, optional **`fill_block=`** (dominant ingest fill failure: `claim_none`, `skip_missing`, `skip_reband`, `skip_lock`, `skip_fp`, `band_cap`, `submit_err`). Set when a fill submits 0 while **`len(local) < pool`** and the ingest ZSET is deep (under-capacity, not only local-empty). Cleared when a fill submits >0.
-- **`ingest fill empty deep_queue`** — rate-limited when local inflight is zero but Redis ingest ZSET is deep; includes `fill_block=` and per-reason `stats=` counters.
-- **`ingest fill under-capacity`** — rate-limited when local inflight is **below pool** (may be non-zero) but ZSET is deep and the fill submitted 0; same `fill_block=` / `stats=` tokens.
+- **`status`** — Redis `current/queued` (`ingest_hot` / `ingest_catchup` / …), `busy=` (incl discover), `orphan_inflight`, queue `*_q_delta`, `oldest_day` / `oldest_age_s`, optional **`fill_block=`** (dominant ingest fill failure: `claim_none`, `skip_missing`, `skip_reband`, `skip_lock`, `skip_fp`, `band_cap`, `submit_err`). Set when a fill submits 0 while **`len(local) < pool`** and the ingest ZSET is deep (under-capacity, not only local-empty). Cleared when **Redis HLEN ≥ pool−1** (RC9).
+- **`ingest fill empty deep_queue`** — rate-limited when local inflight is zero but Redis ingest ZSET is deep; includes `fill_block=` and per-reason `stats=` counters plus **`redis_hlen=` / `hot_used=` / `catch_used=`** census.
+- **`ingest fill under-capacity`** — rate-limited when local inflight is **below pool** (may be non-zero) but ZSET is deep and the fill submitted 0; same `fill_block=` / `stats=` tokens and census fields.
 - **`census`** — 60s depth; ratios are **inflight/queued**; `busy=` replaces opaque `local=I/A/D`.
 - **`archive_job_done`** — single INFO per append job (`tar_bytes`, `members_source`, `mapped`/`to_add`/`appended`, `outcome=`). Do not require `archive_job_begin` / `archive_job_duty` / `Archived batch` at INFO.
 - **`ingest per-file timeout`** — includes `size_bytes=` and `bytes_per_s=` for size/time judgment.
@@ -95,6 +95,15 @@ redis-cli -n 0 HGETALL 'hpcperfstats:sync_timedb:job:v1:inflight:discover'
 **Fail (T0 — ingest underfill / unused-slot gate RC7, hpcperfstats04 2026-08-30):** Redis deep ingest ZSET (`hot_q`/`catchup_q` ≫0) with **`HLEN` inflight ≪ `sync_ingest_pool_processes`**; status may show `ingest_catchup` stuck near **`catchup_cap`** while total inflight decays; RC1–RC6 helpers present (`catchup_dispatch_cap` / orphan reconcile / steal). Root cause: unused-slot elevated hot + catchup expand required `hot_submitted==0`. **Pass after RC7:** when ZSET is deep, local/HLEN ingest inflight stays near pool; catchup inflight may exceed reserved `catchup_cap` into unused slots; do not treat status `X/Y` alone as capacity — use **HLEN vs pool**.
 
 **Fail (T0 — local vs Redis desync RC8):** Redis **HLEN ≪ pool** with deep ZSET, leases ≈ HLEN, **and** empty greps for `ingest fill under-capacity` / `fill_block=` / `ingest runtime steal` (fill/hygiene gated on local-full). Root cause: phantom local `ingest_inflight` maps block fill + hygiene. **Pass after RC8:** `local_inflight_desync` may appear briefly then clear; HLEN rises toward pool; under-capacity/steal logs only when still stuck for real claim/lease reasons.
+
+**Fail (T0 — decay-from-full skip storm RC9, hpcperfstats04 2026-08-30):** status time series shows **full pool then decay** (e.g. `21/39+11/77` → `2/517+3/736`) while ZSET grows; hot heads **`isfile True`** (not missing-path livelock); RC8 fingerprints deployed; **no** `fill_block=` in status during sustained underfill. Root cause: `skip_fp` / `skip_reband` same-score requeue burns skip budget while workers finish real jobs. **Pass after RC9:** penalty requeue deprioritizes skip identities; HLEN stays near pool; status shows persistent `fill_block=` until HLEN recovers; under-capacity logs include `redis_hlen=` census; `oldest_day` advances.
+
+```bash
+# T0 — RC9 decay-from-full / fill_block (full logs never --tail before grep)
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
+  grep -E 'queue_orchestrator status |ingest fill (under-capacity|empty deep_queue)|ingest fill skip_(fp|missing|reband) penalty' | tail -80
+redis-cli -n 1 HLEN hpcperfstats:sync_timedb:job:v1:inflight:ingest
+```
 
 **Pass (T1/T2):** head-day work advances without restoring chunk_gate / handoff_priority / janitor tick signatures as the only progress metric. Prefer `ZCOUNT`/`LLEN` + lease keys over historical `oldest_day_chunk_gate_stall` greps. **T0/T1/T2 are post-deploy** — they cannot be claimed green until the orchestrator image is running; a pre-deploy `job:v1` census of all zeros is a false negative, not a pass. **Do not** `ZCARD job:v1:ingest` — that short name is always empty; use `hpcperfstats:sync_timedb:job:v1:queue:ingest` (hot `ZCOUNT -inf 999999999999999`, catchup `ZCOUNT 1000000000000000 +inf`).
 

@@ -1895,6 +1895,133 @@ def test_dominant_ingest_fill_block_picks_max():
   assert qo._dominant_ingest_fill_block(stats) == "claim_none"
 
 
+def test_skip_missing_penalty_requeues_with_score_bump(monkeypatch, tmp_path):
+  """RC9: missing-path fill skip must penalty-requeue, not same-score spin."""
+  client = FakeRedis()
+  identity = "/no/such/raw/file"
+  claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity=identity,
+      owner_token="n:h:b:1",
+      deadline=1060.0,
+      score=5.0,
+  )
+  requeue_kw: list[dict] = []
+  calls = {"n": 0}
+
+  def _claim_jobs(*a, **k):
+    calls["n"] += 1
+    return [claim] if calls["n"] == 1 else []
+
+  monkeypatch.setattr(jq, "claim_ingest_jobs", _claim_jobs)
+  monkeypatch.setattr(
+      jq, "requeue_job",
+      lambda *a, **k: requeue_kw.append(dict(k)) or True,
+  )
+  monkeypatch.setattr(jq, "bump_job_attempt", lambda *a, **k: 1)
+  monkeypatch.setattr(jq, "ack_job", lambda *a, **k: True)
+
+  class _Pool:
+    def apply_async(self, *a, **k):
+      raise AssertionError("must not submit missing path")
+
+  qo._fill_ingest_band(
+      client,
+      band="hot",
+      cap=1,
+      inflight={},
+      claims={},
+      submitted={},
+      ingest_pool=_Pool(),
+      manager_lock=None,
+      band_cap=1,
+      tgz_archive_dir=str(tmp_path),
+      archive_data_dir=str(tmp_path),
+      ingest_is_complete_fn=lambda *_a, **_k: False,
+  )
+  assert len(requeue_kw) == 1
+  assert requeue_kw[0]["score"] == qo._penalized_ingest_requeue_score(5.0)
+
+
+def test_skip_fp_penalty_lets_claimable_job_behind_submit(monkeypatch, tmp_path):
+  """RC9: stale fingerprint at head must not block submit of job behind it."""
+  good_path = tmp_path / "host" / "good"
+  good_path.parent.mkdir(parents=True)
+  good_path.write_bytes(b"data")
+  bad_path = tmp_path / "host" / "bad"
+  bad_path.write_bytes(b"stale")
+  good_st = os.stat(good_path)
+  good_fp = jq.ingest_fingerprint(good_st.st_size, good_st.st_mtime_ns)
+  bad_claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity=str(bad_path),
+      owner_token="n:h:b:1",
+      deadline=1060.0,
+      score=5.0,
+      fingerprint="stale-fingerprint",
+  )
+  good_claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity=str(good_path),
+      owner_token="n:h:b:2",
+      deadline=1060.0,
+      score=6.0,
+      fingerprint=good_fp,
+  )
+  requeue_kw: list[dict] = []
+  submitted: list[str] = []
+  claim_calls = {"n": 0}
+
+  def _claim_jobs(*a, **k):
+    claim_calls["n"] += 1
+    if claim_calls["n"] == 1:
+      return [bad_claim, good_claim]
+    return []
+
+  monkeypatch.setattr(jq, "claim_ingest_jobs", _claim_jobs)
+  monkeypatch.setattr(
+      jq, "requeue_job",
+      lambda *a, **k: requeue_kw.append(dict(k)) or True,
+  )
+  monkeypatch.setattr(jq, "bump_job_attempt", lambda *a, **k: 1)
+  monkeypatch.setattr(jq, "write_job_fingerprint", lambda *a, **k: True)
+  monkeypatch.setattr(jq, "ack_job", lambda *a, **k: True)
+
+  class _Pool:
+    def apply_async(self, func, args=(), **k):
+      submitted.append(args[1])
+      return type("_R", (), {"ready": lambda self: False})()
+
+  n = qo._fill_ingest_band(
+      FakeRedis(),
+      band="hot",
+      cap=2,
+      inflight={},
+      claims={},
+      submitted={},
+      ingest_pool=_Pool(),
+      manager_lock=None,
+      band_cap=2,
+      tgz_archive_dir=str(tmp_path),
+      archive_data_dir=str(tmp_path),
+  )
+  assert n == 1
+  assert submitted == [str(good_path)]
+  assert len(requeue_kw) == 1
+  assert requeue_kw[0]["identity"] == str(bad_path)
+  assert requeue_kw[0]["score"] == qo._penalized_ingest_requeue_score(5.0)
+
+
+def test_fill_block_persists_until_redis_hlen_recovers():
+  """RC9: clear fill_block only when Redis HLEN reaches pool-1, not on submit."""
+  src = inspect.getsource(qo._ingest_coordinator_loop)
+  assert "redis_hlen_after >= ingest_pool_size - 1" in src
+  assert "set_fill_block(None)" in src
+  assert "redis_hlen=" in src
+  assert "hot_used=" in src
+  assert "catch_used=" in src
+
+
 def test_ingest_coordinator_uses_runtime_steal_on_fill_empty():
   """B3/RC2: under-capacity deep queue steals and reconciles this-owner leases."""
   src = inspect.getsource(qo._ingest_coordinator_loop)
@@ -1916,7 +2043,7 @@ def test_ingest_coordinator_uses_runtime_steal_on_fill_empty():
   )
   assert 0 < first_fill < drain_at < second_fill
   assert "fill under-capacity" in fill_src
-  assert "set_fill_block(None)" in fill_src
+  assert "redis_hlen_after >= ingest_pool_size - 1" in fill_src
   assert "len(ingest_inflight) < ingest_pool_size" in fill_src
 
 

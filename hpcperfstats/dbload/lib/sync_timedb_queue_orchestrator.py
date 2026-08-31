@@ -760,6 +760,7 @@ def _reband_claimed_ingest_if_needed(
   claim: Any,
   tgz_archive_dir: str,
   today: date | None = None,
+  log_fn: Callable[..., None] | None = None,
 ) -> bool:
   """
   Requeue a claimed ingest job when its live band no longer matches.
@@ -769,6 +770,7 @@ def _reband_claimed_ingest_if_needed(
     claim (Any): :class:`ClaimedJob` from a hot or catchup claim.
     tgz_archive_dir (str): Daily archive directory.
     today (date | None): Local today override for tests.
+    log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
     bool: True when the job was requeued onto a different band.
@@ -795,12 +797,19 @@ def _reband_claimed_ingest_if_needed(
       today=today_d,
       identity=claim.identity,
   )
+  penalized = _penalized_ingest_requeue_score(score)
   jq.requeue_job(
       client,
       kind=jq.JOB_KIND_INGEST,
       identity=claim.identity,
       owner_token=claim.owner_token,
-      score=score,
+      score=penalized,
+  )
+  _log(
+      "queue_orchestrator ingest fill skip_reband penalty identity=%s"
+      " score=%.0f"
+      % (claim.identity, penalized),
+      log_fn=log_fn,
   )
   return True
 
@@ -2379,6 +2388,101 @@ def _dominant_ingest_fill_block(stats: dict[str, int]) -> str | None:
   return best_key
 
 
+def _penalized_ingest_requeue_score(score: float | int | None) -> float:
+  """
+  Return an ingest ZSET score deprioritized behind same-band peers (RC9).
+
+  Args:
+    score (float | int | None): Current claim score; defaults to catchup base.
+
+  Returns:
+    float: Score bumped by :data:`LEASE_CONFLICT_SCORE_PENALTY`.
+
+  Examples:
+    >>> _penalized_ingest_requeue_score(5.0) == 5.0 + jq.LEASE_CONFLICT_SCORE_PENALTY
+    True
+  """
+  base = float(jq.CATCHUP_SCORE_BASE if score is None else score)
+  return base + float(jq.LEASE_CONFLICT_SCORE_PENALTY)
+
+
+def _requeue_ingest_fill_skip(
+  client: Any,
+  *,
+  claim: Any,
+  archive_data_dir: str | None,
+  reason: str,
+  score: float | int | None = None,
+  log_fn: Callable[..., None] | None = None,
+) -> str:
+  """
+  Penalty-requeue or dead-letter an ingest fill skip (RC9).
+
+  Args:
+    client (Any): Redis client.
+    claim (Any): Claimed ingest job.
+    archive_data_dir (str | None): Archive root for dead-letter sidecar.
+    reason (str): ``skip_missing`` or ``skip_fp`` for logs.
+    score (float | int | None): Requeue score override (default claim score).
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    str: ``requeued``, ``dead_letter``, or ``dropped_no_claim``.
+
+  Examples:
+    >>> _requeue_ingest_fill_skip(None, claim=None, archive_data_dir="/a",
+    ...   reason="skip_fp")
+    'dropped_no_claim'
+  """
+  if claim is None or client is None:
+    return "dropped_no_claim"
+  identity = claim.identity
+  attempt = jq.bump_job_attempt(
+      client, kind=jq.JOB_KIND_INGEST, identity=identity,
+  )
+  if attempt >= jq.job_max_attempts():
+    if archive_data_dir:
+      progress.get_progress_state().record_dead_letter(
+          None, jq.JOB_KIND_INGEST, 1,
+      )
+      jq.append_queue_dead_letter(
+          archive_data_dir,
+          kind=jq.JOB_KIND_INGEST,
+          identity=identity,
+          attempt=attempt,
+          reason=reason,
+      )
+    jq.ack_job(
+        client,
+        kind=jq.JOB_KIND_INGEST,
+        identity=identity,
+        owner_token=claim.owner_token,
+    )
+    _log(
+        "queue_orchestrator ingest fill %s dead_letter identity=%s attempt=%d"
+        % (reason, identity, attempt),
+        log_fn=log_fn,
+    )
+    return "dead_letter"
+  penalized = _penalized_ingest_requeue_score(
+      score if score is not None else getattr(claim, "score", None),
+  )
+  jq.requeue_job(
+      client,
+      kind=jq.JOB_KIND_INGEST,
+      identity=identity,
+      owner_token=claim.owner_token,
+      score=penalized,
+  )
+  _log(
+      "queue_orchestrator ingest fill %s penalty identity=%s attempt=%d"
+      " score=%.0f"
+      % (reason, identity, attempt, penalized),
+      log_fn=log_fn,
+  )
+  return "requeued"
+
+
 def _ingest_fill_skip_budget_for_zcard(zcard: int) -> int:
   """
   Scale skip budget when the ingest ZSET is deep.
@@ -2445,6 +2549,7 @@ def _fill_ingest_band(
   skip_budget: int | None = None,
   probe_depth: int | None = None,
   fill_stats: dict[str, int] | None = None,
+  log_fn: Callable[..., None] | None = None,
 ) -> int:
   """
   Claim ranged ingest jobs and submit until ``cap`` in-flight for ``band``.
@@ -2472,6 +2577,7 @@ def _fill_ingest_band(
     skip_budget (int | None): Max skip/requeue iterations this tick.
     probe_depth (int | None): Lua claim probe depth override.
     fill_stats (dict[str, int] | None): Optional per-tick failure counters.
+    log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
     int: Newly submitted job count.
@@ -2551,7 +2657,7 @@ def _fill_ingest_band(
         stats["band_cap"] += 1
         break
       if _reband_claimed_ingest_if_needed(
-          client, claim, tgz_archive_dir,
+          client, claim, tgz_archive_dir, log_fn=log_fn,
       ):
         skipped += 1
         stats["skip_reband"] += 1
@@ -2594,12 +2700,13 @@ def _fill_ingest_band(
               owner_token=claim.owner_token,
           )
         else:
-          jq.requeue_job(
+          _requeue_ingest_fill_skip(
               client,
-              kind=jq.JOB_KIND_INGEST,
-              identity=claim.identity,
-              owner_token=claim.owner_token,
+              claim=claim,
+              archive_data_dir=archive_data_dir,
+              reason="skip_missing",
               score=claim.score,
+              log_fn=log_fn,
           )
         skipped += 1
         stats["skip_missing"] += 1
@@ -2621,12 +2728,13 @@ def _fill_ingest_band(
           )
         except OSError:
           pass
-        jq.requeue_job(
+        _requeue_ingest_fill_skip(
             client,
-            kind=jq.JOB_KIND_INGEST,
-            identity=claim.identity,
-            owner_token=claim.owner_token,
+            claim=claim,
+            archive_data_dir=archive_data_dir,
+            reason="skip_fp",
             score=claim.score,
+            log_fn=log_fn,
         )
         skipped += 1
         stats["skip_fp"] += 1
@@ -3820,6 +3928,7 @@ def _ingest_coordinator_fill_tick(
   ingest_submitted: dict[str, float],
   skip_budget: int,
   fill_stats: dict[str, int],
+  log_fn: Callable[..., None] | None = None,
 ) -> tuple[int, int, int, int]:
   """
   Run one ingest-coordinator fill pass (hot, catchup, spillover, retry).
@@ -3844,6 +3953,7 @@ def _ingest_coordinator_fill_tick(
     ingest_submitted (dict[str, float]): Submit monotonic times.
     skip_budget (int): Max skip iterations per band fill.
     fill_stats (dict[str, int]): Per-tick failure counters (mutated).
+    log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
     tuple[int, int, int, int]: ``(submitted, hot_queued, zcard,
@@ -3880,6 +3990,7 @@ def _ingest_coordinator_fill_tick(
       "tgz_archive_dir": tgz_archive_dir,
       "archive_data_dir": directory,
       "band_used": band_used,
+      "log_fn": log_fn,
   }
   while len(ingest_inflight) < hot_cap:
     n = _fill_ingest_band(
@@ -4130,6 +4241,7 @@ def _ingest_coordinator_loop(
             "ingest_submitted": ingest_submitted,
             "skip_budget": skip_budget,
             "fill_stats": fill_stats,
+            "log_fn": log_fn,
         }
         did, hot_queued, zcard, _hot_n = _ingest_coordinator_fill_tick(
             **fill_tick_kw,
@@ -4149,7 +4261,9 @@ def _ingest_coordinator_loop(
         )
         did += extra
         fill_submitted += extra
-        if fill_submitted > 0:
+        redis_hlen_after = _redis_ingest_hlen(client)
+        hot_used, catch_used = _count_ingest_band_inflight(ingest_leases)
+        if redis_hlen_after >= ingest_pool_size - 1:
           progress.get_progress_state().set_fill_block(None)
         elif (
             zcard > 0
@@ -4165,6 +4279,10 @@ def _ingest_coordinator_loop(
               for k in _FILL_BLOCK_KEYS
               if fill_stats.get(k)
           )
+          census = (
+              " redis_hlen=%d local=%d hot_used=%d catch_used=%d"
+              % (redis_hlen_after, local_n, hot_used, catch_used)
+          )
           if local_n == 0 and (
               (now_bc - last_fill_empty_log)
               >= INGEST_FILL_BLOCK_LOG_INTERVAL_S
@@ -4173,12 +4291,13 @@ def _ingest_coordinator_loop(
             _log(
                 "queue_orchestrator ingest fill empty deep_queue "
                 "zcard=%d hot_q=%d local_inflight=0 submitted=0"
-                " fill_block=%s stats=%s"
+                " fill_block=%s stats=%s%s"
                 % (
                     zcard,
                     hot_queued,
                     fill_block or "unknown",
                     reason_bits or "-",
+                    census,
                 ),
                 log_fn=log_fn,
             )
@@ -4190,7 +4309,7 @@ def _ingest_coordinator_loop(
             _log(
                 "queue_orchestrator ingest fill under-capacity "
                 "zcard=%d hot_q=%d local_inflight=%d pool=%d"
-                " submitted=0 fill_block=%s stats=%s"
+                " submitted=0 fill_block=%s stats=%s%s"
                 % (
                     zcard,
                     hot_queued,
@@ -4198,6 +4317,7 @@ def _ingest_coordinator_loop(
                     ingest_pool_size,
                     fill_block or "unknown",
                     reason_bits or "-",
+                    census,
                 ),
                 log_fn=log_fn,
             )
