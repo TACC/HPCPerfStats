@@ -190,16 +190,17 @@ def test_populate_processing_ack_parks_inflight_until_complete(monkeypatch):
   assert not client.inflight
 
 
-def test_orchestrator_boot_refuses_persistence_reset():
-  """P-C: orchestrator must call ensure_persistence_contract(allow_reset=False)."""
+def test_orchestrator_boot_allows_persistence_reset():
+  """Boot must auto-reset sidecars on contract mismatch (allow_reset=True)."""
   import inspect
   from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
-  assert "allow_reset=False" in src
+  assert "allow_reset=True" in src
+  assert "allow_reset=False" not in src
 
 
 def test_persistence_reset_refused_when_disallowed(tmp_path):
-  """allow_reset=False must fail closed on version mismatch."""
+  """allow_reset=False must fail closed on version mismatch (API still refuses)."""
   import pytest
   from hpcperfstats.dbload.lib import sync_timedb_persistence as pers
   archive = tmp_path / "a"
@@ -213,6 +214,26 @@ def test_persistence_reset_refused_when_disallowed(tmp_path):
         str(archive), allow_reset=False,
     )
   assert pers._read_contract_version(str(archive)) == -1
+
+
+def test_persistence_mismatch_allow_reset_true_resets(tmp_path):
+  """Regression: old=7 new=current must reset, not raise (operator boot path)."""
+  from hpcperfstats.dbload.lib import sync_timedb_persistence as pers
+
+  archive = tmp_path / "a"
+  archive.mkdir()
+  stale = archive / ".sync_timedb_state.json"
+  stale.write_text("[]", encoding="utf-8")
+  pers._save_json_atomic(
+      pers.persistence_contract_path(str(archive)),
+      {"contract_version": 7, "written_at": 0},
+  )
+  assert pers.ensure_persistence_contract(str(archive), allow_reset=True) is True
+  assert (
+      pers._read_contract_version(str(archive))
+      == pers.SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION
+  )
+  assert not stale.exists()
 
 
 def test_persistence_missing_contract_allow_reset_false_initializes(tmp_path):

@@ -7263,7 +7263,7 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
       return 1
 
     ensure_persistence_contract(
-        archive_dir, log_fn=log_print, allow_reset=False,
+        archive_dir, log_fn=log_print, allow_reset=True,
     )
     checkpoint_path = os.path.join(archive_dir, SYNC_TIMEDB_CHECKPOINT_BASENAME)
 

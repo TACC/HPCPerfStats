@@ -337,10 +337,11 @@ def ensure_persistence_contract(
   Args:
     archive_data_dir (str): Archive data directory.
     log_fn (LogFn): Optional logger.
-    allow_reset (bool): When False (queue orchestrator boot), never wipe
-      sidecars on version mismatch — cutover must not call
-      ``reset_sync_timedb_persistence`` (OQ-1 / adversarial P-C). A missing
-      contract file is initialized without wiping sidecars.
+    allow_reset (bool): When True (default; queue orchestrator and
+      ``--jid`` boot), version mismatch resets registered sidecars and
+      writes the current contract. When False, refuse wipe on mismatch
+      (tests / explicit refuse). A missing contract file is initialized
+      without wiping sidecars even when ``allow_reset`` is False.
 
   Returns:
     bool: True when a reset ran.
@@ -370,7 +371,8 @@ def _ensure_persistence_contract_inner(
   Args:
     archive_data_dir (str): Archive data directory.
     log_fn (LogFn): Optional logger.
-    allow_reset (bool): When False, refuse wipe on version mismatch.
+    allow_reset (bool): When False, refuse wipe on version mismatch
+      (API / tests). Production boot uses True so mismatch auto-resets.
       A missing contract file is initialized in place (no sidecar reset).
 
   Returns:

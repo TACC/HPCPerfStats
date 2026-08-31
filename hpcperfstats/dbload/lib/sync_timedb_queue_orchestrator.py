@@ -4763,7 +4763,7 @@ def run_sync_timedb_queue_orchestrator(
     raise ValueError("archive_dir is required")
 
   with exclusive_archive_dir_flock(directory, blocking=True):
-    ensure_persistence_contract(directory, log_fn=log_fn, allow_reset=False)
+    ensure_persistence_contract(directory, log_fn=log_fn, allow_reset=True)
     try:
       client = get_archive_members_redis_client(required=True)
     except Exception as exc:
