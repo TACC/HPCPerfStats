@@ -143,6 +143,7 @@ from .job_detail_artifacts import (
     compute_detail_input_fingerprint,
     load_job_detail_artifact,
 )
+from hpcperfstats.analysis.metrics.lib.gen.jid_table import _as_host_data_fqdn
 from hpcperfstats.analysis.metrics.lib.metrics import (
     build_job_metrics_display_list,
     job_metrics_catalog_entries,
@@ -3563,7 +3564,7 @@ def job_detail(request: Any, pk: Any) -> Any:
 
     urlstring = "https://scribe.tacc.utexas.edu/en-US/app/search/search?q=search%20"
     if host_list:
-        first_host = urllib.parse.quote(host_list[0] + cfg.get_host_name_ext(), safe="")
+        first_host = urllib.parse.quote(_as_host_data_fqdn(host_list[0]), safe="")
         hoststring = urlstring + "%20host%3D" + first_host
         for host in host_list[1:]:
             hoststring += "%20OR%20%20host%3D" + urllib.parse.quote(host + "*", safe="")

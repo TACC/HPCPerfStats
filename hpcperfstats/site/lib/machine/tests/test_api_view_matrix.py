@@ -1407,6 +1407,37 @@ class TestJobDetailCoverageClosure:
         assert response.data["xalt_data"]["exec_path"] == []
         assert "OR" in response.data["client_url"]
 
+    def test_job_detail_client_url_inserts_dot_before_host_name_ext(self):
+        from hpcperfstats.site.lib.machine import api
+
+        request = RequestFactory().get("/api/jobs/j-stampede/")
+        request.session = {"username": "u", "is_staff": False}
+        job = MagicMock(jid="j-stampede")
+        job.host_list = ["c551-002"]
+        job.start_time = datetime(2024, 1, 1, tzinfo=dt_timezone.utc)
+        job.end_time = datetime(2024, 1, 2, tzinfo=dt_timezone.utc)
+
+        with patch.object(api, "_require_auth", return_value=None), patch.object(
+            api, "_get_visible_job_or_error_response", return_value=(job, None)
+        ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
+            api, "load_job_detail_artifact", return_value={}
+        ), patch.object(
+            api, "compute_detail_input_fingerprint", return_value="fp"
+        ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
+            api, "JobListSerializer"
+        ) as mock_ser, patch.object(
+            api, "_job_for_detail_list_serializer", return_value=job
+        ), patch.object(api.cfg, "get_xalt_user", return_value=""), patch.object(
+            api.cfg, "get_host_name_ext", return_value="stampede3.tacc.utexas.edu"
+        ):
+            mock_ser.return_value.data = {"jid": "j-stampede"}
+            response = api.job_detail(request, "j-stampede")
+
+        assert response.status_code == 200
+        client_url = response.data["client_url"]
+        assert "host%3Dc551-002.stampede3.tacc.utexas.edu" in client_url
+        assert "c551-002stampede3" not in client_url
+
     def test_xalt_missing_lib_and_duplicate_module_deduped(self):
         from hpcperfstats.site.lib.machine import api
 
