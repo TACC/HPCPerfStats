@@ -1567,6 +1567,8 @@ class ListendDbIngestPool:
         _unlink_shm_by_name(shm_name)
         _inc_counter(self._counters, "queue_drops")
         return False
+      with self._outstanding_shm_lock:
+        self._outstanding_shm.discard(shm_name)
       return True
     except Exception:
       if (
