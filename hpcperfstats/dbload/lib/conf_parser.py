@@ -164,6 +164,8 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "listend_db_ingest_pool_processes"),
     ("PIPELINE", "listend_db_ingest_queue_max_gb"),
     ("PIPELINE", "listend_db_ingest_batch_samples"),
+    ("PIPELINE", "listend_db_ingest_proc_peak_lookup_chunk"),
+    ("PIPELINE", "listend_db_ingest_statement_timeout_ms"),
     ("PIPELINE", "acct_path"),
     ("PIPELINE", "archive_dir"),
     ("PIPELINE", "daily_archive_dir"),
@@ -323,6 +325,8 @@ INI_OPTION_DEFAULTS = {
     'listend_db_ingest_pool_processes': '32',
     'listend_db_ingest_queue_max_gb': '8',
     'listend_db_ingest_batch_samples': '100',
+    'listend_db_ingest_proc_peak_lookup_chunk': '256',
+    'listend_db_ingest_statement_timeout_ms': '600000',
     'acct_path': None,
     'archive_dir': None,
     'daily_archive_dir': None,
@@ -4482,6 +4486,48 @@ def get_listend_db_ingest_batch_samples() -> Any:
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("listend_db_ingest_batch_samples"))
+
+
+def get_listend_db_ingest_proc_peak_lookup_chunk() -> int:
+  """
+  Max ``proc`` names per peak-merge DB lookup (default 256).
+
+  Homogeneous ``(jid, host)`` batches use ``proc__in`` slices of this size
+  instead of one giant OR query.
+
+  Returns:
+    int: Chunk size, at least 1.
+
+  Examples:
+    >>> get_listend_db_ingest_proc_peak_lookup_chunk() >= 1  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(1, int(_pipeline_get("listend_db_ingest_proc_peak_lookup_chunk")))
+  except (TypeError, ValueError, OverflowError):
+    return 256
+
+
+def get_listend_db_ingest_statement_timeout_ms() -> int:
+  """
+  PostgreSQL ``statement_timeout`` ms for listend DB ingest workers.
+
+  Default ``600000`` (10 min). ``0`` leaves the portal
+  ``db_statement_timeout_ms`` session default unchanged.
+
+  Returns:
+    int: Milliseconds (0 = do not override portal default).
+
+  Examples:
+    >>> get_listend_db_ingest_statement_timeout_ms() >= 0  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0, int(_pipeline_get("listend_db_ingest_statement_timeout_ms")))
+  except (TypeError, ValueError, OverflowError):
+    return 600000
 
 
 def get_redis_location() -> Any:

@@ -641,6 +641,226 @@ def test_flush_orm_batch_dedupes_proc_before_bulk_create(monkeypatch):
   assert kwargs.get("update_conflicts") is True
 
 
+def test_peak_merge_uses_jid_host_in_fast_path(monkeypatch):
+  """Homogeneous batch must use proc__in, not a giant Q() OR chain."""
+  from types import SimpleNamespace
+  from unittest import mock
+
+  from hpcperfstats.dbload.lib import sync_timedb_parsing as parsing
+
+  filter_calls = []
+
+  class _QS:
+    def only(self, *args, **kwargs):
+      return []
+
+  def _filter(**kwargs):
+    filter_calls.append(kwargs)
+    return _QS()
+
+  fake_manager = mock.Mock()
+  fake_manager.filter = _filter
+  fake_model = mock.Mock()
+  fake_model.objects = fake_manager
+  monkeypatch.setattr(
+      "hpcperfstats.site.lib.machine.models.proc_data",
+      fake_model,
+  )
+
+  objs = [
+      SimpleNamespace(
+          jid="3450351",
+          host="c515-013.stampede3.tacc.utexas.edu",
+          proc="exec%d" % i,
+          vm_peak=i,
+          vm_hwm=None,
+          vm_stk=None,
+          vm_exe=None,
+          vm_lib=None,
+      )
+      for i in range(5)
+  ]
+  out = parsing.peak_merge_proc_objs_with_existing(
+      objs, lookup_chunk_size=256
+  )
+  assert out is objs
+  assert len(filter_calls) == 1
+  call = filter_calls[0]
+  assert call["jid"] == "3450351"
+  assert call["host"] == "c515-013.stampede3.tacc.utexas.edu"
+  assert set(call["proc__in"]) == {"exec%d" % i for i in range(5)}
+  assert len(call) == 3
+
+
+def test_peak_merge_subchunks_large_mixed_batch(monkeypatch):
+  """Large same-host batch must issue ceil(N/chunk) proc__in lookups."""
+  from types import SimpleNamespace
+  from unittest import mock
+
+  from hpcperfstats.dbload.lib import sync_timedb_parsing as parsing
+
+  filter_calls = []
+
+  class _QS:
+    def only(self, *args, **kwargs):
+      return []
+
+  def _filter(**kwargs):
+    filter_calls.append(kwargs)
+    return _QS()
+
+  fake_manager = mock.Mock()
+  fake_manager.filter = _filter
+  fake_model = mock.Mock()
+  fake_model.objects = fake_manager
+  monkeypatch.setattr(
+      "hpcperfstats.site.lib.machine.models.proc_data",
+      fake_model,
+  )
+
+  n = 600
+  chunk = 256
+  objs = [
+      SimpleNamespace(
+          jid="j1",
+          host="h1",
+          proc="p%d" % i,
+          vm_peak=1,
+          vm_hwm=1,
+          vm_stk=1,
+          vm_exe=1,
+          vm_lib=1,
+      )
+      for i in range(n)
+  ]
+  parsing.peak_merge_proc_objs_with_existing(objs, lookup_chunk_size=chunk)
+  assert len(filter_calls) == (n + chunk - 1) // chunk
+  sizes = [len(c["proc__in"]) for c in filter_calls]
+  assert sizes == [256, 256, 88]
+
+
+def test_flush_bisects_proc_chunk_on_statement_timeout(monkeypatch):
+  """Statement timeout on a large proc chunk must bisect until writes succeed."""
+  from types import SimpleNamespace
+
+  from django.db.utils import OperationalError
+
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  written = []
+
+  class _FakeManager:
+    def bulk_create(self, objs, **kwargs):
+      if len(objs) > 2:
+        raise OperationalError(
+            "canceling statement due to statement timeout"
+        )
+      written.append(list(objs))
+
+    def filter(self, *args, **kwargs):
+      return self
+
+    def only(self, *args, **kwargs):
+      return []
+
+  class _FakeModel:
+    objects = _FakeManager()
+
+  monkeypatch.setattr("django.db.close_old_connections", lambda: None)
+  monkeypatch.setattr(
+      "django.db.connections.close_all", lambda: None, raising=False
+  )
+  monkeypatch.setattr(
+      ldi, "_apply_listend_db_ingest_statement_timeout", lambda: None
+  )
+  import hpcperfstats.site.lib.machine.models as models
+
+  monkeypatch.setattr(models, "proc_data", _FakeModel)
+  monkeypatch.setattr(models, "host_data", _FakeModel)
+  monkeypatch.setattr(ldi.cfg, "get_sync_bulk_create_batch_size", lambda: 10000)
+
+  objs = [
+      SimpleNamespace(
+          jid="1",
+          host="h",
+          proc="p%d" % i,
+          device="d",
+          **{
+              k: None
+              for k in (
+                  "uid",
+                  "vm_peak",
+                  "vm_size",
+                  "vm_lck",
+                  "vm_hwm",
+                  "vm_rss",
+                  "vm_data",
+                  "vm_stk",
+                  "vm_exe",
+                  "vm_lib",
+                  "vm_pte",
+                  "vm_swap",
+                  "threads",
+              )
+          },
+      )
+      for i in range(4)
+  ]
+  ldi._flush_orm_batch([], objs)
+  assert sum(len(c) for c in written) == 4
+  assert all(len(c) <= 2 for c in written)
+
+
+def test_worker_applies_listend_statement_timeout(monkeypatch):
+  """Worker startup must apply listend statement_timeout after ensure_django."""
+  import inspect
+
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  src = inspect.getsource(ldi._worker_main)
+  ensure_pos = src.find("ensure_django()")
+  timeout_pos = src.find("_apply_listend_db_ingest_statement_timeout()")
+  assert ensure_pos != -1
+  assert timeout_pos != -1
+  assert ensure_pos < timeout_pos
+
+  executed = []
+
+  class _Cursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *a):
+      return False
+
+    def execute(self, sql):
+      executed.append(sql)
+
+  class _Conn:
+    def cursor(self):
+      return _Cursor()
+
+  monkeypatch.setattr(
+      ldi.cfg, "get_listend_db_ingest_statement_timeout_ms", lambda: 600000
+  )
+  import django.db as django_db
+
+  monkeypatch.setattr(django_db, "connection", _Conn())
+  ldi._apply_listend_db_ingest_statement_timeout()
+  assert any("statement_timeout" in s for s in executed)
+
+
+def test_sync_timedb_peak_merge_delegates_to_shared_helper():
+  """sync_timedb peak merge must call shared parsing helper (no local Q OR)."""
+  import inspect
+
+  from hpcperfstats.dbload import sync_timedb as st
+
+  src = inspect.getsource(st._peak_merge_proc_objs_with_existing)
+  assert "peak_merge_proc_objs_with_existing" in src
+  assert "Q()" not in src
+
+
 def test_worker_main_configures_blas_before_numpy(monkeypatch):
   """Regression: listend DB workers must cap OpenBLAS before parsing imports numpy.
 

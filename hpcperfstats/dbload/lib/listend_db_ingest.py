@@ -15,6 +15,9 @@ Attributes:
   _RESUME_WATERMARK: Attribute.
   _SHUTDOWN_JOIN_TIMEOUT_S: Attribute.
   _listend_flush_error_is_poison: Classify flush errors that drop the batch.
+  _is_listend_statement_timeout: Detect PostgreSQL statement timeout cancels.
+  _apply_listend_db_ingest_statement_timeout: Apply listend INI statement_timeout.
+  _write_proc_chunk_with_timeout_bisect: Peak-merge write with timeout bisect.
 """
 from __future__ import annotations
 
@@ -69,6 +72,199 @@ def _listend_flush_error_is_poison(exc: BaseException) -> bool:
   """
   name = type(exc).__name__
   return name in ("DataError", "ProgrammingError", "IntegrityError")
+
+
+def _is_listend_statement_timeout(exc: BaseException) -> bool:
+  """
+  True when ``exc`` looks like a PostgreSQL statement timeout cancel.
+
+  Args:
+    exc (BaseException): Exception from a flush/peak-merge DB call.
+
+  Returns:
+    bool: True when the message indicates statement timeout.
+
+  Examples:
+    >>> _is_listend_statement_timeout(
+    ...     Exception("canceling statement due to statement timeout")
+    ... )
+    True
+    >>> _is_listend_statement_timeout(Exception("connection reset"))
+    False
+  """
+  text = str(exc).lower()
+  return "statement timeout" in text or "canceling statement" in text
+
+
+def _apply_listend_db_ingest_statement_timeout() -> None:
+  """
+  Set this worker's Postgres ``statement_timeout`` from listend INI.
+
+  Uses ``listend_db_ingest_statement_timeout_ms`` (default 10 min). ``0``
+  leaves the portal ``db_statement_timeout_ms`` default unchanged.
+
+  Returns:
+    None
+
+  Examples:
+    >>> callable(_apply_listend_db_ingest_statement_timeout)
+    True
+  """
+  try:
+    ms = int(cfg.get_listend_db_ingest_statement_timeout_ms())
+  except Exception:
+    ms = 600000
+  if ms <= 0:
+    return
+  try:
+    from django.db import connection
+
+    with connection.cursor() as cursor:
+      cursor.execute("SET statement_timeout = %d" % ms)
+  except Exception:
+    return
+
+
+def _peak_merge_proc_chunk_with_existing(chunk: list) -> list:
+  """
+  Raise peak fields on ``chunk`` from matching ``proc_data`` DB rows.
+
+  Delegates to shared ``peak_merge_proc_objs_with_existing`` (jid+host
+  ``proc__in`` slices).
+
+  Args:
+    chunk (list): ``proc_data`` instances for one bulk_create.
+
+  Returns:
+    list: Same chunk list (objs mutated when DB peers exist).
+
+  Examples:
+    >>> _peak_merge_proc_chunk_with_existing([])
+    []
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+      peak_merge_proc_objs_with_existing,
+  )
+
+  return peak_merge_proc_objs_with_existing(chunk)
+
+
+def _write_proc_chunk_with_timeout_bisect(
+    chunk: list,
+    *,
+    update_fields: tuple,
+) -> None:
+  """
+  Peak-merge and ``bulk_create`` one proc chunk; bisect on statement timeout.
+
+  Args:
+    chunk (list): Deduped ``proc_data`` instances for one write.
+    update_fields (tuple): Fields passed to ``bulk_create`` update_conflicts.
+
+  Returns:
+    None
+
+  Raises:
+    OperationalError: Re-raised when timeout persists at chunk size 1 or the
+      error is not a statement timeout.
+    Exception: Propagated from connection recycle / peak-merge helpers during
+      bisect recovery.
+
+  Examples:
+    >>> _write_proc_chunk_with_timeout_bisect([], update_fields=())  # doctest: +SKIP
+  """
+  from django.db import close_old_connections, connections
+  from django.db.utils import OperationalError
+
+  from hpcperfstats.site.lib.machine.models import proc_data
+
+  if not chunk:
+    return
+  try:
+    merged = _peak_merge_proc_chunk_with_existing(chunk)
+    proc_data.objects.bulk_create(
+        merged,
+        update_conflicts=True,
+        unique_fields=["jid", "host", "proc"],
+        update_fields=update_fields,
+    )
+  except OperationalError as exc:
+    if _is_listend_statement_timeout(exc) and len(chunk) > 1:
+      try:
+        connections.close_all()
+      except Exception:
+        pass
+      close_old_connections()
+      _apply_listend_db_ingest_statement_timeout()
+      mid = len(chunk) // 2
+      _write_proc_chunk_with_timeout_bisect(
+          chunk[:mid], update_fields=update_fields
+      )
+      _write_proc_chunk_with_timeout_bisect(
+          chunk[mid:], update_fields=update_fields
+      )
+      return
+    raise
+
+
+def _flush_orm_batch(host_objs: list, proc_objs: list) -> None:
+  """
+  Write pending ORM instances; clear caller lists on success.
+  
+  Args:
+    host_objs (list): Sequence for host objs.
+    proc_objs (list): Sequence for proc objs.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> _flush_orm_batch([], [])  # doctest: +SKIP
+  """
+  from django.db import close_old_connections, connections
+  from django.db.utils import OperationalError
+
+  from hpcperfstats.site.lib.machine.models import host_data
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import HOST_PROC_KEYS
+
+  close_old_connections()
+  batch_size = cfg.get_sync_bulk_create_batch_size()
+  update_fields = ("device",) + HOST_PROC_KEYS
+  proc_objs = _dedupe_proc_objs_keep_last(proc_objs)
+
+  def _write_once() -> None:
+    """
+    Internal helper to write the once.
+    
+    Returns:
+      None
+    
+    Examples:
+      >>> _write_once()  # doctest: +SKIP
+    """
+    for i in range(0, len(proc_objs), batch_size):
+      chunk = proc_objs[i : i + batch_size]
+      if not chunk:
+        continue
+      _write_proc_chunk_with_timeout_bisect(
+          chunk, update_fields=update_fields
+      )
+    for i in range(0, len(host_objs), batch_size):
+      chunk = host_objs[i : i + batch_size]
+      if not chunk:
+        continue
+      host_data.objects.bulk_create(chunk, ignore_conflicts=True)
+
+  try:
+    _write_once()
+  except OperationalError:
+    try:
+      connections.close_all()
+    except Exception:
+      pass
+    close_old_connections()
+    _apply_listend_db_ingest_statement_timeout()
+    _write_once()
 
 
 def compute_listend_db_queue_budgets(
@@ -453,111 +649,6 @@ def _dedupe_proc_objs_keep_last(proc_objs: list) -> list:
   return list(by_key.values())
 
 
-def _peak_merge_proc_chunk_with_existing(chunk: list) -> list:
-  """
-  Raise peak fields on ``chunk`` from matching ``proc_data`` DB rows.
-
-  Args:
-    chunk (list): ``proc_data`` instances for one bulk_create.
-
-  Returns:
-    list: Same chunk list (objs mutated when DB peers exist).
-
-  Examples:
-    >>> _peak_merge_proc_chunk_with_existing([])
-    []
-  """
-  if not chunk:
-    return chunk
-  from django.db.models import Q
-
-  from hpcperfstats.site.lib.machine.models import proc_data
-  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-      HOST_PROC_PEAK_KEYS,
-      apply_proc_peak_attrs_from_earlier,
-  )
-
-  q = Q()
-  for obj in chunk:
-    q |= Q(jid=obj.jid, host=obj.host, proc=obj.proc)
-  existing = {
-      (row.jid, row.host, row.proc): row
-      for row in proc_data.objects.filter(q).only(
-          "jid", "host", "proc", *HOST_PROC_PEAK_KEYS
-      )
-  }
-  if not existing:
-    return chunk
-  for obj in chunk:
-    prior = existing.get((obj.jid, obj.host, obj.proc))
-    if prior is not None:
-      apply_proc_peak_attrs_from_earlier(prior, obj)
-  return chunk
-
-
-def _flush_orm_batch(host_objs: list, proc_objs: list) -> None:
-  """
-  Write pending ORM instances; clear caller lists on success.
-  
-  Args:
-    host_objs (list): Sequence for host objs.
-    proc_objs (list): Sequence for proc objs.
-  
-  Returns:
-    None
-  
-  Examples:
-    >>> _flush_orm_batch([], [])  # doctest: +SKIP
-  """
-  from django.db import close_old_connections, connections
-  from django.db.utils import OperationalError
-
-  from hpcperfstats.site.lib.machine.models import host_data, proc_data
-  from hpcperfstats.dbload.lib.sync_timedb_parsing import HOST_PROC_KEYS
-
-  close_old_connections()
-  batch_size = cfg.get_sync_bulk_create_batch_size()
-  update_fields = ("device",) + HOST_PROC_KEYS
-  proc_objs = _dedupe_proc_objs_keep_last(proc_objs)
-
-  def _write_once() -> None:
-    """
-    Internal helper to write the once.
-    
-    Returns:
-      None
-    
-    Examples:
-      >>> _write_once()  # doctest: +SKIP
-    """
-    for i in range(0, len(proc_objs), batch_size):
-      chunk = proc_objs[i : i + batch_size]
-      if not chunk:
-        continue
-      chunk = _peak_merge_proc_chunk_with_existing(chunk)
-      proc_data.objects.bulk_create(
-          chunk,
-          update_conflicts=True,
-          unique_fields=["jid", "host", "proc"],
-          update_fields=update_fields,
-      )
-    for i in range(0, len(host_objs), batch_size):
-      chunk = host_objs[i : i + batch_size]
-      if not chunk:
-        continue
-      host_data.objects.bulk_create(chunk, ignore_conflicts=True)
-
-  try:
-    _write_once()
-  except OperationalError:
-    try:
-      connections.close_all()
-    except Exception:
-      pass
-    close_old_connections()
-    _write_once()
-
-
 def _process_sample_to_orm(
   message: str,
   *,
@@ -685,6 +776,7 @@ def _worker_main(
 
   set_daemon_process_title(name="listend.py", role="worker", pool_kind="listend-db-pool")
   ensure_django()
+  _apply_listend_db_ingest_statement_timeout()
 
   from django.db import close_old_connections, connections
 
@@ -721,6 +813,7 @@ def _worker_main(
       pass
     nonlocal conn_opened_at
     conn_opened_at = time.monotonic()
+    _apply_listend_db_ingest_statement_timeout()
     _inc_counter(counters, "conn_recycle")
 
   def _flush(*, force_memory_release: bool = True) -> None:

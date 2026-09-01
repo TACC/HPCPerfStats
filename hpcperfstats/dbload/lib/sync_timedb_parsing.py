@@ -263,6 +263,75 @@ def apply_proc_peak_attrs_from_earlier(earlier: Any, later: Any) -> Any:
     setattr(later, key, _nullable_int_max(prev, cur))
   return later
 
+
+def peak_merge_proc_objs_with_existing(
+    proc_objs: list,
+    *,
+    lookup_chunk_size: int | None = None,
+) -> list:
+  """
+  Raise peak fields on ``proc_objs`` from matching ``proc_data`` DB rows.
+
+  Groups by ``(jid, host)`` and loads existing rows with ``proc__in`` slices
+  of ``lookup_chunk_size`` (INI ``listend_db_ingest_proc_peak_lookup_chunk``,
+  default 256) so MPI-scale batches do not build one giant OR query.
+
+  Args:
+    proc_objs (list): ``proc_data`` instances about to be upserted.
+    lookup_chunk_size (int | None): Override INI chunk size; ``None`` reads
+      ``get_listend_db_ingest_proc_peak_lookup_chunk()``.
+
+  Returns:
+    list: Same list (objs mutated in place when a DB peer exists).
+
+  Examples:
+    >>> peak_merge_proc_objs_with_existing([])
+    []
+  """
+  if not proc_objs:
+    return proc_objs
+
+  from hpcperfstats.site.lib.machine.models import proc_data
+
+  chunk_size = lookup_chunk_size
+  if chunk_size is None:
+    try:
+      import hpcperfstats.dbload.lib.conf_parser as cfg
+
+      chunk_size = int(cfg.get_listend_db_ingest_proc_peak_lookup_chunk())
+    except Exception:
+      chunk_size = 256
+  chunk_size = max(1, int(chunk_size))
+
+  existing: dict[tuple[Any, Any, Any], Any] = {}
+  by_jh: dict[tuple[Any, Any], list] = {}
+  for obj in proc_objs:
+    by_jh.setdefault((obj.jid, obj.host), []).append(obj)
+
+  for (jid, host), group in by_jh.items():
+    seen: set[Any] = set()
+    procs: list[Any] = []
+    for obj in group:
+      if obj.proc in seen:
+        continue
+      seen.add(obj.proc)
+      procs.append(obj.proc)
+    for i in range(0, len(procs), chunk_size):
+      part = procs[i : i + chunk_size]
+      for row in proc_data.objects.filter(
+          jid=jid, host=host, proc__in=part
+      ).only("jid", "host", "proc", *HOST_PROC_PEAK_KEYS):
+        existing[(row.jid, row.host, row.proc)] = row
+
+  if not existing:
+    return proc_objs
+  for obj in proc_objs:
+    prior = existing.get((obj.jid, obj.host, obj.proc))
+    if prior is not None:
+      apply_proc_peak_attrs_from_earlier(prior, obj)
+  return proc_objs
+
+
 # Back-compat re-export for callers/tests that referenced legacy eventmaps.
 EVENTMAPS_BY_TYPE = legacy_parsing.EVENTMAPS_BY_TYPE
 map_hardware_counter_vals = legacy_parsing.map_hardware_counter_vals

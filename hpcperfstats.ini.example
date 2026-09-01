@@ -407,6 +407,13 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Samples cached per listend DB worker before one bulk_create (default 100).
 # listend_db_ingest_batch_samples = 100
 
+# Max proc names per peak-merge DB lookup (default 256); avoids giant OR queries.
+# listend_db_ingest_proc_peak_lookup_chunk = 256
+
+# PostgreSQL statement_timeout ms for listend DB workers (default 600000 = 10 min).
+# 0 leaves portal db_statement_timeout_ms unchanged.
+# listend_db_ingest_statement_timeout_ms = 600000
+
 # When live DB queues are full: drop (archive+ack, shed DB) or pause (nack, stop consume).
 # listend_db_ingest_backpressure = drop
 

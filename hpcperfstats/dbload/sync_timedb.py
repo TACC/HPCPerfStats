@@ -6051,6 +6051,7 @@ def _peak_merge_proc_objs_with_existing(proc_objs: list) -> list:
 
   Incoming objs keep last-write for other KEYS; peak fields use GREATEST with
   any matching DB row so lower later samples cannot drop stored highs.
+  Delegates to shared ``peak_merge_proc_objs_with_existing``.
 
   Args:
     proc_objs (list): ``proc_data`` instances about to be upserted.
@@ -6062,26 +6063,11 @@ def _peak_merge_proc_objs_with_existing(proc_objs: list) -> list:
     >>> _peak_merge_proc_objs_with_existing([])
     []
   """
-  if not proc_objs:
-    return proc_objs
-  from django.db.models import Q
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+      peak_merge_proc_objs_with_existing,
+  )
 
-  q = Q()
-  for obj in proc_objs:
-    q |= Q(jid=obj.jid, host=obj.host, proc=obj.proc)
-  existing = {
-      (row.jid, row.host, row.proc): row
-      for row in proc_data.objects.filter(q).only(
-          "jid", "host", "proc", *HOST_PROC_PEAK_KEYS
-      )
-  }
-  if not existing:
-    return proc_objs
-  for obj in proc_objs:
-    prior = existing.get((obj.jid, obj.host, obj.proc))
-    if prior is not None:
-      apply_proc_peak_attrs_from_earlier(prior, obj)
-  return proc_objs
+  return peak_merge_proc_objs_with_existing(proc_objs)
 
 
 def _proc_data_row_kwargs(row: Any) -> Any:
