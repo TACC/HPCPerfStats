@@ -417,6 +417,12 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # When live DB queues are full: drop (archive+ack, shed DB) or pause (nack, stop consume).
 # listend_db_ingest_backpressure = drop
 
+# Host-affine archive writer threads for listend consume (default 8).
+# listend_archive_worker_threads = 8
+
+# RabbitMQ basic_qos prefetch in drop mode (default 32); pause mode always uses 1.
+# listend_amqp_prefetch = 32
+
 # Keep uncompressed YYYY-MM-DD.tar after sealing globally (default no).
 # Prior days drop at seal when raw is gone; calendar-today uses grace hours below.
 # archive_keep_uncompressed_tar = no

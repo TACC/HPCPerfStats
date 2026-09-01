@@ -166,6 +166,8 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "listend_db_ingest_batch_samples"),
     ("PIPELINE", "listend_db_ingest_proc_peak_lookup_chunk"),
     ("PIPELINE", "listend_db_ingest_statement_timeout_ms"),
+    ("PIPELINE", "listend_archive_worker_threads"),
+    ("PIPELINE", "listend_amqp_prefetch"),
     ("PIPELINE", "acct_path"),
     ("PIPELINE", "archive_dir"),
     ("PIPELINE", "daily_archive_dir"),
@@ -327,6 +329,8 @@ INI_OPTION_DEFAULTS = {
     'listend_db_ingest_batch_samples': '100',
     'listend_db_ingest_proc_peak_lookup_chunk': '256',
     'listend_db_ingest_statement_timeout_ms': '600000',
+    'listend_archive_worker_threads': '8',
+    'listend_amqp_prefetch': '32',
     'acct_path': None,
     'archive_dir': None,
     'daily_archive_dir': None,
@@ -4528,6 +4532,48 @@ def get_listend_db_ingest_statement_timeout_ms() -> int:
     return max(0, int(_pipeline_get("listend_db_ingest_statement_timeout_ms")))
   except (TypeError, ValueError, OverflowError):
     return 600000
+
+
+def get_listend_archive_worker_threads() -> int:
+  """
+  Host-affine archive writer threads for listend consume (default 8).
+
+  Parallelizes per-host ``current`` append/rotate off the AMQP callback
+  thread. Same host always maps to one thread (adler32 affine).
+
+  Returns:
+    int: Thread count, at least 1.
+
+  Examples:
+    >>> get_listend_archive_worker_threads() >= 1  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(1, int(_pipeline_get("listend_archive_worker_threads")))
+  except (TypeError, ValueError, OverflowError):
+    return 8
+
+
+def get_listend_amqp_prefetch() -> int:
+  """
+  RabbitMQ ``basic_qos`` prefetch for listend in drop backpressure mode.
+
+  Default ``32``. Pause mode always uses prefetch ``1`` regardless of this
+  value so overflow stays on the broker ready queue.
+
+  Returns:
+    int: Prefetch count, at least 1.
+
+  Examples:
+    >>> get_listend_amqp_prefetch() >= 1  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(1, int(_pipeline_get("listend_amqp_prefetch")))
+  except (TypeError, ValueError, OverflowError):
+    return 32
 
 
 def get_redis_location() -> Any:

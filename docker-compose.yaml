@@ -51,6 +51,8 @@ services:
     # Tune from host MemTotal minus db, web, redis; 128g fits ~192 GiB hosts with no swap.
     mem_limit: 128g
     memswap_limit: 128g
+    # POSIX SharedMemory for listend live-DB enqueue (8 GiB queue budget + headroom).
+    shm_size: "10gb"
     stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-2m}
     depends_on:
       - web

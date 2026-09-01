@@ -8,6 +8,7 @@ Attributes:
   IDLE_CHECK_INTERVAL: Attribute.
   MESSAGE_WINDOW_SECONDS: Attribute.
   RECENT_HOST_TTL_SECONDS: Attribute.
+  ArchiveAppendResult: Result of a durable archive append (host + byte range).
   _idle_monitor_stop_event: Attribute.
   _idle_thread_started: Attribute.
   _last_idle_report_time: Attribute.
@@ -17,6 +18,14 @@ Attributes:
   _amqp_reconnect_requested: Attribute.
   _amqp_reconnect_backoff_seconds: Attribute.
   _consume_attach_monotonic: Attribute.
+  _amqp_connection: Current BlockingConnection for threadsafe ack/nack.
+  _amqp_channel: Current consume channel (ack/nack via connection callbacks).
+  _archive_queues: Host-affine threading.Queue list for archive workers.
+  _archive_threads: Daemon archive Thread list.
+  _archive_pool_stop: Event to stop archive workers.
+  _archive_pool_started: Whether the archive thread pool is running.
+  _archive_pool_n: Number of archive worker threads.
+  _archive_pool_lock: Guard for start/stop of the archive pool.
   _recent_host_queue: Attribute.
   _recent_host_redis_client: Attribute.
   _recent_host_worker_stop_event: Attribute.
@@ -30,7 +39,7 @@ Attributes:
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NamedTuple
 
 import os
 import queue
@@ -51,7 +60,7 @@ from pika.exceptions import (
 )
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.dbload.lib.file_locking import file_read_lock_wait, file_write_lock
+from hpcperfstats.dbload.lib.file_locking import file_write_lock
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.shutdown_utils import send_sigchld_to_parent
 from hpcperfstats.lib.monitor_identity import (
@@ -79,6 +88,23 @@ RECENT_HOST_TTL_SECONDS = 7 * 24 * 60 * 60  # 1 week
 _MIN_PLAUSIBLE_UNIX_SECONDS = 1_000_000_000
 _DIGIT_EPOCH_NAME_MAX_ATTEMPTS = 10_000
 
+
+class ArchiveAppendResult(NamedTuple):
+  """Durable archive append outcome for ack and path+range DB enqueue.
+
+  Attributes:
+    host: FQDN host token from the monitor payload.
+    path: Absolute path of the ``current`` file written.
+    offset: Byte offset of this payload in ``path`` (0 for ``$`` rewrite).
+    length: UTF-8 byte length of the written payload.
+  """
+
+  host: str
+  path: str
+  offset: int
+  length: int
+
+
 _message_timestamps = deque()
 _unlink_timestamps = deque()
 _timestamps_lock = Lock()
@@ -99,6 +125,16 @@ _amqp_reconnect_requested = False
 _amqp_reconnect_backoff_seconds = AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
 # Monotonic time when the current consume session started (Begining Consume).
 _consume_attach_monotonic: float | None = None
+# Consume BlockingConnection / channel for archive-thread threadsafe ack/nack.
+_amqp_connection: Any = None
+_amqp_channel: Any = None
+# Host-affine archive thread pool (off AMQP callback thread).
+_archive_queues: list = []
+_archive_threads: list = []
+_archive_pool_stop = Event()
+_archive_pool_started = False
+_archive_pool_n = 0
+_archive_pool_lock = Lock()
 
 
 def _parse_plausible_unix_seconds(token: str) -> int | None:
@@ -504,32 +540,31 @@ def _recent_host_worker() -> None:
       _recent_host_queue.task_done()
 
 
-def append_monitor_payload_to_archive(message: Any) -> Any:
+def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
   """
-  Decode-safe: append one monitor payload string to the per-host archive (same.
-  
-    as listend).
-  
+  Append one monitor payload to the per-host archive ``current`` file.
+
   Used by the long-running daemon and by ``listend_drain`` integration tests.
-  Returns the FQDN host string parsed from the payload (for metrics / logging).
-  
+  Returns host plus the byte range written so live-DB enqueue can fall back
+  to path+offset without re-pickling the body.
+
   Args:
-    message (Any): Message passed to this helper.
-  
+    message (Any): Monitor payload string (UTF-8 text).
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    ArchiveAppendResult: Host, path, byte offset, and UTF-8 length.
+
   Raises:
-    RuntimeError: Raised when ``append_monitor_payload_to_archive`` hits a
-    ``RuntimeError`` failure path.
-    ValueError: Raised when ``append_monitor_payload_to_archive`` hits a
-    ``ValueError`` failure path.
-  
+    RuntimeError: When ``$`` rotate cannot hardlink ``current`` safely.
+    ValueError: When the payload is empty or malformed.
+
   Examples:
-    >>> append_monitor_payload_to_archive(None)  # doctest: +SKIP
+    >>> append_monitor_payload_to_archive("")  # doctest: +SKIP
   """
   if not message:
     raise ValueError("Empty message body")
+  if not isinstance(message, str):
+    message = message.decode("utf-8", errors="replace")
 
   # `$`-prefixed messages are *schema/header* dumps from `hpcperfstatsd`:
   # they are emitted when `rotate_timer_cb()` runs (immediately at daemon
@@ -555,6 +590,9 @@ def append_monitor_payload_to_archive(message: Any) -> Any:
     os.makedirs(host_dir)
 
   current_path = os.path.join(host_dir, "current")
+  payload_bytes = message.encode("utf-8")
+  payload_len = len(payload_bytes)
+  write_offset = 0
   unlinked_current = False
   if message[0] == "$":
     # Wall clock is only the safety-link cutoff / fallback when the ``$``
@@ -574,8 +612,9 @@ def append_monitor_payload_to_archive(message: Any) -> Any:
         os.unlink(current_path)
         unlinked_current = True
 
-      with open(current_path, "w") as fd:
-        fd.write(message)
+      with open(current_path, "wb") as fd:
+        fd.write(payload_bytes)
+      write_offset = 0
       # Name the new segment from first sample ts in the file; +1 on conflict.
       epoch_ts = _digit_epoch_start_ts_for_new_current(
           current_path, fallback_ts=rotate_wall_ts,
@@ -586,15 +625,16 @@ def append_monitor_payload_to_archive(message: Any) -> Any:
       # sync_timedb skips epoch files same-inode-as-current to avoid read races.
   else:
     with file_write_lock(current_path):
-      with open(current_path, "a") as fd:
-        fd.write(message)
+      with open(current_path, "ab") as fd:
+        write_offset = fd.tell()
+        fd.write(payload_bytes)
   _enqueue_recent_host_update(host)
   # Redis-only identity snapshot on ``$`` rotation (tolerant if ``$build``
   # absent). Does not change ack, pause/resume, or archive/DB gate semantics.
   if message[0] == "$":
     try:
       identity = parse_monitor_identity_from_dollar_message(
-          message if isinstance(message, str) else message.decode("utf-8", "replace"),
+          message,
           updated_at=int(time.time()),
       )
     except Exception:
@@ -615,7 +655,12 @@ def append_monitor_payload_to_archive(message: Any) -> Any:
     while _unlink_timestamps and _unlink_timestamps[0] < cutoff_window:
       _unlink_timestamps.popleft()
 
-  return host
+  return ArchiveAppendResult(
+      host=host,
+      path=current_path,
+      offset=int(write_offset),
+      length=int(payload_len),
+  )
 
 
 def _get_rmq_queue_depth_for_monitor() -> int | str:
@@ -998,6 +1043,345 @@ def _wait_for_db_backpressure_resume(connection: Any) -> bool:
   return True
 
 
+def set_amqp_connection(connection: Any, channel: Any) -> None:
+  """
+  Store the consume BlockingConnection/channel for archive-thread ack/nack.
+
+  Args:
+    connection (Any): Pika ``BlockingConnection``, or ``None`` to clear.
+    channel (Any): Consume channel, or ``None`` to clear.
+
+  Returns:
+    None
+
+  Examples:
+    >>> set_amqp_connection(None, None)
+  """
+  global _amqp_connection, _amqp_channel
+  _amqp_connection = connection
+  _amqp_channel = channel
+
+
+def clear_amqp_connection() -> None:
+  """
+  Clear stored AMQP connection/channel (reconnect or shutdown).
+
+  Returns:
+    None
+
+  Examples:
+    >>> clear_amqp_connection()
+  """
+  set_amqp_connection(None, None)
+
+
+def archive_queue_depth() -> int:
+  """
+  Return total pending items across host-affine archive queues.
+
+  Returns:
+    int: Sum of ``qsize()`` across archive queues (0 when pool stopped).
+
+  Examples:
+    >>> archive_queue_depth() >= 0
+    True
+  """
+  total = 0
+  for q in _archive_queues:
+    try:
+      total += int(q.qsize())
+    except Exception:
+      pass
+  return total
+
+
+def _threadsafe_basic_ack(delivery_tag: Any) -> None:
+  """
+  Schedule ``basic_ack`` on the consume connection I/O thread.
+
+  Args:
+    delivery_tag (Any): AMQP delivery tag to acknowledge.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _threadsafe_basic_ack(1)  # doctest: +SKIP
+  """
+  conn = _amqp_connection
+  ch = _amqp_channel
+  if conn is None or ch is None or delivery_tag is None:
+    return
+
+  def _ack() -> None:
+    """
+    Run ``basic_ack`` on the connection thread.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _ack()  # doctest: +SKIP
+    """
+    try:
+      ch.basic_ack(delivery_tag=delivery_tag)
+    except Exception as exc:
+      if _is_amqp_channel_or_connection_dead(exc, ch):
+        _request_amqp_full_reconnect(ch, str(exc))
+      elif DEBUG:
+        log_print("threadsafe basic_ack failed: %s" % exc)
+
+  try:
+    if hasattr(conn, "add_callback_threadsafe"):
+      conn.add_callback_threadsafe(_ack)
+    else:
+      _ack()
+  except Exception as exc:
+    if _is_amqp_channel_or_connection_dead(exc, ch):
+      _request_amqp_full_reconnect(ch, str(exc))
+    elif DEBUG:
+      log_print("add_callback_threadsafe ack failed: %s" % exc)
+
+
+def _threadsafe_basic_nack(delivery_tag: Any, *, requeue: bool = True) -> None:
+  """
+  Schedule ``basic_nack`` on the consume connection I/O thread.
+
+  Args:
+    delivery_tag (Any): AMQP delivery tag to negatively acknowledge.
+    requeue (bool): When ``True``, requeue the message on the broker.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _threadsafe_basic_nack(1)  # doctest: +SKIP
+  """
+  conn = _amqp_connection
+  ch = _amqp_channel
+  if conn is None or ch is None or delivery_tag is None:
+    return
+
+  def _nack() -> None:
+    """
+    Run ``basic_nack`` on the connection thread.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _nack()  # doctest: +SKIP
+    """
+    try:
+      if hasattr(ch, "basic_nack"):
+        ch.basic_nack(delivery_tag=delivery_tag, requeue=requeue)
+    except Exception as exc:
+      if _is_amqp_channel_or_connection_dead(exc, ch):
+        _request_amqp_full_reconnect(ch, str(exc))
+      elif DEBUG:
+        log_print("threadsafe basic_nack failed: %s" % exc)
+
+  try:
+    if hasattr(conn, "add_callback_threadsafe"):
+      conn.add_callback_threadsafe(_nack)
+    else:
+      _nack()
+  except Exception as exc:
+    if _is_amqp_channel_or_connection_dead(exc, ch):
+      _request_amqp_full_reconnect(ch, str(exc))
+    elif DEBUG:
+      log_print("add_callback_threadsafe nack failed: %s" % exc)
+
+
+def _archive_and_submit_then_ack(delivery_tag: Any, message: str) -> None:
+  """
+  Archive payload, best-effort live-DB submit, then ack (or nack on I/O error).
+
+  Hard order: durable filesystem archive → submit → ACK. Never ACK without
+  a successful archive append.
+
+  Args:
+    delivery_tag (Any): AMQP delivery tag.
+    message (str): Decoded monitor payload.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _archive_and_submit_then_ack(1, "x")  # doctest: +SKIP
+  """
+  try:
+    result = append_monitor_payload_to_archive(message)
+    try:
+      from hpcperfstats.dbload.lib.listend_db_ingest import (
+          submit_listend_db_ingest,
+      )
+
+      submit_listend_db_ingest(
+          result.host,
+          message,
+          archive_path=result.path,
+          offset=result.offset,
+          length=result.length,
+      )
+    except Exception as submit_err:
+      if DEBUG:
+        log_print("listend db ingest submit error: %s" % submit_err)
+    _threadsafe_basic_ack(delivery_tag)
+  except Exception as e:
+    if _is_amqp_channel_or_connection_dead(e, _amqp_channel):
+      _request_amqp_full_reconnect(_amqp_channel, str(e))
+      return
+    log_print("Error processing message; leaving on server: %s" % e)
+    _threadsafe_basic_nack(delivery_tag, requeue=True)
+
+
+def _archive_worker_main(worker_idx: int, work_queue: queue.Queue) -> None:
+  """
+  Host-affine archive thread: archive → submit → threadsafe ack/nack.
+
+  Args:
+    worker_idx (int): Archive worker index (0..N-1).
+    work_queue (queue.Queue): Per-worker ``(delivery_tag, message)`` queue.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _archive_worker_main(0, queue.Queue())  # doctest: +SKIP
+  """
+  from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
+
+  set_daemon_thread_title(
+      "",
+      script_name="listend.py",
+      role="archive-%d" % int(worker_idx),
+  )
+  while not _archive_pool_stop.is_set():
+    try:
+      item = work_queue.get(timeout=1.0)
+    except queue.Empty:
+      continue
+    if item is None:
+      work_queue.task_done()
+      break
+    try:
+      delivery_tag, message = item
+      _archive_and_submit_then_ack(delivery_tag, message)
+    finally:
+      try:
+        work_queue.task_done()
+      except Exception:
+        pass
+
+
+def start_listend_archive_pool(n_threads: int | None = None) -> int:
+  """
+  Start host-affine archive writer threads (idempotent).
+
+  Args:
+    n_threads (int | None): Worker count; default from INI
+      ``listend_archive_worker_threads``.
+
+  Returns:
+    int: Number of archive worker threads started (or already running).
+
+  Examples:
+    >>> start_listend_archive_pool(1)  # doctest: +SKIP
+  """
+  global _archive_pool_started, _archive_pool_n
+  with _archive_pool_lock:
+    if _archive_pool_started:
+      return int(_archive_pool_n)
+    n = int(
+        n_threads
+        if n_threads is not None
+        else cfg.get_listend_archive_worker_threads()
+    )
+    n = max(1, n)
+    _archive_pool_stop.clear()
+    _archive_queues.clear()
+    _archive_threads.clear()
+    for i in range(n):
+      q: queue.Queue = queue.Queue()
+      t = Thread(
+          target=_archive_worker_main,
+          args=(i, q),
+          name="listend-archive-%d" % i,
+          daemon=True,
+      )
+      _archive_queues.append(q)
+      _archive_threads.append(t)
+      t.start()
+    _archive_pool_n = n
+    _archive_pool_started = True
+    log_print(
+        "listend archive pool started threads=%d" % n,
+        flush=True,
+    )
+    return n
+
+
+def stop_listend_archive_pool(*, join_timeout: float = 15.0) -> None:
+  """
+  Stop archive workers and drain queues (best-effort).
+
+  Args:
+    join_timeout (float): Seconds to wait for each worker join.
+
+  Returns:
+    None
+
+  Examples:
+    >>> stop_listend_archive_pool()
+  """
+  global _archive_pool_started, _archive_pool_n
+  with _archive_pool_lock:
+    if not _archive_pool_started:
+      return
+    _archive_pool_stop.set()
+    for q in _archive_queues:
+      try:
+        q.put_nowait(None)
+      except Exception:
+        pass
+    deadline = time.monotonic() + max(0.1, float(join_timeout))
+    for t in _archive_threads:
+      remaining = deadline - time.monotonic()
+      if remaining <= 0:
+        break
+      try:
+        t.join(timeout=remaining)
+      except Exception:
+        pass
+    _archive_queues.clear()
+    _archive_threads.clear()
+    _archive_pool_n = 0
+    _archive_pool_started = False
+
+
+def _dispatch_to_archive_pool(delivery_tag: Any, message: str, host: str) -> None:
+  """
+  Put ``(delivery_tag, message)`` on the host-affine archive queue.
+
+  Args:
+    delivery_tag (Any): AMQP delivery tag.
+    message (str): Decoded monitor payload.
+    host (str): Host token for affine index.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _dispatch_to_archive_pool(1, "x", "h")  # doctest: +SKIP
+  """
+  from hpcperfstats.dbload.lib.listend_db_ingest import host_affine_worker_index
+
+  n = max(1, int(_archive_pool_n) if _archive_pool_n else 1)
+  idx = host_affine_worker_index(host, n)
+  _archive_queues[idx].put((delivery_tag, message))
+
+
 def on_message(
   channel: Any,
   method_frame: Any,
@@ -1005,28 +1389,23 @@ def on_message(
   body: Any,
 ) -> None:
   """
-  Callback for each message: decode body, determine host, write/append to.
-  
-    host's.
-  
-    current file and optionally rotate. Acknowledges the message.
-  
+  Consume callback: pause-check, then host-affine archive dispatch (or sync).
+
+  When the archive pool is running, parse host cheaply, enqueue
+  ``(delivery_tag, message)``, and return without archive/ack on this thread.
+  Archive workers perform durable append → best-effort DB submit → threadsafe
+  ack. Without a started pool (unit tests), process synchronously on this
+  thread.
+
   When live DB ingest is on and backpressure mode is ``pause``, high-watermark
   queues cause nack+requeue without archive until the resume watermark. Mode
   ``drop`` (default) always archives and acks, shedding live DB enqueue.
 
-  When ack/nack/ops hit a dead AMQP channel or connection, requests a full
-  BlockingConnection restart (stop consume + close) instead of per-message
-  ERROR spam; non-AMQP archive failures keep nack+requeue.
-
-  Per-message logging of consumption/queue depth is avoided; instead, a
-  background monitor thread reports aggregate rates every 10 minutes.
-
   Args:
-    channel (Any): Channel passed to this helper.
-    method_frame (Any): Method frame passed to this helper.
-    _header_frame (Any):  header frame passed to this helper.
-    body (Any): Value to inspect (typically a numeric scalar).
+    channel (Any): Pika channel delivering the message.
+    method_frame (Any): Method frame with ``delivery_tag``.
+    _header_frame (Any): Unused AMQP header frame.
+    body (Any): Raw message body bytes.
 
   Returns:
     None
@@ -1054,12 +1433,28 @@ def on_message(
       ):
         _request_db_backpressure_pause(channel, delivery_tag)
         return
-    host = append_monitor_payload_to_archive(message)
-    # Best-effort live DB dual-write; never blocks or fails the ack path.
+
+    if _archive_pool_started and _archive_queues:
+      from hpcperfstats.dbload.lib.listend_db_ingest import (
+          parse_host_from_monitor_payload,
+      )
+
+      host = parse_host_from_monitor_payload(message)
+      _dispatch_to_archive_pool(delivery_tag, message, host)
+      return
+
+    # Sync path (tests / pool not started): archive → submit → ack.
+    result = append_monitor_payload_to_archive(message)
     try:
       from hpcperfstats.dbload.lib.listend_db_ingest import submit_listend_db_ingest
 
-      submit_listend_db_ingest(host, message)
+      submit_listend_db_ingest(
+          result.host,
+          message,
+          archive_path=result.path,
+          offset=result.offset,
+          length=result.length,
+      )
     except Exception as submit_err:
       if DEBUG:
         log_print("listend db ingest submit error: %s" % submit_err)
@@ -1129,11 +1524,19 @@ def _idle_monitor() -> None:
     except Exception:
       pass
 
+    archive_suffix = ""
+    try:
+      if _archive_pool_started:
+        archive_suffix = "; archive_q_depth=%d" % archive_queue_depth()
+    except Exception:
+      pass
+
     log_print(
         "Messages consumed in the last 10 minutes: %d; "
         "messages waiting to be consumed: %s; "
-        "current file unlinks (last 10 minutes): %d%s" %
-        (count_last_10, queue_depth, unlink_count_last_10, db_suffix))
+        "current file unlinks (last 10 minutes): %d%s%s" %
+        (count_last_10, queue_depth, unlink_count_last_10, db_suffix,
+         archive_suffix))
 
     _last_idle_report_time = now
 
@@ -1218,6 +1621,11 @@ def main() -> None:
       except Exception as pool_err:
         log_print("Failed to start listend db ingest pool: %s" % pool_err)
 
+      try:
+        start_listend_archive_pool()
+      except Exception as arch_err:
+        log_print("Failed to start listend archive pool: %s" % arch_err)
+
       # Outer loop: keep the daemon running indefinitely by reconnecting to
       # RabbitMQ on failure instead of exiting. The process will typically only
       # terminate when it receives a signal (e.g. SIGTERM) from the service
@@ -1231,8 +1639,10 @@ def main() -> None:
           connection = pika.BlockingConnection(parameters)
 
           channel = connection.channel()
+          set_amqp_connection(connection, channel)
           queue_name = cfg.get_rmq_queue()
           channel = declare_durable_quorum_queue(channel, queue_name)
+          set_amqp_connection(connection, channel)
           # Report how many messages are waiting to be consumed at startup.
           try:
             q = channel.queue_declare(
@@ -1247,6 +1657,9 @@ def main() -> None:
           if live_pool is not None and _listend_db_backpressure_mode_is_pause():
             # Prefetch=1 so pause leaves work on the broker ready queue.
             channel.basic_qos(prefetch_count=1)
+          else:
+            channel.basic_qos(
+                prefetch_count=int(cfg.get_listend_amqp_prefetch()))
 
           # Log consume-start once per RabbitMQ connection; pause/resume
           # rebinds must not re-emit (that was log spam with backpressure).
@@ -1269,6 +1682,9 @@ def main() -> None:
                     and _listend_db_backpressure_mode_is_pause()
                 ):
                   channel.basic_qos(prefetch_count=1)
+                else:
+                  channel.basic_qos(
+                      prefetch_count=int(cfg.get_listend_amqp_prefetch()))
               except Exception:
                 break
               # stop_consuming already cleared the consumer tag.
@@ -1349,6 +1765,7 @@ def main() -> None:
           else:
             reconnect_sleep_s = AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
         finally:
+          clear_amqp_connection()
           _close_amqp_channel_and_connection_gracefully(channel, connection)
           _amqp_reconnect_requested = False
           _consume_attach_monotonic = None
@@ -1360,11 +1777,16 @@ def main() -> None:
     _idle_monitor_stop_event.set()
     _recent_host_worker_stop_event.set()
     try:
+      stop_listend_archive_pool()
+    except Exception:
+      pass
+    try:
       from hpcperfstats.dbload.lib.listend_db_ingest import stop_listend_db_ingest_pool
 
       stop_listend_db_ingest_pool()
     except Exception:
       pass
+    clear_amqp_connection()
     try:
       if connection and not connection.is_closed:
         connection.close()

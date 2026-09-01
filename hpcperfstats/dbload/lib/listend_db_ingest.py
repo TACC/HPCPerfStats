@@ -24,6 +24,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import queue
+import threading
 import time
 import zlib
 from typing import Any, Dict, Optional, Tuple
@@ -48,7 +49,12 @@ _COUNTER_NAMES = (
     "db_err",
     "conn_recycle",
     "batch_flush",
+    "shm_fallback",
+    "shm_reclaim",
 )
+
+# POSIX SharedMemory name prefix for listend live-DB enqueue.
+_LISTEND_SHM_PREFIX = "hps-ld-"
 
 
 def _listend_flush_error_is_poison(exc: BaseException) -> bool:
@@ -227,7 +233,8 @@ def _flush_orm_batch(host_objs: list, proc_objs: list) -> None:
   from hpcperfstats.site.lib.machine.models import host_data
   from hpcperfstats.dbload.lib.sync_timedb_parsing import HOST_PROC_KEYS
 
-  close_old_connections()
+  # Do not close_old_connections() at every flush start — that fights
+  # persistent connections and inflates idle conn_recycle.
   batch_size = cfg.get_sync_bulk_create_batch_size()
   update_fields = ("device",) + HOST_PROC_KEYS
   proc_objs = _dedupe_proc_objs_keep_last(proc_objs)
@@ -501,6 +508,108 @@ def _payload_byte_size(message: str) -> int:
     >>> _payload_byte_size("x")  # doctest: +SKIP
   """
   return len(message.encode("utf-8", errors="replace"))
+
+
+def _unlink_shm_by_name(name: str) -> bool:
+  """
+  Best-effort unlink of a named POSIX SharedMemory segment.
+
+  Args:
+    name (str): SharedMemory name (e.g. ``hps-ld-123-0``).
+
+  Returns:
+    bool: True when unlink succeeded.
+
+  Examples:
+    >>> _unlink_shm_by_name("hps-ld-missing")
+    False
+  """
+  if not name:
+    return False
+  try:
+    from multiprocessing.shared_memory import SharedMemory
+
+    shm = SharedMemory(name=name)
+    try:
+      shm.close()
+    finally:
+      try:
+        shm.unlink()
+      except FileNotFoundError:
+        return False
+    return True
+  except FileNotFoundError:
+    return False
+  except Exception:
+    try:
+      path = os.path.join("/dev/shm", name.lstrip("/"))
+      os.unlink(path)
+      return True
+    except Exception:
+      return False
+
+
+def _reclaim_orphan_listend_shm() -> int:
+  """
+  Unlink leftover ``hps-ld-*`` segments under ``/dev/shm``.
+
+  Called on pool ``start()`` so a prior crash/OOM cannot starve tmpfs.
+
+  Returns:
+    int: Number of names successfully unlinked.
+
+  Examples:
+    >>> _reclaim_orphan_listend_shm() >= 0
+    True
+  """
+  shm_dir = "/dev/shm"
+  if not os.path.isdir(shm_dir):
+    return 0
+  reclaimed = 0
+  try:
+    names = os.listdir(shm_dir)
+  except OSError:
+    return 0
+  for name in names:
+    if not name.startswith(_LISTEND_SHM_PREFIX):
+      continue
+    if _unlink_shm_by_name(name):
+      reclaimed += 1
+  return reclaimed
+
+
+def _read_archive_payload_range(
+  archive_path: str,
+  offset: int,
+  length: int,
+) -> str:
+  """
+  Read ``length`` bytes at ``offset`` from a durable archive file.
+
+  Args:
+    archive_path (str): Absolute path to the host ``current`` (or sibling).
+    offset (int): Byte offset of the payload.
+    length (int): UTF-8 byte length to read.
+
+  Returns:
+    str: Decoded UTF-8 payload (replace errors).
+
+  Raises:
+    OSError: When the file cannot be opened or read.
+    ValueError: When ``length`` is negative.
+
+  Examples:
+    >>> _read_archive_payload_range("/tmp/x", 0, 0)  # doctest: +SKIP
+  """
+  from hpcperfstats.dbload.lib.file_locking import file_read_lock_wait
+
+  if int(length) < 0:
+    raise ValueError("negative archive payload length")
+  with file_read_lock_wait(archive_path):
+    with open(archive_path, "rb") as fd:
+      fd.seek(int(offset))
+      raw = fd.read(int(length))
+  return raw.decode("utf-8", errors="replace")
 
 
 def _inc_counter(counters: dict, name: str, amount: int = 1) -> None:
@@ -885,11 +994,57 @@ def _worker_main(
       item = work_queue.get(timeout=_QUEUE_GET_TIMEOUT_S)
     except queue.Empty:
       _flush(force_memory_release=True)
-      _recycle_conn(reason="idle")
+      # Recycle only on max age — not every idle Empty (avoids conn_recycle ≫ db_ok).
+      if (time.monotonic() - conn_opened_at) >= _conn_max_age_s():
+        _recycle_conn(reason="age")
       continue
     if item is None:
       break
-    host, message, size = item
+    host = ""
+    message = ""
+    size = 0
+    shm_name: str | None = None
+    try:
+      kind = item[0] if isinstance(item, tuple) and item else None
+      if kind == "shm":
+        _, host, shm_name, size = item
+        from multiprocessing.shared_memory import SharedMemory
+
+        shm = SharedMemory(name=shm_name)
+        try:
+          raw = bytes(shm.buf[: int(size)])
+          message = raw.decode("utf-8", errors="replace")
+        finally:
+          try:
+            shm.close()
+          finally:
+            try:
+              shm.unlink()
+            except FileNotFoundError:
+              pass
+        shm_name = None
+      elif kind == "path":
+        _, host, archive_path, offset, length = item
+        size = int(length)
+        message = _read_archive_payload_range(
+            str(archive_path), int(offset), int(length),
+        )
+      else:
+        # Legacy pickle-body tuple from older callers/tests.
+        host, message, size = item
+    except Exception as unpack_exc:
+      _inc_counter(counters, "db_err")
+      log_print(
+          "ERROR: listend db ingest dequeue failed worker=%d: %s"
+          % (worker_idx, unpack_exc),
+          flush=True,
+      )
+      if shm_name:
+        _unlink_shm_by_name(shm_name)
+      with byte_lock:
+        byte_count.value = max(0, int(byte_count.value) - int(size or 0))
+      continue
+
     with byte_lock:
       byte_count.value = max(0, int(byte_count.value) - int(size))
 
@@ -1032,6 +1187,10 @@ class ListendDbIngestPool:
     self._started = False
     self._pause_started_mono: float | None = None
     self._pause_seconds_window = 0.0
+    self._shm_seq = 0
+    self._shm_seq_lock = threading.Lock()
+    self._outstanding_shm: set[str] = set()
+    self._outstanding_shm_lock = threading.Lock()
     # Disabled pools must not allocate spawn Event/Value/Queue objects.
     # POSIX semaphores fail with FileNotFoundError when /dev/shm is missing
     # (the [listend:main] "Failed to start listend db ingest pool: [Errno 2]"
@@ -1061,6 +1220,9 @@ class ListendDbIngestPool:
     """
     if not self.enabled or self._started:
       return
+    reclaimed = _reclaim_orphan_listend_shm()
+    if reclaimed:
+      _inc_counter(self._counters, "shm_reclaim", reclaimed)
     for i in range(self.pool_processes):
       q = self._ctx.Queue(maxsize=self.queue_maxsize)
       byte_count = self._ctx.Value("Q", 0)
@@ -1089,12 +1251,13 @@ class ListendDbIngestPool:
     self._window_baseline = self.snapshot_counters()
     log_print(
         "listend db ingest pool started workers=%d queue_maxsize=%d "
-        "per_worker_budget_bytes=%d batch_samples=%d"
+        "per_worker_budget_bytes=%d batch_samples=%d shm_reclaim=%d"
         % (
             self.pool_processes,
             self.queue_maxsize,
             self.per_worker_budget_bytes,
             self.batch_samples,
+            reclaimed,
         ),
         flush=True,
     )
@@ -1135,6 +1298,11 @@ class ListendDbIngestPool:
           proc.terminate()
         except Exception:
           pass
+    with self._outstanding_shm_lock:
+      outstanding = list(self._outstanding_shm)
+      self._outstanding_shm.clear()
+    for name in outstanding:
+      _unlink_shm_by_name(name)
     self._started = False
 
   def queued_bytes(self) -> int:
@@ -1323,23 +1491,37 @@ class ListendDbIngestPool:
       paused = 1
     return int(pause_s), paused
 
-  def submit(self, host: str, message: str) -> bool:
+  def submit(
+    self,
+    host: str,
+    message: str,
+    *,
+    archive_path: str | None = None,
+    offset: int | None = None,
+    length: int | None = None,
+  ) -> bool:
     """
-    Nonblocking enqueue. Return False on drop / disabled / not started.
-    
-    Under ``listend_db_ingest_backpressure=pause``, listend normally pauses
-    RabbitMQ consume before calling submit. Under ``drop``, False returns and
-    ``queue_drops`` are expected when queues are full.
-    
+    Nonblocking enqueue via POSIX SharedMemory (path+range fallback).
+
+    Prefer ``("shm", host, name, nbytes)`` so ``mp.Queue`` does not pickle the
+    full monitor body. On SharedMemory create failure with archive range
+    available, enqueue ``("path", host, path, offset, length)`` and increment
+    ``shm_fallback``. Under ``drop``, False returns and ``queue_drops`` are
+    expected when queues are full.
+
     Args:
-      host (str): String for host.
-      message (str): String for message.
-    
+      host (str): Monitor hostname token.
+      message (str): Raw monitor payload string.
+      archive_path (str | None): Durable archive path for path fallback.
+      offset (int | None): Byte offset of this payload in ``archive_path``.
+      length (int | None): UTF-8 byte length of this payload.
+
     Returns:
-      bool: True or False for this check.
-    
+      bool: True when enqueued; False on drop / disabled / not started.
+
     Examples:
-      >>> ListendDbIngestPool().submit("x", "x")  # doctest: +SKIP
+      >>> ListendDbIngestPool(enabled=False).submit("h", "x")
+      False
     """
     if not self.enabled or not self._started or self._stop.is_set():
       return False
@@ -1354,13 +1536,60 @@ class ListendDbIngestPool:
       if int(byte_count.value) + size > self.per_worker_budget_bytes:
         _inc_counter(self._counters, "queue_drops")
         return False
+
+    payload = message.encode("utf-8", errors="replace")
+    nbytes = len(payload)
+    shm_name: str | None = None
+    try:
+      from multiprocessing.shared_memory import SharedMemory
+
+      with self._shm_seq_lock:
+        self._shm_seq += 1
+        seq = self._shm_seq
+      shm_name = "%s%d-%d" % (_LISTEND_SHM_PREFIX, os.getpid(), seq)
+      shm = SharedMemory(create=True, size=max(1, nbytes), name=shm_name)
       try:
-        q.put_nowait((host, message, size))
+        if nbytes:
+          shm.buf[:nbytes] = payload
+      finally:
+        shm.close()
+      with self._outstanding_shm_lock:
+        self._outstanding_shm.add(shm_name)
+      try:
+        with byte_lock:
+          if int(byte_count.value) + size > self.per_worker_budget_bytes:
+            raise queue.Full
+          q.put_nowait(("shm", host, shm_name, nbytes))
+          byte_count.value = int(byte_count.value) + size
       except Exception:
+        with self._outstanding_shm_lock:
+          self._outstanding_shm.discard(shm_name)
+        _unlink_shm_by_name(shm_name)
         _inc_counter(self._counters, "queue_drops")
         return False
-      byte_count.value = int(byte_count.value) + size
-    return True
+      return True
+    except Exception:
+      if (
+          archive_path is not None
+          and offset is not None
+          and length is not None
+      ):
+        try:
+          with byte_lock:
+            if int(byte_count.value) + size > self.per_worker_budget_bytes:
+              _inc_counter(self._counters, "queue_drops")
+              return False
+            q.put_nowait(
+                ("path", host, archive_path, int(offset), int(length))
+            )
+            byte_count.value = int(byte_count.value) + size
+          _inc_counter(self._counters, "shm_fallback")
+          return True
+        except Exception:
+          _inc_counter(self._counters, "queue_drops")
+          return False
+      _inc_counter(self._counters, "queue_drops")
+      return False
 
   def snapshot_counters(self) -> dict:
     """
