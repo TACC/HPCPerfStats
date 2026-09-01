@@ -1666,7 +1666,8 @@ class ListendDbIngestPool:
     return (
         "db_ingest queue_drops=%d pause_enters=%d pause_s=%d paused=%d "
         "schema_miss=%d db_ok=%d db_err=%d conn_recycle=%d "
-        "db_queue_depth=%d db_queued_bytes=%d batch_flush=%d"
+        "db_queue_depth=%d db_queued_bytes=%d batch_flush=%d "
+        "shm_fallback=%d shm_reclaim=%d"
         % (
             d.get("queue_drops", 0),
             d.get("pause_enters", 0),
@@ -1679,6 +1680,8 @@ class ListendDbIngestPool:
             d.get("db_queue_depth", 0),
             d.get("db_queued_bytes", 0),
             d.get("batch_flush", 0),
+            d.get("shm_fallback", 0),
+            d.get("shm_reclaim", 0),
         )
     )
 
@@ -1763,25 +1766,44 @@ def stop_listend_db_ingest_pool() -> None:
       log_print("ERROR: listend db ingest pool stop failed: %s" % exc, flush=True)
 
 
-def submit_listend_db_ingest(host: str, message: str) -> bool:
+def submit_listend_db_ingest(
+  host: str,
+  message: str,
+  *,
+  archive_path: str | None = None,
+  offset: int | None = None,
+  length: int | None = None,
+) -> bool:
   """
   Best-effort enqueue; never raises into the ack path.
-  
+
   Args:
-    host (str): String for host.
-    message (str): String for message.
-  
+    host (str): Monitor hostname token.
+    message (str): Raw monitor payload.
+    archive_path (str | None): Durable archive path for shm create fallback.
+    offset (int | None): Byte offset of this payload in ``archive_path``.
+    length (int | None): UTF-8 byte length of this payload.
+
   Returns:
-    bool: True or False for this check.
-  
+    bool: True when enqueued; False when pool missing or drop.
+
   Examples:
-    >>> submit_listend_db_ingest("x", "x")  # doctest: +SKIP
+    >>> submit_listend_db_ingest("x", "x")
+    False
   """
   pool = _GLOBAL_POOL
   if pool is None:
     return False
   try:
-    return bool(pool.submit(host, message))
+    return bool(
+        pool.submit(
+            host,
+            message,
+            archive_path=archive_path,
+            offset=offset,
+            length=length,
+        )
+    )
   except Exception as exc:
     try:
       log_print(
