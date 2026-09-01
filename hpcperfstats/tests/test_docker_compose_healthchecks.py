@@ -402,3 +402,23 @@ def test_docker_compose_test_overlay_clears_host_binds():
   assert "/etc/ssl/hpcperfstats" not in overlay
   assert "additional_contexts:" not in overlay
   assert "ssl_certs: ./tests/fixtures/proxy-ssl" not in overlay
+
+
+def test_docker_compose_pipeline_shm_size_at_least_10gb():
+  """listend POSIX SharedMemory enqueue needs pipeline /dev/shm >= 10gb."""
+  import re
+
+  repo_root = Path(__file__).resolve().parents[2]
+  content = (repo_root / "docker-compose.yaml").read_text()
+  # Extract the pipeline service block until the next top-level service key.
+  m = re.search(
+      r"(?ms)^  pipeline:\n(.*?)(?=^  [a-z].*:|\Z)",
+      content,
+  )
+  assert m, "pipeline service not found"
+  block = m.group(0)
+  assert 'shm_size:' in block
+  size_m = re.search(r'shm_size:\s*["\']?(\d+)\s*([gG][bB]?)["\']?', block)
+  assert size_m, "pipeline shm_size not parseable: %r" % block
+  gib = int(size_m.group(1))
+  assert gib >= 10, "pipeline shm_size must be >= 10gb, got %sgb" % gib

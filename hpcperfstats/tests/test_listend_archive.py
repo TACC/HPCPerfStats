@@ -10,7 +10,11 @@ def test_append_monitor_payload_to_archive_plain_sample(tmp_path, monkeypatch):
   host_fqdn = "n001.demo.cluster.local"
   jid = "12345"
   body = "1700000000.0 %s %s\ncpu 0 1 2 3 4 5 6 7\n" % (jid, host_fqdn)
-  assert ld.append_monitor_payload_to_archive(body) == host_fqdn
+  result = ld.append_monitor_payload_to_archive(body)
+  assert result.host == host_fqdn
+  assert result.path.endswith("/current")
+  assert result.offset == 0
+  assert result.length == len(body.encode("utf-8"))
   current = tmp_path / host_fqdn / "current"
   assert current.is_file()
   text = current.read_text()
@@ -35,6 +39,19 @@ def test_append_monitor_payload_to_archive_preserves_tier_markers(tmp_path, monk
       "1700000600.0 %s %s\n"
       "host_tt dev0 @full 200 250 400 450\n"
   ) % (jid, host_fqdn, jid, host_fqdn)
-  assert ld.append_monitor_payload_to_archive(body) == host_fqdn
+  result = ld.append_monitor_payload_to_archive(body)
+  assert result.host == host_fqdn
   current = tmp_path / host_fqdn / "current"
   assert current.read_text() == body
+
+
+def test_append_second_sample_offset_after_first(tmp_path, monkeypatch):
+  monkeypatch.setattr(ld.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  host = "n002.demo.cluster.local"
+  first = "1700000000.0 1 %s\ncpu 0\n" % host
+  second = "1700000001.0 1 %s\ncpu 1\n" % host
+  r1 = ld.append_monitor_payload_to_archive(first)
+  r2 = ld.append_monitor_payload_to_archive(second)
+  assert r1.offset == 0
+  assert r2.offset == r1.length
+  assert r2.length == len(second.encode("utf-8"))

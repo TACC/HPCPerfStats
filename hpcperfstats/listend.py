@@ -1360,7 +1360,11 @@ def stop_listend_archive_pool(*, join_timeout: float = 15.0) -> None:
     _archive_pool_started = False
 
 
-def _dispatch_to_archive_pool(delivery_tag: Any, message: str, host: str) -> None:
+def _dispatch_to_archive_pool(
+  delivery_tag: Any,
+  message: str,
+  host: str,
+) -> None:
   """
   Put ``(delivery_tag, message)`` on the host-affine archive queue.
 

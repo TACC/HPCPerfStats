@@ -264,7 +264,9 @@ def test_on_message_drop_mode_archives_when_full(tmp_path, monkeypatch):
 
   def capture_archive(message):
     archived.append(message)
-    return "myhost"
+    return listend.ArchiveAppendResult(
+        host="myhost", path="/tmp/myhost/current", offset=0, length=10,
+    )
 
   monkeypatch.setattr(listend, "append_monitor_payload_to_archive", capture_archive)
 
@@ -303,9 +305,13 @@ def test_submit_after_write_not_on_failure(tmp_path, monkeypatch):
   monkeypatch.setattr(listend, "_live_db_ingest_pool_active", lambda: None)
   submitted = []
 
+  def capture_submit(host, message, **_kwargs):
+    submitted.append((host, message))
+    return True
+
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
-      lambda host, message: submitted.append((host, message)) or True,
+      capture_submit,
   )
 
   channel = type("C", (), {"acked": [], "nacked": []})()
@@ -1028,3 +1034,198 @@ def test_wait_connection_loss_does_not_note_pause_exit(monkeypatch):
   assert listend._wait_for_db_backpressure_resume(connection) is False
   assert pool._pause_started_mono is not None
   listend._db_backpressure_pause = False
+
+
+def test_submit_puts_shm_tuple_not_body():
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  q = queue.Queue(maxsize=1000)
+  byte_count = mock.Mock()
+  byte_count.value = 0
+  byte_lock = mock.MagicMock()
+  byte_lock.__enter__ = mock.Mock(return_value=None)
+  byte_lock.__exit__ = mock.Mock(return_value=False)
+  pool._queues = [q]
+  pool._byte_counts = [byte_count]
+  pool._byte_locks = [byte_lock]
+  pool._counters = {name: mock.Mock(value=0) for name in ldi._COUNTER_NAMES}
+  for c in pool._counters.values():
+    c.get_lock.return_value = mock.MagicMock()
+    c.get_lock.return_value.__enter__ = mock.Mock(return_value=None)
+    c.get_lock.return_value.__exit__ = mock.Mock(return_value=False)
+  pool._started = True
+  pool.per_worker_budget_bytes = 10**9
+
+  body = "1710000001.0 1 myhost x\n"
+  assert pool.submit("myhost", body) is True
+  item = q.get_nowait()
+  assert item[0] == "shm"
+  assert item[1] == "myhost"
+  assert isinstance(item[2], str) and item[2].startswith("hps-ld-")
+  assert item[3] == len(body.encode("utf-8"))
+  # Payload must not appear as a queue pickle field.
+  assert body not in item
+  ldi._unlink_shm_by_name(item[2])
+
+
+def test_submit_shm_create_fail_falls_back_to_path(monkeypatch):
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  q = queue.Queue(maxsize=1000)
+  byte_count = mock.Mock()
+  byte_count.value = 0
+  byte_lock = mock.MagicMock()
+  byte_lock.__enter__ = mock.Mock(return_value=None)
+  byte_lock.__exit__ = mock.Mock(return_value=False)
+  pool._queues = [q]
+  pool._byte_counts = [byte_count]
+  pool._byte_locks = [byte_lock]
+  pool._counters = {name: mock.Mock(value=0) for name in ldi._COUNTER_NAMES}
+  for c in pool._counters.values():
+    c.get_lock.return_value = mock.MagicMock()
+    c.get_lock.return_value.__enter__ = mock.Mock(return_value=None)
+    c.get_lock.return_value.__exit__ = mock.Mock(return_value=False)
+  pool._started = True
+  pool.per_worker_budget_bytes = 10**9
+
+  def boom(*_a, **_k):
+    raise OSError(28, "No space left on device")
+
+  monkeypatch.setattr(
+      "multiprocessing.shared_memory.SharedMemory",
+      boom,
+  )
+  ok = pool.submit(
+      "myhost",
+      "payload",
+      archive_path="/tmp/current",
+      offset=10,
+      length=7,
+  )
+  assert ok is True
+  item = q.get_nowait()
+  assert item == ("path", "myhost", "/tmp/current", 10, 7)
+  assert pool._counters["shm_fallback"].value >= 1
+
+
+def test_submit_put_fail_after_shm_create_unlinks(monkeypatch):
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+  from multiprocessing.shared_memory import SharedMemory as RealSharedMemory
+  import os
+
+  created = []
+
+  class _TrackingShm:
+    def __init__(self, *args, **kwargs):
+      self._real = RealSharedMemory(*args, **kwargs)
+      created.append(self._real.name)
+      self.name = self._real.name
+      self.buf = self._real.buf
+
+    def close(self):
+      self._real.close()
+
+    def unlink(self):
+      self._real.unlink()
+
+  def factory(*args, **kwargs):
+    if kwargs.get("create"):
+      return _TrackingShm(*args, **kwargs)
+    return RealSharedMemory(*args, **kwargs)
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  q = queue.Queue(maxsize=1)
+  q.put_nowait("blocker")
+  byte_count = mock.Mock()
+  byte_count.value = 0
+  byte_lock = mock.MagicMock()
+  byte_lock.__enter__ = mock.Mock(return_value=None)
+  byte_lock.__exit__ = mock.Mock(return_value=False)
+  pool._queues = [q]
+  pool._byte_counts = [byte_count]
+  pool._byte_locks = [byte_lock]
+  pool._counters = {name: mock.Mock(value=0) for name in ldi._COUNTER_NAMES}
+  for c in pool._counters.values():
+    c.get_lock.return_value = mock.MagicMock()
+    c.get_lock.return_value.__enter__ = mock.Mock(return_value=None)
+    c.get_lock.return_value.__exit__ = mock.Mock(return_value=False)
+  pool._started = True
+  pool.per_worker_budget_bytes = 10**9
+
+  monkeypatch.setattr(
+      "multiprocessing.shared_memory.SharedMemory",
+      factory,
+  )
+  ok = pool.submit("myhost", "payload-data")
+  assert ok is False
+  assert pool._counters["queue_drops"].value >= 1
+  assert created
+  for name in created:
+    assert not os.path.exists(os.path.join("/dev/shm", name))
+
+
+def test_start_reclaims_orphan_hps_ld_shm():
+  import os
+  import pytest
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+  from multiprocessing.shared_memory import SharedMemory
+
+  if not os.path.isdir("/dev/shm"):
+    pytest.skip("orphan scan uses /dev/shm (Linux containers)")
+
+  name = "hps-ld-orphan-test-xyz"
+  try:
+    orphan = SharedMemory(create=True, size=8, name=name)
+    orphan.close()
+  except FileExistsError:
+    pass
+  n = ldi._reclaim_orphan_listend_shm()
+  assert n >= 1
+  assert not os.path.exists(os.path.join("/dev/shm", name))
+
+
+def test_unlink_shm_by_name_removes_created_segment():
+  """Direct unlink works on macOS and Linux SharedMemory backends."""
+  import os
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+  from multiprocessing.shared_memory import SharedMemory
+
+  name = "hps-ld-unlink-unit-%d" % os.getpid()
+  shm = SharedMemory(create=True, size=8, name=name)
+  shm.close()
+  assert ldi._unlink_shm_by_name(name) is True
+  # Second unlink is a no-op / miss.
+  assert ldi._unlink_shm_by_name(name) is False
+
+
+def test_idle_empty_does_not_recycle_when_under_max_age(monkeypatch):
+  """Source contract: Empty path recycles only after max age."""
+  import inspect
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  src = inspect.getsource(ldi._worker_main)
+  assert "except queue.Empty:" in src
+  # Must flush on idle.
+  assert "_flush(force_memory_release=True)" in src
+  # Must not unconditionally recycle on every Empty.
+  empty_block = src.split("except queue.Empty:")[1].split("continue")[0]
+  assert "_recycle_conn(reason=\"idle\")" not in empty_block
+  assert "_conn_max_age_s()" in empty_block
+  assert "_recycle_conn(reason=\"age\")" in empty_block

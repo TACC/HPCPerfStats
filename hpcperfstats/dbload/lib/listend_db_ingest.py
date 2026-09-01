@@ -9,6 +9,7 @@ timestamp-second presence would poison duplicate-scan repair.
 Attributes:
   _COUNTER_NAMES: Attribute.
   _GLOBAL_POOL: Attribute.
+  _LISTEND_SHM_PREFIX: POSIX SharedMemory name prefix (``hps-ld-``).
   _MIN_QUEUED_PAYLOAD_BYTES: Attribute.
   _PAUSE_WATERMARK: Attribute.
   _QUEUE_GET_TIMEOUT_S: Attribute.
@@ -1120,10 +1121,15 @@ class ListendDbIngestPool:
     _byte_locks: Attribute.
     _counters: Attribute.
     _ctx: Attribute.
+    _outstanding_shm: Set of shm names created but not yet accepted by a
+      worker (unlinked on put failure or ``stop``).
+    _outstanding_shm_lock: Thread lock guarding ``_outstanding_shm``.
     _pause_seconds_window: Accumulated pause seconds in the current idle
       monitor window (closed intervals only).
     _pause_started_mono: Monotonic start of an open pause interval, or None.
     _queues: Attribute.
+    _shm_seq: Monotonic counter for SharedMemory name suffixes.
+    _shm_seq_lock: Thread lock guarding ``_shm_seq``.
     _started: Attribute.
     _stop: Attribute.
     _window_baseline: Attribute.
@@ -1518,6 +1524,10 @@ class ListendDbIngestPool:
 
     Returns:
       bool: True when enqueued; False on drop / disabled / not started.
+
+    Raises:
+      queue.Full: Used internally to abort a put when the byte budget fills
+        between create and enqueue; caught and converted to ``queue_drops``.
 
     Examples:
       >>> ListendDbIngestPool(enabled=False).submit("h", "x")

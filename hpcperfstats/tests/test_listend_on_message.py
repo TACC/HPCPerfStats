@@ -712,3 +712,23 @@ def test_db_backpressure_pause_does_not_set_amqp_reconnect(monkeypatch):
   assert listend._amqp_reconnect_requested is False
   listend._db_backpressure_pause = False
 
+
+
+def test_listend_amqp_prefetch_defaults():
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  assert cfg.get_listend_archive_worker_threads() >= 1
+  assert cfg.get_listend_amqp_prefetch() >= 1
+  # Registry defaults.
+  assert cfg.INI_OPTION_DEFAULTS["listend_archive_worker_threads"] == "8"
+  assert cfg.INI_OPTION_DEFAULTS["listend_amqp_prefetch"] == "32"
+
+
+def test_drop_mode_uses_ini_prefetch_not_only_pause(monkeypatch):
+  """Documented contract: drop mode applies get_listend_amqp_prefetch()."""
+  import inspect
+  import hpcperfstats.listend as listend
+
+  src = inspect.getsource(listend.main)
+  assert "get_listend_amqp_prefetch" in src
+  assert "prefetch_count=1" in src
