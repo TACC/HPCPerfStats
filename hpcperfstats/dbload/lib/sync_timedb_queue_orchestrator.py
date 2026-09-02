@@ -27,6 +27,8 @@ Attributes:
   _FILL_BLOCK_KEYS: Ordered ingest fill failure counter names for telemetry.
   APPEND_FILL_SKIP_BUDGET: Max impossible append claims (missing path /
     unresolved daily tar) ACK-dropped per fill tick before yielding.
+  _APPEND_DAY_LISTS: Process-local calendar-day deques of claimed append
+    jobs (coordinator only; Redis LIST remains durable SoT).
   SHUTDOWN_DRAIN_TIMEOUT_S: Bounded wall clock for the cooperative drain.
   _IDLE_RECONSTRUCT_MIN_INTERVAL_S: Min seconds between idle reconstruct passes.
   _SHUTDOWN_REQUESTED: Event set by ``SIGTERM``/``SIGINT`` handlers.
@@ -71,6 +73,9 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   calendar_date_from_daily_tar_path,
   daily_tar_path_for_stats_path,
 )
+from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
+  AppendDayClaimLists,
+)
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
   get_archive_members_redis_client,
 )
@@ -98,6 +103,7 @@ INGEST_FILL_BLOCK_LOG_INTERVAL_S = 60.0
 # Same bound for append fill: missing/unresolved identities are ACK-dropped
 # (not requeued) so a deep LIST of gone paths cannot livelock MainThread.
 APPEND_FILL_SKIP_BUDGET = 8
+_APPEND_DAY_LISTS = AppendDayClaimLists()
 _TRANSIENT_DAY_CLOSE_OUTCOMES = frozenset({
     "deferred_age",
     "yielded",
@@ -3098,6 +3104,95 @@ def _drain_ingest_ready(
   return done
 
 
+def reset_append_day_lists_for_tests() -> None:
+  """
+  Clear process-local append day lists (unit tests).
+
+  Returns:
+    None
+
+  Examples:
+    >>> reset_append_day_lists_for_tests()
+  """
+  _APPEND_DAY_LISTS.clear()
+
+
+def _try_submit_pending_append_days(
+  *,
+  client: Any,
+  cap: int,
+  inflight: dict[str, AsyncResult],
+  claims: dict[str, Any],
+  archive_pool: Any,
+  tgz_archive_dir: str,
+  batch_size: int,
+  allow_partial: bool,
+) -> int:
+  """
+  Submit one GNU-tar batch per free daily tar from in-memory day lists.
+
+  Args:
+    client (Any): Redis client used to requeue popped claims on submit fail.
+    cap (int): Max concurrent append jobs.
+    inflight (dict[str, AsyncResult]): Daily tar → async result.
+    claims (dict[str, Any]): Daily tar → claim list for drain ACK.
+    archive_pool (Any): Archive spawn pool.
+    tgz_archive_dir (str): Daily archive directory.
+    batch_size (int): Max paths per ``tar -T`` job.
+    allow_partial (bool): Submit leftover paths when Redis LIST is empty.
+
+  Returns:
+    int: Newly submitted append jobs this call.
+
+  Raises:
+    Exception: When archive-pool submit fails after claims were popped
+      (those claims are requeued first).
+
+  Examples:
+    >>> _try_submit_pending_append_days(
+    ...   client=None, cap=0, inflight={}, claims={}, archive_pool=None,
+    ...   tgz_archive_dir="/d", batch_size=1, allow_partial=True,
+    ... )
+    0
+  """
+  submitted = 0
+  for day in _APPEND_DAY_LISTS.day_keys():
+    if len(inflight) >= cap:
+      break
+    pending_n = _APPEND_DAY_LISTS.peek_len(day)
+    if pending_n <= 0:
+      continue
+    if not allow_partial and pending_n < batch_size:
+      continue
+    first = _APPEND_DAY_LISTS.peek_first(day)
+    identity = getattr(first, "identity", "") if first is not None else ""
+    tar_path = daily_tar_path_for_stats_path(identity, tgz_archive_dir)
+    if not tar_path or tar_path in inflight:
+      continue
+    take = min(batch_size, pending_n)
+    batch_claims = _APPEND_DAY_LISTS.pop_batch(day, take)
+    if not batch_claims:
+      continue
+    paths = [job.identity for job in batch_claims]
+    try:
+      async_res = archive_pool.apply_async(
+          _append_worker, ((tar_path, paths),)
+      )
+    except Exception:
+      for job in batch_claims:
+        jq.requeue_job(
+            client,
+            kind=jq.JOB_KIND_APPEND,
+            identity=job.identity,
+            owner_token=job.owner_token,
+        )
+      raise
+    inflight[tar_path] = async_res
+    claims[tar_path] = batch_claims
+    submitted += 1
+  return submitted
+
+
 def _fill_append_slots(
   client: Any,
   *,
@@ -3108,11 +3203,12 @@ def _fill_append_slots(
   tgz_archive_dir: str,
 ) -> int:
   """
-  Claim append LIST jobs and submit grouped ``archive_stats_files`` tasks.
+  Claim append LIST jobs into day-keyed lists and submit ``tar -T`` batches.
 
   Missing paths and unresolved daily-tar identities are ``ack_job``-dropped
-  (impossible work), bounded by ``APPEND_FILL_SKIP_BUDGET`` per tick. Inflight /
-  other-tar collisions still ``requeue`` + ``break`` (correct queue semantics).
+  (impossible work), bounded by ``APPEND_FILL_SKIP_BUDGET`` per tick. Other-tar
+  FIFO items go onto their calendar-day list (no ``requeue`` + ``break``).
+  Same-tar inflight holds claims in the day list until the writer slot frees.
 
   Args:
     client (Any): Redis client.
@@ -3144,79 +3240,56 @@ def _fill_append_slots(
   submitted = 0
   skipped = 0
   batch_size = max(1, int(cfg.get_sync_timedb_tar_append_batch_size()))
+  redis_exhausted = False
   while len(inflight) < cap:
-    batch_claims: list[Any] = []
-    tar_path = ""
-    while len(batch_claims) < batch_size:
-      if skipped >= APPEND_FILL_SKIP_BUDGET:
-        break
-      claim = jq.claim_list_job(
+    submitted += _try_submit_pending_append_days(
+        client=client,
+        cap=cap,
+        inflight=inflight,
+        claims=claims,
+        archive_pool=archive_pool,
+        tgz_archive_dir=tgz_archive_dir,
+        batch_size=batch_size,
+        allow_partial=redis_exhausted,
+    )
+    if len(inflight) >= cap:
+      break
+    if redis_exhausted:
+      break
+    if skipped >= APPEND_FILL_SKIP_BUDGET:
+      break
+    claim = jq.claim_list_job(
+        client,
+        kind=jq.JOB_KIND_APPEND,
+        owner_token=jq.make_lease_owner_token(),
+    )
+    if claim is None:
+      redis_exhausted = True
+      continue
+    path = claim.identity
+    if not path or not os.path.isfile(path):
+      jq.ack_job(
           client,
           kind=jq.JOB_KIND_APPEND,
-          owner_token=jq.make_lease_owner_token(),
+          identity=path,
+          owner_token=claim.owner_token,
       )
-      if claim is None:
-        break
-      path = claim.identity
-      if not path or not os.path.isfile(path):
-        jq.ack_job(
-            client,
-            kind=jq.JOB_KIND_APPEND,
-            identity=path,
-            owner_token=claim.owner_token,
-        )
-        skipped += 1
-        continue
-      this_tar = daily_tar_path_for_stats_path(path, tgz_archive_dir)
-      if not this_tar:
-        jq.ack_job(
-            client,
-            kind=jq.JOB_KIND_APPEND,
-            identity=path,
-            owner_token=claim.owner_token,
-        )
-        skipped += 1
-        continue
-      if this_tar in inflight:
-        jq.requeue_job(
-            client,
-            kind=jq.JOB_KIND_APPEND,
-            identity=path,
-            owner_token=claim.owner_token,
-        )
-        break
-      if not tar_path:
-        tar_path = this_tar
-      elif this_tar != tar_path:
-        jq.requeue_job(
-            client,
-            kind=jq.JOB_KIND_APPEND,
-            identity=path,
-            owner_token=claim.owner_token,
-        )
-        break
-      batch_claims.append(claim)
-    if skipped >= APPEND_FILL_SKIP_BUDGET and not batch_claims:
-      break
-    if not batch_claims or not tar_path:
-      break
-    paths = [job.identity for job in batch_claims]
-    try:
-      async_res = archive_pool.apply_async(
-          _append_worker, ((tar_path, paths),)
+      skipped += 1
+      continue
+    this_tar = daily_tar_path_for_stats_path(path, tgz_archive_dir)
+    day_obj = (
+        calendar_date_from_daily_tar_path(this_tar) if this_tar else None
+    )
+    if not this_tar or day_obj is None:
+      jq.ack_job(
+          client,
+          kind=jq.JOB_KIND_APPEND,
+          identity=path,
+          owner_token=claim.owner_token,
       )
-    except Exception:
-      for job in batch_claims:
-        jq.requeue_job(
-            client,
-            kind=jq.JOB_KIND_APPEND,
-            identity=job.identity,
-            owner_token=job.owner_token,
-        )
-      raise
-    inflight[tar_path] = async_res
-    claims[tar_path] = batch_claims
-    submitted += 1
+      skipped += 1
+      continue
+    _APPEND_DAY_LISTS.add(day_obj.isoformat(), claim)
   return submitted
 
 

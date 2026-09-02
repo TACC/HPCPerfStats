@@ -741,6 +741,7 @@ def test_fill_append_slots_missing_paths_ack_and_bounded(monkeypatch, tmp_path):
   monkeypatch.setattr(jq, "ack_job", _ack)
   monkeypatch.setattr(jq, "requeue_job", _requeue)
   monkeypatch.setattr(os.path, "isfile", lambda p: False)
+  qo.reset_append_day_lists_for_tests()
 
   class _Pool:
     def apply_async(self, *a, **k):

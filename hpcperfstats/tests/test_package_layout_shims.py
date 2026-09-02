@@ -14,6 +14,13 @@ def test_dbload_lib_sync_timedb_parsing_importable():
   assert hasattr(mod, "parse_first_timestamp_line")
 
 
+def test_dbload_lib_sync_timedb_append_day_lists_importable():
+  mod = importlib.import_module(
+      "hpcperfstats.dbload.lib.sync_timedb_append_day_lists",
+  )
+  assert hasattr(mod, "AppendDayClaimLists")
+
+
 def test_analysis_metrics_lib_metrics_importable():
   mod = importlib.import_module("hpcperfstats.analysis.metrics.lib.metrics")
   assert mod is not None

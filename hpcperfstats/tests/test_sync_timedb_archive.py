@@ -467,6 +467,65 @@ def test_reconcile_noop_when_maps_equivalent(tmp_path):
   assert not tar_path.is_file()
 
 
+def test_rebuild_union_does_not_call_tarfile_getmember(tmp_path, monkeypatch):
+  """Union rewrite copies via GNU tar; TarFile.getmember stays unused."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      rebuild_daily_tar_member_union_in_place,
+  )
+
+  tar_path = tmp_path / "2024-04-10.tar"
+  zst_path = tmp_path / "2024-04-10.tar.zst"
+  names = []
+  with tarfile.open(tar_path, "w") as tf:
+    for i in range(8):
+      p = tmp_path / ("m%d.txt" % i)
+      p.write_text("x" * (i + 1))
+      tf.add(str(p), arcname=p.name)
+      names.append(p.name)
+  calls = {"n": 0}
+  real_getmember = tarfile.TarFile.getmember
+
+  def _spy(self, name):
+    calls["n"] += 1
+    return real_getmember(self, name)
+
+  monkeypatch.setattr(tarfile.TarFile, "getmember", _spy)
+  write_opens = {"n": 0}
+  real_open = tarfile.open
+
+  def _open(*a, **k):
+    mode = k.get("mode")
+    if mode is None and len(a) > 1:
+      mode = a[1]
+    if str(mode or "r").startswith("w"):
+      write_opens["n"] += 1
+    return real_open(*a, **k)
+
+  monkeypatch.setattr(tarfile, "open", _open)
+  monkeypatch.setattr(
+      helpers, "verify_tar_archive_readable", lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      helpers, "invalidate_after_daily_tar_mutation", lambda *_a, **_k: None,
+  )
+  union = {name: (tmp_path / name).stat().st_size for name in names}
+  ok = rebuild_daily_tar_member_union_in_place(
+      str(tar_path),
+      str(zst_path),
+      union,
+      log_fn=lambda *a, **k: None,
+      stall_warn_s=9999,
+      stall_yield_s=99999,
+  )
+  assert ok is True
+  assert calls["n"] == 0
+  assert write_opens["n"] == 0
+  with tarfile.open(tar_path, "r") as tf:
+    rebuilt = {m.name: int(m.size) for m in tf.getmembers() if m.isfile()}
+  assert rebuilt == union
+
+
 def test_rebuild_union_stage_progress_advancing_true(tmp_path, monkeypatch):
   """Advancing member copies emit stage_progress advancing=true."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers

@@ -9374,66 +9374,274 @@ def _tarfile_member_map(tar_path: str) -> dict[str, int]:
   return members
 
 
+def _resolved_extracted_member_path(extract_dir: str, member_name: str) -> str:
+  """
+  Return the extracted file path under ``extract_dir`` for ``member_name``.
+
+  Args:
+    extract_dir (str): Staging directory GNU tar extracted into.
+    member_name (str): Archive member name from the union map.
+
+  Returns:
+    str: Absolute file path, or empty when the member is missing.
+
+  Examples:
+    >>> _resolved_extracted_member_path("/tmp", "missing.bin")
+    ''
+  """
+  direct = os.path.join(extract_dir, member_name)
+  if os.path.isfile(direct):
+    return direct
+  base = os.path.basename(member_name)
+  if not base:
+    return ""
+  for root, _dirs, files in os.walk(extract_dir):
+    if base in files and not base.startswith("._"):
+      return os.path.join(root, base)
+  return ""
+
+
+def _gnu_tar_union_env() -> dict[str, str]:
+  """
+  Return env for union tar CLI (disable macOS AppleDouble sidecars).
+
+  Returns:
+    dict[str, str]: Copy of ``os.environ`` with ``COPYFILE_DISABLE=1``.
+
+  Examples:
+    >>> "COPYFILE_DISABLE" in _gnu_tar_union_env()
+    True
+  """
+  env = os.environ.copy()
+  env["COPYFILE_DISABLE"] = "1"
+  return env
+
+
+def _gnu_tar_extract_named_member(
+  source_path: str,
+  member_name: str,
+  extract_dir: str,
+  *,
+  from_zst: bool = False,
+) -> bool:
+  """
+  Extract one named member with GNU/BSD ``tar -x`` (zst via ``zstd -d -c``).
+
+  Args:
+    source_path (str): Open ``.tar`` or sealed ``.tar.zst`` path.
+    member_name (str): Member to extract (not a full archive scan).
+    extract_dir (str): Destination directory for the member file.
+    from_zst (bool): True when ``source_path`` is zstd-compressed.
+
+  Returns:
+    bool: True when tar extract exited 0.
+
+  Examples:
+    >>> _gnu_tar_extract_named_member("x.tar", "a", "/tmp")
+    False
+  """
+  tar_bin = str(_tar_list_executable())
+  from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
+      ProgressIdleError,
+      run_subprocess_with_progress,
+  )
+
+  if from_zst:
+    from hpcperfstats.dbload.lib.zstd_cli import zstd_executable
+
+    zstd_bin = zstd_executable()
+    if not zstd_bin:
+      return False
+    try:
+      decomp = subprocess.Popen(
+          [zstd_bin, "-d", "-c", "-q", source_path],
+          stdout=subprocess.PIPE,
+          stderr=subprocess.PIPE,
+      )
+    except (FileNotFoundError, OSError):
+      return False
+    result = None
+    try:
+      if decomp.stdout is None:
+        return False
+      result = run_subprocess_with_progress(
+          [tar_bin, "-x", "-f", "-", "-C", extract_dir, member_name],
+          progress_path=os.path.join(
+              extract_dir, os.path.basename(member_name),
+          ),
+          stage="tar_union_extract",
+          metric="bytes",
+          stdin=decomp.stdout,
+          stdout=subprocess.PIPE,
+          stderr=subprocess.PIPE,
+          text=False,
+          env=_gnu_tar_union_env(),
+      )
+    except (ProgressIdleError, FileNotFoundError, OSError):
+      return False
+    finally:
+      if decomp.stdout is not None:
+        try:
+          decomp.stdout.close()
+        except OSError:
+          pass
+      if decomp.poll() is None:
+        try:
+          decomp.kill()
+        except OSError:
+          pass
+      decomp.wait()
+    return int(getattr(result, "returncode", 1) or 0) == 0
+
+  extract_cmd = [
+      tar_bin, "-x", "-f", source_path, "-C", extract_dir, member_name,
+  ]
+  progress_path = os.path.join(extract_dir, os.path.basename(member_name))
+  try:
+    result = run_subprocess_with_progress(
+        extract_cmd,
+        progress_path=progress_path,
+        stage="tar_union_extract",
+        metric="bytes",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_gnu_tar_union_env(),
+    )
+  except (ProgressIdleError, FileNotFoundError, OSError):
+    return False
+  return int(getattr(result, "returncode", 1) or 0) == 0
+
+
+def _gnu_tar_append_extracted_member(
+  dest_tar_path: str,
+  extract_dir: str,
+  member_rel: str,
+) -> bool:
+  """
+  Write one extracted member onto ``dest_tar_path`` with GNU/BSD tar.
+
+  Uses ``tar -c`` when the merge tmp does not exist yet, then ``tar -r``.
+  Dest writer is the tar CLI, not ``tarfile.open(..., "w")``.
+
+  Args:
+    dest_tar_path (str): Merge tmp tar being built.
+    extract_dir (str): Directory passed to tar ``-C``.
+    member_rel (str): Path relative to ``extract_dir``.
+
+  Returns:
+    bool: True when tar append exited 0.
+
+  Examples:
+    >>> _gnu_tar_append_extracted_member("/tmp/x.tar", "/tmp", "nope")
+    False
+  """
+  tar_bin = str(_tar_list_executable())
+  from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
+      ProgressIdleError,
+      run_subprocess_with_progress,
+  )
+
+  mode = "-c" if not os.path.isfile(dest_tar_path) else "-r"
+  cmd = [
+      tar_bin,
+      mode,
+      "--posix",
+      "--exclude=._*",
+      "-C",
+      extract_dir,
+      "-f",
+      dest_tar_path,
+      member_rel,
+  ]
+  try:
+    result = run_subprocess_with_progress(
+        cmd,
+        progress_path=dest_tar_path,
+        stage="tar_union_append",
+        metric="bytes",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_gnu_tar_union_env(),
+    )
+  except (ProgressIdleError, FileNotFoundError, OSError):
+    return False
+  return int(getattr(result, "returncode", 1) or 0) == 0
+
+
 def _copy_union_member_into_tar(
-  dest_tf: tarfile.TarFile,
+  dest_tar_path: str,
   member_name: str,
   expected_size: int,
   *,
   tar_path: str,
   zst_path: str,
+  extract_dir: str,
 ) -> bool:
   """
-  Copy one union member from tar or zst into an open tar writer.
+  Copy one union member into the merge tar via GNU tar named extract.
 
   Args:
-    dest_tf (tarfile.TarFile): Open destination tar writer.
+    dest_tar_path (str): Merge tmp path (``tar -r`` destination).
     member_name (str): Member basename to copy.
     expected_size (int): Expected byte size in the union map.
     tar_path (str): Open daily tar path.
     zst_path (str): Sealed zst sibling path.
+    extract_dir (str): Staging directory for one-member extract.
 
   Returns:
     bool: True when the member was copied.
 
   Examples:
-    >>> _copy_union_member_into_tar(None, "a", 1, tar_path="x", zst_path="y")
+    >>> _copy_union_member_into_tar(
+    ...   "/tmp/out.tar", "a", 1, tar_path="x", zst_path="y",
+    ...   extract_dir="/tmp",
+    ... )
+    False
   """
+  sources: list[tuple[str, bool]] = []
   if os.path.isfile(tar_path):
-    try:
-      with tarfile.open(tar_path, "r") as tin:
-        member = tin.getmember(member_name)
-        if member.isfile() and int(member.size) == int(expected_size):
-          fobj = tin.extractfile(member)
-          if fobj is not None:
-            try:
-              dest_tf.addfile(member, fobj)
-              return True
-            finally:
-              fobj.close()
-    except (KeyError, tarfile.TarError, OSError):
-      pass
+    sources.append((tar_path, False))
   if os.path.isfile(zst_path):
+    sources.append((zst_path, True))
+  for source_path, from_zst in sources:
+    if not _gnu_tar_extract_named_member(
+        source_path,
+        member_name,
+        extract_dir,
+        from_zst=from_zst,
+    ):
+      continue
+    extracted = _resolved_extracted_member_path(extract_dir, member_name)
+    if not extracted:
+      continue
     try:
-      with _open_tarfile_for_read(
-          zst_path,
-          get_archive_zstd_thread_count(),
-          apply_priority_wrap=True,
-      ) as tin:
-        for member in _iter_tar_members(tin):
-          if (
-              member.isfile()
-              and member.name == member_name
-              and int(member.size) == int(expected_size)
-          ):
-            fobj = tin.extractfile(member)
-            if fobj is not None:
-              try:
-                dest_tf.addfile(member, fobj)
-                return True
-              finally:
-                fobj.close()
-    except (tarfile.TarError, OSError):
+      size_ok = int(os.path.getsize(extracted)) == int(expected_size)
+    except OSError:
+      size_ok = False
+    if not size_ok:
+      try:
+        os.remove(extracted)
+      except OSError:
+        pass
+      continue
+    member_rel = os.path.relpath(extracted, extract_dir)
+    if member_rel.startswith(".."):
+      try:
+        os.remove(extracted)
+      except OSError:
+        pass
+      continue
+    appended = _gnu_tar_append_extracted_member(
+        dest_tar_path, extract_dir, member_rel,
+    )
+    try:
+      os.remove(extracted)
+    except OSError:
       pass
+    if appended:
+      return True
   return False
 
 
@@ -9541,7 +9749,11 @@ def rebuild_daily_tar_member_union_in_place(
   on_merge_progress: Any | None = None,
 ) -> bool:
   """
-  Rebuild open daily tar to match a union member map.
+  Rebuild the open daily tar to match a union member map via GNU tar.
+
+  Named extract copies one member at a time (``tar -x`` / ``zstd -d -c``
+  pipe). The merge tmp is written with ``tar -c`` then ``tar -r``, not
+  ``tarfile.open(..., "w")`` or per-name ``TarFile.getmember``.
 
   Emits rate-limited ``stage_progress`` lines. Yields cooperatively when
   ``members_done`` is unchanged for ``stall_yield_s`` (default 1800s) at a
@@ -9605,6 +9817,8 @@ def rebuild_daily_tar_member_union_in_place(
       on_merge_progress(members_done, members_total, last_progress_mono)
     except Exception:
       pass
+  parent = os.path.dirname(tar_path) or "."
+  extract_dir = tempfile.mkdtemp(prefix="hps_union_extract_", dir=parent)
 
   def _maybe_stall_yield_at_checkpoint() -> None:
     """
@@ -9674,41 +9888,41 @@ def rebuild_daily_tar_member_union_in_place(
 
   try:
     with file_write_lock(tar_path):
-      with tarfile.open(tmp_path, "w") as tout:
-        for member_name in sorted(union_members):
-          _maybe_stall_yield_at_checkpoint()
-          if not _copy_union_member_into_tar(
-              tout,
-              member_name,
-              union_members[member_name],
-              tar_path=tar_path,
-              zst_path=zst_path,
-          ):
-            try:
-              os.remove(tmp_path)
-            except OSError:
-              pass
-            return False
-          members_done += 1
-          last_progress_mono = float(clock())
-          warn_emitted = False
-          if callable(on_merge_progress):
-            try:
-              on_merge_progress(
-                  members_done, members_total, last_progress_mono,
-              )
-            except Exception:
-              pass
-          _emit_reconcile_stage_progress(
-              day_token,
-              members_done=members_done,
-              members_total=members_total,
-              elapsed_s=last_progress_mono - merge_started,
-              advancing=True,
-              stuck_s=0.0,
-              log_fn=log_fn,
-              force=False,
-          )
+      for member_name in sorted(union_members):
+        _maybe_stall_yield_at_checkpoint()
+        if not _copy_union_member_into_tar(
+            tmp_path,
+            member_name,
+            union_members[member_name],
+            tar_path=tar_path,
+            zst_path=zst_path,
+            extract_dir=extract_dir,
+        ):
+          try:
+            os.remove(tmp_path)
+          except OSError:
+            pass
+          return False
+        members_done += 1
+        last_progress_mono = float(clock())
+        warn_emitted = False
+        if callable(on_merge_progress):
+          try:
+            on_merge_progress(
+                members_done, members_total, last_progress_mono,
+            )
+          except Exception:
+            pass
+        _emit_reconcile_stage_progress(
+            day_token,
+            members_done=members_done,
+            members_total=members_total,
+            elapsed_s=last_progress_mono - merge_started,
+            advancing=True,
+            stuck_s=0.0,
+            log_fn=log_fn,
+            force=False,
+        )
       requested, reason = day_close_yield_requested(
           tar_path,
           tgz_archive_dir=tgz_archive_dir,
@@ -9749,6 +9963,8 @@ def rebuild_daily_tar_member_union_in_place(
     except OSError:
       pass
     return False
+  finally:
+    shutil.rmtree(extract_dir, ignore_errors=True)
 
 
 def _maybe_clear_stale_day_ingest_skip_after_reconcile(
