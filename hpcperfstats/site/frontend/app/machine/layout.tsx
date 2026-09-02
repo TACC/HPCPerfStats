@@ -3,7 +3,6 @@
 import { useCallback, useEffect, Suspense } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getSessionRetrieveQueryKey } from "@/api/generated/session/session";
-import type { SessionInfo } from "@/api/generated/models/sessionInfo";
 import { applyBokehResizeObserverDeferral } from "@/patch-resize-observer-for-bokeh";
 import { useSessionRetrieve } from "@/api/generated/session/session";
 import Layout from "@/Layout";
@@ -12,6 +11,7 @@ import { SessionContext, type SessionData } from "@/session-context";
 import { useDocumentTitle } from "@/utils/useDocumentTitle";
 import { SITE_MACHINE_NAME } from "@/config/site-identity";
 import { selectOrvalData } from "@/api/orval-response";
+import { sessionFromApi } from "@/utils/session-from-api";
 
 applyBokehResizeObserverDeferral();
 
@@ -20,16 +20,8 @@ const PLACEHOLDER_SESSION: SessionData = {
   username: "",
   is_staff: false,
   machine_name: SITE_MACHINE_NAME,
+  separate_test_login: false,
 };
-
-function sessionFromApi(data: SessionInfo): SessionData {
-  return {
-    logged_in: data.logged_in,
-    username: data.username,
-    is_staff: data.is_staff,
-    machine_name: data.machine_name ?? SITE_MACHINE_NAME,
-  };
-}
 
 export default function MachineLayout({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();

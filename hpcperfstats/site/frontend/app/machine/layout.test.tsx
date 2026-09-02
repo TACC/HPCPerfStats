@@ -9,8 +9,19 @@ vi.mock("@/patch-resize-observer-for-bokeh", () => ({
 }));
 
 vi.mock("@/Layout", () => ({
-  default: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="layout-shell">{children}</div>
+  default: ({
+    children,
+    session,
+  }: {
+    children: React.ReactNode;
+    session: { separate_test_login?: boolean };
+  }) => (
+    <div
+      data-testid="layout-shell"
+      data-separate-test-login={String(Boolean(session.separate_test_login))}
+    >
+      {children}
+    </div>
   ),
 }));
 
@@ -82,5 +93,30 @@ describe("MachineLayout", () => {
     expect(screen.getByText("page body")).toBeInTheDocument();
     expect(screen.queryByText("Loading session…")).not.toBeInTheDocument();
     expect(authenticatedChildHookSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("layout-shell")).toHaveAttribute(
+      "data-separate-test-login",
+      "false",
+    );
+  });
+
+  it("forwards separate_test_login from the session API to Layout", () => {
+    useSessionRetrieveMock.mockReturnValue({
+      data: {
+        logged_in: true,
+        username: "alice",
+        is_staff: true,
+        machine_name: "cluster.test",
+        separate_test_login: true,
+      },
+      isLoading: false,
+      isError: false,
+    });
+
+    renderMachineLayout(<AuthenticatedPageStub />);
+
+    expect(screen.getByTestId("layout-shell")).toHaveAttribute(
+      "data-separate-test-login",
+      "true",
+    );
   });
 });

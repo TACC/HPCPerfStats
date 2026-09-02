@@ -14,7 +14,7 @@ import { orvalResponseData } from "@/api/orval-response";
 import type { SessionInfo } from "@/api/generated/models/sessionInfo";
 import type { InvalidateCacheResponse } from "@/api/generated/models/invalidateCacheResponse";
 import type { SessionData } from "@/session-context";
-import { SITE_MACHINE_NAME } from "@/config/site-identity";
+import { sessionFromApi } from "@/utils/session-from-api";
 
 type UseLayoutSessionActionsArgs = {
   pathname: string;
@@ -51,16 +51,7 @@ export function useLayoutSessionActions({
         const refreshedSession = await queryClient.fetchQuery(getSessionRetrieveQueryOptions());
         if (typeof onSessionChange === "function") {
           const sessionBody = orvalResponseData<SessionInfo>(refreshedSession);
-          onSessionChange(
-            sessionBody
-              ? {
-                  logged_in: sessionBody.logged_in,
-                  username: sessionBody.username,
-                  is_staff: sessionBody.is_staff,
-                  machine_name: sessionBody.machine_name ?? SITE_MACHINE_NAME,
-                }
-              : null,
-          );
+          onSessionChange(sessionBody ? sessionFromApi(sessionBody) : null);
         }
         const responseBody = getApiBody(response);
         setStaffMessage(
