@@ -66,6 +66,8 @@ def test_print_jobstats_auth_failure_prints_display_cache_path(capsys):
   # Must not print the Path object representation of home/.hpcperfstats-api
   assert "PosixPath" not in out
   assert "WindowsPath" not in out
+  # Auth-failure help must not echo the supplied API key (CodeQL #23).
+  assert "bad-key" not in out
 
 
 def test_print_jobstats_returns_0(capsys):

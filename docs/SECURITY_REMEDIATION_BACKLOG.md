@@ -34,6 +34,7 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 | Bokeh CSP staging (F5) | Path-scoped CSP middleware; report-only without `unsafe-eval`; CustomJS hovers/ticks replaced with Python pre-formatting in analysis plots. |
 | Dependabot npm sweep (2026-07-26) | Cleared 15 open frontend Dependabot alerts: `next@^16.2.11` + overrides for `dompurify`, `postcss`, `brace-expansion`, `fast-uri`, `sharp`, `@hono/node-server`; `npm audit` 0; Vitest green. |
 | Dependabot #109 nanoid (2026-08-13) | `overrides.nanoid@^3.3.18` (GHSA-2v37-7h3g-55p8 / CVE-2026-67213); lock **3.3.18**; regression `test_nanoid_override_meets_dependabot_109_floor`; `npm audit` 0. |
+| Dependabot #110–#116 npm (2026-09-02) | `overrides` floors `fast-uri@^4.1.3` (lock **4.1.4**), `qs@^6.16.0`, `@xmldom/xmldom@^0.9.12`; override-floor tests in `test_dockerfile_frontend_builder_cache.py`; `npm audit` 0. |
 | Frontend stack posture (2026-06 / doc 2026-07-31) | Mid-2026 migration to Next static export + TypeScript + OpenAPI/Orval/Zod documented as positive controls in SECURITY_AUDIT (attack-surface and contract validation), not only as DX. |
 | Burp 2026-08-05 edge hardening | nginx-canonical HSTS/framing/COOP/Permissions-Policy/Referrer-Policy; OCSP stapling (`ssl_trusted_certificate` + runtime resolver); hash-based SPA CSP without `unsafe-inline` (machine/pub retain Bokeh `unsafe-eval`); public dashboard query allowlist + non-reflective errors; SECURITY_AUDIT disposition table. |
 
@@ -41,6 +42,7 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 
 | Date       | Change |
 |------------|--------|
+| 2026-09-02 | Dependabot #110–#116: `fast-uri` / `qs` / `@xmldom/xmldom` override floors; SECURITY_AUDIT npm snapshot updated; local `npm audit` clean (GitHub alert dismiss awaits push/rescan). |
 | 2026-08-13 | Dependabot #109: `nanoid@^3.3.18` override; SECURITY_AUDIT npm snapshot updated; local `npm audit` clean (GitHub alert dismiss awaits push/rescan). |
 | 2026-08-05 | Burp report dispositions + nginx HSTS/OCSP/CSP hardening marked Done; Django runtime cap `<6.1` until DRF supports 6.1 `cc_delim_re` removal. |
 | 2026-07-31 | SECURITY_AUDIT frontend stack security section synced (OpenAPI/TypeScript/static export); Done row added for posture documentation. |

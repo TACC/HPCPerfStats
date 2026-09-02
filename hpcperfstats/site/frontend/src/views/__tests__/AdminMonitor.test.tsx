@@ -355,7 +355,7 @@ describe("AdminMonitor", () => {
     expect(screen.getByText("host_mem")).toBeInTheDocument();
     expect(screen.getByText(/Bounded scan of non-error/i)).toBeInTheDocument();
     expect(screen.getByText(/16 hosts/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/n001.example.com/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/n001\.example\.com/).length).toBeGreaterThan(0);
     expect(screen.getByText(/slug pending RPM/i)).toBeInTheDocument();
     expect(screen.queryByText("port_xmit_data")).not.toBeInTheDocument();
     expect(

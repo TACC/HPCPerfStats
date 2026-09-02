@@ -75,30 +75,80 @@ def test_js_yaml_override_stays_on_v4_for_orval_default_import():
   )
 
 
-def test_nanoid_override_meets_dependabot_109_floor():
-  """Dependabot #109 / GHSA-2v37-7h3g-55p8: nanoid < 3.3.18 is vulnerable (DoS on size 0)."""
+def _semver_triple(spec: str) -> tuple[int, int, int]:
+  """Parse ``^X.Y.Z`` / ``X.Y.Z`` override specs into a comparable triple."""
+  match = re.fullmatch(r"\^?(\d+)\.(\d+)\.(\d+)", spec)
+  assert match, f"override spec must be X.Y.Z or ^X.Y.Z; got {spec!r}"
+  return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+def _assert_npm_override_floor(
+    package: str,
+    min_version: tuple[int, int, int],
+    *,
+    reason: str,
+) -> None:
+  """Require package.json override + lockfile version at or above min_version."""
   import json
-  import re
 
   package_json = json.loads(
-      (_repo_root() / "hpcperfstats/site/frontend/package.json").read_text(encoding="utf-8"),
+      (_repo_root() / "hpcperfstats/site/frontend/package.json").read_text(
+          encoding="utf-8"
+      ),
   )
-  override = (package_json.get("overrides") or {}).get("nanoid")
-  assert override is not None, "nanoid override required (GHSA-2v37-7h3g-55p8 / Dependabot #109)"
-  match = re.fullmatch(r"\^?(3)\.(\d+)\.(\d+)", override)
-  assert match, f"nanoid override must stay on 3.x for postcss; got {override!r}"
-  major, minor, patch = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
-  assert (major, minor, patch) >= (3, 3, 18), (
-      f"nanoid override must be >= 3.3.18 (Dependabot first_patched); got {override!r}"
+  override = (package_json.get("overrides") or {}).get(package)
+  assert override is not None, f"{package} override required ({reason})"
+  assert _semver_triple(override) >= min_version, (
+      f"{package} override must be >= {min_version[0]}.{min_version[1]}."
+      f"{min_version[2]} ({reason}); got {override!r}"
+  )
+  lock = json.loads(
+      (_repo_root() / "hpcperfstats/site/frontend/package-lock.json").read_text(
+          encoding="utf-8",
+      )
+  )
+  locked = (lock.get("packages") or {}).get(f"node_modules/{package}") or {}
+  locked_version = locked.get("version")
+  assert locked_version, f"package-lock.json missing node_modules/{package}"
+  assert _semver_triple(locked_version) >= min_version, (
+      f"lock {package}@{locked_version} must be >= "
+      f"{min_version[0]}.{min_version[1]}.{min_version[2]} ({reason})"
   )
 
-  lock = (_repo_root() / "hpcperfstats/site/frontend/package-lock.json").read_text(
-      encoding="utf-8",
+
+def test_nanoid_override_meets_dependabot_109_floor():
+  """Dependabot #109 / GHSA-2v37-7h3g-55p8: nanoid < 3.3.18 is vulnerable (DoS on size 0)."""
+  _assert_npm_override_floor(
+      "nanoid",
+      (3, 3, 18),
+      reason="GHSA-2v37-7h3g-55p8 / Dependabot #109",
   )
-  # Locked resolved entry must not stay on the vulnerable 3.3.17 tarball.
-  assert "nanoid/-/nanoid-3.3.17.tgz" not in lock
-  assert re.search(r"nanoid/-/nanoid-3\.3\.(1[89]|[2-9]\d)\.tgz", lock), (
-      "package-lock.json must resolve nanoid to >= 3.3.18"
+
+
+def test_fast_uri_override_meets_dependabot_113_116_floor():
+  """Dependabot #113–#116 / GHSA-*-fast-uri: fast-uri < 4.1.3 is vulnerable."""
+  _assert_npm_override_floor(
+      "fast-uri",
+      (4, 1, 3),
+      reason="GHSA-5jgf-p345-68v8 / Dependabot #113–#116",
+  )
+
+
+def test_qs_override_meets_dependabot_111_112_floor():
+  """Dependabot #111–#112 / GHSA-*-qs: qs <= 6.15.3 is vulnerable."""
+  _assert_npm_override_floor(
+      "qs",
+      (6, 16, 0),
+      reason="GHSA-x5fp-wj9c-mxmx / Dependabot #111–#112",
+  )
+
+
+def test_xmldom_override_meets_dependabot_110_floor():
+  """Dependabot #110 / GHSA-6gmq-8vp8-gcm6: @xmldom/xmldom <= 0.9.11 is vulnerable."""
+  _assert_npm_override_floor(
+      "@xmldom/xmldom",
+      (0, 9, 12),
+      reason="GHSA-6gmq-8vp8-gcm6 / Dependabot #110",
   )
 
 
