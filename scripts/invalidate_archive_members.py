@@ -7,7 +7,7 @@ Redis transport is ``docker compose exec -T redis redis-cli`` (no published
 Redis port required). After a successful non-dry-run invalidate, restarts the
 ``pipeline`` service so worker L1 member caches are cold.
 
-Requires Python >= 3.12 (project ``requires-python``). When the host default
+Requires Python >= 3.14 (project ``requires-python``). When the host default
 ``python3`` is older, this script re-execs a suitable interpreter if found.
 
 Examples (from checkout root)::
@@ -30,13 +30,13 @@ import shutil
 import sys
 from pathlib import Path
 
-_MIN_PY = (3, 12)
+_MIN_PY = (3, 14)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _candidate_pythons() -> Iterator[Any]:
   """
-  Yield executable paths that may satisfy requires-python >= 3.12.
+  Yield executable paths that may satisfy requires-python >= 3.14.
   
   Yields:
     Iterator[Any]: Open return polymorphism from ``_candidate_pythons``:
@@ -50,9 +50,8 @@ def _candidate_pythons() -> Iterator[Any]:
   names = (
       _REPO_ROOT / ".venv" / "bin" / "python3",
       _REPO_ROOT.parent / ".venv" / "bin" / "python3",
-      shutil.which("python3.12"),
-      shutil.which("python3.13"),
       shutil.which("python3.14"),
+      shutil.which("python3.15"),
   )
   for raw in names:
     if not raw:
@@ -67,7 +66,7 @@ def _candidate_pythons() -> Iterator[Any]:
 
 def _ensure_python_version() -> None:
   """
-  Re-exec under Python >= 3.12 when the current interpreter is too old.
+  Re-exec under Python >= 3.14 when the current interpreter is too old.
   
   Returns:
     None
@@ -89,9 +88,9 @@ def _ensure_python_version() -> None:
     os.execv(candidate, [candidate, script] + sys.argv[1:])
   sys.stderr.write(
       "ERROR: scripts/invalidate_archive_members.py requires Python >= %s.%s "
-      "(found %s.%s). Use the project venv or python3.12+, for example:\n"
+      "(found %s.%s). Use the project venv or python3.14+, for example:\n"
       "  %s/../.venv/bin/python3 scripts/invalidate_archive_members.py ...\n"
-      "  python3.12 scripts/invalidate_archive_members.py ...\n"
+      "  python3.14 scripts/invalidate_archive_members.py ...\n"
       % (
           _MIN_PY[0],
           _MIN_PY[1],

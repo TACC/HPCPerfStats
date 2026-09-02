@@ -50,10 +50,43 @@ RUN /bin/bash -o pipefail -c "\
     mkdir -p /tmp/frontend-static && \
     cp -a hpcperfstats/site/hpcperfstats_site/static/frontend/. /tmp/frontend-static/"
 
+# Free-threaded CPython 3.14.7 (cp314t) for pipeline daemons only.
+# Official Hub has no python:3.14t-* tag; compile from the matching source tarball.
+FROM python:3.14.7-trixie AS python-freethreaded
+ENV PYTHON_VERSION=3.14.7
+RUN /bin/bash -o pipefail -c "\
+    apt-get update -y \
+    && apt-get install -y --no-install-recommends \
+       build-essential \
+       libssl-dev zlib1g-dev libncursesw5-dev libffi-dev libsqlite3-dev \
+       libreadline-dev libbz2-dev liblzma-dev tk-dev uuid-dev \
+       libgdbm-dev libnss3-dev ca-certificates curl \
+    && curl -fsSL \"https://www.python.org/ftp/python/\${PYTHON_VERSION}/Python-\${PYTHON_VERSION}.tgz\" \
+       -o /tmp/Python.tgz \
+    && mkdir -p /usr/src/python \
+    && tar -xzf /tmp/Python.tgz -C /usr/src/python --strip-components=1 \
+    && rm -f /tmp/Python.tgz \
+    && cd /usr/src/python \
+    && ./configure \
+         --prefix=/opt/python3.14t \
+         --enable-shared \
+         --with-ensurepip=install \
+         --disable-gil \
+         LDFLAGS=\"-Wl,-rpath=/opt/python3.14t/lib\" \
+    && make -j\"\$(nproc)\" \
+    && make install \
+    && ln -sf python3.14t /opt/python3.14t/bin/python \
+    && ln -sf python3.14t /opt/python3.14t/bin/python3 \
+    && /opt/python3.14t/bin/python3.14t -c \"import sysconfig; assert int(sysconfig.get_config_var('Py_GIL_DISABLED') or 0) == 1\" \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /usr/src/python"
+
 # Shared Python runtime base (no frontend overlay, pip deps layered before full tree).
-FROM python:3.12.13-trixie AS hpcperfstats-base
+FROM python:3.14.7-trixie AS hpcperfstats-base
 
 # Setup users, directories, and required runtime and debug packages.
+# default-libmysqlclient-dev/pkg-config: mysqlclient has no manylinux cp314(t) wheel.
+# libpq5: runtime for pure-Python psycopg.
 RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
     && mkdir -p /hpcperfstats /home/hpcperfstats/.ssh \
         /var/lib/hpcperfstats-syslog \
@@ -65,8 +98,14 @@ RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
        supervisor rsync syslog-ng zstd util-linux time \
        net-tools lsof procps gdb strace netcat-openbsd \
        vim nano \
+       build-essential pkg-config default-libmysqlclient-dev \
+       libpq5 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*"
+
+# Bake free-threaded prefix (required for listend/sync_timedb/update_metrics).
+COPY --from=python-freethreaded /opt/python3.14t /opt/python3.14t
+
 
 # Default syslog-ng allowlist fragment (render overwrites at container start).
 # Keep this self-contained so image builds do not depend on optional files in
@@ -94,11 +133,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 
 # Upgrade pip and install python dependencies: cached until pyproject.toml changes.
+# Dual ABI: GIL (/usr/local) for web/helpers; cp314t (/opt/python3.14t) for pipeline.
 COPY --chown=hpcperfstats:hpcperfstats pyproject.toml ./
 RUN /bin/bash -o pipefail -c 'pip install --no-cache-dir --upgrade pip && python3 -c "import tomllib; \
     from pathlib import Path; deps=tomllib.loads(Path(\"pyproject.toml\").read_text())[\"project\"][\"dependencies\"]; \
     Path(\"/tmp/requirements.txt\").write_text(\"\\n\".join(deps)+\"\\n\")" \
-    && pip install --no-cache-dir -r /tmp/requirements.txt'
+    && pip install --no-cache-dir -r /tmp/requirements.txt \
+    && /opt/python3.14t/bin/python3.14t -m ensurepip --upgrade \
+    && /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --upgrade pip \
+    && /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir -r /tmp/requirements.txt'
 
 # Install debugging tools.
 RUN /bin/bash -o pipefail -c 'pip install --no-cache-dir pyinstrument py-spy'
@@ -120,8 +163,11 @@ RUN chmod +x \
     /home/hpcperfstats/services-conf/rsync_data.sh \
     /home/hpcperfstats/services-conf/rsync_data.sh.example
 
-# Install the hpcperfstats package (deps already installed above).
-RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --no-deps . && pip cache purge"
+# Install the hpcperfstats package (deps already installed above) for both ABIs.
+RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --no-deps . \
+    && /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-deps . \
+    && pip cache purge \
+    && /opt/python3.14t/bin/python3.14t -m pip cache purge"
 
 # Pipeline-only refresh: scripts/rebuild_pipeline.sh populates
 # .build/pipeline-rebuild-frontend/ from the live deployment before build.

@@ -41,6 +41,13 @@ def test_resolve_explicit_name_adds_py_suffix():
 
 def test_resolve_interpreter_argv_returns_none():
   assert resolve_script_process_title_name(argv=["/usr/bin/python3.12"]) is None
+  assert resolve_script_process_title_name(argv=["/usr/bin/python3.14"]) is None
+  assert resolve_script_process_title_name(
+      argv=["/opt/python3.14t/bin/python3.14t"]
+  ) is None
+  assert resolve_script_process_title_name(
+      argv=["/opt/python3.14t/bin/python"]
+  ) is None
 
 
 def test_format_daemon_process_title_main():

@@ -623,7 +623,7 @@ Treat the following as a **release gate** alongside automated tests: run through
 
 ## Requirements
 
-- **General**: Python 3.12+, `pip install -e ".[test]"`.
+- **General**: Python 3.14+, `pip install -e ".[test]"`. Host workspace `.venv` must be GIL CPython 3.14 (Homebrew `python@3.14`). Compose image is `python:3.14.7-trixie` (GIL) for web; pipeline daemons run baked free-threaded `/opt/python3.14t` (`python-image-interpreter-contract.mdc`). Container `python3` is **not** the ingest interpreter.
 - **Django tests**: For a full run matching production hostnames (`db`, `redis`), use `tests/run_db_pytest_workflow.sh`. Host-side `python scripts/run_tests.py` needs a reachable Postgres matching `HPCPERFSTATS_INI` **`[DEFAULT]`** PostgreSQL keys (and typically `host=localhost` with a published port, not `host=db`).
 - **Live Redis cache tests**: Optional; use `tests/run_redis_cache_pytest_workflow.sh` (sets `HPCPERFSTATS_PYTEST_LIVE_REDIS=1`).
 - **Browser E2E tests**: Playwright/Chromium tooling (installed by the DB workflow or E2E workflow script unless skipped).

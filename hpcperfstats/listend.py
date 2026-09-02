@@ -1559,8 +1559,10 @@ def main() -> None:
     >>> main()  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
+  from hpcperfstats.dbload.lib.python_abi_startup_log import log_python_abi_startup
 
   set_daemon_process_title(name="listend.py", role="main")
+  log_python_abi_startup()
   global _idle_thread_started
   global _recent_host_worker_thread_started
   global _amqp_reconnect_requested

@@ -275,7 +275,7 @@ Chunk handlers call **`hard_exit_pool_worker_error`** (`os._exit`) immediately a
   --day YYYY-MM-DD --compose-dir .
 
 # All days (requires --yes); --no-restart for Redis-only
-# Prefer python3.12+ / project venv if host ``python3`` is older than 3.12.
+# Prefer python3.14+ / project venv if host ``python3`` is older than 3.14.
 ../.venv/bin/python3 scripts/invalidate_archive_members.py \
   --all --yes --compose-dir .
 ```

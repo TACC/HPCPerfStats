@@ -93,3 +93,34 @@ def test_dockerfile_documents_spa_volume_fingerprint_heal_contract():
   full = _stage_body(dockerfile, "hpcperfstats-full")
   assert "masks" in full.lower() or "mask" in full.lower()
   assert "collectstatic --noinput" in full
+
+
+def test_dockerfile_pins_python_3147_and_bakes_freethreaded_prefix():
+  """GIL web uses python:3.14.7-trixie; pipeline ABI is /opt/python3.14t (no second tree)."""
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  stages = re.findall(r"^FROM .* AS (\S+)", dockerfile, flags=re.MULTILINE)
+  assert "python-freethreaded" in stages
+  assert stages.index("python-freethreaded") < stages.index("hpcperfstats-base")
+  assert stages[-1] == "hpcperfstats-full"
+
+  assert re.search(
+      r"^FROM python:3\.14\.7-trixie AS python-freethreaded\s*$",
+      dockerfile,
+      flags=re.MULTILINE,
+  )
+  assert re.search(
+      r"^FROM python:3\.14\.7-trixie AS hpcperfstats-base\s*$",
+      dockerfile,
+      flags=re.MULTILINE,
+  )
+
+  ft_stage = _stage_body(dockerfile, "python-freethreaded")
+  assert "--prefix=/opt/python3.14t" in ft_stage
+  assert "--disable-gil" in ft_stage
+  assert "/opt/hpcperfstats-ft" not in dockerfile
+
+  base = _stage_body(dockerfile, "hpcperfstats-base")
+  assert "COPY --from=python-freethreaded /opt/python3.14t /opt/python3.14t" in base
+  assert "/opt/python3.14t/bin/python3.14t -m pip" in base
+  assert "pip install --no-cache-dir -r /tmp/requirements.txt" in base
+  assert "/opt/hpcperfstats-ft" not in base

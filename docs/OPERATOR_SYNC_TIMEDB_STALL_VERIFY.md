@@ -8,6 +8,8 @@ See also: `sync-timedb-change-regression-gate.mdc`, `sync-timedb-queue-orchestra
 
 ### T0 — 10-minute progress + status (primary)
 
+After an interpreter-only redeploy (CPython 3.14 / baked pipeline **3.14t**), T0 also means: confirm live `sync_timedb` / `listend` / `update_metrics` argv is **`/opt/python3.14t/bin/python`** (not GIL `/usr/local/bin/python3`) and greppable `python_abi … Py_GIL_DISABLED=1`. Skip T1/T2 unless ingest/day_close/pool semantics changed.
+
 Prefer these lines over firehose greps for backlog diagnosis:
 
 ```bash

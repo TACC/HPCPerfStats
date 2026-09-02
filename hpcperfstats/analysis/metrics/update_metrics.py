@@ -7472,8 +7472,10 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
     >>> main(None, None)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
+  from hpcperfstats.dbload.lib.python_abi_startup_log import log_python_abi_startup
 
   set_daemon_process_title(name=UPDATE_METRICS_PROCESS_TITLE, role="main")
+  log_python_abi_startup()
   if argv is None:
     argv = sys.argv
 

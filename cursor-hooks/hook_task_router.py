@@ -243,6 +243,21 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "frontend-prod-test-build-boundary.mdc",
             "frontend-static-prod-serve-only.mdc",
             "dockerignore-test-artifacts-sync.mdc",
+            "python-image-interpreter-contract.mdc",
+        ],
+    },
+    {
+        "id": "python_image_interpreter",
+        "patterns": [
+            "services-conf/supervisord.conf",
+        ],
+        "exact_paths": [
+            "Dockerfile",
+        ],
+        "rules": [
+            "python-image-interpreter-contract.mdc",
+            "immutable-image-ini-policy.mdc",
+            "process-title-and-pool-labels.mdc",
         ],
     },
     {

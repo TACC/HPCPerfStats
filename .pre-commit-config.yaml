@@ -1,6 +1,6 @@
 # Local git hooks for lint gates (install: scripts/install-git-hooks.sh).
 default_language_version:
-  python: python3.12
+  python: python3.14
 
 repos:
   - repo: local

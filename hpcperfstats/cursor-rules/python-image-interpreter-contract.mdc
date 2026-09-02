@@ -1,0 +1,44 @@
+---
+description: Dual ABI — GIL python:3.14.7 for web; baked /opt/python3.14t for pipeline daemons; no INI ABI switch
+alwaysApply: false
+globs: Dockerfile,services-conf/supervisord.conf
+---
+
+# Python image interpreter contract (GIL web + baked pipeline 3.14t)
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+## Laws
+
+| Concern | Contract |
+|---------|----------|
+| Web / gunicorn / django_startup | Always GIL **`/usr/local/bin/python3`** from `FROM python:3.14.7-trixie` |
+| Pipeline daemons | Always free-threaded **`/opt/python3.14t/bin/python`** for **`listend`**, **`sync_timedb`**, **`update_metrics`** in `services-conf/supervisord.conf` |
+| Helpers | Syslog render, `seal_syslog_daily`, `supervisor_startup.sh` stay on GIL `/usr/local/bin/python3` |
+| Operator `exec … python3` | PATH `python3` remains GIL; do **not** treat it as the ingest interpreter |
+| INI / env ABI switch | **Forbidden** — no `*_interpreter` keys, no resolver, no skip build-arg fallback to GIL for pipeline |
+| Missing `/opt/python3.14t` | Build must fail or those three supervisord programs fail to start — **no silent GIL fallback** |
+| Official Hub `3.14t` tag | Does not exist; compile matching **`Python-3.14.7.tgz`** with `--disable-gil --prefix=/opt/python3.14t` |
+| Dual pip | Install runtime deps into both `/usr/local` (cp314) and `/opt/python3.14t` (cp314t); **no** `/opt/hpcperfstats-ft` second tree |
+| Host `.venv` | GIL **3.14** only (Homebrew `python@3.14`); host 3.14t not required for pytest |
+
+## Follow-on (not this interpreter change)
+
+A later plan may replace spawn/fork pool **processes** with **in-process threads** that share ordinary Python objects. Do **not**:
+
+- Convert pools in an interpreter-only change
+- Use `/dev/shm` POSIX SharedMemory or Redis as the worker-data bus for that rewrite
+- Remove Redis `job:v1` durable orchestration
+- Put gunicorn on 3.14t
+
+## Validation
+
+- Unit: `test_dockerfile_python_deps_cache.py`, `test_supervisord_pipeline_python.py`, `test_hpcperfstats_ini_example.py` (no interpreter keys), `test_python_abi_startup_log.py`
+- Compose smoke: web `python3` is 3.14.7 GIL; live pipeline argv is `/opt/python3.14t/...` and logs `python_abi … Py_GIL_DISABLED=1`
+
+## Overlap
+
+- **`immutable-image-ini-policy.mdc`** — ABI is baked in the image, not an operator INI knob
+- **`workspace-layout-and-python-env.mdc`** — host venv vs image interpreters
+- **`process-title-and-pool-labels.mdc`** — titles still apply under 3.14t argv
+- **`sync-timedb-change-regression-gate.mdc`** — run battery after interpreter bumps that affect spawn/fork workers

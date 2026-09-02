@@ -7506,6 +7506,9 @@ if __name__ == '__main__':
   signal.signal(signal.SIGTERM, _sigterm_handler)
   try:
     set_daemon_process_title(name=SYNC_TIMEDB_PROCESS_TITLE, role="main")
+    from hpcperfstats.dbload.lib.python_abi_startup_log import log_python_abi_startup
+
+    log_python_abi_startup()
     database_startup()
     from hpcperfstats.dbload.lib.sync_timedb_jid_scope import (
         parse_sync_timedb_jid_cli_arg,

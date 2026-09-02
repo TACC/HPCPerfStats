@@ -226,3 +226,23 @@ def test_ini_values_equal_registry_default_float_normalize():
   assert _ini_values_equal_registry_default("40", "40")
   assert not _ini_values_equal_registry_default("True", "no")
   assert not _ini_values_equal_registry_default("x", None)
+
+
+def test_ini_example_has_no_pipeline_interpreter_abi_keys():
+  """Pipeline ABI is baked in supervisord; INI must not offer interpreter switches."""
+  path = _repo_ini_example_path()
+  text = path.read_text(encoding="utf-8")
+  forbidden = (
+      "listend_interpreter",
+      "sync_timedb_interpreter",
+      "update_metrics_interpreter",
+      "pipeline_interpreter",
+  )
+  for key in forbidden:
+    assert key not in text, key
+  registry_options = {
+      option for _section, option, _default in cfg.INI_OPTION_REGISTRY
+  }
+  for key in forbidden:
+    assert key not in registry_options, key
+
