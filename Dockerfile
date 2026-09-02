@@ -53,7 +53,11 @@ RUN /bin/bash -o pipefail -c "\
 # Free-threaded CPython 3.14.7 (cp314t) for pipeline daemons only.
 # Official Hub has no python:3.14t-* tag; compile from the matching source tarball.
 FROM python:3.14.7-trixie AS python-freethreaded
-ENV PYTHON_VERSION=3.14.7
+ENV PYTHON_VERSION=3.14.7 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_WARN_SCRIPT_LOCATION=false \
+    PIP_ROOT_USER_ACTION=ignore 
 RUN /bin/bash -o pipefail -c "\
     apt-get update -y \
     && apt-get install -y --no-install-recommends \
