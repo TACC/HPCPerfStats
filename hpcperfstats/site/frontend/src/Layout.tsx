@@ -334,7 +334,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
                     API key
                   </Button>
                 </NavLink>
-                <Button variant="outline" size="sm" render={<a href="/machine/logout/" />}>
+                <Button variant="outline" size="sm" render={<a href="/logout/" />}>
                   Logout
                 </Button>
               </div>
@@ -424,7 +424,7 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
                       variant="outline"
                       size="sm"
                       className="w-full"
-                      render={<a href="/machine/logout/" onClick={() => setMoreMenuOpen(false)} />}
+                      render={<a href="/logout/" onClick={() => setMoreMenuOpen(false)} />}
                     >
                       Logout
                     </Button>

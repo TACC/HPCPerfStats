@@ -68,6 +68,7 @@ def test_browser_flow_for_web_pages():
           "/machine/admin_monitor/",
           "/machine/job_monitor/",
           "/machine/test-login/",
+          "/machine/logout/",
           "/pub/",
           "/pub/cluster-dashboard",
       ):

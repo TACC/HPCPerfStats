@@ -143,6 +143,19 @@ describe("Layout", () => {
     }
   });
 
+  it("points Logout at the Django session-flush URL, not the SPA prefix", () => {
+    renderLayout({
+      logged_in: true,
+      username: "alice",
+      is_staff: false,
+    });
+    const logoutLinks = screen.getAllByRole("link", { name: "Logout" });
+    expect(logoutLinks.length).toBeGreaterThan(0);
+    for (const link of logoutLinks) {
+      expect(link).toHaveAttribute("href", "/logout/");
+    }
+  });
+
   it("shows Create test user only when the session advertises separate_test_login", async () => {
     const user = userEvent.setup();
     renderLayout({

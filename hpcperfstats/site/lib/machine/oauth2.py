@@ -200,23 +200,40 @@ def _is_synthetic_access_token(access_token: Any) -> bool:
 
 def logout(request: Any) -> Any:
   """
-  Revoke token, flush session, redirect to /.
-  
+  Revoke Tapis tokens when needed, flush the session, and redirect.
+
+  Test-login sessions skip Tapis revoke. When the INI flag is on they
+  land on ``/test-login/`` so the operator is not sent to Tapis.
+
   Args:
-    request (Any): Request passed to this helper.
-  
+    request (Any): Django request whose session is flushed.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: Redirect to ``/test-login/`` for an enabled test-login session,
+    otherwise ``/``.
+
   Examples:
-    >>> logout(None)  # doctest: +SKIP
+    >>> from unittest.mock import MagicMock, patch
+    >>> from django.test import RequestFactory
+    >>> req = RequestFactory().get("/logout/")
+    >>> req.session = MagicMock()
+    >>> req.session.get.return_value = "test-login:qa"
+    >>> with patch.object(cfg, "get_separate_test_login", return_value=True):
+    ...     logout(req).url
+    '/test-login/'
   """
   access_token = request.session.get('access_token')
+  redirect_to = "/"
+  if (
+      str(access_token or "").startswith("test-login:")
+      and cfg.get_separate_test_login()
+  ):
+    redirect_to = "/test-login/"
   if access_token and not _is_synthetic_access_token(access_token):
     _http_session.post('%s/oauth2/tokens/revoke' % tenant_base_url,
                        json={'token': access_token})
   request.session.flush()
-  return HttpResponseRedirect("/")
+  return HttpResponseRedirect(redirect_to)
 
 
 def login_prompt(request: Any) -> Any:

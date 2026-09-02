@@ -183,10 +183,33 @@ def test_logout_skips_revoke_for_test_login_token():
   request = RequestFactory().get("/logout/")
   request.session = _Session({"access_token": "test-login:qa", "username": "qa"})
   mock_http = MagicMock()
-  with patch.object(oauth2, "_http_session", mock_http):
+  with patch.object(oauth2, "_http_session", mock_http), patch.object(
+      oauth2.cfg, "get_separate_test_login", return_value=False
+  ):
     response = oauth2.logout(request)
   mock_http.post.assert_not_called()
   assert request.session.get("_flushed") is True
   assert "access_token" not in request.session
   assert isinstance(response, HttpResponseRedirect)
   assert response.url == "/"
+
+
+def test_logout_sends_test_login_user_to_hidden_form_when_enabled():
+  from hpcperfstats.site.lib.machine import oauth2
+
+  class _Session(dict):
+    def flush(self):
+      self.clear()
+      self["_flushed"] = True
+
+  request = RequestFactory().get("/logout/")
+  request.session = _Session({"access_token": "test-login:qa", "username": "qa"})
+  mock_http = MagicMock()
+  with patch.object(oauth2, "_http_session", mock_http), patch.object(
+      oauth2.cfg, "get_separate_test_login", return_value=True
+  ):
+    response = oauth2.logout(request)
+  mock_http.post.assert_not_called()
+  assert request.session.get("_flushed") is True
+  assert isinstance(response, HttpResponseRedirect)
+  assert response.url == "/test-login/"

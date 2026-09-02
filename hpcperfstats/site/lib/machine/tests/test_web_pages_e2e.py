@@ -50,6 +50,7 @@ class TestWebPagesEndToEnd:
         "/machine/admin_monitor/",
         "/machine/job_monitor/",
         "/machine/test-login/",
+        "/machine/logout/",
         "/pub/",
         "/pub/cluster-dashboard",
     ):
@@ -57,6 +58,9 @@ class TestWebPagesEndToEnd:
 
     assert client.get("/robots.txt").status_code == 404
     assert client.get("/test-login/").status_code == 404
+    logout_response = client.get("/logout/")
+    assert logout_response.status_code == 302
+    assert logout_response["Location"] == "/"
     prefixes = load_public_robots_allow_prefixes()
     expected_body = format_public_robots_txt_body(prefixes)
     assert "User-agent: *" in expected_body
