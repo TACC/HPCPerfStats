@@ -47,6 +47,30 @@ class SessionInfoSerializer(serializers.Serializer):
     is_staff = serializers.BooleanField()
     # Optional in schema: SPA uses build-time site-identity.ts; field still sent for compatibility.
     machine_name = serializers.CharField(required=False)
+    # Always sent by session_info; optional so older documented payloads still parse.
+    separate_test_login = serializers.BooleanField(required=False)
+
+
+class TestLoginUserSerializer(serializers.Serializer):
+    """
+    Staff-visible test-login configuration (never includes a password).
+
+    Subclasses ``Serializer`` with the GET/POST response shape for
+    ``/api/test-login/user/``.
+    """
+    configured = serializers.BooleanField()
+    username = serializers.CharField(allow_null=True)
+    login_url = serializers.CharField()
+
+
+class TestLoginUserWriteSerializer(serializers.Serializer):
+    """
+    Staff POST body for creating or replacing the singleton test user.
+
+    Subclasses ``Serializer`` with username and password write fields.
+    """
+    username = serializers.CharField()
+    password = serializers.CharField(write_only=True)
 
 
 class UserApiKeySerializer(serializers.Serializer):

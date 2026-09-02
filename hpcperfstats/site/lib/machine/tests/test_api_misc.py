@@ -247,6 +247,32 @@ class TestSessionInfo:
     assert data["username"] == "alice"
     assert data["is_staff"] is True
     assert data["machine_name"] == "test-machine"
+    assert data["separate_test_login"] is False
+
+
+@pytest.mark.machine_unit_mock
+def test_session_info_separate_test_login_staff_and_flag_only():
+  """Advertise the staff create-page only when INI is on and the session is staff."""
+  from hpcperfstats.site.lib.machine import api
+
+  factory = RequestFactory()
+
+  def _call(*, is_staff, flag):
+    request = factory.get("/api/session/")
+    request.session = {"username": "alice", "is_staff": is_staff}
+    with patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None), patch(
+        "hpcperfstats.site.lib.machine.api.cfg.get_host_name_ext",
+        return_value="test-machine",
+    ), patch(
+        "hpcperfstats.site.lib.machine.api.cfg.get_separate_test_login",
+        return_value=flag,
+    ):
+      return api.session_info(request).data["separate_test_login"]
+
+  assert _call(is_staff=True, flag=True) is True
+  assert _call(is_staff=True, flag=False) is False
+  assert _call(is_staff=False, flag=True) is False
+  assert _call(is_staff=False, flag=False) is False
 
 
 @pytest.mark.django_db(databases=[])

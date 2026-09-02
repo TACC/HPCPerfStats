@@ -97,6 +97,7 @@ from .openapi_schema import (
     JOB_PLOTS_SCHEMA,
     SACCT_INGEST_SCHEMA,
     SESSION_SCHEMA,
+    TEST_LOGIN_USER_SCHEMA,
     TYPE_DETAIL_SCHEMA,
     USER_API_KEY_ROTATE_SCHEMA,
     USER_API_KEY_SCHEMA,
@@ -153,7 +154,12 @@ from hpcperfstats.dbload.sync_acct import (
     persist_accounting_daily_file,
     sync_acct_from_content,
 )
-from .models import ApiKey, job_data, metrics_data
+from .models import ApiKey, TestLoginUser, job_data, metrics_data
+from .test_login import (
+    require_separate_test_login,
+    test_login_user_payload,
+    validate_test_login_credentials,
+)
 from .host_data_latest import (
     format_host_data_newest_iso,
     latest_sample_time_by_host,
@@ -1895,12 +1901,77 @@ def session_info(request: Any) -> Any:
     err = _require_auth(request)
     if err is not None:
         return err
+    is_staff = bool(request.session.get("is_staff", False))
     return Response({
         "logged_in": True,
         "username": request.session.get("username", ""),
-        "is_staff": request.session.get("is_staff", False),
+        "is_staff": is_staff,
         "machine_name": cfg.get_host_name_ext(),
+        "separate_test_login": bool(
+            is_staff and cfg.get_separate_test_login()
+        ),
     })
+
+
+@TEST_LOGIN_USER_SCHEMA
+@api_view(["GET", "POST"])
+def test_login_user(request: Any) -> Any:
+    """
+    Return or replace the singleton development test-login user.
+
+    Hidden with HTTP 404 when ``separate_test_login`` is off. Staff-only when
+    the flag is on. Never returns a password or hash.
+
+    Args:
+      request (Any): Authenticated staff GET or POST.
+
+    Returns:
+      Any: JSON ``configured`` / ``username`` / ``login_url``, or an error
+      response.
+
+    Raises:
+      Http404: Raised when the INI flag is off.
+
+    Examples:
+      >>> from unittest.mock import patch
+      >>> from django.http import Http404
+      >>> from django.test import RequestFactory
+      >>> req = RequestFactory().get("/api/test-login/user/")
+      >>> with patch(
+      ...     "hpcperfstats.site.lib.machine.test_login.cfg.get_separate_test_login",
+      ...     return_value=False,
+      ... ):
+      ...     try:
+      ...         test_login_user(req)
+      ...     except Http404:
+      ...         404
+      404
+    """
+    require_separate_test_login()
+    if request.method == "POST":
+        csrf_err = _require_csrf_for_session_post(request)
+        if csrf_err is not None:
+            return csrf_err
+    err = _require_staff(request)
+    if err is not None:
+        return err
+    if request.method == "GET":
+        return Response(test_login_user_payload())
+    username = str((request.data or {}).get("username") or "")
+    password = str((request.data or {}).get("password") or "")
+    validation_error = validate_test_login_credentials(username, password)
+    if validation_error:
+        return Response(
+            {"detail": validation_error},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    created_by = str(request.session.get("username") or "")
+    TestLoginUser.replace_singleton(
+        username.strip(),
+        password,
+        created_by=created_by,
+    )
+    return Response(test_login_user_payload())
 
 
 @USER_API_KEY_SCHEMA

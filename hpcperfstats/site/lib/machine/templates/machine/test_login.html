@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Test login</title>
+</head>
+<body>
+  <h1>Test login</h1>
+  {% if error %}
+  <p role="alert">{{ error }}</p>
+  {% endif %}
+  <form method="post" action="/test-login/">
+    {% csrf_token %}
+    <p>
+      <label for="test-login-username">Username</label>
+      <input id="test-login-username" name="username" autocomplete="username" required>
+    </p>
+    <p>
+      <label for="test-login-password">Password</label>
+      <input id="test-login-password" name="password" type="password" autocomplete="current-password" required>
+    </p>
+    <button type="submit">Sign in</button>
+  </form>
+</body>
+</html>

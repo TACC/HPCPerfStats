@@ -15,6 +15,7 @@ from . import public_api
 urlpatterns = [
     path("schema/", SpectacularAPIView.as_view(), name="schema"),
     path("session/", api.session_info),
+    path("test-login/user/", api.test_login_user),
     path("user-api-key/", api.user_api_key_status),
     path("user-api-key/rotate/", api.user_api_key_rotate),
     path("session/drop-staff/", api.drop_staff_for_session),

@@ -27,6 +27,8 @@ import { PubClusterDashboardRetrieveResponse } from "./generated-zod/public/publ
 import {
   SessionDropStaffCreateResponse,
   SessionRetrieveResponse,
+  TestLoginUserCreateResponse,
+  TestLoginUserRetrieveResponse,
   UserApiKeyRetrieveResponse,
   UserApiKeyRotateCreateResponse,
 } from "./generated-zod/session/session";
@@ -57,6 +59,8 @@ function matchTypeDetail(path: string): boolean {
 const EXACT_RESPONSE_SCHEMAS: Record<string, ZodSchema> = {
   "GET /api/session/": SessionRetrieveResponse,
   "POST /api/session/drop-staff/": SessionDropStaffCreateResponse,
+  "GET /api/test-login/user/": TestLoginUserRetrieveResponse,
+  "POST /api/test-login/user/": TestLoginUserCreateResponse,
   "GET /api/user-api-key/": UserApiKeyRetrieveResponse,
   "POST /api/user-api-key/rotate/": UserApiKeyRotateCreateResponse,
   "POST /api/cache/invalidate-page/": CacheInvalidatePageCreateResponse,

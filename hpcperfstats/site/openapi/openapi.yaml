@@ -1303,6 +1303,111 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Forbidden
+  /api/test-login/user/:
+    get:
+      operationId: test_login_user_retrieve
+      description: |-
+        Return or replace the singleton development test-login user.
+
+        Hidden with HTTP 404 when ``separate_test_login`` is off. Staff-only when
+        the flag is on. Never returns a password or hash.
+
+        Args:
+          request (Any): Authenticated staff GET or POST.
+
+        Returns:
+          Any: JSON ``configured`` / ``username`` / ``login_url``, or an error
+          response.
+
+        Raises:
+          Http404: Raised when the INI flag is off.
+
+        Examples:
+          >>> test_login_user(None)  # doctest: +SKIP
+      tags:
+      - session
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestLoginUser'
+          description: ''
+        '404':
+          description: Test-login surface disabled
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
+    post:
+      operationId: test_login_user_create
+      description: |-
+        Return or replace the singleton development test-login user.
+
+        Hidden with HTTP 404 when ``separate_test_login`` is off. Staff-only when
+        the flag is on. Never returns a password or hash.
+
+        Args:
+          request (Any): Authenticated staff GET or POST.
+
+        Returns:
+          Any: JSON ``configured`` / ``username`` / ``login_url``, or an error
+          response.
+
+        Raises:
+          Http404: Raised when the INI flag is off.
+
+        Examples:
+          >>> test_login_user(None)  # doctest: +SKIP
+      tags:
+      - session
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestLoginUserWriteRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TestLoginUserWriteRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TestLoginUserWriteRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestLoginUser'
+          description: ''
+        '404':
+          description: Test-login surface disabled
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Forbidden
   /api/user-api-key/:
     get:
       operationId: user_api_key_retrieve
@@ -2466,6 +2571,8 @@ components:
           type: boolean
         machine_name:
           type: string
+        separate_test_login:
+          type: boolean
       required:
       - is_staff
       - logged_in
@@ -2492,6 +2599,42 @@ components:
       - current_plot
       - db_detail
       - db_plot
+    TestLoginUser:
+      type: object
+      description: |-
+        Staff-visible test-login configuration (never includes a password).
+
+        Subclasses ``Serializer`` with the GET/POST response shape for
+        ``/api/test-login/user/``.
+      properties:
+        configured:
+          type: boolean
+        username:
+          type: string
+          nullable: true
+        login_url:
+          type: string
+      required:
+      - configured
+      - login_url
+      - username
+    TestLoginUserWriteRequest:
+      type: object
+      description: |-
+        Staff POST body for creating or replacing the singleton test user.
+
+        Subclasses ``Serializer`` with username and password write fields.
+      properties:
+        username:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - password
+      - username
     TypeDetailResponse:
       type: object
       description: |-

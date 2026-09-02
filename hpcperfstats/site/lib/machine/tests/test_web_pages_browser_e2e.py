@@ -67,6 +67,7 @@ def test_browser_flow_for_web_pages():
           "/machine/host/node1/plot/",
           "/machine/admin_monitor/",
           "/machine/job_monitor/",
+          "/machine/test-login/",
           "/pub/",
           "/pub/cluster-dashboard",
       ):
@@ -76,6 +77,8 @@ def test_browser_flow_for_web_pages():
 
       robots_probe = page.context.request.get(f"{base_url}/robots.txt")
       assert robots_probe.status == 404
+      test_login_probe = page.context.request.get(f"{base_url}/test-login/")
+      assert test_login_probe.status == 404
       prefixes = load_public_robots_allow_prefixes()
       expected = format_public_robots_txt_body(prefixes)
       assert "User-agent: *" in expected

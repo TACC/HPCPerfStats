@@ -104,6 +104,54 @@ class TestHomeOptionsView:
         assert response.data["machine_name"] == "hpc"
 
 
+class TestTestLoginUserView:
+    def test_404_when_flag_off(self):
+        from hpcperfstats.site.lib.machine import api
+
+        request = RequestFactory().get("/api/test-login/user/")
+        with patch(
+            "hpcperfstats.site.lib.machine.test_login.cfg.get_separate_test_login",
+            return_value=False,
+        ):
+            response = api.test_login_user(request)
+        assert response.status_code == 404
+
+    def test_get_unconfigured(self):
+        from hpcperfstats.site.lib.machine import api
+
+        request = RequestFactory().get("/api/test-login/user/")
+        request.session = {"is_staff": True}
+        with patch(
+            "hpcperfstats.site.lib.machine.test_login.cfg.get_separate_test_login",
+            return_value=True,
+        ), patch.object(
+            api, "_require_staff", return_value=None
+        ), patch.object(api.TestLoginUser, "get_singleton", return_value=None):
+            response = api.test_login_user(request)
+        assert response.status_code == 200
+        assert response.data["configured"] is False
+        assert response.data["username"] is None
+
+    def test_post_validation_error(self):
+        from hpcperfstats.site.lib.machine import api
+
+        request = RequestFactory().post(
+            "/api/test-login/user/",
+            data={},
+            content_type="application/json",
+        )
+        request.session = {"is_staff": True, "username": "staffer"}
+        request.data = {"username": "", "password": ""}
+        with patch(
+            "hpcperfstats.site.lib.machine.test_login.cfg.get_separate_test_login",
+            return_value=True,
+        ), patch.object(
+            api, "_require_staff", return_value=None
+        ), patch.object(api, "_require_csrf_for_session_post", return_value=None):
+            response = api.test_login_user(request)
+        assert response.status_code == 400
+
+
 class TestUserApiKeyStatusView:
     def test_requires_oauth_session(self):
         from hpcperfstats.site.lib.machine import api

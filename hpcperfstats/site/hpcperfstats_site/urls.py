@@ -27,6 +27,7 @@ from hpcperfstats.site.lib.machine.oauth2 import (
     logout,
     oauth_callback,
 )
+from hpcperfstats.site.lib.machine.test_login import test_login_page
 from hpcperfstats.site.hpcperfstats_site.views import (
     csp_report,
 )
@@ -42,6 +43,7 @@ urlpatterns = [
     ),
     path("admin_monitor/", lambda r: HttpResponseRedirect("/machine/admin_monitor/")),
     path("login/", login_oauth, name="login"),
+    path("test-login/", test_login_page, name="test_login"),
     path("login_prompt", login_prompt, name="login_prompt"),
     path("logout/", logout, name="logout"),
     path("oauth_callback/", oauth_callback, name="oauth_callback"),

@@ -286,6 +286,16 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
                       >
                         HPCPerfStats Monitor
                       </DropdownMenuItem>
+                      {session?.separate_test_login ? (
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setMoreMenuOpen(false);
+                            router.push("/machine/test-login/");
+                          }}
+                        >
+                          Create test user
+                        </DropdownMenuItem>
+                      ) : null}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
                         variant="destructive"
@@ -359,6 +369,13 @@ export default function Layout({ session, onSessionChange, children }: LayoutPro
                             HPCPerfStats Monitor
                           </Button>
                         </NavLink>
+                        {session?.separate_test_login ? (
+                          <NavLink to="/test-login" onClick={() => setMoreMenuOpen(false)}>
+                            <Button variant="outline" size="sm" className="w-full justify-start">
+                              Create test user
+                            </Button>
+                          </NavLink>
+                        ) : null}
                         <Button
                           type="button"
                           variant="destructive"

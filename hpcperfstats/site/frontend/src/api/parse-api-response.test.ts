@@ -334,9 +334,20 @@ describe("parse-api-response", () => {
       username: "alice",
       is_staff: true,
       machine_name: "cluster.test",
+      separate_test_login: true,
     };
     expect(SessionRetrieveResponse.safeParse(payload).success).toBe(true);
     expect(parseApiResponse("GET", "/api/session/", payload)).toEqual(payload);
+  });
+
+  it("accepts test-login user payload", () => {
+    const payload = {
+      configured: true,
+      username: "qa",
+      login_url: "/test-login/",
+    };
+    expect(parseApiResponse("GET", "/api/test-login/user/", payload)).toEqual(payload);
+    expect(parseApiResponse("POST", "/api/test-login/user/", payload)).toEqual(payload);
   });
 
   it("rejects legacy home metrics missing type with route in error message", () => {

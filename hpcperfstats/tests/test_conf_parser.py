@@ -1235,3 +1235,43 @@ def test_format_sync_timedb_non_default_settings_line(temp_ini, monkeypatch):
   line = cfg.format_sync_timedb_non_default_settings_line()
   assert line.startswith("sync_timedb: non-default settings:")
   assert "total_cores=4" in line
+
+
+def test_get_separate_test_login_defaults_false(temp_ini, monkeypatch):
+  """Missing PORTAL.separate_test_login follows the registry default no."""
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_separate_test_login() is False
+
+
+def test_get_separate_test_login_true(temp_ini, monkeypatch):
+  """yes/true/1/on enable the development-only test-login surface."""
+  with open(temp_ini) as handle:
+    content = handle.read()
+  content += "\n[PORTAL]\nseparate_test_login = yes\n"
+  with open(temp_ini, "w") as handle:
+    handle.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_separate_test_login() is True
+  content = content.replace("separate_test_login = yes", "separate_test_login = true")
+  with open(temp_ini, "w") as handle:
+    handle.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_separate_test_login() is True
+  content = content.replace("separate_test_login = true", "separate_test_login = 1")
+  with open(temp_ini, "w") as handle:
+    handle.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_separate_test_login() is True
+  content = content.replace("separate_test_login = 1", "separate_test_login = on")
+  with open(temp_ini, "w") as handle:
+    handle.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_separate_test_login() is True

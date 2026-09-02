@@ -9,6 +9,7 @@ export type MachineRouteView =
   | "adminMonitor"
   | "jobMonitor"
   | "pageApiKey"
+  | "pageTestLogin"
   | "notFound";
 
 export type MachineFlatRouteParams = {
@@ -49,6 +50,7 @@ export function parseMachineSlug(slug: string[] | undefined): {
     else if (head === "admin_monitor") view = "adminMonitor";
     else if (head === "job_monitor") view = "jobMonitor";
     else if (head === "api-key") view = "pageApiKey";
+    else if (head === "test-login") view = "pageTestLogin";
   } else if (parts.length === 2) {
     const [head, value] = parts;
     if (head === "job") {

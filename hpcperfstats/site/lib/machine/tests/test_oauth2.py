@@ -2,9 +2,12 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from django.http import HttpResponseRedirect
 from django.test import RequestFactory
 from django.test import override_settings
+
+pytestmark = pytest.mark.machine_unit_mock
 
 
 class TestSafeRedirectPath:
@@ -155,3 +158,35 @@ class TestLoginPrompt:
       response = oauth2.login_prompt(request)
     assert isinstance(response, HttpResponseRedirect)
     assert response.url.startswith("/login/")
+
+
+def test_check_for_tokens_accepts_test_login_prefix():
+  from hpcperfstats.site.lib.machine import oauth2
+
+  request = RequestFactory().get("/")
+  request.session = {"access_token": "test-login:qa", "is_staff": True}
+  mock_http = MagicMock()
+  with patch.object(oauth2, "_http_session", mock_http):
+    assert oauth2.check_for_tokens(request) is True
+  mock_http.get.assert_not_called()
+  mock_http.post.assert_not_called()
+
+
+def test_logout_skips_revoke_for_test_login_token():
+  from hpcperfstats.site.lib.machine import oauth2
+
+  class _Session(dict):
+    def flush(self):
+      self.clear()
+      self["_flushed"] = True
+
+  request = RequestFactory().get("/logout/")
+  request.session = _Session({"access_token": "test-login:qa", "username": "qa"})
+  mock_http = MagicMock()
+  with patch.object(oauth2, "_http_session", mock_http):
+    response = oauth2.logout(request)
+  mock_http.post.assert_not_called()
+  assert request.session.get("_flushed") is True
+  assert "access_token" not in request.session
+  assert isinstance(response, HttpResponseRedirect)
+  assert response.url == "/"

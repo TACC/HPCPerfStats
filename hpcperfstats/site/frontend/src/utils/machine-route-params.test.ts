@@ -54,6 +54,14 @@ describe("parseMachineSlug", () => {
     });
   });
 
+  it("maps test-login create page", () => {
+    expect(parseMachineSlug(["test-login"])).toEqual({
+      slug: ["test-login"],
+      flatParams: {},
+      view: "pageTestLogin",
+    });
+  });
+
   it("maps list routes by segment key", () => {
     expect(parseMachineSlug(["username", "alice"]).flatParams).toEqual({ username: "alice" });
     expect(parseMachineSlug(["account", "proj"]).flatParams).toEqual({ account: "proj" });

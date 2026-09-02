@@ -18,6 +18,7 @@ Attributes:
   PUBLIC_CLUSTER_DASHBOARD_SCHEMA: Attribute.
   SACCT_INGEST_SCHEMA: Attribute.
   SESSION_SCHEMA: Attribute.
+  TEST_LOGIN_USER_SCHEMA: Attribute.
   TYPE_DETAIL_SCHEMA: Attribute.
   USER_API_KEY_ROTATE_SCHEMA: Attribute.
   USER_API_KEY_SCHEMA: Attribute.
@@ -91,6 +92,16 @@ def _async_loading_responses() -> Any:
 SESSION_SCHEMA = extend_schema(
     tags=["session"],
     responses={200: os.SessionInfoSerializer, **_auth_responses()},
+)
+
+TEST_LOGIN_USER_SCHEMA = extend_schema(
+    tags=["session"],
+    request=os.TestLoginUserWriteSerializer,
+    responses={
+        200: os.TestLoginUserSerializer,
+        404: OpenApiResponse(description="Test-login surface disabled"),
+        **_auth_responses(),
+    },
 )
 
 USER_API_KEY_SCHEMA = extend_schema(

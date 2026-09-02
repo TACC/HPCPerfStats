@@ -20,6 +20,7 @@ const HostDetail = lazy(() => import("@/views/HostDetail"));
 const AdminMonitor = lazy(() => import("@/views/AdminMonitor"));
 const JobMonitor = lazy(() => import("@/views/JobMonitor"));
 const PageApiKey = lazy(() => import("@/views/PageApiKey"));
+const PageTestLogin = lazy(() => import("@/views/PageTestLogin"));
 const PageNotFound = lazy(() => import("@/views/PageNotFound"));
 
 const VIEW_COMPONENTS: Record<MachineRouteView, ComponentType> = {
@@ -31,6 +32,7 @@ const VIEW_COMPONENTS: Record<MachineRouteView, ComponentType> = {
   adminMonitor: AdminMonitor,
   jobMonitor: JobMonitor,
   pageApiKey: PageApiKey,
+  pageTestLogin: PageTestLogin,
   notFound: PageNotFound,
 };
 

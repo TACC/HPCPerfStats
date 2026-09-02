@@ -176,6 +176,28 @@ def oauth_callback(request: Any) -> Any:
     return HttpResponseRedirect(redirect_to)
 
 
+def _is_synthetic_access_token(access_token: Any) -> bool:
+  """
+  Return True for session tokens that must not call Tapis.
+
+  Args:
+    access_token (Any): Session ``access_token`` value, or empty.
+
+  Returns:
+    bool: True for ``api-key:`` and ``test-login:`` prefixes.
+
+  Examples:
+    >>> _is_synthetic_access_token("test-login:qa")
+    True
+    >>> _is_synthetic_access_token("api-key:alice")
+    True
+    >>> _is_synthetic_access_token("tapis-token")
+    False
+  """
+  token = str(access_token or "")
+  return token.startswith("api-key:") or token.startswith("test-login:")
+
+
 def logout(request: Any) -> Any:
   """
   Revoke token, flush session, redirect to /.
@@ -190,7 +212,7 @@ def logout(request: Any) -> Any:
     >>> logout(None)  # doctest: +SKIP
   """
   access_token = request.session.get('access_token')
-  if access_token:
+  if access_token and not _is_synthetic_access_token(access_token):
     _http_session.post('%s/oauth2/tokens/revoke' % tenant_base_url,
                        json={'token': access_token})
   request.session.flush()
@@ -238,7 +260,7 @@ def check_for_tokens(request: Any) -> Any:
   try:
     session = request.session
     access_token = request.session.get("access_token")
-    if access_token and str(access_token).startswith("api-key:"):
+    if _is_synthetic_access_token(access_token):
       return True
     if access_token:
       now_epoch = int(time.time())

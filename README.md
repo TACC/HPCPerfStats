@@ -312,7 +312,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    Optional tuning lives in other sections (see `hpcperfstats.ini.example`):
 
-   - **`[PORTAL]`** — Gunicorn/Django web stack only: `gunicorn_workers`, `parallel_db_prefetch_max`, `api_small_executor_max_workers`, `db_conn_max_age`, `db_statement_timeout_ms`, `db_idle_in_transaction_timeout_ms`, `cors_origin_scheme`
+   - **`[PORTAL]`** — Gunicorn/Django web stack only: `gunicorn_workers`, `parallel_db_prefetch_max`, `api_small_executor_max_workers`, `db_conn_max_age`, `db_statement_timeout_ms`, `db_idle_in_transaction_timeout_ms`, `cors_origin_scheme`, and development-only `separate_test_login` (default **no**)
    - **`[PIPELINE]`** — ingest, archive, and metrics: required paths `acct_path`, `archive_dir`, `daily_archive_dir`; optional `sync_*`, `metrics_*`, `archive_*`, `metrics_pool_processes`, and related keys
    - **`[RMQ]`**, **`[OAUTH2]`**, optional **`[CACHE]`**, **`[SYSLOG]`**, **`[XALT]`** — integration sections unchanged
 

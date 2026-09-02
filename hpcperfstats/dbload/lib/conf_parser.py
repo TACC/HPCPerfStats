@@ -74,6 +74,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PORTAL", "db_conn_max_age"),
     ("PORTAL", "db_statement_timeout_ms"),
     ("PORTAL", "db_idle_in_transaction_session_timeout_ms"),
+    ("PORTAL", "separate_test_login"),
     # [PIPELINE] — sync_timedb, update_metrics, sync_acct, archive paths/tuning
     ("PIPELINE", "metrics_pool_processes"),
     ("PIPELINE", "metrics_pool_maxtasksperchild"),
@@ -235,6 +236,7 @@ INI_OPTION_DEFAULTS = {
     'db_conn_max_age': '90',
     'db_statement_timeout_ms': '120000',
     'db_idle_in_transaction_session_timeout_ms': '300000',
+    'separate_test_login': 'no',
     'metrics_pool_processes': '24',
     'metrics_pool_maxtasksperchild': '16',
     'metrics_scheduler_mode': 'global_priority',
@@ -1350,6 +1352,28 @@ def get_cors_origin_scheme() -> Any:
   if raw in ('http', 'https'):
     return raw
   return 'https'
+
+
+def get_separate_test_login() -> bool:
+  """
+  Return whether the development-only test-login surface is enabled.
+
+  Reads ``[PORTAL] separate_test_login``. Missing or unrecognized values
+  follow the registry default ``no``.
+
+  Returns:
+    bool: True when staff may create a test user and ``/test-login/`` is live.
+
+  Examples:
+    >>> isinstance(get_separate_test_login(), bool)
+    True
+  """
+  _ensure_cfg_loaded()
+  return bool(
+      _parse_bool(
+          _ini_get_from_registry("PORTAL", "separate_test_login"),
+      )
+  )
 
 
 def format_cors_allowed_origins_csv_from_ini() -> Any:

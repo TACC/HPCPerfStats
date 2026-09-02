@@ -53,6 +53,7 @@ PORTAL_WEB_TUNING_OPTIONS = frozenset({
     "db_conn_max_age",
     "db_statement_timeout_ms",
     "db_idle_in_transaction_session_timeout_ms",
+    "separate_test_login",
 })
 
 OAUTH2_OPTIONS = frozenset({

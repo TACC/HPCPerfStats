@@ -27,17 +27,21 @@ EXPECTED_ROUTE_TEMPLATES: FrozenSet[str] = frozenset({
     "api/jobs/<str:jid>/<str:type_name>/",
     "api/jobs/<str:pk>/",
     "api/jobs/<str:pk>/plots/",
+    "api/jobs/filter_options/",
     "api/jobs/histograms/",
+    "api/jobs/histograms/batch/",
     "api/pub/cluster-dashboard/",
     "api/sacct/ingest/",
     "api/schema/",
     "api/session/",
     "api/session/drop-staff/",
+    "api/test-login/user/",
     "api/user-api-key/",
     "api/user-api-key/rotate/",
     "csp-report/",
     "login/",
     "login_prompt",
+    "test-login/",
     "logout/",
     "oauth_callback/",
 })
@@ -114,6 +118,8 @@ def build_pipeline_http_endpoint_specs(
   add(PipelineHttpEndpointSpec(
       "login/", "GET", "/login/", 200, 499, None, True))
   add(PipelineHttpEndpointSpec(
+      "test-login/", "GET", "/test-login/", 404, 404, None, True))
+  add(PipelineHttpEndpointSpec(
       "login_prompt", "GET", "/login_prompt", 200, 499, None, True))
   add(PipelineHttpEndpointSpec(
       "logout/", "GET", "/logout/", 200, 399, None, True))
@@ -126,8 +132,17 @@ def build_pipeline_http_endpoint_specs(
   add(PipelineHttpEndpointSpec(
       "api/jobs/", "GET", "/api/jobs/", 200, 299, "application/json", False))
   add(PipelineHttpEndpointSpec(
+      "api/jobs/filter_options/", "GET", "/api/jobs/filter_options/",
+      200, 299, "application/json", False))
+  add(PipelineHttpEndpointSpec(
       "api/jobs/histograms/", "GET", "/api/jobs/histograms/?group=metric&metric=runtime",
       200, 299, "application/json", False))
+  add(PipelineHttpEndpointSpec(
+      "api/jobs/histograms/batch/", "GET",
+      "/api/jobs/histograms/batch/?metrics=runtime",
+      200, 299, "application/json", False))
+  add(PipelineHttpEndpointSpec(
+      "api/schema/", "GET", "/api/schema/", 200, 299, None, False))
   add(PipelineHttpEndpointSpec(
       "api/pub/cluster-dashboard/", "GET", "/api/pub/cluster-dashboard/",
       200, 299, "application/json", False))
@@ -157,6 +172,9 @@ def build_pipeline_http_endpoint_specs(
       200, 299, "application/json", False))
   add(PipelineHttpEndpointSpec(
       "api/session/", "GET", "/api/session/", 200, 299, "application/json", False))
+  add(PipelineHttpEndpointSpec(
+      "api/test-login/user/", "GET", "/api/test-login/user/",
+      404, 404, None, False))
   add(PipelineHttpEndpointSpec(
       "api/user-api-key/", "GET", "/api/user-api-key/",
       200, 299, "application/json", False))

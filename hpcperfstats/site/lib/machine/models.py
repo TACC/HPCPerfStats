@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex
 import hashlib
@@ -567,3 +568,118 @@ class ApiKey(models.Model):
       >>> ApiKey().matches_raw_key("x")  # doctest: +SKIP
     """
     return hmac.compare_digest(self.key, self.hash_raw_key(raw_key))
+
+
+class TestLoginUser(models.Model):
+  """
+  Singleton hashed credential for the INI-gated hidden test-login page.
+
+  Subclasses Django ``Model``. Staff create or replace the single row via the
+  staff API; plaintext passwords are never stored.
+
+  Attributes:
+    username: Staff-chosen test-login username.
+    password_hash: Django password hasher output (never returned by the API).
+    created_at: When the singleton row was first created.
+    updated_at: When the singleton row was last replaced.
+    created_by: Staff username that last wrote the row.
+  """
+
+  username = models.CharField(max_length=128)
+  password_hash = models.CharField(max_length=256)
+  created_at = models.DateTimeField(auto_now_add=True)
+  updated_at = models.DateTimeField(auto_now=True)
+  created_by = models.CharField(max_length=128)
+
+  class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
+    db_table = "test_login_user"
+    managed = True
+
+  def __str__(self) -> str:
+    """
+    Return the configured test-login username.
+
+    Returns:
+      str: Username stored on this singleton row.
+
+    Examples:
+      >>> TestLoginUser(username="qa").__str__()
+      'qa'
+    """
+    return self.username
+
+  def check_password(self, raw_password: str) -> bool:
+    """
+    Return True when *raw_password* matches the stored hash.
+
+    Args:
+      raw_password (str): Candidate plaintext from the hidden login form.
+
+    Returns:
+      bool: True when Django's hasher accepts the candidate.
+
+    Examples:
+      >>> TestLoginUser(password_hash="x").check_password("")
+      False
+    """
+    return bool(check_password(raw_password, self.password_hash))
+
+  @classmethod
+  def get_singleton(cls) -> TestLoginUser | None:
+    """
+    Return the single configured test-login row, or None.
+
+    Returns:
+      TestLoginUser | None: First row by primary key, if any.
+
+    Examples:
+      >>> TestLoginUser.get_singleton()  # doctest: +SKIP
+      None
+    """
+    return cls.objects.order_by("pk").first()
+
+  @classmethod
+  def replace_singleton(
+      cls,
+      username: str,
+      password: str,
+      created_by: str,
+  ) -> TestLoginUser:
+    """
+    Create or replace the singleton username and password hash.
+
+    Args:
+      username (str): Test-login username chosen by staff.
+      password (str): New plaintext password; hashed before save.
+      created_by (str): Staff username that submitted the replace.
+
+    Returns:
+      TestLoginUser: The persisted singleton row.
+
+    Examples:
+      >>> from django.contrib.auth.hashers import make_password
+      >>> hashed = make_password("secret12")
+      >>> hashed.startswith("pbkdf2_") or hashed.startswith("argon2")
+      True
+    """
+    password_hash = make_password(password)
+    obj = cls.get_singleton()
+    if obj is None:
+      return cls.objects.create(
+          username=username,
+          password_hash=password_hash,
+          created_by=created_by,
+      )
+    obj.username = username
+    obj.password_hash = password_hash
+    obj.created_by = created_by
+    obj.save(update_fields=[
+        "username",
+        "password_hash",
+        "created_by",
+        "updated_at",
+    ])
+    return obj

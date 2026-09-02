@@ -104,6 +104,9 @@ rmq_queue = %(machine)s
 # PostgreSQL idle_in_transaction_session_timeout ms; 0 omits (default 300000).
 # db_idle_in_transaction_session_timeout_ms = 300000
 
+# Development-only hidden test-login; default no.
+# separate_test_login = no
+
 [PIPELINE]
 # Directory for Slurm accounting logs.
 acct_path = %(data_dir)s/accounting

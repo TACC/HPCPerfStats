@@ -28,6 +28,9 @@ vi.mock("@/views/JobMonitor", () => ({
 vi.mock("@/views/PageApiKey", () => ({
   default: () => <div data-testid="view-api-key">PageApiKey</div>,
 }));
+vi.mock("@/views/PageTestLogin", () => ({
+  default: () => <div data-testid="view-test-login">PageTestLogin</div>,
+}));
 vi.mock("@/views/PageNotFound", () => ({
   default: () => <div data-testid="view-not-found">PageNotFound</div>,
 }));
@@ -62,6 +65,7 @@ const ROUTED_VIEWS: { view: MachineRouteView; testId: string }[] = [
   { view: "adminMonitor", testId: "view-admin-monitor" },
   { view: "jobMonitor", testId: "view-job-monitor" },
   { view: "pageApiKey", testId: "view-api-key" },
+  { view: "pageTestLogin", testId: "view-test-login" },
 ];
 
 describe("matchMachineView", () => {

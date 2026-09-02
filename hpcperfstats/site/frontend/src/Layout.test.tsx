@@ -128,6 +128,7 @@ describe("Layout", () => {
       "Invalidate Cache For Page",
       "Current github commit: abcdef1",
     ]);
+    expect(screen.queryByText("Create test user")).not.toBeInTheDocument();
     const commitLink = screen.getByRole("menuitem", {
       name: "Current github commit: abcdef1",
     });
@@ -140,6 +141,21 @@ describe("Layout", () => {
     for (const item of items) {
       expect(item).toBeVisible();
     }
+  });
+
+  it("shows Create test user only when the session advertises separate_test_login", async () => {
+    const user = userEvent.setup();
+    renderLayout({
+      logged_in: true,
+      username: "alice",
+      is_staff: true,
+      separate_test_login: true,
+    });
+    await user.click(screen.getByRole("button", { name: "Staff actions" }));
+    const items = await screen.findAllByRole("menuitem");
+    expect(items.map((item) => item.textContent?.trim())).toContain(
+      "Create test user",
+    );
   });
 
   it("shows commit link in mobile staff section", async () => {

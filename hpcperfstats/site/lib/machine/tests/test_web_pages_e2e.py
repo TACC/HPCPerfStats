@@ -49,12 +49,14 @@ class TestWebPagesEndToEnd:
         "/machine/host/node1/plot/",
         "/machine/admin_monitor/",
         "/machine/job_monitor/",
+        "/machine/test-login/",
         "/pub/",
         "/pub/cluster-dashboard",
     ):
       assert client.get(path).status_code == 404
 
     assert client.get("/robots.txt").status_code == 404
+    assert client.get("/test-login/").status_code == 404
     prefixes = load_public_robots_allow_prefixes()
     expected_body = format_public_robots_txt_body(prefixes)
     assert "User-agent: *" in expected_body

@@ -11,6 +11,8 @@ import { WIRE_AUDIT_CASES, WIRE_AUDIT_EXACT_PATHS } from "@test/wire-audit/wire-
 const EXPECTED_EXACT_ROUTES = [
   "GET /api/session/",
   "POST /api/session/drop-staff/",
+  "GET /api/test-login/user/",
+  "POST /api/test-login/user/",
   "GET /api/user-api-key/",
   "POST /api/user-api-key/rotate/",
   "POST /api/cache/invalidate-page/",

@@ -205,6 +205,7 @@ def test_nginx_static_files_conf_allowlists_django_prefixes_and_default_404():
       "location ^~ /api-key/",
       "location ^~ /admin_monitor/",
       "location ^~ /login/",
+      "location ^~ /test-login/",
       "location = /login_prompt",
       "location ^~ /logout/",
       "location ^~ /oauth_callback/",

@@ -21,6 +21,25 @@ export const WIRE_AUDIT_CASES: WireAuditCase[] = [
       username: "alice",
       is_staff: false,
       machine_name: ".cluster.example",
+      separate_test_login: false,
+    },
+  },
+  {
+    method: "GET",
+    path: "/api/test-login/user/",
+    wire: {
+      configured: true,
+      username: "qa",
+      login_url: "/test-login/",
+    },
+  },
+  {
+    method: "POST",
+    path: "/api/test-login/user/",
+    wire: {
+      configured: true,
+      username: "qa",
+      login_url: "/test-login/",
     },
   },
   {

@@ -141,6 +141,7 @@ Source: operator scan PDF `2026-08-05-hpcperfstats04.pdf` against the public TLS
 - **nginx** emits HSTS, framing, COOP, Permissions-Policy, Referrer-Policy, and CSP for public traffic; Django middleware remains defense-in-depth for direct Gunicorn.
 - OCSP stapling completed when the leaf advertises an AIA responder (trusted CA bundle + runtime resolver).
 - API key material hashed at rest; staff ingest requires `_require_staff`.
+- Optional development-only **`[PORTAL] separate_test_login`** (default **no**) exposes a hidden `/test-login/` HTML form and staff `GET`/`POST /api/test-login/user/` to create one hashed singleton user. Disabled surfaces return **404** (not 403). Sessions use a `test-login:` token prefix so Tapis userinfo/refresh/revoke are skipped. Passwords are stored with Django `make_password` only.
 - API throttling is active for authenticated and expensive API routes, with stricter staff-ingest scope.
 - SPA stack controls in **Frontend stack security posture** (static export, TypeScript, OpenAPI/Orval/Zod, CSRF mutator, no CDN, prod build boundary, hash-based edge CSP).
 - `robots.txt` defaults to **`Disallow: /`** with explicit **`Allow:`** prefixes only for anonymous **`/pub/`** HTML shell paths (canonical registry in [`publicRobotsAllowPrefixes.js`](../hpcperfstats/site/frontend/src/config/publicRobotsAllowPrefixes.js), emitted by **`scripts/generate-robots-txt.mjs`** during the Next static-export build; nginx serves **`/robots.txt`** from **`STATIC_ROOT`**); **`/api/pub/`** remains uncrawlable by default.
@@ -171,3 +172,4 @@ Source: operator scan PDF `2026-08-05-hpcperfstats04.pdf` against the public TLS
 | 2026-08-05 | Burp 2026-08-05 disposition: nginx-canonical HSTS/framing/CSP; OCSP trusted cert + runtime resolver; hash-based SPA CSP (no unsafe-inline); public dashboard non-reflective validation. |
 | 2026-08-13 | Dependabot #109: `overrides.nanoid@^3.3.18` (GHSA-2v37-7h3g-55p8); lock **3.3.18**; `npm audit` 0; regression test on package.json + lock. |
 | 2026-09-02 | Dependabot #110–#116: `fast-uri@^4.1.3` (lock **4.1.4**), `qs@^6.16.0`, `@xmldom/xmldom@^0.9.12`; `npm audit` 0; override-floor tests. CodeQL #23/#25 dismissed won't-fix (no credential leak; test-only hostname assert). |
+| 2026-09-02 | Documented INI-gated development test-login (`separate_test_login`, hashed singleton, 404 when off, synthetic `test-login:` sessions). |
