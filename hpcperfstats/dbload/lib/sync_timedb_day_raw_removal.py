@@ -3709,6 +3709,35 @@ class DayRawRemovalCoordinator:
     self._last_closed_raw_kick_action = kick_action
     return []
 
+  def kick_closed_raw_paths_to_ingest(
+    self,
+    tar_path: str,
+    *,
+    reason: str = "",
+  ) -> List[str]:
+    """
+    Enqueue closed-raw paths for ingest without verify-handoff gating.
+
+    Used by H17 day_close ``wait_on_ingest`` yield when
+    ``complete_handoff_to_ingest`` returns empty because
+    ``should_handoff_day_close_to_ingest`` is false.
+
+    Args:
+      tar_path (str): Daily ``.tar`` path.
+      reason (str): Handoff reason token for the callback.
+
+    Returns:
+      List[str]: Paths passed to ``on_handoff_to_ingest`` (may be empty).
+
+    Examples:
+      >>> DayRawRemovalCoordinator().kick_closed_raw_paths_to_ingest("x")
+      []
+    """
+    return self.requeue_closed_raw_paths_for_ingest(
+        tar_path,
+        reason=reason or "day_close_wait_on_ingest",
+    )
+
   def discover_closed_raw_on_disk_handoffs(self) -> List[Tuple[str, List[str]]]:
     """
     Boot-time handoff for days with closed raw blockers (narrow path lists).

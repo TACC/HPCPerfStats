@@ -1,7 +1,7 @@
 ---
 description: Hot wait/poll/retry/defer INFO must be rate-limited with suppressed_n= (never bare log_print in loops)
 alwaysApply: false
-globs: hpcperfstats/dbload/lib/sync_timedb_archive_members_coord.py,hpcperfstats/dbload/lib/sync_timedb_populate_pool.py,hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/tests/test_sync_timedb_archive_members_store.py,hpcperfstats/tests/test_sync_timedb_archive.py
+globs: hpcperfstats/dbload/lib/sync_timedb_archive_members_coord.py,hpcperfstats/dbload/lib/sync_timedb_populate_pool.py,hpcperfstats/dbload/lib/sync_timedb_queue_orchestrator.py,hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/tests/test_sync_timedb_archive_members_store.py,hpcperfstats/tests/test_sync_timedb_archive.py,hpcperfstats/tests/test_sync_timedb_queue_orchestrator.py
 ---
 
 # sync_timedb Anti Log Spam
@@ -14,9 +14,9 @@ INFO/WARN on **hot wait / poll / retry / defer** paths that can fire **per worke
 
 Prefer a **shared in-process limiter** when N threads (ingest-pool / populate waiters / main) share the same calendar day — process-local intervals in each thread still emit ~N lines per window.
 
-Canonical helper: `_rate_limited_day_info_log` (+ day-specific wrappers) in `sync_timedb_archive_members_coord.py`.
+Canonical helper: `_rate_limited_day_info_log` (+ day-specific wrappers) in `sync_timedb_archive_members_coord.py`. Day-close claim/vacate for cooperative ``yielded`` uses the same helper via `_day_close_log_claim_if_allowed` / `_day_close_log_vacate_if_allowed` in `sync_timedb_queue_orchestrator.py` (30 s interval).
 
-**Deliberate INFO (not spam):** `reconstruct-coordinator` **600s** `queue_orchestrator progress day=` / `status` rollup (`sync_timedb_progress_report.py`) and single-line `archive_job_done` are intentional operator surfaces — do not rate-limit those. Do **not** restore per-batch `Archive/delete gate: skipped`, per-job `handoff_to_ingest … reason=gate_skip`, or undated `queue_orchestrator idle reconstruct work=` INFO (day-line `gate_skip=` / `ingest_handoff=` / `reconstruct_enq=` / `incomplete_seen=` own that visibility).
+**Deliberate INFO (not spam):** `reconstruct-coordinator` **600s** `queue_orchestrator progress day=` / `status` rollup (`sync_timedb_progress_report.py`) and single-line `archive_job_done` are intentional operator surfaces — do not rate-limit those. Do **not** restore per-batch `Archive/delete gate: skipped`, per-job `handoff_to_ingest … reason=gate_skip`, or undated `queue_orchestrator idle reconstruct work=` INFO (day-line `gate_skip=` / `ingest_handoff=` / `reconstruct_enq=` / `incomplete_seen=` own that visibility). Unbroken multi-minute streams of `day_close claim` / `vacate … outcome=yielded` are a **fail** signature (yield reclaim busy-wait) — after the yield-spin fix expect rate-limited lines + `yielded=` on 600s progress.
 
 ## Motivating regression (RC-ER, 2026-07-29)
 

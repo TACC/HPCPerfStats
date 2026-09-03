@@ -1106,7 +1106,7 @@ def test_day_close_failure_requeues(tmp_path, monkeypatch):
     def result(self):
       return "deferred_age"
 
-  n = qo._drain_day_close_ready(
+  n, _coop = qo._drain_day_close_ready(
       client,
       inflight={"2026-08-01": _Done()},
       leases={"2026-08-01": claim},
@@ -1136,7 +1136,7 @@ def test_day_close_verify_failed_bumps_attempt(tmp_path, monkeypatch):
     def result(self):
       return "verify_failed"
 
-  n = qo._drain_day_close_ready(
+  n, _coop = qo._drain_day_close_ready(
       client,
       inflight={"2026-08-02": _Done()},
       leases={"2026-08-02": claim},
@@ -1166,7 +1166,7 @@ def test_day_close_path_identity_records_complete_on_calendar_day(tmp_path):
     def result(self):
       return "complete"
 
-  n = qo._drain_day_close_ready(
+  n, _coop = qo._drain_day_close_ready(
       client,
       inflight={ident: _Done()},
       leases={ident: claim},
@@ -1200,7 +1200,7 @@ def test_day_close_incomplete_raw_requeues_without_ack(tmp_path):
     def result(self):
       return "incomplete_raw"
 
-  n = qo._drain_day_close_ready(
+  n, _coop = qo._drain_day_close_ready(
       client,
       inflight={ident: _Done()},
       leases={ident: claim},
@@ -1235,7 +1235,7 @@ def test_day_close_fake_sealed_requeues_without_ack(tmp_path):
     def result(self):
       return "sealed"
 
-  n = qo._drain_day_close_ready(
+  n, _coop = qo._drain_day_close_ready(
       client,
       inflight={ident: _Done()},
       leases={ident: claim},
@@ -1262,13 +1262,14 @@ def test_fill_day_close_records_dc_run_for_tar_path_identity(
   client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   ident = "/d/2026-06-07.tar"
+  qo._DAY_CLOSE_YIELD_BACKOFF.clear_tar(ident)
   jq.enqueue_list_job(client, kind="day_close", identity=ident)
   monkeypatch.setattr(qo, "_run_day_close_job", lambda *a, **k: "deferred_age")
   monkeypatch.setattr(qo.cfg, "get_sync_day_close_max_inflight", lambda: 1)
   inflight = {}
   leases = {}
   with ThreadPoolExecutor(max_workers=1) as ex:
-    n = qo._fill_day_close_slots(
+    n, _skips = qo._fill_day_close_slots(
         client,
         executor=ex,
         inflight=inflight,
@@ -1433,6 +1434,10 @@ def test_day_close_claim_vacate_and_stage_enter_logged(tmp_path, monkeypatch):
       log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   assert any("day_close vacate" in line for line in logs)
+  # Drain records yield backoff; clear so the fill assertion below can submit.
+  qo._DAY_CLOSE_YIELD_BACKOFF.clear_tar(str(tar))
+  qo._DAY_CLOSE_CLAIM_LOG_STATE.clear()
+  qo._DAY_CLOSE_VACATE_LOG_STATE.clear()
 
   class _Ex:
     def submit(self, fn, *a, **k):
@@ -1447,7 +1452,7 @@ def test_day_close_claim_vacate_and_stage_enter_logged(tmp_path, monkeypatch):
   )
   monkeypatch.setattr(qo.cfg, "get_sync_day_close_max_inflight", lambda: 1)
   fill_logs = []
-  submitted = qo._fill_day_close_slots(
+  submitted, _skips = qo._fill_day_close_slots(
       client,
       executor=_Ex(),
       inflight={},
@@ -1590,6 +1595,7 @@ def test_day_close_closed_raw_handoff_false_yields_before_merge(tmp_path, monkey
   tar.write_bytes(b"tar")
   reconcile_calls = []
   seal_calls = []
+  kicks = []
 
   monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
@@ -1614,7 +1620,11 @@ def test_day_close_closed_raw_handoff_false_yields_before_merge(tmp_path, monkey
       return False
 
     def complete_handoff_to_ingest(self, _tar_path, reason=""):
-      pass
+      return []
+
+    def kick_closed_raw_paths_to_ingest(self, tar_path, reason=""):
+      kicks.append((tar_path, reason))
+      return ["/raw/a"]
 
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
@@ -1629,6 +1639,7 @@ def test_day_close_closed_raw_handoff_false_yields_before_merge(tmp_path, monkey
   assert outcome == "yielded"
   assert not reconcile_calls
   assert not seal_calls
+  assert kicks and kicks[0][1] == "day_close_wait_on_ingest"
 
 
 def test_day_close_pre_seal_verify_before_reconcile_merge():
@@ -2921,3 +2932,182 @@ def test_rc8e_census_wired_in_fill_tick():
   loop = inspect.getsource(qo._ingest_coordinator_loop)
   assert "_ingest_coordinator_tick_sleep_s" in loop
   assert "_reconcile_local_ingest_maps_to_store" in loop
+
+
+def test_day_close_yield_backoff_skips_reclaim_without_claim_log(tmp_path, monkeypatch):
+  """After yield, fill silently requeues while sticky backoff is active."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      JanitorDeferTracker,
+  )
+
+  qo._DAY_CLOSE_CLAIM_LOG_STATE.clear()
+  qo._DAY_CLOSE_VACATE_LOG_STATE.clear()
+  tracker = JanitorDeferTracker()
+  client = SyncTimedbJobStore("")
+  jq.reset_job_queue_script_cache_for_tests()
+  ident = str(tmp_path / "2020-01-01.tar")
+  jq.enqueue_list_job(client, kind="day_close", identity=ident)
+  tracker.record_yield_backoff(ident)
+  assert tracker.yield_backoff_active(ident)
+
+  class _Ex:
+    def submit(self, *a, **k):
+      raise AssertionError("must not submit during yield backoff")
+
+  logs = []
+  monkeypatch.setattr(qo.cfg, "get_sync_day_close_max_inflight", lambda: 1)
+  submitted, skips = qo._fill_day_close_slots(
+      client,
+      executor=_Ex(),
+      inflight={},
+      leases={},
+      tgz_archive_dir=str(tmp_path),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda msg, **k: logs.append(str(msg)),
+      defer_tracker=tracker,
+  )
+  assert submitted == 0
+  assert skips >= 1
+  assert not any("day_close claim" in line for line in logs)
+  assert client.llen(jq.job_queue_key("day_close")) == 1
+
+
+def test_day_close_yield_backoff_clears_on_complete(tmp_path):
+  """Complete drain clears sticky yield backoff for the identity."""
+  from concurrent.futures import Future
+
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      JanitorDeferTracker,
+  )
+
+  tracker = JanitorDeferTracker()
+  client = SyncTimedbJobStore("")
+  jq.reset_job_queue_script_cache_for_tests()
+  ident = "2020-01-02"
+  jq.enqueue_list_job(client, kind="day_close", identity=ident)
+  claim = jq.claim_list_job(
+      client, kind="day_close", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+  )
+  tracker.record_yield_backoff(ident)
+  assert tracker.yield_backoff_active(ident)
+  fut = Future()
+  fut.set_result("complete")
+  n, coop = qo._drain_day_close_ready(
+      client,
+      inflight={ident: fut},
+      leases={ident: claim},
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+      defer_tracker=tracker,
+  )
+  assert n == 1
+  assert coop is False
+  assert not tracker.yield_backoff_active(ident)
+
+
+def test_day_close_coordinator_sleeps_poll_on_yield_only_churn(monkeypatch):
+  """Yield-only drain with empty inflight must sleep poll_s, not ~50ms."""
+  sleeps = []
+  monkeypatch.setattr(qo.time, "sleep", lambda s: sleeps.append(float(s)))
+
+  class _Barrier:
+    draining = type("E", (), {"is_set": staticmethod(lambda: False)})()
+    def mark_drained(self, role):
+      del role
+
+  ticks = {"n": 0}
+
+  def _fill(*a, **k):
+    return (0, 2)
+
+  def _drain(*a, **k):
+    ticks["n"] += 1
+    if ticks["n"] >= 2:
+      # Force loop exit via draining on next check by raising.
+      raise StopIteration("done")
+    return (1, True)
+
+  monkeypatch.setattr(qo, "_fill_day_close_slots", _fill)
+  monkeypatch.setattr(qo, "_drain_day_close_ready", _drain)
+  monkeypatch.setattr(qo, "shutdown_requested", lambda: False)
+  monkeypatch.setattr(qo, "set_daemon_thread_title", lambda *a, **k: None)
+  monkeypatch.setattr(qo, "_reap_stale_inflight", lambda *a, **k: 0)
+
+  try:
+    qo._day_close_coordinator_loop(
+        client=object(),
+        directory="/a",
+        tgz_archive_dir="/d",
+        day_executor=object(),
+        poll_s=5.0,
+        barrier=_Barrier(),
+        day_inflight={},
+        day_leases={},
+        busy_flags={},
+        busy_lock=__import__("threading").Lock(),
+        log_fn=None,
+    )
+  except StopIteration:
+    pass
+  assert sleeps, "expected cooperative poll sleep"
+  assert sleeps[0] >= 5.0
+
+
+def test_day_close_disk_remaining_kick_enqueues_when_verify_handoff_false():
+  """Handoff helper kicks closed-raw paths when complete_handoff returns []."""
+  kicks = []
+
+  class _Coord:
+    def complete_handoff_to_ingest(self, tar_path, reason=""):
+      return []
+
+    def kick_closed_raw_paths_to_ingest(self, tar_path, reason=""):
+      kicks.append((tar_path, reason))
+      return ["/raw/x"]
+
+  qo._day_close_complete_wait_on_ingest_handoff(_Coord(), "/d/2020-01-01.tar")
+  assert kicks == [("/d/2020-01-01.tar", "day_close_wait_on_ingest")]
+
+
+def test_day_close_claim_vacate_yield_log_rate_limited(tmp_path):
+  """Many yield vacates for one day emit one INFO + suppressed_n."""
+  from concurrent.futures import Future
+
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      JanitorDeferTracker,
+  )
+
+  qo._DAY_CLOSE_VACATE_LOG_STATE.clear()
+  qo._DAY_CLOSE_CLAIM_LOG_STATE.clear()
+  tracker = JanitorDeferTracker()
+  client = SyncTimedbJobStore("")
+  jq.reset_job_queue_script_cache_for_tests()
+  ident = "/d/2020-03-01.tar"
+  logs = []
+  for i in range(5):
+    jq.enqueue_list_job(client, kind="day_close", identity=ident)
+    claim = jq.claim_list_job(
+        client,
+        kind="day_close",
+        owner_token="n:h:b:%d" % i,
+        ttl_s=60,
+        now_s=1000.0 + i,
+    )
+    fut = Future()
+    fut.set_result("yielded")
+    qo._drain_day_close_ready(
+        client,
+        inflight={ident: fut},
+        leases={ident: claim},
+        archive_data_dir=str(tmp_path),
+        log_fn=lambda msg, **k: logs.append(str(msg)),
+        defer_tracker=tracker,
+    )
+  vacate_lines = [ln for ln in logs if "day_close vacate" in ln]
+  assert len(vacate_lines) == 1
+  assert "outcome=yielded" in vacate_lines[0]
+  # After the first emit, subsequent cycles accumulate suppressed_n on the
+  # next allowed emit; with interval 30s only one line in this burst.

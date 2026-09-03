@@ -485,6 +485,73 @@ class JanitorDeferTracker:
         )
         entry["write_lock_until"] = now + float(delay)
 
+  def record_yield_backoff(self, tar_path: str) -> None:
+    """
+    Record a cooperative day_close yield for sticky reclaim backoff.
+
+    Same 30s→300s schedule as write_lock contention. Fill skips reclaim
+    while active so claim/vacate cannot busy-wait for minutes.
+
+    Args:
+      tar_path (str): Daily ``.tar`` path or day_close LIST identity.
+
+    Returns:
+      None
+
+    Examples:
+      >>> JanitorDeferTracker().record_yield_backoff("/d/2020-01-01.tar")
+    """
+    tar_norm = _tar_norm(tar_path)
+    if not tar_norm:
+      return
+    now = time.time()
+    with self._lock:
+      entry = self._by_tar.setdefault(
+          tar_norm,
+          {"count": 0, "first_ts": now},
+      )
+      streak = int(entry.get("yield_streak", 0)) + 1
+      entry["yield_streak"] = streak
+      exp = min(max(0, streak - 1), 4)
+      delay = min(
+          WRITE_LOCK_BACKOFF_MAX_S,
+          WRITE_LOCK_BACKOFF_BASE_S * (2 ** exp),
+      )
+      entry["yield_until"] = now + float(delay)
+      entry["last_ts"] = now
+      entry["last_reason"] = "yielded"
+
+  def yield_backoff_active(
+    self,
+    tar_path: str,
+    *,
+    now: Optional[float] = None,
+  ) -> bool:
+    """
+    True while sticky day_close yield reclaim backoff has not expired.
+
+    Args:
+      tar_path (str): Daily ``.tar`` path or day_close LIST identity.
+      now (Optional[float]): Wall clock override for tests.
+
+    Returns:
+      bool: Whether reclaim should skip submit for this identity.
+
+    Examples:
+      >>> JanitorDeferTracker().yield_backoff_active("x", now=0.0)
+      False
+    """
+    tar_norm = _tar_norm(tar_path)
+    if not tar_norm:
+      return False
+    clock = time.time() if now is None else float(now)
+    with self._lock:
+      entry = self._by_tar.get(tar_norm)
+      if not entry:
+        return False
+      until = float(entry.get("yield_until", 0.0) or 0.0)
+      return until > clock
+
   def write_lock_backoff_active(
     self,
     tar_path: str,

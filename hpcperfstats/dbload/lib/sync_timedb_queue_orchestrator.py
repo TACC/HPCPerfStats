@@ -34,6 +34,11 @@ Attributes:
   _SHUTDOWN_REQUESTED: Event set by ``SIGTERM``/``SIGINT`` handlers.
   _TRANSIENT_DAY_CLOSE_OUTCOMES: day_close results that requeue without
     burning a retry attempt.
+  _DAY_CLOSE_YIELD_BACKOFF: Sticky per-identity yield reclaim backoff tracker.
+  _DAY_CLOSE_CLAIM_LOG_STATE: Rate-limit state for day_close claim INFO.
+  _DAY_CLOSE_VACATE_LOG_STATE: Rate-limit state for day_close vacate INFO.
+  DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S: Seconds between claim/vacate INFO
+    lines per calendar day (yielded reclaim spam guard).
   _discover_bg_executor: Single-worker executor for idle GNU find (P1-10).
   _discover_bg_future: In-flight background discover future, or ``None``.
   _discover_bg_lock: Serializes submit/shutdown of background discover.
@@ -73,7 +78,13 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   daily_tar_path_for_stats_path,
 )
 from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
-  AppendDayClaimLists,
+    AppendDayClaimLists,
+)
+from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    _rate_limited_day_info_log,
+)
+from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+    JanitorDeferTracker,
 )
 from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
@@ -111,6 +122,11 @@ _TRANSIENT_DAY_CLOSE_OUTCOMES = frozenset({
     "skipped",
     "incomplete_raw",
 })
+# Sticky reclaim backoff after cooperative day_close yield (30s→300s).
+_DAY_CLOSE_YIELD_BACKOFF = JanitorDeferTracker()
+_DAY_CLOSE_CLAIM_LOG_STATE: dict[str, dict[str, float]] = {}
+_DAY_CLOSE_VACATE_LOG_STATE: dict[str, dict[str, float]] = {}
+DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S = 30.0
 # Slack over the per-file budget: a worker that is merely slow (contended DB,
 # large file) must not be abandoned before the ingest path itself gives up.
 INGEST_WATCHDOG_GRACE_S = it.STALL_ABORT_GRACE_S
@@ -1459,7 +1475,11 @@ def _day_close_complete_wait_on_ingest_handoff(
     tar_path: str,
 ) -> None:
   """
-  Record cooperative handoff before ``wait_on_ingest`` yield.
+  Handoff closed raw to ingest before ``wait_on_ingest`` yield.
+
+  Prefer verify-gated ``complete_handoff_to_ingest``. When that returns
+  empty (verify-handoff false but closed raw still on disk), kick
+  ``kick_closed_raw_paths_to_ingest`` so idle yield still refills ingest.
 
   Args:
     coord (Any): :class:`DayRawRemovalCoordinator` instance.
@@ -1471,9 +1491,95 @@ def _day_close_complete_wait_on_ingest_handoff(
   Examples:
     >>> _day_close_complete_wait_on_ingest_handoff(object(), "/tmp/x.tar")
   """
+  paths: list[str] = []
   complete_fn = getattr(coord, "complete_handoff_to_ingest", None)
   if callable(complete_fn):
-    complete_fn(tar_path, reason="day_close_wait_on_ingest")
+    result = complete_fn(tar_path, reason="day_close_wait_on_ingest")
+    if result:
+      paths = list(result)
+  if paths:
+    return
+  kick_fn = getattr(coord, "kick_closed_raw_paths_to_ingest", None)
+  if callable(kick_fn):
+    kick_fn(tar_path, reason="day_close_wait_on_ingest")
+  else:
+    requeue_fn = getattr(coord, "requeue_closed_raw_paths_for_ingest", None)
+    if callable(requeue_fn):
+      requeue_fn(tar_path, reason="day_close_wait_on_ingest")
+
+
+def _day_close_log_claim_if_allowed(
+    day_tok: str,
+    identity: str,
+    *,
+    log_fn: Callable[..., None] | None = None,
+) -> None:
+  """
+  Rate-limit day_close claim INFO (yield reclaim can otherwise flood).
+
+  Args:
+    day_tok (str): Calendar day token.
+    identity (str): day_close LIST identity.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _day_close_log_claim_if_allowed("2020-01-01", "/d/2020-01-01.tar")
+  """
+  _rate_limited_day_info_log(
+      _DAY_CLOSE_CLAIM_LOG_STATE,
+      day_tok or "unknown",
+      "queue_orchestrator day_close claim day=%s identity=%s"
+      % (day_tok, identity),
+      interval_s=DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S,
+      log_fn=log_fn or log_print,
+      skip_unknown_day=False,
+  )
+
+
+def _day_close_log_vacate_if_allowed(
+    day_tok: str,
+    identity: str,
+    outcome: str,
+    *,
+    log_fn: Callable[..., None] | None = None,
+) -> None:
+  """
+  Rate-limit day_close vacate INFO for cooperative ``yielded`` outcomes.
+
+  Non-yield vacates always log (complete / fail need operator visibility).
+
+  Args:
+    day_tok (str): Calendar day token.
+    identity (str): day_close LIST identity.
+    outcome (str): Drain outcome token.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _day_close_log_vacate_if_allowed(
+    ...   "2020-01-01", "/d/2020-01-01.tar", "complete",
+    ... )
+  """
+  line = (
+      "queue_orchestrator day_close vacate day=%s identity=%s outcome=%s"
+      % (day_tok, identity, outcome)
+  )
+  if outcome == "yielded":
+    _rate_limited_day_info_log(
+        _DAY_CLOSE_VACATE_LOG_STATE,
+        day_tok or "unknown",
+        line,
+        interval_s=DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S,
+        log_fn=log_fn or log_print,
+        skip_unknown_day=False,
+    )
+    return
+  _log(line, log_fn=log_fn)
 
 
 def _run_day_close_job(
@@ -3703,9 +3809,13 @@ def _fill_day_close_slots(
   tgz_archive_dir: str,
   archive_data_dir: str,
   log_fn: Callable[..., None] | None = None,
-) -> int:
+  defer_tracker: JanitorDeferTracker | None = None,
+) -> tuple[int, int]:
   """
   Pop day_close LIST jobs into the day_close thread pool.
+
+  Identities under sticky yield reclaim backoff are requeued silently
+  without submit or claim INFO.
 
   Args:
     client (Any): job store.
@@ -3715,9 +3825,10 @@ def _fill_day_close_slots(
     tgz_archive_dir (str): Daily archive directory.
     archive_data_dir (str): Archive data root for day_raw_removal.
     log_fn (Callable[..., None] | None): Optional logger.
+    defer_tracker (JanitorDeferTracker | None): Yield backoff tracker.
 
   Returns:
-    int: Newly submitted day_close jobs.
+    tuple[int, int]: ``(submitted, backoff_skips)``.
 
   Examples:
     >>> from concurrent.futures import ThreadPoolExecutor
@@ -3732,11 +3843,16 @@ def _fill_day_close_slots(
     ...     tgz_archive_dir="/d",
     ...     archive_data_dir="/a",
     ...   )
-    0
+    (0, 0)
   """
+  tracker = defer_tracker if defer_tracker is not None else _DAY_CLOSE_YIELD_BACKOFF
   cap = max(1, int(cfg.get_sync_day_close_max_inflight()))
   submitted = 0
-  while len(inflight) < cap:
+  backoff_skips = 0
+  # Bound silent backoff reclaim so a full LIST of backoffed days cannot
+  # spin forever inside one fill tick.
+  skip_budget = max(cap * 4, 16)
+  while len(inflight) < cap and skip_budget > 0:
     claim = jq.claim_list_job(
         client,
         kind=jq.JOB_KIND_DAY_CLOSE,
@@ -3744,6 +3860,13 @@ def _fill_day_close_slots(
     )
     if claim is None:
       break
+    if tracker.yield_backoff_active(claim.identity):
+      _requeue_claimed_job_without_attempt_bump(
+          client, claim=claim, log_fn=log_fn,
+      )
+      backoff_skips += 1
+      skip_budget -= 1
+      continue
     try:
       fut = executor.submit(
           _run_day_close_job,
@@ -3763,21 +3886,13 @@ def _fill_day_close_slots(
       break
     inflight[claim.identity] = fut
     leases[claim.identity] = claim
-    progress.record(
-        progress.day_token_from_day_close_identity(claim.identity),
-        "dc_run",
-        1,
-    )
-    _log(
-        "queue_orchestrator day_close claim day=%s identity=%s"
-        % (
-            progress.day_token_from_day_close_identity(claim.identity),
-            claim.identity,
-        ),
-        log_fn=log_fn,
+    day_tok = progress.day_token_from_day_close_identity(claim.identity)
+    progress.record(day_tok, "dc_run", 1)
+    _day_close_log_claim_if_allowed(
+        day_tok, claim.identity, log_fn=log_fn,
     )
     submitted += 1
-  return submitted
+  return submitted, backoff_skips
 
 
 def _drain_day_close_ready(
@@ -3787,7 +3902,8 @@ def _drain_day_close_ready(
   leases: dict[str, Any],
   archive_data_dir: str = "",
   log_fn: Callable[..., None] | None = None,
-) -> int:
+  defer_tracker: JanitorDeferTracker | None = None,
+) -> tuple[int, bool]:
   """
   Collect finished day_close futures; ACK only filesystem+age complete.
 
@@ -3801,9 +3917,12 @@ def _drain_day_close_ready(
     leases (dict[str, Any]): Claim map (mutated).
     archive_data_dir (str): Archive data root for the dead-letter sidecar.
     log_fn (Callable[..., None] | None): Optional logger.
+    defer_tracker (JanitorDeferTracker | None): Yield backoff tracker.
 
   Returns:
-    int: Number of day_close jobs drained.
+    tuple[int, bool]: ``(drained, cooperative_churn_only)`` — the bool is
+    True when every drained outcome was a transient cooperative yield
+    (or incomplete_raw / deferred_age) with no ``complete``.
 
   Examples:
     >>> _drain_day_close_ready(
@@ -3813,9 +3932,12 @@ def _drain_day_close_ready(
     ...   inflight={},
     ...   leases={},
     ... )
-    0
+    (0, True)
   """
+  tracker = defer_tracker if defer_tracker is not None else _DAY_CLOSE_YIELD_BACKOFF
   done = 0
+  saw_productive = False
+  saw_cooperative = False
   for identity, fut in list(inflight.items()):
     if not fut.done():
       continue
@@ -3834,12 +3956,12 @@ def _drain_day_close_ready(
           log_fn=log_fn,
       )
     day_tok = progress.day_token_from_day_close_identity(identity)
-    _log(
-        "queue_orchestrator day_close vacate day=%s identity=%s outcome=%s"
-        % (day_tok, identity, failure or outcome),
-        log_fn=log_fn,
+    vacate_outcome = failure or outcome
+    _day_close_log_vacate_if_allowed(
+        day_tok, identity, vacate_outcome, log_fn=log_fn,
     )
     if failure or outcome == "verify_failed":
+      saw_productive = True
       progress.record(
           day_tok,
           "verify_failed",
@@ -3857,17 +3979,26 @@ def _drain_day_close_ready(
     if outcome != "complete":
       if outcome == "deferred_age":
         progress.record(day_tok, "deferred_age", 1)
+        saw_cooperative = True
       elif outcome == "yielded":
         progress.record(day_tok, "yielded", 1)
+        saw_cooperative = True
+        tracker.record_yield_backoff(identity)
       elif (
           outcome == "incomplete_raw"
           or outcome not in _TRANSIENT_DAY_CLOSE_OUTCOMES
       ):
         progress.record(day_tok, "incomplete_raw", 1)
+        saw_cooperative = True
+        tracker.record_yield_backoff(identity)
+      else:
+        saw_cooperative = True
       _requeue_claimed_job_without_attempt_bump(
           client, claim=claim, log_fn=log_fn,
       )
       continue
+    saw_productive = True
+    tracker.clear_tar(identity)
     if claim is not None:
       progress.record(day_tok, "complete", 1)
       jq.ack_job(
@@ -3876,7 +4007,13 @@ def _drain_day_close_ready(
           identity=identity,
           owner_token=claim.owner_token,
       )
-  return done
+  if done == 0:
+    cooperative_only = True
+  elif saw_productive:
+    cooperative_only = False
+  else:
+    cooperative_only = saw_cooperative
+  return done, cooperative_only
 
 
 def _renew_active_claims(
@@ -4848,8 +4985,11 @@ def _day_close_coordinator_loop(
       if draining:
         barrier.draining.set()
       did = 0
+      cooperative_churn = False
+      submitted = 0
+      backoff_skips = 0
       if not draining:
-        did += _fill_day_close_slots(
+        submitted, backoff_skips = _fill_day_close_slots(
             client,
             executor=day_executor,
             inflight=day_inflight,
@@ -4858,13 +4998,21 @@ def _day_close_coordinator_loop(
             archive_data_dir=directory,
             log_fn=log_fn,
         )
-      did += _drain_day_close_ready(
+        did += submitted + backoff_skips
+        if backoff_skips and not submitted:
+          cooperative_churn = True
+      drained, drain_coop = _drain_day_close_ready(
           client,
           inflight=day_inflight,
           leases=day_leases,
           archive_data_dir=directory,
           log_fn=log_fn,
       )
+      did += drained
+      if drain_coop and drained:
+        cooperative_churn = True
+      if submitted:
+        cooperative_churn = False
       now = time.monotonic()
       if now - last_reap >= max(poll_s, 5.0):
         last_reap = now
@@ -4897,6 +5045,9 @@ def _day_close_coordinator_loop(
               timeout=min(poll_s, 0.5),
               return_when=FIRST_COMPLETED,
           )
+        elif cooperative_churn:
+          # Yield/backoff-only churn: sleep poll_s, not ~50ms busy-wait.
+          time.sleep(max(0.05, poll_s))
         else:
           time.sleep(min(0.05, poll_s))
   finally:
