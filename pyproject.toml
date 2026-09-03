@@ -67,6 +67,7 @@ dev = [
 # is not imported at runtime. Not installed by `pip install -e ".[test]"`.
 # setuptools/wheel: required for numexpr's setuptools.build_meta when pip
 # uses --no-build-isolation (official python images may omit setuptools).
+# versioneer: pandas generate_version.py imports it during meson setup.
 image-build = [
   "mkl==2026.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
   "mkl-devel==2026.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
@@ -76,6 +77,7 @@ image-build = [
   "cython==3.3.0",
   "setuptools>=80",
   "wheel",
+  "versioneer[toml]==0.29",
 ]
 
 [tool.pytest.ini_options]

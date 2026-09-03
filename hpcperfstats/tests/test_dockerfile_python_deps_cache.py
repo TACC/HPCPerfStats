@@ -37,7 +37,10 @@ def test_hpcperfstats_base_layers_python_deps_on_pyproject():
   )
   assert "tomllib" in stage
   assert "-r /tmp/requirements-build.txt" in stage
-  assert "-r /tmp/requirements-mkl-src.txt" in stage
+  assert "--constraint /tmp/requirements-mkl-src.txt" in stage
+  assert "-r /tmp/requirements-mkl-numpy.txt" in stage
+  assert "-r /tmp/requirements-mkl-numexpr.txt" in stage
+  assert "-r /tmp/requirements-mkl-pandas.txt" in stage
   assert "-r /tmp/requirements-rest.txt" in stage
   assert "pip install --no-cache-dir --no-deps ." in stage
   assert "shlex.quote" not in stage

@@ -154,7 +154,7 @@ RUN /bin/bash -o pipefail -c '\
     deps = proj[\"dependencies\"]; \
     build = proj[\"optional-dependencies\"][\"image-build\"]; \
     build_names = {n(d) for d in build}; \
-    assert {\"mkl\", \"mkl-devel\", \"meson-python\", \"setuptools\"} <= build_names, build_names; \
+    assert {\"mkl\", \"mkl-devel\", \"meson-python\", \"setuptools\", \"versioneer\"} <= build_names, build_names; \
     src_names = {\"numpy\", \"numexpr\", \"pandas\"}; \
     src = [d for d in deps if n(d) in src_names]; \
     assert src_names <= {n(d) for d in src}, src_names - {n(d) for d in src}; \
@@ -185,6 +185,7 @@ RUN /bin/bash -o pipefail -c '\
 # numexpr VML requires site.cfg in the sdist tree (setup.py sets USE_VML).
 # GNU ld -lmkl_rt needs unversioned libmkl_rt.so; pip mkl wheels often ship only .so.N.
 # -march=native: images are built on the prod host that runs them (not portable).
+# pandas meson generate_version.py imports versioneer (image-build extra).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   MKLROOT="$(python3 -c "import sysconfig; from pathlib import Path; r=Path(sysconfig.get_path(\"data\")); assert list((r/\"lib\"/\"pkgconfig\").glob(\"mkl-*.pc\")), r; assert list((r/\"lib\").glob(\"libmkl_rt.so*\")), r; assert (r/\"include\"/\"mkl.h\").is_file() or list((r/\"include\").rglob(\"mkl.h\")), r; print(r)")"; \

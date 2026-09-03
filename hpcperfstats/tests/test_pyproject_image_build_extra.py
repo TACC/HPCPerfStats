@@ -28,6 +28,7 @@ def test_image_build_extra_is_image_only_and_pinned():
       "cython",
       "setuptools",
       "wheel",
+      "versioneer",
   } <= names
 
   runtime = {_pep508_name(d) for d in proj["dependencies"]}
@@ -64,3 +65,20 @@ def test_image_build_extra_includes_setuptools_for_no_build_isolation():
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   assert "--no-build-isolation" in dockerfile
   assert "setuptools" in dockerfile
+
+
+def test_image_build_extra_includes_versioneer_for_pandas_meson():
+  """Regression: pandas 3 meson generate_version.py imports versioneer under --no-build-isolation."""
+  proj = tomllib.loads((_repo_root() / "pyproject.toml").read_text())["project"]
+  build = proj["optional-dependencies"]["image-build"]
+  names = {_pep508_name(d) for d in build}
+  assert "versioneer" in names
+  assert any("versioneer[toml]==0.29" in d for d in build)
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  assert "versioneer" in dockerfile
+  writer_assert = next(
+      line
+      for line in dockerfile.splitlines()
+      if "build_names" in line and "versioneer" in line
+  )
+  assert "versioneer" in writer_assert

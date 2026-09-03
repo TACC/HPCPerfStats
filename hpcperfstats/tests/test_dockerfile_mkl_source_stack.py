@@ -43,7 +43,7 @@ def test_base_apt_has_mkl_compile_tools_not_openblas_dev():
 
 
 def test_mkl_source_stack_run_order_and_flags():
-  """Per ABI: image-build wheels, then --no-binary compile, then constrained rest."""
+  """Per ABI: image-build, numpy MKL, numexpr VML via site.cfg, pandas, rest."""
   base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
   runs = _run_instructions(base)
   assert runs, "expected RUN instructions in hpcperfstats-base"
@@ -59,8 +59,13 @@ def test_mkl_source_stack_run_order_and_flags():
       and "python3.14t" not in b
       and "--no-binary" not in b
   )
+  # Regression: one pip resolve of numpy+numexpr under --no-build-isolation fails
+  # because numexpr setup imports numpy during metadata generation.
   gil_compile_i, gil_compile = _find(
-      lambda b: "--no-binary numpy,numexpr,pandas" in b and "python3.14t" not in b
+      lambda b: "--no-binary numpy" in b
+      and "ne.use_vml" in b
+      and "--no-binary pandas" in b
+      and "python3.14t" not in b
   )
   gil_rest_i, gil_rest = _find(
       lambda b: "-r /tmp/requirements-rest.txt" in b
@@ -73,7 +78,10 @@ def test_mkl_source_stack_run_order_and_flags():
       and "--no-binary" not in b
   )
   ft_compile_i, ft_compile = _find(
-      lambda b: "python3.14t" in b and "--no-binary numpy,numexpr,pandas" in b
+      lambda b: "python3.14t" in b
+      and "--no-binary numpy" in b
+      and "ne.use_vml" in b
+      and "--no-binary pandas" in b
   )
   ft_rest_i, ft_rest = _find(
       lambda b: "python3.14t" in b
@@ -94,16 +102,49 @@ def test_mkl_source_stack_run_order_and_flags():
     assert "--force-reinstall" in compile_body
     assert "-Dblas=mkl" in compile_body
     assert "-Dlapack=mkl" in compile_body
-    assert "-r /tmp/requirements-mkl-src.txt" in compile_body
+    assert "-Dcpu-baseline=native" in compile_body
+    assert "-Dcpu-dispatch=max" in compile_body
+    assert "-march=native" in compile_body
+    assert "-r /tmp/requirements-mkl-numpy.txt" in compile_body
+    assert "-r /tmp/requirements-mkl-numexpr.txt" in compile_body
+    assert "-r /tmp/requirements-mkl-pandas.txt" in compile_body
+    # Combined three-way --no-binary must not return (numexpr needs installed numpy).
+    assert "--no-binary numpy,numexpr,pandas" not in compile_body
+    assert "--no-binary numexpr,pandas" not in compile_body
+    assert "-r /tmp/requirements-mkl-src.txt" not in compile_body
     assert "-r /tmp/requirements-rest.txt" not in compile_body
-    assert "show_config" in compile_body
     assert "scipy" not in compile_body
+    # Regression: default show_config() returns None; mode=dicts returns the MKL map.
+    assert 'show_config(mode="dicts")' in compile_body or (
+        'show_config(mode=\\"dicts\\")' in compile_body
+    )
+    assert 'c=str(np.show_config())' not in compile_body
+    # numexpr Intel VML: inject site.cfg into unpacked sdist (setup.py USE_VML).
+    assert "site.cfg" in compile_body
+    assert "libraries = mkl_rt" in compile_body
+    assert "pip download" in compile_body
+    assert "ne.use_vml" in compile_body
+    # Regression: GNU ld cannot find -lmkl_rt when only libmkl_rt.so.N exists.
+    assert 'libmkl_rt.so.*' in compile_body
+    assert "LIBRARY_PATH" in compile_body
+    assert "ln -s" in compile_body
     # mkl 2026+ has no importable Python module; discover via sysconfig data prefix.
     assert "sysconfig.get_path" in compile_body
     assert 'glob("mkl-*.pc")' in compile_body or 'glob(\\"mkl-*.pc\\")' in compile_body
     assert "libmkl_rt.so" in compile_body
+    assert "mkl.h" in compile_body
     assert "import pathlib,mkl" not in compile_body
     assert "import mkl" not in compile_body
+    # MKL meson flags apply to numpy install only; later steps have no -Dblas.
+    numpy_marker = "-r /tmp/requirements-mkl-numpy.txt"
+    pandas_marker = "-r /tmp/requirements-mkl-pandas.txt"
+    numpy_pip = compile_body.index(numpy_marker)
+    pandas_pip = compile_body.index(pandas_marker)
+    assert numpy_pip < pandas_pip
+    assert "-Dblas=mkl" in compile_body[: compile_body.index("ne.use_vml")]
+    after_numpy_install = compile_body[numpy_pip + len(numpy_marker) :]
+    assert "-Dblas=mkl" not in after_numpy_install
+    assert "-Dlapack=mkl" not in after_numpy_install
 
   for rest in (gil_rest, ft_rest):
     assert "--no-binary" not in rest
@@ -115,6 +156,24 @@ def test_mkl_source_stack_run_order_and_flags():
   assert "--no-binary :all:" not in base
   assert "-m ensurepip" not in base
   assert "ensurepip --upgrade" not in base
+
+
+def test_numexpr_link_creates_unversioned_mkl_rt_so():
+  """Regression: ld -lmkl_rt fails when pip mkl ships only libmkl_rt.so.2."""
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  assert "cannot find -lmkl_rt" not in base
+  assert "libmkl_rt.so.*" in base
+  assert "LIBRARY_PATH" in base
+  assert "ln -s" in base
+
+
+def test_show_config_assert_uses_dicts_mode_not_none_return():
+  """Regression: str(np.show_config()) is 'None' even when MKL linked (numpy 2.5)."""
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  assert 'c=str(np.show_config())' not in base
+  assert "mode=" in base and "dicts" in base
+  assert "ne.use_vml" in base
+  assert "site.cfg" in base
 
 
 def test_mklroot_discovery_does_not_import_mkl_module():
@@ -186,14 +245,25 @@ def test_writer_run_payload_executes_against_real_pyproject(tmp_path, monkeypatc
 
   build = (out / "requirements-build.txt").read_text().splitlines()
   src = (out / "requirements-mkl-src.txt").read_text().splitlines()
+  numpy_only = (out / "requirements-mkl-numpy.txt").read_text().splitlines()
+  numexpr_only = (out / "requirements-mkl-numexpr.txt").read_text().splitlines()
+  pandas_only = (out / "requirements-mkl-pandas.txt").read_text().splitlines()
+  after_numpy = (out / "requirements-mkl-after-numpy.txt").read_text().splitlines()
   rest = (out / "requirements-rest.txt").read_text().splitlines()
   all_deps = (out / "requirements.txt").read_text().splitlines()
 
   assert {_pep508_name(d) for d in src} == {"numpy", "numexpr", "pandas"}
+  assert {_pep508_name(d) for d in numpy_only} == {"numpy"}
+  assert {_pep508_name(d) for d in numexpr_only} == {"numexpr"}
+  assert {_pep508_name(d) for d in pandas_only} == {"pandas"}
+  assert {_pep508_name(d) for d in after_numpy} == {"numexpr", "pandas"}
+  assert set(numpy_only) | set(after_numpy) == set(src)
+  assert set(numexpr_only) | set(pandas_only) == set(after_numpy)
   assert "numpy" not in {_pep508_name(d) for d in rest}
   assert "bokeh==3.9.2" in rest
   assert any(_pep508_name(d) == "mkl" for d in build)
   assert any(_pep508_name(d) == "meson-python" for d in build)
   assert any(_pep508_name(d) == "setuptools" for d in build)
+  assert any(_pep508_name(d) == "versioneer" for d in build)
   assert set(all_deps) == set(src) | set(rest)
   assert "scipy" not in "\n".join(all_deps).lower()
