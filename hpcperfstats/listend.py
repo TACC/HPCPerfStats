@@ -16,6 +16,8 @@ Attributes:
   _message_timestamps: Attribute.
   _db_backpressure_pause: Attribute.
   _amqp_reconnect_requested: Attribute.
+  _amqp_connection_generation: Consume-session id; stale ack/nack callbacks
+    no-op after ``set_amqp_connection`` so leftover tags cannot 406.
   _amqp_reconnect_backoff_seconds: Attribute.
   _consume_attach_monotonic: Attribute.
   _amqp_connection: Current BlockingConnection for threadsafe ack/nack.
@@ -47,7 +49,7 @@ import signal
 import sys
 import time
 from collections import deque
-from threading import Event, Lock, Thread
+from threading import Event, Lock, Thread, current_thread, main_thread
 from fcntl import LOCK_EX, LOCK_NB, flock
 
 import pika
@@ -128,6 +130,9 @@ _consume_attach_monotonic: float | None = None
 # Consume BlockingConnection / channel for archive-thread threadsafe ack/nack.
 _amqp_connection: Any = None
 _amqp_channel: Any = None
+# Bumped on every ``set_amqp_connection`` so deferred acks from a prior
+# BlockingConnection cannot ``basic_ack`` an unknown delivery tag (406).
+_amqp_connection_generation = 0
 # Host-affine archive thread pool (off AMQP callback thread).
 _archive_queues: list = []
 _archive_threads: list = []
@@ -815,6 +820,35 @@ def _bind_listend_consume(
   channel.basic_consume(queue_name, on_message)
 
 
+def _format_amqp_consume_error(exc: BaseException) -> str:
+  """
+  Return a non-empty consume-error string for logs.
+
+  Some pika/AMQP failures stringify to ``\"\"`` (production: bare
+  ``Error while consuming from RabbitMQ:``). Fall back to the exception
+  type and ``repr(args)`` so the reconnect loop still records a reason.
+
+  Args:
+    exc (BaseException): Exception raised from connect or consume.
+
+  Returns:
+    str: ``str(exc)`` when non-empty; otherwise type name plus args.
+
+  Examples:
+    >>> _format_amqp_consume_error(Exception("Channel is closed."))
+    'Channel is closed.'
+    >>> _format_amqp_consume_error(Exception())
+    'Exception'
+  """
+  text = str(exc).strip()
+  if text:
+    return text
+  args = getattr(exc, "args", ())
+  if args:
+    return "%s %r" % (type(exc).__name__, args)
+  return type(exc).__name__
+
+
 def _log_amqp_outer_loop_error(exc: BaseException) -> str:
   """
   Log an outer reconnect-loop failure; return a coarse error kind.
@@ -888,10 +922,12 @@ def _is_amqp_channel_or_connection_dead(
   """
   Return True when the AMQP channel or connection is unusable.
 
-  Matches closed-channel/connection messages, pika wrong-state / stream-lost
-  errors, and ``channel.is_closed`` / ``channel.connection.is_closed`` when
-  those attributes exist. Idle-monitor depth probes use a separate short-lived
-  connection and must not share this consumer channel.
+  Matches closed-channel/connection messages (including pika
+  ``closed or closing connection`` and 406 ``unknown delivery tag`` /
+  ``PRECONDITION_FAILED``), pika wrong-state / stream-lost errors, and
+  ``channel.is_closed`` / ``connection.is_closed`` / ``is_closing`` when
+  those attributes exist. Idle-monitor depth probes use a separate
+  short-lived connection and must not share this consumer channel.
 
   Args:
     exc (BaseException | None): Exception from ack/nack/consume, if any.
@@ -914,7 +950,10 @@ def _is_amqp_channel_or_connection_dead(
       pass
     try:
       conn = getattr(channel, "connection", None)
-      if conn is not None and getattr(conn, "is_closed", False):
+      if conn is not None and (
+          getattr(conn, "is_closed", False)
+          or getattr(conn, "is_closing", False)
+      ):
         return True
     except Exception:
       pass
@@ -931,19 +970,139 @@ def _is_amqp_channel_or_connection_dead(
   ):
     return True
   msg = str(exc).lower()
-  return "channel is closed" in msg or "connection is closed" in msg
+  dead_markers = (
+      "channel is closed",
+      "connection is closed",
+      "closed or closing connection",
+      "unknown delivery tag",
+      "precondition_failed",
+  )
+  return any(marker in msg for marker in dead_markers)
+
+
+def _is_amqp_io_thread() -> bool:
+  """
+  Return True when this thread owns the consume BlockingConnection I/O.
+
+  ``listend.main`` drives ``process_data_events`` / ``start_consuming`` on the
+  process MainThread. Archive and idle-monitor threads must not close that
+  connection: pika ``BlockingConnection`` is not thread-safe, and
+  ``add_callback_threadsafe()`` on a closed or closing connection raises
+  ``ConnectionWrongStateError``.
+
+  Returns:
+    bool: ``True`` on the process MainThread.
+
+  Examples:
+    >>> isinstance(_is_amqp_io_thread(), bool)
+    True
+  """
+  try:
+    return current_thread() is main_thread()
+  except Exception:
+    return False
+
+
+def _consume_connection_unusable(conn: Any, channel: Any = None) -> bool:
+  """
+  Return True when the consume connection cannot accept callbacks or acks.
+
+  Args:
+    conn (Any): Stored ``BlockingConnection``, or ``None``.
+    channel (Any): Consume channel, or ``None``.
+
+  Returns:
+    bool: ``True`` when ``conn`` is missing, closed, closing, or the
+    channel is already dead.
+
+  Examples:
+    >>> _consume_connection_unusable(None)
+    True
+  """
+  if conn is None:
+    return True
+  try:
+    if getattr(conn, "is_closed", False):
+      return True
+  except Exception:
+    return True
+  try:
+    if getattr(conn, "is_closing", False):
+      return True
+  except Exception:
+    pass
+  return _is_amqp_channel_or_connection_dead(None, channel)
+
+
+def _consume_amqp_for_threadsafe_op() -> tuple[Any, Any, int] | None:
+  """
+  Return the current consume connection snapshot, or ``None`` if unusable.
+
+  Marks a connection-scoped reconnect when the stored connection is already
+  closed/closing so archive threads never call ``add_callback_threadsafe``
+  on a dead ``BlockingConnection``.
+
+  Returns:
+    tuple[Any, Any, int] | None: ``(connection, channel, generation)`` when
+    an ack/nack may be scheduled; ``None`` when the consume session is
+    missing or already dead.
+
+  Examples:
+    >>> _consume_amqp_for_threadsafe_op() is None
+    True
+  """
+  conn = _amqp_connection
+  ch = _amqp_channel
+  gen = _amqp_connection_generation
+  if conn is None or ch is None:
+    return None
+  if _amqp_reconnect_requested or _consume_connection_unusable(conn, ch):
+    _request_amqp_full_reconnect(
+        ch, "consume connection unusable before ack/nack"
+    )
+    return None
+  return conn, ch, gen
+
+
+def _consume_amqp_callback_stale(conn: Any, generation: int) -> bool:
+  """
+  Return True when a deferred ack/nack belongs to a prior consume session.
+
+  Args:
+    conn (Any): Connection captured when the callback was scheduled.
+    generation (int): ``_amqp_connection_generation`` at schedule time.
+
+  Returns:
+    bool: ``True`` when reconnect ran or the stored connection changed.
+
+  Examples:
+    >>> _consume_amqp_callback_stale(object(), -1)
+    True
+  """
+  return (
+      _amqp_connection_generation != generation
+      or _amqp_reconnect_requested
+      or _amqp_connection is not conn
+  )
 
 
 def _request_amqp_full_reconnect(channel: Any, reason: str) -> None:
   """
-  Stop consuming and close the BlockingConnection for a clean reconnect.
+  Request a consume-connection rebuild; close only on the AMQP I/O thread.
 
   Sets ``_amqp_reconnect_requested`` and logs at most once while the flag is
   already set (avoids per-message ERROR storms after the channel dies). Does
   not set ``_db_backpressure_pause``; pause/resume remains same-connection.
 
+  Archive workers (and any non-MainThread caller) only set the flag: pika
+  ``BlockingConnection`` is not thread-safe, so ``stop_consuming`` /
+  ``close()`` from ``listend-archive-N`` races the consume loop and can
+  leave leftover ``add_callback_threadsafe`` acks that 406 on the next
+  channel. MainThread still tears down channel then connection.
+
   Args:
-    channel (Any): Pika channel whose connection should be torn down.
+    channel (Any): Pika channel whose connection should be torn down on
+      the I/O thread, or inspected for ``connection``.
     reason (str): Short reason string for the reconnect log line.
 
   Returns:
@@ -960,9 +1119,69 @@ def _request_amqp_full_reconnect(channel: Any, reason: str) -> None:
   log_print(
       "AMQP reconnect requested (channel/connection dead): %s" % reason
   )
-  conn = getattr(channel, "connection", None) if channel is not None else None
-  _close_amqp_channel_and_connection_gracefully(
-      channel, conn, stop_consuming=True)
+  if _is_amqp_io_thread():
+    conn = getattr(channel, "connection", None) if channel is not None else None
+    _close_amqp_channel_and_connection_gracefully(
+        channel, conn, stop_consuming=True)
+    return
+  _schedule_amqp_reconnect_teardown_on_io_thread(channel)
+
+
+def _schedule_amqp_reconnect_teardown_on_io_thread(channel: Any) -> None:
+  """
+  Ask the consume I/O thread to stop consuming and close the connection.
+
+  Archive threads must not call ``stop_consuming`` or ``close`` themselves.
+  When the consume connection is already closed or closing, skip scheduling
+  (``add_callback_threadsafe`` would raise; ``start_consuming`` will exit).
+
+  Args:
+    channel (Any): Channel that reported the failure, or ``None``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _schedule_amqp_reconnect_teardown_on_io_thread(None)
+  """
+
+  def _teardown() -> None:
+    """
+    Close the consume channel/connection on the pika I/O thread.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _teardown()  # doctest: +SKIP
+    """
+    if not _amqp_reconnect_requested:
+      return
+    ch = _amqp_channel if _amqp_channel is not None else channel
+    conn = (
+        _amqp_connection
+        if _amqp_connection is not None
+        else (getattr(ch, "connection", None) if ch is not None else None)
+    )
+    _close_amqp_channel_and_connection_gracefully(
+        ch, conn, stop_consuming=True
+    )
+
+  conn = _amqp_connection
+  if conn is None and channel is not None:
+    conn = getattr(channel, "connection", None)
+  if conn is None:
+    return
+  try:
+    if getattr(conn, "is_closed", False) or getattr(conn, "is_closing", False):
+      return
+  except Exception:
+    return
+  try:
+    if hasattr(conn, "add_callback_threadsafe"):
+      conn.add_callback_threadsafe(_teardown)
+  except Exception:
+    pass
 
 
 def _request_db_backpressure_pause(channel: Any, delivery_tag: Any) -> None:
@@ -1047,6 +1266,9 @@ def set_amqp_connection(connection: Any, channel: Any) -> None:
   """
   Store the consume BlockingConnection/channel for archive-thread ack/nack.
 
+  Increments ``_amqp_connection_generation`` so deferred ack/nack callbacks
+  from a prior session no-op (avoids 406 unknown delivery tag).
+
   Args:
     connection (Any): Pika ``BlockingConnection``, or ``None`` to clear.
     channel (Any): Consume channel, or ``None`` to clear.
@@ -1057,9 +1279,10 @@ def set_amqp_connection(connection: Any, channel: Any) -> None:
   Examples:
     >>> set_amqp_connection(None, None)
   """
-  global _amqp_connection, _amqp_channel
+  global _amqp_connection, _amqp_channel, _amqp_connection_generation
   _amqp_connection = connection
   _amqp_channel = channel
+  _amqp_connection_generation += 1
 
 
 def clear_amqp_connection() -> None:
@@ -1099,6 +1322,11 @@ def _threadsafe_basic_ack(delivery_tag: Any) -> None:
   """
   Schedule ``basic_ack`` on the consume connection I/O thread.
 
+  Skips ``add_callback_threadsafe`` when the consume connection is already
+  closed/closing (pika raises ``ConnectionWrongStateError``). Deferred
+  callbacks no-op after ``set_amqp_connection`` so leftover tags cannot
+  406 on a new channel.
+
   Args:
     delivery_tag (Any): AMQP delivery tag to acknowledge.
 
@@ -1108,10 +1336,12 @@ def _threadsafe_basic_ack(delivery_tag: Any) -> None:
   Examples:
     >>> _threadsafe_basic_ack(1)  # doctest: +SKIP
   """
-  conn = _amqp_connection
-  ch = _amqp_channel
-  if conn is None or ch is None or delivery_tag is None:
+  if delivery_tag is None:
     return
+  snapshot = _consume_amqp_for_threadsafe_op()
+  if snapshot is None:
+    return
+  conn, ch, gen = snapshot
 
   def _ack() -> None:
     """
@@ -1123,6 +1353,8 @@ def _threadsafe_basic_ack(delivery_tag: Any) -> None:
     Examples:
       >>> _ack()  # doctest: +SKIP
     """
+    if _consume_amqp_callback_stale(conn, gen):
+      return
     try:
       ch.basic_ack(delivery_tag=delivery_tag)
     except Exception as exc:
@@ -1147,6 +1379,8 @@ def _threadsafe_basic_nack(delivery_tag: Any, *, requeue: bool = True) -> None:
   """
   Schedule ``basic_nack`` on the consume connection I/O thread.
 
+  Same closed-connection and generation guards as ``_threadsafe_basic_ack``.
+
   Args:
     delivery_tag (Any): AMQP delivery tag to negatively acknowledge.
     requeue (bool): When ``True``, requeue the message on the broker.
@@ -1157,10 +1391,12 @@ def _threadsafe_basic_nack(delivery_tag: Any, *, requeue: bool = True) -> None:
   Examples:
     >>> _threadsafe_basic_nack(1)  # doctest: +SKIP
   """
-  conn = _amqp_connection
-  ch = _amqp_channel
-  if conn is None or ch is None or delivery_tag is None:
+  if delivery_tag is None:
     return
+  snapshot = _consume_amqp_for_threadsafe_op()
+  if snapshot is None:
+    return
+  conn, ch, gen = snapshot
 
   def _nack() -> None:
     """
@@ -1172,6 +1408,8 @@ def _threadsafe_basic_nack(delivery_tag: Any, *, requeue: bool = True) -> None:
     Examples:
       >>> _nack()  # doctest: +SKIP
     """
+    if _consume_amqp_callback_stale(conn, gen):
+      return
     try:
       if hasattr(ch, "basic_nack"):
         ch.basic_nack(delivery_tag=delivery_tag, requeue=requeue)
@@ -1730,7 +1968,10 @@ def main() -> None:
                 _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
                 reconnect_sleep_s = _apply_amqp_reconnect_backoff()
               else:
-                log_print("Error while consuming from RabbitMQ: %s" % e)
+                log_print(
+                    "Error while consuming from RabbitMQ: %s"
+                    % _format_amqp_consume_error(e)
+                )
               break
             except Exception as e:
               if should_use_amqp_exponential_reconnect_backoff(e):
@@ -1743,7 +1984,10 @@ def main() -> None:
                 _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
                 reconnect_sleep_s = _apply_amqp_reconnect_backoff()
               else:
-                log_print("Error while consuming from RabbitMQ: %s" % e)
+                log_print(
+                    "Error while consuming from RabbitMQ: %s"
+                    % _format_amqp_consume_error(e)
+                )
               break
 
             if _db_backpressure_pause:

@@ -732,3 +732,211 @@ def test_drop_mode_uses_ini_prefetch_not_only_pause(monkeypatch):
   src = inspect.getsource(listend.main)
   assert "get_listend_amqp_prefetch" in src
   assert "prefetch_count=1" in src
+
+
+def test_format_amqp_consume_error_uses_type_when_str_empty():
+  """Production: consume loop logged a blank reason after reconnect."""
+  import hpcperfstats.listend as listend
+
+  assert listend._format_amqp_consume_error(Exception()) == "Exception"
+  assert (
+      listend._format_amqp_consume_error(Exception("Channel is closed."))
+      == "Channel is closed."
+  )
+
+
+def test_is_amqp_dead_detects_add_callback_threadsafe_on_closed_connection():
+  """Production: archive-3 add_callback_threadsafe on a closing BlockingConnection."""
+  import hpcperfstats.listend as listend
+  from pika.exceptions import ConnectionWrongStateError
+
+  msg = (
+      "BlockingConnection.add_callback_threadsafe() called on closed "
+      "or closing connection."
+  )
+  assert listend._is_amqp_channel_or_connection_dead(Exception(msg))
+  assert listend._is_amqp_channel_or_connection_dead(
+      ConnectionWrongStateError(msg)
+  )
+  assert listend._is_amqp_channel_or_connection_dead(
+      Exception("PRECONDITION_FAILED - unknown delivery tag 2155")
+  )
+
+
+def test_threadsafe_ack_on_closed_connection_does_not_close_from_worker(
+    monkeypatch,
+):
+  """Archive threads must not close BlockingConnection (not thread-safe)."""
+  import threading
+
+  import hpcperfstats.listend as listend
+  from pika.exceptions import ConnectionWrongStateError
+
+  listend._amqp_reconnect_requested = False
+  close_calls = []
+  monkeypatch.setattr(
+      listend,
+      "_close_amqp_channel_and_connection_gracefully",
+      lambda *a, **k: close_calls.append((a, k)),
+  )
+  monkeypatch.setattr(listend, "log_print", lambda _m: None)
+
+  class _ClosedConn:
+    is_closed = False
+
+    def add_callback_threadsafe(self, _cb):
+      raise ConnectionWrongStateError(
+          "BlockingConnection.add_callback_threadsafe() called on closed "
+          "or closing connection."
+      )
+
+  class _Ch:
+    is_closed = False
+    connection = None
+    acked = []
+
+    def basic_ack(self, delivery_tag=None):
+      self.acked.append(delivery_tag)
+
+  conn = _ClosedConn()
+  ch = _Ch()
+  ch.connection = conn
+  listend.set_amqp_connection(conn, ch)
+
+  err = []
+
+  def _worker():
+    try:
+      listend._threadsafe_basic_ack(2155)
+    except Exception as exc:
+      err.append(exc)
+
+  t = threading.Thread(target=_worker, name="listend-archive-3")
+  t.start()
+  t.join(timeout=2)
+  assert not t.is_alive()
+  assert err == []
+  assert listend._amqp_reconnect_requested is True
+  assert close_calls == []
+  assert ch.acked == []
+  listend.clear_amqp_connection()
+  listend._amqp_reconnect_requested = False
+
+
+def test_threadsafe_ack_skips_stale_delivery_tag_after_reconnect(monkeypatch):
+  """After reconnect, old-generation acks must not basic_ack (406)."""
+  import hpcperfstats.listend as listend
+
+  listend._amqp_reconnect_requested = False
+  monkeypatch.setattr(listend, "log_print", lambda _m: None)
+  pending = []
+
+  class _DeferConn:
+    is_closed = False
+
+    def add_callback_threadsafe(self, callback):
+      pending.append(callback)
+
+  class _Conn:
+    is_closed = False
+
+    def add_callback_threadsafe(self, callback):
+      callback()
+
+  class _Ch:
+    def __init__(self):
+      self.acked = []
+
+    def basic_ack(self, delivery_tag=None):
+      self.acked.append(delivery_tag)
+
+  old_conn, old_ch = _DeferConn(), _Ch()
+  listend.set_amqp_connection(old_conn, old_ch)
+  listend._threadsafe_basic_ack(2155)
+  assert len(pending) == 1
+  new_conn, new_ch = _Conn(), _Ch()
+  listend.set_amqp_connection(new_conn, new_ch)
+  pending[0]()
+  assert old_ch.acked == []
+  assert new_ch.acked == []
+  listend.clear_amqp_connection()
+
+
+def test_request_amqp_reconnect_from_worker_thread_does_not_close(
+    monkeypatch,
+):
+  """Non-MainThread reconnect request is flag-only; MainThread still closes."""
+  import threading
+
+  import hpcperfstats.listend as listend
+
+  close_calls = []
+  monkeypatch.setattr(
+      listend,
+      "_close_amqp_channel_and_connection_gracefully",
+      lambda *a, **k: close_calls.append(True),
+  )
+  monkeypatch.setattr(listend, "log_print", lambda _m: None)
+
+  channel = type("C", (), {"connection": object()})()
+  listend._amqp_reconnect_requested = False
+
+  def _worker():
+    listend._request_amqp_full_reconnect(
+        channel,
+        "BlockingConnection.add_callback_threadsafe() called on closed "
+        "or closing connection.",
+    )
+
+  t = threading.Thread(target=_worker, name="listend-archive-3")
+  t.start()
+  t.join(timeout=2)
+  assert listend._amqp_reconnect_requested is True
+  assert close_calls == []
+
+  listend._amqp_reconnect_requested = False
+  listend._request_amqp_full_reconnect(channel, "Channel is closed.")
+  assert close_calls == [True]
+  listend._amqp_reconnect_requested = False
+
+
+def test_worker_reconnect_schedules_teardown_callback(monkeypatch):
+  """Archive thread schedules I/O-thread teardown; does not close itself."""
+  import threading
+
+  import hpcperfstats.listend as listend
+
+  close_calls = []
+  pending = []
+  monkeypatch.setattr(
+      listend,
+      "_close_amqp_channel_and_connection_gracefully",
+      lambda *a, **k: close_calls.append(True),
+  )
+  monkeypatch.setattr(listend, "log_print", lambda _m: None)
+
+  class _Conn:
+    is_closed = False
+    is_closing = False
+
+    def add_callback_threadsafe(self, callback):
+      pending.append(callback)
+
+  conn = _Conn()
+  channel = type("C", (), {"connection": conn})()
+  listend.set_amqp_connection(conn, channel)
+  listend._amqp_reconnect_requested = False
+
+  def _worker():
+    listend._request_amqp_full_reconnect(channel, "Channel is closed.")
+
+  t = threading.Thread(target=_worker, name="listend-archive-3")
+  t.start()
+  t.join(timeout=2)
+  assert listend._amqp_reconnect_requested is True
+  assert close_calls == []
+  assert len(pending) == 1
+  pending[0]()
+  assert close_calls == [True]
+  listend.clear_amqp_connection()
+  listend._amqp_reconnect_requested = False
