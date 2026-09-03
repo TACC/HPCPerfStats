@@ -144,6 +144,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY --chown=hpcperfstats:hpcperfstats pyproject.toml ./
 
 # 1) Requirements slices from pyproject (no pip).
+# Split mkl-src into numpy-first then numexpr/pandas: under --no-build-isolation,
+# numexpr setup.py imports numpy during metadata generation.
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   python3 -c "import re, tomllib; from pathlib import Path; \
@@ -157,9 +159,14 @@ RUN /bin/bash -o pipefail -c '\
     src = [d for d in deps if n(d) in src_names]; \
     assert src_names <= {n(d) for d in src}, src_names - {n(d) for d in src}; \
     rest = [d for d in deps if n(d) not in src_names]; \
+    numpy_reqs = [d for d in src if n(d) == \"numpy\"]; \
+    after_numpy = [d for d in src if n(d) != \"numpy\"]; \
+    assert numpy_reqs and after_numpy, (numpy_reqs, after_numpy); \
     Path(\"/tmp/requirements.txt\").write_text(\"\\n\".join(deps) + \"\\n\"); \
     Path(\"/tmp/requirements-rest.txt\").write_text(\"\\n\".join(rest) + \"\\n\"); \
     Path(\"/tmp/requirements-mkl-src.txt\").write_text(\"\\n\".join(src) + \"\\n\"); \
+    Path(\"/tmp/requirements-mkl-numpy.txt\").write_text(\"\\n\".join(numpy_reqs) + \"\\n\"); \
+    Path(\"/tmp/requirements-mkl-after-numpy.txt\").write_text(\"\\n\".join(after_numpy) + \"\\n\"); \
     Path(\"/tmp/requirements-build.txt\").write_text(\"\\n\".join(build) + \"\\n\")"'
 
 # 2) GIL image-build wheels only (MKL + toolchain).
@@ -168,18 +175,22 @@ RUN /bin/bash -o pipefail -c '\
   pip install --no-cache-dir --upgrade pip; \
   pip install --no-cache-dir -r /tmp/requirements-build.txt'
 
-# 3) GIL source-build numpy/numexpr/pandas against MKL (before rest).
+# 3) GIL source-build against MKL (before rest): numpy first, then numexpr/pandas.
 # mkl 2026+ wheels install shared libs under sysconfig data/lib (no Python package).
+# numexpr setup imports numpy at metadata time when --no-build-isolation is set.
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   MKLROOT="$(python3 -c "import sysconfig; from pathlib import Path; r=Path(sysconfig.get_path(\"data\")); assert list((r/\"lib\"/\"pkgconfig\").glob(\"mkl-*.pc\")), r; assert list((r/\"lib\").glob(\"libmkl_rt.so*\")), r; print(r)")"; \
   export MKLROOT PKG_CONFIG_PATH="${MKLROOT}/lib/pkgconfig" LD_LIBRARY_PATH="${MKLROOT}/lib"; \
   pip install --no-cache-dir --no-build-isolation --force-reinstall \
-    --no-binary numpy,numexpr,pandas \
+    --no-binary numpy \
     --config-settings=setup-args=-Dblas=mkl \
     --config-settings=setup-args=-Dlapack=mkl \
-    -r /tmp/requirements-mkl-src.txt; \
+    -r /tmp/requirements-mkl-numpy.txt; \
   python3 -c "import numpy as np; c=str(np.show_config()); assert \"mkl\" in c.lower() or \"mkl_rt\" in c.lower(), c"; \
+  pip install --no-cache-dir --no-build-isolation --force-reinstall \
+    --no-binary numexpr,pandas \
+    -r /tmp/requirements-mkl-after-numpy.txt; \
   echo "${MKLROOT}/lib" > /etc/ld.so.conf.d/mkl-gil.conf'
 
 # 4) GIL rest wheels (Bokeh/contourpy see MKL numpy; constraint blocks wheel upgrades).
@@ -194,18 +205,21 @@ RUN /bin/bash -o pipefail -c '\
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --upgrade pip; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir -r /tmp/requirements-build.txt'
 
-# 6) Free-threaded source-build + ldconfig.
+# 6) Free-threaded source-build + ldconfig (numpy first, then numexpr/pandas).
 # Same as GIL: MKLROOT is sysconfig data prefix (shared libs only; no Python package).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   MKLROOT_T="$(/opt/python3.14t/bin/python3.14t -c "import sysconfig; from pathlib import Path; r=Path(sysconfig.get_path(\"data\")); assert list((r/\"lib\"/\"pkgconfig\").glob(\"mkl-*.pc\")), r; assert list((r/\"lib\").glob(\"libmkl_rt.so*\")), r; print(r)")"; \
   export MKLROOT="${MKLROOT_T}" PKG_CONFIG_PATH="${MKLROOT_T}/lib/pkgconfig" LD_LIBRARY_PATH="${MKLROOT_T}/lib"; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-build-isolation --force-reinstall \
-    --no-binary numpy,numexpr,pandas \
+    --no-binary numpy \
     --config-settings=setup-args=-Dblas=mkl \
     --config-settings=setup-args=-Dlapack=mkl \
-    -r /tmp/requirements-mkl-src.txt; \
+    -r /tmp/requirements-mkl-numpy.txt; \
   /opt/python3.14t/bin/python3.14t -c "import numpy as np; c=str(np.show_config()); assert \"mkl\" in c.lower() or \"mkl_rt\" in c.lower(), c"; \
+  /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-build-isolation --force-reinstall \
+    --no-binary numexpr,pandas \
+    -r /tmp/requirements-mkl-after-numpy.txt; \
   echo "${MKLROOT_T}/lib" > /etc/ld.so.conf.d/mkl-ft.conf; \
   ldconfig'
 
