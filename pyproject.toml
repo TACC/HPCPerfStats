@@ -29,6 +29,7 @@ dependencies = [
   "numexpr==2.14.2",
   "psycopg==3.3.5",
   "pandas==3.0.5",
+  "python-dateutil==2.9.0.post0",
   "bokeh==3.9.2",
   "Django>=6.1.1,<6.2",
   "python-hostlist==2.3.0",

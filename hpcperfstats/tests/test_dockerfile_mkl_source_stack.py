@@ -153,7 +153,8 @@ def test_mkl_source_stack_run_order_and_flags():
         + len(pandas_marker)
     ]
     assert "--no-deps" in pandas_region
-    assert "python-dateutil" in compile_body
+    # dateutil is a rest-layer dep (pyproject); do not install it in the compile RUN.
+    assert "python-dateutil" not in compile_body
     # MKL assert must run again after pandas (not only after the numpy install).
     after_pandas = compile_body[pandas_pip_idx + len(pandas_marker) :]
     assert "show_config" in after_pandas
@@ -162,6 +163,9 @@ def test_mkl_source_stack_run_order_and_flags():
   for rest in (gil_rest, ft_rest):
     assert "--no-binary" not in rest
     assert "--constraint /tmp/requirements-mkl-src.txt" in rest
+    # pandas import needs dateutil from rest; smoke after rest install.
+    assert "import pandas" in rest
+    assert "pd.__version__" in rest
 
   assert "ldconfig" in ft_compile
   assert "mkl-gil.conf" in gil_compile
@@ -215,9 +219,9 @@ def test_pandas_install_uses_no_deps_to_preserve_mkl_numpy():
     assert "--no-deps" in region
     assert "--no-binary pandas" in region
     after = body[body.index(pandas_marker) + len(pandas_marker) :]
-    assert "python-dateutil" in after
+    assert "python-dateutil" not in after
     assert "show_config" in after
-    assert "import pandas" in after
+    assert "mkl" in after.lower()
 
 
 def test_dockerfile_pip_argv_has_no_hardcoded_scientific_or_mkl_pins():
@@ -295,6 +299,7 @@ def test_writer_run_payload_executes_against_real_pyproject(tmp_path, monkeypatc
   assert set(numpy_only) | set(after_numpy) == set(src)
   assert set(numexpr_only) | set(pandas_only) == set(after_numpy)
   assert "numpy" not in {_pep508_name(d) for d in rest}
+  assert any(_pep508_name(d) == "python-dateutil" for d in rest)
   assert "bokeh==3.9.2" in rest
   assert any(_pep508_name(d) == "mkl" for d in build)
   assert any(_pep508_name(d) == "meson-python" for d in build)

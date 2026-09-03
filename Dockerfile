@@ -188,7 +188,7 @@ RUN /bin/bash -o pipefail -c '\
 # pandas meson generate_version.py imports versioneer (image-build extra).
 # pandas --no-deps: without it, pip resolves numpy>=… and replaces the MKL
 # source build with a manylinux OpenBLAS wheel (same version, different binary).
-# python-dateutil (+ six) are pandas runtime deps not in project.dependencies.
+# python-dateutil (+ six) come from project.dependencies via the rest RUN.
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   MKLROOT="$(python3 -c "import sysconfig; from pathlib import Path; r=Path(sysconfig.get_path(\"data\")); assert list((r/\"lib\"/\"pkgconfig\").glob(\"mkl-*.pc\")), r; assert list((r/\"lib\").glob(\"libmkl_rt.so*\")), r; assert (r/\"include\"/\"mkl.h\").is_file() or list((r/\"include\").rglob(\"mkl.h\")), r; print(r)")"; \
@@ -230,16 +230,16 @@ RUN /bin/bash -o pipefail -c '\
   pip install --no-cache-dir --no-build-isolation --force-reinstall --no-deps \
     --no-binary pandas \
     -r /tmp/requirements-mkl-pandas.txt; \
-  pip install --no-cache-dir "python-dateutil>=2.8.2"; \
   python3 -c "import numpy as np; c=np.show_config(mode=\"dicts\"); assert \"mkl\" in str(c).lower(), c"; \
-  python3 -c "import pandas as pd; assert pd.__version__"; \
   echo "${MKLROOT}/lib" > /etc/ld.so.conf.d/mkl-gil.conf'
 
 # 4) GIL rest wheels (Bokeh/contourpy see MKL numpy; constraint blocks wheel upgrades).
+# python-dateutil is here; import pandas only after rest (needs dateutil).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   pip install --no-cache-dir --constraint /tmp/requirements-mkl-src.txt \
-    -r /tmp/requirements-rest.txt'
+    -r /tmp/requirements-rest.txt; \
+  python3 -c "import pandas as pd; assert pd.__version__"'
 
 # 5) Free-threaded image-build wheels only (pip already from --with-ensurepip=install).
 RUN /bin/bash -o pipefail -c '\
@@ -250,7 +250,7 @@ RUN /bin/bash -o pipefail -c '\
 # 6) Free-threaded source-build + ldconfig (numpy, numexpr+VML, pandas).
 # Same as GIL: MKLROOT is sysconfig data prefix; numexpr VML via injected site.cfg.
 # -march=native: prod-host builds only (same as GIL compile RUN).
-# pandas --no-deps + python-dateutil: same MKL-numpy preservation as GIL.
+# pandas --no-deps: same MKL-numpy preservation as GIL (dateutil via rest).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   MKLROOT_T="$(/opt/python3.14t/bin/python3.14t -c "import sysconfig; from pathlib import Path; r=Path(sysconfig.get_path(\"data\")); assert list((r/\"lib\"/\"pkgconfig\").glob(\"mkl-*.pc\")), r; assert list((r/\"lib\").glob(\"libmkl_rt.so*\")), r; assert (r/\"include\"/\"mkl.h\").is_file() or list((r/\"include\").rglob(\"mkl.h\")), r; print(r)")"; \
@@ -293,18 +293,17 @@ RUN /bin/bash -o pipefail -c '\
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-build-isolation --force-reinstall --no-deps \
     --no-binary pandas \
     -r /tmp/requirements-mkl-pandas.txt; \
-  /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir "python-dateutil>=2.8.2"; \
   /opt/python3.14t/bin/python3.14t -c "import numpy as np; c=np.show_config(mode=\"dicts\"); assert \"mkl\" in str(c).lower(), c"; \
-  /opt/python3.14t/bin/python3.14t -c "import pandas as pd; assert pd.__version__"; \
   echo "${MKLROOT_T}/lib" > /etc/ld.so.conf.d/mkl-ft.conf; \
   ldconfig'
 
-# 7) Free-threaded rest wheels.
+# 7) Free-threaded rest wheels (dateutil then import pandas, same as GIL).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir \
     --constraint /tmp/requirements-mkl-src.txt \
-    -r /tmp/requirements-rest.txt'
+    -r /tmp/requirements-rest.txt; \
+  /opt/python3.14t/bin/python3.14t -c "import pandas as pd; assert pd.__version__"'
 
 # Install debugging tools.
 RUN /bin/bash -o pipefail -c 'pip install --no-cache-dir pyinstrument py-spy'
