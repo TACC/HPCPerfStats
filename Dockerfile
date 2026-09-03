@@ -183,11 +183,21 @@ RUN /bin/bash -o pipefail -c '\
 # mkl 2026+ wheels install shared libs under sysconfig data/lib (no Python package).
 # np.show_config() prints and returns None by default — use mode=dicts for assert.
 # numexpr VML requires site.cfg in the sdist tree (setup.py sets USE_VML).
+# GNU ld -lmkl_rt needs unversioned libmkl_rt.so; pip mkl wheels often ship only .so.N.
 # -march=native: images are built on the prod host that runs them (not portable).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   MKLROOT="$(python3 -c "import sysconfig; from pathlib import Path; r=Path(sysconfig.get_path(\"data\")); assert list((r/\"lib\"/\"pkgconfig\").glob(\"mkl-*.pc\")), r; assert list((r/\"lib\").glob(\"libmkl_rt.so*\")), r; assert (r/\"include\"/\"mkl.h\").is_file() or list((r/\"include\").rglob(\"mkl.h\")), r; print(r)")"; \
   export MKLROOT PKG_CONFIG_PATH="${MKLROOT}/lib/pkgconfig" LD_LIBRARY_PATH="${MKLROOT}/lib"; \
+  shopt -s nullglob; \
+  if [ ! -e "${MKLROOT}/lib/libmkl_rt.so" ]; then \
+    _mkl_vers=("${MKLROOT}"/lib/libmkl_rt.so.*); \
+    test "${#_mkl_vers[@]}" -ge 1; \
+    ln -s "$(basename "${_mkl_vers[0]}")" "${MKLROOT}/lib/libmkl_rt.so"; \
+  fi; \
+  test -e "${MKLROOT}/lib/libmkl_rt.so"; \
+  export LIBRARY_PATH="${MKLROOT}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"; \
+  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT}/lib -Wl,-rpath,${MKLROOT}/lib"; \
   export CFLAGS="${CFLAGS:+${CFLAGS} }-O3 -march=native" \
     CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }-O3 -march=native" \
     FFLAGS="${FFLAGS:+${FFLAGS} }-O3 -march=native"; \
@@ -237,6 +247,15 @@ RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   MKLROOT_T="$(/opt/python3.14t/bin/python3.14t -c "import sysconfig; from pathlib import Path; r=Path(sysconfig.get_path(\"data\")); assert list((r/\"lib\"/\"pkgconfig\").glob(\"mkl-*.pc\")), r; assert list((r/\"lib\").glob(\"libmkl_rt.so*\")), r; assert (r/\"include\"/\"mkl.h\").is_file() or list((r/\"include\").rglob(\"mkl.h\")), r; print(r)")"; \
   export MKLROOT="${MKLROOT_T}" PKG_CONFIG_PATH="${MKLROOT_T}/lib/pkgconfig" LD_LIBRARY_PATH="${MKLROOT_T}/lib"; \
+  shopt -s nullglob; \
+  if [ ! -e "${MKLROOT_T}/lib/libmkl_rt.so" ]; then \
+    _mkl_vers=("${MKLROOT_T}"/lib/libmkl_rt.so.*); \
+    test "${#_mkl_vers[@]}" -ge 1; \
+    ln -s "$(basename "${_mkl_vers[0]}")" "${MKLROOT_T}/lib/libmkl_rt.so"; \
+  fi; \
+  test -e "${MKLROOT_T}/lib/libmkl_rt.so"; \
+  export LIBRARY_PATH="${MKLROOT_T}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"; \
+  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT_T}/lib -Wl,-rpath,${MKLROOT_T}/lib"; \
   export CFLAGS="${CFLAGS:+${CFLAGS} }-O3 -march=native" \
     CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }-O3 -march=native" \
     FFLAGS="${FFLAGS:+${FFLAGS} }-O3 -march=native"; \
