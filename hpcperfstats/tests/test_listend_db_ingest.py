@@ -886,6 +886,83 @@ def test_worker_main_configures_blas_before_numpy(monkeypatch):
   assert os.environ.get("OMP_NUM_THREADS") == "1"
 
 
+def test_pool_start_bootstraps_django_before_worker_threads(monkeypatch):
+  """Regression: django.setup() must run once on the starting thread.
+
+  Every worker calling ensure_django() concurrently raced Django's
+  LazySettings assignment and killed most threads with
+  "AttributeError: 'NoneType' object has no attribute 'LOGGING'".
+  """
+  import threading
+
+  from hpcperfstats.dbload.lib import django_bootstrap
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  order: list = []
+  order_lock = threading.Lock()
+  worker_started = threading.Event()
+
+  def fake_ensure_django() -> None:
+    with order_lock:
+      order.append("bootstrap")
+
+  def fake_worker_main(worker_idx, work_queue, stop_event, *args, **kwargs):
+    del worker_idx, work_queue, args, kwargs
+    with order_lock:
+      order.append("worker")
+    worker_started.set()
+    stop_event.wait(5.0)
+
+  monkeypatch.setattr(django_bootstrap, "ensure_django", fake_ensure_django)
+  monkeypatch.setattr(ldi, "_worker_main", fake_worker_main)
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=3,
+      queue_max_gb=0.001,
+      batch_samples=1,
+      enabled=True,
+  )
+  try:
+    pool.start()
+    assert worker_started.wait(10.0)
+  finally:
+    pool.stop(join_timeout=5.0)
+
+  with order_lock:
+    assert order[0] == "bootstrap"
+    assert order.count("bootstrap") == 1
+
+
+def test_pool_start_propagates_django_bootstrap_failure(monkeypatch):
+  """A failed bootstrap must fail start() instead of starting dead threads."""
+  from hpcperfstats.dbload.lib import django_bootstrap
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  def boom() -> None:
+    raise RuntimeError("settings unavailable")
+
+  monkeypatch.setattr(django_bootstrap, "ensure_django", boom)
+  monkeypatch.setattr(
+      ldi,
+      "_worker_main",
+      mock.Mock(side_effect=AssertionError("must not start workers")),
+  )
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=2,
+      queue_max_gb=0.001,
+      batch_samples=1,
+      enabled=True,
+  )
+  try:
+    pool.start()
+    raise AssertionError("expected start() to propagate bootstrap failure")
+  except RuntimeError as exc:
+    assert "settings unavailable" in str(exc)
+  assert pool._workers == []
+  assert pool._started is False
+
+
 def test_pause_resume_wait_emits_no_transition_info(monkeypatch):
   """Repeated pause/resume must not emit the former hot-path INFO spam."""
   import hpcperfstats.listend as listend

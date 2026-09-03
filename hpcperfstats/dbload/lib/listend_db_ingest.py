@@ -1128,16 +1128,37 @@ class ListendDbIngestPool:
 
   def start(self) -> None:
     """
-    Start background work for this object.
-    
+    Bootstrap Django, then start one DB thread per host-affine queue.
+
+    Django is set up on the calling thread before any worker starts.
+    ``django.setup()`` is not thread-safe (``LazySettings.__setattr__``
+    clears the instance ``__dict__`` before storing ``_wrapped``), so letting
+    every worker race it raises ``AttributeError: 'NoneType' object has no
+    attribute 'LOGGING'`` in most of the threads.
+
     Returns:
       None
-    
+
+    Raises:
+      Exception: Propagates a failed ``django.setup()`` so the caller logs
+      one startup failure instead of losing every worker thread.
+
     Examples:
-      >>> ListendDbIngestPool().start()  # doctest: +SKIP
+      >>> pool = ListendDbIngestPool(pool_processes=4)  # doctest: +SKIP
+      >>> pool.start()  # doctest: +SKIP
     """
     if not self.enabled or self._started:
       return
+    # Cap BLAS/OpenMP before Django imports pull in numpy/pandas, then run
+    # django.setup() exactly once on this thread (workers re-call the
+    # idempotent helper and return immediately).
+    from hpcperfstats.dbload.lib.blas_thread_env import (
+        configure_blas_thread_env,
+    )
+    from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
+
+    configure_blas_thread_env()
+    ensure_django()
     for i in range(self.pool_processes):
       q: queue.Queue = queue.Queue(maxsize=self.queue_maxsize)
       byte_count = _ThreadCounter(0)
