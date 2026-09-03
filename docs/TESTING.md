@@ -203,7 +203,7 @@ The SPA pins Bokeh via **`@bokeh/bokehjs`** in `package.json`; keep its version 
 
 **Bootswatch** (Spacelab) is imported from **`bootswatch`** in the Next.js bundle (same CSS stack as the rest of `/machine/`).
 
-**Frontend stack:** Next.js 16 App Router (static export, Turbopack), strict TypeScript 6, TanStack Query, Orval 8 + Zod 4 (from committed `hpcperfstats/site/openapi/openapi.yaml`), React Hook Form + Zod.
+**Frontend stack:** Next.js 16 App Router (static export, Turbopack), strict TypeScript 6 (`typescript-eslint` peer holds TypeScript below 6.1), TanStack Query, Orval 8 + Zod 4 (from committed `hpcperfstats/site/openapi/openapi.yaml`), React Hook Form + Zod, Vitest 5 + RTL.
 
 **Production static export** (Docker image, `scripts/rebuild_frontend.sh` — omits test-only routes such as `bokeh-playwright-smoke/`):
 

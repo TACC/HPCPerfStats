@@ -57,7 +57,7 @@ def test_frontend_package_json_allowscripts_covers_esbuild():
       (_repo_root() / "hpcperfstats/site/frontend/package.json").read_text(encoding="utf-8"),
   )
   allow = package_json.get("allowScripts") or {}
-  assert allow.get("esbuild@0.28.1") is True
+  assert allow.get("esbuild@0.28.2") is True
 
 
 def test_js_yaml_override_stays_on_v4_for_orval_default_import():
