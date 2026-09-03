@@ -126,6 +126,9 @@ def test_dockerfile_pins_python_3147_and_bakes_freethreaded_prefix():
   assert "--prefix=/opt/python3.14t" in ft_stage
   assert "--disable-gil" in ft_stage
   assert "--with-ensurepip=install" in ft_stage
+  # Prod-host builds: same -march=native policy as the MKL scientific stack.
+  assert "-march=native" in ft_stage
+  assert "CFLAGS" in ft_stage
   assert "/opt/hpcperfstats-ft" not in dockerfile
 
   base = _stage_body(dockerfile, "hpcperfstats-base")

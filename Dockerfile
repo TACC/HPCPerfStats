@@ -52,6 +52,7 @@ RUN /bin/bash -o pipefail -c "\
 
 # Free-threaded CPython 3.14.7 (cp314t) for pipeline daemons only.
 # Official Hub has no python:3.14t-* tag; compile from the matching source tarball.
+# -march=native: build on the prod host that runs the image (same as MKL stack).
 FROM python:3.14.7-trixie AS python-freethreaded
 ENV PYTHON_VERSION=3.14.7 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -71,6 +72,8 @@ RUN /bin/bash -o pipefail -c "\
     && tar -xzf /tmp/Python.tgz -C /usr/src/python --strip-components=1 \
     && rm -f /tmp/Python.tgz \
     && cd /usr/src/python \
+    && export CFLAGS=\"\${CFLAGS:+\${CFLAGS} }-O3 -march=native\" \
+         CXXFLAGS=\"\${CXXFLAGS:+\${CXXFLAGS} }-O3 -march=native\" \
     && ./configure \
          --prefix=/opt/python3.14t \
          --enable-shared \
