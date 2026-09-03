@@ -96,7 +96,7 @@ def test_supervisor_startup_wait_order_is_db_then_redis_then_web():
 
 
 def test_supervisord_runs_as_hpcperfstats_user():
-  """[supervisord] drops to hpcperfstats with user-writable pidfile and socket."""
+  """[supervisord] drops to hpcperfstats with user-writable pidfile; no supervisorctl RPC."""
   config = configparser.ConfigParser()
   config.read(_supervisord_conf_path())
 
@@ -105,10 +105,9 @@ def test_supervisord_runs_as_hpcperfstats_user():
   assert pidfile.startswith("/tmp/"), pidfile
   assert "/var/run" not in pidfile
 
-  sock = config.get("unix_http_server", "file")
-  assert sock.startswith("/tmp/"), sock
-  assert "/var/run" not in sock
-  assert config.get("supervisorctl", "serverurl") == f"unix://{sock}"
+  assert not config.has_section("unix_http_server")
+  assert not config.has_section("supervisorctl")
+  assert not any(s.startswith("rpcinterface:") for s in config.sections())
 
 
 def test_supervisord_has_no_root_programs():

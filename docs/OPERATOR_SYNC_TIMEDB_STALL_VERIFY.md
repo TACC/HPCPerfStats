@@ -62,7 +62,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
 
 **Pass (T0):** one `[main]` sync_timedb; flock acquired; `.sync_timedb_job_store.json` present or reconstruct explains empty; `[thread:populate-pool]` plus ingest/append coordinator titles; SIGTERM of the process yields exit **143** (not 0); ingest success logs / file-complete marks grow when listend is on. **Local agent T0** is `tests/run_sync_timedb_regression_battery.sh` (host pytest). **T1/T2** remain post-deploy on the backlog site (this Mac cannot claim production catch-up). **Fail:** two orchestrators, CLI `backlog`/`current` still in supervisord, no-arg run that only walks the last 5 days, or `deferred_age` burning day_close attempts.
 
-**Pipeline supervisor ownership:** supervisord runs as **`hpcperfstats`** (`[supervisord] user=hpcperfstats`); `supervisorctl` uses **`unix:///tmp/supervisor.sock`** (not `/var/run/supervisor.sock`). Container **PID 1** remains **`supervisor_startup.sh`** (no `exec` of supervisord — deferred). Prefer `docker compose stop -t 180 pipeline` so wall clock covers **`stopwaitsecs=130`**. Do **not** treat a missing socket path as proof ingest is down — check `/tmp/supervisor.sock` first.
+**Pipeline supervisor ownership:** supervisord runs as **`hpcperfstats`** (`[supervisord] user=hpcperfstats`); **`supervisorctl` is not configured** (no unix socket / RPC). Use **`docker compose`** and process titles (`pgrep` / `ps`) for liveness — not `supervisorctl`. Container **PID 1** remains **`supervisor_startup.sh`** (no `exec` of supervisord — deferred). Prefer `docker compose stop -t 180 pipeline` so wall clock covers **`stopwaitsecs=130`**.
 
 **Fail (T0 — day-close never completes, hpcperfstats03 2026-08-27):** census `day_close=4/61` with **no** `complete=` on `progress day=` lines; drain parsed `identity[:10]` as `/hpcperfst` (LIST identities are `/…/YYYY-MM-DD.tar`); workers ACK fake `sealed` after `only_when_no_remaining_raw` no-op seal; `tar_drop` count 0. **Pass after fix:** age-eligible no-remaining-raw days show `complete=` (and `tar_delete=` when tar-drop ran); remaining-raw days show `incomplete_raw=` and stay on the LIST (attempt 0); `dc_run=` appears for tar-path identities while verify is in flight; cheap enqueue does not RPUSH today/yesterday when `sync_day_close_min_age_hours=32`.
 
@@ -499,7 +499,7 @@ Do **not** mark this class verified on **T0 smoke alone**. Use T0 then T1 then T
 
 **Failure signature (pre-fix):** CLI ``current``; sealed June days (`*.tar.zst` present) stuck **`phase=deleting`**, histogram **100% `skipped_not_in_archive`**, **`deleted_count=0`**, **zero quarantine**. Separate day **`phase=done` + `entries=0` + live `.tar`**. py-spy **`day-close_N`**: `apply_batch_delete` → `complete_handoff_to_ingest` → `_finalize_ingest_archive_batch` → `oldest_checkpoint_incomplete_tar` (`isfile`). Janitor tick may sit in discover `isfile` so compose **`Archive janitor tick done` count 0** is not proof the thread is dead.
 
-**Do not:** quarantine-only tar-drop for retryable skips; py-spy `pgrep … .[m]ain. | head -1` (Manager leftover); treat `supervisorctl` missing socket as ingest-down.
+**Do not:** quarantine-only tar-drop for retryable skips; py-spy `pgrep … .[m]ain. | head -1` (Manager leftover); treat `supervisorctl` failure as ingest-down (`supervisorctl` is not configured).
 
 ```bash
 # T0 — skip-status histogram (Path.read_text fingerprint; no Django import of day_raw_removal)
