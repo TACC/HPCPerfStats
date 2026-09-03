@@ -64,7 +64,7 @@ RUN /bin/bash -o pipefail -c "\
        build-essential \
        libssl-dev zlib1g-dev libncursesw5-dev libffi-dev libsqlite3-dev \
        libreadline-dev libbz2-dev liblzma-dev tk-dev uuid-dev \
-       libgdbm-dev libnss3-dev ca-certificates curl \
+       libgdbm-dev libnss3-dev ca-certificates curl libmpdec-dev libmpdec++-dev \
     && curl -fsSL \"https://www.python.org/ftp/python/\${PYTHON_VERSION}/Python-\${PYTHON_VERSION}.tgz\" \
        -o /tmp/Python.tgz \
     && mkdir -p /usr/src/python \
@@ -101,9 +101,9 @@ RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
     && apt-get install -y --no-install-recommends \
        supervisor rsync syslog-ng zstd util-linux time \
        net-tools lsof procps gdb strace netcat-openbsd \
-       vim nano \
-       build-essential pkg-config default-libmysqlclient-dev \
-       libpq5 \
+       vim nano build-essential pkg-config \
+       default-libmysqlclient-dev libpq5 libmpdec4 \
+       libmpdec++4 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*"
 
