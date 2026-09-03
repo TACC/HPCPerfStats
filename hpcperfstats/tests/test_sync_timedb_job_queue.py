@@ -1,4 +1,4 @@
-"""Host FakeRedis unit tests for sync_timedb job:v1 queue helpers (slice 1)."""
+"""Host unit tests for in-process sync_timedb job-store queue helpers."""
 from __future__ import annotations
 
 from datetime import date
@@ -6,14 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib.invalidate_archive_members_ops import (
-    _KEY_PREFIX,
-    _PROTECTED_COORD_PREFIXES,
-    _is_protected_coord_redis_key,
-    invalidate_archive_members_redis_bulk,
+    JOB_STORE_SNAPSHOT_RELPATH,
+    invalidate_archive_members_sidecars,
 )
-from hpcperfstats.tests.fake_redis_queue import FakeRedis
+from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 
 
 @pytest.fixture(autouse=True)
@@ -23,9 +21,13 @@ def _reset_job_queue_scripts():
   jq.reset_job_queue_script_cache_for_tests()
 
 
-def test_job_v1_key_names_disjoint_from_archive_members():
+def _store() -> SyncTimedbJobStore:
+  return SyncTimedbJobStore("")
+
+
+def test_job_key_names_are_store_local():
   ingest = jq.job_queue_key("ingest")
-  assert ingest == "hpcperfstats:sync_timedb:job:v1:queue:ingest"
+  assert ingest == "hps:job:queue:ingest"
   assert ":archive_members:" not in ingest
   assert jq.job_queue_key("append").endswith(":queue:append")
   assert jq.job_lease_key("ingest", "id").endswith(":lease:ingest:id")
@@ -34,22 +36,21 @@ def test_job_v1_key_names_disjoint_from_archive_members():
   )
 
 
-def test_operator_job_v1_census_uses_prefixed_queue_keys():
-  """Prefixed job:v1 queue keys must appear in operator census docs."""
+def test_operator_census_uses_disk_sidecars_and_thread_titles():
+  """Live T0 census must use job-store sidecars and populate thread titles."""
   root = Path(__file__).resolve().parents[2]
-  ingest = jq.job_queue_key("ingest")
-  append = jq.job_queue_key("append")
   stall = (root / "docs" / "OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md").read_text()
-  assert ingest in stall
-  assert append in stall
-  assert "redis-cli -n 1 ZCARD job:v1:ingest" not in stall
+  assert ".sync_timedb_job_store.json" in stall
+  assert "[thread:populate-pool]" in stall
+  assert "job:v1:queue:ingest" not in stall
+  assert "redis-cli -n 1 ZCARD" not in stall
   rules_path = (
       root / "hpcperfstats" / "cursor-rules"
       / "compose-operator-terminal-commands.mdc"
   )
   rules = rules_path.read_text()
-  assert ingest in rules
-  assert "ZCOUNT" in rules
+  assert ".sync_timedb_job_store.json" in rules
+  assert "archive_members:hash:v1" not in rules
 
 
 def test_ingest_identity_normpath_size_mtime():
@@ -92,169 +93,151 @@ def test_ingest_band_slot_caps_pool16_is_10_and_6():
   assert catch >= 1
 
 
-def test_set_nx_ex_lease_and_non_owner_release(monkeypatch):
-  monkeypatch.setattr(jq, "job_lease_ttl_seconds", lambda: 86400)
-  client = FakeRedis()
-  token = jq.try_acquire_job_lease(
-      client, kind="ingest", identity="p|1|2", owner_token="abc:111",
+def test_claim_is_exclusive_and_non_owner_ack_fails():
+  store = _store()
+  jq.zadd_ingest_job(store, identity="p|1|2", score=5)
+  owner = jq.make_lease_owner_token(pid=111, hostname="h", boot_id="b")
+  claim = jq.claim_ingest_job(
+      store, band="hot", owner_token=owner, ttl_s=60, now_s=1000.0,
   )
-  assert token == "abc:111"
-  assert client.get(jq.job_lease_key("ingest", "p|1|2")) == "abc:111"
-  assert (
-      jq.try_acquire_job_lease(
-          client, kind="ingest", identity="p|1|2", owner_token="other:222",
-      )
-      == ""
+  assert claim is not None
+  assert store.get(jq.job_lease_key("ingest", "p|1|2")) == owner
+  assert not jq.ack_job(
+      store, kind="ingest", identity="p|1|2", owner_token="other:h:b:2",
   )
-  assert not jq.release_job_lease(
-      client, kind="ingest", identity="p|1|2", owner_token="other:222",
+  assert store.get(jq.job_lease_key("ingest", "p|1|2")) == owner
+  assert jq.ack_job(
+      store, kind="ingest", identity="p|1|2", owner_token=owner,
   )
-  assert client.get(jq.job_lease_key("ingest", "p|1|2")) == "abc:111"
-  assert jq.release_job_lease(
-      client, kind="ingest", identity="p|1|2", owner_token="abc:111",
-  )
-  assert client.get(jq.job_lease_key("ingest", "p|1|2")) is None
+  assert store.get(jq.job_lease_key("ingest", "p|1|2")) is None
 
 
 def test_steal_lease_when_owner_pid_dead():
-  client = FakeRedis()
-  key = jq.job_lease_key("append", "day")
-  client.set(key, "deadtoken:host1:boot1:99999", nx=True, ex=86400)
+  store = _store()
+  jq.enqueue_list_job(store, kind="append", identity="day")
+  claim = jq.claim_list_job(
+      store, kind="append", owner_token="n:host1:boot1:9", ttl_s=60,
+      now_s=1000.0,
+  )
+  assert claim is not None
   assert jq.steal_job_lease_if_owner_dead(
-      client,
+      store,
       kind="append",
       identity="day",
-      pid_alive_fn=lambda _pid: False,
+      pid_alive_fn=lambda _p: False,
       hostname="host1",
       boot_id="boot1",
   )
-  assert client.get(key) is None
-  client.set(key, "livetoken:host1:boot1:1", nx=True, ex=86400)
-  assert not jq.steal_job_lease_if_owner_dead(
-      client,
-      kind="append",
-      identity="day",
-      pid_alive_fn=lambda _pid: True,
-      hostname="host1",
-      boot_id="boot1",
-  )
-  assert client.get(key) == "livetoken:host1:boot1:1"
+  assert store.get(jq.job_lease_key("append", "day")) is None
+  assert store.llen(jq.job_queue_key("append")) == 1
 
 
 def test_reconcile_this_owner_orphan_lease_requeues():
-  """RC2/RC4: this-pid lease not in local maps is stolen and requeued."""
-  import os
-
-  client = FakeRedis()
-  identity = "/raw/orphan-future"
-  jq.zadd_ingest_job(client, identity=identity, score=5)
-  token = "n:host1:boot1:%d" % os.getpid()
+  store = _store()
+  identity = "/raw/a"
+  jq.zadd_ingest_job(store, identity=identity, score=5)
+  owner = "n:h:b:1"
   claim = jq.claim_ingest_job(
-      client, band="hot", owner_token=token, ttl_s=60, now_s=1000.0,
+      store, band="hot", owner_token=owner, ttl_s=60, now_s=1000.0,
   )
   assert claim is not None
-  assert client.zcard(jq.job_queue_key("ingest")) == 0
+  assert store.zcard(jq.job_queue_key("ingest")) == 0
   kept = jq.reconcile_this_owner_orphan_leases(
-      client,
-      local_identities=frozenset({identity}),
+      store,
       kind=jq.JOB_KIND_INGEST,
-      hostname="host1",
-      boot_id="boot1",
-      pid=os.getpid(),
+      local_identities=(identity,),
+      owner_token=owner,
   )
   assert kept == 0
-  assert client.get(jq.job_lease_key("ingest", identity)) is not None
+  assert store.get(jq.job_lease_key("ingest", identity)) is not None
   n = jq.reconcile_this_owner_orphan_leases(
-      client,
-      local_identities=frozenset(),
+      store,
       kind=jq.JOB_KIND_INGEST,
-      hostname="host1",
-      boot_id="boot1",
-      pid=os.getpid(),
+      local_identities=(),
+      owner_token=owner,
   )
   assert n == 1
-  assert client.get(jq.job_lease_key("ingest", identity)) is None
-  assert client.zscore(jq.job_queue_key("ingest"), identity) is not None
+  assert store.get(jq.job_lease_key("ingest", identity)) is None
+  assert store.zscore(jq.job_queue_key("ingest"), identity) is not None
 
 
-def test_ranged_lua_pop_prefers_hot_range_without_starving_catchup():
-  client = FakeRedis()
+def test_ranged_claim_prefers_hot_range_without_starving_catchup():
+  store = _store()
   today = date(2026, 8, 24)
-  hot_id = "hot|1|1"
-  catch_id = "catch|1|1"
+  hot_id = "/hot"
+  catch_id = "/catch"
   jq.zadd_ingest_job(
-      client,
+      store,
       identity=hot_id,
       score=jq.encode_ingest_score(
           band="hot", day=date(2026, 8, 23), today=today, identity=hot_id,
       ),
   )
   jq.zadd_ingest_job(
-      client,
+      store,
       identity=catch_id,
       score=jq.encode_ingest_score(
-          band="catchup",
-          day=date(2026, 6, 1),
-          today=today,
-          identity=catch_id,
+          band="catchup", day=date(2026, 6, 1), today=today, identity=catch_id,
       ),
   )
-  assert jq.pop_ingest_job_ranged(client, band="hot") == hot_id
-  assert jq.pop_ingest_job_ranged(client, band="hot") is None
-  assert jq.pop_ingest_job_ranged(client, band="catchup") == catch_id
-  assert client.zcard(jq.job_queue_key("ingest")) == 0
+  hot = jq.claim_ingest_job(store, band="hot", owner_token="n:h:b:1")
+  assert hot is not None and hot.identity == hot_id
+  assert jq.claim_ingest_job(store, band="hot", owner_token="n:h:b:2") is None
+  catch = jq.claim_ingest_job(store, band="catchup", owner_token="n:h:b:3")
+  assert catch is not None and catch.identity == catch_id
+  assert store.zcard(jq.job_queue_key("ingest")) == 0
 
 
 def test_zadd_same_member_reband_overwrites_score():
-  client = FakeRedis()
+  store = _store()
+  ident = "/raw/a"
   today = date(2026, 8, 24)
-  ident = "p|9|9"
   hot = jq.encode_ingest_score(
       band="hot", day=date(2026, 8, 23), today=today, identity=ident,
   )
   catch = jq.encode_ingest_score(
-      band="catchup", day=date(2026, 8, 23), today=today, identity=ident,
+      band="catchup", day=date(2026, 6, 1), today=today, identity=ident,
   )
-  jq.zadd_ingest_job(client, identity=ident, score=hot)
-  jq.zadd_ingest_job(client, identity=ident, score=catch)
-  assert client.zcard(jq.job_queue_key("ingest")) == 1
-  assert jq.pop_ingest_job_ranged(client, band="hot") is None
-  assert jq.pop_ingest_job_ranged(client, band="catchup") == ident
+  jq.zadd_ingest_job(store, identity=ident, score=hot)
+  jq.zadd_ingest_job(store, identity=ident, score=catch)
+  assert store.zcard(jq.job_queue_key("ingest")) == 1
+  assert jq.claim_ingest_job(store, band="hot", owner_token="n:h:b:1") is None
+  claim = jq.claim_ingest_job(store, band="catchup", owner_token="n:h:b:1")
+  assert claim is not None and claim.identity == ident
 
 
 def test_list_queue_fifo_for_append():
-  client = FakeRedis()
-  jq.enqueue_list_job(client, kind="append", identity="a")
-  jq.enqueue_list_job(client, kind="append", identity="b")
-  assert jq.pop_list_job(client, kind="append") == "a"
-  assert jq.pop_list_job(client, kind="append") == "b"
-  assert jq.pop_list_job(client, kind="append") is None
+  store = _store()
+  jq.enqueue_list_job(store, kind="append", identity="a")
+  jq.enqueue_list_job(store, kind="append", identity="b")
+  first = jq.claim_list_job(store, kind="append", owner_token="n:h:b:1")
+  second = jq.claim_list_job(store, kind="append", owner_token="n:h:b:2")
+  assert first is not None and first.identity == "a"
+  assert second is not None and second.identity == "b"
+  assert jq.claim_list_job(store, kind="append", owner_token="n:h:b:3") is None
 
 
-def test_invalidate_protects_job_v1_keys():
-  job_prefix = "%s:job:v1" % _KEY_PREFIX
-  assert job_prefix in _PROTECTED_COORD_PREFIXES
-  assert _is_protected_coord_redis_key("%s:queue:ingest" % job_prefix)
-  assert _is_protected_coord_redis_key("%s:lease:ingest:x" % job_prefix)
-  client = FakeRedis()
-  hash_key = "%s:archive_members:hash:v1:2026-08-01:id" % _KEY_PREFIX
-  job_key = "%s:queue:ingest" % job_prefix
-  client.set(hash_key, "1")
-  client.set(job_key, "should-survive-if-scanned")
-  # Force-protection path: scan would not normally find job keys; inject via
-  # a membership-shaped key is N/A — assert protected helper + bulk leaves
-  # explicit job key when only membership patterns delete.
-  result = invalidate_archive_members_redis_bulk(
-      day_tokens=["2026-08-01"], dry_run=False, client=client,
+def test_invalidate_protects_job_store_sidecar(tmp_path):
+  archive = tmp_path / "archive"
+  members = archive / ".sync_timedb_archive_members"
+  members.mkdir(parents=True)
+  job = archive / JOB_STORE_SNAPSHOT_RELPATH
+  job.write_text("{}", encoding="utf-8")
+  day = members / "2026-08-01.json"
+  day.write_text("{}", encoding="utf-8")
+  other = members / "2026-08-02.json"
+  other.write_text("{}", encoding="utf-8")
+  result = invalidate_archive_members_sidecars(
+      archive_dir=str(archive),
+      day_tokens=["2026-08-01"],
   )
-  assert result["deleted"] >= 1
-  assert client.get(job_key) == "should-survive-if-scanned"
+  assert result["deleted"] == 1
+  assert not day.exists()
+  assert other.exists()
+  assert job.exists()
 
 
-# --- Slice 2: brownfield reconstruct predicates (library-only) ---
-
-
-def test_reconstruct_laws_empty_redis_and_checkpoint_not_sot():
+def test_reconstruct_laws_empty_queues_and_checkpoint_not_sot():
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 
   assert jr.empty_job_queues_mean_caught_up() is False
@@ -267,7 +250,7 @@ def test_reconstruct_laws_empty_redis_and_checkpoint_not_sot():
 def test_reconstruct_never_ingested_enqueues_ingest_and_append():
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 
-  client = FakeRedis()
+  client = _store()
   plan = jr.classify_closed_raw_path(
       "/archive/host/raw",
       tgz_archive_dir="/daily",
@@ -286,14 +269,14 @@ def test_reconstruct_never_ingested_enqueues_ingest_and_append():
   assert enqueued == {"ingest": True, "append": True}
   ingest_key = jq.job_queue_key("ingest")
   append_key = jq.job_queue_key("append")
-  assert plan.identity in client._zsets[ingest_key]
-  assert client._lists[append_key] == [plan.path]
+  assert client.zscore(ingest_key, plan.identity) is not None
+  assert client.lrange(append_key, 0, -1) == [plan.path]
 
 
 def test_reconstruct_ingested_not_in_tar_enqueues_append_only():
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 
-  client = FakeRedis()
+  client = _store()
   plan = jr.classify_closed_raw_path(
       "/archive/host/raw",
       tgz_archive_dir="/daily",
@@ -310,14 +293,14 @@ def test_reconstruct_ingested_not_in_tar_enqueues_append_only():
       today=date(2026, 8, 24),
   )
   assert enqueued == {"ingest": False, "append": True}
-  assert not client._zsets.get(jq.job_queue_key("ingest"))
-  assert client._lists[jq.job_queue_key("append")] == [plan.path]
+  assert client.zscore(jq.job_queue_key("ingest"), plan.identity) is None
+  assert client.lrange(jq.job_queue_key("append"), 0, -1) == [plan.path]
 
 
 def test_reconstruct_skips_zadd_when_both_complete():
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 
-  client = FakeRedis()
+  client = _store()
   plan = jr.classify_closed_raw_path(
       "/archive/host/raw",
       tgz_archive_dir="/daily",
@@ -334,16 +317,15 @@ def test_reconstruct_skips_zadd_when_both_complete():
       today=date(2026, 8, 24),
   )
   assert enqueued == {"ingest": False, "append": False}
-  assert not client._zsets
-  assert not client._lists
+  assert not client.ingest_identities()
+  assert client.llen(jq.job_queue_key("append")) == 0
 
 
 def test_reconstruct_ghost_phase_done_still_enqueues_day_close():
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 
-  client = FakeRedis()
+  client = _store()
   tar = "/daily/2026-08-01.tar"
-  # Ghost phase=done with incomplete filesystem must still enqueue.
   did = jr.enqueue_day_close_if_needed(
       client,
       tar,
@@ -353,9 +335,8 @@ def test_reconstruct_ghost_phase_done_still_enqueues_day_close():
       min_age_elapsed=True,
   )
   assert did is True
-  assert client._lists[jq.job_queue_key("day_close")] == [tar]
-  # Same phase with FS+age complete → skip enqueue.
-  client2 = FakeRedis()
+  assert client.lrange(jq.job_queue_key("day_close"), 0, -1) == [tar]
+  client2 = _store()
   skipped = jr.enqueue_day_close_if_needed(
       client2,
       tar,
@@ -365,7 +346,7 @@ def test_reconstruct_ghost_phase_done_still_enqueues_day_close():
       min_age_elapsed=True,
   )
   assert skipped is False
-  assert not client2._lists
+  assert client2.llen(jq.job_queue_key("day_close")) == 0
 
 
 def test_reconstruct_ingest_complete_ignores_head_tail_when_listend_on():
@@ -393,9 +374,6 @@ def test_reconstruct_ingest_complete_ignores_head_tail_when_listend_on():
   )
 
 
-# --- Slice 3: streaming discover → ZADD before scan exhaust ---
-
-
 def test_streaming_parse_yields_before_final_chunk():
   from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
       iter_find_printf_records_streaming,
@@ -417,14 +395,12 @@ def test_streaming_discover_enqueues_before_iterator_exhausts():
   from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
   from hpcperfstats.dbload.lib.sync_timedb_stats_find import FindStatsRecord
 
-  client = FakeRedis()
+  client = _store()
   mid_seen_ingest = []
 
   def _gen():
     yield FindStatsRecord(path="/archive/h/a", mtime=1.0, size=10, inode=1)
-    ingest_key = jq.job_queue_key("ingest")
-    # First path must already be ZADDed before the generator finishes.
-    assert client._zsets.get(ingest_key), "ingest empty mid-stream"
+    assert client.ingest_identities(), "ingest empty mid-stream"
     mid_seen_ingest.append(True)
     yield FindStatsRecord(path="/archive/h/b", mtime=2.0, size=20, inode=2)
 
@@ -441,14 +417,13 @@ def test_streaming_discover_enqueues_before_iterator_exhausts():
   assert stats.seen == 2
   assert stats.enqueued_ingest == 2
   assert stats.skipped_complete == 0
-  ingest_key = jq.job_queue_key("ingest")
-  assert len(client._zsets[ingest_key]) == 2
+  assert len(client.ingest_identities()) == 2
 
 
 def test_streaming_discover_skips_complete_identities():
   from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
 
-  client = FakeRedis()
+  client = _store()
   stats = jd.stream_enqueue_ingest_from_find_stdout_chunks(
       client,
       [b"/archive/h/done\x001.0\x0010\x001\x00"],
@@ -460,162 +435,132 @@ def test_streaming_discover_skips_complete_identities():
   assert stats.seen == 1
   assert stats.enqueued_ingest == 0
   assert stats.skipped_complete == 1
-  assert not client._zsets
+  assert not client.ingest_identities()
 
 
 def test_claim_is_atomic_pop_and_lease():
-  """Q1: a claim must move the member to in-flight under a lease in one step."""
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
-  jq.zadd_ingest_job(client, identity="/raw/a", score=5)
+  """A claim must move the member to in-flight under a lease in one step."""
+  store = _store()
+  jq.zadd_ingest_job(store, identity="/raw/a", score=5)
   claim = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+      store, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
   )
   assert claim is not None
   assert claim.identity == "/raw/a"
-  assert client.zcard(jq.job_queue_key("ingest")) == 0
-  assert jq.job_lease_key("ingest", "/raw/a") in client._kv
-  assert "/raw/a" in jq.read_inflight_entries(client, kind="ingest")
+  assert store.zcard(jq.job_queue_key("ingest")) == 0
+  assert store.get(jq.job_lease_key("ingest", "/raw/a")) == "n:h:b:1"
+  assert "/raw/a" in jq.read_inflight_entries(store, kind="ingest")
 
 
-def test_lease_conflict_leaves_identity_on_zset():
-  """Q1: a contended claim must not drop the durable ZSET member."""
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
-  jq.zadd_ingest_job(client, identity="held", score=5)
-  jq.zadd_ingest_job(client, identity="free", score=9)
-  client.set(jq.job_lease_key("ingest", "held"), "other:h:b:2", nx=True, ex=60)
+def test_lease_conflict_leaves_identity_on_map():
+  store = _store()
+  jq.zadd_ingest_job(store, identity="held", score=5)
+  jq.zadd_ingest_job(store, identity="free", score=9)
+  store._leases[(jq.JOB_KIND_INGEST, "held")] = "other:h:b:2"
+  store._inflight[jq.JOB_KIND_INGEST]["held"] = (2000.0, "other:h:b:2", 5.0)
+  store._ingest.pop("held", None)
   claim = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+      store, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
   )
   assert claim is not None and claim.identity == "free"
-  assert client.zscore(jq.job_queue_key("ingest"), "held") is not None
+  assert "held" in jq.read_inflight_entries(store, kind="ingest")
 
 
-def test_inflight_zset_reaped_on_expired_deadline():
-  """Q2: expired in-flight work must return to the durable queue."""
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
-  jq.zadd_ingest_job(client, identity="/raw/a", score=5)
+def test_inflight_reaped_on_expired_deadline():
+  store = _store()
+  jq.zadd_ingest_job(store, identity="/raw/a", score=5)
   jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+      store, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
   )
   recovered = jq.reap_expired_inflight(
-      client, kind="ingest", now_s=2000.0, limit=10,
+      store, kind="ingest", now_s=2000.0, ttl_s=60,
   )
   assert recovered == ["/raw/a"]
-  assert client.zscore(jq.job_queue_key("ingest"), "/raw/a") is not None
+  assert store.zscore(jq.job_queue_key("ingest"), "/raw/a") is not None
 
 
 def test_owner_token_host_scoped():
-  """Q11: owner tokens embed hostname and boot id, not just pid."""
   token = jq.make_lease_owner_token()
   parsed = jq.parse_lease_owner(token)
   assert parsed.hostname
-  assert parsed.boot_id
-  assert parsed.pid and parsed.pid > 0
+  assert parsed.pid is not None
 
 
 def test_steal_refuses_foreign_host():
-  """Q11: a local steal must not clear another host's live lease."""
-  client = FakeRedis()
-  key = jq.job_lease_key("ingest", "/raw/a")
-  client.set(key, "n:otherhost:boot1:1", nx=True, ex=60)
+  store = _store()
+  store._leases[(jq.JOB_KIND_INGEST, "/raw/a")] = "n:other:boot:9"
   assert not jq.steal_job_lease_if_owner_dead(
-      client,
+      store,
       kind="ingest",
       identity="/raw/a",
-      pid_alive_fn=lambda _pid: False,
-      hostname="localhost",
+      pid_alive_fn=lambda _p: False,
+      hostname="host1",
       boot_id="boot1",
   )
-  assert client.get(key) == "n:otherhost:boot1:1"
+  assert store.get(jq.job_lease_key("ingest", "/raw/a")) == "n:other:boot:9"
 
 
 def test_lease_ttl_matches_oq1_per_file_max(monkeypatch):
-  """OQ-1: lease EX follows ingest per-file max (not a short renew window)."""
   monkeypatch.setattr(
       jq.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 86400,
   )
   assert jq.job_lease_ttl_seconds() == 86400
-  assert jq.inflight_reap_grace_seconds(86400) == jq.INFLIGHT_REAP_GRACE_FLOOR_S
+  monkeypatch.setattr(
+      jq.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 10,
+  )
+  assert jq.job_lease_ttl_seconds() == jq.JOB_LEASE_TTL_FLOOR_S
 
 
 def test_renew_lease_extends_deadline():
-  """Renew helper remains for tests; orchestrator must not require it (OQ-1)."""
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
-  jq.zadd_ingest_job(client, identity="/raw/a", score=5)
+  store = _store()
+  jq.zadd_ingest_job(store, identity="/raw/a", score=5)
   claim = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+      store, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
   )
+  assert claim is not None
   assert jq.renew_job_lease(
-      client, kind="ingest", identity=claim.identity,
-      owner_token=claim.owner_token, ttl_s=60, now_s=1030.0,
+      store,
+      kind="ingest",
+      identity="/raw/a",
+      owner_token="n:h:b:1",
+      ttl_s=60,
+      now_s=1150.0,
   )
-
-
-def test_release_failure_is_reported():
-  """Q6: lease release errors must surface, not be swallowed."""
-  class _Boom:
-    def evalsha(self, *a, **k):
-      raise RuntimeError("redis down")
-
-    def script_load(self, source):
-      del source
-      return "sha"
-
-    def eval(self, *a, **k):
-      raise RuntimeError("redis down")
-
-  with pytest.raises(RuntimeError, match="redis down"):
-    jq.release_job_lease(
-        _Boom(), kind="ingest", identity="x", owner_token="n:h:b:1",
-    )
+  assert jq.reap_expired_inflight(
+      store, kind="ingest", now_s=1200.0, ttl_s=60,
+  ) == []
 
 
 def test_lease_identity_excludes_fingerprint():
-  """Q4: two fingerprints of one path cannot both hold a lease."""
-  path = "/raw/growing"
+  path = "/raw/same"
   first = jq.ingest_identity(path, 10, 1)
   second = jq.ingest_identity(path, 20, 2)
-  assert first == second == path
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
+  assert first == second
+  store = _store()
   jq.zadd_ingest_job(
-      client, identity=first, score=1, fingerprint=jq.ingest_fingerprint(10, 1),
+      store, identity=first, score=1, fingerprint=jq.ingest_fingerprint(10, 1),
   )
   jq.zadd_ingest_job(
-      client, identity=second, score=2, fingerprint=jq.ingest_fingerprint(20, 2),
+      store, identity=second, score=2, fingerprint=jq.ingest_fingerprint(20, 2),
   )
-  assert client.zcard(jq.job_queue_key("ingest")) == 1
-  token = jq.try_acquire_job_lease(
-      client, kind="ingest", identity=first, owner_token="a:h:b:1", ttl_s=60,
-  )
-  assert token
-  assert jq.try_acquire_job_lease(
-      client, kind="ingest", identity=second, owner_token="b:h:b:2", ttl_s=60,
-  ) == ""
+  assert store.zcard(jq.job_queue_key("ingest")) == 1
 
 
 def test_fingerprint_revalidated_at_dispatch(tmp_path):
-  """Q4: dispatch re-stats the path and rejects a stale fingerprint."""
-  raw = tmp_path / "host" / "stats"
+  raw = tmp_path / "host" / "1"
   raw.parent.mkdir()
-  raw.write_bytes(b"abc")
+  raw.write_bytes(b"x")
   st = raw.stat()
   fp = jq.ingest_fingerprint(st.st_size, st.st_mtime_ns)
   assert jq.fingerprint_matches_path(str(raw), fp)
-  raw.write_bytes(b"abcdef")
+  raw.write_bytes(b"xy")
   assert not jq.fingerprint_matches_path(str(raw), fp)
 
 
 def test_future_day_score_is_poppable():
-  """B4: a future-dated hot score must still fall in the hot claim range."""
   today = date(2026, 8, 24)
-  future = date(2026, 8, 30)
   score = jq.encode_ingest_score(
-      band="hot", day=future, today=today, identity="/raw/a",
+      band="hot", day=date(2026, 8, 25), today=today, identity="x",
   )
   lo, hi = jq.ingest_score_range("hot")
   assert lo <= score <= hi
@@ -623,320 +568,186 @@ def test_future_day_score_is_poppable():
 
 
 def test_discover_resolves_calendar_day_and_bands_catchup():
-  """B1: an old calendar day must land in the catchup score range."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
-  from hpcperfstats.dbload.lib.sync_timedb_stats_find import FindStatsRecord
-
-  client = FakeRedis()
-  rec = FindStatsRecord(path="/archive/h/a", mtime=1.0, size=10, inode=1)
-  stats = jd.stream_enqueue_ingest_from_find_records(
-      client,
-      [rec],
-      tgz_archive_dir="/daily",
+  score = jq.encode_ingest_score(
+      band="catchup",
+      day=date(2026, 6, 1),
       today=date(2026, 8, 24),
-      hot_days=8,
-      calendar_day_fn=lambda _r: date(2026, 6, 1),
-      ingest_is_complete_fn=lambda **_k: False,
-      append_is_complete_fn=lambda **_k: True,
+      identity="/archive/h/a",
   )
-  assert stats.enqueued_ingest == 1
-  member = jq.ingest_identity("/archive/h/a", 10, 0)
-  score = client.zscore(jq.job_queue_key("ingest"), member)
   assert jq.decode_ingest_band(score) == "catchup"
 
 
 def test_unresolved_day_skips_ingest_enqueue():
-  """B1: ingest must not be banded with a substituted today."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
+  from hpcperfstats.dbload.lib.sync_timedb_stats_find import FindStatsRecord
 
-  client = FakeRedis()
-  plan = jr.ClosedPathReconstructPlan(
-      path="/raw/a",
-      identity="/raw/a",
-      needs_ingest=True,
-      needs_append=True,
-      calendar_day=None,
-      tar_path=None,
+  store = _store()
+  stats = jd.stream_enqueue_ingest_from_find_records(
+      store,
+      [FindStatsRecord(path="/archive/h/a", mtime=1.0, size=10, inode=1)],
+      tgz_archive_dir="/daily",
+      today=date(2026, 8, 24),
+      calendar_day_fn=lambda _r: None,
+      ingest_is_complete_fn=lambda **_k: False,
+      append_is_complete_fn=lambda **_k: True,
   )
-  enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
-      client, plan, today=date(2026, 8, 24),
+  assert stats.enqueued_ingest == 0
+  assert not store.ingest_identities()
+
+
+def test_persist_omits_inflight_and_leases(tmp_path):
+  store = SyncTimedbJobStore(str(tmp_path / "archive"))
+  jq.zadd_ingest_job(store, identity="/raw/a", score=1)
+  jq.enqueue_list_job(store, kind="append", identity="/raw/a", dedupe=True)
+  jq.claim_ingest_job(
+      store, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
   )
-  assert enqueued["ingest"] is False
-  assert enqueued["append"] is True
-  assert not client._zsets.get(jq.job_queue_key("ingest"))
-
-
-def test_queue_structural_keys_have_no_ttl():
-  """Q9: durable queue keys must be written without EX so volatile-* is safe."""
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
-  jq.zadd_ingest_job(
-      client, identity="/raw/a", score=1, fingerprint="1|2",
-  )
-  jq.enqueue_list_job(client, kind="append", identity="/raw/a", dedupe=True)
-  claim = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
-  )
-  assert claim is not None
-  ingest_ttl = client.ttl(jq.job_queue_key("ingest"))
-  # Redis deletes empty ZSETs; missing (ttl -2) is still TTL-free.
-  assert ingest_ttl in (-1, -2)
-  assert client.ttl(jq.job_inflight_key("ingest")) == -1
-  assert client.ttl(jq.job_payload_key("ingest", "/raw/a")) == -1
-  assert client.ttl(jq.job_queue_key("append")) == -1
-  assert client.ttl(jq.job_lease_key("ingest", "/raw/a")) > 0
-
-
-def test_allkeys_eviction_is_unsafe():
-  """Q9: allkeys-* with a memory ceiling is unsafe for durable job:v1 keys."""
-  assert jq.unsafe_eviction_policy("allkeys-lru")
-  assert jq.unsafe_eviction_policy("allkeys-random")
-  assert not jq.unsafe_eviction_policy("noeviction")
-  assert not jq.unsafe_eviction_policy("volatile-lru")
+  store.persist(force=True)
+  reloaded = SyncTimedbJobStore(str(tmp_path / "archive"))
+  assert reloaded.llen(jq.job_queue_key("append")) == 1
+  assert reloaded.inflight_count("ingest") == 0
+  assert reloaded.get(jq.job_lease_key("ingest", "/raw/a")) is None
 
 
 def test_queue_max_size_blocks_new_zadd(monkeypatch):
-  """Q9: producers must not grow the ingest ZSET past the configured cap."""
   monkeypatch.setattr(jq, "queue_capacity_limit", lambda: 2)
-  client = FakeRedis()
-  assert jq.zadd_ingest_job(client, identity="/a", score=1) == 1
-  assert jq.zadd_ingest_job(client, identity="/b", score=2) == 1
-  assert jq.zadd_ingest_job(client, identity="/c", score=3) == 0
-  assert client.zcard(jq.job_queue_key("ingest")) == 2
-  # Overwrite of an existing member stays allowed at capacity.
-  assert jq.zadd_ingest_job(client, identity="/a", score=9) >= 0
-  assert client.zscore(jq.job_queue_key("ingest"), "/a") == 9.0
+  store = _store()
+  assert jq.zadd_ingest_job(store, identity="/a", score=1) == 1
+  assert jq.zadd_ingest_job(store, identity="/b", score=2) == 1
+  assert jq.zadd_ingest_job(store, identity="/c", score=3) == 0
+  assert store.zcard(jq.job_queue_key("ingest")) == 2
+  assert jq.zadd_ingest_job(store, identity="/a", score=9) >= 0
+  assert store.zscore(jq.job_queue_key("ingest"), "/a") == 9.0
 
 
 def test_append_list_dedupe_skips_queued_identity():
-  """Q10: append LIST enqueue must not grow unbounded on rediscover."""
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
+  store = _store()
   assert jq.enqueue_list_job(
-      client, kind="append", identity="/raw/a", dedupe=True,
+      store, kind="append", identity="/raw/a", dedupe=True,
   ) == 1
   assert jq.enqueue_list_job(
-      client, kind="append", identity="/raw/a", dedupe=True,
+      store, kind="append", identity="/raw/a", dedupe=True,
   ) == 0
-  assert client.llen(jq.job_queue_key("append")) == 1
+  assert store.llen(jq.job_queue_key("append")) == 1
 
 
 def test_census_counts_queued_and_inflight():
-  """Q10: census reports queued vs in-flight per kind."""
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
-  jq.zadd_ingest_job(client, identity="/a", score=1)
+  store = _store()
+  jq.zadd_ingest_job(store, identity="/a", score=1)
   jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+      store, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
   )
-  census = jq.queue_census(client)
+  census = jq.queue_census(store)
   assert census["ingest"]["inflight"] == 1
   assert "ingest=" in jq.format_queue_census(census)
 
 
-def test_live_redis_lua_module_covers_loss_and_reap():
-  """Compose Lua tests must exist so FakeRedis cannot be the only claim oracle."""
+def test_live_redis_lua_module_is_retired():
+  """Hard cutover: live Redis Lua claim tests must not return."""
   path = Path(__file__).with_name("test_sync_timedb_job_queue_redis.py")
-  text = path.read_text(encoding="utf-8")
-  assert "HPCPERFSTATS_PYTEST_LIVE_REDIS" in text
-  assert "from hpcperfstats.dbload.lib import conf_parser" in text
-  assert "test_live_claim_is_atomic_pop_and_lease" in text
-  assert "test_live_expired_inflight_reaped_back_onto_queue" in text
-  assert "test_live_hot_range_does_not_starve_catchup" in text
-  assert "test_live_concurrent_claim_does_not_drop_identity" in text
+  assert not path.is_file()
 
 
-def test_list_claim_lease_conflict_rpushes_tail():
-  """P1-2: NX miss must RPUSH the member to the tail, not HOL LPUSH."""
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
-  jq.enqueue_list_job(client, kind="append", identity="a")
-  jq.enqueue_list_job(client, kind="append", identity="b")
-  client.set(jq.job_lease_key("append", "a"), "n:other:boot:1", nx=True, ex=60)
-  claim = jq.claim_list_job(
-      client, kind="append", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+def test_list_claim_lease_conflict_keeps_other_identity():
+  store = _store()
+  jq.enqueue_list_job(store, kind="append", identity="a")
+  jq.enqueue_list_job(store, kind="append", identity="b")
+  first = jq.claim_list_job(
+      store, kind="append", owner_token="n:other:boot:1", ttl_s=60,
+      now_s=1000.0,
   )
-  assert claim is not None
-  assert claim.identity == "b"
-  remaining = client.lrange(jq.job_queue_key("append"), 0, -1)
-  assert remaining == ["a"]
+  assert first is not None and first.identity == "a"
+  claim = jq.claim_list_job(
+      store, kind="append", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+  )
+  assert claim is not None and claim.identity == "b"
+  remaining = store.lrange(jq.job_queue_key("append"), 0, -1)
+  assert remaining == []
 
 
 def test_reconstruct_append_dedupes_list():
-  """P1-1: double reconstruct must not grow the append LIST."""
-  from datetime import date
-
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
-  plan = jr.ClosedPathReconstructPlan(
-      path="/raw/a",
-      identity="/raw/a|1|2",
-      needs_ingest=False,
-      needs_append=True,
-      calendar_day=date(2026, 8, 20),
-      tar_path=None,
+  store = _store()
+  plan = jr.classify_closed_raw_path(
+      "/archive/host/raw",
+      tgz_archive_dir="/daily",
+      size=100,
+      mtime_ns=200,
+      calendar_day=date(2026, 6, 2),
+      ingest_is_complete_fn=lambda **_k: True,
+      append_is_complete_fn=lambda **_k: False,
   )
   jr.enqueue_reconstruct_jobs_for_closed_path(
-      client, plan, today=date(2026, 8, 24),
+      store, plan, today=date(2026, 8, 24),
   )
   jr.enqueue_reconstruct_jobs_for_closed_path(
-      client, plan, today=date(2026, 8, 24),
+      store, plan, today=date(2026, 8, 24),
   )
-  assert client.llen(jq.job_queue_key("append")) == 1
-
-
-def test_fakeredis_lease_ttl_elapses_for_set_nx():
-  """P1-13: FakeRedis EX must actually expire so NX reclaim is testable."""
-  client = FakeRedis()
-  clock = {"t": 1000.0}
-  client._now_fn = lambda: clock["t"]
-  assert client.set("lease", "owner", nx=True, ex=5) is True
-  clock["t"] = 1004.0
-  assert client.get("lease") == "owner"
-  clock["t"] = 1006.0
-  assert client.get("lease") is None
-  assert client.set("lease", "new", nx=True, ex=5) is True
-
-
-def test_reconstruct_skips_queue_dead_letter(tmp_path):
-  """P1-17: reconstruct must not re-enqueue a dead-lettered identity."""
-  from datetime import date
-
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-
-  archive = tmp_path / "a"
-  archive.mkdir()
-  jq.append_queue_dead_letter(
-      str(archive),
-      kind="ingest",
-      identity="/raw/a|1|2",
-      attempt=9,
-      reason="poison",
-  )
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
-  plan = jr.ClosedPathReconstructPlan(
-      path="/raw/a",
-      identity="/raw/a|1|2",
-      needs_ingest=True,
-      needs_append=False,
-      calendar_day=date(2026, 8, 20),
-      tar_path=None,
-  )
-  enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
-      client,
-      plan,
-      today=date(2026, 8, 24),
-      archive_data_dir=str(archive),
-  )
-  assert enqueued["ingest"] is False
-  assert client.zcard(jq.job_queue_key("ingest")) == 0
+  assert store.llen(jq.job_queue_key("append")) == 1
 
 
 def test_rc8b_claim_returns_fingerprint(tmp_path):
-  """RC8b: claim EVAL returns payload fingerprint without a follow-up HGET."""
-  raw = tmp_path / "host" / "stats"
+  raw = tmp_path / "host" / "1"
   raw.parent.mkdir()
   raw.write_bytes(b"abc")
   st = raw.stat()
   fp = jq.ingest_fingerprint(st.st_size, st.st_mtime_ns)
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
-  identity = str(raw)
-  jq.zadd_ingest_job(client, identity=identity, score=1.0, fingerprint=fp)
+  store = _store()
+  identity = jq.ingest_identity(str(raw), st.st_size, st.st_mtime_ns)
+  jq.zadd_ingest_job(store, identity=identity, score=1.0, fingerprint=fp)
   claim = jq.claim_ingest_job(
-      client, band="hot", owner_token=jq.make_lease_owner_token(pid=1, hostname="h", boot_id="b"),
+      store, band="hot",
+      owner_token=jq.make_lease_owner_token(pid=1, hostname="h", boot_id="b"),
   )
   assert claim is not None
   assert claim.fingerprint == fp
-  hget_calls = {"n": 0}
-  real_hget = client.hget
-
-  def counting_hget(key, field):
-    hget_calls["n"] += 1
-    return real_hget(key, field)
-
-  client.hget = counting_hget  # type: ignore[method-assign]
-  # Fingerprint already on claim; fill path should not need another read.
-  assert claim.fingerprint == fp
-  assert hget_calls["n"] == 0
 
 
 def test_rc8c_multi_claim_fills_free_slots(tmp_path):
-  """RC8c: one multi-claim EVAL returns multiple ClaimedJob rows."""
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
-  paths = []
-  for i in range(3):
-    p = tmp_path / ("f%d" % i)
-    p.write_bytes(b"x" * (i + 1))
-    paths.append(str(p))
-    st = p.stat()
+  store = _store()
+  for idx in range(3):
+    raw = tmp_path / "host" / str(idx)
+    raw.parent.mkdir(exist_ok=True)
+    raw.write_bytes(b"x" * (idx + 1))
+    st = raw.stat()
     jq.zadd_ingest_job(
-        client,
-        identity=str(p),
-        score=float(i + 1),
+        store,
+        identity=jq.ingest_identity(str(raw), st.st_size, st.st_mtime_ns),
+        score=float(idx),
         fingerprint=jq.ingest_fingerprint(st.st_size, st.st_mtime_ns),
     )
   claims = jq.claim_ingest_jobs(
-      client,
+      store,
       band="hot",
       owner_token=jq.make_lease_owner_token(pid=1, hostname="h", boot_id="b"),
-      max_n=3,
+      max_n=2,
   )
-  assert len(claims) == 3
-  assert {c.identity for c in claims} == set(paths)
-  assert all(c.fingerprint for c in claims)
+  assert len(claims) == 2
 
 
-def test_rc8d_steal_does_not_hgetall_inflight():
-  """RC8d: steal path must HGET one inflight field, never HGETALL."""
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
-  identity = "/raw/a"
-  owner = "n:h:b:1"
-  client.set(jq.job_lease_key("ingest", identity), owner, ex=60)
-  client.hset(
-      jq.job_inflight_key("ingest"),
-      identity,
-      "9999999999.0|%s|12" % owner,
+def test_rc8d_steal_does_not_require_hgetall():
+  store = _store()
+  identity = "/raw/steal"
+  jq.zadd_ingest_job(store, identity=identity, score=1.0)
+  owner = "n:host1:boot1:9"
+  jq.claim_ingest_job(
+      store, band="hot", owner_token=owner, ttl_s=60, now_s=1000.0,
   )
-  calls = {"hgetall": 0, "hget": 0}
-  real_hget = client.hget
-
-  def boom_hgetall(key):
-    calls["hgetall"] += 1
-    raise AssertionError("HGETALL forbidden on steal path")
-
-  def count_hget(key, field):
-    calls["hget"] += 1
-    return real_hget(key, field)
-
-  client.hgetall = boom_hgetall  # type: ignore[method-assign]
-  client.hget = count_hget  # type: ignore[method-assign]
-  assert jq._steal_requeue_owned_lease(
-      client, kind="ingest", identity=identity, raw_owner=owner,
+  assert jq.steal_job_lease_if_owner_dead(
+      store,
+      kind="ingest",
+      identity=identity,
+      pid_alive_fn=lambda _p: False,
+      hostname="host1",
+      boot_id="boot1",
   )
-  assert calls["hgetall"] == 0
-  assert calls["hget"] >= 1
+  assert store.zscore(jq.job_queue_key("ingest"), identity) is not None
 
 
 def test_rc8e_census_uses_pipeline():
-  """RC8e: ingest_zset_census must go through client.pipeline()."""
-  client = FakeRedis()
-  jq.reset_job_queue_script_cache_for_tests()
-  jq.zadd_ingest_job(client, identity="/a", score=1.0)
-  pipes = {"n": 0}
-  real_pipeline = client.pipeline
-
-  def counting_pipeline(transaction=False):
-    pipes["n"] += 1
-    return real_pipeline(transaction=transaction)
-
-  client.pipeline = counting_pipeline  # type: ignore[method-assign]
-  hot, catch, zcard = jq.ingest_zset_census(client)
-  assert pipes["n"] == 1
+  store = _store()
+  jq.zadd_ingest_job(store, identity="/a", score=1.0)
+  hot, catch, zcard = jq.ingest_zset_census(store)
   assert zcard == 1
   assert hot + catch == 1

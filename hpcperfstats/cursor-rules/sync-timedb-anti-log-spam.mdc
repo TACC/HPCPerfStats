@@ -1,7 +1,7 @@
 ---
 description: Hot wait/poll/retry/defer INFO must be rate-limited with suppressed_n= (never bare log_print in loops)
 alwaysApply: false
-globs: hpcperfstats/dbload/lib/sync_timedb_archive_members_redis.py,hpcperfstats/dbload/lib/sync_timedb_populate_pool.py,hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/tests/test_sync_timedb_archive_members_redis.py
+globs: hpcperfstats/dbload/lib/sync_timedb_archive_members_coord.py,hpcperfstats/dbload/lib/sync_timedb_populate_pool.py,hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/tests/test_sync_timedb_archive_members_store.py,hpcperfstats/tests/test_sync_timedb_archive.py
 ---
 
 # sync_timedb Anti Log Spam
@@ -12,9 +12,9 @@ globs: hpcperfstats/dbload/lib/sync_timedb_archive_members_redis.py,hpcperfstats
 
 INFO/WARN on **hot wait / poll / retry / defer** paths that can fire **per worker** or **per poll** must use **rate-limiting** and append **`suppressed_n=`** when prior emissions were suppressed. **Never** bare `log_print` / `logger.info` inside those loops.
 
-Prefer **Redis `SET NX EX`** when N processes (ingest-pool / populate waiters / main) share the same calendar day or key — process-local intervals alone still emit ~N lines per window.
+Prefer a **shared in-process limiter** when N threads (ingest-pool / populate waiters / main) share the same calendar day — process-local intervals in each thread still emit ~N lines per window.
 
-Canonical helper: `_rate_limited_day_info_log` (+ day-specific wrappers) in `sync_timedb_archive_members_redis.py`.
+Canonical helper: `_rate_limited_day_info_log` (+ day-specific wrappers) in `sync_timedb_archive_members_coord.py`.
 
 **Deliberate INFO (not spam):** `reconstruct-coordinator` **600s** `queue_orchestrator progress day=` / `status` rollup (`sync_timedb_progress_report.py`) and single-line `archive_job_done` are intentional operator surfaces — do not rate-limit those. Do **not** restore per-batch `Archive/delete gate: skipped`, per-job `handoff_to_ingest … reason=gate_skip`, or undated `queue_orchestrator idle reconstruct work=` INFO (day-line `gate_skip=` / `ingest_handoff=` / `reconstruct_enq=` / `incomplete_seen=` own that visibility).
 
@@ -22,7 +22,7 @@ Canonical helper: `_rate_limited_day_info_log` (+ day-specific wrappers) in `syn
 
 Bare `log_print("INFO: populate empty recover deferred … reason=archive_append_inflight")` in `wait_for_complete_members` fired on every empty-recover trip while append was inflight. Concurrent ingest-pool waiters produced tens of identical INFO lines per second.
 
-**Required:** `_log_empty_recover_deferred_if_allowed` (process-local + Redis NX). Sibling patterns already covered: `_log_append_inflight_defer_if_allowed`, `_log_identity_drift_if_allowed`, `_log_stale_incomplete_if_allowed`.
+**Required:** `_log_empty_recover_deferred_if_allowed` (shared process limiter). Sibling patterns already covered: `_log_append_inflight_defer_if_allowed`, `_log_identity_drift_if_allowed`, `_log_stale_incomplete_if_allowed`.
 
 ## Required tests (same task)
 

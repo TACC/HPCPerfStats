@@ -8,7 +8,7 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-**Production coordinator** is **`run_sync_timedb_queue_orchestrator`** (`sync-timedb-queue-orchestrator-contract.mdc`). Dual CLI ``backlog``/``current``, janitor startup heavy pass, and MainThread “blocking boot snapshot before ingest” are **retired**. Empty Redis job keys ≠ caught up — **reconstruct** from disk + Timescale + marks, then **stream** GNU `find -printf` into ingest `ZADD` (`sync_timedb_job_discover` / `sync_timedb_job_reconstruct`).
+**Production coordinator** is **`run_sync_timedb_queue_orchestrator`** (`sync-timedb-queue-orchestrator-contract.mdc`). Dual CLI ``backlog``/``current``, janitor startup heavy pass, and MainThread “blocking boot snapshot before ingest” are **retired**. Empty job-store sidecars ≠ caught up — **reconstruct** from disk + Timescale + marks, then **stream** GNU `find -printf` into ingest `ZADD` (`sync_timedb_job_discover` / `sync_timedb_job_reconstruct`).
 
 `StartupArchiveScanCoordinator` in `sync_timedb_startup_archive_scan.py` remains a **library helper** for single-flight snapshot build/publish if tooling still calls it. Do **not** rewire production ingest to wait on janitor `run_heavy_maintenance_pass(reason=startup)` or `handoff_priority_paths`.
 
@@ -24,14 +24,14 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 ## Required behavior (queue era)
 
 - **Streaming discover:** enqueue ingest jobs as paths arrive; do not wait for full-tree collect before the first `ZADD`.
-- **Brownfield reconstruct:** on empty or incomplete `job:v1` structures, classify from disk+DB and enqueue incomplete identities only (skip already-complete).
+- **Brownfield reconstruct:** on empty or incomplete job-store sidecars, classify from disk+DB and enqueue incomplete identities only (skip already-complete).
 - **Day-close:** filesystem remaining-raw empty **and** `sync_day_close_min_age_hours` (default 32); not gated on a B startup snapshot flag.
 - **Ingest is not gated** on day_close completion (`TQ-09`).
 
 ## Forbidden patterns
 
 - Dual-run of `run_sync_timedb_supervisor_loop` / `ArchiveJanitor` beside the queue orchestrator.
-- Treating empty Redis `job:v1` as “caught up.”
+- Treating empty job-store sidecars as “caught up.”
 - Restoring oldest-day **chunk gate** / `handoff_priority_paths` as production discover.
 - Parallel full-tree boot walks from multiple coordinators as the production discover path.
 

@@ -178,7 +178,7 @@ def test_day_close_job_wires_on_handoff_to_ingest():
   assert "on_handoff_to_ingest" in src
   assert "_handoff_retryable_paths_to_ingest" in src
   fill = inspect.getsource(qo._fill_day_close_slots)
-  assert "redis_client=" in fill
+  assert "job_store=" in fill
 
 
 def test_handoff_retryable_paths_enqueues_ingest(tmp_path):
@@ -205,8 +205,8 @@ def test_handoff_retryable_paths_enqueues_ingest(tmp_path):
   assert client.zscore(jq.job_queue_key("ingest"), ident) is not None
 
 
-def test_handoff_retryable_paths_skips_when_redis_client_missing(tmp_path):
-  """Handoff is a no-op when the day-close thread has no Redis client."""
+def test_handoff_retryable_paths_skips_when_job_store_missing(tmp_path):
+  """Handoff is a no-op when the day-close thread has no job store."""
   daily = tmp_path / "daily"
   daily.mkdir()
   tar = daily / "2020-01-01.tar"
@@ -771,9 +771,9 @@ def test_boot_stream_discover_uses_discover_append_complete():
 def test_discover_raw_needs_tar_append_cold_never_calls_populate_wait(
   tmp_path, monkeypatch,
 ):
-  """Cold Redis: discover probe enqueues append without populate_and_wait."""
+  """Cold members store: discover probe enqueues append without populate_and_wait."""
   from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as ah
-  from hpcperfstats.dbload.lib import sync_timedb_archive_members_redis as amr
+  from hpcperfstats.dbload.lib import sync_timedb_archive_members_coord as amr
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 
   daily = tmp_path / "daily"
@@ -793,15 +793,11 @@ def test_discover_raw_needs_tar_append_cold_never_calls_populate_wait(
   )
   monkeypatch.setattr(ah, "daily_archive_populate_source_exists", lambda _c: True)
   monkeypatch.setattr(ah, "_lookup_daily_archive_members_cache", lambda _c: None)
-  monkeypatch.setattr(amr, "archive_members_redis_enabled", lambda: True)
   monkeypatch.setattr(
-      amr, "build_archive_members_redis_keys",
+      amr, "build_archive_members_keys",
       lambda key: type("K", (), {"hash_key": "h", "complete_key": "c"})(),
   )
-  monkeypatch.setattr(
-      amr, "get_archive_members_redis_client", lambda required=True: object(),
-  )
-  monkeypatch.setattr(amr, "redis_member_match_when_warm", lambda *a, **k: None)
+  monkeypatch.setattr(amr, "member_match_when_warm", lambda *a, **k: None)
   monkeypatch.setattr(
       amr,
       "request_archive_members_populate_and_wait",
@@ -1518,7 +1514,7 @@ def test_day_close_wait_on_ingest_yield(tmp_path, monkeypatch):
 
 
 def test_startup_has_no_redis_eviction_gate():
-  """In-process queues do not consult Redis maxmemory-policy."""
+  """In-process queues do not consult a queue eviction policy."""
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
   assert "assert_redis_queue_safety" not in src
   assert not hasattr(qo, "assert_redis_queue_safety")
@@ -1805,7 +1801,7 @@ def test_retry_or_dead_letter_claim_none_not_silent_requeued():
 
 
 def test_drain_timeout_terminates_before_requeue():
-  """P0-8: kill in-flight workers before Redis requeue (dirty-tar then recover)."""
+  """P0-8: kill in-flight workers before job-store requeue (dirty-tar then recover)."""
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
   timeout_idx = src.find("drain timeout")
   assert timeout_idx != -1
@@ -1853,12 +1849,12 @@ def test_ingest_timeout_requeues_without_attempt_bump(tmp_path, monkeypatch):
 
 
 def test_zcount_failure_is_fail_closed():
-  """P1-7: Redis zcount errors must not invent hot_queued=1."""
+  """P1-7: job-store zcount errors must not invent hot_queued=1."""
   loop_src = inspect.getsource(qo._ingest_coordinator_loop)
   fill_src = inspect.getsource(qo._ingest_coordinator_fill_tick)
   assert "hot_queued = 1" not in loop_src
   assert "hot_queued = 1" not in fill_src
-  assert "queue orchestrator redis zcount failed" in fill_src
+  assert "queue orchestrator job-store zcount failed" in fill_src
 
 
 def test_ingest_coordinator_idle_sleep_deep_queue():
@@ -2012,12 +2008,12 @@ def test_skip_fp_penalty_lets_claimable_job_behind_submit(monkeypatch, tmp_path)
   assert requeue_kw[0]["score"] == qo._penalized_ingest_requeue_score(5.0)
 
 
-def test_fill_block_persists_until_redis_hlen_recovers():
-  """RC9: clear fill_block only when Redis HLEN reaches pool-1, not on submit."""
+def test_fill_block_persists_until_store_hlen_recovers():
+  """RC9: clear fill_block only when store HLEN reaches pool-1, not on submit."""
   src = inspect.getsource(qo._ingest_coordinator_loop)
-  assert "redis_hlen_after >= ingest_pool_size - 1" in src
+  assert "store_hlen_after >= ingest_pool_size - 1" in src
   assert "set_fill_block(None)" in src
-  assert "redis_hlen=" in src
+  assert "store_hlen=" in src
   assert "hot_used=" in src
   assert "catch_used=" in src
 
@@ -2031,7 +2027,7 @@ def test_ingest_coordinator_uses_runtime_steal_on_fill_empty():
   assert "steal_dead_owner_leases" in hy
   assert "ingest runtime steal" in hy
   assert "reconcile_this_owner_orphan_leases" in hy
-  assert "redis_underfull" in hy or "redis_hlen" in hy
+  assert "store_underfull" in hy or "store_hlen" in hy
   assert "zcard" in hy
   fill_src = inspect.getsource(qo._ingest_coordinator_loop)
   first_fill = fill_src.find(
@@ -2043,7 +2039,7 @@ def test_ingest_coordinator_uses_runtime_steal_on_fill_empty():
   )
   assert 0 < first_fill < drain_at < second_fill
   assert "fill under-capacity" in fill_src
-  assert "redis_hlen_after >= ingest_pool_size - 1" in fill_src
+  assert "store_hlen_after >= ingest_pool_size - 1" in fill_src
   assert "len(ingest_inflight) < ingest_pool_size" in fill_src
 
 
@@ -2294,16 +2290,16 @@ def test_cheap_day_close_helper_rejects_blocking_filesystem_complete():
 
 
 def test_tar_dedup_day_close_uses_list_dedupe(monkeypatch):
-  """Burst appends for one tar enqueue day_close at most once (Redis dedupe)."""
+  """Burst appends for one tar enqueue day_close at most once (job-store dedupe)."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 
   client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   tar = "/d/2026-07-17.tar"
   assert jr.enqueue_cheap_day_close_if_needed(client, tar) is True
-  # Second enqueue is dedupe-skipped at Redis; complete check still True-path
+  # Second enqueue is dedupe-skipped at the job store; complete check still True-path
   # returns True from enqueue_day_close_if_needed only when push happens.
-  # With FakeRedis dedupe Lua may no-op; assert LIST depth stays 1.
+  # Store enqueue is idempotent; assert LIST depth stays 1.
   jr.enqueue_cheap_day_close_if_needed(client, tar)
   jr.enqueue_cheap_day_close_if_needed(client, tar)
   depth = int(client.llen(jq.job_queue_key(jq.JOB_KIND_DAY_CLOSE)) or 0)
@@ -2376,7 +2372,7 @@ def test_fail_closed_coordinator_death_no_empty_map_restart(monkeypatch):
 
 
 def test_kind_scoped_reaper_skips_local_inflight(monkeypatch):
-  """C3: reaper protects local identities before Redis reclaim."""
+  """C3: reaper protects local identities before job-store reclaim."""
   client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   protected: list[str] = []
@@ -2469,6 +2465,32 @@ def test_drain_bare_TimeoutError_leaves_inflight_no_soft_requeue(
   joined = "\n".join(logs)
   assert "ingest fail" not in joined
   assert "queue_orchestrator ingest timeout" not in joined
+  assert qo._is_ingest_timeout_sentinel(inflight[identity])
+
+
+def test_drain_timeout_sentinel_is_not_deadline_protected(tmp_path, monkeypatch):
+  """H7 sentinels stay in inflight but are excluded from deadline protect."""
+  monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
+  client = SyncTimedbJobStore("")
+  jq.reset_job_queue_script_cache_for_tests()
+  identity = "/raw/timeout_sentinel"
+  jq.zadd_ingest_job(client, identity=identity, score=1.0)
+  claim = jq.claim_ingest_job(
+      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+  )
+  inflight = {identity: qo._IngestTimeoutSentinel()}
+  protected = qo._protect_local_inflight_deadlines(
+      client,
+      kind="ingest",
+      identities=[
+          ident
+          for ident, res in inflight.items()
+          if not qo._is_ingest_timeout_sentinel(res)
+      ],
+  )
+  assert protected == 0
+  assert identity in inflight
+  assert claim is not None
 
 
 def test_drain_rich_TimeoutError_soft_requeues_without_fail(tmp_path, monkeypatch):
@@ -2622,8 +2644,8 @@ def test_drain_ingest_marks_quiet_log_fn_none(monkeypatch, tmp_path):
   assert "log_fn=None" in src
 
 
-def test_rc8_reconcile_prunes_local_when_redis_hlen_low():
-  """RC8: phantom local maps prune when Redis has no inflight/lease."""
+def test_rc8_reconcile_prunes_local_when_store_hlen_low():
+  """RC8: phantom local maps prune when the job store has no inflight/lease."""
   class _Client:
     def hget(self, key, field):
       del key, field
@@ -2643,7 +2665,7 @@ def test_rc8_reconcile_prunes_local_when_redis_hlen_low():
   }
   submitted = {"/phantom": 1.0}
   band_used = {"hot": 1, "catchup": 0}
-  pruned = qo._reconcile_local_ingest_maps_to_redis(
+  pruned = qo._reconcile_local_ingest_maps_to_store(
       _Client(),
       ingest_inflight=inflight,
       ingest_leases=leases,
@@ -2657,8 +2679,8 @@ def test_rc8_reconcile_prunes_local_when_redis_hlen_low():
   assert band_used["hot"] == 0
 
 
-def test_rc8_hygiene_runs_when_local_full_redis_underfull(monkeypatch):
-  """RC8: hygiene must not skip when local looks full but Redis HLEN is low."""
+def test_rc8_hygiene_runs_when_local_full_store_underfull(monkeypatch):
+  """RC8: hygiene must not skip when local looks full but store HLEN is low."""
   calls = {"steal": 0}
 
   def fake_steal(client):
@@ -2682,7 +2704,7 @@ def test_rc8_hygiene_runs_when_local_full_redis_underfull(monkeypatch):
       zcard=100,
       last_runtime_steal=0.0,
       log_fn=None,
-      redis_hlen=5,
+      store_hlen=5,
   )
   assert now > 0
   assert calls["steal"] == 1
@@ -2714,4 +2736,4 @@ def test_rc8e_census_wired_in_fill_tick():
   assert "ingest_zset_census" in src
   loop = inspect.getsource(qo._ingest_coordinator_loop)
   assert "_ingest_coordinator_tick_sleep_s" in loop
-  assert "_reconcile_local_ingest_maps_to_redis" in loop
+  assert "_reconcile_local_ingest_maps_to_store" in loop

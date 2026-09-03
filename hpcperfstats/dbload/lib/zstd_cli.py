@@ -591,9 +591,9 @@ def decompress_compressed_to_tar(
   """
   Decompress to a verified sibling ``.tar``; unlink compressed only on success.
   
-  Exclusive ownership: Redis ``daily_tar_restore`` ``SET NX`` lease when Redis
-    L2
-  is enabled; otherwise ``{tar}.decomp`` file write lock. Losers never touch
+  Exclusive ownership: in-process members-store ``daily_tar_restore`` lease
+  when the store is installed; otherwise ``{tar}.decomp`` file write lock.
+  Losers never touch
   ``.decomp.tmp`` or spawn a second ``zstd -o``. When ``wait_for_other_owner``
   is False (day-close pre_seal), losers return False immediately so the worker
   can defer and free its pool slot.
@@ -634,33 +634,33 @@ def decompress_compressed_to_tar(
       invalidate_after_daily_tar_mutation,
       notify_daily_tar_restore_cleared,
   )
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      archive_members_redis_enabled,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       clear_daily_tar_restore_in_progress,
-      get_archive_members_redis_client,
       renew_daily_tar_restore_lease,
       try_acquire_daily_tar_restore,
       wait_for_daily_tar_restore_before_populate,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      get_process_archive_members_store,
   )
 
   day = calendar_date_from_daily_tar_path(tar_path or "")
   day_token = day.isoformat() if day is not None else ""
   lease_value = ""
-  use_redis_lease = False
-  if day_token and archive_members_redis_enabled():
-    client = get_archive_members_redis_client(required=False)
-    if client is not None:
-      use_redis_lease = True
-      lease_value = try_acquire_daily_tar_restore(
-          day_token,
-          reason=restore_reason,
-          caller=restore_caller,
-      )
-      if not lease_value:
-        if not wait_for_other_owner:
-          return False
-        wait_for_daily_tar_restore_before_populate(tar_path, log_fn=log_print)
-        return os.path.isfile(tar_path)
+  use_store_lease = False
+  if day_token and get_process_archive_members_store() is not None:
+    lease_value = try_acquire_daily_tar_restore(
+        day_token,
+        reason=restore_reason,
+        caller=restore_caller,
+    )
+    if lease_value:
+      use_store_lease = True
+    elif not wait_for_other_owner:
+      return False
+    else:
+      wait_for_daily_tar_restore_before_populate(tar_path, log_fn=log_print)
+      return os.path.isfile(tar_path)
 
   renew_stop = threading.Event()
   renew_thread = None
@@ -760,7 +760,7 @@ def decompress_compressed_to_tar(
 
   held_file_lock = False
   try:
-    if use_redis_lease:
+    if use_store_lease:
       return _run_owned_restore()
     decomp_lock_target = "%s.decomp" % tar_path
     lease_s = max(60.0, float(cfg.get_sync_daily_tar_restore_lease_seconds()))

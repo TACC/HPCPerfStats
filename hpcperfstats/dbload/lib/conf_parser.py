@@ -132,16 +132,10 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_stall_idle_s"),
     ("PIPELINE", "sync_archive_members_cache_enabled"),
     ("PIPELINE", "sync_archive_members_cache_max_entries"),
-    ("PIPELINE", "sync_archive_members_redis_enabled"),
-    ("PIPELINE", "sync_archive_members_redis_ttl_seconds"),
-    ("PIPELINE", "sync_archive_members_redis_populate_lock_seconds"),
-    ("PIPELINE", "sync_archive_members_redis_populate_stall_seconds"),
-    ("PIPELINE", "sync_archive_members_redis_populate_max_seconds"),
+    ("PIPELINE", "sync_archive_members_populate_max_seconds"),
     ("PIPELINE", "sync_daily_tar_restore_lease_seconds"),
     ("PIPELINE", "sync_archive_members_fnctl_read_lock_timeout_seconds"),
-    ("PIPELINE", "sync_archive_members_redis_wait_poll_seconds"),
-    ("PIPELINE", "sync_archive_members_redis_hset_batch_size"),
-    ("PIPELINE", "sync_archive_members_redis_max_payload_bytes"),
+    ("PIPELINE", "sync_archive_members_wait_poll_seconds"),
     ("PIPELINE", "sync_archive_members_populate_pool_processes"),
     ("PIPELINE", "sync_write_lock_shards"),
     ("PIPELINE", "sync_bulk_create_batch_size"),
@@ -296,16 +290,10 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_stall_idle_s': '1800',
     'sync_archive_members_cache_enabled': 'yes',
     'sync_archive_members_cache_max_entries': '64',
-    'sync_archive_members_redis_enabled': 'yes',
-    'sync_archive_members_redis_ttl_seconds': '86400',
-    'sync_archive_members_redis_populate_lock_seconds': '3600',
-    'sync_archive_members_redis_populate_stall_seconds': '120',
-    'sync_archive_members_redis_populate_max_seconds': '0',
+    'sync_archive_members_populate_max_seconds': '0',
     'sync_daily_tar_restore_lease_seconds': '14400',
     'sync_archive_members_fnctl_read_lock_timeout_seconds': '180',
-    'sync_archive_members_redis_wait_poll_seconds': '0.25',
-    'sync_archive_members_redis_hset_batch_size': '500',
-    'sync_archive_members_redis_max_payload_bytes': '8388608',
+    'sync_archive_members_wait_poll_seconds': '0.25',
     'sync_archive_members_populate_pool_processes': '4',
     'sync_write_lock_shards': '8',
     'sync_bulk_create_batch_size': '10000',
@@ -2956,99 +2944,22 @@ def get_sync_archive_members_cache_max_entries() -> Any:
     return 64
 
 
-def get_sync_archive_members_redis_enabled() -> Any:
-  """
-  Whether cross-worker Redis L2 backs daily archive member maps.
-  
-  Returns:
-    Any: Open return polymorphism from
-    ``get_sync_archive_members_redis_enabled``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
-  Examples:
-    >>> get_sync_archive_members_redis_enabled()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return _parse_bool(
-      _pipeline_get("sync_archive_members_redis_enabled"),
-  )
-
-
-def get_sync_archive_members_redis_ttl_seconds() -> Any:
-  """
-  TTL for Redis archive member HASH / complete keys.
-  
-  Returns:
-    Any: Open return polymorphism from
-    ``get_sync_archive_members_redis_ttl_seconds``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
-  Examples:
-    >>> get_sync_archive_members_redis_ttl_seconds()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  try:
-    return max(60, int(_pipeline_get("sync_archive_members_redis_ttl_seconds")))
-  except (TypeError, ValueError, OverflowError):
-    return 86400
-
-
-def get_sync_archive_members_redis_populate_lock_seconds() -> Any:
-  """
-  Populate lock lease (renewed during scan).
-  
-  Returns:
-    Any: Open return polymorphism from
-    ``get_sync_archive_members_redis_populate_lock_seconds``: concrete type
-    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-    empty).
-  
-  Examples:
-    >>> get_sync_archive_members_redis_populate_lock_seconds()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  try:
-    return max(30, int(_pipeline_get("sync_archive_members_redis_populate_lock_seconds")))
-  except (TypeError, ValueError, OverflowError):
-    return 3600
-
-
-def get_sync_archive_members_redis_populate_stall_seconds() -> Any:
-  """
-  Waiter abort when populate shows no lock renewal or HASH growth.
-  
-  Returns:
-    Any: Open return polymorphism from
-    ``get_sync_archive_members_redis_populate_stall_seconds``: concrete type
-    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-    empty).
-  
-  Examples:
-    >>> get_sync_archive_members_redis_populate_stall_seconds()
-  """
-  _ensure_cfg_loaded()
-  try:
-    return max(5, int(_pipeline_get("sync_archive_members_redis_populate_stall_seconds")))
-  except (TypeError, ValueError, OverflowError):
-    return 120
-
-
-def get_sync_archive_members_redis_populate_max_seconds() -> Any:
+def get_sync_archive_members_populate_max_seconds() -> Any:
   """
   Absolute cap for populate/waiter loops (0 = disabled).
   
   Returns:
     Any: Open return polymorphism from
-    ``get_sync_archive_members_redis_populate_max_seconds``: concrete type
+    ``get_sync_archive_members_populate_max_seconds``: concrete type
     depends on inputs and branch (mapping, scalar, handle, or ``None``-like
     empty).
   
   Examples:
-    >>> get_sync_archive_members_redis_populate_max_seconds()  # doctest: +SKIP
+    >>> get_sync_archive_members_populate_max_seconds()  # doctest: +SKIP
   """
   _ensure_cfg_loaded()
   try:
-    return max(0, int(_pipeline_get("sync_archive_members_redis_populate_max_seconds")))
+    return max(0, int(_pipeline_get("sync_archive_members_populate_max_seconds")))
   except (TypeError, ValueError, OverflowError):
     return 0
 
@@ -3094,74 +3005,32 @@ def get_sync_archive_members_fnctl_read_lock_timeout_seconds() -> Any:
     return 180
 
 
-def get_sync_archive_members_redis_wait_poll_seconds() -> Any:
+def get_sync_archive_members_wait_poll_seconds() -> Any:
   """
   Waiter poll interval for incremental member lookups.
   
   Returns:
     Any: Open return polymorphism from
-    ``get_sync_archive_members_redis_wait_poll_seconds``: concrete type
+    ``get_sync_archive_members_wait_poll_seconds``: concrete type
     depends on inputs and branch (mapping, scalar, handle, or ``None``-like
     empty).
   
   Examples:
-    >>> get_sync_archive_members_redis_wait_poll_seconds()  # doctest: +SKIP
+    >>> get_sync_archive_members_wait_poll_seconds()  # doctest: +SKIP
   """
   _ensure_cfg_loaded()
   try:
     return max(
         0.05,
-        float(_pipeline_get("sync_archive_members_redis_wait_poll_seconds")),
+        float(_pipeline_get("sync_archive_members_wait_poll_seconds")),
     )
   except (TypeError, ValueError, OverflowError):
     return 0.25
 
 
-def get_sync_archive_members_redis_hset_batch_size() -> Any:
-  """
-  Pipeline batch size for incremental Redis HASH writes during populate.
-  
-  Returns:
-    Any: Open return polymorphism from
-    ``get_sync_archive_members_redis_hset_batch_size``: concrete type depends
-    on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
-  Examples:
-    >>> get_sync_archive_members_redis_hset_batch_size()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  try:
-    return max(1, int(_pipeline_get("sync_archive_members_redis_hset_batch_size")))
-  except (TypeError, ValueError, OverflowError):
-    return 500
-
-
-def get_sync_archive_members_redis_max_payload_bytes() -> Any:
-  """
-  Refuse populate when estimated Redis HASH payload exceeds this size.
-  
-  Returns:
-    Any: Open return polymorphism from
-    ``get_sync_archive_members_redis_max_payload_bytes``: concrete type
-    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-    empty).
-  
-  Examples:
-    >>> get_sync_archive_members_redis_max_payload_bytes()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        65536,
-        int(_pipeline_get("sync_archive_members_redis_max_payload_bytes")),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return 8388608
-
-
 def get_sync_archive_members_populate_pool_processes() -> Any:
   """
-  Dedicated populate-pool workers for Redis L2 sealed/tar member streaming.
+  Dedicated populate-pool threads for in-process sealed/tar member streaming.
   
   Returns:
     Any: Open return polymorphism from

@@ -189,7 +189,7 @@ def _hot_path_contention_reasons(
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       calendar_date_from_daily_tar_path,
   )
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       archive_members_populate_shows_progress_for_day,
       ingest_tar_hot_for_day,
   )
@@ -334,7 +334,7 @@ def daily_tar_janitor_mutation_should_defer(
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       calendar_date_from_daily_tar_path,
   )
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       daily_tar_restore_in_progress_for_day,
   )
 

@@ -1,5 +1,5 @@
 """
-Greenfield Redis ``job:v1`` queue orchestrator for ``sync_timedb``.
+Greenfield in-process ``job:v1`` queue orchestrator for ``sync_timedb``.
 
 Replaces ``run_sync_timedb_supervisor_loop`` as the sole coordinator inside
 the same CLI entry. Holds an exclusive ``archive_dir`` flock, starts ingest
@@ -28,7 +28,7 @@ Attributes:
   APPEND_FILL_SKIP_BUDGET: Max impossible append claims (missing path /
     unresolved daily tar) ACK-dropped per fill tick before yielding.
   _APPEND_DAY_LISTS: Process-local calendar-day deques of claimed append
-    jobs (coordinator only; Redis LIST remains durable SoT).
+    jobs (coordinator only; job-store LIST remains durable SoT).
   SHUTDOWN_DRAIN_TIMEOUT_S: Bounded wall clock for the cooperative drain.
   _IDLE_RECONSTRUCT_MIN_INTERVAL_S: Min seconds between idle reconstruct passes.
   _SHUTDOWN_REQUESTED: Event set by ``SIGTERM``/``SIGINT`` handlers.
@@ -76,6 +76,10 @@ from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
   AppendDayClaimLists,
 )
 from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
+from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+  SyncTimedbArchiveMembersStore,
+  set_process_archive_members_store,
+)
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   ensure_persistence_contract,
 )
@@ -331,8 +335,8 @@ def request_shutdown() -> None:
   """
   Mark a cooperative shutdown request (signal-safe, flag only).
 
-  The handler does no logging, no Redis I/O, and no lock acquisition, so a
-  signal delivered inside a Redis call or while holding the archive flock
+  The handler does no logging, no store I/O, and no lock acquisition, so a
+  signal delivered inside a store call or while holding the archive flock
   cannot deadlock or re-enter non-reentrant code.
 
   Returns:
@@ -461,7 +465,7 @@ def _status_band_ratios(client: Any) -> dict[str, dict[str, int]]:
   Build status footer band ratios (current/queued) including ingest hot/catchup.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
 
   Returns:
     dict[str, dict[str, int]]: Name → ``inflight`` / ``queued``.
@@ -513,7 +517,7 @@ def _emit_progress_report_if_due(
   Emit 10-minute progress+status lines when the interval has elapsed.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     busy_flags (dict[str, bool]): Local coordinator busy map.
     busy_lock (Any): Lock guarding ``busy_flags``.
     log_fn (Callable[..., None] | None): Optional logger.
@@ -743,7 +747,7 @@ def _reband_claimed_ingest_if_needed(
   Requeue a claimed ingest job when its live band no longer matches.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     claim (Any): :class:`ClaimedJob` from a hot or catchup claim.
     tgz_archive_dir (str): Daily archive directory.
     today (date | None): Local today override for tests.
@@ -818,14 +822,14 @@ def _boot_stream_discover(
   """
   Stream GNU find stdout into ingest/append/day_close jobs as paths arrive.
 
-  Does **not** call capture-all ``run_find_stats``. Empty Redis before or after
+  Does **not** call capture-all ``run_find_stats``. Empty job store before or after
   this call does **not** mean caught up. ``mtime_days=None`` is a full scan
   (boot); a positive window is the periodic reconstruct rescan. Append
-  skip-complete uses :func:`jr.discover_append_is_complete` (warm Redis /
+  skip-complete uses :func:`jr.discover_append_is_complete` (warm members store /
   open-tar only; never ``populate_and_wait``).
 
   Args:
-    client (Any): Redis client for ``job:v1``.
+    client (Any): job store for ``job:v1``.
     archive_dir (str): Archive data directory (find root).
     tgz_archive_dir (str): Daily archive directory for append classify.
     log_fn (Callable[..., None] | None): Optional logger.
@@ -923,7 +927,7 @@ def _run_background_discover(
   Claim one discover job and stream GNU find off the orchestrator MainThread.
 
   Args:
-    client (Any): Redis client (pool-backed; command-safe across threads).
+    client (Any): job store (pool-backed; command-safe across threads).
     archive_dir (str): Archive data directory.
     tgz_archive_dir (str): Daily archive directory.
     log_fn (Callable[..., None] | None): Optional logger.
@@ -984,7 +988,7 @@ def _submit_background_discover(
   Submit idle discover to the background executor when none is already running.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     archive_dir (str): Archive data directory.
     tgz_archive_dir (str): Daily archive directory.
     log_fn (Callable[..., None] | None): Optional logger.
@@ -1062,7 +1066,7 @@ def _enqueue_day_closes_for_daily_dir(
   Scan daily ``.tar`` siblings and enqueue incomplete day_close jobs.
 
   Args:
-    client (Any): Redis client with ``rpush``.
+    client (Any): job store with ``rpush``.
     tgz_archive_dir (str): Daily archive directory.
 
   Returns:
@@ -1115,14 +1119,14 @@ def _idle_reconstruct_pass(
   """
   Interval reconstruct: rediscover via ``JOB_KIND_DISCOVER`` + day_close scan.
 
-  Empty Redis does **not** mean caught up — this pass re-classifies from disk.
+  Empty job store does **not** mean caught up — this pass re-classifies from disk.
   Throttled to at most once per ``_IDLE_RECONSTRUCT_MIN_INTERVAL_S`` unless
   ``force`` (``run_once`` exit path). ``force=True`` claims discover on this
   thread so tests and run_once can observe a complete pass; ``force=False``
   enqueues discover and runs GNU find on the background executor (P1-10).
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     archive_dir (str): Archive data directory.
     tgz_archive_dir (str): Daily archive directory.
     log_fn (Callable[..., None] | None): Optional logger.
@@ -1329,7 +1333,7 @@ def _handoff_retryable_paths_to_ingest(
   tar (never substituted with today) and complete predicates are skipped.
 
   Args:
-    client (Any): Redis client, or ``None`` to no-op.
+    client (Any): job store, or ``None`` to no-op.
     tar_path (str): Daily ``.tar`` path that produced the handoff.
     paths (Iterable[str]): Retryable raw stats paths.
     tgz_archive_dir (str): Daily archive directory.
@@ -1427,7 +1431,7 @@ def _run_day_close_job(
   tgz_archive_dir: str,
   archive_data_dir: str | None = None,
   log_fn: Callable[..., None] | None = None,
-  redis_client: Any | None = None,
+  job_store: Any | None = None,
 ) -> str:
   """
   Day-close thread body: age gate, seal, raw removal, tar-drop when ready.
@@ -1444,7 +1448,7 @@ def _run_day_close_job(
     tgz_archive_dir (str): Daily archive directory.
     archive_data_dir (str | None): Archive root for day_raw_removal manifests.
     log_fn (Callable[..., None] | None): Optional logger.
-    redis_client (Any | None): Queue Redis client for ingest handoff.
+    job_store (Any | None): job store for ingest handoff.
 
   Returns:
     str: Outcome token (``complete``, ``deferred_age``, ``incomplete_raw``,
@@ -1545,7 +1549,7 @@ def _run_day_close_job(
         ingest_ready_fn=stats_file_head_ingested_in_db,
         on_handoff_to_ingest=lambda tar_norm, paths, reason: (
             _handoff_retryable_paths_to_ingest(
-                redis_client,
+                job_store,
                 tar_norm,
                 paths,
                 tgz_archive_dir=tgz_archive_dir,
@@ -1858,7 +1862,7 @@ def _retry_or_dead_letter(
   accounts for its attempt exactly once and no claim is dropped silently.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     kind (str): Job kind.
     claim (Any): :class:`sync_timedb_job_store.ClaimedJob` for the failure.
     archive_data_dir (str): Archive data root holding the dead-letter sidecar.
@@ -1929,7 +1933,7 @@ def _requeue_claimed_job_without_attempt_bump(
   ``skipped``, ``incomplete_raw``) that are not failures.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     claim (Any): :class:`sync_timedb_job_store.ClaimedJob` to restore.
     log_fn (Callable[..., None] | None): Optional logger.
 
@@ -2004,18 +2008,18 @@ def _ingest_claim_band_key(claim: Any) -> str:
   return "catchup"
 
 
-def _redis_ingest_hlen(client: Any) -> int:
+def _store_ingest_hlen(client: Any) -> int:
   """
-  Return Redis ingest inflight HASH cardinality (capacity authority).
+  Return job-store ingest inflight HASH cardinality (capacity authority).
 
   Args:
-    client (Any): Redis client with ``hlen``.
+    client (Any): job store with ``hlen``.
 
   Returns:
     int: ``HLEN`` of the ingest inflight HASH, or ``0`` on error/None.
 
   Examples:
-    >>> _redis_ingest_hlen(None)
+    >>> _store_ingest_hlen(None)
     0
   """
   if client is None:
@@ -2026,7 +2030,7 @@ def _redis_ingest_hlen(client: Any) -> int:
     return 0
 
 
-def _reconcile_local_ingest_maps_to_redis(
+def _reconcile_local_ingest_maps_to_store(
   client: Any,
   *,
   ingest_inflight: dict[str, AsyncResult],
@@ -2036,13 +2040,13 @@ def _reconcile_local_ingest_maps_to_redis(
   log_fn: Callable[..., None] | None = None,
 ) -> int:
   """
-  Drop local ingest maps that no longer hold Redis inflight/lease (RC8).
+  Drop local ingest maps that no longer hold store inflight/lease (RC8).
 
-  Never prunes an identity that still has a Redis inflight HASH field or a
+  Never prunes an identity that still has a store inflight HASH field or a
   live lease GET. Ready AsyncResults are left for ``_drain_ingest_ready``.
 
   Args:
-    client (Any): Redis job client.
+    client (Any): job store.
     ingest_inflight (dict[str, AsyncResult]): Local Future map (mutated).
     ingest_leases (dict[str, Any]): Local claim map (mutated).
     ingest_submitted (dict[str, float]): Submit-time map (mutated).
@@ -2053,7 +2057,7 @@ def _reconcile_local_ingest_maps_to_redis(
     int: Number of phantom local identities pruned.
 
   Examples:
-    >>> _reconcile_local_ingest_maps_to_redis(
+    >>> _reconcile_local_ingest_maps_to_store(
     ...   None, ingest_inflight={}, ingest_leases={}, ingest_submitted={},
     ... )
     0
@@ -2175,7 +2179,7 @@ def _abandon_timed_out_ingest(
   give-up; do not fall back to this watchdog.
 
   Args:
-    client (Any): Redis client (unused).
+    client (Any): job store (unused).
     inflight (dict[str, AsyncResult]): In-flight ingest map (unused).
     claims (dict[str, Any]): Claim map (unused).
     submitted (dict[str, float]): Submit-time map (unused).
@@ -2212,7 +2216,7 @@ def _requeue_pool_collateral(
   they did not fail, the coordinator preempted them.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     inflight (dict[str, AsyncResult]): In-flight ingest map (cleared).
     claims (dict[str, Any]): Claim map (cleared).
     submitted (dict[str, float]): Submit-time map (cleared).
@@ -2396,7 +2400,7 @@ def _requeue_ingest_fill_skip(
   Penalty-requeue or dead-letter an ingest fill skip (RC9).
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     claim (Any): Claimed ingest job.
     archive_data_dir (str | None): Archive root for dead-letter sidecar.
     reason (str): ``skip_missing`` or ``skip_fp`` for logs.
@@ -2536,7 +2540,7 @@ def _fill_ingest_band(
   full-map walk.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     band (str): ``hot`` or ``catchup``.
     cap (int): Max total concurrent ingest jobs.
     inflight (dict[str, AsyncResult]): Identity → async result map.
@@ -2889,6 +2893,114 @@ def _log_orchestrator_ingest_timeout(
   _log(" ".join(parts), log_fn=log_fn)
 
 
+class _IngestTimeoutSentinel:
+  """
+  Occupancy marker after a bare TimeoutError drain (H7).
+
+  Keeps the identity in local inflight without retaining a Future. Deadline
+  protection skips sentinels so the store reaper can reclaim after TTL.
+
+  Attributes:
+    ready: Always True so later drains re-hit get().
+  """
+
+  def ready(self) -> bool:
+    """
+    Return True so drain keeps observing this identity.
+
+    Returns:
+      bool: Always True.
+
+    Examples:
+      >>> _IngestTimeoutSentinel().ready()
+      True
+    """
+    return True
+
+  def get(self, timeout: float = 0) -> Any:
+    """
+    Re-raise bare TimeoutError so H7 does not soft-requeue.
+
+    Args:
+      timeout (float): Unused.
+
+    Returns:
+      Any: Never returns.
+
+    Raises:
+      TimeoutError: Occupancy sentinel.
+
+    Examples:
+      >>> _IngestTimeoutSentinel().get(0)
+      Traceback (most recent call last):
+        ...
+      TimeoutError: ingest occupancy sentinel
+    """
+    del timeout
+    raise TimeoutError("ingest occupancy sentinel")
+
+
+def _is_ingest_timeout_sentinel(obj: Any) -> bool:
+  """
+  Return True when *obj* is an H7 occupancy sentinel.
+
+  Args:
+    obj (Any): In-flight result object.
+
+  Returns:
+    bool: True for sentinels.
+
+  Examples:
+    >>> _is_ingest_timeout_sentinel(_IngestTimeoutSentinel())
+    True
+  """
+  return isinstance(obj, _IngestTimeoutSentinel)
+
+
+def _drop_expired_ingest_timeout_sentinels(
+  client: Any,
+  *,
+  inflight: dict[str, Any],
+  claims: dict[str, Any],
+  submitted: dict[str, float] | None = None,
+) -> int:
+  """
+  Drop H7 sentinels whose store inflight HASH entry is gone.
+
+  Args:
+    client (Any): Job store.
+    inflight (dict[str, Any]): Local ingest inflight map.
+    claims (dict[str, Any]): Local claim map.
+    submitted (dict[str, float] | None): Submit-time map.
+
+  Returns:
+    int: Number of sentinels dropped.
+
+  Examples:
+    >>> _drop_expired_ingest_timeout_sentinels(
+    ...   SyncTimedbJobStore(""), inflight={}, claims={},
+    ... )
+    0
+  """
+  dropped = 0
+  key = jq.job_inflight_key(jq.JOB_KIND_INGEST)
+  for ident, res in list(inflight.items()):
+    if not _is_ingest_timeout_sentinel(res):
+      continue
+    try:
+      raw = client.hget(key, ident)
+    except Exception:
+      continue
+    if raw is not None:
+      continue
+    inflight.pop(ident, None)
+    claims.pop(ident, None)
+    if submitted is not None:
+      submitted.pop(ident, None)
+    dropped += 1
+  return dropped
+
+
 def _drain_ingest_ready(
   client: Any,
   *,
@@ -2908,7 +3020,7 @@ def _drain_ingest_ready(
   soft-requeue without attempt bump.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     inflight (dict[str, AsyncResult]): In-flight ingest map (mutated).
     claims (dict[str, Any]): Claim map (mutated).
     tgz_archive_dir (str): Daily archive dir (unused; append uses path).
@@ -2942,6 +3054,8 @@ def _drain_ingest_ready(
       # do not thrash sticky 0/N while workers still finish / ZSET stays deep.
       # Rich / IngestPerFileTimeoutError escape still soft-requeues.
       if not _is_rich_ingest_timeout_exc(exc):
+        if not isinstance(async_res, _IngestTimeoutSentinel):
+          inflight[identity] = _IngestTimeoutSentinel()
         continue
       claim = claims.pop(identity, None)
       inflight.pop(identity, None)
@@ -3103,14 +3217,14 @@ def _try_submit_pending_append_days(
   Submit one GNU-tar batch per free daily tar from in-memory day lists.
 
   Args:
-    client (Any): Redis client used to requeue popped claims on submit fail.
+    client (Any): Job store used to requeue popped claims on submit fail.
     cap (int): Max concurrent append jobs.
     inflight (dict[str, AsyncResult]): Daily tar → async result.
     claims (dict[str, Any]): Daily tar → claim list for drain ACK.
-    archive_pool (Any): Archive spawn pool.
+    archive_pool (Any): Archive thread pool.
     tgz_archive_dir (str): Daily archive directory.
     batch_size (int): Max paths per ``tar -T`` job.
-    allow_partial (bool): Submit leftover paths when Redis LIST is empty.
+    allow_partial (bool): Submit leftover paths when the job-store LIST is empty.
 
   Returns:
     int: Newly submitted append jobs this call.
@@ -3182,11 +3296,11 @@ def _fill_append_slots(
   Same-tar inflight holds claims in the day list until the writer slot frees.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     cap (int): Max concurrent append jobs.
     inflight (dict[str, AsyncResult]): Path → async result.
     claims (dict[str, Any]): Path → claim map.
-    archive_pool (Any): Archive spawn pool.
+    archive_pool (Any): Archive thread pool.
     tgz_archive_dir (str): Daily archive directory.
 
   Returns:
@@ -3211,7 +3325,7 @@ def _fill_append_slots(
   submitted = 0
   skipped = 0
   batch_size = max(1, int(cfg.get_sync_timedb_tar_append_batch_size()))
-  redis_exhausted = False
+  store_exhausted = False
   while len(inflight) < cap:
     submitted += _try_submit_pending_append_days(
         client=client,
@@ -3221,11 +3335,11 @@ def _fill_append_slots(
         archive_pool=archive_pool,
         tgz_archive_dir=tgz_archive_dir,
         batch_size=batch_size,
-        allow_partial=redis_exhausted,
+        allow_partial=store_exhausted,
     )
     if len(inflight) >= cap:
       break
-    if redis_exhausted:
+    if store_exhausted:
       break
     if skipped >= APPEND_FILL_SKIP_BUDGET:
       break
@@ -3235,7 +3349,7 @@ def _fill_append_slots(
         owner_token=jq.make_lease_owner_token(),
     )
     if claim is None:
-      redis_exhausted = True
+      store_exhausted = True
       continue
     path = claim.identity
     if not path or not os.path.isfile(path):
@@ -3277,7 +3391,7 @@ def _drain_append_ready(
   Collect finished append async results; enqueue day_close when needed.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     inflight (dict[str, AsyncResult]): In-flight append map (mutated).
     claims (dict[str, Any]): Claim map (mutated).
     tgz_archive_dir (str): Daily archive directory for day_close identity.
@@ -3436,7 +3550,7 @@ def _fill_day_close_slots(
   Pop day_close LIST jobs into the day_close thread pool.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     executor (ThreadPoolExecutor): Day-close thread pool (max inflight 4).
     inflight (dict[str, Future]): Identity → future.
     leases (dict[str, Any]): Identity → claim map (mutated).
@@ -3479,7 +3593,7 @@ def _fill_day_close_slots(
           tgz_archive_dir=tgz_archive_dir,
           archive_data_dir=archive_data_dir,
           log_fn=log_fn,
-          redis_client=client,
+          job_store=client,
       )
     except RuntimeError:
       jq.requeue_job(
@@ -3524,7 +3638,7 @@ def _drain_day_close_ready(
   dead-letter. Fake ``sealed`` after a no-op seal is never an ACK.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     inflight (dict[str, Future]): In-flight day_close map (mutated).
     leases (dict[str, Any]): Claim map (mutated).
     archive_data_dir (str): Archive data root for the dead-letter sidecar.
@@ -3622,7 +3736,7 @@ def _renew_active_claims(
   must not call it on each tick.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     claim_maps (Iterable[tuple[str, dict[str, Any]]]): ``(kind, claims)`` pairs.
     log_fn (Callable[..., None] | None): Optional logger.
 
@@ -3674,7 +3788,7 @@ def _release_claims_on_shutdown(
   lease TTL plus reap grace before another coordinator could pick it up.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     claim_maps (Iterable[tuple[str, dict[str, Any]]]): ``(kind, claims)`` pairs.
     log_fn (Callable[..., None] | None): Optional logger.
 
@@ -3716,7 +3830,7 @@ def _protect_local_inflight_deadlines(
   extend_s: float = 600.0,
 ) -> int:
   """
-  Push in-flight deadlines forward for local identities before a Redis reap.
+  Push in-flight deadlines forward for local identities before a store reap.
 
   Kind-scoped coordinators must not let ``reap_expired_inflight`` steal
   identities still held in local claim maps. Extending the inflight HASH
@@ -3724,7 +3838,7 @@ def _protect_local_inflight_deadlines(
   reap cutoff for this tick.
 
   Args:
-    client (Any): Redis client with ``hget`` / ``hset``.
+    client (Any): job store with ``hget`` / ``hset``.
     kind (str): Job kind whose inflight HASH is updated.
     identities (Iterable[str]): Local identities to protect.
     extend_s (float): Seconds added to ``time.time()`` for the new deadline.
@@ -3778,11 +3892,11 @@ def _reap_stale_inflight(
   cross-thread reaper cannot steal live work.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     kinds (Iterable[str] | None): Kinds to reap; default all job kinds
       (boot path only).
     skip_identities (Iterable[str] | None): Local identities to leave
-      alone even if Redis reports them expired.
+      alone even if the job store reports them expired.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -3833,7 +3947,7 @@ def _queues_appear_idle(client: Any) -> bool:
   Empty queues still do **not** mean caught up (reconstruct law).
 
   Args:
-    client (Any): Redis client with ``zcard`` / ``llen`` / ``hlen``.
+    client (Any): job store with ``zcard`` / ``llen`` / ``hlen``.
 
   Returns:
     bool: True when all job structures report zero length.
@@ -3870,24 +3984,24 @@ def _ingest_runtime_lease_hygiene(
   zcard: int,
   last_runtime_steal: float,
   log_fn: Callable[..., None] | None,
-  redis_hlen: int | None = None,
+  store_hlen: int | None = None,
 ) -> float:
   """
   Rate-limit this-owner orphan reconcile and dead-PID steal.
 
-  Runs when local inflight is below pool size **or** Redis HLEN is below
+  Runs when local inflight is below pool size **or** store HLEN is below
   pool while the ingest ZSET is non-empty (RC8: do not skip solely because
   local maps look full).
 
   Args:
-    client (Any): Redis job client.
+    client (Any): job store.
     ingest_inflight (dict[str, AsyncResult]): Local Future map.
     ingest_leases (dict[str, Any]): Local claim map.
     ingest_pool_size (int): Ingest pool process count.
     zcard (int): Ingest ZSET depth.
     last_runtime_steal (float): Monotonic time of last hygiene pass.
     log_fn (Callable[..., None] | None): Optional logger.
-    redis_hlen (int | None): Optional precomputed inflight HLEN.
+    store_hlen (int | None): Optional precomputed inflight HLEN.
 
   Returns:
     float: Updated ``last_runtime_steal`` (unchanged when skipped).
@@ -3909,13 +4023,13 @@ def _ingest_runtime_lease_hygiene(
   if int(zcard) <= 0:
     return last_runtime_steal
   hlen = (
-      int(redis_hlen)
-      if redis_hlen is not None
-      else _redis_ingest_hlen(client)
+      int(store_hlen)
+      if store_hlen is not None
+      else _store_ingest_hlen(client)
   )
   local_full = len(ingest_inflight) >= int(ingest_pool_size)
-  redis_underfull = hlen < int(ingest_pool_size)
-  if local_full and not redis_underfull:
+  store_underfull = hlen < int(ingest_pool_size)
+  if local_full and not store_underfull:
     return last_runtime_steal
   now_steal = time.monotonic()
   if (now_steal - last_runtime_steal) < INGEST_RUNTIME_STEAL_INTERVAL_S:
@@ -3984,7 +4098,7 @@ def _ingest_coordinator_fill_tick(
   even when this tick already submitted hot (RC7).
 
   Args:
-    client (Any): Redis job client.
+    client (Any): job store.
     pool_ref (AtomicPoolRef): Current ingest pool holder.
     manager_lock (Any): Write lock for ingest workers.
     directory (str): Archive data directory.
@@ -4004,7 +4118,7 @@ def _ingest_coordinator_fill_tick(
     hot_submitted)``.
 
   Raises:
-    RuntimeError: When Redis ``zcount`` fails.
+    RuntimeError: When job-store ``zcount`` fails.
 
   Examples:
     >>> isinstance(_ingest_coordinator_fill_tick, type(lambda: None))
@@ -4019,7 +4133,7 @@ def _ingest_coordinator_fill_tick(
     hot_queued, catchup_queued, zcard = jq.ingest_zset_census(client)
   except Exception as exc:
     raise RuntimeError(
-        "queue orchestrator redis zcount failed: %s" % type(exc).__name__
+        "queue orchestrator job-store zcount failed: %s" % type(exc).__name__
     ) from exc
   probe_depth = jq.ingest_claim_probe_depth(
       hot_q=hot_queued, pool=ingest_pool_size,
@@ -4169,7 +4283,7 @@ def _ingest_coordinator_loop(
   shutdown.
 
   Args:
-    client (Any): Redis job client.
+    client (Any): job store.
     directory (str): Archive data directory.
     tgz_archive_dir (str): Daily archive directory.
     manager_lock (Any): Write lock passed to ingest workers.
@@ -4191,7 +4305,7 @@ def _ingest_coordinator_loop(
     None
 
   Raises:
-    RuntimeError: When Redis ``zcount`` fails (fail-closed mid-tick).
+    RuntimeError: When job-store ``zcount`` fails (fail-closed mid-tick).
     Exception: Re-raises unexpected coordinator crashes after logging.
 
   Examples:
@@ -4241,20 +4355,20 @@ def _ingest_coordinator_loop(
           _hq, _cq, zcard = jq.ingest_zset_census(client)
         except Exception as exc:
           raise RuntimeError(
-              "queue orchestrator redis zcard failed: %s"
+              "queue orchestrator job-store zcard failed: %s"
               % type(exc).__name__
           ) from exc
         skip_budget = _ingest_fill_skip_budget_for_zcard(zcard)
-        redis_hlen = _redis_ingest_hlen(client)
+        store_hlen = _store_ingest_hlen(client)
         if (
             zcard > 0
             and (
-                redis_hlen < ingest_pool_size
-                or len(ingest_inflight) > redis_hlen
+                store_hlen < ingest_pool_size
+                or len(ingest_inflight) > store_hlen
                 or len(ingest_inflight) >= ingest_pool_size
             )
         ):
-          _reconcile_local_ingest_maps_to_redis(
+          _reconcile_local_ingest_maps_to_store(
               client,
               ingest_inflight=ingest_inflight,
               ingest_leases=ingest_leases,
@@ -4269,7 +4383,7 @@ def _ingest_coordinator_loop(
             zcard=zcard,
             last_runtime_steal=last_runtime_steal,
             log_fn=log_fn,
-            redis_hlen=redis_hlen,
+            store_hlen=store_hlen,
         )
         fill_tick_kw = {
             "client": client,
@@ -4305,9 +4419,9 @@ def _ingest_coordinator_loop(
         )
         did += extra
         fill_submitted += extra
-        redis_hlen_after = _redis_ingest_hlen(client)
+        store_hlen_after = _store_ingest_hlen(client)
         hot_used, catch_used = _count_ingest_band_inflight(ingest_leases)
-        if redis_hlen_after >= ingest_pool_size - 1:
+        if store_hlen_after >= ingest_pool_size - 1:
           progress.get_progress_state().set_fill_block(None)
         elif (
             zcard > 0
@@ -4324,8 +4438,8 @@ def _ingest_coordinator_loop(
               if fill_stats.get(k)
           )
           census = (
-              " redis_hlen=%d local=%d hot_used=%d catch_used=%d"
-              % (redis_hlen_after, local_n, hot_used, catch_used)
+              " store_hlen=%d local=%d hot_used=%d catch_used=%d"
+              % (store_hlen_after, local_n, hot_used, catch_used)
           )
           if local_n == 0 and (
               (now_bc - last_fill_empty_log)
@@ -4383,8 +4497,18 @@ def _ingest_coordinator_loop(
         _reap_stale_inflight(
             client,
             kinds=(jq.JOB_KIND_INGEST,),
-            skip_identities=tuple(ingest_inflight) + tuple(ingest_leases),
+            skip_identities=tuple(
+                ident
+                for ident, res in ingest_inflight.items()
+                if not _is_ingest_timeout_sentinel(res)
+            ) + tuple(ingest_leases),
             log_fn=log_fn,
+        )
+        _drop_expired_ingest_timeout_sentinels(
+            client,
+            inflight=ingest_inflight,
+            claims=ingest_leases,
+            submitted=ingest_submitted,
         )
       with busy_lock:
         busy_flags["ingest"] = bool(ingest_inflight)
@@ -4442,7 +4566,7 @@ def _append_coordinator_loop(
   Never runs remaining-raw / archive-wide find on this thread.
 
   Args:
-    client (Any): Redis job client.
+    client (Any): job store.
     directory (str): Archive data directory.
     tgz_archive_dir (str): Daily archive directory.
     archive_pool (Any): Spawn pool for append workers.
@@ -4536,7 +4660,7 @@ def _day_close_coordinator_loop(
   Full filesystem remaining-raw probes run only on day_close **workers**.
 
   Args:
-    client (Any): Redis job client.
+    client (Any): job store.
     directory (str): Archive data directory.
     tgz_archive_dir (str): Daily archive directory.
     day_executor (ThreadPoolExecutor): Worker pool for ``_run_day_close_job``.
@@ -4646,7 +4770,7 @@ def _reconstruct_coordinator_loop(
   inflight leases on an interval (kind-scoped ``JOB_KIND_DISCOVER`` only).
 
   Args:
-    client (Any): Redis job client.
+    client (Any): job store.
     directory (str): Archive data directory.
     tgz_archive_dir (str): Daily archive directory.
     poll_s (float): Idle poll seconds.
@@ -4794,7 +4918,7 @@ def run_sync_timedb_queue_orchestrator(
   Raises:
     ValueError: When ``archive_dir`` is empty.
     OSError: When the exclusive ``archive_dir`` flock cannot be acquired.
-    RuntimeError: When Redis job client cannot be obtained (fail-closed).
+    RuntimeError: When job store cannot be obtained (fail-closed).
 
   Examples:
     >>> run_sync_timedb_queue_orchestrator(  # doctest: +SKIP
@@ -4809,6 +4933,8 @@ def run_sync_timedb_queue_orchestrator(
   with exclusive_archive_dir_flock(directory, blocking=True):
     ensure_persistence_contract(directory, log_fn=log_fn, allow_reset=True)
     client = SyncTimedbJobStore(directory)
+    members_store = SyncTimedbArchiveMembersStore(directory)
+    set_process_archive_members_store(members_store)
 
     tgz_archive_dir = cfg.get_daily_archive_dir_path()
     install_cooperative_shutdown_handlers(log_fn=log_fn)
@@ -5110,10 +5236,15 @@ def run_sync_timedb_queue_orchestrator(
     finally:
       _shutdown_background_discover()
       try:
+        client.persist(force=True)
+      except Exception:
+        pass
+      try:
         populate.stop()
       except Exception:
         pass
       set_populate_pool_controller(None)
+      set_process_archive_members_store(None)
       try:
         day_executor.shutdown(wait=False, cancel_futures=True)
       except Exception:

@@ -14,7 +14,7 @@ class AppendDayClaimLists:
   """
   Process-local day → deque of append claims.
 
-  Redis ``job:v1`` append LIST remains durable SoT. This structure only
+  The job-store append LIST remains durable SoT. This structure only
   groups claims already taken by the append-coordinator. Empty day keys
   are deleted. Spawn workers must not mutate an instance.
 

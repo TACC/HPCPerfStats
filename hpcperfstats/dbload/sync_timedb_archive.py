@@ -73,7 +73,6 @@ from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
     stall_abort_polls_for_sealed_archives,
 )
 from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-    apply_ingest_pool_worker_init,
     clear_dispatch_worker_stages,
     seed_dispatch_worker_stages,
 )
@@ -86,7 +85,6 @@ from hpcperfstats.dbload.lib.db_unavailable import (
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     MultiprocessingWorkerExitError,
     imap_sliding_window_watch_pool,
-    terminate_pool_bounded,
 )
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
     create_sync_timedb_thread_pool,
@@ -528,11 +526,11 @@ def _process_sealed_tasks_sliding_window(
       _build_ingest_stall_log_suffix,
       _calendar_day_hint_from_sealed_paths,
       _distinct_calendar_days_from_sealed_paths,
-      _format_redis_populate_for_sealed_paths,
+      _format_store_populate_for_sealed_paths,
       _handle_pool_worker_exit_fatal,
       _make_ingest_stall_poll_fn,
       _make_ingest_stall_warning_fn,
-      _prewarm_archive_members_redis_for_sealed_chunk,
+      _prewarm_archive_members_for_sealed_chunk,
   )
 
   all_sealed_paths = _sealed_paths_from_locked_tasks(tasks_locked)
@@ -550,7 +548,7 @@ def _process_sealed_tasks_sliding_window(
       % (len(all_sealed_paths), max_inflight),
       flush=True,
   )
-  prewarm_summary = _prewarm_archive_members_redis_for_sealed_chunk(all_sealed_paths)
+  prewarm_summary = _prewarm_archive_members_for_sealed_chunk(all_sealed_paths)
   stall_diagnostics.chunk_prewarm_summary = prewarm_summary
   stall_diagnostics.ingest_pipeline = "sealed_archive_backfill"
   stall_diagnostics.imap_batch_cap = max_inflight
@@ -613,7 +611,7 @@ def _process_sealed_tasks_sliding_window(
             progress_state=stall_poll_state,
             day_hint_from_sample_fn=_calendar_day_hint_from_sealed_paths,
             distinct_days_from_sample_fn=_distinct_calendar_days_from_sealed_paths,
-            redis_populate_for_sample_fn=_format_redis_populate_for_sealed_paths,
+            store_populate_for_sample_fn=_format_store_populate_for_sealed_paths,
         ),
         on_stall_poll=_make_ingest_stall_poll_fn(
             None,
@@ -632,7 +630,7 @@ def _process_sealed_tasks_sliding_window(
                 consecutive=consecutive,
                 poll_timeout_s=poll_timeout_s,
                 distinct_days_from_sample_fn=_distinct_calendar_days_from_sealed_paths,
-                redis_populate_for_sample_fn=_format_redis_populate_for_sealed_paths,
+                store_populate_for_sample_fn=_format_store_populate_for_sealed_paths,
             )
         ),
     ):

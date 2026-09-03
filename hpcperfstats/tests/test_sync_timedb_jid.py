@@ -296,13 +296,14 @@ def test_run_sync_timedb_jid_ingest_no_archive_or_janitor(monkeypatch, tmp_path)
     raise AssertionError("supervisor must not run for --jid")
 
   monkeypatch.setattr(st, "run_sync_timedb_queue_orchestrator", _boom_supervisor)
-  monkeypatch.setattr(
-      st,
-      "create_sync_timedb_spawn_pool",
-      lambda *a, **k: (_ for _ in ()).throw(
-          AssertionError("archive pool must not start"),
-      ),
-  )
+  if hasattr(st, "create_sync_timedb_thread_pool"):
+    monkeypatch.setattr(
+        st,
+        "create_sync_timedb_thread_pool",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("archive pool must not start"),
+        ),
+    )
 
   ingest_calls = []
 

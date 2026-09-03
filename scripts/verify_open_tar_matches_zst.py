@@ -6,7 +6,8 @@ Compares tar **file** member basenames and byte sizes using the same helpers as
 ``sync_timedb``:
 
 - open tar: ``get_mutable_tar_authority_member_map`` (GNU ``tar tvf``, no cache)
-- sealed zstd: streamed scan (default) or Redis L2 when ``--use-redis``
+- sealed zstd: streamed scan (default) or members-store single-flight when
+  ``--use-store``
 
 Use when ``daily_archive_dir`` still holds uncompressed tars alongside sealed
 ``.tar.zst`` (``archive_keep_uncompressed_tar=yes`` or pre tar-drop days).
@@ -215,7 +216,7 @@ def _archive_date_from_tar_path(tar_path: str) -> date | None:
 def _check_one_tar(
   tar_path: str,
   *,
-  use_redis: bool,
+  use_store: bool,
   skip_sealed_dirty: bool,
   strict: bool,
 ) -> dict[str, Any]:
@@ -224,7 +225,7 @@ def _check_one_tar(
 
   Args:
     tar_path (str): Path to ``YYYY-MM-DD.tar``.
-    use_redis (bool): Read sealed members via Redis L2 when enabled.
+    use_store (bool): Read sealed members via the in-process members store.
     skip_sealed_dirty (bool): Skip when tar mtime is newer than zst mtime.
     strict (bool): Treat sealed-dirty (mtime) as failure even when maps match.
 
@@ -232,12 +233,12 @@ def _check_one_tar(
     dict[str, Any]: Result record with ``status`` and diagnostic fields.
 
   Examples:
-    >>> _check_one_tar("/no/such.tar", use_redis=False, skip_sealed_dirty=False, strict=False)  # doctest: +SKIP
+    >>> _check_one_tar("/no/such.tar", use_store=False, skip_sealed_dirty=False, strict=False)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       _scan_compressed_archive_members_and_readable,
-      _sealed_archive_members_via_redis_or_scan,
+      _sealed_archive_members_via_store_or_scan,
       get_mutable_tar_authority_member_map,
       is_daily_tar_sealed_dirty,
       verify_tar_archive_readable,
@@ -273,8 +274,8 @@ def _check_one_tar(
     result["tar_member_count"] = 0
     return result
 
-  if use_redis:
-    zst_readable, zst_members = _sealed_archive_members_via_redis_or_scan(zst_path)
+  if use_store:
+    zst_readable, zst_members = _sealed_archive_members_via_store_or_scan(zst_path)
   else:
     zst_readable, zst_members = _scan_compressed_archive_members_and_readable(
         zst_path,
@@ -369,11 +370,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
       ),
   )
   parser.add_argument(
-      "--use-redis",
+      "--use-store",
       action="store_true",
       help=(
-          "Read sealed members via Redis L2 populate (matches ingest path; "
-          "default is direct zstd stream scan)."
+          "Read sealed members via the in-process members store "
+          "(matches ingest single-flight; default is a direct zstd stream)."
       ),
   )
   parser.add_argument(
@@ -440,7 +441,7 @@ def main(argv: list[str] | None = None) -> int:
   for tar_path in tar_paths:
     result = _check_one_tar(
         tar_path,
-        use_redis=args.use_redis,
+        use_store=args.use_store,
         skip_sealed_dirty=args.skip_sealed_dirty,
         strict=args.strict,
     )

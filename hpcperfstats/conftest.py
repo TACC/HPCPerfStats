@@ -135,23 +135,19 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture(autouse=True)
-def _archive_members_redis_test_policy(request, monkeypatch):
-  """Disable Redis L2 in archive unit tests unless the dedicated module opts in."""
-  mod = getattr(request.node, "module", None)
-  mod_name = getattr(mod, "__name__", "") or ""
-  if mod_name.endswith("test_sync_timedb_archive_members_redis"):
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        reset_archive_members_redis_client_for_tests,
-    )
-    reset_archive_members_redis_client_for_tests()
-    yield
-    reset_archive_members_redis_client_for_tests()
-    return
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: False,
+def _archive_members_store_test_policy(tmp_path_factory):
+  """Install a process-wide members store for sync_timedb unit tests."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      SyncTimedbArchiveMembersStore,
+      set_process_archive_members_store,
   )
-  yield
+
+  store = SyncTimedbArchiveMembersStore(
+      str(tmp_path_factory.mktemp("archive_members_store")),
+  )
+  set_process_archive_members_store(store)
+  yield store
+  set_process_archive_members_store(None)
 
 
 @pytest.fixture

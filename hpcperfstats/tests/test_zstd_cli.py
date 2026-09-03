@@ -439,31 +439,17 @@ def test_concurrent_decompress_compressed_to_tar_runs_one_zstd(monkeypatch, tmp_
   import threading
   import time
 
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      reset_archive_members_redis_client_for_tests,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      SyncTimedbArchiveMembersStore,
+      set_process_archive_members_store,
   )
 
   day = "2026-06-02"
   zst_path = tmp_path / ("%s.tar.zst" % day)
   tar_path = tmp_path / ("%s.tar" % day)
   zst_path.write_bytes(b"zst")
-  reset_archive_members_redis_client_for_tests()
-  fake = FakeRedis()
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=False: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".archive_members_redis_enabled",
-      lambda: True,
-  )
+  store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+  set_process_archive_members_store(store)
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
       lambda p: True,
@@ -472,12 +458,6 @@ def test_concurrent_decompress_compressed_to_tar_runs_one_zstd(monkeypatch, tmp_
       "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
       ".invalidate_after_daily_tar_mutation",
       lambda *a, **k: None,
-  )
-  # Speed up waiter sleep
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      "._populate_max_seconds",
-      lambda: 5,
   )
   decompress_calls = []
   hold = threading.Event()
@@ -501,26 +481,30 @@ def test_concurrent_decompress_compressed_to_tar_runs_one_zstd(monkeypatch, tmp_
         str(zst_path), str(tar_path), 1, remove_compressed=False,
     )
 
-  t0 = threading.Thread(target=_worker, args=(0,))
-  t1 = threading.Thread(target=_worker, args=(1,))
-  t0.start()
-  assert owner_started.wait(timeout=2)
-  t1.start()
-  time.sleep(0.1)
-  hold.set()
-  t0.join(timeout=5)
-  t1.join(timeout=5)
-  assert decompress_calls == [str(tar_path) + ".decomp.tmp"]
-  assert results.count(True) == 2
-  assert tar_path.is_file()
-  reset_archive_members_redis_client_for_tests()
+  try:
+    t0 = threading.Thread(target=_worker, args=(0,))
+    t1 = threading.Thread(target=_worker, args=(1,))
+    t0.start()
+    assert owner_started.wait(timeout=2)
+    t1.start()
+    time.sleep(0.1)
+    hold.set()
+    t0.join(timeout=5)
+    t1.join(timeout=5)
+    assert decompress_calls == [str(tar_path) + ".decomp.tmp"]
+    assert results.count(True) == 2
+    assert tar_path.is_file()
+  finally:
+    set_process_archive_members_store(None)
 
 
 def test_decompress_conflict_does_not_remove_tmp(monkeypatch, tmp_path):
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      reset_archive_members_redis_client_for_tests,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       try_acquire_daily_tar_restore,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      SyncTimedbArchiveMembersStore,
+      set_process_archive_members_store,
   )
 
   day = "2026-06-02"
@@ -529,102 +513,80 @@ def test_decompress_conflict_does_not_remove_tmp(monkeypatch, tmp_path):
   tmp_out = tmp_path / ("%s.tar.decomp.tmp" % day)
   zst_path.write_bytes(b"zst")
   tmp_out.write_bytes(b"owner-in-progress")
-  reset_archive_members_redis_client_for_tests()
-  fake = FakeRedis()
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=False: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".archive_members_redis_enabled",
-      lambda: True,
-  )
-  owner = try_acquire_daily_tar_restore(
-      day, reason="missing_tar", caller="owner",
-  )
-  assert owner
-  removes = []
+  store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+  set_process_archive_members_store(store)
+  try:
+    owner = try_acquire_daily_tar_restore(
+        day, reason="missing_tar", caller="owner",
+    )
+    assert owner
+    removes = []
 
-  def _tracking_remove(path):
-    removes.append(path)
-    raise AssertionError("loser must not remove decomp.tmp")
+    def _tracking_remove(path):
+      removes.append(path)
+      raise AssertionError("loser must not remove decomp.tmp")
 
-  monkeypatch.setattr("os.remove", _tracking_remove)
-  assert not decompress_compressed_to_tar(
-      str(zst_path),
-      str(tar_path),
-      1,
-      remove_compressed=False,
-      wait_for_other_owner=False,
-  )
-  assert removes == []
-  assert tmp_out.read_bytes() == b"owner-in-progress"
-  reset_archive_members_redis_client_for_tests()
+    monkeypatch.setattr("os.remove", _tracking_remove)
+    assert not decompress_compressed_to_tar(
+        str(zst_path),
+        str(tar_path),
+        1,
+        remove_compressed=False,
+        wait_for_other_owner=False,
+    )
+    assert removes == []
+    assert tmp_out.read_bytes() == b"owner-in-progress"
+  finally:
+    set_process_archive_members_store(None)
 
 
 def test_decompress_no_wait_returns_false_on_conflict(monkeypatch, tmp_path):
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      reset_archive_members_redis_client_for_tests,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       try_acquire_daily_tar_restore,
   )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      SyncTimedbArchiveMembersStore,
+      set_process_archive_members_store,
+  )
 
   day = "2026-06-02"
   zst_path = tmp_path / ("%s.tar.zst" % day)
   tar_path = tmp_path / ("%s.tar" % day)
   zst_path.write_bytes(b"zst")
-  reset_archive_members_redis_client_for_tests()
-  fake = FakeRedis()
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=False: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".archive_members_redis_enabled",
-      lambda: True,
-  )
-  assert try_acquire_daily_tar_restore(
-      day, reason="missing_tar", caller="owner",
-  )
-  called = []
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
-      lambda *a, **k: called.append(1),
-  )
-  assert not decompress_compressed_to_tar(
-      str(zst_path),
-      str(tar_path),
-      1,
-      wait_for_other_owner=False,
-  )
-  assert called == []
-  reset_archive_members_redis_client_for_tests()
+  store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+  set_process_archive_members_store(store)
+  try:
+    assert try_acquire_daily_tar_restore(
+        day, reason="missing_tar", caller="owner",
+    )
+    called = []
+    monkeypatch.setattr(
+        "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
+        lambda *a, **k: called.append(1),
+    )
+    assert not decompress_compressed_to_tar(
+        str(zst_path),
+        str(tar_path),
+        1,
+        wait_for_other_owner=False,
+    )
+    assert called == []
+  finally:
+    set_process_archive_members_store(None)
 
 
-def test_decompress_uses_file_lock_when_redis_unavailable(monkeypatch, tmp_path):
+def test_decompress_uses_file_lock_when_store_unset(monkeypatch, tmp_path):
   import threading
 
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
+
   day = "2026-06-02"
   zst_path = tmp_path / ("%s.tar.zst" % day)
   tar_path = tmp_path / ("%s.tar" % day)
   zst_path.write_bytes(b"zst")
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".archive_members_redis_enabled",
-      lambda: False,
-  )
+  set_process_archive_members_store(None)
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
       lambda p: True,

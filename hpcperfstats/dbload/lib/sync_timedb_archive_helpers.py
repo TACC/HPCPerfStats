@@ -40,7 +40,6 @@ Attributes:
   _INGEST_SKIPPED_CALENDAR_DAYS_MAX: Attribute.
   _LOGGED_ARCHIVE_DAY_INGEST_SKIP: Attribute.
   _LOGGED_ARCHIVE_DAY_INGEST_SKIP_MAX: Attribute.
-  _POPULATE_SOURCE_BY_CANONICAL: Attribute.
   _UNMAPPED_DISQUALIFY_CACHE: Attribute.
   _UNMAPPED_DISQUALIFY_TTL_S: Attribute.
   _oldest_waiting_ingest_frozen_state: Attribute.
@@ -2247,7 +2246,7 @@ def raw_stats_path_tar_append_decision(
     ):
       return False, ARCHIVE_SKIP_MEMBER_EXISTS
   except Exception as exc:
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
         ArchiveDayIngestSkipError,
     )
     if isinstance(exc, ArchiveDayIngestSkipError):
@@ -5207,7 +5206,7 @@ def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
   """
   Return file member sizes from a mutable daily ``.tar`` on disk.
 
-  Bypasses L1/Redis member caches so append and handoff partition agree with
+  Bypasses L1/store member caches so append and handoff partition agree with
   the open tar Branch C uses for reclassify.
 
   Args:
@@ -5246,21 +5245,21 @@ def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
   return members
 
 
-def maybe_invalidate_open_tar_redis_divergence_for_append_batch(
+def maybe_invalidate_open_tar_store_divergence_for_append_batch(
   archive_fname: str,
   stats_files: Any,
-  redis_members: Any,
+  store_members: Any,
   open_members: Any,
   *,
   log_fn: Any = log_print,
 ) -> bool:
   """
-  Log and invalidate when warm Redis claims batch members the open tar lacks.
+  Log and invalidate when warm members store claims batch members the open tar lacks.
 
   Args:
     archive_fname (str): Daily compressed archive path (``.tar.zst`` / ``.gz``).
     stats_files (Any): Raw stats paths in the current append batch.
-    redis_members (Any): Warm Redis member map.
+    store_members (Any): Warm members store member map.
     open_members (Any): Authoritative open-tar member map.
     log_fn (Any): Logger callable.
 
@@ -5268,13 +5267,13 @@ def maybe_invalidate_open_tar_redis_divergence_for_append_batch(
     bool: True when divergence was detected and invalidate ran.
 
   Examples:
-    >>> maybe_invalidate_open_tar_redis_divergence_for_append_batch(
+    >>> maybe_invalidate_open_tar_store_divergence_for_append_batch(
     ...     "", [], {}, {},
     ... )  # doctest: +SKIP
   """
-  if not redis_members or not stats_files:
+  if not store_members or not stats_files:
     return False
-  redis_only_n = 0
+  store_only_n = 0
   open_only_n = 0
   for path in stats_files:
     member_name = get_tar_member_name(path)
@@ -5282,13 +5281,13 @@ def maybe_invalidate_open_tar_redis_divergence_for_append_batch(
       expected_size = int(os.path.getsize(path))
     except OSError:
       continue
-    redis_hit = redis_members.get(member_name) == expected_size
+    store_hit = store_members.get(member_name) == expected_size
     open_hit = open_members.get(member_name) == expected_size
-    if redis_hit and not open_hit:
-      redis_only_n += 1
-    elif open_hit and not redis_hit:
+    if store_hit and not open_hit:
+      store_only_n += 1
+    elif open_hit and not store_hit:
       open_only_n += 1
-  if redis_only_n <= 0 and open_only_n <= 0:
+  if store_only_n <= 0 and open_only_n <= 0:
     return False
   day_date = calendar_date_from_daily_tar_path(
       daily_tar_path_from_compressed(archive_fname),
@@ -5296,9 +5295,9 @@ def maybe_invalidate_open_tar_redis_divergence_for_append_batch(
   day_token = day_date.isoformat() if day_date is not None else "?"
   if log_fn:
     log_fn(
-        "INFO: archive_append open_tar_redis_divergence day=%s "
-        "redis_only_n=%d open_only_n=%d"
-        % (day_token, redis_only_n, open_only_n),
+        "INFO: archive_append open_tar_store_divergence day=%s "
+        "store_only_n=%d open_only_n=%d"
+        % (day_token, store_only_n, open_only_n),
         flush=True,
     )
   invalidate_after_daily_tar_mutation(
@@ -5330,7 +5329,7 @@ _DEFERRED_PREWARM_FLUSH_HOOK = None
 
 def set_archive_members_invalidation_hook(hook: Any) -> None:
   """
-  Register supervisor callback after L1/Redis member cache invalidation.
+  Register supervisor callback after L1/store member cache invalidation.
   
   Args:
     hook (Any): Hook passed to this helper.
@@ -5463,7 +5462,7 @@ def invalidate_after_daily_tar_mutation(
   
   Accepts ``YYYY-MM-DD.tar``, ``.tar.zst``, or legacy ``.tar.gz``; invalidates
     L1
-  and Redis member maps for the canonical daily compressed key.
+  and members-store maps for the canonical daily compressed key.
   
   Args:
     daily_tar_or_compressed_path (str): daily tar or compressed path as
@@ -5524,15 +5523,13 @@ def invalidate_daily_archive_members_cache(
   tar_path = daily_tar_path_from_compressed(canonical)
   _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.pop(os.path.normpath(tar_path), None)
   try:
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        archive_members_redis_enabled,
-        invalidate_archive_members_redis,
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+        invalidate_archive_members,
     )
-    if archive_members_redis_enabled():
-      for key in drop_keys:
-        invalidate_archive_members_redis(key)
-      if not drop_keys:
-        invalidate_archive_members_redis(_daily_archive_members_cache_key(canonical))
+    for key in drop_keys:
+      invalidate_archive_members(key)
+    if not drop_keys:
+      invalidate_archive_members(_daily_archive_members_cache_key(canonical))
   except Exception:
     pass
   _notify_archive_members_invalidation(canonical, day_token, reason)
@@ -5689,45 +5686,40 @@ def _store_daily_archive_members_cache(
   _trim_daily_archive_members_cache()
 
 
-def _daily_archive_member_match_via_redis_l2(
+def _daily_archive_member_match_via_store(
   canonical: Any,
   compressed_path: str,
   member_name: Any,
   expected_size: int,
 ) -> Any:
   """
-  Ingest duplicate-check via Redis L2 before local tar scan.
-  
-  Returns ``None`` when Redis is disabled or the caller should fall back to a
-  mutable ``.tar`` scan (no sealed archive and Redis map not warm).
-  
+  Ingest duplicate-check via the in-process members store before a local scan.
+
+  Returns ``None`` when the caller should fall back to a mutable ``.tar``
+  scan (no sealed archive and the store map is not warm).
+
   Args:
-    canonical (Any): Canonical passed to this helper.
-    compressed_path (str): String for compressed path.
-    member_name (Any): Member name passed to this helper.
-    expected_size (int): Integer value for expected size.
-  
+    canonical (Any): Canonical daily archive path.
+    compressed_path (str): Compressed sibling path used for the cache key.
+    member_name (Any): Archive member basename to match.
+    expected_size (int): Expected member byte size.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: ``True``/``False`` when the store can answer; ``None`` to scan tar.
+
   Examples:
-    >>> _daily_archive_member_match_via_redis_l2(None, "x", None, 0)
+    >>> _daily_archive_member_match_via_store(None, "x", None, 0)
   """
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      archive_members_redis_enabled,
-      build_archive_members_redis_keys,
-      get_archive_members_redis_client,
-      redis_member_match_when_warm,
-      redis_members_cache_is_fully_warm,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      member_match_when_warm,
+      members_cache_is_fully_warm,
   )
 
-  if not archive_members_redis_enabled():
-    return None
   if not daily_archive_populate_source_exists(compressed_path):
     return None
   cache_key = _daily_archive_members_cache_key(canonical)
-  keys = build_archive_members_redis_keys(cache_key)
-  client = get_archive_members_redis_client(required=True)
+  keys = build_archive_members_keys(cache_key)
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       update_worker_substage,
   )
@@ -5736,28 +5728,25 @@ def _daily_archive_member_match_via_redis_l2(
       "archive_member_lookup",
       lookup_mode="hget",
   )
-  warm_match = redis_member_match_when_warm(
+  warm_match = member_match_when_warm(
       keys,
       member_name,
       expected_size,
-      client=client,
   )
   if warm_match is not None:
     return warm_match
   sealed_path = _resolve_sealed_daily_archive_path(compressed_path)
   if sealed_path is None:
-    if redis_members_cache_is_fully_warm(keys):
+    if members_cache_is_fully_warm(keys):
       return False
     return None
-  client = get_archive_members_redis_client(required=True)
-  return _member_match_via_redis_or_sealed_point(
+  return _member_match_via_store_or_sealed_point(
       canonical,
       cache_key,
       keys,
       sealed_path,
       member_name,
       expected_size,
-      client=client,
   )
 
 
@@ -5795,14 +5784,14 @@ def daily_archive_has_member_with_size(
   if members is not None:
     return members.get(member_name) == expected_size
   try:
-    redis_match = _daily_archive_member_match_via_redis_l2(
+    store_match = _daily_archive_member_match_via_store(
         canonical,
         compressed_path,
         member_name,
         expected_size,
     )
-    if redis_match is not None:
-      return redis_match
+    if store_match is not None:
+      return store_match
   except Exception:
     raise
   members = get_existing_archive_members_for_daily_archive(compressed_path)
@@ -5981,12 +5970,12 @@ def _populate_tar_file_read_lock_wait(target_path: str) -> Any:
   Examples:
     >>> _populate_tar_file_read_lock_wait("x")  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       wait_for_daily_tar_restore_before_populate,
   )
 
   wait_for_daily_tar_restore_before_populate(target_path, log_fn=log_print)
-  max_s = cfg.get_sync_archive_members_redis_populate_max_seconds()
+  max_s = cfg.get_sync_archive_members_populate_max_seconds()
   timeout = float(max_s) if max_s > 0 else float(
       _archive_members_fnctl_read_lock_timeout_seconds(),
   )
@@ -6220,7 +6209,7 @@ def _raise_if_ingest_day_skipped(
   Examples:
     >>> _raise_if_ingest_day_skipped(None, "x", None)  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       ArchiveDayIngestSkipError,
       get_archive_day_ingest_skip,
   )
@@ -6234,9 +6223,13 @@ def _raise_if_ingest_day_skipped(
     raise ArchiveDayIngestSkipError(
         keys.day_token, resolved, kind, detail,
     )
-  skip = get_archive_day_ingest_skip(keys, client=client)
+  skip = get_archive_day_ingest_skip(keys)
   if skip is not None:
-    kind, detail = skip
+    if isinstance(skip, dict):
+      kind = skip.get("kind")
+      detail = skip.get("detail", "")
+    else:
+      kind, detail = skip
     resolved = sealed_path or _resolve_sealed_path_for_day_token(keys.day_token)
     _cache_ingest_skipped_calendar_day(keys.day_token, kind, detail, resolved)
     raise ArchiveDayIngestSkipError(keys.day_token, resolved, kind, detail)
@@ -6264,16 +6257,16 @@ def mark_archive_day_ingest_skip_and_raise(
     ArchiveDayIngestSkipError: Raised when
     ``mark_archive_day_ingest_skip_and_raise`` hits a
     ``ArchiveDayIngestSkipError`` failure path.
-    ArchiveMembersRedisUnavailableError: Raised when
+    ArchiveMembersStoreUnavailableError: Raised when
     ``mark_archive_day_ingest_skip_and_raise`` hits a
-    ``ArchiveMembersRedisUnavailableError`` failure path.
+    ``ArchiveMembersStoreUnavailableError`` failure path.
   
   Examples:
     >>> mark_archive_day_ingest_skip_and_raise("x", None, None, None)
   """
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       ArchiveDayIngestSkipError,
-      ArchiveMembersRedisUnavailableError,
+      ArchiveMembersStoreUnavailableError,
       _SELF_INGEST_TAR_HOT_REASONS,
       archive_append_inflight_for_day,
       ingest_tar_hot_for_day,
@@ -6286,7 +6279,7 @@ def mark_archive_day_ingest_skip_and_raise(
       _is_fnctl_read_lock_timeout_error(stream_error)
       or _is_fnctl_read_lock_timeout_detail(detail)
   ):
-    raise ArchiveMembersRedisUnavailableError(
+    raise ArchiveMembersStoreUnavailableError(
         "transient fnctl read lock timeout during sealed populate day=%s path=%s"
         % (keys.day_token, sealed_path or ""),
     )
@@ -6302,7 +6295,7 @@ def mark_archive_day_ingest_skip_and_raise(
     sealed_sibling = _resolve_sealed_path_for_day_token(day_token)
     # True append (or non-self hot) → transient Unavailable; preserve no day-skip.
     if day_token and archive_append_inflight_for_day(day_token):
-      raise ArchiveMembersRedisUnavailableError(
+      raise ArchiveMembersStoreUnavailableError(
           "transient tar populate EOF during hot/append activity day=%s"
           % day_token,
       )
@@ -6312,13 +6305,13 @@ def mark_archive_day_ingest_skip_and_raise(
         and sealed_sibling
         and os.path.isfile(sealed_sibling)
     ):
-      raise ArchiveMembersRedisUnavailableError(
+      raise ArchiveMembersStoreUnavailableError(
           "tar populate EOF prefer sealed fallback day=%s" % day_token,
       )
     if day_token and ingest_tar_hot_for_day(day_token):
       hot_reason = ingest_tar_hot_reason_for_day(day_token)
       if hot_reason and hot_reason not in _SELF_INGEST_TAR_HOT_REASONS:
-        raise ArchiveMembersRedisUnavailableError(
+        raise ArchiveMembersStoreUnavailableError(
             "transient tar populate EOF during hot/append activity day=%s"
             % day_token,
         )
@@ -6326,12 +6319,12 @@ def mark_archive_day_ingest_skip_and_raise(
     if tar_path and os.path.isfile(tar_path):
       try:
         if verify_tar_archive_readable(tar_path):
-          raise ArchiveMembersRedisUnavailableError(
+          raise ArchiveMembersStoreUnavailableError(
               "transient tar populate EOF while mutable tar readable day=%s"
               % day_token,
           )
       except TimeoutError:
-        raise ArchiveMembersRedisUnavailableError(
+        raise ArchiveMembersStoreUnavailableError(
             "transient tar populate EOF during fnctl contention day=%s"
             % day_token,
         ) from None
@@ -6403,48 +6396,51 @@ def _log_ingest_sealed_lookup_issue(sealed_path: str, message: Any) -> None:
   log_print(message, flush=True)
 
 
-def _member_match_via_redis_or_sealed_point(
+def _member_match_via_store_or_sealed_point(
   canonical: Any,
   cache_key: Any,
   keys: Any,
   sealed_path: str,
   member_name: Any,
   expected_size: int,
-  *,
-  client: Any,
 ) -> Any:
   """
-  Internal helper to handle member match via redis or sealed point.
-  
+  Point duplicate-check via the members store, then populate-and-wait.
+
   Args:
-    canonical (Any): Canonical passed to this helper.
-    cache_key (Any): Cache key passed to this helper.
-    keys (Any): Keys passed to this helper.
-    sealed_path (str): String for sealed path.
-    member_name (Any): Member name passed to this helper.
-    expected_size (int): Integer value for expected size.
-    client (Any): Live handle (pool, client, or connection).
-  
+    canonical (Any): Canonical daily archive path.
+    cache_key (Any): Unused leftover cache-key argument.
+    keys (Any): Archive-members day handle.
+    sealed_path (str): Sealed archive path for skip errors.
+    member_name (Any): Archive member basename to match.
+    expected_size (int): Expected member byte size.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: ``True``/``False`` after store lookup or populate wait.
+
   Raises:
-    Exception: Raised when ``_member_match_via_redis_or_sealed_point`` hits a
-    ``Exception`` failure path.
-  
+    ArchiveDayIngestSkipError: Raised when the calendar day is sticky-skipped.
+    ArchiveMembersStoreUnavailableError: Raised when populate cannot complete.
+    Exception: Re-raised skip errors after a failed populate wait.
+
   Examples:
-    >>> _member_match_via_redis_or_sealed_point(0)  # doctest: +SKIP
+    >>> _member_match_via_store_or_sealed_point(  # doctest: +SKIP
+    ...   "x", None, None, "x", "m", 0,
+    ... )
   """
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       ArchiveDayIngestSkipError,
-      ArchiveMembersRedisUnavailableError,
+      ArchiveMembersStoreUnavailableError,
+      archive_members_populate_shows_progress_for_day,
       populate_degraded_is_set,
+      member_match_when_warm,
       request_archive_members_populate_and_wait,
       wait_for_member_match,
   )
 
+  del cache_key
   expected_size = int(expected_size)
-  _raise_if_ingest_day_skipped(keys, sealed_path, client)
+  _raise_if_ingest_day_skipped(keys, sealed_path, None)
 
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       update_worker_substage,
@@ -6454,22 +6450,19 @@ def _member_match_via_redis_or_sealed_point(
       "archive_member_lookup",
       lookup_mode="hget",
   )
-  raw_size = client.hget(keys.hash_key, member_name)
-  if raw_size is not None:
-    size = int(raw_size)
-    if size == expected_size:
-      return True
-    if size > expected_size:
-      return False
+  warm_match = member_match_when_warm(
+      keys, member_name, expected_size,
+  )
+  if warm_match is not None:
+    return warm_match
 
-  if client.get(keys.complete_key) == "1":
-    return False
-
-  if populate_degraded_is_set(keys, client=client):
-    _raise_if_ingest_day_skipped(keys, sealed_path, client)
+  if populate_degraded_is_set(keys) or (
+      archive_members_populate_shows_progress_for_day(keys.day_token)
+  ):
+    _raise_if_ingest_day_skipped(keys, sealed_path, None)
     update_worker_substage(
         "archive_member_lookup",
-        lookup_mode="redis_wait",
+        lookup_mode="store_wait",
     )
     try:
       members = request_archive_members_populate_and_wait(canonical)
@@ -6479,42 +6472,26 @@ def _member_match_via_redis_or_sealed_point(
       return int(size) == expected_size
     except ArchiveDayIngestSkipError:
       raise
-    except ArchiveMembersRedisUnavailableError:
-      _raise_if_ingest_day_skipped(keys, sealed_path, client)
-      if client.exists(keys.lock_key) or client.get(keys.complete_key) == "1":
-        return wait_for_member_match(
-            keys, member_name, expected_size, sealed_path=sealed_path,
-            respect_ingest_deadline=False,
-            canonical=canonical,
-        )
-      raise
-
-  if client.exists(keys.lock_key):
-    if populate_degraded_is_set(keys, client=client):
-      _raise_if_ingest_day_skipped(keys, sealed_path, client)
-    update_worker_substage(
-        "archive_member_lookup",
-        lookup_mode="redis_wait",
-    )
-    return wait_for_member_match(
-        keys, member_name, expected_size, sealed_path=sealed_path,
-        respect_ingest_deadline=False,
-        canonical=canonical,
-    )
+    except ArchiveMembersStoreUnavailableError:
+      _raise_if_ingest_day_skipped(keys, sealed_path, None)
+      return wait_for_member_match(
+          keys, member_name, expected_size, sealed_path=sealed_path,
+          respect_ingest_deadline=False,
+          canonical=canonical,
+      )
 
   try:
     members = request_archive_members_populate_and_wait(canonical)
     return members.get(member_name) == expected_size
   except ArchiveDayIngestSkipError:
     raise
-  except ArchiveMembersRedisUnavailableError:
-    _raise_if_ingest_day_skipped(keys, sealed_path, client)
-    if client.exists(keys.lock_key) or client.get(keys.complete_key) == "1":
-      return wait_for_member_match(
-          keys, member_name, expected_size, sealed_path=sealed_path,
-          respect_ingest_deadline=False,
-          canonical=canonical,
-      )
+  except ArchiveMembersStoreUnavailableError:
+    _raise_if_ingest_day_skipped(keys, sealed_path, None)
+    return wait_for_member_match(
+        keys, member_name, expected_size, sealed_path=sealed_path,
+        respect_ingest_deadline=False,
+        canonical=canonical,
+    )
 
 
 def _stream_compressed_archive_members(
@@ -6572,10 +6549,10 @@ def _stream_compressed_archive_members(
   except _MemberStreamEarlyExit:
     raise
   except Exception as exc:
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        ArchiveMembersRedisUnavailableError,
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+        ArchiveMembersStoreUnavailableError,
     )
-    if isinstance(exc, ArchiveMembersRedisUnavailableError):
+    if isinstance(exc, ArchiveMembersStoreUnavailableError):
       raise
     log_print(
         "WARNING: sealed archive member stream failed for %s: %s"
@@ -6626,54 +6603,47 @@ def _scan_gzip_archive_members_and_readable(gz_path: str) -> Any:
   return _scan_compressed_archive_members_and_readable(gz_path)
 
 
-def _sealed_archive_members_via_redis_or_scan(
+def _sealed_archive_members_via_store_or_scan(
   sealed_path: str,
   *,
   apply_priority_wrap: bool = False,
 ) -> Any:
   """
   Return ``(readable, members)`` for sealed-side raw-removal / validation reads.
-  
-  When Redis L2 is enabled, use the same single-flight populate path as ingest
-  prewarm and duplicate-check (at most one ``zstd -d -c`` per calendar day).
-  
+
+  Uses the same single-flight populate path as ingest prewarm and
+  duplicate-check (at most one ``zstd -d -c`` per calendar day). There is
+  no local sealed-scan fallback.
+
   Args:
     sealed_path (str): String for sealed path.
-    apply_priority_wrap (bool): Boolean flag for apply priority wrap.
-  
+    apply_priority_wrap (bool): Unused leftover flag from the legacy
+      local-scan fallback.
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
-    Exception: Raised when ``_sealed_archive_members_via_redis_or_scan`` hits
-    a ``Exception`` failure path.
-  
+    Exception: Raised when store lookup fails for a reason other than
+      sticky day skip.
+
   Examples:
-    >>> _sealed_archive_members_via_redis_or_scan("x", True)  # doctest: +SKIP
+    >>> _sealed_archive_members_via_store_or_scan("x", True)  # doctest: +SKIP
   """
+  del apply_priority_wrap
   sealed_path = os.path.normpath(str(sealed_path or ""))
   if not sealed_path or not os.path.isfile(sealed_path):
     return False, {}
-  try:
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        ArchiveDayIngestSkipError,
-        archive_members_redis_enabled,
-    )
-    if archive_members_redis_enabled():
-      try:
-        members = get_existing_archive_members_for_daily_archive(sealed_path)
-      except ArchiveDayIngestSkipError:
-        return False, {}
-      if members is None:
-        return False, {}
-      return True, dict(members)
-  except Exception:
-    raise
-  readable, members = _scan_compressed_archive_members_and_readable(
-      sealed_path,
-      apply_priority_wrap=apply_priority_wrap,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      ArchiveDayIngestSkipError,
   )
-  return readable, dict(members or {})
+  try:
+    members = get_existing_archive_members_for_daily_archive(sealed_path)
+  except ArchiveDayIngestSkipError:
+    return False, {}
+  if members is None:
+    return False, {}
+  return True, dict(members)
 
 
 def validate_sealed_daily_archive_for_raw_removal(
@@ -6786,7 +6756,7 @@ def validate_sealed_daily_archive_for_raw_removal(
           log_fn=log_fn,
       )
       sealed_path = zst_path
-      sealed_readable, members_sealed = _sealed_archive_members_via_redis_or_scan(
+      sealed_readable, members_sealed = _sealed_archive_members_via_store_or_scan(
           sealed_path,
       )
       if not sealed_readable or members_sealed != members_tar:
@@ -6807,7 +6777,7 @@ def validate_sealed_daily_archive_for_raw_removal(
         )
       return False, None
 
-  sealed_readable, members_sealed = _sealed_archive_members_via_redis_or_scan(
+  sealed_readable, members_sealed = _sealed_archive_members_via_store_or_scan(
       sealed_path,
   )
   if not sealed_readable:
@@ -7214,9 +7184,6 @@ def get_existing_archive_members(tar_path: str) -> Any:
   return members
 
 
-_POPULATE_SOURCE_BY_CANONICAL = {}
-
-
 def consume_archive_members_populate_source(
   canonical: Any,
   default: Any | None = None,
@@ -7227,8 +7194,7 @@ def consume_archive_members_populate_source(
     ``sealed_populated``).
   
   Default is ``None`` so callers can distinguish a recorded populate from a
-    silent
-  miss (do not invent ``prewarmed`` when Redis stayed empty).
+    silent miss (do not invent ``prewarmed`` when the store stayed empty).
   
   Args:
     canonical (Any): Canonical passed to this helper.
@@ -7240,10 +7206,17 @@ def consume_archive_members_populate_source(
   Examples:
     >>> consume_archive_members_populate_source(None, None)  # doctest: +SKIP
   """
-  return _POPULATE_SOURCE_BY_CANONICAL.pop(
-      normalize_daily_compressed_path(canonical),
-      default,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      get_process_archive_members_store,
   )
+
+  store = get_process_archive_members_store()
+  if store is None:
+    return default
+  value = store.consume_populate_source(
+      normalize_daily_compressed_path(canonical),
+  )
+  return default if value is None else value
 
 
 def _record_archive_members_populate_source(
@@ -7263,7 +7236,17 @@ def _record_archive_members_populate_source(
   Examples:
     >>> _record_archive_members_populate_source(None, None)  # doctest: +SKIP
   """
-  _POPULATE_SOURCE_BY_CANONICAL[normalize_daily_compressed_path(canonical)] = source
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      get_process_archive_members_store,
+  )
+
+  store = get_process_archive_members_store()
+  if store is None:
+    return
+  store.set_populate_source(
+      normalize_daily_compressed_path(canonical),
+      str(source),
+  )
 
 
 def _ensure_populate_scan_allowed() -> None:
@@ -7274,9 +7257,9 @@ def _ensure_populate_scan_allowed() -> None:
     None
   
   Raises:
-    ArchiveMembersRedisUnavailableError: Raised when
+    ArchiveMembersStoreUnavailableError: Raised when
     ``_ensure_populate_scan_allowed`` hits a
-    ``ArchiveMembersRedisUnavailableError`` failure path.
+    ``ArchiveMembersStoreUnavailableError`` failure path.
   
   Examples:
     >>> _ensure_populate_scan_allowed()  # doctest: +SKIP
@@ -7285,19 +7268,18 @@ def _ensure_populate_scan_allowed() -> None:
       get_worker_pool_kind,
       may_run_archive_members_populate_scan,
   )
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      ArchiveMembersRedisUnavailableError,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      ArchiveMembersStoreUnavailableError,
   )
 
   if not may_run_archive_members_populate_scan():
-    raise ArchiveMembersRedisUnavailableError(
+    raise ArchiveMembersStoreUnavailableError(
         "archive members populate scan forbidden for pool_kind=%s"
         % get_worker_pool_kind(),
     )
 
 
 def _clear_stale_day_ingest_skip_if_tar_repaired(
-  client: Any,
   keys: Any,
   tar_path: str,
   zst_path: str,
@@ -7305,31 +7287,33 @@ def _clear_stale_day_ingest_skip_if_tar_repaired(
   sealed_path: str,
 ) -> None:
   """
-  Fix D: drop sticky skip when sealed is gone and mutable tar is readable.
-  
+  Drop sticky skip when sealed is gone and the mutable tar is readable.
+
   Args:
-    client (Any): Live handle (pool, client, or connection).
-    keys (Any): Keys passed to this helper.
-    tar_path (str): String for tar path.
-    zst_path (str): String for zst path.
-    gz_path (str): String for gz path.
-    sealed_path (str): String for sealed path.
-  
+    keys (Any): Archive-members day handle.
+    tar_path (str): Daily tar path.
+    zst_path (str): Sealed zst sibling path.
+    gz_path (str): Legacy gzip sibling path.
+    sealed_path (str): Resolved sealed path, or empty when absent.
+
   Returns:
     None
-  
+
   Examples:
-    >>> _clear_stale_day_ingest_skip_if_tar_repaired(0)  # doctest: +SKIP
+    >>> _clear_stale_day_ingest_skip_if_tar_repaired(  # doctest: +SKIP
+    ...   None, "x", "y", "z", "",
+    ... )
   """
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       clear_archive_day_ingest_skip,
       get_archive_day_ingest_skip,
+      get_process_archive_members_store,
       populate_degraded_is_set,
   )
 
-  if client is None or keys.day_token == "unknown":
+  if keys.day_token == "unknown":
     return
-  skip = get_archive_day_ingest_skip(keys, client=client)
+  skip = get_archive_day_ingest_skip(keys)
   if skip is None:
     return
   if sealed_path and os.path.isfile(sealed_path):
@@ -7344,11 +7328,13 @@ def _clear_stale_day_ingest_skip_if_tar_repaired(
       return
   except TimeoutError:
     return
-  clear_archive_day_ingest_skip(client, keys)
+  clear_archive_day_ingest_skip(keys)
   _INGEST_SKIPPED_CALENDAR_DAYS.pop(keys.day_token, None)
   _LOGGED_ARCHIVE_DAY_INGEST_SKIP.discard(keys.day_token)
-  if populate_degraded_is_set(keys, client=client):
-    client.delete(keys.degraded_key)
+  if populate_degraded_is_set(keys):
+    store = get_process_archive_members_store()
+    if store is not None:
+      store.clear_degraded(keys.day_token)
   log_print(
       "INFO: cleared stale archive_day_ingest_skip day=%s tar=%s "
       "(sealed missing/dirty; tar readable)"
@@ -7389,13 +7375,13 @@ def _build_populate_source_decision(
   }
 
 
-def _populate_redis_members_from_sealed_scan(
+def _populate_members_from_sealed_scan(
   sealed_path: str,
   cache_key: Any,
   tar_path: Any | None = None,
 ) -> Any:
   """
-  Internal helper to populate the redis members from sealed scan.
+  Internal helper to populate the members store from sealed scan.
   
   Args:
     sealed_path (str): String for sealed path.
@@ -7406,19 +7392,19 @@ def _populate_redis_members_from_sealed_scan(
     Any: Value produced by this call (type depends on inputs).
   
   Raises:
-    Exception: Raised when ``_populate_redis_members_from_sealed_scan`` hits a
+    Exception: Raised when ``_populate_members_from_sealed_scan`` hits a
     ``Exception`` failure path.
   
   Examples:
-    >>> _populate_redis_members_from_sealed_scan("x", None, None)
+    >>> _populate_members_from_sealed_scan("x", None, None)
   """
   _ensure_populate_scan_allowed()
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      build_archive_members_redis_keys,
-      populate_archive_members_redis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      populate_archive_members,
   )
 
-  keys = build_archive_members_redis_keys(cache_key)
+  keys = build_archive_members_keys(cache_key)
   canonical = cache_key[0] if cache_key else sealed_path
   if tar_path is None:
     tar_path = daily_tar_path_from_compressed(canonical)
@@ -7448,7 +7434,7 @@ def _populate_redis_members_from_sealed_scan(
 
   members = None
   try:
-    members = populate_archive_members_redis(
+    members = populate_archive_members(
         keys,
         _scan_fn,
         sealed_path=sealed_path,
@@ -7457,10 +7443,9 @@ def _populate_redis_members_from_sealed_scan(
         ),
     )
   except Exception as exc:
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
         ArchiveDayIngestSkipError,
         clear_archive_day_ingest_skip,
-        get_archive_members_redis_client,
     )
     if not isinstance(exc, ArchiveDayIngestSkipError):
       raise
@@ -7481,13 +7466,16 @@ def _populate_redis_members_from_sealed_scan(
             ),
             flush=True,
         )
-        client = get_archive_members_redis_client(required=False)
-        if client is not None:
-          clear_archive_day_ingest_skip(client, keys)
-          client.delete(keys.degraded_key)
+        clear_archive_day_ingest_skip(keys)
+        from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+            get_process_archive_members_store,
+        )
+        store = get_process_archive_members_store()
+        if store is not None:
+          store.clear_degraded(keys.day_token)
         _INGEST_SKIPPED_CALENDAR_DAYS.pop(keys.day_token, None)
         _LOGGED_ARCHIVE_DAY_INGEST_SKIP.discard(keys.day_token)
-        return _populate_redis_members_from_tar_scan(tar_path, cache_key)
+        return _populate_members_from_tar_scan(tar_path, cache_key)
     raise
   if members is not None:
     _record_archive_members_populate_source(canonical, "sealed_populated")
@@ -7501,9 +7489,9 @@ def _populate_redis_members_from_sealed_scan(
   return members
 
 
-def _populate_redis_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
+def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
   """
-  Internal helper to populate the redis members from tar scan.
+  Internal helper to populate the members store from tar scan.
   
   Args:
     tar_path (str): String for tar path.
@@ -7513,19 +7501,19 @@ def _populate_redis_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
     Any: Value produced by this call (type depends on inputs).
   
   Raises:
-    Exception: Raised when ``_populate_redis_members_from_tar_scan`` hits a
+    Exception: Raised when ``_populate_members_from_tar_scan`` hits a
     ``Exception`` failure path.
   
   Examples:
-    >>> _populate_redis_members_from_tar_scan("x", None)  # doctest: +SKIP
+    >>> _populate_members_from_tar_scan("x", None)  # doctest: +SKIP
   """
   _ensure_populate_scan_allowed()
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      build_archive_members_redis_keys,
-      populate_archive_members_redis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      populate_archive_members,
   )
 
-  keys = build_archive_members_redis_keys(cache_key)
+  keys = build_archive_members_keys(cache_key)
   canonical = cache_key[0] if cache_key else tar_path
   zst_path, gz_path = compressed_sibling_paths(tar_path)
   sealed_path = _resolve_sealed_daily_archive_path(canonical)
@@ -7541,8 +7529,8 @@ def _populate_redis_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
       Any: Value produced by this call (type depends on inputs).
     
     Raises:
-      ArchiveMembersRedisUnavailableError: Raised when ``_scan_fn`` hits a
-      ``ArchiveMembersRedisUnavailableError`` failure path.
+      ArchiveMembersStoreUnavailableError: Raised when ``_scan_fn`` hits a
+      ``ArchiveMembersStoreUnavailableError`` failure path.
     
     Examples:
       >>> _scan_fn(None)  # doctest: +SKIP
@@ -7562,11 +7550,11 @@ def _populate_redis_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
             seen_names.add(member.name)
             on_member(member.name, member.size)
     except Exception as exc:
-      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-          ArchiveMembersRedisUnavailableError,
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+          ArchiveMembersStoreUnavailableError,
       )
       if _is_fnctl_read_lock_timeout_error(exc):
-        raise ArchiveMembersRedisUnavailableError(
+        raise ArchiveMembersStoreUnavailableError(
             "transient fnctl read lock timeout during tar populate path=%s"
             % tar_path,
         ) from exc
@@ -7576,7 +7564,7 @@ def _populate_redis_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
     return True, saw_duplicates, None
 
   try:
-    members = populate_archive_members_redis(
+    members = populate_archive_members(
         keys,
         _scan_fn,
         sealed_path=None,
@@ -7586,10 +7574,10 @@ def _populate_redis_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
         scanning_mutable_tar=True,
     )
   except Exception as exc:
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        ArchiveMembersRedisUnavailableError,
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+        ArchiveMembersStoreUnavailableError,
     )
-    if not isinstance(exc, ArchiveMembersRedisUnavailableError):
+    if not isinstance(exc, ArchiveMembersStoreUnavailableError):
       raise
     if "prefer sealed fallback" not in str(exc):
       raise
@@ -7601,7 +7589,7 @@ def _populate_redis_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
         % (keys.day_token, tar_path, sealed_path),
         flush=True,
     )
-    return _populate_redis_members_from_sealed_scan(
+    return _populate_members_from_sealed_scan(
         sealed_path, cache_key, tar_path=tar_path,
     )
   if members is not None:
@@ -7618,7 +7606,7 @@ def _populate_redis_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
 
 def execute_archive_members_populate_for_canonical(canonical: Any) -> Any:
   """
-  Run Redis single-flight populate for one daily archive (populate-pool only).
+  Run store single-flight populate for one daily archive (populate-pool only).
   
   Args:
     canonical (Any): Canonical passed to this helper.
@@ -7627,20 +7615,19 @@ def execute_archive_members_populate_for_canonical(canonical: Any) -> Any:
     Any: Value produced by this call (type depends on inputs).
   
   Raises:
-    ArchiveMembersRedisUnavailableError: Raised when
+    ArchiveMembersStoreUnavailableError: Raised when
     ``execute_archive_members_populate_for_canonical`` hits a
-    ``ArchiveMembersRedisUnavailableError`` failure path.
+    ``ArchiveMembersStoreUnavailableError`` failure path.
   
   Examples:
     >>> execute_archive_members_populate_for_canonical(None)  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      ArchiveMembersRedisUnavailableError,
-      archive_members_redis_enabled,
-      build_archive_members_redis_keys,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      ArchiveMembersStoreUnavailableError,
+      build_archive_members_keys,
       get_archive_day_ingest_skip,
       populate_degraded_is_set,
-      redis_lookup_full_members,
+      lookup_full_members,
   )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       get_worker_pool_kind,
@@ -7649,13 +7636,9 @@ def execute_archive_members_populate_for_canonical(canonical: Any) -> Any:
   )
 
   canonical = normalize_daily_compressed_path(canonical)
-  if not archive_members_redis_enabled():
-    raise ArchiveMembersRedisUnavailableError(
-        "execute_archive_members_populate_for_canonical requires Redis L2",
-    )
   kind = get_worker_pool_kind()
   if kind in ("ingest-pool", "archive-pool"):
-    raise ArchiveMembersRedisUnavailableError(
+    raise ArchiveMembersStoreUnavailableError(
         "execute_archive_members_populate_for_canonical forbidden on %s "
         "(use request_archive_members_populate_and_wait)"
         % kind,
@@ -7665,46 +7648,38 @@ def execute_archive_members_populate_for_canonical(canonical: Any) -> Any:
     token = set_worker_pool_kind("populate-pool")
   try:
     cache_key = _daily_archive_members_cache_key(canonical)
-    keys = build_archive_members_redis_keys(cache_key)
-    members = redis_lookup_full_members(keys)
+    keys = build_archive_members_keys(cache_key)
+    members = lookup_full_members(keys)
     if members is not None:
       _store_daily_archive_members_cache(canonical, members)
       return dict(members)
     tar_path = daily_tar_path_from_compressed(canonical)
     sealed_path = _resolve_sealed_daily_archive_path(canonical)
-    client = None
-    try:
-      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-          get_archive_members_redis_client,
-      )
-      client = get_archive_members_redis_client(required=True)
-    except Exception:
-      client = None
-    if client is not None and populate_degraded_is_set(keys, client=client):
-      if get_archive_day_ingest_skip(keys, client=client) is not None:
+    if populate_degraded_is_set(keys):
+      if get_archive_day_ingest_skip(keys) is not None:
         return {}
-      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-          clear_stale_incomplete_archive_members_redis,
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+          clear_stale_incomplete_archive_members,
       )
-      clear_stale_incomplete_archive_members_redis(keys, client=client)
+      clear_stale_incomplete_archive_members(keys)
     if sealed_path is None and not os.path.isfile(tar_path):
       _store_daily_archive_members_cache(canonical, {})
       return {}
     zst_path, gz_path = compressed_sibling_paths(tar_path)
     _clear_stale_day_ingest_skip_if_tar_repaired(
-        client, keys, tar_path, zst_path, gz_path, sealed_path,
+        keys, tar_path, zst_path, gz_path, sealed_path,
     )
     use_tar, _reason = _populate_should_use_tar_scan(
         tar_path, zst_path, gz_path, sealed_path,
     )
     if use_tar:
-      members = _populate_redis_members_from_tar_scan(tar_path, cache_key)
+      members = _populate_members_from_tar_scan(tar_path, cache_key)
     else:
       if sealed_path is None:
-        raise ArchiveMembersRedisUnavailableError(
+        raise ArchiveMembersStoreUnavailableError(
             "no sealed archive for populate canonical=%s" % canonical,
         )
-      members = _populate_redis_members_from_sealed_scan(
+      members = _populate_members_from_sealed_scan(
           sealed_path, cache_key, tar_path=tar_path,
       )
     if members is not None:
@@ -7721,21 +7696,20 @@ def get_existing_archive_members_for_daily_archive(
 ) -> Any:
   """
   File member sizes for a daily ``.tar.zst`` or legacy ``.tar.gz``.
-  
-  When Redis L2 is enabled, prefer a warm Redis member map before scanning a
-  sibling ``.tar`` (ingest duplicate-check must not N× parallel tar reads).
-  When Redis is disabled or cold and ``.tar`` exists, scan the mutable tar.
-  
+
+  Prefer a warm members-store map, then single-flight populate. Ingest
+  duplicate-check must not N× parallel tar reads. There is no local-scan
+  fallback when the store is cold or unavailable.
+
   Args:
     archive_compressed_path (str): String for archive compressed path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
-    Exception: Raised when ``get_existing_archive_members_for_daily_archive``
-    hits a ``Exception`` failure path.
-  
+    Exception: Raised when populate or store lookup fails.
+
   Examples:
     >>> get_existing_archive_members_for_daily_archive("x")  # doctest: +SKIP
   """
@@ -7746,92 +7720,15 @@ def get_existing_archive_members_for_daily_archive(
   cached = _lookup_daily_archive_members_cache(canonical)
   if cached is not None:
     return cached
-  try:
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        archive_members_redis_enabled,
-        request_archive_members_populate_and_wait,
-    )
-    from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-        may_run_archive_members_populate_scan,
-    )
-    if archive_members_redis_enabled():
-      if may_run_archive_members_populate_scan():
-        return execute_archive_members_populate_for_canonical(canonical)
-      return request_archive_members_populate_and_wait(canonical)
-  except Exception:
-    raise
-  return _get_existing_archive_members_for_daily_archive_local_scan(
-      archive_compressed_path,
-      canonical,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      request_archive_members_populate_and_wait,
   )
-
-
-def _get_existing_archive_members_for_daily_archive_local_scan(
-  archive_compressed_path: str,
-  canonical: Any,
-) -> Any:
-  """
-  Local tar/sealed scan when Redis L2 is disabled.
-  
-  Args:
-    archive_compressed_path (str): String for archive compressed path.
-    canonical (Any): Canonical passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Raises:
-    ArchiveMembersRedisUnavailableError: Raised when
-    ``_get_existing_archive_members_for_daily_archive_local_scan`` hits a
-    ``ArchiveMembersRedisUnavailableError`` failure path.
-  
-  Examples:
-    >>> _get_existing_archive_members_for_daily_archive_local_scan("x", None)
-  """
-  cache_key = _daily_archive_members_cache_key(canonical)
-  tar_path = daily_tar_path_from_compressed(canonical)
-  sealed_path = _resolve_sealed_daily_archive_path(archive_compressed_path)
-  if os.path.isfile(tar_path):
-    members = get_existing_archive_members(tar_path)
-    _store_daily_archive_members_cache(canonical, members)
-    try:
-      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-          archive_members_redis_enabled,
-          build_archive_members_redis_keys,
-          store_complete_members_in_redis,
-      )
-      if archive_members_redis_enabled():
-        store_complete_members_in_redis(
-            build_archive_members_redis_keys(cache_key),
-            members,
-            saw_duplicates=tar_has_duplicate_file_members(tar_path),
-        )
-    except Exception as exc:
-      log_print(
-          "WARNING: store_complete_members_in_redis failed for %s: %s"
-          % (cache_key, exc),
-          flush=True,
-      )
-    return members
-  if sealed_path is None:
-    return {}
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      ArchiveMembersRedisUnavailableError,
-      archive_members_redis_enabled,
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      may_run_archive_members_populate_scan,
   )
-  if archive_members_redis_enabled():
-    raise ArchiveMembersRedisUnavailableError(
-        "archive members Redis enabled but lookup did not return members for %s"
-        % canonical,
-    )
-  readable, members = _scan_compressed_archive_members_and_readable(
-      sealed_path,
-      apply_priority_wrap=False,
-  )
-  if not readable:
-    return {}
-  _store_daily_archive_members_cache(canonical, members)
-  return dict(members)
+  if may_run_archive_members_populate_scan():
+    return execute_archive_members_populate_for_canonical(canonical)
+  return request_archive_members_populate_and_wait(canonical)
 
 
 def _record_validated_day_hint(
@@ -9741,7 +9638,7 @@ def _emit_reconcile_stage_progress(
   if force:
     log_fn(msg, flush=True)
     return
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       _rate_limited_day_info_log,
   )
 
@@ -10007,26 +9904,15 @@ def _maybe_clear_stale_day_ingest_skip_after_reconcile(
     >>> _maybe_clear_stale_day_ingest_skip_after_reconcile("x", "y", "z")
   """
   try:
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        archive_members_redis_enabled,
-        build_archive_members_redis_keys,
-        get_archive_members_redis_client,
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+        build_archive_members_keys,
     )
   except Exception:
     return
-  if not archive_members_redis_enabled():
-    return
-  try:
-    client = get_archive_members_redis_client(required=False)
-  except Exception:
-    return
-  if client is None:
-    return
   cache_key = _daily_archive_members_cache_key(normalize_daily_compressed_path(zst_path))
-  keys = build_archive_members_redis_keys(cache_key)
+  keys = build_archive_members_keys(cache_key)
   sealed_path = zst_path if os.path.isfile(zst_path) else ""
   _clear_stale_day_ingest_skip_if_tar_repaired(
-      client,
       keys,
       tar_path,
       zst_path,
@@ -10115,7 +10001,7 @@ def reconcile_open_tar_with_sealed_zst(
   zst_members: dict[str, int] = {}
   zst_readable = False
   if zst_exists:
-    zst_readable, zst_members = _sealed_archive_members_via_redis_or_scan(
+    zst_readable, zst_members = _sealed_archive_members_via_store_or_scan(
         zst_path,
         apply_priority_wrap=False,
     )
@@ -10453,7 +10339,7 @@ def dedupe_sealed_daily_archive(
       log_fn=log_fn,
   )
   try:
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
         clear_dedupe_hint,
         dedupe_hint_is_set,
     )
@@ -11248,7 +11134,7 @@ def compare_compressed_archive_members(
   if zst_members is not None:
     zst_ok, zst_members = True, dict(zst_members)
   else:
-    zst_ok, zst_members = _sealed_archive_members_via_redis_or_scan(zst_path)
+    zst_ok, zst_members = _sealed_archive_members_via_store_or_scan(zst_path)
   if not gz_ok or not zst_ok:
     return False, gz_members, zst_members
   return (
@@ -11359,7 +11245,7 @@ def _seal_skip_existing_zst_equivalent(
           flush=True,
       )
     return True, None
-  existing_ok, existing_members = _sealed_archive_members_via_redis_or_scan(
+  existing_ok, existing_members = _sealed_archive_members_via_store_or_scan(
       zst_path,
   )
   if not existing_ok:

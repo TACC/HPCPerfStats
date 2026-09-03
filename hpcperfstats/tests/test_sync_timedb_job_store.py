@@ -15,6 +15,7 @@ from hpcperfstats.dbload.lib.sync_timedb_job_store import (
     claim_list_job,
     encode_ingest_score,
     enqueue_list_job,
+    job_lease_key,
     make_lease_owner_token,
     requeue_job,
     zadd_ingest_job,
@@ -181,3 +182,19 @@ def test_reload_drops_payload_for_claimed_and_orphan_identities(tmp_path):
     assert (JOB_KIND_INGEST, "/raw/keep") in revived._payloads
     assert (JOB_KIND_INGEST, "/raw/claim") not in revived._payloads
     assert (JOB_KIND_INGEST, "/raw/orphan") not in revived._payloads
+
+
+@pytest.mark.django_db(databases=[])
+def test_ack_drops_inflight_lease_and_payload(tmp_path):
+    """ACK must drop heap occupancy so a finished job cannot leak leases."""
+    store = SyncTimedbJobStore(str(tmp_path / "archive"))
+    zadd_ingest_job(store, identity="/raw/done", score=1.0, fingerprint="fp")
+    owner = make_lease_owner_token(pid=1, hostname="h", boot_id="b")
+    claim = claim_ingest_job(store, band="hot", owner_token=owner)
+    assert claim is not None
+    assert store.inflight_count(JOB_KIND_INGEST) == 1
+    assert (JOB_KIND_INGEST, "/raw/done") in store._payloads
+    ack_job(store, kind=JOB_KIND_INGEST, identity="/raw/done", owner_token=owner)
+    assert store.inflight_count(JOB_KIND_INGEST) == 0
+    assert store.get(job_lease_key(JOB_KIND_INGEST, "/raw/done")) is None
+    assert (JOB_KIND_INGEST, "/raw/done") not in store._payloads

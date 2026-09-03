@@ -11,9 +11,9 @@ Uses ``sync_timedb`` seal helpers (``atomic_seal_tar_to_zst``, advisory locks,
 ``zstd -t`` integrity). Always drops the uncompressed tar after a successful seal
 or when tar/zst member maps already match.
 
-**Redis is not required.** Member classification and sealing use local GNU
-``tar tvf`` + streamed ``zstd`` scans only (same as offline filesystem truth).
-Use ``--use-redis`` only when you want Redis L2 populate parity with ingest.
+Member classification and sealing use local GNU ``tar tvf`` + streamed
+``zstd`` scans only (same as offline filesystem truth). The members store
+is not required for this offline operator path.
 
 Run while ``sync_timedb`` is quiet; contended locks are skipped when
 ``--lock-timeout`` is 0 (default).
@@ -593,14 +593,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
       help="Do not remove orphan .fnctl.lock sidecars before sealing.",
   )
   parser.add_argument(
-      "--use-redis",
-      action="store_true",
-      help=(
-          "Use Redis L2 archive member populate (requires reachable "
-          "[CACHE] redis_location). Default is local tar/zstd scans only."
-      ),
-  )
-  parser.add_argument(
       "--verbose",
       action="store_true",
       help="Print per-day log lines.",
@@ -689,13 +681,6 @@ def main(argv: list[str] | None = None) -> int:
           flush=True,
       )
 
-  redis_restore = None
-  if not args.use_redis:
-    import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
-
-    redis_restore = redis_mod.archive_members_redis_enabled
-    redis_mod.archive_members_redis_enabled = lambda: False
-
   zstd_threads = int(get_archive_zstd_thread_count())
   compress_level = int(cfg_mod.get_archive_zstd_level())
 
@@ -727,32 +712,26 @@ def main(argv: list[str] | None = None) -> int:
     return _process_one_tar(tar_path, **worker_kwargs)
 
   workers = max(1, min(int(args.workers), len(tar_paths)))
-  try:
-    for tar_path, result, err in iter_bounded_thread_pool(
-        tar_paths,
-        _worker,
-        max_workers=workers,
-        thread_role="operator-seal",
-        process_title="seal_open_daily_tars_to_zst.py",
-    ):
-      if err is not None:
-        status, detail = STATUS_FAILED, str(err)
-      else:
-        status, detail = result or (STATUS_FAILED, "missing_result")
-      counts[status] = counts.get(status, 0) + 1
-      if status == STATUS_FAILED:
-        failures.append((tar_path, status, detail))
-      elif args.verbose and not args.dry_run and log_fn:
-        log_fn(
-            "%s %s (%s)"
-            % (os.path.basename(tar_path), status, detail),
-            flush=True,
-        )
-  finally:
-    if redis_restore is not None:
-      import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
-
-      redis_mod.archive_members_redis_enabled = redis_restore
+  for tar_path, result, err in iter_bounded_thread_pool(
+      tar_paths,
+      _worker,
+      max_workers=workers,
+      thread_role="operator-seal",
+      process_title="seal_open_daily_tars_to_zst.py",
+  ):
+    if err is not None:
+      status, detail = STATUS_FAILED, str(err)
+    else:
+      status, detail = result or (STATUS_FAILED, "missing_result")
+    counts[status] = counts.get(status, 0) + 1
+    if status == STATUS_FAILED:
+      failures.append((tar_path, status, detail))
+    elif args.verbose and not args.dry_run and log_fn:
+      log_fn(
+          "%s %s (%s)"
+          % (os.path.basename(tar_path), status, detail),
+          flush=True,
+      )
 
   print(
       "daily_archive_dir=%s candidates=%d workers=%d counts=%s dry_run=%s"

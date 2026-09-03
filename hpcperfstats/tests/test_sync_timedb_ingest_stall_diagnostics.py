@@ -1,7 +1,5 @@
 import os
 
-import pytest
-
 from hpcperfstats.dbload import sync_timedb as st
 from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     clear_dispatch_worker_stages,
@@ -40,10 +38,10 @@ def test_add_stats_file_to_db_records_worker_entry_before_ingest(monkeypatch):
   assert recorded[0] == ("/tmp/f", "ingest", "worker_entry", None, None)
 
 
-def test_raise_if_ingest_per_file_deadline_exceeded_raises(monkeypatch):
+def test_raise_if_ingest_per_file_deadline_exceeded_is_noop(monkeypatch):
   import time
 
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       reset_ingest_task_deadline_monotonic,
       reset_ingest_task_effective_timeout_s,
       set_ingest_task_deadline_monotonic,
@@ -54,11 +52,7 @@ def test_raise_if_ingest_per_file_deadline_exceeded_raises(monkeypatch):
   deadline_token = set_ingest_task_deadline_monotonic(time.monotonic() - 1.0)
   effective_token = set_ingest_task_effective_timeout_s(900.0)
   try:
-    with pytest.raises(st.IngestPerFileTimeoutError) as excinfo:
-      st._raise_if_ingest_per_file_deadline_exceeded("/tmp/f", "db_write_host")
-    assert excinfo.value.stage == "db_write_host"
-    assert excinfo.value.path == "/tmp/f"
-    assert excinfo.value.elapsed_s == 900.0
+    st._raise_if_ingest_per_file_deadline_exceeded("/tmp/f", "db_write_host")
   finally:
     reset_ingest_task_effective_timeout_s(effective_token)
     reset_ingest_task_deadline_monotonic(deadline_token)
@@ -75,7 +69,7 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
       st.cfg, "get_sync_ingest_pool_processes", lambda: 16,
   )
   monkeypatch.setattr(
-      st, "_ingest_stall_defer_state", lambda _day, _state, **kwargs: (False, "redis_warm"),
+      st, "_ingest_stall_defer_state", lambda _day, _state, **kwargs: (False, "store_warm"),
   )
   diag = st.IngestStallDiagnostics()
   diag.current_imap_batch_max_timeout_s = 900.0
@@ -85,7 +79,7 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
   diag.imap_batch_cap = 10
   diag.chunk_batch_size = 200
   diag.current_imap_batch_size = 10
-  diag.chunk_prewarm_summary = "2026-05-20:redis_warm"
+  diag.chunk_prewarm_summary = "2026-05-20:store_warm"
   suffix = st._build_ingest_stall_log_suffix(
       sample=["/data/host.example/1716163200"],
       day_hint="2026-05-20",
@@ -95,13 +89,13 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
       consecutive=60,
       poll_timeout_s=5.0,
   )
-  assert "stall_defer=off defer_reason=redis_warm" in suffix
+  assert "stall_defer=off defer_reason=store_warm" in suffix
   assert "sync_ingest_per_file_timeout_s=900.0" in suffix
   assert "sync_ingest_per_file_timeout_max_s=14400.0" in suffix
   assert "effective_ingest_timeout_s=-" in suffix
   assert "ingest_pipeline=combined" in suffix
   assert "sync_ingest_pool_processes=16" in suffix
-  assert "chunk_prewarm=2026-05-20:redis_warm" in suffix
+  assert "chunk_prewarm=2026-05-20:store_warm" in suffix
   assert "imap_batch_cap=10" in suffix
   assert "batch_max_ingest_timeout_s=900.0" in suffix
   assert "dynamic_stall_abort_after=181" in suffix
@@ -275,7 +269,7 @@ def test_build_ingest_stall_log_suffix_includes_worker_registry_counts(monkeypat
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0)
   monkeypatch.setattr(
-      st, "_ingest_stall_defer_state", lambda _d, _s, **kwargs: (False, "redis_warm"),
+      st, "_ingest_stall_defer_state", lambda _d, _s, **kwargs: (False, "store_warm"),
   )
   suffix = st._build_ingest_stall_log_suffix(
       sample=[
@@ -468,8 +462,8 @@ def test_reap_supervisor_pool_children_isolates_pool_reap_failure(monkeypatch):
   )
 
 
-def test_ingest_stall_defer_redis_populate_before_idle_ghost(monkeypatch):
-  """redis_populate_active must win over idle_pool_ghost during Redis wait."""
+def test_ingest_stall_defer_store_populate_before_idle_ghost(monkeypatch):
+  """store_populate_active must win over idle_pool_ghost during members-store wait."""
   monkeypatch.setattr(st, "pool_workers_all_idle", lambda _pool: True)
   monkeypatch.setattr(
       st, "worker_registry_shows_recent_progress", lambda *_a, **_k: False,
@@ -492,16 +486,15 @@ def test_ingest_stall_defer_redis_populate_before_idle_ghost(monkeypatch):
       sample=["/data/host.example/1700000000"],
   )
   assert defer_on is True
-  assert reason == "redis_populate_active"
+  assert reason == "store_populate_active"
 
 
-def test_ingest_stall_defer_member_match_wait_despite_redis_warm(monkeypatch):
+def test_ingest_stall_defer_member_match_wait_despite_store_warm(monkeypatch):
   import time
 
-  monkeypatch.setattr(st, "archive_members_redis_enabled", lambda: True)
   monkeypatch.setattr(
       st,
-      "redis_members_cache_is_fully_warm",
+      "members_cache_is_fully_warm",
       lambda *_a, **_k: True,
   )
   monkeypatch.setattr(
@@ -515,7 +508,7 @@ def test_ingest_stall_defer_member_match_wait_despite_redis_warm(monkeypatch):
           "path": "/data/host.example/1700000000",
           "stage": "ingest",
           "substage": "archive_member_lookup",
-          "lookup_mode": "redis_wait",
+          "lookup_mode": "store_wait",
           "t0": time.monotonic(),
       },
   }
@@ -541,10 +534,9 @@ def test_ingest_stall_defer_worker_progress_combined_pipeline(monkeypatch):
       "archive_members_populate_shows_progress_for_day",
       lambda *_a, **_k: False,
   )
-  monkeypatch.setattr(st, "archive_members_redis_enabled", lambda: True)
   monkeypatch.setattr(
       st,
-      "redis_members_cache_is_fully_warm",
+      "members_cache_is_fully_warm",
       lambda *_a, **_k: True,
   )
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)

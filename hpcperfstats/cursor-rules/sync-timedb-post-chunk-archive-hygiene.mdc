@@ -10,7 +10,7 @@ globs: hpcperfstats/dbload/sync_timedb*.py
 
 **Retired.** Post-chunk hygiene (`_schedule_post_chunk_hygiene` / `_run_post_chunk_hygiene_body`) and the B supervisor chunk-boundary seal schedule are **gone**.
 
-Production cold path is **Redis `day_close` jobs** drained by the **queue orchestrator** (`run_sync_timedb_queue_orchestrator`) on day_close threads. Do **not** reintroduce:
+Production cold path is **in-process `day_close` jobs** drained by the **queue orchestrator** (`run_sync_timedb_queue_orchestrator`) on day_close threads. Do **not** reintroduce:
 
 - `signal_scheduled_maintenance_pass` every N chunks
 - `run_supervisor_day_raw_removal_delete_pass` at chunk boundaries

@@ -27,16 +27,16 @@ This document describes how `sync_timedb` uses **spawn process pools**, **day_cl
 
 **Ingest dispatch:** `imap_unordered_watch_pool` polls process liveness and aborts on worker death — thread pools have no equivalent worker-PID model.
 
-## Ingest band reservation (`job:v1`)
+## Ingest band reservation (job store)
 
-The ingest ZSET is one key (`hpcperfstats:sync_timedb:job:v1:queue:ingest`) with two score bands. Fill paths never `ZPOPMIN` the whole set (catchup would starve).
+The ingest ZSET is one in-process key (`hps:job:queue:ingest`) with two score bands. Fill paths never `ZPOPMIN` the whole set (catchup would starve).
 
 | Token | Formula | Score window |
 |-------|---------|--------------|
 | **`hot_cap`** | `max(1, (2 * pool) // 3)` | `-inf` … `CATCHUP_SCORE_BASE - 1` (`10**15 - 1`) — newest days first |
 | **`catchup_cap`** | `pool - hot_cap`, floored to **1** when `pool >= 2` | `10**15` … `+inf` — oldest days first |
 
-Catchup may use unused pool slots **only when the hot range is empty**. Reband at claim time (`ZADD` the same path identity with a new score). Calendar day comes from the daily tar basename (`YYYY-MM-DD.tar`); unresolved day skips ingest enqueue (never substitute today). Operator census: `ZCARD` plus per-band `ZCOUNT` on the prefixed queue key (not the short name `job:v1:ingest`).
+Catchup may use unused pool slots **only when the hot range is empty**. Reband at claim time (`ZADD` the same path identity with a new score). Calendar day comes from the daily tar basename (`YYYY-MM-DD.tar`); unresolved day skips ingest enqueue (never substitute today). Operator census: job-store sidecar `{archive_dir}/.sync_timedb_job_store.json` plus live `zcard`/`zcount` on the in-process store (not Redis `job:v1`).
 
 ## B. Session thread executors (day_close + helpers)
 
@@ -75,21 +75,21 @@ Per-task `set_daemon_thread_title(role=...)` for operator `ps`/logs. Validation 
 
 | Site | Purpose |
 |------|---------|
-| `sync_timedb_archive_members_redis.py` | Daemon heartbeat during Redis populate lock renewal |
+| `sync_timedb_archive_members_coord.py` | Shared populate-wait rate-limit state (not a heartbeat thread) |
 
 Not generalized to `ThreadPoolExecutor` — lifecycle tied to populate call.
 
-## Redis L2 populate fnctl contention
+## Members-store populate fnctl contention
 
-On **active-ingest** calendar days, populate-pool **shared read locks** (`file_read_lock_wait` on `*.fnctl.lock`) contend with archive-pool **exclusive write locks** during `.tar` append. Tar populate waits up to **`sync_archive_members_redis_populate_max_seconds`** (default **7200**) in one blocking attempt; transient timeouts must recover (waiter re-enqueue, prewarm retry) rather than supervisor **`sys.exit(1)`** on the first failure.
+On **active-ingest** calendar days, populate-pool **shared read locks** (`file_read_lock_wait` on `*.fnctl.lock`) contend with archive-pool **exclusive write locks** during `.tar` append. Tar populate waits up to **`sync_archive_members_populate_max_seconds`** (default **7200**) in one blocking attempt; transient timeouts must recover (waiter re-enqueue, prewarm retry) rather than supervisor **`sys.exit(1)`** on the first failure.
 
 | INI key | Default | Role |
 |---------|---------|------|
-| `sync_archive_members_redis_populate_max_seconds` | 7200 | Tar populate fnctl read-lock wait when > 0; absolute waiter/prewarm recovery budget (`0` = off) |
+| `sync_archive_members_populate_max_seconds` | 7200 | Tar populate fnctl read-lock wait when > 0; absolute waiter/prewarm recovery budget (`0` = off) |
 | `sync_archive_members_fnctl_read_lock_timeout_seconds` | 180 | Read-lock wait for verify/non-populate paths; tar populate fallback when `populate_max_seconds=0` |
-| `sync_archive_members_redis_populate_stall_seconds` | 120 | No-progress detection while populate lock held |
+| `sync_archive_members_populate_max_seconds` | 7200 | No-progress / waiter bound while populate lock held |
 
-**Populate source:** when sibling **`YYYY-MM-DD.tar` exists**, cold Redis populate uses **`populate_source=tar`**; **`populate_source=sealed`** only when tar is absent (post tar-drop).
+**Populate source:** when sibling **`YYYY-MM-DD.tar` exists**, cold members-store populate uses **`populate_source=tar`**; **`populate_source=sealed`** only when tar is absent (post tar-drop).
 
 Prewarm summary token **`populate_recovering`** indicates transient fnctl recovery succeeded after retry.
 

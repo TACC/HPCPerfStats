@@ -392,6 +392,14 @@ def test_triggered_rules_sync_timedb_lib_helper_path():
   assert "sync-timedb-archive-janitor-contract.mdc" in rules
 
 
+def test_triggered_rules_archive_members_store_test_dispatches_anti_log_spam():
+  rules = triggered_rules_for_paths(
+      ["hpcperfstats/tests/test_sync_timedb_archive_members_store.py"],
+  )
+  assert "sync-timedb-anti-log-spam.mdc" in rules
+  assert "sync-timedb-ingest-pool-io-coordination.mdc" in rules
+
+
 def test_triggered_rules_stale_dbload_helper_path_not_matched():
   rules = triggered_rules_for_paths(
       ["hpcperfstats/dbload/sync_timedb_day_close_manifest.py"],

@@ -48,7 +48,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `hpcperfstats/tests/test_sync_timedb*.py`, `tests/run_sync_timedb_regression_battery.sh` | `sync-timedb-change-regression-gate.mdc`, `test-first-discipline.mdc` |
 | `hpcperfstats/dbload/lib/sync_timedb_parsing.py`, collapse tests in `hpcperfstats/tests/test_sync_timedb.py` | `sync-timedb-parsing-collapse-vectorization.mdc` |
 | Startup archive scan | `sync-timedb-canonical-startup-archive-scan.mdc` |
-| Ingest pool + sealed archive / Redis members | `sync-timedb-ingest-pool-io-coordination.mdc`, `sync-timedb-hot-path-janitor-lock-priority.mdc`, `sync-timedb-anti-log-spam.mdc` (`sync_timedb_populate_pool.py`, populate queue, `request_archive_members_populate_and_wait`) |
+| Ingest pool + sealed archive / in-process members store | `sync-timedb-ingest-pool-io-coordination.mdc`, `sync-timedb-hot-path-janitor-lock-priority.mdc`, `sync-timedb-anti-log-spam.mdc` (`sync_timedb_populate_pool.py`, populate queue, `request_archive_members_populate_and_wait`, `test_sync_timedb_archive_members_store.py`, `test_sync_timedb_archive.py`) |
 | `hpcperfstats/analysis/metrics/` | `runtime-resource-and-metrics-safety.mdc`, `pipeline-metrics-e2e-maintenance.mdc`, `update-metrics-job-listing-new-data-type.mdc`, `update-metrics-batch-resilience.mdc`, `monitor-analysis-architecture-sync.mdc`, `gpu-host-data-source-priority.mdc` |
 | `gpu_job_detail_summary.py`, Job Detail GPU inventory / `nvidia_gpu`·`amd_gpu` precedence | `gpu-host-data-source-priority.mdc`, `monitor-analysis-architecture-sync.mdc` |
 | `docs/monitor_variable_rename_map.yaml`, `hpcperfstats/dbload/lib/monitor_naming/**` | `monitor-analysis-architecture-sync.mdc` |

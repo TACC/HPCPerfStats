@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Host CLI: bulk-invalidate archive membership Redis L2, then restart pipeline.
+Host CLI: wipe archive-members disk sidecars, then restart pipeline.
 
-Run from the Compose checkout (directory with ``docker-compose.yaml``). Default
-Redis transport is ``docker compose exec -T redis redis-cli`` (no published
-Redis port required). After a successful non-dry-run invalidate, restarts the
-``pipeline`` service so worker L1 member caches are cold.
+Run from the Compose checkout (directory with ``docker-compose.yaml``).
+Wipes ``{archive_dir}/.sync_timedb_archive_members/{day}.json`` only.
+Never unlinks ``.sync_timedb_job_store.json``. After a successful
+non-dry-run invalidate, restarts the ``pipeline`` service so worker L1
+member caches are cold.
 
 Requires Python >= 3.14 (project ``requires-python``). When the host default
 ``python3`` is older, this script re-execs a suitable interpreter if found.
@@ -151,7 +152,7 @@ def _build_parser() -> Any:
   """
   parser = argparse.ArgumentParser(
       description=(
-          "Invalidate archive membership Redis L2 (--all or --day), then "
+          "Invalidate archive membership sidecars (--all or --day), then "
           "docker compose restart pipeline (unless --dry-run / --no-restart)."
       ),
   )
@@ -159,19 +160,19 @@ def _build_parser() -> Any:
   scope.add_argument(
       "--all",
       action="store_true",
-      help="Clear all membership-related Redis keys (requires --yes unless --dry-run)",
+      help="Clear all membership day sidecars (requires --yes unless --dry-run)",
   )
   scope.add_argument(
       "--day",
       action="append",
       dest="days",
       metavar="YYYY-MM-DD",
-      help="Clear membership keys for one calendar day (repeatable)",
+      help="Clear membership sidecars for one calendar day (repeatable)",
   )
   parser.add_argument(
       "--dry-run",
       action="store_true",
-      help="Scan and report counts without DELETE or pipeline restart",
+      help="Scan and report counts without unlinking sidecars or restart",
   )
   parser.add_argument(
       "--yes",
@@ -202,34 +203,14 @@ def _build_parser() -> Any:
       help="Extra -f compose file (repeatable); relative to --compose-dir",
   )
   parser.add_argument(
-      "--redis-url",
+      "--archive-dir",
       default=None,
       help=(
-          "Optional redis:// URL reachable from the host; when set, use a "
-          "direct Redis client instead of compose exec redis-cli"
+          "Archive data directory that owns .sync_timedb_archive_members; "
+          "defaults to conf_parser.get_archive_dir_path()"
       ),
   )
   return parser
-
-
-def _direct_redis_client(url: Any) -> Any:
-  """
-  Internal helper to handle direct redis client.
-  
-  Args:
-    url (Any): Url passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _direct_redis_client(None)  # doctest: +SKIP
-  """
-  import redis
-
-  client = redis.Redis.from_url(url, decode_responses=True)
-  client.ping()
-  return client
 
 
 def main(argv: Any | None = None) -> Any:
@@ -253,11 +234,10 @@ def main(argv: Any | None = None) -> Any:
 
   # Import only the lightweight ops module (no print_utils / conf_parser).
   from hpcperfstats.dbload.lib.invalidate_archive_members_ops import (
-      ComposeRedisCliClient,
       DEFAULT_COMPOSE_PROJECT,
       compose_argv,
       format_compose_cmd_for_log,
-      invalidate_archive_members_redis_bulk,
+      invalidate_archive_members_sidecars,
       restart_pipeline_compose,
   )
 
@@ -269,34 +249,25 @@ def main(argv: Any | None = None) -> Any:
   if day_tokens is not None and not day_tokens:
     parser.error("at least one --day is required when not using --all")
 
-  try:
-    if args.redis_url:
-      client = _direct_redis_client(args.redis_url)
-    else:
-      client = ComposeRedisCliClient(
-          compose_dir=str(compose_dir),
-          project=project,
-          compose_files=compose_files,
-      )
-  except Exception as exc:  # noqa: BLE001 — operator CLI surface
-    print("ERROR: Redis transport unavailable: %s" % exc, file=sys.stderr)
+  archive_dir = str(args.archive_dir or "").strip()
+  if not archive_dir:
+    from hpcperfstats.dbload.lib import conf_parser as cfg
+    archive_dir = str(cfg.get_archive_dir_path() or "").strip()
+  if not archive_dir:
+    print("ERROR: archive_dir is required (--archive-dir or INI)", file=sys.stderr)
     return 2
 
   try:
-    result = invalidate_archive_members_redis_bulk(
+    result = invalidate_archive_members_sidecars(
+        archive_dir=archive_dir,
         day_tokens=day_tokens,
         dry_run=bool(args.dry_run),
-        client=client,
     )
   except ValueError as exc:
     print("ERROR: %s" % exc, file=sys.stderr)
     return 2
   except Exception as exc:  # noqa: BLE001
-    print("ERROR: Redis bulk invalidate failed: %s" % exc, file=sys.stderr)
-    return 2
-
-  if result.get("error") == "redis_unavailable":
-    print("ERROR: Redis unavailable", file=sys.stderr)
+    print("ERROR: sidecar invalidate failed: %s" % exc, file=sys.stderr)
     return 2
 
   scope_label = (
@@ -317,7 +288,8 @@ def main(argv: Any | None = None) -> Any:
       print("dry-run: skipped docker compose restart pipeline")
     else:
       print(
-          "no-restart: Redis cleared; worker L1 may stay warm until manual recycle",
+          "no-restart: sidecars cleared; worker L1 may stay warm until "
+          "manual recycle",
       )
     return 0
 
@@ -332,7 +304,7 @@ def main(argv: Any | None = None) -> Any:
     )
   except Exception as exc:  # noqa: BLE001
     print(
-        "ERROR: Redis membership keys were already cleared, but pipeline "
+        "ERROR: member sidecars were already cleared, but pipeline "
         "restart failed: %s" % exc,
         file=sys.stderr,
     )

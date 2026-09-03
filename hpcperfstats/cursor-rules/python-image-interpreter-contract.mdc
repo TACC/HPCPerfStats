@@ -28,7 +28,7 @@ A later plan may replace spawn/fork pool **processes** with **in-process threads
 
 - Convert pools in an interpreter-only change
 - Use `/dev/shm` POSIX SharedMemory or Redis as the worker-data bus for that rewrite
-- Remove Redis `job:v1` durable orchestration
+- Remove the in-process job store / disk sidecar (`.sync_timedb_job_store.json`) without a replacement durability path
 - Put gunicorn on 3.14t
 
 ## Validation

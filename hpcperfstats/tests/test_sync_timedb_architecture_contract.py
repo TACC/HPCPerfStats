@@ -6,6 +6,7 @@ threads as sacred law.
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 
 from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
@@ -91,7 +92,7 @@ def test_arch_predicate_day_close_is_filesystem_plus_min_age():
 
 
 def test_arch_empty_job_queues_do_not_mean_caught_up():
-  """Empty Redis job structures never imply archive catch-up."""
+  """Empty in-process job-store queues never imply archive catch-up."""
   assert jr.empty_job_queues_mean_caught_up() is False
 
 
@@ -157,40 +158,28 @@ def test_append_to_tar_refilters_under_write_lock():
   assert lock_idx < lexists_idx
 
 
-def test_populate_processing_ack_parks_inflight_until_complete(monkeypatch):
-  """F5: claim must park inflight and only clear NX on complete."""
-  from hpcperfstats.dbload.lib import sync_timedb_archive_members_redis as amr
+def test_populate_queue_complete_clears_queued_day(tmp_path):
+  """Populate ACK drops the ephemeral queued-day flag on the members store."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      complete_populate_queue_job,
+      enqueue_archive_members_populate,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      SyncTimedbArchiveMembersStore,
+      set_process_archive_members_store,
+  )
 
-  class _C:
-    def __init__(self):
-      self.inflight = []
-      self.queued_cleared = []
-
-    def rpush(self, key, raw):
-      self.inflight.append((key, raw))
-      return 1
-
-    def lrem(self, key, count, raw):
-      self.inflight = [x for x in self.inflight if x != (key, raw)]
-      return 1
-
-  client = _C()
-  monkeypatch.setattr(amr, "get_archive_members_redis_client", lambda **k: client)
-  cleared = []
-
-  def _clear(day):
-    cleared.append(day)
-
-  monkeypatch.setattr(amr, "clear_populate_queued", _clear)
-  job = {"day_token": "2026-08-01", "canonical": "/a.tar.zst"}
-  raw = '{"day_token":"2026-08-01"}'
-  out = amr._claim_populate_queue_job(job, raw=raw)
-  assert out is job
-  assert client.inflight
-  assert cleared == []
-  amr.complete_populate_queue_job({**job, "_queue_raw": raw})
-  assert cleared == ["2026-08-01"]
-  assert not client.inflight
+  store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+  set_process_archive_members_store(store)
+  try:
+    assert enqueue_archive_members_populate("/a.tar.zst", "2026-08-01") is True
+    assert enqueue_archive_members_populate("/a.tar.zst", "2026-08-01") is False
+    job = store.dequeue_populate(timeout_s=0.01)
+    assert job["day_token"] == "2026-08-01"
+    complete_populate_queue_job(job)
+    assert enqueue_archive_members_populate("/a.tar.zst", "2026-08-01") is True
+  finally:
+    set_process_archive_members_store(None)
 
 
 def test_orchestrator_boot_allows_persistence_reset():
@@ -301,3 +290,89 @@ def test_arch_no_internal_wall_timers_append_and_ingest():
   assert "signal.alarm" not in timed_src
   assert ito.stall_abort_polls_for_paths(["/x"]) == 0
   assert ito.resolve_ingest_per_file_timeout_s("/x") == 0.0
+
+
+_REDIS_AS_LAW_PHRASES = (
+    "when redis l2 is enabled",
+    "when redis is required",
+    "when redis is fully warm",
+    "prewarms redis",
+    "cold redis",
+    "warm redis",
+    "redis list",
+    "redis hash",
+    "via redis set",
+    "blocked in redis",
+    "enqueue redis populate",
+    "hit cold redis",
+    "redis-first",
+    "redis first",
+    "archive spawn pool",
+    "workers are separate processes under spawn",
+    "no redis fallback",
+    "no redis-disable fallback",
+    "redis-disable",
+    "redis enabled",
+    "during redis wait",
+    "on brpop",
+    "ingest spawn pool",
+    "tar append redis",
+    "redis key",
+    "append redis parity",
+    "redis +",
+    "not redis populate",
+)
+
+
+def _prose_outside_backticks(text: str) -> str:
+  """Return markdown with fenced identifier spans removed."""
+  return "".join(
+      part for index, part in enumerate(text.split("`")) if index % 2 == 0
+  )
+
+
+def test_arch_sync_timedb_rules_have_no_redis_as_law():
+  """sync-timedb-*.mdc prose must not treat Redis as the live members/job bus."""
+  from pathlib import Path
+
+  rules_dir = Path(__file__).resolve().parents[1] / "cursor-rules"
+  failures: list[str] = []
+  for path in sorted(rules_dir.glob("sync-timedb-*.mdc")):
+    prose = _prose_outside_backticks(path.read_text(encoding="utf-8")).lower()
+    for phrase in _REDIS_AS_LAW_PHRASES:
+      if phrase not in prose:
+        continue
+      if phrase == "redis first" and "reintroduce redis" in prose:
+        continue
+      failures.append("%s: %r" % (path.name, phrase))
+  assert not failures, "Redis-as-law leftover in domain rules: %s" % failures
+
+
+_ALLOWED_REDIS_STEMS = ("rediscover", "redispatch")
+_REDIS_TOKEN_RE = re.compile(
+    r"[A-Za-z0-9_]*redis[A-Za-z0-9_]*",
+    re.IGNORECASE,
+)
+
+
+def test_arch_sync_timedb_code_has_no_redis_identifiers():
+  """Live sync_timedb identifiers must not contain redis except rediscover/redispatch."""
+  from pathlib import Path
+
+  checkout = Path(__file__).resolve().parents[2]
+  paths = []
+  paths.extend(sorted((checkout / "hpcperfstats" / "dbload").glob("sync_timedb*.py")))
+  paths.extend(
+      sorted((checkout / "hpcperfstats" / "dbload" / "lib").glob("sync_timedb*.py"))
+  )
+  paths.append(checkout / "scripts" / "seal_open_daily_tars_to_zst.py")
+  paths.append(checkout / "scripts" / "verify_open_tar_matches_zst.py")
+  failures: list[str] = []
+  for path in paths:
+    src = path.read_text(encoding="utf-8")
+    for match in _REDIS_TOKEN_RE.finditer(src):
+      token = match.group(0)
+      if any(stem in token.lower() for stem in _ALLOWED_REDIS_STEMS):
+        continue
+      failures.append("%s:%s" % (path.name, token))
+  assert not failures, "leftover redis identifiers: %s" % failures

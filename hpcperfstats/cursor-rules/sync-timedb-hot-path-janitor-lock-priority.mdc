@@ -8,9 +8,9 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-**Law:** ingest/populate/append is the **hot path**; day_close seal/dedupe/delete/tar-drop is the **cold path**. Cold-path work **defers before write** and **cooperatively yields mid-mutation** when ingest signals need the same daily tar after a cold-path-first lock — **except daily tar restore from sealed** (missing or corrupt `.tar`), where restore runs to completion under an **exclusive owner-token lease** (`SET NX EX` + compare-and-del clear) and populate **waits** on `daily_tar_restore`. **Non-owner clears are forbidden** (loser must not `DELETE` the lease). Day-close is **single-flight per tar** (orchestrator leases). A day_close worker that loses the restore race **defers** (`reason=daily_tar_restore`) instead of blocking a slot for the full decompress. Append dispatch must **skip** restore-blocked calendar days so other days drain; restore ownership stays on the decompress owner.
+**Law:** ingest/populate/append is the **hot path**; day_close seal/dedupe/delete/tar-drop is the **cold path**. Cold-path work **defers before write** and **cooperatively yields mid-mutation** when ingest signals need the same daily tar after a cold-path-first lock — **except daily tar restore from sealed** (missing or corrupt `.tar`), where restore runs to completion under an **exclusive owner-token lease** (store compare-and-clear) and populate **waits** on `daily_tar_restore`. **Non-owner clears are forbidden**. Day-close is **single-flight per tar** (orchestrator leases). A day_close worker that loses the restore race **defers** (`reason=daily_tar_restore`) instead of blocking a slot for the full decompress. Append dispatch must **skip** restore-blocked calendar days so other days drain; restore ownership stays on the decompress owner.
 
-**Operator signature of the dual-write bug:** two concurrent `zstd -d -o …/{day}.tar.decomp.tmp` processes (materialize-to-tar). That is **not** Redis populate — populate uses `zstd -d -c` (stdout pipe) under the populate lock.
+**Operator signature of the dual-write bug:** two concurrent `zstd -d -o …/{day}.tar.decomp.tmp` processes (materialize-to-tar). That is **not** members-store populate — populate uses `zstd -d -c` (stdout pipe) under the populate lock.
 
 ## Required patterns
 
@@ -20,9 +20,9 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 | `day_close_yield_requested` + `DayCloseYieldError` | `sync_timedb_day_close_cooperation.py`; orchestrator `_run_day_close_job` returns ``yielded`` and requeues |
 | `try_file_write_lock` (**context manager**, non-blocking; contended → `TimeoutError`) | `file_locking.py` |
 | Sticky `write_lock_contended` backoff (`JanitorDeferTracker`) | `sync_timedb_day_close_cooperation.py` |
-| `ingest_tar_hot` Redis key | `sync_timedb_archive_members_redis.py` |
-| `try_acquire_daily_tar_restore` / owner-token `clear_daily_tar_restore_in_progress` | `sync_timedb_archive_members_redis.py` |
-| Restore serialize + `{tar}.decomp` file lock when Redis off | `zstd_cli.py` `decompress_compressed_to_tar` |
+| `ingest_tar_hot` occupancy | `sync_timedb_archive_members_store.py` |
+| `try_acquire_daily_tar_restore` / owner-token `clear_daily_tar_restore_in_progress` | `sync_timedb_archive_members_store.py` |
+| Restore serialize + `{tar}.decomp` file lock | `zstd_cli.py` `decompress_compressed_to_tar` |
 | In-operation yield polls (5s) in dedupe + zstd Popen | `sync_timedb_archive_helpers.py`, `zstd_cli.py` |
 
 ## Logs (operator grep)

@@ -1,25 +1,24 @@
 """
-Dedicated populate-pool workers for Redis L2 sealed/tar member streaming.
+Dedicated populate-pool threads for in-process sealed/tar member streaming.
 
 Attributes:
   _POPULATE_POOL_CONTROLLER: Attribute.
 """
 from __future__ import annotations
 
+import threading
+import time
 from typing import Any
 
-import multiprocessing
-import time
-
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-    _waitpid_pid_nonblocking,
-)
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     apply_ingest_pool_worker_init,
     clear_worker_stage,
     record_worker_stage,
+)
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+    create_sync_timedb_thread_pool,
 )
 
 _POPULATE_POOL_CONTROLLER = None
@@ -69,16 +68,85 @@ def reset_populate_pool_controller_for_tests() -> None:
   _POPULATE_POOL_CONTROLLER = None
 
 
+class _PopulateWorkerHandle:
+  """
+  Thread handle with the join/is_alive surface populate-pool tests use.
+
+  Attributes:
+    pid: Synthetic worker index used in restart logs.
+    _thread: Worker thread.
+  """
+
+  def __init__(self, thread: threading.Thread, index: int) -> None:
+    """
+    Wrap one populate worker thread.
+
+    Args:
+      thread (threading.Thread): Worker thread.
+      index (int): Worker index.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _PopulateWorkerHandle(threading.Thread(target=lambda: None), 0).pid
+      1
+    """
+    self._thread = thread
+    self.pid = int(index) + 1
+
+  def is_alive(self) -> bool:
+    """
+    Return True while the worker thread is running.
+
+    Returns:
+      bool: Thread liveness.
+
+    Examples:
+      >>> _PopulateWorkerHandle(threading.Thread(target=lambda: None), 0).is_alive()
+      False
+    """
+    return bool(self._thread.is_alive())
+
+  def join(self, timeout: float | None = None) -> None:
+    """
+    Join the worker thread.
+
+    Args:
+      timeout (float | None): Optional join timeout.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _PopulateWorkerHandle(threading.Thread(target=lambda: None), 0).join(0)
+    """
+    self._thread.join(timeout)
+
+  def terminate(self) -> None:
+    """
+    No-op: threads cannot be terminated.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _PopulateWorkerHandle(threading.Thread(target=lambda: None), 0).terminate()
+    """
+    return
+
+
 class PopulatePoolController:
   """
-  Spawn workers that BRPOP Redis populate jobs (separate from ingest-pool).
-  
+  Thread workers that dequeue in-process populate jobs.
+
   Attributes:
-    _ctx: Attribute.
-    _processes: Attribute.
-    _registry: Attribute.
-    _script_name: Attribute.
-    _shutdown: Attribute.
+    _ctx: Unused leftover attribute kept for test patches.
+    _pool: Titled thread pool (titles only; workers are raw threads).
+    _processes: Worker handles.
+    _registry: Worker registry.
+    _script_name: Process title script name.
+    _shutdown: Shutdown event.
   """
 
   def __init__(self) -> None:
@@ -96,6 +164,7 @@ class PopulatePoolController:
     self._script_name = None
     self._registry = None
     self._ctx = None
+    self._pool = None
 
   def is_running(self) -> Any:
     """
@@ -124,17 +193,18 @@ class PopulatePoolController:
     Examples:
       >>> PopulatePoolController().start(None, None)  # doctest: +SKIP
     """
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        archive_members_redis_enabled,
-    )
-
     n_workers = int(cfg.get_sync_archive_members_populate_pool_processes())
-    if n_workers <= 0 or not archive_members_redis_enabled():
+    if n_workers <= 0:
       return
     self._script_name = script_name
     self._registry = registry
-    self._ctx = multiprocessing.get_context("spawn")
-    self._shutdown = self._ctx.Event()
+    self._ctx = object()
+    self._shutdown = threading.Event()
+    self._pool = create_sync_timedb_thread_pool(
+        max_workers=n_workers,
+        thread_role="populate-pool",
+        process_title=str(script_name or "sync_timedb.py"),
+    )
     for index in range(n_workers):
       self._spawn_one(index)
     log_print(
@@ -156,15 +226,16 @@ class PopulatePoolController:
     Examples:
       >>> PopulatePoolController()._spawn_one(0)  # doctest: +SKIP
     """
-    proc = self._ctx.Process(
+    thread = threading.Thread(
         target=_populate_pool_worker_entry,
         args=(self._script_name, self._registry, self._shutdown),
         name="populate-pool-%d" % index,
         daemon=True,
     )
-    proc.start()
-    self._processes.append(proc)
-    return proc
+    thread.start()
+    handle = _PopulateWorkerHandle(thread, index)
+    self._processes.append(handle)
+    return handle
 
   def stop(self, *, force: bool = False) -> None:
     """
@@ -201,6 +272,13 @@ class PopulatePoolController:
     self._script_name = None
     self._registry = None
     self._ctx = None
+    if self._pool is not None:
+      try:
+        self._pool.terminate()
+        self._pool.join()
+      except Exception:
+        pass
+    self._pool = None
 
   def reap_and_restart(self) -> Any:
     """
@@ -232,8 +310,6 @@ class PopulatePoolController:
         proc.join(timeout=0)
       except Exception:
         pass
-      if old_pid is not None:
-        _waitpid_pid_nonblocking(int(old_pid), timeout_s=0.5)
       log_print(
           "WARN: populate-pool worker restarted pid=%s"
           % (old_pid if old_pid is not None else "-"),
@@ -266,21 +342,18 @@ def _populate_pool_worker_entry(
     >>> _populate_pool_worker_entry(None, None, None)  # doctest: +SKIP
   """
   apply_ingest_pool_worker_init(script_name, "populate-pool", registry)
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      archive_members_populate_queue_brpop,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      archive_members_populate_queue_claim,
       complete_populate_queue_job,
-      drop_archive_members_redis_client,
       requeue_populate_queue_job,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       execute_archive_members_populate_for_canonical,
   )
 
-  # Spawn must not inherit a parent-process Redis connection pool (F14).
-  drop_archive_members_redis_client()
   while not shutdown.is_set():
     record_worker_stage("", "populate_queue_wait")
-    job = archive_members_populate_queue_brpop(timeout_s=1.0)
+    job = archive_members_populate_queue_claim(timeout_s=1.0)
     if job is None:
       continue
     canonical = str(job.get("canonical") or "")

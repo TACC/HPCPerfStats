@@ -74,8 +74,8 @@ def test_archive_sliding_window_imap_wires_stall_guards(monkeypatch):
   )
   monkeypatch.setattr(
       st,
-      "_prewarm_archive_members_redis_for_sealed_chunk",
-      lambda paths: "2024-01-01:redis_warm",
+      "_prewarm_archive_members_for_sealed_chunk",
+      lambda paths: "2024-01-01:store_warm",
   )
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
   monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 2881)
@@ -108,7 +108,7 @@ def test_archive_sliding_window_imap_wires_stall_guards(monkeypatch):
   assert callable(captured["on_in_flight_change"])
   assert callable(captured["on_stall_poll"])
   assert callable(captured["on_stall_warning"])
-  assert diag.chunk_prewarm_summary == "2024-01-01:redis_warm"
+  assert diag.chunk_prewarm_summary == "2024-01-01:store_warm"
   assert diag.ingest_pipeline == "sealed_archive_backfill"
   assert diag.imap_batch_cap == 4
 
@@ -156,7 +156,7 @@ def test_stall_abort_polls_for_sealed_archives_scales_with_size(monkeypatch, tmp
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0)
   monkeypatch.setattr(
       ingest_timeout_mod,
-      "_redis_member_count_for_sealed_day",
+      "_store_member_count_for_sealed_day",
       lambda _day: 0,
   )
 

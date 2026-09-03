@@ -1,247 +1,58 @@
 """
-Host-side archive-members Redis bulk invalidate + compose redis-cli / restart.
+Host-side archive-members sidecar wipe + optional compose pipeline restart.
 
 This module is intentionally free of ``print_utils`` / ``conf_parser`` imports
 so ``scripts/invalidate_archive_members.py`` can run on hosts whose default
 ``python3`` is older than 3.10 (PEP 604) without pulling the full sync_timedb
-Redis L2 stack. Prefer Python >= 3.12 (``requires-python``); the script re-execs
+stack. Prefer Python >= 3.12 (``requires-python``); the script re-execs
 when needed.
 
 Attributes:
-  DEFAULT_COMPOSE_PROJECT: Attribute.
-  PIPELINE_SERVICE: Attribute.
-  REDIS_SERVICE: Attribute.
-  _ARCHIVE_APPEND_INFLIGHT_PREFIX: Attribute.
-  _COMPLETE_PREFIX: Attribute.
-  _DAILY_TAR_RESTORE_PREFIX: Attribute.
-  _DAY_SKIP_PREFIX: Attribute.
-  _DEDUPE_HINT_PREFIX: Attribute.
-  _DEGRADED_PREFIX: Attribute.
-  _HASH_PREFIX: Attribute.
-  _INGEST_TAR_HOT_PREFIX: Attribute.
-  _INVALIDATE_PENDING_PREFIX: Attribute.
-  _KEY_PREFIX: Attribute.
-  _LOCK_PREFIX: Attribute.
-  _MEMBERSHIP_DAY_EXACT_SCAN_PREFIXES: Attribute.
-  _MEMBERSHIP_IDENTITY_SCAN_PREFIXES: Attribute.
-  _JOB_V1_PREFIX: Attribute.
-  _POPULATE_QUEUED_PREFIX: Attribute.
-  _POPULATE_QUEUE_KEY: Attribute.
-  _PROTECTED_COORD_PREFIXES: Attribute.
+  DEFAULT_COMPOSE_PROJECT: Compose project name used by restart helpers.
+  JOB_STORE_SNAPSHOT_RELPATH: Job-store sidecar basename that must never
+    be unlinked by invalidate.
+  MEMBERS_STORE_DIR_RELPATH: Day-member sidecar directory basename.
+  PIPELINE_SERVICE: Compose service restarted to drop process L1 caches.
 """
 from __future__ import annotations
 
-from typing import Any, Iterator
+from typing import Any, Iterable
 
 import datetime
+import os
 import shlex
 import subprocess
 
 
 DEFAULT_COMPOSE_PROJECT = "hpcperfstats"
 PIPELINE_SERVICE = "pipeline"
-REDIS_SERVICE = "redis"
-
-# Keep in sync with sync_timedb_archive_members_redis.py key families.
-_KEY_PREFIX = "hpcperfstats:sync_timedb"
-_HASH_PREFIX = "%s:archive_members:hash:v1" % _KEY_PREFIX
-_COMPLETE_PREFIX = "%s:archive_members:complete:v1" % _KEY_PREFIX
-_LOCK_PREFIX = "%s:archive_members:lock:v1" % _KEY_PREFIX
-_DEDUPE_HINT_PREFIX = "%s:archive_dedupe_hint:v1" % _KEY_PREFIX
-_DEGRADED_PREFIX = "%s:archive_populate_degraded:v1" % _KEY_PREFIX
-_DAY_SKIP_PREFIX = "%s:archive_day_ingest_skip:v1" % _KEY_PREFIX
-_INVALIDATE_PENDING_PREFIX = "%s:archive_members:invalidate_pending:v1" % _KEY_PREFIX
-_POPULATE_QUEUE_KEY = "%s:archive_members:populate_queue:v1" % _KEY_PREFIX
-_POPULATE_QUEUED_PREFIX = "%s:archive_members:populate_queued:v1" % _KEY_PREFIX
-_INGEST_TAR_HOT_PREFIX = "%s:ingest_tar_hot:v1" % _KEY_PREFIX
-_ARCHIVE_APPEND_INFLIGHT_PREFIX = "%s:archive_append_inflight:v1" % _KEY_PREFIX
-_DAILY_TAR_RESTORE_PREFIX = "%s:daily_tar_restore:v1" % _KEY_PREFIX
-# Keep in sync with sync_timedb_job_queue.JOB_V1_PREFIX (orchestrator jobs).
-_JOB_V1_PREFIX = "%s:job:v1" % _KEY_PREFIX
-
-_MEMBERSHIP_IDENTITY_SCAN_PREFIXES = (
-    _HASH_PREFIX,
-    _COMPLETE_PREFIX,
-    _LOCK_PREFIX,
-    _INVALIDATE_PENDING_PREFIX,
-)
-_MEMBERSHIP_DAY_EXACT_SCAN_PREFIXES = (
-    _DEGRADED_PREFIX,
-    _DAY_SKIP_PREFIX,
-    _DEDUPE_HINT_PREFIX,
-    _POPULATE_QUEUED_PREFIX,
-)
-_PROTECTED_COORD_PREFIXES = (
-    _INGEST_TAR_HOT_PREFIX,
-    _ARCHIVE_APPEND_INFLIGHT_PREFIX,
-    _DAILY_TAR_RESTORE_PREFIX,
-    _JOB_V1_PREFIX,
-)
+JOB_STORE_SNAPSHOT_RELPATH = ".sync_timedb_job_store.json"
+MEMBERS_STORE_DIR_RELPATH = ".sync_timedb_archive_members"
 
 
 def compose_argv(
   *,
   project: Any = DEFAULT_COMPOSE_PROJECT,
   compose_files: Any | None = None,
-) -> Any:
+) -> list[str]:
   """
   Build ``docker compose -p <project> [-f …]`` argv prefix.
-  
+
   Args:
-    project (Any): Project passed to this helper.
-    compose_files (Any | None): One of ``Any``, ``None``.
-  
+    project (Any): Compose project name.
+    compose_files (Any | None): Extra ``-f`` compose files.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    list[str]: Argv prefix for compose commands.
+
   Examples:
-    >>> compose_argv(None, None)  # doctest: +SKIP
+    >>> compose_argv(project="hpcperfstats")[0]
+    'docker'
   """
   argv = ["docker", "compose", "-p", str(project or DEFAULT_COMPOSE_PROJECT)]
   for path in compose_files or ():
     argv.extend(["-f", str(path)])
   return argv
-
-
-class ComposeRedisCliClient:
-  """
-  Minimal Redis client via ``docker compose exec -T redis redis-cli``.
-  
-  Implements ``scan_iter`` / ``delete`` for
-  :func:`invalidate_archive_members_redis_bulk`.
-  
-  Attributes:
-    compose_dir: Attribute.
-    compose_files: Attribute.
-    project: Attribute.
-    timeout_s: Attribute.
-  """
-
-  def __init__(
-    self,
-    *,
-    compose_dir: str,
-    project: Any = DEFAULT_COMPOSE_PROJECT,
-    compose_files: Any | None = None,
-    timeout_s: float = 120.0,
-  ) -> None:
-    """
-    Initialize a new instance.
-    
-    Args:
-      compose_dir (str): String for compose dir.
-      project (Any): Project passed to this helper.
-      compose_files (Any | None): One of ``Any``, ``None``.
-      timeout_s (float): Floating-point value for timeout s.
-    
-    Returns:
-      None
-    
-    Examples:
-      >>> ComposeRedisCliClient("x", None, None, 0)  # doctest: +SKIP
-    """
-    self.compose_dir = str(compose_dir)
-    self.project = str(project or DEFAULT_COMPOSE_PROJECT)
-    self.compose_files = list(compose_files or ())
-    self.timeout_s = float(timeout_s)
-
-  def _redis_cli(self, *args: Any) -> Any:
-    """
-    Internal helper to handle redis cli.
-    
-    Args:
-      *args (Any): Extra positional arguments; unused unless the callee
-      documents a specific leftover protocol.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Raises:
-      RuntimeError: Raised when ``_redis_cli`` hits a ``RuntimeError`` failure
-      path.
-    
-    Examples:
-      >>> ComposeRedisCliClient()._redis_cli()  # doctest: +SKIP
-    """
-    cmd = compose_argv(project=self.project, compose_files=self.compose_files)
-    cmd.extend(["exec", "-T", REDIS_SERVICE, "redis-cli"] + list(args))
-    try:
-      completed = subprocess.run(
-          cmd,
-          cwd=self.compose_dir,
-          check=False,
-          capture_output=True,
-          text=True,
-          timeout=self.timeout_s,
-      )
-    except FileNotFoundError as exc:
-      raise RuntimeError(
-          "docker compose not found on PATH; install Docker or pass --redis-url",
-      ) from exc
-    except subprocess.TimeoutExpired as exc:
-      raise RuntimeError(
-          "redis-cli via compose timed out after %.0fs" % self.timeout_s,
-      ) from exc
-    if completed.returncode != 0:
-      err = (completed.stderr or completed.stdout or "").strip()
-      raise RuntimeError(
-          "compose redis-cli failed (exit %s): %s"
-          % (completed.returncode, err or "(no output)"),
-      )
-    return completed.stdout or ""
-
-  def scan_iter(
-    self,
-    match: Any | None = None,
-    count: int = 100,
-  ) -> Iterator[Any]:
-    """
-    Scan iter.
-    
-    Args:
-      match (Any | None): One of ``Any``, ``None``.
-      count (int): Integer value for count.
-    
-    Yields:
-      Iterator[Any]: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> ComposeRedisCliClient().scan_iter(None, 0)  # doctest: +SKIP
-    """
-    del count
-    pattern = match if match else "*"
-    out = self._redis_cli("--scan", "--pattern", str(pattern))
-    for line in out.splitlines():
-      key = line.strip()
-      if key:
-        yield key
-
-  def delete(self, *keys: Any) -> Any:
-    """
-    Delete a key from this store.
-    
-    Args:
-      *keys (Any): Extra positional values for ``keys``; element types match
-      the helper's documented protocol.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> ComposeRedisCliClient().delete()  # doctest: +SKIP
-    """
-    if not keys:
-      return 0
-    deleted = 0
-    batch_size = 100
-    for i in range(0, len(keys), batch_size):
-      chunk = [str(k) for k in keys[i:i + batch_size]]
-      out = self._redis_cli(*(["DEL"] + chunk))
-      try:
-        deleted += int((out or "0").strip().splitlines()[-1])
-      except (TypeError, ValueError, IndexError):
-        deleted += len(chunk)
-    return deleted
 
 
 def restart_pipeline_compose(
@@ -254,23 +65,24 @@ def restart_pipeline_compose(
 ) -> None:
   """
   Restart the Compose ``pipeline`` service on the host (clears worker L1).
-  
+
   Args:
-    compose_dir (str): String for compose dir.
-    project (Any): Project passed to this helper.
-    compose_files (Any | None): One of ``Any``, ``None``.
-    timeout_s (float): Floating-point value for timeout s.
-    run_fn (Any | None): One of ``Any``, ``None``.
-  
+    compose_dir (str): Checkout directory with docker-compose.yaml.
+    project (Any): Compose project name.
+    compose_files (Any | None): Extra compose files.
+    timeout_s (float): Subprocess timeout seconds.
+    run_fn (Any | None): Optional ``subprocess.run`` replacement.
+
   Returns:
     None
-  
+
   Raises:
-    RuntimeError: Raised when ``restart_pipeline_compose`` hits a
-    ``RuntimeError`` failure path.
-  
+    RuntimeError: When docker compose is missing, times out, or exits
+      non-zero.
+
   Examples:
-    >>> restart_pipeline_compose("x", None, None, 0, None)  # doctest: +SKIP
+    >>> format_compose_cmd_for_log(compose_argv(project="hps") + ["restart"])
+    'docker compose -p hps restart'
   """
   runner = run_fn or subprocess.run
   cmd = compose_argv(project=project, compose_files=compose_files)
@@ -304,38 +116,39 @@ def restart_pipeline_compose(
     )
 
 
-def format_compose_cmd_for_log(argv: Any) -> Any:
+def format_compose_cmd_for_log(argv: Any) -> str:
   """
-  Format the compose cmd for log.
-  
+  Quote argv for operator log lines.
+
   Args:
-    argv (Any): CLI argument list (``sys.argv``-like).
-  
+    argv (Any): Command argument list.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    str: Shell-quoted command string.
+
   Examples:
-    >>> format_compose_cmd_for_log(None)  # doctest: +SKIP
+    >>> format_compose_cmd_for_log(["docker", "compose"])
+    'docker compose'
   """
   return " ".join(shlex.quote(str(part)) for part in argv)
 
 
-def _normalize_bulk_day_tokens(day_tokens: Any) -> Any:
+def _normalize_bulk_day_tokens(day_tokens: Any) -> list[str] | None:
   """
   Validate and normalize calendar day tokens (``YYYY-MM-DD``).
-  
+
   Args:
-    day_tokens (Any): Day tokens passed to this helper.
-  
+    day_tokens (Any): Day tokens, or None for every sidecar.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    list[str] | None: Sorted unique days, or None for all days.
+
   Raises:
-    ValueError: Raised when ``_normalize_bulk_day_tokens`` hits a
-    ``ValueError`` failure path.
-  
+    ValueError: When a token is not an ISO calendar day.
+
   Examples:
-    >>> _normalize_bulk_day_tokens(None)  # doctest: +SKIP
+    >>> _normalize_bulk_day_tokens(["2026-08-01"])
+    ['2026-08-01']
   """
   if day_tokens is None:
     return None
@@ -352,119 +165,170 @@ def _normalize_bulk_day_tokens(day_tokens: Any) -> Any:
   return sorted(set(normalized))
 
 
-def _bulk_membership_scan_patterns(day_tokens: Any) -> Any:
+def _members_dir(archive_dir: str) -> str:
   """
-  Internal helper to handle bulk membership scan patterns.
-  
+  Return the member-sidecar directory under ``archive_dir``.
+
   Args:
-    day_tokens (Any): Day tokens passed to this helper.
-  
+    archive_dir (str): Archive data directory.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    str: Absolute or joined member-store directory.
+
   Examples:
-    >>> _bulk_membership_scan_patterns(None)  # doctest: +SKIP
+    >>> _members_dir("/archive").endswith(".sync_timedb_archive_members")
+    True
   """
-  patterns = []
-  if day_tokens is None:
-    for prefix in _MEMBERSHIP_IDENTITY_SCAN_PREFIXES:
-      patterns.append("%s:*" % prefix)
-    for prefix in _MEMBERSHIP_DAY_EXACT_SCAN_PREFIXES:
-      patterns.append("%s:*" % prefix)
-    return patterns
-  for day in day_tokens:
-    for prefix in _MEMBERSHIP_IDENTITY_SCAN_PREFIXES:
-      patterns.append("%s:%s:*" % (prefix, day))
-    for prefix in _MEMBERSHIP_DAY_EXACT_SCAN_PREFIXES:
-      patterns.append("%s:%s" % (prefix, day))
-  return patterns
+  return os.path.join(str(archive_dir), MEMBERS_STORE_DIR_RELPATH)
 
 
-def _is_protected_coord_redis_key(key: Any) -> Any:
+def _job_store_path(archive_dir: str) -> str:
   """
-  Internal helper to check if protected coord redis key.
-  
+  Return the job-store snapshot path that invalidate must never unlink.
+
   Args:
-    key (Any): Key passed to this helper.
-  
+    archive_dir (str): Archive data directory.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    str: Job-store sidecar path.
+
   Examples:
-    >>> _is_protected_coord_redis_key(None)  # doctest: +SKIP
+    >>> _job_store_path("/archive").endswith(".sync_timedb_job_store.json")
+    True
   """
-  text = str(key)
-  for prefix in _PROTECTED_COORD_PREFIXES:
-    if text == prefix or text.startswith(prefix + ":"):
-      return True
-  return False
+  return os.path.join(str(archive_dir), JOB_STORE_SNAPSHOT_RELPATH)
 
 
-def invalidate_archive_members_redis_bulk(
+def _sidecar_paths_for_days(
+  archive_dir: str,
+  days: Iterable[str] | None,
+) -> list[str]:
+  """
+  List member sidecar files that would be wiped.
+
+  Args:
+    archive_dir (str): Archive data directory.
+    days (Iterable[str] | None): Calendar days, or None for every
+      ``*.json`` under the members directory.
+
+  Returns:
+    list[str]: Existing sidecar paths, never including the job store.
+
+  Examples:
+    >>> _sidecar_paths_for_days("/missing", None)
+    []
+  """
+  store_dir = _members_dir(archive_dir)
+  job_store = os.path.realpath(_job_store_path(archive_dir))
+  found: list[str] = []
+  if days is None:
+    if not os.path.isdir(store_dir):
+      return []
+    for name in sorted(os.listdir(store_dir)):
+      if not name.endswith(".json"):
+        continue
+      path = os.path.join(store_dir, name)
+      if os.path.realpath(path) == job_store:
+        continue
+      if os.path.isfile(path):
+        found.append(path)
+    return found
+  for day in days:
+    path = os.path.join(store_dir, "%s.json" % day)
+    if os.path.realpath(path) == job_store:
+      continue
+    if os.path.isfile(path):
+      found.append(path)
+  return found
+
+
+def invalidate_archive_members_sidecars(
   *,
+  archive_dir: str,
   day_tokens: Any | None = None,
   dry_run: bool = False,
-  client: Any | None = None,
-) -> Any:
+) -> dict[str, Any]:
   """
-  Bulk-clear archive membership Redis L2 (operator recovery).
-  
-  ``day_tokens=None`` clears all membership-related key families and the
-  populate queue list. Otherwise only keys for those calendar days.
-  
-  Does **not** delete ``ingest_tar_hot``, ``archive_append_inflight``,
-  ``daily_tar_restore``, or ``job:v1`` orchestrator queue/lease/payload keys.
-  
-  Returns ``{"scanned": int, "deleted": int, "dry_run": bool, "days": list}``.
-  When ``client`` is omitted, returns ``"error": "redis_unavailable"`` (callers
-  that have a Redis URL / FakeRedis must pass ``client`` explicitly).
-  
+  Wipe member-store day sidecars without touching the job-store snapshot.
+
+  Ephemeral flags (tar-hot, append-inflight, restore) are process-local
+  and are not on disk. Pipeline restart drops L1 caches.
+
   Args:
-    day_tokens (Any | None): One of ``Any``, ``None``.
-    dry_run (bool): Boolean flag for dry run.
-    client (Any | None): One of ``Any``, ``None``.
-  
+    archive_dir (str): Archive data directory that owns the sidecars.
+    day_tokens (Any | None): Calendar days, or None to wipe every day
+      sidecar.
+    dry_run (bool): True to report paths without unlinking.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    dict[str, Any]: ``scanned``, ``deleted``, ``dry_run``, ``days``,
+    and ``paths``.
+
+  Raises:
+    ValueError: When ``archive_dir`` is empty or a day token is invalid.
+
   Examples:
-    >>> invalidate_archive_members_redis_bulk(None, True, None)
+    >>> invalidate_archive_members_sidecars(
+    ...   archive_dir="/missing", dry_run=True,
+    ... )["deleted"]
+    0
   """
+  root = str(archive_dir or "").strip()
+  if not root:
+    raise ValueError("archive_dir is required")
   days = _normalize_bulk_day_tokens(day_tokens)
+  paths = _sidecar_paths_for_days(root, days)
   result = {
-      "scanned": 0,
+      "scanned": len(paths),
       "deleted": 0,
       "dry_run": bool(dry_run),
       "days": list(days) if days is not None else [],
+      "paths": list(paths),
   }
-  if client is None:
-    result["error"] = "redis_unavailable"
+  if dry_run or not paths:
     return result
-
-  found = set()
-  for pattern in _bulk_membership_scan_patterns(days):
-    for key in client.scan_iter(match=pattern, count=200):
-      text = str(key)
-      if _is_protected_coord_redis_key(text):
-        continue
-      found.add(text)
-  if days is None:
-    found.add(_POPULATE_QUEUE_KEY)
-
-  result["scanned"] = len(found)
-  if dry_run or not found:
-    return result
-
   deleted = 0
-  batch = []
-  for key in sorted(found):
-    batch.append(key)
-    if len(batch) >= 200:
-      client.delete(*batch)
-      deleted += len(batch)
-      batch.clear()
-  if batch:
-    client.delete(*batch)
-    deleted += len(batch)
+  for path in paths:
+    if os.path.realpath(path) == os.path.realpath(_job_store_path(root)):
+      continue
+    try:
+      os.unlink(path)
+    except OSError:
+      continue
+    deleted += 1
   result["deleted"] = deleted
   return result
+
+
+def invalidate_archive_members_bulk(
+  *,
+  archive_dir: str,
+  day_tokens: Any | None = None,
+  dry_run: bool = False,
+  client: Any | None = None,
+) -> dict[str, Any]:
+  """
+  Compatibility wrapper for sidecar wipe (job store is ignored).
+
+  Args:
+    archive_dir (str): Archive data directory.
+    day_tokens (Any | None): Calendar days, or None for every sidecar.
+    dry_run (bool): True to report without unlinking.
+    client (Any | None): Ignored leftover argument.
+
+  Returns:
+    dict[str, Any]: Same payload as
+    :func:`invalidate_archive_members_sidecars`.
+
+  Examples:
+    >>> invalidate_archive_members_bulk(
+    ...   archive_dir="/missing", dry_run=True,
+    ... )["dry_run"]
+    True
+  """
+  del client
+  return invalidate_archive_members_sidecars(
+      archive_dir=archive_dir,
+      day_tokens=day_tokens,
+      dry_run=dry_run,
+  )

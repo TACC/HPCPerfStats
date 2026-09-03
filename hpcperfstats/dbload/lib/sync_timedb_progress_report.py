@@ -214,7 +214,7 @@ def day_token_from_day_close_identity(identity: str) -> str | None:
   example ``/hpcperfst``) is not an ISO day.
 
   Args:
-    identity (str): Redis day_close LIST member.
+    identity (str): job-store day_close LIST member.
 
   Returns:
     str | None: ``YYYY-MM-DD`` when parseable, otherwise None.
@@ -256,7 +256,7 @@ def resolve_oldest_queued_day(
   whose basename is ``YYYY-MM-DD.tar``.
 
   Args:
-    client (Any): Redis client.
+    client (Any): job store.
     now (Optional[datetime]): Clock for age; defaults to UTC now.
 
   Returns:
@@ -341,7 +341,7 @@ def format_orphan_inflight(
   busy_kinds: Iterable[str],
 ) -> str:
   """
-  Render Redis inflight kinds that are not locally busy.
+  Render store inflight kinds that are not locally busy.
 
   Args:
     census_inflight (Mapping[str, int]): Kind → inflight count.
@@ -413,7 +413,7 @@ def format_status_line(
       ``{"inflight": n, "queued": n}``.
     queue_deltas (Mapping[str, int]): Queued-depth delta vs window start.
     busy_kinds (Iterable[str]): Local busy kinds.
-    orphan_inflight (Mapping[str, int]): Kind → Redis inflight.
+    orphan_inflight (Mapping[str, int]): Kind → store inflight.
     oldest_day (Optional[str]): Oldest queued day token.
     oldest_age_s (Optional[int]): Age of oldest head in seconds.
     undated (Optional[Mapping[str, int]]): Undated fallback counters.
@@ -639,7 +639,7 @@ class ProgressReportState:
     Args:
       band_ratios (Mapping[str, Mapping[str, int]]): Status band ratios.
       busy_kinds (Iterable[str]): Local busy kinds.
-      census_inflight (Mapping[str, int]): Kind → Redis inflight.
+      census_inflight (Mapping[str, int]): Kind → store inflight.
       queue_depth_now (Mapping[str, int]): Kind → queued depth now.
       oldest_day (Optional[str]): Oldest queued day.
       oldest_age_s (Optional[int]): Oldest head age seconds.
@@ -712,7 +712,7 @@ class ProgressReportState:
       interval_s (float): Emit interval.
       band_ratios (Mapping[str, Mapping[str, int]]): Status band ratios.
       busy_kinds (Iterable[str]): Local busy kinds.
-      census_inflight (Mapping[str, int]): Kind → Redis inflight.
+      census_inflight (Mapping[str, int]): Kind → store inflight.
       queue_depth_now (Mapping[str, int]): Kind → queued depth now.
       oldest_day (Optional[str]): Oldest queued day.
       oldest_age_s (Optional[int]): Oldest head age seconds.

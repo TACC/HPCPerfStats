@@ -4,7 +4,7 @@ Load raw stats files into TimescaleDB (host_data, proc_data).
 
 Production coordinator is the greenfield ``job:v1`` queue orchestrator
 (``run_sync_timedb_queue_orchestrator``): exclusive ``archive_dir`` flock,
-streaming discover → ingest/append/day_close Redis jobs, sliding-window spawn
+streaming discover → ingest/append/day_close jobs, sliding-window threads
 pools for ingest/append, and day_close threads (seal → raw removal → tar-drop).
 The B ``run_sync_timedb_supervisor_loop`` / ``ArchiveJanitor`` coordinator is
 retired.
@@ -72,7 +72,6 @@ import gc
 import hashlib
 import itertools
 import json
-import multiprocessing
 import os
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -98,7 +97,6 @@ from enum import Enum
 
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 from hpcperfstats.dbload.lib.process_title import (
-  apply_pool_worker_process_title,
   set_daemon_process_title,
 )
 
@@ -180,22 +178,21 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   stats_file_is_active_segment,
   verify_tar_archive_readable,
 )
-from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
   ArchiveMembersPopulateStalledError,
-  ArchiveMembersRedisConnectionError,
-  ArchiveMembersRedisUnavailableError,
+  ArchiveMembersStoreConnectionError,
+  ArchiveMembersStoreUnavailableError,
   IngestArchiveLookupBudgetExceededError,
   _raise_if_ingest_deadline_exceeded,
   archive_append_inflight_for_day,
   archive_members_populate_shows_progress_for_day,
-  archive_members_redis_enabled,
-  build_archive_members_redis_keys,
-  describe_archive_members_populate_redis_for_day,
+  build_archive_members_keys,
+  describe_archive_members_populate_for_day,
   get_ingest_task_effective_timeout_s,
   is_populate_pool_unavailable_error,
   is_transient_fnctl_populate_unavailable,
-  maybe_clear_orphan_incomplete_archive_members_redis,
-  redis_members_cache_is_fully_warm,
+  maybe_clear_orphan_incomplete_archive_members,
+  members_cache_is_fully_warm,
 )
 from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
   calendar_day_from_sealed_archive_path,
@@ -921,7 +918,7 @@ def _signal_ingest_hot_for_populate(
   Examples:
     >>> _signal_ingest_hot_for_populate(None, "x", None)  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       set_ingest_tar_hot,
   )
 
@@ -930,13 +927,13 @@ def _signal_ingest_hot_for_populate(
     set_ingest_tar_hot(day_token, reason=reason)
 
 
-def _prewarm_archive_members_redis_for_days(
+def _prewarm_archive_members_for_days(
   day_items: Any,
   *,
   gated_tar_restore_day_tokens: Any | None = None,
 ) -> Any:
   """
-  Single-flight populate on supervisor before imap when Redis L2 is cold.
+  Single-flight populate on supervisor before imap when the members store is cold.
   
   Args:
     day_items (Any): Day items passed to this helper.
@@ -946,23 +943,21 @@ def _prewarm_archive_members_redis_for_days(
     Any: Value produced by this call (type depends on inputs).
   
   Raises:
-    ArchiveMembersRedisUnavailableError: Raised when
-    ``_prewarm_archive_members_redis_for_days`` hits a
-    ``ArchiveMembersRedisUnavailableError`` failure path.
+    ArchiveMembersStoreUnavailableError: Raised when
+    ``_prewarm_archive_members_for_days`` hits a
+    ``ArchiveMembersStoreUnavailableError`` failure path.
   
   Examples:
-    >>> _prewarm_archive_members_redis_for_days(None, None)  # doctest: +SKIP
+    >>> _prewarm_archive_members_for_days(None, None)  # doctest: +SKIP
   """
   summary_parts = []
-  if not archive_members_redis_enabled():
-    return "-"
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       _FNCTL_POPULATE_RETRY_DELAYS_S,
       _daily_archive_members_cache_key,
       _resolve_sealed_daily_archive_path,
       daily_archive_populate_source_exists,
   )
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       ArchiveDayIngestSkipError,
       request_archive_members_populate_and_wait,
   )
@@ -971,10 +966,10 @@ def _prewarm_archive_members_redis_for_days(
   for compressed, day_token in day_items or ():
     canonical = normalize_daily_compressed_path(compressed)
     cache_key = _daily_archive_members_cache_key(canonical)
-    keys = build_archive_members_redis_keys(cache_key)
-    maybe_clear_orphan_incomplete_archive_members_redis(keys)
-    if redis_members_cache_is_fully_warm(keys):
-      summary_parts.append("%s:redis_warm" % day_token)
+    keys = build_archive_members_keys(cache_key)
+    maybe_clear_orphan_incomplete_archive_members(keys)
+    if members_cache_is_fully_warm(keys):
+      summary_parts.append("%s:store_warm" % day_token)
       continue
     if not daily_archive_populate_source_exists(canonical):
       summary_parts.append("%s:no_daily_archive" % day_token)
@@ -999,7 +994,7 @@ def _prewarm_archive_members_redis_for_days(
         summary_parts.append("%s:restore_failed" % day_token)
         continue
     log_print(
-        "Prewarming archive members Redis for day=%s sealed=%s"
+        "Prewarming archive members store for day=%s sealed=%s"
         % (day_token, sealed_path or tar_path),
         flush=True,
     )
@@ -1017,36 +1012,25 @@ def _prewarm_archive_members_redis_for_days(
         # Wait may re-resolve to a post-append identity (T1→T2); do not warm-check
         # the frozen entry-time keys (empty-after-prewarm with members_n>0).
         cache_key = _daily_archive_members_cache_key(canonical)
-        keys = build_archive_members_redis_keys(cache_key)
-        if not redis_members_cache_is_fully_warm(keys):
-          client = None
-          try:
-            from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-                get_archive_day_ingest_skip,
-                get_archive_members_redis_client,
-            )
-            client = get_archive_members_redis_client(required=False)
-          except Exception:
-            client = None
-            get_archive_day_ingest_skip = None  # type: ignore[assignment]
-          if (
-              get_archive_day_ingest_skip is not None
-              and get_archive_day_ingest_skip(keys, client=client) is not None
-          ):
+        keys = build_archive_members_keys(cache_key)
+        if not members_cache_is_fully_warm(keys):
+          from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+              get_archive_day_ingest_skip,
+              lookup_full_members,
+          )
+          if get_archive_day_ingest_skip(keys) is not None:
             summary_parts.append("%s:day_ingest_skip" % day_token)
             last_transient_exc = None
             break
-          complete = (
-              client.get(keys.complete_key) == "1" if client is not None else False
-          )
+          complete = lookup_full_members(keys) is not None
           if complete and not (members or {}):
             source = source or "empty_archive"
           elif attempt < len(_FNCTL_POPULATE_RETRY_DELAYS_S) and (
               archive_append_inflight_for_day(day_token) or len(members or {}) > 0
           ):
             prewarm_recovered = True
-            last_transient_exc = ArchiveMembersRedisUnavailableError(
-                "archive members Redis cold after prewarm for day=%s "
+            last_transient_exc = ArchiveMembersStoreUnavailableError(
+                "archive members store cold after prewarm for day=%s "
                 "canonical=%s source=%s members_n=%d append_inflight=%s"
                 % (
                     day_token,
@@ -1069,7 +1053,7 @@ def _prewarm_archive_members_redis_for_days(
               )
             else:
               log_print(
-                  "WARNING: members returned but Redis cold during archive "
+                  "WARNING: members returned but store cold during archive "
                   "members prewarm day=%s attempt=%d/%d members_n=%d "
                   "source=%s: retrying"
                   % (
@@ -1083,9 +1067,9 @@ def _prewarm_archive_members_redis_for_days(
               )
             continue
           else:
-            maybe_clear_orphan_incomplete_archive_members_redis(keys)
-            raise ArchiveMembersRedisUnavailableError(
-                "archive members Redis empty after prewarm for day=%s "
+            maybe_clear_orphan_incomplete_archive_members(keys)
+            raise ArchiveMembersStoreUnavailableError(
+                "archive members store empty after prewarm for day=%s "
                 "canonical=%s source=%s members_n=%d"
                 % (
                     day_token,
@@ -1095,7 +1079,7 @@ def _prewarm_archive_members_redis_for_days(
                 ),
             )
         if not source:
-          source = "redis_warm"
+          source = "store_warm"
         if prewarm_recovered:
           summary_parts.append(
               "%s:populate_recovering:%s" % (day_token, source),
@@ -1109,10 +1093,10 @@ def _prewarm_archive_members_redis_for_days(
         last_transient_exc = None
         break
       except ArchiveMembersPopulateStalledError as exc:
-        maybe_clear_orphan_incomplete_archive_members_redis(keys)
-        _exit_on_archive_members_redis_unavailable(exc)
-      except ArchiveMembersRedisUnavailableError as exc:
-        maybe_clear_orphan_incomplete_archive_members_redis(keys)
+        maybe_clear_orphan_incomplete_archive_members(keys)
+        _exit_on_archive_members_store_unavailable(exc)
+      except ArchiveMembersStoreUnavailableError as exc:
+        maybe_clear_orphan_incomplete_archive_members(keys)
         if is_transient_fnctl_populate_unavailable(exc) or is_populate_pool_unavailable_error(
             exc,
         ):
@@ -1147,16 +1131,16 @@ def _prewarm_archive_members_redis_for_days(
                 flush=True,
             )
             continue
-        _exit_on_archive_members_redis_unavailable(exc)
+        _exit_on_archive_members_store_unavailable(exc)
     else:
       if last_transient_exc is not None:
-        _exit_on_archive_members_redis_unavailable(last_transient_exc)
+        _exit_on_archive_members_store_unavailable(last_transient_exc)
   return ",".join(summary_parts) if summary_parts else "-"
 
 
-def _prewarm_archive_members_redis_for_day_token(day_token: Any) -> None:
+def _prewarm_archive_members_for_day_token(day_token: Any) -> None:
   """
-  Internal helper to handle prewarm archive members redis for day token.
+  Internal helper to handle prewarm archive members store for day token.
   
   Args:
     day_token (Any): Day token passed to this helper.
@@ -1165,7 +1149,7 @@ def _prewarm_archive_members_redis_for_day_token(day_token: Any) -> None:
     None
   
   Examples:
-    >>> _prewarm_archive_members_redis_for_day_token(None)  # doctest: +SKIP
+    >>> _prewarm_archive_members_for_day_token(None)  # doctest: +SKIP
   """
   if not day_token:
     return
@@ -1174,18 +1158,18 @@ def _prewarm_archive_members_redis_for_day_token(day_token: Any) -> None:
   except ValueError:
     return
   compressed = daily_compressed_path_for_date(tgz_archive_dir, day_date)
-  _prewarm_archive_members_redis_for_days([(compressed, day_token)])
+  _prewarm_archive_members_for_days([(compressed, day_token)])
 
 
 def _reprewarm_archive_members_after_seal_phase(
   day_token: Any,
   *,
   day_raw_removal: Any,
-  prewarm_fn: Any = _prewarm_archive_members_redis_for_day_token,
+  prewarm_fn: Any = _prewarm_archive_members_for_day_token,
   log_fn: Any = log_print,
 ) -> None:
   """
-  Re-prewarm Redis after seal invalidation, unless verify will populate.
+  Re-prewarm members store after seal invalidation, unless verify will populate.
   
   Args:
     day_token (Any): Day token passed to this helper.
@@ -1207,14 +1191,14 @@ def _reprewarm_archive_members_after_seal_phase(
     )
     return
   log_fn(
-      "INFO: re-prewarm archive members Redis after seal day=%s"
+      "INFO: re-prewarm archive members store after seal day=%s"
       % day_token,
       flush=True,
   )
   prewarm_fn(day_token)
 
 
-def _prewarm_archive_members_redis_for_chunk(
+def _prewarm_archive_members_for_chunk(
   paths: Any,
   *,
   oldest_tar: Any | None = None,
@@ -1222,7 +1206,7 @@ def _prewarm_archive_members_redis_for_chunk(
   skip_prewarm: bool = False,
 ) -> Any:
   """
-  Single-flight populate on supervisor before imap when Redis L2 is cold.
+  Single-flight populate on supervisor before imap when the members store is cold.
   
   Args:
     paths (Any): Iterable of filesystem paths as strings.
@@ -1234,10 +1218,10 @@ def _prewarm_archive_members_redis_for_chunk(
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> _prewarm_archive_members_redis_for_chunk(None, None, True, True)
+    >>> _prewarm_archive_members_for_chunk(None, None, True, True)
   """
   with ingest_logging():
-    return _prewarm_archive_members_redis_for_chunk_inner(
+    return _prewarm_archive_members_for_chunk_inner(
         paths,
         oldest_tar=oldest_tar,
         gated_tar_restore=gated_tar_restore,
@@ -1245,7 +1229,7 @@ def _prewarm_archive_members_redis_for_chunk(
     )
 
 
-def _prewarm_archive_members_redis_for_chunk_inner(
+def _prewarm_archive_members_for_chunk_inner(
   paths: Any,
   *,
   oldest_tar: Any | None = None,
@@ -1253,7 +1237,7 @@ def _prewarm_archive_members_redis_for_chunk_inner(
   skip_prewarm: bool = False,
 ) -> Any:
   """
-  Internal helper to handle prewarm archive members redis for chunk inner.
+  Internal helper to handle prewarm archive members store for chunk inner.
   
   Args:
     paths (Any): Iterable of filesystem paths as strings.
@@ -1265,7 +1249,7 @@ def _prewarm_archive_members_redis_for_chunk_inner(
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> _prewarm_archive_members_redis_for_chunk_inner(None, None, True, True)
+    >>> _prewarm_archive_members_for_chunk_inner(None, None, True, True)
   """
   if skip_prewarm:
     log_print(
@@ -1300,7 +1284,7 @@ def _prewarm_archive_members_redis_for_chunk_inner(
       flush=True,
   )
   prewarm_t0 = time.time()
-  summary = _prewarm_archive_members_redis_for_days(
+  summary = _prewarm_archive_members_for_days(
       list(day_map.items()),
       gated_tar_restore_day_tokens=gated_tokens,
   )
@@ -1312,9 +1296,9 @@ def _prewarm_archive_members_redis_for_chunk_inner(
   return summary
 
 
-def _prewarm_archive_members_redis_for_sealed_chunk(sealed_paths: Any) -> Any:
+def _prewarm_archive_members_for_sealed_chunk(sealed_paths: Any) -> Any:
   """
-  Prewarm Redis member maps for unique calendar days in a sealed archive chunk.
+  Prewarm members store member maps for unique calendar days in a sealed archive chunk.
   
   Args:
     sealed_paths (Any): Iterable of filesystem paths as strings.
@@ -1323,17 +1307,17 @@ def _prewarm_archive_members_redis_for_sealed_chunk(sealed_paths: Any) -> Any:
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> _prewarm_archive_members_redis_for_sealed_chunk(None)  # doctest: +SKIP
+    >>> _prewarm_archive_members_for_sealed_chunk(None)  # doctest: +SKIP
   """
   with ingest_logging():
-    return _prewarm_archive_members_redis_for_sealed_chunk_inner(sealed_paths)
+    return _prewarm_archive_members_for_sealed_chunk_inner(sealed_paths)
 
 
-def _prewarm_archive_members_redis_for_sealed_chunk_inner(
+def _prewarm_archive_members_for_sealed_chunk_inner(
   sealed_paths: Any,
 ) -> Any:
   """
-  Prewarm Redis member maps for unique calendar days in a sealed archive chunk.
+  Prewarm members store member maps for unique calendar days in a sealed archive chunk.
   
   Args:
     sealed_paths (Any): Iterable of filesystem paths as strings.
@@ -1342,7 +1326,7 @@ def _prewarm_archive_members_redis_for_sealed_chunk_inner(
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> _prewarm_archive_members_redis_for_sealed_chunk_inner(None)
+    >>> _prewarm_archive_members_for_sealed_chunk_inner(None)
   """
   day_items = []
   seen = set()
@@ -1364,7 +1348,7 @@ def _prewarm_archive_members_redis_for_sealed_chunk_inner(
       flush=True,
   )
   prewarm_t0 = time.time()
-  summary = _prewarm_archive_members_redis_for_days(day_items)
+  summary = _prewarm_archive_members_for_days(day_items)
   log_print(
       "archive chunk prewarm complete elapsed_s=%.3f days=%s"
       % (time.time() - prewarm_t0, summary),
@@ -1758,8 +1742,8 @@ def _ingest_stall_defer_state(
   if active_pool is None and stall_diagnostics is not None:
     active_pool = getattr(stall_diagnostics, "active_pool", None)
   sample_list = list(sample or ())
-  # Check redis populate / long-budget defer BEFORE idle-ghost: workers blocked
-  # in hrtimer_nanosleep during Redis populate wait look idle to ps/wchan.
+  # Check members-store populate / long-budget defer BEFORE idle-ghost: workers
+  # blocked in hrtimer_nanosleep during populate wait look idle to ps/wchan.
   defer_on, defer_reason = _ingest_stall_defer_long_budget(
       stall_diagnostics,
       consecutive_timeouts,
@@ -1781,7 +1765,7 @@ def _ingest_stall_defer_state(
       tgz_archive_dir,
       progress_state=progress_state,
   ):
-    return True, "redis_populate_active"
+    return True, "store_populate_active"
   if (
       active_pool is not None
       and sample_list
@@ -1791,30 +1775,29 @@ def _ingest_stall_defer_state(
     return False, "idle_pool_ghost_inflight"
   if not day_hint_resolved:
     return False, "no_day_hint"
-  if archive_members_redis_enabled():
-    try:
-      day_date = date_cls.fromisoformat(day_hint_resolved)
-      compressed = daily_compressed_path_for_date(tgz_archive_dir, day_date)
-      from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-          _daily_archive_members_cache_key,
-      )
-      cache_key = _daily_archive_members_cache_key(
-          normalize_daily_compressed_path(compressed),
-      )
-      keys = build_archive_members_redis_keys(cache_key)
-      if redis_members_cache_is_fully_warm(keys):
-        return False, "redis_warm"
-    except (ValueError, TypeError):
-      pass
-  return False, "redis_populate_inactive"
+  try:
+    day_date = date_cls.fromisoformat(day_hint_resolved)
+    compressed = daily_compressed_path_for_date(tgz_archive_dir, day_date)
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+        _daily_archive_members_cache_key,
+    )
+    cache_key = _daily_archive_members_cache_key(
+        normalize_daily_compressed_path(compressed),
+    )
+    keys = build_archive_members_keys(cache_key)
+    if members_cache_is_fully_warm(keys):
+      return False, "store_warm"
+  except (ValueError, TypeError):
+    pass
+  return False, "store_populate_inactive"
 
 
-def _format_redis_populate_for_in_flight_days(
+def _format_store_populate_for_in_flight_days(
   paths: Any,
   max_days: int = 3,
 ) -> Any:
   """
-  Internal helper to format the redis populate for in flight days.
+  Internal helper to format the store populate for in flight days.
   
   Args:
     paths (Any): Iterable of filesystem paths as strings.
@@ -1824,25 +1807,25 @@ def _format_redis_populate_for_in_flight_days(
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> _format_redis_populate_for_in_flight_days(None, 0)  # doctest: +SKIP
+    >>> _format_store_populate_for_in_flight_days(None, 0)  # doctest: +SKIP
   """
   days = _distinct_calendar_days_from_paths(paths, max_days=max_days)
   if not days:
     return ""
   parts = [
       "%s{%s}"
-      % (day, describe_archive_members_populate_redis_for_day(day, tgz_archive_dir))
+      % (day, describe_archive_members_populate_for_day(day, tgz_archive_dir))
       for day in days
   ]
-  return " redis_by_day=" + " ".join(parts)
+  return " store_by_day=" + " ".join(parts)
 
 
-def _format_redis_populate_for_sealed_paths(
+def _format_store_populate_for_sealed_paths(
   sealed_paths: Any,
   max_days: int = 3,
 ) -> Any:
   """
-  Internal helper to format the redis populate for sealed paths.
+  Internal helper to format the store populate for sealed paths.
   
   Args:
     sealed_paths (Any): Iterable of filesystem paths as strings.
@@ -1852,17 +1835,17 @@ def _format_redis_populate_for_sealed_paths(
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> _format_redis_populate_for_sealed_paths(None, 0)  # doctest: +SKIP
+    >>> _format_store_populate_for_sealed_paths(None, 0)  # doctest: +SKIP
   """
   days = _distinct_calendar_days_from_sealed_paths(sealed_paths, max_days=max_days)
   if not days:
     return ""
   parts = [
       "%s{%s}"
-      % (day, describe_archive_members_populate_redis_for_day(day, tgz_archive_dir))
+      % (day, describe_archive_members_populate_for_day(day, tgz_archive_dir))
       for day in days
   ]
-  return " redis_by_day=" + " ".join(parts)
+  return " store_by_day=" + " ".join(parts)
 
 
 def _max_effective_ingest_timeout_from_registry(registry: Any) -> Any:
@@ -1946,7 +1929,7 @@ def _build_ingest_stall_log_suffix(
   consecutive: Any,
   poll_timeout_s: Any,
   distinct_days_from_sample_fn: Any | None = None,
-  redis_populate_for_sample_fn: Any | None = None,
+  store_populate_for_sample_fn: Any | None = None,
 ) -> Any:
   """
   Internal helper to build the ingest stall log suffix.
@@ -1960,7 +1943,7 @@ def _build_ingest_stall_log_suffix(
     consecutive (Any): Consecutive passed to this helper.
     poll_timeout_s (Any): Poll timeout s passed to this helper.
     distinct_days_from_sample_fn (Any | None): One of ``Any``, ``None``.
-    redis_populate_for_sample_fn (Any | None): One of ``Any``, ``None``.
+    store_populate_for_sample_fn (Any | None): One of ``Any``, ``None``.
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -2007,10 +1990,10 @@ def _build_ingest_stall_log_suffix(
     distinct_days_fn = _distinct_calendar_days_from_paths
   else:
     distinct_days_fn = distinct_days_from_sample_fn
-  if redis_populate_for_sample_fn is None:
-    redis_suffix_fn = _format_redis_populate_for_in_flight_days
+  if store_populate_for_sample_fn is None:
+    store_suffix_fn = _format_store_populate_for_in_flight_days
   else:
-    redis_suffix_fn = redis_populate_for_sample_fn
+    store_suffix_fn = store_populate_for_sample_fn
   return (
       " sync_ingest_per_file_timeout_s=%s sync_ingest_per_file_timeout_max_s=%s"
       " batch_max_ingest_timeout_s=%.1f dynamic_stall_abort_after=%d"
@@ -2043,7 +2026,7 @@ def _build_ingest_stall_log_suffix(
           in_flight_n,
           worker_stages,
           registry_gap,
-          redis_suffix_fn(sample),
+          store_suffix_fn(sample),
       )
   )
 
@@ -2059,7 +2042,7 @@ def _make_ingest_stall_warning_fn(
   progress_state: Any | None = None,
   day_hint_from_sample_fn: Any | None = None,
   distinct_days_from_sample_fn: Any | None = None,
-  redis_populate_for_sample_fn: Any | None = None,
+  store_populate_for_sample_fn: Any | None = None,
 ) -> Any:
   """
   Internal helper to make the ingest stall warning function.
@@ -2074,7 +2057,7 @@ def _make_ingest_stall_warning_fn(
     progress_state (Any | None): One of ``Any``, ``None``.
     day_hint_from_sample_fn (Any | None): One of ``Any``, ``None``.
     distinct_days_from_sample_fn (Any | None): One of ``Any``, ``None``.
-    redis_populate_for_sample_fn (Any | None): One of ``Any``, ``None``.
+    store_populate_for_sample_fn (Any | None): One of ``Any``, ``None``.
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -2120,11 +2103,11 @@ def _make_ingest_stall_warning_fn(
         consecutive=consecutive,
         poll_timeout_s=poll_timeout_s,
         distinct_days_from_sample_fn=distinct_days_from_sample_fn,
-        redis_populate_for_sample_fn=redis_populate_for_sample_fn,
+        store_populate_for_sample_fn=store_populate_for_sample_fn,
     )
-    redis_hint = ""
-    if day_hint and "redis_by_day=" not in extra:
-      redis_hint = " " + describe_archive_members_populate_redis_for_day(
+    store_hint = ""
+    if day_hint and "store_by_day=" not in extra:
+      store_hint = " " + describe_archive_members_populate_for_day(
           day_hint,
           tgz_archive_dir,
       )
@@ -2146,7 +2129,7 @@ def _make_ingest_stall_warning_fn(
             len(sample),
             day_hint or "-",
             sample,
-            redis_hint,
+            store_hint,
             extra,
         ),
         flush=True,
@@ -2197,7 +2180,7 @@ def _make_ingest_stall_poll_fn(
   supervisor_reap_fn: Any | None = None,
 ) -> Any:
   """
-  Defer pool imap stall abort while Redis populate shows progress.
+  Defer pool imap stall abort while members-store populate shows progress.
   
   Args:
     tracker (Any): Tracker passed to this helper.
@@ -2314,17 +2297,17 @@ def _make_ingest_stall_poll_fn(
           flush=True,
       )
       return True
-    redis_snapshot = describe_archive_members_populate_redis_for_day(
+    store_snapshot = describe_archive_members_populate_for_day(
         day_hint,
         tgz_archive_dir,
     )
     log_print(
-        "WARN: pool imap stall deferred: Redis populate active for day=%s (%s) "
+        "WARN: pool imap stall deferred: members-store populate active for day=%s (%s) "
         "consecutive_timeouts=%d in_flight_n=%d estimated_stall_s=%.1f "
         "worker_stages=%s"
         % (
             day_hint,
-            redis_snapshot,
+            store_snapshot,
             int(consecutive),
             len(sample),
             consecutive * float(cfg.get_sync_pool_poll_timeout_s()),
@@ -2733,9 +2716,9 @@ def _maybe_reap_supervisor_pool_children_throttled(
   return True
 
 
-def _exit_on_archive_members_redis_unavailable(exc: Any) -> None:
+def _exit_on_archive_members_store_unavailable(exc: Any) -> None:
   """
-  Fatal exit when Redis L2 contract fails during ingest or startup.
+  Fatal exit when the members-store contract fails during ingest or startup.
   
   Populate-pool-down / refuse-stream is recoverable (enqueue + wait / ensure
   pool) and must not map to immediate ``sys.exit(1)``.
@@ -2747,9 +2730,9 @@ def _exit_on_archive_members_redis_unavailable(exc: Any) -> None:
     None
   
   Examples:
-    >>> _exit_on_archive_members_redis_unavailable(None)  # doctest: +SKIP
+    >>> _exit_on_archive_members_store_unavailable(None)  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       is_populate_pool_unavailable_error,
   )
 
@@ -2762,39 +2745,19 @@ def _exit_on_archive_members_redis_unavailable(exc: Any) -> None:
         flush=True,
     )
     return
-  if isinstance(exc, ArchiveMembersRedisConnectionError):
+  if isinstance(exc, ArchiveMembersStoreConnectionError):
     log_print(
-        "ERROR: sync_archive_members_redis_enabled=yes requires a reachable "
-        "Redis at [CACHE] redis_location.",
+        "ERROR: archive members store is not installed.",
         flush=True,
     )
   elif isinstance(exc, ArchiveMembersPopulateStalledError):
-    redis_reachable = False
-    try:
-      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-          get_archive_members_redis_client,
-      )
-      client = get_archive_members_redis_client(required=False)
-      if client is not None:
-        client.ping()
-        redis_reachable = True
-    except Exception:
-      redis_reachable = False
-    if redis_reachable:
-      log_print(
-          "ERROR: archive members populate stalled or timed out "
-          "(Redis at [CACHE] redis_location=%s is reachable)."
-          % cfg.get_redis_location(),
-          flush=True,
-      )
-    else:
-      log_print(
-          "ERROR: archive members populate stalled or timed out.",
-          flush=True,
-      )
+    log_print(
+        "ERROR: archive members populate stalled or timed out.",
+        flush=True,
+    )
   else:
     log_print(
-        "ERROR: archive members Redis L2 contract failed.",
+        "ERROR: archive members populate contract failed.",
         flush=True,
     )
   sys.exit(1)
@@ -3014,7 +2977,7 @@ class ArchiveAppendOutcome:
   
   Attributes:
     ok: Attribute.
-    redis_merge_ok: Attribute.
+    store_merge_ok: Attribute.
     skip_finalize_invalidate: Attribute.
     skipped_paths: Attribute.
     soft_requeue: Attribute.
@@ -3022,7 +2985,7 @@ class ArchiveAppendOutcome:
   """
 
   ok: bool = True
-  redis_merge_ok: bool = False
+  store_merge_ok: bool = False
   skip_finalize_invalidate: bool = True
   # Oversized paths skipped after convert_fail_skip (still finalized as archived).
   skipped_paths: tuple = ()
@@ -3139,8 +3102,8 @@ def _archive_finalize_skip_invalidate_log_reason(result: Any) -> Any:
   Examples:
     >>> _archive_finalize_skip_invalidate_log_reason(None)  # doctest: +SKIP
   """
-  if isinstance(result, ArchiveAppendOutcome) and result.redis_merge_ok:
-    return "redis_merge_warm"
+  if isinstance(result, ArchiveAppendOutcome) and result.store_merge_ok:
+    return "store_merge_warm"
   return "no_tar_mutation_or_worker_invalidated"
 
 
@@ -3776,7 +3739,7 @@ def _held_ingest_write_lock(
   Acquire Manager write shard; always release (including deadline raises).
 
   Acquire wait suspends per-file SIGALRM and extends the monotonic deadline
-  (same class as Redis populate wait). Hold time during ORM/bulk_create is
+  (same class as members-store populate wait). Hold time during ORM/bulk_create is
   charged to the budget and summed into the ``postgres_s`` timing token.
 
   Args:
@@ -6537,7 +6500,7 @@ def _lookup_existing_members_for_archive_append(
   Return (members, members_source) for archive append.
 
   When a sibling mutable ``.tar`` exists, membership comes from an open-tar
-  scan (authoritative for append). Redis/sealed fast paths apply only when the
+  scan (authoritative for append). store/sealed fast paths apply only when the
   mutable ``.tar`` is absent (sealed-only days).
 
   Args:
@@ -6546,7 +6509,7 @@ def _lookup_existing_members_for_archive_append(
 
   Returns:
     Any: ``(member_map, members_source)`` where ``members_source`` is one of
-    ``redis``, ``sealed_stream``, or ``tar_scan``.
+    ``store``, ``sealed_stream``, or ``tar_scan``.
 
   Examples:
     >>> _lookup_existing_members_for_archive_append(None, None)
@@ -6561,30 +6524,22 @@ def _lookup_existing_members_for_archive_append(
         get_mutable_tar_authority_member_map(archive_tar_fname),
         "tar_scan",
     )
-  if cfg.get_sync_archive_members_redis_enabled():
-    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      _daily_archive_members_cache_key,
-    )
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      archive_members_redis_enabled,
-      build_archive_members_redis_keys,
-      redis_members_cache_is_fully_warm,
-    )
-    if archive_members_redis_enabled():
-      keys = build_archive_members_redis_keys(
-          _daily_archive_members_cache_key(canonical),
-      )
-      was_warm = redis_members_cache_is_fully_warm(keys)
-      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-          archive_pre_append_member_lookup_context,
-      )
-      with archive_pre_append_member_lookup_context():
-        members = get_existing_archive_members_for_daily_archive(canonical)
-      members_source = "redis" if was_warm else "sealed_stream"
-      return members, members_source
-  # Redis off + sealed-only day: local sealed scan (no mutable tar).
-  members = get_existing_archive_members_for_daily_archive(canonical)
-  return members, ("sealed_stream" if members else "tar_scan")
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    _daily_archive_members_cache_key,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    archive_pre_append_member_lookup_context,
+    build_archive_members_keys,
+    members_cache_is_fully_warm,
+  )
+  keys = build_archive_members_keys(
+      _daily_archive_members_cache_key(canonical),
+  )
+  was_warm = members_cache_is_fully_warm(keys)
+  with archive_pre_append_member_lookup_context():
+    members = get_existing_archive_members_for_daily_archive(canonical)
+  members_source = "store" if was_warm else "sealed_stream"
+  return members, members_source
 
 
 def _log_archive_job_begin(archive_tar_fname: Any, members_source: Any) -> int:
@@ -6670,7 +6625,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
           skipped_paths=tuple(gate_skipped or ()),
           skip_finalize_invalidate=True,
       )
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
         daily_tar_restore_in_progress_for_day,
         set_archive_append_inflight,
     )
@@ -6703,40 +6658,38 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         )
     )
 
-    # Membership before restore: Redis/sealed can answer to_add without
+    # Membership before restore: store/sealed can answer to_add without
     # materializing a multi-hundred-GB mutable .tar (noop sealed days).
-    redis_warm_members = None
-    if os.path.exists(archive_tar_fname) and cfg.get_sync_archive_members_redis_enabled():
+    store_warm_members = None
+    if os.path.exists(archive_tar_fname):
       from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
           _daily_archive_members_cache_key,
-          maybe_invalidate_open_tar_redis_divergence_for_append_batch,
+          maybe_invalidate_open_tar_store_divergence_for_append_batch,
       )
-      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-          archive_members_redis_enabled,
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
           archive_pre_append_member_lookup_context,
-          build_archive_members_redis_keys,
-          redis_members_cache_is_fully_warm,
+          build_archive_members_keys,
+          members_cache_is_fully_warm,
       )
-      if archive_members_redis_enabled():
-        canonical = normalize_daily_compressed_path(archive_fname)
-        keys = build_archive_members_redis_keys(
-            _daily_archive_members_cache_key(canonical),
-        )
-        if redis_members_cache_is_fully_warm(keys):
-          with archive_pre_append_member_lookup_context():
-            redis_warm_members = get_existing_archive_members_for_daily_archive(
-                canonical,
-            )
+      canonical = normalize_daily_compressed_path(archive_fname)
+      keys = build_archive_members_keys(
+          _daily_archive_members_cache_key(canonical),
+      )
+      if members_cache_is_fully_warm(keys):
+        with archive_pre_append_member_lookup_context():
+          store_warm_members = get_existing_archive_members_for_daily_archive(
+              canonical,
+          )
     if sealed_exists or os.path.exists(archive_tar_fname):
       existing_members, members_source = _lookup_existing_members_for_archive_append(
           archive_fname, archive_tar_fname,
       )
       _ensure_job_begin_logged(members_source)
-      if redis_warm_members is not None:
-        maybe_invalidate_open_tar_redis_divergence_for_append_batch(
+      if store_warm_members is not None:
+        maybe_invalidate_open_tar_store_divergence_for_append_batch(
             archive_fname,
             stats_files,
-            redis_warm_members,
+            store_warm_members,
             existing_members,
         )
 
@@ -6939,8 +6892,8 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
           _daily_archive_members_cache_key,
       )
-      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-          merge_appended_members_into_redis,
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+          merge_appended_members,
       )
 
       canonical = normalize_daily_compressed_path(archive_fname)
@@ -6951,14 +6904,14 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       merged = False
       worker_invalidated = False
       try:
-        merged = merge_appended_members_into_redis(
+        merged = merge_appended_members(
             cache_key,
             member_map,
             saw_duplicates=saw_dupes,
         )
       except Exception as exc:
         log_print(
-            "WARNING: tar_append redis merge failed for %s: %s; invalidating"
+            "WARNING: tar_append store merge failed for %s: %s; invalidating"
             % (canonical, exc),
             flush=True,
         )
@@ -6967,7 +6920,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         day_date = calendar_date_from_daily_tar_path(archive_tar_fname)
         if DEBUG:
           log_print(
-              "DEBUG: tar_append redis merge day=%s members=%d"
+              "DEBUG: tar_append store merge day=%s members=%d"
               % (
                   day_date.isoformat() if day_date is not None else canonical,
                   len(member_map),
@@ -6993,7 +6946,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
             flush=True,
         )
       return ArchiveAppendOutcome(
-          redis_merge_ok=merged,
+          store_merge_ok=merged,
           skip_finalize_invalidate=merged or worker_invalidated,
           skipped_paths=skipped_oversized,
       )
@@ -7010,7 +6963,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
     )
   finally:
     if append_inflight_set:
-      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
           clear_archive_append_inflight,
       )
       clear_archive_append_inflight(day_token)

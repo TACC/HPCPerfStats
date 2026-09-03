@@ -495,7 +495,7 @@ def file_read_lock_wait(
             "Timed out waiting for read lock: %s" % lock_path
         ) from exc
       try:
-        from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+        from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
             _raise_if_ingest_deadline_exceeded,
         )
 

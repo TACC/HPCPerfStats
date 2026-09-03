@@ -3,7 +3,7 @@ Brownfield reconstruct helpers for sync_timedb greenfield job queues.
 
 Library-only (slice 2): classify closed raw paths and day-close targets from
 disk + Timescale + durable marks, enqueue only when complete predicates are
-false, and encode the laws that empty Redis job queues are not \"caught up\"
+false, and encode the laws that empty job-store queues are not \"caught up\"
 and ``.sync_timedb_state.json`` is not reconstruct source of truth. Not wired
 into ``sync_timedb.py`` until the orchestrator cutover slice.
 
@@ -34,7 +34,7 @@ DEFAULT_INGEST_HOT_DAYS = 8
 
 def empty_job_queues_mean_caught_up() -> bool:
   """
-  Return whether empty Redis job structures imply the archive is caught up.
+  Return whether empty job-store structures imply the archive is caught up.
 
   Law (OQ-1 / residual gaps): empty ``job:v1`` queues are never \"caught up\".
   Reconstruct always classifies from disk + Timescale + marks.
@@ -262,8 +262,8 @@ def discover_raw_needs_tar_append(
   """
   Discover/reconstruct skip-complete probe that never waits on sealed populate.
 
-  Open mutable ``.tar`` and warm Redis ``HGET`` may still skip enqueue. Cold
-  Redis (or Redis disabled with sealed-only day) returns ``True`` so discover
+  Open mutable ``.tar`` and warm members store ``HGET`` may still skip enqueue. Cold
+  a cold members store (sealed-only day) returns ``True`` so discover
   enqueues append (at-least-once). Workers keep
   :func:`raw_stats_path_needs_tar_append` / ``populate_and_wait``.
 
@@ -271,7 +271,7 @@ def discover_raw_needs_tar_append(
     stats_path (str): Closed raw stats path.
     tgz_archive_dir (str): Daily archive directory.
     first_ts (Any | None): Optional first timestamp hint for day derive.
-    enqueue_populate_on_cold (bool): When True and Redis L2 is cold with a
+    enqueue_populate_on_cold (bool): When True and the members store is cold with a
       populate source, fire-and-forget enqueue populate-pool work.
 
   Returns:
@@ -324,24 +324,19 @@ def discover_raw_needs_tar_append(
   if members is not None:
     return members.get(member_name) != expected_size
   try:
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        archive_members_redis_enabled,
-        build_archive_members_redis_keys,
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+        build_archive_members_keys,
         enqueue_archive_members_populate,
-        get_archive_members_redis_client,
-        redis_member_match_when_warm,
+        member_match_when_warm,
     )
   except Exception:
-    return True
-  if not archive_members_redis_enabled():
     return True
   warm: bool | None = None
   try:
     cache_key = _daily_archive_members_cache_key(canonical)
-    keys = build_archive_members_redis_keys(cache_key)
-    client = get_archive_members_redis_client(required=True)
-    warm = redis_member_match_when_warm(
-        keys, member_name, expected_size, client=client,
+    keys = build_archive_members_keys(cache_key)
+    warm = member_match_when_warm(
+        keys, member_name, expected_size,
     )
     if warm is True:
       return False
@@ -705,11 +700,11 @@ def enqueue_reconstruct_jobs_for_closed_path(
   Enqueue ingest/append jobs only for incomplete predicates on ``plan``.
 
   Skips ``ZADD`` / ``RPUSH`` when the corresponding complete predicate is
-  already true (``needs_*`` false). Empty Redis before this call still does
+  already true (``needs_*`` false). Empty job store before this call still does
   not mean caught up.
 
   Args:
-    client (Any): Redis client supporting ``zadd`` / ``rpush``.
+    client (Any): job store supporting ``zadd`` / ``rpush``.
     plan (ClosedPathReconstructPlan): Classify result for one closed path.
     today (date): Local today for hot/catchup score encode.
     hot_days (int): Hot-band window length.
@@ -800,7 +795,7 @@ def enqueue_day_close_if_needed(
   enqueued.
 
   Args:
-    client (Any): Redis client with ``rpush``.
+    client (Any): job store with ``rpush``.
     tar_path (str): Daily tar identity / path.
     calendar_day (date | None): Day for min-age when not injected.
     phase_name (str | None): Ignored removal/manifest phase.
@@ -861,14 +856,14 @@ def enqueue_cheap_day_close_if_needed(
 
   Append/reconstruct coordinators must not call
   ``day_close_filesystem_complete`` (archive-wide find). Inject
-  ``filesystem_complete=False`` so Redis LIST dedupe can keep at most one
+  ``filesystem_complete=False`` so job-store LIST dedupe can keep at most one
   queued/inflight identity per tar; day_close **workers** own the full FS
   probe. Skip enqueue when the calendar day (basename ``YYYY-MM-DD`` or
   ``calendar_day``) is younger than ``sync_day_close_min_age_hours`` so
   today's tar is not RPUSH'd onto the LIST head.
 
   Args:
-    client (Any): Redis client with ``rpush``.
+    client (Any): job store with ``rpush``.
     tar_path (str): Daily tar identity / path.
     calendar_day (date | None): Day for min-age when not parsed from
       ``tar_path`` basename.

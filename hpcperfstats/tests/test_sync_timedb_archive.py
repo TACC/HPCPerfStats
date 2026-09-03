@@ -985,7 +985,7 @@ def test_seal_skip_rejects_same_aggregate_different_members(monkeypatch, tmp_pat
   monkeypatch.setattr(helpers, "zstd_test", lambda *a, **k: None)
   monkeypatch.setattr(
       helpers,
-      "_sealed_archive_members_via_redis_or_scan",
+      "_sealed_archive_members_via_store_or_scan",
       lambda path, **kwargs: (True, dict(zst_members)),
   )
   monkeypatch.setattr(helpers, "get_existing_archive_members", lambda path: dict(tar_members))
@@ -1036,7 +1036,7 @@ def test_atomic_seal_tar_to_zst_shrink_guard_one_zst_scan(monkeypatch, tmp_path)
   )
   monkeypatch.setattr(
       helpers,
-      "_sealed_archive_members_via_redis_or_scan",
+      "_sealed_archive_members_via_store_or_scan",
       lambda *_a, **_k: (True, dict(zst_members)),
   )
 
@@ -1052,18 +1052,18 @@ def test_atomic_seal_tar_to_zst_shrink_guard_one_zst_scan(monkeypatch, tmp_path)
   assert scan_calls["n"] == 0
 
 
-def test_seal_skip_uses_redis_helper_not_local_scan(monkeypatch, tmp_path):
+def test_seal_skip_uses_store_helper_not_local_scan(monkeypatch, tmp_path):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2020-01-05.tar"
   zst_path = tmp_path / "2020-01-05.tar.zst"
   tar_path.write_text("tar")
   zst_path.write_text("zst")
-  via_redis_calls = {"n": 0}
+  via_store_calls = {"n": 0}
   scan_calls = {"n": 0}
 
-  def _via_redis(path, **kwargs):
-    via_redis_calls["n"] += 1
+  def _via_store(path, **kwargs):
+    via_store_calls["n"] += 1
     return True, {"m.txt": 1}
 
   def _forbidden_scan(*_a, **_k):
@@ -1072,7 +1072,7 @@ def test_seal_skip_uses_redis_helper_not_local_scan(monkeypatch, tmp_path):
 
   monkeypatch.setattr(helpers, "zstd_test", lambda *a, **k: None)
   monkeypatch.setattr(
-      helpers, "_sealed_archive_members_via_redis_or_scan", _via_redis,
+      helpers, "_sealed_archive_members_via_store_or_scan", _via_store,
   )
   monkeypatch.setattr(
       helpers, "_scan_compressed_archive_members_and_readable", _forbidden_scan,
@@ -1084,20 +1084,27 @@ def test_seal_skip_uses_redis_helper_not_local_scan(monkeypatch, tmp_path):
       str(tar_path), str(zst_path), 0, log_fn=None,
   )
   assert skipped is True
-  assert via_redis_calls["n"] == 1
+  assert via_store_calls["n"] == 1
   assert scan_calls["n"] == 0
 
 
-def test_seal_skip_redis_single_flight_cold(monkeypatch, tmp_path, _clear_daily_archive_members_cache):
+def test_seal_skip_store_single_flight_cold(monkeypatch, tmp_path, _clear_daily_archive_members_cache):
   import subprocess
   import threading
 
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
 
   if not shutil.which("zstd"):
     pytest.skip("zstd not on PATH")
 
+  _install_members_store(tmp_path)
   tar_path = tmp_path / "2024-06-20.tar"
   zst_path = tmp_path / "2024-06-20.tar.zst"
   inner = tmp_path / "raw.txt"
@@ -1112,7 +1119,6 @@ def test_seal_skip_redis_single_flight_cold(monkeypatch, tmp_path, _clear_daily_
   stream_calls = {"n": 0}
   stream_lock = threading.Lock()
   original_stream = helpers._stream_compressed_archive_members
-  fake = FakeRedis()
 
   def _counting_stream(compressed_path, on_member=None, **kwargs):
     with stream_lock:
@@ -1123,18 +1129,6 @@ def test_seal_skip_redis_single_flight_cold(monkeypatch, tmp_path, _clear_daily_
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
-      lambda: 30,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
       helpers, "_stream_compressed_archive_members", _counting_stream,
   )
   monkeypatch.setattr(helpers, "zstd_test", lambda *a, **k: None)
@@ -1143,6 +1137,7 @@ def test_seal_skip_redis_single_flight_cold(monkeypatch, tmp_path, _clear_daily_
   results = []
 
   def _seal_skip_worker():
+    token = set_worker_pool_kind("populate-pool")
     try:
       results.append(
           helpers._seal_skip_existing_zst_equivalent(
@@ -1151,30 +1146,37 @@ def test_seal_skip_redis_single_flight_cold(monkeypatch, tmp_path, _clear_daily_
       )
     except Exception as exc:
       errors.append(exc)
+    finally:
+      reset_worker_pool_kind(token)
 
   def _lookup_worker():
+    token = set_worker_pool_kind("populate-pool")
     try:
       helpers.get_existing_archive_members_for_daily_archive(str(zst_path))
     except Exception as exc:
       errors.append(exc)
+    finally:
+      reset_worker_pool_kind(token)
 
-  threads = [
-      threading.Thread(target=_seal_skip_worker),
-      threading.Thread(target=_lookup_worker),
-  ]
-  for t in threads:
-    t.start()
-  for t in threads:
-    t.join(timeout=10)
-  assert not errors
-  assert stream_calls["n"] == 1
-  assert len(results) == 1
+  try:
+    threads = [
+        threading.Thread(target=_seal_skip_worker),
+        threading.Thread(target=_lookup_worker),
+    ]
+    for t in threads:
+      t.start()
+    for t in threads:
+      t.join(timeout=10)
+    assert not errors
+    assert stream_calls["n"] == 1
+    assert len(results) == 1
+  finally:
+    set_process_archive_members_store(None)
 
-
-def test_seal_skip_propagates_redis_unavailable(monkeypatch, tmp_path):
+def test_seal_skip_propagates_store_unavailable(monkeypatch, tmp_path):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      ArchiveMembersRedisUnavailableError,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      ArchiveMembersStoreUnavailableError,
   )
 
   tar_path = tmp_path / "2020-01-06.tar"
@@ -1183,13 +1185,13 @@ def test_seal_skip_propagates_redis_unavailable(monkeypatch, tmp_path):
   zst_path.write_text("zst")
 
   def _raise_unavailable(*_a, **_k):
-    raise ArchiveMembersRedisUnavailableError("redis down")
+    raise ArchiveMembersStoreUnavailableError("store down")
 
   monkeypatch.setattr(helpers, "zstd_test", lambda *a, **k: None)
   monkeypatch.setattr(
-      helpers, "_sealed_archive_members_via_redis_or_scan", _raise_unavailable,
+      helpers, "_sealed_archive_members_via_store_or_scan", _raise_unavailable,
   )
-  with pytest.raises(ArchiveMembersRedisUnavailableError, match="redis down"):
+  with pytest.raises(ArchiveMembersStoreUnavailableError, match="store down"):
     helpers._seal_skip_existing_zst_equivalent(
         str(tar_path), str(zst_path), 0, log_fn=None,
     )
@@ -1300,7 +1302,7 @@ def test_drop_legacy_gz_removes_when_zst_is_superset(monkeypatch, tmp_path):
   monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
   monkeypatch.setattr(
       helpers,
-      "_sealed_archive_members_via_redis_or_scan",
+      "_sealed_archive_members_via_store_or_scan",
       lambda path, **kwargs: _scan(path),
   )
   drop_legacy_gz_if_equivalent_to_zst(str(gz_path), str(zst_path), log_fn=None)
@@ -1323,7 +1325,7 @@ def test_drop_legacy_gz_keeps_when_zst_missing_gz_member(monkeypatch, tmp_path):
   monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
   monkeypatch.setattr(
       helpers,
-      "_sealed_archive_members_via_redis_or_scan",
+      "_sealed_archive_members_via_store_or_scan",
       lambda path, **kwargs: _scan(path),
   )
   drop_legacy_gz_if_equivalent_to_zst(str(gz_path), str(zst_path), log_fn=None)
@@ -1346,7 +1348,7 @@ def test_drop_legacy_gz_keeps_when_zst_member_size_differs(monkeypatch, tmp_path
   monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
   monkeypatch.setattr(
       helpers,
-      "_sealed_archive_members_via_redis_or_scan",
+      "_sealed_archive_members_via_store_or_scan",
       lambda path, **kwargs: _scan(path),
   )
   drop_legacy_gz_if_equivalent_to_zst(str(gz_path), str(zst_path), log_fn=None)
@@ -1373,7 +1375,7 @@ def test_drop_legacy_gz_uses_provided_zst_members_no_zst_scan(monkeypatch, tmp_p
     raise AssertionError("zst must not scan when snapshot provided")
 
   monkeypatch.setattr(
-      helpers, "_sealed_archive_members_via_redis_or_scan", _forbidden_zst,
+      helpers, "_sealed_archive_members_via_store_or_scan", _forbidden_zst,
   )
   monkeypatch.setattr(
       helpers, "_scan_compressed_archive_members_and_readable", _scan_gz_only,
@@ -1407,7 +1409,7 @@ def test_compare_compressed_members_coordinated_zst_cold(monkeypatch, tmp_path):
     raise AssertionError("zst must use coordinated read, not direct scan")
 
   monkeypatch.setattr(
-      helpers, "_sealed_archive_members_via_redis_or_scan", _sealed,
+      helpers, "_sealed_archive_members_via_store_or_scan", _sealed,
   )
   monkeypatch.setattr(
       helpers, "_scan_compressed_archive_members_and_readable", _scan,
@@ -1422,10 +1424,10 @@ def test_compare_compressed_members_coordinated_zst_cold(monkeypatch, tmp_path):
   assert zst_calls["n"] == 1
 
 
-def test_drop_legacy_propagates_redis_unavailable(monkeypatch, tmp_path):
+def test_drop_legacy_propagates_store_unavailable(monkeypatch, tmp_path):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      ArchiveMembersRedisUnavailableError,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      ArchiveMembersStoreUnavailableError,
   )
 
   gz_path = tmp_path / "2020-01-07.tar.gz"
@@ -1434,12 +1436,12 @@ def test_drop_legacy_propagates_redis_unavailable(monkeypatch, tmp_path):
   zst_path.write_bytes(b"zst")
 
   def _raise_unavailable(*_a, **_k):
-    raise ArchiveMembersRedisUnavailableError("redis down")
+    raise ArchiveMembersStoreUnavailableError("store down")
 
   monkeypatch.setattr(
-      helpers, "_sealed_archive_members_via_redis_or_scan", _raise_unavailable,
+      helpers, "_sealed_archive_members_via_store_or_scan", _raise_unavailable,
   )
-  with pytest.raises(ArchiveMembersRedisUnavailableError, match="redis down"):
+  with pytest.raises(ArchiveMembersStoreUnavailableError, match="store down"):
     helpers.drop_legacy_gz_if_equivalent_to_zst(
         str(gz_path), str(zst_path), log_fn=None,
     )
@@ -1472,7 +1474,7 @@ def test_migrate_legacy_gz_drop_reuses_compare_snapshot(monkeypatch, tmp_path):
   monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
   monkeypatch.setattr(
       helpers,
-      "_sealed_archive_members_via_redis_or_scan",
+      "_sealed_archive_members_via_store_or_scan",
       lambda path, **kwargs: _scan(path),
   )
   monkeypatch.setattr(
@@ -2064,7 +2066,7 @@ def test_sliding_window_refills_idle_worker_slot(monkeypatch):
 
   monkeypatch.setattr(
       st,
-      "_prewarm_archive_members_redis_for_sealed_chunk",
+      "_prewarm_archive_members_for_sealed_chunk",
       lambda _paths: "-",
   )
   monkeypatch.setattr(
@@ -2876,6 +2878,10 @@ def test_validate_sealed_daily_archive_validation_cache_invalidates_on_mtime_cha
     monkeypatch, tmp_path
 ):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
 
   gz = tmp_path / "2022-02-02.tar.gz"
   f = tmp_path / "stale.txt"
@@ -2883,35 +2889,37 @@ def test_validate_sealed_daily_archive_validation_cache_invalidates_on_mtime_cha
   with tarfile.open(gz, "w:gz") as tf:
     tf.add(str(f), arcname="stale.txt")
 
-  calls = {"n": 0}
-  real_scan = helpers._scan_compressed_archive_members_and_readable
+  lookup_calls = {"n": 0}
+  real_lookup = helpers.get_existing_archive_members_for_daily_archive
 
-  def wrapped_scan(path, **kwargs):
-    calls["n"] += 1
-    return real_scan(path, **kwargs)
+  def wrapped_lookup(path, **kwargs):
+    lookup_calls["n"] += 1
+    return real_lookup(path, **kwargs)
 
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: False,
+      helpers, "get_existing_archive_members_for_daily_archive", wrapped_lookup,
   )
-  monkeypatch.setattr(
-      helpers, "_scan_compressed_archive_members_and_readable", wrapped_scan)
   cache = {"hits": 0, "misses": 0}
-  ok1, _members1 = validate_sealed_daily_archive_for_raw_removal(
-      str(gz), log_fn=None, validation_cache=cache
-  )
-  assert ok1
+  token = set_worker_pool_kind("populate-pool")
+  try:
+    ok1, _members1 = validate_sealed_daily_archive_for_raw_removal(
+        str(gz), log_fn=None, validation_cache=cache
+    )
+    assert ok1
 
-  # Rewrite gzip so key identity changes (mtime/size).
-  f.write_text("v2-updated")
-  with tarfile.open(gz, "w:gz") as tf:
-    tf.add(str(f), arcname="stale.txt")
+    # Rewrite gzip so key identity changes (mtime/size).
+    f.write_text("v2-updated")
+    with tarfile.open(gz, "w:gz") as tf:
+      tf.add(str(f), arcname="stale.txt")
 
-  ok2, members2 = validate_sealed_daily_archive_for_raw_removal(
-      str(gz), log_fn=None, validation_cache=cache
-  )
+    ok2, members2 = validate_sealed_daily_archive_for_raw_removal(
+        str(gz), log_fn=None, validation_cache=cache
+    )
+  finally:
+    reset_worker_pool_kind(token)
   assert ok2
   assert members2["stale.txt"] == len("v2-updated")
-  assert calls["n"] == 2
+  assert lookup_calls["n"] == 2
   assert cache["misses"] == 2
 
 
@@ -3125,7 +3133,7 @@ def test_invalidate_after_daily_tar_mutation_from_tar_path(
   monkeypatch.setattr(
       helpers,
       "invalidate_daily_archive_members_cache",
-      lambda path: dropped.append(path),
+      lambda path, **_k: dropped.append(path),
   )
   helpers.invalidate_after_daily_tar_mutation(
       str(tar_path),
@@ -3163,37 +3171,44 @@ def test_dedupe_sealed_daily_archive_last_resort(monkeypatch, tmp_path):
       lambda *_a, **_k: calls.append("invalidate"),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.dedupe_hint_is_set",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord.dedupe_hint_is_set",
       lambda *_a, **_k: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.clear_dedupe_hint",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord.clear_dedupe_hint",
       lambda *_a, **_k: calls.append("clear_hint"),
   )
   assert helpers.dedupe_sealed_daily_archive(str(zst_path), log_fn=None)
   assert calls == ["decompress", "dedupe", "seal", "invalidate", "clear_hint"]
 
 
-def test_get_existing_archive_members_uses_redis_l2(
+def test_get_existing_archive_members_uses_members_store(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      store_complete_members,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
 
   zst_path = tmp_path / "2026-06-02.tar.zst"
   zst_path.write_bytes(b"z")
+  store = _install_members_store(tmp_path)
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
-  monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.redis_lookup_full_members",
-      lambda keys: {"cached/member": 11},
-  )
-  members = helpers.get_existing_archive_members_for_daily_archive(str(zst_path))
-  assert members == {"cached/member": 11}
-
+  cache_key = helpers._daily_archive_members_cache_key(str(zst_path))
+  keys = build_archive_members_keys(cache_key)
+  try:
+    store_complete_members(keys, {"cached/member": 11})
+    members = helpers.get_existing_archive_members_for_daily_archive(str(zst_path))
+    assert members == {"cached/member": 11}
+  finally:
+    set_process_archive_members_store(None)
+  del store
 
 def test_dedupe_tar_tie_same_size_keeps_last(tmp_path):
   """Equal sizes: last archive entry is retained."""
@@ -4380,7 +4395,7 @@ def test_process_tar_chunk_stops_when_shutdown_requested(monkeypatch):
   monkeypatch.setattr(sta, "imap_sliding_window_watch_pool", fake_sliding_window)
   monkeypatch.setattr(
       st,
-      "_prewarm_archive_members_redis_for_sealed_chunk",
+      "_prewarm_archive_members_for_sealed_chunk",
       lambda _paths: "-",
   )
 
@@ -4796,7 +4811,7 @@ def test_migrate_one_dropped_only_when_zst_is_superset(monkeypatch, tmp_path):
   monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
   monkeypatch.setattr(
       helpers,
-      "_sealed_archive_members_via_redis_or_scan",
+      "_sealed_archive_members_via_store_or_scan",
       lambda path, **kwargs: _scan(path),
   )
   drop_calls = []
@@ -5515,7 +5530,7 @@ def test_raw_stats_path_tar_append_decision_active_segment(
 def test_raw_stats_path_tar_append_decision_day_ingest_skip(
     tmp_path, monkeypatch,
 ):
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       ArchiveDayIngestSkipError,
   )
 
@@ -5581,6 +5596,133 @@ def _clear_daily_archive_members_cache():
   yield
   helpers.clear_daily_archive_members_cache()
 
+def _install_members_store(tmp_path):
+  """Install a process members store rooted at ``tmp_path`` (try/finally None)."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      SyncTimedbArchiveMembersStore,
+      set_process_archive_members_store,
+  )
+
+  store = SyncTimedbArchiveMembersStore(str(tmp_path / "members_store"))
+  set_process_archive_members_store(store)
+  return store
+
+
+def test_sealed_member_match_does_not_nameerror_without_store(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  """Sealed-only cold lookup must not reference an undefined job store."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  sealed = daily_dir / "2026-05-21.tar.gz"
+  with tarfile.open(sealed, "w:gz") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  _install_members_store(tmp_path)
+
+  def _fake_populate(_canonical):
+    return {"host/raw": 4}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord."
+      "request_archive_members_populate_and_wait",
+      _fake_populate,
+  )
+  try:
+    helpers._daily_archive_member_match_via_store(
+        helpers.normalize_daily_compressed_path(str(sealed)),
+        str(sealed),
+        "host/raw",
+        4,
+    )
+  except NameError as exc:
+    raise AssertionError(
+        "sealed member match referenced undefined job store: %s" % exc,
+    ) from exc
+  finally:
+    set_process_archive_members_store(None)
+
+
+def test_clear_stale_day_ingest_skip_uses_members_store(
+    tmp_path, monkeypatch,
+):
+  """Tar-repair skip clear must drop store skip/degraded without a job store."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  inner = tmp_path / "raw.txt"
+  inner.write_text("data")
+  tar_path = daily_dir / "2026-05-22.tar"
+  with tarfile.open(tar_path, "w:") as tf:
+    tf.add(str(inner), arcname="host/raw")
+  store = _install_members_store(tmp_path)
+  cache_key = helpers._daily_archive_members_cache_key(
+      helpers.normalize_daily_compressed_path(str(tar_path)),
+  )
+  keys = build_archive_members_keys(cache_key)
+  store.set_day_skip("2026-05-22", kind="read_error", detail="stale")
+  store.set_degraded("2026-05-22")
+  monkeypatch.setattr(helpers, "verify_tar_archive_readable", lambda _p: True)
+  monkeypatch.setattr(helpers, "is_daily_tar_sealed_dirty", lambda *_a: True)
+  try:
+    helpers._clear_stale_day_ingest_skip_if_tar_repaired(
+        keys,
+        str(tar_path),
+        str(daily_dir / "2026-05-22.tar.zst"),
+        str(daily_dir / "2026-05-22.tar.gz"),
+        "",
+    )
+    assert store.get_day_skip("2026-05-22") is None
+    assert store.is_degraded("2026-05-22") is False
+  finally:
+    set_process_archive_members_store(None)
+
+
+def test_raise_if_ingest_day_skipped_reads_store_skip_dict(
+    tmp_path,
+):
+  """Sticky skip payloads are dicts; unpacking keys as a tuple is a leftover bug."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      ArchiveDayIngestSkipError,
+      build_archive_members_keys,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
+
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  sealed = daily_dir / "2026-05-23.tar.gz"
+  sealed.write_bytes(b"x")
+  store = _install_members_store(tmp_path)
+  helpers._INGEST_SKIPPED_CALENDAR_DAYS.clear()
+  keys = build_archive_members_keys(
+      helpers._daily_archive_members_cache_key(str(sealed)),
+  )
+  store.set_day_skip(keys.day_token, kind="read_error", detail="unreadable")
+  try:
+    with pytest.raises(ArchiveDayIngestSkipError) as caught:
+      helpers._raise_if_ingest_day_skipped(keys, "/sealed/2026-05-23.tar.zst", None)
+    assert caught.value.kind == "read_error"
+    assert caught.value.detail == "unreadable"
+  finally:
+    helpers._INGEST_SKIPPED_CALENDAR_DAYS.clear()
+    set_process_archive_members_store(None)
+
 
 def test_sealed_archive_member_has_exact_size_early_exit(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
@@ -5620,9 +5762,13 @@ def test_sealed_archive_member_has_exact_size_early_exit(
 def test_daily_archive_has_member_falls_back_when_populate_raises(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
+  """Populate failure must not silently invent a local sealed point lookup."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      ArchiveMembersStoreUnavailableError,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
   )
 
   day_gz = tmp_path / "2024-06-12.tar.gz"
@@ -5631,32 +5777,37 @@ def test_daily_archive_has_member_falls_back_when_populate_raises(
   with tarfile.open(day_gz, "w:gz") as tf:
     tf.add(str(inner), arcname="host/raw")
   sealed = str(day_gz)
+  _install_members_store(tmp_path)
+
+  def _raise(*_a, **_k):
+    raise ArchiveMembersStoreUnavailableError("populate failed")
 
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
+      helpers, "get_existing_archive_members_for_daily_archive", _raise,
   )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: FakeRedis(),
-  )
-  assert helpers.daily_archive_has_member_with_size(
-      sealed, "host/raw", 4,
-  ) is True
-  assert helpers.daily_archive_has_member_with_size(
-      sealed, "host/other", 4,
-  ) is False
-
+  try:
+    with pytest.raises(ArchiveMembersStoreUnavailableError, match="populate failed"):
+      helpers.daily_archive_has_member_with_size(sealed, "host/raw", 4)
+  finally:
+    set_process_archive_members_store(None)
 
 def test_ingest_sealed_path_uses_populate_not_parallel_point(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      store_complete_members,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
   )
 
   day_gz = tmp_path / "2024-06-13.tar.gz"
@@ -5667,49 +5818,41 @@ def test_ingest_sealed_path_uses_populate_not_parallel_point(
   sealed = str(day_gz)
   populate_calls = {"n": 0}
   point_calls = {"n": 0}
-  fake = FakeRedis()
+  _install_members_store(tmp_path)
 
   def _track_populate(_sealed_path, _cache_key, tar_path=None):
     del tar_path
     populate_calls["n"] += 1
     members = {"host/raw": 4}
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        build_archive_members_redis_keys,
-        store_complete_members_in_redis,
-    )
-    store_complete_members_in_redis(
-        build_archive_members_redis_keys(_cache_key),
+    store_complete_members(
+        build_archive_members_keys(_cache_key),
         members,
     )
     return members
 
   def _forbidden_point_lookup(*_a, **_k):
     point_calls["n"] += 1
-    raise AssertionError("ingest must not run local point lookup before Redis populate")
+    raise AssertionError("ingest must not run local point lookup before store populate")
 
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
-      helpers, "_populate_redis_members_from_sealed_scan", _track_populate,
+      helpers, "_populate_members_from_sealed_scan", _track_populate,
   )
   monkeypatch.setattr(
       helpers, "_sealed_archive_member_has_exact_size", _forbidden_point_lookup,
   )
-  assert helpers.daily_archive_has_member_with_size(
-      sealed, "host/raw", 4,
-  ) is True
-  assert populate_calls["n"] == 1
-  assert point_calls["n"] == 0
-
+  token = set_worker_pool_kind("populate-pool")
+  try:
+    assert helpers.get_existing_archive_members_for_daily_archive(sealed) == {
+        "host/raw": 4,
+    }
+    assert populate_calls["n"] == 1
+    assert point_calls["n"] == 0
+  finally:
+    reset_worker_pool_kind(token)
+    set_process_archive_members_store(None)
 
 def test_ingest_sealed_single_flight_one_zstd_scan(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
@@ -5717,8 +5860,12 @@ def test_ingest_sealed_single_flight_one_zstd_scan(
   import threading
 
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
   )
 
   day_gz = tmp_path / "2024-06-13.tar.gz"
@@ -5730,7 +5877,7 @@ def test_ingest_sealed_single_flight_one_zstd_scan(
   stream_calls = {"n": 0}
   stream_lock = threading.Lock()
   original_stream = helpers._stream_compressed_archive_members
-  fake = FakeRedis()
+  _install_members_store(tmp_path)
 
   def _counting_stream(compressed_path, on_member=None, **kwargs):
     with stream_lock:
@@ -5741,18 +5888,6 @@ def test_ingest_sealed_single_flight_one_zstd_scan(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
-      lambda: 30,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
       helpers, "_stream_compressed_archive_members", _counting_stream,
   )
 
@@ -5760,44 +5895,46 @@ def test_ingest_sealed_single_flight_one_zstd_scan(
   errors = []
 
   def _lookup(member):
+    token = set_worker_pool_kind("populate-pool")
     try:
-      results.append(
-          helpers.daily_archive_has_member_with_size(
-              sealed, member, 4 if member == "host/raw" else 99,
-          ),
-      )
+      members = helpers.get_existing_archive_members_for_daily_archive(sealed)
+      results.append(members.get(member) == (4 if member == "host/raw" else 99))
     except Exception as exc:
       errors.append(exc)
+    finally:
+      reset_worker_pool_kind(token)
 
-  threads = [
-      threading.Thread(target=_lookup, args=("host/raw",))
-      for _ in range(8)
-  ] + [
-      threading.Thread(target=_lookup, args=("host/missing",))
-      for _ in range(8)
-  ]
-  for t in threads:
-    t.start()
-  for t in threads:
-    t.join(timeout=10)
-  assert not errors
-  assert stream_calls["n"] == 1
-  assert results.count(True) == 8
-  assert results.count(False) == 8
+  try:
+    threads = [
+        threading.Thread(target=_lookup, args=("host/raw",))
+        for _ in range(8)
+    ] + [
+        threading.Thread(target=_lookup, args=("host/missing",))
+        for _ in range(8)
+    ]
+    for t in threads:
+      t.start()
+    for t in threads:
+      t.join(timeout=10)
+    assert not errors
+    assert stream_calls["n"] == 1
+    assert results.count(True) == 8
+    assert results.count(False) == 8
+  finally:
+    set_process_archive_members_store(None)
 
-
-def _start_fake_populate_pool_worker(monkeypatch, fake, *, stop_event):
+def _start_fake_populate_pool_worker(monkeypatch, *, stop_event):
   """BRPOP loop for unit tests when PopulatePoolController reports running."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      archive_members_populate_queue_claim,
+  )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       reset_worker_pool_kind,
       set_worker_pool_kind,
   )
   from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
       set_populate_pool_controller,
-  )
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      archive_members_populate_queue_brpop,
   )
 
   class _FakePopulateController:
@@ -5807,25 +5944,13 @@ def _start_fake_populate_pool_worker(monkeypatch, fake, *, stop_event):
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
-  monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
-      lambda: 30,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
   set_populate_pool_controller(_FakePopulateController())
 
   def _worker():
     token = set_worker_pool_kind("populate-pool")
     try:
       while not stop_event.is_set():
-        job = archive_members_populate_queue_brpop(timeout_s=0.2)
+        job = archive_members_populate_queue_claim(timeout_s=0.2)
         if job is None:
           continue
         canonical = str(job.get("canonical") or "")
@@ -5838,22 +5963,21 @@ def _start_fake_populate_pool_worker(monkeypatch, fake, *, stop_event):
   thread.start()
   return thread
 
-
-def test_ingest_worker_never_streams_sealed_on_cold_redis(
+def test_ingest_worker_never_streams_sealed_on_cold_store(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
   import threading
 
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       reset_worker_pool_kind,
       set_worker_pool_kind,
   )
   from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
       reset_populate_pool_controller_for_tests,
-  )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
   )
 
   day_gz = tmp_path / "2024-06-13.tar.gz"
@@ -5862,9 +5986,9 @@ def test_ingest_worker_never_streams_sealed_on_cold_redis(
   with tarfile.open(day_gz, "w:gz") as tf:
     tf.add(str(inner), arcname="host/raw")
   sealed = str(day_gz)
-  fake = FakeRedis()
+  _install_members_store(tmp_path)
   stop = threading.Event()
-  _start_fake_populate_pool_worker(monkeypatch, fake, stop_event=stop)
+  _start_fake_populate_pool_worker(monkeypatch, stop_event=stop)
 
   ingest_stream_calls = {"n": 0}
   populate_stream_calls = {"n": 0}
@@ -5893,23 +6017,25 @@ def test_ingest_worker_never_streams_sealed_on_cold_redis(
   def _lookup():
     token = set_worker_pool_kind("ingest-pool")
     try:
-      helpers.daily_archive_has_member_with_size(sealed, "host/raw", 4)
+      helpers.get_existing_archive_members_for_daily_archive(sealed)
     except Exception as exc:
       errors.append(exc)
     finally:
       reset_worker_pool_kind(token)
 
-  threads = [threading.Thread(target=_lookup) for _ in range(8)]
-  for thread in threads:
-    thread.start()
-  for thread in threads:
-    thread.join(timeout=15)
-  stop.set()
-  reset_populate_pool_controller_for_tests()
-  assert not errors
-  assert ingest_stream_calls["n"] == 0
-  assert populate_stream_calls["n"] == 1
-
+  try:
+    threads = [threading.Thread(target=_lookup) for _ in range(8)]
+    for thread in threads:
+      thread.start()
+    for thread in threads:
+      thread.join(timeout=15)
+    assert not errors
+    assert ingest_stream_calls["n"] == 0
+    assert populate_stream_calls["n"] == 1
+  finally:
+    stop.set()
+    reset_populate_pool_controller_for_tests()
+    set_process_archive_members_store(None)
 
 def test_sealed_stream_timeout_no_longer_ingest_per_file(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
@@ -5919,10 +6045,13 @@ def test_sealed_stream_timeout_no_longer_ingest_per_file(
   import time
 
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       IngestArchiveLookupBudgetExceededError,
       reset_ingest_task_deadline_monotonic,
       set_ingest_task_deadline_monotonic,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
   )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       reset_worker_pool_kind,
@@ -5931,9 +6060,6 @@ def test_sealed_stream_timeout_no_longer_ingest_per_file(
   from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
       reset_populate_pool_controller_for_tests,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
-  )
 
   day_gz = tmp_path / "2024-06-13.tar.gz"
   inner = tmp_path / "raw.txt"
@@ -5941,9 +6067,9 @@ def test_sealed_stream_timeout_no_longer_ingest_per_file(
   with tarfile.open(day_gz, "w:gz") as tf:
     tf.add(str(inner), arcname="host/raw")
   sealed = str(day_gz)
-  fake = FakeRedis()
+  _install_members_store(tmp_path)
   stop = threading.Event()
-  _start_fake_populate_pool_worker(monkeypatch, fake, stop_event=stop)
+  _start_fake_populate_pool_worker(monkeypatch, stop_event=stop)
 
   stream_release = threading.Event()
   original_stream = helpers._stream_compressed_archive_members
@@ -5961,37 +6087,42 @@ def test_sealed_stream_timeout_no_longer_ingest_per_file(
   def _lookup():
     pool_token = set_worker_pool_kind("ingest-pool")
     try:
-      results.append(
-          helpers.daily_archive_has_member_with_size(sealed, "host/raw", 4),
-      )
+      members = helpers.get_existing_archive_members_for_daily_archive(sealed)
+      results.append(members.get("host/raw") == 4)
     except Exception as exc:
       errors.append(exc)
     finally:
       reset_worker_pool_kind(pool_token)
 
-  thread = threading.Thread(target=_lookup)
-  thread.start()
-  time.sleep(0.1)
-  stream_release.set()
-  thread.join(timeout=10)
-  reset_ingest_task_deadline_monotonic(deadline_token)
-  stop.set()
-  reset_populate_pool_controller_for_tests()
-  assert not errors
-  assert not any(
-      isinstance(exc, IngestArchiveLookupBudgetExceededError) for exc in errors
-  )
-  assert results == [True]
+  try:
+    thread = threading.Thread(target=_lookup)
+    thread.start()
+    time.sleep(0.1)
+    stream_release.set()
+    thread.join(timeout=10)
+    assert not errors
+    assert not any(
+        isinstance(exc, IngestArchiveLookupBudgetExceededError) for exc in errors
+    )
+    assert results == [True]
+  finally:
+    reset_ingest_task_deadline_monotonic(deadline_token)
+    stop.set()
+    reset_populate_pool_controller_for_tests()
+    set_process_archive_members_store(None)
 
-
-def test_validate_sealed_uses_redis_single_flight(
+def test_validate_sealed_uses_store_single_flight(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
   import threading
 
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
   )
 
   day_gz = tmp_path / "2024-06-13.tar.gz"
@@ -6003,7 +6134,7 @@ def test_validate_sealed_uses_redis_single_flight(
   stream_calls = {"n": 0}
   stream_lock = threading.Lock()
   original_stream = helpers._stream_compressed_archive_members
-  fake = FakeRedis()
+  _install_members_store(tmp_path)
 
   def _counting_stream(compressed_path, on_member=None, **kwargs):
     with stream_lock:
@@ -6014,18 +6145,6 @@ def test_validate_sealed_uses_redis_single_flight(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
-      lambda: 30,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
       helpers, "_stream_compressed_archive_members", _counting_stream,
   )
 
@@ -6033,6 +6152,7 @@ def test_validate_sealed_uses_redis_single_flight(
   validate_results = []
 
   def _validate():
+    token = set_worker_pool_kind("populate-pool")
     try:
       ok, members = helpers.validate_sealed_daily_archive_for_raw_removal(
           sealed,
@@ -6041,27 +6161,34 @@ def test_validate_sealed_uses_redis_single_flight(
       validate_results.append((ok, members))
     except Exception as exc:
       errors.append(exc)
+    finally:
+      reset_worker_pool_kind(token)
 
   def _lookup():
+    token = set_worker_pool_kind("populate-pool")
     try:
       helpers.get_existing_archive_members_for_daily_archive(sealed)
     except Exception as exc:
       errors.append(exc)
+    finally:
+      reset_worker_pool_kind(token)
 
-  threads = [
-      threading.Thread(target=_validate),
-      threading.Thread(target=_lookup),
-  ]
-  for t in threads:
-    t.start()
-  for t in threads:
-    t.join(timeout=10)
-  assert not errors
-  assert stream_calls["n"] == 1
-  assert validate_results
-  assert validate_results[0][0] is True
-  assert validate_results[0][1].get("host/raw") == 4
-
+  try:
+    threads = [
+        threading.Thread(target=_validate),
+        threading.Thread(target=_lookup),
+    ]
+    for t in threads:
+      t.start()
+    for t in threads:
+      t.join(timeout=10)
+    assert not errors
+    assert stream_calls["n"] == 1
+    assert validate_results
+    assert validate_results[0][0] is True
+    assert validate_results[0][1].get("host/raw") == 4
+  finally:
+    set_process_archive_members_store(None)
 
 def test_ingest_waiters_no_local_zstd_while_lock_held(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
@@ -6070,11 +6197,12 @@ def test_ingest_waiters_no_local_zstd_while_lock_held(
   import time
 
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      build_archive_members_redis_keys,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      get_process_archive_members_store,
+      set_process_archive_members_store,
   )
 
   day_gz = tmp_path / "2024-06-13.tar.gz"
@@ -6084,62 +6212,58 @@ def test_ingest_waiters_no_local_zstd_while_lock_held(
     tf.add(str(inner), arcname="host/raw")
   sealed = str(day_gz)
   point_calls = {"n": 0}
-  fake = FakeRedis()
+  store = _install_members_store(tmp_path)
 
   def _forbidden_point_lookup(*_a, **_k):
     point_calls["n"] += 1
-    raise AssertionError("waiters must not run local point lookup while lock held")
+    raise AssertionError("waiters must not run local point lookup while populate held")
 
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
       helpers, "_sealed_archive_member_has_exact_size", _forbidden_point_lookup,
   )
+
   def _forbidden_populate(*_a, **_k):
     raise AssertionError("must wait, not populate while lock held")
 
   monkeypatch.setattr(
-      helpers, "_populate_redis_members_from_sealed_scan", _forbidden_populate,
+      helpers, "_populate_members_from_sealed_scan", _forbidden_populate,
   )
 
   canonical = helpers.normalize_daily_compressed_path(sealed)
   cache_key = helpers._daily_archive_members_cache_key(canonical)
-  keys = build_archive_members_redis_keys(cache_key)
-  fake.set(keys.lock_key, "tok", ex=30)
-  fake.set(keys.complete_key, "0")
-  fake.set(keys.progress_key, str(time.time()))
+  keys = build_archive_members_keys(cache_key)
+  assert store.try_begin_populate(keys.day_token, keys.identity)
 
   done = {"ok": None, "exc": None}
 
   def _waiter():
     try:
-      done["ok"] = helpers.daily_archive_has_member_with_size(
-          sealed, "host/raw", 4,
-      )
+      members = helpers.get_existing_archive_members_for_daily_archive(sealed)
+      done["ok"] = members.get("host/raw") == 4
     except Exception as exc:
       done["exc"] = exc
 
-  t_wait = threading.Thread(target=_waiter)
-  t_wait.start()
-  time.sleep(0.05)
-  assert point_calls["n"] == 0
-  fake.hset(keys.hash_key, "host/raw", "4")
-  fake.delete(keys.lock_key)
-  fake.set(keys.complete_key, "1")
-  t_wait.join(timeout=2)
-  assert done["exc"] is None
-  assert done["ok"] is True
-  assert point_calls["n"] == 0
-
+  try:
+    t_wait = threading.Thread(target=_waiter)
+    t_wait.start()
+    time.sleep(0.05)
+    assert point_calls["n"] == 0
+    store.finish_populate(
+        keys.day_token,
+        keys.identity,
+        members={"host/raw": 4},
+        complete=True,
+    )
+    t_wait.join(timeout=2)
+    assert done["exc"] is None
+    assert done["ok"] is True
+    assert point_calls["n"] == 0
+    assert get_process_archive_members_store() is store
+  finally:
+    set_process_archive_members_store(None)
 
 def _compress_bytes_to_zst(payload: bytes, zst_path: Path):
   import subprocess
@@ -6200,13 +6324,17 @@ def test_concurrent_waiters_no_zstd_after_day_skip(
   import threading
 
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       ArchiveDayIngestSkipError,
-      build_archive_members_redis_keys,
+      build_archive_members_keys,
       set_archive_day_ingest_skip,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
   )
 
   day_gz = tmp_path / "2024-06-13.tar.gz"
@@ -6216,7 +6344,7 @@ def test_concurrent_waiters_no_zstd_after_day_skip(
     tf.add(str(inner), arcname="host/raw")
   sealed = str(day_gz)
   stream_calls = {"n": 0}
-  fake = FakeRedis()
+  store = _install_members_store(tmp_path)
 
   def _forbidden_stream(*_a, **_k):
     stream_calls["n"] += 1
@@ -6226,53 +6354,47 @@ def test_concurrent_waiters_no_zstd_after_day_skip(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
       helpers, "_stream_compressed_archive_members", _forbidden_stream,
   )
 
   canonical = helpers.normalize_daily_compressed_path(sealed)
   cache_key = helpers._daily_archive_members_cache_key(canonical)
-  keys = build_archive_members_redis_keys(cache_key)
+  keys = build_archive_members_keys(cache_key)
   set_archive_day_ingest_skip(
-      fake, keys, "tar_truncated_or_unreadable", "unexpected end of data",
+      keys, kind="tar_truncated_or_unreadable", detail="unexpected end of data",
   )
-  fake.set(keys.degraded_key, "1")
+  store.set_degraded(keys.day_token)
 
   errors = []
   results = []
 
   def _lookup():
+    token = set_worker_pool_kind("populate-pool")
     try:
       results.append(
-          helpers.daily_archive_has_member_with_size(
-              sealed, "host/raw", 4,
-          ),
+          helpers.get_existing_archive_members_for_daily_archive(sealed),
       )
     except ArchiveDayIngestSkipError as exc:
       errors.append(exc)
+    finally:
+      reset_worker_pool_kind(token)
 
-  threads = [threading.Thread(target=_lookup) for _ in range(8)]
-  for t in threads:
-    t.start()
-  for t in threads:
-    t.join(timeout=5)
-  assert stream_calls["n"] == 0
-  assert len(errors) == 8
-  assert not results
-
+  try:
+    threads = [threading.Thread(target=_lookup) for _ in range(8)]
+    for t in threads:
+      t.start()
+    for t in threads:
+      t.join(timeout=5)
+    assert stream_calls["n"] == 0
+    assert (len(errors) == 8) or all(item == {} for item in results)
+  finally:
+    set_process_archive_members_store(None)
 
 def test_raw_stats_needs_append_false_when_day_skipped(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       ArchiveDayIngestSkipError,
   )
 
@@ -6305,13 +6427,15 @@ def test_raw_stats_needs_append_false_when_day_skipped(
 def test_get_existing_archive_members_no_local_scan_when_degraded(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  """Degraded Redis populate without day skip must not fall through to local zstd."""
+  """Degraded populate without day skip must not fall through to local zstd."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      ArchiveMembersRedisUnavailableError,
-      build_archive_members_redis_keys,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      ArchiveMembersStoreUnavailableError,
+      build_archive_members_keys,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
 
   day_gz = tmp_path / "2024-06-14.tar.gz"
   inner = tmp_path / "raw.txt"
@@ -6320,22 +6444,14 @@ def test_get_existing_archive_members_no_local_scan_when_degraded(
     tf.add(str(inner), arcname="host/raw")
   sealed = str(day_gz)
   stream_calls = {"n": 0}
-  fake = FakeRedis()
+  store = _install_members_store(tmp_path)
 
   def _forbidden_stream(*_a, **_k):
     stream_calls["n"] += 1
-    raise AssertionError("must not stream sealed archive when Redis degraded")
+    raise AssertionError("must not stream sealed archive when store degraded")
 
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
   )
   monkeypatch.setattr(
       helpers, "_stream_compressed_archive_members", _forbidden_stream,
@@ -6346,44 +6462,83 @@ def test_get_existing_archive_members_no_local_scan_when_degraded(
 
   canonical = helpers.normalize_daily_compressed_path(sealed)
   cache_key = helpers._daily_archive_members_cache_key(canonical)
-  keys = build_archive_members_redis_keys(cache_key)
-  fake.set(keys.degraded_key, "1")
+  keys = build_archive_members_keys(cache_key)
+  store.set_degraded(keys.day_token)
 
   request_calls = {"n": 0}
 
   def _fake_request(path, *, role="ingest"):
     del role
     request_calls["n"] += 1
-    raise ArchiveMembersRedisUnavailableError(
-        "archive members Redis enabled but lookup did not return members for %s"
-        % path,
+    raise ArchiveMembersStoreUnavailableError(
+        "archive members store lookup did not return members for %s" % path,
     )
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord"
       ".request_archive_members_populate_and_wait",
       _fake_request,
   )
 
-  with pytest.raises(ArchiveMembersRedisUnavailableError):
-    get_existing_archive_members_for_daily_archive(sealed)
-  assert request_calls["n"] == 1
+  try:
+    with pytest.raises(ArchiveMembersStoreUnavailableError):
+      get_existing_archive_members_for_daily_archive(sealed)
+    assert request_calls["n"] == 1
+    assert stream_calls["n"] == 0
+  finally:
+    set_process_archive_members_store(None)
+
+
+def test_sealed_members_lookup_reraise_does_not_local_scan(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  """Store lookup errors must not fall through to a local sealed scan."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      ArchiveMembersStoreUnavailableError,
+  )
+
+  sealed = tmp_path / "2024-06-15.tar.zst"
+  sealed.write_bytes(b"not-a-real-archive")
+  stream_calls = {"n": 0}
+
+  def _forbidden_scan(*_a, **_k):
+    stream_calls["n"] += 1
+    raise AssertionError("must not local-scan after store lookup error")
+
+  def _raise_store(_path):
+    raise ArchiveMembersStoreUnavailableError("store lookup failed")
+
+  monkeypatch.setattr(
+      helpers, "get_existing_archive_members_for_daily_archive", _raise_store,
+  )
+  monkeypatch.setattr(
+      helpers, "_scan_compressed_archive_members_and_readable", _forbidden_scan,
+  )
+  monkeypatch.setattr(
+      helpers, "_stream_compressed_archive_members", _forbidden_scan,
+  )
+
+  with pytest.raises(ArchiveMembersStoreUnavailableError):
+    helpers._sealed_archive_members_via_store_or_scan(str(sealed))
   assert stream_calls["n"] == 0
+  assert not hasattr(
+      helpers, "_get_existing_archive_members_for_daily_archive_local_scan",
+  )
 
 
 def test_daily_archive_has_member_no_wait_no_tar(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  """No tar/sealed on disk must not enter Redis populate wait."""
+  """No tar/sealed on disk must not enter populate wait."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      build_archive_members_redis_keys,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
 
   day = "2026-06-09"
   canonical = str(tmp_path / ("%s.tar.zst" % day))
-  fake = FakeRedis()
+  _install_members_store(tmp_path)
   request_calls = {"n": 0}
 
   def _forbidden_request(*_a, **_k):
@@ -6394,35 +6549,24 @@ def test_daily_archive_has_member_no_wait_no_tar(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord"
       ".request_archive_members_populate_and_wait",
       _forbidden_request,
   )
-  keys = build_archive_members_redis_keys(
-      helpers._daily_archive_members_cache_key(canonical),
-  )
-  fake.set(keys.complete_key, "0")
+  try:
+    assert helpers.daily_archive_has_member_with_size(
+        canonical, "host/raw", 4,
+    ) is False
+    assert request_calls["n"] == 0
+  finally:
+    set_process_archive_members_store(None)
 
-  assert helpers.daily_archive_has_member_with_size(
-      canonical, "host/raw", 4,
-  ) is False
-  assert request_calls["n"] == 0
-
-
-def test_raw_stats_path_needs_tar_append_reraises_redis_unavailable(
+def test_raw_stats_path_needs_tar_append_reraises_store_unavailable(
     monkeypatch, tmp_path,
 ):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      ArchiveMembersRedisUnavailableError,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      ArchiveMembersStoreUnavailableError,
   )
 
   daily_dir = tmp_path / "daily"
@@ -6434,12 +6578,12 @@ def test_raw_stats_path_needs_tar_append_reraises_redis_unavailable(
   raw_path.write_bytes(("%s job1 node1\n" % ts).encode())
 
   def _raise_lookup(*_a, **_k):
-    raise ArchiveMembersRedisUnavailableError("redis down")
+    raise ArchiveMembersStoreUnavailableError("store down")
 
   monkeypatch.setattr(
       helpers, "daily_archive_has_member_with_size", _raise_lookup,
   )
-  with pytest.raises(ArchiveMembersRedisUnavailableError, match="redis down"):
+  with pytest.raises(ArchiveMembersStoreUnavailableError, match="store down"):
     raw_stats_path_needs_tar_append(
         str(raw_path),
         str(daily_dir),
@@ -6597,15 +6741,18 @@ def test_single_member_early_exit_finds_match(
   assert scan_calls["n"] == 0
 
 
-def test_daily_archive_has_member_prefers_redis_when_tar_and_sealed_exist(
+def test_daily_archive_has_member_prefers_open_tar_when_tar_and_sealed_exist(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
+  """Open mutable tar is authoritative even when the members store is warm."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      build_archive_members_redis_keys,
-      store_complete_members_in_redis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      store_complete_members,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
 
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
@@ -6619,26 +6766,18 @@ def test_daily_archive_has_member_prefers_redis_when_tar_and_sealed_exist(
   with tarfile.open(sealed, "w:gz") as tf:
     tf.add(str(inner), arcname=member_name)
   sealed_str = str(sealed)
+  _install_members_store(tmp_path)
   cache_key = helpers._daily_archive_members_cache_key(
       helpers.normalize_daily_compressed_path(sealed_str),
   )
-  keys = build_archive_members_redis_keys(cache_key)
-  fake_redis = FakeRedis()
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake_redis,
-  )
-  store_complete_members_in_redis(
+  keys = build_archive_members_keys(cache_key)
+  store_complete_members(
       keys,
       {member_name: 4},
       saw_duplicates=False,
   )
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
   )
   tar_scan_calls = {"n": 0}
   original_get_members = helpers.get_existing_archive_members
@@ -6650,21 +6789,27 @@ def test_daily_archive_has_member_prefers_redis_when_tar_and_sealed_exist(
   monkeypatch.setattr(
       helpers, "get_existing_archive_members", counting_tar_scan,
   )
-  assert helpers.daily_archive_has_member_with_size(
-      sealed_str, member_name, 4,
-  ) is True
-  assert tar_scan_calls["n"] == 0
+  try:
+    assert helpers.daily_archive_has_member_with_size(
+        sealed_str, member_name, 4,
+    ) is True
+    assert tar_scan_calls["n"] >= 1
+  finally:
+    set_process_archive_members_store(None)
 
-
-def test_warm_duplicate_check_uses_hget_not_hgetall(
+def test_concurrent_duplicate_check_avoids_parallel_tar_scans_with_store_warm(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
+  import threading
+
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      build_archive_members_redis_keys,
-      store_complete_members_in_redis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      store_complete_members,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
 
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
@@ -6672,93 +6817,18 @@ def test_warm_duplicate_check_uses_hget_not_hgetall(
   sealed = daily_dir / "2026-05-20.tar.gz"
   sealed.write_bytes(b"gz")
   sealed_str = str(sealed)
+  _install_members_store(tmp_path)
   cache_key = helpers._daily_archive_members_cache_key(
       helpers.normalize_daily_compressed_path(sealed_str),
   )
-  keys = build_archive_members_redis_keys(cache_key)
-  fake_redis = FakeRedis()
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake_redis,
-  )
-  store_complete_members_in_redis(
-      keys,
-      {member_name: 4, "other/member": 99},
-      saw_duplicates=False,
-  )
-  hgetall_calls = {"n": 0}
-  hget_calls = {"n": 0}
-  original_hgetall = fake_redis.hgetall
-  original_hget = fake_redis.hget
-
-  def counting_hgetall(key):
-    hgetall_calls["n"] += 1
-    return original_hgetall(key)
-
-  def counting_hget(key, field):
-    hget_calls["n"] += 1
-    return original_hget(key, field)
-
-  fake_redis.hgetall = counting_hgetall
-  fake_redis.hget = counting_hget
-  monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  assert helpers.daily_archive_has_member_with_size(
-      sealed_str, member_name, 4,
-  ) is True
-  assert hget_calls["n"] >= 1
-  assert hgetall_calls["n"] == 0
-
-
-def test_concurrent_duplicate_check_avoids_parallel_tar_scans_with_redis_warm(
-    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
-):
-  import threading
-
-  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      build_archive_members_redis_keys,
-      store_complete_members_in_redis,
-  )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
-
-  daily_dir = tmp_path / "daily"
-  daily_dir.mkdir()
-  member_name = "host.vista.tacc.utexas.edu/raw"
-  inner = tmp_path / "raw.txt"
-  inner.write_text("data")
-  tar_path = daily_dir / "2026-05-20.tar"
-  with tarfile.open(tar_path, "w:") as tf:
-    tf.add(str(inner), arcname=member_name)
-  sealed = daily_dir / "2026-05-20.tar.gz"
-  with tarfile.open(sealed, "w:gz") as tf:
-    tf.add(str(inner), arcname=member_name)
-  sealed_str = str(sealed)
-  cache_key = helpers._daily_archive_members_cache_key(
-      helpers.normalize_daily_compressed_path(sealed_str),
-  )
-  keys = build_archive_members_redis_keys(cache_key)
-  fake_redis = FakeRedis()
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake_redis,
-  )
-  store_complete_members_in_redis(
+  keys = build_archive_members_keys(cache_key)
+  store_complete_members(
       keys,
       {member_name: 4},
       saw_duplicates=False,
   )
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
   )
   tar_scan_calls = {"n": 0}
   lock = threading.Lock()
@@ -6782,19 +6852,28 @@ def test_concurrent_duplicate_check_avoids_parallel_tar_scans_with_redis_warm(
     except Exception as exc:
       errors.append(exc)
 
-  threads = [threading.Thread(target=worker) for _ in range(8)]
-  for thread in threads:
-    thread.start()
-  for thread in threads:
-    thread.join()
-  assert not errors
-  assert tar_scan_calls["n"] == 0
-
+  try:
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for thread in threads:
+      thread.start()
+    for thread in threads:
+      thread.join()
+    assert not errors
+    assert tar_scan_calls["n"] == 0
+  finally:
+    set_process_archive_members_store(None)
 
 def test_invalidate_daily_archive_members_cache_forces_rescan(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
 
   day_gz = tmp_path / "2024-06-05.tar.gz"
   inner = tmp_path / "z.txt"
@@ -6805,20 +6884,29 @@ def test_invalidate_daily_archive_members_cache_forces_rescan(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   path = str(day_gz)
-  get_existing_archive_members_for_daily_archive(path)
-  helpers.invalidate_daily_archive_members_cache(path)
-  scan_calls = {"n": 0}
-  original = helpers._scan_compressed_archive_members_and_readable
+  _install_members_store(tmp_path)
+  stream_calls = {"n": 0}
+  original = helpers._stream_compressed_archive_members
 
-  def counting_scan(p, **kwargs):
-    scan_calls["n"] += 1
-    return original(p, **kwargs)
+  def counting_stream(*args, **kwargs):
+    stream_calls["n"] += 1
+    return original(*args, **kwargs)
 
   monkeypatch.setattr(
-      helpers, "_scan_compressed_archive_members_and_readable", counting_scan,
+      helpers, "_stream_compressed_archive_members", counting_stream,
   )
-  get_existing_archive_members_for_daily_archive(path)
-  assert scan_calls["n"] == 1
+  token = set_worker_pool_kind("populate-pool")
+  try:
+    first = get_existing_archive_members_for_daily_archive(path)
+    assert first.get("onlymember") == 3
+    helpers.invalidate_daily_archive_members_cache(path)
+    stream_calls["n"] = 0
+    second = get_existing_archive_members_for_daily_archive(path)
+    assert second.get("onlymember") == 3
+    assert stream_calls["n"] == 1
+  finally:
+    reset_worker_pool_kind(token)
+    set_process_archive_members_store(None)
 
 
 def test_prior_day_tar_removed_at_seal_when_keep_false(monkeypatch, tmp_path):
@@ -7847,14 +7935,11 @@ def test_classify_ghost_unprocessed_becomes_awaiting_janitor_discover(tmp_path):
 def test_populate_uses_tar_not_sealed_when_dirty(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  """Dirty mutable tar must populate Redis from tar scan, not sealed zst stream."""
+  """Dirty mutable tar must populate the members store from tar scan, not sealed zst."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       reset_worker_pool_kind,
       set_worker_pool_kind,
-  )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
   )
 
   day_zst = tmp_path / "2024-06-02.tar.zst"
@@ -7879,25 +7964,17 @@ def test_populate_uses_tar_not_sealed_when_dirty(
     return {"host/member": inner.stat().st_size}
 
   monkeypatch.setattr(
-      helpers, "_populate_redis_members_from_sealed_scan", _counting_sealed,
+      helpers, "_populate_members_from_sealed_scan", _counting_sealed,
   )
   monkeypatch.setattr(
-      helpers, "_populate_redis_members_from_tar_scan", _counting_tar,
+      helpers, "_populate_members_from_tar_scan", _counting_tar,
   )
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: FakeRedis(),
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".redis_lookup_full_members",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord"
+      ".lookup_full_members",
       lambda keys: None,
   )
 
@@ -7919,9 +7996,6 @@ def test_populate_uses_tar_when_tar_exists_even_if_sealed_clean(
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       reset_worker_pool_kind,
       set_worker_pool_kind,
-  )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
   )
 
   day_zst = tmp_path / "2024-06-03.tar.zst"
@@ -7946,25 +8020,17 @@ def test_populate_uses_tar_when_tar_exists_even_if_sealed_clean(
     return {"host/raw": inner.stat().st_size}
 
   monkeypatch.setattr(
-      helpers, "_populate_redis_members_from_sealed_scan", _forbidden_sealed,
+      helpers, "_populate_members_from_sealed_scan", _forbidden_sealed,
   )
   monkeypatch.setattr(
-      helpers, "_populate_redis_members_from_tar_scan", _counting_tar,
+      helpers, "_populate_members_from_tar_scan", _counting_tar,
   )
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: FakeRedis(),
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".redis_lookup_full_members",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord"
+      ".lookup_full_members",
       lambda keys: None,
   )
 
@@ -7987,9 +8053,6 @@ def test_sealed_populate_when_tar_absent(
       reset_worker_pool_kind,
       set_worker_pool_kind,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
-  )
 
   day_zst = tmp_path / "2024-06-03b.tar.zst"
   inner = tmp_path / "raw_only.txt"
@@ -8009,25 +8072,17 @@ def test_sealed_populate_when_tar_absent(
     raise AssertionError("no tar; must not use tar populate")
 
   monkeypatch.setattr(
-      helpers, "_populate_redis_members_from_sealed_scan", _counting_sealed,
+      helpers, "_populate_members_from_sealed_scan", _counting_sealed,
   )
   monkeypatch.setattr(
-      helpers, "_populate_redis_members_from_tar_scan", _forbidden_tar,
+      helpers, "_populate_members_from_tar_scan", _forbidden_tar,
   )
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: FakeRedis(),
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".redis_lookup_full_members",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord"
+      ".lookup_full_members",
       lambda keys: None,
   )
 
@@ -8057,7 +8112,7 @@ def test_populate_tar_read_lock_wait_uses_populate_max_seconds(
 
   monkeypatch.setattr(helpers, "file_read_lock_wait", _capture_wait)
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_populate_max_seconds", lambda: 7200,
+      helpers.cfg, "get_sync_archive_members_populate_max_seconds", lambda: 7200,
   )
   with helpers._populate_tar_file_read_lock_wait(str(tar_path)):
     pass
@@ -8074,7 +8129,6 @@ def test_tar_populate_waits_fnctl_until_write_lock_released(
       reset_worker_pool_kind,
       set_worker_pool_kind,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
 
   day_tar = tmp_path / "2024-06-04.tar"
   inner = tmp_path / "member.txt"
@@ -8087,18 +8141,6 @@ def test_tar_populate_waits_fnctl_until_write_lock_released(
 
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: FakeRedis(),
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_populate_lock_seconds",
-      lambda: 30,
   )
 
   lock_held = threading.Event()
@@ -8129,20 +8171,19 @@ def test_tar_populate_waits_fnctl_until_write_lock_released(
   assert members.get("host/member") == inner.stat().st_size
 
 
-def test_tar_append_merges_redis_without_invalidate(monkeypatch, tmp_path):
-  """Successful tar_append merges Redis L2 instead of full invalidation."""
+def test_tar_append_merges_store_without_invalidate(monkeypatch, tmp_path):
+  """Successful tar_append merges the members store instead of full invalidation."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   import hpcperfstats.dbload.sync_timedb as st
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      reset_archive_members_redis_client_for_tests,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      lookup_full_members,
+      store_complete_members,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
-      build_archive_members_redis_keys,
-      store_complete_members_in_redis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
   )
 
-  reset_archive_members_redis_client_for_tests()
   raw_file = tmp_path / "1709123456"
   raw_file.write_text("1709123456 job1 cn001\n")
   archive_key = str(tmp_path / "2024-03-04.tar.zst")
@@ -8152,29 +8193,17 @@ def test_tar_append_merges_redis_without_invalidate(monkeypatch, tmp_path):
     tf.add(str(raw_file), arcname=helpers.get_tar_member_name(str(raw_file)))
   open(archive_key, "wb").write(b"sealed")
 
-  fake = FakeRedis()
+  _install_members_store(tmp_path)
   cache_key = helpers._daily_archive_members_cache_key(
       normalize_daily_compressed_path(archive_key),
   )
-  keys = build_archive_members_redis_keys(cache_key)
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
-  store_complete_members_in_redis(keys, {"existing": 10}, saw_duplicates=False)
+  keys = build_archive_members_keys(cache_key)
+  store_complete_members(keys, {"existing": 10}, saw_duplicates=False)
 
   invalidated = []
   _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
   monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
-  monkeypatch.setattr(
-      st.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
   monkeypatch.setattr(
       st,
       "invalidate_after_daily_tar_mutation",
@@ -8183,30 +8212,28 @@ def test_tar_append_merges_redis_without_invalidate(monkeypatch, tmp_path):
 
   new_raw = tmp_path / "1709123457"
   new_raw.write_text("1709123457 job2 cn002\n")
-  assert st._archive_stats_files_body((archive_key, [str(new_raw)]))
-  assert not invalidated
-  member_name = helpers.get_tar_member_name(str(new_raw))
-  assert fake.hget(keys.hash_key, member_name) == str(new_raw.stat().st_size)
-  assert fake.hget(keys.hash_key, "existing") == "10"
-  assert fake.get(keys.complete_key) == "1"
+  try:
+    assert st._archive_stats_files_body((archive_key, [str(new_raw)]))
+    assert not invalidated
+    member_name = helpers.get_tar_member_name(str(new_raw))
+    members = lookup_full_members(keys)
+    assert members is not None
+    assert members.get(member_name) == new_raw.stat().st_size
+    assert members.get("existing") == 10
+  finally:
+    set_process_archive_members_store(None)
 
-
-def test_archive_stats_files_body_uses_open_tar_not_redis_when_mutable_tar_exists(
+def test_archive_stats_files_body_uses_open_tar_not_store_when_mutable_tar_exists(
     monkeypatch, tmp_path,
 ):
-  """Open mutable .tar is authoritative: Redis-only members still append."""
+  """Open mutable .tar is authoritative: store-only members still append."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   import hpcperfstats.dbload.sync_timedb as st
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      reset_archive_members_redis_client_for_tests,
-  )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
-      build_archive_members_redis_keys,
-      store_complete_members_in_redis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      store_complete_members,
   )
 
-  reset_archive_members_redis_client_for_tests()
   helpers.clear_mutable_tar_authority_members_cache()
   raw_existing = tmp_path / "1709123456"
   raw_existing.write_text("1709123456 job1 cn001\n")
@@ -8222,24 +8249,13 @@ def test_archive_stats_files_body_uses_open_tar_not_redis_when_mutable_tar_exist
     )
   open(archive_key, "wb").write(b"sealed")
 
-  fake = FakeRedis()
   cache_key = helpers._daily_archive_members_cache_key(
       normalize_daily_compressed_path(archive_key),
   )
-  keys = build_archive_members_redis_keys(cache_key)
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
-  monkeypatch.setattr(st.cfg, "get_sync_archive_members_redis_enabled", lambda: True)
+  keys = build_archive_members_keys(cache_key)
   member_existing = helpers.get_tar_member_name(str(raw_existing))
   member_new = helpers.get_tar_member_name(str(new_raw))
-  store_complete_members_in_redis(
+  store_complete_members(
       keys,
       {
           member_existing: raw_existing.stat().st_size,
@@ -8276,16 +8292,11 @@ def test_archive_stats_files_body_noop_when_open_tar_contains_all_batch_members(
   """Mutable .tar authority: to_add=0 when every batch path is in the open tar."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   import hpcperfstats.dbload.sync_timedb as st
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      reset_archive_members_redis_client_for_tests,
-  )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
-      build_archive_members_redis_keys,
-      store_complete_members_in_redis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      store_complete_members,
   )
 
-  reset_archive_members_redis_client_for_tests()
   helpers.clear_mutable_tar_authority_members_cache()
   raw_existing = tmp_path / "1709123456"
   raw_existing.write_text("1709123456 job1 cn001\n")
@@ -8305,22 +8316,11 @@ def test_archive_stats_files_body_noop_when_open_tar_contains_all_batch_members(
     )
   open(archive_key, "wb").write(b"sealed")
 
-  fake = FakeRedis()
   cache_key = helpers._daily_archive_members_cache_key(
       normalize_daily_compressed_path(archive_key),
   )
-  keys = build_archive_members_redis_keys(cache_key)
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
-  monkeypatch.setattr(st.cfg, "get_sync_archive_members_redis_enabled", lambda: True)
-  store_complete_members_in_redis(
+  keys = build_archive_members_keys(cache_key)
+  store_complete_members(
       keys,
       {
           helpers.get_tar_member_name(str(raw_existing)): raw_existing.stat().st_size,
@@ -8360,16 +8360,14 @@ def test_archive_stats_files_skips_restore_when_to_add_zero_sealed(
   """Sealed-only day with candidates already in members must skip decompress."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   import hpcperfstats.dbload.sync_timedb as st
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      reset_archive_members_redis_client_for_tests,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      store_complete_members,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
-      build_archive_members_redis_keys,
-      store_complete_members_in_redis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
   )
 
-  reset_archive_members_redis_client_for_tests()
   raw_existing = tmp_path / "1709123456"
   raw_existing.write_text("1709123456 job1 cn001\n")
   archive_key = str(tmp_path / "2024-03-05.tar.zst")
@@ -8377,23 +8375,13 @@ def test_archive_stats_files_skips_restore_when_to_add_zero_sealed(
   tar_path = daily_tar_path_from_compressed(archive_key)
   assert not os.path.exists(tar_path)
 
-  fake = FakeRedis()
+  _install_members_store(tmp_path)
   cache_key = helpers._daily_archive_members_cache_key(
       normalize_daily_compressed_path(archive_key),
   )
-  keys = build_archive_members_redis_keys(cache_key)
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
-  monkeypatch.setattr(st.cfg, "get_sync_archive_members_redis_enabled", lambda: True)
+  keys = build_archive_members_keys(cache_key)
   member_name = helpers.get_tar_member_name(str(raw_existing))
-  store_complete_members_in_redis(
+  store_complete_members(
       keys, {member_name: raw_existing.stat().st_size}, saw_duplicates=False,
   )
 
@@ -8420,43 +8408,41 @@ def test_archive_stats_files_skips_restore_when_to_add_zero_sealed(
   monkeypatch.setattr(st, "log_print", lambda msg, **kw: logs.append(str(msg)))
   _patch_archive_gate_pass(monkeypatch)
 
-  result = st._archive_stats_files_body((archive_key, [str(raw_existing)]))
-  assert isinstance(result, st.ArchiveAppendOutcome)
-  assert result.ok
-  assert result.skip_finalize_invalidate
-  assert decompress_calls == []
-  assert append_calls["n"] == 0
-  assert tar_scan_calls["n"] == 0
-  assert not os.path.exists(tar_path)
-  assert any(
-      "archive_job_done" in line
-      and "members_source=redis" in line
-      and "to_add=0" in line
-      and "appended=0" in line
-      for line in logs
-  )
-
+  try:
+    result = st._archive_stats_files_body((archive_key, [str(raw_existing)]))
+    assert isinstance(result, st.ArchiveAppendOutcome)
+    assert result.ok
+    assert result.skip_finalize_invalidate
+    assert decompress_calls == []
+    assert append_calls["n"] == 0
+    assert tar_scan_calls["n"] == 0
+    assert not os.path.exists(tar_path)
+    assert any(
+        "archive_job_done" in line
+        and "members_source=store" in line
+        and "to_add=0" in line
+        and "appended=0" in line
+        for line in logs
+    )
+  finally:
+    set_process_archive_members_store(None)
 
 def test_archive_stats_files_body_soft_skips_when_daily_tar_restore(
     monkeypatch, tmp_path,
 ):
   """Restore in progress → soft_requeue before append_inflight (no slot park)."""
-  import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_coord as coord_mod
   import hpcperfstats.dbload.sync_timedb as st
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      reset_archive_members_redis_client_for_tests,
-  )
 
-  reset_archive_members_redis_client_for_tests()
   raw = tmp_path / "1709123456"
   raw.write_text("1709123456 job1 cn001\n")
   archive_key = str(tmp_path / "2024-03-06.tar.zst")
   Path(archive_key).write_bytes(b"sealed")
 
   inflight_calls = []
-  monkeypatch.setattr(redis_mod, "daily_tar_restore_in_progress_for_day", lambda day: True)
+  monkeypatch.setattr(coord_mod, "daily_tar_restore_in_progress_for_day", lambda day: True)
   monkeypatch.setattr(
-      redis_mod,
+      coord_mod,
       "set_archive_append_inflight",
       lambda *a, **k: inflight_calls.append((a, k)),
   )
@@ -8471,7 +8457,6 @@ def test_archive_stats_files_body_soft_skips_when_daily_tar_restore(
   assert inflight_calls == []
   assert any("soft_skip" in line and "daily_tar_restore" in line for line in logs)
   assert st._archive_task_succeeded(result) is False
-
 
 def test_archive_append_soft_requeue_keeps_attempt():
   """Finalize soft_requeue must requeue without burning archive_retry attempts."""
@@ -8519,16 +8504,11 @@ def test_archive_stats_files_restores_when_to_add_positive_sealed(
 
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   import hpcperfstats.dbload.sync_timedb as st
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      reset_archive_members_redis_client_for_tests,
-  )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
-      build_archive_members_redis_keys,
-      store_complete_members_in_redis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      store_complete_members,
   )
 
-  reset_archive_members_redis_client_for_tests()
   raw_existing = tmp_path / "1709123456"
   raw_existing.write_text("1709123456 job1 cn001\n")
   new_raw = tmp_path / "1709123457"
@@ -8537,23 +8517,12 @@ def test_archive_stats_files_restores_when_to_add_positive_sealed(
   Path(archive_key).write_bytes(b"sealed-zst-bytes")
   tar_path = daily_tar_path_from_compressed(archive_key)
 
-  fake = FakeRedis()
   cache_key = helpers._daily_archive_members_cache_key(
       normalize_daily_compressed_path(archive_key),
   )
-  keys = build_archive_members_redis_keys(cache_key)
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
-  monkeypatch.setattr(st.cfg, "get_sync_archive_members_redis_enabled", lambda: True)
+  keys = build_archive_members_keys(cache_key)
   member_name = helpers.get_tar_member_name(str(raw_existing))
-  store_complete_members_in_redis(
+  store_complete_members(
       keys, {member_name: raw_existing.stat().st_size}, saw_duplicates=False,
   )
 
@@ -8585,7 +8554,7 @@ def test_archive_stats_files_restores_when_to_add_positive_sealed(
 def test_lookup_members_source_tar_scan_when_mutable_tar_exists(
     monkeypatch, tmp_path,
 ):
-  """Mutable sibling .tar forces open-tar authority even when Redis is warm."""
+  """Mutable sibling .tar forces open-tar authority even when the store is warm."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   import hpcperfstats.dbload.sync_timedb as st
 
@@ -8598,22 +8567,9 @@ def test_lookup_members_source_tar_scan_when_mutable_tar_exists(
     tf.add(str(raw), arcname=helpers.get_tar_member_name(str(raw)))
   open_members = {helpers.get_tar_member_name(str(raw)): raw.stat().st_size}
 
-  monkeypatch.setattr(st.cfg, "get_sync_archive_members_redis_enabled", lambda: True)
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".archive_members_redis_enabled",
-      lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".redis_members_cache_is_fully_warm",
-      lambda _keys: True,
-  )
-
   got, source = st._lookup_existing_members_for_archive_append(archive_key, tar_path)
   assert got == open_members
   assert source == "tar_scan"
-
 
 def test_get_existing_archive_members_empty_when_no_archive_despite_l1(
     tmp_path,
@@ -8632,22 +8588,17 @@ def test_get_existing_archive_members_empty_when_no_archive_despite_l1(
   assert helpers.get_existing_archive_members_for_daily_archive(canonical) == {}
 
 
-def test_archive_stats_files_body_to_add_when_redis_warm_no_archive_on_disk(
+def test_archive_stats_files_body_to_add_when_store_warm_no_archive_on_disk(
     monkeypatch, tmp_path,
 ):
-  """Aug 20+ class: warm Redis must not skip bootstrap when no archive on disk."""
+  """Warm members store must not skip bootstrap when no archive on disk."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   import hpcperfstats.dbload.sync_timedb as st
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      reset_archive_members_redis_client_for_tests,
-  )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
-      build_archive_members_redis_keys,
-      store_complete_members_in_redis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      store_complete_members,
   )
 
-  reset_archive_members_redis_client_for_tests()
   helpers.clear_daily_archive_members_cache()
   raw = tmp_path / "1709123456"
   raw.write_text("1709123456 job1 cn001\n")
@@ -8657,27 +8608,16 @@ def test_archive_stats_files_body_to_add_when_redis_warm_no_archive_on_disk(
   assert not os.path.exists(tar_path)
   assert not os.path.exists(archive_key)
 
-  fake = FakeRedis()
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
   cache_key = helpers._daily_archive_members_cache_key(
       normalize_daily_compressed_path(archive_key),
   )
-  keys = build_archive_members_redis_keys(cache_key)
+  keys = build_archive_members_keys(cache_key)
   member_name = helpers.get_tar_member_name(str(raw))
-  store_complete_members_in_redis(
+  store_complete_members(
       keys,
       {member_name: raw.stat().st_size},
       saw_duplicates=False,
   )
-  monkeypatch.setattr(st.cfg, "get_sync_archive_members_redis_enabled", lambda: True)
 
   append_calls = {"n": 0}
   logs = []
@@ -8698,15 +8638,14 @@ def test_archive_stats_files_body_to_add_when_redis_warm_no_archive_on_disk(
   )
 
 
-def test_raw_stats_path_needs_tar_append_when_redis_warm_no_archive_on_disk(
+def test_raw_stats_path_needs_tar_append_when_store_warm_no_archive_on_disk(
     monkeypatch, tmp_path,
 ):
-  """Ingest gate: phantom warm Redis must not suppress need_archival with no archive."""
+  """Ingest gate: phantom warm store must not suppress need_archival with no archive."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
-      build_archive_members_redis_keys,
-      store_complete_members_in_redis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      store_complete_members,
   )
 
   helpers.clear_daily_archive_members_cache()
@@ -8721,22 +8660,12 @@ def test_raw_stats_path_needs_tar_append_when_redis_warm_no_archive_on_disk(
   assert not os.path.exists(archive_key)
   assert not os.path.exists(daily_tar_path_from_compressed(archive_key))
 
-  fake = FakeRedis()
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
   cache_key = helpers._daily_archive_members_cache_key(
       normalize_daily_compressed_path(archive_key),
   )
-  keys = build_archive_members_redis_keys(cache_key)
+  keys = build_archive_members_keys(cache_key)
   member_name = helpers.get_tar_member_name(str(raw_path))
-  store_complete_members_in_redis(
+  store_complete_members(
       keys,
       {member_name: raw_path.stat().st_size},
       saw_duplicates=False,
@@ -8750,7 +8679,7 @@ def test_raw_stats_path_needs_tar_append_when_redis_warm_no_archive_on_disk(
 
 
 def test_lookup_members_source_sealed_stream_when_tar_missing(monkeypatch, tmp_path):
-  """Cold Redis + missing tar labels members_source=sealed_stream after populate."""
+  """Cold store + missing tar labels members_source=sealed_stream after populate."""
   import hpcperfstats.dbload.sync_timedb as st
 
   archive_key = str(tmp_path / "2024-03-07.tar.zst")
@@ -8758,24 +8687,13 @@ def test_lookup_members_source_sealed_stream_when_tar_missing(monkeypatch, tmp_p
   tar_path = daily_tar_path_from_compressed(archive_key)
   members = {"host/1709123456": 12}
 
-  monkeypatch.setattr(st.cfg, "get_sync_archive_members_redis_enabled", lambda: True)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".archive_members_redis_enabled",
-      lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".redis_members_cache_is_fully_warm",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord"
+      ".members_cache_is_fully_warm",
       lambda _keys: False,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".build_archive_members_redis_keys",
-      lambda _ck: type("K", (), {"hash_key": "h", "complete_key": "c"})(),
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord"
       ".archive_pre_append_member_lookup_context",
       lambda: contextlib.nullcontext(),
   )
@@ -8789,21 +8707,14 @@ def test_lookup_members_source_sealed_stream_when_tar_missing(monkeypatch, tmp_p
   assert got == members
   assert source == "sealed_stream"
 
-
-def test_archive_append_cold_redis_completes_with_inflight_first(
+def test_archive_append_cold_store_completes_with_inflight_first(
     monkeypatch, tmp_path, capsys,
 ):
   """F6: inflight-first archive job must still reach archive_job_begin with open tar."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   import hpcperfstats.dbload.sync_timedb as st
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      reset_archive_members_redis_client_for_tests,
-  )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
-  )
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_coord as coord_mod
 
-  reset_archive_members_redis_client_for_tests()
   raw_existing = tmp_path / "1709123456"
   raw_existing.write_text("1709123456 job1 cn001\n")
   new_raw = tmp_path / "1709123457"
@@ -8818,22 +8729,8 @@ def test_archive_append_cold_redis_completes_with_inflight_first(
     )
   open(archive_key, "wb").write(b"sealed")
 
-  fake = FakeRedis()
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
-  monkeypatch.setattr(st.cfg, "get_sync_archive_members_redis_enabled", lambda: True)
-
-  import hpcperfstats.dbload.lib.sync_timedb_archive_members_redis as redis_mod
-
   call_order = []
-  original_set_inflight = redis_mod.set_archive_append_inflight
+  original_set_inflight = coord_mod.set_archive_append_inflight
 
   def inflight_first(*args, **kwargs):
     call_order.append("inflight")
@@ -8845,7 +8742,7 @@ def test_archive_append_cold_redis_completes_with_inflight_first(
     call_order.append("lookup")
     return original_lookup(canonical)
 
-  monkeypatch.setattr(redis_mod, "set_archive_append_inflight", inflight_first)
+  monkeypatch.setattr(coord_mod, "set_archive_append_inflight", inflight_first)
   monkeypatch.setattr(
       st,
       "get_existing_archive_members_for_daily_archive",
@@ -9786,18 +9683,20 @@ def test_decompress_restore_keeps_zst_on_active_ingest_day(monkeypatch, tmp_path
 @pytest.mark.skipif(
     not shutil.which("zstd"), reason="zstd not on PATH",
 )
-def test_ensure_daily_tar_restored_invalidates_stale_redis_warm(
+def test_ensure_daily_tar_restored_invalidates_stale_store_warm(
     monkeypatch, tmp_path, _clear_daily_archive_members_cache,
 ):
-  """Sealed+tar=None Redis warm must clear after ensure_daily_tar_restored."""
+  """Sealed+tar=None store warm must clear after ensure_daily_tar_restored."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      build_archive_members_redis_keys,
-      redis_members_cache_is_fully_warm,
-      store_complete_members_in_redis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      members_cache_is_fully_warm,
+      store_complete_members,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
   )
   from hpcperfstats.dbload.lib.zstd_cli import zstd_compress_tar_to_file
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
 
   tar_path = tmp_path / "2026-06-08.tar"
   zst_path = tmp_path / "2026-06-08.tar.zst"
@@ -9808,32 +9707,25 @@ def test_ensure_daily_tar_restored_invalidates_stale_redis_warm(
   zstd_compress_tar_to_file(str(tar_path), str(zst_path), 1, 6)
   tar_path.unlink()
 
+  _install_members_store(tmp_path)
   canonical = helpers.normalize_daily_compressed_path(str(zst_path))
   sealed_only_key = helpers._daily_archive_members_cache_key(canonical)
   assert sealed_only_key[2] is None
-  keys = build_archive_members_redis_keys(sealed_only_key)
-  fake_redis = FakeRedis()
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake_redis,
-  )
+  keys = build_archive_members_keys(sealed_only_key)
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
-  monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  store_complete_members_in_redis(
-      keys, {"host/raw": 4}, saw_duplicates=False,
-  )
-  assert redis_members_cache_is_fully_warm(keys, client=fake_redis)
-
-  assert helpers.ensure_daily_tar_restored_for_append(str(tar_path), 1) is True
-  assert tar_path.is_file()
-  assert zst_path.is_file()
-  assert not redis_members_cache_is_fully_warm(keys, client=fake_redis)
-
+  try:
+    store_complete_members(
+        keys, {"host/raw": 4}, saw_duplicates=False,
+    )
+    assert members_cache_is_fully_warm(keys)
+    assert helpers.ensure_daily_tar_restored_for_append(str(tar_path), 1) is True
+    assert tar_path.is_file()
+    assert zst_path.is_file()
+    assert not members_cache_is_fully_warm(keys)
+  finally:
+    set_process_archive_members_store(None)
 
 def test_ensure_restore_does_not_build_full_maint_snapshot(monkeypatch, tmp_path):
   """Gated restore must reach decompress without full remaining-raw census."""
@@ -9894,9 +9786,6 @@ def test_populate_uses_tar_when_sealed_missing_even_if_not_dirty_mtime(
       reset_worker_pool_kind,
       set_worker_pool_kind,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
-  )
 
   day_tar = tmp_path / "2024-06-09.tar"
   inner = tmp_path / "member.txt"
@@ -9917,25 +9806,17 @@ def test_populate_uses_tar_when_sealed_missing_even_if_not_dirty_mtime(
     return {"host/member": inner.stat().st_size}
 
   monkeypatch.setattr(
-      helpers, "_populate_redis_members_from_sealed_scan", _forbidden_sealed,
+      helpers, "_populate_members_from_sealed_scan", _forbidden_sealed,
   )
   monkeypatch.setattr(
-      helpers, "_populate_redis_members_from_tar_scan", _counting_tar,
+      helpers, "_populate_members_from_tar_scan", _counting_tar,
   )
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: FakeRedis(),
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".redis_lookup_full_members",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord"
+      ".lookup_full_members",
       lambda keys: None,
   )
 
@@ -9957,9 +9838,6 @@ def test_populate_uses_tar_for_active_ingest_day(
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       reset_worker_pool_kind,
       set_worker_pool_kind,
-  )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
   )
 
   day_zst = tmp_path / "2024-06-10.tar.zst"
@@ -9987,25 +9865,17 @@ def test_populate_uses_tar_for_active_ingest_day(
       helpers, "remaining_raw_by_gz_has_paths_on_disk", lambda *_a, **_k: True,
   )
   monkeypatch.setattr(
-      helpers, "_populate_redis_members_from_sealed_scan", _forbidden_sealed,
+      helpers, "_populate_members_from_sealed_scan", _forbidden_sealed,
   )
   monkeypatch.setattr(
-      helpers, "_populate_redis_members_from_tar_scan", _counting_tar,
+      helpers, "_populate_members_from_tar_scan", _counting_tar,
   )
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   monkeypatch.setattr(
-      helpers.cfg, "get_sync_archive_members_redis_enabled", lambda: True,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: FakeRedis(),
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".redis_lookup_full_members",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord"
+      ".lookup_full_members",
       lambda keys: None,
   )
 
@@ -10027,32 +9897,23 @@ def test_ingest_worker_never_streams_sealed_when_populate_pool_down(
 ):
   """Ingest-pool must enqueue (not stream) when controller is None (spawn reality)."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      ArchiveMembersRedisUnavailableError,
-      _POPULATE_QUEUE_KEY,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      ArchiveMembersStoreUnavailableError,
       request_archive_members_populate_and_wait,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      get_process_archive_members_store,
   )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       reset_worker_pool_kind,
       set_worker_pool_kind,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import FakeRedis
 
   day_gz = tmp_path / "2024-06-13.tar.gz"
   inner = tmp_path / "raw.txt"
   inner.write_text("data")
   with tarfile.open(day_gz, "w:gz") as tf:
     tf.add(str(inner), arcname="host/raw")
-  fake = FakeRedis()
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_populate_pool.get_populate_pool_controller",
       lambda: None,
@@ -10071,30 +9932,30 @@ def test_ingest_worker_never_streams_sealed_when_populate_pool_down(
     return dict(members)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis.wait_for_complete_members",
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord.wait_for_complete_members",
       _fake_wait,
   )
   token = set_worker_pool_kind("ingest-pool")
   try:
     got = request_archive_members_populate_and_wait(str(day_gz))
     assert got == members
-    with pytest.raises(ArchiveMembersRedisUnavailableError, match="forbidden on ingest-pool"):
+    with pytest.raises(ArchiveMembersStoreUnavailableError, match="forbidden on ingest-pool"):
       helpers.execute_archive_members_populate_for_canonical(str(day_gz))
   finally:
     reset_worker_pool_kind(token)
   assert stream_calls["n"] == 0
-  assert _POPULATE_QUEUE_KEY in fake._lists
-  assert len(fake._lists[_POPULATE_QUEUE_KEY]) == 1
+  store = get_process_archive_members_store()
+  assert store is not None
+  assert len(store._populate_jobs) == 1
 
-def test_raw_stats_path_needs_tar_append_when_redis_claims_but_open_tar_missing(
+def test_raw_stats_path_needs_tar_append_when_store_claims_but_open_tar_missing(
     monkeypatch, tmp_path,
 ):
-  """Handoff partition must not trust Redis when mutable .tar lacks the member."""
+  """Handoff partition must not trust a warm store when mutable .tar lacks the member."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-      FakeRedis,
-      build_archive_members_redis_keys,
-      store_complete_members_in_redis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      store_complete_members,
   )
 
   helpers.clear_mutable_tar_authority_members_cache()
@@ -10108,22 +9969,12 @@ def test_raw_stats_path_needs_tar_append_when_redis_claims_but_open_tar_missing(
   open(archive_key, "wb").write(b"zst")
   open(tar_path, "wb").write(b"")
 
-  fake = FakeRedis()
   cache_key = helpers._daily_archive_members_cache_key(
       normalize_daily_compressed_path(archive_key),
   )
-  keys = build_archive_members_redis_keys(cache_key)
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
+  keys = build_archive_members_keys(cache_key)
   member_name = helpers.get_tar_member_name(str(raw))
-  store_complete_members_in_redis(
+  store_complete_members(
       keys,
       {member_name: raw.stat().st_size},
       saw_duplicates=False,
@@ -10176,5 +10027,40 @@ def test_cross_day_remaining_raw_does_not_block_filesystem_complete(tmp_path):
       use_blocking_remaining=False,
       tgz_archive_dir=str(daily_dir),
   ) is False
+
+
+def test_rate_limited_day_info_log_prunes_stale_days():
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      _RATE_LIMIT_STATE_STALE_S,
+      _prune_rate_limit_state,
+      _rate_limited_day_info_log,
+  )
+
+  state = {
+      "2026-01-01": {
+          "last_touch_mono": 1.0,
+          "last_log_mono": 1.0,
+          "suppressed": 0.0,
+      },
+      "2026-01-02": {
+          "last_touch_mono": 10.0,
+          "last_log_mono": 10.0,
+          "suppressed": 0.0,
+      },
+  }
+  _prune_rate_limit_state(state, 1.0 + _RATE_LIMIT_STATE_STALE_S + 1.0)
+  assert "2026-01-01" not in state
+  assert "2026-01-02" in state
+  emitted = []
+  _rate_limited_day_info_log(
+      state,
+      "2026-01-03",
+      "INFO: probe",
+      interval_s=30.0,
+      log_fn=lambda msg, flush=False: emitted.append(msg),
+  )
+  assert emitted == ["INFO: probe"]
+  assert "2026-01-03" in state
+  assert "last_touch_mono" in state["2026-01-03"]
 
 

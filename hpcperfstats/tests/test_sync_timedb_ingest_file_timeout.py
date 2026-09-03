@@ -213,7 +213,7 @@ def test_stall_abort_polls_for_sealed_archives_respects_ini_ceiling(monkeypatch,
 
   monkeypatch.setattr(
       ingest_timeout_mod,
-      "_redis_member_count_for_sealed_day",
+      "_store_member_count_for_sealed_day",
       lambda _day: 500,
   )
   sealed = tmp_path / "2024-01-01.tar.zst"
@@ -226,7 +226,7 @@ def test_raise_if_ingest_per_file_deadline_uses_effective_timeout(monkeypatch):
   """Wall deadline branch deleted — past ContextVar deadline is a no-op."""
   import time
 
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       reset_ingest_task_deadline_monotonic,
       reset_ingest_task_effective_timeout_s,
       set_ingest_task_deadline_monotonic,
@@ -258,7 +258,7 @@ def test_ingest_remaining_count_never_negative():
 
 
 def test_extend_ingest_task_deadline_monotonic():
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       extend_ingest_task_deadline_monotonic,
       get_ingest_task_deadline_monotonic,
       reset_ingest_task_deadline_monotonic,
@@ -277,7 +277,7 @@ def test_extend_ingest_task_deadline_monotonic():
 
 def test_suspend_sigalrm_extends_deadline_monotonic(monkeypatch):
   """Wall deleted: suspend touches idle progress; does not extend wall deadline."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       get_ingest_task_deadline_monotonic,
       reset_ingest_task_deadline_monotonic,
       set_ingest_task_deadline_monotonic,
@@ -304,17 +304,17 @@ def test_suspend_sigalrm_extends_deadline_monotonic(monkeypatch):
 
 @pytest.mark.skipif(not _SIGALRM_AVAILABLE, reason="SIGALRM not available")
 def test_ingest_populate_wait_survives_sigalrm(monkeypatch, tmp_path):
-  """Short per-file SIGALRM must not fire during Redis populate wait."""
+  """Short per-file SIGALRM must not fire during members-store populate wait."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     _daily_archive_members_cache_key,
   )
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-    build_archive_members_redis_keys,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    build_archive_members_keys,
     request_archive_members_populate_and_wait,
-    reset_archive_members_redis_client_for_tests,
   )
-  from hpcperfstats.tests.test_sync_timedb_archive_members_redis import (
-    FakeRedis,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+    SyncTimedbArchiveMembersStore,
+    set_process_archive_members_store,
   )
 
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.15)
@@ -324,35 +324,28 @@ def test_ingest_populate_wait_survives_sigalrm(monkeypatch, tmp_path):
       "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_cache_enabled",
       lambda: True,
   )
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_redis_enabled",
-      lambda: True,
-  )
 
-  fake = FakeRedis()
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_members_redis"
-      ".get_archive_members_redis_client",
-      lambda required=True: fake,
-  )
-  reset_archive_members_redis_client_for_tests()
-
+  store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+  set_process_archive_members_store(store)
   day_gz = tmp_path / "2024-06-13.tar.gz"
   inner = tmp_path / "raw.txt"
   inner.write_text("data")
   with tarfile.open(day_gz, "w:gz") as tf:
     tf.add(str(inner), arcname="host/raw")
   cache_key = _daily_archive_members_cache_key(str(day_gz))
-  keys = build_archive_members_redis_keys(cache_key)
-  fake.set(keys.lock_key, "tok:999999997", ex=30)
-  fake.set(keys.complete_key, "0")
+  keys = build_archive_members_keys(cache_key)
+  assert store.try_begin_populate(keys.day_token, keys.identity)
 
   populate_done = threading.Event()
 
   def _finish_populate():
     time.sleep(0.35)
-    fake.hset(keys.hash_key, mapping={"host/raw": "4"})
-    fake.set(keys.complete_key, "1")
+    store.finish_populate(
+        keys.day_token,
+        keys.identity,
+        members={"host/raw": 4},
+        complete=True,
+    )
     populate_done.set()
 
   threading.Thread(target=_finish_populate, daemon=True).start()
@@ -364,13 +357,16 @@ def test_ingest_populate_wait_survives_sigalrm(monkeypatch, tmp_path):
   stats_file.write_bytes(b"x")
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: 1024)
 
-  result = st._run_ingest_timed(
-      str(stats_file),
-      "ingest",
-      lambda: request_archive_members_populate_and_wait(str(day_gz)),
-  )
-  assert populate_done.wait(timeout=2.0)
-  assert result.get("host/raw") == 4
+  try:
+    result = st._run_ingest_timed(
+        str(stats_file),
+        "ingest",
+        lambda: request_archive_members_populate_and_wait(str(day_gz)),
+    )
+    assert populate_done.wait(timeout=2.0)
+    assert result.get("host/raw") == 4
+  finally:
+    set_process_archive_members_store(None)
 
 
 def test_parse_still_times_out_without_populate_wait(monkeypatch, tmp_path):
@@ -510,7 +506,7 @@ def test_log_ingest_per_file_timeout_includes_size_and_rate(capsys, tmp_path):
 
 def test_suspend_sigalrm_for_non_work_extends_deadline_monotonic(monkeypatch):
   """Wall deleted: non-work suspend touches idle; wall deadline unchanged."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       get_ingest_task_deadline_monotonic,
       reset_ingest_task_deadline_monotonic,
       set_ingest_task_deadline_monotonic,
@@ -531,7 +527,7 @@ def test_suspend_sigalrm_for_non_work_extends_deadline_monotonic(monkeypatch):
 
 def test_write_lock_wait_extends_deadline_and_accumulates_timing(monkeypatch):
   """Manager acquire wait accumulates timing; wall deadline unchanged."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       get_ingest_task_deadline_monotonic,
       reset_ingest_task_deadline_monotonic,
       set_ingest_task_deadline_monotonic,

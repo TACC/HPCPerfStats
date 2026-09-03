@@ -57,15 +57,14 @@ BATTERY_FILTER='test_arch_ or architecture or find_stats or printf or rescan_mti
 set +e
 "$PYTHON" -m pytest -q \
   hpcperfstats/tests/test_sync_timedb_job_queue.py \
-  hpcperfstats/tests/test_sync_timedb_job_queue_redis.py \
   hpcperfstats/tests/test_sync_timedb_job_discover.py \
   hpcperfstats/tests/test_sync_timedb_queue_orchestrator.py \
   hpcperfstats/tests/test_sync_timedb_append_tar_race.py \
   hpcperfstats/tests/test_sync_timedb_subprocess_hardening.py \
-  hpcperfstats/tests/test_sync_timedb_archive_members_redis_client.py \
+  hpcperfstats/tests/test_sync_timedb_archive_members_store_required.py \
   hpcperfstats/tests/test_sync_timedb_architecture_contract.py \
   hpcperfstats/tests/test_sync_timedb_archive.py \
-  hpcperfstats/tests/test_sync_timedb_archive_members_redis.py \
+  hpcperfstats/tests/test_sync_timedb_archive_members_coord.py \
   hpcperfstats/tests/test_sync_timedb_stats_find.py \
   hpcperfstats/tests/test_sync_timedb_jid.py \
   hpcperfstats/tests/test_sync_timedb_day_raw_removal.py \

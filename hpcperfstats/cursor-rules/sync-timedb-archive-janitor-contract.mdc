@@ -16,7 +16,7 @@ This rule keeps **A** cold-path worker contracts used by **day_close threads** a
 
 | Path | Owns | Mechanism today |
 |------|------|-----------------|
-| Hot | Discover → ingest → append → populate | Orchestrator + spawn pools + Redis `job:v1` / populate queue |
+| Hot | Discover → ingest → append → populate | Orchestrator + thread pools + in-process job/members stores |
 | Cold | Seal → verify → raw delete → tar-drop | Orchestrator **day_close** jobs on threads (`sync_day_close_max_inflight`) |
 
 Ingest is **never** gated on day-close completion. Day-close waits for filesystem remaining-raw empty **and** `sync_day_close_min_age_hours` (default **32**) after that day’s local end.
@@ -30,13 +30,13 @@ Ingest is **never** gated on day-close completion. Day-close waits for filesyste
 | Open-tar membership authority | `get_mutable_tar_authority_member_map` in `sync_timedb_archive_helpers.py` |
 | Yield / defer vs hot path | `sync_timedb_day_close_cooperation.py` |
 | Per-day raw removal | `sync_timedb_day_raw_removal.py` → `DayRawRemovalCoordinator` |
-| Single-flight populate | `sync_timedb_archive_members_redis.py` / populate-pool |
+| Single-flight populate | `sync_timedb_archive_members_store.py` / populate-pool threads |
 | Append unseal | `ensure_daily_tar_restored_for_append` (`sync-timedb-lock-and-archive-contract.mdc`) |
 
 ## Required A laws
 
 1. **Seal → verify → delete → tar-drop** order; shrink guard; fail-closed restore; safe decompress temp + `tar tf` + replace.
-2. **Open mutable `.tar`** is membership authority when present — not warm Redis alone (`AR-06`).
+2. **Open mutable `.tar`** is membership authority when present — not a warm members-store map alone (`AR-06`).
 3. **No append/delete** without DB readiness / marks (`sync-timedb-db-before-archive-contract.mdc`).
 4. **Path-level recheck** before `os.remove` (32h delay is not enough alone).
 5. **Hot wins flock:** day_close **defers/yields** via `sync_timedb_day_close_cooperation` when ingest/populate needs the tar (`sync-timedb-hot-path-janitor-lock-priority.mdc`).

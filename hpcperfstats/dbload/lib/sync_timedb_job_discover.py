@@ -263,7 +263,7 @@ def stream_enqueue_ingest_from_find_records(
   Already-complete identities are skipped (residual-gap reconstruct-skip).
 
   Args:
-    client (Any): Redis client with ``zadd`` / ``rpush``.
+    client (Any): job store with ``zadd`` / ``rpush``.
     records (Iterable[FindStatsRecord]): Streaming find records (generator
       OK).
     tgz_archive_dir (str): Daily archive directory for append classify.
@@ -418,7 +418,7 @@ def stream_enqueue_ingest_from_find_stdout_chunks(
   Parse find stdout chunks and enqueue ingest jobs as records complete.
 
   Args:
-    client (Any): Redis client with ``zadd`` / ``rpush``.
+    client (Any): job store with ``zadd`` / ``rpush``.
     chunks (Iterable[bytes]): GNU find ``-printf`` stdout chunks.
     tgz_archive_dir (str): Daily archive directory.
     today (date): Local today for score encode.

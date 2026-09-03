@@ -12,6 +12,8 @@ Attributes:
   ARCHIVE_MEMBERS_STORE_DIR_RELPATH: Sidecar directory basename.
   MEMBERS_DAY_SCHEMA_VERSION: Schema version written into each day file.
   SyncTimedbArchiveMembersStore: Thread-safe in-process member store.
+  _PROCESS_STORE: Process-local store installed by the orchestrator.
+  _PROCESS_STORE_LOCK: Lock covering process-local store install/get.
 """
 from __future__ import annotations
 
@@ -49,6 +51,10 @@ class SyncTimedbArchiveMembersStore:
       _lock: Re-entrant lock covering maps and flags.
       _members: Member name to size maps by (day, identity).
       _populate_owner: Thread ident of the populate owner by (day, identity).
+      _populate_jobs: In-process populate job list (not persisted).
+      _populate_queued: Calendar days already queued for populate.
+      _populate_cv: Condition used by populate waiters and owners.
+      _populate_source: Ephemeral populate-source token by canonical path.
       _restore: In-memory restore tokens by calendar day.
       _tar_hot: In-memory ingest-tar-hot reason by calendar day.
     """
@@ -81,6 +87,10 @@ class SyncTimedbArchiveMembersStore:
         self._tar_hot: Dict[str, str] = {}
         self._append_inflight: Dict[str, bool] = {}
         self._restore: Dict[str, str] = {}
+        self._populate_source: Dict[str, str] = {}
+        self._populate_jobs: list[Any] = []
+        self._populate_queued: set[str] = set()
+        self._populate_cv = threading.Condition(self._lock)
         if self.archive_dir:
             os.makedirs(self._store_dir(), exist_ok=True)
             self.load()
@@ -166,6 +176,39 @@ class SyncTimedbArchiveMembersStore:
         if event is not None:
             event.set()
 
+    def _drop_stale_identities_for_day_locked(
+        self,
+        day_token: str,
+        keep_identity: str,
+    ) -> None:
+        """
+        Drop abandoned sibling identities after the live identity completes.
+
+        Identity drift (T1→T2) otherwise leaves Events and incomplete maps
+        for the rest of the supervisor life.
+
+        Args:
+          day_token (str): ISO calendar day.
+          keep_identity (str): Identity that just became complete.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store._drop_stale_identities_for_day_locked("2026-01-01", "id")
+        """
+        day = str(day_token)
+        keep = (day, str(keep_identity))
+        for key in list(self._members):
+            if key[0] == day and key != keep and key not in self._populate_owner:
+                self._members.pop(key, None)
+                self._complete.pop(key, None)
+        for key in list(self._events):
+            if key[0] == day and key != keep and key not in self._populate_owner:
+                event = self._events.pop(key)
+                event.set()
+
     def try_begin_populate(self, day_token: str, identity: str) -> bool:
         """
         Become the single populate owner for one archive identity.
@@ -230,7 +273,10 @@ class SyncTimedbArchiveMembersStore:
                 self._complete[key] = True
             self._populate_owner.pop(key, None)
             self._wake_and_drop_event_locked(day_token, identity)
-        self.persist_day(day_token)
+            if complete:
+                self._drop_stale_identities_for_day_locked(day_token, identity)
+        if complete:
+            self.persist_day(day_token)
 
     def wait_for_complete(
         self,
@@ -308,6 +354,7 @@ class SyncTimedbArchiveMembersStore:
             if saw_duplicates:
                 self._dedupe_hint[str(day_token)] = True
             self._wake_and_drop_event_locked(day_token, identity)
+            self._drop_stale_identities_for_day_locked(day_token, identity)
         self.persist_day(day_token)
 
     def is_complete(self, day_token: str, identity: str) -> bool:
@@ -417,6 +464,381 @@ class SyncTimedbArchiveMembersStore:
             payload = self._day_skip.get(str(day_token))
             return None if payload is None else dict(payload)
 
+    def clear_day_skip(self, day_token: str) -> None:
+        """
+        Clear the persisted sticky skip for one calendar day.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store.clear_day_skip("2026-01-01")
+        """
+        with self._lock:
+            self._day_skip.pop(str(day_token), None)
+        self.persist_day(day_token)
+
+    def lookup_complete_map(
+        self,
+        day_token: str,
+        identity: str,
+    ) -> Optional[Dict[str, int]]:
+        """
+        Return a copy of a complete member map, or None when incomplete.
+
+        Args:
+          day_token (str): ISO calendar day.
+          identity (str): Archive identity suffix.
+
+        Returns:
+          dict[str, int] | None: Complete map, or None.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").lookup_complete_map(
+          ...   "2026-01-01", "id",
+          ... ) is None
+          True
+        """
+        with self._lock:
+            key = (str(day_token), str(identity))
+            if not self._complete.get(key):
+                return None
+            return dict(self._members.get(key) or {})
+
+    def merge_members(
+        self,
+        day_token: str,
+        identity: str,
+        member_map: Dict[str, int],
+        *,
+        saw_duplicates: bool = False,
+    ) -> bool:
+        """
+        Merge appended sizes into a complete map and persist.
+
+        Args:
+          day_token (str): ISO calendar day.
+          identity (str): Archive identity suffix.
+          member_map (dict[str, int]): Newly appended member sizes.
+          saw_duplicates (bool): True when the append listed duplicate names.
+
+        Returns:
+          bool: True when a complete map was updated.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").merge_members(
+          ...   "2026-01-01", "id", {"a": 1},
+          ... )
+          False
+        """
+        key = (str(day_token), str(identity))
+        with self._lock:
+            if not self._complete.get(key):
+                current = dict(self._members.get(key) or {})
+            else:
+                current = dict(self._members.get(key) or {})
+            if not member_map:
+                return False
+            for name, size in member_map.items():
+                size_i = int(size)
+                prev = current.get(str(name))
+                if prev is None or size_i > int(prev):
+                    current[str(name)] = size_i
+            self._members[key] = current
+            self._complete[key] = True
+            if saw_duplicates:
+                self._dedupe_hint[str(day_token)] = True
+            self._degraded.pop(str(day_token), None)
+            self._wake_and_drop_event_locked(day_token, identity)
+            self._drop_stale_identities_for_day_locked(day_token, identity)
+        self.persist_day(day_token)
+        return True
+
+    def clear_incomplete(self, day_token: str, identity: str) -> None:
+        """
+        Drop a non-complete identity map without touching complete peers.
+
+        Args:
+          day_token (str): ISO calendar day.
+          identity (str): Archive identity suffix.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store.clear_incomplete("2026-01-01", "id")
+        """
+        key = (str(day_token), str(identity))
+        with self._lock:
+            if self._complete.get(key):
+                return
+            self._members.pop(key, None)
+            self._populate_owner.pop(key, None)
+            self._wake_and_drop_event_locked(day_token, identity)
+
+    def set_degraded(self, day_token: str) -> None:
+        """
+        Persist a populate-degraded flag for one calendar day.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store.set_degraded("2026-01-01")
+        """
+        with self._lock:
+            self._degraded[str(day_token)] = True
+        self.persist_day(day_token)
+
+    def clear_degraded(self, day_token: str) -> None:
+        """
+        Clear the persisted populate-degraded flag for one calendar day.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store.clear_degraded("2026-01-01")
+        """
+        with self._lock:
+            self._degraded.pop(str(day_token), None)
+        self.persist_day(day_token)
+
+    def is_degraded(self, day_token: str) -> bool:
+        """
+        Return True when the day is marked populate-degraded.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          bool: True when degraded is set.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").is_degraded(
+          ...   "2026-01-01",
+          ... )
+          False
+        """
+        with self._lock:
+            return bool(self._degraded.get(str(day_token)))
+
+    def set_populate_source(self, canonical: str, source: str) -> None:
+        """
+        Record an ephemeral populate-source token for one canonical path.
+
+        Args:
+          canonical (str): Canonical daily archive path.
+          source (str): Token such as tar_populated or sealed_populated.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store.set_populate_source("/d/2026-01-01.tar", "tar_populated")
+        """
+        with self._lock:
+            self._populate_source[str(canonical)] = str(source)
+
+    def peek_populate_source(self, canonical: str) -> Optional[str]:
+        """
+        Return the populate-source token without consuming it.
+
+        Args:
+          canonical (str): Canonical daily archive path.
+
+        Returns:
+          str | None: Stored token, or None when unset.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").peek_populate_source(
+          ...   "/d/2026-01-01.tar",
+          ... ) is None
+          True
+        """
+        with self._lock:
+            value = self._populate_source.get(str(canonical))
+            return None if value is None else str(value)
+
+    def consume_populate_source(self, canonical: str) -> Optional[str]:
+        """
+        Pop the populate-source token for one canonical path.
+
+        Args:
+          canonical (str): Canonical daily archive path.
+
+        Returns:
+          str | None: Stored token, or None when unset.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").consume_populate_source(
+          ...   "/d/2026-01-01.tar",
+          ... ) is None
+          True
+        """
+        with self._lock:
+            value = self._populate_source.pop(str(canonical), None)
+            return None if value is None else str(value)
+
+    def _drop_populate_source_for_day_locked(self, day_token: str) -> None:
+        """
+        Drop ephemeral populate-source tokens whose path names this day.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store._drop_populate_source_for_day_locked("2026-01-01")
+        """
+        day = str(day_token)
+        for key in list(self._populate_source):
+            if day in str(key):
+                self._populate_source.pop(key, None)
+
+    def enqueue_populate(self, job: Any) -> bool:
+        """
+        Enqueue one in-process populate job, deduped per calendar day.
+
+        Args:
+          job (Any): Populate job payload with optional day_token.
+
+        Returns:
+          bool: True when the job was newly queued.
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store.enqueue_populate({"day_token": "2026-01-01"})
+          True
+        """
+        day = ""
+        if isinstance(job, dict):
+            day = str(job.get("day_token") or "")
+        with self._populate_cv:
+            if day and day in self._populate_queued:
+                return False
+            if day:
+                self._populate_queued.add(day)
+            self._populate_jobs.append(job)
+            self._populate_cv.notify()
+        return True
+
+    def _populate_job_hot_rank_locked(self, job: Any) -> int:
+        """
+        Return ingest-hot prefer rank for one queued populate job.
+
+        Args:
+          job (Any): Populate job payload.
+
+        Returns:
+          int: Prefer rank (0 when the day is not ingest-hot).
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store._populate_job_hot_rank_locked({"day_token": "x"})
+          0
+        """
+        if not isinstance(job, dict):
+            return 0
+        day = str(job.get("day_token") or "")
+        reason = str(self._tar_hot.get(day, ""))
+        return {
+            "chunk_prewarm": 3,
+            "populate_wait": 2,
+            "populate_enqueue": 1,
+        }.get(reason, 0)
+
+    def dequeue_populate(self, *, timeout_s: float = 1.0) -> Any:
+        """
+        Pop one in-process populate job, preferring ingest-hot days.
+
+        Args:
+          timeout_s (float): Seconds to block.
+
+        Returns:
+          Any: Job payload, or None on timeout.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").dequeue_populate(
+          ...   timeout_s=0.01,
+          ... ) is None
+          True
+        """
+        deadline = time.time() + max(0.0, float(timeout_s))
+        with self._populate_cv:
+            while not self._populate_jobs:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return None
+                self._populate_cv.wait(timeout=remaining)
+            best_i = 0
+            best_rank = -1
+            for index, job in enumerate(self._populate_jobs):
+                rank = self._populate_job_hot_rank_locked(job)
+                if rank > best_rank:
+                    best_rank = rank
+                    best_i = index
+            return self._populate_jobs.pop(best_i)
+
+    def complete_populate_job(self, job: Any) -> None:
+        """
+        Drop the ephemeral queued-day flag after a successful populate.
+
+        Args:
+          job (Any): Finished populate job payload.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store.complete_populate_job({"day_token": "2026-01-01"})
+        """
+        if not isinstance(job, dict):
+            return
+        day = str(job.get("day_token") or "")
+        if not day:
+            return
+        with self._lock:
+            self._populate_queued.discard(day)
+
+    def requeue_populate_job(self, job: Any) -> None:
+        """
+        Return a failed populate job to the in-process queue.
+
+        Args:
+          job (Any): Populate job payload.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store.requeue_populate_job({"day_token": "2026-01-01"})
+        """
+        if not isinstance(job, dict):
+            return
+        with self._populate_cv:
+            self._populate_jobs.append(job)
+            self._populate_cv.notify()
+
     def invalidate(self, day_token: str, identity: str) -> None:
         """
         Drop one identity map without touching the job-store snapshot.
@@ -437,6 +859,7 @@ class SyncTimedbArchiveMembersStore:
             self._members.pop(key, None)
             self._complete.pop(key, None)
             self._populate_owner.pop(key, None)
+            self._drop_populate_source_for_day_locked(day_token)
             self._wake_and_drop_event_locked(day_token, identity)
         self.persist_day(day_token)
 
@@ -465,6 +888,10 @@ class SyncTimedbArchiveMembersStore:
             self._tar_hot.clear()
             self._append_inflight.clear()
             self._restore.clear()
+            self._populate_source.clear()
+            self._populate_jobs.clear()
+            self._populate_queued.clear()
+            self._populate_cv.notify_all()
         store_dir = self._store_dir()
         if not os.path.isdir(store_dir):
             return
@@ -494,6 +921,25 @@ class SyncTimedbArchiveMembersStore:
         """
         with self._lock:
             self._tar_hot[str(day_token)] = str(reason)
+
+    def ingest_tar_hot_reason(self, day_token: str) -> str:
+        """
+        Return the in-memory ingest-tar-hot reason, or empty when unset.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          str: Reason string, or empty.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").ingest_tar_hot_reason(
+          ...   "2026-01-01",
+          ... )
+          ''
+        """
+        with self._lock:
+            return str(self._tar_hot.get(str(day_token), ""))
 
     def clear_ingest_tar_hot(self, day_token: str) -> None:
         """
@@ -605,9 +1051,11 @@ class SyncTimedbArchiveMembersStore:
             for (stored_day, identity), members in self._members.items():
                 if stored_day != day:
                     continue
+                if not self._complete.get((day, identity)):
+                    continue
                 identities[identity] = {
                     "members": dict(members),
-                    "complete": bool(self._complete.get((day, identity))),
+                    "complete": True,
                 }
             payload = {
                 "schema_version": MEMBERS_DAY_SCHEMA_VERSION,
@@ -662,8 +1110,227 @@ class SyncTimedbArchiveMembersStore:
                             continue
                         key = (day, str(identity))
                         members = body.get("members") or {}
+                        if not body.get("complete"):
+                            continue
                         self._members[key] = {
                             str(member): int(size)
                             for member, size in members.items()
                         }
-                        self._complete[key] = bool(body.get("complete"))
+                        self._complete[key] = True
+
+    def try_acquire_restore(self, day_token: str, token: str) -> bool:
+        """
+        Become the in-memory restore owner for one calendar day.
+
+        Args:
+          day_token (str): ISO calendar day.
+          token (str): Owner token.
+
+        Returns:
+          bool: True when this caller now owns restore.
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store.try_acquire_restore("2026-01-01", "t1")
+          True
+        """
+        day = str(day_token)
+        if not day or day == "unknown":
+            return False
+        with self._lock:
+            current = self._restore.get(day)
+            if current and current != str(token):
+                return False
+            self._restore[day] = str(token)
+            return True
+
+    def renew_restore(self, day_token: str, token: str) -> bool:
+        """
+        Refresh an owned in-memory restore token.
+
+        Args:
+          day_token (str): ISO calendar day.
+          token (str): Owner token.
+
+        Returns:
+          bool: True when this caller still owns restore.
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store.try_acquire_restore("2026-01-01", "t1")
+          True
+          >>> store.renew_restore("2026-01-01", "t1")
+          True
+        """
+        day = str(day_token)
+        with self._lock:
+            return self._restore.get(day) == str(token)
+
+    def clear_restore(self, day_token: str, token: str | None = None) -> None:
+        """
+        Drop the in-memory restore token when the owner matches.
+
+        Args:
+          day_token (str): ISO calendar day.
+          token (str | None): Owner token, or None to force-clear.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store.clear_restore("2026-01-01")
+        """
+        day = str(day_token)
+        with self._lock:
+            if token is None or self._restore.get(day) == str(token):
+                self._restore.pop(day, None)
+
+    def restore_in_progress(self, day_token: str) -> bool:
+        """
+        Return True when an in-memory restore token is set.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          bool: True when restore is owned.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").restore_in_progress(
+          ...   "2026-01-01",
+          ... )
+          False
+        """
+        with self._lock:
+            return str(day_token) in self._restore
+
+    def restore_reason(self, day_token: str) -> str:
+        """
+        Return the in-memory restore token, or empty when unset.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          str: Owner token, or empty.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").restore_reason(
+          ...   "2026-01-01",
+          ... )
+          ''
+        """
+        with self._lock:
+            return str(self._restore.get(str(day_token), ""))
+
+    def dedupe_hint_is_set(self, day_token: str) -> bool:
+        """
+        Return True when the day saw duplicate tar members.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          bool: True when the durable dedupe hint is set.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").dedupe_hint_is_set(
+          ...   "2026-01-01",
+          ... )
+          False
+        """
+        with self._lock:
+            return bool(self._dedupe_hint.get(str(day_token)))
+
+    def clear_dedupe_hint(self, day_token: str) -> None:
+        """
+        Clear the persisted dedupe hint for one calendar day.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store.clear_dedupe_hint("2026-01-01")
+        """
+        with self._lock:
+            self._dedupe_hint.pop(str(day_token), None)
+        self.persist_day(day_token)
+
+    def list_dedupe_hint_days(self) -> list[str]:
+        """
+        Return calendar days that currently have a dedupe hint.
+
+        Returns:
+          list[str]: Day tokens.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").list_dedupe_hint_days()
+          []
+        """
+        with self._lock:
+            return sorted(
+                day for day, flag in self._dedupe_hint.items() if flag
+            )
+
+
+_PROCESS_STORE: SyncTimedbArchiveMembersStore | None = None
+_PROCESS_STORE_LOCK = threading.Lock()
+
+
+def set_process_archive_members_store(
+    store: SyncTimedbArchiveMembersStore | None,
+) -> None:
+    """
+    Install the process-wide archive members store.
+
+    Args:
+      store (SyncTimedbArchiveMembersStore | None): Store instance, or None.
+
+    Returns:
+      None
+
+    Examples:
+      >>> set_process_archive_members_store(None)
+    """
+    global _PROCESS_STORE
+    with _PROCESS_STORE_LOCK:
+        _PROCESS_STORE = store
+
+
+def get_process_archive_members_store() -> SyncTimedbArchiveMembersStore | None:
+    """
+    Return the process-wide archive members store, or None when unset.
+
+    Returns:
+      SyncTimedbArchiveMembersStore | None: Installed store.
+
+    Examples:
+      >>> get_process_archive_members_store() is None
+      True
+    """
+    with _PROCESS_STORE_LOCK:
+        return _PROCESS_STORE
+
+
+def require_process_archive_members_store() -> SyncTimedbArchiveMembersStore:
+    """
+    Return the process-wide store, or raise when it is not installed.
+
+    Returns:
+      SyncTimedbArchiveMembersStore: Installed store.
+
+    Raises:
+      RuntimeError: No process-wide store has been installed.
+
+    Examples:
+      >>> require_process_archive_members_store()  # doctest: +SKIP
+    """
+    store = get_process_archive_members_store()
+    if store is None:
+        raise RuntimeError("archive members store is not installed")
+    return store

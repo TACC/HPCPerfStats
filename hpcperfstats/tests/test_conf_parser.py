@@ -784,15 +784,9 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   )
   assert cfg.get_sync_archive_members_cache_enabled() is True
   assert cfg.get_sync_archive_members_cache_max_entries() == 64
-  assert cfg.get_sync_archive_members_redis_enabled() is True
-  assert cfg.get_sync_archive_members_redis_ttl_seconds() == 86400
-  assert cfg.get_sync_archive_members_redis_populate_lock_seconds() == 3600
-  assert cfg.get_sync_archive_members_redis_populate_stall_seconds() == 120
-  assert cfg.get_sync_archive_members_redis_populate_max_seconds() == 7200
+  assert cfg.get_sync_archive_members_populate_max_seconds() == 0
   assert cfg.get_sync_archive_members_fnctl_read_lock_timeout_seconds() == 180
-  assert cfg.get_sync_archive_members_redis_wait_poll_seconds() == 0.25
-  assert cfg.get_sync_archive_members_redis_hset_batch_size() == 500
-  assert cfg.get_sync_archive_members_redis_max_payload_bytes() == 8388608
+  assert cfg.get_sync_archive_members_wait_poll_seconds() == 0.25
 
   with open(temp_ini) as f:
     content = f.read()
@@ -815,15 +809,9 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
       "sync_ingest_per_file_timeout_s_per_mib = 1.0\n"
       "sync_archive_members_cache_enabled = no\n"
       "sync_archive_members_cache_max_entries = 32\n"
-      "sync_archive_members_redis_enabled = no\n"
-      "sync_archive_members_redis_ttl_seconds = 7200\n"
-      "sync_archive_members_redis_populate_lock_seconds = 120\n"
-      "sync_archive_members_redis_populate_stall_seconds = 45\n"
-      "sync_archive_members_redis_populate_max_seconds = 1800\n"
+      "sync_archive_members_populate_max_seconds = 1800\n"
       "sync_archive_members_fnctl_read_lock_timeout_seconds = 300\n"
-      "sync_archive_members_redis_wait_poll_seconds = 0.5\n"
-      "sync_archive_members_redis_hset_batch_size = 100\n"
-      "sync_archive_members_redis_max_payload_bytes = 1048576",
+      "sync_archive_members_wait_poll_seconds = 0.5",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
@@ -847,15 +835,9 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == 1.0
   assert cfg.get_sync_archive_members_cache_enabled() is False
   assert cfg.get_sync_archive_members_cache_max_entries() == 32
-  assert cfg.get_sync_archive_members_redis_enabled() is False
-  assert cfg.get_sync_archive_members_redis_ttl_seconds() == 7200
-  assert cfg.get_sync_archive_members_redis_populate_lock_seconds() == 120
-  assert cfg.get_sync_archive_members_redis_populate_stall_seconds() == 45
-  assert cfg.get_sync_archive_members_redis_populate_max_seconds() == 1800
+  assert cfg.get_sync_archive_members_populate_max_seconds() == 1800
   assert cfg.get_sync_archive_members_fnctl_read_lock_timeout_seconds() == 300
-  assert cfg.get_sync_archive_members_redis_wait_poll_seconds() == 0.5
-  assert cfg.get_sync_archive_members_redis_hset_batch_size() == 100
-  assert cfg.get_sync_archive_members_redis_max_payload_bytes() == 1048576
+  assert cfg.get_sync_archive_members_wait_poll_seconds() == 0.5
   monkeypatch.setenv("HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S", "45")
   assert cfg.get_sync_ingest_per_file_timeout_s() == 45.0
 

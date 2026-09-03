@@ -3,7 +3,7 @@ Per-file ingest timeout helpers (shared by sync_timedb and pool dispatch).
 
 Internal wall soft-kill is deleted: ``resolve_*`` and ``stall_abort_polls_*``
 always return ``0``. Idle stall + Postgres ``statement_timeout`` remain.
-``get_sync_ingest_per_file_timeout_max_s`` is retained for Redis lease EX only.
+``get_sync_ingest_per_file_timeout_max_s`` is retained for job-store lease EX only.
 
 Attributes:
   GIANT_SUPPLEMENT_LARGE_MAX_BYTES: Attribute.
@@ -30,7 +30,7 @@ import os
 import hpcperfstats.dbload.lib.conf_parser as cfg
 
 _INGEST_TIMEOUT_MIB_BYTES = 1024 * 1024
-# Conservative proxy when Redis hlen is unavailable (typical spooled member size).
+# Conservative proxy when store hlen is unavailable (typical spooled member size).
 _TYPICAL_SEALED_MEMBER_BYTES = 32 * 1024 * 1024
 
 
@@ -197,9 +197,9 @@ def calendar_day_from_sealed_archive_path(sealed_path: str) -> Any:
   return ""
 
 
-def _redis_member_count_for_sealed_day(day_token: Any) -> Any:
+def _store_member_count_for_sealed_day(day_token: Any) -> Any:
   """
-  Best-effort Redis HASH length for a calendar day (0 when unavailable).
+  Best-effort store HASH length for a calendar day (0 when unavailable).
   
   Args:
     day_token (Any): Day token passed to this helper.
@@ -208,18 +208,15 @@ def _redis_member_count_for_sealed_day(day_token: Any) -> Any:
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> _redis_member_count_for_sealed_day(None)  # doctest: +SKIP
+    >>> _store_member_count_for_sealed_day(None)  # doctest: +SKIP
   """
   if not day_token:
     return 0
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-      archive_members_redis_enabled,
-      build_archive_members_redis_keys,
-      get_archive_members_redis_client,
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      build_archive_members_keys,
+      lookup_full_members,
   )
 
-  if not archive_members_redis_enabled():
-    return 0
   tgz_archive_dir = cfg.get_daily_archive_dir_path()
   if not tgz_archive_dir:
     return 0
@@ -239,11 +236,9 @@ def _redis_member_count_for_sealed_day(day_token: Any) -> Any:
     cache_key = _daily_archive_members_cache_key(
         normalize_daily_compressed_path(compressed),
     )
-    keys = build_archive_members_redis_keys(cache_key)
-    client = get_archive_members_redis_client(required=False)
-    if client is None:
-      return 0
-    return int(client.hlen(keys.hash_key))
+    keys = build_archive_members_keys(cache_key)
+    members = lookup_full_members(keys)
+    return 0 if members is None else len(members)
   except (ValueError, TypeError, OSError):
     return 0
 
@@ -274,7 +269,7 @@ def sealed_archive_member_count_hint(
     if count > 0:
       return count
   day_token = calendar_day_from_sealed_archive_path(sealed_path)
-  hlen = _redis_member_count_for_sealed_day(day_token)
+  hlen = _store_member_count_for_sealed_day(day_token)
   if hlen > 0:
     return hlen
   try:

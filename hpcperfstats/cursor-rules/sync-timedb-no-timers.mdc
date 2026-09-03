@@ -17,10 +17,10 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_*
    - **byte/size** — tar append, zstd compress/decompress out
    - **unit** — lines parsed, rows flushed, members sealed, find lines
    - **Liveness alone** (PID alive) **never** resets the idle clock
-3. **Suspend catalog** — idle clock must suspend on: flock wait, Manager shard acquire, Redis populate wait, restore lease wait, day_close yield. New wait classes must opt in.
+3. **Suspend catalog** — idle clock must suspend on: flock wait, Manager shard acquire, members-store populate wait, restore lease wait, day_close yield. New wait classes must opt in.
 4. **Subprocess kill contract** — `start_new_session` / process group → SIGTERM → grace → SIGKILL → reap; never leave exclusive flock held across kill without `finally`. Prefer `run_subprocess_with_progress` in `sync_timedb_progress_io.py`.
 5. **Pool reclaim** — dead worker / packed `idle_stall` / registry no-progress only. Do not restore `stall_abort_polls_for_paths` max_s fallback walls.
-6. **External timeouts OK** — Postgres `statement_timeout`, Redis lease EX, contention wait budgets, shutdown drain.
+6. **External timeouts OK** — Postgres `statement_timeout`, job-store lease deadline, contention wait budgets, shutdown drain.
 
 ## Progress log SOP
 

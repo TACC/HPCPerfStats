@@ -834,7 +834,7 @@ class SyncTimedbJobStore:
 
     def lrange(self, key: str, start: int, end: int) -> List[str]:
         """
-        Return a slice of a LIST queue, matching Redis inclusive indexes.
+        Return a slice of a LIST queue, matching inclusive LIST indexes.
 
         Args:
           key (str): LIST queue key.
@@ -965,7 +965,7 @@ class SyncTimedbJobStore:
         Return a tiny pipeline that batches zcount and zcard reads.
 
         Args:
-          transaction (bool): Unused Redis compatibility flag.
+          transaction (bool): Unused compatibility flag.
 
         Returns:
           _StorePipeline: Collector that executes against this store.
@@ -1058,7 +1058,7 @@ class _StorePipeline:
 
 def _bound_to_float(value: Any, *, default: float) -> float:
     """
-    Convert a Redis-style score bound to a float.
+    Convert a score bound to a float.
 
     Args:
       value (Any): Numeric bound, "-inf", or "+inf".
@@ -1465,7 +1465,7 @@ def claim_ingest_job(
       owner_token (str): Token from make_lease_owner_token.
       ttl_s (int | None): Deadline override.
       now_s (float | None): Clock override for tests.
-      probe_depth (int | None): Unused leftover from the Redis probe loop.
+      probe_depth (int | None): Unused leftover from the probe loop.
 
     Returns:
       ClaimedJob | None: Claim, or None when the band has no free work.
@@ -1841,7 +1841,7 @@ def claim_ingest_jobs(
       max_n (int): Maximum claims this call.
       ttl_s (int | None): Deadline override.
       now_s (float | None): Clock override for tests.
-      probe_depth (int | None): Unused leftover from the Redis probe loop.
+      probe_depth (int | None): Unused leftover from the probe loop.
 
     Returns:
       list[ClaimedJob]: Zero or more claims.
@@ -2250,7 +2250,7 @@ def identity_in_queue_dead_letter(
 
 def _score_arg(value: float) -> str:
     """
-    Render a score bound as a Redis-style range argument.
+    Render a score bound as a range argument.
 
     Args:
       value (float): Finite score, -inf, or +inf.
@@ -2437,7 +2437,7 @@ def reap_expired_inflight(
       kind (str): Job kind.
       now_s (float | None): Clock override for tests.
       limit (int): Maximum identities to recover in one call.
-      ttl_s (int | None): Unused leftover from the Redis grace formula.
+      ttl_s (int | None): Unused leftover from the grace formula.
 
     Returns:
       list[str]: Identities returned to the queue.
@@ -2605,7 +2605,9 @@ def steal_job_lease_if_owner_dead(
       boot_id (str | None): Local boot id override for tests.
 
     Returns:
-      bool: True when the lease was stolen and requeued.
+      bool: True when the lease was stolen and requeued, or when a
+      dead-owner lease with no inflight entry was dropped (no fabricated
+      LIST job).
 
     Examples:
       >>> steal_job_lease_if_owner_dead(
@@ -2629,8 +2631,17 @@ def steal_job_lease_if_owner_dead(
         return False
     if alive_fn(owner.pid):
         return False
-    return store.requeue(
+    if store.requeue(
         kind=kind,
         identity=identity,
         owner_token=owner_token,
-    )
+    ):
+        return True
+    # Orphan lease with no inflight map: drop the token, do not fabricate
+    # a LIST/ZSET member (same class as job-store steal with nil HASH).
+    with store._lock:
+        current = store._leases.get((str(kind), str(identity)))
+        if current != owner_token:
+            return False
+        store._leases.pop((str(kind), str(identity)), None)
+    return True

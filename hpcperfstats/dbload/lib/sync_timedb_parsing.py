@@ -926,7 +926,7 @@ def _maybe_raise_ingest_read_deadline(line_idx: Any, bytes_read: Any) -> None:
   if line_idx and line_idx % _READ_LOOP_DEADLINE_EVERY_LINES == 0:
     touch_ingest_progress()
     raise_if_ingest_idle_stalled(stage="idle_stall")
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
         _raise_if_ingest_deadline_exceeded,
     )
 
@@ -934,7 +934,7 @@ def _maybe_raise_ingest_read_deadline(line_idx: Any, bytes_read: Any) -> None:
   if bytes_read and bytes_read % _READ_LOOP_DEADLINE_EVERY_BYTES == 0:
     touch_ingest_progress()
     raise_if_ingest_idle_stalled(stage="idle_stall")
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+    from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
         _raise_if_ingest_deadline_exceeded,
     )
 
@@ -1246,7 +1246,7 @@ def find_processing_start_index(
   need_archival = True
   for i, line in enumerate(lines):
     if i and i % 1000 == 0:
-      from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+      from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
           _raise_if_ingest_deadline_exceeded,
       )
       from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
@@ -1293,7 +1293,7 @@ def find_processing_start_index_streaming(
   Examples:
     >>> find_processing_start_index_streaming("x", None, None)  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       _raise_if_ingest_deadline_exceeded,
   )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
@@ -1453,7 +1453,7 @@ def tail_window_timestamps_all_present_streaming(
     >>> tail_window_timestamps_all_present_streaming("x", None, None, None)
   """
   import hpcperfstats.dbload.lib.conf_parser as cfg
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       _raise_if_ingest_deadline_exceeded,
   )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (

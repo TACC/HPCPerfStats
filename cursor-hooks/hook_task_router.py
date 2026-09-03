@@ -111,9 +111,12 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     {
         "id": "sync_timedb_ingest_pool",
         "patterns": [
-            "hpcperfstats/dbload/lib/sync_timedb_archive_members_redis.py",
+            "hpcperfstats/dbload/lib/sync_timedb_archive_members_coord.py",
+            "hpcperfstats/dbload/lib/sync_timedb_archive_members_store.py",
             "hpcperfstats/dbload/lib/sync_timedb_archive_helpers.py",
             "hpcperfstats/dbload/lib/sync_timedb_populate_pool.py",
+            "hpcperfstats/tests/test_sync_timedb_archive_members_store.py",
+            "hpcperfstats/tests/test_sync_timedb_archive.py",
         ],
         "rules": [
             "sync-timedb-ingest-pool-io-coordination.mdc",

@@ -72,7 +72,7 @@ def test_populate_pool_reap_and_restart_replaces_dead_worker(monkeypatch):
   assert spawned
 
 
-def test_populate_pool_reap_waitpids_dead_worker(monkeypatch):
+def test_populate_pool_reap_joins_dead_thread_without_waitpid(monkeypatch):
   controller = PopulatePoolController()
   dead = _DeadProc()
   alive = _AliveProc()
@@ -81,22 +81,15 @@ def test_populate_pool_reap_waitpids_dead_worker(monkeypatch):
   controller._ctx = object()
   controller._script_name = "sync_timedb.py"
   controller._registry = {}
-  waitpids = []
-
-  def _waitpid(pid, timeout_s=0.5):
-    waitpids.append(int(pid))
-    return True
+  spawned = []
 
   def _spawn(index):
     proc = _AliveProc()
     proc.pid = 8000 + index
+    spawned.append(proc)
     controller._processes.append(proc)
     return proc
 
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_populate_pool._waitpid_pid_nonblocking",
-      _waitpid,
-  )
   monkeypatch.setattr(controller, "_spawn_one", _spawn)
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser"
@@ -105,7 +98,8 @@ def test_populate_pool_reap_waitpids_dead_worker(monkeypatch):
   )
   controller.reap_and_restart()
   assert dead.joined is True
-  assert 7001 in waitpids
+  assert spawned
+  assert alive in controller._processes
 
 
 def test_populate_pool_started():

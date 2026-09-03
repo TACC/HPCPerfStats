@@ -142,3 +142,98 @@ def test_finish_and_invalidate_drop_unused_events_and_ephemeral_flags(tmp_path):
     assert not store._tar_hot
     assert not store._append_inflight
     assert not store._populate_owner
+
+
+@pytest.mark.django_db(databases=[])
+def test_populate_source_dropped_without_consume(tmp_path):
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    canonical = "/daily/2026-08-08.tar.zst"
+    store.set_populate_source(canonical, "tar_populated")
+    assert store.peek_populate_source(canonical) == "tar_populated"
+    store.invalidate("2026-08-08", "id-a")
+    assert store.peek_populate_source(canonical) is None
+    store.set_populate_source(canonical, "sealed_populated")
+    store.finish_populate("2026-08-08", "id-a", members={}, complete=True)
+    assert store.consume_populate_source(canonical) == "sealed_populated"
+    assert store.consume_populate_source(canonical) is None
+    store.set_populate_source(canonical, "tar_populated")
+    store.invalidate_all()
+    assert store.peek_populate_source(canonical) is None
+
+
+@pytest.mark.django_db(databases=[])
+def test_complete_identity_drops_stale_sibling_events_and_incomplete_maps(tmp_path):
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    assert store.wait_for_complete("2026-08-10", "id-t1", timeout_s=0.01) is None
+    assert ("2026-08-10", "id-t1") in store._events
+    store.finish_populate(
+        "2026-08-10",
+        "id-t1",
+        members={"host/stale": 1},
+        complete=False,
+    )
+    assert store.try_begin_populate("2026-08-10", "id-t2")
+    store.finish_populate(
+        "2026-08-10",
+        "id-t2",
+        members={"host/1": 2},
+        complete=True,
+    )
+    assert ("2026-08-10", "id-t1") not in store._events
+    assert ("2026-08-10", "id-t1") not in store._members
+    assert not store.is_complete("2026-08-10", "id-t1")
+    assert store.is_complete("2026-08-10", "id-t2")
+    assert store.lookup_member("2026-08-10", "id-t2", "host/1") == 2
+
+
+@pytest.mark.django_db(databases=[])
+def test_merge_complete_identity_drops_stale_sibling_events_and_incomplete_maps(
+    tmp_path,
+):
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    store.store_complete("2026-08-11", "id-t2", {"host/old": 1})
+    store.finish_populate(
+        "2026-08-11",
+        "id-t3",
+        members={"host/stale2": 1},
+        complete=False,
+    )
+    assert store.wait_for_complete("2026-08-11", "id-t3", timeout_s=0.01) is None
+    assert ("2026-08-11", "id-t3") in store._events
+    assert ("2026-08-11", "id-t3") in store._members
+    assert store.merge_members("2026-08-11", "id-t2", {"host/new": 2})
+    assert ("2026-08-11", "id-t3") not in store._events
+    assert ("2026-08-11", "id-t3") not in store._members
+    assert store.is_complete("2026-08-11", "id-t2")
+    assert store.lookup_member("2026-08-11", "id-t2", "host/old") == 1
+    assert store.lookup_member("2026-08-11", "id-t2", "host/new") == 2
+
+
+@pytest.mark.django_db(databases=[])
+def test_incomplete_maps_are_not_reloaded(tmp_path):
+    archive = str(tmp_path / "archive")
+    store = SyncTimedbArchiveMembersStore(archive)
+    store.finish_populate(
+        "2026-08-09",
+        "id-partial",
+        members={"host/1": 1},
+        complete=False,
+    )
+    store.store_complete("2026-08-09", "id-full", {"host/2": 2})
+    revived = SyncTimedbArchiveMembersStore(archive)
+    assert not revived.is_complete("2026-08-09", "id-partial")
+    assert revived.lookup_member("2026-08-09", "id-partial", "host/1") is None
+    assert revived.is_complete("2026-08-09", "id-full")
+    assert revived.lookup_member("2026-08-09", "id-full", "host/2") == 2
+
+
+@pytest.mark.django_db(databases=[])
+def test_degraded_survives_reload(tmp_path):
+    archive = str(tmp_path / "archive")
+    store = SyncTimedbArchiveMembersStore(archive)
+    store.set_degraded("2026-08-10")
+    revived = SyncTimedbArchiveMembersStore(archive)
+    assert revived.is_degraded("2026-08-10")
+    revived.clear_degraded("2026-08-10")
+    again = SyncTimedbArchiveMembersStore(archive)
+    assert not again.is_degraded("2026-08-10")
