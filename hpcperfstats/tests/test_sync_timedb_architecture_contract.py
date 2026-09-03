@@ -367,7 +367,22 @@ def test_arch_sync_timedb_code_has_no_redis_identifiers():
   )
   paths.append(checkout / "scripts" / "seal_open_daily_tars_to_zst.py")
   paths.append(checkout / "scripts" / "verify_open_tar_matches_zst.py")
+  paths.append(
+      checkout / "hpcperfstats" / "dbload" / "lib" / "zstd_cli.py"
+  )
+  leftover_files = (
+      checkout / "hpcperfstats" / "tests" / "fake_redis_queue.py",
+      checkout / "hpcperfstats" / "tests" / "test_sync_timedb_job_queue_redis.py",
+      checkout
+      / "hpcperfstats"
+      / "dbload"
+      / "lib"
+      / "sync_timedb_archive_members_redis.py",
+  )
   failures: list[str] = []
+  for leftover in leftover_files:
+    if leftover.exists():
+      failures.append("leftover unused file still exists: %s" % leftover.name)
   for path in paths:
     src = path.read_text(encoding="utf-8")
     for match in _REDIS_TOKEN_RE.finditer(src):

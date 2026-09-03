@@ -30,7 +30,7 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`sync-timedb-change-regression-gate.mdc`** — mandatory `tests/run_sync_timedb_regression_battery.sh` before sync_timedb stall PR close; T0/T1/T2 operator verify (`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`); hooks enforce battery log citation on close.
 - **`sync-timedb-queue-orchestrator-contract.mdc`** — greenfield `job:v1` orchestrator (exclusive flock, streaming submit, sliding-window pools, B-09 predicates); dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
 - **`sync-timedb-no-timers.mdc`** — no internal wall soft-kills; progress kinds + idle kill/yield; dual-registered on sync_timedb / pool / tests paths.
-- **`sync-timedb-anti-log-spam.mdc`** — hot wait/poll/retry/defer INFO must rate-limit with `suppressed_n=` (Redis NX when multi-process); never bare `log_print` in those loops.
+- **`sync-timedb-anti-log-spam.mdc`** — hot wait/poll/retry/defer INFO must rate-limit with `suppressed_n=` (process-local limiter); never bare `log_print` in those loops.
 - **`startup-migration-bounded-work.mdc`** — `django_startup` migrate must stay bounded (no unbounded hypertable work); production never runs `makemigrations`.
 - **`dockerignore-test-artifacts-sync.mdc`** — `.dockerignore` must exclude test-only paths; keep `test_dockerignore_test_artifacts.py` in sync when test layout changes.
 - **`frontend-prod-test-build-boundary.mdc`** — `build` vs `build:prod`, `tsconfig.app`/`test`, `frontend/test/` tree, production static export exclusions.

@@ -121,7 +121,7 @@ Exit **124** / `Pool imap stalled` / `MultiprocessingWorkerExitError` come from 
 | Day-close manifest | `.sync_timedb_async_day_close.json` | Worker occupancy / enqueue guard |
 | Per-day raw removal | `.sync_timedb_day_raw_removal/*.json` | Delete pipeline phases |
 
-## Redis populate call graph
+## Members-store populate call graph
 
 | Entry | Thread | Scan execution |
 |-------|--------|----------------|
@@ -129,9 +129,9 @@ Exit **124** / `Pool imap stalled` / `MultiprocessingWorkerExitError` come from 
 | `get_existing_archive_members_for_daily_archive` | Ingest lookup | L1 cache → populate wait → local scan fallback |
 | `sync_timedb_archive.py` backfill | Sealed-only CLI | `iter_sealed_daily_archive_member_paths` (no `.tar` restore) |
 
-**Day-close ownership:** one orchestrator process owns ingest **and** day_close (Redis `day_close` LIST + thread pool). Dual CLI ``backlog``/``current`` is **retired**.
+**Day-close ownership:** one orchestrator process owns ingest **and** day_close (job-store `day_close` LIST + thread pool). Dual CLI ``backlog``/``current`` is **retired**.
 
-**Archive CLI vs orchestrator prewarm boundary:** `sync_timedb_archive.py` is an operator/CLI sealed-day tool (`all` / dates / paths) — it never calls `ensure_daily_tar_restored_for_append` or orchestrator chunk prewarm. The orchestrator and ingest workers own hot-path Redis populate via `request_archive_members_populate_and_wait`; day_close threads own seal/verify/delete. Do not route CLI scans through prewarm or maintenance snapshots.
+**Archive CLI vs orchestrator prewarm boundary:** `sync_timedb_archive.py` is an operator/CLI sealed-day tool (`all` / dates / paths) — it never calls `ensure_daily_tar_restored_for_append` or orchestrator chunk prewarm. The orchestrator and ingest workers own hot-path members-store populate via `request_archive_members_populate_and_wait`; day_close threads own seal/verify/delete. Do not route CLI scans through prewarm or maintenance snapshots.
 
 **Defer split:** day_close defer checks `ingest_tar_hot` (ingest pool activity). Populate-pool tar scans **also** defer on `archive_append_inflight` (append worker holds day until merge). Both keys are intentional — see `sync-timedb-ingest-pool-io-coordination.mdc` §8b.
 

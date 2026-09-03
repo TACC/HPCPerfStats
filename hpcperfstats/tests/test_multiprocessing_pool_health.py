@@ -363,7 +363,7 @@ class _DeferStallPool:
     return _Iterator()
 
 
-def test_imap_stall_counter_resets_during_redis_populate_progress(monkeypatch):
+def test_imap_stall_counter_resets_during_store_populate_progress(monkeypatch):
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
       lambda: 2,

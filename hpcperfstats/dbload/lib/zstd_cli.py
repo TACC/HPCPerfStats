@@ -721,7 +721,7 @@ def decompress_compressed_to_tar(
       except OSError:
         pass
       return False
-    # Sealed membership maps are untrusted; drop pre-identity L1/Redis before
+    # Sealed membership maps are untrusted; drop pre-identity L1/store before
     # replace so warm sealed+tar=None keys cannot skip post-restore populate.
     invalidate_after_daily_tar_mutation(
         compressed_path,

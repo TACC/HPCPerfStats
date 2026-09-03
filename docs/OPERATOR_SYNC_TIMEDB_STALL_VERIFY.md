@@ -30,7 +30,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 
 ## Queue orchestrator era — remaining tiers
 
-Production is **one** `sync_timedb.py` process per `archive_dir` (`run_sync_timedb_queue_orchestrator`, exclusive flock). Dual CLI ``backlog``/``current``, proximity heartbeat, `ArchiveJanitor` tick, handoff pins, and oldest-day **chunk gate** are **retired**. Operator census is **disk sidecars + thread titles** plus disk/DB reconstruct predicates — an empty `.sync_timedb_job_store.json` snapshot ≠ caught up.
+Production is **one** `sync_timedb.py` process per `archive_dir` (`run_sync_timedb_queue_orchestrator`, exclusive flock). Dual CLI ``backlog``/``current``, proximity heartbeat, `ArchiveJanitor` tick, handoff pins, and oldest-day **chunk gate** are **retired**. Operator census is **disk sidecars + thread titles** plus disk/DB reconstruct predicates — an empty `.sync_timedb_job_store.json` snapshot ≠ caught up. Pre-cutover T0 signatures below may mention Redis because that was the live job/members bus then; live census is the job-store sidecar and `.sync_timedb_archive_members/`.
 
 ### Post-deploy tiers (orchestrator)
 
@@ -81,7 +81,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 
 **Fail (T0 — post-boot silence / discover_bg Lock deadlock, hpcperfstats03 2026-08-26):** logs show `populate-pool started` then `queue_orchestrator boot discover submitted` (or hang after pools with that log if an older build logged it **before** submit) then **no census / ingest / append / `boot discover seen=` for hours**. `ps` shows ingest+populate+archive kids alive. py-spy MainThread **idle** at `_discover_executor` ← `_submit_background_discover` (nested non-reentrant `_discover_bg_lock`). Redis: discover `LLEN=1` unclaimed, append may be deep, leases/inflight **0**, no `discover-bg` thread. **Pass after fix:** submit returns; `boot discover submitted` only after submit; fill census/leases appear within minutes; MainThread not stuck in `_discover_executor`.
 
-**Fail (T0 — ingest empty + append flood / MainThread day_close find, hpcperfstats03 2026-08-26):** after Lock fix: one census, hours of populate/archive skips, **zero** `ingest file path=`, **zero** `boot discover seen=`, append LIST ~70k. py-spy MainThread in `_drain_append_ready` → `enqueue_day_close_if_needed` (default FS probe) → archive-wide `iter_find_printf_records_streaming`. **Pass after subsystem-threads fix:** `ps`/`top` show titled `thread:ingest-coordinator`, `thread:append-coordinator`, `thread:day-close-coordinator`, `thread:reconstruct-coordinator` (plus `discover-bg`); MainThread only populate reap / pause recycle / death watch; append drain uses **cheap** day_close (`filesystem_complete=False`, Redis dedupe ≤1 per tar); ingest ZADD/fill resumes while append drains; day_close **workers** own remaining-raw find. Do **not** paste `REPLACE_WITH` / `SAMPLE_PATH` placeholders into classify commands — use a real baked path from Redis/append LIST.
+**Fail (T0 — ingest empty + append flood / MainThread day_close find, hpcperfstats03 2026-08-26):** after Lock fix: one census, hours of populate/archive skips, **zero** `ingest file path=`, **zero** `boot discover seen=`, append LIST ~70k. py-spy MainThread in `_drain_append_ready` → `enqueue_day_close_if_needed` (default FS probe) → archive-wide `iter_find_printf_records_streaming`. **Pass after subsystem-threads fix:** `ps`/`top` show titled `thread:ingest-coordinator`, `thread:append-coordinator`, `thread:day-close-coordinator`, `thread:reconstruct-coordinator` (plus `discover-bg`); MainThread only populate reap / pause recycle / death watch; append drain uses **cheap** day_close (`filesystem_complete=False`, job-store dedupe ≤1 per tar); ingest ZADD/fill resumes while append drains; day_close **workers** own remaining-raw find. Do **not** paste `REPLACE_WITH` / `SAMPLE_PATH` placeholders into classify commands — use a real baked path from the job-store append LIST.
 
 **Fail (T0 — gate-skip append ACK thrash, hpcperfstats03 2026-08-26 evening):** census `ingest=0/0` while append LIST ~68k slowly falling (~11 paths/min); flood of `Archive/delete gate: skipped`; **zero** `ingest file path=` in full pipeline log buffer; sticky `discover=0/2` with orphan `rescan|…|mtime=*` inflight leases; optional cosmetic `thread:thread:reconstruct-coordinator` double prefix. Classify append LIST head: `needs_ingest=True`, `gate_ready=False`, `listend_db_ingest=True` — gate is **correct**; bug is append ACK without ingest ZADD handoff. **Pass after gate-skip handoff fix:** gate skips still log; append drain calls ingest handoff before ACK; ingest ZCARD/leases grow; discover inflight orphans reaped by reconstruct-coordinator; coordinator titles show single `thread:` prefix.
 
@@ -133,7 +133,7 @@ Attach the `test_runs/day-close-loop-regression-battery-*.log` path to the PR or
 
 **After chunk-cadence / RC-0 deploy (persistence v7):** contract bump clears poisoned `zero_host_ingest_mark` entries — expect a one-time re-gate/re-ingest of previously marked paths still on disk. Deleted-but-tarred raws (extract + re-ingest) are a separate operator restore decision after the fixed parser is live.
 
-**After dual-zstd / exclusive restore deploy:** at most one `archive: daily_tar_restore begin` per calendar day until matching owner `end`; never two `zstd -d -o …decomp.tmp` for the same day. Classify: `zstd -d -c` = Redis populate (OK); `zstd -d -o …decomp.tmp` = sealed→tar restore (must be single-flight). On redeploy, stop pipeline, remove stale `*.tar.decomp.tmp` under INI `daily_archive_dir`, then up — see **T0 / T1 — exclusive daily tar restore (dual-zstd)** below.
+**After dual-zstd / exclusive restore deploy:** at most one `archive: daily_tar_restore begin` per calendar day until matching owner `end`; never two `zstd -d -o …decomp.tmp` for the same day. Classify: `zstd -d -c` = members-store populate (OK); `zstd -d -o …decomp.tmp` = sealed→tar restore (must be single-flight). On redeploy, stop pipeline, remove stale `*.tar.decomp.tmp` under INI `daily_archive_dir`, then up — see **T0 / T1 — exclusive daily tar restore (dual-zstd)** below.
 
 ## Chunk cadence attribution (T0 / T1)
 
@@ -177,7 +177,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
 |------|------|---------------|
 | **T0 smoke** | T+15 min after deploy | Pipeline up; at least one `chunk ingest summary` **or** documented giant-chunk defer (not an error by itself); optional boot thread census (below) |
 | **T1 progress** | T+4 h **or** after first giant `archive_job_done` for backlog head day | Oldest `waiting_on_ingest` day: `unprocessed` **not frozen** vs prior sample; no repeating `oldest_day_chunk_gate_stall` with same `incomplete_n` |
-| **T1 progress (`current`)** | Same window while CLI ``current`` (newest-first) runs | Descending `epochs=` on `chunk dispatch begin`; `youngest_day_chunk_gate` / `youngest_day_chunk_gate_pad` (not ascending oldest-gate for ``backlog``); heartbeat sidecar/Redis advances with active work |
+| **T1 progress (`current`)** | Same window while CLI ``current`` (newest-first) runs | Descending `epochs=` on `chunk dispatch begin`; `youngest_day_chunk_gate` / `youngest_day_chunk_gate_pad` (not ascending oldest-gate for ``backlog``); heartbeat sidecar advances with active work |
 | **T2 catch-up** | T+24 h or when head day advances | New `chunk ingest summary` cadence; June-scale head day `unprocessed` trending down; `ingest_stall_watchdog` absent |
 
 ### T0 / T1 — ingest-first then async snapshot then day-close (CLI `current` / date-range, 2026-07)
@@ -311,7 +311,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
 
 ### T0 / T1 — `wait_for_member_match` + `store_warm` false non-defer → exit 124 (2026-07)
 
-**Failure signature (pre-fix):** `ERROR: Pool imap stalled` with `stall_defer=off defer_reason=store_warm`, `effective_ingest_timeout_s=-`, small in-flight `batch_max_ingest_timeout_s` ≈ floor, then `hard exit code=124`. py-spy on ingest-pool workers shows idle `wait_for_member_match` → `daily_archive_has_member_with_size` / tar-append decision while calendar-day Redis reports `complete=1`.
+**Failure signature (pre-fix):** `ERROR: Pool imap stalled` with `stall_defer=off defer_reason=store_warm`, `effective_ingest_timeout_s=-`, small in-flight `batch_max_ingest_timeout_s` ≈ floor, then `hard exit code=124`. py-spy on ingest-pool workers shows idle `wait_for_member_match` → `daily_archive_has_member_with_size` / tar-append decision while the calendar-day members store reports `complete=1`.
 
 ```bash
 # T0 — stall / exit124 signatures (full pipeline log; never --tail before grep)
@@ -320,7 +320,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 
 **Pass (T0):** no new `ERROR: Pool imap stalled` + `defer_reason=store_warm` while workers are in member-match wait. Expect either imap completions, `stall deferred` with `defer_reason=member_match_wait` / `worker_progress_active` / `long_ingest_budget`, or `effective_ingest_timeout_s` numeric (not `-`). Stall wall should exceed in-flight `batch_max` by ~120s grace.
 
-**Pass (T1):** under combined ingest with warm July Redis + concurrent June populate, ingest continues without exit 124 on the store_warm small-window path; `chunk ingest summary` cadence resumes after large-file / member-wait windows.
+**Pass (T1):** under combined ingest with a warm July members store + concurrent June populate, ingest continues without exit 124 on the store_warm small-window path; `chunk ingest summary` cadence resumes after large-file / member-wait windows.
 
 ### T0 / T1 — find-based pending discovery (every chunk + mtime window)
 
@@ -555,7 +555,7 @@ grep -E 'archive_job_duty|archive_finalize skip invalidate|handoff_pin_hold|hand
 
 **Pass (T2):** skip-only days reach Branch C upgrade → delete → tar-drop; no perpetual `to_add=0` / skip-invalidate pin-clear loop.
 
-### T0 / T1 / T2 — open-tar vs Redis membership divergence (hpcperfstats03, 2026-08-23)
+### T0 / T1 / T2 — open-tar vs store membership divergence (hpcperfstats03, 2026-08-23)
 
 **Signature (pre-fix):** mutable daily `.tar` remains (`open_tar_n` high); `archive_job_begin … members_source=store` (or `tar_scan`) with **`to_add=0 appended=0`** while `handoff_mode=archive_append` requeues keep **flat** `paths=N`; Branch C `member_hit False` on open tar; optional **`skip_invalidate`** without **`handoff_pin_hold`** when skip-only pin-hold fix is not deployed. Root cause: warm members store/sealed claimed membership the **open mutable tar** lacked.
 
@@ -577,7 +577,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | awk '
 /archive_append open_tar_store_divergence/ { div++ }
 /archive_finalize skip invalidate/ { si++ }
 /archive_job_duty.*appended=[1-9]/ { ap++ }
-END { printf "handoff_pin_hold %d\nto_add_zero %d\nmembers_source_redis %d\nopen_tar_redis_divergence %d\nskip_invalidate %d\nappended_positive %d\n", hp+0, tz+0, mr+0, div+0, si+0, ap+0 }'\''
+END { printf "handoff_pin_hold %d\nto_add_zero %d\nmembers_source_store %d\nopen_tar_store_divergence %d\nskip_invalidate %d\nappended_positive %d\n", hp+0, tz+0, mr+0, div+0, si+0, ap+0 }'\''
 
 docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
   grep -E 'archive_job_duty|archive_job_begin|handoff_pin_hold|open_tar_store_divergence|handoff_mode=archive_append|day_close reclassify' | tail -25
@@ -593,7 +593,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
 
 ### T0 / T1 / T2 — daily tar append stall / new tars (hpcperfstats03, 2026-08-23)
 
-**Signature (pre-fix):** all open daily `.tar` mtimes stale >3d (`tars_mtime_older_than_3d` equals `tar_count`); **`Archived batch=0`**; **`archive_job_duty` with `to_add=0`** on every job (e.g. 47/47); newest calendar days (e.g. **2026-08-20+**) have **no** `.tar`; June days occupy oldest-first archive slots with **`mapped>0`** but **`appended=0`**. Often coexists with open-tar/redis divergence on older mutable tars and skip-invalidate thrash when pin-hold is not deployed.
+**Signature (pre-fix):** all open daily `.tar` mtimes stale >3d (`tars_mtime_older_than_3d` equals `tar_count`); **`Archived batch=0`**; **`archive_job_duty` with `to_add=0`** on every job (e.g. 47/47); newest calendar days (e.g. **2026-08-20+**) have **no** `.tar`; June days occupy oldest-first archive slots with **`mapped>0`** but **`appended=0`**. Often coexists with open-tar/store divergence on older mutable tars and skip-invalidate thrash when pin-hold is not deployed.
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml exec -T pipeline \
@@ -624,7 +624,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
 
 **Fail (T0):** `tars_mtime_older_than_3d == tar_count` with **`appended_positive=0`** and **`Archived batch=0`** for 24h+; missing newest-calendar-day `.tar` files while June-only `archive_job_duty` lines show **`to_add=0`**.
 
-**Pass (T0):** at least one sticky day logs **`to_add>0`** / **`appended>0`** or **`Archived batch`**; newest calendar days gain `.tar` files or advancing mtimes; **`members_source=tar_scan`** on mutable-tar jobs (see open-tar/redis divergence section).
+**Pass (T0):** at least one sticky day logs **`to_add>0`** / **`appended>0`** or **`Archived batch`**; newest calendar days gain `.tar` files or advancing mtimes; **`members_source=tar_scan`** on mutable-tar jobs (see open-tar/store divergence section).
 
 **Pass (T1):** `open_tar_n` declines for lead days; handoff `paths=N` trends down; August calendar days appear in `archive_job_duty` samples.
 
@@ -671,7 +671,7 @@ grep -E 'Archive dispatch submitted=|pending_archive_heap|archive_job_duty|disco
 
 **Pass (T0):** no `Queue watermarks` / `above high watermark` / `below low watermark` lines; archive dispatch and day-close continue within configured pool/inflight.
 
-**T0/T1 — multi-day mapping with pool ≪ N (site example pool=6):** after `Archive mapping: N tar(s)` with N larger than pool (or with overflow from an earlier narrow wave), expect later `archive_job_begin` / `Archive dispatch submitted=` for overflow calendar days **before** the next `chunk imap start` / IMAP for a new ingest chunk. Tiny `Archived batch (2|5|…)` plus `archive_job_duty … to_add=… appended=…` means Redis/tar already-present skips — not a missing day. If `post_finalize_reconcile oldest_tar=` advances past days that never logged `archive_job_*`, that is a drain regression.
+**T0/T1 — multi-day mapping with pool ≪ N (site example pool=6):** after `Archive mapping: N tar(s)` with N larger than pool (or with overflow from an earlier narrow wave), expect later `archive_job_begin` / `Archive dispatch submitted=` for overflow calendar days **before** the next `chunk imap start` / IMAP for a new ingest chunk. Tiny `Archived batch (2|5|…)` plus `archive_job_duty … to_add=… appended=…` means store/tar already-present skips — not a missing day. If `post_finalize_reconcile oldest_tar=` advances past days that never logged `archive_job_*`, that is a drain regression.
 
 ### T0/T1 — restore self-wait + dispatch skip blocked days (2026-07)
 
@@ -691,7 +691,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
 
 **Unhealthy (pre-fix):** sealed day missing sibling `.tar` → `archive decompress restore` / `_decompress_compressed_archive` for multi-hundred-GB days, then `archive_job_begin … members_source=tar_scan`, then `archive_job_duty … to_add=0 appended=0` after 1h+ (`Archive worker stall detected` warn-only). Slots stay full while oldest incomplete drains slowly.
 
-**Healthy (post-fix):** membership from Redis/sealed **before** decompress. When candidates are already members:
+**Healthy (post-fix):** membership from store/sealed **before** decompress. When candidates are already members:
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
@@ -888,7 +888,7 @@ podman-compose logs pipeline 2>&1 | grep -E \
 
 After deploy of **pad gated chunks / cut between-chunk tax** (Choice C) and the **reconcile-tax** follow-up (handoff defer skip + hard-ceiling cache reuse): under saturated pending (`ingest_queue_max` ≈ `chunk_size`) with frozen `oldest_tar` / `incomplete_n>0`, chunks must fill toward `chunk_size` and reconcile must not dominate the duty cycle with multi‑minute identical accrual rescans.
 
-**Archive signal:** prefer `archive_job_begin` / `archive_job_done` / `Archived batch` / `Archive mapping` — **not** a bare `tar` grep (misses Redis-noop days and worker-role lines).
+**Archive signal:** prefer `archive_job_begin` / `archive_job_done` / `Archived batch` / `Archive mapping` — **not** a bare `tar` grep (misses store-noop days and worker-role lines).
 
 ```bash
 # Full log first (never --tail before grep on backlog sites).
@@ -991,31 +991,31 @@ grep 'janitor: day_close candidate' /tmp/pipeline-full.log | grep -E 'waiting_on
 grep -E 'discover_ready|missing_tar|processed_cross_day_n|processed_but_on_disk|filesystem_complete' /tmp/pipeline-full.log | tail -60
 ```
 
-**Pass (T1 — empty Redis after prewarm):** After `chunk prewarm complete` with a day token other than `no_daily_archive` / `day_ingest_skip`, Redis must be warm (`dbsize` / `archive_members*` keys) and **`chunk imap start`** must appear. **Failure signature (pre-fix, claimed success hang):** `…:prewarmed` (or similar) with `dbsize=0` and no `chunk_elapsed` / no `chunk imap start`. **Post-fix (true empty):** supervisor **exits** with `archive members store empty after prewarm` rather than hanging.
+**Pass (T1 — empty store after prewarm):** After `chunk prewarm complete` with a day token other than `no_daily_archive` / `day_ingest_skip`, the members store must be warm and **`chunk imap start`** must appear. **Failure signature (pre-fix, claimed success hang):** `…:prewarmed` (or similar) with an empty store and no `chunk_elapsed` / no `chunk imap start`. **Post-fix (true empty):** supervisor **exits** with `archive members store empty after prewarm` rather than hanging.
 
-**T0 / T1 — prewarm identity drift during tar append (2026-07):** concurrent `archive_pool` append/merge can change the Redis identity fingerprint while chunk prewarm holds entry-time keys.
+**T0 / T1 — prewarm identity drift during tar append (2026-07):** concurrent `archive_pool` append/merge can change the store identity fingerprint while chunk prewarm holds entry-time keys.
 
 ```bash
 # T0 — false empty-after-prewarm during append (unhealthy)
-grep -E 'populate_wait identity_drift|empty after prewarm|archive members Redis L2 contract failed|tar_append store merge|archive_job_done' /tmp/pipeline-full.log | tail -80
+grep -E 'populate_wait identity_drift|empty after prewarm|archive members store empty after prewarm|tar_append store merge|archive_job_done' /tmp/pipeline-full.log | tail -80
 
-# T1 — healthy: identity_drift may appear, but prewarm re-resolves / retries; no L2 exit
+# T1 — healthy: identity_drift may appear, but prewarm re-resolves / retries; no empty-store exit
 grep -E 'populate_wait identity_drift|archive_append_inflight during archive members prewarm|chunk prewarm complete|chunk imap start|empty after prewarm' /tmp/pipeline-full.log | tail -80
 ```
 
-**Unhealthy:** `INFO: populate_wait identity_drift day=…` then `ERROR: archive members store empty after prewarm … source=none members_n=N` (N often >0) + `L2 contract failed` while the same day shows `tar_append store merge` / `archive_job_done`. **Healthy:** drift and/or `WARNING: archive_append_inflight during archive members prewarm … retrying` then `chunk prewarm complete` with `store_warm` / populate source and **`chunk imap start`** — no empty-after-prewarm L2 exit.
+**Unhealthy:** `INFO: populate_wait identity_drift day=…` then `ERROR: archive members store empty after prewarm … source=none members_n=N` (N often >0) while the same day shows `tar_append store merge` / `archive_job_done`. **Healthy:** drift and/or `WARNING: archive_append_inflight during archive members prewarm … retrying` then `chunk prewarm complete` with `store_warm` / populate source and **`chunk imap start`** — no empty-after-prewarm exit.
 
-**T0 / T1 — L1 hit + cold Redis (no append_inflight) (2026-07-21):** process L1 can return `members_n>0` with `source=none` while Redis stays cold; prewarm must **not** L2-exit on the first cold check when retries remain.
+**T0 / T1 — L1 hit + cold store (no append_inflight) (2026-07-21):** process L1 can return `members_n>0` with `source=none` while the members store stays cold; prewarm must **not** exit on the first cold check when retries remain.
 
 ```bash
 # T0 — false empty-after-prewarm from L1 / members_n>0 without inflight (unhealthy)
-grep -E 'members returned but Redis cold|empty after prewarm|L2 contract failed|Prewarming archive members Redis|chunk prewarm begin|chunk imap start' /tmp/pipeline-full.log | tail -80
+grep -E 'members returned but store cold|empty after prewarm|archive members store empty after prewarm|Prewarming archive members|chunk prewarm begin|chunk imap start' /tmp/pipeline-full.log | tail -80
 
-# T1 — healthy: WARNING members returned but Redis cold … retrying then warm / imap start
-grep -E 'members returned but Redis cold|archive_append_inflight during archive members prewarm|chunk prewarm complete|chunk imap start|empty after prewarm' /tmp/pipeline-full.log | tail -80
+# T1 — healthy: WARNING members returned but store cold … retrying then warm / imap start
+grep -E 'members returned but store cold|archive_append_inflight during archive members prewarm|chunk prewarm complete|chunk imap start|empty after prewarm' /tmp/pipeline-full.log | tail -80
 ```
 
-**Unhealthy:** `Prewarming …` then within ~10ms `ERROR: … empty after prewarm … source=none members_n=N` + `L2 contract failed` with **no** `members returned but Redis cold` / inflight WARN (often tar-only day, Redis `hlen=0`). **Healthy:** `WARNING: members returned but Redis cold … retrying` (and/or inflight WARN) then prewarm success and **`chunk imap start`** — no immediate L2 exit.
+**Unhealthy:** `Prewarming …` then within ~10ms `ERROR: … empty after prewarm … source=none members_n=N` with **no** `members returned but store cold` / inflight WARN (often tar-only day, store `hlen=0`). **Healthy:** `WARNING: members returned but store cold … retrying` (and/or inflight WARN) then prewarm success and **`chunk imap start`** — no immediate empty-store exit.
 
 **Compare dispatch vs completion:**
 
@@ -1146,14 +1146,14 @@ grep -E 'ingest-pool\].*sealed archive member stream|Archive members populate st
 ```
 
 - **`[sync_timedb:worker:ingest-pool] … sealed archive member stream failed`** (often `ingest per-file timeout … elapsed_s=…`) → ingest illegally streamed sealed `.tar.zst` under SIGALRM.
-- Then **`Archive members populate stalled (no progress for 120s)`** → supervisor **`exit status 1`** while Redis is still reachable.
+- Then **`Archive members populate stalled (no progress for 120s)`** → supervisor **`exit status 1`** while the members store is still reachable.
 - Orthogonal: **`janitor: tick budget_exit`** then **`Archive janitor tick done … duration_s=9xxx`** with **`days_completed=0`** → coordinator drain-wait bug (fixed by non-blocking leave_in_flight).
 
 **Pass (T0/T1 post-fix):**
 
 - **Zero** `ingest-pool].*sealed archive member stream` lines.
 - Populate stall within `populate_max_seconds` with alive lock owner recovers (re-enqueue / keep waiting) — not immediate exit 1 on first 120s heartbeat gap.
-- Stall defer prefers **`store_populate_active`** over **`idle_pool_ghost_inflight`** while Redis populate lock is held.
+- Stall defer prefers **`store_populate_active`** over **`idle_pool_ghost_inflight`** while the members-store populate lock is held.
 - Day-close: **`leave_in_flight`** after **`budget_exit`**; tick **`duration_s`** stays near budget (not multi-hour).
 
 **Root-cause decision tree (idle `day-close-N` threads):**
