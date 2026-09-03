@@ -1,105 +1,99 @@
-"""Unit tests for PopulatePoolController join/restart behavior."""
+"""Unit tests for PopulatePoolController thread-pool join/restart behavior."""
 
 from types import SimpleNamespace
 
 from hpcperfstats.dbload.lib.sync_timedb_populate_pool import PopulatePoolController
 
 
-class _DeadProc:
-  pid = 7001
-
-  def __init__(self):
-    self.joined = False
-
-  def is_alive(self):
-    return False
-
-  def join(self, timeout=None):
-    del timeout
-    self.joined = True
-
-
-class _AliveProc:
-  pid = 7002
-
-  def is_alive(self):
+class _ReadyResult:
+  def ready(self):
     return True
 
-  def join(self, timeout=None):
-    del timeout
+
+class _LiveResult:
+  def ready(self):
+    return False
+
+
+class _FakePool:
+  def __init__(self):
+    self.terminated = False
+    self.joined = False
+    self.submitted = []
+
+  def apply_async(self, fn, args=(), kwds=None):
+    del kwds
+    self.submitted.append((fn, args))
+    return _LiveResult()
+
+  def terminate(self):
+    self.terminated = True
+
+  def join(self):
+    self.joined = True
 
 
 def test_populate_pool_stop_joins_dead_processes():
   controller = PopulatePoolController()
-  dead = _DeadProc()
-  alive = _AliveProc()
-  controller._processes = [dead, alive]
+  pool = _FakePool()
+  controller._pool = pool
   controller._shutdown = SimpleNamespace(set=lambda: None, is_set=lambda: False)
+  controller._results = [_LiveResult()]
   controller.stop(force=False)
-  assert dead.joined is True
-  assert controller._processes == []
+  assert pool.terminated is True
+  assert pool.joined is True
+  assert controller._results == []
+  assert controller._pool is None
 
 
 def test_populate_pool_reap_and_restart_replaces_dead_worker(monkeypatch):
   controller = PopulatePoolController()
-  dead = _DeadProc()
-  alive = _AliveProc()
-  controller._processes = [dead, alive]
+  pool = _FakePool()
+  controller._pool = pool
   controller._shutdown = SimpleNamespace(is_set=lambda: False)
-  controller._ctx = object()
   controller._script_name = "sync_timedb.py"
   controller._registry = {}
-  spawned = []
-
-  def _spawn(index):
-    proc = _AliveProc()
-    proc.pid = 8000 + index
-    spawned.append(proc)
-    controller._processes.append(proc)
-    return proc
-
-  monkeypatch.setattr(controller, "_spawn_one", _spawn)
+  controller._results = [_ReadyResult(), _LiveResult()]
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser"
       ".get_sync_archive_members_populate_pool_processes",
       lambda: 2,
   )
   restarted = controller.reap_and_restart()
-  assert dead.joined is True
   assert restarted == 1
-  assert alive in controller._processes
-  assert len(controller._processes) == 2
-  assert spawned
+  assert len(controller._results) == 2
+  assert pool.submitted
 
 
 def test_populate_pool_reap_joins_dead_thread_without_waitpid(monkeypatch):
   controller = PopulatePoolController()
-  dead = _DeadProc()
-  alive = _AliveProc()
-  controller._processes = [dead, alive]
+  pool = _FakePool()
+  controller._pool = pool
   controller._shutdown = SimpleNamespace(is_set=lambda: False)
-  controller._ctx = object()
   controller._script_name = "sync_timedb.py"
   controller._registry = {}
-  spawned = []
-
-  def _spawn(index):
-    proc = _AliveProc()
-    proc.pid = 8000 + index
-    spawned.append(proc)
-    controller._processes.append(proc)
-    return proc
-
-  monkeypatch.setattr(controller, "_spawn_one", _spawn)
+  controller._results = [_ReadyResult(), _LiveResult()]
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser"
       ".get_sync_archive_members_populate_pool_processes",
       lambda: 2,
   )
   controller.reap_and_restart()
-  assert dead.joined is True
-  assert spawned
-  assert alive in controller._processes
+  assert pool.submitted
+  assert any(not result.ready() for result in controller._results)
+
+
+def test_populate_pool_has_no_spawn_one():
+  """Hard cutover: populate workers are ThreadPool apply_async jobs."""
+  import inspect
+
+  from hpcperfstats.dbload.lib import sync_timedb_populate_pool as pp
+
+  src = inspect.getsource(pp)
+  assert "def _spawn_one" not in src
+  assert 'get_context("spawn")' not in src
+  assert "apply_async" in src
+  assert "create_sync_timedb_thread_pool" in src
 
 
 def test_populate_pool_started():

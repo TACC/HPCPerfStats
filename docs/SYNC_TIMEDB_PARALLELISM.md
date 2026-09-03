@@ -1,31 +1,32 @@
 # sync_timedb parallelism model
 
-This document describes how `sync_timedb` uses **spawn process pools**, **day_close thread executors**, **ephemeral burst thread pools**, and **subprocess CLI** (zstd/tar). Production coordinator is **`run_sync_timedb_queue_orchestrator`** (`sync-timedb-queue-orchestrator-contract.mdc`). Complements operator stall verification (`OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`).
+This document describes how `sync_timedb` uses **in-process thread pools**, **day_close thread executors**, **ephemeral burst thread pools**, and **subprocess CLI** (zstd/tar). Production coordinator is **`run_sync_timedb_queue_orchestrator`** (`sync-timedb-queue-orchestrator-contract.mdc`). Complements operator stall verification (`OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`).
 
 ## Four categories
 
 | Category | Mechanism | Lifetime | Typical work |
 |----------|-----------|----------|--------------|
-| **A. Hot-path spawn pools** | `multiprocessing.get_context("spawn").Pool` | Session-static (orchestrator lifetime) | Ingest parse/DB, archive tar append |
+| **A. Hot-path thread pools** | `create_sync_timedb_thread_pool` (`SyncTimedbThreadPool`) | Session-static (orchestrator lifetime) | Ingest parse/DB, archive tar append, populate scans |
 | **B. Session thread executors** | `ThreadPoolExecutor` for day_close (max `sync_day_close_max_inflight`) | Orchestrator lifetime | Seal → raw removal → tar-drop |
 | **C. Ephemeral burst threads** | `ThreadPoolExecutor` in `with` block | Per maintenance call | Archive metadata reads, parallel seal/validation/migrate |
 | **D. Subprocess CLI** | `subprocess` | Per command | `zstd`, GNU `tar -r`, decompress helpers |
 
-**Not a Python pool:** zstd compression uses the **zstd CLI** via subprocess, not `multiprocessing.Pool`.
+**Not a Python pool:** zstd compression uses the **zstd CLI** via subprocess, not a worker pool. Do **not** restore `create_sync_timedb_spawn_pool` on the `sync_timedb` hot path.
 
-## A. Hot-path spawn pools (keep on spawn)
+## A. Hot-path thread pools
 
-| Pool | Module | Workers | Initializer | Why spawn |
-|------|--------|---------|-------------|-----------|
-| `ingest_pool` | `sync_timedb.py` | INI `sync_ingest_pool_processes` | `apply_ingest_pool_worker_init` + diagnostics registry | Combined parse+DB write; CPU parse, RSS, Django test DB isolation, BLAS, stall exit **124**, L1 host cache |
-| `archive_pool` | `sync_timedb.py` | INI `sync_archive_pool_processes` | `apply_pool_worker_process_title` only | Hardcoded **`maxtasksperchild=1`** per append job; failure isolation, L1 cache; append is I/O-heavy but isolation wins |
-| `sealed-archive-pool` | `sync_timedb_archive.py` | INI archive worker count | Same as ingest init | Hardcoded **`maxtasksperchild=1`**; standalone sealed-archive ingest CLI |
+| Pool | Module | Workers | Title role | Why threads |
+|------|--------|---------|------------|-------------|
+| `ingest_pool` | `sync_timedb_queue_orchestrator.py` | INI `sync_ingest_pool_processes` | `[thread:ingest-pool]` | Combined parse+DB write on 3.14t; shared job/members stores |
+| `archive_pool` | `sync_timedb.py` / orchestrator append | INI `sync_archive_pool_processes` | `[thread:archive-pool]` | One daily tar per slot; I/O-heavy append |
+| `populate_pool` | `sync_timedb_populate_pool.py` | INI `sync_archive_members_populate_pool_processes` | `[thread:populate-pool]` | Sealed/tar member scans; ingest only enqueues and waits |
+| `sealed-archive-pool` | `sync_timedb_archive.py` | INI archive worker count | `[thread:sealed-archive-pool]` | Standalone sealed-archive ingest CLI |
 
-**Factory:** `create_sync_timedb_spawn_pool()` in `multiprocessing_pool_health.py` — shared spawn context + recycle kwargs; **distinct initializers per pool kind** (do not unify initargs).
+**Factory:** `create_sync_timedb_thread_pool()` in `sync_timedb_session_executor.py`. `create_sync_timedb_spawn_pool()` remains in `multiprocessing_pool_health.py` for listend/metrics only and raises unless those callers pass a pool kind.
 
-**Archive dispatch:** append jobs use `archive_pool` with **one daily tar per slot**; concurrent slots follow **`sync_archive_pool_processes`**. Sliding-window refill on completion — never join an entire batch before the next hop. Do **not** replace with `ThreadPoolExecutor.submit` on the hot path without redesigning stall/finalize/fatal-exit semantics (`async_result_get_watch_pool`, exit **124**/**137**).
+**Archive dispatch:** append jobs use `archive_pool` with **one daily tar per slot**; concurrent slots follow **`sync_archive_pool_processes`**. Sliding-window refill on completion — never join an entire batch before the next hop.
 
-**Ingest dispatch:** `imap_unordered_watch_pool` polls process liveness and aborts on worker death — thread pools have no equivalent worker-PID model.
+**Ingest dispatch:** orchestrator fill/drain submits `apply_async` on the ingest thread pool. Populate workers are long-lived `apply_async` loops that claim the in-process populate queue.
 
 ## Ingest band reservation (job store)
 
@@ -45,9 +46,9 @@ Catchup may use unused pool slots **only when the hot range is empty**. Reband a
 | day_close workers | `sync_timedb_queue_orchestrator.py` | `ThreadPoolExecutor(max_workers=sync_day_close_max_inflight)` |
 | Day raw removal verify | `sync_timedb_day_raw_removal.py` | Eager when preflight enabled |
 
-**Two-queue law:** MainThread + ingest/append spawn pools own hot path; day_close threads own seal/validate/delete/tar-drop. day_close stays on **threads** (not spawn).
+**Two-queue law:** MainThread + ingest/append/populate thread pools own hot path; day_close threads own seal/validate/delete/tar-drop.
 
-**Shutdown:** orchestrator `finally` shuts down day_close and spawn pools. The B **`ArchiveJanitor`** single-flight tick executor is **retired**.
+**Shutdown:** orchestrator `finally` force-persists the job store, then shuts down day_close and hot-path thread pools. The B **`ArchiveJanitor`** single-flight tick executor is **retired**.
 
 ## C. Ephemeral burst thread pools
 
@@ -93,14 +94,14 @@ On **active-ingest** calendar days, populate-pool **shared read locks** (`file_r
 
 Prewarm summary token **`populate_recovering`** indicates transient fnctl recovery succeeded after retry.
 
-## Operator stall signals (spawn-specific)
+## Operator stall signals
 
-Exit **124** / `Pool imap stalled` / `MultiprocessingWorkerExitError` come from **spawn pool health** (`multiprocessing_pool_health.py`), not janitor threads. See `OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`.
+Historical exit **124** / `Pool imap stalled` / `MultiprocessingWorkerExitError` text is spawn-pool archaeology. Live `sync_timedb` census is job-store / members-store sidecars plus `[thread:ingest-pool]` / `[thread:populate-pool]` titles. See `OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`.
 
-## Normalization policy (2026-07)
+## Normalization policy
 
-- **In scope:** session executor helper, spawn pool factory, burst thread helper, replace duplicated Pool/executor boilerplate.
-- **Out of scope:** hot-path Pool→threads (ingest; archive except explicit trial), renaming `archive_pool`, changing `map_async`/stall semantics.
+- **In scope:** titled `SyncTimedbThreadPool` for ingest/append/populate; burst thread helper; no Redis job/members bus.
+- **Out of scope:** restoring spawn pools or `/dev/shm` for `sync_timedb`.
 
 ## Census vs blocking remaining-raw (decision gates)
 

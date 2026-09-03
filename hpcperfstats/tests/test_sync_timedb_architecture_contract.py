@@ -35,6 +35,31 @@ def test_arch_predicate_discovered_incomplete_enqueues_ingest_job():
   assert client.zscore(ingest_key, plan.identity) is not None
 
 
+def test_loaded_snapshot_overlay_reconstruct_enqueues_missing_work(tmp_path):
+  """A persisted snapshot must not hide reconstruct-discovered missing ingest."""
+  archive = str(tmp_path / "archive")
+  store = SyncTimedbJobStore(archive)
+  jq.zadd_ingest_job(store, identity="/raw/already", score=1.0)
+  store.persist(force=True)
+  revived = SyncTimedbJobStore(archive)
+  plan = jr.classify_closed_raw_path(
+      "/raw/missing",
+      tgz_archive_dir="/daily",
+      size=10,
+      mtime_ns=20,
+      calendar_day=date(2026, 8, 20),
+      ingest_is_complete_fn=lambda **k: False,
+      append_is_complete_fn=lambda **k: True,
+  )
+  enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
+      revived, plan, today=date(2026, 8, 24), hot_days=8
+  )
+  assert enqueued["ingest"] is True
+  ingest_key = jq.job_queue_key(jq.JOB_KIND_INGEST)
+  assert revived.zscore(ingest_key, plan.identity) is not None
+  assert "/raw/already" in revived.ingest_identities()
+
+
 def test_arch_predicate_remaining_raw_enqueues_ingest_or_append_job():
   """Remaining-raw incomplete append must leave an append LIST job."""
   client = SyncTimedbJobStore("")

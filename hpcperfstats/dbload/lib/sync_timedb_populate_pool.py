@@ -2,7 +2,7 @@
 Dedicated populate-pool threads for in-process sealed/tar member streaming.
 
 Attributes:
-  _POPULATE_POOL_CONTROLLER: Attribute.
+  _POPULATE_POOL_CONTROLLER: Process-wide populate controller, or None.
 """
 from __future__ import annotations
 
@@ -26,29 +26,30 @@ _POPULATE_POOL_CONTROLLER = None
 
 def get_populate_pool_controller() -> Any:
   """
-  Return the populate pool controller.
-  
+  Return the process-wide populate pool controller.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: Current controller, or None before start.
+
   Examples:
-    >>> get_populate_pool_controller()  # doctest: +SKIP
+    >>> get_populate_pool_controller() is None or True
+    True
   """
   return _POPULATE_POOL_CONTROLLER
 
 
 def set_populate_pool_controller(controller: Any) -> None:
   """
-  Set the populate pool controller.
-  
+  Install the process-wide populate pool controller.
+
   Args:
-    controller (Any): Controller passed to this helper.
-  
+    controller (Any): Controller instance, or None to clear.
+
   Returns:
     None
-  
+
   Examples:
-    >>> set_populate_pool_controller(None)  # doctest: +SKIP
+    >>> set_populate_pool_controller(None)
   """
   global _POPULATE_POOL_CONTROLLER
   _POPULATE_POOL_CONTROLLER = controller
@@ -56,140 +57,76 @@ def set_populate_pool_controller(controller: Any) -> None:
 
 def reset_populate_pool_controller_for_tests() -> None:
   """
-  Reset populate pool controller for tests.
-  
+  Clear the process-wide populate controller for unit tests.
+
   Returns:
     None
-  
+
   Examples:
-    >>> reset_populate_pool_controller_for_tests()  # doctest: +SKIP
+    >>> reset_populate_pool_controller_for_tests()
   """
   global _POPULATE_POOL_CONTROLLER
   _POPULATE_POOL_CONTROLLER = None
 
 
-class _PopulateWorkerHandle:
-  """
-  Thread handle with the join/is_alive surface populate-pool tests use.
-
-  Attributes:
-    pid: Synthetic worker index used in restart logs.
-    _thread: Worker thread.
-  """
-
-  def __init__(self, thread: threading.Thread, index: int) -> None:
-    """
-    Wrap one populate worker thread.
-
-    Args:
-      thread (threading.Thread): Worker thread.
-      index (int): Worker index.
-
-    Returns:
-      None
-
-    Examples:
-      >>> _PopulateWorkerHandle(threading.Thread(target=lambda: None), 0).pid
-      1
-    """
-    self._thread = thread
-    self.pid = int(index) + 1
-
-  def is_alive(self) -> bool:
-    """
-    Return True while the worker thread is running.
-
-    Returns:
-      bool: Thread liveness.
-
-    Examples:
-      >>> _PopulateWorkerHandle(threading.Thread(target=lambda: None), 0).is_alive()
-      False
-    """
-    return bool(self._thread.is_alive())
-
-  def join(self, timeout: float | None = None) -> None:
-    """
-    Join the worker thread.
-
-    Args:
-      timeout (float | None): Optional join timeout.
-
-    Returns:
-      None
-
-    Examples:
-      >>> _PopulateWorkerHandle(threading.Thread(target=lambda: None), 0).join(0)
-    """
-    self._thread.join(timeout)
-
-  def terminate(self) -> None:
-    """
-    No-op: threads cannot be terminated.
-
-    Returns:
-      None
-
-    Examples:
-      >>> _PopulateWorkerHandle(threading.Thread(target=lambda: None), 0).terminate()
-    """
-    return
-
-
 class PopulatePoolController:
   """
-  Thread workers that dequeue in-process populate jobs.
+  Long-lived populate workers submitted on SyncTimedbThreadPool.
+
+  Each worker dequeues in-process populate jobs. The titled pool is the
+  only worker set — there is no leftover raw-thread dual path.
 
   Attributes:
-    _ctx: Unused leftover attribute kept for test patches.
-    _pool: Titled thread pool (titles only; workers are raw threads).
-    _processes: Worker handles.
-    _registry: Worker registry.
+    _pool: Titled SyncTimedbThreadPool that runs populate workers.
+    _registry: Worker registry passed into each worker.
+    _results: apply_async handles for the long-lived workers.
     _script_name: Process title script name.
-    _shutdown: Shutdown event.
+    _shutdown: Shutdown event shared with worker loops.
   """
 
   def __init__(self) -> None:
     """
-    Initialize a new instance.
-    
+    Create an idle populate-pool controller.
+
     Returns:
       None
-    
+
     Examples:
-      >>> PopulatePoolController()  # doctest: +SKIP
+      >>> PopulatePoolController().is_running()
+      False
     """
     self._shutdown = None
-    self._processes = []
+    self._results: list[Any] = []
     self._script_name = None
     self._registry = None
-    self._ctx = None
     self._pool = None
 
-  def is_running(self) -> Any:
+  def is_running(self) -> bool:
     """
-    True when at least one populate-pool worker process is alive.
-    
+    Return True when at least one submitted populate worker is unfinished.
+
     Returns:
-      Any: Open return polymorphism from ``is_running``: concrete type depends
-      on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-    
+      bool: True when a pool worker future is still running.
+
     Examples:
-      >>> PopulatePoolController().is_running()  # doctest: +SKIP
+      >>> PopulatePoolController().is_running()
+      False
     """
-    return any(proc.is_alive() for proc in self._processes)
+    return self._pool is not None and any(
+        not result.ready() for result in self._results
+    )
 
   def start(self, *, script_name: Any, registry: Any) -> None:
     """
-    Start background work for this object.
-    
+    Submit populate workers onto the titled thread pool.
+
     Args:
-      script_name (Any): Script name passed to this helper.
-      registry (Any): Registry passed to this helper.
-    
+      script_name (Any): Script name used for thread titles.
+      registry (Any): Worker diagnostics registry.
+
     Returns:
       None
-    
+
     Examples:
       >>> PopulatePoolController().start(None, None)  # doctest: +SKIP
     """
@@ -198,127 +135,88 @@ class PopulatePoolController:
       return
     self._script_name = script_name
     self._registry = registry
-    self._ctx = object()
     self._shutdown = threading.Event()
     self._pool = create_sync_timedb_thread_pool(
         max_workers=n_workers,
         thread_role="populate-pool",
         process_title=str(script_name or "sync_timedb.py"),
     )
-    for index in range(n_workers):
-      self._spawn_one(index)
+    self._results = []
+    for _index in range(n_workers):
+      self._results.append(
+          self._pool.apply_async(
+              _populate_pool_worker_entry,
+              (self._script_name, self._registry, self._shutdown),
+          )
+      )
     log_print(
         "populate-pool started workers=%d"
-        % len(self._processes),
+        % len(self._results),
         flush=True,
     )
 
-  def _spawn_one(self, index: int) -> Any:
-    """
-    Internal helper to handle spawn one.
-    
-    Args:
-      index (int): Integer value for index.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> PopulatePoolController()._spawn_one(0)  # doctest: +SKIP
-    """
-    thread = threading.Thread(
-        target=_populate_pool_worker_entry,
-        args=(self._script_name, self._registry, self._shutdown),
-        name="populate-pool-%d" % index,
-        daemon=True,
-    )
-    thread.start()
-    handle = _PopulateWorkerHandle(thread, index)
-    self._processes.append(handle)
-    return handle
-
   def stop(self, *, force: bool = False) -> None:
     """
-    Stop background work for this object.
-    
+    Signal workers to exit and shut the titled pool down.
+
     Args:
-      force (bool): Boolean flag for force.
-    
+      force (bool): When True, cancel pending pool futures immediately.
+
     Returns:
       None
-    
+
     Examples:
       >>> PopulatePoolController().stop(True)  # doctest: +SKIP
     """
+    del force
     if self._shutdown is not None:
       self._shutdown.set()
-    for proc in self._processes:
-      # Always join — is_alive() is False for zombies but join still reaps.
-      try:
-        proc.join(timeout=5.0 if not force else 0.0)
-      except Exception:
-        pass
-      if proc.is_alive() and force:
-        try:
-          proc.terminate()
-        except Exception:
-          pass
-        try:
-          proc.join(timeout=2.0)
-        except Exception:
-          pass
-    self._processes = []
-    self._shutdown = None
-    self._script_name = None
-    self._registry = None
-    self._ctx = None
     if self._pool is not None:
       try:
         self._pool.terminate()
         self._pool.join()
       except Exception:
         pass
+    self._results = []
+    self._shutdown = None
+    self._script_name = None
+    self._registry = None
     self._pool = None
 
   def reap_and_restart(self) -> Any:
     """
-    Join dead workers and replace them up to the configured pool size.
-    
+    Resubmit finished populate workers up to the configured pool size.
+
     Returns:
-      Any: Open return polymorphism from ``reap_and_restart``: concrete type
-      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-      empty).
-    
+      Any: Number of workers resubmitted, or None when the pool is idle.
+
     Examples:
-      >>> PopulatePoolController().reap_and_restart()  # doctest: +SKIP
+      >>> PopulatePoolController().reap_and_restart() is None
+      True
     """
-    if self._shutdown is None or self._ctx is None:
+    if self._shutdown is None or self._pool is None:
       return
     if self._shutdown.is_set():
       return
     n_workers = int(cfg.get_sync_archive_members_populate_pool_processes())
     if n_workers <= 0:
       return
-    kept = []
+    kept = [result for result in self._results if not result.ready()]
     restarted = 0
-    for proc in self._processes:
-      if proc.is_alive():
-        kept.append(proc)
-        continue
-      old_pid = getattr(proc, "pid", None)
-      try:
-        proc.join(timeout=0)
-      except Exception:
-        pass
-      log_print(
-          "WARN: populate-pool worker restarted pid=%s"
-          % (old_pid if old_pid is not None else "-"),
-          flush=True,
+    while len(kept) < n_workers:
+      kept.append(
+          self._pool.apply_async(
+              _populate_pool_worker_entry,
+              (self._script_name, self._registry, self._shutdown),
+          )
       )
       restarted += 1
-    self._processes = kept
-    while len(self._processes) < n_workers:
-      self._spawn_one(len(self._processes))
+      log_print(
+          "WARN: populate-pool worker restarted index=%d"
+          % restarted,
+          flush=True,
+      )
+    self._results = kept
     return restarted
 
 
@@ -328,18 +226,19 @@ def _populate_pool_worker_entry(
   shutdown: Any,
 ) -> None:
   """
-  Internal helper to populate the pool worker entry.
-  
+  Claim and scan populate-queue jobs until shutdown is set.
+
   Args:
-    script_name (Any): Script name passed to this helper.
-    registry (Any): Registry passed to this helper.
-    shutdown (Any): Shutdown passed to this helper.
-  
+    script_name (Any): Script name for worker titles and init.
+    registry (Any): Worker diagnostics registry.
+    shutdown (Any): Event that stops the worker loop.
+
   Returns:
     None
-  
+
   Examples:
-    >>> _populate_pool_worker_entry(None, None, None)  # doctest: +SKIP
+    >>> callable(_populate_pool_worker_entry)
+    True
   """
   apply_ingest_pool_worker_init(script_name, "populate-pool", registry)
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
@@ -384,16 +283,16 @@ def _populate_pool_worker_entry(
 
 def shutdown_populate_pool_controller(*, force: bool = False) -> None:
   """
-  Shutdown populate pool controller.
-  
+  Stop the process-wide populate controller when one is installed.
+
   Args:
-    force (bool): Boolean flag for force.
-  
+    force (bool): Forwarded to ``PopulatePoolController.stop``.
+
   Returns:
     None
-  
+
   Examples:
-    >>> shutdown_populate_pool_controller(True)  # doctest: +SKIP
+    >>> shutdown_populate_pool_controller(True)
   """
   controller = get_populate_pool_controller()
   if controller is not None:

@@ -2940,6 +2940,42 @@ class _IngestTimeoutSentinel:
     raise TimeoutError("ingest occupancy sentinel")
 
 
+def _ingest_reaper_skip_identities(
+  ingest_inflight: dict[str, Any],
+  ingest_leases: dict[str, Any],
+) -> tuple[str, ...]:
+  """
+  Local ingest identities the store reaper must not steal this tick.
+
+  H7 occupancy sentinels stay in ``ingest_inflight`` and keep their
+  lease, but they must not refresh HASH deadlines. Exclude those
+  identities so ``reap_expired_inflight`` can reclaim after TTL.
+
+  Args:
+    ingest_inflight (dict[str, Any]): Local ingest result map.
+    ingest_leases (dict[str, Any]): Local ingest claim map.
+
+  Returns:
+    tuple[str, ...]: Non-sentinel identities to protect.
+
+  Examples:
+    >>> _ingest_reaper_skip_identities(
+    ...   {"/raw/a": _IngestTimeoutSentinel()}, {"/raw/a": object()},
+    ... )
+    ()
+  """
+  skip: list[str] = []
+  for ident, res in ingest_inflight.items():
+    if _is_ingest_timeout_sentinel(res):
+      continue
+    skip.append(str(ident))
+  for ident in ingest_leases:
+    if _is_ingest_timeout_sentinel(ingest_inflight.get(ident)):
+      continue
+    skip.append(str(ident))
+  return tuple(skip)
+
+
 def _is_ingest_timeout_sentinel(obj: Any) -> bool:
   """
   Return True when *obj* is an H7 occupancy sentinel.
@@ -4497,11 +4533,9 @@ def _ingest_coordinator_loop(
         _reap_stale_inflight(
             client,
             kinds=(jq.JOB_KIND_INGEST,),
-            skip_identities=tuple(
-                ident
-                for ident, res in ingest_inflight.items()
-                if not _is_ingest_timeout_sentinel(res)
-            ) + tuple(ingest_leases),
+            skip_identities=_ingest_reaper_skip_identities(
+                ingest_inflight, ingest_leases,
+            ),
             log_fn=log_fn,
         )
         _drop_expired_ingest_timeout_sentinels(
@@ -4980,10 +5014,10 @@ def run_sync_timedb_queue_orchestrator(
 
     def _new_ingest_pool() -> Any:
       """
-      Create a spawn ingest pool with worker process titles.
+      Create a titled ingest thread pool.
 
       Returns:
-        Any: New ``multiprocessing.Pool`` for ingest workers.
+        Any: New ``SyncTimedbThreadPool`` for ingest workers.
 
       Examples:
         >>> callable(_new_ingest_pool)

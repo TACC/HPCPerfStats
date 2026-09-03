@@ -2493,6 +2493,59 @@ def test_drain_timeout_sentinel_is_not_deadline_protected(tmp_path, monkeypatch)
   assert claim is not None
 
 
+def test_ingest_reaper_skip_excludes_sentinel_and_its_lease():
+  """H7 sentinel occupancy must not refresh store deadlines via lease skip."""
+  identity = "/raw/sentinel_skip"
+  inflight = {identity: qo._IngestTimeoutSentinel()}
+  leases = {identity: object(), "/raw/live": object()}
+  skip = qo._ingest_reaper_skip_identities(inflight, leases)
+  assert identity not in skip
+  assert "/raw/live" in skip
+
+
+def test_reaper_after_ttl_reclaims_sentinel(tmp_path, monkeypatch):
+  """After TTL, store reaper may reclaim a sentinel identity and drop occupancy."""
+  monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
+  client = SyncTimedbJobStore("")
+  jq.reset_job_queue_script_cache_for_tests()
+  identity = "/raw/sentinel_ttl"
+  jq.zadd_ingest_job(client, identity=identity, score=1.0)
+  claim = jq.claim_ingest_job(
+      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+  )
+  assert claim is not None
+  client._inflight[jq.JOB_KIND_INGEST][identity] = (
+      1.0, claim.owner_token, 1.0,
+  )
+  inflight = {identity: qo._IngestTimeoutSentinel()}
+  leases = {identity: claim}
+  skip = qo._ingest_reaper_skip_identities(inflight, leases)
+  recovered = qo._reap_stale_inflight(
+      client,
+      kinds=(jq.JOB_KIND_INGEST,),
+      skip_identities=skip,
+      log_fn=lambda *a, **k: None,
+  )
+  assert recovered >= 1
+  assert client.zscore(jq.job_queue_key("ingest"), identity) is not None
+  dropped = qo._drop_expired_ingest_timeout_sentinels(
+      client, inflight=inflight, claims=leases,
+  )
+  assert dropped == 1
+  assert identity not in inflight
+  assert identity not in leases
+
+
+def test_orchestrator_shutdown_force_persists():
+  """Clean orchestrator exit must flush the job-store snapshot."""
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  persist_at = src.find("client.persist(force=True)")
+  finally_at = src.rfind("finally:")
+  assert persist_at > 0
+  assert finally_at > 0
+  assert persist_at > finally_at
+
+
 def test_drain_rich_TimeoutError_soft_requeues_without_fail(tmp_path, monkeypatch):
   """Rich IngestPerFileTimeoutError escape still soft-requeues (Wave 1)."""
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
