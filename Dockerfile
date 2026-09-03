@@ -189,8 +189,8 @@ RUN /bin/bash -o pipefail -c '\
 # GNU ld -lmkl_rt needs unversioned libmkl_rt.so; pip mkl wheels often ship only .so.N.
 # -march=native: images are built on the prod host that runs them (not portable).
 # pandas meson generate_version.py imports versioneer (image-build extra).
-# pandas --no-deps: without it, pip resolves numpy>=… and replaces the MKL
-# source build with a manylinux OpenBLAS wheel (same version, different binary).
+# numexpr and pandas --no-deps: without it, pip resolves numpy>=… and replaces
+# the MKL source build with a manylinux OpenBLAS wheel (same version string).
 # python-dateutil (+ six) come from project.dependencies via the rest RUN.
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
@@ -228,8 +228,10 @@ RUN /bin/bash -o pipefail -c '\
   NUMEXPR_SRC="${_ne_srcs[0]}"; \
   printf "%s\n" "[mkl]" "include_dirs = ${MKLROOT}/include" \
     "library_dirs = ${MKLROOT}/lib" "libraries = mkl_rt" > "${NUMEXPR_SRC}/site.cfg"; \
-  pip install --no-cache-dir --no-build-isolation --force-reinstall "${NUMEXPR_SRC}"; \
+  pip install --no-cache-dir --no-build-isolation --force-reinstall --no-deps \
+    "${NUMEXPR_SRC}"; \
   python3 -c "import numexpr as ne; assert ne.use_vml is True, (ne.use_vml, getattr(ne, \"get_vml_version\", lambda: None)())"; \
+  python3 -c "import numpy as np; c=np.show_config(mode=\"dicts\"); assert \"mkl\" in str(c).lower(), c"; \
   pip install --no-cache-dir --no-build-isolation --force-reinstall --no-deps \
     --no-binary pandas \
     -r /tmp/requirements-mkl-pandas.txt; \
@@ -253,7 +255,7 @@ RUN /bin/bash -o pipefail -c '\
 # 6) Free-threaded source-build + ldconfig (numpy, numexpr+VML, pandas).
 # Same as GIL: MKLROOT is sysconfig data prefix; numexpr VML via injected site.cfg.
 # -march=native: prod-host builds only (same as GIL compile RUN).
-# pandas --no-deps: same MKL-numpy preservation as GIL (dateutil via rest).
+# numexpr/pandas --no-deps: same MKL-numpy preservation as GIL (dateutil via rest).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   MKLROOT_T="$(/opt/python3.14t/bin/python3.14t -c "import sysconfig; from pathlib import Path; r=Path(sysconfig.get_path(\"data\")); assert list((r/\"lib\"/\"pkgconfig\").glob(\"mkl-*.pc\")), r; assert list((r/\"lib\").glob(\"libmkl_rt.so*\")), r; assert (r/\"include\"/\"mkl.h\").is_file() or list((r/\"include\").rglob(\"mkl.h\")), r; print(r)")"; \
@@ -291,8 +293,9 @@ RUN /bin/bash -o pipefail -c '\
   printf "%s\n" "[mkl]" "include_dirs = ${MKLROOT_T}/include" \
     "library_dirs = ${MKLROOT_T}/lib" "libraries = mkl_rt" > "${NUMEXPR_SRC}/site.cfg"; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-build-isolation \
-    --force-reinstall "${NUMEXPR_SRC}"; \
+    --force-reinstall --no-deps "${NUMEXPR_SRC}"; \
   /opt/python3.14t/bin/python3.14t -c "import numexpr as ne; assert ne.use_vml is True, (ne.use_vml, getattr(ne, \"get_vml_version\", lambda: None)())"; \
+  /opt/python3.14t/bin/python3.14t -c "import numpy as np; c=np.show_config(mode=\"dicts\"); assert \"mkl\" in str(c).lower(), c"; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-build-isolation --force-reinstall --no-deps \
     --no-binary pandas \
     -r /tmp/requirements-mkl-pandas.txt; \

@@ -145,8 +145,16 @@ def test_mkl_source_stack_run_order_and_flags():
     after_numpy_install = compile_body[numpy_pip + len(numpy_marker) :]
     assert "-Dblas=mkl" not in after_numpy_install
     assert "-Dlapack=mkl" not in after_numpy_install
-    # Regression: pandas without --no-deps reinstalls manylinux numpy over MKL build.
+    # Regression: numexpr/pandas without --no-deps reinstall manylinux numpy over MKL.
     assert "--no-deps" in compile_body
+    numexpr_install_idx = compile_body.index('pip install', compile_body.index("site.cfg"))
+    numexpr_install_end = compile_body.index("ne.use_vml", numexpr_install_idx)
+    numexpr_region = compile_body[numexpr_install_idx:numexpr_install_end]
+    assert "--no-deps" in numexpr_region
+    # MKL assert after numexpr (before pandas) — prod log: numexpr replaced MKL numpy.
+    after_numexpr = compile_body[numexpr_install_end: compile_body.index(pandas_marker)]
+    assert "show_config" in after_numexpr
+    assert "mkl" in after_numexpr.lower()
     pandas_pip_idx = compile_body.index(pandas_marker)
     pandas_region = compile_body[
         compile_body.rfind("pip", 0, pandas_pip_idx) : pandas_pip_idx
@@ -200,6 +208,28 @@ def test_mklroot_discovery_does_not_import_mkl_module():
   assert re.search(r"\bimport mkl\b", base) is None
   assert "sysconfig.get_path" in base
   assert "libmkl_rt.so" in base
+
+
+def test_numexpr_install_uses_no_deps_to_preserve_mkl_numpy():
+  """Regression: numexpr dep resolve replaced MKL numpy with manylinux OpenBLAS."""
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  runs = _run_instructions(base)
+  compile_runs = [
+      body
+      for body in runs
+      if "ne.use_vml" in body and "site.cfg" in body and "--no-binary pandas" in body
+  ]
+  assert len(compile_runs) == 2  # GIL + free-threaded
+  for body in compile_runs:
+    site_idx = body.index("site.cfg")
+    # Local path install of unpacked sdist (not the download --no-deps).
+    install_idx = body.index("pip install", site_idx)
+    vml_idx = body.index("ne.use_vml", install_idx)
+    assert "--no-deps" in body[install_idx:vml_idx]
+    # Catch replacement before pandas; show_config after VML assert.
+    between = body[vml_idx : body.index("-r /tmp/requirements-mkl-pandas.txt")]
+    assert "show_config" in between
+    assert "mkl" in between.lower()
 
 
 def test_pandas_install_uses_no_deps_to_preserve_mkl_numpy():
