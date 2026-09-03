@@ -24,10 +24,10 @@ globs: Dockerfile,services-conf/supervisord.conf
 
 ## Follow-on (not this interpreter change)
 
-A later plan may replace spawn/fork pool **processes** with **in-process threads** that share ordinary Python objects. Do **not**:
+**listend** live-DB workers are already in-process threads sharing ordinary Python objects (no `/dev/shm`, no Redis payload bus). Remaining follow-on: `update_metrics` process pools (and any leftover `sync_timedb` spawn callers). Do **not**:
 
-- Convert pools in an interpreter-only change
-- Use `/dev/shm` POSIX SharedMemory or Redis as the worker-data bus for that rewrite
+- Restore listend spawn Processes or POSIX SharedMemory
+- Use Redis as a worker-data bus for daemon-private queues
 - Remove the in-process job store / disk sidecar (`.sync_timedb_job_store.json`) without a replacement durability path
 - Put gunicorn on 3.14t
 

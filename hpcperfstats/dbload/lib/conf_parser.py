@@ -4337,7 +4337,7 @@ def get_listend_db_ingest_backpressure() -> str:
 
 def get_listend_db_ingest_pool_processes() -> Any:
   """
-  Host-affine spawn workers for listend live DB ingest (default 32).
+  Host-affine thread count for listend live DB ingest (default 32).
   
   Returns:
     Any: Open return polymorphism from

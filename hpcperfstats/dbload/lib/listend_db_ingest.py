@@ -7,14 +7,13 @@ below the low watermark. Incomplete samples are never partially inserted —
 timestamp-second presence would poison duplicate-scan repair.
 
 Attributes:
-  _COUNTER_NAMES: Attribute.
-  _GLOBAL_POOL: Attribute.
-  _LISTEND_SHM_PREFIX: POSIX SharedMemory name prefix (``hps-ld-``).
-  _MIN_QUEUED_PAYLOAD_BYTES: Attribute.
-  _PAUSE_WATERMARK: Attribute.
-  _QUEUE_GET_TIMEOUT_S: Attribute.
-  _RESUME_WATERMARK: Attribute.
-  _SHUTDOWN_JOIN_TIMEOUT_S: Attribute.
+  _COUNTER_NAMES: Shared idle-monitor counter keys (no shm leftover names).
+  _GLOBAL_POOL: Process-global ``ListendDbIngestPool`` or ``None``.
+  _MIN_QUEUED_PAYLOAD_BYTES: Minimum payload floor used for watermark math.
+  _PAUSE_WATERMARK: High-watermark fraction of the total byte budget.
+  _QUEUE_GET_TIMEOUT_S: Idle ``queue.get`` timeout before a flush.
+  _RESUME_WATERMARK: Low-watermark fraction that resumes consume.
+  _SHUTDOWN_JOIN_TIMEOUT_S: Worker ``join`` budget on ``stop()``.
   _listend_flush_error_is_poison: Classify flush errors that drop the batch.
   _is_listend_statement_timeout: Detect PostgreSQL statement timeout cancels.
   _apply_listend_db_ingest_statement_timeout: Apply listend INI statement_timeout.
@@ -22,7 +21,6 @@ Attributes:
 """
 from __future__ import annotations
 
-import multiprocessing as mp
 import os
 import queue
 import threading
@@ -41,7 +39,7 @@ _SHUTDOWN_JOIN_TIMEOUT_S = 15.0
 _PAUSE_WATERMARK = 0.95
 _RESUME_WATERMARK = 0.50
 
-# Shared counter names (multiprocessing.Value keys via dict of Values).
+# Shared counter names (in-process ints guarded by ``_ThreadCounter``).
 _COUNTER_NAMES = (
     "queue_drops",
     "pause_enters",
@@ -50,12 +48,50 @@ _COUNTER_NAMES = (
     "db_err",
     "conn_recycle",
     "batch_flush",
-    "shm_fallback",
-    "shm_reclaim",
 )
 
-# POSIX SharedMemory name prefix for listend live-DB enqueue.
-_LISTEND_SHM_PREFIX = "hps-ld-"
+
+class _ThreadCounter:
+  """
+  Integer plus lock with the ``.value`` / ``.get_lock()`` counter surface.
+
+  Replaces spawn ``multiprocessing.Value("Q")`` so submit, workers, and the
+  idle monitor can share ordinary heap integers.
+
+  Attributes:
+    _lock: Mutex guarding ``value``.
+    value: Current integer count.
+  """
+
+  def __init__(self, initial: int = 0) -> None:
+    """
+    Create a zero-or-seeded in-process counter.
+
+    Args:
+      initial (int): Starting value.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _ThreadCounter(3).value
+      3
+    """
+    self._lock = threading.Lock()
+    self.value = int(initial)
+
+  def get_lock(self) -> threading.Lock:
+    """
+    Return the mutex used by ``_inc_counter``.
+
+    Returns:
+      threading.Lock: Lock protecting ``value``.
+
+    Examples:
+      >>> isinstance(_ThreadCounter().get_lock(), threading.Lock)
+      True
+    """
+    return self._lock
 
 
 def _listend_flush_error_is_poison(exc: BaseException) -> bool:
@@ -511,108 +547,6 @@ def _payload_byte_size(message: str) -> int:
   return len(message.encode("utf-8", errors="replace"))
 
 
-def _unlink_shm_by_name(name: str) -> bool:
-  """
-  Best-effort unlink of a named POSIX SharedMemory segment.
-
-  Args:
-    name (str): SharedMemory name (e.g. ``hps-ld-123-0``).
-
-  Returns:
-    bool: True when unlink succeeded.
-
-  Examples:
-    >>> _unlink_shm_by_name("hps-ld-missing")
-    False
-  """
-  if not name:
-    return False
-  try:
-    from multiprocessing.shared_memory import SharedMemory
-
-    shm = SharedMemory(name=name)
-    try:
-      shm.close()
-    finally:
-      try:
-        shm.unlink()
-      except FileNotFoundError:
-        return False
-    return True
-  except FileNotFoundError:
-    return False
-  except Exception:
-    try:
-      path = os.path.join("/dev/shm", name.lstrip("/"))
-      os.unlink(path)
-      return True
-    except Exception:
-      return False
-
-
-def _reclaim_orphan_listend_shm() -> int:
-  """
-  Unlink leftover ``hps-ld-*`` segments under ``/dev/shm``.
-
-  Called on pool ``start()`` so a prior crash/OOM cannot starve tmpfs.
-
-  Returns:
-    int: Number of names successfully unlinked.
-
-  Examples:
-    >>> _reclaim_orphan_listend_shm() >= 0
-    True
-  """
-  shm_dir = "/dev/shm"
-  if not os.path.isdir(shm_dir):
-    return 0
-  reclaimed = 0
-  try:
-    names = os.listdir(shm_dir)
-  except OSError:
-    return 0
-  for name in names:
-    if not name.startswith(_LISTEND_SHM_PREFIX):
-      continue
-    if _unlink_shm_by_name(name):
-      reclaimed += 1
-  return reclaimed
-
-
-def _read_archive_payload_range(
-  archive_path: str,
-  offset: int,
-  length: int,
-) -> str:
-  """
-  Read ``length`` bytes at ``offset`` from a durable archive file.
-
-  Args:
-    archive_path (str): Absolute path to the host ``current`` (or sibling).
-    offset (int): Byte offset of the payload.
-    length (int): UTF-8 byte length to read.
-
-  Returns:
-    str: Decoded UTF-8 payload (replace errors).
-
-  Raises:
-    OSError: When the file cannot be opened or read.
-    ValueError: When ``length`` is negative.
-
-  Examples:
-    >>> _read_archive_payload_range("/tmp/x", 0, 0)  # doctest: +SKIP
-  """
-  from hpcperfstats.dbload.lib.file_locking import file_read_lock_wait
-
-  if int(length) < 0:
-    raise ValueError("negative archive payload length")
-  with file_read_lock_wait(archive_path):
-    with open(archive_path, "rb") as fd:
-      fd.seek(int(offset))
-      raw = fd.read(int(length))
-  return raw.decode("utf-8", errors="replace")
-
-
 def _inc_counter(counters: dict, name: str, amount: int = 1) -> None:
   """
   Internal helper to handle inc counter.
@@ -874,21 +808,26 @@ def _worker_main(
     >>> _worker_main(0, None, None, None, None, {}, 0, 0)  # doctest: +SKIP
   """
   del per_worker_budget  # tracked on put; kept for future diagnostics
-  # Cap BLAS/OpenMP before any numpy/pandas import (30 workers × default
+  # Cap BLAS/OpenMP before any numpy/pandas import (32 threads × default
   # OpenBLAS threads exhausts pthread resources → EAGAIN).
   from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
 
   configure_blas_thread_env()
 
   from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
-  from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
+  from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
   from hpcperfstats.dbload.lib.sync_timedb_parsing import DeltaCarryState
 
-  set_daemon_process_title(name="listend.py", role="worker", pool_kind="listend-db-pool")
+  set_daemon_thread_title(
+      "",
+      script_name="listend.py",
+      role="listend-db-%d" % int(worker_idx),
+  )
   ensure_django()
-  _apply_listend_db_ingest_statement_timeout()
-
   from django.db import close_old_connections, connections
+
+  close_old_connections()
+  _apply_listend_db_ingest_statement_timeout()
 
   schema_by_host: Dict[str, dict] = {}
   schema_fast_by_host: Dict[str, dict] = {}
@@ -958,6 +897,8 @@ def _worker_main(
         pending_host = []
         pending_proc = []
         sample_count = 0
+        if force_memory_release:
+          _release_listend_db_worker_memory()
       return
     pending_host = []
     pending_proc = []
@@ -1004,35 +945,9 @@ def _worker_main(
     host = ""
     message = ""
     size = 0
-    shm_name: str | None = None
     try:
-      kind = item[0] if isinstance(item, tuple) and item else None
-      if kind == "shm":
-        _, host, shm_name, size = item
-        from multiprocessing.shared_memory import SharedMemory
-
-        shm = SharedMemory(name=shm_name)
-        try:
-          raw = bytes(shm.buf[: int(size)])
-          message = raw.decode("utf-8", errors="replace")
-        finally:
-          try:
-            shm.close()
-          finally:
-            try:
-              shm.unlink()
-            except FileNotFoundError:
-              pass
-        shm_name = None
-      elif kind == "path":
-        _, host, archive_path, offset, length = item
-        size = int(length)
-        message = _read_archive_payload_range(
-            str(archive_path), int(offset), int(length),
-        )
-      else:
-        # Legacy pickle-body tuple from older callers/tests.
-        host, message, size = item
+      host, message, size = item
+      size = int(size)
     except Exception as unpack_exc:
       _inc_counter(counters, "db_err")
       log_print(
@@ -1040,11 +955,11 @@ def _worker_main(
           % (worker_idx, unpack_exc),
           flush=True,
       )
-      if shm_name:
-        _unlink_shm_by_name(shm_name)
       with byte_lock:
         byte_count.value = max(0, int(byte_count.value) - int(size or 0))
+      item = None
       continue
+    item = None
 
     with byte_lock:
       byte_count.value = max(0, int(byte_count.value) - int(size))
@@ -1056,6 +971,7 @@ def _worker_main(
           schema_by_host[host] = schema
           schema_fast_by_host[host] = schema_fast
         seeded_hosts.add(host)
+        message = None
         continue
 
       _ensure_schema_seed(host)
@@ -1068,9 +984,11 @@ def _worker_main(
       schema = schema_by_host.get(host) or {}
       if not schema and not has_bang:
         _inc_counter(counters, "schema_miss")
+        message = None
         continue
       if has_bang and not schema:
         _inc_counter(counters, "schema_miss")
+        message = None
         continue
 
       schema_fast = schema_fast_by_host.get(host) or {}
@@ -1082,7 +1000,7 @@ def _worker_main(
           schema_fast=schema_fast,
           carry=carry,
       )
-      message = None  # drop payload ref
+      message = None  # drop payload ref after parse
       if not host_objs and not proc_objs:
         # Covered schema but unusable / incomplete → treat as schema_miss class skip.
         _inc_counter(counters, "schema_miss")
@@ -1103,9 +1021,14 @@ def _worker_main(
       pending_host = []
       pending_proc = []
       sample_count = 0
+      message = None
       _release_listend_db_worker_memory()
 
   _flush(force_memory_release=True)
+  try:
+    close_old_connections()
+  except Exception:
+    pass
   try:
     connections.close_all()
   except Exception:
@@ -1114,32 +1037,32 @@ def _worker_main(
 
 class ListendDbIngestPool:
   """
-  Host-affine continuous worker pool for listend live DB ingest.
-  
+  Host-affine in-process thread pool for listend live DB ingest.
+
+  Each worker is a dedicated ``threading.Thread`` with its own
+  ``queue.Queue``. Host affinity (``adler32 % N``) keeps per-host FIFO
+  and ``DeltaCarryState`` on one writer. Payloads stay ordinary Python
+  strings on in-process queues — no spawn Process and no ``/dev/shm``
+  payload bus.
+
   Attributes:
-    _byte_counts: Attribute.
-    _byte_locks: Attribute.
-    _counters: Attribute.
-    _ctx: Attribute.
-    _outstanding_shm: Set of shm names created but not yet accepted by a
-      worker (unlinked on put failure or ``stop``).
-    _outstanding_shm_lock: Thread lock guarding ``_outstanding_shm``.
+    _byte_counts: Per-worker queued-byte counters.
+    _byte_locks: Per-worker locks for those counters.
+    _counters: Named idle-monitor counters.
     _pause_seconds_window: Accumulated pause seconds in the current idle
       monitor window (closed intervals only).
     _pause_started_mono: Monotonic start of an open pause interval, or None.
-    _queues: Attribute.
-    _shm_seq: Monotonic counter for SharedMemory name suffixes.
-    _shm_seq_lock: Thread lock guarding ``_shm_seq``.
-    _started: Attribute.
-    _stop: Attribute.
-    _window_baseline: Attribute.
-    _workers: Attribute.
-    batch_samples: Attribute.
-    budget_bytes: Attribute.
-    enabled: Attribute.
-    per_worker_budget_bytes: Attribute.
-    pool_processes: Attribute.
-    queue_maxsize: Attribute.
+    _queues: Per-worker ``queue.Queue`` objects.
+    _started: True after ``start()`` has launched threads.
+    _stop: In-process stop event shared with workers.
+    _window_baseline: Last idle-monitor counter snapshot.
+    _workers: Started worker threads.
+    batch_samples: Flush size in samples.
+    budget_bytes: Total queued-byte budget.
+    enabled: Whether live DB ingest is on.
+    per_worker_budget_bytes: Per-thread queued-byte cap.
+    pool_processes: Thread count (INI key name is historical).
+    queue_maxsize: ``Queue`` item cap derived from the byte budget.
   """
 
   def __init__(
@@ -1193,25 +1116,14 @@ class ListendDbIngestPool:
     self._started = False
     self._pause_started_mono: float | None = None
     self._pause_seconds_window = 0.0
-    self._shm_seq = 0
-    self._shm_seq_lock = threading.Lock()
-    self._outstanding_shm: set[str] = set()
-    self._outstanding_shm_lock = threading.Lock()
-    # Disabled pools must not allocate spawn Event/Value/Queue objects.
-    # POSIX semaphores fail with FileNotFoundError when /dev/shm is missing
-    # (the [listend:main] "Failed to start listend db ingest pool: [Errno 2]"
-    # log) even though start() would have been a no-op.
+    # Disabled pools do not start threads or allocate queues.
     if not self.enabled:
-      self._ctx = None
       self._stop = None
       self._counters = {}
       self._window_baseline = self.snapshot_counters()
       return
-    self._ctx = mp.get_context("spawn")
-    self._stop = self._ctx.Event()
-    self._counters = {
-        name: self._ctx.Value("Q", 0) for name in _COUNTER_NAMES
-    }
+    self._stop = threading.Event()
+    self._counters = {name: _ThreadCounter(0) for name in _COUNTER_NAMES}
     self._window_baseline = self.snapshot_counters()
 
   def start(self) -> None:
@@ -1226,14 +1138,11 @@ class ListendDbIngestPool:
     """
     if not self.enabled or self._started:
       return
-    reclaimed = _reclaim_orphan_listend_shm()
-    if reclaimed:
-      _inc_counter(self._counters, "shm_reclaim", reclaimed)
     for i in range(self.pool_processes):
-      q = self._ctx.Queue(maxsize=self.queue_maxsize)
-      byte_count = self._ctx.Value("Q", 0)
-      byte_lock = self._ctx.Lock()
-      proc = self._ctx.Process(
+      q: queue.Queue = queue.Queue(maxsize=self.queue_maxsize)
+      byte_count = _ThreadCounter(0)
+      byte_lock = threading.Lock()
+      thread = threading.Thread(
           target=_worker_main,
           args=(
               i,
@@ -1245,25 +1154,24 @@ class ListendDbIngestPool:
               self.batch_samples,
               self.per_worker_budget_bytes,
           ),
-          name="listend-db-pool-%d" % i,
+          name="listend-db-%d" % i,
           daemon=True,
       )
       self._queues.append(q)
       self._byte_counts.append(byte_count)
       self._byte_locks.append(byte_lock)
-      self._workers.append(proc)
-      proc.start()
+      self._workers.append(thread)
+      thread.start()
     self._started = True
     self._window_baseline = self.snapshot_counters()
     log_print(
         "listend db ingest pool started workers=%d queue_maxsize=%d "
-        "per_worker_budget_bytes=%d batch_samples=%d shm_reclaim=%d"
+        "per_worker_budget_bytes=%d batch_samples=%d"
         % (
             self.pool_processes,
             self.queue_maxsize,
             self.per_worker_budget_bytes,
             self.batch_samples,
-            reclaimed,
         ),
         flush=True,
     )
@@ -1283,32 +1191,33 @@ class ListendDbIngestPool:
     """
     if not self._started:
       return
-    self._stop.set()
+    if self._stop is not None:
+      self._stop.set()
     for q in self._queues:
       try:
         q.put_nowait(None)
       except Exception:
         pass
     deadline = time.monotonic() + max(0.1, float(join_timeout))
-    for proc in self._workers:
+    for thread in self._workers:
       remaining = deadline - time.monotonic()
       if remaining <= 0:
         break
       try:
-        proc.join(timeout=remaining)
+        thread.join(timeout=remaining)
       except Exception:
         pass
-    for proc in self._workers:
-      if proc.is_alive():
+    for q in self._queues:
+      while True:
         try:
-          proc.terminate()
-        except Exception:
-          pass
-    with self._outstanding_shm_lock:
-      outstanding = list(self._outstanding_shm)
-      self._outstanding_shm.clear()
-    for name in outstanding:
-      _unlink_shm_by_name(name)
+          leftover = q.get_nowait()
+        except queue.Empty:
+          break
+        del leftover
+    self._queues = []
+    self._byte_counts = []
+    self._byte_locks = []
+    self._workers = []
     self._started = False
 
   def queued_bytes(self) -> int:
@@ -1507,32 +1416,26 @@ class ListendDbIngestPool:
     length: int | None = None,
   ) -> bool:
     """
-    Nonblocking enqueue via POSIX SharedMemory (path+range fallback).
+    Nonblocking enqueue of ``(host, message, nbytes)`` on the affine queue.
 
-    Prefer ``("shm", host, name, nbytes)`` so ``mp.Queue`` does not pickle the
-    full monitor body. On SharedMemory create failure with archive range
-    available, enqueue ``("path", host, path, offset, length)`` and increment
-    ``shm_fallback``. Under ``drop``, False returns and ``queue_drops`` are
-    expected when queues are full.
+    ``archive_path`` / ``offset`` / ``length`` are accepted for caller
+    compatibility and ignored — there is no path-range fallback.
 
     Args:
       host (str): Monitor hostname token.
       message (str): Raw monitor payload string.
-      archive_path (str | None): Durable archive path for path fallback.
-      offset (int | None): Byte offset of this payload in ``archive_path``.
-      length (int | None): UTF-8 byte length of this payload.
+      archive_path (str | None): Ignored leftover caller kwarg.
+      offset (int | None): Ignored leftover caller kwarg.
+      length (int | None): Ignored leftover caller kwarg.
 
     Returns:
       bool: True when enqueued; False on drop / disabled / not started.
-
-    Raises:
-      queue.Full: Used internally to abort a put when the byte budget fills
-        between create and enqueue; caught and converted to ``queue_drops``.
 
     Examples:
       >>> ListendDbIngestPool(enabled=False).submit("h", "x")
       False
     """
+    del archive_path, offset, length
     if not self.enabled or not self._started or self._stop.is_set():
       return False
     if not host or message is None:
@@ -1542,64 +1445,18 @@ class ListendDbIngestPool:
     q = self._queues[idx]
     byte_count = self._byte_counts[idx]
     byte_lock = self._byte_locks[idx]
-    with byte_lock:
-      if int(byte_count.value) + size > self.per_worker_budget_bytes:
-        _inc_counter(self._counters, "queue_drops")
-        return False
-
-    payload = message.encode("utf-8", errors="replace")
-    nbytes = len(payload)
-    shm_name: str | None = None
     try:
-      from multiprocessing.shared_memory import SharedMemory
-
-      with self._shm_seq_lock:
-        self._shm_seq += 1
-        seq = self._shm_seq
-      shm_name = "%s%d-%d" % (_LISTEND_SHM_PREFIX, os.getpid(), seq)
-      shm = SharedMemory(create=True, size=max(1, nbytes), name=shm_name)
-      try:
-        if nbytes:
-          shm.buf[:nbytes] = payload
-      finally:
-        shm.close()
-      with self._outstanding_shm_lock:
-        self._outstanding_shm.add(shm_name)
-      try:
-        with byte_lock:
-          if int(byte_count.value) + size > self.per_worker_budget_bytes:
-            raise queue.Full
-          q.put_nowait(("shm", host, shm_name, nbytes))
-          byte_count.value = int(byte_count.value) + size
-      except Exception:
-        with self._outstanding_shm_lock:
-          self._outstanding_shm.discard(shm_name)
-        _unlink_shm_by_name(shm_name)
-        _inc_counter(self._counters, "queue_drops")
-        return False
-      with self._outstanding_shm_lock:
-        self._outstanding_shm.discard(shm_name)
-      return True
-    except Exception:
-      if (
-          archive_path is not None
-          and offset is not None
-          and length is not None
-      ):
-        try:
-          with byte_lock:
-            if int(byte_count.value) + size > self.per_worker_budget_bytes:
-              _inc_counter(self._counters, "queue_drops")
-              return False
-            q.put_nowait(
-                ("path", host, archive_path, int(offset), int(length))
-            )
-            byte_count.value = int(byte_count.value) + size
-          _inc_counter(self._counters, "shm_fallback")
-          return True
-        except Exception:
+      with byte_lock:
+        if int(byte_count.value) + size > self.per_worker_budget_bytes:
           _inc_counter(self._counters, "queue_drops")
           return False
+        q.put_nowait((host, message, size))
+        byte_count.value = int(byte_count.value) + size
+      return True
+    except queue.Full:
+      _inc_counter(self._counters, "queue_drops")
+      return False
+    except Exception:
       _inc_counter(self._counters, "queue_drops")
       return False
 
@@ -1678,8 +1535,7 @@ class ListendDbIngestPool:
     return (
         "db_ingest queue_drops=%d pause_enters=%d pause_s=%d paused=%d "
         "schema_miss=%d db_ok=%d db_err=%d conn_recycle=%d "
-        "db_queue_depth=%d db_queued_bytes=%d batch_flush=%d "
-        "shm_fallback=%d shm_reclaim=%d"
+        "db_queue_depth=%d db_queued_bytes=%d batch_flush=%d"
         % (
             d.get("queue_drops", 0),
             d.get("pause_enters", 0),
@@ -1692,8 +1548,6 @@ class ListendDbIngestPool:
             d.get("db_queue_depth", 0),
             d.get("db_queued_bytes", 0),
             d.get("batch_flush", 0),
-            d.get("shm_fallback", 0),
-            d.get("shm_reclaim", 0),
         )
     )
 
@@ -1723,9 +1577,7 @@ def start_listend_db_ingest_pool(
   Construct and start the process-global live DB ingest pool.
 
   When live ingest is off (``listend_db_ingest_enabled=no`` or
-  ``enabled=False``), return ``None`` without creating multiprocessing
-  shared objects. Spawn ``Event``/``Value`` allocation is what raises
-  ``FileNotFoundError`` when ``/dev/shm`` or ``sys.executable`` is missing.
+  ``enabled=False``), return ``None`` without starting DB threads.
 
   Args:
     **kwargs (Any): Forwarded to ``ListendDbIngestPool``:
@@ -1792,9 +1644,9 @@ def submit_listend_db_ingest(
   Args:
     host (str): Monitor hostname token.
     message (str): Raw monitor payload.
-    archive_path (str | None): Durable archive path for shm create fallback.
-    offset (int | None): Byte offset of this payload in ``archive_path``.
-    length (int | None): UTF-8 byte length of this payload.
+    archive_path (str | None): Ignored leftover caller kwarg.
+    offset (int | None): Ignored leftover caller kwarg.
+    length (int | None): Ignored leftover caller kwarg.
 
   Returns:
     bool: True when enqueued; False when pool missing or drop.

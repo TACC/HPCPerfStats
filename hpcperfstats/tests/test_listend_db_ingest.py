@@ -21,36 +21,27 @@ def test_compute_listend_db_queue_budgets_splits_evenly():
   assert budgets["queue_maxsize"] == budgets["per_worker_budget_bytes"] // 256
 
 
-def test_disabled_pool_skips_multiprocessing_spawn_ipc(monkeypatch):
-  """listend_db_ingest_enabled=no must not create spawn Event/Value objects.
-
-  Those POSIX semaphores raise FileNotFoundError when /dev/shm or the
-  spawn executable is missing — the [listend:main] Errno 2 log.
-  """
+def test_disabled_pool_does_not_start_threads():
+  """listend_db_ingest_enabled=no must not start DB threads or queues."""
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi
 
-  def boom(*_args, **_kwargs):
-    raise FileNotFoundError(2, "No such file or directory")
-
-  monkeypatch.setattr(ldi.mp, "get_context", boom)
   pool = ldi.ListendDbIngestPool(enabled=False)
+  pool.start()
   assert pool.enabled is False
   assert pool._started is False
-  assert pool._ctx is None
+  assert pool._stop is None
+  assert pool._workers == []
+  assert pool._queues == []
   assert pool.queued_bytes() == 0
+  assert pool.submit("h", "x") is False
 
 
-def test_start_listend_db_ingest_pool_disabled_skips_spawn(monkeypatch):
-  """start_listend_db_ingest_pool must not construct IPC when INI is off."""
+def test_start_listend_db_ingest_pool_disabled_skips_threads(monkeypatch):
+  """start_listend_db_ingest_pool must not construct the pool when INI is off."""
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi
 
   monkeypatch.setattr(ldi.cfg, "get_listend_db_ingest_enabled", lambda: False)
   monkeypatch.setattr(ldi, "_GLOBAL_POOL", None)
-
-  def boom(*_args, **_kwargs):
-    raise FileNotFoundError(2, "No such file or directory")
-
-  monkeypatch.setattr(ldi.mp, "get_context", boom)
   monkeypatch.setattr(
       ldi,
       "ListendDbIngestPool",
@@ -103,8 +94,7 @@ def test_submit_drops_when_byte_budget_exceeded(monkeypatch):
       batch_samples=10,
       enabled=True,
   )
-  # Bypass Process.start — wire a real Queue for put/drop math.
-  pool._ctx = mock.Mock()
+  # Wire a real Queue for put/drop math without starting worker threads.
   pool._stop = mock.Mock()
   pool._stop.is_set.return_value = False
   q = queue.Queue(maxsize=1000)
@@ -1036,7 +1026,8 @@ def test_wait_connection_loss_does_not_note_pause_exit(monkeypatch):
   listend._db_backpressure_pause = False
 
 
-def test_submit_puts_shm_tuple_not_body():
+def test_submit_puts_host_message_nbytes():
+  """Submit must enqueue the payload string, not a shm or path tuple."""
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi
 
   pool = ldi.ListendDbIngestPool(
@@ -1063,87 +1054,22 @@ def test_submit_puts_shm_tuple_not_body():
   pool.per_worker_budget_bytes = 10**9
 
   body = "1710000001.0 1 myhost x\n"
-  assert pool.submit("myhost", body) is True
-  item = q.get_nowait()
-  assert item[0] == "shm"
-  assert item[1] == "myhost"
-  assert isinstance(item[2], str) and item[2].startswith("hps-ld-")
-  assert item[3] == len(body.encode("utf-8"))
-  # Payload must not appear as a queue pickle field.
-  assert body not in item
-  ldi._unlink_shm_by_name(item[2])
-
-
-def test_submit_shm_create_fail_falls_back_to_path(monkeypatch):
-  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
-
-  pool = ldi.ListendDbIngestPool(
-      pool_processes=1,
-      queue_max_gb=1.0,
-      batch_samples=10,
-      enabled=True,
-  )
-  q = queue.Queue(maxsize=1000)
-  byte_count = mock.Mock()
-  byte_count.value = 0
-  byte_lock = mock.MagicMock()
-  byte_lock.__enter__ = mock.Mock(return_value=None)
-  byte_lock.__exit__ = mock.Mock(return_value=False)
-  pool._queues = [q]
-  pool._byte_counts = [byte_count]
-  pool._byte_locks = [byte_lock]
-  pool._counters = {name: mock.Mock(value=0) for name in ldi._COUNTER_NAMES}
-  for c in pool._counters.values():
-    c.get_lock.return_value = mock.MagicMock()
-    c.get_lock.return_value.__enter__ = mock.Mock(return_value=None)
-    c.get_lock.return_value.__exit__ = mock.Mock(return_value=False)
-  pool._started = True
-  pool.per_worker_budget_bytes = 10**9
-
-  def boom(*_a, **_k):
-    raise OSError(28, "No space left on device")
-
-  monkeypatch.setattr(
-      "multiprocessing.shared_memory.SharedMemory",
-      boom,
-  )
-  ok = pool.submit(
+  assert pool.submit(
       "myhost",
-      "payload",
+      body,
       archive_path="/tmp/current",
       offset=10,
       length=7,
-  )
-  assert ok is True
+  ) is True
   item = q.get_nowait()
-  assert item == ("path", "myhost", "/tmp/current", 10, 7)
-  assert pool._counters["shm_fallback"].value >= 1
+  assert item == ("myhost", body, len(body.encode("utf-8")))
+  assert "shm" not in item
+  assert "/tmp/current" not in item
 
 
-def test_submit_put_fail_after_shm_create_unlinks(monkeypatch):
+def test_submit_full_queue_increments_drops():
+  """A full in-process queue must drop and increment queue_drops."""
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi
-  from multiprocessing.shared_memory import SharedMemory as RealSharedMemory
-  import os
-
-  created = []
-
-  class _TrackingShm:
-    def __init__(self, *args, **kwargs):
-      self._real = RealSharedMemory(*args, **kwargs)
-      created.append(self._real.name)
-      self.name = self._real.name
-      self.buf = self._real.buf
-
-    def close(self):
-      self._real.close()
-
-    def unlink(self):
-      self._real.unlink()
-
-  def factory(*args, **kwargs):
-    if kwargs.get("create"):
-      return _TrackingShm(*args, **kwargs)
-    return RealSharedMemory(*args, **kwargs)
 
   pool = ldi.ListendDbIngestPool(
       pool_processes=1,
@@ -1169,50 +1095,42 @@ def test_submit_put_fail_after_shm_create_unlinks(monkeypatch):
   pool._started = True
   pool.per_worker_budget_bytes = 10**9
 
-  monkeypatch.setattr(
-      "multiprocessing.shared_memory.SharedMemory",
-      factory,
-  )
-  ok = pool.submit("myhost", "payload-data")
-  assert ok is False
+  assert pool.submit("myhost", "payload-data") is False
   assert pool._counters["queue_drops"].value >= 1
-  assert created
-  for name in created:
-    assert not os.path.exists(os.path.join("/dev/shm", name))
 
 
-def test_start_reclaims_orphan_hps_ld_shm():
-  import os
-  import pytest
+def test_listend_production_path_has_no_spawn_or_shared_memory():
+  """Architecture: listend production modules must not use spawn or shm."""
+  from pathlib import Path
+
+  root = Path(__file__).resolve().parents[1]
+  banned = (
+      "SharedMemory",
+      "hps-ld-",
+      'get_context("spawn")',
+      "shm_fallback",
+      "shm_reclaim",
+  )
+  for rel in (
+      "listend.py",
+      "dbload/lib/listend_db_ingest.py",
+  ):
+    src = (root / rel).read_text(encoding="utf-8")
+    for token in banned:
+      assert token not in src, "%s still contains %r" % (rel, token)
+
+
+def test_worker_uses_thread_title_not_process_pool_title():
+  """DB workers must title as [thread:listend-db-N], not worker:listend-db-pool."""
+  import inspect
+
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi
-  from multiprocessing.shared_memory import SharedMemory
 
-  if not os.path.isdir("/dev/shm"):
-    pytest.skip("orphan scan uses /dev/shm (Linux containers)")
-
-  name = "hps-ld-orphan-test-xyz"
-  try:
-    orphan = SharedMemory(create=True, size=8, name=name)
-    orphan.close()
-  except FileExistsError:
-    pass
-  n = ldi._reclaim_orphan_listend_shm()
-  assert n >= 1
-  assert not os.path.exists(os.path.join("/dev/shm", name))
-
-
-def test_unlink_shm_by_name_removes_created_segment():
-  """Direct unlink works on macOS and Linux SharedMemory backends."""
-  import os
-  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
-  from multiprocessing.shared_memory import SharedMemory
-
-  name = "hps-ld-unlink-unit-%d" % os.getpid()
-  shm = SharedMemory(create=True, size=8, name=name)
-  shm.close()
-  assert ldi._unlink_shm_by_name(name) is True
-  # Second unlink is a no-op / miss.
-  assert ldi._unlink_shm_by_name(name) is False
+  src = inspect.getsource(ldi._worker_main)
+  assert "set_daemon_thread_title" in src
+  assert "listend-db-%d" in src
+  assert "listend-db-pool" not in src
+  assert "set_daemon_process_title" not in src
 
 
 def test_idle_empty_does_not_recycle_when_under_max_age(monkeypatch):
@@ -1229,3 +1147,47 @@ def test_idle_empty_does_not_recycle_when_under_max_age(monkeypatch):
   assert "_recycle_conn(reason=\"idle\")" not in empty_block
   assert "_conn_max_age_s()" in empty_block
   assert "_recycle_conn(reason=\"age\")" in empty_block
+
+
+def test_worker_drops_payload_refs_on_skip_and_parse_paths():
+  """Source contract: payload strings are dropped after use, including skips."""
+  import inspect
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  src = inspect.getsource(ldi._worker_main)
+  dollar_block = src.split('if message and message[0] == "$":', 1)[1]
+  dollar_block = dollar_block.split("continue", 1)[0]
+  assert "message = None" in dollar_block
+  miss_blocks = src.split('_inc_counter(counters, "schema_miss")')
+  assert len(miss_blocks) >= 3
+  for block in miss_blocks[1:3]:
+    before_continue = block.split("continue", 1)[0]
+    assert "message = None" in before_continue or "drop payload ref" in src
+  assert "message = None  # drop payload ref after parse" in src
+  assert "item = None" in src
+
+
+def test_stop_drains_leftover_queue_items():
+  """stop() must drop leftover queued payloads instead of leaving them queued."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  leftover = ("h", "payload-that-must-be-dropped", 7)
+  q = queue.Queue(maxsize=8)
+  q.put_nowait(leftover)
+  pool._queues = [q]
+  pool._byte_counts = [ldi._ThreadCounter(7)]
+  pool._byte_locks = [__import__("threading").Lock()]
+  pool._workers = []
+  pool._stop = __import__("threading").Event()
+  pool._started = True
+
+  pool.stop(join_timeout=0.2)
+  assert q.empty()
+  assert pool._queues == []
+  assert pool._started is False

@@ -73,6 +73,10 @@ def test_format_daemon_thread_title():
       format_daemon_thread_title("listend.py", role="idle-monitor")
       == "listend.py [thread:idle-monitor]"
   )
+  assert (
+      format_daemon_thread_title("listend.py", role="listend-db-0")
+      == "listend.py [thread:listend-db-0]"
+  )
 
 
 def test_running_under_gunicorn_server_software(monkeypatch):
