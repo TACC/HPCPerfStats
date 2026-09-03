@@ -145,6 +145,19 @@ def test_mkl_source_stack_run_order_and_flags():
     after_numpy_install = compile_body[numpy_pip + len(numpy_marker) :]
     assert "-Dblas=mkl" not in after_numpy_install
     assert "-Dlapack=mkl" not in after_numpy_install
+    # Regression: pandas without --no-deps reinstalls manylinux numpy over MKL build.
+    assert "--no-deps" in compile_body
+    pandas_pip_idx = compile_body.index(pandas_marker)
+    pandas_region = compile_body[
+        compile_body.rfind("pip", 0, pandas_pip_idx) : pandas_pip_idx
+        + len(pandas_marker)
+    ]
+    assert "--no-deps" in pandas_region
+    assert "python-dateutil" in compile_body
+    # MKL assert must run again after pandas (not only after the numpy install).
+    after_pandas = compile_body[pandas_pip_idx + len(pandas_marker) :]
+    assert "show_config" in after_pandas
+    assert "mkl" in after_pandas.lower()
 
   for rest in (gil_rest, ft_rest):
     assert "--no-binary" not in rest
@@ -183,6 +196,28 @@ def test_mklroot_discovery_does_not_import_mkl_module():
   assert re.search(r"\bimport mkl\b", base) is None
   assert "sysconfig.get_path" in base
   assert "libmkl_rt.so" in base
+
+
+def test_pandas_install_uses_no_deps_to_preserve_mkl_numpy():
+  """Regression: pandas dep resolve replaced MKL numpy with a manylinux wheel."""
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  runs = _run_instructions(base)
+  compile_runs = [
+      body
+      for body in runs
+      if "--no-binary pandas" in body and "-r /tmp/requirements-mkl-pandas.txt" in body
+  ]
+  assert len(compile_runs) == 2  # GIL + free-threaded
+  for body in compile_runs:
+    pandas_marker = "-r /tmp/requirements-mkl-pandas.txt"
+    region_start = body.rfind("pip", 0, body.index(pandas_marker))
+    region = body[region_start : body.index(pandas_marker) + len(pandas_marker)]
+    assert "--no-deps" in region
+    assert "--no-binary pandas" in region
+    after = body[body.index(pandas_marker) + len(pandas_marker) :]
+    assert "python-dateutil" in after
+    assert "show_config" in after
+    assert "import pandas" in after
 
 
 def test_dockerfile_pip_argv_has_no_hardcoded_scientific_or_mkl_pins():

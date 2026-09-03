@@ -404,8 +404,8 @@ def test_docker_compose_test_overlay_clears_host_binds():
   assert "ssl_certs: ./tests/fixtures/proxy-ssl" not in overlay
 
 
-def test_docker_compose_pipeline_shm_size_is_modest_leftover_spawn():
-  """listend no longer needs 10gb /dev/shm; leftover spawn IPC stays at 1g."""
+def test_docker_compose_pipeline_has_no_process_pool_shared_memory_override():
+  """Thread-only pipeline workers do not require a service /dev/shm override."""
   import re
 
   repo_root = Path(__file__).resolve().parents[2]
@@ -418,11 +418,7 @@ def test_docker_compose_pipeline_shm_size_is_modest_leftover_spawn():
   assert m, "pipeline service not found"
   block = m.group(0)
   assert "POSIX SharedMemory for listend live-DB enqueue" not in block
-  assert 'shm_size:' in block
-  size_m = re.search(r'shm_size:\s*["\']?(\d+)\s*([gG][bB]?)["\']?', block)
-  assert size_m, "pipeline shm_size not parseable: %r" % block
-  gib = int(size_m.group(1))
-  assert gib == 1, "pipeline leftover-spawn shm_size must be 1g, got %sgb" % gib
+  assert "shm_size:" not in block
   db_m = re.search(
       r"(?ms)^  db:\n(.*?)(?=^  [a-z].*:|\Z)",
       content,
