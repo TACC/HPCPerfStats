@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-from hpcperfstats.tests.fake_redis_queue import FakeRedis
+from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 
 
 def test_arch_predicate_discovered_incomplete_enqueues_ingest_job():
   """Discovered closed raw with incomplete ingest must create an ingest job."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   plan = jr.classify_closed_raw_path(
       "/raw/host/1",
       tgz_archive_dir="/daily",
@@ -36,7 +36,7 @@ def test_arch_predicate_discovered_incomplete_enqueues_ingest_job():
 
 def test_arch_predicate_remaining_raw_enqueues_ingest_or_append_job():
   """Remaining-raw incomplete append must leave an append LIST job."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   plan = jr.classify_closed_raw_path(
       "/raw/host/2",
       tgz_archive_dir="/daily",
@@ -134,12 +134,15 @@ def test_handoff_priority_paths_removed_from_legacy_helpers():
   ).parameters
 
 
-def test_reap_lua_never_hgetall():
-  """F7: expired inflight recovery must not HGETALL the full hash."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+def test_job_store_has_no_lua_or_redis_reap():
+  """In-process reap walks memory maps; Lua/HGETALL must not return."""
+  import inspect
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 
-  assert "HGETALL" not in jq._REAP_LUA
-  assert "HSCAN" in jq._REAP_LUA
+  src = inspect.getsource(jq)
+  assert "_REAP_LUA" not in src
+  assert "HGETALL" not in src
+  assert "redis.call" not in src
 
 
 def test_append_to_tar_refilters_under_write_lock():

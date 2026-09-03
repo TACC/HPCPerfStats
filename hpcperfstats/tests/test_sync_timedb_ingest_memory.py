@@ -209,6 +209,25 @@ def test_should_stream_stats_file_for_4_6gib_class_segment(monkeypatch, tmp_path
   assert st._should_stream_stats_file(str(stats_file), None) is True
 
 
+def test_mutable_tar_authority_cache_trims_to_max_entries(monkeypatch):
+  archive_helpers._MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.clear()
+  monkeypatch.setattr(
+      archive_helpers.cfg,
+      "get_sync_archive_members_cache_max_entries",
+      lambda: 2,
+  )
+  monkeypatch.setattr(archive_helpers.os.path, "isfile", lambda _p: False)
+  archive_helpers.get_mutable_tar_authority_member_map("/tars/a.tar")
+  archive_helpers.get_mutable_tar_authority_member_map("/tars/b.tar")
+  archive_helpers.get_mutable_tar_authority_member_map("/tars/c.tar")
+  cached = archive_helpers._MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE
+  assert len(cached) == 2
+  assert "/tars/a.tar" not in cached
+  assert "/tars/b.tar" in cached
+  assert "/tars/c.tar" in cached
+  archive_helpers._MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.clear()
+
+
 def test_conf_parser_ingest_memory_defaults(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib

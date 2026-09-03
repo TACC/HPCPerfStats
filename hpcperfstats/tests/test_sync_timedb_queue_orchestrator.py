@@ -11,14 +11,14 @@ from pathlib import Path
 import pytest
 
 import hpcperfstats.dbload.sync_timedb as st
-from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib import sync_timedb_progress_report as pr
 from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
   exclusive_archive_dir_flock,
   orchestrator_lock_path,
 )
-from hpcperfstats.tests.fake_redis_queue import FakeRedis
+from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 
 
 def test_exclusive_archive_dir_flock_rejects_second_nonblocking_holder(tmp_path):
@@ -72,7 +72,7 @@ def test_supervisor_loop_symbol_removed():
 
 def test_sliding_window_ingest_enqueues_append_while_other_inflight():
   """First completed ingest enqueues append while another ingest stays inflight."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
   from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 
   class _Ready:
@@ -87,7 +87,7 @@ def test_sliding_window_ingest_enqueues_append_while_other_inflight():
     def ready(self):
       return False
 
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   inflight = {
       "/a|1|1": _Ready(),
       "/b|2|2": _Pending(),
@@ -145,7 +145,7 @@ def test_drain_records_ingest_marks_before_ack(monkeypatch):
       del timeout
       return ("/a", True, True, 0.1, {"outcome": "ingested"})
 
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   inflight = {"/a": _Ready()}
   claims = {
       "/a": jq.ClaimedJob(
@@ -183,7 +183,7 @@ def test_day_close_job_wires_on_handoff_to_ingest():
 
 def test_handoff_retryable_paths_enqueues_ingest(tmp_path):
   """Retryable day-close paths ZADD ingest from the daily tar calendar day."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   daily = tmp_path / "daily"
   daily.mkdir()
   tar = daily / "2020-01-01.tar"
@@ -505,7 +505,7 @@ def test_boot_stream_discover_does_not_call_run_find_stats():
 
 def test_idle_reconstruct_enqueues_discover_and_rescans(monkeypatch):
   """Idle reconstruct must use JOB_KIND_DISCOVER then re-run streaming discover."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
   from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 
   calls = {"boot": 0, "rpush": []}
@@ -587,7 +587,7 @@ def test_idle_reconstruct_does_not_log_work_total():
 
 def test_idle_reconstruct_off_main_does_not_run_boot_inline(monkeypatch):
   """P1-10: periodic reconstruct must not block MainThread on GNU find."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
   from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 
   calls = {"boot": 0, "submit": 0}
@@ -647,13 +647,15 @@ def test_cli_no_arg_does_not_default_five_day_window():
 
 
 def test_boot_steals_dead_owner_leases():
-  """Q3: boot must SCAN lease keys and steal locally-dead owners before discover."""
+  """Q3: boot must steal locally-dead owners before discover."""
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
   assert "steal_dead_owner_leases" in src
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
-  key = jq.job_lease_key("ingest", "/raw/dead")
-  client.set(key, "n:host1:boot1:99999", nx=True, ex=60)
+  jq.zadd_ingest_job(client, identity="/raw/dead", score=1.0)
+  owner = "n:host1:boot1:99999"
+  claim = jq.claim_ingest_job(client, band="hot", owner_token=owner)
+  assert claim is not None
   stolen = jq.steal_dead_owner_leases(
       client,
       pid_alive_fn=lambda _pid: False,
@@ -661,7 +663,7 @@ def test_boot_steals_dead_owner_leases():
       boot_id="boot1",
   )
   assert stolen >= 1
-  assert client.get(key) is None
+  assert client.get(jq.job_lease_key("ingest", "/raw/dead")) is None
 
 
 def test_orchestrator_starts_pools_before_boot_discover_submit():
@@ -689,7 +691,7 @@ def test_submit_background_discover_does_not_deadlock_on_lock():
   import threading
 
   qo._shutdown_background_discover()
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   done = {"ok": False}
 
   def _run() -> None:
@@ -715,7 +717,7 @@ def test_submit_background_discover_does_not_deadlock_on_lock():
 
 def test_fill_append_slots_missing_paths_ack_and_bounded(monkeypatch, tmp_path):
   """Missing append identities ACK-drop with skip budget (not unbounded requeue)."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   claim = jq.ClaimedJob(
       kind=jq.JOB_KIND_APPEND,
       identity="/no/such/raw/file",
@@ -953,7 +955,7 @@ def test_reband_at_claim_moves_stale_hot_to_catchup(monkeypatch):
   """B5: a claimed job whose day aged out of hot is requeued with a catchup score."""
   from datetime import date
 
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   identity = "/raw/old"
   score = jq.encode_ingest_score(
@@ -987,7 +989,7 @@ def test_reband_at_claim_moves_stale_hot_to_catchup(monkeypatch):
 def test_poison_routes_to_dead_letter(tmp_path, monkeypatch):
   """Q5: after max attempts a failed ingest is quarantined, not requeued."""
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 2)
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   jq.zadd_ingest_job(client, identity="/raw/a", score=1)
   claim = jq.claim_ingest_job(
@@ -1041,7 +1043,7 @@ def test_executor_shutdown_cancels():
 
 def test_dead_pool_worker_frees_slot_and_requeues(monkeypatch):
   """T2 retired: submit-age abandon is a no-op (idle stall owns soft-kill)."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   jq.zadd_ingest_job(client, identity="/raw/a", score=1)
   claim = jq.claim_ingest_job(
@@ -1082,7 +1084,7 @@ def test_ingest_deadline_requeues():
 def test_day_close_failure_requeues(tmp_path, monkeypatch):
   """S3: deferred_age requeues without burning a retry attempt."""
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   jq.enqueue_list_job(client, kind="day_close", identity="2026-08-01")
   claim = jq.claim_list_job(
@@ -1112,7 +1114,7 @@ def test_day_close_failure_requeues(tmp_path, monkeypatch):
 def test_day_close_verify_failed_bumps_attempt(tmp_path, monkeypatch):
   """P0-7: verify_failed is a real error and must increment attempts."""
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   jq.enqueue_list_job(client, kind="day_close", identity="2026-08-02")
   claim = jq.claim_list_job(
@@ -1141,7 +1143,7 @@ def test_day_close_verify_failed_bumps_attempt(tmp_path, monkeypatch):
 def test_day_close_path_identity_records_complete_on_calendar_day(tmp_path):
   """Tar-path identity ACKs complete onto the calendar day, not undated."""
   pr.reset_progress_state_for_tests()
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   ident = "/d/2026-06-07.tar"
   jq.enqueue_list_job(client, kind="day_close", identity=ident)
@@ -1175,7 +1177,7 @@ def test_day_close_path_identity_records_complete_on_calendar_day(tmp_path):
 def test_day_close_incomplete_raw_requeues_without_ack(tmp_path):
   """Remaining-raw outcome stays on the LIST with attempt 0 and no sealed=."""
   pr.reset_progress_state_for_tests()
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   ident = "/d/2026-06-07.tar"
   jq.enqueue_list_job(client, kind="day_close", identity=ident)
@@ -1210,7 +1212,7 @@ def test_day_close_incomplete_raw_requeues_without_ack(tmp_path):
 def test_day_close_fake_sealed_requeues_without_ack(tmp_path):
   """Leftover sealed outcome must not ACK (hpcperfstats03 fake-sealed)."""
   pr.reset_progress_state_for_tests()
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   ident = "/d/2026-07-15.tar"
   jq.enqueue_list_job(client, kind="day_close", identity=ident)
@@ -1249,7 +1251,7 @@ def test_fill_day_close_records_dc_run_for_tar_path_identity(
   from concurrent.futures import ThreadPoolExecutor
 
   pr.reset_progress_state_for_tests()
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   ident = "/d/2026-06-07.tar"
   jq.enqueue_list_job(client, kind="day_close", identity=ident)
@@ -1331,7 +1333,7 @@ def test_day_close_claim_vacate_and_stage_enter_logged(tmp_path, monkeypatch):
   """Fill/drain and job body emit claim/vacate/stage_enter breadcrumbs."""
   from concurrent.futures import Future
 
-  from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
   from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
       DayCloseYieldError,
@@ -1405,7 +1407,7 @@ def test_day_close_claim_vacate_and_stage_enter_logged(tmp_path, monkeypatch):
   assert "stall_confirmed" in joined
   assert "stage_exit" in joined and "result=yielded" in joined
 
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   claim = jq.ClaimedJob(
       kind=jq.JOB_KIND_DAY_CLOSE,
       identity=str(tar),
@@ -1515,21 +1517,18 @@ def test_day_close_wait_on_ingest_yield(tmp_path, monkeypatch):
   assert any("wait_on_ingest" in line for line in logs)
 
 
-def test_startup_rejects_allkeys_eviction_policy():
-  """Q9: allkeys-* fails closed at orchestrator start."""
+def test_startup_has_no_redis_eviction_gate():
+  """In-process queues do not consult Redis maxmemory-policy."""
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
-  assert "assert_redis_queue_safety" in src or "RuntimeError" in src
-  client = FakeRedis()
-  client.set_config_for_tests("maxmemory-policy", "allkeys-lru")
-  with pytest.raises(RuntimeError):
-    qo.assert_redis_queue_safety(client)
+  assert "assert_redis_queue_safety" not in src
+  assert not hasattr(qo, "assert_redis_queue_safety")
 
 
 def test_idle_includes_discover():
   """S6: idle detection includes the discover LIST, not just ingest/append."""
   src = inspect.getsource(qo._queues_appear_idle)
   assert "queue_census" in src
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.enqueue_list_job(client, kind="discover", identity="rescan|/a|mtime=1")
   assert qo._queues_appear_idle(client) is False
 
@@ -1565,7 +1564,7 @@ def test_oq1_lease_no_heartbeat_renew_in_orchestrator_loop():
 
 def test_missing_path_requeues_ingest_not_ack(monkeypatch, tmp_path):
   """F4: missing raw must requeue, never terminal-ack."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   identity = "/no/such/raw/file"
   claim = jq.ClaimedJob(
       kind=jq.JOB_KIND_INGEST,
@@ -1624,7 +1623,7 @@ def test_missing_path_requeues_ingest_not_ack(monkeypatch, tmp_path):
 
 def test_missing_path_acks_when_ingest_complete(monkeypatch, tmp_path):
   """P0-3: gone + complete predicates → terminal ack, not infinite requeue."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   identity = "/gone/but/complete"
   claim = jq.ClaimedJob(
       kind=jq.JOB_KIND_INGEST,
@@ -1716,7 +1715,7 @@ def test_fill_ingest_ack_drops_fnctl_lock_sidecar(monkeypatch, tmp_path):
       raise AssertionError("must not submit lock sidecar")
 
   n = qo._fill_ingest_band(
-      FakeRedis(),
+      SyncTimedbJobStore(""),
       band="hot",
       cap=1,
       inflight={},
@@ -1733,7 +1732,7 @@ def test_fill_ingest_ack_drops_fnctl_lock_sidecar(monkeypatch, tmp_path):
 
 def test_fill_ingest_skip_budget_breaks(monkeypatch, tmp_path):
   """P0-3: missing-path skips must not busy-spin the MainThread tick."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   claim = jq.ClaimedJob(
       kind=jq.JOB_KIND_INGEST,
       identity="/no/such/raw/file",
@@ -1826,7 +1825,7 @@ def test_drain_timeout_terminates_before_requeue():
 def test_ingest_timeout_requeues_without_attempt_bump(tmp_path, monkeypatch):
   """P1-18: timeout/lookup_budget must not burn the poison attempt counter."""
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   identity = "/raw/timeout"
   jq.zadd_ingest_job(client, identity=identity, score=1.0)
@@ -1898,7 +1897,7 @@ def test_dominant_ingest_fill_block_picks_max():
 
 def test_skip_missing_penalty_requeues_with_score_bump(monkeypatch, tmp_path):
   """RC9: missing-path fill skip must penalty-requeue, not same-score spin."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   identity = "/no/such/raw/file"
   claim = jq.ClaimedJob(
       kind=jq.JOB_KIND_INGEST,
@@ -1994,7 +1993,7 @@ def test_skip_fp_penalty_lets_claimable_job_behind_submit(monkeypatch, tmp_path)
       return type("_R", (), {"ready": lambda self: False})()
 
   n = qo._fill_ingest_band(
-      FakeRedis(),
+      SyncTimedbJobStore(""),
       band="hot",
       cap=2,
       inflight={},
@@ -2131,7 +2130,7 @@ def test_drain_append_no_find_uses_cheap_day_close(monkeypatch):
     identity = "/raw/a"
     owner_token = "tok"
 
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   n = qo._drain_append_ready(
       client,
@@ -2186,7 +2185,7 @@ def test_drain_append_gate_skip_handoffs_before_ack(monkeypatch):
     identity = "/raw/a"
     owner_token = "tok"
 
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   n = qo._drain_append_ready(
       client,
@@ -2233,7 +2232,7 @@ def test_drain_append_soft_requeue_requeues_without_ack(monkeypatch):
     identity = "/raw/a"
     owner_token = "tok"
 
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   n = qo._drain_append_ready(
       client,
       inflight={"/d/2026-07-17.tar": _Ready()},
@@ -2298,7 +2297,7 @@ def test_tar_dedup_day_close_uses_list_dedupe(monkeypatch):
   """Burst appends for one tar enqueue day_close at most once (Redis dedupe)."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   tar = "/d/2026-07-17.tar"
   assert jr.enqueue_cheap_day_close_if_needed(client, tar) is True
@@ -2315,7 +2314,7 @@ def test_cheap_day_close_age_skips_today_and_yesterday(monkeypatch):
   """Cheap enqueue must not RPUSH days younger than min-age (find-free)."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   now = datetime(2026, 8, 27, 12, 0, 0)
   monkeypatch.setattr(
@@ -2378,7 +2377,7 @@ def test_fail_closed_coordinator_death_no_empty_map_restart(monkeypatch):
 
 def test_kind_scoped_reaper_skips_local_inflight(monkeypatch):
   """C3: reaper protects local identities before Redis reclaim."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   protected: list[str] = []
 
@@ -2431,7 +2430,7 @@ def test_drain_bare_TimeoutError_leaves_inflight_no_soft_requeue(
 ):
   """Bare TimeoutError on get must not soft-requeue or clear local inflight."""
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   identity = "/raw/timeout_escape"
   jq.zadd_ingest_job(client, identity=identity, score=1.0)
@@ -2475,7 +2474,7 @@ def test_drain_bare_TimeoutError_leaves_inflight_no_soft_requeue(
 def test_drain_rich_TimeoutError_soft_requeues_without_fail(tmp_path, monkeypatch):
   """Rich IngestPerFileTimeoutError escape still soft-requeues (Wave 1)."""
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   identity = "/raw/timeout_rich"
   jq.zadd_ingest_job(client, identity=identity, score=1.0)
@@ -2521,7 +2520,7 @@ def test_drain_packed_timeout_rich_log(tmp_path, monkeypatch):
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
   monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 42)
   monkeypatch.setattr(st, "resolve_ingest_per_file_timeout_s", lambda _p: 3600.0)
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   identity = "/raw/packed_timeout"
   jq.zadd_ingest_job(client, identity=identity, score=1.0)
@@ -2598,7 +2597,7 @@ def test_drain_ingest_marks_quiet_log_fn_none(monkeypatch, tmp_path):
       del timeout
       return ("/a", True, True, 0.1, {"outcome": "ingested"})
 
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   inflight = {"/a": _Ready()}
   claims = {
       "/a": jq.ClaimedJob(

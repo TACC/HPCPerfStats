@@ -5171,6 +5171,25 @@ _DAILY_ARCHIVE_MEMBERS_CACHE = {}
 _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE: dict[str, dict[str, int]] = {}
 
 
+def _trim_mutable_tar_authority_members_cache() -> None:
+  """
+  Cap the shared open-tar authority cache to the L1 max-entry budget.
+
+  Thread-pool ingest/archive share this map in the supervisor heap, so
+  unused days must be dropped instead of growing for process lifetime.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _trim_mutable_tar_authority_members_cache()  # doctest: +SKIP
+  """
+  max_entries = cfg.get_sync_archive_members_cache_max_entries()
+  while len(_MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE) > max_entries:
+    oldest_key = next(iter(_MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE))
+    _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.pop(oldest_key, None)
+
+
 def clear_mutable_tar_authority_members_cache() -> None:
   """
   Clear per-process open-tar authority maps (tests and worker reset).
@@ -5223,6 +5242,7 @@ def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
     finally:
       _remove_read_lock_sidecar(tar_norm)
   _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE[tar_norm] = members
+  _trim_mutable_tar_authority_members_cache()
   return members
 
 

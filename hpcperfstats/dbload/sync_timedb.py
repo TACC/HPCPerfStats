@@ -137,7 +137,6 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
   MultiprocessingWorkerExitError,
   alive_pool_worker_count,
   close_pool_bounded,
-  create_sync_timedb_spawn_pool,
   hard_exit_pool_worker_error,
   maintain_ingest_pool_after_supervisor_retire,
   pool_workers_all_idle,
@@ -219,6 +218,9 @@ from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
 )
 from hpcperfstats.dbload.lib.sync_timedb_queue_orchestrator import (
   run_sync_timedb_queue_orchestrator,
+)
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+  create_sync_timedb_thread_pool,
 )
 from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
   classify_supervisor_reap_kind,
@@ -7390,63 +7392,49 @@ def run_sync_timedb_supervisor_from_parsed(
         "subdirectories whose names end with this suffix.")
     sys.exit(1)
 
-  try:
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-        ArchiveMembersRedisUnavailableError,
-        verify_archive_members_redis_startup,
-    )
-    verify_archive_members_redis_startup()
-  except ArchiveMembersRedisUnavailableError as exc:
-    _exit_on_archive_members_redis_unavailable(exc)
-
   _warn_if_pool_stall_wall_below_ingest_timeout_max()
 
   directory = cfg.get_archive_dir_path()
 
-  manager = multiprocessing.Manager()
-  try:
-    log_print(
-        "Pipeline absolute pools effective_cores=%d sync_ingest=%d sync_archive=%d "
-        "metrics=%d write_lock_shards=%d"
-        % (
-            cfg.get_effective_cores(),
-            cfg.get_sync_ingest_pool_processes(),
-            cfg.get_sync_archive_pool_processes(),
-            cfg.get_metrics_pool_processes(),
-            cfg.get_sync_write_lock_shards(),
-        ),
-        flush=True,
-    )
-    lock_shards = max(1, int(cfg.get_sync_write_lock_shards()))
-    if lock_shards == 1:
-      manager_lock = manager.Lock()
-    else:
-      manager_lock = [manager.Lock() for _ in range(lock_shards)]
-      log_print("Using %d sync_timedb write-lock shards" % lock_shards, flush=True)
-    with create_sync_timedb_spawn_pool(
-        processes=archive_thread_count,
-        initializer=apply_pool_worker_process_title,
-        initargs=(SYNC_TIMEDB_PROCESS_TITLE, "archive-pool"),
-        pool_kind_log_label="archive-pool",
-    ) as archive_pool:
-      try:
-        run_sync_timedb_queue_orchestrator(
-            directory,
-            startdate,
-            enddate,
-            host_name_ext,
-            manager_lock,
-            archive_pool,
-            run_once=run_once,
-            log_fn=log_print,
-        )
-      except MultiprocessingWorkerExitError as exc:
-        hard_exit_pool_worker_error(exc)
+  log_print(
+      "Pipeline absolute pools effective_cores=%d sync_ingest=%d sync_archive=%d "
+      "metrics=%d write_lock_shards=%d"
+      % (
+          cfg.get_effective_cores(),
+          cfg.get_sync_ingest_pool_processes(),
+          cfg.get_sync_archive_pool_processes(),
+          cfg.get_metrics_pool_processes(),
+          cfg.get_sync_write_lock_shards(),
+      ),
+      flush=True,
+  )
+  lock_shards = max(1, int(cfg.get_sync_write_lock_shards()))
+  if lock_shards == 1:
+    manager_lock = threading.Lock()
+  else:
+    manager_lock = [threading.Lock() for _ in range(lock_shards)]
+    log_print("Using %d sync_timedb write-lock shards" % lock_shards, flush=True)
+  with create_sync_timedb_thread_pool(
+      max_workers=archive_thread_count,
+      thread_role="archive-pool",
+      process_title=SYNC_TIMEDB_PROCESS_TITLE,
+  ) as archive_pool:
+    try:
+      run_sync_timedb_queue_orchestrator(
+          directory,
+          startdate,
+          enddate,
+          host_name_ext,
+          manager_lock,
+          archive_pool,
+          run_once=run_once,
+          log_fn=log_print,
+      )
+    except MultiprocessingWorkerExitError as exc:
+      hard_exit_pool_worker_error(exc)
 
-    if DEBUG:
-      log_print("sync_timedb finished")
-  finally:
-    manager.shutdown()
+  if DEBUG:
+    log_print("sync_timedb finished")
 
 
 def run_ingest_entire_archive_once_for_tests() -> None:

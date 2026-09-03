@@ -6,9 +6,9 @@ remain for other recycle paths.
 """
 from __future__ import annotations
 
-from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
-from hpcperfstats.tests.fake_redis_queue import FakeRedis
+from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 
 
 class _NeverReady:
@@ -63,7 +63,7 @@ def test_ingest_watchdog_budget_retired_always_zero(tmp_path):
 
 def test_abandon_timed_out_ingest_is_noop_even_past_budget(monkeypatch):
   """Retired watchdog must not free slots or bump attempts."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   identity = "/raw/a|1|1"
   claim = _real_claim(client, identity, score=5.0)
   inflight = {identity: _NeverReady()}
@@ -96,7 +96,7 @@ def test_ingest_coordinator_loop_does_not_call_abandon():
 
 
 def test_drain_ingest_ready_clears_submitted_timestamps():
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   identity = "/raw/a|1|1"
   inflight = {identity: _Ready(("/raw/a", True, True, 0.1, {}))}
   claims = {identity: _real_claim(client, identity)}
@@ -116,7 +116,7 @@ def test_drain_ingest_ready_clears_submitted_timestamps():
 
 
 def test_fill_ingest_band_records_submission_time(monkeypatch, tmp_path):
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   path = tmp_path / "raw"
   path.write_text("x", encoding="utf-8")
   identity = "%s|1|1" % path
@@ -170,7 +170,7 @@ def test_pool_recycle_replaces_pool_after_abandonment():
 
 def test_recycle_requeues_healthy_survivors_without_burning_an_attempt():
   """Terminating the pool kills every worker, not just the hung one."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   survivor = "/raw/live|1|1"
   claim = _real_claim(client, survivor, score=-3.0)
   inflight = {survivor: _NeverReady()}

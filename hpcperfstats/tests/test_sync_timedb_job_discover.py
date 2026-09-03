@@ -4,9 +4,9 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
-from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import FindStatsRecord
-from hpcperfstats.tests.fake_redis_queue import FakeRedis
+from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 
 
 def test_basename_date_rejects_day_raw_removal_manifest_json():
@@ -15,7 +15,7 @@ def test_basename_date_rejects_day_raw_removal_manifest_json():
 
 
 def test_stream_enqueue_skips_internal_sidecar_paths():
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   records = [
       FindStatsRecord(
           path="/archive/.sync_timedb_day_raw_removal/2026-08-07.json",
@@ -41,7 +41,7 @@ def test_stream_enqueue_skips_internal_sidecar_paths():
 
 def test_stream_enqueue_skips_fnctl_lock_sidecar_paths():
   """Discover must not ZADD *.fnctl.lock lock sidecars onto the ingest ZSET."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   records = [
       FindStatsRecord(
           path="/archive/h/1787359835.fnctl.lock",
@@ -88,7 +88,7 @@ def test_calendar_day_from_find_record_uses_daily_tar(tmp_path):
 
 def test_discover_stops_at_queue_max_size_and_resumes(monkeypatch):
   """Q9: discover stops at the ingest queue cap and can resume later."""
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   monkeypatch.setattr(jq, "queue_capacity_limit", lambda: 2)
   records = [
       FindStatsRecord(path="/archive/h/a", mtime=1.0, size=10, inode=1),

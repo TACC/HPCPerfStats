@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib import sync_timedb_progress_report as pr
 
 

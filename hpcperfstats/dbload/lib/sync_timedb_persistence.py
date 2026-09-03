@@ -30,7 +30,7 @@ from hpcperfstats.dbload.lib.print_utils import ingest_logging
 
 # Bump when ANY persisted semantics change (day-close eligibility, checkpoint
 # shape, manifest phase meaning, delete-gate assumptions, hints debt, etc.).
-SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION = 8
+SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION = 9
 
 PERSISTENCE_CONTRACT_BASENAME = ".sync_timedb_persistence.json"
 
@@ -51,6 +51,8 @@ PERSISTENCE_ARTIFACT_REGISTRY: Dict[str, str] = {
     "unparsable_raw": ".sync_timedb_unparsable_raw.json",
     "zero_host_ingest_mark": ".sync_timedb_zero_host_ingest_mark.json",
     "file_complete_ingest_mark": ".sync_timedb_file_complete_ingest_mark.json",
+    "job_store_snapshot": ".sync_timedb_job_store.json",
+    "archive_members_store_dir": ".sync_timedb_archive_members",
 }
 
 INGEST_CHECKPOINT_SCHEMA_VERSION = 1
@@ -61,6 +63,7 @@ DEAD_LETTER_SCHEMA_VERSION = 1
 QUEUE_DEAD_LETTER_SCHEMA_VERSION = 1
 ZERO_HOST_INGEST_MARK_SCHEMA_VERSION = 1
 FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION = 1
+JOB_STORE_SNAPSHOT_SCHEMA_VERSION = 1
 
 LogFn = Optional[Callable[..., Any]]
 
@@ -258,7 +261,7 @@ def reset_sync_timedb_persistence(
     return
   for kind, rel in PERSISTENCE_ARTIFACT_REGISTRY.items():
     path = os.path.join(archive_data_dir, rel)
-    if kind == "day_raw_removal_dir":
+    if kind in ("day_raw_removal_dir", "archive_members_store_dir"):
       _unlink_tree(path, log_fn)
     else:
       _unlink_path(path, log_fn)
@@ -464,6 +467,8 @@ def _expected_schema_version(kind: str) -> Optional[int]:
     return ZERO_HOST_INGEST_MARK_SCHEMA_VERSION
   if kind == "file_complete_ingest_mark":
     return FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION
+  if kind == "job_store_snapshot":
+    return JOB_STORE_SNAPSHOT_SCHEMA_VERSION
   return None
 
 
@@ -601,6 +606,24 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
     if entries is None:
       return True
     return isinstance(entries, dict)
+  if kind == "job_store_snapshot":
+    if not isinstance(raw, dict):
+      return False
+    schema = raw.get("schema_version")
+    if schema is not None and expected is not None:
+      try:
+        if int(schema) != expected:
+          if log_fn:
+            log_fn(
+                "reject %s schema_version=%s expected=%s"
+                % (kind, schema, expected),
+                flush=True,
+            )
+          return False
+      except (TypeError, ValueError):
+        return False
+    ingest = raw.get("ingest")
+    return ingest is None or isinstance(ingest, dict)
   return True
 
 
@@ -658,6 +681,15 @@ def _unwrap_envelope(raw: Any, *, kind: str) -> Any:
     if isinstance(raw, dict):
       return raw
     return None
+  if kind == "job_store_snapshot":
+    if isinstance(raw, dict):
+      return {
+          "ingest": raw.get("ingest") or {},
+          "lists": raw.get("lists") or {},
+          "pending": raw.get("pending") or {},
+          "payloads": raw.get("payloads") or {},
+      }
+    return None
   return raw
 
 
@@ -703,6 +735,13 @@ def load_persistence_document(
       default = {"entries": {}}
     elif kind == "file_complete_ingest_mark":
       default = {"entries": {}}
+    elif kind == "job_store_snapshot":
+      default = {
+          "ingest": {},
+          "lists": {},
+          "pending": {},
+          "payloads": {},
+      }
     else:
       default = None
   if not path or not os.path.isfile(path):
@@ -810,5 +849,18 @@ def save_persistence_document(
     if not isinstance(payload.get("entries"), dict):
       payload["entries"] = {}
     _save_json_atomic(path, payload, compact=compact)
+    return
+  if kind == "job_store_snapshot":
+    if not isinstance(payload, dict):
+      payload = {}
+    envelope = {
+        "contract_version": contract_version,
+        "schema_version": JOB_STORE_SNAPSHOT_SCHEMA_VERSION,
+        "ingest": dict(payload.get("ingest") or {}),
+        "lists": dict(payload.get("lists") or {}),
+        "pending": dict(payload.get("pending") or {}),
+        "payloads": dict(payload.get("payloads") or {}),
+    }
+    _save_json_atomic(path, envelope, compact=compact)
     return
   _save_json_atomic(path, payload, compact=compact)

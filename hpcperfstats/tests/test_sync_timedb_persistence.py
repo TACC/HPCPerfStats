@@ -21,7 +21,7 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
 def _touch_artifacts(archive_dir: str) -> None:
   for kind, rel in PERSISTENCE_ARTIFACT_REGISTRY.items():
     path = os.path.join(archive_dir, rel)
-    if kind == "day_raw_removal_dir":
+    if kind in ("day_raw_removal_dir", "archive_members_store_dir"):
       os.makedirs(path, exist_ok=True)
       with open(os.path.join(path, "2020-01-01.json"), "w", encoding="utf-8") as handle:
         handle.write("{}")
@@ -50,7 +50,7 @@ def test_stale_contract_resets_all_registered_artifacts(tmp_path):
   assert reset_ran is True
   for kind, rel in PERSISTENCE_ARTIFACT_REGISTRY.items():
     path = os.path.join(archive_dir, rel)
-    if kind == "day_raw_removal_dir":
+    if kind in ("day_raw_removal_dir", "archive_members_store_dir"):
       assert not os.path.isdir(path)
     else:
       assert not os.path.isfile(path)
@@ -117,7 +117,7 @@ def test_reset_sync_timedb_persistence_unlinks_registry_paths(tmp_path):
   reset_sync_timedb_persistence(archive_dir)
   for kind, rel in PERSISTENCE_ARTIFACT_REGISTRY.items():
     path = os.path.join(archive_dir, rel)
-    if kind == "day_raw_removal_dir":
+    if kind in ("day_raw_removal_dir", "archive_members_store_dir"):
       assert not os.path.exists(path)
     else:
       assert not os.path.isfile(path)

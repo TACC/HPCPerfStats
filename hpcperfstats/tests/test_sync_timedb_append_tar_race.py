@@ -6,9 +6,9 @@ import os
 import tarfile
 
 from hpcperfstats.dbload import sync_timedb as st
-from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
-from hpcperfstats.tests.fake_redis_queue import FakeRedis
+from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 
 
 def test_append_to_tar_uses_r_unconditionally_inside_lock():
@@ -57,7 +57,7 @@ def test_append_jobs_group_per_daily_tar(monkeypatch):
       lambda path, daily: "/daily/2026-08-01.tar",
   )
   qo.reset_append_day_lists_for_tests()
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   for name in ("/raw/a", "/raw/b", "/raw/c"):
     jq.enqueue_list_job(client, kind="append", identity=name, dedupe=True)
@@ -107,7 +107,7 @@ def test_fill_append_slots_interleaved_days_batches_same_tar(monkeypatch):
 
   monkeypatch.setattr(qo, "daily_tar_path_for_stats_path", _tar_for)
   qo.reset_append_day_lists_for_tests()
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   identities = [
       "/raw/d1/a",
@@ -167,7 +167,7 @@ def test_fill_append_slots_holds_claims_when_tar_inflight(monkeypatch):
       lambda path, daily: "/daily/2026-08-01.tar",
   )
   qo.reset_append_day_lists_for_tests()
-  client = FakeRedis()
+  client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   for name in ("/raw/a", "/raw/b"):
     jq.enqueue_list_job(client, kind="append", identity=name, dedupe=True)

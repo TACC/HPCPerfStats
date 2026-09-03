@@ -19,7 +19,7 @@ from datetime import date, datetime
 import os
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
-from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
     FindStatsRecord,

@@ -55,15 +55,14 @@ from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.dbload.lib import shutdown_utils as _shutdown_utils
 from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as it
 from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
-from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 from hpcperfstats.dbload.lib import sync_timedb_progress_report as progress
-from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-  create_sync_timedb_spawn_pool,
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+  create_sync_timedb_thread_pool,
 )
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.process_title import (
-  apply_pool_worker_process_title,
   set_daemon_thread_title,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
@@ -76,9 +75,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
 from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
   AppendDayClaimLists,
 )
-from hpcperfstats.dbload.lib.sync_timedb_archive_members_redis import (
-  get_archive_members_redis_client,
-)
+from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   ensure_persistence_contract,
 )
@@ -609,32 +606,6 @@ def _hot_days() -> int:
     True
   """
   return max(1, int(cfg.get_sync_ingest_hot_days()))
-
-
-def assert_redis_queue_safety(client: Any) -> None:
-  """
-  Fail closed when Redis would silently evict durable ``job:v1`` keys.
-
-  Args:
-    client (Any): Redis client with ``config_get`` / ``ttl``.
-
-  Returns:
-    None
-
-  Raises:
-    RuntimeError: When :func:`check_redis_queue_safety` reports problems.
-
-  Examples:
-    >>> class _C:
-    ...   def config_get(self, name):
-    ...     return {"maxmemory-policy": "noeviction"}
-    ...   def ttl(self, key):
-    ...     return -1
-    >>> assert_redis_queue_safety(_C())
-  """
-  problems = jq.check_redis_queue_safety(client)
-  if problems:
-    raise RuntimeError("Redis job:v1 unsafe: %s" % "; ".join(problems))
 
 
 def catchup_dispatch_cap(
@@ -1889,7 +1860,7 @@ def _retry_or_dead_letter(
   Args:
     client (Any): Redis client.
     kind (str): Job kind.
-    claim (Any): :class:`sync_timedb_job_queue.ClaimedJob` for the failure.
+    claim (Any): :class:`sync_timedb_job_store.ClaimedJob` for the failure.
     archive_data_dir (str): Archive data root holding the dead-letter sidecar.
     reason (str): Short failure reason recorded on give-up.
     log_fn (Callable[..., None] | None): Optional logger.
@@ -1959,7 +1930,7 @@ def _requeue_claimed_job_without_attempt_bump(
 
   Args:
     client (Any): Redis client.
-    claim (Any): :class:`sync_timedb_job_queue.ClaimedJob` to restore.
+    claim (Any): :class:`sync_timedb_job_store.ClaimedJob` to restore.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -4837,17 +4808,10 @@ def run_sync_timedb_queue_orchestrator(
 
   with exclusive_archive_dir_flock(directory, blocking=True):
     ensure_persistence_contract(directory, log_fn=log_fn, allow_reset=True)
-    try:
-      client = get_archive_members_redis_client(required=True)
-    except Exception as exc:
-      raise RuntimeError(
-          "queue orchestrator requires Redis (fail-closed): %s"
-          % type(exc).__name__
-      ) from exc
+    client = SyncTimedbJobStore(directory)
 
     tgz_archive_dir = cfg.get_daily_archive_dir_path()
     install_cooperative_shutdown_handlers(log_fn=log_fn)
-    assert_redis_queue_safety(client)
     try:
       stolen = jq.steal_dead_owner_leases(client)
     except Exception as exc:
@@ -4899,11 +4863,10 @@ def run_sync_timedb_queue_orchestrator(
         >>> callable(_new_ingest_pool)
         True
       """
-      return create_sync_timedb_spawn_pool(
-          processes=ingest_pool_size,
-          initializer=apply_pool_worker_process_title,
-          initargs=("sync_timedb.py", "ingest-pool"),
-          pool_kind_log_label="ingest-pool",
+      return create_sync_timedb_thread_pool(
+          max_workers=ingest_pool_size,
+          thread_role="ingest-pool",
+          process_title="sync_timedb.py",
       )
 
     # Start ingest + populate before boot discover so classify never inlines

@@ -268,7 +268,7 @@ def resolve_oldest_queued_day(
   """
   if client is None:
     return None, None
-  from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 
   candidates: List[date] = []
   try:

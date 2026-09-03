@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
-from hpcperfstats.dbload.lib import sync_timedb_job_queue as jq
+from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
     is_internal_archive_stats_path,
 )

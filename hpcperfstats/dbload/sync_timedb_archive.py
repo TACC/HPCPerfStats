@@ -28,10 +28,10 @@ from __future__ import annotations
 
 from typing import Any, Iterator
 
-import multiprocessing
 import os
 import re
 import sys
+import threading
 
 from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
 
@@ -85,9 +85,11 @@ from hpcperfstats.dbload.lib.db_unavailable import (
 )
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
     MultiprocessingWorkerExitError,
-    create_sync_timedb_spawn_pool,
     imap_sliding_window_watch_pool,
     terminate_pool_bounded,
+)
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+    create_sync_timedb_thread_pool,
 )
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 
@@ -726,62 +728,48 @@ if __name__ == "__main__":
     for sealed_path in sealed_paths:
       log_print(sealed_path, flush=True)
 
-    lock_manager = multiprocessing.Manager()
-    diagnostics_manager = multiprocessing.Manager()
-    try:
-      worker_diagnostics_registry = diagnostics_manager.dict()
-      stall_diagnostics = IngestStallDiagnostics()
-      stall_diagnostics.worker_registry = worker_diagnostics_registry
-      stall_poll_state = {}
-      lock_shards = max(1, int(cfg.get_sync_write_lock_shards()))
-      if lock_shards == 1:
-        manager_lock = lock_manager.Lock()
-      else:
-        manager_lock = [lock_manager.Lock() for _ in range(lock_shards)]
-        log_print(
-            "Using %d sync_timedb_archive write-lock shards" % lock_shards,
-            flush=True,
-        )
-      pool = create_sync_timedb_spawn_pool(
-          processes=_archive_worker_process_count(),
-          initializer=apply_ingest_pool_worker_init,
-          initargs=(
-              SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE,
-              "sealed-archive-pool",
-              worker_diagnostics_registry,
-          ),
-          pool_kind_log_label="sealed-archive-pool",
+    worker_diagnostics_registry: dict[str, Any] = {}
+    stall_diagnostics = IngestStallDiagnostics()
+    stall_diagnostics.worker_registry = worker_diagnostics_registry
+    stall_poll_state = {}
+    lock_shards = max(1, int(cfg.get_sync_write_lock_shards()))
+    if lock_shards == 1:
+      manager_lock = threading.Lock()
+    else:
+      manager_lock = [threading.Lock() for _ in range(lock_shards)]
+      log_print(
+          "Using %d sync_timedb_archive write-lock shards" % lock_shards,
+          flush=True,
       )
-      try:
-        tasks = list(
-            iter_archive_ingest_tasks(
-                sealed_paths,
-                cfg.get_daily_archive_dir_path(),
-            ),
-        )
-        tasks_locked = [(manager_lock, p) for _kind, p in tasks]
-        _process_sealed_tasks_sliding_window(
-            pool,
-            _process_stream_archive_task,
-            tasks_locked,
-            lambda _result: None,
-            stall_diagnostics=stall_diagnostics,
-            stall_poll_state=stall_poll_state,
-            worker_registry=worker_diagnostics_registry,
-        )
-        if shutdown_requested[0]:
-          log_print("Exiting due to SIGTERM", flush=True)
-      except MultiprocessingWorkerExitError:
-        raise
-      finally:
-        terminate_pool_bounded(pool)
-        try:
-          pool.close()
-        except Exception:
-          pass
+    pool = create_sync_timedb_thread_pool(
+        max_workers=_archive_worker_process_count(),
+        thread_role="sealed-archive-pool",
+        process_title=SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE,
+    )
+    try:
+      tasks = list(
+          iter_archive_ingest_tasks(
+              sealed_paths,
+              cfg.get_daily_archive_dir_path(),
+          ),
+      )
+      tasks_locked = [(manager_lock, p) for _kind, p in tasks]
+      _process_sealed_tasks_sliding_window(
+          pool,
+          _process_stream_archive_task,
+          tasks_locked,
+          lambda _result: None,
+          stall_diagnostics=stall_diagnostics,
+          stall_poll_state=stall_poll_state,
+          worker_registry=worker_diagnostics_registry,
+      )
+      if shutdown_requested[0]:
+        log_print("Exiting due to SIGTERM", flush=True)
+    except MultiprocessingWorkerExitError:
+      raise
     finally:
-      diagnostics_manager.shutdown()
-      lock_manager.shutdown()
+      pool.terminate()
+      pool.join()
     try:
       connections.close_all()
     except Exception:
