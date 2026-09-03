@@ -538,7 +538,9 @@ Resolve **`N`** from `redis://…/N` in INI / Django settings when unsure.
 
 **Anti-pattern — `count_inflight_by_band(client, kind=…)` (hpcperfstats04 2026-08-29):** API is **`hot_infl, catch_infl = count_inflight_by_band(store)`** on the in-process job store — ingest-only, **no** `kind=` kwarg.
 
-**Anti-pattern — importing deleted `sync_timedb_archive_members_redis`:** member maps live on `SyncTimedbArchiveMembersStore`. Correct live census:
+**Anti-pattern — importing `sync_timedb_job_store` on pre-in-process soak (hpcperfstats02 2026-09-03):** images **before** the in-process cutover have **no** `hpcperfstats.dbload.lib.sync_timedb_job_store` module. `from …sync_timedb_job_store import SyncTimedbJobStore` raises **`ModuleNotFoundError`** and aborts the whole census block. Use `conf_parser` getters + `importlib` / `Path.read_text` of installed `sync_timedb_archive_helpers.py` and `sync_timedb_queue_orchestrator.py` for source fingerprints; skip job-store queue depths when the module is absent.
+
+**Anti-pattern — importing deleted `sync_timedb_archive_members_redis`:** member maps live on `SyncTimedbArchiveMembersStore`. Correct live census (in-process cutover **only** — skip when `sync_timedb_job_store` is missing):
 
 ```bash
 docker compose exec pipeline su hpcperfstats -c 'python3 -c "

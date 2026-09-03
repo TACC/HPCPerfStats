@@ -1425,6 +1425,57 @@ def _handoff_retryable_paths_to_ingest(
   return enqueued_n
 
 
+def _day_close_disk_remaining_raw_blocks(coord: Any, tar_path: str) -> bool:
+  """
+  Return True when closed raw on disk should block merge/seal this claim.
+
+  Uses ``has_closed_raw_on_disk`` (broader than verify-handoff) and the
+  remaining-raw map passed into reconcile.
+
+  Args:
+    coord (Any): :class:`DayRawRemovalCoordinator` instance.
+    tar_path (str): Daily ``.tar`` path.
+
+  Returns:
+    bool: True when merge/seal must not run on this claim.
+
+  Examples:
+    >>> _day_close_disk_remaining_raw_blocks(object(), "/tmp/x.tar")
+    False
+  """
+  has_closed_fn = getattr(coord, "has_closed_raw_on_disk", None)
+  if callable(has_closed_fn) and has_closed_fn(tar_path):
+    return True
+  remaining_fn = getattr(coord, "remaining_raw_paths_blocking_tar_drop", None)
+  if callable(remaining_fn):
+    remaining_raw_by_gz = remaining_fn(tar_path) or {}
+    if remaining_raw_by_gz:
+      return True
+  return False
+
+
+def _day_close_complete_wait_on_ingest_handoff(
+    coord: Any,
+    tar_path: str,
+) -> None:
+  """
+  Record cooperative handoff before ``wait_on_ingest`` yield.
+
+  Args:
+    coord (Any): :class:`DayRawRemovalCoordinator` instance.
+    tar_path (str): Daily ``.tar`` path.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _day_close_complete_wait_on_ingest_handoff(object(), "/tmp/x.tar")
+  """
+  complete_fn = getattr(coord, "complete_handoff_to_ingest", None)
+  if callable(complete_fn):
+    complete_fn(tar_path, reason="day_close_wait_on_ingest")
+
+
 def _run_day_close_job(
   identity: str,
   *,
@@ -1613,8 +1664,111 @@ def _run_day_close_job(
             log_fn=log_fn,
         )
 
-    # DC-01: reconcile/repair → pre-seal verify → dedupe → seal → post-seal → delete → tar-drop.
+    def _run_pre_seal_verify() -> str | None:
+      """
+      Run one pre-seal classify batch; return early outcome or None.
+
+      Returns:
+        str | None: ``yielded``, ``verify_failed``, or None to continue.
+
+      Examples:
+        >>> # nested helper inside _run_day_close_job
+        >>> None is None
+        True
+      """
+      _stage_enter("pre_seal_verify")
+      try:
+        try:
+          pre_seal_ok = coord.run_pre_seal_verify_sync(
+              tar_path,
+              max_classify_batches=1,
+          )
+        except TypeError:
+          pre_seal_ok = coord.run_pre_seal_verify_sync(tar_path)
+      except Exception as exc:
+        _log(
+            "queue_orchestrator day_close pre_seal_verify fail day=%s err=%s"
+            % (day_token, type(exc).__name__),
+            log_fn=log_fn,
+        )
+        _stage_exit(
+            "pre_seal_verify",
+            result="fail",
+            reason=type(exc).__name__,
+        )
+        return "verify_failed"
+      if not pre_seal_ok:
+        _stage_exit(
+            "pre_seal_verify",
+            result="yielded",
+            reason="classify_batch_resume",
+        )
+        return "yielded"
+      _stage_exit("pre_seal_verify", result="ok")
+      return None
+
+    def _maybe_yield_wait_on_ingest_after_verify() -> str | None:
+      """
+      Yield when verify says ingest must drain before cold-path work.
+
+      Returns:
+        str | None: ``yielded`` or None to continue.
+
+      Examples:
+        >>> # nested helper inside _run_day_close_job
+        >>> None is None
+        True
+      """
+      handoff_fn = getattr(coord, "should_handoff_to_ingest", None)
+      if callable(handoff_fn) and handoff_fn(tar_path):
+        _stage_enter("wait_on_ingest")
+        _day_close_complete_wait_on_ingest_handoff(coord, tar_path)
+        _stage_exit(
+            "wait_on_ingest",
+            result="yielded",
+            reason="wait_on_ingest",
+        )
+        return "yielded"
+      return None
+
+    def _maybe_yield_disk_remaining_raw() -> str | None:
+      """
+      Yield before merge when closed raw is already on disk (H17/H17b).
+
+      Returns:
+        str | None: ``yielded`` or None to continue.
+
+      Examples:
+        >>> # nested helper inside _run_day_close_job
+        >>> None is None
+        True
+      """
+      if _day_close_disk_remaining_raw_blocks(coord, tar_path):
+        _stage_enter("wait_on_ingest")
+        _day_close_complete_wait_on_ingest_handoff(coord, tar_path)
+        _stage_exit(
+            "wait_on_ingest",
+            result="yielded",
+            reason="wait_on_ingest",
+        )
+        return "yielded"
+      return None
+
+    # H17 DC-01: disk remaining-raw / verify-handoff before merge → merge →
+    # verify → dedupe → seal → post-seal → delete → tar-drop.
     if os.path.isfile(tar_path):
+      early = _maybe_yield_disk_remaining_raw()
+      if early:
+        return early
+
+      early = _run_pre_seal_verify()
+      if early:
+        return early
+
+      early = _maybe_yield_wait_on_ingest_after_verify()
+      if early:
+        return early
+
       _stage_enter("reconcile_merge")
       try:
         updater = getattr(coord, "update_reconcile_progress", None)
@@ -1687,47 +1841,15 @@ def _run_day_close_job(
             result="fail",
             reason=type(exc).__name__,
         )
-      _stage_enter("pre_seal_verify")
-      try:
-        try:
-          pre_seal_ok = coord.run_pre_seal_verify_sync(
-              tar_path,
-              max_classify_batches=1,
-          )
-        except TypeError:
-          pre_seal_ok = coord.run_pre_seal_verify_sync(tar_path)
-      except Exception as exc:
-        _log(
-            "queue_orchestrator day_close pre_seal_verify fail day=%s err=%s"
-            % (day_token, type(exc).__name__),
-            log_fn=log_fn,
-        )
-        _stage_exit(
-            "pre_seal_verify",
-            result="fail",
-            reason=type(exc).__name__,
-        )
-        return "verify_failed"
-      if not pre_seal_ok:
-        _stage_exit(
-            "pre_seal_verify",
-            result="yielded",
-            reason="classify_batch_resume",
-        )
-        return "yielded"
-      _stage_exit("pre_seal_verify", result="ok")
-      handoff_fn = getattr(coord, "should_handoff_to_ingest", None)
-      if callable(handoff_fn) and handoff_fn(tar_path):
-        _stage_enter("wait_on_ingest")
-        complete_fn = getattr(coord, "complete_handoff_to_ingest", None)
-        if callable(complete_fn):
-          complete_fn(tar_path, reason="day_close_wait_on_ingest")
-        _stage_exit(
-            "wait_on_ingest",
-            result="yielded",
-            reason="wait_on_ingest",
-        )
-        return "yielded"
+
+      early = _run_pre_seal_verify()
+      if early:
+        return early
+
+      early = _maybe_yield_wait_on_ingest_after_verify()
+      if early:
+        return early
+
       _stage_enter("dedupe")
       try:
         dedupe_tar_keep_largest_file_per_member(

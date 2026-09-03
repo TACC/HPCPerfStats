@@ -286,7 +286,7 @@ def test_day_close_job_tar_drops_when_sealed_and_no_raw(tmp_path, monkeypatch):
 
 
 def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
-  """DC-01 order: reconcile → pre-seal verify → dedupe → seal → post-seal → delete."""
+  """DC-01 order: pre-seal → reconcile → pre-seal → dedupe → seal → post-seal → delete."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
   from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import ReconcileResult
@@ -351,7 +351,15 @@ def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
       log_fn=lambda *a, **k: None,
   )
   assert outcome == "complete"
-  assert stages == ["reconcile", "pre_seal", "dedupe", "seal", "post_seal", "delete"]
+  assert stages == [
+      "pre_seal",
+      "reconcile",
+      "pre_seal",
+      "dedupe",
+      "seal",
+      "post_seal",
+      "delete",
+  ]
 
 
 def test_day_close_reconcile_invoked_before_dedupe():
@@ -420,7 +428,7 @@ def test_day_close_job_returns_complete_after_tar_drop(tmp_path, monkeypatch):
 def test_day_close_job_remaining_raw_returns_incomplete_raw_not_fake_sealed(
     tmp_path, monkeypatch,
 ):
-  """No-op seal with remaining raw must not report sealed."""
+  """Closed raw on disk must yield before merge/seal (no fake sealed path)."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
   from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 
@@ -428,43 +436,47 @@ def test_day_close_job_remaining_raw_returns_incomplete_raw_not_fake_sealed(
   daily.mkdir()
   tar = daily / "2020-01-01.tar"
   tar.write_bytes(b"tar")
+  reconcile_calls = []
+  seal_calls = []
 
   monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+      lambda *a, **k: seal_calls.append(1),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+      lambda *a, **k: reconcile_calls.append(1),
   )
 
   class _Coord:
     def __init__(self, **_kw):
       pass
 
-    def apply_batch_delete(self, _tar_path):
-      return 0
-
-    def run_pre_seal_verify_sync(self, _tar_path):
-      return True
-
-    def run_post_seal_verify_sync(self, _tar_path):
-      return True
-
     def has_closed_raw_on_disk(self, _tar_path):
       return True
+
+    def complete_handoff_to_ingest(self, _tar_path, reason=""):
+      pass
 
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
       _Coord,
   )
+  logs = []
   outcome = qo._run_day_close_job(
       "2020-01-01",
       tgz_archive_dir=str(daily),
       archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: None,
+      log_fn=lambda msg, **k: logs.append(str(msg)),
   )
-  assert outcome == "incomplete_raw"
+  assert outcome == "yielded"
+  assert not reconcile_calls
+  assert not seal_calls
   assert tar.exists()
+  assert any("wait_on_ingest" in line for line in logs)
 
 
 def test_enqueue_day_closes_for_daily_dir_calls_reconstruct(tmp_path, monkeypatch):
@@ -1462,6 +1474,7 @@ def test_day_close_wait_on_ingest_yield(tmp_path, monkeypatch):
   zst.write_bytes(b"zst")
   handoffs = []
   logs = []
+  reconcile_calls = []
 
   monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
@@ -1472,7 +1485,9 @@ def test_day_close_wait_on_ingest_yield(tmp_path, monkeypatch):
   )
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: ReconcileResult(True, "noop", "already_equivalent"),
+      lambda *a, **k: reconcile_calls.append(1) or ReconcileResult(
+          True, "noop", "already_equivalent",
+      ),
   )
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
@@ -1511,6 +1526,122 @@ def test_day_close_wait_on_ingest_yield(tmp_path, monkeypatch):
   assert outcome == "yielded"
   assert handoffs and handoffs[0][1] == "day_close_wait_on_ingest"
   assert any("wait_on_ingest" in line for line in logs)
+  assert not reconcile_calls
+
+
+def test_day_close_remaining_raw_map_skips_merge(tmp_path, monkeypatch):
+  """Non-empty remaining_raw map must yield before reconcile_merge (H17)."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2020-01-01"
+  tar = daily / ("%s.tar" % day)
+  tar.write_bytes(b"tar")
+  reconcile_calls = []
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+      lambda *a, **k: reconcile_calls.append(1),
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return False
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      return {"2020-01-01.tar.gz": ["/archive/raw/closed.stats"]}
+
+    def complete_handoff_to_ingest(self, _tar_path, reason=""):
+      pass
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  logs = []
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda msg, **k: logs.append(str(msg)),
+  )
+  assert outcome == "yielded"
+  assert not reconcile_calls
+  assert any("wait_on_ingest" in line for line in logs)
+
+
+def test_day_close_closed_raw_handoff_false_yields_before_merge(tmp_path, monkeypatch):
+  """H17b: has_closed_raw true but should_handoff false still skips merge."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2020-01-01"
+  tar = daily / ("%s.tar" % day)
+  tar.write_bytes(b"tar")
+  reconcile_calls = []
+  seal_calls = []
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+      lambda *a, **k: reconcile_calls.append(1),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: seal_calls.append(1),
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return True
+
+    def should_handoff_to_ingest(self, _tar_path):
+      return False
+
+    def complete_handoff_to_ingest(self, _tar_path, reason=""):
+      pass
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+  )
+  assert outcome == "yielded"
+  assert not reconcile_calls
+  assert not seal_calls
+
+
+def test_day_close_pre_seal_verify_before_reconcile_merge():
+  """H17: disk remaining-raw probe and pre-seal verify run before reconcile_merge."""
+  import inspect
+
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  src = inspect.getsource(qo._run_day_close_job)
+  merge_idx = src.index("reconcile_open_tar_with_sealed_zst(")
+  disk_raw_call = src.index("early = _maybe_yield_disk_remaining_raw()")
+  pre_seal_call = src.index("early = _run_pre_seal_verify()")
+  assert disk_raw_call < pre_seal_call < merge_idx
 
 
 def test_startup_has_no_redis_eviction_gate():
