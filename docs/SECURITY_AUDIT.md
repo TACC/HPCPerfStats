@@ -36,6 +36,8 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 
 ### npm audit (frontend)
 
+**2026-09-03:** 0 vulnerabilities after Bokeh lockstep bump to **`@bokeh/bokehjs@3.10.0`** / **`bokeh==3.10.0`**. Lockfile swaps deprecated `@bokeh/slickgrid` for transitive **`slickgrid@5.20.0`**; kept **`overrides.dompurify@^3.4.13`**. SPA loads via **`src/bokehjs-bundle.ts`** (Turbopack cannot resolve 3.10 package-`main` bare imports). Log: [`test_runs/bokeh_3_10_npm_audit.log`](../test_runs/bokeh_3_10_npm_audit.log) + embed suite under `test_runs/bokeh_3_10_*`.
+
 **2026-09-02:** 0 vulnerabilities. Dependabot alerts [#110](https://github.com/TACC/HPCPerfStats/security/dependabot/110)–[#116](https://github.com/TACC/HPCPerfStats/security/dependabot/116): raised `overrides` for `fast-uri@^4.1.3` (lock **4.1.4**; host-confusion / SSRF GHSAs), `qs@^6.16.0` (array-limit bypass + isBuffer DoS), `@xmldom/xmldom@^0.9.12` (EntityReference fragment injection). Verified with `npm install --package-lock-only`, `npm audit`, and override-floor tests in `test_dockerfile_frontend_builder_cache.py`. Log: [`test_runs/dependabot_110_116_npm_2026-09-02.md`](../test_runs/dependabot_110_116_npm_2026-09-02.md).
 
 **2026-08-13:** 0 vulnerabilities. Dependabot alert [#109](https://github.com/TACC/HPCPerfStats/security/dependabot/109) (`nanoid` / GHSA-2v37-7h3g-55p8 / CVE-2026-67213): added `overrides.nanoid` **`^3.3.18`** (lock was **3.3.17**; Dependabot `first_patched` **3.3.18**). Verified with `npm install`, `npm audit`, and `test_nanoid_override_meets_dependabot_109_floor`. Log: [`test_runs/dependabot_109_nanoid_2026-08-13.md`](../test_runs/dependabot_109_nanoid_2026-08-13.md).

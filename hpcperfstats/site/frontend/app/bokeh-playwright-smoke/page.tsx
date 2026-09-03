@@ -5,7 +5,7 @@ import { applyBokehResizeObserverDeferral } from "@/patch-resize-observer-for-bo
 
 declare global {
   interface Window {
-    __HPCPERFSTATS_NEXT_BOKEH__?: typeof import("@bokeh/bokehjs");
+    __HPCPERFSTATS_NEXT_BOKEH__?: typeof import("@/bokehjs-bundle");
     __HPCPERFSTATS_BOKEH_SMOKE_READY__?: boolean;
   }
 }
@@ -16,7 +16,7 @@ export default function BokehPlaywrightSmokePage() {
     let cancelled = false;
     void (async () => {
       applyBokehResizeObserverDeferral();
-      const Bokeh = await import("@bokeh/bokehjs");
+      const Bokeh = await import("@/bokehjs-bundle");
       if (cancelled) return;
       window.__HPCPERFSTATS_NEXT_BOKEH__ = Bokeh;
       window.__HPCPERFSTATS_BOKEH_SMOKE_READY__ = true;

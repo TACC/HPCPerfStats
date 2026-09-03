@@ -51,7 +51,7 @@ def test_image_build_extra_is_image_only_and_pinned():
   assert any("meson-python==0.20.0" in d for d in build)
   assert any(d.startswith("setuptools>=") for d in build)
   assert "scipy" not in runtime
-  assert "bokeh==3.9.2" in proj["dependencies"]
+  assert "bokeh==3.10.0" in proj["dependencies"]
 
 
 def test_image_build_extra_includes_setuptools_for_no_build_isolation():

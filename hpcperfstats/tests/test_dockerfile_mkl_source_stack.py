@@ -330,7 +330,7 @@ def test_writer_run_payload_executes_against_real_pyproject(tmp_path, monkeypatc
   assert set(numexpr_only) | set(pandas_only) == set(after_numpy)
   assert "numpy" not in {_pep508_name(d) for d in rest}
   assert any(_pep508_name(d) == "python-dateutil" for d in rest)
-  assert "bokeh==3.9.2" in rest
+  assert "bokeh==3.10.0" in rest
   assert any(_pep508_name(d) == "mkl" for d in build)
   assert any(_pep508_name(d) == "meson-python" for d in build)
   assert any(_pep508_name(d) == "setuptools" for d in build)
