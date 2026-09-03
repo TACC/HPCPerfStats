@@ -25,9 +25,9 @@ when calendar today advances past the frozen window end (midnight rollover).
 CLI explicit start/end dates do not auto-extend.
 
 The global scheduler (**``update_metrics_for_dates``**) first finishes all
-`/pub/` expansion-factor aggregate artifacts using a metrics-sized process pool
-(one calendar month or one calendar year per worker task), then resets worker
-processes and begins job readiness checks plus ``Metrics.run`` batches.
+`/pub/` expansion-factor aggregate artifacts using a metrics-sized thread pool
+(one calendar month or one calendar year per worker task), then switches the
+thread role and begins job readiness checks plus ``Metrics.run`` batches.
 
 Attributes:
   CHUNK_SIZE: Attribute.
@@ -83,7 +83,6 @@ import contextlib
 import functools
 import gc
 import inspect
-import multiprocessing
 import os
 import threading
 import signal
@@ -120,11 +119,8 @@ import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.analysis.metrics.lib import metrics
 from hpcperfstats.analysis.metrics.lib.metrics import (
     INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
-    abort_if_metrics_pool_workers_dead,
     expected_job_metric_row_count,
-    maybe_reap_metrics_main_zombie_children as _maybe_reap_metrics_main_zombie_children,
     persist_window_coverage_gate_failure,
-    reap_metrics_main_zombie_children as _reap_metrics_main_zombie_children,
 )
 from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
 from hpcperfstats.dbload.lib.db_unavailable import (
@@ -932,7 +928,7 @@ def _drain_prewarm_imap(
   Drain prewarm ``imap_unordered`` with the same poll/stall knobs as Metrics.run.
 
   Args:
-    shared_pool (Any): Metrics process pool.
+    shared_pool (Any): Metrics thread pool.
     jids (Any): Iterable of jid strings.
     poll_timeout_s (float): ``imap`` poll timeout seconds.
     stall_timeout_s (float): No-progress stall budget seconds.
@@ -952,13 +948,10 @@ def _drain_prewarm_imap(
   jid_list = list(jids or [])
   if not jid_list or shared_pool is None:
     return []
-  abort_if_metrics_pool_workers_dead(
-      shared_pool,
-      context="update_metrics prewarm imap (preflight)",
-  )
   iterator = shared_pool.imap_unordered(_prewarm_jid_on_metrics_pool, jid_list)
   iterator_next = getattr(iterator, "next", None)
   supports_timeout = callable(iterator_next)
+  iterator_close = getattr(iterator, "close", None)
   total = len(jid_list)
   done = 0
   last_progress_at = time.monotonic()
@@ -988,18 +981,16 @@ def _drain_prewarm_imap(
   while done < total:
     if shutdown_requested[0]:
       break
-    abort_if_metrics_pool_workers_dead(
-        shared_pool,
-        context="update_metrics prewarm imap",
-    )
     try:
       if supports_timeout:
         result = iterator_next(timeout=float(max(0.0, poll_timeout_s)))
       else:
         result = next(iterator)
-    except multiprocessing.TimeoutError:
+    except TimeoutError:
       stalled_for = time.monotonic() - last_progress_at
       if stalled_for >= max(0.0, float(stall_timeout_s)):
+        if callable(iterator_close):
+          iterator_close()
         raise MetricsPrewarmStallError(
             stalled_for,
             "prewarm imap stall: no completed jids for %.1fs "
@@ -1017,11 +1008,15 @@ def _drain_prewarm_imap(
         )
       continue
     except StopIteration:
+      if callable(iterator_close):
+        iterator_close()
       break
     results.append(result)
     done += 1
     last_progress_at = time.monotonic()
     _emit("prewarm")
+  if callable(iterator_close):
+    iterator_close()
   return results
 
 
@@ -1611,7 +1606,7 @@ class _PrewarmPipeline:
 
 def _prewarm_jid_on_metrics_pool(jid: Any) -> Any:
   """
-  Picklable metrics-pool worker: detail+plot prewarm for one jid.
+  Metrics thread worker: detail+plot prewarm for one jid.
 
   Args:
     jid (Any): Job id to prewarm.
@@ -1622,9 +1617,6 @@ def _prewarm_jid_on_metrics_pool(jid: Any) -> Any:
   Examples:
     >>> _prewarm_jid_on_metrics_pool("1")  # doctest: +SKIP
   """
-  from django.db import connections
-
-  connections.close_all()
   close_old_connections()
   pipe = _PrewarmPipeline()
   try:
@@ -5024,15 +5016,11 @@ def _run_public_ef_artifacts_parallel_phase(
 
 def _reset_metrics_pool_after_public_phase(metrics_manager: Any) -> None:
   """
-  Recreate worker processes after /pub phase before job metrics.
+  Recreate titled threads after /pub phase before job metrics.
   
-  Public EF workers and job-metrics workers both use ORM-heavy paths. Recreating
-  the pool between phases avoids carrying any mixed server-cursor/session state
-  into the first metrics batch. Callers must follow with
-  ``ensure_pool(pool_kind="metrics-pool")``, which enforces configured live
-  width and logs configured versus alive. After hard reset, run **unthrottled**
-  ``reap_metrics_main_zombie_children`` so abandon leftovers cannot wait for
-  the 60s idle throttle (hs04: 24Z+24alive after ``/pub`` recycle).
+  Public EF and job-metrics tasks use different operator-visible thread roles.
+  Detaching the completed public executor ensures subsequent tasks are titled
+  ``metrics-pool`` and use fresh thread-local database connections.
   
   Args:
     metrics_manager (Any): Metrics manager passed to this helper.
@@ -5052,14 +5040,6 @@ def _reset_metrics_pool_after_public_phase(metrics_manager: Any) -> None:
           "metrics scheduler: pool reset after /pub phase failed; recreating lazily: {0}".format(exc),
           flush=True,
       )
-  try:
-    _reap_metrics_main_zombie_children(context="after_pub_pool_recycle")
-  except Exception as exc:
-    log_print(
-        "WARN: metrics main zombie reap after /pub reset failed err=%s: %s"
-        % (type(exc).__name__, exc),
-        flush=True,
-    )
 
 
 def _start_readiness_producer(
@@ -5539,28 +5519,21 @@ def _compute_and_prewarm_jid(
   prewarm_pipeline: Any,
   job_ref: Any,
   shared_pool: Any,
-  metrics_run_lock: Any | None = None,
 ) -> Any:
   """
   Compute metrics and immediately prewarm detail/plot artifacts for one jid.
-  
-  When ``metrics_run_lock`` is set (concurrent scheduler threads), only
-  ``metrics_manager.run`` is taken under the lock: ``multiprocessing.Pool.imap``
-  from multiple threads on one pool is unsafe; ``prewarm_pipeline.run_for_jid``
-  runs outside the lock so prewarm can overlap other jobs' metrics phases.
   
   Args:
     metrics_manager (Any): Metrics manager passed to this helper.
     prewarm_pipeline (Any): Prewarm pipeline passed to this helper.
     job_ref (Any): Job ref passed to this helper.
     shared_pool (Any): Shared pool passed to this helper.
-    metrics_run_lock (Any | None): One of ``Any``, ``None``.
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> _compute_and_prewarm_jid(None, None, None, None, None)  # doctest: +SKIP
+    >>> _compute_and_prewarm_jid(None, None, None, None)  # doctest: +SKIP
   """
   context = PerJidComputeContext(jid=job_ref.jid)
   telemetry = _new_jid_telemetry()
@@ -5578,11 +5551,10 @@ def _compute_and_prewarm_jid(
     }
   else:
     try:
-      if metrics_run_lock is not None:
-        with metrics_run_lock:
-          run_outcomes = metrics_manager.run([job_ref], pool=metrics_manager.ensure_pool())
-      else:
-        run_outcomes = metrics_manager.run([job_ref], pool=metrics_manager.ensure_pool())
+      run_outcomes = metrics_manager.run(
+          [job_ref],
+          pool=metrics_manager.ensure_pool(),
+      )
     except Exception as exc:
       log_print(
           "metrics scheduler: failed jid={0}; skipping and continuing: {1}".format(
@@ -5766,15 +5738,14 @@ def _rebind_metrics_shared_pool(
   shared_pool: Any,
 ) -> Any:
   """
-  Return a live metrics pool after ``reset_pool_hard`` may have abandoned one.
+  Return a live metrics pool after ``reset_pool_hard`` detached one.
 
   When ``metrics_manager`` exposes ``ensure_pool``, call it so callers never
-  health-check or ``imap`` an abandoned ``Pool`` whose workers were SIGKILL'd
-  by intentional teardown (``sigkill_non_cgroup`` recycle-gate false positive).
+  submit to an executor that has already refused new work.
 
   Args:
     metrics_manager (Any): Metrics owner with optional ``ensure_pool``.
-    shared_pool (Any): Caller-held pool reference (may be abandoned).
+    shared_pool (Any): Caller-held pool reference (may be shut down).
 
   Returns:
     Any: Fresh pool from ``ensure_pool``, or ``shared_pool`` when no manager.
@@ -5817,15 +5788,15 @@ def _prewarm_successful_refs_on_metrics_pool(
 
   Fail-closed: only ``successful_refs`` are prewarmed. Mode gate uses
   ``metrics_plot_prewarm_mode`` (``inline`` → parent ``run_for_jid``;
-  ``pipeline_required`` → metrics process pool ``imap``). On prewarm stall,
+  ``pipeline_required`` → metrics thread pool completion drain). On prewarm stall,
   keep partial successes, soft-fail unfinished jids, and recycle the pool.
-  Before pool imap, rebind via ``ensure_pool`` so abandoned pools after
-  ``reset_pool_hard`` are never fed to the recycle gate.
+  Before pool imap, rebind via ``ensure_pool`` so detached executors after
+  ``reset_pool_hard`` never receive another submission.
 
   Args:
     successful_refs (Any): Job refs whose metrics outcome was ok.
     prewarm_pipeline (Any): Sync ``_PrewarmPipeline`` for counters / inline.
-    shared_pool (Any): Metrics process pool (pool B); may be rebound.
+    shared_pool (Any): Metrics thread pool (pool B); may be rebound.
     progress_callback (Any | None): Optional mid-batch heartbeat callback.
     metrics_manager (Any | None): Metrics owner used to ``reset_pool_hard``
     and ``ensure_pool``.
@@ -5927,7 +5898,7 @@ def _compute_jid_outcomes_sliding(
     artifact_only_refs (Any): Artifact-only refs (prewarm only).
     metrics_manager (Any): Metrics owner for unwrap + pool reset.
     prewarm_pipeline (Any): Parent prewarm pipeline for inline / counters.
-    shared_pool (Any): Metrics process pool with ``apply_async``.
+    shared_pool (Any): Metrics thread pool with ``apply_async``.
     timing (Any): Mutable timing dict for watchdogs.
     t_batch (float): Session start monotonic time.
     heartbeat (Any | None): Optional compute-batch heartbeat.
@@ -5957,7 +5928,7 @@ def _compute_jid_outcomes_sliding(
   prewarm_mode = str(cfg.get_metrics_plot_prewarm_mode())
   worker_fallback = 1
   try:
-    worker_fallback = int(metrics_manager._worker_process_count())
+    worker_fallback = int(metrics_manager._worker_thread_count())
   except Exception:
     try:
       worker_fallback = int(cfg.get_metrics_pool_processes())
@@ -5970,21 +5941,18 @@ def _compute_jid_outcomes_sliding(
 
   def _persist(payload: Any) -> Any:
     """
-    Persist one metrics payload under the batch stall wall budget.
+    Persist one metrics payload under database statement and lock timeouts.
 
     Args:
       payload (Any): Metrics worker payload to persist.
 
     Returns:
-      Any: Persist outcome dict from ``_persist_metrics_payload_bounded``.
+      Any: Persist outcome dict from ``_persist_metrics_payload``.
 
     Examples:
       >>> _persist(None)  # doctest: +SKIP
     """
-    return metrics._persist_metrics_payload_bounded(
-        payload,
-        wall_timeout_s=float(max(0.0, stall_timeout_s)),
-    )
+    return metrics._persist_metrics_payload(payload)
 
   def _inline_prewarm(jid: Any) -> None:
     """
@@ -6006,7 +5974,7 @@ def _compute_jid_outcomes_sliding(
     Hard-reset the metrics pool after a sliding-session stall soft-fail.
 
     Rebinds ``shared_pool`` via ``ensure_pool`` so artifact-only prewarm
-    after the session does not health-check the abandoned pool.
+    after the session does not submit to the detached executor.
 
     Returns:
       None
@@ -6050,11 +6018,7 @@ def _compute_jid_outcomes_sliding(
       supplement_enabled=True,
       shutdown_requested=shutdown_requested,
       progress_callback=progress_callback,
-      abort_if_pool_dead_fn=abort_if_metrics_pool_workers_dead,
       on_stall_reset=_on_stall_reset,
-      on_poll_hygiene_fn=lambda: _maybe_reap_metrics_main_zombie_children(
-          context="sliding_session_poll",
-      ),
       on_supplements_taken=on_supplements_taken,
   )
   # Run artifact-only prewarms on the same pool path (closed small batch).
@@ -6143,7 +6107,7 @@ def _compute_jid_outcomes_batch(
   ``apply_async``, uses a pool-sized sliding session: per-jid metrics
   persist then prewarm, filling idle slots from ``ready_queue`` under
   sample-count soft/hard caps (RC-E). Otherwise a single
-  ``Metrics.run(job_refs, …)`` saturates the process pool and prewarm
+  ``Metrics.run(job_refs, …)`` saturates the thread pool and prewarm
   runs afterward on successful jids.
 
   Stall/watchdog timing treats metrics+prewarm as one job/batch wall-time
@@ -6223,6 +6187,10 @@ def _compute_jid_outcomes_batch(
         flush=True,
     )
 
+  # The scheduler keeps its original handle across batches. A prior sliding or
+  # prewarm stall may have detached and shut down that executor, so always
+  # resolve the manager's current pool before selecting or submitting work.
+  shared_pool = _rebind_metrics_shared_pool(metrics_manager, shared_pool)
   use_sliding = should_use_metrics_sliding_session(
       supplement_enabled=bool(cfg.get_metrics_idle_slot_supplement_enabled()),
       shared_pool=shared_pool,
@@ -6679,7 +6647,7 @@ def update_metrics_for_dates(
           flush=True,
       )
       shared_pool = metrics_manager.ensure_pool(pool_kind="public-ef-pool")
-      log_print("Metrics worker pool ready.", flush=True)
+      log_print("Metrics thread pool ready.", flush=True)
       pub_stats = _run_public_ef_artifacts_parallel_phase(shared_pool, phase_timer)
       with scheduler_shared_lock:
         stats["public_ef_degraded"] = int(pub_stats.get("degraded", 0))
@@ -6692,17 +6660,9 @@ def update_metrics_for_dates(
         stats["public_ef_pending_tasks"] = int(pub_stats.get("pending_tasks", 0))
       _reset_metrics_pool_after_public_phase(metrics_manager)
       shared_pool = metrics_manager.ensure_pool(pool_kind="metrics-pool")
-      try:
-        _reap_metrics_main_zombie_children(context="after_pub_pool_recycle")
-      except Exception as exc:
-        log_print(
-            "WARN: metrics main zombie reap after metrics ensure_pool "
-            "failed err=%s: %s" % (type(exc).__name__, exc),
-            flush=True,
-        )
       log_print(
-          "Metrics worker pool recycled after /pub phase. "
-          "configured=%s pool_processes=%s"
+          "Metrics thread pool recycled after /pub phase. "
+          "configured=%s pool_threads=%s"
           % (
               cfg.get_metrics_pool_processes(),
               getattr(shared_pool, "_processes", None),
@@ -6782,7 +6742,6 @@ def update_metrics_for_dates(
               stats["ready_dequeued_total"] += len(jobs_this_round)
               stats["inflight_jids"] += len(jobs_this_round)
           if not jobs_this_round:
-            _maybe_reap_metrics_main_zombie_children(context="empty_pass")
             if _maybe_trigger_consumer_stall_exit(
                 stats, consumer_stall_since, scheduler_shared_lock,
             ):
@@ -6869,7 +6828,6 @@ def update_metrics_for_dates(
             continue
           stall_iters = 0
           job_refs = _job_refs_from_jids(jobs_this_round)
-          _maybe_reap_metrics_main_zombie_children(context="compute_batch_start")
           log_print(
               "metrics scheduler: compute batch starting size={0} inflight_jids={1} batch_cap={2}".format(
                   len(job_refs),
@@ -7543,19 +7501,7 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
     close_old_connections()
     connections.close_all()
 
-    def _idle_sleep_hygiene_tick() -> None:
-      """
-      Throttled ``[main]`` zombie reap during post-pass idle sleep.
-
-      Returns:
-        None
-
-      Examples:
-        >>> _idle_sleep_hygiene_tick()  # doctest: +SKIP
-      """
-      _maybe_reap_metrics_main_zombie_children(context="idle_sleep_after_pass")
-
-    sleep_until_shutdown(600, on_tick=_idle_sleep_hygiene_tick)
+    sleep_until_shutdown(600)
   return 0
 
 

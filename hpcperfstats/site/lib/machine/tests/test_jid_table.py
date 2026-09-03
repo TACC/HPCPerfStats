@@ -428,26 +428,19 @@ def test_type_detail_provider_invalid_metric_defaults_to_arc():
 
 
 def test_is_metrics_compute_control_flow_error_matches_only_timeouts():
-  """The fallback guard keys off ``TimeoutError``, the base of the SIGALRM error."""
+  """The fallback guard keys off timeout control flow."""
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
       is_metrics_compute_control_flow_error,
   )
-  from hpcperfstats.analysis.metrics.lib.metrics import MetricsComputeJobTimeoutError
 
   assert is_metrics_compute_control_flow_error(
-      MetricsComputeJobTimeoutError("exceeded 900s")) is True
+      TimeoutError("statement budget exceeded")) is True
   assert is_metrics_compute_control_flow_error(
       OperationalError("canceling statement")) is False
 
 
 def test_jid_table_get_aggregate_df_reraises_compute_timeout():
-  """A per-job wall-clock timeout must propagate, not restart the pandas path.
-
-  The ``update_metrics`` SIGALRM budget is one-shot; retrying raw-row fetches
-  inside ``except Exception`` runs unbounded (the 900s traceback showed the
-  fallback re-entered after the alarm already fired).
-  """
-  from hpcperfstats.analysis.metrics.lib.metrics import MetricsComputeJobTimeoutError
+  """A query timeout must propagate, not restart the pandas path."""
 
   inst = jid_table.__new__(jid_table)
   inst.jid = "jid-agg-timeout"
@@ -461,8 +454,7 @@ def test_jid_table_get_aggregate_df_reraises_compute_timeout():
 
   def fake_queryset_to_dataframe(_qs, columns=None):
     calls.append(1)
-    raise MetricsComputeJobTimeoutError(
-        "compute_metrics exceeded 900s for jid jid-agg-timeout")
+    raise TimeoutError("statement budget exceeded for jid jid-agg-timeout")
 
   with patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.queryset_to_dataframe",
@@ -470,10 +462,10 @@ def test_jid_table_get_aggregate_df_reraises_compute_timeout():
   ), patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
       lambda _key, _timeout, query_fn: query_fn(),
-  ), pytest.raises(MetricsComputeJobTimeoutError):
+  ), pytest.raises(TimeoutError):
     jid_table.get_aggregate_df(inst, "host_cpu", "arc", ["user"])
 
-  assert calls == [1], "pandas fallback must not run after the alarm fires"
+  assert calls == [1], "pandas fallback must not run after a timeout"
 
 
 def test_jid_table_get_aggregate_df_sql_timeout_splits_not_pandas_fallback():
@@ -611,8 +603,7 @@ def test_jid_table_get_aggregate_df_pandas_fallback_uses_fetch_frames():
 
 
 def test_type_detail_get_aggregate_df_reraises_compute_timeout():
-  """TypeDetailDataProvider must not swallow the metrics wall-clock alarm either."""
-  from hpcperfstats.analysis.metrics.lib.metrics import MetricsComputeJobTimeoutError
+  """TypeDetailDataProvider must not swallow metrics timeout control flow."""
 
   provider = TypeDetailDataProvider(
       jid="jid-type-detail-timeout",
@@ -624,8 +615,7 @@ def test_type_detail_get_aggregate_df_reraises_compute_timeout():
   fallback_calls = []
 
   def fake_retry(_host_chunk, _build_qs, **_kwargs):
-    raise MetricsComputeJobTimeoutError(
-        "compute_metrics exceeded 900s for jid jid-type-detail-timeout")
+    raise TimeoutError("statement budget exceeded for jid jid-type-detail-timeout")
 
   def fake_fallback(*_args, **_kwargs):
     fallback_calls.append(1)
@@ -642,7 +632,7 @@ def test_type_detail_get_aggregate_df_reraises_compute_timeout():
   ), patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
       lambda _key, _timeout, query_fn: query_fn(),
-  ), pytest.raises(MetricsComputeJobTimeoutError):
+  ), pytest.raises(TimeoutError):
     provider.get_aggregate_df("FLOPS", metric="arc")
 
   assert fallback_calls == []

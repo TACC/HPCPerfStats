@@ -13,10 +13,10 @@ from hpcperfstats.analysis.metrics.lib.metrics_idle_slot_supplement import (
 
 def resolve_metrics_pool_max_inflight(pool: Any, fallback: int = 1) -> int:
   """
-  Bound outstanding apply_async work to the live pool process count.
+  Bound outstanding apply_async work to the live pool thread count.
 
   Args:
-    pool (Any): multiprocessing.Pool or test double.
+    pool (Any): Titled thread pool or test double.
     fallback (int): Used when the pool does not expose worker count.
 
   Returns:
@@ -72,7 +72,7 @@ def should_use_metrics_sliding_session(
 
   Args:
     supplement_enabled (bool): ``metrics_idle_slot_supplement_enabled``.
-    shared_pool (Any): Metrics process pool, or None.
+    shared_pool (Any): Metrics thread pool, or None.
 
   Returns:
     bool: True when the sliding session path should run.
@@ -172,9 +172,7 @@ def run_metrics_sliding_session(
   supplement_enabled: bool = True,
   shutdown_requested: Any | None = None,
   progress_callback: Any | None = None,
-  abort_if_pool_dead_fn: Any | None = None,
   on_stall_reset: Any | None = None,
-  on_poll_hygiene_fn: Any | None = None,
   empty_supplement_sleep_s: float = 0.05,
   on_supplements_taken: Any | None = None,
 ) -> list[dict[str, Any]]:
@@ -189,10 +187,10 @@ def run_metrics_sliding_session(
   Args:
     primary_refs (list[Any]): Original compute-batch candidate refs.
     metrics_obj (Any): Metrics manager instance passed to ``unwrap_fn``.
-    shared_pool (Any): Live metrics process pool.
-    unwrap_fn (Any): Picklable worker ``(metrics_obj, job) -> payload``.
+    shared_pool (Any): Live metrics thread pool.
+    unwrap_fn (Any): Worker ``(metrics_obj, job) -> payload``.
     persist_fn (Any): Parent persist ``payload -> outcome dict``.
-    prewarm_worker_fn (Any): Picklable ``jid -> {jid, ok, ...}``.
+    prewarm_worker_fn (Any): Worker ``jid -> {jid, ok, ...}``.
     inline_prewarm_fn (Any | None): Parent prewarm when mode is inline.
     prewarm_mode (str): ``inline`` or ``pipeline_required``.
     max_inflight (int): Concurrent apply_async budget.
@@ -205,10 +203,7 @@ def run_metrics_sliding_session(
     supplement_enabled (bool): When False, never pull ready_queue.
     shutdown_requested (Any | None): ``[bool]`` flag list, or None.
     progress_callback (Any | None): Mid-session heartbeat callback.
-    abort_if_pool_dead_fn (Any | None): Optional pool-death checker.
     on_stall_reset (Any | None): Called after stall soft-fail.
-    on_poll_hygiene_fn (Any | None): Optional zero-arg callback for throttled
-        ``[main]`` zombie reap each poll loop.
     empty_supplement_sleep_s (float): Sleep when waiting with empty fill.
     on_supplements_taken (Any | None): Optional ``(n: int) -> None`` after
         each non-empty ready-queue supplement pop (scheduler dequeue counters).
@@ -216,9 +211,6 @@ def run_metrics_sliding_session(
   Returns:
     list[dict[str, Any]]: Per-ref results with keys ``ref``, ``ok``,
     ``base_outcome``, ``metrics_s``, ``prewarm_s``.
-
-  Raises:
-    Exception: Re-raised when ``abort_if_pool_dead_fn`` reports pool death.
 
   Examples:
     >>> run_metrics_sliding_session(  # doctest: +SKIP
@@ -372,20 +364,6 @@ def run_metrics_sliding_session(
     })
 
   while (primary or pending) and not _shutting_down():
-    if callable(on_poll_hygiene_fn):
-      try:
-        on_poll_hygiene_fn()
-      except Exception:
-        pass
-    if callable(abort_if_pool_dead_fn):
-      try:
-        abort_if_pool_dead_fn(
-            shared_pool,
-            context="metrics sliding session",
-        )
-      except Exception:
-        raise
-
     filled = False
     while len(pending) < cap and primary:
       ref = primary.popleft()
@@ -473,7 +451,6 @@ def run_metrics_sliding_session(
       continue
 
     pending.pop(ready_idx)
-    last_progress_at = time.monotonic()
     async_result = ready_item["async_result"]
     ref = ready_item["ref"]
 
@@ -493,6 +470,7 @@ def run_metrics_sliding_session(
         metrics_s = max(0.0, time.monotonic() - float(ready_item["t0"]))
         _finalize_failed(ref, base, metrics_s)
         completed_total += 1
+        last_progress_at = time.monotonic()
         _emit("metrics")
         continue
       metrics_s = max(0.0, time.monotonic() - float(ready_item["t0"]))
@@ -507,6 +485,7 @@ def run_metrics_sliding_session(
             "error_message": str(exc),
             "persist_s": 0.0,
         }
+      last_progress_at = time.monotonic()
       ready_item["base_outcome"] = base_outcome
       ready_item["metrics_s"] = metrics_s
       if base_outcome.get("ok"):
@@ -530,6 +509,7 @@ def run_metrics_sliding_session(
         prewarm_ok = bool(prewarm_result.get("ok"))
     except Exception:
       prewarm_ok = False
+    last_progress_at = time.monotonic()
     prewarm_s = max(
         0.0,
         time.monotonic() - float(ready_item.get("t_prewarm0", last_progress_at)),

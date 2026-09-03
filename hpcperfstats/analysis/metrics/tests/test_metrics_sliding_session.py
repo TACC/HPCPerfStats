@@ -196,47 +196,67 @@ def test_sliding_feeder_does_not_busy_spin_on_empty_supplement(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
-def test_sliding_session_invokes_abort_with_pool(monkeypatch):
-  seen = []
+def test_sliding_stall_clock_advances_only_after_persist(monkeypatch):
+  """A completed worker is not progress until parent persistence returns."""
+  now = [0.0]
+  sleeps_after_persist = []
+  persist_finished = [False]
 
-  def abort_fn(pool, *, context=""):
-    seen.append({"pool": pool, "context": context})
+  monkeypatch.setattr(mss.time, "monotonic", lambda: now[0])
+
+  def _sleep(seconds):
+    now[0] += max(0.1, float(seconds))
+    if persist_finished[0]:
+      sleeps_after_persist.append(seconds)
+
+  monkeypatch.setattr(mss.time, "sleep", _sleep)
 
   class _Pool:
-    def apply_async(self, fn, args=(), kwds=None):
-      del kwds
-      payload = fn(*args)
-      return _ReadyAsync(payload)
+    def __init__(self):
+      self.calls = 0
 
-  monkeypatch.setattr(mss.time, "monotonic", lambda: 1000.0)
-  rows = mss.run_metrics_sliding_session(
-      primary_refs=[SimpleNamespace(jid="j1", estimated_sample_count=1)],
+    def apply_async(self, fn, args):
+      del fn, args
+      self.calls += 1
+      if self.calls == 1:
+        return _ReadyAsync({
+            "jid": "ready",
+            "status": "ok",
+            "rows": [],
+            "distinct_time_count": 1,
+        })
+      return _SlowAsync()
+
+  def _persist(payload):
+    now[0] = 100.0
+    persist_finished[0] = True
+    return {
+        "jid": payload["jid"],
+        "ok": True,
+        "status": "ok",
+        "persist_s": 100.0,
+    }
+
+  mss.run_metrics_sliding_session(
+      primary_refs=[
+          SimpleNamespace(jid="ready", estimated_sample_count=1),
+          SimpleNamespace(jid="stalled", estimated_sample_count=1),
+      ],
       metrics_obj=object(),
       shared_pool=_Pool(),
-      unwrap_fn=lambda task: {
-          "jid": task[1].jid,
-          "ok": True,
-          "status": "ok",
-          "persisted_rows": 0,
-          "distinct_time_count": 1,
-          "persist_s": 0.0,
-          "error_type": None,
-          "error_message": None,
-      },
-      persist_fn=lambda payload: payload,
-      prewarm_worker_fn=lambda jid: {"jid": jid, "ok": True},
+      unwrap_fn=lambda args: args,
+      persist_fn=_persist,
+      prewarm_worker_fn=None,
       inline_prewarm_fn=None,
-      prewarm_mode="pipeline_required",
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_timeout_s=5.0,
-      ready_queue=deque(),
-      ready_queue_lock=threading.Lock(),
-      abort_if_pool_dead_fn=abort_fn,
+      prewarm_mode="inline",
+      max_inflight=2,
+      poll_timeout_s=0.1,
+      stall_timeout_s=0.3,
+      supplement_enabled=False,
+      empty_supplement_sleep_s=0.0,
   )
-  assert len(rows) == 1
-  assert seen
-  assert seen[0]["context"] == "metrics sliding session"
+
+  assert len(sleeps_after_persist) >= 3
 
 
 @pytest.mark.machine_unit_mock

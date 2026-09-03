@@ -22,7 +22,7 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`frontend-stack-wiring-contract.mdc`** — SPA routing, thin hooks, `response-schema-registry.ts`, and test mock layers must stay wired; see view → hook → API map and drift guards.
 - **`interactive-ready-controls.mdc`** — hide or skeleton until ready; shown controls must be immediately interactive (`initialLoading`, `tableBusy`, lazy sections).
 - **`rabbitmq-memory-cgroup-contract.mdc`** — compose `mem_limit` 96g + watermark absolute **strictly below** cgroup (80GiB); recreate rabbitmq; never classic-queue “fix”; dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
-- **`compose-operator-terminal-commands.mdc`** — plans and blocked diagnostics: INI paths first, filtered service-specific logs (not raw pipeline firehose), one `docker compose exec` block per service; findings on disk per **`plan-live-disk-sync.mdc`**.
+- **`compose-operator-terminal-commands.mdc`** — plans and blocked diagnostics: INI paths first, filtered service-specific logs (not raw pipeline firehose), one `docker compose exec` block per service; update_metrics census uses `get_metrics_pool_processes()` as the thread count and `[thread:metrics-pool]`.
 - **`operator-command-lessons-learned.mdc`** — when operator commands fail, update `compose-operator-terminal-commands.mdc` in the same task; do not repeat broken patterns.
 - **`plan-live-disk-sync.mdc`** — live plan file on disk is authority; chat/CreatePlan do not count; operator discovery Completed findings vs Pending commands.
 - **`package-lib-colocation.mdc`** — new library modules under flat `{parent}/lib/`; import prefixes; `.gitignore` negation so lib trees are committed; Django migrations stay under `site/lib/machine/`.
@@ -30,6 +30,7 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`sync-timedb-change-regression-gate.mdc`** — mandatory `tests/run_sync_timedb_regression_battery.sh` before sync_timedb stall PR close; T0/T1/T2 operator verify (`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`); hooks enforce battery log citation on close.
 - **`sync-timedb-queue-orchestrator-contract.mdc`** — greenfield `job:v1` orchestrator (exclusive flock, streaming submit, sliding-window pools, B-09 predicates); dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
 - **`sync-timedb-no-timers.mdc`** — no internal wall soft-kills; progress kinds + idle kill/yield; dual-registered on sync_timedb / pool / tests paths.
+- **`update-metrics-batch-resilience.mdc`** — update_metrics uses bounded titled 3.14t threads only; parent persistence, DB statement-timeout boundaries, partial stall recovery, lazy Future release, and no process-pool/SIGALRM fallback.
 - **`sync-timedb-anti-log-spam.mdc`** — hot wait/poll/retry/defer INFO must rate-limit with `suppressed_n=` (process-local limiter); never bare `log_print` in those loops.
 - **`startup-migration-bounded-work.mdc`** — `django_startup` migrate must stay bounded (no unbounded hypertable work); production never runs `makemigrations`.
 - **`dockerignore-test-artifacts-sync.mdc`** — `.dockerignore` must exclude test-only paths; keep `test_dockerignore_test_artifacts.py` in sync when test layout changes.

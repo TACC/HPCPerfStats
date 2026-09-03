@@ -11,8 +11,8 @@ Rows are **not** deleted when inputs change: invalidation sets
 path) recomputes and clears the flag.
 
 The scheduler runs :func:`refresh_public_expansion_factor_artifacts_parallel` on
-the metrics ``multiprocessing`` pool (one calendar month or one calendar year
-per task) and **completes** that pass before starting job-based metrics.
+the metrics in-process thread pool (one calendar month or one calendar year per
+task) and **completes** that pass before starting job-based metrics.
 
 Attributes:
   APP_PUBLIC_METRICS_SCHEMA_VERSION: Attribute.
@@ -37,7 +37,6 @@ import math
 import time
 from collections import defaultdict
 from datetime import date, datetime
-from multiprocessing import TimeoutError as MultiprocessingTimeoutError
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from django.db import connection, transaction
@@ -62,7 +61,7 @@ PUBLIC_EF_YEAR_WEEKLY = "ef_year_weekly"
 _PUBLIC_METRICS_INVALIDATE_LOCK_TIMEOUT_MS = 2000
 _PUBLIC_METRICS_INVALIDATE_STATEMENT_TIMEOUT_MS = 5000
 
-# Task kind strings for :func:`_public_ef_period_worker` (pickled by multiprocessing).
+# Task kind strings for :func:`_public_ef_period_worker`.
 _PUBLIC_EF_KIND_MONTH = "month"
 _PUBLIC_EF_KIND_YEAR = "year"
 
@@ -683,50 +682,9 @@ def _sync_reconcile_public_ef_year(ys: str) -> Dict[str, int]:
   return {"rebuilt_year_periods": 1, "skipped_year_periods": 0}
 
 
-def _public_ef_reset_fork_inherited_db() -> None:
-  """
-  Drop connections inherited after ``multiprocessing`` fork before ORM queries.
-  
-  Forked worker processes share their parent's Postgres socket unless closed.
-  Django's ``QuerySet.iterator(chunk_size=…)`` declares named server-side
-  cursors; two processes multiplexing one session yields ``cursor … already
-    exists``.
-  
-  Returns:
-    None
-  
-  Examples:
-    >>> _public_ef_reset_fork_inherited_db()  # doctest: +SKIP
-  """
-  from django.db import close_old_connections, connections
-
-  connections.close_all()
-  close_old_connections()
-
-
-def _public_ef_parent_refresh_connections_after_forked_children() -> None:
-  """
-  Reinitialize this process's DB handles after forked workers close shared fds.
-  
-  ``connections.close_all()`` in a worker closes inherited sockets that were
-  still referenced by Django's wrappers in this (parent) process; discard and
-  reconnect before any subsequent ORM in the scheduler thread.
-  
-  Returns:
-    None
-  
-  Examples:
-    >>> _public_ef_parent_refresh_connections_after_forked_children()
-  """
-  from django.db import close_old_connections, connections
-
-  connections.close_all()
-  close_old_connections()
-
-
 def _public_ef_period_worker(task: Tuple[str, str]) -> Dict[str, int]:
   """
-  Picklable multiprocessing worker: reconcile exactly one month or year period.
+  Reconcile exactly one month or year period in a metrics thread.
   
   Args:
     task (Tuple[str, str]): Sequence for task.
@@ -740,7 +698,6 @@ def _public_ef_period_worker(task: Tuple[str, str]) -> Dict[str, int]:
   from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
   ensure_django()
-  _public_ef_reset_fork_inherited_db()
   kind, key = task
   try:
     if kind == _PUBLIC_EF_KIND_MONTH:
@@ -752,12 +709,6 @@ def _public_ef_period_worker(task: Tuple[str, str]) -> Dict[str, int]:
   except Exception:
     logger.exception("public EF period worker failed kind=%s key=%s", kind, key)
     return {"worker_exceptions": 1}
-  finally:
-    from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
-        release_spawn_pool_worker_memory,
-    )
-
-    release_spawn_pool_worker_memory()
 
 
 def refresh_public_expansion_factor_artifacts_parallel(
@@ -806,6 +757,7 @@ def refresh_public_expansion_factor_artifacts_parallel(
 
   iterator = pool.imap_unordered(_public_ef_period_worker, tasks, chunksize=1)
   next_with_timeout = getattr(iterator, "next", None)
+  iterator_close = getattr(iterator, "close", None)
   completed = 0
   last_progress_at = time.monotonic()
   while completed < len(tasks):
@@ -815,8 +767,10 @@ def refresh_public_expansion_factor_artifacts_parallel(
       else:
         piece = next(iterator)
     except StopIteration:
+      if callable(iterator_close):
+        iterator_close()
       break
-    except MultiprocessingTimeoutError:
+    except TimeoutError:
       stalled_for_s = max(0.0, time.monotonic() - last_progress_at)
       if callable(progress_callback):
         progress_callback({
@@ -827,6 +781,8 @@ def refresh_public_expansion_factor_artifacts_parallel(
         })
       if stalled_for_s >= max(float(poll_timeout_s), float(no_progress_timeout_s)):
         totals["watchdog_timeouts"] += 1
+        if callable(iterator_close):
+          iterator_close()
         break
       continue
     completed += 1
@@ -834,6 +790,8 @@ def refresh_public_expansion_factor_artifacts_parallel(
     for k, v in piece.items():
       totals[k] += int(v)
 
+  if callable(iterator_close):
+    iterator_close()
   totals["tasks_completed"] = completed
   totals["pending_tasks"] = max(0, len(tasks) - completed)
   totals["degraded"] = int(
@@ -842,7 +800,6 @@ def refresh_public_expansion_factor_artifacts_parallel(
       or totals["pending_tasks"] > 0
   )
 
-  _public_ef_parent_refresh_connections_after_forked_children()
   _prune_orphan_public_ef_rows(months, years)
   return dict(totals)
 

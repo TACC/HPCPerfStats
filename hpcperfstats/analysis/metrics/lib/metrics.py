@@ -3,15 +3,12 @@ Metric computation for jobs: simple metrics (job_arc/time_bucket) and complex
 metrics (avg_freq, avg_ethbw, mem_hwm, etc.) via utils-compatible job view.
 Results written to metrics_data.
 
-DB access is process-safe: _unwrap runs in multiprocessing workers, calls
-connections.close_all() then close_old_connections() so forked children never
-reuse the parent's PostgreSQL session (named server-side cursors / iterator
-state); writes are done in the main process only.
+DB access is thread-safe: the titled worker pool closes stale thread-local
+connections around each task; writes are done by the draining parent thread.
 
 Attributes:
   INSUFFICIENT_DATA_FOR_METRICS_PROCESSING: Attribute.
   METRICS_HOST_QUERY_BATCH: Attribute.
-  METRICS_POOL_JOIN_TIMEOUT_S: Attribute.
   METRIC_NOT_COMPUTED_YET: Attribute.
   NO_GPU_AGGREGATE_TELEMETRY: Attribute.
   NO_SIMPLE_SAMPLES_MSG: Attribute.
@@ -24,10 +21,8 @@ Attributes:
   _MAX_FABRIC_BW_SANITY_MB_S: Attribute.
   _MAX_SANE_GPU_LINK_GBPS: Attribute.
   _MAX_SANE_PACKETRATE: Attribute.
-  _METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S: Attribute.
   _PARENT_PERSIST_TIMEOUT_MARKERS: Attribute.
   _TIME_IMBALANCE_MAX_SLICE_RATIO: Attribute.
-  _last_metrics_main_zombie_reap_mono: Attribute.
 """
 from __future__ import annotations
 
@@ -35,13 +30,10 @@ from typing import Any, Iterator
 
 import contextlib
 import json
-import os
+import threading
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.print_utils import log_print
-from hpcperfstats.dbload.lib.process_title import apply_pool_worker_process_title
 
-import multiprocessing
-import signal
 import sys
 import time
 import traceback
@@ -56,14 +48,8 @@ from django.db.models import Max, Min
 from django.db.utils import OperationalError, DatabaseError
 
 from hpcperfstats.analysis.metrics.lib.gen import jid_table
-from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-  MultiprocessingWorkerExitError,
-  abort_if_pool_workers_dead,
-  alive_pool_worker_count,
-  close_pool_bounded as _shared_close_pool_bounded,
-  reap_zombie_children_of_self,
-  terminate_pool_bounded as _shared_terminate_pool_bounded,
-  warn_unreaped_zombie_children,
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+    SyncTimedbThreadPool,
 )
 from hpcperfstats.analysis.metrics.lib.gen.utils import utils
 from hpcperfstats.lib.dcgm_blank import (
@@ -123,10 +109,6 @@ from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
 from hpcperfstats.dbload.lib.db_unavailable import DatabaseUnavailableExit
 
 NUMEXPR_MIN_ARRAY_SIZE = 100_000
-METRICS_POOL_JOIN_TIMEOUT_S = max(
-    1.0,
-    float(os.environ.get("HPCPERFSTATS_METRICS_POOL_JOIN_TIMEOUT_S", "30")),
-)
 _PARENT_PERSIST_TIMEOUT_MARKERS = (
     "statement timeout",
     "lock timeout",
@@ -176,18 +158,6 @@ class MetricsRunWorkerStallError(TimeoutError):
     self.pool_reset_confirmed = bool(pool_reset_confirmed)
     self.partial_outcomes = list(partial_outcomes or [])
     self.pending_jobs = list(pending_jobs or [])
-
-
-class MetricsComputeJobTimeoutError(TimeoutError):
-  """
-  One metrics worker exceeded the per-job compute wall clock.
-  """
-
-
-class MetricsPersistWallTimeoutError(TimeoutError):
-  """
-  Parent-side metrics persist exceeded the Metrics.run stall wall clock.
-  """
 
 
 def _metrics_jid_value(job_or_pk: Any) -> Any:
@@ -263,310 +233,6 @@ def _is_parent_persist_timeout_error(exc: Any) -> Any:
   """
   text = str(exc or "").lower()
   return any(marker in text for marker in _PARENT_PERSIST_TIMEOUT_MARKERS)
-
-
-def _metrics_pool_health_context() -> dict[str, int]:
-  """
-  Build ``pool_health_context`` for metrics ``abort_if_pool_workers_dead``.
-
-  Carries absolute ``metrics_pool_processes`` and
-  ``metrics_pool_maxtasksperchild`` so the shared recycle gate classifies
-  healthy worker recycle correctly (not as attrition).
-
-  Returns:
-    dict[str, int]: Context with ``expected_pool_workers`` and
-    ``maxtasksperchild``.
-
-  Examples:
-    >>> _metrics_pool_health_context()  # doctest: +SKIP
-  """
-  return {
-      "expected_pool_workers": int(cfg.get_metrics_pool_processes()),
-      "maxtasksperchild": int(cfg.get_metrics_pool_maxtasksperchild()),
-  }
-
-
-def abort_if_metrics_pool_workers_dead(
-  pool: Any,
-  *,
-  context: str = "",
-) -> None:
-  """
-  Abort when metrics pool workers are dead, with absolute expected width.
-
-  Args:
-    pool (Any): Live metrics ``multiprocessing.Pool``.
-    context (str): Operator-facing context string.
-
-  Returns:
-    None
-
-  Raises:
-    MultiprocessingWorkerExitError: When a worker has exited unexpectedly.
-
-  Examples:
-    >>> abort_if_metrics_pool_workers_dead(None, context="x")  # doctest: +SKIP
-  """
-  abort_if_pool_workers_dead(
-      pool,
-      context=context,
-      pool_health_context=_metrics_pool_health_context(),
-  )
-
-
-# Throttled hygiene for ``update_metrics.py [main]`` zombies left by pool
-# attrition between ``reset_pool_hard`` calls (Branch Z-H2 metrics analogue).
-_METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S = 60.0
-_last_metrics_main_zombie_reap_mono = 0.0
-
-
-def reap_metrics_main_zombie_children(*, context: str = "metrics_main") -> Any:
-  """
-  Waitpid zombie children of metrics ``[main]`` and warn if any remain.
-
-  Prefer PID-specific shared ``reap_zombie_children_of_self`` over
-  ``waitpid(-1)`` so live Pool/Manager waits are not stolen. Fault-isolates
-  reap vs warn so one failure cannot skip the other.
-
-  Args:
-    context (str): Log token (for example ``empty_pass`` or
-    ``metrics_run_poll``).
-
-  Returns:
-    Any: List of reaped PIDs from ``reap_zombie_children_of_self``, or ``[]``
-    on reap failure.
-
-  Examples:
-    >>> reap_metrics_main_zombie_children(context="unit")  # doctest: +SKIP
-  """
-  reaped: Any = []
-  try:
-    reaped = reap_zombie_children_of_self(context=context)
-  except Exception as exc:
-    log_print(
-        "WARN: metrics main zombie reap failed context=%s err=%s: %s"
-        % (context, type(exc).__name__, exc),
-        flush=True,
-    )
-  try:
-    warn_unreaped_zombie_children(context=context)
-  except Exception as exc:
-    log_print(
-        "WARN: metrics main unreaped-zombie warn failed context=%s "
-        "err=%s: %s" % (context, type(exc).__name__, exc),
-        flush=True,
-    )
-  return reaped
-
-
-def maybe_reap_metrics_main_zombie_children(
-  *,
-  context: str = "throttled",
-) -> bool:
-  """
-  Run metrics ``[main]`` zombie hygiene at most once per reap interval.
-
-  Called from scheduler idle/batch boundaries and mid-batch drain polls so
-  ``STAT=Z`` children cannot wait for the next empty_pass after attrition
-  during a long ``Metrics.run``.
-
-  Args:
-    context (str): Log token forwarded to ``reap_metrics_main_zombie_children``.
-
-  Returns:
-    bool: ``True`` when hygiene ran; ``False`` when the throttle skipped it.
-
-  Examples:
-    >>> maybe_reap_metrics_main_zombie_children(context="metrics_run_poll")  # doctest: +SKIP
-  """
-  global _last_metrics_main_zombie_reap_mono
-  now_mono = time.monotonic()
-  if now_mono - _last_metrics_main_zombie_reap_mono < _METRICS_MAIN_ZOMBIE_REAP_INTERVAL_S:
-    return False
-  _last_metrics_main_zombie_reap_mono = now_mono
-  reap_metrics_main_zombie_children(context=context)
-  return True
-
-
-def _metrics_worker_exit_is_oom_or_sigkill(
-  exc: MultiprocessingWorkerExitError,
-) -> bool:
-  """
-  Return True when a pool-worker exit looks like OOM or SIGKILL.
-
-  Args:
-    exc (MultiprocessingWorkerExitError): Raised worker-exit error.
-
-  Returns:
-    bool: True when OOM/SIGKILL diagnostics should stay fatal.
-
-  Examples:
-    >>> _metrics_worker_exit_is_oom_or_sigkill(
-    ...     MultiprocessingWorkerExitError(
-    ...         "x", dead_pids=[1], likely_cause="sigkill"
-    ...     )
-    ... )
-    True
-  """
-  cause = str(getattr(exc, "likely_cause", "") or "").lower()
-  if "oom" in cause or "sigkill" in cause:
-    return True
-  if int(getattr(exc, "cgroup_oom_kill", 0) or 0) > 0:
-    return True
-  diagnostics = getattr(exc, "diagnostics", None) or {}
-  if int(diagnostics.get("cgroup_oom_kill", 0) or 0) > 0:
-    return True
-  for worker in diagnostics.get("dead_workers") or ():
-    exitcode = worker.get("exitcode")
-    if exitcode in (-signal.SIGKILL, 137):
-      return True
-  return False
-
-
-def _wait_pool_processes_bounded(active_pool: Any, timeout_s: Any) -> Any:
-  """
-  Wait up to ``timeout_s`` for pool worker processes to exit.
-  
-  Args:
-    active_pool (Any): Active pool passed to this helper.
-    timeout_s (Any): Timeout s passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _wait_pool_processes_bounded(None, None)  # doctest: +SKIP
-  """
-  workers = list(getattr(active_pool, "_pool", []) or [])
-  deadline = time.monotonic() + max(0.1, float(timeout_s))
-  for proc in workers:
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-      break
-    try:
-      proc.join(timeout=remaining)
-    except Exception:
-      continue
-  alive = [getattr(p, "pid", None) for p in workers if getattr(p, "is_alive", lambda: False)()]
-  return len(alive) == 0, alive
-
-
-def _metrics_pool_worker_cmdline_mark(pool_kind: str = "metrics-pool") -> str:
-  """
-  Cmdline mark for metrics PPID census during abandon teardown.
-
-  Args:
-    pool_kind (str): Stable pool label (``metrics-pool`` or
-      ``public-ef-pool``).
-
-  Returns:
-    str: ``[worker:{pool_kind}]`` substring.
-
-  Examples:
-    >>> _metrics_pool_worker_cmdline_mark("metrics-pool")
-    '[worker:metrics-pool]'
-  """
-  from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-      pool_worker_cmdline_mark_for_kind,
-  )
-
-  return pool_worker_cmdline_mark_for_kind(pool_kind or "metrics-pool")
-
-
-def _metrics_pool_create_kwargs(
-  processes: int,
-  pool_kind: str = "metrics-pool",
-) -> dict[str, Any]:
-  """
-  Keyword args for metrics ``multiprocessing.Pool`` construction.
-
-  Includes ``maxtasksperchild`` when ``metrics_pool_maxtasksperchild`` > 0.
-
-  Args:
-    processes (int): Absolute worker count.
-    pool_kind (str): Process-title pool label.
-
-  Returns:
-    dict[str, Any]: Args for ``multiprocessing.Pool(...)``.
-
-  Examples:
-    >>> _metrics_pool_create_kwargs(24, "metrics-pool")  # doctest: +SKIP
-  """
-  kwargs: dict[str, Any] = {
-      "processes": int(processes),
-      "initializer": apply_pool_worker_process_title,
-      "initargs": ("update_metrics.py", pool_kind),
-  }
-  maxtasks = int(cfg.get_metrics_pool_maxtasksperchild())
-  if maxtasks > 0:
-    kwargs["maxtasksperchild"] = maxtasks
-  return kwargs
-
-
-def _close_pool_bounded(
-  active_pool: Any,
-  timeout_s: Any,
-  *,
-  pool_kind: str = "metrics-pool",
-) -> Any:
-  """
-  Best-effort bounded close via abandon-kill (never stdlib ``Pool.terminate``).
-
-  Delegates to shared ``close_pool_bounded`` with ``force_terminate=True`` so
-  join-timeout fallback cannot re-enter the hangable non-abandon branch
-  (hs04: MainThread wedged at ``pool.py:732`` ``p.join()``).
-
-  Args:
-    active_pool (Any): Live metrics pool.
-    timeout_s (Any): Join/kill budget seconds.
-    pool_kind (str): Pool label for PPID census mark.
-
-  Returns:
-    Any: Shared helper return value.
-
-  Examples:
-    >>> _close_pool_bounded(None, None)  # doctest: +SKIP
-  """
-  return _shared_close_pool_bounded(
-      active_pool,
-      timeout_s=float(timeout_s),
-      force_terminate=True,
-      pool_worker_cmdline_mark=_metrics_pool_worker_cmdline_mark(pool_kind),
-  )
-
-
-def _terminate_pool_bounded(
-  active_pool: Any,
-  timeout_s: Any,
-  *,
-  pool_kind: str = "metrics-pool",
-) -> Any:
-  """
-  Best-effort bounded terminate via abandon-kill (never stdlib terminate).
-
-  Used in stall recovery and ``reset_pool_hard``. Always passes
-  ``abandon_after_kill=True`` so metrics never calls stdlib
-  ``Pool.terminate()`` (hs04 hang at ``p.join()`` after swallowed SIGTERM).
-
-  Args:
-    active_pool (Any): Live metrics pool.
-    timeout_s (Any): Kill/reap budget seconds.
-    pool_kind (str): Pool label for PPID census mark.
-
-  Returns:
-    Any: Shared helper return value.
-
-  Examples:
-    >>> _terminate_pool_bounded(None, None)  # doctest: +SKIP
-  """
-  return _shared_terminate_pool_bounded(
-      active_pool,
-      timeout_s=float(timeout_s),
-      context="metrics_pool",
-      abandon_after_kill=True,
-      kill_workers_first=True,
-      pool_worker_cmdline_mark=_metrics_pool_worker_cmdline_mark(pool_kind),
-  )
 
 
 def _log_exception_details(prefix: Any, exc: Any) -> None:
@@ -744,93 +410,6 @@ def _finite_amax(values: Any, *, reject_dcgm_blank: bool = False) -> Any:
   if fin.size == 0:
     return None
   return float(amax(fin))
-
-
-def _resolve_metrics_run_per_job_timeout_s() -> Any:
-  """
-  Per-job compute wall clock in pool workers (0 INI/env →.
-  
-    ``metrics_run_stall_timeout_s``).
-  
-  Returns:
-    Any: Open return polymorphism from
-    ``_resolve_metrics_run_per_job_timeout_s``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
-  Examples:
-    >>> _resolve_metrics_run_per_job_timeout_s()  # doctest: +SKIP
-  """
-  per_job = float(cfg.get_metrics_run_per_job_timeout_s())
-  if per_job > 0.0:
-    return per_job
-  return max(5.0, float(cfg.get_metrics_run_stall_timeout_s()))
-
-
-def _run_compute_metrics_timed(
-  metrics_obj: Any,
-  job: Any,
-  timeout_s: Any,
-) -> Any:
-  """
-  Run ``compute_metrics`` with a Unix wall-clock cap (no-op when ``timeout_s <=.
-  
-    0``).
-  
-  Args:
-    metrics_obj (Any): Metrics obj passed to this helper.
-    job (Any): Job record (Django ``job_data`` or job-like mapping).
-    timeout_s (Any): Timeout s passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _run_compute_metrics_timed(None, None, None)  # doctest: +SKIP
-  """
-  timeout_s = float(timeout_s)
-  if timeout_s <= 0.0:
-    return metrics_obj.compute_metrics(job)
-  if not hasattr(signal, "SIGALRM"):
-    return metrics_obj.compute_metrics(job)
-
-  jid = getattr(job, "jid", "?")
-
-  def _handler(signum: Any, frame: Any) -> None:
-    """
-    Internal helper to handle handler.
-    
-    Args:
-      signum (Any): Signum passed to this helper.
-      frame (Any): Frame passed to this helper.
-    
-    Returns:
-      None
-    
-    Raises:
-      MetricsComputeJobTimeoutError: Raised when ``_handler`` hits a
-      ``MetricsComputeJobTimeoutError`` failure path.
-    
-    Examples:
-      >>> _handler(None, None)  # doctest: +SKIP
-    """
-    del signum, frame
-    raise MetricsComputeJobTimeoutError(
-        "compute_metrics exceeded {:.0f}s for jid {}".format(timeout_s, jid))
-
-  previous = signal.getsignal(signal.SIGALRM)
-  signal.signal(signal.SIGALRM, _handler)
-  try:
-    if hasattr(signal, "setitimer"):
-      signal.setitimer(signal.ITIMER_REAL, timeout_s)
-    else:
-      signal.alarm(max(1, int(timeout_s)))
-    return metrics_obj.compute_metrics(job)
-  finally:
-    if hasattr(signal, "setitimer"):
-      signal.setitimer(signal.ITIMER_REAL, 0)
-    else:
-      signal.alarm(0)
-    signal.signal(signal.SIGALRM, previous)
 
 
 def _coerced_metric_name_set(metric_names: Any) -> Any:
@@ -1286,8 +865,8 @@ def _metric_type_events_feasible(schema: Any, typ: Any, events: Any) -> Any:
   
   Same contract as SummaryPlot ``_summary_type_events_feasible``: empty/unknown
   schema allows ORM; populated schema skips impossible type/event probes so
-  cascading ``job_arc`` helpers do not burn the per-job wall clock on empty
-  ``host_data`` scans (production: MetricsComputeJobTimeoutError in list(qs)).
+  cascading ``job_arc`` helpers do not burn the database statement budget on
+  empty ``host_data`` scans.
   
   Args:
     schema (Any): Schema passed to this helper.
@@ -1690,12 +1269,10 @@ class _JobForMetrics:
 @contextlib.contextmanager
 def _pg_session_statement_timeout_for_metrics_worker() -> Iterator[Any]:
   """
-  Apply ``metrics_worker_statement_timeout_ms`` for pool compute, then restore.
+  Apply ``metrics_worker_statement_timeout_ms`` for thread compute, then restore.
   
-  Default ``0`` disables PostgreSQL ``statement_timeout`` for the compute window
-  so legitimate multi-host ``host_data`` scans are not canceled at the web/API
-  120s session limit. Per-job SIGALRM remains the wall-clock backstop. Restore
-  is best-effort (swallow OperationalError/DatabaseError on dead connections).
+  Restore is best-effort and swallows connection errors. The statement timeout
+  bounds database work; the parent drain stall clock bounds batch progress.
   
   Yields:
     Iterator[Any]: Open return polymorphism from
@@ -1736,7 +1313,7 @@ def _pg_session_statement_timeout_for_metrics_worker() -> Iterator[Any]:
 
 def _unwrap(args: Any) -> Any:
   """
-  Wrapper for pool: call compute_metrics on the job. Used by Metrics.run.
+  Compute one job in a titled worker thread for ``Metrics.run``.
   
   Args:
     args (Any): Args passed to this helper.
@@ -1750,19 +1327,12 @@ def _unwrap(args: Any) -> Any:
   Examples:
     >>> _unwrap(None)  # doctest: +SKIP
   """
-  # Fork inherits the parent's DB socket on Linux; Django named cursors (iterator)
-  # must never share one PostgreSQL session across processes (#close_all_after_fork).
-  connections.close_all()
-  close_old_connections()
   metrics_obj, job = args
 
-  # Lost DB connections in worker processes can manifest as "lost
+  # Lost DB connections in worker threads can manifest as "lost
   # synchronization with server" DatabaseErrors. Retry once with a clean
-  # connection; on repeated failure, log and skip this job rather than
-  # crashing the entire pool.
+  # thread-local connection; on repeated failure, skip this job.
   try:
-    per_job_timeout_s = _resolve_metrics_run_per_job_timeout_s()
-
     def _compute() -> Any:
       """
       Internal helper to compute.
@@ -1774,8 +1344,7 @@ def _unwrap(args: Any) -> Any:
         >>> _compute()  # doctest: +SKIP
       """
       with _pg_session_statement_timeout_for_metrics_worker():
-        return _run_compute_metrics_timed(
-            metrics_obj, job, per_job_timeout_s)
+        return metrics_obj.compute_metrics(job)
 
     payload = run_with_db_retry(_compute, attempts=2)
     if not isinstance(payload, dict):
@@ -1819,14 +1388,6 @@ def _unwrap(args: Any) -> Any:
         "error_type": type(exc).__name__,
         "error_message": str(exc),
     }
-  finally:
-    from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
-        release_spawn_pool_worker_memory,
-    )
-
-    release_spawn_pool_worker_memory()
-
-
 def _persist_metrics_batch(
   job_results: Any,
   distinct_time_count: int,
@@ -2036,90 +1597,6 @@ def _persist_metrics_payload(payload: Any) -> Any:
   )
 
 
-def _persist_metrics_payload_bounded(
-  payload: Any,
-  *,
-  wall_timeout_s: float,
-) -> Any:
-  """
-  Persist one worker payload with an optional Unix wall-clock bound.
-
-  When ``wall_timeout_s > 0``, a hang inside ``_persist_metrics_payload``
-  raises ``MetricsPersistWallTimeoutError`` so ``_drain_metrics_imap`` can
-  record a ``parent_persist_timeout`` outcome and keep the stall clock honest.
-
-  Args:
-    payload (Any): Worker payload mapping for one jid.
-    wall_timeout_s (float): Stall/wall budget in seconds; ``<= 0`` disables.
-
-  Returns:
-    Any: Per-jid outcome dict from ``_persist_metrics_payload`` (or a
-    timeout/failure outcome when the wall clock fires).
-
-  Examples:
-    >>> _persist_metrics_payload_bounded({"jid": "1", "status": "ok"}, wall_timeout_s=0)
-  """
-  timeout_s = float(wall_timeout_s)
-  if timeout_s <= 0.0 or not hasattr(signal, "SIGALRM"):
-    return _persist_metrics_payload(payload)
-  jid = _metrics_jid_value(payload.get("jid") if isinstance(payload, dict) else None)
-
-  def _handler(signum: Any, frame: Any) -> None:
-    """
-    Raise when parent persist exceeds the stall wall clock.
-
-    Args:
-      signum (Any): Signal number (unused).
-      frame (Any): Interrupted frame (unused).
-
-    Returns:
-      None
-
-    Raises:
-      MetricsPersistWallTimeoutError: Always raised on the alarm.
-
-    Examples:
-      >>> _handler(None, None)  # doctest: +SKIP
-    """
-    del signum, frame
-    raise MetricsPersistWallTimeoutError(
-        "parent persist exceeded {:.0f}s for jid {}".format(timeout_s, jid)
-    )
-
-  previous = signal.getsignal(signal.SIGALRM)
-  signal.signal(signal.SIGALRM, _handler)
-  try:
-    if hasattr(signal, "setitimer"):
-      signal.setitimer(signal.ITIMER_REAL, timeout_s)
-    else:
-      signal.alarm(max(1, int(timeout_s)))
-    return _persist_metrics_payload(payload)
-  except MetricsPersistWallTimeoutError as exc:
-    log_print(
-        "Metrics.run parent persist wall timeout jid={0} elapsed_budget_s={1:.3f} "
-        "error={2!r}".format(jid, timeout_s, exc),
-        flush=True,
-    )
-    return _metrics_run_outcome(
-        jid,
-        ok=False,
-        status="parent_persist_timeout",
-        persisted_rows=0,
-        distinct_time_count=(
-            payload.get("distinct_time_count") if isinstance(payload, dict) else None
-        ),
-        persist_s=timeout_s,
-        error_type=type(exc).__name__,
-        error_message=str(exc),
-    )
-  finally:
-    if hasattr(signal, "setitimer"):
-      signal.setitimer(signal.ITIMER_REAL, 0)
-    else:
-      signal.alarm(0)
-    signal.signal(signal.SIGALRM, previous)
-
-
 def _drain_metrics_imap(
   active_pool: Any,
   tasks: Any,
@@ -2162,14 +1639,8 @@ def _drain_metrics_imap(
   Examples:
     >>> _drain_metrics_imap(None, None, None, None, None)  # doctest: +SKIP
   """
-  # multiprocessing IMap* timeout polling is only reliable with chunksize=1.
-  # Larger chunks can block indefinitely on ``next(timeout=...)`` and bypass
-  # stall detection (observed as inflight batches with zero completions).
+  # Submit individual Futures so completion and memory release remain per job.
   submit_chunksize = 1
-  abort_if_metrics_pool_workers_dead(
-      active_pool,
-      context="Metrics.run imap_unordered (preflight)",
-  )
   iterator = active_pool.imap_unordered(
       _unwrap,
       tasks,
@@ -2177,6 +1648,7 @@ def _drain_metrics_imap(
   )
   iterator_next = getattr(iterator, "next", None)
   iterator_next_supports_timeout = callable(iterator_next)
+  iterator_close = getattr(iterator, "close", None)
   total = len(tasks)
   done = 0
   last_progress_at = time.monotonic()
@@ -2209,11 +1681,6 @@ def _drain_metrics_imap(
       pass
 
   while done < total:
-    abort_if_metrics_pool_workers_dead(
-        active_pool,
-        context="Metrics.run imap_unordered",
-    )
-    maybe_reap_metrics_main_zombie_children(context="metrics_run_poll")
     try:
       if iterator_next_supports_timeout:
         payload = iterator_next(timeout=float(max(0.0, poll_timeout_s)))
@@ -2221,10 +1688,14 @@ def _drain_metrics_imap(
         # Some pool adapters/tests return plain generators with ``__next__`` only.
         payload = next(iterator)
     except DatabaseUnavailableExit:
+      if callable(iterator_close):
+        iterator_close()
       raise
-    except multiprocessing.TimeoutError:
+    except TimeoutError:
       stalled_for = time.monotonic() - last_progress_at
       if stalled_for >= max(0.0, float(stall_timeout_s)):
+        if callable(iterator_close):
+          iterator_close()
         pending_jobs = [
             job
             for _metrics_obj, job in tasks
@@ -2261,6 +1732,8 @@ def _drain_metrics_imap(
         )
       continue
     except StopIteration:
+      if callable(iterator_close):
+        iterator_close()
       break
     if not payload:
       outcomes.append(
@@ -2280,15 +1753,14 @@ def _drain_metrics_imap(
     # persist cannot look like worker progress (stall audit critical #1).
     _emit_progress("persist")
     outcomes.append(
-        _persist_metrics_payload_bounded(
-            payload,
-            wall_timeout_s=float(max(0.0, stall_timeout_s)),
-        )
+        _persist_metrics_payload(payload)
     )
     completed_jids.add(_metrics_jid_value(payload.get("jid")))
     done += 1
     last_progress_at = time.monotonic()
     _emit_progress("metrics")
+  if callable(iterator_close):
+    iterator_close()
   return outcomes
 
 
@@ -2555,7 +2027,7 @@ def _host_data_metric_rows_with_host_chunk_retry(
 
 # Prefer host×time chunks sized like jid_table's default (16) so ~48-host jobs
 # issue several bounded queries; pairs with metrics_worker_statement_timeout_ms
-# so chunk-on-timeout split can fire before the 900s SIGALRM. Must stay equal to
+# so chunk-on-timeout split can fire before the batch stall budget. Equal to
 # ``jid_table.JID_TABLE_HOST_QUERY_BATCH`` (drift-tested).
 METRICS_HOST_QUERY_BATCH = 16
 
@@ -2699,6 +2171,7 @@ class Metrics():
   Computes simple and complex metrics for a list of jobs in parallel and writes.
   
   Attributes:
+    _pool_lock: Reentrant lock guarding shared-pool replacement.
     _shared_pool: Attribute.
     _shared_pool_kind: Attribute.
     complex_metrics_list: Attribute.
@@ -2875,195 +2348,61 @@ class Metrics():
     ]
     self._shared_pool = None
     self._shared_pool_kind = None
+    self._pool_lock = threading.RLock()
 
-  def __getstate__(self) -> Any:
+  def _worker_thread_count(self) -> int:
     """
-    Exclude non-picklable runtime pool when sending self to workers.
-    
-    Returns:
-      Any: Open return polymorphism from ``__getstate__``: concrete type
-      depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-      empty).
-    
-    Examples:
-      >>> __getstate__()  # doctest: +SKIP
-    """
-    state = dict(self.__dict__)
-    state["_shared_pool"] = None
-    state["_shared_pool_kind"] = None
-    return state
+    Return the configured in-process metrics worker count.
 
-  def __setstate__(self, state: Any) -> None:
-    """
-    Internal helper to handle setstate.
-    
-    Args:
-      state (Any): State passed to this helper.
-    
     Returns:
-      None
-    
-    Examples:
-      >>> __setstate__(None)  # doctest: +SKIP
-    """
-    self.__dict__.update(state)
-    if "_shared_pool" not in self.__dict__:
-      self._shared_pool = None
-    if "_shared_pool_kind" not in self.__dict__:
-      self._shared_pool_kind = None
+      int: Absolute thread count.
 
-  def _worker_process_count(self) -> Any:
-    """
-    Internal helper to handle worker process count.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
     Examples:
-      >>> Metrics()._worker_process_count()  # doctest: +SKIP
+      >>> Metrics()._worker_thread_count() > 0
+      True
     """
-    return cfg.get_metrics_pool_processes()
-
-  def _imap_chunksize(self, job_count: int, threads: Any) -> Any:
-    """
-    Internal helper to handle imap chunksize.
-    
-    Args:
-      job_count (int): Integer value for job count.
-      threads (Any): Threads passed to this helper.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> Metrics()._imap_chunksize(0, None)  # doctest: +SKIP
-    """
-    if job_count <= 0:
-      return 1
-    # Balance IPC overhead and fairness.
-    return max(1, job_count // (threads * 4))
+    return max(1, int(cfg.get_metrics_pool_processes()))
 
   def ensure_pool(self, pool_kind: str = "metrics-pool") -> Any:
     """
-    Create and retain a shared worker pool for repeated run() calls.
-
-    Same-kind reuse requires alive workers at the configured absolute width
-    (``metrics_pool_processes``) **and** a live ``Pool._worker_handler``
-    thread. Undersized pools or a dead worker-handler are hard-reset and
-    recreated so post-``/pub`` attrition or a wedged terminate cannot silently
-    shrink capacity or disable reaping.
+    Create and retain a titled in-process worker pool.
 
     Args:
-      pool_kind (str): Stable pool label for process titles
+      pool_kind (str): Stable role label for thread titles
       (``metrics-pool`` or ``public-ef-pool``).
 
     Returns:
-      Any: Live ``multiprocessing.Pool`` retained on this instance.
+      Any: Live ``SyncTimedbThreadPool`` retained on this instance.
 
     Examples:
       >>> Metrics().ensure_pool("metrics-pool")  # doctest: +SKIP
     """
-    configured = int(self._worker_process_count())
-    if (
-        self._shared_pool is not None
-        and self._shared_pool_kind == pool_kind
-    ):
-      alive = int(alive_pool_worker_count(self._shared_pool))
-      handler = getattr(self._shared_pool, "_worker_handler", None)
-      handler_alive = True
-      if handler is not None and hasattr(handler, "is_alive"):
-        try:
-          handler_alive = bool(handler.is_alive())
-        except Exception:
-          handler_alive = False
-      if alive >= configured and handler_alive:
+    configured = self._worker_thread_count()
+    with self._pool_lock:
+      if (
+          self._shared_pool is not None
+          and self._shared_pool_kind == pool_kind
+          and bool(getattr(self._shared_pool, "is_active", False))
+      ):
         return self._shared_pool
-      if not handler_alive:
-        log_print(
-            "WARN: metrics pool worker_handler dead pool_kind=%s "
-            "configured=%s alive=%s; recreating"
-            % (pool_kind, configured, alive),
-            flush=True,
-        )
-      else:
-        log_print(
-            "WARN: metrics pool undersized pool_kind=%s configured=%s "
-            "alive=%s pool_processes=%s; recreating"
-            % (
-                pool_kind,
-                configured,
-                alive,
-                getattr(self._shared_pool, "_processes", None),
-            ),
-            flush=True,
-        )
-      self.reset_pool_hard()
-    elif self._shared_pool is not None:
-      self.close_pool()
-    self._shared_pool_kind = pool_kind
-    self._shared_pool = multiprocessing.Pool(
-        **_metrics_pool_create_kwargs(configured, pool_kind),
-    )
-    alive = int(alive_pool_worker_count(self._shared_pool))
-    log_print(
-        "INFO: metrics pool created pool_kind=%s configured=%s "
-        "pool_processes=%s alive=%s"
-        % (
-            pool_kind,
-            configured,
-            getattr(self._shared_pool, "_processes", None),
-            alive,
-        ),
-        flush=True,
-    )
-    return self._shared_pool
+      if self._shared_pool is not None:
+        self.close_pool()
+      self._shared_pool_kind = pool_kind
+      self._shared_pool = SyncTimedbThreadPool(
+          max_workers=configured,
+          thread_role=pool_kind,
+          process_title="update_metrics.py",
+      )
+      log_print(
+          "INFO: metrics thread pool created pool_kind=%s configured=%s"
+          % (pool_kind, configured),
+          flush=True,
+      )
+      return self._shared_pool
 
-  def handle_pool_worker_exit(
-    self,
-    exc: MultiprocessingWorkerExitError,
-  ) -> Any:
-    """
-    Reset and recreate the shared metrics pool after unexpected worker loss.
-
-    OOM / SIGKILL exits remain fatal (re-raised). Exit-zero attrition and
-    recycle-stuck deaths hard-reset the pool and recreate at the configured
-    absolute width so the scheduler cannot continue with an undersized pool.
-
-    Args:
-      exc (MultiprocessingWorkerExitError): Worker-exit error from a metrics
-      health check.
-
-    Returns:
-      Any: Fresh shared pool after non-fatal recovery.
-
-    Raises:
-      MultiprocessingWorkerExitError: Re-raised for OOM/SIGKILL causes.
-      exc: Same fatal worker-exit instance when OOM/SIGKILL is detected.
-
-    Examples:
-      >>> Metrics().handle_pool_worker_exit(
-      ...     MultiprocessingWorkerExitError("x", dead_pids=[1])
-      ... )  # doctest: +SKIP
-    """
-    if _metrics_worker_exit_is_oom_or_sigkill(exc):
-      raise exc
-    pool_kind = self._shared_pool_kind or "metrics-pool"
-    log_print(
-        "WARN: metrics pool worker exit context=%s likely_cause=%s "
-        "dead_pids=%s; resetting and recreating pool_kind=%s"
-        % (
-            getattr(exc, "context", "") or "unknown",
-            getattr(exc, "likely_cause", "") or "unknown",
-            list(getattr(exc, "dead_pids", ()) or ()),
-            pool_kind,
-        ),
-        flush=True,
-    )
-    self.reset_pool_hard()
-    return self.ensure_pool(pool_kind=pool_kind)
   def close_pool(self) -> None:
     """
-    Close retained worker pool (idempotent).
+    Gracefully close the retained thread pool (idempotent).
 
     Returns:
       None
@@ -3071,24 +2410,21 @@ class Metrics():
     Examples:
       >>> Metrics().close_pool()  # doctest: +SKIP
     """
-    if self._shared_pool is None:
-      return
-    pool_kind = self._shared_pool_kind or "metrics-pool"
-    _close_pool_bounded(
-        self._shared_pool,
-        METRICS_POOL_JOIN_TIMEOUT_S,
-        pool_kind=pool_kind,
-    )
-    self._shared_pool = None
-    self._shared_pool_kind = None
+    with self._pool_lock:
+      pool = self._shared_pool
+      self._shared_pool = None
+      self._shared_pool_kind = None
+    if pool is not None:
+      pool.close()
+      pool.join()
 
   def reset_pool_hard(self) -> None:
     """
-    Terminate the retained metrics worker pool with abandon-kill + reap.
+    Detach the retained pool and cancel work that has not started.
 
-    Detach the pool reference first so ``ensure_pool()`` can create a fresh
-    pool. Teardown uses ``abandon_after_kill`` (never stdlib
-    ``Pool.terminate()``) so lingerers and zombies cannot wedge ``[main]``.
+    Python cannot kill a running thread. The old executor is therefore shut
+    down without waiting; a subsequent ``ensure_pool`` creates a fresh bounded
+    executor while any already-running call unwinds naturally.
 
     Returns:
       None
@@ -3096,20 +2432,12 @@ class Metrics():
     Examples:
       >>> Metrics().reset_pool_hard()  # doctest: +SKIP
     """
-    pool = self._shared_pool
-    if pool is None:
-      return
-    pool_kind = self._shared_pool_kind or "metrics-pool"
-    self._shared_pool = None
-    self._shared_pool_kind = None
-    try:
-      _terminate_pool_bounded(
-          pool,
-          METRICS_POOL_JOIN_TIMEOUT_S,
-          pool_kind=pool_kind,
-      )
-    except Exception:
-      pass
+    with self._pool_lock:
+      pool = self._shared_pool
+      self._shared_pool = None
+      self._shared_pool_kind = None
+    if pool is not None:
+      pool.terminate()
 
   # Compute metrics in parallel (Shared memory only)
   def run(
@@ -3119,9 +2447,7 @@ class Metrics():
     progress_callback: Any | None = None,
   ) -> Any:
     """
-    Run metric computation for each job in job_list in a process pool; persist.
-    
-      results via metrics_data.update_or_create.
+    Compute jobs in titled in-process threads and persist in the caller.
     
     Args:
       job_list (Any): Job list passed to this helper.
@@ -3144,56 +2470,34 @@ class Metrics():
       log_print("Please specify a job list.")
       return []
 
-    threads = self._worker_process_count()
-    pool_chunksize = self._imap_chunksize(len(job_list), threads)
+    threads = self._worker_thread_count()
     own_pool = pool is None
     active_pool = pool
     if active_pool is None:
-      active_pool = multiprocessing.Pool(
-          **_metrics_pool_create_kwargs(threads, "metrics-pool"),
+      active_pool = SyncTimedbThreadPool(
+          max_workers=threads,
+          thread_role="metrics-pool",
+          process_title="update_metrics.py",
       )
     tasks = [(self, job) for job in job_list]
     poll_timeout_s = cfg.get_metrics_run_poll_timeout_s()
     stall_timeout_s = cfg.get_metrics_run_stall_timeout_s()
     outcomes = []
     try:
-      try:
-        outcomes = _drain_metrics_imap(
-            active_pool,
-            tasks,
-            pool_chunksize,
-            poll_timeout_s=poll_timeout_s,
-            stall_timeout_s=stall_timeout_s,
-            progress_callback=progress_callback,
-        )
-      except IndexError:
-        # Rare pool/imap edge case (e.g. short batches); single-job tasks avoid it.
-        log_print(
-            "Metrics.run: imap raised IndexError (batch size=%s); retrying per-job."
-            % len(tasks),
-            flush=True,
-        )
-        for single in tasks:
-          outcomes.extend(_drain_metrics_imap(
-              active_pool,
-              [single],
-              1,
-              poll_timeout_s=poll_timeout_s,
-              stall_timeout_s=stall_timeout_s,
-              progress_callback=progress_callback,
-          ))
+      outcomes = _drain_metrics_imap(
+          active_pool,
+          tasks,
+          1,
+          poll_timeout_s=poll_timeout_s,
+          stall_timeout_s=stall_timeout_s,
+          progress_callback=progress_callback,
+      )
     except MetricsRunWorkerStallError as exc:
       log_print("Metrics.run: %s" % exc, flush=True)
-      reset_confirmed = False
       if own_pool:
-        try:
-          reset_confirmed = _terminate_pool_bounded(
-              active_pool,
-              METRICS_POOL_JOIN_TIMEOUT_S,
-          )
-          active_pool = None
-        except Exception:
-          pass
+        active_pool.terminate()
+        active_pool = None
+        reset_confirmed = True
       else:
         self.reset_pool_hard()
         reset_confirmed = self._shared_pool is None
@@ -3224,26 +2528,13 @@ class Metrics():
           partial_outcomes=exc.partial_outcomes,
           pending_jobs=exc.pending_jobs,
       )
-    except MultiprocessingWorkerExitError as exc:
-      if own_pool:
-        try:
-          _terminate_pool_bounded(
-              active_pool,
-              METRICS_POOL_JOIN_TIMEOUT_S,
-          )
-          active_pool = None
-        except Exception:
-          pass
-        raise
-      # Shared pool: recreate on non-OOM attrition; OOM/SIGKILL stays fatal.
-      self.handle_pool_worker_exit(exc)
-      raise
     except Exception as exc:
       _log_exception_details("Metrics.run failure", exc)
       raise
     finally:
       if own_pool and active_pool is not None:
-        _close_pool_bounded(active_pool, METRICS_POOL_JOIN_TIMEOUT_S)
+        active_pool.close()
+        active_pool.join()
     return outcomes
 
   def job_arc(
@@ -3327,8 +2618,8 @@ class Metrics():
       if not _metric_type_events_feasible(schema, typ, events):
         continue
       # Instantaneous total at each sample time (events × devices) is summed in
-      # SQL; pulling every device row into pandas burned the per-job wall clock
-      # on multi-node PMC jobs (MetricsComputeJobTimeoutError in job_arc).
+      # SQL; pulling every device row into pandas exhausted the statement
+      # budget on multi-node PMC jobs.
       rows = _host_data_metric_rows_batched(
           tkw,
           hosts,

@@ -18,15 +18,16 @@ globs: Dockerfile,services-conf/supervisord.conf
 | Operator `exec … python3` | PATH `python3` remains GIL; do **not** treat it as the ingest interpreter |
 | INI / env ABI switch | **Forbidden** — no `*_interpreter` keys, no resolver, no skip build-arg fallback to GIL for pipeline |
 | Missing `/opt/python3.14t` | Build must fail or those three supervisord programs fail to start — **no silent GIL fallback** |
-| Official Hub `3.14t` tag | Does not exist; compile matching **`Python-3.14.7.tgz`** with `--disable-gil --prefix=/opt/python3.14t` |
-| Dual pip | Install runtime deps into both `/usr/local` (cp314) and `/opt/python3.14t` (cp314t); **no** `/opt/hpcperfstats-ft` second tree. Image uses pip **`image-build`** MKL then **source-builds** numpy/numexpr/pandas with `--no-binary` against MKL (scipy not in the scientific stack). Host `.venv` keeps PyPI wheels — never install `.[image-build]` on macOS ARM |
+| Official Hub `3.14t` tag | Does not exist; compile matching **`Python-3.14.7.tgz`** with `--disable-gil --prefix=/opt/python3.14t` and **`CFLAGS`/`CXXFLAGS` `-O3 -march=native`** (same prod-host native policy as the MKL stack; GIL web still uses Hub `python:3.14.7-trixie` binaries) |
+| Dual pip | Install runtime deps into both `/usr/local` (cp314) and `/opt/python3.14t` (cp314t); **no** `/opt/hpcperfstats-ft` second tree. Image uses pip **`image-build`** MKL then **source-builds** numpy (MKL BLAS/LAPACK + `-Dcpu-baseline=native` / `-Dcpu-dispatch=max`), numexpr (Intel VML via `site.cfg` + **`--no-deps`**), and pandas with **`--no-binary` + `--no-deps`** and **`-march=native`** (scipy not in the scientific stack). **`--no-deps` is mandatory** on **both** numexpr and pandas so pip cannot replace MKL numpy with a manylinux OpenBLAS wheel; re-assert `numpy.show_config(mode="dicts")` still mentions MKL after each. **`python-dateutil`** (pandas runtime dep; pulls `six`) is a `project.dependencies` pin installed in the **rest** wheel layer; **`import pandas`** smoke runs **after** that rest install. **`image-build` includes `versioneer[toml]`** so pandas meson `generate_version.py` works under `--no-build-isolation`. **Build images on the prod host that runs them** — `native` is not portable across CPU generations. Host `.venv` keeps PyPI wheels — never install `.[image-build]` on macOS ARM |
 | Host `.venv` | GIL **3.14** only (Homebrew `python@3.14`); host 3.14t not required for pytest |
 
 ## Follow-on (not this interpreter change)
 
-**listend** live-DB workers are already in-process threads sharing ordinary Python objects (no `/dev/shm`, no Redis payload bus). Remaining follow-on: `update_metrics` process pools (and any leftover `sync_timedb` spawn callers). Do **not**:
+**listend**, **sync_timedb**, and **update_metrics** workers use in-process threads sharing ordinary Python objects (no `/dev/shm` payload bus and no Redis payload bus). Do **not**:
 
 - Restore listend spawn Processes or POSIX SharedMemory
+- Restore update_metrics process pools, SIGALRM per-job timers, or process-worker fallbacks
 - Use Redis as a worker-data bus for daemon-private queues
 - Remove the in-process job store / disk sidecar (`.sync_timedb_job_store.json`) without a replacement durability path
 - Put gunicorn on 3.14t
@@ -34,7 +35,7 @@ globs: Dockerfile,services-conf/supervisord.conf
 ## Validation
 
 - Unit: `test_dockerfile_python_deps_cache.py`, `test_dockerfile_mkl_source_stack.py`, `test_pyproject_image_build_extra.py`, `test_supervisord_pipeline_python.py`, `test_hpcperfstats_ini_example.py` (no interpreter keys), `test_python_abi_startup_log.py`
-- Compose smoke: web `python3` is 3.14.7 GIL; live pipeline argv is `/opt/python3.14t/...` and logs `python_abi … Py_GIL_DISABLED=1`; after image rebuild, GIL and 3.14t `numpy.show_config()` mention MKL
+- Compose smoke: web `python3` is 3.14.7 GIL; live pipeline argv is `/opt/python3.14t/...` and logs `python_abi … Py_GIL_DISABLED=1`; after image rebuild, GIL and 3.14t `numpy.show_config(mode="dicts")` mention MKL and `numexpr.use_vml` is true
 
 ## Overlap
 

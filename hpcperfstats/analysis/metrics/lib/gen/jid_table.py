@@ -280,12 +280,11 @@ def host_data_restore_time_column(df: Any) -> Any:
 
 def is_metrics_compute_control_flow_error(exc: Any) -> Any:
   """
-  True for wall-clock cancellations that must never be swallowed by a fallback.
-  
-  ``update_metrics`` pool workers bound each job with ``SIGALRM``
-  (``MetricsComputeJobTimeoutError``, a ``TimeoutError``). The alarm is one-
-    shot,
-  so retrying a slower path inside ``except Exception`` runs unbounded.
+  True for timeout control flow that must never be swallowed by a fallback.
+
+  Thread workers rely on database statement timeouts and parent no-progress
+  detection. A timeout escaping a bounded query must propagate so an
+  ``except Exception`` fallback cannot start a slower unbounded path.
   
   Args:
     exc (Any): Exception instance being classified or logged.
@@ -2869,7 +2868,7 @@ class jid_table:
         Any: DataFrame with host, time[,dev], sum_val columns (possibly empty).
 
       Raises:
-        Exception: Control-flow timeouts (SIGALRM) are re-raised.
+        Exception: Database timeout control flow is re-raised.
 
       Examples:
         >>> True

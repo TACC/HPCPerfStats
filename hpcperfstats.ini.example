@@ -117,12 +117,8 @@ archive_dir = %(data_dir)s/archive
 # Daily sealed monitor archive directory.
 daily_archive_dir = %(data_dir)s/daily_archive
 
-# Absolute update_metrics + plot/detail prewarm process pool size (default 24).
+# Absolute update_metrics + plot/detail prewarm thread pool size (default 24).
 # metrics_pool_processes = 24
-
-# Recycle metrics-pool workers after N tasks; 0 = unlimited (default 16).
-# Caps per-worker RSS growth; pair with metrics_pool_processes and cgroup headroom.
-# metrics_pool_maxtasksperchild = 16
 
 # Metrics scheduler: strict_date, global_fifo, or global_priority (default global_priority).
 # metrics_scheduler_mode = global_priority
@@ -158,11 +154,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max no-progress seconds in Metrics.run before abort (default 900).
 # metrics_run_stall_timeout_s = 900
 
-# Per-job compute wall clock in pool workers; 0 uses metrics_run_stall_timeout_s (default 0).
-# metrics_run_per_job_timeout_s = 0
-
-# statement_timeout ms for metrics pool compute (default 120000). Arms host__in
-# chunk-on-timeout split; 0 disables session timeout (SIGALRM remains the wall clock).
+# statement_timeout ms for metrics thread compute; 0 disables it (default 120000).
 # metrics_worker_statement_timeout_ms = 120000
 
 # statement_timeout ms for metrics persistence (default 120000).

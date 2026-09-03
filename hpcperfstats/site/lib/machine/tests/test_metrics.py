@@ -1938,7 +1938,7 @@ def test_metric_type_events_feasible_skips_impossible_types():
 
 @pytest.mark.django_db(databases=[])
 def test_job_arc_skips_orm_when_schema_rules_out_type(monkeypatch):
-  """Regression: empty vendor probes must not list(qs) until 900s SIGALRM."""
+  """Empty vendor probes must not spend the database statement budget."""
   from types import SimpleNamespace
 
   from django.utils import timezone as django_tz

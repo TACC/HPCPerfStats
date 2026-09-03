@@ -120,7 +120,7 @@ def test_time_imbalance_short_timeline_returns_none():
 
 
 def test_time_imbalance_large_nt_completes_under_budget():
-  """Regression for MetricsComputeJobTimeoutError on long timelines (O(n^2) path)."""
+  """Keep long-timeline imbalance work below the scheduler stall budget."""
   # nt=800 was enough to make the old nested trapz path dominate wall clock;
   # O(n) must finish well under 2s on a single host.
   u = _synthetic_cpu_job(nt=800, nhosts=1, phase_drop_at=400)

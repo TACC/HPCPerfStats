@@ -7,11 +7,13 @@ Attributes:
   SessionSingleFlightExecutor: Single-worker background executor.
   SyncTimedbThreadPool: Titled in-process worker pool.
   ThreadPoolAsyncResult: Future wrapper with ready/get.
+  ThreadPoolUnorderedIterator: Completion-order Future iterator.
 """
 
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from queue import Empty, Queue
 from typing import Any, Callable, Iterable, Iterator, Optional, Tuple, TypeVar
 
 from django.db import close_old_connections
@@ -88,6 +90,179 @@ class ThreadPoolAsyncResult:
     return self._future.result(timeout=timeout)
 
 
+class ThreadPoolUnorderedIterator:
+  """
+  Completion-order iterator compatible with ``Pool.imap_unordered``.
+
+  The iterator owns only completed Future references waiting to be consumed.
+  Executor internals own pending Futures; consumed results are released
+  immediately instead of accumulating for the lifetime of the pool.
+
+  Attributes:
+    _completed: Queue receiving Futures as each submitted task finishes.
+    _executor: Executor that owns the bounded active Futures.
+    _fn: Callable applied to each lazily consumed input.
+    _inflight: Number of submitted results not yet consumed.
+    _items: Lazy source iterator; only worker-width inputs are retained.
+    _exhausted: True after the source iterator is empty.
+    _max_inflight: Maximum submitted Future count.
+    _closed: True after unsubmitted source references are released.
+  """
+
+  def __init__(
+    self,
+    executor: ThreadPoolExecutor,
+    fn: Callable[[Any], Any],
+    items: Iterable[Any],
+  ) -> None:
+    """
+    Submit items and enqueue each Future on completion.
+
+    Args:
+      executor (ThreadPoolExecutor): Executor accepting submitted work.
+      fn (Callable[[Any], Any]): One-argument worker callable.
+      items (Iterable[Any]): Work items submitted exactly once.
+
+    Returns:
+      None
+
+    Examples:
+      >>> executor = ThreadPoolExecutor(max_workers=1)
+      >>> iterator = ThreadPoolUnorderedIterator(executor, lambda x: x, [1])
+      >>> iterator.next(timeout=1)
+      1
+      >>> executor.shutdown()
+    """
+    self._completed: Queue[Future[Any]] = Queue()
+    self._executor = executor
+    self._fn = fn
+    self._items = iter(items)
+    self._inflight = 0
+    self._exhausted = False
+    self._max_inflight = max(1, int(executor._max_workers))
+    self._closed = False
+    self._fill_available_slots()
+
+  def _fill_available_slots(self) -> None:
+    """
+    Submit source items until the worker-width bound is full.
+
+    Returns:
+      None
+
+    Examples:
+      >>> executor = ThreadPoolExecutor(max_workers=1)
+      >>> iterator = ThreadPoolUnorderedIterator(executor, lambda x: x, [])
+      >>> iterator._fill_available_slots()
+      >>> executor.shutdown()
+    """
+    while (
+        not self._closed
+        and not self._exhausted
+        and self._inflight < self._max_inflight
+    ):
+      try:
+        item = next(self._items)
+      except StopIteration:
+        self._exhausted = True
+        break
+      future = self._executor.submit(self._fn, item)
+      self._inflight += 1
+      future.add_done_callback(self._completed.put)
+
+  def __iter__(self) -> "ThreadPoolUnorderedIterator":
+    """
+    Return this completion iterator.
+
+    Returns:
+      ThreadPoolUnorderedIterator: This iterator.
+
+    Examples:
+      >>> executor = ThreadPoolExecutor(max_workers=1)
+      >>> iterator = ThreadPoolUnorderedIterator(executor, lambda x: x, [])
+      >>> iter(iterator) is iterator
+      True
+      >>> executor.shutdown()
+    """
+    return self
+
+  def __next__(self) -> Any:
+    """
+    Return the next completed result, waiting without a timeout.
+
+    Returns:
+      Any: Value returned by the next completed task.
+
+    Raises:
+      StopIteration: When every submitted result was consumed.
+
+    Examples:
+      >>> executor = ThreadPoolExecutor(max_workers=1)
+      >>> next(ThreadPoolUnorderedIterator(executor, lambda x: x, [2]))
+      2
+      >>> executor.shutdown()
+    """
+    return self.next()
+
+  def next(self, timeout: float | None = None) -> Any:
+    """
+    Return the next completed result within ``timeout`` seconds.
+
+    Args:
+      timeout (float | None): Maximum wait, or None to block.
+
+    Returns:
+      Any: Value returned by the next completed task.
+
+    Raises:
+      Exception: When the completed worker Future failed.
+      StopIteration: When every submitted result was consumed.
+      TimeoutError: When no result finishes before ``timeout``.
+
+    Examples:
+      >>> executor = ThreadPoolExecutor(max_workers=1)
+      >>> iterator = ThreadPoolUnorderedIterator(executor, lambda x: x, [3])
+      >>> iterator.next(timeout=1)
+      3
+      >>> executor.shutdown()
+    """
+    if self._closed or (self._inflight <= 0 and self._exhausted):
+      raise StopIteration
+    try:
+      future = self._completed.get(timeout=timeout)
+    except Empty as exc:
+      raise TimeoutError from exc
+    self._inflight -= 1
+    try:
+      result = future.result()
+    except BaseException:
+      self.close()
+      raise
+    self._fill_available_slots()
+    if self._inflight <= 0 and self._exhausted:
+      self.close()
+    return result
+
+  def close(self) -> None:
+    """
+    Release the unsubmitted input source without waiting for running tasks.
+
+    Returns:
+      None
+
+    Examples:
+      >>> executor = ThreadPoolExecutor(max_workers=1)
+      >>> iterator = ThreadPoolUnorderedIterator(executor, lambda x: x, [])
+      >>> iterator.close()
+      >>> executor.shutdown()
+    """
+    if self._closed:
+      return
+    self._closed = True
+    self._exhausted = True
+    self._items = iter(())
+
+
 class SyncTimedbThreadPool:
   """
   ThreadPoolExecutor with a multiprocessing.Pool apply_async surface.
@@ -98,6 +273,8 @@ class SyncTimedbThreadPool:
     _executor: Underlying thread pool.
     _initargs: Initializer positional arguments.
     _initializer: Optional per-task initializer.
+    _processes: Compatibility worker count used for bounded inflight work.
+    _shutdown: True after close or terminate refuses new submissions.
   """
 
   def __init__(
@@ -130,10 +307,28 @@ class SyncTimedbThreadPool:
     self.thread_role = str(thread_role)
     self._initializer = initializer
     self._initargs = tuple(initargs)
+    self._processes = max(1, int(max_workers))
+    self._shutdown = False
     self._executor = ThreadPoolExecutor(
-        max_workers=max(1, int(max_workers)),
+        max_workers=self._processes,
         thread_name_prefix=self.thread_role,
     )
+
+  @property
+  def is_active(self) -> bool:
+    """
+    Return whether the pool still accepts submissions.
+
+    Returns:
+      bool: True before close or terminate.
+
+    Examples:
+      >>> pool = SyncTimedbThreadPool(max_workers=1, thread_role="x")
+      >>> pool.is_active
+      True
+      >>> pool.terminate()
+    """
+    return not self._shutdown
 
   def apply_async(
     self,
@@ -192,6 +387,64 @@ class SyncTimedbThreadPool:
 
     return ThreadPoolAsyncResult(self._executor.submit(_run))
 
+  def imap_unordered(
+    self,
+    fn: Callable[[Any], Any],
+    items: Iterable[Any],
+    chunksize: int = 1,
+  ) -> ThreadPoolUnorderedIterator:
+    """
+    Submit one-argument work and yield results in completion order.
+
+    Args:
+      fn (Callable[[Any], Any]): Worker callable.
+      items (Iterable[Any]): Work items submitted exactly once.
+      chunksize (int): Compatibility value; threads submit individual items.
+
+    Returns:
+      ThreadPoolUnorderedIterator: Iterator with timeout-aware ``next``.
+
+    Raises:
+      ValueError: When ``chunksize`` is less than one.
+
+    Examples:
+      >>> pool = SyncTimedbThreadPool(max_workers=1, thread_role="x")
+      >>> list(pool.imap_unordered(lambda x: x + 1, [1], chunksize=1))
+      [2]
+      >>> pool.close(); pool.join()
+    """
+    if int(chunksize) < 1:
+      raise ValueError("chunksize must be >= 1")
+
+    def _run(item: Any) -> Any:
+      """
+      Apply worker setup around one iterator item.
+
+      Args:
+        item (Any): Work item passed to ``fn``.
+
+      Returns:
+        Any: Value returned by ``fn``.
+
+      Examples:
+        >>> callable(_run)
+        True
+      """
+      set_daemon_thread_title(
+          "",
+          script_name=self.process_title,
+          role=self.thread_role,
+      )
+      close_old_connections()
+      if self._initializer is not None:
+        self._initializer(*self._initargs)
+      try:
+        return fn(item)
+      finally:
+        close_old_connections()
+
+    return ThreadPoolUnorderedIterator(self._executor, _run, items)
+
   def close(self) -> None:
     """
     Refuse new work; existing jobs may still finish.
@@ -203,6 +456,7 @@ class SyncTimedbThreadPool:
       >>> pool = SyncTimedbThreadPool(max_workers=1, thread_role="ingest-pool")
       >>> pool.close()
     """
+    self._shutdown = True
     self._executor.shutdown(wait=False, cancel_futures=False)
 
   def terminate(self) -> None:
@@ -216,6 +470,7 @@ class SyncTimedbThreadPool:
       >>> pool = SyncTimedbThreadPool(max_workers=1, thread_role="ingest-pool")
       >>> pool.terminate()
     """
+    self._shutdown = True
     self._executor.shutdown(wait=False, cancel_futures=True)
 
   def join(self) -> None:

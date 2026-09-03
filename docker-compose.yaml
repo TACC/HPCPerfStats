@@ -51,9 +51,6 @@ services:
     # Tune from host MemTotal minus db, web, redis; 128g fits ~192 GiB hosts with no swap.
     mem_limit: 128g
     memswap_limit: 128g
-    # Leftover spawn IPC headroom for sync_timedb/update_metrics until those
-    # cutovers. listend live-DB payloads no longer use /dev/shm.
-    shm_size: "1g"
     stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-2m}
     depends_on:
       - web

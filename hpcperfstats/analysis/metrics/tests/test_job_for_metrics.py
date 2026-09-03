@@ -1,6 +1,4 @@
 import contextlib
-import signal
-import time
 
 import numpy as np
 import pandas as pd
@@ -10,7 +8,6 @@ from types import SimpleNamespace
 from django.db.utils import OperationalError
 
 from hpcperfstats.analysis.metrics.lib import metrics
-from hpcperfstats.dbload.lib.multiprocessing_pool_health import MultiprocessingWorkerExitError
 
 
 class _FakeJidTable:
@@ -185,7 +182,7 @@ def test_coerced_metric_name_set_normalizes_unhashable_metric_names():
 
 class _AlwaysTimeoutIterator:
   def next(self, timeout=None):
-    raise metrics.multiprocessing.TimeoutError()
+    raise TimeoutError()
 
 
 class _FakePoolTimeout:
@@ -256,11 +253,6 @@ def test_drain_metrics_imap_returns_explicit_worker_failure_outcome():
 
 
 def test_unwrap_returns_worker_compute_error_on_value_error(monkeypatch):
-  release_calls = []
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_worker_memory.release_spawn_pool_worker_memory",
-      lambda: release_calls.append(True),
-  )
   class _Job:
     jid = "j-bad"
 
@@ -280,7 +272,6 @@ def test_unwrap_returns_worker_compute_error_on_value_error(monkeypatch):
   assert out["jid"] == "j-bad"
   assert out["error_type"] == "ValueError"
   assert out["rows"] == []
-  assert release_calls == [True]
 
 
 def test_drain_metrics_imap_returns_worker_compute_error_outcome():
@@ -308,46 +299,6 @@ def test_drain_metrics_imap_returns_worker_compute_error_outcome():
   assert out[0]["ok"] is False
   assert out[0]["status"] == "worker_compute_error"
   assert out[0]["error_type"] == "ValueError"
-
-
-def test_run_compute_metrics_timed_raises_when_exceeded():
-  if not hasattr(signal, "SIGALRM"):
-    pytest.skip("SIGALRM unavailable")
-
-  class _Job:
-    jid = "slow"
-
-  class _Metrics:
-    def compute_metrics(self, job):
-      time.sleep(2.0)
-      return {"rows": [], "distinct_time_count": 0}
-
-  with pytest.raises(metrics.MetricsComputeJobTimeoutError):
-    metrics._run_compute_metrics_timed(_Metrics(), _Job(), 0.05)
-
-
-def test_unwrap_returns_worker_compute_error_on_per_job_timeout(monkeypatch):
-  if not hasattr(signal, "SIGALRM"):
-    pytest.skip("SIGALRM unavailable")
-
-  class _Job:
-    jid = "slow"
-
-  class _Metrics:
-    def compute_metrics(self, job):
-      time.sleep(2.0)
-      return {"rows": [], "distinct_time_count": 0}
-
-  monkeypatch.setattr(metrics, "run_with_db_retry", lambda fn, attempts=2: fn())
-  monkeypatch.setattr(metrics, "_resolve_metrics_run_per_job_timeout_s", lambda: 0.05)
-  monkeypatch.setattr(
-      metrics,
-      "_pg_session_statement_timeout_for_metrics_worker",
-      contextlib.nullcontext,
-  )
-  out = metrics._unwrap((_Metrics(), _Job()))
-  assert out["status"] == "worker_compute_error"
-  assert out["error_type"] == "MetricsComputeJobTimeoutError"
 
 
 def test_drain_metrics_imap_returns_parent_persist_timeout_outcome(monkeypatch):
@@ -416,21 +367,20 @@ def test_drain_metrics_imap_stall_clock_waits_for_persist(monkeypatch):
       if _It.n == 1:
         return payload
       clock["t"] += 0.25
-      raise metrics.multiprocessing.TimeoutError()
+      raise TimeoutError()
 
   class _Pool:
     def imap_unordered(self, fn, tasks, chunksize=1):
       del fn, tasks, chunksize
       return _It()
 
-  def _slow_persist(pl, *, wall_timeout_s=0.0):
-    del pl, wall_timeout_s
+  def _slow_persist(pl):
+    del pl
     persist_started_at.append(clock["t"])
     clock["t"] += 10.0
     return metrics._metrics_run_outcome("j1", ok=True, status="ok")
 
-  monkeypatch.setattr(metrics, "_persist_metrics_payload_bounded", _slow_persist)
-  monkeypatch.setattr(metrics, "abort_if_pool_workers_dead", lambda *a, **k: None)
+  monkeypatch.setattr(metrics, "_persist_metrics_payload", _slow_persist)
 
   with pytest.raises(metrics.MetricsRunWorkerStallError) as ei:
     metrics._drain_metrics_imap(
@@ -451,34 +401,19 @@ def test_drain_metrics_imap_stall_clock_waits_for_persist(monkeypatch):
 def test_metrics_run_stall_with_owned_pool_returns_partial_outcomes(monkeypatch):
   fake_calls = {"terminate": 0}
 
-  class _Proc:
-    def __init__(self):
-      self.pid = 111
-
-    def join(self, timeout=None):
-      return None
-
-    def is_alive(self):
-      return False
-
   class _OwnedPool:
-    def __init__(self, processes=None, initializer=None, initargs=None, **kwargs):
-      del processes, initializer, initargs, kwargs
-      self._pool = [_Proc()]
-
+    def __init__(self, **kwargs):
+      del kwargs
     def terminate(self):
-      raise AssertionError("stdlib Pool.terminate must not be called")
+      fake_calls["terminate"] += 1
 
     def close(self):
       return None
 
-  def fake_terminate(active_pool, timeout_s, *, pool_kind="metrics-pool"):
-    del active_pool, timeout_s, pool_kind
-    fake_calls["terminate"] += 1
-    return True
+    def join(self):
+      return None
 
-  monkeypatch.setattr(metrics.multiprocessing, "Pool", _OwnedPool)
-  monkeypatch.setattr(metrics, "_terminate_pool_bounded", fake_terminate)
+  monkeypatch.setattr(metrics, "SyncTimedbThreadPool", _OwnedPool)
 
   partial = [
       metrics._metrics_run_outcome("j-done", ok=True, status="ok", persisted_rows=3),
@@ -508,33 +443,19 @@ def test_metrics_run_stall_with_owned_pool_returns_partial_outcomes(monkeypatch)
 def test_metrics_run_stall_with_owned_pool_raises_when_no_partial_outcomes(monkeypatch):
   fake_calls = {"terminate": 0}
 
-  class _Proc:
-    pid = 111
-
-    def join(self, timeout=None):
-      return None
-
-    def is_alive(self):
-      return False
-
   class _OwnedPool:
-    def __init__(self, processes=None, initializer=None, initargs=None, **kwargs):
-      del processes, initializer, initargs, kwargs
-      self._pool = [_Proc()]
-
+    def __init__(self, **kwargs):
+      del kwargs
     def terminate(self):
-      raise AssertionError("stdlib Pool.terminate must not be called")
+      fake_calls["terminate"] += 1
 
     def close(self):
       return None
 
-  def fake_terminate(active_pool, timeout_s, *, pool_kind="metrics-pool"):
-    del active_pool, timeout_s, pool_kind
-    fake_calls["terminate"] += 1
-    return True
+    def join(self):
+      return None
 
-  monkeypatch.setattr(metrics.multiprocessing, "Pool", _OwnedPool)
-  monkeypatch.setattr(metrics, "_terminate_pool_bounded", fake_terminate)
+  monkeypatch.setattr(metrics, "SyncTimedbThreadPool", _OwnedPool)
 
   def _raise_stall(*args, **kwargs):
     raise metrics.MetricsRunWorkerStallError(
@@ -552,166 +473,21 @@ def test_metrics_run_stall_with_owned_pool_raises_when_no_partial_outcomes(monke
   assert excinfo.value.pool_reset_confirmed is True
 
 
-def test_reset_pool_hard_terminates_synchronously_after_detach(monkeypatch):
+def test_reset_pool_hard_detaches_and_cancels_pending_threads():
   calls = {"terminate": 0}
-
-  def sync_terminate(active_pool, timeout_s, *, pool_kind="metrics-pool"):
-    del active_pool, timeout_s, pool_kind
-    calls["terminate"] += 1
-    return True
 
   class _Pool:
     def terminate(self):
-      raise AssertionError("stdlib Pool.terminate must not be called")
-
-    _pool = []
+      calls["terminate"] += 1
 
   pool = _Pool()
   m = metrics.Metrics()
   m._shared_pool = pool
   m._shared_pool_kind = "metrics-pool"
-  monkeypatch.setattr(metrics, "_terminate_pool_bounded", sync_terminate)
 
   m.reset_pool_hard()
   assert m._shared_pool is None
   assert calls["terminate"] == 1
-
-
-def test_metrics_terminate_pool_delegates_to_shared_sigkill_reap(monkeypatch):
-  """Metrics terminate must use shared helper (SIGKILL lingerers + zombie reap)."""
-  calls = []
-
-  def fake_shared(active_pool, timeout_s=30.0, *, context="", **kwargs):
-    calls.append({
-        "pool": active_pool,
-        "timeout_s": timeout_s,
-        "context": context,
-        **kwargs,
-    })
-    return True
-
-  monkeypatch.setattr(metrics, "_shared_terminate_pool_bounded", fake_shared)
-  assert metrics._terminate_pool_bounded(object(), 1.5) is True
-  assert len(calls) == 1
-  assert calls[0]["timeout_s"] == 1.5
-  assert calls[0]["context"] == "metrics_pool"
-  assert calls[0]["abandon_after_kill"] is True
-  assert calls[0]["kill_workers_first"] is True
-  assert calls[0]["pool_worker_cmdline_mark"] == "[worker:metrics-pool]"
-
-
-def test_metrics_terminate_never_calls_stdlib_pool_terminate(monkeypatch):
-  """hs04: metrics teardown must never call stdlib Pool.terminate()."""
-  terminate_calls = []
-
-  class _HangPool:
-    def terminate(self):
-      terminate_calls.append(True)
-      raise AssertionError("stdlib Pool.terminate must not be called")
-
-  shared_calls = []
-
-  def fake_shared(active_pool, timeout_s=30.0, *, context="", **kwargs):
-    shared_calls.append(dict(kwargs, timeout_s=timeout_s, context=context))
-    # Mimic abandon path: never touch active_pool.terminate().
-    assert kwargs.get("abandon_after_kill") is True
-    return True
-
-  monkeypatch.setattr(metrics, "_shared_terminate_pool_bounded", fake_shared)
-  pool = _HangPool()
-  assert metrics._terminate_pool_bounded(pool, 2.0) is True
-  assert terminate_calls == []
-  assert shared_calls
-  assert shared_calls[0]["abandon_after_kill"] is True
-
-
-def test_metrics_terminate_uses_abandon_after_kill_with_metrics_mark(monkeypatch):
-  calls = []
-
-  def fake_shared(active_pool, timeout_s=30.0, *, context="", **kwargs):
-    del active_pool
-    calls.append(dict(kwargs, timeout_s=timeout_s, context=context))
-    return True
-
-  monkeypatch.setattr(metrics, "_shared_terminate_pool_bounded", fake_shared)
-  metrics._terminate_pool_bounded(object(), 1.0, pool_kind="public-ef-pool")
-  assert calls[0]["abandon_after_kill"] is True
-  assert calls[0]["pool_worker_cmdline_mark"] == "[worker:public-ef-pool]"
-
-
-def test_close_pool_bounded_metrics_uses_force_terminate(monkeypatch):
-  """Join-timeout fallback must not re-enter the non-abandon terminate branch."""
-  calls = []
-
-  def fake_shared(active_pool, timeout_s=30.0, *, force_terminate=False, **kwargs):
-    del active_pool
-    calls.append(dict(kwargs, timeout_s=timeout_s, force_terminate=force_terminate))
-    return True
-
-  monkeypatch.setattr(metrics, "_shared_close_pool_bounded", fake_shared)
-  assert metrics._close_pool_bounded(object(), 3.0) is True
-  assert calls[0]["force_terminate"] is True
-  assert calls[0]["pool_worker_cmdline_mark"] == "[worker:metrics-pool]"
-
-
-def test_drain_metrics_imap_aborts_when_pool_worker_dead(monkeypatch):
-  class _DeadProc:
-    pid = 4242
-
-    def is_alive(self):
-      return False
-
-  class _Pool:
-    _pool = [_DeadProc()]
-
-  with pytest.raises(MultiprocessingWorkerExitError):
-    metrics._drain_metrics_imap(
-        _Pool(),
-        [("task",)],
-        1,
-        poll_timeout_s=0.01,
-        stall_timeout_s=60.0,
-    )
-
-
-def test_drain_metrics_imap_invokes_metrics_zombie_reap(monkeypatch):
-  """Mid-batch poll must invoke throttled metrics [main] zombie reap."""
-  hygiene = []
-
-  class _FakePool:
-    def imap_unordered(self, fn, tasks, chunksize=1):
-      del fn, tasks, chunksize
-
-      class _It:
-        def next(self, timeout=None):
-          del timeout
-          return {
-              "jid": "j-reap",
-              "status": "worker_db_error",
-              "rows": [],
-              "distinct_time_count": None,
-              "error_type": "OperationalError",
-              "error_message": "lost synchronization with server",
-          }
-
-      return _It()
-
-  monkeypatch.setattr(metrics, "abort_if_metrics_pool_workers_dead", lambda *a, **k: None)
-  monkeypatch.setattr(
-      metrics,
-      "maybe_reap_metrics_main_zombie_children",
-      lambda *, context="": hygiene.append(context) or True,
-  )
-  out = metrics._drain_metrics_imap(
-      _FakePool(),
-      tasks=[("m", "j-reap")],
-      chunksize=1,
-      poll_timeout_s=0.01,
-      stall_timeout_s=60.0,
-  )
-  assert len(out) == 1
-  assert out[0]["jid"] == "j-reap"
-  assert "metrics_run_poll" in hygiene
 
 
 def test_metrics_run_stall_with_shared_pool_calls_reset(monkeypatch):
@@ -909,7 +685,7 @@ def test_metric_type_events_feasible_skips_impossible_types():
 
 
 def test_job_arc_skips_orm_when_schema_rules_out_type(monkeypatch):
-  """Regression: empty vendor probes must not list(qs) until 900s SIGALRM."""
+  """Empty vendor probes must not spend the database statement budget."""
   from django.utils import timezone as django_tz
 
   t0 = django_tz.now()
@@ -985,400 +761,58 @@ def test_host_data_metric_rows_batched_uses_metrics_host_batch(monkeypatch):
   assert chunk_sizes == [metrics.METRICS_HOST_QUERY_BATCH, 2]
 
 
-def test_ensure_pool_recreates_when_alive_below_configured(monkeypatch):
-  """hs04 signature: configured 24, alive 4 → terminate and recreate at 24."""
-  created = []
-  terminated = {"n": 0}
-
-  class _AliveProc:
-    def __init__(self, alive):
-      self._alive = alive
-
-    def is_alive(self):
-      return self._alive
-
-  class _Handler:
-    def is_alive(self):
-      return True
-
-  class _Pool:
-    def __init__(self, processes, initializer=None, initargs=(), maxtasksperchild=None):
-      del initializer, initargs
-      self._processes = processes
-      self.maxtasksperchild = maxtasksperchild
-      # Undersized live set when processes is the configured width and we
-      # simulate attrition by attaching fewer alive workers after the fact.
-      self._pool = [_AliveProc(True) for _ in range(processes)]
-      self._worker_handler = _Handler()
-      created.append(self)
-
-    def terminate(self):
-      return None
-
-    def close(self):
-      return None
-
-    def join(self):
-      return None
-
-  def sync_terminate(active_pool, timeout_s, *, pool_kind="metrics-pool"):
-    del active_pool, timeout_s, pool_kind
-    terminated["n"] += 1
-    return True
-
-  monkeypatch.setattr(metrics.multiprocessing, "Pool", _Pool)
-  monkeypatch.setattr(metrics, "_terminate_pool_bounded", sync_terminate)
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_processes", lambda: 24
-  )
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_maxtasksperchild", lambda: 16
-  )
-
+def test_ensure_pool_creates_titled_in_process_threads(monkeypatch):
+  monkeypatch.setattr(metrics.cfg, "get_metrics_pool_processes", lambda: 3)
   m = metrics.Metrics()
-  first = m.ensure_pool(pool_kind="metrics-pool")
-  assert first._processes == 24
-  assert len(created) == 1
-
-  # Simulate attrition: only 4 workers still alive (hs04 production).
-  first._pool = [_AliveProc(True) for _ in range(4)]
-  second = m.ensure_pool(pool_kind="metrics-pool")
-  assert terminated["n"] == 1
-  assert second is not first
-  assert second._processes == 24
-  assert len(created) == 2
-  assert m._shared_pool is second
-
+  pool = m.ensure_pool(pool_kind="metrics-pool")
+  try:
+    assert pool._processes == 3
+    assert pool.process_title == "update_metrics.py"
+    assert pool.thread_role == "metrics-pool"
+    assert pool.is_active is True
+  finally:
+    m.close_pool()
 
 def test_ensure_pool_reuses_full_width_pool(monkeypatch):
-  created = []
-
-  class _AliveProc:
-    def is_alive(self):
-      return True
-
-  class _Handler:
-    def is_alive(self):
-      return True
-
-  class _Pool:
-    def __init__(self, processes, initializer=None, initargs=(), maxtasksperchild=None):
-      del initializer, initargs
-      self._processes = processes
-      self.maxtasksperchild = maxtasksperchild
-      self._pool = [_AliveProc() for _ in range(processes)]
-      self._worker_handler = _Handler()
-      created.append(self)
-
-  monkeypatch.setattr(metrics.multiprocessing, "Pool", _Pool)
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_processes", lambda: 24
-  )
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_maxtasksperchild", lambda: 16
-  )
-
+  monkeypatch.setattr(metrics.cfg, "get_metrics_pool_processes", lambda: 2)
   m = metrics.Metrics()
   first = m.ensure_pool(pool_kind="metrics-pool")
   second = m.ensure_pool(pool_kind="metrics-pool")
-  assert first is second
-  assert len(created) == 1
+  try:
+    assert first is second
+  finally:
+    m.close_pool()
 
 
-def test_ensure_pool_recreates_when_worker_handler_thread_dead(monkeypatch):
-  """Dead Pool._worker_handler must force recreate even when alive >= configured."""
-  created = []
-  terminated = {"n": 0}
-  logs = []
-
-  class _AliveProc:
-    def is_alive(self):
-      return True
-
-  class _Handler:
-    def __init__(self, alive):
-      self._alive = alive
-
-    def is_alive(self):
-      return self._alive
-
-  class _Pool:
-    def __init__(self, processes, initializer=None, initargs=(), maxtasksperchild=None):
-      del initializer, initargs
-      self._processes = processes
-      self.maxtasksperchild = maxtasksperchild
-      self._pool = [_AliveProc() for _ in range(processes)]
-      self._worker_handler = _Handler(True)
-      created.append(self)
-
-  def sync_terminate(active_pool, timeout_s, *, pool_kind="metrics-pool"):
-    del active_pool, timeout_s, pool_kind
-    terminated["n"] += 1
-    return True
-
-  monkeypatch.setattr(metrics.multiprocessing, "Pool", _Pool)
-  monkeypatch.setattr(metrics, "_terminate_pool_bounded", sync_terminate)
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_processes", lambda: 24
-  )
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_maxtasksperchild", lambda: 16
-  )
-  monkeypatch.setattr(
-      metrics, "log_print", lambda msg, flush=False: logs.append(msg)
-  )
-
+def test_ensure_pool_switches_thread_role_with_fresh_executor(monkeypatch):
+  monkeypatch.setattr(metrics.cfg, "get_metrics_pool_processes", lambda: 2)
   m = metrics.Metrics()
-  first = m.ensure_pool(pool_kind="metrics-pool")
-  assert len(created) == 1
-  first._worker_handler = _Handler(False)
+  first = m.ensure_pool(pool_kind="public-ef-pool")
   second = m.ensure_pool(pool_kind="metrics-pool")
-  assert terminated["n"] == 1
-  assert second is not first
-  assert len(created) == 2
-  assert any("worker_handler dead" in line for line in logs)
-
-
-def test_metrics_pool_maxtasksperchild_passed_to_pool(monkeypatch):
-  """Both metrics Pool(...) sites must receive metrics_pool_maxtasksperchild."""
-  created = []
-
-  class _AliveProc:
-    def is_alive(self):
-      return True
-
-  class _Handler:
-    def is_alive(self):
-      return True
-
-  class _Pool:
-    def __init__(self, processes, initializer=None, initargs=(), maxtasksperchild=None):
-      del initializer, initargs
-      self._processes = processes
-      self.maxtasksperchild = maxtasksperchild
-      self._pool = [_AliveProc() for _ in range(processes)]
-      self._worker_handler = _Handler()
-      created.append(self)
-
-    def imap_unordered(self, *a, **k):
-      del a, k
-      return iter([])
-
-    def close(self):
-      return None
-
-    def join(self):
-      return None
-
-    def terminate(self):
-      return None
-
-  monkeypatch.setattr(metrics.multiprocessing, "Pool", _Pool)
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_processes", lambda: 4
-  )
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_maxtasksperchild", lambda: 16
-  )
-  monkeypatch.setattr(metrics, "_close_pool_bounded", lambda *a, **k: True)
-  monkeypatch.setattr(metrics, "_terminate_pool_bounded", lambda *a, **k: True)
-  monkeypatch.setattr(
-      metrics, "_drain_metrics_imap", lambda *a, **k: []
-  )
-
-  m = metrics.Metrics()
-  shared = m.ensure_pool(pool_kind="metrics-pool")
-  assert shared.maxtasksperchild == 16
-
-  m.run([])  # empty returns early
-  # Ephemeral pool path with non-empty list:
-  monkeypatch.setattr(metrics.cfg, "get_metrics_run_poll_timeout_s", lambda: 0.01)
-  monkeypatch.setattr(metrics.cfg, "get_metrics_run_stall_timeout_s", lambda: 1.0)
-  m2 = metrics.Metrics()
-  m2.run([object()])
-  assert len(created) >= 2
-  assert all(p.maxtasksperchild == 16 for p in created)
+  try:
+    assert second is not first
+    assert first.is_active is False
+    assert second.thread_role == "metrics-pool"
+  finally:
+    m.close_pool()
 
 
 def test_ensure_pool_logs_configured_and_alive_after_create(monkeypatch):
   logs = []
 
-  class _AliveProc:
-    def is_alive(self):
-      return True
-
-  class _Pool:
-    def __init__(self, processes, initializer=None, initargs=(), maxtasksperchild=None):
-      del initializer, initargs
-      self._processes = processes
-      self.maxtasksperchild = maxtasksperchild
-      self._pool = [_AliveProc() for _ in range(processes)]
-
-  monkeypatch.setattr(metrics.multiprocessing, "Pool", _Pool)
   monkeypatch.setattr(
       metrics.cfg, "get_metrics_pool_processes", lambda: 24
-  )
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_maxtasksperchild", lambda: 16
   )
   monkeypatch.setattr(
       metrics, "log_print", lambda msg, flush=False: logs.append(str(msg))
   )
 
   m = metrics.Metrics()
-  m.ensure_pool(pool_kind="metrics-pool")
-  joined = "\n".join(logs)
-  assert "configured=24" in joined
-  assert "alive=24" in joined
-  assert "pool_kind=metrics-pool" in joined
-
-
-def test_metrics_health_checks_supply_expected_worker_count(monkeypatch):
-  seen = []
-
-  def fake_abort(pool, *, context="", pool_health_context=None):
-    del pool
-    seen.append({
-        "context": context,
-        "pool_health_context": dict(pool_health_context or {}),
-    })
-
-  monkeypatch.setattr(metrics, "abort_if_pool_workers_dead", fake_abort)
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_processes", lambda: 24
-  )
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_maxtasksperchild", lambda: 16
-  )
-
-  metrics.abort_if_metrics_pool_workers_dead(
-      object(),
-      context="unit-test",
-  )
-  assert len(seen) == 1
-  assert seen[0]["context"] == "unit-test"
-  assert seen[0]["pool_health_context"].get("expected_pool_workers") == 24
-  assert seen[0]["pool_health_context"].get("maxtasksperchild") == 16
-
-  drain_seen = []
-
-  def fake_metrics_abort(pool, *, context=""):
-    del pool
-    drain_seen.append(context)
-
-  monkeypatch.setattr(
-      metrics, "abort_if_metrics_pool_workers_dead", fake_metrics_abort
-  )
-
-  class _ReadyIter:
-    def next(self, timeout=None):
-      del timeout
-      raise StopIteration
-
-  class _Pool:
-    def imap_unordered(self, *args, **kwargs):
-      del args, kwargs
-      return _ReadyIter()
-
-  # Drain catches StopIteration and returns; preflight abort must still run.
-  metrics._drain_metrics_imap(
-      _Pool(),
-      [("metrics", SimpleNamespace(jid="j1"))],
-      1,
-      poll_timeout_s=0.01,
-      stall_timeout_s=60.0,
-  )
-  assert drain_seen
-  assert "Metrics.run imap_unordered (preflight)" in drain_seen[0]
-
-
-def test_metrics_worker_exit_error_recreates_pool(monkeypatch):
-  """Non-OOM MultiprocessingWorkerExitError must reset+recreate, not shrink."""
-  created = []
-
-  class _AliveProc:
-    def is_alive(self):
-      return True
-
-  class _Pool:
-    def __init__(self, processes, initializer=None, initargs=(), maxtasksperchild=None):
-      del initializer, initargs
-      self._processes = processes
-      self.maxtasksperchild = maxtasksperchild
-      self._pool = [_AliveProc() for _ in range(processes)]
-      created.append(self)
-
-  def sync_terminate(active_pool, timeout_s, *, pool_kind="metrics-pool"):
-    del active_pool, timeout_s, pool_kind
-    return True
-
-  monkeypatch.setattr(metrics.multiprocessing, "Pool", _Pool)
-  monkeypatch.setattr(metrics, "_terminate_pool_bounded", sync_terminate)
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_processes", lambda: 24
-  )
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_maxtasksperchild", lambda: 16
-  )
-
-  m = metrics.Metrics()
-  first = m.ensure_pool(pool_kind="metrics-pool")
-  assert first._processes == 24
-
-  exc = MultiprocessingWorkerExitError(
-      "dead",
-      dead_pids=[101],
-      context="metrics",
-      exit_code=0,
-      likely_cause="recycle_stuck",
-      diagnostics={
-          "dead_workers": [{"pid": 101, "exitcode": 0}],
-          "alive_workers": 4,
-          "likely_cause": "recycle_stuck",
-      },
-  )
-  recreated = m.handle_pool_worker_exit(exc)
-  assert m._shared_pool is recreated
-  assert recreated is not first
-  assert recreated._processes == 24
-  assert len(created) == 2
-
-
-def test_metrics_worker_exit_oom_remains_fatal(monkeypatch):
-  class _AliveProc:
-    def is_alive(self):
-      return True
-
-  class _Pool:
-    def __init__(self, processes, initializer=None, initargs=(), maxtasksperchild=None):
-      del initializer, initargs
-      self._processes = processes
-      self.maxtasksperchild = maxtasksperchild
-      self._pool = [_AliveProc() for _ in range(processes)]
-
-  monkeypatch.setattr(metrics.multiprocessing, "Pool", _Pool)
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_processes", lambda: 24
-  )
-  monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_maxtasksperchild", lambda: 16
-  )
-
-  m = metrics.Metrics()
-  m.ensure_pool(pool_kind="metrics-pool")
-  exc = MultiprocessingWorkerExitError(
-      "oom",
-      dead_pids=[202],
-      context="metrics",
-      exit_code=137,
-      likely_cause="sigkill",
-      diagnostics={
-          "dead_workers": [{"pid": 202, "exitcode": -9}],
-          "likely_cause": "sigkill",
-          "cgroup_oom_kill": 1,
-      },
-  )
-  with pytest.raises(MultiprocessingWorkerExitError):
-    m.handle_pool_worker_exit(exc)
-  assert m._shared_pool is not None
+  try:
+    m.ensure_pool(pool_kind="metrics-pool")
+    joined = "\n".join(logs)
+    assert "configured=24" in joined
+    assert "pool_kind=metrics-pool" in joined
+  finally:
+    m.close_pool()
 

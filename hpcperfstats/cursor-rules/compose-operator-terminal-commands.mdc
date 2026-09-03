@@ -331,18 +331,17 @@ docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost 
 
 ### Anti-pattern — inventing `conf_parser.get_metrics_pool`
 
-`hpcperfstats.dbload.lib.conf_parser` has **no** `get_metrics_pool()`. Operator `cfg.get_metrics_pool()` raises **`AttributeError`** (hpcperfstats04 2026-08-06). Use **`get_metrics_pool_process_count()`** and/or **`get_metrics_pool_processes()`**. Do **not** chain `python3 -c … && docker compose logs …` when the Python can fail — empty exit short-circuits and **drops the log paste**.
+`hpcperfstats.dbload.lib.conf_parser` has **no** `get_metrics_pool()`. Operator `cfg.get_metrics_pool()` raises **`AttributeError`** (hpcperfstats04 2026-08-06). Use **`get_metrics_pool_processes()`**; despite the compatibility key name, it now returns the in-process thread count. Do **not** chain `python3 -c … && docker compose logs …` when the Python can fail — empty exit short-circuits and **drops the log paste**.
 
 | Do | Don't |
 |----|-------|
-| `print(cfg.get_metrics_pool_process_count())` | `cfg.get_metrics_pool()` |
+| `print(cfg.get_metrics_pool_processes())` | `cfg.get_metrics_pool()` |
 | Separate host-side `logs … \| grep` block | `python … && logs …` after a fallible one-liner |
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
-print(\"metrics_pool_process_count\", cfg.get_metrics_pool_process_count())
-print(\"metrics_pool_processes\", cfg.get_metrics_pool_processes())
+print(\"metrics_pool_threads\", cfg.get_metrics_pool_processes())
 "'
 ```
 
@@ -370,14 +369,14 @@ Pipeline logs mix **listend** hardlink floods with **update_metrics** scheduler 
 |----|-------|
 | `logs pipeline 2>&1 \| grep -E 'Date Range\|candidate_jids\|window_rollover\|empty_pass' \| tail -80` | Mix `hardlink` + metrics tokens then `tail -80` |
 
-### Anti-pattern — BRE `grep` of `[worker:…]` process titles (hpcperfstats04 2026-08-13)
+### Metrics thread titles contain brackets
 
-`ps` / cmdline titles like `update_metrics.py [worker:metrics-pool]` contain **`[`**. Passing that string to BRE `grep -c '…[worker:metrics-pool]…'` opens a character class and fails with **`grep: Invalid range end`** (false `LIVE_METRICS=` / inflated `LIVE_PUB`). Use **`grep -F`** / `fgrep`, or escape brackets.
+`ps` / thread titles like `update_metrics.py [thread:metrics-pool]` contain **`[`**. Passing that string to BRE `grep -c '…[thread:metrics-pool]…'` opens a character class and can fail. Use **`grep -F`** / `fgrep`, or escape brackets.
 
 | Do | Don't |
 |----|-------|
-| `ps -ef \| grep -F '[worker:metrics-pool]' \| grep -v grep` | `grep -c '[worker:metrics-pool]'` (BRE) |
-| `grep -Fc '[worker:metrics-pool]'` | Unescaped `[` in basic `grep` patterns |
+| `ps -eT -o pid,tid,args \| grep -F '[thread:metrics-pool]' \| grep -v grep` | `grep -c '[thread:metrics-pool]'` (BRE) |
+| `grep -Fc '[thread:metrics-pool]'` | Unescaped `[` in basic `grep` patterns |
 
 ### Anti-pattern — long web `python3 -c` census (podman-compose)
 

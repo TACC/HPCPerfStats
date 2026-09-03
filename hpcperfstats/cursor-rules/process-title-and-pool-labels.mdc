@@ -7,7 +7,7 @@ alwaysApply: false
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-Supervisor/batch daemons (`sync_timedb`, `update_metrics`, `listend`, etc.) must label **main**, **process-pool worker**, and **helper thread** roles in `top`/`ps` without clobbering **gunicorn** worker titles.
+Supervisor/batch daemons (`sync_timedb`, `update_metrics`, `listend`, etc.) must label **main**, **process-pool worker**, and **helper thread** roles in `top`/`ps` without clobbering **gunicorn** worker titles. `update_metrics` uses threads only.
 
 ## Canonical module
 
@@ -24,11 +24,12 @@ Supervisor/batch daemons (`sync_timedb`, `update_metrics`, `listend`, etc.) must
 |------|---------|
 | Main daemon | `sync_timedb.py [main]` |
 | Pool worker | `sync_timedb.py [worker:ingest-pool]` |
-| Helper thread (daemons only) | `update_metrics.py [thread:prewarm-pool]` |
+| Metrics compute thread | `update_metrics.py [thread:metrics-pool]` |
+| Public EF thread | `update_metrics.py [thread:public-ef-pool]` |
 | listend live-DB thread | `listend.py [thread:listend-db-N]` (not `[worker:listend-db-pool]`) |
 | Post-chunk hygiene thread | `sync_timedb.py [thread:archive-post-chunk-hygiene]` |
 
-Use a **distinct, stable `pool_kind`** per pool type in the same script (e.g. `ingest-parse-pool`, `db-writer-pool`, `metrics-pool`, `public-ef-pool`).
+Use a **distinct, stable role** per pool type in the same script (e.g. `ingest-pool`, `append-pool`, `metrics-pool`, `public-ef-pool`).
 
 ## Trigger conditions
 
@@ -53,6 +54,8 @@ Use a **distinct, stable `pool_kind`** per pool type in the same script (e.g. `i
    Do not use nested closures for `initializer` (`spawn` must pickle it). ``Pool`` calls ``initializer(*initargs)``, so pass two positional args in ``initargs``, not a single nested tuple. ``apply_pool_worker_process_title`` must reset ``SIGTERM``/``SIGINT`` to ``SIG_DFL`` so workers do not inherit a parent daemon flag-only handler (stdlib ``Pool.terminate`` otherwise hangs at ``p.join()``).
 
 4. **Daemon threads only:** `set_daemon_thread_title(..., script_name="….py", role="…")`. Never change the **process** title for threads.
+   `update_metrics` must run metrics and public-EF work through the titled
+   in-process pool; do not add a process-pool fallback.
 5. **Log role mirrors title:** `set_daemon_process_title` and `set_daemon_thread_title` wire `print_utils.set_log_role()` so `log_print` emits `[script:role]` (e.g. `[sync_timedb:thread:archive-janitor]`) matching `top`/`ps` labels. **`format_log_prefix` always includes a role segment** — when the role context is unset it defaults to **`main`** (`[script:main]`), never a bare `[script]`. Do not emit bare `print()` from sync_timedb modules; use `log_print` (or a `log_fn` that wraps it).
 6. **Body facets (outside brackets):** `janitorial_logging()` / `ingest_logging()` (and oneshot `janitorial=` / `ingest=` kwargs) add greppable body prefixes — never put `(janitorial)` / `(ingest)` inside the brackets.
    - **`janitor:`** — janitorial work when the role does **not** contain `janitor`; if the role already contains `janitor` (`thread:archive-janitor`), strip a leading body `janitor:` so the line is not double-labeled.

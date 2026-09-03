@@ -38,15 +38,6 @@ def test_refresh_public_expansion_factor_artifacts_parallel_inline_pool(monkeypa
   from hpcperfstats.site.lib.machine.public_metrics_artifacts import (
       refresh_public_expansion_factor_artifacts_parallel,
   )
-  from hpcperfstats.site.lib.machine import public_metrics_artifacts as pma
-
-  monkeypatch.setattr(pma, "_public_ef_reset_fork_inherited_db", lambda: None)
-  monkeypatch.setattr(
-      pma,
-      "_public_ef_parent_refresh_connections_after_forked_children",
-      lambda: None,
-  )
-
   class _InlinePool:
     def imap_unordered(self, fn, tasks, chunksize=1):
       del chunksize
@@ -290,16 +281,11 @@ def test_refresh_public_expansion_factor_artifacts_parallel_marks_no_progress_de
   monkeypatch.setattr(pma, "_month_keys_present", lambda: ["2025-06"])
   monkeypatch.setattr(pma, "_year_keys_present", lambda: [])
   monkeypatch.setattr(pma, "_prune_orphan_public_ef_rows", lambda months, years: None)
-  monkeypatch.setattr(
-      pma,
-      "_public_ef_parent_refresh_connections_after_forked_children",
-      lambda: None,
-  )
 
   class _NeverProgressIterator:
     def next(self, timeout=None):
       del timeout
-      raise pma.MultiprocessingTimeoutError()
+      raise TimeoutError()
 
   class _Pool:
     def imap_unordered(self, fn, tasks, chunksize=1):

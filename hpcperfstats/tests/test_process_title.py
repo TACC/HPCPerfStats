@@ -77,6 +77,14 @@ def test_format_daemon_thread_title():
       format_daemon_thread_title("listend.py", role="listend-db-0")
       == "listend.py [thread:listend-db-0]"
   )
+  assert (
+      format_daemon_thread_title("update_metrics.py", role="metrics-pool")
+      == "update_metrics.py [thread:metrics-pool]"
+  )
+  assert (
+      format_daemon_thread_title("update_metrics.py", role="public-ef-pool")
+      == "update_metrics.py [thread:public-ef-pool]"
+  )
 
 
 def test_running_under_gunicorn_server_software(monkeypatch):

@@ -77,7 +77,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PORTAL", "separate_test_login"),
     # [PIPELINE] — sync_timedb, update_metrics, sync_acct, archive paths/tuning
     ("PIPELINE", "metrics_pool_processes"),
-    ("PIPELINE", "metrics_pool_maxtasksperchild"),
     ("PIPELINE", "metrics_scheduler_mode"),
     ("PIPELINE", "metrics_scheduler_prefetch_chunks"),
     ("PIPELINE", "metrics_scheduler_ready_queue_target"),
@@ -89,7 +88,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "metrics_plot_aggregate_max_host_time_points"),
     ("PIPELINE", "metrics_run_poll_timeout_s"),
     ("PIPELINE", "metrics_run_stall_timeout_s"),
-    ("PIPELINE", "metrics_run_per_job_timeout_s"),
     ("PIPELINE", "metrics_worker_statement_timeout_ms"),
     ("PIPELINE", "metrics_persist_statement_timeout_ms"),
     ("PIPELINE", "metrics_persist_lock_timeout_ms"),
@@ -232,7 +230,6 @@ INI_OPTION_DEFAULTS = {
     'db_idle_in_transaction_session_timeout_ms': '300000',
     'separate_test_login': 'no',
     'metrics_pool_processes': '24',
-    'metrics_pool_maxtasksperchild': '16',
     'metrics_scheduler_mode': 'global_priority',
     'metrics_scheduler_prefetch_chunks': '8',
     'metrics_scheduler_ready_queue_target': '100',
@@ -246,7 +243,6 @@ INI_OPTION_DEFAULTS = {
     'metrics_plot_aggregate_max_host_time_points': '1000000',
     'metrics_run_poll_timeout_s': '5',
     'metrics_run_stall_timeout_s': '900',
-    'metrics_run_per_job_timeout_s': '0',
     # Non-zero arms host__in chunk-on-timeout during compute (0 = disable).
     'metrics_worker_statement_timeout_ms': '120000',
     'metrics_persist_statement_timeout_ms': '120000',
@@ -1922,50 +1918,19 @@ def get_gunicorn_workers() -> Any:
 
 def get_metrics_pool_processes() -> Any:
   """
-  Absolute metrics (+ prewarm) process pool size.
+  Absolute metrics (+ prewarm) thread pool size.
 
-  INI ``[PIPELINE] metrics_pool_processes`` (default **24**).
+  INI ``[PIPELINE] metrics_pool_processes`` (default **24**). The option name
+  is retained for deployment compatibility; workers are in-process threads.
 
   Returns:
-    Any: Positive int process count.
+    Any: Positive int thread count.
 
   Examples:
     >>> get_metrics_pool_processes()  # doctest: +SKIP
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("metrics_pool_processes"))
-
-
-def get_metrics_pool_maxtasksperchild() -> Any:
-  """
-  Recycle metrics-pool workers after N tasks; 0 means unlimited.
-
-  INI ``[PIPELINE] metrics_pool_maxtasksperchild`` (default **16**). Caps
-  per-worker RSS growth without relying on cgroup OOM. Pass to both
-  metrics ``Pool(...)`` sites and into ``pool_health_context`` so recycle
-  exits are not misread as attrition.
-
-  Returns:
-    Any: Non-negative int task count (0 = no maxtasksperchild).
-
-  Examples:
-    >>> get_metrics_pool_maxtasksperchild()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("metrics_pool_maxtasksperchild"))
-
-
-def get_metrics_pool_process_count() -> Any:
-  """
-  Absolute metrics pool size (same as ``get_metrics_pool_processes``).
-
-  Returns:
-    Any: Positive int process count.
-
-  Examples:
-    >>> get_metrics_pool_process_count()  # doctest: +SKIP
-  """
-  return get_metrics_pool_processes()
 
 
 def get_parallel_db_prefetch_max() -> Any:
@@ -3193,46 +3158,13 @@ def get_metrics_run_stall_timeout_s() -> Any:
     return 900.0
 
 
-def get_metrics_run_per_job_timeout_s() -> Any:
-  """
-  Wall-clock cap for one ``compute_metrics`` call in a pool worker (0 → use.
-  
-    stall timeout).
-  
-  Env ``HPCPERFSTATS_METRICS_RUN_PER_JOB_TIMEOUT_S`` overrides INI
-  ``metrics_run_per_job_timeout_s``.
-  
-  Returns:
-    Any: Open return polymorphism from ``get_metrics_run_per_job_timeout_s``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_metrics_run_per_job_timeout_s()  # doctest: +SKIP
-  """
-  env = os.environ.get("HPCPERFSTATS_METRICS_RUN_PER_JOB_TIMEOUT_S", "").strip()
-  if env:
-    try:
-      return max(0.0, float(env))
-    except (TypeError, ValueError, OverflowError):
-      return 0.0
-  _ensure_cfg_loaded()
-  try:
-    return max(
-        0.0,
-        float(_pipeline_get("metrics_run_per_job_timeout_s")),
-    )
-  except (TypeError, ValueError, OverflowError):
-    return 0.0
-
-
 def get_metrics_worker_statement_timeout_ms() -> Any:
   """
-  PostgreSQL ``statement_timeout`` ms for metrics pool compute.
+  PostgreSQL ``statement_timeout`` ms for metrics thread compute.
   
   Default ``120000`` so ``_host_data_metric_rows_with_host_chunk_retry`` can
-  split large ``host__in`` queries before the per-job SIGALRM. ``0`` disables
-  the session timeout for the compute window (SIGALRM remains the wall clock).
+  split large ``host__in`` queries before the batch stall budget. ``0``
+  disables the session timeout for the compute window.
   Env ``HPCPERFSTATS_METRICS_WORKER_STATEMENT_TIMEOUT_MS`` overrides
   ``[PIPELINE] metrics_worker_statement_timeout_ms``.
   

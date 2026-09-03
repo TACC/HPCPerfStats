@@ -43,8 +43,6 @@ def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_pool_processes() == 16
   assert cfg.get_metrics_pool_processes() == 24
-  assert cfg.get_metrics_pool_maxtasksperchild() == 16
-  assert cfg.get_metrics_pool_process_count() == 24
   assert cfg.get_gunicorn_workers() == 32
   assert cfg.get_summary_aggregate_prefetch_max_threads() == 2
   assert cfg.get_sync_write_lock_shards() == 8
@@ -56,6 +54,9 @@ def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
       "get_max_gunicorn_workers",
       "get_sync_pool_process_cap",
       "get_metrics_pool_process_cap",
+      "get_metrics_pool_process_count",
+      "get_metrics_pool_maxtasksperchild",
+      "get_metrics_run_per_job_timeout_s",
       "get_pipeline_overlap_mode",
       "get_metrics_ingest_priority_scale",
       "get_metrics_min_processes",
@@ -82,7 +83,6 @@ def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):
       "total_cores = 4\n"
       "sync_ingest_pool_processes = 3\n"
       "metrics_pool_processes = 5\n"
-      "metrics_pool_maxtasksperchild = 8\n"
       "gunicorn_workers = 9\n"
       "summary_aggregate_prefetch_max_threads = 1\n"
       "sync_write_lock_shards = 4\n"
@@ -98,7 +98,6 @@ def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_pool_processes() == 3
   assert cfg.get_metrics_pool_processes() == 5
-  assert cfg.get_metrics_pool_maxtasksperchild() == 8
   assert cfg.get_gunicorn_workers() == 9
   assert cfg.get_summary_aggregate_prefetch_max_threads() == 1
   assert cfg.get_sync_write_lock_shards() == 4
@@ -639,7 +638,6 @@ def test_metrics_scheduler_tunables_without_prewarm_pool_keys(temp_ini, monkeypa
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
   assert cfg.get_metrics_run_poll_timeout_s() == 5.0
   assert cfg.get_metrics_run_stall_timeout_s() == 900.0
-  assert cfg.get_metrics_run_per_job_timeout_s() == 0.0
   assert cfg.get_metrics_worker_statement_timeout_ms() == 120000
   assert cfg.get_metrics_persist_statement_timeout_ms() == 120000
   assert cfg.get_metrics_persist_lock_timeout_ms() == 10000
@@ -772,16 +770,14 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_checkpoint_flush_batch_size() == 100
   assert cfg.get_sync_timedb_tar_append_batch_size() == 1024
   assert cfg.get_sync_bulk_create_batch_size() == 10000
-  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 17320
+  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 0
   assert cfg.get_sync_pool_poll_timeout_s() == 5.0
   assert cfg.get_sync_pool_worker_recycle_grace_seconds() == 60.0
   assert cfg.get_sync_pool_stall_defer_log_interval_s() == 60.0
   assert cfg.get_sync_ingest_per_file_timeout_s() == 0.0
   assert cfg.get_sync_ingest_stall_idle_s() == 1800.0
   assert cfg.get_sync_ingest_per_file_timeout_max_s() == 86400.0
-  assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == pytest.approx(
-      (86400.0 - 900.0) / 30720.0,
-  )
+  assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == 0.0
   assert cfg.get_sync_archive_members_cache_enabled() is True
   assert cfg.get_sync_archive_members_cache_max_entries() == 64
   assert cfg.get_sync_archive_members_populate_max_seconds() == 0
@@ -827,19 +823,19 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_retry_backoff_max_seconds() == 12.5
   assert cfg.get_sync_checkpoint_flush_batch_size() == 42
   assert cfg.get_sync_timedb_tar_append_batch_size() == 2048
-  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 90
+  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 0
   assert cfg.get_sync_pool_poll_timeout_s() == 2.5
   assert cfg.get_sync_pool_stall_defer_log_interval_s() == 30.0
-  assert cfg.get_sync_ingest_per_file_timeout_s() == 900.0
+  assert cfg.get_sync_ingest_per_file_timeout_s() == 0.0
   assert cfg.get_sync_ingest_per_file_timeout_max_s() == 7200.0
-  assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == 1.0
+  assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == 0.0
   assert cfg.get_sync_archive_members_cache_enabled() is False
   assert cfg.get_sync_archive_members_cache_max_entries() == 32
   assert cfg.get_sync_archive_members_populate_max_seconds() == 1800
   assert cfg.get_sync_archive_members_fnctl_read_lock_timeout_seconds() == 300
   assert cfg.get_sync_archive_members_wait_poll_seconds() == 0.5
   monkeypatch.setenv("HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S", "45")
-  assert cfg.get_sync_ingest_per_file_timeout_s() == 45.0
+  assert cfg.get_sync_ingest_per_file_timeout_s() == 0.0
 
 
 def test_sync_ingest_rescan_mtime_days_clamp(temp_ini, monkeypatch):
