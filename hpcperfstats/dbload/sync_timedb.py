@@ -6681,17 +6681,36 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
               canonical,
           )
     if sealed_exists or os.path.exists(archive_tar_fname):
-      existing_members, members_source = _lookup_existing_members_for_archive_append(
-          archive_fname, archive_tar_fname,
-      )
-      _ensure_job_begin_logged(members_source)
-      if store_warm_members is not None:
-        maybe_invalidate_open_tar_store_divergence_for_append_batch(
-            archive_fname,
-            stats_files,
-            store_warm_members,
-            existing_members,
+      try:
+        existing_members, members_source = (
+            _lookup_existing_members_for_archive_append(
+                archive_fname, archive_tar_fname,
+            )
         )
+      except RuntimeError as exc:
+        # A truncated/unreadable mutable .tar makes the GNU tvf authority scan
+        # fail closed. Treat membership as empty and fall through to the
+        # repair + sealed-restore block below, which re-resolves membership
+        # after recovery and returns False when recovery fails. Raising here
+        # would break the archive-pool contract that this body never raises.
+        log_print(
+            "WARNING: open tar membership scan failed before append; "
+            "deferring to repair/sealed restore: %s (%s)"
+            % (archive_tar_fname, exc),
+            flush=True,
+        )
+        existing_members = {}
+        members_source = "tar_scan"
+        _ensure_job_begin_logged(members_source)
+      else:
+        _ensure_job_begin_logged(members_source)
+        if store_warm_members is not None:
+          maybe_invalidate_open_tar_store_divergence_for_append_batch(
+              archive_fname,
+              stats_files,
+              store_warm_members,
+              existing_members,
+          )
 
     mapped_n = len(stats_files)
     stats_files_to_tar = filter_files_to_add_to_archive(

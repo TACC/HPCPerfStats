@@ -6153,7 +6153,23 @@ def classify_sealed_archive_stream_failure(
 
   if stream_detail:
     lowered = stream_detail.lower()
-    if "unexpected end" in lowered or "eof" in lowered or "tarerror" in lowered:
+    # GNU tar (production) and bsdtar (dev macOS) word an unreadable or
+    # truncated archive differently: GNU emits "rmtlseek" when the tail is
+    # off a record boundary, "unexpected eof" when it is on one, and "does
+    # not look like a tar archive" when the tail is shorter than one header
+    # block.
+    truncated_markers = (
+        "unexpected end",
+        "eof",
+        "tarerror",
+        "truncated",
+        "unrecognized archive format",
+        "rmtlseek",
+        "not stopped at a record boundary",
+        "does not look like a tar archive",
+        "error opening archive",
+    )
+    if any(marker in lowered for marker in truncated_markers):
       return SKIP_KIND_TAR_TRUNCATED, stream_detail
   return SKIP_KIND_READ_ERROR, stream_detail or "archive stream unreadable"
 
@@ -6329,7 +6345,7 @@ def mark_archive_day_ingest_skip_and_raise(
             % day_token,
         ) from None
   resolved_sealed = sealed_path or _resolve_sealed_path_for_day_token(keys.day_token)
-  set_archive_day_ingest_skip(client, keys, kind, detail)
+  set_archive_day_ingest_skip(keys, kind=kind, detail=detail, client=client)
   _cache_ingest_skipped_calendar_day(
       keys.day_token, kind, detail, resolved_sealed,
   )
@@ -6606,19 +6622,31 @@ def _scan_gzip_archive_members_and_readable(gz_path: str) -> Any:
 def _sealed_archive_members_via_store_or_scan(
   sealed_path: str,
   *,
-  apply_priority_wrap: bool = False,
+  apply_priority_wrap: bool = True,
 ) -> Any:
   """
   Return ``(readable, members)`` for sealed-side raw-removal / validation reads.
 
-  Uses the same single-flight populate path as ingest prewarm and
-  duplicate-check (at most one ``zstd -d -c`` per calendar day). There is
-  no local sealed-scan fallback.
+  Sealed-only days use the same single-flight populate path as ingest prewarm
+  and duplicate-check (at most one ``zstd -d -c`` per calendar day).
+
+  **Sibling-tar exemption (data safety).** Every caller of this helper compares
+  the sealed archive against another object: day-close reconcile vs the open
+  tar, raw-removal validation vs the open tar, seal-skip equivalence, and
+  legacy gz drop. The per-day members store answers with the **open tar**
+  whenever a sibling ``YYYY-MM-DD.tar`` exists (``populate_source=tar``), so
+  routing those comparisons through the store compares the tar against itself:
+  divergence becomes undetectable, ``reconcile_open_tar_with_sealed_zst``
+  classifies ``noop/already_equivalent`` and then deletes a tar holding
+  members the sealed archive does not have. When a sibling tar exists, read
+  the sealed archive directly so the comparison sees real sealed bytes. The
+  ingest hot path does not call this helper, so the single-flight guarantee
+  in ``sync-timedb-ingest-pool-io-coordination.mdc`` is unaffected.
 
   Args:
     sealed_path (str): String for sealed path.
-    apply_priority_wrap (bool): Unused leftover flag from the legacy
-      local-scan fallback.
+    apply_priority_wrap (bool): Whether the direct sealed scan may wrap the
+      decompress in the I/O priority helper.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -6630,10 +6658,14 @@ def _sealed_archive_members_via_store_or_scan(
   Examples:
     >>> _sealed_archive_members_via_store_or_scan("x", True)  # doctest: +SKIP
   """
-  del apply_priority_wrap
   sealed_path = os.path.normpath(str(sealed_path or ""))
   if not sealed_path or not os.path.isfile(sealed_path):
     return False, {}
+  if os.path.isfile(daily_tar_path_from_compressed(sealed_path)):
+    return _scan_compressed_archive_members_and_readable(
+        sealed_path,
+        apply_priority_wrap=apply_priority_wrap,
+    )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       ArchiveDayIngestSkipError,
   )
@@ -7041,6 +7073,144 @@ def iter_archive_file_member_infos(
           yield member_info
 
 
+def _run_gnu_tvf_file_members(
+  tar_path: str,
+) -> tuple[list[tuple[str, int]], int, str]:
+  """
+  Run ``tar tvf`` and parse every file-member line (does not raise).
+
+  Args:
+    tar_path (str): Path to an uncompressed daily ``.tar``.
+
+  Returns:
+    tuple[list[tuple[str, int]], int, str]: Occurrences ``(name, size)`` in
+    archive order, process exit code, and stderr text.
+
+  Examples:
+    >>> _run_gnu_tvf_file_members("/missing.tar")  # doctest: +SKIP
+  """
+  if not os.path.isfile(tar_path):
+    return [], 1, ""
+  tar_bin = _tar_list_executable()
+  result = subprocess.run(
+      [tar_bin, "tvf", tar_path],
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  occurrences: list[tuple[str, int]] = []
+  for raw_line in (result.stdout or "").splitlines():
+    parsed = _parse_tar_tvf_size_and_name(raw_line)
+    if parsed is None:
+      continue
+    occurrences.append(parsed)
+  return occurrences, result.returncode, (result.stderr or "")
+
+
+def _run_gnu_tf_member_names(archive_path: str) -> tuple[list[str], int, str]:
+  """
+  List file member names via ``tar tf`` (plain tar) or decompress pipe.
+
+  Args:
+    archive_path (str): Uncompressed ``.tar`` or sealed ``.tar.zst`` /
+      ``.tar.gz`` path.
+
+  Returns:
+    tuple[list[str], int, str]: File member names (directories omitted),
+    combined exit status, and stderr text.
+
+  Examples:
+    >>> _run_gnu_tf_member_names("/missing.tar")  # doctest: +SKIP
+  """
+  if not os.path.isfile(archive_path):
+    return [], 1, ""
+  tar_bin = _tar_list_executable()
+  fmt = detect_compressed_format(archive_path)
+  if fmt in ("zst", "gz"):
+    from hpcperfstats.dbload.lib.zstd_cli import (
+        _maybe_wrap_zstd_cmd,
+        _thread_args,
+        zstd_executable,
+    )
+
+    thread_count = get_archive_zstd_thread_count()
+    zstd_bin = zstd_executable()
+    if fmt == "zst" and shutil.which("zstd"):
+      decompress_cmd = _maybe_wrap_zstd_cmd([
+          zstd_bin,
+          "-d",
+          "-c",
+          *_thread_args(thread_count),
+          "-q",
+          archive_path,
+      ])
+    elif fmt == "gz" and zstd_gzip_supported():
+      decompress_cmd = _maybe_wrap_zstd_cmd([
+          zstd_bin,
+          "-d",
+          "--format=gzip",
+          "-c",
+          *_thread_args(thread_count),
+          "-q",
+          archive_path,
+      ])
+    else:
+      return [], 1, "unsupported compressed archive format"
+    p_decomp = subprocess.Popen(
+        decompress_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+      p_tar = subprocess.Popen(
+          [tar_bin, "tf", "-"],
+          stdin=p_decomp.stdout,
+          stdout=subprocess.PIPE,
+          stderr=subprocess.PIPE,
+          text=True,
+      )
+    except (FileNotFoundError, OSError) as exc:
+      p_decomp.kill()
+      try:
+        p_decomp.wait(timeout=30)
+      except (OSError, subprocess.SubprocessError):
+        pass
+      return [], 1, str(exc)
+    if p_decomp.stdout is not None:
+      p_decomp.stdout.close()
+    tar_stdout, tar_stderr = p_tar.communicate()
+    decomp_stderr = ""
+    try:
+      _decomp_stdout, decomp_stderr = p_decomp.communicate(timeout=30)
+    except (OSError, subprocess.SubprocessError):
+      p_decomp.kill()
+      try:
+        p_decomp.wait(timeout=30)
+      except (OSError, subprocess.SubprocessError):
+        pass
+    rc = 0 if (p_tar.returncode == 0 and p_decomp.returncode == 0) else 1
+    stderr = (tar_stderr or "") + (decomp_stderr or "")
+    lines = (tar_stdout or "").splitlines()
+  else:
+    result = subprocess.run(
+        [tar_bin, "tf", archive_path],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    rc = result.returncode
+    stderr = result.stderr or ""
+    lines = (result.stdout or "").splitlines()
+  names: list[str] = []
+  for raw_line in lines:
+    name = str(raw_line or "").strip()
+    if not name or name.startswith("tar:") or name.endswith("/"):
+      continue
+    names.append(name)
+  return names, rc, stderr
+
+
 def _parse_tar_tvf_size_and_name(line: str) -> tuple[str, int] | None:
   """
   Parse one ``tar tvf`` listing line into ``(member_name, size)``.
@@ -7071,19 +7241,27 @@ def _parse_tar_tvf_size_and_name(line: str) -> tuple[str, int] | None:
   if len(parts) < 6:
     return None
   if "/" in parts[1]:
+    # GNU: mode owner/group size YYYY-MM-DD HH:MM name
     size_idx = 2
     name_idx = 5
+  elif len(parts) >= 9:
+    # BSD/libarchive: mode links owner group size Mon DD YYYY|HH:MM name,
+    # for both named (`0 sharrell wheel 12 Sep 3 13:20`) and numeric
+    # (`0 0 0 2 Dec 31 1969`) owner listings. This must be checked *before*
+    # the 8-field form below: a numeric-owner BSD line also satisfies that
+    # test and would read size from the gid column, yielding size 0 and a
+    # name prefixed with the year -- a silently empty member map.
+    size_idx = 4
+    name_idx = 8
   elif (
       len(parts) >= 8
       and parts[1].isdigit()
       and parts[2].isdigit()
       and parts[3].isdigit()
   ):
+    # BSD without the links column: mode owner group size Mon DD HH:MM name
     size_idx = 3
     name_idx = 7
-  elif len(parts) >= 9:
-    size_idx = 4
-    name_idx = 8
   else:
     return None
   if size_idx >= len(parts) or name_idx >= len(parts):
@@ -7118,24 +7296,14 @@ def _read_tar_file_member_sizes_unlocked(tar_path: str) -> Any:
   """
   if not os.path.isfile(tar_path):
     return {}
-  tar_bin = _tar_list_executable()
-  result = subprocess.run(
-      [tar_bin, "tvf", tar_path],
-      capture_output=True,
-      text=True,
-      check=False,
-  )
-  if result.returncode != 0:
+  occurrences, rc, stderr = _run_gnu_tvf_file_members(tar_path)
+  if rc != 0:
     raise RuntimeError(
         "gnu tar tvf failed path=%s rc=%s stderr=%s"
-        % (tar_path, result.returncode, (result.stderr or "")[:200])
+        % (tar_path, rc, stderr[:200])
     )
   by_name: dict[str, list[int]] = defaultdict(list)
-  for raw_line in (result.stdout or "").splitlines():
-    parsed = _parse_tar_tvf_size_and_name(raw_line)
-    if parsed is None:
-      continue
-    name, size = parsed
+  for name, size in occurrences:
     by_name[name].append(size)
   return {name: max(sizes) for name, sizes in by_name.items()}
 
@@ -7541,14 +7709,21 @@ def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
     seen_names = set()
     try:
       with _populate_tar_file_read_lock_wait(tar_path):
-        with _open_tarfile_for_read(tar_path, get_archive_zstd_thread_count()) as tf:
-          for member in _iter_tar_members(tf):
-            if not member.isfile():
-              continue
-            if member.name in seen_names:
-              saw_duplicates = True
-            seen_names.add(member.name)
-            on_member(member.name, member.size)
+        occurrences, rc, stderr = _run_gnu_tvf_file_members(tar_path)
+      if rc != 0:
+        return (
+            False,
+            False,
+            RuntimeError(
+                "gnu tar tvf failed path=%s rc=%s stderr=%s"
+                % (tar_path, rc, stderr[:200])
+            ),
+        )
+      for name, size in occurrences:
+        if name in seen_names:
+          saw_duplicates = True
+        seen_names.add(name)
+        on_member(name, size)
     except Exception as exc:
       from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
           ArchiveMembersStoreUnavailableError,
@@ -8714,19 +8889,9 @@ def _gnu_tvf_file_member_map_despite_fail(tar_path: str) -> dict[str, int]:
   """
   if not os.path.isfile(tar_path):
     return {}
-  tar_bin = _tar_list_executable()
-  result = subprocess.run(
-      [tar_bin, "tvf", tar_path],
-      capture_output=True,
-      text=True,
-      check=False,
-  )
+  occurrences, _rc, _stderr = _run_gnu_tvf_file_members(tar_path)
   by_name: dict[str, list[int]] = defaultdict(list)
-  for raw_line in (result.stdout or "").splitlines():
-    parsed = _parse_tar_tvf_size_and_name(raw_line)
-    if parsed is None:
-      continue
-    name, size = parsed
+  for name, size in occurrences:
     by_name[name].append(size)
   member_map = {name: max(sizes) for name, sizes in by_name.items()}
   if member_map:
@@ -9263,32 +9428,6 @@ def repair_truncated_daily_tar_in_place(
     except OSError:
       pass
     return False
-
-
-def _tarfile_member_map(tar_path: str) -> dict[str, int]:
-  """
-  Read file member sizes from a plain ``.tar`` via tarfile.
-
-  Args:
-    tar_path (str): Path to an uncompressed tar.
-
-  Returns:
-    dict[str, int]: Member name to byte size (largest when duplicated).
-
-  Examples:
-    >>> _tarfile_member_map("/no.tar")  # doctest: +SKIP
-  """
-  members: dict[str, int] = {}
-  if not os.path.isfile(tar_path):
-    return members
-  with tarfile.open(tar_path, "r") as tf:
-    for member in _iter_tar_members(tf):
-      if not member.isfile():
-        continue
-      prev = members.get(member.name)
-      if prev is None or member.size >= prev:
-        members[member.name] = int(member.size)
-  return members
 
 
 def _resolved_extracted_member_path(extract_dir: str, member_name: str) -> str:
@@ -9996,8 +10135,6 @@ def reconcile_open_tar_with_sealed_zst(
     tar_members = get_mutable_tar_authority_member_map(tar_path)
   except RuntimeError:
     tar_members = _gnu_tvf_file_member_map_despite_fail(tar_path)
-    if not tar_members:
-      tar_members = _tarfile_member_map(tar_path)
   zst_members: dict[str, int] = {}
   zst_readable = False
   if zst_exists:
@@ -10802,19 +10939,20 @@ def iter_tar_file_tasks(tar_path: str) -> Iterator[Any]:
     Yields:
       Iterator[Any]: Value produced by this call (type depends on inputs).
     
+    Raises:
+      OSError: When GNU ``tar tf`` exits non-zero for ``open_path``.
+    
     Examples:
       >>> _iter_members()  # doctest: +SKIP
     """
     with file_read_lock_wait(open_path):
-      with _open_tarfile_for_read(open_path, get_archive_zstd_thread_count()) as archive_tar:
-        try:
-          member_infos = iter(archive_tar)
-        except TypeError:
-          member_infos = archive_tar.getmembers()
-        for member_info in member_infos:
-          if not member_info.isfile():
-            continue
-          yield (open_path, member_info.name)
+      names, rc, _stderr = _run_gnu_tf_member_names(open_path)
+    if rc != 0:
+      raise OSError(
+          "gnu tar tf failed path=%s rc=%s" % (open_path, rc),
+      )
+    for name in names:
+      yield (open_path, name)
 
   def _restore_from_compressed() -> Any:
     """
@@ -10838,7 +10976,8 @@ def iter_tar_file_tasks(tar_path: str) -> Iterator[Any]:
 
   try:
     yield from _iter_members()
-  except (tarfile.TarError, OSError, EOFError):
+    return
+  except OSError:
     log_print(
         "Unable to read archive %s (possible corruption); attempting restore "
         "from compressed backup" % open_path

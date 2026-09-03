@@ -274,6 +274,37 @@ def test_mutable_tar_authority_uses_tar_tvf_not_tarfile():
   src = inspect.getsource(ah._read_tar_file_member_sizes_unlocked)
   assert "tvf" in src
   assert "tarfile.open" not in src
+  assert "_run_gnu_tvf_file_members" in src
+
+
+def test_populate_members_from_tar_scan_uses_tvf_not_tarfile():
+  """Open-tar populate census must use GNU tar tvf, not tarfile."""
+  import inspect
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as ah
+
+  src = inspect.getsource(ah._populate_members_from_tar_scan)
+  assert "_run_gnu_tvf_file_members" in src
+  assert "tarfile.open" not in src
+
+
+def test_iter_tar_file_tasks_uses_tf_not_tarfile():
+  """iter_tar_file_tasks must list via GNU tar tf, not tarfile."""
+  import inspect
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as ah
+
+  src = inspect.getsource(ah.iter_tar_file_tasks)
+  assert "_run_gnu_tf_member_names" in src
+  assert "tarfile.open" not in src
+
+
+def test_reconcile_open_tar_has_no_tarfile_member_map_fallback():
+  """Reconcile must not fall back to Python tarfile after GNU despite-fail."""
+  import inspect
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as ah
+
+  assert not hasattr(ah, "_tarfile_member_map")
+  src = inspect.getsource(ah.reconcile_open_tar_with_sealed_zst)
+  assert "_tarfile_member_map" not in src
 
 
 def test_orchestrator_omits_b_pending_cap_and_heartbeat_renew():

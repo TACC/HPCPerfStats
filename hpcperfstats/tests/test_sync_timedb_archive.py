@@ -373,6 +373,57 @@ def test_reconcile_merge_tar_and_zst_only_members(tmp_path):
   assert sealed_members.get("c.txt") == len("cc")
 
 
+def test_sealed_membership_read_not_answered_by_sibling_tar(
+    tmp_path, _clear_daily_archive_members_cache,
+):
+  """Sealed-side reads must see sealed bytes, not the day's tar-preferred map.
+
+  Regression (confirmed member loss): the sealed-side helper routed through the
+  per-day members store, which populates from the open ``.tar`` whenever one
+  exists (``populate_source=tar``). Every sealed-vs-other comparison then
+  compared the tar against itself, so divergence was undetectable:
+  ``reconcile_open_tar_with_sealed_zst`` classified ``noop/already_equivalent``
+  and deleted a tar holding members the sealed archive did not have. The same
+  root cause made the tar-vs-sealed mismatch gate in
+  ``validate_sealed_daily_archive_for_raw_removal`` dead code, and it also
+  affected seal-skip equivalence and legacy-gz drop.
+  """
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
+
+  tar_p = tmp_path / "2022-03-01.tar"
+  sealed = tmp_path / "2022-03-01.tar.gz"
+  in_tar = tmp_path / "in_tar.txt"
+  in_sealed = tmp_path / "in_sealed.txt"
+  in_tar.write_text("aa")
+  in_sealed.write_text("bbbb")
+  with tarfile.open(tar_p, "w") as tf:
+    tf.add(str(in_tar), arcname="same/name")
+  with tarfile.open(sealed, "w:gz") as tf:
+    tf.add(str(in_sealed), arcname="same/name")
+  _install_members_store(tmp_path)
+  try:
+    readable, members = helpers._sealed_archive_members_via_store_or_scan(
+        str(sealed),
+    )
+    assert readable is True
+    # 4 == the sealed archive's own member; 2 would be the sibling tar's.
+    assert members == {"same/name": 4}
+
+    # Sealed-only days keep the store single-flight path (the ingest
+    # catch-up case sync-timedb-ingest-pool-io-coordination.mdc protects).
+    tar_p.unlink()
+    readable_sealed_only, members_sealed_only = (
+        helpers._sealed_archive_members_via_store_or_scan(str(sealed))
+    )
+    assert readable_sealed_only is True
+    assert members_sealed_only == {"same/name": 4}
+  finally:
+    set_process_archive_members_store(None)
+
+
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
 def test_reconcile_larger_size_wins_on_conflict(tmp_path):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
@@ -797,6 +848,103 @@ def test_truncated_tar_member_map_fail_closed(tmp_path):
     _read_tar_file_member_sizes_unlocked(str(tar_path))
 
 
+@pytest.mark.skipif(not shutil.which("tar"), reason="tar not on PATH")
+def test_populate_members_from_tar_scan_lists_real_members(
+    tmp_path, _clear_daily_archive_members_cache,
+):
+  """GNU tvf populate fills the members store with real sizes."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
+
+  day_tar = tmp_path / "2024-07-10.tar"
+  inner = tmp_path / "payload.txt"
+  inner.write_text("hello-archive")
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(inner), arcname="host/payload")
+  _install_members_store(tmp_path)
+  cache_key = helpers._daily_archive_members_cache_key(str(day_tar))
+
+  token = set_worker_pool_kind("populate-pool")
+  try:
+    members = helpers._populate_members_from_tar_scan(str(day_tar), cache_key)
+  finally:
+    reset_worker_pool_kind(token)
+  assert members.get("host/payload") == inner.stat().st_size
+
+
+@pytest.mark.skipif(not shutil.which("tar"), reason="tar not on PATH")
+def test_populate_members_from_tar_scan_truncated_unreadable(
+    tmp_path, _clear_daily_archive_members_cache,
+):
+  """Truncated tar populate is unreadable and sets tar_truncated skip."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      ArchiveDayIngestSkipError,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
+
+  day_tar = tmp_path / "2024-07-11.tar"
+  inner = tmp_path / "z.txt"
+  inner.write_text("abcdefghij" * 500)
+  with tarfile.open(day_tar, "w") as tf:
+    tf.add(str(inner), arcname="z.txt")
+  day_tar.write_bytes(day_tar.read_bytes()[:200])
+  _install_members_store(tmp_path)
+  cache_key = helpers._daily_archive_members_cache_key(str(day_tar))
+
+  token = set_worker_pool_kind("populate-pool")
+  try:
+    with pytest.raises(ArchiveDayIngestSkipError) as exc_info:
+      helpers._populate_members_from_tar_scan(str(day_tar), cache_key)
+  finally:
+    reset_worker_pool_kind(token)
+  assert exc_info.value.kind == helpers.SKIP_KIND_TAR_TRUNCATED
+
+
+@pytest.mark.skipif(not shutil.which("tar"), reason="tar not on PATH")
+def test_populate_members_from_tar_scan_duplicate_names(
+    monkeypatch, tmp_path, _clear_daily_archive_members_cache,
+):
+  """Duplicate member names keep max byte size and flag saw_duplicates."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      get_process_archive_members_store,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+      reset_worker_pool_kind,
+      set_worker_pool_kind,
+  )
+
+  day_tar = tmp_path / "2024-07-12.tar"
+  day_tar.write_bytes(b"placeholder")
+  _install_members_store(tmp_path)
+  cache_key = helpers._daily_archive_members_cache_key(str(day_tar))
+
+  def _duplicate_occurrences(path):
+    del path
+    return [("short.txt", 1), ("short.txt", 13)], 0, ""
+
+  monkeypatch.setattr(
+      helpers, "_run_gnu_tvf_file_members", _duplicate_occurrences,
+  )
+
+  token = set_worker_pool_kind("populate-pool")
+  try:
+    members = helpers._populate_members_from_tar_scan(str(day_tar), cache_key)
+  finally:
+    reset_worker_pool_kind(token)
+  store = get_process_archive_members_store()
+  assert members["short.txt"] == 13
+  assert store is not None
+  assert store.dedupe_hint_is_set("2024-07-12") is True
+
+
 def test_verify_tar_archive_readable_rejects_garbage(tmp_path):
   tar_path = tmp_path / "garbage.tar"
   tar_path.write_bytes(b"not a tar archive" * 20)
@@ -908,7 +1056,10 @@ def test_replace_corrupt_tar_from_compressed_backup_restores_via_zstd(monkeypatc
   tar_path.write_text("bad")
   zst_path.write_text("not-used")
 
-  def _fake_decomp(compressed_path, out_tar_path, thread_count, *, remove_compressed=True):
+  def _fake_decomp(
+      compressed_path, out_tar_path, thread_count, *,
+      remove_compressed=True, **kwargs,
+  ):
     assert compressed_path == str(zst_path)
     assert out_tar_path == str(tar_path)
     inner = tmp_path / "inn.txt"
@@ -935,7 +1086,10 @@ def test_replace_corrupt_tar_falls_back_to_gz_when_zst_bad(monkeypatch, tmp_path
 
   calls = []
 
-  def _fake_decomp(compressed_path, out_tar_path, thread_count, *, remove_compressed=True):
+  def _fake_decomp(
+      compressed_path, out_tar_path, thread_count, *,
+      remove_compressed=True, **kwargs,
+  ):
     del thread_count, remove_compressed
     calls.append(compressed_path)
     if str(compressed_path).endswith(".tar.zst"):
@@ -1256,6 +1410,45 @@ def test_archive_stats_files_returns_false_when_sealed_without_restored_tar(
   result = _archive_stats_files_body((archive_key, [str(raw_file)]))
   assert result is False
   assert raw_file.exists()
+
+
+@pytest.mark.skipif(not shutil.which("tar"), reason="tar binary required")
+def test_archive_stats_files_body_no_raise_when_open_tar_tvf_fails_closed(
+    monkeypatch, tmp_path,
+):
+  """Corrupt open .tar must reach recovery, never raise through the pool.
+
+  The pre-append membership lookup uses the GNU ``tar tvf`` authority scan,
+  which fails closed with ``RuntimeError`` on a truncated or corrupt tar.
+  ``_archive_stats_files_body`` must absorb that and route into the in-place
+  repair / sealed-restore recovery path instead of propagating, per
+  sync-timedb-lock-and-archive-contract (the archive pool worker contract is
+  return-a-value, never raise). Nothing here patches
+  ``verify_tar_archive_readable``, so the real tvf failure drives the branch.
+  """
+  import hpcperfstats.dbload.sync_timedb as st
+
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-09.tar.zst")
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  Path(tar_path).write_bytes(b"corrupt-not-a-tar")
+  assert not os.path.exists(archive_key)
+
+  _patch_archive_gate_pass(monkeypatch)
+  logs = []
+  monkeypatch.setattr(st, "log_print", lambda msg, **_k: logs.append(str(msg)))
+
+  # Must not raise; returns False or an ArchiveAppendOutcome depending on
+  # whether in-place repair rescued the tar.
+  result = st._archive_stats_files_body((archive_key, [str(raw_file)]))
+  assert result is False or isinstance(result, st.ArchiveAppendOutcome)
+  assert any(
+      "open tar membership scan failed before append" in line for line in logs
+  ), "expected the tvf fail-closed branch to be exercised"
+  assert any(
+      "Daily tar unreadable before append" in line for line in logs
+  ), "expected the repair/sealed-restore recovery path to run"
 
 
 # --- parse_archive_date_from_daily_tar_path ---
@@ -1794,7 +1987,11 @@ def test_atomic_seal_tar_to_zst_retains_tar_when_raw_remains_for_day(tmp_path):
   member.write_text("x")
   with tarfile.open(tar_path, "w") as tf:
     tf.add(str(member), arcname="b.txt")
-  remaining = {str(zst_path): ["/archive/host/segment"]}
+  # Must be a real on-disk path: remaining_raw_by_gz_has_paths_on_disk ignores
+  # ghost entries, so a nonexistent path no longer blocks the tar drop.
+  remaining_raw = tmp_path / "segment"
+  remaining_raw.write_text("closed-raw")
+  remaining = {str(zst_path): [str(remaining_raw)]}
   atomic_seal_tar_to_zst(
       str(tar_path),
       str(zst_path),
@@ -1851,16 +2048,23 @@ def test_atomic_seal_tar_to_zst_passes_thread_count_to_compress_and_test(monkeyp
 
   calls = []
 
-  def _fake_compress(tar, out, threads, level):
+  def _fake_compress(tar, out, threads, level, **kwargs):
     with open(out, "wb") as f:
       f.write(b"fake-zst-bytes")
 
-  def _fake_test(path, threads):
+  def _fake_test(path, threads, **kwargs):
     calls.append([zstd_executable(), "-t", "-T%d" % threads, "-q", path])
 
   monkeypatch.setattr(helpers, "zstd_compress_tar_to_file", _fake_compress)
   monkeypatch.setattr(helpers, "zstd_test", _fake_test)
-  monkeypatch.setattr(helpers.shutil, "which", lambda name: "/usr/bin/zstd")
+  # Only fake the zstd lookup; the member census shells out to real GNU tar,
+  # so other names must keep resolving normally.
+  _real_which = shutil.which
+  monkeypatch.setattr(
+      helpers.shutil,
+      "which",
+      lambda name: "/usr/bin/zstd" if name == "zstd" else _real_which(name),
+  )
 
   atomic_seal_tar_to_zst(
       str(tar_path),
@@ -1996,6 +2200,28 @@ def test_iter_tar_file_tasks_matches_get_tar_file_tasks(tmp_path):
     tf.add(str(sub_f), arcname="subdir/b.txt")
 
   assert list(iter_tar_file_tasks(str(tar_path))) == get_tar_file_tasks(str(tar_path))
+
+
+def test_iter_tar_file_tasks_yields_each_member_exactly_once(tmp_path):
+  """Healthy tar must not replay members through the recovery retry.
+
+  Regression: the success path fell out of the ``try`` into the trailing
+  post-restore ``yield from _iter_members()``, so every member was emitted
+  twice (a 2-member tar produced 4 ingest tasks). The sibling test above
+  compares the streaming and eager helpers against each other, so it stayed
+  green while both double-counted.
+  """
+  tar_path = tmp_path / "2024-01-01.tar"
+  for name in ("a.txt", "b.txt"):
+    (tmp_path / name).write_text("x")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(tmp_path / "a.txt"), arcname="a.txt")
+    tf.add(str(tmp_path / "b.txt"), arcname="b.txt")
+
+  tasks = list(iter_tar_file_tasks(str(tar_path)))
+  assert [name for _p, name in tasks] == ["a.txt", "b.txt"]
+  assert len(tasks) == 2
+  assert len(set(tasks)) == len(tasks)
 
 
 def test_get_tar_file_tasks_empty_tar(tmp_path):
@@ -2151,39 +2377,20 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
     def __exit__(self, _exc_type, exc, tb):
       return False
 
-  class _Member:
-    def __init__(self, name, is_file):
-      self.name = name
-      self._is_file = is_file
-
-    def isfile(self):
-      return self._is_file
-
-  class _FakeTar:
-    def __enter__(self):
-      return self
-
-    def __exit__(self, _exc_type, exc, tb):
-      return False
-
-    def getmembers(self):
-      return [_Member("a.txt", True), _Member("dir", False)]
-
-  open_calls = {"count": 0}
+  tf_calls = {"count": 0}
   remove_calls = []
   restore_calls = []
 
-  def _open_mock(path, mode):
+  def _tf_mock(path):
     assert path == tar_path
-    assert mode == "r"
-    open_calls["count"] += 1
-    if open_calls["count"] == 1:
-      raise tarfile.ReadError("corrupt tar")
-    return _FakeTar()
+    tf_calls["count"] += 1
+    if tf_calls["count"] == 1:
+      return [], 1, "corrupt tar"
+    return ["a.txt"], 0, ""
 
   monkeypatch.setattr(helpers, "file_read_lock_wait", lambda _p: _NoOpLock())
   monkeypatch.setattr(helpers, "file_write_lock", lambda _p: _NoOpLock())
-  monkeypatch.setattr(helpers.tarfile, "open", _open_mock)
+  monkeypatch.setattr(helpers, "_run_gnu_tf_member_names", _tf_mock)
   monkeypatch.setattr(helpers.os.path, "exists", lambda p: p in (tar_path, gz_path))
   monkeypatch.setattr(
       helpers.os.path,
@@ -2202,7 +2409,7 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
   )
 
   assert get_tar_file_tasks(tar_path) == [(tar_path, "a.txt")]
-  assert open_calls["count"] == 2
+  assert tf_calls["count"] == 2
   assert remove_calls == [tar_path]
   assert restore_calls == [(gz_path, tar_path, helpers.get_archive_zstd_thread_count())]
 
@@ -2222,13 +2429,13 @@ def test_get_tar_file_tasks_raises_when_corrupt_and_no_gz(monkeypatch, tmp_path)
 
   monkeypatch.setattr(helpers, "file_read_lock_wait", lambda _p: _NoOpLock())
   monkeypatch.setattr(
-      helpers.tarfile,
-      "open",
-      lambda _path, _mode: (_ for _ in ()).throw(tarfile.ReadError("corrupt tar")),
+      helpers,
+      "_run_gnu_tf_member_names",
+      lambda _path: ([], 1, "corrupt tar"),
   )
   monkeypatch.setattr(helpers.os.path, "exists", lambda _p: False)
 
-  with pytest.raises(tarfile.ReadError):
+  with pytest.raises(OSError):
     get_tar_file_tasks(tar_path)
 
 
@@ -2248,16 +2455,16 @@ def test_get_tar_file_tasks_raises_when_zstd_restore_fails(monkeypatch, tmp_path
 
   monkeypatch.setattr(helpers, "file_read_lock_wait", lambda _p: _NoOpLock())
   monkeypatch.setattr(
-      helpers.tarfile,
-      "open",
-      lambda _path, _mode: (_ for _ in ()).throw(tarfile.ReadError("corrupt tar")),
+      helpers,
+      "_run_gnu_tf_member_names",
+      lambda _path: ([], 1, "corrupt tar"),
   )
   monkeypatch.setattr(helpers.os.path, "exists", lambda p: p == gz_path or p == tar_path)
   monkeypatch.setattr(helpers.os, "remove", lambda _p: None)
 
   monkeypatch.setattr(helpers, "decompress_compressed_to_tar", lambda *_a, **_k: False)
 
-  with pytest.raises(tarfile.ReadError):
+  with pytest.raises(OSError):
     get_tar_file_tasks(tar_path)
 
 
@@ -2480,8 +2687,16 @@ def test_archive_stats_files_skips_append_when_not_head_ingested(monkeypatch, tm
   )
   monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1))
 
-  assert archive_stats_files((archive_key, [str(raw_file)]))
+  # Gate-skip is a non-ok outcome carrying the skipped paths so the append
+  # drain hands them back to ingest instead of ACK-dropping them (see
+  # sync-timedb-queue-orchestrator-contract "Append gate-skip drain").
+  result = archive_stats_files((archive_key, [str(raw_file)]))
+  assert isinstance(result, st.ArchiveAppendOutcome)
+  assert result.gate_skipped is True
+  assert result.ok is False
+  assert result.skipped_paths == (str(raw_file),)
   assert append_calls["n"] == 0
+  assert raw_file.exists()
 
 
 def test_remove_verified_uncompressed_daily_tars_removes_when_tar_matches_gz(tmp_path):
@@ -2813,15 +3028,17 @@ def test_validate_sealed_daily_archive_validation_cache_hits(monkeypatch, tmp_pa
     tf.add(str(f), arcname="cache.txt")
 
   calls = {"n": 0}
-  real_scan = helpers._scan_compressed_archive_members_and_readable
+  # Sealed-side reads go through the members-store single-flight helper, not a
+  # direct _scan_compressed_archive_members_and_readable call (see
+  # sync-timedb-ingest-pool-io-coordination.mdc item 10).
+  real_scan = helpers._sealed_archive_members_via_store_or_scan
 
   def wrapped_scan(path, **kwargs):
-    del kwargs
     calls["n"] += 1
-    return real_scan(path)
+    return real_scan(path, **kwargs)
 
   monkeypatch.setattr(
-      helpers, "_scan_compressed_archive_members_and_readable", wrapped_scan)
+      helpers, "_sealed_archive_members_via_store_or_scan", wrapped_scan)
   cache = {"hits": 0, "misses": 0}
   first_ok, first_members = validate_sealed_daily_archive_for_raw_removal(
       str(gz), log_fn=None, validation_cache=cache
@@ -3067,6 +3284,42 @@ def _tar_add_bytes(tf, name, data):
   tf.addfile(ti, io.BytesIO(data))
 
 
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        # GNU tar: mode owner/group size YYYY-MM-DD HH:MM name
+        ("-rw-r--r-- 0/0               2 1969-12-31 18:00 host/stats",
+         ("host/stats", 2)),
+        ("-rw-r--r-- 0/0               6 1969-12-31 18:00 host/stats",
+         ("host/stats", 6)),
+        # BSD/libarchive (macOS /usr/bin/tar): mode links owner group size
+        # Mon DD YYYY name. Regression: this 9-field form also satisfies the
+        # 8-field test, which read size from the gid column and returned
+        # ("1969 host/stats", 0) -- a silently empty member map.
+        ("-rw-r--r--  0 0      0           2 Dec 31  1969 host/stats",
+         ("host/stats", 2)),
+        ("-rw-r--r--  0 0      0           6 Dec 31  1969 host/stats",
+         ("host/stats", 6)),
+        # BSD with named owner/group -- the common real macOS listing. The
+        # 9-field branch must stay generic (no all-digits requirement) or
+        # every normal bsdtar line stops parsing.
+        ("-rw-r--r--  0 sharrell wheel      12 Sep  3 13:20 host/stats",
+         ("host/stats", 12)),
+        # BSD without the links column.
+        ("-rw-r--r-- 0 0 12 Dec 31 1969 host/stats", ("host/stats", 12)),
+        # Non-file members and tar diagnostics are not member listings.
+        ("drwxr-xr-x 0/0               0 1969-12-31 18:00 host/", None),
+        ("tar: Unexpected EOF in archive", None),
+        ("", None),
+    ],
+)
+def test_parse_tar_tvf_size_and_name_handles_gnu_and_bsd(line, expected):
+  """tvf line parsing must agree across GNU and BSD verbose layouts."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  assert helpers._parse_tar_tvf_size_and_name(line) == expected
+
+
 def test_get_existing_archive_members_uses_max_size_for_duplicate_paths(tmp_path):
   """Same member path twice: reported size is the larger payload."""
   tar_path = tmp_path / "dup.tar"
@@ -3294,8 +3547,14 @@ def test_append_to_tar_writes_members_via_files_from(tmp_path):
 
 
 def test_append_to_tar_argv_always_includes_posix(monkeypatch, tmp_path):
-  """Create (-c) and append (-r) both pass --posix and -C / for large-member pax."""
+  """Append always passes -r/--posix/-C / and never -c.
+
+  ``tar -r`` is unconditional (GNU tar creates a missing archive), per
+  sync-timedb-lock-and-archive-contract. ``--posix`` and ``-C /`` keep pax
+  headers available for large members.
+  """
   from hpcperfstats.dbload import sync_timedb as st
+  from hpcperfstats.dbload.lib import sync_timedb_progress_io as progress_io
 
   f1 = tmp_path / "segment1"
   f1.write_bytes(b"a")
@@ -3312,26 +3571,29 @@ def test_append_to_tar_argv_always_includes_posix(monkeypatch, tmp_path):
 
   def _run(args, **_kwargs):
     captured.append(list(args))
-    # Pretend create succeeded so second call uses -r.
-    if "-c" in args:
+    if not tar_path.exists():
       tar_path.write_bytes(b"ustar\0")
     return _Ok()
 
-  monkeypatch.setattr(st.subprocess, "run", _run)
+  # Long tar/zstd work goes through run_subprocess_with_progress, not
+  # subprocess.run (sync-timedb-no-timers.mdc).
+  monkeypatch.setattr(progress_io, "run_subprocess_with_progress", _run)
   monkeypatch.setattr(
       st, "file_write_lock", lambda *_a, **_k: contextlib.nullcontext())
   st._append_to_tar(str(tar_path), [str(f1)])
   st._append_to_tar(str(tar_path), [str(f2)])
   assert len(captured) == 2
-  assert "-c" in captured[0] and "--posix" in captured[0]
-  assert "-C" in captured[0] and captured[0][captured[0].index("-C") + 1] == "/"
-  assert "-r" in captured[1] and "--posix" in captured[1]
-  assert "-C" in captured[1] and captured[1][captured[1].index("-C") + 1] == "/"
+  for argv in captured:
+    assert "-r" in argv
+    assert "-c" not in argv
+    assert "--posix" in argv
+    assert "-C" in argv and argv[argv.index("-C") + 1] == "/"
 
 
 def test_append_to_tar_respects_ini_batch_size(monkeypatch, tmp_path):
   """sync_timedb_tar_append_batch_size caps paths per tar -T invocation."""
   from hpcperfstats.dbload import sync_timedb as st
+  from hpcperfstats.dbload.lib import sync_timedb_progress_io as progress_io
 
   paths = []
   for i in range(5):
@@ -3348,14 +3610,14 @@ def test_append_to_tar_respects_ini_batch_size(monkeypatch, tmp_path):
 
   def _run(args, **_kwargs):
     captured.append(list(args))
-    if "-c" in args or not tar_path.exists():
+    if not tar_path.exists():
       tar_path.write_bytes(b"ustar\0")
     return _Ok()
 
   monkeypatch.setattr(
       st.cfg, "get_sync_timedb_tar_append_batch_size", lambda: 2,
   )
-  monkeypatch.setattr(st.subprocess, "run", _run)
+  monkeypatch.setattr(progress_io, "run_subprocess_with_progress", _run)
   monkeypatch.setattr(
       st, "file_write_lock", lambda *_a, **_k: contextlib.nullcontext())
   st._append_to_tar(str(tar_path), paths)
@@ -3396,7 +3658,11 @@ def test_archive_stats_files_error_log_includes_tar_stderr(monkeypatch, tmp_path
 
   _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(st, "_decompress_compressed_archive", lambda *_a, **_k: True)
-  monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
+  monkeypatch.setattr(
+      st,
+      "_lookup_existing_members_for_archive_append",
+      lambda *_a, **_k: ({}, "tar_scan"),
+  )
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
   monkeypatch.setattr(
       st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
@@ -3517,7 +3783,11 @@ def test_archive_stats_files_convert_fail_skip_outcome(monkeypatch, tmp_path):
 
   _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(st, "_decompress_compressed_archive", lambda *_a, **_k: True)
-  monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
+  monkeypatch.setattr(
+      st,
+      "_lookup_existing_members_for_archive_append",
+      lambda *_a, **_k: ({}, "tar_scan"),
+  )
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
   monkeypatch.setattr(
       st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
@@ -3554,7 +3824,11 @@ def test_archive_stats_files_error_log_outcome_fail(monkeypatch, tmp_path):
 
   _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(st, "_decompress_compressed_archive", lambda *_a, **_k: True)
-  monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
+  monkeypatch.setattr(
+      st,
+      "_lookup_existing_members_for_archive_append",
+      lambda *_a, **_k: ({}, "tar_scan"),
+  )
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
   monkeypatch.setattr(
       st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
@@ -4297,7 +4571,11 @@ def test_archive_stats_files_does_not_raise_on_append_failure(monkeypatch, tmp_p
 
   _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(st, "_decompress_compressed_archive", lambda *_a, **_k: True)
-  monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
+  monkeypatch.setattr(
+      st,
+      "_lookup_existing_members_for_archive_append",
+      lambda *_a, **_k: ({}, "tar_scan"),
+  )
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
   monkeypatch.setattr(
       st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
@@ -4323,7 +4601,11 @@ def test_archive_stats_files_does_not_raise_on_fail_closed_append_guard(
 
   _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(st, "_decompress_compressed_archive", lambda *_a, **_k: True)
-  monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
+  monkeypatch.setattr(
+      st,
+      "_lookup_existing_members_for_archive_append",
+      lambda *_a, **_k: ({}, "tar_scan"),
+  )
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
   monkeypatch.setattr(
       st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
@@ -4366,7 +4648,11 @@ def test_archive_stats_files_skips_dedupe_in_append_path(monkeypatch, tmp_path):
 
   _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(st, "_decompress_compressed_archive", lambda *_a, **_k: True)
-  monkeypatch.setattr(st, "get_existing_archive_members", lambda *_a, **_k: {})
+  monkeypatch.setattr(
+      st,
+      "_lookup_existing_members_for_archive_append",
+      lambda *_a, **_k: ({}, "tar_scan"),
+  )
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
   monkeypatch.setattr(
       st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files))
@@ -5063,9 +5349,27 @@ def test_seal_dirty_only_when_no_remaining_raw_defers_day_with_raw(
     zst_p = tmp_path / (tar_p.name + ".zst")
     if zst_p.exists():
       zst_p.unlink()
+  # The only_when_no_remaining_raw gate derives the blocking set itself via
+  # remaining_raw_blocking_day_incomplete (not the remaining_raw_by_gz arg),
+  # and only defers for paths still present on disk.
+  from hpcperfstats.dbload.lib import sync_timedb_day_raw_removal
+
+  raw_seg = tmp_path / "seg1"
+  raw_seg.write_text("closed-raw")
   remaining = {
-      normalize_daily_compressed_path(str(tar_with_raw)): ["/raw/seg1"],
+      normalize_daily_compressed_path(str(tar_with_raw)): [str(raw_seg)],
   }
+
+  def _fake_blocking(tar_p):
+    if os.path.normpath(str(tar_p)) == os.path.normpath(str(tar_with_raw)):
+      return dict(remaining)
+    return {}
+
+  monkeypatch.setattr(
+      sync_timedb_day_raw_removal,
+      "remaining_raw_blocking_day_incomplete",
+      _fake_blocking,
+  )
   seal_dirty_daily_archives(
       str(tmp_path),
       local_tz=ZoneInfo("UTC"),
@@ -5788,9 +6092,25 @@ def test_daily_archive_has_member_falls_back_when_populate_raises(
   monkeypatch.setattr(
       helpers, "get_existing_archive_members_for_daily_archive", _raise,
   )
+  # The store point lookup runs before the full-map lookup, so it must also
+  # fail for the populate-failure path to be exercised at all.
+  monkeypatch.setattr(
+      helpers, "_daily_archive_member_match_via_store", _raise,
+  )
+  local_point_calls = {"n": 0}
+
+  def _count_local_point(*_a, **_k):
+    local_point_calls["n"] += 1
+    return False
+
+  monkeypatch.setattr(
+      helpers, "_sealed_archive_member_has_exact_size", _count_local_point,
+  )
   try:
     with pytest.raises(ArchiveMembersStoreUnavailableError, match="populate failed"):
       helpers.daily_archive_has_member_with_size(sealed, "host/raw", 4)
+    # No local sealed point lookup may be invented as a fallback.
+    assert local_point_calls["n"] == 0
   finally:
     set_process_archive_members_store(None)
 
@@ -6225,11 +6545,17 @@ def test_ingest_waiters_no_local_zstd_while_lock_held(
       helpers, "_sealed_archive_member_has_exact_size", _forbidden_point_lookup,
   )
 
-  def _forbidden_populate(*_a, **_k):
+  # Forbid the actual decompression, not the populate wrapper: entering
+  # _populate_members_from_sealed_scan is legal (it is what blocks on the
+  # in-flight lease); running a second zstd -d -c while it is held is not.
+  def _forbidden_scan(*_a, **_k):
     raise AssertionError("must wait, not populate while lock held")
 
   monkeypatch.setattr(
-      helpers, "_populate_members_from_sealed_scan", _forbidden_populate,
+      helpers, "_stream_compressed_archive_members", _forbidden_scan,
+  )
+  monkeypatch.setattr(
+      helpers, "_scan_compressed_archive_members_and_readable", _forbidden_scan,
   )
 
   canonical = helpers.normalize_daily_compressed_path(sealed)
@@ -6316,6 +6642,38 @@ def test_classify_stream_failure_zst_invalid(tmp_path):
       str(sealed), EOFError("unexpected end of data"),
   )
   assert kind == helpers.SKIP_KIND_ZST_FRAME_INVALID
+
+
+@pytest.mark.parametrize(
+    "stderr_text",
+    [
+        # GNU tar (production): tail off a record boundary.
+        "tar: rmtlseek not stopped at a record boundary\n"
+        "tar: Error is not recoverable: exiting now",
+        # GNU tar (production): tail on a record boundary.
+        "tar: Unexpected EOF in archive\n"
+        "tar: Error is not recoverable: exiting now",
+        # GNU tar (production): tail shorter than one header block.
+        "tar: This does not look like a tar archive\n"
+        "tar: Exiting with failure status due to previous errors",
+        # bsdtar (dev macOS).
+        "tar: Unrecognized archive format",
+        "tar: Error opening archive: Unrecognized archive format",
+        "tar: Truncated tar archive",
+    ],
+)
+def test_classify_stream_failure_open_tar_truncated_cli_wording(
+    tmp_path, stderr_text,
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2026-05-09.tar"
+  tar_path.write_bytes(b"partial-tar-bytes")
+  kind, detail = helpers.classify_sealed_archive_stream_failure(
+      str(tar_path), RuntimeError(stderr_text),
+  )
+  assert kind == helpers.SKIP_KIND_TAR_TRUNCATED
+  assert detail
 
 
 def test_concurrent_waiters_no_zstd_after_day_skip(
@@ -6623,14 +6981,16 @@ def test_daily_archive_members_cache_hit_skips_second_scan(
   with tarfile.open(day_gz, "w:gz") as tf:
     tf.add(str(inner), arcname="onlymember")
   scan_calls = {"n": 0}
-  original = helpers._scan_compressed_archive_members_and_readable
+  # Sealed membership is filled by the single-flight populate path, which
+  # streams the archive via _stream_compressed_archive_members.
+  original = helpers._stream_compressed_archive_members
 
-  def counting_scan(path, **kwargs):
+  def counting_scan(*args, **kwargs):
     scan_calls["n"] += 1
-    return original(path, **kwargs)
+    return original(*args, **kwargs)
 
   monkeypatch.setattr(
-      helpers, "_scan_compressed_archive_members_and_readable", counting_scan,
+      helpers, "_stream_compressed_archive_members", counting_scan,
   )
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
@@ -6685,14 +7045,17 @@ def test_raw_stats_needs_append_uses_cache(
   with tarfile.open(tar_path, "w") as tf:
     tf.add(str(raw_path), arcname=member_name)
   scan_calls = {"n": 0}
-  original = helpers.get_existing_archive_members
+  # An open .tar resolves through get_mutable_tar_authority_member_map, which
+  # caches per tar path; count the underlying tvf read so a cache hit on the
+  # second call means exactly one scan.
+  original = helpers._read_tar_file_member_sizes_unlocked
 
   def counting_get_members(tar_p):
     scan_calls["n"] += 1
     return original(tar_p)
 
   monkeypatch.setattr(
-      helpers, "get_existing_archive_members", counting_get_members,
+      helpers, "_read_tar_file_member_sizes_unlocked", counting_get_members,
   )
   monkeypatch.setattr(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
@@ -6780,14 +7143,15 @@ def test_daily_archive_has_member_prefers_open_tar_when_tar_and_sealed_exist(
       helpers.cfg, "get_sync_archive_members_cache_enabled", lambda: True,
   )
   tar_scan_calls = {"n": 0}
-  original_get_members = helpers.get_existing_archive_members
+  # Open-tar authority map is the seam that bypasses the warm members store.
+  original_get_members = helpers.get_mutable_tar_authority_member_map
 
   def counting_tar_scan(path):
     tar_scan_calls["n"] += 1
     return original_get_members(path)
 
   monkeypatch.setattr(
-      helpers, "get_existing_archive_members", counting_tar_scan,
+      helpers, "get_mutable_tar_authority_member_map", counting_tar_scan,
   )
   try:
     assert helpers.daily_archive_has_member_with_size(
@@ -6914,8 +7278,19 @@ def test_prior_day_tar_removed_at_seal_when_keep_false(monkeypatch, tmp_path):
 
   tar_path = tmp_path / "2026-01-01.tar"
   zst_path = tmp_path / "2026-01-01.tar.zst"
-  tar_path.write_bytes(b"tar-payload")
-  monkeypatch.setattr(helpers.shutil, "which", lambda _cmd: "/usr/bin/zstd")
+  member = tmp_path / "payload.txt"
+  member.write_text("tar-payload")
+  # Must be a real archive: the seal member census is GNU ``tar tvf`` and
+  # fails closed on a non-tar file.
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(member), arcname="host/payload")
+  # Only fake the zstd lookup so real GNU tar still resolves.
+  _real_which = shutil.which
+  monkeypatch.setattr(
+      helpers.shutil,
+      "which",
+      lambda name: "/usr/bin/zstd" if name == "zstd" else _real_which(name),
+  )
 
   def fake_compress(_tar, out_path, *_a, **_k):
     open(out_path, "wb").write(b"z")
@@ -6948,8 +7323,8 @@ def test_iter_tar_file_tasks_falls_back_to_gz_when_zst_corrupt(monkeypatch, tmp_
   gz_path.write_text("good-gz-placeholder")
   calls = []
 
-  def _fake_decomp(compressed_path, out_tar_path, thread_count, *, remove_compressed=True):
-    del thread_count, remove_compressed
+  def _fake_decomp(compressed_path, out_tar_path, thread_count, *, remove_compressed=True, **kwargs):
+    del thread_count, remove_compressed, kwargs
     calls.append(str(compressed_path))
     if str(compressed_path).endswith(".tar.zst"):
       return False
@@ -6981,22 +7356,11 @@ def test_iter_tar_file_tasks_restore_uses_sealed_keep_policy(monkeypatch, tmp_pa
 
   open_calls = {"n": 0}
 
-  class _FakeTar:
-    def __enter__(self):
-      return self
-
-    def __exit__(self, *_a):
-      return False
-
-    def __iter__(self):
-      yield type("M", (), {"isfile": lambda self: True, "name": "only.txt"})()
-
-  def _open_mock(path, mode="r", *_a, **_k):
-    del mode
+  def _fake_tf_list(path):
     open_calls["n"] += 1
     if open_calls["n"] == 1:
-      raise tarfile.ReadError("corrupt")
-    return _FakeTar()
+      return [], 1, "corrupt"
+    return ["only.txt"], 0, ""
 
   restore_kwargs = {}
 
@@ -7006,7 +7370,7 @@ def test_iter_tar_file_tasks_restore_uses_sealed_keep_policy(monkeypatch, tmp_pa
     )
     return True
 
-  monkeypatch.setattr(helpers.tarfile, "open", _open_mock)
+  monkeypatch.setattr(helpers, "_run_gnu_tf_member_names", _fake_tf_list)
   monkeypatch.setattr(
       helpers,
       "replace_corrupt_tar_from_compressed_backup",
@@ -7027,7 +7391,10 @@ def test_validate_sealed_restores_corrupt_tar_before_fail_closed(monkeypatch, tm
   zst_path.write_bytes(b"sealed-placeholder")
   members = {"member.txt": 7}
 
-  def _fake_decomp(compressed_path, out_tar_path, thread_count, *, remove_compressed=True):
+  def _fake_decomp(
+      compressed_path, out_tar_path, thread_count, *,
+      remove_compressed=True, **kwargs,
+  ):
     del compressed_path, thread_count, remove_compressed
     inner = tmp_path / "member.txt"
     inner.write_text("payload")
@@ -7061,7 +7428,10 @@ def test_replace_corrupt_tar_does_not_clobber_concurrent_append(monkeypatch, tmp
   appended = tmp_path / "appended.txt"
   appended.write_text("new-append")
 
-  def _fake_decomp(compressed_path, out_tar_path, thread_count, *, remove_compressed=True):
+  def _fake_decomp(
+      compressed_path, out_tar_path, thread_count, *,
+      remove_compressed=True, **kwargs,
+  ):
     del compressed_path, thread_count, remove_compressed
     with tarfile.open(str(out_tar_path), "w") as tf:
       tf.add(str(appended), arcname="appended.txt")
@@ -8398,10 +8768,16 @@ def test_archive_stats_files_skips_restore_when_to_add_zero_sealed(
       lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1),
   )
   tar_scan_calls = {"n": 0}
+
+  def _count_tar_scan(*_a, **_k):
+    tar_scan_calls["n"] += 1
+    return {}
+
+  # A warm store must satisfy membership without any full sibling .tar scan,
+  # via either the legacy scan helper or the open-tar authority map.
+  monkeypatch.setattr(helpers, "get_existing_archive_members", _count_tar_scan)
   monkeypatch.setattr(
-      st,
-      "get_existing_archive_members",
-      lambda *_a, **_k: tar_scan_calls.__setitem__("n", tar_scan_calls["n"] + 1) or {},
+      helpers, "get_mutable_tar_authority_member_map", _count_tar_scan,
   )
 
   logs = []
@@ -9131,6 +9507,9 @@ def test_rescan_force_snapshot_merges_incremental_find_for_post_snapshot_closes(
     return [str(new_closed_path)]
 
   monkeypatch.setattr(helpers, "collect_stats_files_in_range", _fake_collect)
+  # full_rescan_every=5 with __rescan_count__=1 makes this a non-full tick
+  # (1 % 5 != 0), so the idle-refill union find must stay mtime-bounded rather
+  # than escalating to a full-age walk.
   result = helpers.rescan_pending_stats_files(
       str(tmp_path),
       "current",
@@ -9138,6 +9517,7 @@ def test_rescan_force_snapshot_merges_incremental_find_for_post_snapshot_closes(
       "cluster.test",
       {str(processed_path)},
       host_scan_hints={"__rescan_count__": 1},
+      full_rescan_every=5,
       startup_closed_paths=[str(processed_path)],
       force_snapshot_paths=True,
   )
@@ -9625,19 +10005,26 @@ def test_collect_and_rescan_newest_first_treat_current_as_unfiltered(tmp_path):
 
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
 def test_atomic_seal_refuses_unreadable_tar(tmp_path):
-  """Fix A: refuse seal when tar fails full readability scan."""
+  """Fix A: refuse seal when tar fails full readability scan.
+
+  The member census is GNU ``tar tvf`` and fails closed on a non-zero exit, so
+  seal raises instead of returning ``None``. ``_seal_one_daily_tar`` catches
+  ``RuntimeError`` so one bad day cannot abort a whole maintenance pass. The
+  invariant that matters either way is that no ``.tar.zst`` is produced from an
+  unreadable tar.
+  """
   tar_path = tmp_path / "2021-06-07.tar"
   zst_path = tmp_path / "2021-06-07.tar.zst"
   tar_path.write_bytes(b"not-a-valid-tar-archive")
-  result = atomic_seal_tar_to_zst(
-      str(tar_path),
-      str(zst_path),
-      num_threads=1,
-      compress_level=6,
-      keep_uncompressed_tar=True,
-      log_fn=None,
-  )
-  assert result is None
+  with pytest.raises(RuntimeError, match="tar tvf failed"):
+    atomic_seal_tar_to_zst(
+        str(tar_path),
+        str(zst_path),
+        num_threads=1,
+        compress_level=6,
+        keep_uncompressed_tar=True,
+        log_fn=None,
+    )
   assert not zst_path.is_file()
 
 
@@ -9651,7 +10038,7 @@ def test_verify_tar_read_lock_timeout_not_treated_as_corrupt(monkeypatch, tmp_pa
   with tarfile.open(tar_path, "w") as tf:
     tf.add(str(member), arcname="host/payload")
 
-  def _timeout_lock(_path):
+  def _timeout_lock(_path, *_a, **_k):
     raise TimeoutError("timed out waiting for fnctl.lock on %s" % _path)
 
   monkeypatch.setattr(helpers, "file_read_lock_wait", _timeout_lock)
@@ -9668,7 +10055,7 @@ def test_decompress_restore_keeps_zst_on_active_ingest_day(monkeypatch, tmp_path
   zst_path.write_bytes(b"placeholder-zst")
   captured = {}
 
-  def _fake_decompress(src, dst, zstd_threads, remove_compressed=True):
+  def _fake_decompress(src, dst, zstd_threads, remove_compressed=True, **kwargs):
     captured["remove_compressed"] = remove_compressed
     with tarfile.open(dst, "w") as tf:
       tf.addfile(tarfile.TarInfo(name="host/raw"), io.BytesIO(b"x"))
@@ -9741,7 +10128,7 @@ def test_ensure_restore_does_not_build_full_maint_snapshot(monkeypatch, tmp_path
     snapshot_calls.append(1)
     raise AssertionError("must not build full maint snapshot on restore")
 
-  def _fake_decompress(src, dst, zstd_threads, remove_compressed=True):
+  def _fake_decompress(src, dst, zstd_threads, remove_compressed=True, **kwargs):
     decomp_calls.append((src, remove_compressed))
     with tarfile.open(dst, "w") as tf:
       tf.addfile(tarfile.TarInfo(name="host/raw"), io.BytesIO(b"x"))

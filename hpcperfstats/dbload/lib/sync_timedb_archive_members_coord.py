@@ -1636,7 +1636,14 @@ def populate_archive_members(
         existing = store.lookup_complete_map(keys.day_token, keys.identity)
         if existing is not None:
             return existing
-        if keys.day_token and archive_append_inflight_for_day(keys.day_token):
+        if (
+            keys.day_token
+            and archive_append_inflight_for_day(keys.day_token)
+            and not archive_pre_append_member_lookup_active()
+        ):
+            # The archive-pool pre-append lookup runs inside the same job that
+            # set archive_append_inflight, so it must not defer on its own
+            # flag -- that self-deadlocks until populate_max_seconds.
             _log_append_inflight_defer_if_allowed(keys.day_token)
             time.sleep(_wait_poll_seconds())
             continue
