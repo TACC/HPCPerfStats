@@ -169,9 +169,10 @@ RUN /bin/bash -o pipefail -c '\
   pip install --no-cache-dir -r /tmp/requirements-build.txt'
 
 # 3) GIL source-build numpy/numexpr/pandas against MKL (before rest).
+# mkl 2026+ wheels install shared libs under sysconfig data/lib (no Python package).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  MKLROOT="$(python3 -c "import pathlib,mkl; print(pathlib.Path(mkl.__file__).resolve().parent)")"; \
+  MKLROOT="$(python3 -c "import sysconfig; from pathlib import Path; r=Path(sysconfig.get_path(\"data\")); assert list((r/\"lib\"/\"pkgconfig\").glob(\"mkl-*.pc\")), r; assert list((r/\"lib\").glob(\"libmkl_rt.so*\")), r; print(r)")"; \
   export MKLROOT PKG_CONFIG_PATH="${MKLROOT}/lib/pkgconfig" LD_LIBRARY_PATH="${MKLROOT}/lib"; \
   pip install --no-cache-dir --no-build-isolation --force-reinstall \
     --no-binary numpy,numexpr,pandas \
@@ -194,9 +195,10 @@ RUN /bin/bash -o pipefail -c '\
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir -r /tmp/requirements-build.txt'
 
 # 6) Free-threaded source-build + ldconfig.
+# Same as GIL: MKLROOT is sysconfig data prefix (shared libs only; no Python package).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  MKLROOT_T="$(/opt/python3.14t/bin/python3.14t -c "import pathlib,mkl; print(pathlib.Path(mkl.__file__).resolve().parent)")"; \
+  MKLROOT_T="$(/opt/python3.14t/bin/python3.14t -c "import sysconfig; from pathlib import Path; r=Path(sysconfig.get_path(\"data\")); assert list((r/\"lib\"/\"pkgconfig\").glob(\"mkl-*.pc\")), r; assert list((r/\"lib\").glob(\"libmkl_rt.so*\")), r; print(r)")"; \
   export MKLROOT="${MKLROOT_T}" PKG_CONFIG_PATH="${MKLROOT_T}/lib/pkgconfig" LD_LIBRARY_PATH="${MKLROOT_T}/lib"; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-build-isolation --force-reinstall \
     --no-binary numpy,numexpr,pandas \

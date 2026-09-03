@@ -98,6 +98,12 @@ def test_mkl_source_stack_run_order_and_flags():
     assert "-r /tmp/requirements-rest.txt" not in compile_body
     assert "show_config" in compile_body
     assert "scipy" not in compile_body
+    # mkl 2026+ has no importable Python module; discover via sysconfig data prefix.
+    assert "sysconfig.get_path" in compile_body
+    assert 'glob("mkl-*.pc")' in compile_body or 'glob(\\"mkl-*.pc\\")' in compile_body
+    assert "libmkl_rt.so" in compile_body
+    assert "import pathlib,mkl" not in compile_body
+    assert "import mkl" not in compile_body
 
   for rest in (gil_rest, ft_rest):
     assert "--no-binary" not in rest
@@ -109,6 +115,15 @@ def test_mkl_source_stack_run_order_and_flags():
   assert "--no-binary :all:" not in base
   assert "-m ensurepip" not in base
   assert "ensurepip --upgrade" not in base
+
+
+def test_mklroot_discovery_does_not_import_mkl_module():
+  """Regression: mkl 2026.1.0 wheel has no importable ``mkl`` package (data libs only)."""
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  assert "import pathlib,mkl" not in base
+  assert re.search(r"\bimport mkl\b", base) is None
+  assert "sysconfig.get_path" in base
+  assert "libmkl_rt.so" in base
 
 
 def test_dockerfile_pip_argv_has_no_hardcoded_scientific_or_mkl_pins():
@@ -133,7 +148,7 @@ def test_dockerfile_pip_argv_has_no_hardcoded_scientific_or_mkl_pins():
   for body in pip_runs:
     for lit in forbidden_literals:
       assert lit not in body, lit
-    # Bare package names on pip argv (not import mkl in python -c).
+    # Bare package names on pip argv (MKLROOT uses sysconfig, not import mkl).
     pip_lines = [
         line
         for line in body.splitlines()
