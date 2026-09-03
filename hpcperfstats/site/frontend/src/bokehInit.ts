@@ -1,28 +1,33 @@
 /**
- * Load Bokeh from the npm package so the version matches @bokeh/bokehjs in package.json.
- * Dynamic import keeps BokehJS in its own async chunk (large library).
+ * Load Bokeh from the npm-synced UMD vendor so the version matches
+ * ``@bokeh/bokehjs`` in package.json without Turbopack rewriting the library.
  * Keep window.Bokeh for BokehEmbed and tests that stub the global.
  *
- * Import via ``./bokehjs-bundle`` (not package ``main``) so Turbopack can resolve
- * Bokeh 3.10+ lib modules — see ``bokehjs-bundle.ts``.
+ * Import via ``./bokehjs-bundle`` (``loadBokehRuntime`` → ``/static/frontend/vendor/bokeh.min.js``)
+ * — see ``bokehjs-bundle.ts`` and ``scripts/sync-bokeh-vendor.mjs``.
  */
 import { applyBokehResizeObserverDeferral } from "./patch-resize-observer-for-bokeh";
+import type { HpcperfstatsBokehRuntime } from "./bokehjs-bundle";
 
-let bokehLoadPromise: Promise<typeof import("./bokehjs-bundle")> | null = null;
+type BokehRuntime = HpcperfstatsBokehRuntime;
 
-export function ensureBokehLoaded() {
+let bokehLoadPromise: Promise<BokehRuntime> | null = null;
+
+export function ensureBokehLoaded(): Promise<BokehRuntime | null> {
   if (typeof window === "undefined") {
     return Promise.resolve(null);
   }
   applyBokehResizeObserverDeferral();
-  if (window.Bokeh) {
-    return Promise.resolve(window.Bokeh);
+  if (window.Bokeh?.embed?.embed_item) {
+    return Promise.resolve(window.Bokeh as BokehRuntime);
   }
   if (!bokehLoadPromise) {
-    bokehLoadPromise = import("./bokehjs-bundle").then((mod) => {
-      window.Bokeh = mod;
-      return mod;
-    });
+    bokehLoadPromise = import("./bokehjs-bundle").then((mod) =>
+      mod.loadBokehRuntime().then((Bokeh) => {
+        window.Bokeh = Bokeh;
+        return Bokeh;
+      }),
+    );
   }
   return bokehLoadPromise;
 }

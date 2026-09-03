@@ -308,6 +308,18 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "interactive-ready-controls.mdc",
             "design-focused-spa-ux.mdc",
             "job-detail-analysis-tab-consistency.mdc",
+            "no-cdn-in-production.mdc",
+        ],
+    },
+    {
+        "id": "no_cdn_production_assets",
+        "patterns": [
+            "hpcperfstats/site/frontend/*",
+            "hpcperfstats/site/hpcperfstats_site/middleware.py",
+            "hpcperfstats/cursor-rules/no-cdn*.mdc",
+        ],
+        "rules": [
+            "no-cdn-in-production.mdc",
         ],
     },
     {

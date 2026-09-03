@@ -6,9 +6,9 @@ Chromium has a real canvas (jsdom/Vitest cannot run ``embed_item``).
 
 A second test serves the **Next static export** (``npm run build`` →
 ``hpcperfstats_site/static/frontend/``) via ``python3 -m http.server`` and embeds
-the same fixtures through ``/static/frontend/bokeh-playwright-smoke/`` (bundled
-``@bokeh/bokehjs`` + ``patch-resize-observer-for-bokeh``), matching production chunk
-graph without jsDelivr.
+the same fixtures through ``/static/frontend/bokeh-playwright-smoke/`` (vendored
+UMD ``bokeh.min.js`` + ``patch-resize-observer-for-bokeh``), matching production
+load path without jsDelivr.
 
 See also: ``test_job_hist_bokeh_ranges.py`` (Python y-range contracts).
 
@@ -40,6 +40,8 @@ _FAILURE_SUBSTRINGS = (
     "could not set initial ranges",
     "wasn't built properly",
     'can\'t access property "is_valid"',
+    # Turbopack rewriting Bokeh (lib/ESM) so models never register (Grid / DocumentConfig).
+    "could not resolve type",
 )
 
 # hpcperfstats/site/lib/machine/tests -> site

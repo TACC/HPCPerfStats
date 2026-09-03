@@ -14,7 +14,11 @@ globs:
 
 The SPA bundles **stock** **`@bokeh/bokehjs`** from npm (no `patch-package` vendor overrides). Embed timing mitigations live in app code: **`patch-resize-observer-for-bokeh.js`**, **`BokehEmbed`** viewport gating, and post-`Document.idle` settle (see **`bokeh-layout-surface-split.mdc`**).
 
-**Load path (3.10+):** do **not** `import("@bokeh/bokehjs")` (package `main` = `build/js/lib/bokeh.js`). That entry uses **bare** internal imports (`main`, `api/main`, `models/.../main`) instead of relative `./…` paths used through 3.9.x; Next/Turbopack cannot resolve them. Import via **`src/bokehjs-bundle.ts`**, which re-exports the same targets as package subpaths (`@bokeh/bokehjs/build/js/lib/...`) whose internals stay relative. `bokehInit.ts` and `app/bokeh-playwright-smoke/` must use that bundle. Lock with `scripts/bokehjs-bundle-entry.test.ts`.
+**Load path (3.10+):** do **not** `import("@bokeh/bokehjs")` (package `main` = `build/js/lib/bokeh.js`). That entry uses **bare** internal imports (`main`, `api/main`, `models/.../main`) instead of relative `./…` paths used through 3.9.x; Next/Turbopack cannot resolve them.
+
+**Registration / single module graph (mandatory):** do **not** let Turbopack bundle Bokeh sources at all. `export *` / side-effect imports from `build/js/lib/**` **and** importing prebuilt `bokeh.esm.min.js` still rewrite the graph under Turbopack and split `default_resolver`, so `embed_item` reports **`could not resolve type 'Grid'`** / **`DocumentConfig`**. **`scripts/sync-bokeh-vendor.mjs`** copies stock **`build/js/bokeh.min.js`** (UMD) to **`public/vendor/bokeh.min.js`**; **`bokehjs-bundle.ts`** injects that same-origin script (`/static/frontend/vendor/bokeh.min.js`) via `loadBokehRuntime()`. **`bokehInit` / smoke must call `loadBokehRuntime()`** (not `mod.default` from an ESM import). Lock with `scripts/bokehjs-bundle-entry.test.ts`. Keep Playwright `_FAILURE_SUBSTRINGS` including **`could not resolve type`**.
+
+`bokehInit.ts` and `app/bokeh-playwright-smoke/` must use that loader.
 
 **npm graph (3.10+):** `@bokeh/bokehjs` depends on **`slickgrid@^5.19`** (not deprecated `@bokeh/slickgrid`). Do **not** add `slickgrid` as a direct app dependency unless install cannot resolve it transitively. Keep **`overrides.dompurify`** at the SECURITY_AUDIT floor (satisfies Bokeh’s `^3.3.0`). After `npm install`, confirm the lockfile has **one** grid package and `npm audit` is clean (or dated in SECURITY_AUDIT).
 
@@ -29,22 +33,22 @@ If Bokeh regressions reappear in the browser console after upgrades, prefer fixi
 | `hpcperfstats/site/lib/machine/job_plot_artifacts.py` | Fingerprint includes `bokeh.__version__` — expect artifact churn / cache behavior on bump |
 | `hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` | `_BOKEH_CDN_JS` jsDelivr pin for `@bokeh/bokehjs@X.Y.Z` |
 | `hpcperfstats/site/frontend/test/fixtures/bokeh-*.json` | Regenerate if serialized `json_item` / doc schema changes (per `web-pages-e2e-test-maintenance.mdc`) |
-| `hpcperfstats/site/frontend/src/bokehjs-bundle.ts` | Keep re-exports aligned with package `build/js/lib/bokeh.js` |
-| `hpcperfstats/site/frontend/src/bokehInit.ts` / `patch-resize-observer-for-bokeh.ts` | Load via `bokehjs-bundle`; re-validate embed + ResizeObserver after upgrades |
+| `hpcperfstats/site/frontend/src/bokehjs-bundle.ts` | `loadBokehRuntime()` → UMD script `/static/frontend/vendor/bokeh.min.js` (do **not** import `build/js/lib/**` or `bokeh.esm.min.js` under Turbopack) |
+| `hpcperfstats/site/frontend/scripts/sync-bokeh-vendor.mjs` | Copy `@bokeh/bokehjs` `bokeh.min.js` → `public/vendor/` (wired from `write-site-identity.mjs`) |
+| `hpcperfstats/site/frontend/src/bokehInit.ts` / `patch-resize-observer-for-bokeh.ts` | Load via `loadBokehRuntime()`; re-validate embed + ResizeObserver after upgrades |
 
 ## Workflow (bump checklist)
 
 1. Bump **`@bokeh/bokehjs`** and **`bokeh==…`** together per the table above (exact npm pin).
 2. `cd hpcperfstats/site/frontend && npm ci` (or `npm install`). Confirm lockfile: `slickgrid` 5.x present, **no** `@bokeh/slickgrid`, `npm audit` clean or documented.
-3. If package `main` still uses bare imports, keep / extend **`bokehjs-bundle.ts`** (do not reintroduce `import("@bokeh/bokehjs")` in app/smoke).
-4. `npm run build` (full export) → fix bundle/import breaks (includes `app/bokeh-playwright-smoke/` for Playwright bundle regression). Production Docker/redeploy uses **`npm run build:prod`** (`frontend-prod-test-build-boundary.mdc`).
-5. `npm test -- --run` (Vitest), including `bokehjs-bundle-entry` + Bokeh embed tests.
-6. `pytest hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (Playwright + CDN Bokeh; see below). For the **third** (Next-bundle) test, run **`npm run build`** first or that test skips.
+3. Prefer **`sync-bokeh-vendor` + `loadBokehRuntime()`** (UMD script tag). Do not reintroduce `import("@bokeh/bokehjs")`, `export *` from `build/js/lib/**`, or Turbopack imports of `bokeh.esm.min.js` in app/smoke — duplicate `base` / missing model registration.
+4. `npm run build` (full export; syncs vendor via `write-site-identity`) → fix load-path breaks (includes `app/bokeh-playwright-smoke/` for Playwright regression). Production Docker/redeploy uses **`npm run build:prod`** (`frontend-prod-test-build-boundary.mdc`). Confirm **`out/vendor/bokeh.min.js`** (then static copy) exists.
+5. `npm test -- --run` (Vitest), including `bokehjs-bundle-entry` (UMD vendor assert) + Bokeh embed tests.
+6. `pytest hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (Playwright + CDN Bokeh; see below). For the **third** (Next-bundle) test, run **`npm run build`** first or that test skips. Confirm `_FAILURE_SUBSTRINGS` still includes **`could not resolve type`**.
 7. Regenerate **`test/fixtures/bokeh-*.json`** if schema changes; update **`docs/TESTING.md`** if workflow or commands change (`testing-doc-sync.mdc`).
-
 ## Playwright vs production bundle
 
-`test_bokeh_job_list_embed_browser_e2e.py` loads Bokeh from **jsDelivr** at the same **version** as `package.json` for two tests, and a third serves the **Next static export** (`hpcperfstats_site/static/frontend/`) via `python3 -m http.server` so **`/static/frontend/bokeh-playwright-smoke/`** exercises the **same Turbopack chunk graph** as production (requires **`npm run build`** in `hpcperfstats/site/frontend` — or the third test skips). After Bokeh bumps, spot-check real pages (job list distributions, job detail plots) for console cleanliness if Vitest/Playwright are green.
+`test_bokeh_job_list_embed_browser_e2e.py` loads Bokeh from **jsDelivr** at the same **version** as `package.json` for two tests, and a third serves the **Next static export** (`hpcperfstats_site/static/frontend/`) via `python3 -m http.server` so **`/static/frontend/bokeh-playwright-smoke/`** exercises the **same UMD vendor load path** as production (requires **`npm run build`** in `hpcperfstats/site/frontend` — or the third test skips). After Bokeh bumps, spot-check real pages (job list distributions, job detail plots) for console cleanliness if Vitest/Playwright are green.
 
 ## Overlap
 

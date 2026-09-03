@@ -93,3 +93,6 @@ export const SITE_GIT_COMMIT = "${escapeTsString(gitCommit)}";
 fs.mkdirSync(path.dirname(outPath), { recursive: true });
 fs.writeFileSync(outPath, body, "utf8");
 console.log(`write-site-identity: wrote ${outPath}`);
+
+// Keep Bokeh UMD vendor in lockstep whenever identity (predev/prebuild/pretest) runs.
+await import("./sync-bokeh-vendor.mjs");

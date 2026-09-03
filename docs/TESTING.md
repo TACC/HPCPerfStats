@@ -197,7 +197,7 @@ For Vitest:
 cd hpcperfstats/site/frontend && npm ci
 ```
 
-`npm ci` / `npm install` install dependencies only (no `patch-package`); Bokeh is the stock **`@bokeh/bokehjs`** package loaded through **`src/bokehjs-bundle.ts`** (Turbopack-safe subpath re-exports — package `main` bare imports break Next 16). On any **`@bokeh/bokehjs`** version change, follow **`hpcperfstats/cursor-rules/bokeh-version-and-vendor-patch-upgrade.mdc`** (JS/Python pin sync, Vitest, Playwright Bokeh embed test).
+`npm ci` / `npm install` install dependencies only (no `patch-package`); Bokeh is the stock **`@bokeh/bokehjs`** UMD (`bokeh.min.js`) synced to **`public/vendor/`** by **`scripts/sync-bokeh-vendor.mjs`** (via `write-site-identity`) and loaded by **`src/bokehjs-bundle.ts`** as a same-origin script — Turbopack must not bundle Bokeh sources (package `main` bare imports and ESM rewrites both break model registration). On any **`@bokeh/bokehjs`** version change, follow **`hpcperfstats/cursor-rules/bokeh-version-and-vendor-patch-upgrade.mdc`** (JS/Python pin sync, Vitest, Playwright Bokeh embed test).
 
 The SPA pins Bokeh via **`@bokeh/bokehjs`** in `package.json`; keep its version aligned with the **`bokeh==…`** pin in `pyproject.toml` so `json_item` embeds stay compatible.
 

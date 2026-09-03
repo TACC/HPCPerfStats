@@ -71,7 +71,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 
 | Trigger paths | Read these rules |
 |---------------|------------------|
-| `hpcperfstats/site/frontend/` | `react-next-ts-cursor-rule.mdc`, `shadcn-ui-frontend.mdc`, `testing-best-practices.mdc`, `frontend-stack-wiring-contract.mdc`, `interactive-ready-controls.mdc`, `design-focused-spa-ux.mdc`, `job-detail-analysis-tab-consistency.mdc` |
+| `hpcperfstats/site/frontend/` | `react-next-ts-cursor-rule.mdc`, `shadcn-ui-frontend.mdc`, `testing-best-practices.mdc`, `frontend-stack-wiring-contract.mdc`, `interactive-ready-controls.mdc`, `design-focused-spa-ux.mdc`, `job-detail-analysis-tab-consistency.mdc`, `no-cdn-in-production.mdc` |
 | `hpcperfstats/site/frontend/src/hooks/`, `src/views/`, `app/machine/**`, `src/utils/machine-route-params.ts`, `scripts/audit-wire-drift.mts` | `frontend-stack-wiring-contract.mdc` |
 | `hpcperfstats/site/openapi/`, `orval.config.ts`, `src/api/` | `openapi-orval-sync.mdc`, `openapi-spa-wire-validation-contract.mdc`, `frontend-stack-wiring-contract.mdc` |
 | `hpcperfstats/site/lib/machine/api.py`, `openapi_schema.py`, `openapi_serializers.py` | `openapi-orval-sync.mdc`, `openapi-spa-wire-validation-contract.mdc`, `api-breaking-change-contract.mdc` |
@@ -80,7 +80,8 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | Job Detail, Extended Search, metadata | `search-metric-artifact-sync.mdc`, `variable-metadata-cross-source-sync.mdc`, `variable-metadata-monitor-contract.mdc`, `researcher-job-detail-doc-sync.mdc`, `job-detail-analysis-tab-consistency.mdc`, `gpu-host-data-source-priority.mdc` |
 | Plots / Bokeh embed | `job-plot-artifacts-caching.mdc`, `host-data-read-boundary.mdc`, `bokeh-layout-surface-split.mdc`, `no-scientific-notation-web.mdc`, `job-detail-bokeh-plot-help.mdc` |
 | `bokeh_job_detail_help_marker.py`, `job_detail_bokeh_plot_descriptions.py`, `summary_metric_descriptions.py`, `summaryplot.py`, `roofline.py`, `job_detail_artifacts.py`, `job_plot_artifacts.py`, Job Detail Bokeh help / Summary metric prose | `job-detail-bokeh-plot-help.mdc`, `job-plot-artifacts-caching.mdc`, `variable-metadata-cross-source-sync.mdc` |
-| `@bokeh/bokehjs` / `bokeh==` pins, `test_bokeh*.py`, Bokeh fixture regen | `bokeh-version-and-vendor-patch-upgrade.mdc` |
+| `@bokeh/bokehjs` / `bokeh==` pins, `test_bokeh*.py`, Bokeh fixture regen | `bokeh-version-and-vendor-patch-upgrade.mdc`, `no-cdn-in-production.mdc` |
+| Frontend fonts / CSP middleware / SPA asset URLs | `no-cdn-in-production.mdc` |
 | Frontend jest-axe / Playwright axe (`axe-test-utils`, page shell tests) | `frontend-a11y-regression.mdc` |
 | Web-facing pages | `web-pages-e2e-test-maintenance.mdc`, `web-pages-full-e2e-completion-gate.mdc` |
 

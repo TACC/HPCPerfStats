@@ -19,7 +19,7 @@ alwaysApply: false
 - **Parse boundary** — success JSON validated in `parse-api-response.ts` / `response-schema-registry.ts`; prefer thin hooks in `src/hooks/` over the legacy `api/index.ts` facade. Use `isDevEnvironment()` from `src/utils/is-dev-environment.ts` for dev-only logging — never raw `import.meta.env.DEV` (undefined in Next static export bundles). Validation failures throw `Error` messages that include `METHOD /api/path/` for operator diagnosis.
 - **VariableInfoLabel help** — use Base UI `PopoverTrigger` `openOnHover` + `delay`/`closeDelay` for hover; click toggles pinned open with `modal={false}`. When pinned, call `details.cancel()` in `Popover` `onOpenChange` to ignore outside dismiss. Do not add custom debounced hover state that fights controlled `open`.
 - **Forms** — React Hook Form + Zod schemas (`src/schemas/` or colocated `*-schema.ts`); mirror validation in Zod + drift tests.
-- **Bokeh** — `'use client'` only; embed via `BokehEmbed`; see **`bokeh-layout-surface-split.mdc`**.
+- **Bokeh** — `'use client'` only; embed via `BokehEmbed`; load UMD via `bokehjs-bundle` / `loadBokehRuntime()` (do not Turbopack-import Bokeh lib/ESM); see **`bokeh-layout-surface-split.mdc`** and **`bokeh-version-and-vendor-patch-upgrade.mdc`**.
 
 ## Conventions
 

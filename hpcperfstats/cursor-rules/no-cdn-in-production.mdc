@@ -1,6 +1,10 @@
 ---
 description: No third-party asset CDNs in production; CDNs allowed only in tests
 alwaysApply: false
+globs:
+  - "**/hpcperfstats/site/frontend/**"
+  - "**/hpcperfstats/site/hpcperfstats_site/middleware.py"
+  - "**/hpcperfstats/cursor-rules/no-cdn*.mdc"
 ---
 
 # No CDN For Production Assets
@@ -10,7 +14,7 @@ alwaysApply: false
 ## Policy
 
 - **Production** (anything shipped to browsers or enforced at runtime for user-facing responses) must **not** load **executable or author-controlled layout assets** from public third-party CDNs: scripts, ES modules, stylesheets, or webfonts.
-- **Preferred pattern:** `npm` dependencies built into the Vite bundle / Django `staticfiles` (`'self'`), same as Bokeh loaded from `@bokeh/bokehjs` in the SPA bundle.
+- **Preferred pattern:** `npm` dependencies built into the SPA / Django `staticfiles` (`'self'`), same as Bokeh UMD vendored from `@bokeh/bokehjs` to `/static/frontend/vendor/bokeh.min.js`.
 - **Tests and tooling** may use CDNs when necessary (e.g. Playwright loading Bokeh from jsDelivr because jsdom lacks canvas). Restrict those URLs to **`**/tests/**`**, **`test_*.py`**, **`*.test.js`**, **`*.test.jsx`**, and similar—never to templates, middleware, SPA app source, or service configs that define what end users load.
 
 ## What counts as production

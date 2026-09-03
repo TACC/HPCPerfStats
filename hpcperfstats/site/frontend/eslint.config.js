@@ -23,6 +23,7 @@ export default tseslint.config(
     ignores: [
       ".next/**",
       "out/**",
+      "public/**",
       "node_modules/**",
       "coverage/**",
       "next-env.d.ts",

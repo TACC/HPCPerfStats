@@ -508,7 +508,8 @@ export default function BokehEmbed({
         .then(() => {
           if (cancelled || !containerRef.current) return;
           const el = document.getElementById(id);
-          if (!el || !window.Bokeh?.embed?.embed_item) {
+          const embedItem = window.Bokeh?.embed?.embed_item;
+          if (!el || !embedItem) {
             if (!cancelled) failEmbed("Bokeh embed target or embed_item not available");
             return;
           }
@@ -545,7 +546,7 @@ export default function BokehEmbed({
                 const embedPayload = prepareBokehJsonItemForEmbed(item, {
                   stripHelpMarkers: Boolean(printCaptureLayout),
                 });
-                const embedResult = window.Bokeh.embed.embed_item(embedPayload, id);
+                const embedResult = embedItem(embedPayload, id);
                 return Promise.resolve(embedResult)
                   .then((views) => waitForBokehEmbedDocumentIdle(views))
                   .then(() => delayMs(effectiveSettleMs))
