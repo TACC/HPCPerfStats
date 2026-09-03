@@ -95,6 +95,62 @@ def test_supervisor_startup_wait_order_is_db_then_redis_then_web():
   assert content.index(redis_marker) < content.index(web_marker)
 
 
+def test_supervisord_runs_as_hpcperfstats_user():
+  """[supervisord] drops to hpcperfstats with user-writable pidfile and socket."""
+  config = configparser.ConfigParser()
+  config.read(_supervisord_conf_path())
+
+  assert config.get("supervisord", "user") == "hpcperfstats"
+  pidfile = config.get("supervisord", "pidfile")
+  assert pidfile.startswith("/tmp/"), pidfile
+  assert "/var/run" not in pidfile
+
+  sock = config.get("unix_http_server", "file")
+  assert sock.startswith("/tmp/"), sock
+  assert "/var/run" not in sock
+  assert config.get("supervisorctl", "serverurl") == f"unix://{sock}"
+
+
+def test_supervisord_has_no_root_programs():
+  """No program section may set user=root (blocks [supervisord] user= drop)."""
+  config = configparser.ConfigParser()
+  config.read(_supervisord_conf_path())
+
+  for section in config.sections():
+    if not section.startswith("program:"):
+      continue
+    user = config.get(section, "user", fallback="")
+    assert user != "root", section
+
+
+def test_supervisor_startup_keeps_root_prep_without_exec():
+  """Root chown/ssh prep remains; supervisord is launched without exec (PID-1 deferred)."""
+  content = (_repo_root() / "services-conf" / "supervisor_startup.sh").read_text()
+  assert "chown -R hpcperfstats:hpcperfstats /hpcperfstats/*" in content
+  assert "cp /hpcperfstats/.ssh/id*" in content
+  assert "/usr/bin/supervisord -c /home/hpcperfstats/services-conf/supervisord.conf" in content
+  assert "exec /usr/bin/supervisord" not in content
+
+
+def test_supervisor_startup_syslog_lines_are_commented_out():
+  """Syslog mkdir + render stay as commented re-enable lines, never executed."""
+  content = (_repo_root() / "services-conf" / "supervisor_startup.sh").read_text()
+  mkdir_hits = [
+    line
+    for line in content.splitlines()
+    if "mkdir -p /var/lib/hpcperfstats-syslog" in line
+  ]
+  render_hits = [
+    line
+    for line in content.splitlines()
+    if "render_syslog_ng_generated" in line
+  ]
+  assert mkdir_hits, "expected commented mkdir re-enable line"
+  assert render_hits, "expected commented render re-enable line"
+  assert all(line.lstrip().startswith("#") for line in mkdir_hits)
+  assert all(line.lstrip().startswith("#") for line in render_hits)
+
+
 def test_rsync_data_wrapper_source_prefers_site_then_example():
   """Wrapper source: prefer rsync_data.sh, else example, else exit 1 (parse only)."""
   text = _rsync_wrapper_path().read_text()

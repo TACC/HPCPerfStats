@@ -38,13 +38,13 @@ def test_pipeline_programs_use_opt_python314t():
     assert "/usr/local/bin/python3" not in command, (program, command)
 
 
-def test_helper_programs_stay_on_gil_usr_local_python3():
-  """Syslog render and seal stay on image GIL python3."""
+def test_supervisord_has_no_syslog_programs():
+  """syslog-ng and seal_syslog_daily are not supervisord programs."""
   text = _supervisord_text()
-  for program in ("syslog-ng", "seal_syslog_daily"):
-    command = _program_command(text, program)
-    assert "/usr/local/bin/python3" in command, (program, command)
-    assert "/opt/python3.14t" not in command, (program, command)
+  assert "[program:syslog-ng]" not in text
+  assert "[program:seal_syslog_daily]" not in text
+  assert "syslog-ng" not in text
+  assert "seal_syslog_daily" not in text
 
 
 def test_supervisord_has_no_pipeline_interpreter_resolver():

@@ -264,6 +264,25 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "syslog_cluster_ingest",
+        "patterns": [
+            "services-conf/syslog-ng.conf",
+            "services-conf/supervisord.conf",
+            "services-conf/supervisor_startup.sh",
+            "hpcperfstats/render_syslog_ng_generated.py",
+            "hpcperfstats/seal_syslog_daily.py",
+            "hpcperfstats.ini.example",
+        ],
+        "exact_paths": [
+            "README.md",
+            "HPCPerfStats/README.md",
+        ],
+        "rules": [
+            "syslog-cluster-ingest.mdc",
+            "readme-installation-sync.mdc",
+        ],
+    },
+    {
         "id": "frontend_static_prod_serve",
         "patterns": [
             "hpcperfstats/site/hpcperfstats_site/static/frontend/*",

@@ -14,8 +14,9 @@ globs: Dockerfile,services-conf/supervisord.conf
 |---------|----------|
 | Web / gunicorn / django_startup | Always GIL **`/usr/local/bin/python3`** from `FROM python:3.14.7-trixie` |
 | Pipeline daemons | Always free-threaded **`/opt/python3.14t/bin/python`** for **`listend`**, **`sync_timedb`**, **`update_metrics`** in `services-conf/supervisord.conf` |
-| Helpers | Syslog render, `seal_syslog_daily`, `supervisor_startup.sh` stay on GIL `/usr/local/bin/python3` |
+| Helpers | Syslog render and `seal_syslog_daily` stay on GIL `/usr/local/bin/python3` **when invoked manually**; they are **not** supervisord programs. `supervisor_startup.sh` stays on GIL `/usr/local/bin/python3` |
 | Operator `exec … python3` | PATH `python3` remains GIL; do **not** treat it as the ingest interpreter |
+| Pipeline supervisor uid | `[supervisord] user=hpcperfstats` in `services-conf/supervisord.conf`; the three pipeline daemons run under that non-root supervisor |
 | INI / env ABI switch | **Forbidden** — no `*_interpreter` keys, no resolver, no skip build-arg fallback to GIL for pipeline |
 | Missing `/opt/python3.14t` | Build must fail or those three supervisord programs fail to start — **no silent GIL fallback** |
 | Official Hub `3.14t` tag | Does not exist; compile matching **`Python-3.14.7.tgz`** with `--disable-gil --prefix=/opt/python3.14t` and **`CFLAGS`/`CXXFLAGS` `-O3 -march=native`** (same prod-host native policy as the MKL stack; GIL web still uses Hub `python:3.14.7-trixie` binaries) |

@@ -166,13 +166,13 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 
 ## 6. Runtime processes (pipeline)
 
-The tracked supervisor configuration (`services-conf/supervisord.conf`) defines long-running programs including:
+The tracked supervisor configuration (`services-conf/supervisord.conf`) runs **supervisord as `hpcperfstats`** and defines long-running programs including:
 
 - **`listend.py`** — RabbitMQ listener (archive append/rotation).
 - **`sync_timedb.py backlog`** — Imports node-level data from the archive into the database; runs until stopped, rescans for new files after each wave, and sleeps when the queue is empty. Startup still runs the archive snapshot + boot handoff for ingest catch-up. Under dual-mode with ``current``, CLI **`all` is ingest-only for day-close** (no day-close discover / seal / delete). Date-window runs and CLI ``current`` own day-close. Archive-member prewarm/coordination uses the in-process members store (`sync_timedb_archive_members_store` / `sync_timedb_archive_members_coord`).
 - **`update_metrics.py`** — Builds/updates job-indexed and secondary metrics from DB state; persists **`job_plot_artifact`** / **`job_detail_artifact`** and invalidates related Redis keys.
 
-It also includes **`rsync_data`** (via **`rsync_data_wrapper.sh`**, preferring guarded **`rsync_data.sh`** then **`rsync_data.sh.example`**), **syslog-ng** (with **`render_syslog_ng_generated`** from **`[SYSLOG]`** in `hpcperfstats.ini`), **`seal_syslog_daily`** to pack prior-day per-host logs into **`logs/log_archive/YYYY-MM-DD-syslog.tar.gz`**, and related operational logging.
+It also includes **`rsync_data`** (via **`rsync_data_wrapper.sh`**, preferring guarded **`rsync_data.sh`** then **`rsync_data.sh.example`**). **Cluster syslog** (`syslog-ng`, **`render_syslog_ng_generated`**, **`seal_syslog_daily`**) remains in the image and under **`[SYSLOG]`** / **`data_dir/logs/`**, but those programs are **not** supervised — enable manually as root when needed (see `README.md`).
 
 **Accounting (job-level) ingest** is **not** a separate supervisord program: operators either:
 
