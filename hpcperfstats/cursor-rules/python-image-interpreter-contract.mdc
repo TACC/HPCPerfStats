@@ -19,7 +19,7 @@ globs: Dockerfile,services-conf/supervisord.conf
 | INI / env ABI switch | **Forbidden** — no `*_interpreter` keys, no resolver, no skip build-arg fallback to GIL for pipeline |
 | Missing `/opt/python3.14t` | Build must fail or those three supervisord programs fail to start — **no silent GIL fallback** |
 | Official Hub `3.14t` tag | Does not exist; compile matching **`Python-3.14.7.tgz`** with `--disable-gil --prefix=/opt/python3.14t` |
-| Dual pip | Install runtime deps into both `/usr/local` (cp314) and `/opt/python3.14t` (cp314t); **no** `/opt/hpcperfstats-ft` second tree |
+| Dual pip | Install runtime deps into both `/usr/local` (cp314) and `/opt/python3.14t` (cp314t); **no** `/opt/hpcperfstats-ft` second tree. Image uses pip **`image-build`** MKL then **source-builds** numpy/numexpr/pandas with `--no-binary` against MKL (scipy not in the scientific stack). Host `.venv` keeps PyPI wheels — never install `.[image-build]` on macOS ARM |
 | Host `.venv` | GIL **3.14** only (Homebrew `python@3.14`); host 3.14t not required for pytest |
 
 ## Follow-on (not this interpreter change)
@@ -33,8 +33,8 @@ globs: Dockerfile,services-conf/supervisord.conf
 
 ## Validation
 
-- Unit: `test_dockerfile_python_deps_cache.py`, `test_supervisord_pipeline_python.py`, `test_hpcperfstats_ini_example.py` (no interpreter keys), `test_python_abi_startup_log.py`
-- Compose smoke: web `python3` is 3.14.7 GIL; live pipeline argv is `/opt/python3.14t/...` and logs `python_abi … Py_GIL_DISABLED=1`
+- Unit: `test_dockerfile_python_deps_cache.py`, `test_dockerfile_mkl_source_stack.py`, `test_pyproject_image_build_extra.py`, `test_supervisord_pipeline_python.py`, `test_hpcperfstats_ini_example.py` (no interpreter keys), `test_python_abi_startup_log.py`
+- Compose smoke: web `python3` is 3.14.7 GIL; live pipeline argv is `/opt/python3.14t/...` and logs `python_abi … Py_GIL_DISABLED=1`; after image rebuild, GIL and 3.14t `numpy.show_config()` mention MKL
 
 ## Overlap
 

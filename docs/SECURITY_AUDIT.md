@@ -28,7 +28,7 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 | pillow       | 12.2.0          | Clean |
 | gunicorn     | 26.0.0          | Clean |
 
-`pyproject.toml` runtime floors: `Django>=6.0.7,<6.1` (cap below 6.1 until DRF ships Django 6.1 `cc_delim_re` compatibility), `requests>=2.34.2`, `cryptography>=49.0.0`, `pillow>=12.2.0`.
+`pyproject.toml` runtime floors: `Django>=6.1.1,<6.2`, `requests>=2.34.2`, `cryptography>=50.0.1`, `pillow>=12.3.0`.
 
 **Host dev venv** (not shipped): `idna` 3.13 (CVE-2026-45409 → 3.15+), `pip` 26.1.1 (PYSEC-2026-196 → 26.1.2+). Treat as developer-workstation hygiene only.
 

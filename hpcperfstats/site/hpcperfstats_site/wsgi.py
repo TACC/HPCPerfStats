@@ -19,10 +19,15 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE",
                       "hpcperfstats.site.hpcperfstats_site.settings")
 from django.conf import settings
 
-# Limit OpenBLAS threads per web worker to avoid resource exhaustion.
+# Limit BLAS threads per web worker to avoid resource exhaustion.
 # Value comes from Django settings while still allowing env override.
+# Image numpy is MKL-linked; OPENBLAS remains for host/dev OpenBLAS wheels.
 os.environ.setdefault(
     "OPENBLAS_NUM_THREADS",
+    str(getattr(settings, "OPENBLAS_NUM_THREADS", 4)),
+)
+os.environ.setdefault(
+    "MKL_NUM_THREADS",
     str(getattr(settings, "OPENBLAS_NUM_THREADS", 4)),
 )
 

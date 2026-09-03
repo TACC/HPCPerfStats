@@ -102,6 +102,7 @@ RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
        supervisor rsync syslog-ng zstd util-linux time \
        net-tools lsof procps gdb strace netcat-openbsd \
        vim nano build-essential pkg-config \
+       gfortran ninja-build cmake \
        default-libmysqlclient-dev libpq5 libmpdec4 \
        libmpdec++4 \
     && apt-get clean \
@@ -138,14 +139,80 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Upgrade pip and install python dependencies: cached until pyproject.toml changes.
 # Dual ABI: GIL (/usr/local) for web/helpers; cp314t (/opt/python3.14t) for pipeline.
+# Per ABI: image-build wheels (MKL + meson) -> source-build numpy/numexpr/pandas
+# against MKL -> rest wheels (constrained so Bokeh cannot pull OpenBLAS numpy).
 COPY --chown=hpcperfstats:hpcperfstats pyproject.toml ./
-RUN /bin/bash -o pipefail -c 'pip install --no-cache-dir --upgrade pip && python3 -c "import tomllib; \
-    from pathlib import Path; deps=tomllib.loads(Path(\"pyproject.toml\").read_text())[\"project\"][\"dependencies\"]; \
-    Path(\"/tmp/requirements.txt\").write_text(\"\\n\".join(deps)+\"\\n\")" \
-    && pip install --no-cache-dir -r /tmp/requirements.txt \
-    && /opt/python3.14t/bin/python3.14t -m ensurepip --upgrade \
-    && /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --upgrade pip \
-    && /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir -r /tmp/requirements.txt'
+
+# 1) Requirements slices from pyproject (no pip).
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  python3 -c "import re, tomllib; from pathlib import Path; \
+    n = lambda d: re.split(r\"[=<>~;!@[ ]\", d, maxsplit=1)[0].strip().lower(); \
+    proj = tomllib.loads(Path(\"pyproject.toml\").read_text())[\"project\"]; \
+    deps = proj[\"dependencies\"]; \
+    build = proj[\"optional-dependencies\"][\"image-build\"]; \
+    build_names = {n(d) for d in build}; \
+    assert {\"mkl\", \"mkl-devel\", \"meson-python\"} <= build_names, build_names; \
+    src_names = {\"numpy\", \"numexpr\", \"pandas\"}; \
+    src = [d for d in deps if n(d) in src_names]; \
+    assert src_names <= {n(d) for d in src}, src_names - {n(d) for d in src}; \
+    rest = [d for d in deps if n(d) not in src_names]; \
+    Path(\"/tmp/requirements.txt\").write_text(\"\\n\".join(deps) + \"\\n\"); \
+    Path(\"/tmp/requirements-rest.txt\").write_text(\"\\n\".join(rest) + \"\\n\"); \
+    Path(\"/tmp/requirements-mkl-src.txt\").write_text(\"\\n\".join(src) + \"\\n\"); \
+    Path(\"/tmp/requirements-build.txt\").write_text(\"\\n\".join(build) + \"\\n\")"'
+
+# 2) GIL image-build wheels only (MKL + toolchain).
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  pip install --no-cache-dir --upgrade pip; \
+  pip install --no-cache-dir -r /tmp/requirements-build.txt'
+
+# 3) GIL source-build numpy/numexpr/pandas against MKL (before rest).
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  MKLROOT="$(python3 -c "import pathlib,mkl; print(pathlib.Path(mkl.__file__).resolve().parent)")"; \
+  export MKLROOT PKG_CONFIG_PATH="${MKLROOT}/lib/pkgconfig" LD_LIBRARY_PATH="${MKLROOT}/lib"; \
+  pip install --no-cache-dir --no-build-isolation --force-reinstall \
+    --no-binary numpy,numexpr,pandas \
+    --config-settings=setup-args=-Dblas=mkl \
+    --config-settings=setup-args=-Dlapack=mkl \
+    -r /tmp/requirements-mkl-src.txt; \
+  python3 -c "import numpy as np; c=str(np.show_config()); assert \"mkl\" in c.lower() or \"mkl_rt\" in c.lower(), c"; \
+  echo "${MKLROOT}/lib" > /etc/ld.so.conf.d/mkl-gil.conf'
+
+# 4) GIL rest wheels (Bokeh/contourpy see MKL numpy; constraint blocks wheel upgrades).
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  pip install --no-cache-dir --constraint /tmp/requirements-mkl-src.txt \
+    -r /tmp/requirements-rest.txt'
+
+# 5) Free-threaded image-build wheels only (pip already from --with-ensurepip=install).
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --upgrade pip; \
+  /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir -r /tmp/requirements-build.txt'
+
+# 6) Free-threaded source-build + ldconfig.
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  MKLROOT_T="$(/opt/python3.14t/bin/python3.14t -c "import pathlib,mkl; print(pathlib.Path(mkl.__file__).resolve().parent)")"; \
+  export MKLROOT="${MKLROOT_T}" PKG_CONFIG_PATH="${MKLROOT_T}/lib/pkgconfig" LD_LIBRARY_PATH="${MKLROOT_T}/lib"; \
+  /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-build-isolation --force-reinstall \
+    --no-binary numpy,numexpr,pandas \
+    --config-settings=setup-args=-Dblas=mkl \
+    --config-settings=setup-args=-Dlapack=mkl \
+    -r /tmp/requirements-mkl-src.txt; \
+  /opt/python3.14t/bin/python3.14t -c "import numpy as np; c=str(np.show_config()); assert \"mkl\" in c.lower() or \"mkl_rt\" in c.lower(), c"; \
+  echo "${MKLROOT_T}/lib" > /etc/ld.so.conf.d/mkl-ft.conf; \
+  ldconfig'
+
+# 7) Free-threaded rest wheels.
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir \
+    --constraint /tmp/requirements-mkl-src.txt \
+    -r /tmp/requirements-rest.txt'
 
 # Install debugging tools.
 RUN /bin/bash -o pipefail -c 'pip install --no-cache-dir pyinstrument py-spy'

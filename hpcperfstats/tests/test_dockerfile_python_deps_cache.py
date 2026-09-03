@@ -36,15 +36,17 @@ def test_hpcperfstats_base_layers_python_deps_on_pyproject():
       stage,
   )
   assert "tomllib" in stage
-  assert "pip install --no-cache-dir -r /tmp/requirements.txt" in stage
+  assert "-r /tmp/requirements-build.txt" in stage
+  assert "-r /tmp/requirements-mkl-src.txt" in stage
+  assert "-r /tmp/requirements-rest.txt" in stage
   assert "pip install --no-cache-dir --no-deps ." in stage
   assert "shlex.quote" not in stage
 
   pyproject_copy_pos = stage.index("pyproject.toml")
-  deps_install_pos = stage.index("pip install --no-cache-dir -r /tmp/requirements.txt")
+  build_install_pos = stage.index("-r /tmp/requirements-build.txt")
   full_copy_pos = stage.index("COPY --chown=hpcperfstats:hpcperfstats . .")
   package_install_pos = stage.index("pip install --no-cache-dir --no-deps .")
-  assert pyproject_copy_pos < deps_install_pos < full_copy_pos < package_install_pos
+  assert pyproject_copy_pos < build_install_pos < full_copy_pos < package_install_pos
 
 
 def test_pyproject_dependencies_write_valid_pip_requirements_file():
@@ -52,8 +54,7 @@ def test_pyproject_dependencies_write_valid_pip_requirements_file():
   deps = _pyproject_runtime_requirements()
   requirements_text = "\n".join(deps) + "\n"
 
-  # Cap below Django 6.1 until DRF ships cc_delim_re / split_header_value compatibility.
-  assert "Django>=6.0.7,<6.1" in requirements_text
+  assert "Django>=6.1.1,<6.2" in requirements_text
   assert "'Django" not in requirements_text
   assert '"Django' not in requirements_text
 
@@ -78,8 +79,12 @@ def test_hpcperfstats_full_is_last_dockerfile_stage():
   stages = re.findall(r"^FROM .* AS (\S+)", dockerfile, flags=re.MULTILINE)
 
   assert stages[-1] == "hpcperfstats-full"
-  assert stages.index("hpcperfstats-pipeline-refresh") < stages.index("hpcperfstats-full")
-  assert "COPY --from=frontend-builder" in _stage_body(dockerfile, "hpcperfstats-full")
+  assert stages.index("hpcperfstats-pipeline-refresh") < stages.index(
+      "hpcperfstats-full"
+  )
+  assert "COPY --from=frontend-builder" in _stage_body(
+      dockerfile, "hpcperfstats-full"
+  )
 
 
 def test_dockerfile_documents_spa_volume_fingerprint_heal_contract():
@@ -117,10 +122,13 @@ def test_dockerfile_pins_python_3147_and_bakes_freethreaded_prefix():
   ft_stage = _stage_body(dockerfile, "python-freethreaded")
   assert "--prefix=/opt/python3.14t" in ft_stage
   assert "--disable-gil" in ft_stage
+  assert "--with-ensurepip=install" in ft_stage
   assert "/opt/hpcperfstats-ft" not in dockerfile
 
   base = _stage_body(dockerfile, "hpcperfstats-base")
   assert "COPY --from=python-freethreaded /opt/python3.14t /opt/python3.14t" in base
   assert "/opt/python3.14t/bin/python3.14t -m pip" in base
-  assert "pip install --no-cache-dir -r /tmp/requirements.txt" in base
+  assert "-r /tmp/requirements-build.txt" in base
   assert "/opt/hpcperfstats-ft" not in base
+  assert "-m ensurepip" not in base
+  assert "ensurepip --upgrade" not in base
