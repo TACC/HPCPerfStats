@@ -152,7 +152,7 @@ RUN /bin/bash -o pipefail -c '\
     deps = proj[\"dependencies\"]; \
     build = proj[\"optional-dependencies\"][\"image-build\"]; \
     build_names = {n(d) for d in build}; \
-    assert {\"mkl\", \"mkl-devel\", \"meson-python\"} <= build_names, build_names; \
+    assert {\"mkl\", \"mkl-devel\", \"meson-python\", \"setuptools\"} <= build_names, build_names; \
     src_names = {\"numpy\", \"numexpr\", \"pandas\"}; \
     src = [d for d in deps if n(d) in src_names]; \
     assert src_names <= {n(d) for d in src}, src_names - {n(d) for d in src}; \

@@ -194,5 +194,6 @@ def test_writer_run_payload_executes_against_real_pyproject(tmp_path, monkeypatc
   assert "bokeh==3.9.2" in rest
   assert any(_pep508_name(d) == "mkl" for d in build)
   assert any(_pep508_name(d) == "meson-python" for d in build)
+  assert any(_pep508_name(d) == "setuptools" for d in build)
   assert set(all_deps) == set(src) | set(rest)
   assert "scipy" not in "\n".join(all_deps).lower()
