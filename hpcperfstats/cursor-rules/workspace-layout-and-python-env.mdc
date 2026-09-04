@@ -85,7 +85,7 @@ If `<workspace_root>/.venv` is missing or `python3` cannot be restored, **ask** 
 ## Docker vs host venv
 
 - **Docker Compose** workflows (`docker-compose run … web`) use the image’s Python — that is separate from `.venv` and is required for DB hostname `db`, Redis `redis`, Timescale, and many integration tests.
-- Image **`python:3.14.7-trixie`** provides GIL **`/usr/local/bin/python3`** for web/gunicorn/helpers. Pipeline daemons (`listend`, `sync_timedb`, `update_metrics`) use baked free-threaded **`/opt/python3.14t/bin/python`** — see **`python-image-interpreter-contract.mdc`**. Host `.venv` stays GIL 3.14 (not 3.14t).
+- Image **`debian:trixie` / `debian:trixie-slim`** bake GIL **`/opt/python3.14`** (symlinked at **`/usr/local/bin/python3`**) for web/gunicorn/helpers and free-threaded **`/opt/python3.14t/bin/python`** for pipeline daemons (`listend`, `sync_timedb`, `update_metrics`), with jemalloc link + preload — see **`python-image-interpreter-contract.mdc`**. Host `.venv` stays GIL 3.14 (not 3.14t).
 - **Host `.venv`** is for quick scripts, linters, and pytest **only when** tests do not need the compose network (see `docker-compose-non-unit-testing.mdc` and `full-test-with-db-redis.mdc`).
 
 ## Overlap

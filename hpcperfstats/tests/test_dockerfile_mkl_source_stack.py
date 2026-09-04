@@ -33,18 +33,22 @@ def _pep508_name(dep: str) -> str:
   return re.split(r"[=<>~;!@[ ]", dep, maxsplit=1)[0].strip().lower()
 
 
-def test_base_apt_has_mkl_compile_tools_not_openblas_dev():
+def test_builder_apt_has_mkl_compile_tools_not_openblas_dev():
+  build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
+  assert "gfortran" in build
+  assert "ninja-build" in build
+  assert "cmake" in build
+  assert "libopenblas-dev" not in build
+  assert "libatlas-base-dev" not in build
   base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
-  assert "gfortran" in base
-  assert "ninja-build" in base
-  assert "cmake" in base
-  assert "libopenblas-dev" not in base
-  assert "libatlas-base-dev" not in base
+  assert "gfortran" not in base
+  assert "ninja-build" not in base
+  assert "cmake" not in base
 
 
 def test_mkl_source_stack_run_order_and_flags():
   """Per ABI: image-build, numpy MKL, numexpr VML via site.cfg, pandas, rest."""
-  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   runs = _run_instructions(base)
   assert runs, "expected RUN instructions in hpcperfstats-base"
 
@@ -185,7 +189,7 @@ def test_mkl_source_stack_run_order_and_flags():
 
 def test_numexpr_link_creates_unversioned_mkl_rt_so():
   """Regression: ld -lmkl_rt fails when pip mkl ships only libmkl_rt.so.2."""
-  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   assert "cannot find -lmkl_rt" not in base
   assert "libmkl_rt.so.*" in base
   assert "LIBRARY_PATH" in base
@@ -194,7 +198,7 @@ def test_numexpr_link_creates_unversioned_mkl_rt_so():
 
 def test_show_config_assert_uses_dicts_mode_not_none_return():
   """Regression: str(np.show_config()) is 'None' even when MKL linked (numpy 2.5)."""
-  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   assert 'c=str(np.show_config())' not in base
   assert "mode=" in base and "dicts" in base
   assert "ne.use_vml" in base
@@ -203,7 +207,7 @@ def test_show_config_assert_uses_dicts_mode_not_none_return():
 
 def test_mklroot_discovery_does_not_import_mkl_module():
   """Regression: mkl 2026.1.0 wheel has no importable ``mkl`` package (data libs only)."""
-  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   assert "import pathlib,mkl" not in base
   assert re.search(r"\bimport mkl\b", base) is None
   assert "sysconfig.get_path" in base
@@ -212,7 +216,7 @@ def test_mklroot_discovery_does_not_import_mkl_module():
 
 def test_numexpr_install_uses_no_deps_to_preserve_mkl_numpy():
   """Regression: numexpr dep resolve replaced MKL numpy with manylinux OpenBLAS."""
-  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   runs = _run_instructions(base)
   compile_runs = [
       body
@@ -234,7 +238,7 @@ def test_numexpr_install_uses_no_deps_to_preserve_mkl_numpy():
 
 def test_pandas_install_uses_no_deps_to_preserve_mkl_numpy():
   """Regression: pandas dep resolve replaced MKL numpy with a manylinux wheel."""
-  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   runs = _run_instructions(base)
   compile_runs = [
       body
@@ -256,7 +260,7 @@ def test_pandas_install_uses_no_deps_to_preserve_mkl_numpy():
 
 def test_dockerfile_pip_argv_has_no_hardcoded_scientific_or_mkl_pins():
   """Versions and MKL/toolchain packages come from pyproject -r files only."""
-  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   pip_runs = [
       body
       for body in _run_instructions(base)
@@ -296,7 +300,7 @@ def test_dockerfile_pip_argv_has_no_hardcoded_scientific_or_mkl_pins():
 
 def test_writer_run_payload_executes_against_real_pyproject(tmp_path, monkeypatch):
   """Extract and exec the tomllib writer so quoting regressions fail on host."""
-  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   runs = _run_instructions(base)
   writer = next(body for body in runs if "tomllib" in body and "image-build" in body)
   match = re.search(r'python3 -c "(.*)"\s*\Z', writer, flags=re.DOTALL)

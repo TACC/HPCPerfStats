@@ -253,6 +253,9 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         "id": "python_image_interpreter",
         "patterns": [
             "services-conf/supervisord.conf",
+            "hpcperfstats/tests/test_dockerfile_jemalloc_cpython.py",
+            "hpcperfstats/tests/test_dockerfile_python_deps_cache.py",
+            "hpcperfstats/tests/test_dockerfile_mkl_source_stack.py",
         ],
         "exact_paths": [
             "Dockerfile",

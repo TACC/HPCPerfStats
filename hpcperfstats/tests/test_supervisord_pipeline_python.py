@@ -38,6 +38,39 @@ def test_pipeline_programs_use_opt_python314t():
     assert "/usr/local/bin/python3" not in command, (program, command)
 
 
+def test_pipeline_programs_set_ft_malloc_conf_without_clearing_preload():
+  """FT daemons may enable jemalloc background_thread; must not unset LD_PRELOAD."""
+  text = _supervisord_text()
+  for program in (
+      "hpcperfstats-rabbitmq-listener",
+      "sync_timedb",
+      "update_metrics",
+  ):
+    match = re.search(
+        rf"^\[program:{re.escape(program)}\]\n(?:.*\n)*?(?=^\[|\Z)",
+        text,
+        flags=re.MULTILINE,
+    )
+    assert match, program
+    block = match.group(0)
+    assert "MALLOC_CONF=" in block, program
+    assert "background_thread:true" in block, program
+    env_lines = [
+        ln for ln in block.splitlines() if ln.startswith("environment=")
+    ]
+    assert env_lines, program
+    joined_env = "\n".join(env_lines)
+    assert "LD_PRELOAD=" not in joined_env, program
+    assert "ld.so.preload" not in joined_env, program
+
+
+def test_django_startup_gunicorn_stays_gil():
+  """Gunicorn must remain on GIL /usr/local; never 3.14t."""
+  startup = (_repo_root() / "services-conf" / "django_startup.sh").read_text()
+  assert "/usr/local/bin/gunicorn" in startup
+  assert "/opt/python3.14t" not in startup
+
+
 def test_supervisord_has_no_syslog_programs():
   """syslog-ng and seal_syslog_daily are not supervisord programs."""
   text = _supervisord_text()

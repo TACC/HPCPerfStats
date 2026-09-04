@@ -26,30 +26,39 @@ def _pyproject_runtime_requirements() -> list[str]:
   return pyproject["project"]["dependencies"]
 
 
-def test_hpcperfstats_base_layers_python_deps_on_pyproject():
-  """Application edits must not reinstall pinned PyPI deps unless pyproject.toml changes."""
+def test_python_build_layers_python_deps_on_pyproject():
+  """PyPI deps install in python-build; application COPY must not reinstall them."""
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  build = _stage_body(dockerfile, "python-build")
+
+  assert re.search(r"COPY pyproject\.toml \./", build)
+  assert "tomllib" in build
+  assert "-r /tmp/requirements-build.txt" in build
+  assert "--constraint /tmp/requirements-mkl-src.txt" in build
+  assert "-r /tmp/requirements-mkl-numpy.txt" in build
+  assert "-r /tmp/requirements-mkl-numexpr.txt" in build
+  assert "-r /tmp/requirements-mkl-pandas.txt" in build
+  assert "-r /tmp/requirements-rest.txt" in build
+  assert "shlex.quote" not in build
+
+  pyproject_copy_pos = build.index("pyproject.toml")
+  build_install_pos = build.index("-r /tmp/requirements-build.txt")
+  assert pyproject_copy_pos < build_install_pos
+
+
+def test_hpcperfstats_base_installs_package_no_deps_after_full_copy():
+  """Runtime base copies tree then pip --no-deps only (deps already in python-build)."""
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   stage = _stage_body(dockerfile, "hpcperfstats-base")
 
-  assert re.search(
-      r"COPY --chown=hpcperfstats:hpcperfstats pyproject\.toml \./",
-      stage,
-  )
-  assert "tomllib" in stage
-  assert "-r /tmp/requirements-build.txt" in stage
-  assert "--constraint /tmp/requirements-mkl-src.txt" in stage
-  assert "-r /tmp/requirements-mkl-numpy.txt" in stage
-  assert "-r /tmp/requirements-mkl-numexpr.txt" in stage
-  assert "-r /tmp/requirements-mkl-pandas.txt" in stage
-  assert "-r /tmp/requirements-rest.txt" in stage
+  assert "COPY --chown=hpcperfstats:hpcperfstats . ." in stage
   assert "pip install --no-cache-dir --no-deps ." in stage
-  assert "shlex.quote" not in stage
+  assert "-r /tmp/requirements-build.txt" not in stage
+  assert "-r /tmp/requirements-rest.txt" not in stage
 
-  pyproject_copy_pos = stage.index("pyproject.toml")
-  build_install_pos = stage.index("-r /tmp/requirements-build.txt")
   full_copy_pos = stage.index("COPY --chown=hpcperfstats:hpcperfstats . .")
   package_install_pos = stage.index("pip install --no-cache-dir --no-deps .")
-  assert pyproject_copy_pos < build_install_pos < full_copy_pos < package_install_pos
+  assert full_copy_pos < package_install_pos
 
 
 def test_pyproject_dependencies_write_valid_pip_requirements_file():
@@ -103,38 +112,38 @@ def test_dockerfile_documents_spa_volume_fingerprint_heal_contract():
   assert "collectstatic --noinput" in full
 
 
-def test_dockerfile_pins_python_3147_and_bakes_freethreaded_prefix():
-  """GIL web uses python:3.14.7-trixie; pipeline ABI is /opt/python3.14t (no second tree)."""
+def test_dockerfile_pins_dual_cpython_prefixes_from_python_build():
+  """GIL /opt/python3.14 (+ /usr/local links) and FT /opt/python3.14t from python-build."""
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   stages = re.findall(r"^FROM .* AS (\S+)", dockerfile, flags=re.MULTILINE)
-  assert "python-freethreaded" in stages
-  assert stages.index("python-freethreaded") < stages.index("hpcperfstats-base")
+  assert "python-build" in stages
+  assert stages.index("python-build") < stages.index("hpcperfstats-base")
   assert stages[-1] == "hpcperfstats-full"
 
   assert re.search(
-      r"^FROM python:3\.14\.7-trixie AS python-freethreaded\s*$",
+      r"^FROM debian:trixie AS python-build\s*$",
       dockerfile,
       flags=re.MULTILINE,
   )
   assert re.search(
-      r"^FROM python:3\.14\.7-trixie AS hpcperfstats-base\s*$",
+      r"^FROM debian:trixie-slim AS hpcperfstats-base\s*$",
       dockerfile,
       flags=re.MULTILINE,
   )
 
-  ft_stage = _stage_body(dockerfile, "python-freethreaded")
-  assert "--prefix=/opt/python3.14t" in ft_stage
-  assert "--disable-gil" in ft_stage
-  assert "--with-ensurepip=install" in ft_stage
-  # Prod-host builds: same -march=native policy as the MKL scientific stack.
-  assert "-march=native" in ft_stage
-  assert "CFLAGS" in ft_stage
+  build = _stage_body(dockerfile, "python-build")
+  assert "--prefix=/opt/python3.14" in build
+  assert "--prefix=/opt/python3.14t" in build
+  assert "--disable-gil" in build
+  assert "--with-ensurepip=install" in build
+  assert "-march=native" in build
+  assert "CFLAGS" in build
   assert "/opt/hpcperfstats-ft" not in dockerfile
 
   base = _stage_body(dockerfile, "hpcperfstats-base")
-  assert "COPY --from=python-freethreaded /opt/python3.14t /opt/python3.14t" in base
+  assert "COPY --from=python-build /opt/python3.14t /opt/python3.14t" in base
+  assert "COPY --from=python-build /opt/python3.14 /opt/python3.14" in base
   assert "/opt/python3.14t/bin/python3.14t -m pip" in base
-  assert "-r /tmp/requirements-build.txt" in base
   assert "/opt/hpcperfstats-ft" not in base
   assert "-m ensurepip" not in base
   assert "ensurepip --upgrade" not in base

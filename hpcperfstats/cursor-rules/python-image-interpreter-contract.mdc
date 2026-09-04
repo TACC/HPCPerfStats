@@ -1,5 +1,5 @@
 ---
-description: Dual ABI — GIL python:3.14.7 for web; baked /opt/python3.14t for pipeline daemons; no INI ABI switch
+description: Dual ABI — GIL /opt/python3.14 (+ /usr/local) for web; baked /opt/python3.14t for pipeline; jemalloc both ways; no INI ABI switch
 alwaysApply: false
 globs: Dockerfile,services-conf/supervisord.conf
 ---
@@ -12,15 +12,16 @@ globs: Dockerfile,services-conf/supervisord.conf
 
 | Concern | Contract |
 |---------|----------|
-| Web / gunicorn / django_startup | Always GIL **`/usr/local/bin/python3`** from `FROM python:3.14.7-trixie` |
+| Web / gunicorn / django_startup | Always GIL **`/usr/local/bin/python3`** and **`/usr/local/bin/gunicorn`** (symlinks to **`/opt/python3.14`**). Image is built from **`debian:trixie`** / **`debian:trixie-slim`**, not Hub `python:*`. **Forbidden:** gunicorn on 3.14t |
 | Pipeline daemons | Always free-threaded **`/opt/python3.14t/bin/python`** for **`listend`**, **`sync_timedb`**, **`update_metrics`** in `services-conf/supervisord.conf` |
 | Helpers | Syslog render and `seal_syslog_daily` stay on GIL `/usr/local/bin/python3` **when invoked manually**; they are **not** supervisord programs. `supervisor_startup.sh` stays on GIL `/usr/local/bin/python3` |
 | Operator `exec … python3` | PATH `python3` remains GIL; do **not** treat it as the ingest interpreter |
 | Pipeline supervisor uid | `[supervisord] user=hpcperfstats` in `services-conf/supervisord.conf`; the three pipeline daemons run under that non-root supervisor |
 | INI / env ABI switch | **Forbidden** — no `*_interpreter` keys, no resolver, no skip build-arg fallback to GIL for pipeline |
 | Missing `/opt/python3.14t` | Build must fail or those three supervisord programs fail to start — **no silent GIL fallback** |
-| Official Hub `3.14t` tag | Does not exist; compile matching **`Python-3.14.7.tgz`** with `--disable-gil --prefix=/opt/python3.14t` and **`CFLAGS`/`CXXFLAGS` `-O3 -march=native`** (same prod-host native policy as the MKL stack; GIL web still uses Hub `python:3.14.7-trixie` binaries) |
-| Dual pip | Install runtime deps into both `/usr/local` (cp314) and `/opt/python3.14t` (cp314t); **no** `/opt/hpcperfstats-ft` second tree. Image uses pip **`image-build`** MKL then **source-builds** numpy (MKL BLAS/LAPACK + `-Dcpu-baseline=native` / `-Dcpu-dispatch=max`), numexpr (Intel VML via `site.cfg` + **`--no-deps`**), and pandas with **`--no-binary` + `--no-deps`** and **`-march=native`** (scipy not in the scientific stack). **`--no-deps` is mandatory** on **both** numexpr and pandas so pip cannot replace MKL numpy with a manylinux OpenBLAS wheel; re-assert `numpy.show_config(mode="dicts")` still mentions MKL after each. **`python-dateutil`** (pandas runtime dep; pulls `six`) is a `project.dependencies` pin installed in the **rest** wheel layer; **`import pandas`** smoke runs **after** that rest install. **`image-build` includes `versioneer[toml]`** so pandas meson `generate_version.py` works under `--no-build-isolation`. **Build images on the prod host that runs them** — `native` is not portable across CPU generations. Host `.venv` keeps PyPI wheels — never install `.[image-build]` on macOS ARM |
+| Dual CPython bake | Compile matching **`Python-3.14.7.tgz`** twice in **`python-build`**: GIL **`--prefix=/opt/python3.14 --without-mimalloc`** and FT **`--prefix=/opt/python3.14t --disable-gil`** (FT **must keep mimalloc**; do **not** pass `--without-mimalloc` with `--disable-gil`). Shared: `--enable-shared --enable-optimizations --with-lto --with-system-libmpdec --with-system-ffi`, **`MAKEFLAGS=-j40`**, **`CFLAGS`/`CXXFLAGS` `-O3 -march=native -g0`**, then **`strip --strip-unneeded`**. Native **libmpdec** / **libffi** under `/opt/mpdecimal` and `/opt/libffi`. Symlink GIL into `/usr/local` |
+| Jemalloc both ways | Pin jemalloc under `/opt/jemalloc`. Force-link **both** ABIs with `-Wl,--no-as-needed -ljemalloc` (and source-built numpy/numexpr/pandas). Runtime **`ENV LD_PRELOAD`** jemalloc soname **and** `/etc/ld.so.preload` so manylinux wheels also interpose (link-only is not enough). Image default **`MALLOC_CONF=background_thread:false,metadata_thp:auto`** for GIL gunicorn prefork. Supervisord **3.14t** programs may set `background_thread:true,…` **without** unsetting `LD_PRELOAD` or emptying `ld.so.preload`. **Forbidden:** `patchelf --add-needed` sweep of site-packages; `--disable-initial-exec-tls` on jemalloc |
+| Dual pip | Install runtime deps into both `/opt/python3.14` (cp314, via `/usr/local`) and `/opt/python3.14t` (cp314t) in **`python-build`**; runtime only `pip install --no-deps .`. **no** `/opt/hpcperfstats-ft` second tree. Image uses pip **`image-build`** MKL then **source-builds** numpy (MKL BLAS/LAPACK + `-Dcpu-baseline=native` / `-Dcpu-dispatch=max`), numexpr (Intel VML via `site.cfg` + **`--no-deps`**), and pandas with **`--no-binary` + `--no-deps`** and **`-march=native`** (scipy not in the scientific stack). **`--no-deps` is mandatory** on **both** numexpr and pandas so pip cannot replace MKL numpy with a manylinux OpenBLAS wheel; re-assert `numpy.show_config(mode="dicts")` still mentions MKL after each. **`python-dateutil`** (pandas runtime dep; pulls `six`) is a `project.dependencies` pin installed in the **rest** wheel layer; **`import pandas`** smoke runs **after** that rest install. **`image-build` includes `versioneer[toml]`** so pandas meson `generate_version.py` works under `--no-build-isolation`. **Build images on the prod host that runs them** — `native` is not portable across CPU generations. Host `.venv` keeps PyPI wheels — never install `.[image-build]` on macOS ARM |
 | Host `.venv` | GIL **3.14** only (Homebrew `python@3.14`); host 3.14t not required for pytest |
 
 ## Follow-on (not this interpreter change)
@@ -35,8 +36,8 @@ globs: Dockerfile,services-conf/supervisord.conf
 
 ## Validation
 
-- Unit: `test_dockerfile_python_deps_cache.py`, `test_dockerfile_mkl_source_stack.py`, `test_pyproject_image_build_extra.py`, `test_supervisord_pipeline_python.py`, `test_hpcperfstats_ini_example.py` (no interpreter keys), `test_python_abi_startup_log.py`
-- Compose smoke: web `python3` is 3.14.7 GIL; live pipeline argv is `/opt/python3.14t/...` and logs `python_abi … Py_GIL_DISABLED=1`; after image rebuild, GIL and 3.14t `numpy.show_config(mode="dicts")` mention MKL and `numexpr.use_vml` is true
+- Unit: `test_dockerfile_python_deps_cache.py`, `test_dockerfile_mkl_source_stack.py`, `test_dockerfile_jemalloc_cpython.py`, `test_pyproject_image_build_extra.py`, `test_supervisord_pipeline_python.py`, `test_hpcperfstats_ini_example.py` (no interpreter keys), `test_python_abi_startup_log.py`
+- Compose smoke: web `python3` is 3.14.7 GIL; live pipeline argv is `/opt/python3.14t/...` and logs `python_abi … Py_GIL_DISABLED=1`; `/proc/self/maps` and `LD_PRELOAD`/`ld.so.preload` show jemalloc on both ABIs; after image rebuild, GIL and 3.14t `numpy.show_config(mode="dicts")` mention MKL and `numexpr.use_vml` is true
 
 ## Overlap
 
