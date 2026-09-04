@@ -226,6 +226,20 @@ def test_runtime_jemalloc_both_ways_preload_and_ld_so_preload():
   assert "COPY --from=python-build /opt/jemalloc" in base
   assert "COPY --from=python-build /opt/python3.14 " in base
   assert "COPY --from=python-build /opt/python3.14t" in base
+  # Prefer ${var##*/} over $(basename "$var") — podman wraps RUN in sh -c "…"
+  # and nested double quotes inside $() cause Unterminated quoted string.
+  assert "/usr/local/lib/${so##*/}" in base
+  assert '$(basename "' not in base
+
+
+def test_dockerfile_avoids_nested_quotes_inside_command_substitution():
+  """Podman/buildah: RUN is sh -c \"…\"; $(… \" …) breaks with unterminated quote."""
+  text = (_repo_root() / "Dockerfile").read_text()
+  assert '$(basename "' not in text
+  assert "$(basename \"" not in text
+  # libpython symlink must still use strip-dir expansion.
+  assert "${so##*/}" in text
+  assert "${_mkl_vers[0]##*/}" in text
 
 
 def test_hpcperfstats_base_copies_only_opt_prefixes_not_compile_trees():

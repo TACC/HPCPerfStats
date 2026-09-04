@@ -255,7 +255,7 @@ RUN /bin/bash -o pipefail -c '\
   ln -sfn /opt/python3.14/bin/python3.14 /usr/local/bin/python3.14; \
   ln -sfn /opt/python3.14/bin/pip3 /usr/local/bin/pip3; \
   ln -sfn /opt/python3.14/bin/pip3.14 /usr/local/bin/pip3.14; \
-  for so in /opt/python3.14/lib/libpython3.14.so*; do ln -sfn "$so" "/usr/local/lib/$(basename "$so")"; done; \
+  for so in /opt/python3.14/lib/libpython3.14.so*; do ln -sfn "$so" "/usr/local/lib/${so##*/}"; done; \
   echo "/opt/python3.14/lib" > /etc/ld.so.conf.d/python314.conf; \
   ldconfig; \
   for bin in /opt/python3.14/bin/python3.14 /opt/python3.14/lib/libpython3.14.so /opt/jemalloc/lib/libjemalloc.so.2; do \
@@ -399,7 +399,7 @@ RUN /bin/bash -o pipefail -c '\
   if [ ! -e "${MKLROOT}/lib/libmkl_rt.so" ]; then \
     _mkl_vers=("${MKLROOT}"/lib/libmkl_rt.so.*); \
     test "${#_mkl_vers[@]}" -ge 1; \
-    ln -s "$(basename "${_mkl_vers[0]}")" "${MKLROOT}/lib/libmkl_rt.so"; \
+    ln -s "${_mkl_vers[0]##*/}" "${MKLROOT}/lib/libmkl_rt.so"; \
   fi; \
   test -e "${MKLROOT}/lib/libmkl_rt.so"; \
   export LIBRARY_PATH="${MKLROOT}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"; \
@@ -475,7 +475,7 @@ RUN /bin/bash -o pipefail -c '\
   if [ ! -e "${MKLROOT_T}/lib/libmkl_rt.so" ]; then \
     _mkl_vers=("${MKLROOT_T}"/lib/libmkl_rt.so.*); \
     test "${#_mkl_vers[@]}" -ge 1; \
-    ln -s "$(basename "${_mkl_vers[0]}")" "${MKLROOT_T}/lib/libmkl_rt.so"; \
+    ln -s "${_mkl_vers[0]##*/}" "${MKLROOT_T}/lib/libmkl_rt.so"; \
   fi; \
   test -e "${MKLROOT_T}/lib/libmkl_rt.so"; \
   export LIBRARY_PATH="${MKLROOT_T}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"; \
@@ -526,12 +526,24 @@ RUN /bin/bash -o pipefail -c '\
 # Install debugging tools into GIL prefix (py-spy / pyinstrument).
 RUN /bin/bash -o pipefail -c 'python3 -m pip install --no-cache-dir pyinstrument py-spy'
 
-# Uninstall image-build-only toolchain from both ABIs; keep runtime mkl; final strip.
+# Uninstall image-build-only toolchain/devel from both ABIs after all pip layers
+# (image-build + MKL source numpy/numexpr/pandas + rest wheels + pyinstrument).
+# Keep: cython (operator); mkl + OpenMP/TBB/UR runtime; setuptools/wheel/packaging
+# (packaging is a runtime dep of bokeh; setuptools/wheel stay for pip tooling).
+# Prune: meson/meson-python/ninja/versioneer/pyproject-metadata (build backends)
+# and mkl-include/mkl-devel/tbb-devel (compile headers only).
+# Rest project.dependencies do not require any pruned package.
 # Prune compile leftovers under /opt so hpcperfstats-base never inherits src/build trees.
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  python3 -m pip uninstall -y meson meson-python ninja cython versioneer mkl-devel || true; \
-  /opt/python3.14t/bin/python3.14t -m pip uninstall -y meson meson-python ninja cython versioneer mkl-devel || true; \
+  python3 -m pip uninstall -y \
+    meson meson-python ninja versioneer pyproject-metadata \
+    mkl-devel mkl-include tbb-devel || true; \
+  /opt/python3.14t/bin/python3.14t -m pip uninstall -y \
+    meson meson-python ninja versioneer pyproject-metadata \
+    mkl-devel mkl-include tbb-devel || true; \
+  test "$(command -v cython)" = "/opt/python3.14/bin/cython"; \
+  test -x /opt/python3.14t/bin/cython; \
   python3 -m pip cache purge; \
   /opt/python3.14t/bin/python3.14t -m pip cache purge; \
   for root in /opt/jemalloc /opt/zlib-ng /opt/zstd /opt/mpdecimal /opt/libffi /opt/python3.14 /opt/python3.14t; do \
@@ -606,7 +618,7 @@ RUN /bin/bash -o pipefail -c '\
   ln -sfn /opt/python3.14/bin/pip3 /usr/local/bin/pip3; \
   ln -sfn /opt/python3.14/bin/pip3.14 /usr/local/bin/pip3.14; \
   if [ -e /opt/python3.14/bin/gunicorn ]; then ln -sfn /opt/python3.14/bin/gunicorn /usr/local/bin/gunicorn; fi; \
-  for so in /opt/python3.14/lib/libpython3.14.so*; do ln -sfn "$so" "/usr/local/lib/$(basename "$so")"; done; \
+  for so in /opt/python3.14/lib/libpython3.14.so*; do ln -sfn "$so" "/usr/local/lib/${so##*/}"; done; \
   for b in zstd zstdcat zstdgrep zstdless zstdmt unzstd; do \
     if [ -e "/opt/zstd/bin/$b" ]; then \
       ln -sfn "/opt/zstd/bin/$b" "/usr/local/bin/$b"; \

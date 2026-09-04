@@ -70,6 +70,52 @@ def test_python_build_gil_pip_invokes_via_python3_m():
   assert "pip cache" not in cleaned
 
 
+def test_python_build_prunes_full_image_build_toolchain_keeps_cython():
+  """After all pip layers, prune build/devel pkgs from image-build install log.
+
+  Covers the full image-build ``Successfully installed`` set (not only
+  meson/ninja): drop devel/backends; keep cython and MKL/OpenMP/TBB runtime.
+  Rest project.dependencies (Django/Bokeh/…) do not need the pruned names.
+  """
+  build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
+  uninstall_bodies = [
+      body
+      for body in re.findall(
+          r"^RUN /bin/bash -o pipefail -c '((?:\\'|[^'])*)'",
+          build,
+          flags=re.MULTILINE | re.DOTALL,
+      )
+      if "pip uninstall" in body
+  ]
+  assert len(uninstall_bodies) == 1, uninstall_bodies
+  body = uninstall_bodies[0]
+  for pkg in (
+      "meson",
+      "meson-python",
+      "ninja",
+      "versioneer",
+      "pyproject-metadata",
+      "mkl-devel",
+      "mkl-include",
+      "tbb-devel",
+  ):
+    assert re.search(rf"(^|[\s\\]){re.escape(pkg)}([\s\\]|$)", body), pkg
+  # Must not uninstall cython (kept on both prefixes).
+  assert not re.search(r"pip uninstall -y[^\n]*\bcython\b", body)
+  assert 'command -v cython)" = "/opt/python3.14/bin/cython"' in body
+  assert "test -x /opt/python3.14t/bin/cython" in body
+  # Must not prune runtime MKL/OpenMP/TBB or packaging (bokeh Needs packaging).
+  for keep in (
+      " mkl ",
+      " intel-openmp ",
+      " tbb ",
+      " packaging ",
+      " setuptools ",
+      " wheel ",
+  ):
+    assert keep not in f" {body.replace(chr(10), ' ')} ".replace("\\", " "), keep
+
+
 def test_python_build_path_includes_prefix_bins_for_cython_meson():
   """image-build console scripts (cython/meson/ninja) must be on PATH.
 
