@@ -241,6 +241,8 @@ def test_runtime_jemalloc_both_ways_preload_and_ld_so_preload():
   assert '"' not in symlink_run
   assert "grep -F 1.5.7" in symlink_run
   assert "_zstd_usr=$(readlink -f /usr/local/bin/zstd)" in symlink_run
+  # trixie-slim has no `file` package; ELF checks stay in python-build only.
+  assert "file -b" not in symlink_run
 
 
 def test_dockerfile_avoids_nested_quotes_inside_command_substitution():

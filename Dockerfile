@@ -612,6 +612,7 @@ RUN /bin/bash -o pipefail -c "printf '%s\n' \
 # Recreate GIL /usr/local symlinks, ldconfig paths, jemalloc preload (path A + B).
 # Podman/buildah wraps RUN in sh -c "..."; any " inside a -c '...' script terminates
 # that outer quote (Unterminated quoted string). Keep this script free of ".
+# Do not call `file` here: debian:trixie-slim does not install it (python-build does).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   mkdir -p /usr/local/bin /usr/local/lib; \
@@ -645,7 +646,6 @@ RUN /bin/bash -o pipefail -c '\
   test -f $JE_SO; \
   echo $JE_SO > /etc/ld.so.preload; \
   test -s /etc/ld.so.preload; \
-  file -b $JE_SO | grep -q ELF; \
   test -x /usr/local/bin/zstd; \
   _zstd_usr=$(readlink -f /usr/local/bin/zstd); \
   _zstd_opt=$(readlink -f /opt/zstd/bin/zstd); \
