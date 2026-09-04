@@ -14,7 +14,7 @@ globs: services-conf/db.Dockerfile,docker-compose.yaml,scripts/pg18_host_data_ch
 |-----|--------|
 | Base | Pinned **`alpine:3.24.x`** (e.g. `3.24.1`). **Forbidden:** `alpine:latest`, `alpine:edge`, `debian:trixie` for the DB image |
 | Stack | Source-build under `/opt`: jemalloc, **zlib-ng (ZLIB_COMPAT)**, ICU, liburing, lz4, zstd; PostgreSQL 18.x SHA pin; TimescaleDB 2.29.x **without** `APACHE_ONLY`. **Forbidden:** apk `zlib` / `zlib-dev` as the linked ABI |
-| Configure | `--with-icu --with-liburing --with-lz4 --with-zstd --with-llvm` (+ openssl/libxml/libxslt/uuid as documented). Postgres and zstd link `/opt/zlib-ng` (`HAVE_ZLIB=1`) and `/opt/lz4` (`HAVE_LZ4=1`). **Do not** pass docker-library `--disable-rpath` |
+| Configure | `--with-icu --with-liburing --with-lz4 --with-zstd --with-llvm` (+ openssl/libxml/libxslt/uuid as documented). Postgres and zstd link `/opt/zlib-ng` (`HAVE_ZLIB=1`) and `/opt/lz4` (`HAVE_LZ4=1`). **Do not** pass docker-library `--disable-rpath`. **Do not** pass removed PG18 flags such as `--enable-thread-safety` (fatal with `--enable-option-checking=fatal`) |
 | CFLAGS | Postgres + Timescale: `-O3 -march=native -mprefer-vector-width=512 -mtune=native -flto=auto -g0` (512-bit prefer **only** on PG + Timescale unless later asked) |
 | Runtime | `LD_PRELOAD` jemalloc on musl; fail-closed `ldd` shows `/opt/...` for jemalloc/**zlib-ng**/icu/uring/lz4/zstd on `postgres` and `/opt/zlib-ng` + `/opt/lz4` on `zstd` CLI; no apk `zlib` |
 | Build host | Bake on the **prod CPU** (`native`). Colima ARM images are not the ship target |

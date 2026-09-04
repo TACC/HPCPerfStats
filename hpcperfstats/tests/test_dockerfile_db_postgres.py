@@ -100,6 +100,9 @@ def test_db_dockerfile_links_opt_icu_liburing_lz4_zstd_into_postgres() -> None:
     # Must not pass docker-library's --disable-rpath to ./configure.
     configure_block = text[text.index("./configure") : text.index("make -j")]
     assert "--disable-rpath" not in configure_block
+    # PG18 removed --enable-thread-safety (always on); --enable-option-checking=fatal
+    # rejects unrecognized options (bake failure on prod: 2026-09-04).
+    assert "--enable-thread-safety" not in configure_block
 
 
 def test_db_dockerfile_postgres_and_timescale_prefer_512_vector_width() -> None:

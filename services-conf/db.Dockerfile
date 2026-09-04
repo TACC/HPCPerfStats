@@ -180,7 +180,6 @@ RUN set -eux; \
     --enable-option-checking=fatal \
     --build="$gnuArch" \
     --enable-integer-datetimes \
-    --enable-thread-safety \
     --with-uuid=e2fs \
     --with-pgport=5432 \
     --with-system-tzdata=/usr/share/zoneinfo \
