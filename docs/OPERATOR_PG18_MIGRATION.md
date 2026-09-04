@@ -114,7 +114,7 @@ After cutover soak, operators may archive/delete `/data/hpcperfstats_db/pg15` â€
 | Base | `alpine:3.24.1` (not `latest`) |
 | Postgres | 18.x SHA-pinned in `services-conf/db.Dockerfile` |
 | Timescale | 2.29.x (not `APACHE_ONLY`) |
-| `/opt` | jemalloc, **zlib-ng**, icu, liburing, lz4, zstd with rpath (no apk `zlib`) |
+| `/opt` | jemalloc, **zlib-ng**, icu, liburing, lz4, zstd with rpath (zstd CLI: `HAVE_ZLIB=1` + `HAVE_LZ4=1`; no apk `zlib`) |
 | CFLAGS (PG + Timescale) | `-O3 -march=native -mprefer-vector-width=512 -mtune=native -flto=auto -g0` |
 | Volume | `/var/lib/postgresql` (PG18 layout) |
 | Seccomp | `seccomp=unconfined` on `db_pg18` for `io_method=io_uring` |

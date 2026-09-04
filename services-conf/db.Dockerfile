@@ -133,7 +133,7 @@ RUN set -eux; \
   test -f /opt/zlib-ng/lib/libz.so || test -f /opt/zlib-ng/lib/libz.so.1; \
   rm -rf /usr/src/zlib-ng /tmp/zlib-ng.tar.gz
 
-# --- zstd (match Python image /opt/zstd 1.5.7 pin; gzip path links zlib-ng) ---
+# --- zstd (match Python image /opt/zstd 1.5.7 pin; gzip→zlib-ng, .lz4→/opt/lz4) ---
 RUN set -eux; \
   curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" \
     -o /tmp/zstd.tar.gz; \
@@ -141,14 +141,15 @@ RUN set -eux; \
   mkdir -p /usr/src/zstd; \
   tar -xzf /tmp/zstd.tar.gz -C /usr/src/zstd --strip-components=1; \
   cd /usr/src/zstd; \
-  export PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
-  export CPPFLAGS="-I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
-  export LDFLAGS="-L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib${LDFLAGS:+ $LDFLAGS}"; \
-  make -j"$(nproc)" PREFIX=/opt/zstd HAVE_ZLIB=1 MOREFLAGS="${OPT_CFLAGS_LIBS}"; \
+  export PKG_CONFIG_PATH="/opt/lz4/lib/pkgconfig:/opt/zlib-ng/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
+  export CPPFLAGS="-I/opt/lz4/include -I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
+  export LDFLAGS="-L/opt/lz4/lib -Wl,-rpath,/opt/lz4/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib${LDFLAGS:+ $LDFLAGS}"; \
+  make -j"$(nproc)" PREFIX=/opt/zstd HAVE_ZLIB=1 HAVE_LZ4=1 MOREFLAGS="${OPT_CFLAGS_LIBS}"; \
   make install PREFIX=/opt/zstd; \
   ldd /opt/zstd/bin/zstd | tee /tmp/zstd.ldd; \
   grep -E '/opt/zlib-ng/.+libz' /tmp/zstd.ldd; \
-  ! grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.)' /tmp/zstd.ldd; \
+  grep -E '/opt/lz4/.+liblz4' /tmp/zstd.ldd; \
+  ! grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.|/usr/lib/liblz4)' /tmp/zstd.ldd; \
   rm -rf /usr/src/zstd /tmp/zstd.tar.gz
 
 ENV PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig:/opt/icu/lib/pkgconfig:/opt/liburing/lib/pkgconfig:/opt/lz4/lib/pkgconfig:/opt/zstd/lib/pkgconfig" \
@@ -335,6 +336,8 @@ RUN set -eux; \
   ! grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.)' /tmp/postgres.ldd; \
   ldd /opt/zstd/bin/zstd | tee /tmp/zstd.ldd; \
   grep -E '/opt/zlib-ng/.+libz' /tmp/zstd.ldd; \
+  grep -E '/opt/lz4/.+liblz4' /tmp/zstd.ldd; \
+  ! grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.|/usr/lib/liblz4)' /tmp/zstd.ldd; \
   sed -ri "s!^#?(listen_addresses)\s*=\s*\S+.*!\1 = '*'!" \
     /usr/local/share/postgresql/postgresql.conf.sample; \
   grep -F "listen_addresses = '*'" /usr/local/share/postgresql/postgresql.conf.sample; \

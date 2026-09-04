@@ -56,9 +56,17 @@ def test_db_dockerfile_uses_zlib_ng_not_apk_zlib() -> None:
     assert "ZLIB_COMPAT=ON" in text
     assert "WITH_NATIVE_INSTRUCTIONS=ON" in text
     assert "HAVE_ZLIB=1" in text
+    assert "HAVE_LZ4=1" in text
     assert "-I/opt/zlib-ng/include" in text
     assert "-L/opt/zlib-ng/lib" in text
     assert "-Wl,-rpath,/opt/zlib-ng/lib" in text
+    assert "-I/opt/lz4/include" in text
+    assert "-L/opt/lz4/lib" in text
+    # zstd bake must rpath both codecs (zlib-ng + lz4), not only the global PG LDFLAGS.
+    zstd_run = text[text.index("# --- zstd") : text.index("ENV PKG_CONFIG_PATH=")]
+    assert "HAVE_LZ4=1" in zstd_run
+    assert "/opt/lz4" in zstd_run
+    assert "/opt/lz4/.+liblz4" in zstd_run
     assert "COPY --from=db-build /opt/zlib-ng" in text
     assert not re.search(r"(?m)^\s+zlib-dev\b", text)
     # Runtime must not apk-add stock zlib (comments mentioning zlib-ng / forbid are OK).
