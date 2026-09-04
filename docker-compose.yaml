@@ -198,7 +198,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - pg_isready -U hpcperfstats -h 127.0.0.1 -p 5432
+        - pg_isready -U hpcperfstats -d postgres -h 127.0.0.1 -p 5432
       interval: 5s
       timeout: 3s
       retries: 10
@@ -209,6 +209,7 @@ services:
     environment:
       - POSTGRES_USER=hpcperfstats
       - POSTGRES_PASSWORD=hpcperfstats
+      - POSTGRES_DB=hpcperfstats
     networks:
       hpcperfstats_net:
         aliases:
@@ -225,16 +226,28 @@ services:
       context: ./services-conf
       dockerfile: db.Dockerfile
     image: hpcperfstats-db
-    # This is needed to use the kernel.io_uring facility which speeds up the database
-    cap_add: 
-      - SYS_ADMIN
     logging: *hpc-logging
     shm_size: "16gb"
-    # Docker default seccomp often blocks io_uring (docker-library/postgres#1365).
-    # Unconfined is required for -c io_method=io_uring to stick; fail closed in
-    # the operator runbook if SHOW io_method is not io_uring.
+    # io_uring (PG18 -c io_method=io_uring):
+    # Host kernel (required). Postgres gosu's to Alpine uid/gid 70, so either:
+    #   A) Recommended locked-down compromise — only gid 70 (and CAP_SYS_ADMIN) may create rings:
+    #        sudo sysctl -w kernel.io_uring_disabled=1
+    #        sudo sysctl -w kernel.io_uring_group=70
+    #        printf '%s\n' 'kernel.io_uring_disabled = 1' 'kernel.io_uring_group = 70' \
+    #          | sudo tee /etc/sysctl.d/99-hpcperfstats-io-uring.conf && sudo sysctl --system
+    #   B) Fully open (less preferred): kernel.io_uring_disabled=0
+    #   Forbidden for this service: kernel.io_uring_disabled=2 (always EPERM).
+    # With disabled=1 and default io_uring_group=-1 (unset), uid 70 gets EPERM even with
+    # seccomp=unconfined — you must set io_uring_group=70 (or use disabled=0).
+    # Seccomp: Docker/Podman default blocks io_uring_*; use unconfined.
+    # SELinux: often AVCs create on anon_inode [io_uring]; label=disable for this service.
+    # Recreate after changing security_opt: compose up -d --force-recreate db_pg18
+    # See README Installation + docs/OPERATOR_PG18_MIGRATION.md.
     security_opt:
       - seccomp=unconfined
+      - label=disable
+    cap_add:
+      - SYS_ADMIN
     command:
       - -c
       - max_connections=500
@@ -276,7 +289,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - pg_isready -U hpcperfstats -h 127.0.0.1 -p 5432
+        - pg_isready -U hpcperfstats -d postgres -h 127.0.0.1 -p 5432
       interval: 5s
       timeout: 3s
       retries: 10
@@ -288,6 +301,7 @@ services:
     environment:
       - POSTGRES_USER=hpcperfstats
       - POSTGRES_PASSWORD=hpcperfstats
+      - POSTGRES_DB=hpcperfstats
       - TIMESCALEDB_TELEMETRY=off
     networks:
       hpcperfstats_net:

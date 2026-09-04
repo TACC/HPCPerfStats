@@ -301,8 +301,14 @@ def test_docker_compose_db_pg18_dual_run_beside_hub_pg15():
   assert "services-conf/db.Dockerfile" in pg18 or "dockerfile: db.Dockerfile" in pg18
   assert "image: hpcperfstats-db" in pg18
   assert "pg18-migrate" in pg18
+  assert "POSTGRES_DB=hpcperfstats" in pg18
+  assert "pg_isready -U hpcperfstats -d postgres" in pg18
   assert "io_method=io_uring" in pg18
   assert "seccomp=unconfined" in pg18
+  assert "label=disable" in pg18
+  assert "SYS_ADMIN" in pg18
+  assert "kernel.io_uring_disabled=1" in pg18
+  assert "kernel.io_uring_group=70" in pg18
   assert 'shm_size: "16gb"' in pg18
   assert "postgres_data_pg18:/var/lib/postgresql" in pg18
   assert "- db18" in pg18

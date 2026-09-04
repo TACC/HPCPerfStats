@@ -142,6 +142,12 @@ class Migration(migrations.Migration):
       ),
 
       # TIMESCALEDB Timeseries and compression setup
+      # Extension must exist before create_hypertable (fresh DBs only have
+      # shared_preload_libraries; Hub images sometimes already had the extension).
+      migrations.RunSQL(
+          "CREATE EXTENSION IF NOT EXISTS timescaledb;",
+          reverse_sql=migrations.RunSQL.noop,
+      ),
       migrations.RunSQL("ALTER TABLE host_data DROP CONSTRAINT IF EXISTS host_data_pkey;"
                         ),
       migrations.RunSQL(

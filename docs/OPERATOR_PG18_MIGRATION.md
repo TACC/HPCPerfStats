@@ -51,9 +51,57 @@ docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exe
 
 ## Phase B — Empty schema on PG18 (Django migrate)
 
-Point a one-shot web run at hostname `db18` (override `HOST` / Django DB host per site INI/settings — typically set the Postgres host to `db18` for this run only) and run `django_startup` / migrate so `host_data` exists as an **empty** hypertable.
+`db_pg18` must already be healthy (Phase A). Do **not** point the long-running **`web`** service at `db18` yet — Hub PG15 stays on alias **`db`**.
 
-Disable compression policy on the target until backfill finishes (re-enable after verification). Exact policy SQL depends on how migrations created the policy; record the `remove_compression_policy` / `add_compression_policy` calls you use in the site change log.
+`machine.0001_initial` calls `create_hypertable` but does **not** `CREATE EXTENSION timescaledb`. Hub Timescale images often leave the extension in place from earlier ops; a fresh PG18 database only has `shared_preload_libraries = timescaledb`. **Create the extension first**, then one-shot migrate with Django `HOST=db18`, then disable compression for backfill.
+
+### db_pg18 — CREATE EXTENSION timescaledb (paste output)
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 sh -lc 'psql -h localhost -U hpcperfstats -d hpcperfstats -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" -c "SELECT extname, extversion FROM pg_extension WHERE extname = '\''timescaledb'\'';" -c "SELECT proname FROM pg_proc WHERE proname = '\''create_hypertable'\'' LIMIT 3;"'
+```
+
+**Fail closed:** `extversion` is set (e.g. `2.29.2`) and `create_hypertable` appears in `pg_proc`.
+
+### web — migrate empty schema onto db18 (paste output)
+
+Requires profile **`pg18-migrate`** so hostname **`db18`** resolves. `--no-deps` assumes **`db_pg18`** is already up. Run **after** the extension paste above.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate run --rm --no-deps --entrypoint /usr/local/bin/python3 web -c '
+import os
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "hpcperfstats.site.hpcperfstats_site.settings")
+import django
+django.setup()
+from django.conf import settings
+from django.db import connection, connections
+connections.close_all()
+settings.DATABASES["default"]["HOST"] = "db18"
+connection.ensure_connection()
+print("connected_host", settings.DATABASES["default"]["HOST"])
+with connection.cursor() as cur:
+    cur.execute("SELECT version()")
+    print("server", cur.fetchone()[0])
+    cur.execute("SELECT extversion FROM pg_extension WHERE extname = %s", ["timescaledb"])
+    row = cur.fetchone()
+    print("timescaledb", row[0] if row else None)
+    if not row:
+        raise SystemExit("timescaledb extension missing — run Phase B CREATE EXTENSION paste first")
+from django.core.management import call_command
+call_command("migrate", verbosity=1)
+print("migrate_ok")
+'
+```
+
+**Fail closed:** printed `connected_host` is `db18`, `timescaledb` is non-empty, migrate finishes without error. If you see `create_hypertable … does not exist`, the extension paste was skipped or ran against the wrong database.
+
+### db_pg18 — verify empty host_data hypertable + disable compression (paste output)
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 sh -lc 'psql -h localhost -U hpcperfstats -d hpcperfstats -v ON_ERROR_STOP=1 -c "SELECT version();" -c "SELECT extversion FROM pg_extension WHERE extname = '\''timescaledb'\'';" -c "SELECT hypertable_name, compression_enabled FROM timescaledb_information.hypertables WHERE hypertable_name = '\''host_data'\'';" -c "SELECT count(*) AS host_data_n FROM host_data;" -c "SELECT remove_compression_policy('\''host_data'\'', if_exists => true);" -c "SELECT job_id, proc_name, scheduled FROM timescaledb_information.jobs WHERE hypertable_name = '\''host_data'\'' AND proc_name LIKE '\''%policy_compression%'\'';"'
+```
+
+**Fail closed:** `host_data` hypertable exists; `host_data_n` is **0**; compression policy job row is empty / removed. Re-enable compression only after Phase D verification (site change log should record the `add_compression_policy` you restore — typically `compress_after => INTERVAL '8d'` per migration `0023` / `0032`).
 
 ---
 

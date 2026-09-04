@@ -22,7 +22,7 @@ globs: services-conf/db.Dockerfile,docker-compose.yaml,scripts/pg18_host_data_ch
 ## Compose dual-run
 
 - Keep Hub **`timescale/timescaledb:2.28.3-pg15`** as service **`db`** (alias **`db`**) until cutover.
-- Homemade service **`db_pg18`** (`image: hpcperfstats-db`), profile **`pg18-migrate`**, alias **`db18`**, volume **`postgres_data_pg18`**, mount **`/var/lib/postgresql`**, same `shm_size: "16gb"` GUCs **plus** `-c io_method=io_uring` and **`security_opt: seccomp=unconfined`** (or an equivalent profile that allows `io_uring_*`).
+- Homemade service **`db_pg18`** (`image: hpcperfstats-db`), profile **`pg18-migrate`**, alias **`db18`**, volume **`postgres_data_pg18`**, mount **`/var/lib/postgresql`**, same `shm_size: "16gb"` GUCs **plus** `-c io_method=io_uring`, **`security_opt: [seccomp=unconfined, label=disable]`**, and **`cap_add: [SYS_ADMIN]`**. Host io_uring: preferred **`kernel.io_uring_disabled=1`** + **`kernel.io_uring_group=70`** (Alpine postgres gid); alternative **`disabled=0`**; **forbidden** **`disabled=2`**. With **`disabled=1`** and unset group (`-1`), uid 70 gets **EPERM** even with seccomp unconfined.
 - **Forbidden:** stealing alias `db` before freeze + verification.
 - Both DB containers keep **`shm_size: "16gb"`** during dual-run (`postgres-docker-shared-memory.mdc`).
 
