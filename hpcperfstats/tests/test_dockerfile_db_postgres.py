@@ -128,6 +128,9 @@ def test_db_dockerfile_timescale_229_no_external_lz4_zstd_ldd_gate() -> None:
 
     Third bake (podman): shell heredoc (`cat <<EOF`) inside RUN is parsed as a
     bogus CHMOD instruction — use printf to write the wrap script inline.
+
+    Fourth bake (Alpine BusyBox sed): `s|(^|…)|…|` is invalid — `|` used as both
+    delimiter and regex OR. Use `#` delimiters / plain `s/-ljemalloc//g`.
     """
     text = _dockerfile()
     ts_run = text[text.index("# --- TimescaleDB") : text.index("# Prune docs/man")]
@@ -135,7 +138,12 @@ def test_db_dockerfile_timescale_229_no_external_lz4_zstd_ldd_gate() -> None:
     assert "pg-config-wrap" in ts_run
     assert "printf '%s\\n'" in ts_run
     assert "--ldflags|--libs)" in ts_run
-    assert "-ljemalloc" in ts_run
+    assert "s/-ljemalloc//g" in ts_run
+    assert "s#-L/opt/jemalloc" in ts_run
+    assert "s#-Wl,-rpath,/opt/jemalloc" in ts_run
+    # Forbidden: pipe delimiter + alternation (BusyBox "bad option in substitution").
+    assert "s|(^|" not in ts_run
+    assert "sed -i -E" not in ts_run
     assert "COPY db-pg-config-no-jemalloc.sh" not in ts_run
     assert "<<'EOF'" not in ts_run
     assert "scanelf -n" in ts_run

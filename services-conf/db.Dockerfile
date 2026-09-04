@@ -237,12 +237,13 @@ RUN set -eux; \
   cd /usr/src/timescaledb; \
   unset LDFLAGS CPPFLAGS CFLAGS CXXFLAGS PKG_CONFIG_PATH || true; \
   mkdir -p /tmp/pg-config-wrap; \
+  # BusyBox sed: never use '|' as s||| delimiter when the pattern also has '|'.
   printf '%s\n' \
     '#!/bin/sh' \
     'real=/usr/local/bin/pg_config' \
     'case "$1" in' \
     '  --ldflags|--libs)' \
-    '    "$real" "$@" | sed -E -e "s/(^|[[:space:]])-ljemalloc([[:space:]]|$)/ /g" -e "s|(^|[[:space:]])-L/opt/jemalloc[^[:space:]]*||g" -e "s|(^|[[:space:]])-Wl,-rpath,/opt/jemalloc[^[:space:]]*||g"' \
+    '    "$real" "$@" | sed -e "s/-ljemalloc//g" -e "s#-L/opt/jemalloc[^[:space:]]*##g" -e "s#-Wl,-rpath,/opt/jemalloc[^[:space:]]*##g"' \
     '    ;;' \
     '  *)' \
     '    exec "$real" "$@"' \
@@ -263,10 +264,10 @@ RUN set -eux; \
   fi; \
   # Belt-and-suspenders: drop any -ljemalloc cmake already expanded into link lines.
   find build -type f \( -name 'link.txt' -o -name 'flags.make' -o -name 'build.make' \) \
-    -exec sed -i -E \
-      -e 's/(^|[[:space:]])-ljemalloc([[:space:]]|$)/ /g' \
-      -e 's|(^|[[:space:]])-L/opt/jemalloc[^[:space:]]*||g' \
-      -e 's|(^|[[:space:]])-Wl,-rpath,/opt/jemalloc[^[:space:]]*||g' \
+    -exec sed -i \
+      -e 's/-ljemalloc//g' \
+      -e 's#-L/opt/jemalloc[^[:space:]]*##g' \
+      -e 's#-Wl,-rpath,/opt/jemalloc[^[:space:]]*##g' \
       {} +; \
   cd build; \
   make -j"$(nproc)"; \
