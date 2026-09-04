@@ -223,7 +223,8 @@ RUN set -eux; \
 # (or lz4/zstd): the extension is loaded into the postgres process, which
 # already has jemalloc via DT_NEEDED + LD_PRELOAD. unset LDFLAGS is not enough
 # — Timescale cmake uses `pg_config --ldflags`, which still reports -ljemalloc
-# from the postgres bake; wrap pg_config to strip jemalloc for this stage.
+# from the postgres bake. Write a pg_config wrap with printf (not a shell
+# heredoc — podman/buildah misparses <<EOF inside RUN as a CHMOD instruction).
 # Timescale 2.29+ also does not DT_NEEDED external liblz4/libzstd. musl `ldd`
 # on a PG extension always reports unresolved backend symbols — use scanelf.
 RUN set -eux; \
@@ -236,22 +237,18 @@ RUN set -eux; \
   cd /usr/src/timescaledb; \
   unset LDFLAGS CPPFLAGS CFLAGS CXXFLAGS PKG_CONFIG_PATH || true; \
   mkdir -p /tmp/pg-config-wrap; \
-  cat > /tmp/pg-config-wrap/pg_config <<'EOF'
-#!/bin/sh
-# Strip jemalloc from pg_config link flags so timescaledb.so does not DT_NEEDED it.
-real=/usr/local/bin/pg_config
-case "$1" in
-  --ldflags|--libs)
-    "$real" "$@" | sed -E \
-      -e 's/(^|[[:space:]])-ljemalloc([[:space:]]|$)/ /g' \
-      -e 's|(^|[[:space:]])-L/opt/jemalloc[^[:space:]]*||g' \
-      -e 's|(^|[[:space:]])-Wl,-rpath,/opt/jemalloc[^[:space:]]*||g'
-    ;;
-  *)
-    exec "$real" "$@"
-    ;;
-esac
-EOF
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'real=/usr/local/bin/pg_config' \
+    'case "$1" in' \
+    '  --ldflags|--libs)' \
+    '    "$real" "$@" | sed -E -e "s/(^|[[:space:]])-ljemalloc([[:space:]]|$)/ /g" -e "s|(^|[[:space:]])-L/opt/jemalloc[^[:space:]]*||g" -e "s|(^|[[:space:]])-Wl,-rpath,/opt/jemalloc[^[:space:]]*||g"' \
+    '    ;;' \
+    '  *)' \
+    '    exec "$real" "$@"' \
+    '    ;;' \
+    'esac' \
+    > /tmp/pg-config-wrap/pg_config; \
   chmod +x /tmp/pg-config-wrap/pg_config; \
   export PATH="/tmp/pg-config-wrap:/usr/local/bin:${PATH}"; \
   ./bootstrap \

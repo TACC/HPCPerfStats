@@ -125,13 +125,19 @@ def test_db_dockerfile_timescale_229_no_external_lz4_zstd_ldd_gate() -> None:
     `pg_config --ldflags` (-ljemalloc from postgres bake). unset LDFLAGS alone
     is insufficient; wrap pg_config. Also `! grep` under set -e does not fail
     the layer when the forbidden pattern matches (bash quirk) — use if/exit 1.
+
+    Third bake (podman): shell heredoc (`cat <<EOF`) inside RUN is parsed as a
+    bogus CHMOD instruction — use printf to write the wrap script inline.
     """
     text = _dockerfile()
     ts_run = text[text.index("# --- TimescaleDB") : text.index("# Prune docs/man")]
     assert "unset LDFLAGS" in ts_run
     assert "pg-config-wrap" in ts_run
+    assert "printf '%s\\n'" in ts_run
     assert "--ldflags|--libs)" in ts_run
-    assert "-ljemalloc" in ts_run  # stripped by wrap / sed
+    assert "-ljemalloc" in ts_run
+    assert "COPY db-pg-config-no-jemalloc.sh" not in ts_run
+    assert "<<'EOF'" not in ts_run
     assert "scanelf -n" in ts_run
     assert "if grep -qi 'APACHE_ONLY:BOOL=ON'" in ts_run
     # Fail-closed must use if/exit (not "! grep") so set -e actually stops the bake.
@@ -143,6 +149,7 @@ def test_db_dockerfile_timescale_229_no_external_lz4_zstd_ldd_gate() -> None:
     assert "grep -E '/opt/zstd/.+libzstd' /tmp/timescaledb" not in ts_run
     # Postgres binary still must link /opt codecs (separate stage).
     assert "grep -E '/opt/lz4/.+liblz4' /tmp/postgres.ldd" in text
+    assert not (_repo_root() / "services-conf" / "db-pg-config-no-jemalloc.sh").exists()
 
 
 def test_db_dockerfile_jemalloc_ld_preload_and_fail_closed_ldd() -> None:
