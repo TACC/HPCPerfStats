@@ -21,31 +21,67 @@ sudo mkdir -p /data/hpcperfstats_db/pg18
 sudo chown -R 70:70 /data/hpcperfstats_db/pg18
 ```
 
-Then restart:
+4. Host **io_uring** for `db_pg18` (`-c io_method=io_uring`). Postgres runs as Alpine **uid/gid 70**. Preferred locked-down compromise: **`kernel.io_uring_disabled=1`** plus **`kernel.io_uring_group=70`**. With `disabled=1` and the default unset group (`-1`), uid 70 gets **EPERM** even when compose has `seccomp=unconfined`. **Forbidden:** `kernel.io_uring_disabled=2`. Alternative (fully open): `kernel.io_uring_disabled=0`.
+
+### host — apply io_uring sysctl now (paste output)
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate up -d db_pg18
+sudo sysctl -w kernel.io_uring_disabled=1
+sudo sysctl -w kernel.io_uring_group=70
+sysctl kernel.io_uring_disabled kernel.io_uring_group
 ```
 
-4. Build on the **production CPU** (`-march=native`). Do not ship an ARM/Colima bake to x86 prod.
+**Fail closed:** printed values are `kernel.io_uring_disabled = 1` and `kernel.io_uring_group = 70`.
+
+### host — persist io_uring sysctl across reboot (paste output)
+
+```bash
+printf '%s\n' 'kernel.io_uring_disabled = 1' 'kernel.io_uring_group = 70' | sudo tee /etc/sysctl.d/99-hpcperfstats-io-uring.conf
+sudo sysctl --system
+sysctl kernel.io_uring_disabled kernel.io_uring_group
+```
+
+Then start (or recreate) `db_pg18`:
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate up -d --force-recreate db_pg18
+```
+
+5. Build on the **production CPU** (`-march=native`). Do not ship an ARM/Colima bake to x86 prod.
 
 ---
 
 ## Phase A — Build and start PG18 beside PG15
 
-Hub `db` (alias `db`) stays the live writer. PG18 uses profile `pg18-migrate` and alias `db18`.
+Hub `db` (alias `db`) stays the live writer. PG18 uses profile `pg18-migrate` and alias `db18`. Host io_uring sysctl from Prerequisites step 4 must already be applied.
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate build db_pg18 && docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate up -d db_pg18
 ```
 
+### db_pg18 — wait until accepting connections (paste output)
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 sh -lc 'pg_isready -U hpcperfstats -d postgres -h 127.0.0.1'
+```
+
+### db_pg18 — create database `hpcperfstats` if missing (paste output)
+
+Init may have been skipped during an early crash loop even when compose sets `POSTGRES_DB=hpcperfstats`. Always run this against the maintenance DB **`postgres`** before Phase B migrate. Idempotent if the DB already exists.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 sh -lc 'psql -h localhost -U hpcperfstats -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '\''hpcperfstats'\''" | grep -q 1 || psql -h localhost -U hpcperfstats -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE hpcperfstats OWNER hpcperfstats;" ; psql -h localhost -U hpcperfstats -d postgres -c "SELECT datname FROM pg_database WHERE datname = '\''hpcperfstats'\'';"'
+```
+
+**Fail closed:** printed `datname` is `hpcperfstats`.
+
 ### db_pg18 — paste health + io_uring + Timescale
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 sh -lc 'pg_isready -U hpcperfstats -h 127.0.0.1 && psql -h localhost -U hpcperfstats -c "SELECT version();" -c "SHOW shared_preload_libraries;" -c "SHOW io_method;" -c "SELECT default_version FROM pg_available_extensions WHERE name = '\''timescaledb'\'';"'
+docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 sh -lc 'pg_isready -U hpcperfstats -d hpcperfstats -h 127.0.0.1 && psql -h localhost -U hpcperfstats -d hpcperfstats -c "SELECT version();" -c "SHOW shared_preload_libraries;" -c "SHOW io_method;" -c "SELECT default_version FROM pg_available_extensions WHERE name = '\''timescaledb'\'';"'
 ```
 
-**Fail closed:** `SHOW io_method` must be `io_uring`. If not, check host `/proc/sys/kernel/io_uring_disabled` is `0` and that `db_pg18` still has `security_opt: seccomp=unconfined` (Docker default seccomp blocks io_uring).
+**Fail closed:** `SHOW io_method` must be `io_uring`. If not: re-run Prerequisites host sysctl (`disabled=1` + `group=70`, or `disabled=0`); confirm `db_pg18` still has `security_opt: [seccomp=unconfined, label=disable]` and `cap_add: [SYS_ADMIN]`; then `up -d --force-recreate db_pg18`.
 
 ---
 
@@ -284,7 +320,8 @@ After a successful soak, operators may archive/delete `/data/hpcperfstats_db/pg1
 | `/opt` | jemalloc, **zlib-ng**, icu, liburing, lz4, zstd with rpath on **postgres** + zstd CLI (`HAVE_ZLIB=1` + `HAVE_LZ4=1`; no apk `zlib`) |
 | CFLAGS (PG + Timescale) | `-O3 -march=native -mprefer-vector-width=512 -mtune=native -flto=auto -g0` |
 | Volume | `/var/lib/postgresql` (PG18 layout) |
-| Seccomp | `seccomp=unconfined` on `db_pg18` for `io_method=io_uring` |
+| Seccomp | `seccomp=unconfined` + `label=disable` + `cap_add: SYS_ADMIN` on `db_pg18` for `io_method=io_uring` |
+| Host io_uring | Preferred: `kernel.io_uring_disabled=1` + `kernel.io_uring_group=70`; forbidden: `disabled=2` |
 
 ---
 

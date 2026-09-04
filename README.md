@@ -267,15 +267,20 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    sudo mkdir -p /data/hpcperfstats_db/pg15
    # Optional during PG18 dual-run migrate (profile pg18-migrate); see docs/OPERATOR_PG18_MIGRATION.md:
    # sudo mkdir -p /data/hpcperfstats_db/pg18 && sudo chown -R 70:70 /data/hpcperfstats_db/pg18
-   # Host io_uring for db_pg18 (Alpine postgres gid 70). Preferred locked-down compromise:
-   #   sudo sysctl -w kernel.io_uring_disabled=1
-   #   sudo sysctl -w kernel.io_uring_group=70
-   #   printf '%s\n' 'kernel.io_uring_disabled = 1' 'kernel.io_uring_group = 70' \
-   #     | sudo tee /etc/sysctl.d/99-hpcperfstats-io-uring.conf && sudo sysctl --system
-   # Alternative: kernel.io_uring_disabled=0. Do not use =2. Compose also needs
-   # security_opt seccomp=unconfined + label=disable on db_pg18 (already in docker-compose.yaml).
    # Also ensure the ssh_keys and proxy_ssl_source device paths you set above exist.
    ```
+
+   **Host io_uring for `db_pg18` (preferred: `disabled=1` + gid 70):** Postgres in the homemade image runs as Alpine **uid/gid 70**. Apply before starting profile `pg18-migrate`. Do **not** use `kernel.io_uring_disabled=2`. Full migrate runbook: **`docs/OPERATOR_PG18_MIGRATION.md`**.
+
+   ```bash
+   sudo sysctl -w kernel.io_uring_disabled=1
+   sudo sysctl -w kernel.io_uring_group=70
+   printf '%s\n' 'kernel.io_uring_disabled = 1' 'kernel.io_uring_group = 70' | sudo tee /etc/sysctl.d/99-hpcperfstats-io-uring.conf
+   sudo sysctl --system
+   sysctl kernel.io_uring_disabled kernel.io_uring_group
+   ```
+
+   Alternative (fully open): `sudo sysctl -w kernel.io_uring_disabled=0`. Compose already sets **`security_opt: [seccomp=unconfined, label=disable]`** and **`cap_add: [SYS_ADMIN]`** on **`db_pg18`**.
 
    The `hpcperfstatsdata` bind maps to **`/hpcperfstats/`** in the `pipeline` and `web` containers (for example `/hpcperfstats/accounting`, `/hpcperfstats/archive`, `/hpcperfstats/daily_archive`, and **`/hpcperfstats/logs/`** for cluster syslog).
 
