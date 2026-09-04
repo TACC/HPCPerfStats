@@ -176,6 +176,15 @@ def test_db_dockerfile_jemalloc_ld_preload_and_fail_closed_ldd() -> None:
     assert "! apk info -e zlib" not in text
 
 
+def test_db_entrypoint_pg18_bind_chown_hint() -> None:
+    """PG18 bind at /var/lib/postgresql needs host uid 70; entrypoint must explain mkdir fails."""
+    text = (_repo_root() / "services-conf" / "db-docker-entrypoint.sh").read_text()
+    assert "chown postgres:postgres /var/lib/postgresql" in text
+    assert "chown -R 70:70" in text
+    assert "cannot create" in text
+    assert "NFS root_squash" in text
+
+
 def test_db_entrypoint_scripts_shipped() -> None:
     """db.Dockerfile COPY needs these scripts; root *.sh must not hide them from git."""
     import subprocess

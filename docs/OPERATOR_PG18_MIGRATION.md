@@ -14,10 +14,17 @@ Run compose from the checkout that contains `docker-compose.yaml` (typically `HP
 
 1. Host free disk ≈ **2×** current `host_data` size (dual volumes until PG15 retirement).
 2. Settings include `postgres_data_pg18` bind (`/data/hpcperfstats_db/pg18` in the example).
-3. Create the host directory before starting `db_pg18`:
+3. Create the host directory and give it to Alpine **postgres uid/gid 70** before starting `db_pg18`. A bind mount **replaces** the image’s `1777` ownership; empty `root:root` (or NFS `root_squash`) yields `mkdir: can't create directory '/var/lib/postgresql/18/': Permission denied`.
 
 ```bash
 sudo mkdir -p /data/hpcperfstats_db/pg18
+sudo chown -R 70:70 /data/hpcperfstats_db/pg18
+```
+
+Then restart:
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate up -d db_pg18
 ```
 
 4. Build on the **production CPU** (`-march=native`). Do not ship an ARM/Colima bake to x86 prod.

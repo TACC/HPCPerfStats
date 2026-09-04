@@ -36,7 +36,22 @@ _is_sourced() {
 docker_create_db_directories() {
 	local user; user="$(id -u)"
 
-	mkdir -p "$PGDATA"
+	# VOLUME / bind at /var/lib/postgresql replaces the image's 1777 postgres-owned
+	# directory. Reclaim ownership when we are root (no-op on NFS root_squash —
+	# operators must chown 70:70 on the host bind; see OPERATOR_PG18_MIGRATION.md).
+	if [ "$user" = '0' ]; then
+		chown postgres:postgres /var/lib/postgresql 2>/dev/null || :
+		chmod 1777 /var/lib/postgresql 2>/dev/null || :
+	fi
+
+	if ! mkdir -p "$PGDATA"; then
+		printf >&2 'error: cannot create %s (Permission denied).\n' "$PGDATA"
+		printf >&2 'PG18 mounts the volume at /var/lib/postgresql and uses PGDATA=%s.\n' "$PGDATA"
+		printf >&2 'On the host bind (e.g. /data/hpcperfstats_db/pg18), run:\n'
+		printf >&2 '  mkdir -p <host-pg18-dir> && chown -R 70:70 <host-pg18-dir>\n'
+		printf >&2 '(Alpine postgres uid/gid is 70). NFS root_squash: chown on the export host.\n'
+		exit 1
+	fi
 	# ignore failure since there are cases where we can't chmod (and PostgreSQL might fail later anyhow - it's picky about permissions of this directory)
 	chmod 00700 "$PGDATA" || :
 

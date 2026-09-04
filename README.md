@@ -266,7 +266,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    sudo mkdir -p /data/hpcperfstats_site/media
    sudo mkdir -p /data/hpcperfstats_db/pg15
    # Optional during PG18 dual-run migrate (profile pg18-migrate); see docs/OPERATOR_PG18_MIGRATION.md:
-   # sudo mkdir -p /data/hpcperfstats_db/pg18
+   # sudo mkdir -p /data/hpcperfstats_db/pg18 && sudo chown -R 70:70 /data/hpcperfstats_db/pg18
    # Also ensure the ssh_keys and proxy_ssl_source device paths you set above exist.
    ```
 

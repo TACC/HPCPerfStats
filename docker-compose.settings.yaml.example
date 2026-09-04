@@ -33,8 +33,10 @@ volumes:
       type: none
       device: /data/hpcperfstats_db/pg15
       o: bind
-  # Homegrown PG18 dual-run volume (profile pg18-migrate). Create the host dir
-  # before: docker compose --profile pg18-migrate up -d db_pg18
+  # Homegrown PG18 dual-run volume (profile pg18-migrate). Create + chown before
+  # starting db_pg18 (Alpine postgres is uid/gid 70):
+  #   mkdir -p /data/hpcperfstats_db/pg18 && chown -R 70:70 /data/hpcperfstats_db/pg18
+  # Bind replaces image ownership; empty root:root → Permission denied on mkdir 18/.
   # See docs/OPERATOR_PG18_MIGRATION.md. After cutover, operators may re-point
   # the primary bind and retire pg15.
   postgres_data_pg18:

@@ -364,6 +364,8 @@ def test_docker_compose_settings_example_operator_markers():
     assert marker in example_content, "example missing bind device: %s" % marker
   assert _OPERATOR_SETTINGS_EXAMPLE_SSH_DEVICE in example_content
   assert _OPERATOR_SETTINGS_EXAMPLE_SSL_DEVICE in example_content
+  assert "device: /data/hpcperfstats_db/pg18" in example_content
+  assert "chown -R 70:70" in example_content
   assert "HPCPERFSTATS_SSL_CERTS_REL" in example_content
   assert "ssl_certs:" not in example_content
   assert "SYS_PTRACE" in example_content
