@@ -127,6 +127,14 @@ def test_mkl_source_stack_run_order_and_flags():
     assert "site.cfg" in compile_body
     assert "libraries = mkl_rt" in compile_body
     assert "pip download" in compile_body
+    # pip download of an sdist still isolates PEP517 build deps unless disabled;
+    # that nested env rebuilds numpy/meson-python/patchelf (needs aclocal).
+    dl_start = compile_body.index("pip download")
+    dl_marker = "requirements-mkl-numexpr.txt"
+    dl_end = compile_body.index(dl_marker, dl_start) + len(dl_marker)
+    dl_region = compile_body[dl_start:dl_end]
+    assert "--no-deps" in dl_region
+    assert "--no-build-isolation" in dl_region
     assert "ne.use_vml" in compile_body
     # Regression: GNU ld cannot find -lmkl_rt when only libmkl_rt.so.N exists.
     assert 'libmkl_rt.so.*' in compile_body

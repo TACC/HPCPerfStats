@@ -88,11 +88,13 @@ def test_image_build_extra_includes_versioneer_for_pandas_meson():
 
 
 def test_dockerfile_python_build_path_exposes_image_build_scripts():
-  """Meson needs cython on PATH; python-build must set prefix bin PATH early."""
+  """Meson needs cython on PATH; each ABI RUN must pin its own prefix cython."""
   dockerfile = (_repo_root() / "Dockerfile").read_text()
-  # Stage-local: find PATH= after FT bake / before numpy MKL install.
   assert re.search(
       r"PATH=/usr/local/bin:/opt/zstd/bin:/opt/python3\.14/bin:/opt/python3\.14t/bin",
       dockerfile,
   )
-  assert "command -v cython" in dockerfile
+  assert 'command -v cython)" = "/opt/python3.14/bin/cython"' in dockerfile
+  assert 'command -v cython)" = "/opt/python3.14t/bin/cython"' in dockerfile
+  assert 'PATH="/opt/python3.14/bin:' in dockerfile
+  assert 'PATH="/opt/python3.14t/bin:' in dockerfile

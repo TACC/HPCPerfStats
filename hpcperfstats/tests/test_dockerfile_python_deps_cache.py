@@ -90,12 +90,32 @@ def test_python_build_path_includes_prefix_bins_for_cython_meson():
   path_pos = min(build.index(ln) for ln in path_lines if "/opt/python3.14/bin" in ln)
   numpy_pos = build.index("-r /tmp/requirements-mkl-numpy.txt")
   assert path_pos < numpy_pos
-  gil_build_install = build[
+
+
+def test_python_build_cython_path_matches_abi_prefix():
+  """GIL/FT Meson must see that ABI's cython, not the other prefix.
+
+  Shared ENV PATH lists GIL bin before FT; without per-RUN PATH pinning, the
+  FT numpy source build would pick /opt/python3.14/bin/cython.
+  """
+  build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
+  gil = build[
       build.index("COPY pyproject.toml") : build.index(
           "/opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --upgrade pip"
       )
   ]
-  assert "command -v cython" in gil_build_install
+  ft = build[build.index("/opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --upgrade pip") :]
+  assert 'PATH="/opt/python3.14/bin:' in gil or "PATH=/opt/python3.14/bin:" in gil
+  assert 'PATH="/opt/python3.14t/bin:' in ft or "PATH=/opt/python3.14t/bin:" in ft
+  assert 'command -v cython)" = "/opt/python3.14/bin/cython"' in gil
+  assert 'command -v cython)" = "/opt/python3.14t/bin/cython"' in ft
+  # Assert before the numpy source install that Meson will invoke cython.
+  assert gil.index('command -v cython)" = "/opt/python3.14/bin/cython"') < gil.index(
+      "-r /tmp/requirements-mkl-numpy.txt"
+  )
+  assert ft.index('command -v cython)" = "/opt/python3.14t/bin/cython"') < ft.index(
+      "-r /tmp/requirements-mkl-numpy.txt"
+  )
 
 
 def test_hpcperfstats_base_installs_package_no_deps_after_full_copy():

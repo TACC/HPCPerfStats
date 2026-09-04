@@ -324,7 +324,8 @@ RUN /bin/bash -o pipefail -c '\
 
 # Prefix bins must be on PATH so image-build console scripts (cython, meson,
 # ninja) are visible to Meson under --no-build-isolation. Symlinking only
-# python3/pip3 into /usr/local/bin is not enough.
+# python3/pip3 into /usr/local/bin is not enough. Per-ABI pip/MKL RUNs still
+# prepend that ABI's /opt/.../bin so Meson does not mix GIL and FT cython.
 ENV PATH=/usr/local/bin:/opt/zstd/bin:/opt/python3.14/bin:/opt/python3.14t/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
 WORKDIR /home/hpcperfstats
@@ -366,9 +367,13 @@ RUN /bin/bash -o pipefail -c '\
 # 2) GIL image-build wheels only (MKL + toolchain).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
+  export PATH="/opt/python3.14/bin:/usr/local/bin:/opt/zstd/bin:${PATH}"; \
   python3 -m pip install --no-cache-dir --upgrade pip; \
   python3 -m pip install --no-cache-dir -r /tmp/requirements-build.txt; \
-  command -v cython; \
+  test "$(command -v cython)" = "/opt/python3.14/bin/cython"; \
+  if command -v cython3 >/dev/null 2>&1; then \
+    test "$(command -v cython3)" = "/opt/python3.14/bin/cython3"; \
+  fi; \
   cython -V'
 
 # 3) GIL source-build against MKL (before rest): numpy, numexpr+VML, pandas.
@@ -383,6 +388,11 @@ RUN /bin/bash -o pipefail -c '\
 # python-dateutil (+ six) come from project.dependencies via the rest RUN.
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
+  export PATH="/opt/python3.14/bin:/usr/local/bin:/opt/zstd/bin:${PATH}"; \
+  test "$(command -v cython)" = "/opt/python3.14/bin/cython"; \
+  if command -v cython3 >/dev/null 2>&1; then \
+    test "$(command -v cython3)" = "/opt/python3.14/bin/cython3"; \
+  fi; \
   MKLROOT="$(python3 -c "import sysconfig; from pathlib import Path; r=Path(sysconfig.get_path(\"data\")); assert list((r/\"lib\"/\"pkgconfig\").glob(\"mkl-*.pc\")), r; assert list((r/\"lib\").glob(\"libmkl_rt.so*\")), r; assert (r/\"include\"/\"mkl.h\").is_file() or list((r/\"include\").rglob(\"mkl.h\")), r; print(r)")"; \
   export MKLROOT PKG_CONFIG_PATH="${MKLROOT}/lib/pkgconfig" LD_LIBRARY_PATH="${MKLROOT}/lib"; \
   shopt -s nullglob; \
@@ -406,7 +416,8 @@ RUN /bin/bash -o pipefail -c '\
     -r /tmp/requirements-mkl-numpy.txt; \
   python3 -c "import numpy as np; c=np.show_config(mode=\"dicts\"); assert \"mkl\" in str(c).lower(), c"; \
   rm -rf /tmp/numexpr-dl /tmp/numexpr-src; mkdir -p /tmp/numexpr-dl /tmp/numexpr-src; \
-  python3 -m pip download --no-cache-dir --no-binary=:all: --no-deps -d /tmp/numexpr-dl \
+  python3 -m pip download --no-cache-dir --no-binary=:all: --no-deps \
+    --no-build-isolation -d /tmp/numexpr-dl \
     -r /tmp/requirements-mkl-numexpr.txt; \
   shopt -s nullglob; \
   _ne_tars=(/tmp/numexpr-dl/numexpr-*.tar.gz); \
@@ -438,9 +449,13 @@ RUN /bin/bash -o pipefail -c '\
 # 5) Free-threaded image-build wheels only (pip already from --with-ensurepip=install).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
+  export PATH="/opt/python3.14t/bin:/usr/local/bin:/opt/zstd/bin:${PATH}"; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --upgrade pip; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir -r /tmp/requirements-build.txt; \
-  command -v cython; \
+  test "$(command -v cython)" = "/opt/python3.14t/bin/cython"; \
+  if command -v cython3 >/dev/null 2>&1; then \
+    test "$(command -v cython3)" = "/opt/python3.14t/bin/cython3"; \
+  fi; \
   cython -V'
 
 # 6) Free-threaded source-build + ldconfig (numpy, numexpr+VML, pandas).
@@ -449,6 +464,11 @@ RUN /bin/bash -o pipefail -c '\
 # numexpr/pandas --no-deps: same MKL-numpy preservation as GIL (dateutil via rest).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
+  export PATH="/opt/python3.14t/bin:/usr/local/bin:/opt/zstd/bin:${PATH}"; \
+  test "$(command -v cython)" = "/opt/python3.14t/bin/cython"; \
+  if command -v cython3 >/dev/null 2>&1; then \
+    test "$(command -v cython3)" = "/opt/python3.14t/bin/cython3"; \
+  fi; \
   MKLROOT_T="$(/opt/python3.14t/bin/python3.14t -c "import sysconfig; from pathlib import Path; r=Path(sysconfig.get_path(\"data\")); assert list((r/\"lib\"/\"pkgconfig\").glob(\"mkl-*.pc\")), r; assert list((r/\"lib\").glob(\"libmkl_rt.so*\")), r; assert (r/\"include\"/\"mkl.h\").is_file() or list((r/\"include\").rglob(\"mkl.h\")), r; print(r)")"; \
   export MKLROOT="${MKLROOT_T}" PKG_CONFIG_PATH="${MKLROOT_T}/lib/pkgconfig" LD_LIBRARY_PATH="${MKLROOT_T}/lib"; \
   shopt -s nullglob; \
@@ -472,7 +492,8 @@ RUN /bin/bash -o pipefail -c '\
     -r /tmp/requirements-mkl-numpy.txt; \
   /opt/python3.14t/bin/python3.14t -c "import numpy as np; c=np.show_config(mode=\"dicts\"); assert \"mkl\" in str(c).lower(), c"; \
   rm -rf /tmp/numexpr-dl-t /tmp/numexpr-src-t; mkdir -p /tmp/numexpr-dl-t /tmp/numexpr-src-t; \
-  /opt/python3.14t/bin/python3.14t -m pip download --no-cache-dir --no-binary=:all: --no-deps \
+  /opt/python3.14t/bin/python3.14t -m pip download --no-cache-dir --no-binary=:all: \
+    --no-deps --no-build-isolation \
     -d /tmp/numexpr-dl-t -r /tmp/requirements-mkl-numexpr.txt; \
   shopt -s nullglob; \
   _ne_tars=(/tmp/numexpr-dl-t/numexpr-*.tar.gz); \
