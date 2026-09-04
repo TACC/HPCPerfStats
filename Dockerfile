@@ -610,6 +610,8 @@ RUN /bin/bash -o pipefail -c "printf '%s\n' \
     && chmod 644 /var/lib/hpcperfstats-syslog/generated.conf"
 
 # Recreate GIL /usr/local symlinks, ldconfig paths, jemalloc preload (path A + B).
+# Podman/buildah wraps RUN in sh -c "..."; any " inside a -c '...' script terminates
+# that outer quote (Unterminated quoted string). Keep this script free of ".
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   mkdir -p /usr/local/bin /usr/local/lib; \
@@ -618,35 +620,37 @@ RUN /bin/bash -o pipefail -c '\
   ln -sfn /opt/python3.14/bin/pip3 /usr/local/bin/pip3; \
   ln -sfn /opt/python3.14/bin/pip3.14 /usr/local/bin/pip3.14; \
   if [ -e /opt/python3.14/bin/gunicorn ]; then ln -sfn /opt/python3.14/bin/gunicorn /usr/local/bin/gunicorn; fi; \
-  for so in /opt/python3.14/lib/libpython3.14.so*; do ln -sfn "$so" "/usr/local/lib/${so##*/}"; done; \
+  for so in /opt/python3.14/lib/libpython3.14.so*; do ln -sfn $so /usr/local/lib/${so##*/}; done; \
   for b in zstd zstdcat zstdgrep zstdless zstdmt unzstd; do \
-    if [ -e "/opt/zstd/bin/$b" ]; then \
-      ln -sfn "/opt/zstd/bin/$b" "/usr/local/bin/$b"; \
-      ln -sfn "/opt/zstd/bin/$b" "/usr/bin/$b"; \
+    if [ -e /opt/zstd/bin/$b ]; then \
+      ln -sfn /opt/zstd/bin/$b /usr/local/bin/$b; \
+      ln -sfn /opt/zstd/bin/$b /usr/bin/$b; \
     fi; \
   done; \
-  echo "/opt/jemalloc/lib" > /etc/ld.so.conf.d/jemalloc.conf; \
-  echo "/opt/zlib-ng/lib" > /etc/ld.so.conf.d/zlib-ng.conf; \
-  echo "/opt/zstd/lib" > /etc/ld.so.conf.d/zstd.conf; \
-  echo "/opt/mpdecimal/lib" > /etc/ld.so.conf.d/mpdecimal.conf; \
+  echo /opt/jemalloc/lib > /etc/ld.so.conf.d/jemalloc.conf; \
+  echo /opt/zlib-ng/lib > /etc/ld.so.conf.d/zlib-ng.conf; \
+  echo /opt/zstd/lib > /etc/ld.so.conf.d/zstd.conf; \
+  echo /opt/mpdecimal/lib > /etc/ld.so.conf.d/mpdecimal.conf; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then \
-    echo "/opt/libffi/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/libffi.conf; \
+    echo /opt/libffi/lib/x86_64-linux-gnu > /etc/ld.so.conf.d/libffi.conf; \
   else \
-    echo "/opt/libffi/lib" > /etc/ld.so.conf.d/libffi.conf; \
+    echo /opt/libffi/lib > /etc/ld.so.conf.d/libffi.conf; \
   fi; \
-  echo "/opt/python3.14/lib" > /etc/ld.so.conf.d/python314.conf; \
-  echo "/opt/python3.14t/lib" > /etc/ld.so.conf.d/python314t.conf; \
-  echo "/opt/python3.14/lib" > /etc/ld.so.conf.d/mkl-gil.conf; \
-  echo "/opt/python3.14t/lib" > /etc/ld.so.conf.d/mkl-ft.conf; \
+  echo /opt/python3.14/lib > /etc/ld.so.conf.d/python314.conf; \
+  echo /opt/python3.14t/lib > /etc/ld.so.conf.d/python314t.conf; \
+  echo /opt/python3.14/lib > /etc/ld.so.conf.d/mkl-gil.conf; \
+  echo /opt/python3.14t/lib > /etc/ld.so.conf.d/mkl-ft.conf; \
   ldconfig; \
-  JE_SO="/opt/jemalloc/lib/libjemalloc.so.2"; \
-  test -f "${JE_SO}"; \
-  printf "%s\n" "${JE_SO}" > /etc/ld.so.preload; \
+  JE_SO=/opt/jemalloc/lib/libjemalloc.so.2; \
+  test -f $JE_SO; \
+  echo $JE_SO > /etc/ld.so.preload; \
   test -s /etc/ld.so.preload; \
-  file -b "${JE_SO}" | grep -q ELF; \
+  file -b $JE_SO | grep -q ELF; \
   test -x /usr/local/bin/zstd; \
-  test "$(readlink -f /usr/local/bin/zstd)" = "$(readlink -f /opt/zstd/bin/zstd)"; \
-  /usr/local/bin/zstd --version | grep -F "1.5.7"
+  _zstd_usr=$(readlink -f /usr/local/bin/zstd); \
+  _zstd_opt=$(readlink -f /opt/zstd/bin/zstd); \
+  test $_zstd_usr = $_zstd_opt; \
+  /usr/local/bin/zstd --version | grep -F 1.5.7 \
 '
 
 # Gunicorn stays GIL (/usr/local/bin/gunicorn). background_thread:false is fork-safe for prefork.

@@ -108,7 +108,7 @@ def test_zstd_opt_direct_link_replaces_system_cli_enables_cpython_zstd():
   assert "COPY --from=python-build /opt/zstd" in base
   assert "/opt/zstd/lib" in base
   assert "/opt/zstd/bin/" in base
-  assert 'ln -sfn "/opt/zstd/bin/$b"' in base
+  assert "ln -sfn /opt/zstd/bin/$b" in base
   # zstd CLI gzip support must link zlib-ng (not stock apt zlib).
   assert re.search(
       r"PKG_CONFIG_PATH=.*?/opt/zlib-ng/lib/pkgconfig",
@@ -226,20 +226,42 @@ def test_runtime_jemalloc_both_ways_preload_and_ld_so_preload():
   assert "COPY --from=python-build /opt/jemalloc" in base
   assert "COPY --from=python-build /opt/python3.14 " in base
   assert "COPY --from=python-build /opt/python3.14t" in base
-  # Prefer ${var##*/} over $(basename "$var") — podman wraps RUN in sh -c "…"
-  # and nested double quotes inside $() cause Unterminated quoted string.
+  # Prefer ${var##*/} over $(basename "$var"); this RUN must also avoid any "
+  # because podman wraps RUN in sh -c "…" (Unterminated quoted string).
   assert "/usr/local/lib/${so##*/}" in base
-  assert '$(basename "' not in base
+  symlink_run = next(
+      body
+      for body in re.findall(
+          r"^RUN /bin/bash -o pipefail -c '((?:\\'|[^'])*)'",
+          base,
+          flags=re.MULTILINE | re.DOTALL,
+      )
+      if "/etc/ld.so.preload" in body and "grep -F 1.5.7" in body
+  )
+  assert '"' not in symlink_run
+  assert "grep -F 1.5.7" in symlink_run
+  assert "_zstd_usr=$(readlink -f /usr/local/bin/zstd)" in symlink_run
 
 
 def test_dockerfile_avoids_nested_quotes_inside_command_substitution():
-  """Podman/buildah: RUN is sh -c \"…\"; $(… \" …) breaks with unterminated quote."""
+  """Podman/buildah: RUN is sh -c \"…\"; $(… \" …) and bare \" break quoting."""
   text = (_repo_root() / "Dockerfile").read_text()
   assert '$(basename "' not in text
   assert "$(basename \"" not in text
-  # libpython symlink must still use strip-dir expansion.
   assert "${so##*/}" in text
   assert "${_mkl_vers[0]##*/}" in text
+  # Base ldconfig/symlink RUN (single-quoted -c) must contain no double quotes.
+  base = _stage_body(text, "hpcperfstats-base")
+  symlink_run = next(
+      body
+      for body in re.findall(
+          r"^RUN /bin/bash -o pipefail -c '((?:\\'|[^'])*)'",
+          base,
+          flags=re.MULTILINE | re.DOTALL,
+      )
+      if "/etc/ld.so.preload" in body and "zstd --version" in body
+  )
+  assert '"' not in symlink_run
 
 
 def test_hpcperfstats_base_copies_only_opt_prefixes_not_compile_trees():
