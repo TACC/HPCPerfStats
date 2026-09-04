@@ -245,6 +245,16 @@ def test_runtime_jemalloc_both_ways_preload_and_ld_so_preload():
   assert "file -b" not in symlink_run
 
 
+def test_hpcperfstats_base_apt_includes_curl_for_supervisor_startup():
+  """pipeline supervisor_startup.sh curls web:8000; slim must ship curl."""
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  base = _stage_body(dockerfile, "hpcperfstats-base")
+  apt_install = base[base.index("apt-get install") : base.index("apt-get clean")]
+  assert re.search(r"\bcurl\b", apt_install), apt_install
+  startup = (_repo_root() / "services-conf" / "supervisor_startup.sh").read_text()
+  assert 'curl -s -o /dev/null -w "%{http_code}"' in startup
+
+
 def test_dockerfile_avoids_nested_quotes_inside_command_substitution():
   """Podman/buildah: RUN is sh -c \"…\"; $(… \" …) and bare \" break quoting."""
   text = (_repo_root() / "Dockerfile").read_text()

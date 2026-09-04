@@ -580,7 +580,8 @@ RUN /bin/bash -o pipefail -c "apt-get update -y \
     && apt-get install -y --no-install-recommends \
        supervisor rsync syslog-ng util-linux time \
        net-tools lsof procps gdb strace netcat-openbsd \
-       vim nano ca-certificates \
+       vim nano \
+       curl ca-certificates \
        libssl3t64 libsqlite3-0 libbz2-1.0 liblzma5 \
        libreadline8t64 libncursesw6 libuuid1 libgdbm6t64 libexpat1 \
        libpq5 libmariadb3 \

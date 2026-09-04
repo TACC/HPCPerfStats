@@ -93,6 +93,9 @@ def test_supervisor_startup_wait_order_is_db_then_redis_then_web():
 
   assert content.index(db_marker) < content.index(redis_marker)
   assert content.index(redis_marker) < content.index(web_marker)
+  # HTTP wait uses curl; image hpcperfstats-base must apt-install it (not only
+  # python-build). Regression: trixie-slim had no curl → "curl: not found".
+  assert 'curl -s -o /dev/null -w "%{http_code}"' in content
 
 
 def test_supervisord_runs_as_hpcperfstats_user():
