@@ -39,6 +39,8 @@ Attributes:
   _DAY_CLOSE_VACATE_LOG_STATE: Rate-limit state for day_close vacate INFO.
   DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S: Seconds between claim/vacate INFO
     lines per calendar day (yielded reclaim spam guard).
+  _day_close_identity_sort_key: Calendar sort key for oldest-first fill (H18).
+  _prioritize_day_close_list_oldest_first: Reorder day_close LIST before claim.
   _discover_bg_executor: Single-worker executor for idle GNU find (P1-10).
   _discover_bg_future: In-flight background discover future, or ``None``.
   _discover_bg_lock: Serializes submit/shutdown of background discover.
@@ -3800,6 +3802,66 @@ def _drain_append_ready(
   return done
 
 
+def _day_close_identity_sort_key(identity: str) -> str:
+  """
+  Calendar day token for oldest-first day_close LIST ordering.
+
+  Unknown or non-ISO identities sort last so age-eligible frozen days
+  claim before malformed LIST entries.
+
+  Args:
+    identity (str): day_close job identity (tar path or day token).
+
+  Returns:
+    str: ``YYYY-MM-DD`` sort key, or ``9999-99-99`` when unresolved.
+
+  Examples:
+    >>> _day_close_identity_sort_key("/d/2026-08-17.tar")
+    '2026-08-17'
+    >>> _day_close_identity_sort_key("not-a-day")
+    '9999-99-99'
+  """
+  tok = progress.day_token_from_day_close_identity(identity) or ""
+  if len(tok) == 10 and tok[4] == "-" and tok[7] == "-":
+    return tok
+  return "9999-99-99"
+
+
+def _prioritize_day_close_list_oldest_first(client: Any) -> bool:
+  """
+  Reorder the day_close LIST so oldest calendar days claim first (H18).
+
+  Args:
+    client (Any): In-process job store (must expose ``lrange`` / ``reorder_list``).
+
+  Returns:
+    bool: True when the LIST order changed.
+
+  Examples:
+    >>> _prioritize_day_close_list_oldest_first(
+    ...     type("C", (), {"lrange": lambda *a: [], "reorder_list": lambda *a: False})()
+    ... )
+    False
+  """
+  reorder = getattr(client, "reorder_list", None)
+  if not callable(reorder):
+    return False
+  key = jq.job_queue_key(jq.JOB_KIND_DAY_CLOSE)
+  try:
+    items = list(client.lrange(key, 0, -1) or [])
+  except Exception:
+    return False
+  if len(items) <= 1:
+    return False
+  ordered = sorted(items, key=_day_close_identity_sort_key)
+  if ordered == items:
+    return False
+  try:
+    return bool(reorder(jq.JOB_KIND_DAY_CLOSE, ordered))
+  except Exception:
+    return False
+
+
 def _fill_day_close_slots(
   client: Any,
   *,
@@ -3815,7 +3877,9 @@ def _fill_day_close_slots(
   Pop day_close LIST jobs into the day_close thread pool.
 
   Identities under sticky yield reclaim backoff are requeued silently
-  without submit or claim INFO.
+  without submit or claim INFO. Before claiming, the LIST is reordered
+  oldest-calendar-first so frozen age-eligible days are not starved by
+  newer growing giants under ``sync_day_close_max_inflight`` (H18).
 
   Args:
     client (Any): job store.
@@ -3846,6 +3910,7 @@ def _fill_day_close_slots(
     (0, 0)
   """
   tracker = defer_tracker if defer_tracker is not None else _DAY_CLOSE_YIELD_BACKOFF
+  _prioritize_day_close_list_oldest_first(client)
   cap = max(1, int(cfg.get_sync_day_close_max_inflight()))
   submitted = 0
   backoff_skips = 0

@@ -864,6 +864,37 @@ class SyncTimedbJobStore:
             end = max(-1, len(items) + end)
         return items[start:end + 1]
 
+    def reorder_list(self, kind: str, ordered_idents: List[str]) -> bool:
+        """
+        Replace a LIST queue order when ``ordered_idents`` matches the current
+        multiset of identities (used to prefer oldest day_close first).
+
+        Args:
+          kind (str): Job kind (for example ``JOB_KIND_DAY_CLOSE``).
+          ordered_idents (List[str]): Desired front-to-back identity order.
+
+        Returns:
+          bool: True when the list was rewritten; False when kind is unknown,
+          lengths differ, or membership differs.
+
+        Examples:
+          >>> store = SyncTimedbJobStore("/tmp/empty")
+          >>> store.reorder_list("day_close", [])
+          False
+        """
+        if kind not in self._lists:
+            return False
+        with self._lock:
+            current = list(self._lists[kind])
+            if len(current) != len(ordered_idents):
+                return False
+            if sorted(current) != sorted(ordered_idents):
+                return False
+            if current == list(ordered_idents):
+                return False
+            self._lists[kind] = deque(ordered_idents)
+            return True
+
     def hlen(self, key: str) -> int:
         """
         Return in-flight count for a kind's in-flight map key.

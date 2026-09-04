@@ -2934,6 +2934,46 @@ def test_rc8e_census_wired_in_fill_tick():
   assert "_reconcile_local_ingest_maps_to_store" in loop
 
 
+def test_day_close_fill_prefers_oldest_frozen_age_eligible(tmp_path, monkeypatch):
+  """H18: day_close fill claims oldest calendar day before newer LIST heads."""
+  from concurrent.futures import ThreadPoolExecutor
+
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
+
+  newer = str(tmp_path / "2026-09-03.tar")
+  older = str(tmp_path / "2026-08-17.tar")
+  qo._DAY_CLOSE_YIELD_BACKOFF.clear_tar(newer)
+  qo._DAY_CLOSE_YIELD_BACKOFF.clear_tar(older)
+  client = SyncTimedbJobStore("")
+  jq.reset_job_queue_script_cache_for_tests()
+  jq.enqueue_list_job(client, kind="day_close", identity=newer)
+  jq.enqueue_list_job(client, kind="day_close", identity=older)
+  claimed = []
+
+  def _run(ident, **kwargs):
+    del kwargs
+    claimed.append(ident)
+    return "deferred_age"
+
+  monkeypatch.setattr(qo, "_run_day_close_job", _run)
+  monkeypatch.setattr(qo.cfg, "get_sync_day_close_max_inflight", lambda: 1)
+  inflight = {}
+  leases = {}
+  with ThreadPoolExecutor(max_workers=1) as ex:
+    n, _skips = qo._fill_day_close_slots(
+        client,
+        executor=ex,
+        inflight=inflight,
+        leases=leases,
+        tgz_archive_dir=str(tmp_path),
+        archive_data_dir=str(tmp_path),
+        log_fn=lambda *a, **k: None,
+    )
+  assert n == 1
+  assert claimed == [older]
+  assert older in inflight
+
+
 def test_day_close_yield_backoff_skips_reclaim_without_claim_log(tmp_path, monkeypatch):
   """After yield, fill silently requeues while sticky backoff is active."""
   from hpcperfstats.dbload.lib import sync_timedb_job_store as jq

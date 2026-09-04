@@ -1357,12 +1357,16 @@ def test_ghost_deleted_manifest_path_on_disk_triggers_delete_retry(
 
 
 def test_kick_closed_raw_unblock_no_deadlock_retryable_only(tmp_path):
-  """begin_deleting must not re-enter _lock (regression: kick/requeue hung ~60s+)."""
+  """Retryable-only must handoff (not begin_deleting) and stay fast (no lock re-entry)."""
+  handoffs = []
   retry_day = datetime(2026, 5, 23)
   retry_seg = _make_closed_segment(tmp_path, "cluster.integration.test", retry_day)
   retry_tar_path, retry_zst = _seal_day(tmp_path, retry_seg, retry_day)
   coord = _make_coordinator(
       tmp_path,
+      on_handoff_to_ingest=lambda tar_norm, paths, reason: handoffs.append(
+          (tar_norm, list(paths), reason),
+      ),
       log_fn=lambda *_a, **_k: None,
       ingest_ready_fn=lambda _p: False,
   )
@@ -1378,9 +1382,37 @@ def test_kick_closed_raw_unblock_no_deadlock_retryable_only(tmp_path):
     _save_manifest(state._manifest_path, state._manifest)
 
   start = time.time()
-  assert coord.kick_closed_raw_unblock(retry_tar_path, reason="unit") == "noop"
+  assert coord.kick_closed_raw_unblock(retry_tar_path, reason="unit") == "handoff"
   assert time.time() - start < 0.5
   assert coord.phase(retry_tar_path) == PHASE_DONE
+  assert handoffs and str(retry_seg) in handoffs[0][1]
+
+
+def test_kick_closed_raw_unblock_empty_handoff_advances_when_has_closed(tmp_path):
+  """H18: has_closed with empty handoff must reopen delete (not noop)."""
+  day = datetime(2026, 5, 24)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(
+      tmp_path,
+      log_fn=lambda *_a, **_k: None,
+      ingest_ready_fn=lambda _p: True,
+  )
+  state = coord._get_or_create_day(tar_path)
+  # Verified-but-not-deleted: handoff_paths empty (not retryable skip),
+  # has_closed True — kick must reopen delete.
+  state._record_entry(str(seg), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  assert coord.has_closed_raw_on_disk(tar_path)
+  assert coord.paths_for_closed_raw_handoff_requeue(tar_path) == []
+  assert (
+      coord.kick_closed_raw_unblock(tar_path, reason="h18_unit")
+      == "delete_reopen"
+  )
 
 
 def test_requeue_closed_raw_skips_quarantine_and_manifested(tmp_path):

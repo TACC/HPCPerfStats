@@ -3526,7 +3526,9 @@ class DayRawRemovalCoordinator:
 
   def kick_closed_raw_unblock(self, tar_path: str, *, reason: str) -> str:
     """
-    Drive delete reopen, ghost retry, or verify for closed-raw blockers.
+    Drive delete reopen, ghost retry, verify, or ingest handoff for closed-raw
+    blockers. H18: never return pure ``noop`` while closed raw remains on disk;
+    retryable-only remaining raw returns ``handoff`` (not ``begin_deleting``).
     
     Args:
       tar_path (str): String for tar path.
@@ -3581,8 +3583,36 @@ class DayRawRemovalCoordinator:
                     flush=True,
                 )
               return "delete_reopen"
-          return "noop"
-        if any(path not in retryable for path in blocking):
+          # H18: retryable-only remaining raw must drive ingest handoff —
+          # never pure noop, and never begin_deleting (lock re-entry hang).
+          paths = (
+              self.paths_for_closed_raw_handoff_requeue(tar_path)
+              or list(blocking)
+          )
+          if paths:
+            if self.on_handoff_to_ingest is not None:
+              try:
+                self.on_handoff_to_ingest(
+                    tar_norm,
+                    paths,
+                    reason or "closed_raw_unblock_retryable",
+                )
+              except Exception:
+                if self.log_fn:
+                  self.log_fn(
+                      "Day raw removal closed-raw handoff callback failed "
+                      "tar=%s" % tar_norm,
+                      flush=True,
+                  )
+            if self.log_fn:
+              self.log_fn(
+                  "Day raw removal closed-raw handoff kick tar=%s reason=%s "
+                  "detail=retryable_only"
+                  % (tar_norm, reason or ""),
+                  flush=True,
+              )
+            return "handoff"
+        elif any(path not in retryable for path in blocking):
           state.begin_deleting()
           if state.phase() == PHASE_DELETING:
             if self.log_fn:
@@ -3593,7 +3623,8 @@ class DayRawRemovalCoordinator:
                   flush=True,
               )
             return "delete_reopen"
-      return "noop"
+      # Fall through when phase=done with no blocking / no handoff paths —
+      # has_closed may still need verify/delete reopen (H18).
     if not state.verification_complete():
       self.start_async_verify(tar_path)
       if self.log_fn:
@@ -3648,6 +3679,53 @@ class DayRawRemovalCoordinator:
               flush=True,
           )
         return "handoff"
+    # H18: age-eligible closed raw remaining must never end as pure noop.
+    if self.has_closed_raw_on_disk(tar_path):
+      if state.delete_phase_done():
+        if state.reopen_delete_phase_if_verified_on_disk():
+          return "delete_reopen"
+      paths = self.paths_for_closed_raw_handoff_requeue(tar_path)
+      if paths and self.on_handoff_to_ingest is not None:
+        try:
+          self.on_handoff_to_ingest(
+              tar_norm,
+              paths,
+              reason or "closed_raw_unblock_has_closed",
+          )
+        except Exception:
+          if self.log_fn:
+            self.log_fn(
+                "Day raw removal closed-raw handoff callback failed tar=%s"
+                % tar_norm,
+                flush=True,
+            )
+        if self.log_fn:
+          self.log_fn(
+              "Day raw removal closed-raw handoff kick tar=%s reason=%s "
+              "detail=has_closed_fallback"
+              % (tar_norm, reason or ""),
+              flush=True,
+          )
+        return "handoff"
+      state.begin_deleting()
+      if state.phase() == PHASE_DELETING:
+        if self.log_fn:
+          self.log_fn(
+              "Day raw removal closed-raw delete kick tar=%s reason=%s "
+              "detail=has_closed_fallback"
+              % (tar_norm, reason or ""),
+              flush=True,
+          )
+        return "delete_reopen"
+      self.start_async_verify(tar_path)
+      if self.log_fn:
+        self.log_fn(
+            "Day raw removal closed-raw verify kick tar=%s reason=%s "
+            "detail=has_closed_fallback"
+            % (tar_norm, reason or ""),
+            flush=True,
+        )
+      return "verify"
     return "noop"
 
   def requeue_closed_raw_paths_for_ingest(
