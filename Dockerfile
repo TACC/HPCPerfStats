@@ -72,7 +72,7 @@ RUN /bin/bash -o pipefail -c '\
   apt-get install -y --no-install-recommends \
     build-essential gfortran ninja-build cmake pkg-config \
     curl ca-certificates autoconf \
-    libssl-dev zlib1g-dev libncursesw5-dev libsqlite3-dev \
+    libssl-dev zlib-ng-compat-dev libncursesw5-dev libsqlite3-dev \
     libreadline-dev libbz2-dev liblzma-dev tk-dev uuid-dev \
     libgdbm-dev libnss3-dev libexpat1-dev \
     default-libmysqlclient-dev file binutils; \
@@ -446,7 +446,7 @@ RUN /bin/bash -o pipefail -c "apt-get update -y \
        supervisor rsync syslog-ng zstd util-linux time \
        net-tools lsof procps gdb strace netcat-openbsd \
        vim nano ca-certificates \
-       libssl3t64 zlib1g libsqlite3-0 libbz2-1.0 liblzma5 \
+       libssl3t64 zlib-ng-compat libsqlite3-0 libbz2-1.0 liblzma5 \
        libreadline8t64 libncursesw6 libuuid1 libgdbm6t64 libexpat1 \
        libpq5 libmariadb3 \
     && apt-get clean \
