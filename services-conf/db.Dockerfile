@@ -212,7 +212,13 @@ RUN set -eux; \
   strip --strip-unneeded /usr/local/bin/postgres /usr/local/bin/psql || true; \
   postgres --version
 
-# --- TimescaleDB (not APACHE_ONLY; share /opt lz4+zstd) ---
+# --- TimescaleDB (not APACHE_ONLY). timescaledb.so must NOT link jemalloc,
+# lz4, or zstd: the extension is loaded into the postgres process, which
+# already has jemalloc via DT_NEEDED + LD_PRELOAD. Clear inherited PG
+# LDFLAGS (-ljemalloc) before cmake. Timescale 2.29+ also does not DT_NEEDED
+# external liblz4/libzstd (compression is internal). musl `ldd` on a PG
+# extension always reports unresolved backend symbols — those resolve when
+# loaded by postgres; use scanelf NEEDED instead.
 RUN set -eux; \
   curl -fsSL "https://github.com/timescale/timescaledb/archive/refs/tags/${TIMESCALEDB_VERSION}.tar.gz" \
     -o /tmp/timescaledb.tar.gz; \
@@ -222,17 +228,14 @@ RUN set -eux; \
   rm -f /tmp/timescaledb.tar.gz; \
   cd /usr/src/timescaledb; \
   export PATH="/usr/local/bin:${PATH}"; \
-  export PKG_CONFIG_PATH="/opt/lz4/lib/pkgconfig:/opt/zstd/lib/pkgconfig:${PKG_CONFIG_PATH}"; \
+  # Do not inherit postgres -L/-ljemalloc or /opt codec include paths.
+  unset LDFLAGS CPPFLAGS CFLAGS CXXFLAGS PKG_CONFIG_PATH || true; \
   ./bootstrap \
     -DCMAKE_BUILD_TYPE=Release \
     -DREGRESS_CHECKS=OFF \
     -DTAP_CHECKS=OFF \
-    -DCMAKE_PREFIX_PATH="/opt/lz4;/opt/zstd" \
-    -DCMAKE_INSTALL_RPATH="/opt/lz4/lib;/opt/zstd/lib" \
-    -DCMAKE_BUILD_RPATH="/opt/lz4/lib;/opt/zstd/lib" \
     -DCMAKE_C_FLAGS="${OPT_CFLAGS_PG}" \
   ; \
-  ! grep -R APACHE_ONLY build 2>/dev/null | grep -q 'ON' || true; \
   cmake -L build | tee /tmp/ts.cmake; \
   ! grep -qi 'APACHE_ONLY:BOOL=ON' /tmp/ts.cmake; \
   cd build; \
@@ -240,10 +243,10 @@ RUN set -eux; \
   make install; \
   TS_SO="$(find /usr/local/lib/postgresql -name 'timescaledb.so' | head -1)"; \
   test -n "$TS_SO"; \
-  ldd "$TS_SO" | tee /tmp/timescaledb.ldd; \
-  grep -E '/opt/lz4/.+liblz4' /tmp/timescaledb.ldd; \
-  grep -E '/opt/zstd/.+libzstd' /tmp/timescaledb.ldd; \
-  ! grep -E '[[:space:]](/usr/lib/liblz4|/usr/lib/libzstd)' /tmp/timescaledb.ldd; \
+  test -f "$TS_SO"; \
+  scanelf -n "$TS_SO" | tee /tmp/timescaledb.needed; \
+  # Fail-closed: extension must not DT_NEEDED jemalloc (or apk codecs).
+  ! grep -E 'liblz4|libzstd|libjemalloc' /tmp/timescaledb.needed; \
   sed -ri "s/#?(shared_preload_libraries)\s*=.*/\1 = 'timescaledb'/" \
     /usr/local/share/postgresql/postgresql.conf.sample; \
   grep -F "shared_preload_libraries = 'timescaledb'" \

@@ -110,9 +110,32 @@ def test_db_dockerfile_postgres_and_timescale_prefer_512_vector_width() -> None:
     assert "-march=native -mprefer-vector-width=512" in text
     assert "OPT_CFLAGS_PG" in text
     assert "CMAKE_C_FLAGS=" in text
-    assert "CMAKE_PREFIX_PATH=\"/opt/lz4;/opt/zstd\"" in text
     assert "APACHE_ONLY" in text  # mentioned only to forbid ON
     assert "-DAPACHE_ONLY" not in text
+
+
+def test_db_dockerfile_timescale_229_no_external_lz4_zstd_ldd_gate() -> None:
+    """Timescale must not DT_NEEDED jemalloc/lz4/zstd; musl ldd on .so is misleading.
+
+    Bake failure (hpcperfstats02 2026-09-04): grep /opt/lz4 on timescaledb.so ldd
+    failed because 2.29.2 has no external lz4/zstd link; musl ldd also prints
+    unresolved PG backend symbols that only exist when loaded by postgres.
+    jemalloc is provided by the postgres process (DT_NEEDED + LD_PRELOAD), not
+    by linking the extension.
+    """
+    text = _dockerfile()
+    ts_run = text[text.index("# --- TimescaleDB") : text.index("# Prune docs/man")]
+    assert "unset LDFLAGS" in ts_run
+    assert "scanelf -n" in ts_run
+    assert "! grep -qi 'APACHE_ONLY:BOOL=ON'" in ts_run
+    # Fail-closed: extension must not DT_NEEDED jemalloc (or apk codecs).
+    assert "libjemalloc" in ts_run
+    assert "! grep -E 'liblz4|libzstd|libjemalloc' /tmp/timescaledb.needed" in ts_run
+    # Must not require DT_NEEDED lz4/zstd on the extension (false fail-closed).
+    assert "grep -E '/opt/lz4/.+liblz4' /tmp/timescaledb" not in ts_run
+    assert "grep -E '/opt/zstd/.+libzstd' /tmp/timescaledb" not in ts_run
+    # Postgres binary still must link /opt codecs (separate stage).
+    assert "grep -E '/opt/lz4/.+liblz4' /tmp/postgres.ldd" in text
 
 
 def test_db_dockerfile_jemalloc_ld_preload_and_fail_closed_ldd() -> None:
