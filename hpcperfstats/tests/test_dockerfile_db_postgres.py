@@ -74,9 +74,12 @@ def test_db_dockerfile_uses_zlib_ng_not_apk_zlib() -> None:
     assert not re.search(r"(?m)^\s+zlib\s*\\?\s*$", runtime)
     assert not re.search(r"apk add[^\n]*\bzlib\b", runtime)
     assert "apk add --no-cache $runDeps" in text
-    assert "if apk info -e zlib" in text
+    # Do not fail-closed on `apk info -e zlib`: openssl/libxml2 pull it transitively.
+    assert "if apk info -e zlib" not in text
     assert "/opt/zlib-ng/.+libz" in text
     assert "ldd /opt/zstd/bin/zstd" in text
+    # Linked-ABI gate: postgres/zstd must not resolve apk /lib|/usr/lib libz.
+    assert "/lib/libz\\.|/usr/lib/libz\\." in text or "/lib/libz\\." in text
 
 
 def test_db_dockerfile_links_opt_icu_liburing_lz4_zstd_into_postgres() -> None:
@@ -167,8 +170,9 @@ def test_db_dockerfile_jemalloc_ld_preload_and_fail_closed_ldd() -> None:
     assert "/opt/jemalloc/.+libjemalloc" in text
     assert "/opt/liburing/.+liburing" in text
     assert "/opt/zlib-ng/.+libz" in text
-    # Runtime apk-zlib gate must use if/exit (not "! apk info") under set -e.
-    assert "if apk info -e zlib" in text
+    # Linked ABI is gated by ldd (apk zlib may exist as openssl transitive dep).
+    assert "runtime postgres linked apk zlib" in text
+    assert "if apk info -e zlib" not in text
     assert "! apk info -e zlib" not in text
 
 

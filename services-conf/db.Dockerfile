@@ -336,7 +336,8 @@ RUN set -eux; \
     openssl \
     tzdata \
     # ICU data files for collations (source ICU may still need full locale data).
-    # zlib/libz: /opt/zlib-ng only — do not apk-add zlib.
+    # Do not apk-add zlib: postgres/zstd must link /opt/zlib-ng. openssl/libxml2
+    # may still pull apk zlib transitively — that is OK; gate via ldd below.
     icu-data-full \
   ; \
   # Transitive shared objects that scanelf would normally pull from apk for
@@ -354,14 +355,11 @@ RUN set -eux; \
              system("[ -e /opt/zstd/lib/" $1 " ]") == 0 { next } \
              { print "so:" $1 }' \
   )"; \
-  # Fail closed if scanelf still wants apk zlib/libz.
+  # Fail closed if scanelf still wants apk zlib/libz for our binaries.
   if printf '%s\n' "$runDeps" | grep -E '^so:libz(\.so|$)'; then \
     echo "runDeps must not pull apk libz" >&2; exit 1; \
   fi; \
   apk add --no-cache $runDeps; \
-  if apk info -e zlib >/dev/null 2>&1; then \
-    echo "runtime must not install apk zlib" >&2; exit 1; \
-  fi; \
   install --verbose --directory --owner postgres --group postgres --mode 3777 /var/run/postgresql; \
   # Fail-closed again on the slim runtime tree.
   ldd /usr/local/bin/postgres | tee /tmp/postgres.ldd; \
