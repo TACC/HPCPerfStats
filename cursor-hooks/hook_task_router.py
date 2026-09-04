@@ -256,6 +256,8 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "hpcperfstats/tests/test_dockerfile_jemalloc_cpython.py",
             "hpcperfstats/tests/test_dockerfile_python_deps_cache.py",
             "hpcperfstats/tests/test_dockerfile_mkl_source_stack.py",
+            "hpcperfstats/tests/test_dockerfile_pyspy.py",
+            "services-conf/py-spy-314t-comm-names.patch",
         ],
         "exact_paths": [
             "Dockerfile",

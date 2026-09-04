@@ -523,8 +523,54 @@ RUN /bin/bash -o pipefail -c '\
     -r /tmp/requirements-rest.txt; \
   /opt/python3.14t/bin/python3.14t -c "import pandas as pd; assert pd.__version__"'
 
-# Install debugging tools into GIL prefix (py-spy / pyinstrument).
-RUN /bin/bash -o pipefail -c 'python3 -m pip install --no-cache-dir pyinstrument py-spy'
+# Install pyinstrument into GIL prefix (in-process; ABI-independent of attach).
+RUN /bin/bash -o pipefail -c 'python3 -m pip install --no-cache-dir pyinstrument'
+
+# TEMPORARY hack — drop this cargo pin (and this comment) when an official
+# py-spy >0.4.2 PyPI/GitHub release advertises 3.14t / libpython3.14t.
+# Released 0.4.2 added GIL 3.14 (Py_Version) only; it cannot attach to
+# libpython3.14t (Failed to find python version from target process).
+# Pin is 0.4.2 + still-open PR #860 (honglei ee757909a5698526a7df04687ecbe6d4daad5f8b,
+# 2026-07-04) plus services-conf/py-spy-314t-comm-names.patch for /proc comm titles.
+# rustc/cargo/libunwind-dev stay in this python-build RUN only — never on
+# hpcperfstats-base. Re-check merge/release at the next image rebuild.
+COPY services-conf/py-spy-314t-comm-names.patch /tmp/py-spy-314t-comm-names.patch
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  apt-get update -y; \
+  apt-get install -y --no-install-recommends rustc cargo libunwind-dev patch; \
+  curl -fsSL "https://github.com/honglei/py-spy/archive/ee757909a5698526a7df04687ecbe6d4daad5f8b.tar.gz" \
+    -o /tmp/py-spy.tar.gz; \
+  echo "aad4fc01436299b68001120c414d15e88b6c9c53270ea9f9a31ffb060604adce  /tmp/py-spy.tar.gz" | sha256sum -c -; \
+  mkdir -p /tmp/py-spy-src; \
+  tar -xzf /tmp/py-spy.tar.gz -C /tmp/py-spy-src --strip-components=1; \
+  rm -f /tmp/py-spy.tar.gz; \
+  cd /tmp/py-spy-src; \
+  patch -p1 < /tmp/py-spy-314t-comm-names.patch; \
+  export CARGO_HOME=/tmp/pyspy-cargo CARGO_TARGET_DIR=/tmp/pyspy-target; \
+  cargo build --release --locked; \
+  install -m 0755 /tmp/pyspy-target/release/py-spy /opt/python3.14/bin/py-spy; \
+  test -x /opt/python3.14/bin/py-spy; \
+  /opt/python3.14/bin/py-spy --version; \
+  python3 -c "import time; time.sleep(30)" & \
+  gil_pid=$!; \
+  sleep 2; \
+  if ! /opt/python3.14/bin/py-spy dump --pid "$gil_pid" > /tmp/pyspy-gil.txt 2>&1; then cat /tmp/pyspy-gil.txt; false; fi; \
+  kill "$gil_pid" || true; wait "$gil_pid" || true; \
+  if grep -q "Failed to find python version" /tmp/pyspy-gil.txt; then cat /tmp/pyspy-gil.txt; false; fi; \
+  grep -E "time.sleep|<module>" /tmp/pyspy-gil.txt; \
+  /opt/python3.14t/bin/python -c "import time; time.sleep(30)" & \
+  ft_pid=$!; \
+  sleep 2; \
+  if ! /opt/python3.14/bin/py-spy dump --pid "$ft_pid" > /tmp/pyspy-ft.txt 2>&1; then cat /tmp/pyspy-ft.txt; false; fi; \
+  kill "$ft_pid" || true; wait "$ft_pid" || true; \
+  if grep -q "Failed to find python version" /tmp/pyspy-ft.txt; then cat /tmp/pyspy-ft.txt; false; fi; \
+  grep -E "time.sleep|<module>" /tmp/pyspy-ft.txt; \
+  rm -rf /tmp/py-spy-src /tmp/pyspy-cargo /tmp/pyspy-target /tmp/py-spy-314t-comm-names.patch /tmp/pyspy-gil.txt /tmp/pyspy-ft.txt; \
+  apt-get purge -y rustc cargo libunwind-dev patch; \
+  apt-get autoremove -y; \
+  apt-get clean; \
+  rm -rf /var/lib/apt/lists/*'
 
 # Uninstall image-build-only toolchain/devel from both ABIs after all pip layers
 # (image-build + MKL source numpy/numexpr/pandas + rest wheels + pyinstrument).

@@ -40,7 +40,7 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`python-docstring-and-typing-contract.mdc`** — Google-style Args/Returns + signature hints for every in-scope Python `def`; hard inventory gate via `scripts/python_def_inventory.py` / `docs/python_def_inventory.json`.
 - **`no-production-env-for-ini-config.mdc`** — production must not require `.env` / shell env flags for site config in INI or settings (e.g. TLS **`proxy_ssl_source`** mount); dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
 - **`syslog-cluster-ingest.mdc`** — cluster syslog under `data_dir/logs/`; **not** supervisord programs; manual root enable + render; dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
-- **`python-image-interpreter-contract.mdc`** — GIL `/opt/python3.14` (`/usr/local`) for web; baked `/opt/python3.14t` for `listend`/`sync_timedb`/`update_metrics`; jemalloc both ways; no INI ABI switch; dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
+- **`python-image-interpreter-contract.mdc`** — GIL `/opt/python3.14` (`/usr/local`) for web; baked `/opt/python3.14t` for `listend`/`sync_timedb`/`update_metrics`; jemalloc both ways; no INI ABI switch; operator `py-spy` is a temporary 0.4.2+PR #860 cargo pin until official `>0.4.2` advertises `libpython3.14t`; dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
 
 Adding a new domain rule (same task, non-optional):
 
