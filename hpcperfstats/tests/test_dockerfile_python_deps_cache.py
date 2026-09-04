@@ -70,6 +70,34 @@ def test_python_build_gil_pip_invokes_via_python3_m():
   assert "pip cache" not in cleaned
 
 
+def test_python_build_path_includes_prefix_bins_for_cython_meson():
+  """image-build console scripts (cython/meson/ninja) must be on PATH.
+
+  Regression: numpy --no-build-isolation Meson failed with
+  ``Unknown compiler(s): [['cython'], ['cython3']]`` because pip installed
+  cython under /opt/python3.14/bin while python-build PATH only had
+  /usr/local/bin (python3/pip3 symlinks).
+  """
+  build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
+  path_lines = [
+      ln for ln in build.splitlines() if re.search(r"(^|\s)PATH=", ln)
+  ]
+  assert path_lines, "python-build must set PATH for prefix bin dirs"
+  joined = "\n".join(path_lines)
+  assert "/opt/python3.14/bin" in joined
+  assert "/opt/python3.14t/bin" in joined
+  # PATH must precede the GIL numpy source install that needs cython.
+  path_pos = min(build.index(ln) for ln in path_lines if "/opt/python3.14/bin" in ln)
+  numpy_pos = build.index("-r /tmp/requirements-mkl-numpy.txt")
+  assert path_pos < numpy_pos
+  gil_build_install = build[
+      build.index("COPY pyproject.toml") : build.index(
+          "/opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --upgrade pip"
+      )
+  ]
+  assert "command -v cython" in gil_build_install
+
+
 def test_hpcperfstats_base_installs_package_no_deps_after_full_copy():
   """Runtime base copies tree then pip --no-deps only (deps already in python-build)."""
   dockerfile = (_repo_root() / "Dockerfile").read_text()

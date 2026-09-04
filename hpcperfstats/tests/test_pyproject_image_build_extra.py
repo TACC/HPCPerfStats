@@ -82,3 +82,17 @@ def test_image_build_extra_includes_versioneer_for_pandas_meson():
       if "build_names" in line and "versioneer" in line
   )
   assert "versioneer" in writer_assert
+  assert "cython" in writer_assert
+  assert "meson" in writer_assert
+  assert "ninja" in writer_assert
+
+
+def test_dockerfile_python_build_path_exposes_image_build_scripts():
+  """Meson needs cython on PATH; python-build must set prefix bin PATH early."""
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  # Stage-local: find PATH= after FT bake / before numpy MKL install.
+  assert re.search(
+      r"PATH=/usr/local/bin:/opt/zstd/bin:/opt/python3\.14/bin:/opt/python3\.14t/bin",
+      dockerfile,
+  )
+  assert "command -v cython" in dockerfile

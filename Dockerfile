@@ -322,6 +322,11 @@ RUN /bin/bash -o pipefail -c '\
   done; \
   rm -rf /usr/src/python'
 
+# Prefix bins must be on PATH so image-build console scripts (cython, meson,
+# ninja) are visible to Meson under --no-build-isolation. Symlinking only
+# python3/pip3 into /usr/local/bin is not enough.
+ENV PATH=/usr/local/bin:/opt/zstd/bin:/opt/python3.14/bin:/opt/python3.14t/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
 WORKDIR /home/hpcperfstats
 
 # Dual-ABI pip/MKL stack (moved from runtime): image-build -> MKL source
@@ -339,7 +344,7 @@ RUN /bin/bash -o pipefail -c '\
     deps = proj[\"dependencies\"]; \
     build = proj[\"optional-dependencies\"][\"image-build\"]; \
     build_names = {n(d) for d in build}; \
-    assert {\"mkl\", \"mkl-devel\", \"meson-python\", \"setuptools\", \"versioneer\"} <= build_names, build_names; \
+    assert {\"mkl\", \"mkl-devel\", \"meson-python\", \"meson\", \"ninja\", \"cython\", \"setuptools\", \"versioneer\"} <= build_names, build_names; \
     src_names = {\"numpy\", \"numexpr\", \"pandas\"}; \
     src = [d for d in deps if n(d) in src_names]; \
     assert src_names <= {n(d) for d in src}, src_names - {n(d) for d in src}; \
@@ -362,7 +367,9 @@ RUN /bin/bash -o pipefail -c '\
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   python3 -m pip install --no-cache-dir --upgrade pip; \
-  python3 -m pip install --no-cache-dir -r /tmp/requirements-build.txt'
+  python3 -m pip install --no-cache-dir -r /tmp/requirements-build.txt; \
+  command -v cython; \
+  cython -V'
 
 # 3) GIL source-build against MKL (before rest): numpy, numexpr+VML, pandas.
 # mkl 2026+ wheels install shared libs under sysconfig data/lib (no Python package).
@@ -432,7 +439,9 @@ RUN /bin/bash -o pipefail -c '\
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --upgrade pip; \
-  /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir -r /tmp/requirements-build.txt'
+  /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir -r /tmp/requirements-build.txt; \
+  command -v cython; \
+  cython -V'
 
 # 6) Free-threaded source-build + ldconfig (numpy, numexpr+VML, pandas).
 # Same as GIL: MKLROOT is sysconfig data prefix; numexpr VML via injected site.cfg.
