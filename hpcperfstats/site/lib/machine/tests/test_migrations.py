@@ -63,10 +63,15 @@ def test_0023_host_data_compression_policy_reduced_to_8_days():
 
 
 def test_0001_timescaledb_sql_uses_idempotent_forms():
+  """0001 must CREATE EXTENSION before create_hypertable (PG18 fresh-DB bake failure)."""
   mod = importlib.import_module("hpcperfstats.site.lib.machine.migrations.0001_initial")
   run_sql_ops = [op for op in mod.Migration.operations if isinstance(op, migrations.RunSQL)]
   sql_text = "\n".join(op.sql for op in run_sql_ops if isinstance(op.sql, str))
 
+  assert "CREATE EXTENSION IF NOT EXISTS timescaledb" in sql_text
+  assert sql_text.index("CREATE EXTENSION IF NOT EXISTS timescaledb") < sql_text.index(
+      "create_hypertable('host_data'"
+  )
   assert "DROP CONSTRAINT IF EXISTS host_data_pkey" in sql_text
   assert "create_hypertable('host_data'" in sql_text
   assert "if_not_exists => TRUE" in sql_text

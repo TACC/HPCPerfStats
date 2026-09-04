@@ -53,19 +53,11 @@ docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exe
 
 `db_pg18` must already be healthy (Phase A). Do **not** point the long-running **`web`** service at `db18` yet — Hub PG15 stays on alias **`db`**.
 
-`machine.0001_initial` calls `create_hypertable` but does **not** `CREATE EXTENSION timescaledb`. Hub Timescale images often leave the extension in place from earlier ops; a fresh PG18 database only has `shared_preload_libraries = timescaledb`. **Create the extension first**, then one-shot migrate with Django `HOST=db18`, then disable compression for backfill.
-
-### db_pg18 — CREATE EXTENSION timescaledb (paste output)
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 sh -lc 'psql -h localhost -U hpcperfstats -d hpcperfstats -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" -c "SELECT extname, extversion FROM pg_extension WHERE extname = '\''timescaledb'\'';" -c "SELECT proname FROM pg_proc WHERE proname = '\''create_hypertable'\'' LIMIT 3;"'
-```
-
-**Fail closed:** `extversion` is set (e.g. `2.29.2`) and `create_hypertable` appears in `pg_proc`.
+`machine.0001_initial` runs `CREATE EXTENSION IF NOT EXISTS timescaledb` before `create_hypertable` (required on fresh PG18: preload alone does not install the extension). Use a checkout / `web` image that includes that `0001` fix. One-shot migrate with Django `HOST=db18`, then disable compression for backfill.
 
 ### web — migrate empty schema onto db18 (paste output)
 
-Requires profile **`pg18-migrate`** so hostname **`db18`** resolves. `--no-deps` assumes **`db_pg18`** is already up. Run **after** the extension paste above.
+Requires profile **`pg18-migrate`** so hostname **`db18`** resolves. `--no-deps` assumes **`db_pg18`** is already up.
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate run --rm --no-deps --entrypoint /usr/local/bin/python3 web -c '
@@ -82,18 +74,13 @@ print("connected_host", settings.DATABASES["default"]["HOST"])
 with connection.cursor() as cur:
     cur.execute("SELECT version()")
     print("server", cur.fetchone()[0])
-    cur.execute("SELECT extversion FROM pg_extension WHERE extname = %s", ["timescaledb"])
-    row = cur.fetchone()
-    print("timescaledb", row[0] if row else None)
-    if not row:
-        raise SystemExit("timescaledb extension missing — run Phase B CREATE EXTENSION paste first")
 from django.core.management import call_command
 call_command("migrate", verbosity=1)
 print("migrate_ok")
 '
 ```
 
-**Fail closed:** printed `connected_host` is `db18`, `timescaledb` is non-empty, migrate finishes without error. If you see `create_hypertable … does not exist`, the extension paste was skipped or ran against the wrong database.
+**Fail closed:** printed `connected_host` is `db18`; migrate finishes without error. If you see `create_hypertable … does not exist`, the `web` image still has an old `0001` without `CREATE EXTENSION` — rebuild/sync the image, or once: `psql … -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"` then re-run migrate.
 
 ### db_pg18 — verify empty host_data hypertable + disable compression (paste output)
 
