@@ -45,10 +45,39 @@ def test_compiled_library_pins_are_latest_known():
   assert "96d33abb4bb0070c7be0fed4246cd38416188325f820468214471938545b1ac8" in build
   assert "libffi-3.8.0.tar.gz" in build
   assert "7da3e2d9a171eb0a038f592ecad3ff2bb2550f3496d87b3b29ad0cf4430c0db4" in build
+  assert "zlib-ng/archive/refs/tags/2.2.5.tar.gz" in build
+  assert "5b3b022489f3ced82384f06db1e13ba148cbce38c7941e424d6cb414416acd18" in build
   # Stale pins must not linger.
   assert "jemalloc-5.3.0.tar.bz2" not in build
   assert "mpdecimal-4.0.0.tar.gz" not in build
   assert "libffi-3.4.8.tar.gz" not in build
+
+
+def test_zlib_ng_compat_opt_direct_link_no_explicit_apt_zlib():
+  """zlib-ng ZLIB_COMPAT under /opt; CPython/extensions link it; no apt zlib* pin."""
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  build = _stage_body(dockerfile, "python-build")
+  base = _stage_body(dockerfile, "hpcperfstats-base")
+  assert "CMAKE_INSTALL_PREFIX=/opt/zlib-ng" in build
+  assert "ZLIB_COMPAT=ON" in build
+  assert "WITH_NATIVE_INSTRUCTIONS=ON" in build
+  assert "-L/opt/zlib-ng/lib" in build
+  assert "-Wl,-rpath,/opt/zlib-ng/lib" in build
+  assert "-I/opt/zlib-ng/include" in build
+  assert "ldd" in build and "/opt/zlib-ng" in build
+  # Do not explicitly apt-install stock zlib (transitive Depends OK).
+  assert "zlib1g-dev" not in build
+  assert not re.search(
+      r"apt-get install[^\n]*\bzlib1g\b",
+      base,
+  )
+  assert "COPY --from=python-build /opt/zlib-ng" in base
+  assert "/opt/zlib-ng/lib" in base
+  # libz is link/rpath only — jemalloc keeps LD_PRELOAD; do not preload libz.
+  for ln in base.splitlines():
+    if "LD_PRELOAD" in ln:
+      assert "zlib-ng" not in ln
+      assert "libz.so" not in ln
 
 
 def test_jemalloc_configure_flags_and_no_initial_exec_tls():
@@ -118,3 +147,25 @@ def test_runtime_jemalloc_both_ways_preload_and_ld_so_preload():
   assert "COPY --from=python-build /opt/jemalloc" in base
   assert "COPY --from=python-build /opt/python3.14 " in base
   assert "COPY --from=python-build /opt/python3.14t" in base
+
+
+def test_hpcperfstats_base_copies_only_opt_prefixes_not_compile_trees():
+  """Runtime stage must not COPY /usr/src or other compile trees from python-build."""
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  build = _stage_body(dockerfile, "python-build")
+  base = _stage_body(dockerfile, "hpcperfstats-base")
+  copies = [
+      ln.strip()
+      for ln in base.splitlines()
+      if ln.strip().startswith("COPY --from=python-build")
+  ]
+  assert copies
+  for ln in copies:
+    assert "/opt/" in ln, ln
+    assert "/usr/src" not in ln, ln
+  assert "COPY --from=python-build /opt/zlib-ng" in base
+  # Builder must wipe /usr/src trees before stage end (fail-closed).
+  assert "test ! -d /usr/src/zlib-ng" in build
+  assert "test ! -d /usr/src/jemalloc" in build
+  assert "test ! -d /usr/src/python" in build
+  assert "leftover /usr/src compile tree" in build

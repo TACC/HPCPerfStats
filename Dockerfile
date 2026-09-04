@@ -72,7 +72,7 @@ RUN /bin/bash -o pipefail -c '\
   apt-get install -y --no-install-recommends \
     build-essential gfortran ninja-build cmake pkg-config \
     curl ca-certificates autoconf \
-    libssl-dev zlib1g-dev libncursesw5-dev libsqlite3-dev \
+    libssl-dev libncursesw5-dev libsqlite3-dev \
     libreadline-dev libbz2-dev liblzma-dev tk-dev uuid-dev \
     libgdbm-dev libnss3-dev libexpat1-dev \
     default-libmysqlclient-dev file binutils; \
@@ -106,6 +106,36 @@ RUN /bin/bash -o pipefail -c '\
   echo "/opt/jemalloc/lib" > /etc/ld.so.conf.d/jemalloc.conf; \
   ldconfig; \
   rm -rf /usr/src/jemalloc'
+
+# zlib-ng 2.2.5 (ZLIB_COMPAT → libz.so.1). CPython and source builds link this; no apt zlib*.
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  curl -fsSL "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/2.2.5.tar.gz" \
+    -o /tmp/zlib-ng.tar.gz; \
+  echo "5b3b022489f3ced82384f06db1e13ba148cbce38c7941e424d6cb414416acd18  /tmp/zlib-ng.tar.gz" | sha256sum -c -; \
+  mkdir -p /usr/src/zlib-ng; \
+  tar -xzf /tmp/zlib-ng.tar.gz -C /usr/src/zlib-ng --strip-components=1; \
+  rm -f /tmp/zlib-ng.tar.gz; \
+  cd /usr/src/zlib-ng; \
+  cmake -S . -B build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/opt/zlib-ng \
+    -DCMAKE_INSTALL_LIBDIR=lib \
+    -DZLIB_COMPAT=ON \
+    -DZLIB_ENABLE_TESTS=OFF \
+    -DZLIBNG_ENABLE_TESTS=OFF \
+    -DWITH_GTEST=OFF \
+    -DWITH_OPTIM=ON \
+    -DWITH_NEW_STRATEGIES=ON \
+    -DWITH_NATIVE_INSTRUCTIONS=ON \
+    -DCMAKE_C_FLAGS="-O3 -march=native -flto -g0"; \
+  cmake --build build -j40; \
+  cmake --install build; \
+  find /opt/zlib-ng -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
+  test -f /opt/zlib-ng/lib/libz.so || test -f /opt/zlib-ng/lib/libz.so.1; \
+  echo "/opt/zlib-ng/lib" > /etc/ld.so.conf.d/zlib-ng.conf; \
+  ldconfig; \
+  rm -rf /usr/src/zlib-ng'
 
 # mpdecimal 4.0.1 (x86_64 MACHINE=x64 → CONFIG_64 + ASM).
 RUN /bin/bash -o pipefail -c '\
@@ -158,11 +188,12 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/Python.tgz -C /usr/src/python --strip-components=1; \
   rm -f /tmp/Python.tgz; \
   cd /usr/src/python; \
-  export PKG_CONFIG_PATH="/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
+  export PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
+  export CPPFLAGS="-I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
   export CFLAGS="-O3 -march=native -g0" CXXFLAGS="-O3 -march=native -g0" OPT="-O3 -g0"; \
   LIBFFI_LIBDIR="/opt/libffi/lib"; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then LIBFFI_LIBDIR="/opt/libffi/lib/x86_64-linux-gnu"; fi; \
-  export LDFLAGS="-L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
+  export LDFLAGS="-L/opt/zlib-ng/lib -L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
   ./configure \
     --prefix=/opt/python3.14 \
     --enable-shared \
@@ -178,9 +209,11 @@ RUN /bin/bash -o pipefail -c '\
   make install; \
   /opt/python3.14/bin/python3.14 -c "import sysconfig; assert int(sysconfig.get_config_var(\"Py_GIL_DISABLED\") or 0) == 0"; \
   ldd /opt/python3.14/bin/python3.14 | grep libjemalloc; \
+  ldd /opt/python3.14/bin/python3.14 | grep '/opt/zlib-ng/.*libz'; \
   ldd /opt/python3.14/bin/python3.14 | grep libmpdec; \
   ldd /opt/python3.14/bin/python3.14 | grep libffi; \
   ldd /opt/python3.14/lib/libpython3.14.so | grep libjemalloc; \
+  /opt/python3.14/bin/python3.14 -c "import zlib; v=getattr(zlib,\"ZLIB_RUNTIME_VERSION\",zlib.ZLIB_VERSION); assert \"zlib-ng\" in str(v).lower(), v"; \
   find /opt/python3.14 -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   mkdir -p /usr/local/bin /usr/local/lib; \
   ln -sfn /opt/python3.14/bin/python3 /usr/local/bin/python3; \
@@ -206,11 +239,12 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/Python.tgz -C /usr/src/python --strip-components=1; \
   rm -f /tmp/Python.tgz; \
   cd /usr/src/python; \
-  export PKG_CONFIG_PATH="/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
+  export PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
+  export CPPFLAGS="-I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
   export CFLAGS="-O3 -march=native -g0" CXXFLAGS="-O3 -march=native -g0" OPT="-O3 -g0"; \
   LIBFFI_LIBDIR="/opt/libffi/lib"; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then LIBFFI_LIBDIR="/opt/libffi/lib/x86_64-linux-gnu"; fi; \
-  export LDFLAGS="-L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14t/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
+  export LDFLAGS="-L/opt/zlib-ng/lib -L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14t/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
   ./configure \
     --prefix=/opt/python3.14t \
     --enable-shared \
@@ -228,9 +262,11 @@ RUN /bin/bash -o pipefail -c '\
   ln -sf python3.14t /opt/python3.14t/bin/python3; \
   /opt/python3.14t/bin/python3.14t -c "import sysconfig; assert int(sysconfig.get_config_var(\"Py_GIL_DISABLED\") or 0) == 1"; \
   ldd /opt/python3.14t/bin/python3.14t | grep libjemalloc; \
+  ldd /opt/python3.14t/bin/python3.14t | grep '/opt/zlib-ng/.*libz'; \
   ldd /opt/python3.14t/bin/python3.14t | grep libmpdec; \
   ldd /opt/python3.14t/bin/python3.14t | grep libffi; \
   (ldd /opt/python3.14t/lib/libpython3.14t.so 2>/dev/null || ldd /opt/python3.14t/lib/libpython3.14.so) | grep libjemalloc; \
+  /opt/python3.14t/bin/python3.14t -c "import zlib; v=getattr(zlib,\"ZLIB_RUNTIME_VERSION\",zlib.ZLIB_VERSION); assert \"zlib-ng\" in str(v).lower(), v"; \
   find /opt/python3.14t -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   echo "/opt/python3.14t/lib" > /etc/ld.so.conf.d/python314t.conf; \
   ldconfig; \
@@ -305,9 +341,9 @@ RUN /bin/bash -o pipefail -c '\
   fi; \
   test -e "${MKLROOT}/lib/libmkl_rt.so"; \
   export LIBRARY_PATH="${MKLROOT}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"; \
-  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT}/lib -Wl,-rpath,${MKLROOT}/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
-  export CFLAGS="${CFLAGS:+${CFLAGS} }-O3 -march=native -g0" \
-    CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }-O3 -march=native -g0" \
+  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT}/lib -Wl,-rpath,${MKLROOT}/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
+  export CFLAGS="${CFLAGS:+${CFLAGS} }-O3 -march=native -g0 -I/opt/zlib-ng/include" \
+    CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }-O3 -march=native -g0 -I/opt/zlib-ng/include" \
     FFLAGS="${FFLAGS:+${FFLAGS} }-O3 -march=native -g0"; \
   pip install --no-cache-dir --no-build-isolation --force-reinstall \
     --no-binary numpy \
@@ -369,9 +405,9 @@ RUN /bin/bash -o pipefail -c '\
   fi; \
   test -e "${MKLROOT_T}/lib/libmkl_rt.so"; \
   export LIBRARY_PATH="${MKLROOT_T}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"; \
-  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT_T}/lib -Wl,-rpath,${MKLROOT_T}/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
-  export CFLAGS="${CFLAGS:+${CFLAGS} }-O3 -march=native -g0" \
-    CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }-O3 -march=native -g0" \
+  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT_T}/lib -Wl,-rpath,${MKLROOT_T}/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
+  export CFLAGS="${CFLAGS:+${CFLAGS} }-O3 -march=native -g0 -I/opt/zlib-ng/include" \
+    CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }-O3 -march=native -g0 -I/opt/zlib-ng/include" \
     FFLAGS="${FFLAGS:+${FFLAGS} }-O3 -march=native -g0"; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-build-isolation --force-reinstall \
     --no-binary numpy \
@@ -416,21 +452,32 @@ RUN /bin/bash -o pipefail -c '\
 RUN /bin/bash -o pipefail -c 'pip install --no-cache-dir pyinstrument py-spy'
 
 # Uninstall image-build-only toolchain from both ABIs; keep runtime mkl; final strip.
+# Prune compile leftovers under /opt so hpcperfstats-base never inherits src/build trees.
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   pip uninstall -y meson meson-python ninja cython versioneer mkl-devel || true; \
   /opt/python3.14t/bin/python3.14t -m pip uninstall -y meson meson-python ninja cython versioneer mkl-devel || true; \
   pip cache purge; \
   /opt/python3.14t/bin/python3.14t -m pip cache purge; \
-  for root in /opt/jemalloc /opt/mpdecimal /opt/libffi /opt/python3.14 /opt/python3.14t; do \
+  for root in /opt/jemalloc /opt/zlib-ng /opt/mpdecimal /opt/libffi /opt/python3.14 /opt/python3.14t; do \
     find "$root" -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   done; \
   for bin in /opt/python3.14/bin/python3.14 /opt/python3.14t/bin/python3.14t /opt/jemalloc/lib/libjemalloc.so.2; do \
     file -b "$bin" | grep -qi "not stripped" && { echo "unstripped $bin"; false; }; \
     if readelf -S "$bin" | grep -q "\.debug_info"; then echo "debug_info $bin"; false; fi; \
-  done'
+  done; \
+  for root in /opt/jemalloc /opt/zlib-ng /opt/mpdecimal /opt/libffi; do \
+    find "$root" -type f \( -name "*.a" -o -name "*.la" -o -name "CMakeCache.txt" \) -delete; \
+    find "$root" -type d \( -name build -o -name CMakeFiles -o -name .libs \) -prune -exec rm -rf {} + 2>/dev/null || true; \
+  done; \
+  if find /usr/src -mindepth 1 -print -quit 2>/dev/null | grep -q .; then \
+    echo "leftover /usr/src compile tree would risk leaking into later stages"; find /usr/src -maxdepth 2; false; \
+  fi; \
+  test ! -d /usr/src/zlib-ng; \
+  test ! -d /usr/src/jemalloc; \
+  test ! -d /usr/src/python'
 
-# Slim runtime: copy prefixes only (no compilers). Jemalloc both ways for CPython + manylinux wheels.
+# Slim runtime: COPY only /opt install prefixes (never /usr/src or cmake build dirs).
 FROM debian:trixie-slim AS hpcperfstats-base
 
 RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
@@ -446,13 +493,14 @@ RUN /bin/bash -o pipefail -c "apt-get update -y \
        supervisor rsync syslog-ng zstd util-linux time \
        net-tools lsof procps gdb strace netcat-openbsd \
        vim nano ca-certificates \
-       libssl3t64 zlib1g libsqlite3-0 libbz2-1.0 liblzma5 \
+       libssl3t64 libsqlite3-0 libbz2-1.0 liblzma5 \
        libreadline8t64 libncursesw6 libuuid1 libgdbm6t64 libexpat1 \
        libpq5 libmariadb3 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*"
 
 COPY --from=python-build /opt/jemalloc /opt/jemalloc
+COPY --from=python-build /opt/zlib-ng /opt/zlib-ng
 COPY --from=python-build /opt/mpdecimal /opt/mpdecimal
 COPY --from=python-build /opt/libffi /opt/libffi
 COPY --from=python-build /opt/python3.14 /opt/python3.14
@@ -483,6 +531,7 @@ RUN /bin/bash -o pipefail -c '\
   if [ -e /opt/python3.14/bin/gunicorn ]; then ln -sfn /opt/python3.14/bin/gunicorn /usr/local/bin/gunicorn; fi; \
   for so in /opt/python3.14/lib/libpython3.14.so*; do ln -sfn "$so" "/usr/local/lib/$(basename "$so")"; done; \
   echo "/opt/jemalloc/lib" > /etc/ld.so.conf.d/jemalloc.conf; \
+  echo "/opt/zlib-ng/lib" > /etc/ld.so.conf.d/zlib-ng.conf; \
   echo "/opt/mpdecimal/lib" > /etc/ld.so.conf.d/mpdecimal.conf; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then \
     echo "/opt/libffi/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/libffi.conf; \
