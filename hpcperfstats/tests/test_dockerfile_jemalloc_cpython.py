@@ -160,9 +160,16 @@ def test_libmpdec_and_libffi_native_flags():
   assert "/opt/mpdecimal" in build
   assert "-DCONFIG_64" in build
   assert "-DASM" in build
+  assert "--with-system-libmpdec" in build
   assert "/opt/libffi" in build
   assert "--with-gcc-arch=native" in build
   assert "--disable-static" in build
+  # --with-system-ffi was removed in CPython 3.12; libffi via pkg-config /
+  # LIBFFI_CFLAGS + LIBFFI_LIBS only (passing the old flag warns).
+  assert "--with-system-ffi" not in build
+  assert "LIBFFI_CFLAGS=" in build
+  assert "LIBFFI_LIBS=" in build
+  assert "ldd" in build and "/opt/libffi/.*libffi" in build
 
 
 def test_cpython_gil_without_mimalloc_ft_keeps_mimalloc_both_force_jemalloc():

@@ -218,6 +218,7 @@ RUN /bin/bash -o pipefail -c '\
   export CFLAGS="-O3 -march=native -g0" CXXFLAGS="-O3 -march=native -g0" OPT="-O3 -g0"; \
   LIBFFI_LIBDIR="/opt/libffi/lib"; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then LIBFFI_LIBDIR="/opt/libffi/lib/x86_64-linux-gnu"; fi; \
+  export LIBFFI_CFLAGS="-I/opt/libffi/include" LIBFFI_LIBS="-L${LIBFFI_LIBDIR} -lffi"; \
   export LDFLAGS="-L/opt/zstd/lib -L/opt/zlib-ng/lib -L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/zstd/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
   ./configure \
     --prefix=/opt/python3.14 \
@@ -226,7 +227,6 @@ RUN /bin/bash -o pipefail -c '\
     --with-lto \
     --with-ensurepip=install \
     --with-system-libmpdec \
-    --with-system-ffi \
     --without-static-libpython \
     --disable-test-modules \
     --without-mimalloc; \
@@ -243,8 +243,7 @@ RUN /bin/bash -o pipefail -c '\
   ldd "$decimal_so" | grep libmpdec; \
   ctypes_so="$(find /opt/python3.14 -name '_ctypes*.so' -type f | head -1)"; \
   test -n "$ctypes_so"; \
-  ldd "$ctypes_so" | grep libffi; \
-  zstd_so="$(find /opt/python3.14 -name '_zstd*.so' -type f | head -1)"; \
+  ldd "$ctypes_so" | grep '/opt/libffi/.*libffi'; \
   test -n "$zstd_so"; \
   ldd "$zstd_so" | grep '/opt/zstd/.*libzstd'; \
   /opt/python3.14/bin/python3.14 -c "import zlib; v=getattr(zlib,\"ZLIB_RUNTIME_VERSION\",zlib.ZLIB_VERSION); assert \"zlib-ng\" in str(v).lower(), v"; \
@@ -279,6 +278,7 @@ RUN /bin/bash -o pipefail -c '\
   export CFLAGS="-O3 -march=native -g0" CXXFLAGS="-O3 -march=native -g0" OPT="-O3 -g0"; \
   LIBFFI_LIBDIR="/opt/libffi/lib"; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then LIBFFI_LIBDIR="/opt/libffi/lib/x86_64-linux-gnu"; fi; \
+  export LIBFFI_CFLAGS="-I/opt/libffi/include" LIBFFI_LIBS="-L${LIBFFI_LIBDIR} -lffi"; \
   export LDFLAGS="-L/opt/zstd/lib -L/opt/zlib-ng/lib -L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/zstd/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14t/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
   ./configure \
     --prefix=/opt/python3.14t \
@@ -287,7 +287,6 @@ RUN /bin/bash -o pipefail -c '\
     --with-lto \
     --with-ensurepip=install \
     --with-system-libmpdec \
-    --with-system-ffi \
     --without-static-libpython \
     --disable-test-modules \
     --disable-gil; \
