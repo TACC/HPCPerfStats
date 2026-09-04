@@ -48,6 +48,8 @@ def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
   assert cfg.get_sync_write_lock_shards() == 8
   assert cfg.get_listend_db_ingest_pool_processes() == 32
   assert cfg.get_listend_db_ingest_backpressure() == "drop"
+  assert cfg.get_listend_db_ingest_flush_max_rows() == 2000
+  assert cfg.get_listend_db_ingest_flush_hold_s() == 5.0
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
   assert cfg.get_sync_process_tree_rss_limit_mb() == 110000
   for dead in (

@@ -383,6 +383,12 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Samples cached per listend DB worker before one bulk_create (default 100).
 # listend_db_ingest_batch_samples = 100
 
+# Max pending host+proc ORM rows per listend DB worker before flush (default 2000).
+# listend_db_ingest_flush_max_rows = 2000
+
+# Seconds to hold a non-empty pending batch when the queue is never empty (default 5).
+# listend_db_ingest_flush_hold_s = 5
+
 # Max proc names per peak-merge DB lookup (default 256); avoids giant OR queries.
 # listend_db_ingest_proc_peak_lookup_chunk = 256
 

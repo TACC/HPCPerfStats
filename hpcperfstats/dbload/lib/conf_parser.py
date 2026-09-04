@@ -157,6 +157,8 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "listend_db_ingest_pool_processes"),
     ("PIPELINE", "listend_db_ingest_queue_max_gb"),
     ("PIPELINE", "listend_db_ingest_batch_samples"),
+    ("PIPELINE", "listend_db_ingest_flush_max_rows"),
+    ("PIPELINE", "listend_db_ingest_flush_hold_s"),
     ("PIPELINE", "listend_db_ingest_proc_peak_lookup_chunk"),
     ("PIPELINE", "listend_db_ingest_statement_timeout_ms"),
     ("PIPELINE", "listend_archive_worker_threads"),
@@ -313,6 +315,8 @@ INI_OPTION_DEFAULTS = {
     'listend_db_ingest_pool_processes': '32',
     'listend_db_ingest_queue_max_gb': '8',
     'listend_db_ingest_batch_samples': '100',
+    'listend_db_ingest_flush_max_rows': '2000',
+    'listend_db_ingest_flush_hold_s': '5',
     'listend_db_ingest_proc_peak_lookup_chunk': '256',
     'listend_db_ingest_statement_timeout_ms': '600000',
     'listend_archive_worker_threads': '8',
@@ -4315,6 +4319,49 @@ def get_listend_db_ingest_batch_samples() -> Any:
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("listend_db_ingest_batch_samples"))
+
+
+def get_listend_db_ingest_flush_max_rows() -> int:
+  """
+  Max pending host+proc ORM rows before a listend DB worker flushes.
+
+  Default ``2000``. Bounds flush size when fat samples would otherwise
+  assemble ``batch_samples`` (default 100) before any SQL. ``0`` disables
+  the row-cap trigger (sample-count and hold-age still apply).
+
+  Returns:
+    int: Row cap, at least 0.
+
+  Examples:
+    >>> get_listend_db_ingest_flush_max_rows() >= 0  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0, int(_pipeline_get("listend_db_ingest_flush_max_rows")))
+  except (TypeError, ValueError, OverflowError):
+    return 2000
+
+
+def get_listend_db_ingest_flush_hold_s() -> float:
+  """
+  Seconds a listend DB worker may hold a non-empty batch when busy.
+
+  Default ``5``. Forces a flush even when ``queue.get`` never times out
+  because the shard queue is never empty. ``0`` disables hold-age flush.
+
+  Returns:
+    float: Hold age in seconds, at least 0.0.
+
+  Examples:
+    >>> get_listend_db_ingest_flush_hold_s() >= 0  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0.0, float(_pipeline_get("listend_db_ingest_flush_hold_s")))
+  except (TypeError, ValueError, OverflowError):
+    return 5.0
 
 
 def get_listend_db_ingest_proc_peak_lookup_chunk() -> int:

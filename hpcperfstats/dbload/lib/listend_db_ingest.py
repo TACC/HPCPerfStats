@@ -14,9 +14,11 @@ Attributes:
   _QUEUE_GET_TIMEOUT_S: Idle ``queue.get`` timeout before a flush.
   _RESUME_WATERMARK: Low-watermark fraction that resumes consume.
   _SHUTDOWN_JOIN_TIMEOUT_S: Worker ``join`` budget on ``stop()``.
+  _FLUSH_LOG_MIN_INTERVAL_S: Per-worker INFO throttle for flush timing logs.
   _listend_flush_error_is_poison: Classify flush errors that drop the batch.
   _is_listend_statement_timeout: Detect PostgreSQL statement timeout cancels.
   _apply_listend_db_ingest_statement_timeout: Apply listend INI statement_timeout.
+  _should_flush_pending: Row-cap / hold-age / batch_samples flush policy.
   _write_proc_chunk_with_timeout_bisect: Peak-merge write with timeout bisect.
 """
 from __future__ import annotations
@@ -33,6 +35,7 @@ from hpcperfstats.dbload.lib.print_utils import log_print
 
 # Module constants (not INI) — connection / idle hygiene.
 _QUEUE_GET_TIMEOUT_S = 30.0
+_FLUSH_LOG_MIN_INTERVAL_S = 10.0
 _MIN_QUEUED_PAYLOAD_BYTES = 256
 _SHUTDOWN_JOIN_TIMEOUT_S = 15.0
 # Consume pause hysteresis (fractions of total queue byte budget).
@@ -92,6 +95,151 @@ class _ThreadCounter:
       True
     """
     return self._lock
+
+
+class _ThreadMax:
+  """
+  Float plus lock that keeps the highest sample until ``take()``.
+
+  Workers record flush elapsed seconds; the idle monitor reads and resets
+  the window maximum.
+
+  Attributes:
+    _lock: Mutex guarding ``value``.
+    value: Current maximum sample.
+  """
+
+  def __init__(self) -> None:
+    """
+    Create a zeroed in-process maximum tracker.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _ThreadMax().value
+      0.0
+    """
+    self._lock = threading.Lock()
+    self.value = 0.0
+
+  def update(self, sample: float) -> None:
+    """
+    Raise the stored maximum when ``sample`` is larger.
+
+    Args:
+      sample (float): Candidate elapsed seconds (or other magnitude).
+
+    Returns:
+      None
+
+    Examples:
+      >>> tracker = _ThreadMax()
+      >>> tracker.update(0.25)
+      >>> tracker.value
+      0.25
+    """
+    with self._lock:
+      if sample > self.value:
+        self.value = float(sample)
+
+  def take(self) -> float:
+    """
+    Return the current maximum and reset it to zero.
+
+    Returns:
+      float: Previous maximum, or 0.0 when no sample was recorded.
+
+    Examples:
+      >>> tracker = _ThreadMax()
+      >>> tracker.update(1.5)
+      >>> tracker.take()
+      1.5
+      >>> tracker.take()
+      0.0
+    """
+    with self._lock:
+      out = float(self.value)
+      self.value = 0.0
+      return out
+
+
+def _should_flush_pending(
+    *,
+    sample_count: int,
+    pending_rows: int,
+    batch_samples: int,
+    flush_max_rows: int,
+    hold_started_mono: float | None,
+    now_mono: float,
+    flush_hold_s: float,
+) -> bool:
+  """
+  True when a worker should flush pending ORM rows now.
+
+  ``batch_samples`` remains an upper bound. Fat samples also flush when
+  pending host+proc rows reach ``flush_max_rows``. A never-empty queue
+  still flushes after ``flush_hold_s`` seconds of holding rows.
+
+  Args:
+    sample_count (int): Parsed samples accumulated since the last flush.
+      ``$`` schema lines do not increment this.
+    pending_rows (int): ``len(pending_host) + len(pending_proc)``.
+    batch_samples (int): Sample-count cap from INI (at least 1).
+    flush_max_rows (int): Row cap; ``<= 0`` disables the row trigger.
+    hold_started_mono (float | None): Monotonic time when pending became
+      non-empty, or None when there is no hold clock.
+    now_mono (float): Current ``time.monotonic()`` value.
+    flush_hold_s (float): Hold-age seconds; ``<= 0`` disables age flush.
+
+  Returns:
+    bool: True when the worker should call ``_flush`` now.
+
+  Examples:
+    >>> _should_flush_pending(
+    ...     sample_count=1,
+    ...     pending_rows=2000,
+    ...     batch_samples=100,
+    ...     flush_max_rows=2000,
+    ...     hold_started_mono=0.0,
+    ...     now_mono=0.1,
+    ...     flush_hold_s=5.0,
+    ... )
+    True
+    >>> _should_flush_pending(
+    ...     sample_count=2,
+    ...     pending_rows=10,
+    ...     batch_samples=100,
+    ...     flush_max_rows=2000,
+    ...     hold_started_mono=100.0,
+    ...     now_mono=105.0,
+    ...     flush_hold_s=5.0,
+    ... )
+    True
+    >>> _should_flush_pending(
+    ...     sample_count=0,
+    ...     pending_rows=0,
+    ...     batch_samples=100,
+    ...     flush_max_rows=2000,
+    ...     hold_started_mono=None,
+    ...     now_mono=0.0,
+    ...     flush_hold_s=5.0,
+    ... )
+    False
+  """
+  if pending_rows <= 0:
+    return False
+  if sample_count >= batch_samples:
+    return True
+  if flush_max_rows > 0 and pending_rows >= flush_max_rows:
+    return True
+  if (
+      hold_started_mono is not None
+      and flush_hold_s > 0
+      and (now_mono - hold_started_mono) >= flush_hold_s
+  ):
+    return True
+  return False
 
 
 def _listend_flush_error_is_poison(exc: BaseException) -> bool:
@@ -787,25 +935,40 @@ def _worker_main(
   counters: dict,
   batch_samples: int,
   per_worker_budget: int,
+  flush_max_rows: int = 2000,
+  flush_hold_s: float = 5.0,
+  flush_elapsed_max: Any = None,
 ) -> None:
   """
-  Internal helper to handle worker main.
-  
+  Host-affine listend DB worker: parse queued samples and flush ORM batches.
+
+  Flushes when ``batch_samples`` is reached, when pending host+proc rows
+  reach ``flush_max_rows``, when pending has been held for
+  ``flush_hold_s`` (even if the queue is never empty), on idle
+  ``queue.get`` timeout, or on shutdown. ``$`` schema lines do not count
+  toward ``batch_samples``.
+
   Args:
-    worker_idx (int): Integer value for worker idx.
-    work_queue (Any): Work queue passed to this helper.
-    stop_event (Any): Stop event passed to this helper.
-    byte_count (Any): Byte count passed to this helper.
-    byte_lock (Any): Byte lock passed to this helper.
-    counters (dict): Mapping for counters.
-    batch_samples (int): Integer value for batch samples.
-    per_worker_budget (int): Integer value for per worker budget.
-  
+    worker_idx (int): Affine shard index (also the thread title suffix).
+    work_queue (Any): In-process ``queue.Queue`` of
+      ``(host, message, nbytes)`` tuples, or ``None`` to stop.
+    stop_event (Any): Shared stop flag; the loop exits when set.
+    byte_count (Any): Per-shard queued-byte counter (``.value``).
+    byte_lock (Any): Mutex guarding ``byte_count``.
+    counters (dict): Shared idle-monitor ``_ThreadCounter`` map.
+    batch_samples (int): Sample-count flush cap (at least 1).
+    per_worker_budget (int): Per-shard byte cap (tracked on put).
+    flush_max_rows (int): Pending host+proc row cap; ``<= 0`` disables.
+    flush_hold_s (float): Hold-age seconds; ``<= 0`` disables age flush.
+    flush_elapsed_max (Any): Optional ``_ThreadMax`` for idle-monitor
+      ``flush_max_s``; ``None`` skips elapsed tracking.
+
   Returns:
     None
-  
+
   Examples:
-    >>> _worker_main(0, None, None, None, None, {}, 0, 0)  # doctest: +SKIP
+    >>> callable(_worker_main)
+    True
   """
   del per_worker_budget  # tracked on put; kept for future diagnostics
   # Cap BLAS/OpenMP before any numpy/pandas import (32 threads × default
@@ -835,6 +998,8 @@ def _worker_main(
   pending_host: list = []
   pending_proc: list = []
   sample_count = 0
+  hold_started_mono: float | None = None
+  last_flush_log_mono = 0.0
   conn_opened_at = time.monotonic()
   seeded_hosts: set = set()
 
@@ -867,21 +1032,27 @@ def _worker_main(
 
   def _flush(*, force_memory_release: bool = True) -> None:
     """
-    Internal helper to handle flush.
-    
+    Write pending ORM rows, reset the hold clock, and record flush elapsed.
+
     Args:
-      force_memory_release (bool): Whether to enable force memory release.
-    
+      force_memory_release (bool): When True, drop heap after a successful
+        or poison flush (not after a retained transient-error batch).
+
     Returns:
       None
-    
+
     Examples:
-      >>> _flush(True)  # doctest: +SKIP
+      >>> callable(_flush)
+      True
     """
-    nonlocal sample_count, pending_host, pending_proc
+    nonlocal sample_count, pending_host, pending_proc, hold_started_mono
+    nonlocal last_flush_log_mono
     if not pending_host and not pending_proc:
       sample_count = 0
+      hold_started_mono = None
       return
+    rows = len(pending_host) + len(pending_proc)
+    started = time.monotonic()
     try:
       _flush_orm_batch(pending_host, pending_proc)
       _inc_counter(counters, "db_ok")
@@ -897,16 +1068,53 @@ def _worker_main(
         pending_host = []
         pending_proc = []
         sample_count = 0
+        hold_started_mono = None
         if force_memory_release:
           _release_listend_db_worker_memory()
       return
+    elapsed = time.monotonic() - started
+    if flush_elapsed_max is not None:
+      try:
+        flush_elapsed_max.update(elapsed)
+      except Exception:
+        pass
+    if (started - last_flush_log_mono) >= _FLUSH_LOG_MIN_INTERVAL_S:
+      last_flush_log_mono = started
+      log_print(
+          "listend db ingest flush worker=%d rows=%d elapsed_s=%.3f"
+          % (worker_idx, rows, elapsed),
+          flush=True,
+      )
     pending_host = []
     pending_proc = []
     sample_count = 0
+    hold_started_mono = None
     if force_memory_release:
       _release_listend_db_worker_memory()
     if (time.monotonic() - conn_opened_at) >= _conn_max_age_s():
       _recycle_conn(reason="age")
+
+  def _maybe_flush_pending() -> None:
+    """
+    Flush when batch, row-cap, or hold-age policy says pending is ready.
+
+    Returns:
+      None
+
+    Examples:
+      >>> callable(_maybe_flush_pending)
+      True
+    """
+    if _should_flush_pending(
+        sample_count=sample_count,
+        pending_rows=len(pending_host) + len(pending_proc),
+        batch_samples=batch_samples,
+        flush_max_rows=flush_max_rows,
+        hold_started_mono=hold_started_mono,
+        now_mono=time.monotonic(),
+        flush_hold_s=flush_hold_s,
+    ):
+      _flush(force_memory_release=True)
 
   def _ensure_schema_seed(host: str) -> None:
     """
@@ -942,6 +1150,8 @@ def _worker_main(
       continue
     if item is None:
       break
+    # Aged pending must flush even when the shard queue is never empty.
+    _maybe_flush_pending()
     host = ""
     message = ""
     size = 0
@@ -1009,8 +1219,9 @@ def _worker_main(
       pending_proc.extend(proc_objs)
       del host_objs, proc_objs
       sample_count += 1
-      if sample_count >= batch_samples:
-        _flush(force_memory_release=True)
+      if hold_started_mono is None:
+        hold_started_mono = time.monotonic()
+      _maybe_flush_pending()
     except Exception as exc:
       _inc_counter(counters, "db_err")
       log_print(
@@ -1021,6 +1232,7 @@ def _worker_main(
       pending_host = []
       pending_proc = []
       sample_count = 0
+      hold_started_mono = None
       message = None
       _release_listend_db_worker_memory()
 
@@ -1049,6 +1261,7 @@ class ListendDbIngestPool:
     _byte_counts: Per-worker queued-byte counters.
     _byte_locks: Per-worker locks for those counters.
     _counters: Named idle-monitor counters.
+    _flush_elapsed_max: Window maximum successful flush elapsed seconds.
     _pause_seconds_window: Accumulated pause seconds in the current idle
       monitor window (closed intervals only).
     _pause_started_mono: Monotonic start of an open pause interval, or None.
@@ -1056,10 +1269,13 @@ class ListendDbIngestPool:
     _started: True after ``start()`` has launched threads.
     _stop: In-process stop event shared with workers.
     _window_baseline: Last idle-monitor counter snapshot.
+    _worker_lock: Mutex for start / respawn of affine worker threads.
     _workers: Started worker threads.
     batch_samples: Flush size in samples.
     budget_bytes: Total queued-byte budget.
     enabled: Whether live DB ingest is on.
+    flush_hold_s: Hold-age flush seconds (0 disables).
+    flush_max_rows: Pending host+proc row flush cap (0 disables).
     per_worker_budget_bytes: Per-thread queued-byte cap.
     pool_processes: Thread count (INI key name is historical).
     queue_maxsize: ``Queue`` item cap derived from the byte budget.
@@ -1072,21 +1288,26 @@ class ListendDbIngestPool:
     queue_max_gb: float | None = None,
     batch_samples: int | None = None,
     enabled: bool | None = None,
+    flush_max_rows: int | None = None,
+    flush_hold_s: float | None = None,
   ) -> None:
     """
-    Initialize a new instance.
-    
+    Load INI budgets and flush knobs; do not start threads until ``start()``.
+
     Args:
-      pool_processes (int | None): One of ``int``, ``None``.
-      queue_max_gb (float | None): One of ``float``, ``None``.
-      batch_samples (int | None): One of ``int``, ``None``.
-      enabled (bool | None): One of ``bool``, ``None``.
-    
+      pool_processes (int | None): Worker count override, or INI default.
+      queue_max_gb (float | None): Total queue budget in GiB, or INI.
+      batch_samples (int | None): Sample-count flush cap, or INI.
+      enabled (bool | None): Live ingest on/off, or INI.
+      flush_max_rows (int | None): Pending row flush cap, or INI.
+      flush_hold_s (float | None): Hold-age flush seconds, or INI.
+
     Returns:
       None
-    
+
     Examples:
-      >>> ListendDbIngestPool(None, None, None, None)  # doctest: +SKIP
+      >>> ListendDbIngestPool(enabled=False).enabled
+      False
     """
     budgets = compute_listend_db_queue_budgets(
         pool_processes=pool_processes,
@@ -1109,6 +1330,22 @@ class ListendDbIngestPool:
             else cfg.get_listend_db_ingest_batch_samples()
         ),
     )
+    self.flush_max_rows = max(
+        0,
+        int(
+            flush_max_rows
+            if flush_max_rows is not None
+            else cfg.get_listend_db_ingest_flush_max_rows()
+        ),
+    )
+    self.flush_hold_s = max(
+        0.0,
+        float(
+            flush_hold_s
+            if flush_hold_s is not None
+            else cfg.get_listend_db_ingest_flush_hold_s()
+        ),
+    )
     self._queues: list = []
     self._byte_counts: list = []
     self._byte_locks: list = []
@@ -1116,6 +1353,8 @@ class ListendDbIngestPool:
     self._started = False
     self._pause_started_mono: float | None = None
     self._pause_seconds_window = 0.0
+    self._flush_elapsed_max = _ThreadMax()
+    self._worker_lock = threading.Lock()
     # Disabled pools do not start threads or allocate queues.
     if not self.enabled:
       self._stop = None
@@ -1159,43 +1398,106 @@ class ListendDbIngestPool:
 
     configure_blas_thread_env()
     ensure_django()
-    for i in range(self.pool_processes):
-      q: queue.Queue = queue.Queue(maxsize=self.queue_maxsize)
-      byte_count = _ThreadCounter(0)
-      byte_lock = threading.Lock()
-      thread = threading.Thread(
-          target=_worker_main,
-          args=(
-              i,
-              q,
-              self._stop,
-              byte_count,
-              byte_lock,
-              self._counters,
-              self.batch_samples,
-              self.per_worker_budget_bytes,
-          ),
-          name="listend-db-%d" % i,
-          daemon=True,
-      )
-      self._queues.append(q)
-      self._byte_counts.append(byte_count)
-      self._byte_locks.append(byte_lock)
-      self._workers.append(thread)
-      thread.start()
+    with self._worker_lock:
+      for i in range(self.pool_processes):
+        q: queue.Queue = queue.Queue(maxsize=self.queue_maxsize)
+        byte_count = _ThreadCounter(0)
+        byte_lock = threading.Lock()
+        self._queues.append(q)
+        self._byte_counts.append(byte_count)
+        self._byte_locks.append(byte_lock)
+        thread = self._make_worker_thread(i)
+        self._workers.append(thread)
+        thread.start()
     self._started = True
     self._window_baseline = self.snapshot_counters()
     log_print(
         "listend db ingest pool started workers=%d queue_maxsize=%d "
-        "per_worker_budget_bytes=%d batch_samples=%d"
+        "per_worker_budget_bytes=%d batch_samples=%d flush_max_rows=%d "
+        "flush_hold_s=%.3f"
         % (
             self.pool_processes,
             self.queue_maxsize,
             self.per_worker_budget_bytes,
             self.batch_samples,
+            self.flush_max_rows,
+            self.flush_hold_s,
         ),
         flush=True,
     )
+
+  def _make_worker_thread(self, worker_idx: int) -> threading.Thread:
+    """
+    Build one host-affine DB thread bound to an existing shard queue.
+
+    Does not start the thread. Caller must hold ``_worker_lock`` when
+    replacing ``_workers[worker_idx]``.
+
+    Args:
+      worker_idx (int): Affine index into queues / byte counters / workers.
+
+    Returns:
+      threading.Thread: Daemon thread targeting ``_worker_main``.
+
+    Examples:
+      >>> callable(ListendDbIngestPool(enabled=False)._make_worker_thread)
+      True
+    """
+    return threading.Thread(
+        target=_worker_main,
+        args=(
+            worker_idx,
+            self._queues[worker_idx],
+            self._stop,
+            self._byte_counts[worker_idx],
+            self._byte_locks[worker_idx],
+            self._counters,
+            self.batch_samples,
+            self.per_worker_budget_bytes,
+            self.flush_max_rows,
+            self.flush_hold_s,
+            self._flush_elapsed_max,
+        ),
+        name="listend-db-%d" % worker_idx,
+        daemon=True,
+    )
+
+  def ensure_workers_alive(self) -> int:
+    """
+    Respawn dead affine DB threads onto the same shard queue.
+
+    Uses ``Thread.is_alive()`` only — not process argv or Linux ``comm``.
+    A dead ``listend-db-N`` thread is replaced in-place so host affinity
+    is preserved. Living threads are left alone (no double-start).
+
+    Returns:
+      int: Count of worker threads that are alive after any respawns.
+
+    Examples:
+      >>> ListendDbIngestPool(enabled=False).ensure_workers_alive()
+      0
+    """
+    if not self.enabled or not self._started or self._stop is None:
+      return 0
+    if self._stop.is_set():
+      return sum(1 for thread in self._workers if thread.is_alive())
+    alive = 0
+    with self._worker_lock:
+      for i, thread in enumerate(self._workers):
+        if thread is not None and thread.is_alive():
+          alive += 1
+          continue
+        log_print(
+            "ERROR: listend db ingest worker dead; respawning index=%d"
+            % i,
+            flush=True,
+        )
+        replacement = self._make_worker_thread(i)
+        self._workers[i] = replacement
+        replacement.start()
+        if replacement.is_alive():
+          alive += 1
+    return alive
 
   def stop(self, *, join_timeout: float = _SHUTDOWN_JOIN_TIMEOUT_S) -> None:
     """
@@ -1543,20 +1845,43 @@ class ListendDbIngestPool:
     """
     Format the idle-monitor DB-ingest suffix for the 10-minute status line.
 
-    Includes window ``pause_enters``, ``pause_s``, and ``paused`` so operators
-    see backpressure duration without per-flap pause/resume INFO.
+    Heals dead affine workers first so ``alive_db_threads`` reflects the
+    post-respawn count. Also reports per-shard queue maxima and the
+    window ``flush_max_s`` (then resets that window max).
 
     Returns:
       str: Space-separated ``key=value`` fields for the idle monitor line.
 
     Examples:
-      >>> ListendDbIngestPool().format_idle_monitor_suffix()  # doctest: +SKIP
+      >>> pool = ListendDbIngestPool(enabled=False)
+      >>> "batch_flush=" in pool.format_idle_monitor_suffix()
+      True
     """
+    alive = self.ensure_workers_alive()
     d = self.window_counters_and_reset()
+    max_shard_qsize = 0
+    for q in self._queues:
+      try:
+        max_shard_qsize = max(max_shard_qsize, int(q.qsize()))
+      except Exception:
+        pass
+    max_shard_bytes = 0
+    for byte_count in self._byte_counts:
+      try:
+        max_shard_bytes = max(max_shard_bytes, int(byte_count.value))
+      except Exception:
+        pass
+    flush_max_s = 0.0
+    try:
+      flush_max_s = float(self._flush_elapsed_max.take())
+    except Exception:
+      pass
     return (
         "db_ingest queue_drops=%d pause_enters=%d pause_s=%d paused=%d "
         "schema_miss=%d db_ok=%d db_err=%d conn_recycle=%d "
-        "db_queue_depth=%d db_queued_bytes=%d batch_flush=%d"
+        "db_queue_depth=%d db_queued_bytes=%d batch_flush=%d "
+        "alive_db_threads=%d max_shard_qsize=%d max_shard_bytes=%d "
+        "flush_max_s=%.3f"
         % (
             d.get("queue_drops", 0),
             d.get("pause_enters", 0),
@@ -1569,6 +1894,10 @@ class ListendDbIngestPool:
             d.get("db_queue_depth", 0),
             d.get("db_queued_bytes", 0),
             d.get("batch_flush", 0),
+            alive,
+            max_shard_qsize,
+            max_shard_bytes,
+            flush_max_s,
         )
     )
 

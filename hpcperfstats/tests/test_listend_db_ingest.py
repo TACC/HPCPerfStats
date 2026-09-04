@@ -1268,3 +1268,167 @@ def test_stop_drains_leftover_queue_items():
   assert q.empty()
   assert pool._queues == []
   assert pool._started is False
+
+
+def test_should_flush_pending_row_cap_before_batch_samples():
+  """Fat samples must flush on row cap before batch_samples is reached."""
+  from hpcperfstats.dbload.lib.listend_db_ingest import _should_flush_pending
+
+  assert _should_flush_pending(
+      sample_count=1,
+      pending_rows=2000,
+      batch_samples=100,
+      flush_max_rows=2000,
+      hold_started_mono=100.0,
+      now_mono=100.1,
+      flush_hold_s=5.0,
+  ) is True
+  assert _should_flush_pending(
+      sample_count=1,
+      pending_rows=1999,
+      batch_samples=100,
+      flush_max_rows=2000,
+      hold_started_mono=100.0,
+      now_mono=100.1,
+      flush_hold_s=5.0,
+  ) is False
+  assert _should_flush_pending(
+      sample_count=100,
+      pending_rows=10,
+      batch_samples=100,
+      flush_max_rows=2000,
+      hold_started_mono=100.0,
+      now_mono=100.1,
+      flush_hold_s=5.0,
+  ) is True
+  assert _should_flush_pending(
+      sample_count=0,
+      pending_rows=0,
+      batch_samples=100,
+      flush_max_rows=2000,
+      hold_started_mono=None,
+      now_mono=100.0,
+      flush_hold_s=5.0,
+  ) is False
+
+
+def test_should_flush_pending_hold_age_while_queue_busy():
+  """Never-empty queues must still flush when pending hold-age expires."""
+  from hpcperfstats.dbload.lib.listend_db_ingest import _should_flush_pending
+
+  assert _should_flush_pending(
+      sample_count=2,
+      pending_rows=10,
+      batch_samples=100,
+      flush_max_rows=2000,
+      hold_started_mono=100.0,
+      now_mono=105.0,
+      flush_hold_s=5.0,
+  ) is True
+  assert _should_flush_pending(
+      sample_count=2,
+      pending_rows=10,
+      batch_samples=100,
+      flush_max_rows=2000,
+      hold_started_mono=100.0,
+      now_mono=104.9,
+      flush_hold_s=5.0,
+  ) is False
+  assert _should_flush_pending(
+      sample_count=2,
+      pending_rows=10,
+      batch_samples=100,
+      flush_max_rows=2000,
+      hold_started_mono=None,
+      now_mono=200.0,
+      flush_hold_s=5.0,
+  ) is False
+
+
+def test_ensure_workers_alive_respawns_dead_affine_thread(monkeypatch):
+  """A dead listend-db-N thread must be replaced on the same queue."""
+  from hpcperfstats.dbload.lib import django_bootstrap
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  def fake_ensure_django() -> None:
+    return None
+
+  def fake_worker_main(worker_idx, work_queue, stop_event, *args, **kwargs):
+    del worker_idx, work_queue, args, kwargs
+    stop_event.wait(5.0)
+
+  monkeypatch.setattr(django_bootstrap, "ensure_django", fake_ensure_django)
+  monkeypatch.setattr(ldi, "_worker_main", fake_worker_main)
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=2,
+      queue_max_gb=0.001,
+      batch_samples=1,
+      enabled=True,
+  )
+  try:
+    pool.start()
+    assert len(pool._workers) == 2
+    assert all(t.is_alive() for t in pool._workers)
+    old_queue = pool._queues[1]
+    dead = mock.Mock()
+    dead.is_alive.return_value = False
+    pool._workers[1] = dead
+    alive = pool.ensure_workers_alive()
+    assert alive == 2
+    replacement = pool._workers[1]
+    assert replacement is not dead
+    assert replacement.is_alive()
+    assert pool._queues[1] is old_queue
+  finally:
+    pool.stop(join_timeout=5.0)
+
+
+def test_idle_monitor_suffix_includes_shard_liveness(monkeypatch):
+  """Idle-monitor suffix must expose shard liveness and flush timing."""
+  from hpcperfstats.dbload.lib import django_bootstrap
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  def fake_ensure_django() -> None:
+    return None
+
+  def fake_worker_main(worker_idx, work_queue, stop_event, *args, **kwargs):
+    del worker_idx, work_queue, args, kwargs
+    stop_event.wait(5.0)
+
+  monkeypatch.setattr(django_bootstrap, "ensure_django", fake_ensure_django)
+  monkeypatch.setattr(ldi, "_worker_main", fake_worker_main)
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=2,
+      queue_max_gb=0.001,
+      batch_samples=10,
+      enabled=True,
+  )
+  try:
+    pool.start()
+    pool._queues[0].put_nowait(("h", "x", 3))
+    pool._byte_counts[1].value = 4096
+    pool._flush_elapsed_max.update(0.25)
+    suffix = pool.format_idle_monitor_suffix()
+  finally:
+    pool.stop(join_timeout=5.0)
+
+  assert "alive_db_threads=2" in suffix
+  assert "max_shard_qsize=" in suffix
+  assert "max_shard_bytes=" in suffix
+  assert "flush_max_s=" in suffix
+  assert "flush_max_s=0" not in suffix.split()[-1] or "0.25" in suffix
+  assert "flush_max_s=0.250" in suffix or "flush_max_s=0.25" in suffix
+
+
+def test_worker_main_uses_bounded_flush_helper():
+  """Worker loop must consult the shared flush-policy helper."""
+  import inspect
+
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  src = inspect.getsource(ldi._worker_main)
+  assert "_should_flush_pending" in src
+  assert "flush_max_rows" in src
+  assert "flush_hold_s" in src
