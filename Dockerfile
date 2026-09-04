@@ -244,6 +244,7 @@ RUN /bin/bash -o pipefail -c '\
   ctypes_so="$(find /opt/python3.14 -name '_ctypes*.so' -type f | head -1)"; \
   test -n "$ctypes_so"; \
   ldd "$ctypes_so" | grep '/opt/libffi/.*libffi'; \
+  zstd_so="$(find /opt/python3.14 -name '_zstd*.so' -type f | head -1)"; \
   test -n "$zstd_so"; \
   ldd "$zstd_so" | grep '/opt/zstd/.*libzstd'; \
   /opt/python3.14/bin/python3.14 -c "import zlib; v=getattr(zlib,\"ZLIB_RUNTIME_VERSION\",zlib.ZLIB_VERSION); assert \"zlib-ng\" in str(v).lower(), v"; \

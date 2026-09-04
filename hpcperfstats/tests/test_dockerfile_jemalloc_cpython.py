@@ -129,6 +129,29 @@ def test_zstd_opt_direct_link_replaces_system_cli_enables_cpython_zstd():
       assert "/opt/zstd" not in ln
 
 
+def test_gil_and_ft_assign_zstd_so_before_test_n():
+  """Both ABI post-install blocks must assign zstd_so before set -u expands it.
+
+  Regression: GIL RUN had test -n \"$zstd_so\" without a find assignment
+  (FT already correct), which fails builds under set -u.
+  """
+  build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
+  gil = build[
+      build.index("--prefix=/opt/python3.14") : build.index("--prefix=/opt/python3.14t")
+  ]
+  ft = build[build.index("--prefix=/opt/python3.14t") :]
+  gil_assign = (
+      "zstd_so=\"$(find /opt/python3.14 -name '_zstd*.so' -type f | head -1)\""
+  )
+  ft_assign = (
+      "zstd_so=\"$(find /opt/python3.14t -name '_zstd*.so' -type f | head -1)\""
+  )
+  assert gil_assign in gil
+  assert ft_assign in ft
+  assert gil.index(gil_assign) < gil.index('test -n "$zstd_so"')
+  assert ft.index(ft_assign) < ft.index('test -n "$zstd_so"')
+
+
 def test_jemalloc_configure_flags_and_no_initial_exec_tls():
   build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   assert "MAKEFLAGS=-j40" in build or "make -j40" in build
