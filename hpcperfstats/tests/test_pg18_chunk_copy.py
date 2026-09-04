@@ -87,3 +87,57 @@ def test_parse_chunk_tsv_and_watermark_days() -> None:
     now = datetime(2026, 9, 4, tzinfo=timezone.utc)
     wm = mod.watermark_from_now(days=3, now=now)
     assert wm == datetime(2026, 9, 1, tzinfo=timezone.utc)
+
+
+def test_fetch_source_chunks_uses_psycopg_not_psql_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: web image has no ``psql``; catalog fetch must use psycopg."""
+    mod = _load_mod()
+
+    def _forbid_subprocess(*_a: object, **_k: object) -> None:
+        raise AssertionError("subprocess must not invoke psql for catalog fetch")
+
+    monkeypatch.setattr(mod.subprocess, "run", _forbid_subprocess)
+    monkeypatch.setattr(mod.subprocess, "Popen", _forbid_subprocess)
+
+    class _FakeCursor:
+        def __enter__(self) -> "_FakeCursor":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def execute(self, _sql: str) -> None:
+            return None
+
+        def fetchall(
+            self,
+        ) -> list[tuple[str, str, datetime, datetime, bool]]:
+            return [
+                (
+                    "_timescaledb_internal",
+                    "_hyper_1_1_chunk",
+                    datetime(2026, 8, 1, tzinfo=timezone.utc),
+                    datetime(2026, 8, 2, tzinfo=timezone.utc),
+                    False,
+                )
+            ]
+
+    class _FakeConn:
+        def __enter__(self) -> "_FakeConn":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def cursor(self) -> _FakeCursor:
+            return _FakeCursor()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(mod, "connect_pg", lambda **_kw: _FakeConn())
+    rows = mod.fetch_source_chunks(host="db", port=5432, user="u", database="d")
+    assert len(rows) == 1
+    assert rows[0].chunk_name == "_hyper_1_1_chunk"
+    assert '"psql"' not in Path(mod.__file__).read_text(encoding="utf-8")
+    assert "'psql'" not in Path(mod.__file__).read_text(encoding="utf-8")

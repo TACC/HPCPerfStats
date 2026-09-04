@@ -7,6 +7,9 @@ have an empty Django-migrated ``host_data`` hypertable. Watermark filtering is
 best-effort while writers stay on PG15; freeze + recount is required before
 cutover (see ``docs/OPERATOR_PG18_MIGRATION.md``).
 
+Uses **psycopg** (already in the ``web`` image) for catalog queries and COPY
+streaming — no PostgreSQL client binary is required on PATH.
+
 Attributes:
   LOG: Module logger for chunk-copy progress and failures.
 """
@@ -15,11 +18,16 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Iterable, Sequence
+
+import psycopg
+from psycopg import Connection
 
 LOG = logging.getLogger("pg18_host_data_chunk_copy")
 
@@ -60,13 +68,13 @@ class ChunkRow:
 
 def parse_chunk_tsv(lines: Iterable[str]) -> list[ChunkRow]:
   """
-  Parse ``psql -At`` TSV lines into :class:`ChunkRow` values.
+  Parse pipe-delimited TSV lines into :class:`ChunkRow` values.
 
   Expected columns: chunk_schema, chunk_name, range_start, range_end,
-  is_compressed (t/f).
+  is_compressed (t/f). Kept for unit tests and offline fixtures.
 
   Args:
-    lines (Iterable[str]): Raw TSV lines from ``psql``.
+    lines (Iterable[str]): Raw TSV lines (five fields per line).
 
   Returns:
     list[ChunkRow]: Parsed chunk metadata rows.
@@ -104,7 +112,7 @@ def _parse_pg_timestamptz(value: str) -> datetime:
   Parse a PostgreSQL timestamptz text form into an aware UTC datetime.
 
   Args:
-    value (str): Timestamp text from ``psql`` (space or ``T`` separator).
+    value (str): Timestamp text (space or ``T`` separator).
 
   Returns:
     datetime: Timezone-aware UTC datetime.
@@ -250,45 +258,64 @@ ORDER BY range_start;
 """.strip()
 
 
-def _psql_env_cmd(
+def connect_pg(
     *,
     host: str,
     port: int,
     user: str,
     database: str,
-    extra: Sequence[str],
-) -> list[str]:
+) -> Connection:
   """
-  Build a ``psql`` argv list for the given connection and extra flags.
+  Open an autocommit psycopg connection (password from ``PGPASSWORD``).
 
   Args:
-    host (str): Postgres hostname.
+    host (str): Postgres hostname (compose alias such as ``db`` / ``db18``).
     port (int): Postgres port.
     user (str): Role name.
     database (str): Database name.
-    extra (Sequence[str]): Additional argv tokens (``-c``, ``-At``, …).
 
   Returns:
-    list[str]: Complete ``psql`` command argv.
+    Connection: Open psycopg connection with ``autocommit=True``.
 
   Examples:
-    >>> _psql_env_cmd(host='db', port=5432, user='u', database='d', extra=['-c', 'SELECT 1'])[0]
-    'psql'
+    >>> connect_pg.__name__
+    'connect_pg'
   """
-  return [
-      "psql",
-      "-h",
-      host,
-      "-p",
-      str(port),
-      "-U",
-      user,
-      "-d",
-      database,
-      "-v",
-      "ON_ERROR_STOP=1",
-      *extra,
-  ]
+  return psycopg.connect(
+      host=host,
+      port=port,
+      user=user,
+      dbname=database,
+      password=os.environ.get("PGPASSWORD") or "",
+      autocommit=True,
+  )
+
+
+def _as_utc_datetime(value: object) -> datetime:
+  """
+  Normalize a DB timestamptz / string into an aware UTC datetime.
+
+  Args:
+    value (object): ``datetime`` from psycopg or a timestamp string.
+
+  Returns:
+    datetime: Timezone-aware UTC datetime.
+
+  Raises:
+    TypeError: Raised when ``value`` is neither datetime nor str.
+
+  Examples:
+    >>> _as_utc_datetime(datetime(2026, 1, 1, tzinfo=timezone.utc)).year
+    2026
+  """
+  if isinstance(value, datetime):
+    dt = value
+    if dt.tzinfo is None:
+      dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+  if isinstance(value, str):
+    return _parse_pg_timestamptz(value)
+  raise TypeError(f"expected datetime or str, got {type(value)!r}")
 
 
 def fetch_source_chunks(
@@ -299,7 +326,7 @@ def fetch_source_chunks(
     database: str,
 ) -> list[ChunkRow]:
   """
-  Run the catalog query on the source and parse TSV rows.
+  Query ``timescaledb_information.chunks`` on the source via psycopg.
 
   Args:
     host (str): Source Postgres hostname.
@@ -310,21 +337,26 @@ def fetch_source_chunks(
   Returns:
     list[ChunkRow]: Parsed source chunks.
 
-  Raises:
-    subprocess.CalledProcessError: Raised when ``psql`` exits non-zero.
-
   Examples:
-    >>> fetch_source_chunks  # doctest: +SKIP
+    >>> callable(fetch_source_chunks)
+    True
   """
-  cmd = _psql_env_cmd(
-      host=host,
-      port=port,
-      user=user,
-      database=database,
-      extra=["-At", "-F", "|", "-c", list_source_chunks_sql()],
-  )
-  proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
-  return parse_chunk_tsv(proc.stdout.splitlines())
+  with connect_pg(host=host, port=port, user=user, database=database) as conn:
+    with conn.cursor() as cur:
+      cur.execute(list_source_chunks_sql())
+      raw_rows = cur.fetchall()
+  rows: list[ChunkRow] = []
+  for schema, name, start, end, compressed in raw_rows:
+    rows.append(
+        ChunkRow(
+            chunk_schema=str(schema),
+            chunk_name=str(name),
+            range_start=_as_utc_datetime(start),
+            range_end=_as_utc_datetime(end),
+            is_compressed=bool(compressed),
+        )
+    )
+  return rows
 
 
 def copy_one_chunk(
@@ -338,7 +370,10 @@ def copy_one_chunk(
     dump_dir: str | None,
 ) -> None:
   """
-  Delete-range on target then pipe COPY out → COPY in (optional zstd dump).
+  Delete-range on target then stream COPY out → COPY in (optional zstd dump).
+
+  Uses the Postgres COPY protocol through psycopg on both ends. Optional
+  ``dump_dir`` still shells out to the ``zstd`` CLI when present.
 
   Args:
     chunk (ChunkRow): Source chunk to copy.
@@ -353,38 +388,16 @@ def copy_one_chunk(
     None: This function does not return a value.
 
   Raises:
-    RuntimeError: Raised when pipe, zstd, or ``psql`` stages fail.
-    subprocess.CalledProcessError: Raised when the delete-range ``psql`` fails.
+    RuntimeError: Raised when zstd dump/restore stages fail.
+    ValueError: Raised when ``chunk`` names the parent ``host_data`` relation.
 
   Examples:
-    >>> copy_one_chunk  # doctest: +SKIP
+    >>> callable(copy_one_chunk)
+    True
   """
   del_sql = build_delete_range_sql(chunk)
   out_sql = build_copy_out_sql(chunk)
   in_sql = build_copy_in_sql()
-
-  timeout_sql = "SET statement_timeout = 0;"
-  src = _psql_env_cmd(
-      host=source_host,
-      port=port,
-      user=user,
-      database=database,
-      extra=["-c", timeout_sql, "-c", out_sql],
-  )
-  tgt_del = _psql_env_cmd(
-      host=target_host,
-      port=port,
-      user=user,
-      database=database,
-      extra=["-c", timeout_sql, "-c", del_sql],
-  )
-  tgt_in = _psql_env_cmd(
-      host=target_host,
-      port=port,
-      user=user,
-      database=database,
-      extra=["-c", timeout_sql, "-c", in_sql],
-  )
 
   LOG.info(
       "copy chunk=%s range=[%s,%s) compressed=%s",
@@ -393,51 +406,63 @@ def copy_one_chunk(
       chunk.range_end.isoformat(),
       chunk.is_compressed,
   )
-  subprocess.run(tgt_del, check=True)
 
-  if dump_dir:
-    from pathlib import Path
+  with connect_pg(
+      host=source_host, port=port, user=user, database=database
+  ) as src, connect_pg(
+      host=target_host, port=port, user=user, database=database
+  ) as tgt:
+    with tgt.cursor() as tcur:
+      tcur.execute("SET statement_timeout = 0")
+      tcur.execute(del_sql)
 
-    path = Path(dump_dir) / f"chunk_{chunk.chunk_name}.pgcopy.zst"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as out_f:
-      src_p = subprocess.Popen(src, stdout=subprocess.PIPE)
-      assert src_p.stdout is not None
-      zstd = subprocess.Popen(
-          ["zstd", "-T0", "-19"],
-          stdin=src_p.stdout,
-          stdout=out_f,
-      )
-      src_p.stdout.close()
-      z_rc = zstd.wait()
-      s_rc = src_p.wait()
-      if s_rc != 0 or z_rc != 0:
-        raise RuntimeError(f"dump failed chunk={chunk.regclass} src={s_rc} zstd={z_rc}")
-    with path.open("rb") as in_f:
-      zstd_d = subprocess.Popen(
-          ["zstd", "-dc"],
-          stdin=in_f,
-          stdout=subprocess.PIPE,
-      )
-      assert zstd_d.stdout is not None
-      tgt_p = subprocess.Popen(tgt_in, stdin=zstd_d.stdout)
-      zstd_d.stdout.close()
-      t_rc = tgt_p.wait()
-      d_rc = zstd_d.wait()
-      if t_rc != 0 or d_rc != 0:
-        raise RuntimeError(
-            f"restore-from-dump failed chunk={chunk.regclass} tgt={t_rc} zstd={d_rc}"
+    if dump_dir:
+      path = Path(dump_dir) / f"chunk_{chunk.chunk_name}.pgcopy.zst"
+      path.parent.mkdir(parents=True, exist_ok=True)
+      with path.open("wb") as out_f, src.cursor() as scur:
+        scur.execute("SET statement_timeout = 0")
+        zstd = subprocess.Popen(
+            ["zstd", "-T0", "-19"],
+            stdin=subprocess.PIPE,
+            stdout=out_f,
         )
-    return
+        assert zstd.stdin is not None
+        with scur.copy(out_sql) as copy_out:
+          for data in copy_out:
+            zstd.stdin.write(bytes(data))
+        zstd.stdin.close()
+        z_rc = zstd.wait()
+        if z_rc != 0:
+          raise RuntimeError(
+              f"dump failed chunk={chunk.regclass} zstd={z_rc}"
+          )
+      with path.open("rb") as in_f, tgt.cursor() as tcur:
+        tcur.execute("SET statement_timeout = 0")
+        zstd_d = subprocess.Popen(
+            ["zstd", "-dc"],
+            stdin=in_f,
+            stdout=subprocess.PIPE,
+        )
+        assert zstd_d.stdout is not None
+        with tcur.copy(in_sql) as copy_in:
+          while True:
+            buf = zstd_d.stdout.read(1024 * 1024)
+            if not buf:
+              break
+            copy_in.write(buf)
+        d_rc = zstd_d.wait()
+        if d_rc != 0:
+          raise RuntimeError(
+              f"restore-from-dump failed chunk={chunk.regclass} zstd={d_rc}"
+          )
+      return
 
-  src_p = subprocess.Popen(src, stdout=subprocess.PIPE)
-  assert src_p.stdout is not None
-  tgt_p = subprocess.Popen(tgt_in, stdin=src_p.stdout)
-  src_p.stdout.close()
-  t_rc = tgt_p.wait()
-  s_rc = src_p.wait()
-  if s_rc != 0 or t_rc != 0:
-    raise RuntimeError(f"pipe copy failed chunk={chunk.regclass} src={s_rc} tgt={t_rc}")
+    with src.cursor() as scur, tgt.cursor() as tcur:
+      scur.execute("SET statement_timeout = 0")
+      tcur.execute("SET statement_timeout = 0")
+      with scur.copy(out_sql) as copy_out, tcur.copy(in_sql) as copy_in:
+        for data in copy_out:
+          copy_in.write(data)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -445,13 +470,15 @@ def main(argv: Sequence[str] | None = None) -> int:
   CLI entry: list or copy watermarked ``host_data`` chunks.
 
   Args:
-    argv (Sequence[str] | None): Optional argv override (tests); default ``None``.
+    argv (Sequence[str] | None): Optional argv override (tests); default
+      ``None`` reads ``sys.argv``.
 
   Returns:
     int: Process exit code (``0`` on success).
 
   Examples:
-    >>> main(['--help'])  # doctest: +SKIP
+    >>> callable(main)
+    True
   """
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--source-host", default="db", help="PG15 compose hostname")

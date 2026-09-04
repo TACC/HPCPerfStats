@@ -29,7 +29,7 @@ globs: services-conf/db.Dockerfile,docker-compose.yaml,scripts/pg18_host_data_ch
 ## Logical migrate (not `pg_upgrade`)
 
 - Fresh Django hypertable on PG18; **do not** restore `_timescaledb_catalog` from PG15.
-- Live copy: `COPY (SELECT * FROM <chunk>)` → `COPY host_data FROM STDIN` with watermark; delete-range before retry.
+- Live copy: psycopg COPY protocol (`COPY (SELECT * FROM <chunk>)` → `COPY host_data FROM STDIN`) with watermark; delete-range before retry. Run from `web` (no client binary required).
 - Freeze order and verify SQL: **`docs/OPERATOR_PG18_MIGRATION.md`**.
 - **Forbidden:** `pg_dump -t host_data` alone; cutover without freeze.
 
