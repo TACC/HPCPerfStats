@@ -305,7 +305,7 @@ RUN /bin/bash -o pipefail -c '\
   ldd "$decimal_so" | grep libmpdec; \
   ctypes_so="$(find /opt/python3.14t -name '_ctypes*.so' -type f | head -1)"; \
   test -n "$ctypes_so"; \
-  ldd "$ctypes_so" | grep libffi; \
+  ldd "$ctypes_so" | grep '/opt/libffi/.*libffi'; \
   zstd_so="$(find /opt/python3.14t -name '_zstd*.so' -type f | head -1)"; \
   test -n "$zstd_so"; \
   ldd "$zstd_so" | grep '/opt/zstd/.*libzstd'; \
