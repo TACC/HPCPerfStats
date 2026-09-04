@@ -46,18 +46,44 @@ def test_python_build_layers_python_deps_on_pyproject():
   assert pyproject_copy_pos < build_install_pos
 
 
+def test_python_build_gil_pip_invokes_via_python3_m():
+  """GIL deps RUNs must use python3 -m pip (bare pip is not on PATH).
+
+  Regression: podman build failed with ``pip: command not found`` after the
+  tomllib requirements slice because only pip3 was symlinked to /usr/local/bin
+  and /opt/python3.14/bin was not on PATH in python-build.
+  """
+  build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
+  assert "python3 -m pip install --no-cache-dir -r /tmp/requirements-build.txt" in build
+  assert "python3 -m pip download" in build
+  assert "python3 -m pip install --no-cache-dir pyinstrument" in build
+  assert "python3 -m pip uninstall" in build
+  assert "python3 -m pip cache purge" in build
+  # Strip allowed forms; remaining bare pip argv breaks the builder under default PATH.
+  cleaned = build.replace("python3 -m pip ", "").replace(
+      "/opt/python3.14t/bin/python3.14t -m pip ",
+      "",
+  )
+  assert "pip install" not in cleaned
+  assert "pip download" not in cleaned
+  assert "pip uninstall" not in cleaned
+  assert "pip cache" not in cleaned
+
+
 def test_hpcperfstats_base_installs_package_no_deps_after_full_copy():
   """Runtime base copies tree then pip --no-deps only (deps already in python-build)."""
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   stage = _stage_body(dockerfile, "hpcperfstats-base")
 
   assert "COPY --chown=hpcperfstats:hpcperfstats . ." in stage
-  assert "pip install --no-cache-dir --no-deps ." in stage
+  assert "python3 -m pip install --no-cache-dir --no-deps ." in stage
   assert "-r /tmp/requirements-build.txt" not in stage
   assert "-r /tmp/requirements-rest.txt" not in stage
 
   full_copy_pos = stage.index("COPY --chown=hpcperfstats:hpcperfstats . .")
-  package_install_pos = stage.index("pip install --no-cache-dir --no-deps .")
+  package_install_pos = stage.index(
+      "python3 -m pip install --no-cache-dir --no-deps ."
+  )
   assert full_copy_pos < package_install_pos
 
 

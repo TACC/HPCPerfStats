@@ -361,8 +361,8 @@ RUN /bin/bash -o pipefail -c '\
 # 2) GIL image-build wheels only (MKL + toolchain).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  pip install --no-cache-dir --upgrade pip; \
-  pip install --no-cache-dir -r /tmp/requirements-build.txt'
+  python3 -m pip install --no-cache-dir --upgrade pip; \
+  python3 -m pip install --no-cache-dir -r /tmp/requirements-build.txt'
 
 # 3) GIL source-build against MKL (before rest): numpy, numexpr+VML, pandas.
 # mkl 2026+ wheels install shared libs under sysconfig data/lib (no Python package).
@@ -390,7 +390,7 @@ RUN /bin/bash -o pipefail -c '\
   export CFLAGS="${CFLAGS:+${CFLAGS} }-O3 -march=native -g0 -I/opt/zlib-ng/include" \
     CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }-O3 -march=native -g0 -I/opt/zlib-ng/include" \
     FFLAGS="${FFLAGS:+${FFLAGS} }-O3 -march=native -g0"; \
-  pip install --no-cache-dir --no-build-isolation --force-reinstall \
+  python3 -m pip install --no-cache-dir --no-build-isolation --force-reinstall \
     --no-binary numpy \
     --config-settings=setup-args=-Dblas=mkl \
     --config-settings=setup-args=-Dlapack=mkl \
@@ -399,7 +399,7 @@ RUN /bin/bash -o pipefail -c '\
     -r /tmp/requirements-mkl-numpy.txt; \
   python3 -c "import numpy as np; c=np.show_config(mode=\"dicts\"); assert \"mkl\" in str(c).lower(), c"; \
   rm -rf /tmp/numexpr-dl /tmp/numexpr-src; mkdir -p /tmp/numexpr-dl /tmp/numexpr-src; \
-  pip download --no-cache-dir --no-binary=:all: --no-deps -d /tmp/numexpr-dl \
+  python3 -m pip download --no-cache-dir --no-binary=:all: --no-deps -d /tmp/numexpr-dl \
     -r /tmp/requirements-mkl-numexpr.txt; \
   shopt -s nullglob; \
   _ne_tars=(/tmp/numexpr-dl/numexpr-*.tar.gz); \
@@ -410,11 +410,11 @@ RUN /bin/bash -o pipefail -c '\
   NUMEXPR_SRC="${_ne_srcs[0]}"; \
   printf "%s\n" "[mkl]" "include_dirs = ${MKLROOT}/include" \
     "library_dirs = ${MKLROOT}/lib" "libraries = mkl_rt" > "${NUMEXPR_SRC}/site.cfg"; \
-  pip install --no-cache-dir --no-build-isolation --force-reinstall --no-deps \
+  python3 -m pip install --no-cache-dir --no-build-isolation --force-reinstall --no-deps \
     "${NUMEXPR_SRC}"; \
   python3 -c "import numexpr as ne; assert ne.use_vml is True, (ne.use_vml, getattr(ne, \"get_vml_version\", lambda: None)())"; \
   python3 -c "import numpy as np; c=np.show_config(mode=\"dicts\"); assert \"mkl\" in str(c).lower(), c"; \
-  pip install --no-cache-dir --no-build-isolation --force-reinstall --no-deps \
+  python3 -m pip install --no-cache-dir --no-build-isolation --force-reinstall --no-deps \
     --no-binary pandas \
     -r /tmp/requirements-mkl-pandas.txt; \
   python3 -c "import numpy as np; c=np.show_config(mode=\"dicts\"); assert \"mkl\" in str(c).lower(), c"; \
@@ -424,7 +424,7 @@ RUN /bin/bash -o pipefail -c '\
 # python-dateutil is here; import pandas only after rest (needs dateutil).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  pip install --no-cache-dir --constraint /tmp/requirements-mkl-src.txt \
+  python3 -m pip install --no-cache-dir --constraint /tmp/requirements-mkl-src.txt \
     -r /tmp/requirements-rest.txt; \
   python3 -c "import pandas as pd; assert pd.__version__"'
 
@@ -494,15 +494,15 @@ RUN /bin/bash -o pipefail -c '\
   /opt/python3.14t/bin/python3.14t -c "import pandas as pd; assert pd.__version__"'
 
 # Install debugging tools into GIL prefix (py-spy / pyinstrument).
-RUN /bin/bash -o pipefail -c 'pip install --no-cache-dir pyinstrument py-spy'
+RUN /bin/bash -o pipefail -c 'python3 -m pip install --no-cache-dir pyinstrument py-spy'
 
 # Uninstall image-build-only toolchain from both ABIs; keep runtime mkl; final strip.
 # Prune compile leftovers under /opt so hpcperfstats-base never inherits src/build trees.
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  pip uninstall -y meson meson-python ninja cython versioneer mkl-devel || true; \
+  python3 -m pip uninstall -y meson meson-python ninja cython versioneer mkl-devel || true; \
   /opt/python3.14t/bin/python3.14t -m pip uninstall -y meson meson-python ninja cython versioneer mkl-devel || true; \
-  pip cache purge; \
+  python3 -m pip cache purge; \
   /opt/python3.14t/bin/python3.14t -m pip cache purge; \
   for root in /opt/jemalloc /opt/zlib-ng /opt/zstd /opt/mpdecimal /opt/libffi /opt/python3.14 /opt/python3.14t; do \
     find "$root" -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
@@ -638,9 +638,9 @@ RUN chmod +x \
     /home/hpcperfstats/services-conf/rsync_data.sh.example
 
 # Install the hpcperfstats package (deps already installed in python-build) for both ABIs.
-RUN /bin/bash -o pipefail -c "pip install --no-cache-dir --no-deps . \
+RUN /bin/bash -o pipefail -c "python3 -m pip install --no-cache-dir --no-deps . \
     && /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-deps . \
-    && pip cache purge \
+    && python3 -m pip cache purge \
     && /opt/python3.14t/bin/python3.14t -m pip cache purge"
 
 # Pipeline-only refresh: scripts/rebuild_pipeline.sh populates
