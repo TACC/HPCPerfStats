@@ -14,13 +14,10 @@ alwaysApply: false
 
 ## What to do
 
-- Increase **`shm_size`** on the Timescale/Postgres service (e.g. in `docker-compose.yaml` under `db:`) until heavy queries and parallel workers stop failing. Canonical compose today sets **`shm_size: "16gb"`** with **`shared_buffers=12GB`** on the `db` service — keep README/`DEPLOY_CONCURRENCY_AND_NUMA.md` aligned when changing either. Smaller dev hosts may need a lower pair; document the tradeoff rather than silently shrinking production defaults.
+- Increase **`shm_size`** on the Timescale/Postgres service (e.g. in `docker-compose.yaml` under `db:` / dual-run `db_pg18:`) until heavy queries and parallel workers stop failing. Canonical compose today sets **`shm_size: "16gb"`** with **`shared_buffers=12GB`** on the `db` service (and the same shm on **`db_pg18`** during migrate) — keep README/`DEPLOY_CONCURRENCY_AND_NUMA.md` aligned when changing either. Smaller dev hosts may need a lower pair; document the tradeoff rather than silently shrinking production defaults.
 - After changing **`shm_size`**, recreate the db container so the limit applies.
-
-## Code interaction
-
-- Django only surfaces the failure as **`django.db.utils.OperationalError`**; the root cause is **container runtime configuration**, not application Python logic.
 
 ## Overlap
 
+- **`postgres-custom-image-and-migrate-contract.mdc`** — homemade PG18 dual-run also keeps **`shm_size: "16gb"`**.
 - Composes with **`local-compose-db-lifecycle-for-web-tests.mdc`** / **`full-test-with-db-redis.mdc`** when validating DB health after compose edits.

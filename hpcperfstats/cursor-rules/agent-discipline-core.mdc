@@ -90,6 +90,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | Trigger paths | Read these rules |
 |---------------|------------------|
 | `docker-compose*.yaml`, `tests/run_*_workflow.sh` | `colima-docker-runtime.mdc`, `compose-required-for-data-services-changes.mdc`, `docker-compose-non-unit-testing.mdc`, `no-production-env-for-ini-config.mdc` |
+| `docker-compose.yaml` `db` / `db_pg18`, `services-conf/db.Dockerfile`, `services-conf/db-docker-*.sh`, `scripts/pg18_host_data_chunk_copy.py`, `docs/OPERATOR_PG18_MIGRATION.md`, `hpcperfstats/tests/test_dockerfile_db_postgres.py`, `hpcperfstats/tests/test_pg18_chunk_copy.py` | `postgres-custom-image-and-migrate-contract.mdc`, `postgres-docker-shared-memory.mdc`, `readme-installation-sync.mdc` |
 | `docker-compose.yaml` `rabbitmq` service, `services-conf/rabbitmq_vm_memory.conf`, `services-conf/rabbitmq_*.conf` | `rabbitmq-memory-cgroup-contract.mdc`, `readme-installation-sync.mdc` |
 | `docker-compose.settings.yaml`, `docker-compose.settings.yaml.example` | `docker-compose-settings-example-sync.mdc`, `readme-installation-sync.mdc`, `minimal-compose-install-footprint.mdc` |
 | `.dockerignore`, `Dockerfile`, `hpcperfstats/tests/test_dockerignore_test_artifacts.py` | `dockerignore-test-artifacts-sync.mdc`, `frontend-prod-test-build-boundary.mdc` (when frontend test/prod build boundary changes), `python-image-interpreter-contract.mdc` |

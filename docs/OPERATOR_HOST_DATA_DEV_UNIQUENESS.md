@@ -100,7 +100,7 @@ Then redeploy the Phase 1 image and let `migrate` apply `0030` for real.
 
 Compose pins `**timescale/timescaledb:2.28.3-pg15**`. Pulling/recreating `db` updates the **container libraries**; the **catalog** `extversion` does **not** auto-bump on an existing `postgres_data` volume. Sites surveyed 2026-07-31 still spanned catalog **2.17.2 / 2.21.0 / 2.24.0 / 2.28.2** while every image offered **2.28.2** (compose now pins **2.28.3**).
 
-Stay on the **2.28.x** line while on PostgreSQL 15 — Timescale **2.29+ drops PG15**. Do not change the compose tag to a newer major Timescale without a PG major upgrade plan.
+Stay on the **2.28.x** line while on PostgreSQL 15 — Timescale **2.29+ drops PG15**. Do not change the compose tag to a newer major Timescale without a PG major upgrade plan. Homemade PG18 + Timescale 2.29.x dual-run and logical cutover: **`docs/OPERATOR_PG18_MIGRATION.md`** (do **not** `pg_upgrade` or restore `_timescaledb_catalog` from PG15).
 
 **Compose cwd (prose only):** checkout with `docker-compose.yaml`. Do not prefix paste blocks with `cd`.
 

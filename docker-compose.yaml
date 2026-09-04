@@ -214,6 +214,83 @@ services:
         aliases:
           - db
 
+  # Homegrown PG18 + Timescale (jemalloc/ICU/liburing/lz4/zstd). Dual-run only
+  # during logical migrate — see docs/OPERATOR_PG18_MIGRATION.md. Hostname `db`
+  # stays on Hub PG15 until cutover. Start with:
+  #   docker compose --profile pg18-migrate up -d db_pg18
+  db_pg18:
+    profiles:
+      - pg18-migrate
+    build:
+      context: ./services-conf
+      dockerfile: db.Dockerfile
+    image: hpcperfstats-db
+    logging: *hpc-logging
+    shm_size: "16gb"
+    # Docker default seccomp often blocks io_uring (docker-library/postgres#1365).
+    # Unconfined is required for -c io_method=io_uring to stick; fail closed in
+    # the operator runbook if SHOW io_method is not io_uring.
+    security_opt:
+      - seccomp=unconfined
+    command:
+      - -c
+      - max_connections=500
+      - -c
+      - statement_timeout=120000
+      - -c
+      - idle_in_transaction_session_timeout=300000
+      - -c
+      - shared_buffers=12GB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - autovacuum_work_mem=256MB
+      - -c
+      - temp_buffers=4MB
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - min_wal_size=2GB
+      - -c
+      - max_wal_size=6GB
+      - -c
+      - max_worker_processes=32
+      - -c
+      - max_parallel_workers=24
+      - -c
+      - max_parallel_workers_per_gather=4
+      - -c
+      - max_parallel_maintenance_workers=2
+      - -c
+      - timescaledb.max_tuples_decompressed_per_dml_transaction=1000000
+      - -c
+      - io_method=io_uring
+    restart: always
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U hpcperfstats -h 127.0.0.1 -p 5432
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    stop_signal: SIGINT
+    stop_grace_period: 2m
+    # PG18 docker-library prefers VOLUME /var/lib/postgresql (not .../data only).
+    volumes:
+      - postgres_data_pg18:/var/lib/postgresql
+    environment:
+      - POSTGRES_USER=hpcperfstats
+      - POSTGRES_PASSWORD=hpcperfstats
+      - TIMESCALEDB_TELEMETRY=off
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - db18
+
   rabbitmq:
     # Management plugin (HTTP API on 15672) for Admin Monitor stats.
     image: rabbitmq:4.3.4-management-alpine

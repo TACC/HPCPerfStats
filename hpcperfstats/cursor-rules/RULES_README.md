@@ -22,6 +22,7 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`frontend-stack-wiring-contract.mdc`** — SPA routing, thin hooks, `response-schema-registry.ts`, and test mock layers must stay wired; see view → hook → API map and drift guards.
 - **`interactive-ready-controls.mdc`** — hide or skeleton until ready; shown controls must be immediately interactive (`initialLoading`, `tableBusy`, lazy sections).
 - **`rabbitmq-memory-cgroup-contract.mdc`** — compose `mem_limit` 96g + watermark absolute **strictly below** cgroup (80GiB); recreate rabbitmq; never classic-queue “fix”; dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
+- **`postgres-custom-image-and-migrate-contract.mdc`** — homemade Alpine PG18 + Timescale bake, `io_uring`, logical migrate (not `pg_upgrade`); dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
 - **`compose-operator-terminal-commands.mdc`** — plans and blocked diagnostics: INI paths first, filtered service-specific logs (not raw pipeline firehose), one `docker compose exec` block per service; update_metrics census uses `get_metrics_pool_processes()` as the thread count and `[thread:metrics-pool]`.
 - **`operator-command-lessons-learned.mdc`** — when operator commands fail, update `compose-operator-terminal-commands.mdc` in the same task; do not repeat broken patterns.
 - **`plan-live-disk-sync.mdc`** — live plan file on disk is authority; chat/CreatePlan do not count; operator discovery Completed findings vs Pending commands.

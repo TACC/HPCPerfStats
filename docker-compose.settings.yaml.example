@@ -33,6 +33,16 @@ volumes:
       type: none
       device: /data/hpcperfstats_db/pg15
       o: bind
+  # Homegrown PG18 dual-run volume (profile pg18-migrate). Create the host dir
+  # before: docker compose --profile pg18-migrate up -d db_pg18
+  # See docs/OPERATOR_PG18_MIGRATION.md. After cutover, operators may re-point
+  # the primary bind and retire pg15.
+  postgres_data_pg18:
+    driver: local
+    driver_opts:
+      type: none
+      device: /data/hpcperfstats_db/pg18
+      o: bind
   rabbitmq_messages:
     driver: local
     driver_opts:

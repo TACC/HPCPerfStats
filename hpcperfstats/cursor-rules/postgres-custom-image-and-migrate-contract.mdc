@@ -1,0 +1,40 @@
+---
+description: Homemade Alpine PG18+Timescale image, io_uring, logical migrate — not pg_upgrade
+alwaysApply: false
+globs: services-conf/db.Dockerfile,docker-compose.yaml,scripts/pg18_host_data_chunk_copy.py,docs/OPERATOR_PG18_MIGRATION.md
+---
+
+# PostgreSQL custom image and PG18 logical migrate
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+## Image bake (`services-conf/db.Dockerfile`)
+
+| Law | Detail |
+|-----|--------|
+| Base | Pinned **`alpine:3.24.x`** (e.g. `3.24.1`). **Forbidden:** `alpine:latest`, `alpine:edge`, `debian:trixie` for the DB image |
+| Stack | Source-build under `/opt`: jemalloc, **zlib-ng (ZLIB_COMPAT)**, ICU, liburing, lz4, zstd; PostgreSQL 18.x SHA pin; TimescaleDB 2.29.x **without** `APACHE_ONLY`. **Forbidden:** apk `zlib` / `zlib-dev` as the linked ABI |
+| Configure | `--with-icu --with-liburing --with-lz4 --with-zstd --with-llvm` (+ openssl/libxml/libxslt/uuid as documented). Postgres and zstd (HAVE_ZLIB=1) link `/opt/zlib-ng`. **Do not** pass docker-library `--disable-rpath` |
+| CFLAGS | Postgres + Timescale: `-O3 -march=native -mprefer-vector-width=512 -mtune=native -flto=auto -g0` (512-bit prefer **only** on PG + Timescale unless later asked) |
+| Runtime | `LD_PRELOAD` jemalloc on musl; fail-closed `ldd` shows `/opt/...` for jemalloc/**zlib-ng**/icu/uring/lz4/zstd on `postgres` and `/opt/zlib-ng` on `zstd` CLI; no apk `zlib` |
+| Build host | Bake on the **prod CPU** (`native`). Colima ARM images are not the ship target |
+
+## Compose dual-run
+
+- Keep Hub **`timescale/timescaledb:2.28.3-pg15`** as service **`db`** (alias **`db`**) until cutover.
+- Homemade service **`db_pg18`** (`image: hpcperfstats-db`), profile **`pg18-migrate`**, alias **`db18`**, volume **`postgres_data_pg18`**, mount **`/var/lib/postgresql`**, same `shm_size: "16gb"` GUCs **plus** `-c io_method=io_uring` and **`security_opt: seccomp=unconfined`** (or an equivalent profile that allows `io_uring_*`).
+- **Forbidden:** stealing alias `db` before freeze + verification.
+- Both DB containers keep **`shm_size: "16gb"`** during dual-run (`postgres-docker-shared-memory.mdc`).
+
+## Logical migrate (not `pg_upgrade`)
+
+- Fresh Django hypertable on PG18; **do not** restore `_timescaledb_catalog` from PG15.
+- Live copy: `COPY (SELECT * FROM <chunk>)` → `COPY host_data FROM STDIN` with watermark; delete-range before retry.
+- Freeze order and verify SQL: **`docs/OPERATOR_PG18_MIGRATION.md`**.
+- **Forbidden:** `pg_dump -t host_data` alone; cutover without freeze.
+
+## Overlap
+
+- **`postgres-docker-shared-memory.mdc`** — shm still 16gb on both containers
+- **`readme-installation-sync.mdc`** / **`compose-operator-terminal-commands.mdc`** — operator paste blocks
+- **`compose-required-for-data-services-changes.mdc`** — validate with compose workflows when DB wiring changes

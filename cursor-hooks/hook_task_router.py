@@ -375,6 +375,23 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "postgres_custom_image_migrate",
+        "patterns": [
+            "docker-compose.yaml",
+            "services-conf/db.Dockerfile",
+            "services-conf/db-docker-*.sh",
+            "scripts/pg18_host_data_chunk_copy.py",
+            "docs/OPERATOR_PG18_MIGRATION.md",
+            "hpcperfstats/tests/test_dockerfile_db_postgres.py",
+            "hpcperfstats/tests/test_pg18_chunk_copy.py",
+        ],
+        "rules": [
+            "postgres-custom-image-and-migrate-contract.mdc",
+            "postgres-docker-shared-memory.mdc",
+            "readme-installation-sync.mdc",
+        ],
+    },
+    {
         "id": "rabbitmq_memory_cgroup",
         "patterns": [
             "docker-compose.yaml",

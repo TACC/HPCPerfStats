@@ -27,9 +27,9 @@ def test_docker_compose_json_file_logging_rotated():
   assert "driver: json-file" in content
   assert 'max-size: "100m"' in content
   assert 'max-file: "3"' in content
-  for service in ["web", "pipeline", "redis", "proxy", "db", "rabbitmq"]:
+  for service in ["web", "pipeline", "redis", "proxy", "db", "db_pg18", "rabbitmq"]:
     assert f"{service}:" in content
-  assert content.count("logging: *hpc-logging") == 6
+  assert content.count("logging: *hpc-logging") == 7
 
 
 def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
@@ -270,6 +270,7 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
       "staticfiles_data",
       "media_data",
       "postgres_data",
+      "postgres_data_pg18",
       "rabbitmq_messages",
       "ssh_keys",
       "proxy_ssl_source",
@@ -281,6 +282,32 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
   assert "ssl_certs:" not in settings
   assert "ssl_certs:/etc/ssl/hpcperfstats" not in base
   assert "proxy_ssl_source:/mnt/ssl-source:ro" in base
+
+
+def test_docker_compose_db_pg18_dual_run_beside_hub_pg15():
+  """Hub PG15 keeps alias db; homemade PG18 is profile-gated with db18 + io_uring."""
+  repo_root = Path(__file__).resolve().parents[2]
+  content = (repo_root / "docker-compose.yaml").read_text()
+  db_m = re.search(r"(?ms)^  db:\n(.*?)(?=^  [a-z].*:|\Z)", content)
+  assert db_m, "db service not found"
+  db_block = db_m.group(0)
+  assert "timescale/timescaledb:2.28.3-pg15" in db_block
+  assert "io_method=io_uring" not in db_block
+  assert 'shm_size: "16gb"' in db_block
+
+  pg18_m = re.search(r"(?ms)^  db_pg18:\n(.*?)(?=^  [a-z].*:|\Z)", content)
+  assert pg18_m, "db_pg18 service not found"
+  pg18 = pg18_m.group(0)
+  assert "services-conf/db.Dockerfile" in pg18 or "dockerfile: db.Dockerfile" in pg18
+  assert "image: hpcperfstats-db" in pg18
+  assert "pg18-migrate" in pg18
+  assert "io_method=io_uring" in pg18
+  assert "seccomp=unconfined" in pg18
+  assert 'shm_size: "16gb"' in pg18
+  assert "postgres_data_pg18:/var/lib/postgresql" in pg18
+  assert "- db18" in pg18
+  # Cutover must not steal alias db while Hub PG15 is still the live writer.
+  assert re.search(r"(?m)^\s+-\s+db\s*$", pg18) is None
 
 
 def test_docker_compose_pipeline_ssh_uses_ssh_keys_volume():
@@ -309,6 +336,7 @@ _OPERATOR_SETTINGS_SHARED_BIND_DEVICES = (
     "device: /data/hpcperfstats_site/staticfiles",
     "device: /data/hpcperfstats_site/media",
     "device: /data/hpcperfstats_db/pg15",
+    "device: /data/hpcperfstats_db/pg18",
     "device: /data/hpcperfstats_data/rabbitmq",
 )
 
@@ -320,6 +348,7 @@ _OPERATOR_SETTINGS_VOLUME_NAMES = (
     "staticfiles_data:",
     "media_data:",
     "postgres_data:",
+    "postgres_data_pg18:",
     "rabbitmq_messages:",
     "ssh_keys:",
     "proxy_ssl_source:",
@@ -378,6 +407,7 @@ def test_docker_compose_test_overlay_clears_host_binds():
         "test_staticfiles_data",
         "test_media_data",
         "test_postgres_data",
+        "test_postgres_data_pg18",
         "test_rabbitmq_messages",
         "test_ssh_keys",
         "test_proxy_ssl_source",
@@ -389,11 +419,13 @@ def test_docker_compose_test_overlay_clears_host_binds():
       "test_staticfiles_data",
       "test_media_data",
       "test_postgres_data",
+      "test_postgres_data_pg18",
       "test_rabbitmq_messages",
       "test_ssh_keys",
       "test_proxy_ssl_source",
   ):
     assert name in overlay
+  assert "test_postgres_data_pg18:/var/lib/postgresql" in overlay
   assert "test_proxy_ssl_source:/mnt/ssl-source:ro" in overlay
   assert "device: ./tests/fixtures/proxy-ssl" in overlay
   assert "test_ssl_certs" not in overlay

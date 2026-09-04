@@ -29,6 +29,9 @@ services:
   db:
     volumes:
       - test_postgres_data:/var/lib/postgresql/data/
+  db_pg18:
+    volumes:
+      - test_postgres_data_pg18:/var/lib/postgresql
   rabbitmq:
     volumes:
       - test_rabbitmq_messages:/var/lib/rabbitmq/
@@ -38,6 +41,7 @@ volumes:
   test_staticfiles_data:
   test_media_data:
   test_postgres_data:
+  test_postgres_data_pg18:
   test_rabbitmq_messages:
   test_ssh_keys:
   test_proxy_ssl_source:

@@ -265,6 +265,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    sudo mkdir -p /data/hpcperfstats_site/staticfiles
    sudo mkdir -p /data/hpcperfstats_site/media
    sudo mkdir -p /data/hpcperfstats_db/pg15
+   # Optional during PG18 dual-run migrate (profile pg18-migrate); see docs/OPERATOR_PG18_MIGRATION.md:
+   # sudo mkdir -p /data/hpcperfstats_db/pg18
    # Also ensure the ssh_keys and proxy_ssl_source device paths you set above exist.
    ```
 
@@ -452,7 +454,9 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    fail-closes — rebuild target **`hpcperfstats-full`** (primary) or run
    **`./scripts/rebuild_frontend.sh`** (SPA-only hot path).
 
-   The compose DB service includes explicit PostgreSQL checkpoint/memory tuning (`max_connections`, `shared_buffers`, `work_mem`, `maintenance_work_mem`, `autovacuum_work_mem`, `checkpoint_*`, `min_wal_size`, `max_wal_size`, and parallel-worker caps) plus `shm_size`. Keep these aligned with host RAM and service memory limits; tune upward one notch at a time only after confirming checkpoint stability and no OOM events. The **pipeline** daemons (`listend`, `sync_timedb`, and `update_metrics`) now use in-process threads and ordinary Python objects, so the pipeline service no longer reserves a separate `shm_size` for worker IPC. Do **not** change **`db`** `shm_size: "16gb"`.
+   The compose DB service includes explicit PostgreSQL checkpoint/memory tuning (`max_connections`, `shared_buffers`, `work_mem`, `maintenance_work_mem`, `autovacuum_work_mem`, `checkpoint_*`, `min_wal_size`, `max_wal_size`, and parallel-worker caps) plus `shm_size`. Keep these aligned with host RAM and service memory limits; tune upward one notch at a time only after confirming checkpoint stability and no OOM events. The **pipeline** daemons (`listend`, `sync_timedb`, and `update_metrics`) now use in-process threads and ordinary Python objects, so the pipeline service no longer reserves a separate `shm_size` for worker IPC. Do **not** change **`db`** (or dual-run **`db_pg18`**) `shm_size: "16gb"`.
+
+   **PostgreSQL 18 migrate (optional dual-run):** Compose keeps Hub **`timescale/timescaledb:2.28.3-pg15`** as hostname **`db`**. Homemade Alpine PG18 + Timescale (`services-conf/db.Dockerfile`, image `hpcperfstats-db`) is service **`db_pg18`** under profile **`pg18-migrate`** (alias **`db18`**, volume **`postgres_data_pg18`**). Logical chunk copy + freeze cutover: **`docs/OPERATOR_PG18_MIGRATION.md`**. Bake the DB image on the production CPU (`-march=native`).
 
    If you change the codebase, bring the containers down, make your changes, and then rebuild and start the stack again. A full **`docker compose up --build`** (or equivalent from-scratch image rebuild) plus recreating **`web`** is the primary way to land SPA fixes: startup fingerprint heal syncs the new package frontend into **`staticfiles_data`**.    Use **`./scripts/rebuild_frontend.sh`** only when you want an SPA-only refresh without rebuilding the image.
    SPA rebuilds and image builds bake the running git SHA into the staff actions menu
