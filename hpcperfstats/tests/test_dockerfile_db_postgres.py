@@ -74,7 +74,7 @@ def test_db_dockerfile_uses_zlib_ng_not_apk_zlib() -> None:
     assert not re.search(r"(?m)^\s+zlib\s*\\?\s*$", runtime)
     assert not re.search(r"apk add[^\n]*\bzlib\b", runtime)
     assert "apk add --no-cache $runDeps" in text
-    assert "! apk info -e zlib" in text
+    assert "if apk info -e zlib" in text
     assert "/opt/zlib-ng/.+libz" in text
     assert "ldd /opt/zstd/bin/zstd" in text
 
@@ -120,17 +120,24 @@ def test_db_dockerfile_timescale_229_no_external_lz4_zstd_ldd_gate() -> None:
     Bake failure (hpcperfstats02 2026-09-04): grep /opt/lz4 on timescaledb.so ldd
     failed because 2.29.2 has no external lz4/zstd link; musl ldd also prints
     unresolved PG backend symbols that only exist when loaded by postgres.
-    jemalloc is provided by the postgres process (DT_NEEDED + LD_PRELOAD), not
-    by linking the extension.
+
+    Second bake: timescaledb.so still DT_NEEDED libjemalloc because cmake uses
+    `pg_config --ldflags` (-ljemalloc from postgres bake). unset LDFLAGS alone
+    is insufficient; wrap pg_config. Also `! grep` under set -e does not fail
+    the layer when the forbidden pattern matches (bash quirk) — use if/exit 1.
     """
     text = _dockerfile()
     ts_run = text[text.index("# --- TimescaleDB") : text.index("# Prune docs/man")]
     assert "unset LDFLAGS" in ts_run
+    assert "pg-config-wrap" in ts_run
+    assert "--ldflags|--libs)" in ts_run
+    assert "-ljemalloc" in ts_run  # stripped by wrap / sed
     assert "scanelf -n" in ts_run
-    assert "! grep -qi 'APACHE_ONLY:BOOL=ON'" in ts_run
-    # Fail-closed: extension must not DT_NEEDED jemalloc (or apk codecs).
-    assert "libjemalloc" in ts_run
-    assert "! grep -E 'liblz4|libzstd|libjemalloc' /tmp/timescaledb.needed" in ts_run
+    assert "if grep -qi 'APACHE_ONLY:BOOL=ON'" in ts_run
+    # Fail-closed must use if/exit (not "! grep") so set -e actually stops the bake.
+    assert "if grep -E 'liblz4|libzstd|libjemalloc' /tmp/timescaledb.needed" in ts_run
+    assert 'echo "timescaledb.so must not DT_NEEDED jemalloc/lz4/zstd"' in ts_run
+    assert "! grep -E 'liblz4|libzstd|libjemalloc' /tmp/timescaledb.needed" not in ts_run
     # Must not require DT_NEEDED lz4/zstd on the extension (false fail-closed).
     assert "grep -E '/opt/lz4/.+liblz4' /tmp/timescaledb" not in ts_run
     assert "grep -E '/opt/zstd/.+libzstd' /tmp/timescaledb" not in ts_run
@@ -145,12 +152,35 @@ def test_db_dockerfile_jemalloc_ld_preload_and_fail_closed_ldd() -> None:
     assert "/opt/jemalloc/.+libjemalloc" in text
     assert "/opt/liburing/.+liburing" in text
     assert "/opt/zlib-ng/.+libz" in text
+    # Runtime apk-zlib gate must use if/exit (not "! apk info") under set -e.
+    assert "if apk info -e zlib" in text
+    assert "! apk info -e zlib" not in text
 
 
 def test_db_entrypoint_scripts_shipped() -> None:
+    """db.Dockerfile COPY needs these scripts; root *.sh must not hide them from git."""
+    import subprocess
+
     root = _repo_root() / "services-conf"
-    assert (root / "db-docker-entrypoint.sh").is_file()
-    assert (root / "db-docker-ensure-initdb.sh").is_file()
+    for name in ("db-docker-entrypoint.sh", "db-docker-ensure-initdb.sh"):
+        path = root / name
+        assert path.is_file(), path
+        rel = f"services-conf/{name}"
+        # Must be trackable (gitignore negation). Prod bake failed when ignored.
+        # Use repo-relative paths: absolute paths can make check-ignore lie.
+        check = subprocess.run(
+            ["git", "check-ignore", "-q", rel],
+            cwd=_repo_root(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert check.returncode == 1, (
+            f"{rel} is gitignored; add !{rel} under .gitignore"
+        )
     text = _dockerfile()
-    assert "db-docker-entrypoint.sh" in text
-    assert "db-docker-ensure-initdb.sh" in text
+    assert "COPY db-docker-entrypoint.sh" in text
+    assert "COPY db-docker-ensure-initdb.sh" in text
+    ignore = (_repo_root() / ".gitignore").read_text()
+    assert "!services-conf/db-docker-entrypoint.sh" in ignore
+    assert "!services-conf/db-docker-ensure-initdb.sh" in ignore

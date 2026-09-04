@@ -149,7 +149,9 @@ RUN set -eux; \
   ldd /opt/zstd/bin/zstd | tee /tmp/zstd.ldd; \
   grep -E '/opt/zlib-ng/.+libz' /tmp/zstd.ldd; \
   grep -E '/opt/lz4/.+liblz4' /tmp/zstd.ldd; \
-  ! grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.|/usr/lib/liblz4)' /tmp/zstd.ldd; \
+  if grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.|/usr/lib/liblz4)' /tmp/zstd.ldd; then \
+    echo "zstd linked apk zlib/lz4 instead of /opt" >&2; exit 1; \
+  fi; \
   rm -rf /usr/src/zstd /tmp/zstd.tar.gz
 
 ENV PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig:/opt/icu/lib/pkgconfig:/opt/liburing/lib/pkgconfig:/opt/lz4/lib/pkgconfig:/opt/zstd/lib/pkgconfig" \
@@ -195,12 +197,15 @@ RUN set -eux; \
     --with-openssl \
     --with-zstd \
   ; \
-  test ! -f config.log || ! grep -q 'disable-rpath' config.status || true; \
-  ! grep -q -- '--disable-rpath' config.status; \
+  if grep -q -- '--disable-rpath' config.status; then \
+    echo "postgres configure must not use --disable-rpath" >&2; exit 1; \
+  fi; \
   make -j"$(nproc)" world-bin; \
   make install-world-bin; \
   make -C contrib install; \
   # Fail-closed: postgres DT_NEEDED must resolve /opt libs (not apk under /usr/lib).
+  # NOTE: under set -e, "! grep PATTERN" does NOT fail the layer when PATTERN
+  # matches (bash ignores negated status); use if/exit 1.
   ldd /usr/local/bin/postgres | tee /tmp/postgres.ldd; \
   grep -E '/opt/jemalloc/.+libjemalloc' /tmp/postgres.ldd; \
   grep -E '/opt/zlib-ng/.+libz' /tmp/postgres.ldd; \
@@ -208,17 +213,19 @@ RUN set -eux; \
   grep -E '/opt/liburing/.+liburing' /tmp/postgres.ldd; \
   grep -E '/opt/lz4/.+liblz4' /tmp/postgres.ldd; \
   grep -E '/opt/zstd/.+libzstd' /tmp/postgres.ldd; \
-  ! grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.|/usr/lib/liblz4|/usr/lib/libzstd|/usr/lib/libicu|/usr/lib/liburing)' /tmp/postgres.ldd; \
+  if grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.|/usr/lib/liblz4|/usr/lib/libzstd|/usr/lib/libicu|/usr/lib/liburing)' /tmp/postgres.ldd; then \
+    echo "postgres linked apk libs instead of /opt" >&2; exit 1; \
+  fi; \
   strip --strip-unneeded /usr/local/bin/postgres /usr/local/bin/psql || true; \
   postgres --version
 
-# --- TimescaleDB (not APACHE_ONLY). timescaledb.so must NOT link jemalloc,
-# lz4, or zstd: the extension is loaded into the postgres process, which
-# already has jemalloc via DT_NEEDED + LD_PRELOAD. Clear inherited PG
-# LDFLAGS (-ljemalloc) before cmake. Timescale 2.29+ also does not DT_NEEDED
-# external liblz4/libzstd (compression is internal). musl `ldd` on a PG
-# extension always reports unresolved backend symbols — those resolve when
-# loaded by postgres; use scanelf NEEDED instead.
+# --- TimescaleDB (not APACHE_ONLY). timescaledb.so must NOT DT_NEEDED jemalloc
+# (or lz4/zstd): the extension is loaded into the postgres process, which
+# already has jemalloc via DT_NEEDED + LD_PRELOAD. unset LDFLAGS is not enough
+# — Timescale cmake uses `pg_config --ldflags`, which still reports -ljemalloc
+# from the postgres bake; wrap pg_config to strip jemalloc for this stage.
+# Timescale 2.29+ also does not DT_NEEDED external liblz4/libzstd. musl `ldd`
+# on a PG extension always reports unresolved backend symbols — use scanelf.
 RUN set -eux; \
   curl -fsSL "https://github.com/timescale/timescaledb/archive/refs/tags/${TIMESCALEDB_VERSION}.tar.gz" \
     -o /tmp/timescaledb.tar.gz; \
@@ -227,9 +234,26 @@ RUN set -eux; \
   tar -xzf /tmp/timescaledb.tar.gz -C /usr/src/timescaledb --strip-components=1; \
   rm -f /tmp/timescaledb.tar.gz; \
   cd /usr/src/timescaledb; \
-  export PATH="/usr/local/bin:${PATH}"; \
-  # Do not inherit postgres -L/-ljemalloc or /opt codec include paths.
   unset LDFLAGS CPPFLAGS CFLAGS CXXFLAGS PKG_CONFIG_PATH || true; \
+  mkdir -p /tmp/pg-config-wrap; \
+  cat > /tmp/pg-config-wrap/pg_config <<'EOF'
+#!/bin/sh
+# Strip jemalloc from pg_config link flags so timescaledb.so does not DT_NEEDED it.
+real=/usr/local/bin/pg_config
+case "$1" in
+  --ldflags|--libs)
+    "$real" "$@" | sed -E \
+      -e 's/(^|[[:space:]])-ljemalloc([[:space:]]|$)/ /g' \
+      -e 's|(^|[[:space:]])-L/opt/jemalloc[^[:space:]]*||g' \
+      -e 's|(^|[[:space:]])-Wl,-rpath,/opt/jemalloc[^[:space:]]*||g'
+    ;;
+  *)
+    exec "$real" "$@"
+    ;;
+esac
+EOF
+  chmod +x /tmp/pg-config-wrap/pg_config; \
+  export PATH="/tmp/pg-config-wrap:/usr/local/bin:${PATH}"; \
   ./bootstrap \
     -DCMAKE_BUILD_TYPE=Release \
     -DREGRESS_CHECKS=OFF \
@@ -237,7 +261,16 @@ RUN set -eux; \
     -DCMAKE_C_FLAGS="${OPT_CFLAGS_PG}" \
   ; \
   cmake -L build | tee /tmp/ts.cmake; \
-  ! grep -qi 'APACHE_ONLY:BOOL=ON' /tmp/ts.cmake; \
+  if grep -qi 'APACHE_ONLY:BOOL=ON' /tmp/ts.cmake; then \
+    echo "Timescale must not be APACHE_ONLY" >&2; exit 1; \
+  fi; \
+  # Belt-and-suspenders: drop any -ljemalloc cmake already expanded into link lines.
+  find build -type f \( -name 'link.txt' -o -name 'flags.make' -o -name 'build.make' \) \
+    -exec sed -i -E \
+      -e 's/(^|[[:space:]])-ljemalloc([[:space:]]|$)/ /g' \
+      -e 's|(^|[[:space:]])-L/opt/jemalloc[^[:space:]]*||g' \
+      -e 's|(^|[[:space:]])-Wl,-rpath,/opt/jemalloc[^[:space:]]*||g' \
+      {} +; \
   cd build; \
   make -j"$(nproc)"; \
   make install; \
@@ -245,13 +278,14 @@ RUN set -eux; \
   test -n "$TS_SO"; \
   test -f "$TS_SO"; \
   scanelf -n "$TS_SO" | tee /tmp/timescaledb.needed; \
-  # Fail-closed: extension must not DT_NEEDED jemalloc (or apk codecs).
-  ! grep -E 'liblz4|libzstd|libjemalloc' /tmp/timescaledb.needed; \
+  if grep -E 'liblz4|libzstd|libjemalloc' /tmp/timescaledb.needed; then \
+    echo "timescaledb.so must not DT_NEEDED jemalloc/lz4/zstd" >&2; exit 1; \
+  fi; \
   sed -ri "s/#?(shared_preload_libraries)\s*=.*/\1 = 'timescaledb'/" \
     /usr/local/share/postgresql/postgresql.conf.sample; \
   grep -F "shared_preload_libraries = 'timescaledb'" \
     /usr/local/share/postgresql/postgresql.conf.sample; \
-  rm -rf /usr/src/timescaledb /usr/src/postgresql
+  rm -rf /usr/src/timescaledb /usr/src/postgresql /tmp/pg-config-wrap
 
 # Prune docs/man from the install tree copied to runtime.
 RUN set -eux; \
@@ -323,9 +357,13 @@ RUN set -eux; \
              { print "so:" $1 }' \
   )"; \
   # Fail closed if scanelf still wants apk zlib/libz.
-  ! printf '%s\n' "$runDeps" | grep -E '^so:libz(\.so|$)'; \
+  if printf '%s\n' "$runDeps" | grep -E '^so:libz(\.so|$)'; then \
+    echo "runDeps must not pull apk libz" >&2; exit 1; \
+  fi; \
   apk add --no-cache $runDeps; \
-  ! apk info -e zlib >/dev/null 2>&1; \
+  if apk info -e zlib >/dev/null 2>&1; then \
+    echo "runtime must not install apk zlib" >&2; exit 1; \
+  fi; \
   install --verbose --directory --owner postgres --group postgres --mode 3777 /var/run/postgresql; \
   # Fail-closed again on the slim runtime tree.
   ldd /usr/local/bin/postgres | tee /tmp/postgres.ldd; \
@@ -335,11 +373,15 @@ RUN set -eux; \
   grep -E '/opt/liburing/.+liburing' /tmp/postgres.ldd; \
   grep -E '/opt/lz4/.+liblz4' /tmp/postgres.ldd; \
   grep -E '/opt/zstd/.+libzstd' /tmp/postgres.ldd; \
-  ! grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.)' /tmp/postgres.ldd; \
+  if grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.)' /tmp/postgres.ldd; then \
+    echo "runtime postgres linked apk zlib" >&2; exit 1; \
+  fi; \
   ldd /opt/zstd/bin/zstd | tee /tmp/zstd.ldd; \
   grep -E '/opt/zlib-ng/.+libz' /tmp/zstd.ldd; \
   grep -E '/opt/lz4/.+liblz4' /tmp/zstd.ldd; \
-  ! grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.|/usr/lib/liblz4)' /tmp/zstd.ldd; \
+  if grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.|/usr/lib/liblz4)' /tmp/zstd.ldd; then \
+    echo "runtime zstd linked apk zlib/lz4" >&2; exit 1; \
+  fi; \
   sed -ri "s!^#?(listen_addresses)\s*=\s*\S+.*!\1 = '*'!" \
     /usr/local/share/postgresql/postgresql.conf.sample; \
   grep -F "listen_addresses = '*'" /usr/local/share/postgresql/postgresql.conf.sample; \

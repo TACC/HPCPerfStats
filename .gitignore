@@ -33,6 +33,9 @@ tacc_stats.egg-info/
 !services-conf/proxy_entrypoint.sh
 !services-conf/rsync_data.sh
 !services-conf/rsync_data_wrapper.sh
+# Homemade PG18 image entrypoints (db.Dockerfile COPY; must ship on prod checkouts).
+!services-conf/db-docker-entrypoint.sh
+!services-conf/db-docker-ensure-initdb.sh
 *.so
 *.d
 .project
