@@ -1,5 +1,8 @@
 """Tests for job list performance classification and ORM annotations."""
 import pytest
+from django.db import connection
+from django.db.models import Aggregate
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from hpcperfstats.site.lib.machine.job_list_performance import (
@@ -157,6 +160,48 @@ class TestSummarizePerformance:
     def test_parse_ranks_accepts_0_through_6(self):
         assert parse_job_list_performance_sort_ranks("0,6") == [0, 6]
         assert parse_job_list_performance_sort_ranks("7") == []
+
+
+@pytest.mark.machine_unit_mock
+def test_performance_annotate_has_no_grouping_aggregates():
+    """Date-browse COUNT must not JOIN metrics_data (statement timeout 2026-09-03)."""
+    qs = annotate_job_list_performance_fields(job_data.objects.all())
+    grouping = [
+        name
+        for name, expr in qs.query.annotations.items()
+        if isinstance(expr, Aggregate) or getattr(expr, "contains_aggregate", False)
+    ]
+    assert grouping == []
+    sql = str(qs.query).lower()
+    assert "left outer join" not in sql
+    assert 'join "metrics_data"' not in sql
+
+
+@pytest.mark.django_db
+def test_performance_annotate_count_sql_has_no_metrics_join():
+    """Executed COUNT(*) on the annotated listing must stay a simple count."""
+    if connection.vendor != "postgresql":
+        pytest.skip("job_data.host_list ArrayField is PostgreSQL-specific")
+
+    now = timezone.now()
+    job_data.objects.create(
+        jid="count-sql-1",
+        submit_time=now,
+        start_time=now,
+        end_time=now,
+        runtime=60.0,
+        username="u",
+        host_list=["h1"],
+    )
+    qs = annotate_job_list_performance_fields(
+        job_data.objects.filter(jid="count-sql-1")
+    )
+    with CaptureQueriesContext(connection) as ctx:
+        assert qs.count() == 1
+    count_sql = " ".join(q["sql"] for q in ctx.captured_queries).lower()
+    assert "count(" in count_sql
+    assert "left outer join" not in count_sql
+    assert 'join "metrics_data"' not in count_sql
 
 
 @pytest.mark.django_db

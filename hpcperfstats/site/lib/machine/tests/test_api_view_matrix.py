@@ -271,6 +271,27 @@ class TestJobListView:
             response = api.job_list(request)
         assert response.status_code == 401
 
+    def test_count_statement_timeout_returns_404(self):
+        """Regression: date-browse count timeout must not 500 (web 2026-09-03)."""
+        from django.db.utils import OperationalError
+
+        from hpcperfstats.site.lib.machine import api
+
+        request = RequestFactory().get("/api/jobs/")
+        request.session = {"username": "u", "is_staff": False}
+        mock_qs = MagicMock()
+        mock_qs.count.side_effect = OperationalError(
+            "canceling statement due to statement timeout"
+        )
+        with patch.object(api, "_require_auth", return_value=None), patch.object(
+            api,
+            "_build_job_list_queryset_from_request",
+            return_value=(mock_qs, {}, None, "-end_time"),
+        ):
+            response = api.job_list(request)
+        assert response.status_code == 404
+        assert response.data["error"] == "No data found for this search request"
+
     def test_empty_query_returns_zero_jobs(self):
         from hpcperfstats.site.lib.machine import api
 

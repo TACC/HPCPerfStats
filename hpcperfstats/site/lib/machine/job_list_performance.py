@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.db.models import Case, Count, Exists, F, IntegerField, OuterRef, Q, Value, When
+from django.db.models import Case, Exists, F, IntegerField, OuterRef, Q, Value, When
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
 
@@ -236,6 +236,11 @@ def annotate_job_list_performance_fields(queryset: Any) -> Any:
   Add has_metrics_data, metrics_value_count, plots_artifacts_ready,
   performance_sort_rank, performance_sort_group.
 
+  ``metrics_value_count`` is 1 or 0 from ``Exists`` (any non-null metric
+  value). A reverse-relation ``Count`` forced ``GROUP BY`` plus a
+  ``metrics_data`` join; ``QuerySet.count()`` on a day's listing then
+  exceeded PostgreSQL ``statement_timeout`` (``job_list: count() failed``).
+
   Args:
     queryset (Any): Queryset passed to this helper.
 
@@ -247,13 +252,19 @@ def annotate_job_list_performance_fields(queryset: Any) -> Any:
   """
   qs = annotate_job_plots_artifacts_ready(queryset, _job_list_host_name_suffix())
   md_exists = Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
-  mcount = Count(
-      "metrics_data_set",
-      filter=Q(metrics_data_set__value__isnull=False),
+  has_nonnull_metric = Exists(
+      metrics_data.objects.filter(
+          jid_id=OuterRef("jid"),
+          value__isnull=False,
+      )
   )
   qs = qs.annotate(
       has_metrics_data=md_exists,
-      metrics_value_count=mcount,
+      metrics_value_count=Case(
+          When(has_nonnull_metric, then=Value(1)),
+          default=Value(0),
+          output_field=IntegerField(),
+      ),
   )
   qs = qs.annotate(
       performance_sort_rank=Case(
