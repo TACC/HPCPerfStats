@@ -58,6 +58,15 @@ describe("VariableInfoLabel", () => {
     expect(panel.classList.contains("variable-info-tooltip-portal")).toBe(true);
   });
 
+  it("pads the help popup and draws a border so text stands off background data", () => {
+    render(
+      <VariableInfoLabel variableName="utilization" labelText="utilization" enableHelp />
+    );
+    fireEvent.click(screen.getByRole("button", { name: /help: utilization/i }));
+    const panel = screen.getByTestId("variable-info-tooltip");
+    expect(panel).toHaveClass("border", "border-foreground/25", "bg-popover", "px-4", "py-3");
+  });
+
   it("renders superscript help trigger close to label text", () => {
     render(
       <VariableInfoLabel variableName="avg_cpuusage" labelText="avg_cpuusage" enableHelp />,

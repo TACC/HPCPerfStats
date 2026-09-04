@@ -108,8 +108,8 @@ export function VariableInfoLabel({
           aria-label={`${variableName} description`}
           sideOffset={2}
           className={cn(
-            "variable-info-tooltip variable-info-tooltip-portal relative w-auto max-w-[min(560px,calc(100vw-16px))] min-w-[min(420px,calc(100vw-16px))] p-2 text-sm font-normal",
-            pinned && "pt-7",
+            "variable-info-tooltip variable-info-tooltip-portal relative w-auto max-w-[min(560px,calc(100vw-16px))] min-w-[min(420px,calc(100vw-16px))] border border-foreground/25 bg-popover px-4 py-3 text-sm font-normal shadow-lg",
+            pinned && "pt-8",
           )}
         >
           {pinned ? (
