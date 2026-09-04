@@ -225,6 +225,9 @@ services:
       context: ./services-conf
       dockerfile: db.Dockerfile
     image: hpcperfstats-db
+    # This is needed to use the kernel.io_uring facility which speeds up the database
+    cap_add: 
+      - SYS_ADMIN
     logging: *hpc-logging
     shm_size: "16gb"
     # Docker default seccomp often blocks io_uring (docker-library/postgres#1365).
