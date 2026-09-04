@@ -209,10 +209,16 @@ RUN /bin/bash -o pipefail -c '\
   make install; \
   /opt/python3.14/bin/python3.14 -c "import sysconfig; assert int(sysconfig.get_config_var(\"Py_GIL_DISABLED\") or 0) == 0"; \
   ldd /opt/python3.14/bin/python3.14 | grep libjemalloc; \
-  ldd /opt/python3.14/bin/python3.14 | grep '/opt/zlib-ng/.*libz'; \
-  ldd /opt/python3.14/bin/python3.14 | grep libmpdec; \
-  ldd /opt/python3.14/bin/python3.14 | grep libffi; \
   ldd /opt/python3.14/lib/libpython3.14.so | grep libjemalloc; \
+  zlib_so="$(find /opt/python3.14 -name 'zlib*.so' -type f | head -1)"; \
+  test -n "$zlib_so"; \
+  ldd "$zlib_so" | grep '/opt/zlib-ng/.*libz'; \
+  decimal_so="$(find /opt/python3.14 -name '_decimal*.so' -type f | head -1)"; \
+  test -n "$decimal_so"; \
+  ldd "$decimal_so" | grep libmpdec; \
+  ctypes_so="$(find /opt/python3.14 -name '_ctypes*.so' -type f | head -1)"; \
+  test -n "$ctypes_so"; \
+  ldd "$ctypes_so" | grep libffi; \
   /opt/python3.14/bin/python3.14 -c "import zlib; v=getattr(zlib,\"ZLIB_RUNTIME_VERSION\",zlib.ZLIB_VERSION); assert \"zlib-ng\" in str(v).lower(), v"; \
   find /opt/python3.14 -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   mkdir -p /usr/local/bin /usr/local/lib; \
@@ -262,10 +268,16 @@ RUN /bin/bash -o pipefail -c '\
   ln -sf python3.14t /opt/python3.14t/bin/python3; \
   /opt/python3.14t/bin/python3.14t -c "import sysconfig; assert int(sysconfig.get_config_var(\"Py_GIL_DISABLED\") or 0) == 1"; \
   ldd /opt/python3.14t/bin/python3.14t | grep libjemalloc; \
-  ldd /opt/python3.14t/bin/python3.14t | grep '/opt/zlib-ng/.*libz'; \
-  ldd /opt/python3.14t/bin/python3.14t | grep libmpdec; \
-  ldd /opt/python3.14t/bin/python3.14t | grep libffi; \
   (ldd /opt/python3.14t/lib/libpython3.14t.so 2>/dev/null || ldd /opt/python3.14t/lib/libpython3.14.so) | grep libjemalloc; \
+  zlib_so="$(find /opt/python3.14t -name 'zlib*.so' -type f | head -1)"; \
+  test -n "$zlib_so"; \
+  ldd "$zlib_so" | grep '/opt/zlib-ng/.*libz'; \
+  decimal_so="$(find /opt/python3.14t -name '_decimal*.so' -type f | head -1)"; \
+  test -n "$decimal_so"; \
+  ldd "$decimal_so" | grep libmpdec; \
+  ctypes_so="$(find /opt/python3.14t -name '_ctypes*.so' -type f | head -1)"; \
+  test -n "$ctypes_so"; \
+  ldd "$ctypes_so" | grep libffi; \
   /opt/python3.14t/bin/python3.14t -c "import zlib; v=getattr(zlib,\"ZLIB_RUNTIME_VERSION\",zlib.ZLIB_VERSION); assert \"zlib-ng\" in str(v).lower(), v"; \
   find /opt/python3.14t -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   echo "/opt/python3.14t/lib" > /etc/ld.so.conf.d/python314t.conf; \

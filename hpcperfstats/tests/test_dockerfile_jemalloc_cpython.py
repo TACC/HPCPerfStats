@@ -65,6 +65,16 @@ def test_zlib_ng_compat_opt_direct_link_no_explicit_apt_zlib():
   assert "-Wl,-rpath,/opt/zlib-ng/lib" in build
   assert "-I/opt/zlib-ng/include" in build
   assert "ldd" in build and "/opt/zlib-ng" in build
+  # CPython does not DT_NEEDED libz on bin/python* — only on zlib*.so (and
+  # similarly libmpdec/_decimal, libffi/_ctypes). Grepping the interpreter
+  # binary for zlib-ng fails the GIL/FT bake after make install.
+  assert "name 'zlib*.so'" in build
+  assert "name '_decimal*.so'" in build
+  assert "name '_ctypes*.so'" in build
+  assert not re.search(
+      r"ldd /opt/python3\.14(?:t)?/bin/python3\.14t? \| grep '/opt/zlib-ng",
+      build,
+  )
   # Do not explicitly apt-install stock zlib (transitive Depends OK).
   assert "zlib1g-dev" not in build
   assert not re.search(
@@ -78,7 +88,6 @@ def test_zlib_ng_compat_opt_direct_link_no_explicit_apt_zlib():
     if "LD_PRELOAD" in ln:
       assert "zlib-ng" not in ln
       assert "libz.so" not in ln
-
 
 def test_jemalloc_configure_flags_and_no_initial_exec_tls():
   build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
