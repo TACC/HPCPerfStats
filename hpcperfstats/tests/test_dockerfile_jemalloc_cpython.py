@@ -47,6 +47,8 @@ def test_compiled_library_pins_are_latest_known():
   assert "7da3e2d9a171eb0a038f592ecad3ff2bb2550f3496d87b3b29ad0cf4430c0db4" in build
   assert "zlib-ng/archive/refs/tags/2.2.5.tar.gz" in build
   assert "5b3b022489f3ced82384f06db1e13ba148cbce38c7941e424d6cb414416acd18" in build
+  assert "zstd-1.5.7.tar.gz" in build
+  assert "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3" in build
   # Stale pins must not linger.
   assert "jemalloc-5.3.0.tar.bz2" not in build
   assert "mpdecimal-4.0.0.tar.gz" not in build
@@ -88,6 +90,44 @@ def test_zlib_ng_compat_opt_direct_link_no_explicit_apt_zlib():
     if "LD_PRELOAD" in ln:
       assert "zlib-ng" not in ln
       assert "libz.so" not in ln
+
+
+def test_zstd_opt_direct_link_replaces_system_cli_enables_cpython_zstd():
+  """zstd under /opt; CPython _zstd + system CLI from /opt (no apt zstd pin)."""
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  build = _stage_body(dockerfile, "python-build")
+  base = _stage_body(dockerfile, "hpcperfstats-base")
+  assert "PREFIX=/opt/zstd" in build
+  assert "-L/opt/zstd/lib" in build
+  assert "-Wl,-rpath,/opt/zstd/lib" in build
+  assert "-I/opt/zstd/include" in build
+  assert "/opt/zstd/lib/pkgconfig" in build
+  assert "name '_zstd*.so'" in build
+  assert "import _zstd" in build
+  assert "compression.zstd" in build
+  assert "COPY --from=python-build /opt/zstd" in base
+  assert "/opt/zstd/lib" in base
+  assert "/opt/zstd/bin/" in base
+  assert 'ln -sfn "/opt/zstd/bin/$b"' in base
+  # zstd CLI gzip support must link zlib-ng (not stock apt zlib).
+  assert re.search(
+      r"PKG_CONFIG_PATH=.*?/opt/zlib-ng/lib/pkgconfig",
+      build,
+  )
+  zstd_run = build[build.index("zstd-1.5.7.tar.gz") : build.index("mpdecimal-4.0.1")]
+  assert "-I/opt/zlib-ng/include" in zstd_run
+  assert "-L/opt/zlib-ng/lib" in zstd_run
+  assert "-Wl,-rpath,/opt/zlib-ng/lib" in zstd_run
+  assert "HAVE_ZLIB=1" in zstd_run
+  assert "ldd /opt/zstd/bin/zstd" in zstd_run
+  assert "/opt/zlib-ng/.*libz" in zstd_run
+  # Runtime must not apt-install the stock CLI (our /opt binary replaces it).
+  assert not re.search(r"apt-get install[^\n]*\bzstd\b", base)
+  for ln in base.splitlines():
+    if "LD_PRELOAD" in ln:
+      assert "libzstd" not in ln
+      assert "/opt/zstd" not in ln
+
 
 def test_jemalloc_configure_flags_and_no_initial_exec_tls():
   build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
@@ -173,8 +213,10 @@ def test_hpcperfstats_base_copies_only_opt_prefixes_not_compile_trees():
     assert "/opt/" in ln, ln
     assert "/usr/src" not in ln, ln
   assert "COPY --from=python-build /opt/zlib-ng" in base
+  assert "COPY --from=python-build /opt/zstd" in base
   # Builder must wipe /usr/src trees before stage end (fail-closed).
   assert "test ! -d /usr/src/zlib-ng" in build
+  assert "test ! -d /usr/src/zstd" in build
   assert "test ! -d /usr/src/jemalloc" in build
   assert "test ! -d /usr/src/python" in build
   assert "leftover /usr/src compile tree" in build

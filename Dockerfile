@@ -62,7 +62,7 @@ ENV PYTHON_VERSION=3.14.7 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_WARN_SCRIPT_LOCATION=false \
     PIP_ROOT_USER_ACTION=ignore \
-    PKG_CONFIG_PATH=/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig
+    PKG_CONFIG_PATH=/opt/zstd/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig
 
 # Builder apt toolchain (compilers stay in python-build only).
 RUN /bin/bash -o pipefail -c '\
@@ -137,6 +137,31 @@ RUN /bin/bash -o pipefail -c '\
   ldconfig; \
   rm -rf /usr/src/zlib-ng'
 
+# zstd 1.5.7 (lib + CLI). Link gzip/zlib support to /opt/zlib-ng; no apt zstd.
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  curl -fsSL "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz" \
+    -o /tmp/zstd.tar.gz; \
+  echo "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3  /tmp/zstd.tar.gz" | sha256sum -c -; \
+  mkdir -p /usr/src/zstd; \
+  tar -xzf /tmp/zstd.tar.gz -C /usr/src/zstd --strip-components=1; \
+  rm -f /tmp/zstd.tar.gz; \
+  cd /usr/src/zstd; \
+  export PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
+  export CPPFLAGS="-I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
+  export LDFLAGS="-L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib${LDFLAGS:+ $LDFLAGS}"; \
+  export MOREFLAGS="-O3 -march=native -flto -g0"; \
+  make -j40 PREFIX=/opt/zstd HAVE_ZLIB=1; \
+  make install PREFIX=/opt/zstd; \
+  find /opt/zstd -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
+  test -x /opt/zstd/bin/zstd; \
+  test -f /opt/zstd/lib/libzstd.so || test -f /opt/zstd/lib/libzstd.so.1; \
+  ldd /opt/zstd/bin/zstd | grep '/opt/zlib-ng/.*libz'; \
+  echo "/opt/zstd/lib" > /etc/ld.so.conf.d/zstd.conf; \
+  ldconfig; \
+  /opt/zstd/bin/zstd --version; \
+  rm -rf /usr/src/zstd'
+
 # mpdecimal 4.0.1 (x86_64 MACHINE=x64 → CONFIG_64 + ASM).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
@@ -188,12 +213,12 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/Python.tgz -C /usr/src/python --strip-components=1; \
   rm -f /tmp/Python.tgz; \
   cd /usr/src/python; \
-  export PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
-  export CPPFLAGS="-I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
+  export PKG_CONFIG_PATH="/opt/zstd/lib/pkgconfig:/opt/zlib-ng/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
+  export CPPFLAGS="-I/opt/zstd/include -I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
   export CFLAGS="-O3 -march=native -g0" CXXFLAGS="-O3 -march=native -g0" OPT="-O3 -g0"; \
   LIBFFI_LIBDIR="/opt/libffi/lib"; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then LIBFFI_LIBDIR="/opt/libffi/lib/x86_64-linux-gnu"; fi; \
-  export LDFLAGS="-L/opt/zlib-ng/lib -L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
+  export LDFLAGS="-L/opt/zstd/lib -L/opt/zlib-ng/lib -L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/zstd/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
   ./configure \
     --prefix=/opt/python3.14 \
     --enable-shared \
@@ -219,7 +244,11 @@ RUN /bin/bash -o pipefail -c '\
   ctypes_so="$(find /opt/python3.14 -name '_ctypes*.so' -type f | head -1)"; \
   test -n "$ctypes_so"; \
   ldd "$ctypes_so" | grep libffi; \
+  zstd_so="$(find /opt/python3.14 -name '_zstd*.so' -type f | head -1)"; \
+  test -n "$zstd_so"; \
+  ldd "$zstd_so" | grep '/opt/zstd/.*libzstd'; \
   /opt/python3.14/bin/python3.14 -c "import zlib; v=getattr(zlib,\"ZLIB_RUNTIME_VERSION\",zlib.ZLIB_VERSION); assert \"zlib-ng\" in str(v).lower(), v"; \
+  /opt/python3.14/bin/python3.14 -c "import _zstd, compression.zstd as z; assert _zstd.zstd_version.startswith(\"1.5.\"), _zstd.zstd_version"; \
   find /opt/python3.14 -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   mkdir -p /usr/local/bin /usr/local/lib; \
   ln -sfn /opt/python3.14/bin/python3 /usr/local/bin/python3; \
@@ -245,12 +274,12 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/Python.tgz -C /usr/src/python --strip-components=1; \
   rm -f /tmp/Python.tgz; \
   cd /usr/src/python; \
-  export PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
-  export CPPFLAGS="-I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
+  export PKG_CONFIG_PATH="/opt/zstd/lib/pkgconfig:/opt/zlib-ng/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
+  export CPPFLAGS="-I/opt/zstd/include -I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
   export CFLAGS="-O3 -march=native -g0" CXXFLAGS="-O3 -march=native -g0" OPT="-O3 -g0"; \
   LIBFFI_LIBDIR="/opt/libffi/lib"; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then LIBFFI_LIBDIR="/opt/libffi/lib/x86_64-linux-gnu"; fi; \
-  export LDFLAGS="-L/opt/zlib-ng/lib -L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14t/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
+  export LDFLAGS="-L/opt/zstd/lib -L/opt/zlib-ng/lib -L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/zstd/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14t/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
   ./configure \
     --prefix=/opt/python3.14t \
     --enable-shared \
@@ -278,7 +307,11 @@ RUN /bin/bash -o pipefail -c '\
   ctypes_so="$(find /opt/python3.14t -name '_ctypes*.so' -type f | head -1)"; \
   test -n "$ctypes_so"; \
   ldd "$ctypes_so" | grep libffi; \
+  zstd_so="$(find /opt/python3.14t -name '_zstd*.so' -type f | head -1)"; \
+  test -n "$zstd_so"; \
+  ldd "$zstd_so" | grep '/opt/zstd/.*libzstd'; \
   /opt/python3.14t/bin/python3.14t -c "import zlib; v=getattr(zlib,\"ZLIB_RUNTIME_VERSION\",zlib.ZLIB_VERSION); assert \"zlib-ng\" in str(v).lower(), v"; \
+  /opt/python3.14t/bin/python3.14t -c "import _zstd, compression.zstd as z; assert _zstd.zstd_version.startswith(\"1.5.\"), _zstd.zstd_version"; \
   find /opt/python3.14t -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   echo "/opt/python3.14t/lib" > /etc/ld.so.conf.d/python314t.conf; \
   ldconfig; \
@@ -471,14 +504,14 @@ RUN /bin/bash -o pipefail -c '\
   /opt/python3.14t/bin/python3.14t -m pip uninstall -y meson meson-python ninja cython versioneer mkl-devel || true; \
   pip cache purge; \
   /opt/python3.14t/bin/python3.14t -m pip cache purge; \
-  for root in /opt/jemalloc /opt/zlib-ng /opt/mpdecimal /opt/libffi /opt/python3.14 /opt/python3.14t; do \
+  for root in /opt/jemalloc /opt/zlib-ng /opt/zstd /opt/mpdecimal /opt/libffi /opt/python3.14 /opt/python3.14t; do \
     find "$root" -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   done; \
   for bin in /opt/python3.14/bin/python3.14 /opt/python3.14t/bin/python3.14t /opt/jemalloc/lib/libjemalloc.so.2; do \
     file -b "$bin" | grep -qi "not stripped" && { echo "unstripped $bin"; false; }; \
     if readelf -S "$bin" | grep -q "\.debug_info"; then echo "debug_info $bin"; false; fi; \
   done; \
-  for root in /opt/jemalloc /opt/zlib-ng /opt/mpdecimal /opt/libffi; do \
+  for root in /opt/jemalloc /opt/zlib-ng /opt/zstd /opt/mpdecimal /opt/libffi; do \
     find "$root" -type f \( -name "*.a" -o -name "*.la" -o -name "CMakeCache.txt" \) -delete; \
     find "$root" -type d \( -name build -o -name CMakeFiles -o -name .libs \) -prune -exec rm -rf {} + 2>/dev/null || true; \
   done; \
@@ -486,6 +519,7 @@ RUN /bin/bash -o pipefail -c '\
     echo "leftover /usr/src compile tree would risk leaking into later stages"; find /usr/src -maxdepth 2; false; \
   fi; \
   test ! -d /usr/src/zlib-ng; \
+  test ! -d /usr/src/zstd; \
   test ! -d /usr/src/jemalloc; \
   test ! -d /usr/src/python'
 
@@ -502,7 +536,7 @@ RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
 RUN /bin/bash -o pipefail -c "apt-get update -y \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-       supervisor rsync syslog-ng zstd util-linux time \
+       supervisor rsync syslog-ng util-linux time \
        net-tools lsof procps gdb strace netcat-openbsd \
        vim nano ca-certificates \
        libssl3t64 libsqlite3-0 libbz2-1.0 liblzma5 \
@@ -513,6 +547,7 @@ RUN /bin/bash -o pipefail -c "apt-get update -y \
 
 COPY --from=python-build /opt/jemalloc /opt/jemalloc
 COPY --from=python-build /opt/zlib-ng /opt/zlib-ng
+COPY --from=python-build /opt/zstd /opt/zstd
 COPY --from=python-build /opt/mpdecimal /opt/mpdecimal
 COPY --from=python-build /opt/libffi /opt/libffi
 COPY --from=python-build /opt/python3.14 /opt/python3.14
@@ -542,8 +577,15 @@ RUN /bin/bash -o pipefail -c '\
   ln -sfn /opt/python3.14/bin/pip3.14 /usr/local/bin/pip3.14; \
   if [ -e /opt/python3.14/bin/gunicorn ]; then ln -sfn /opt/python3.14/bin/gunicorn /usr/local/bin/gunicorn; fi; \
   for so in /opt/python3.14/lib/libpython3.14.so*; do ln -sfn "$so" "/usr/local/lib/$(basename "$so")"; done; \
+  for b in zstd zstdcat zstdgrep zstdless zstdmt unzstd; do \
+    if [ -e "/opt/zstd/bin/$b" ]; then \
+      ln -sfn "/opt/zstd/bin/$b" "/usr/local/bin/$b"; \
+      ln -sfn "/opt/zstd/bin/$b" "/usr/bin/$b"; \
+    fi; \
+  done; \
   echo "/opt/jemalloc/lib" > /etc/ld.so.conf.d/jemalloc.conf; \
   echo "/opt/zlib-ng/lib" > /etc/ld.so.conf.d/zlib-ng.conf; \
+  echo "/opt/zstd/lib" > /etc/ld.so.conf.d/zstd.conf; \
   echo "/opt/mpdecimal/lib" > /etc/ld.so.conf.d/mpdecimal.conf; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then \
     echo "/opt/libffi/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/libffi.conf; \
@@ -559,7 +601,11 @@ RUN /bin/bash -o pipefail -c '\
   test -f "${JE_SO}"; \
   printf "%s\n" "${JE_SO}" > /etc/ld.so.preload; \
   test -s /etc/ld.so.preload; \
-  file -b "${JE_SO}" | grep -q ELF'
+  file -b "${JE_SO}" | grep -q ELF; \
+  test -x /usr/local/bin/zstd; \
+  test "$(readlink -f /usr/local/bin/zstd)" = "$(readlink -f /opt/zstd/bin/zstd)"; \
+  /usr/local/bin/zstd --version | grep -F "1.5.7"
+'
 
 # Gunicorn stays GIL (/usr/local/bin/gunicorn). background_thread:false is fork-safe for prefork.
 # Path B: LD_PRELOAD + ld.so.preload so manylinux wheels hit jemalloc (link-only is not enough).
@@ -570,7 +616,7 @@ ENV LD_PRELOAD=/opt/jemalloc/lib/libjemalloc.so.2 \
     PIP_ROOT_USER_ACTION=ignore \
     HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini \
     STATIC_ROOT=/home/hpcperfstats/staticfiles \
-    PATH=/usr/local/bin:/opt/python3.14/bin:/opt/python3.14t/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/usr/local/bin:/opt/zstd/bin:/opt/python3.14/bin:/opt/python3.14t/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
 WORKDIR /home/hpcperfstats
 
