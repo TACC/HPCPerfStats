@@ -66,6 +66,10 @@ volumes:
       # See below for extra configuration for symlinks outside of this directory (Lets Encrypt)
       device: /opt/certs
       o: bind
+  # Ephemeral Redis Unix socket dir shared by redis, web, and pipeline.
+  # Not a host bind — Docker/Podman named volume only.
+  redis_runtime:
+    driver: local
 
 # Optional knobs — copy a block under `services:` in your local
 # docker-compose.settings.yaml and uncomment as needed for this site.

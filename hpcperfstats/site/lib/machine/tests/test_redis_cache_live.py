@@ -55,6 +55,24 @@ def test_redis_server_major_version_at_least_8():
 
 
 @pytest.mark.live_redis
+def test_redis_compose_tuning_compact_hashes_io_threads_and_unix_socket():
+  """Compose Redis must enable 8.10 compact hashes, I/O threads, and UDS."""
+  client = api_module._get_redis_cache_client()
+  assert client is not None
+  min_entries = client.config_get("hash-min-template-entries")
+  assert min_entries.get("hash-min-template-entries") == "1"
+  io_threads = client.config_get("io-threads")
+  assert io_threads.get("io-threads") == "4"
+  unixsocket = client.config_get("unixsocket")
+  assert unixsocket.get("unixsocket") == "/run/redis/redis.sock"
+  kwargs = client.connection_pool.connection_kwargs
+  path = kwargs.get("path") or kwargs.get("unix_socket_path") or ""
+  host = kwargs.get("host") or ""
+  # Baked images use unix://; TCP redis://redis:6379/1 remains valid.
+  assert path == "/run/redis/redis.sock" or host == "redis"
+
+
+@pytest.mark.live_redis
 def test_get_redis_cache_client_supports_scan():
   client = api_module._get_redis_cache_client()
   assert client is not None

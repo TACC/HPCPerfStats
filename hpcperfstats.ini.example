@@ -479,8 +479,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # sync_archive_worker_stall_seconds = 600
 
 [CACHE]
-# Redis URL for Django cache (compose default uses redis service).
-redis_location = redis://redis:6379/1
+# Redis URL for Django/listend cache (compose default is the shared Unix socket).
+redis_location = unix:///run/redis/redis.sock?db=1
 
 [XALT]
 # XALT database engine when XALT integration is enabled.

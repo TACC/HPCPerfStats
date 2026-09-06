@@ -17,10 +17,12 @@ services:
       - test_hpcperfstatsdata:/hpcperfstats/
       - test_staticfiles_data:/home/hpcperfstats/staticfiles
       - test_media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
+      - redis_runtime:/run/redis
   pipeline:
     volumes:
       - test_hpcperfstatsdata:/hpcperfstats/
       - test_ssh_keys:/hpcperfstats/.ssh/:ro
+      - redis_runtime:/run/redis
   proxy:
     volumes:
       - test_staticfiles_data:/srv/static:ro

@@ -565,7 +565,7 @@ Implementation detail: `tests/run_db_pytest_inner.sh` runs inside the `web` cont
 
 ### `tests/run_redis_cache_pytest_workflow.sh` (live Redis cache integration)
 
-Runs `hpcperfstats/site/lib/machine/tests/test_redis_cache_live.py` inside the `web` container with **`HPCPERFSTATS_PYTEST_LIVE_REDIS=1`**, so Django keeps **`RedisCache`** against the Compose **redis** service instead of switching to `LocMemCache` during pytest. `sync_timedb` job queues and member maps are in-process stores and are not part of this workflow.
+Runs `hpcperfstats/site/lib/machine/tests/test_redis_cache_live.py` inside the `web` container with **`HPCPERFSTATS_PYTEST_LIVE_REDIS=1`**, so Django keeps **`RedisCache`** against the Compose **redis** service instead of switching to `LocMemCache` during pytest. `sync_timedb` job queues and member maps are in-process stores and are not part of this workflow. Live tests also assert Redis 8.10 compact hashes (`hash-min-template-entries=1`), **`io-threads` 4**, and Unix socket **`/run/redis/redis.sock`**. After baking **`[CACHE] redis_location = unix:///run/redis/redis.sock?db=1`**, clients use the socket; TCP **6379** remains for `redis-cli` and older INI URLs.
 
 ```bash
 tests/run_redis_cache_pytest_workflow.sh
@@ -576,7 +576,7 @@ Without that env var, the live Redis tests are **skipped** so normal `python scr
 After changing the Compose **redis** image tag, confirm the running server is Redis 8.x:
 
 ```bash
-docker compose exec redis redis-cli INFO server | grep redis_version
+docker compose exec redis sh -lc 'redis-cli INFO server | grep redis_version; redis-cli ping; redis-cli -s /run/redis/redis.sock ping; redis-cli CONFIG GET hash-min-template-entries; redis-cli CONFIG GET io-threads'
 ```
 
 `test_redis_cache_live.py` also asserts major version `>= 8` when the live Redis workflow runs.

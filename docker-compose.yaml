@@ -38,6 +38,7 @@ services:
       - staticfiles_data:/home/hpcperfstats/staticfiles
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
       - hpcperfstatsdata:/hpcperfstats/
+      - redis_runtime:/run/redis
     networks:
       hpcperfstats_net:
         aliases:
@@ -63,6 +64,7 @@ services:
     volumes:
       - hpcperfstatsdata:/hpcperfstats/
       - ssh_keys:/hpcperfstats/.ssh/:ro
+      - redis_runtime:/run/redis
     networks:
       hpcperfstats_net:
         aliases:
@@ -83,11 +85,24 @@ services:
       - "4"
       - --io-threads-do-reads
       - "yes"
+      - --unixsocket
+      - /run/redis/redis.sock
+      - --unixsocketperm
+      - "777"
+      - --hash-min-template-entries
+      - "1"
+      - --hash-max-template-entries
+      - "0"
+    volumes:
+      - redis_runtime:/run/redis
+      - ./services-conf/redis_entrypoint.sh:/usr/local/bin/hps-redis-entrypoint.sh:ro
+    entrypoint:
+      - /bin/sh
+      - /usr/local/bin/hps-redis-entrypoint.sh
     healthcheck:
       test:
-        - CMD
-        - redis-cli
-        - ping
+        - CMD-SHELL
+        - redis-cli ping && redis-cli -s /run/redis/redis.sock ping
       interval: 5s
       timeout: 3s
       retries: 10

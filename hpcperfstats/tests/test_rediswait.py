@@ -5,6 +5,42 @@ from pathlib import Path
 import pytest
 
 
+def test_redis_url_uses_unix_socket_detects_unix_schemes():
+  from hpcperfstats.dbload.lib import rediswait
+
+  assert rediswait.redis_url_uses_unix_socket(
+      "unix:///run/redis/redis.sock?db=1"
+  )
+  assert rediswait.redis_url_uses_unix_socket(
+      "redis+unix:///run/redis/redis.sock?db=1"
+  )
+  assert not rediswait.redis_url_uses_unix_socket("redis://redis:6379/1")
+  assert not rediswait.redis_url_uses_unix_socket("redis://127.0.0.1:6379/1")
+
+
+def test_wait_for_redis_available_unix_skips_dns_wait(monkeypatch):
+  import redis
+
+  from hpcperfstats.dbload.lib import rediswait
+
+  def fail_dns(*args, **kwargs):
+    raise AssertionError("unix Redis URLs must not wait on TCP DNS")
+
+  monkeypatch.setattr(rediswait, "wait_for_host_port_resolution", fail_dns)
+
+  class FakeClient:
+    def ping(self):
+      return True
+
+  monkeypatch.setattr(redis.Redis, "from_url", lambda *a, **k: FakeClient())
+  rediswait.wait_for_redis_available(
+      "unix:///run/redis/redis.sock?db=1",
+      timeout_seconds=1,
+      interval_seconds=0.01,
+      ping_timeout_seconds=0.01,
+  )
+
+
 def test_wait_for_redis_available_retries_until_ping_success(monkeypatch):
   import redis
 

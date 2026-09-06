@@ -3,6 +3,10 @@ Utilities for waiting on Redis during container startup.
 
 This prevents race conditions where Django starts up and attempts to use the
 Redis cache before the `redis` container is reachable or ready.
+
+Attributes:
+  _UNIX_REDIS_SCHEMES (frozenset[str]): URL schemes that mean a Unix domain
+    socket instead of TCP.
 """
 
 from __future__ import annotations
@@ -13,6 +17,32 @@ import urllib.parse
 import redis
 
 from hpcperfstats.dbload.lib.dbwait import wait_for_host_port_resolution
+
+_UNIX_REDIS_SCHEMES = frozenset({"unix", "redis+unix"})
+
+
+def redis_url_uses_unix_socket(redis_url: str) -> bool:
+  """
+  Return True when *redis_url* addresses Redis over a Unix domain socket.
+
+  Django cache and redis-py accept ``unix:///path`` and ``redis+unix:///path``.
+  TCP URLs (``redis://host:port/db``) return False.
+
+  Args:
+    redis_url (str): Cache URL from ``[CACHE] redis_location`` or a test
+      fixture.
+
+  Returns:
+    bool: True when the URL scheme is a Unix socket form.
+
+  Examples:
+    >>> redis_url_uses_unix_socket("unix:///run/redis/redis.sock?db=1")
+    True
+    >>> redis_url_uses_unix_socket("redis://redis:6379/1")
+    False
+  """
+  scheme = urllib.parse.urlparse(redis_url).scheme.lower()
+  return scheme in _UNIX_REDIS_SCHEMES
 
 
 def resolve_redis_host_port(redis_url: str) -> tuple[str, str]:
@@ -74,7 +104,7 @@ def wait_for_redis_available(
   )
   dns_budget_seconds = min(dns_budget_seconds, remaining)
 
-  if dns_budget_seconds > 0:
+  if dns_budget_seconds > 0 and not redis_url_uses_unix_socket(redis_url):
     wait_for_host_port_resolution(
       host,
       port,

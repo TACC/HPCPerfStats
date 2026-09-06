@@ -14,7 +14,7 @@ def test_docker_compose_has_healthchecks_for_core_services():
     assert f"{service}:" in content
     assert "healthcheck:" in content
 
-  assert "redis-cli" in content
+  assert "redis-cli ping && redis-cli -s /run/redis/redis.sock ping" in content
   assert "nc -z 127.0.0.1 80" in content
   assert "pg_isready" in content
   assert "rabbitmq-diagnostics" in content
@@ -41,11 +41,23 @@ def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
   assert "command: [" not in content
   assert "test:\n        [" not in content
   assert 'test: ["' not in content
+  assert "hps-redis-entrypoint.sh" in content
+  assert "chmod 1777 /run/redis" in (
+      repo_root / "services-conf" / "redis_entrypoint.sh"
+  ).read_text()
   assert "command:\n      - redis-server\n" in content
   assert "      - --maxmemory\n      - 16gb\n" in content
   assert "      - --maxmemory-policy\n      - volatile-lru\n" in content
   assert "      - --io-threads\n      - \"4\"\n" in content
-  assert "test:\n        - CMD\n        - redis-cli\n        - ping\n" in content
+  assert "      - --io-threads-do-reads\n      - \"yes\"\n" in content
+  assert "      - --unixsocket\n      - /run/redis/redis.sock\n" in content
+  assert "      - --unixsocketperm\n      - \"777\"\n" in content
+  assert "      - --hash-min-template-entries\n      - \"1\"\n" in content
+  assert "      - --hash-max-template-entries\n      - \"0\"\n" in content
+  assert (
+      "test:\n        - CMD-SHELL\n"
+      "        - redis-cli ping && redis-cli -s /run/redis/redis.sock ping\n"
+  ) in content
   assert "test:\n        - CMD-SHELL\n        - nc -z 127.0.0.1 80 || exit 1\n" in content
   assert (
       "test:\n        - CMD-SHELL\n"
@@ -53,7 +65,7 @@ def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
   ) in content
   assert (
       "test:\n        - CMD-SHELL\n"
-      "        - pg_isready -U hpcperfstats -h 127.0.0.1 -p 5432\n"
+      "        - pg_isready -U hpcperfstats -d postgres -h 127.0.0.1 -p 5432\n"
   ) in content
   assert "command:\n      - -c\n      - max_connections=500\n" in content
 
@@ -73,10 +85,30 @@ def test_readme_and_design_doc_redis_policy_is_volatile_lru():
   repo_root = Path(__file__).resolve().parents[2]
   readme = (repo_root / "README.md").read_text()
   design = (repo_root / "docs" / "design-document.md").read_text()
+  upgrade = (repo_root / "docs" / "upgrade.md").read_text()
   assert "volatile-lru" in readme
   assert "allkeys-lru" not in readme
   assert "volatile-lru" in design
   assert "allkeys-lru" not in design
+  for text in (readme, design, upgrade):
+    assert "hash-min-template-entries" in text
+    assert "unix:///run/redis/redis.sock" in text
+    assert "--io-threads 4" in text or "`--io-threads` **4**" in text or "**`--io-threads 4`**" in text
+
+
+def test_docker_compose_redis_unix_socket_volume_is_shared():
+  """Unix socket is applicable only when redis/web/pipeline share the runtime dir."""
+  repo_root = Path(__file__).resolve().parents[2]
+  content = (repo_root / "docker-compose.yaml").read_text()
+  example = (repo_root / "docker-compose.settings.yaml.example").read_text()
+  overlay = (
+      repo_root / "tests" / "docker-compose.test-overlay.yaml.example"
+  ).read_text()
+  assert "redis_runtime:/run/redis" in content
+  assert content.count("redis_runtime:/run/redis") >= 3
+  assert "redis_runtime:" in example
+  assert "driver: local" in example
+  assert "redis_runtime:/run/redis" in overlay
 
 
 def test_readme_install_is_fresh_only_and_upgrade_doc_holds_existing_stack():
@@ -309,6 +341,7 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
       "rabbitmq_messages",
       "ssh_keys",
       "proxy_ssl_source",
+      "redis_runtime",
   ):
     assert f"{name}:" in settings
     assert "driver: local" in settings
@@ -393,6 +426,7 @@ _OPERATOR_SETTINGS_VOLUME_NAMES = (
     "rabbitmq_messages:",
     "ssh_keys:",
     "proxy_ssl_source:",
+    "redis_runtime:",
 )
 
 
@@ -456,6 +490,7 @@ def test_docker_compose_test_overlay_clears_host_binds():
         "test_proxy_ssl_source",
     ):
       assert name in overlay_path.read_text()
+    assert "redis_runtime:/run/redis" in overlay_path.read_text()
     assert "test_ssl_certs" not in overlay_path.read_text()
   for name in (
       "test_hpcperfstatsdata",
