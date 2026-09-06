@@ -36,5 +36,5 @@ globs: services-conf/db.Dockerfile,docker-compose.yaml,scripts/pg18_host_data_ch
 ## Overlap
 
 - **`postgres-docker-shared-memory.mdc`** — shm still 16gb on both containers
-- **`readme-installation-sync.mdc`** / **`compose-operator-terminal-commands.mdc`** — operator paste blocks
+- **`readme-installation-sync.mdc`** / **`compose-operator-terminal-commands.mdc`** — fresh install in README; PG18 dual-run operator steps in **`docs/upgrade.md`**
 - **`compose-required-for-data-services-changes.mdc`** — validate with compose workflows when DB wiring changes

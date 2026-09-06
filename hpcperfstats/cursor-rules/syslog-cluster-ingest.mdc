@@ -15,4 +15,4 @@ alwaysApply: false
 - **Allowlist ↔ syslog-ng:** `conf_parser.get_syslog_allow_from_ipv4_networks()` drives **`netmask()`** filters (IPv4 only today). Empty list means **allow all IPv4** (`0.0.0.0/0`).
 - **Per-host filenames:** syslog-ng writes **`$HOST.$R_YEAR$R_MONTH$R_DAY.log`** under `logs/current/`. **`seal_syslog_daily`** must glob the same **`YYYYMMDD`** pattern when sealing.
 - **Startup ownership:** `supervisor_startup.sh` (root) still creates **`logs/current`** and **`logs/log_archive`** with **`hpcperfstats`** ownership before supervisord drops privileges. Do **not** add compose **`user: "901860:901860"`** on **`pipeline`**.
-- **Install docs:** keep **[`HPCPerfStats/README.md`](HPCPerfStats/README.md)** cluster-syslog steps aligned with **`[SYSLOG]`** (`allow_from`, `listen_tcp` / `listen_udp`, pipeline **514**, manual enable, troubleshooting).
+- **Install docs:** keep **[`HPCPerfStats/README.md`](HPCPerfStats/README.md)** cluster-syslog **fresh-install** steps aligned with **`[SYSLOG]`** (`allow_from`, `listen_tcp` / `listen_udp`, pipeline **514**, manual enable, troubleshooting). Legacy `/hpcperfstatslog/` volume migrate: **`docs/upgrade.md`**.

@@ -473,6 +473,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         "id": "readme_install",
         "patterns": [
             "HPCPerfStats/README.md",
+            "docs/upgrade.md",
         ],
         "exact_paths": [
             "README.md",

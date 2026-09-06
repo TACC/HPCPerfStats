@@ -14,8 +14,8 @@ alwaysApply: false
 
 ## What to do
 
-- Increase **`shm_size`** on the Timescale/Postgres service (e.g. in `docker-compose.yaml` under `db:` / dual-run `db_pg18:`) until heavy queries and parallel workers stop failing. Canonical compose today sets **`shm_size: "16gb"`** with **`shared_buffers=12GB`** on the `db` service (and the same shm on **`db_pg18`** during migrate) — keep README/`DEPLOY_CONCURRENCY_AND_NUMA.md` aligned when changing either. Smaller dev hosts may need a lower pair; document the tradeoff rather than silently shrinking production defaults.
-- After changing **`shm_size`**, recreate the db container so the limit applies.
+- Increase **`shm_size`** on the Timescale/Postgres service (e.g. in `docker-compose.yaml` under `db:` / dual-run `db_pg18:`) until heavy queries and parallel workers stop failing. Canonical compose today sets **`shm_size: "16gb"`** with **`shared_buffers=12GB`** on the `db` service (and the same shm on **`db_pg18`** during migrate) — keep README (fresh **`db`**), **`docs/upgrade.md`** (dual-run **`db_pg18`**), and **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** aligned when changing either. Smaller dev hosts may need a lower pair; document the tradeoff rather than silently shrinking production defaults.
+- After changing **`shm_size`**, recreate the db container so the limit applies. Dual-run **`db_pg18`** recreate and migrate steps live in **`docs/upgrade.md`** (not README Installation).
 
 ## Overlap
 

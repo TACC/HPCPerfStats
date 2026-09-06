@@ -1,7 +1,7 @@
 ---
 description: Production must not require .env or shell env flags for site config already in hpcperfstats.ini
 alwaysApply: false
-globs: docker-compose*.yaml,hpcperfstats.ini.example,services-conf/resolve_proxy_ssl_certs_dir.py,HPCPerfStats/README.md,README.md
+globs: docker-compose*.yaml,hpcperfstats.ini.example,services-conf/resolve_proxy_ssl_certs_dir.py,HPCPerfStats/README.md,README.md,docs/upgrade.md
 ---
 
 # No Production `.env` For INI Config

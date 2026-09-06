@@ -328,7 +328,7 @@ After a successful soak, operators may archive/delete `/data/hpcperfstats_db/pg1
 
 ## Related docs
 
-- `README.md` Installation (mkdir `pg15` / `pg18`, dual-run note)
+- `docs/upgrade.md` (PG18 bind mkdir, io_uring sysctl, dual-run note); fresh PG15 bind mkdir stays in `README.md` Installation
 - `docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md` (stay on 2.28.x while on PG15)
 - `docs/TESTING.md` (test overlay still uses Hub `db` until cutover)
 - `scripts/pg18_host_data_chunk_copy.py`

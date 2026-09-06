@@ -25,6 +25,7 @@ The **hpcperfstats** package is split into two parts:
 | [**measurements/**](docs/measurements/) | Recorded ops measurements (for example node-daemon CPU overhead on Stampede3 SPR). |
 | [**using-the-website-as-a-researcher.md**](docs/using-the-website-as-a-researcher.md) | How to read the Django/React job UI—plots, metrics, and diagnostic themes—for HPC users and researchers. |
 | [**TESTING.md**](docs/TESTING.md) | Test commands, CI, compose-backed workflows, Playwright/Vitest, and host vs container pytest notes. |
+| [**upgrade.md**](docs/upgrade.md) | Existing stacks only: image rebuilds, Redis/INI/volume layout, RabbitMQ recreate, PG18 dual-run. |
 | [**OPERATOR_HOST_DATA_DEV_UNIQUENESS.md**](docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md) | `host_data` 5-col uniqueness: Stage 1 decompress (+ 02 PK normalize) and Stage 2 one-shot migrate for `0032` / compress_after 8d. |
 
 **Maintaining `MONITOR_VARIABLES.md`:** the catalog is generated and augmented by maintainer scripts in the same folder: [`regenerate_monitor_variables_catalog.py`](docs/regenerate_monitor_variables_catalog.py), [`augment_monitor_variables_diagnostics.py`](docs/augment_monitor_variables_diagnostics.py).
@@ -43,6 +44,8 @@ The **hpcperfstats** container orchestration sets up a Django/PostgreSQL ingest 
 ---
 
 ## Installation
+
+These steps are a **fresh install** on a new host. For an existing Compose stack (rebuilds, Redis/INI/volume/RabbitMQ changes, PostgreSQL 18 dual-run), use **[docs/upgrade.md](docs/upgrade.md)** instead.
 
 ### Monitor subpackage
 
@@ -212,16 +215,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    Alternatively, add **`vm.overcommit_memory = 1`** to **`/etc/sysctl.conf`** and reboot (or run the **`sysctl -w`** command once). On Docker Desktop for macOS, host **`sysctl`** does not apply to the inner Linux VM; tune there only if your setup exposes it, or treat the warning as informational for small dev stacks.
 
-   **Upgrading the Compose Redis server:** `docker-compose.yaml` pins **Redis Open Source 8.10** (`redis:8.10.0-alpine3.23`) with **`maxmemory 16gb`**, **`volatile-lru`** (Django cache keys keep TTL and remain evictable), and **`--io-threads 4`** / **`--io-threads-do-reads yes`**. Do **not** use **`allkeys-*`** for Django/listend cache keys. `sync_timedb` no longer stores queues or member maps in Redis; durable ingest/append state is `.sync_timedb_job_store.json` plus `.sync_timedb_archive_members/`. Redis has no persistence volume (`appendonly no`), so upgrading still clears cached pages/plots until they are recomputed. Size the host (or Colima) so Redis can use that cap alongside Postgres `shm_size` / `shared_buffers`. On the deployment host:
-
-   ```bash
-   docker compose pull redis
-   docker compose up -d redis
-   docker compose exec redis redis-cli INFO server | grep redis_version
-   docker compose restart web pipeline
-   ```
-
-   Expect `redis_version:8.8.x`. Roll back by restoring the previous image tag in `docker-compose.yaml`, then `pull` / `up -d redis` and restart **web** and **pipeline**. If **`[CACHE] redis_location`** in `hpcperfstats.ini` points at an **external** Redis host (not the Compose service), upgrade that server separately per [Redis OSS standalone upgrade](https://redis.io/docs/latest/operate/oss_and_stack/install/upgrade/standalone/) (supported path: 7.x → 8.x), then restart app services that use the cache.
+   Compose pins **Redis Open Source 8.10** (`redis:8.10.0-alpine3.23`) with **`maxmemory 16gb`**, **`volatile-lru`** (Django cache keys keep TTL and remain evictable), and **`--io-threads 4`** / **`--io-threads-do-reads yes`**. Do **not** use **`allkeys-*`** for Django/listend cache keys. Redis has no persistence volume (`appendonly no`). Size the host (or Colima) so Redis can use that cap alongside Postgres `shm_size` / `shared_buffers`. Redis image bumps on an existing host: **[docs/upgrade.md](docs/upgrade.md)**.
 
 2. **Enable container restart after reboot:**
 
@@ -265,22 +259,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    sudo mkdir -p /data/hpcperfstats_site/staticfiles
    sudo mkdir -p /data/hpcperfstats_site/media
    sudo mkdir -p /data/hpcperfstats_db/pg15
-   # Optional during PG18 dual-run migrate (profile pg18-migrate); see docs/OPERATOR_PG18_MIGRATION.md:
-   # sudo mkdir -p /data/hpcperfstats_db/pg18 && sudo chown -R 70:70 /data/hpcperfstats_db/pg18
    # Also ensure the ssh_keys and proxy_ssl_source device paths you set above exist.
    ```
-
-   **Host io_uring for `db_pg18` (preferred: `disabled=1` + gid 70):** Postgres in the homemade image runs as Alpine **uid/gid 70**. Apply before starting profile `pg18-migrate`. Do **not** use `kernel.io_uring_disabled=2`. Full migrate runbook: **`docs/OPERATOR_PG18_MIGRATION.md`**.
-
-   ```bash
-   sudo sysctl -w kernel.io_uring_disabled=1
-   sudo sysctl -w kernel.io_uring_group=70
-   printf '%s\n' 'kernel.io_uring_disabled = 1' 'kernel.io_uring_group = 70' | sudo tee /etc/sysctl.d/99-hpcperfstats-io-uring.conf
-   sudo sysctl --system
-   sysctl kernel.io_uring_disabled kernel.io_uring_group
-   ```
-
-   Alternative (fully open): `sudo sysctl -w kernel.io_uring_disabled=0`. Compose already sets **`security_opt: [seccomp=unconfined, label=disable]`** and **`cap_add: [SYS_ADMIN]`** on **`db_pg18`**.
 
    The `hpcperfstatsdata` bind maps to **`/hpcperfstats/`** in the `pipeline` and `web` containers (for example `/hpcperfstats/accounting`, `/hpcperfstats/archive`, `/hpcperfstats/daily_archive`, and **`/hpcperfstats/logs/`** for cluster syslog).
 
@@ -316,8 +296,6 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    **Operational notes:** when syslog-ng is running, it emits periodic internal **stats** (`stats(freq(3600))` in `services-conf/syslog-ng.conf`); operators can run **`syslog-ng-ctl stats`** (as root) inside `pipeline` for counters. Monitor **disk use** on the data volume (`logs/log_archive` grows with cluster size and retention). Pipeline process control uses **`docker compose`** (`logs` / `ps` / `stop` / `exec`) — **`supervisorctl` is not configured**. **Troubleshooting:** if packets reach the host but nothing is logged, confirm syslog-ng is actually running, check **firewall rules**, that traffic targets the **published 514** on the host running `pipeline`, **`allow_from`** includes the sender’s IPv4 address, and (for filenames) that forwarders preserve a sensible hostname/FQDN.
 
-   **Migrating from the old layout:** if you previously used a separate host path for node logs (for example `/opt/hpcperfstats_log` mounted at `/hpcperfstatslog/`), copy any `cluster.log` into **`/data/hpcperfstats_data/site_data/logs/current/`** (or your edited `hpcperfstatsdata` device) if you need the history, then drop the extra compose volume. If you still have a local **`docker-compose.app.yaml`**, delete it — the app overlay is obsolete; use settings + base compose only.
-
 5. **Application config:**
 
    ```bash
@@ -346,19 +324,15 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    **`hpcperfstats.ini.example` layout:** each setting has a one-line `#` comment directly above it; optional tuning keys appear commented with defaults matching `conf_parser`. Pipeline/archive behavior (zstd seal, DB-before-append gate **`sync_archive_require_db_ingest`** under **`[PIPELINE]`**, syslog allowlist) is described in the bullets above and in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`**.
 
-   **Upgrading from an older ini layout:** PostgreSQL keys moved from **`[PORTAL]`** to **`[DEFAULT]`**; ingest/archive/metrics keys moved from **`[DEFAULT]`** / **`[PORTAL]`** to **`[PIPELINE]`**. Existing deployments keep working via legacy section fallbacks in `conf_parser` until you migrate keys into the new sections.
-
    **PostgreSQL container (`docker-compose.yaml` `db` service):** `max_connections` is **500** so overlapping Gunicorn workers, threaded API routes (`job_plots`, `home_options`, `job_detail` aux tasks), and pipeline pools rarely hit `too many clients`. Parallel helpers: **`max_worker_processes=32`**, **`max_parallel_workers=24`**, **`max_parallel_workers_per_gather=4`**, **`max_parallel_maintenance_workers=2`**. **Memory spikes** are still controlled by a **lower `work_mem`**, **smaller maintenance/autovacuum work mem**, **`temp_buffers`**, and a **slightly lower `shared_buffers`**—see inline comments there. Summary plot aggregate prefetch uses at most **two** inner threads (see `summaryplot.compute_summary_aggregate_prefetch_pool_size`) so nested thread pools do not stack against the shared API executor. If legitimate bulk jobs slow down, prefer raising `work_mem` only during batch windows or increasing the `db` container `mem_limit` rather than unconstrained per-query memory.
 
    For memory-constrained deployments, start with the conservative baseline values documented in `hpcperfstats.ini.example`, then scale up gradually after observing stable DB checkpoints and container RSS headroom.
 
-   **`pipeline` memory cap (`docker-compose.yaml`):** on hosts with **~192 GiB RAM and no swap**, set **`mem_limit: 128g`** and **`memswap_limit: 128g`** on the **`pipeline`** service (defaults in base compose; override in **`docker-compose.settings.yaml`** if needed) so ingest spikes cgroup-OOM inside the container before starving **`db`**/**`web`**. **`stop_grace_period`** (default **2m**) allows `sync_timedb` to drain on `docker compose stop`; override with **`HPCPERFSTATS_PIPELINE_STOP_GRACE`**. After changing limits or grace, recreate the container (`docker compose up -d --force-recreate pipeline`) and verify **`memory.max`** inside the cgroup is numeric (not `max`). Pair with **`[PIPELINE]`** RSS knobs documented in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § OOM.
-
-   **Graceful stop (listend / sync_timedb / update_metrics):** Prefer `docker compose stop -t 180 pipeline` (or rebuild’s default **300s** via `HPCPERFSTATS_PIPELINE_STOP_TIMEOUT`) so wall clock exceeds sync_timedb’s **`SHUTDOWN_DRAIN_TIMEOUT_S` (120s)**. Keep compose **`stop_grace_period` ≥ 2m**. In **`services-conf/supervisord.conf`**, the three Python programs set **`stopwaitsecs=130`** so supervisord does not SIGKILL after the default **10s** wait. Approximate solo budgets: listend ~**20s** (15s DB pool join), update_metrics ~**30–60s**, sync_timedb up to **120s**. Expected SIGTERM-driven exit **143** (see **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`**). Do **not** `docker kill` / SIGKILL unless wedged past grace. Start `sleep` lines in supervisord are boot stagger only; stop has no sleep.
+   **`pipeline` memory cap (`docker-compose.yaml`):** on hosts with **~192 GiB RAM and no swap**, set **`mem_limit: 128g`** and **`memswap_limit: 128g`** on the **`pipeline`** service (defaults in base compose; override in **`docker-compose.settings.yaml`** if needed) so ingest spikes cgroup-OOM inside the container before starving **`db`**/**`web`**. **`stop_grace_period`** (default **2m**) allows `sync_timedb` to drain on `docker compose stop`; override with **`HPCPERFSTATS_PIPELINE_STOP_GRACE`**. Pair with **`[PIPELINE]`** RSS knobs documented in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § OOM. Recreating after limit changes: **[docs/upgrade.md](docs/upgrade.md)**.
 
    **Python interpreters (image):** web/gunicorn and helpers use GIL **`/opt/python3.14`** via **`/usr/local/bin/python3`** / **`gunicorn`** (built on **`debian:trixie`**, not Hub `python:*`). Pipeline daemons **`listend`**, **`sync_timedb`**, and **`update_metrics`** are baked onto free-threaded **`/opt/python3.14t/bin/python`** (no INI toggle). Image jemalloc is force-linked and preloaded (`LD_PRELOAD` + `/etc/ld.so.preload`) so CPython and manylinux wheels share it; gunicorn keeps `MALLOC_CONF=background_thread:false`. Stdlib **`zlib`** and other image-built natives link **zlib-ng** under **`/opt/zlib-ng`** (ZLIB_COMPAT; direct rpath link, not apt `zlib1g`). Image **`zstd`** CLI and CPython **`_zstd`** / **`compression.zstd`** use **zstd 1.5.7** under **`/opt/zstd`** (CLI gzip/zlib support linked to **zlib-ng**; symlinked into `/usr/local/bin` and `/usr/bin`; not apt `zstd`). `docker compose exec pipeline python3` stays GIL for operator one-liners; greppable startup lines `python_abi executable=… Py_GIL_DISABLED=…` prove the live daemon ABI. `sync_timedb` ingest/append/populate run as in-process threads; durable queues are the job-store sidecar. Production images install Intel MKL from PyPI and **source-compile** numpy/numexpr/pandas against it for both ABIs (not a host `pip` step); full image rebuilds take longer than wheel-only installs.
 
-   **RabbitMQ memory cap (`docker-compose.yaml` `rabbitmq` service):** default `vm_memory_high_watermark` is **40% of detected host RAM**, which can OOM the box under thousands of monitor publishers. Compose sets **`mem_limit: 96g`** / **`memswap_limit: 96g`** and mounts `services-conf/rabbitmq_vm_memory.conf` (`vm_memory_high_watermark.absolute = 80GiB`) so publishers block ~16 GiB below the cgroup hard wall (avoids Erlang `binary_alloc` at the limit). Recreate the service after changing either value (`docker compose up -d --force-recreate rabbitmq`). On hosts with less than 96 GiB RAM, lower **both** `mem_limit`/`memswap_limit` and the absolute watermark together.
+   **RabbitMQ memory cap (`docker-compose.yaml` `rabbitmq` service):** default `vm_memory_high_watermark` is **40% of detected host RAM**, which can OOM the box under thousands of monitor publishers. Compose sets **`mem_limit: 96g`** / **`memswap_limit: 96g`** and mounts `services-conf/rabbitmq_vm_memory.conf` (`vm_memory_high_watermark.absolute = 80GiB`) so publishers block ~16 GiB below the cgroup hard wall (avoids Erlang `binary_alloc` at the limit). On hosts with less than 96 GiB RAM, lower **both** `mem_limit`/`memswap_limit` and the absolute watermark together (then recreate as in **[docs/upgrade.md](docs/upgrade.md)**).
 
 6. **Supervisord and rsync:**
 
@@ -382,7 +356,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    After Let's Encrypt renew (or changing the TLS source path): restart
    **`proxy`** only — **`docker compose restart proxy`**. Never point production
    **`proxy_ssl_source.device`** at **`tests/fixtures/proxy-ssl`**.
-   **`./scripts/rebuild_pipeline.sh`** does **not** restart **`proxy`**.
+   Image rebuilds that leave **`proxy`** running: **[docs/upgrade.md](docs/upgrade.md)**.
 
    Compose bind-mounts **`./services-conf/nginx.conf`** to **`/etc/nginx/http.d/default.conf`**
    on **`proxy`**, and bind-mounts the shared snippets (**`nginx-static-files.conf`**,
@@ -450,32 +424,16 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    sudo docker compose logs
    ```
 
-   On first startup (or after updating the code), the `web` container runs Django
-   migrations (`manage.py migrate` only — schema changes ship as reviewed,
-   committed migration files; production startup never runs `makemigrations`) and
+   On first startup, the `web` container runs Django migrations
+   (`manage.py migrate` only — schema changes ship as reviewed, committed
+   migration files; production startup never runs `makemigrations`) and
    `collectstatic` so **`STATIC_ROOT`** (the volume nginx serves as `/static/`)
    is populated before Gunicorn starts. After `collectstatic`, startup verifies
-   SPA shells under **`STATIC_ROOT/frontend/{machine,pub}/index.html`** and
-   compares a **sha256 fingerprint** of package vs volume `machine/index.html`.
-   If shells are missing (for example a Vite-era volume after upgrading to the
-   Next export), or fingerprints **differ** after a from-scratch image rebuild
-   while **`staticfiles_data`** still holds an older Next tree, startup
-   **auto-heals** by replacing `STATIC_ROOT/frontend` from package static.
-   Image build `collectstatic` alone cannot update the named volume (it masks
-   the image layer). If the package image itself lacks the shells, web
-   fail-closes — rebuild target **`hpcperfstats-full`** (primary) or run
-   **`./scripts/rebuild_frontend.sh`** (SPA-only hot path).
+   SPA shells under **`STATIC_ROOT/frontend/{machine,pub}/index.html`**. If the
+   package image lacks the shells, web fail-closes. Volume fingerprint heal
+   after a later image rebuild is documented in **[docs/upgrade.md](docs/upgrade.md)**.
 
-   The compose DB service includes explicit PostgreSQL checkpoint/memory tuning (`max_connections`, `shared_buffers`, `work_mem`, `maintenance_work_mem`, `autovacuum_work_mem`, `checkpoint_*`, `min_wal_size`, `max_wal_size`, and parallel-worker caps) plus `shm_size`. Keep these aligned with host RAM and service memory limits; tune upward one notch at a time only after confirming checkpoint stability and no OOM events. The **pipeline** daemons (`listend`, `sync_timedb`, and `update_metrics`) now use in-process threads and ordinary Python objects, so the pipeline service no longer reserves a separate `shm_size` for worker IPC. Do **not** change **`db`** (or dual-run **`db_pg18`**) `shm_size: "16gb"`.
-
-   **PostgreSQL 18 migrate (optional dual-run):** Compose keeps Hub **`timescale/timescaledb:2.28.3-pg15`** as hostname **`db`**. Homemade Alpine PG18 + Timescale (`services-conf/db.Dockerfile`, image `hpcperfstats-db`) is service **`db_pg18`** under profile **`pg18-migrate`** (alias **`db18`**, volume **`postgres_data_pg18`**). Logical chunk copy + freeze cutover: **`docs/OPERATOR_PG18_MIGRATION.md`**. Bake the DB image on the production CPU (`-march=native`). For **`io_method=io_uring`**, set host sysctl to the locked-down compromise **`kernel.io_uring_disabled=1`** and **`kernel.io_uring_group=70`** (Alpine postgres gid), or fully open with **`disabled=0`**; never **`disabled=2`**. Compose already sets **`security_opt: [seccomp=unconfined, label=disable]`** on **`db_pg18`**.
-
-   If you change the codebase, bring the containers down, make your changes, and then rebuild and start the stack again. A full **`docker compose up --build`** (or equivalent from-scratch image rebuild) plus recreating **`web`** is the primary way to land SPA fixes: startup fingerprint heal syncs the new package frontend into **`staticfiles_data`**.    Use **`./scripts/rebuild_frontend.sh`** only when you want an SPA-only refresh without rebuilding the image.
-   SPA rebuilds and image builds bake the running git SHA into the staff actions menu
-   (`SITE_GIT_COMMIT`). Image builds copy context `.git` into `frontend-builder` for
-   `git rev-parse` (then strip `.git` from the runtime image after `COPY . .`). Optional
-   `HPCPERFSTATS_GIT_COMMIT` build-arg / env still overrides when set. SPA-only
-   **`./scripts/rebuild_frontend.sh`** exports the host SHA the same way.
+   The compose DB service includes explicit PostgreSQL checkpoint/memory tuning (`max_connections`, `shared_buffers`, `work_mem`, `maintenance_work_mem`, `autovacuum_work_mem`, `checkpoint_*`, `min_wal_size`, `max_wal_size`, and parallel-worker caps) plus `shm_size`. Keep these aligned with host RAM and service memory limits; tune upward one notch at a time only after confirming checkpoint stability and no OOM events. The **pipeline** daemons (`listend`, `sync_timedb`, and `update_metrics`) use in-process threads and ordinary Python objects, so the pipeline service does not reserve a separate `shm_size` for worker IPC. Do **not** change **`db`** `shm_size: "16gb"`.
 
 ---
 
@@ -485,17 +443,14 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 |------|---------|
 | Build and start container stack | `sudo docker compose up --build -d` |
 | Stop and remove containers | `sudo docker compose down` |
-| Rebuild SPA in running stack (optional hot path; no pipeline restart) | `./scripts/rebuild_frontend.sh` |
-| Rebuild web/pipeline image after Python-only changes (preserves live frontend, no npm) | `./scripts/rebuild_pipeline.sh` |
-| Temporary pipeline-only rebuild (no running web; recreate pipeline only) | `./scripts/rebuild_pipeline.sh --no-web` |
-| Rebuild just the app and keep persistent services running | `docker compose stop -t 120 web pipeline proxy && docker compose up --build -d web pipeline && docker compose start proxy` |
+| Existing-stack rebuilds / Redis / PG18 / INI | **[docs/upgrade.md](docs/upgrade.md)** |
 | Restart proxy after cert renew or `server=` change | `docker compose restart proxy` |
 | View logs  | `sudo docker compose logs` |
 | PostgreSQL shell | `docker compose exec db psql -h localhost -U hpcperfstats` |
 | Pipeline shell (data/processing) | `docker compose exec pipeline su hpcperfstats` |
 | Get queues and message counts from rabbitmq | `docker compose exec rabbitmq rabbitmqctl list_queues name messages consumers` |
-| RabbitMQ default queue type | Compose mounts `services-conf/rabbitmq_default_queue_type.conf` (`default_queue_type = quorum`). Classic queues OOM under thousands of monitor publisher connections. **New** durable monitor ingest queues are declared quorum; listend **passive-attaches** to an existing queue of any type (do not 406 `x-queue-type` against classic `stampede3`). Recreate the `rabbitmq` service after changing that conf file; **existing queues keep their declared type** — do **not** delete/recreate `stampede3` (or other `rmq_queue`) as classic to clear listend `INTERNAL_ERROR` 541 “timed out consuming from quorum queue” (that is Ra consume-setup / listend cancel churn; reconnect with backoff). |
-| RabbitMQ memory cap | Compose **`mem_limit` / `memswap_limit` 96g** plus `services-conf/rabbitmq_vm_memory.conf` (`vm_memory_high_watermark.absolute = 80GiB` headroom). Recreate `rabbitmq` after changing either. Inspect: `docker compose exec rabbitmq rabbitmqctl status` (Alarms + watermark; do **not** use `rabbitmqctl list_alarms` — absent on 4.3.x). |
+| RabbitMQ default queue type | Compose mounts `services-conf/rabbitmq_default_queue_type.conf` (`default_queue_type = quorum`). New durable monitor ingest queues are declared quorum. Existing brokers: **[docs/upgrade.md](docs/upgrade.md)**. |
+| RabbitMQ memory cap | Compose **`mem_limit` / `memswap_limit` 96g** plus `services-conf/rabbitmq_vm_memory.conf` (`vm_memory_high_watermark.absolute = 80GiB` headroom). Inspect: `docker compose exec rabbitmq rabbitmqctl status` (Alarms + watermark; do **not** use `rabbitmqctl list_alarms` — absent on 4.3.x). |
 | Admin Monitor RabbitMQ stats | Staff Admin Monitor → RabbitMQ statistics uses the **management HTTP API** on compose-internal **`http://rabbitmq:15672`** (image `rabbitmq:*-management-alpine`). Port **15672 is not published on the host**; `loopback_users.guest = false` in `services-conf/rabbitmq_management.conf` allows `web`→`rabbitmq` auth. |
 
 ---

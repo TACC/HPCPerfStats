@@ -429,6 +429,11 @@ def test_readme_install_triggered_for_operator_readme_paths():
   assert "readme-installation-sync.mdc" in root_rules
 
 
+def test_readme_install_triggered_for_upgrade_doc():
+  rules = triggered_rules_for_paths(["/repo/HPCPerfStats/docs/upgrade.md"])
+  assert "readme-installation-sync.mdc" in rules
+
+
 def test_rule_file_needs_router_entry_for_new_mdc():
   ok, name = lib.rule_file_needs_router_entry(
       "/repo/hpcperfstats/cursor-rules/sync-timedb-foo-contract.mdc",

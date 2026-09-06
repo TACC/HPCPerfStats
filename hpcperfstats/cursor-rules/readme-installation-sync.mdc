@@ -9,9 +9,10 @@ alwaysApply: false
 
 Operator-facing setup lives primarily in **`HPCPerfStats/README.md`** under **Installation** and adjacent deployment sections (Compose stack, nginx, data volumes, cluster syslog, `hpcperfstats.ini`, supervisor/rsync). When a change would leave those instructions wrong, incomplete, or unsafe to follow on a fresh deploy, update **`README.md` in the same task**—**before** considering the change complete (same PR / same agent task). Do not land code or compose edits that alter the setup story without updating the README.
 
-## Canonical document
+## Canonical documents
 
-- **[`HPCPerfStats/README.md`](HPCPerfStats/README.md)** — installation steps, prerequisites, copy/paste commands, and troubleshooting that operators rely on during first-time or upgraded deploys.
+- **[`HPCPerfStats/README.md`](HPCPerfStats/README.md)** — **fresh install** only: prerequisites, copy/paste first-boot commands, and compose/INI/nginx/syslog wiring a blank host needs.
+- **[`docs/upgrade.md`](docs/upgrade.md)** — **existing stacks** only: image rebuilds, Redis/INI/volume layout, RabbitMQ recreate, PG18 dual-run, SPA fingerprint heal. Do **not** put those playbooks back under README **Installation**.
 
 ## Change categories that require README updates
 
@@ -21,20 +22,21 @@ Use this checklist when touching the listed areas. If any row applies, extend or
 |----------|------------------|---------------|
 | **Compose services and wiring** | `docker-compose.yaml`, `docker-compose.settings.yaml` (+ `.example`), service names, `depends_on`, networks, images, commands, env defaults | Document how to start/stop, what runs where, new/changed services, ports published to the host. Prefer **`docker compose exec <service>`** over hardcoded `container_name` strings; when `name:` / project naming changes, audit **Useful commands** tables. Base compose `include`s settings automatically — no `-f docker-compose.app.yaml`. |
 | **Host-visible ports and firewall** | Published ports (`514`, `80`/`443`, DB/Redis/RMQ only-on-internal-network vs exposed) | Call out inbound firewall / syslog forwarder targets; avoid implying ports that no longer exist |
-| **Volumes and data paths** | Bind mounts under `/data/hpcperfstats_*`, named volumes, `/hpcperfstats/` layout, log/accounting/archive dirs, `ssh_keys` and **`proxy_ssl_source`** devices | Directory creation steps, ownership hints, migration notes when paths move |
+| **Volumes and data paths** | Bind mounts under `/data/hpcperfstats_*`, named volumes, `/hpcperfstats/` layout, log/accounting/archive dirs, `ssh_keys` and **`proxy_ssl_source`** devices | Fresh-host directory creation; **existing-volume** moves go in **`docs/upgrade.md`** |
 | **Container resource limits** | `shm_size` for Postgres, `mem_limit`, Redis `maxmemory`, sysctl overrides in compose | Operator prerequisites or tuning guidance when defaults change (e.g. shared memory, Redis memory cap; pool sizing cross-reference **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** if README points there) |
 | **Linux host / VM prerequisites** | Kernel sysctl (`vm.overcommit_memory`), ulimits, Docker Desktop vs Linux host distinctions | Persistent `sysctl` / reboot guidance when Redis, DB, or other services require host-level settings |
 | **Immutable config and examples** | `hpcperfstats.ini.example`, new required `[SECTION]` keys, deprecated keys | Mirror copy/edit steps and field tables under Installation; keep example and README in lockstep |
 | **Service configs operators must copy** | Tracked `supervisord.conf` (no `cp`); rsync via wrapper + optional/site `rsync_data.sh` with tracked `.example` fallback (guarded until enabled); committed `nginx.conf` (no TLS path edit — certs via **`proxy_ssl_source`** settings volume + entrypoint materialization); syslog-ng fragments | README must not instruct supervisord `cp …example`; document wrapper + enable path for rsync; **`proxy_ssl_source.device`** + optional **`HPCPERFSTATS_SSL_CERTS_REL`** (no `.env`) + **`compose restart proxy`** after renew; restart implications |
-| **Bootstrap / migration / one-shot ops** | New `manage.py` or documented migrate/collectstatic order, new mandatory seeds | Add or adjust README commands so a blank deploy succeeds |
+| **Bootstrap / one-shot first boot** | New `manage.py` or documented migrate/collectstatic order, new mandatory seeds | Add or adjust README commands so a blank deploy succeeds. PG18 / Timescale catalog hops: **`docs/upgrade.md`** |
 | **External integrations documented at deploy** | Cluster syslog (`[SYSLOG]`), RabbitMQ from monitors, accounting/rsync | Ports, INI knobs, forwarder examples—stay aligned with code defaults |
 
 ## Required behavior
 
 1. Identify whether the change touches **operator setup**, **first-boot**, **upgrade**, or **host prerequisites**.
-2. If yes, update **`HPCPerfStats/README.md`** so a reader following **Installation** gets correct paths, ports, INI keys, and commands—including **“why”** when a sysctl or volume requirement is non-obvious.
-3. Prefer **copy-paste-ready** shell snippets and keep numbering/sections consistent with the current README structure.
-4. If behavior is documented in **`docs/*.md`** in detail, README may stay short with a **link**—but README must still list the prerequisite or step operators cannot skip.
+2. If it is **fresh install / first-boot**, update **`HPCPerfStats/README.md` Installation** so a reader gets correct paths, ports, INI keys, and commands—including **“why”** when a sysctl or volume requirement is non-obvious.
+3. If it is an **existing-stack upgrade** (rebuild, migrate, recreate, legacy layout), update **`docs/upgrade.md`** and keep a one-line pointer from README Installation / Useful commands — do not expand Installation with upgrade procedures.
+4. Prefer **copy-paste-ready** shell snippets and keep numbering/sections consistent with the current README structure.
+5. If behavior is documented in **`docs/*.md`** in detail, README may stay short with a **link**—but README must still list the prerequisite or step operators cannot skip on a **blank** host.
 
 ## When README-only edits suffice
 

@@ -290,7 +290,8 @@ This section records **typical** tradeoffs implicit in the design—not a formal
 
 | Topic | Location |
 |-------|-----------|
-| Install, monitor RPM, broker config, and **index of all `docs/`** | `HPCPerfStats/README.md` |
+| Fresh install, monitor RPM, broker config, and **index of all `docs/`** | `HPCPerfStats/README.md` |
+| Existing-stack upgrades (rebuild, Redis/INI, PG18 dual-run) | `docs/upgrade.md` |
 | Telemetry / variable definitions (canonical) | `docs/MONITOR_VARIABLES.md` |
 | Regenerate / augment `MONITOR_VARIABLES.md` | `docs/regenerate_monitor_variables_catalog.py`, `docs/augment_monitor_variables_diagnostics.py` |
 | Researcher-facing web UI guide | `docs/using-the-website-as-a-researcher.md` |

@@ -79,6 +79,41 @@ def test_readme_and_design_doc_redis_policy_is_volatile_lru():
   assert "allkeys-lru" not in design
 
 
+def test_readme_install_is_fresh_only_and_upgrade_doc_holds_existing_stack():
+  """Installation stays greenfield; existing-stack playbooks live in docs/upgrade.md."""
+  repo_root = Path(__file__).resolve().parents[2]
+  readme = (repo_root / "README.md").read_text()
+  upgrade = (repo_root / "docs" / "upgrade.md").read_text()
+  install = readme.split("## Installation", 1)[1].split("## Useful commands", 1)[0]
+  assert "docs/upgrade.md" in readme
+  assert "fresh install" in install.lower()
+  forbidden_in_install = (
+      "Upgrading the Compose Redis server",
+      "Upgrading from an older ini layout",
+      "Migrating from the old layout",
+      "PostgreSQL 18 migrate",
+      "profile pg18-migrate",
+      "kernel.io_uring_disabled",
+      "./scripts/rebuild_frontend.sh",
+      "./scripts/rebuild_pipeline.sh",
+      "docker compose pull redis",
+  )
+  for phrase in forbidden_in_install:
+    assert phrase not in install, phrase
+  required_in_upgrade = (
+      "docker compose pull redis",
+      "Upgrading from an older ini layout",
+      "docker-compose.app.yaml",
+      "pg18-migrate",
+      "kernel.io_uring_disabled",
+      "./scripts/rebuild_frontend.sh",
+      "./scripts/rebuild_pipeline.sh",
+      "OPERATOR_PG18_MIGRATION.md",
+  )
+  for phrase in required_in_upgrade:
+    assert phrase in upgrade, phrase
+
+
 def test_docker_compose_rabbitmq_defaults_to_guest_credentials():
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
