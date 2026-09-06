@@ -331,3 +331,60 @@ def test_copy_one_chunk_force_recopies_even_when_counts_match(
     )
     assert result == "copied"
     assert any("DELETE FROM host_data" in s for s in executed)
+
+
+def test_run_chunk_copies_parallel_invokes_each_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--workers 2`` must still process every selected chunk."""
+    mod = _load_mod()
+    c1 = mod.ChunkRow(
+        "_timescaledb_internal",
+        "_hyper_1_1_chunk",
+        datetime(2026, 8, 1, tzinfo=timezone.utc),
+        datetime(2026, 8, 2, tzinfo=timezone.utc),
+        False,
+    )
+    c2 = mod.ChunkRow(
+        "_timescaledb_internal",
+        "_hyper_1_2_chunk",
+        datetime(2026, 8, 2, tzinfo=timezone.utc),
+        datetime(2026, 8, 3, tzinfo=timezone.utc),
+        False,
+    )
+    seen: list[str] = []
+
+    def _fake_copy(chunk: object, **_kw: object) -> str:
+        seen.append(chunk.chunk_name)  # type: ignore[attr-defined]
+        return "skipped" if chunk.chunk_name.endswith("1_chunk") else "copied"  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(mod, "copy_one_chunk", _fake_copy)
+    skipped, copied = mod.run_chunk_copies(
+        [c1, c2],
+        source_host="db",
+        target_host="db18",
+        port=5432,
+        user="u",
+        database="d",
+        dump_dir=None,
+        force=False,
+        workers=2,
+    )
+    assert skipped == 1 and copied == 1
+    assert set(seen) == {"_hyper_1_1_chunk", "_hyper_1_2_chunk"}
+
+
+def test_run_chunk_copies_rejects_non_positive_workers() -> None:
+    mod = _load_mod()
+    with pytest.raises(ValueError, match="workers"):
+        mod.run_chunk_copies(
+            [],
+            source_host="db",
+            target_host="db18",
+            port=5432,
+            user="u",
+            database="d",
+            dump_dir=None,
+            force=False,
+            workers=0,
+        )

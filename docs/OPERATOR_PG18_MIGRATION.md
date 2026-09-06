@@ -154,7 +154,7 @@ Optional audit/resume files (path must be writable inside `web`):
 docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate run --rm --no-deps -e PGPASSWORD=hpcperfstats web python3 /home/hpcperfstats/scripts/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --dump-dir /tmp/pg18_chunk_dumps -v
 ```
 
-Per chunk the tool compares ``count(*)`` on the source chunk to ``count(*)`` on target ``host_data`` for that time range: **matching counts are skipped** (resume-friendly). Mismatches (or ``--force``) **delete the target range then COPY**. It never COPY's the empty parent `host_data`.
+Per chunk the tool compares ``count(*)`` on the source chunk to ``count(*)`` on target ``host_data`` for that time range: **matching counts are skipped** (resume-friendly). Mismatches (or ``--force``) **delete the target range then COPY**. Default **`--workers 2`** runs two chunk copies at once (`--workers 1` for serial). It never COPY's the empty parent `host_data`.
 
 ---
 

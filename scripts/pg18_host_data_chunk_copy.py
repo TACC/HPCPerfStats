@@ -10,6 +10,7 @@ cutover (see ``docs/OPERATOR_PG18_MIGRATION.md``).
 Uses **psycopg** (already in the ``web`` image) for catalog queries and COPY
 streaming — no PostgreSQL client binary is required on PATH. Chunks whose
 source and target row counts already match are skipped unless ``--force``.
+Up to ``--workers`` chunks copy concurrently (default 2).
 
 Attributes:
   LOG: Module logger for chunk-copy progress and failures.
@@ -22,6 +23,7 @@ import logging
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -552,6 +554,78 @@ def copy_one_chunk(
   return "copied"
 
 
+def run_chunk_copies(
+    chunks: Sequence[ChunkRow],
+    *,
+    source_host: str,
+    target_host: str,
+    port: int,
+    user: str,
+    database: str,
+    dump_dir: str | None,
+    force: bool,
+    workers: int,
+) -> tuple[int, int]:
+  """
+  Copy or skip selected chunks with up to ``workers`` concurrent threads.
+
+  Each worker opens its own source/target connections. Disjoint chunk time
+  ranges are safe to run in parallel; raise if ``workers`` is less than 1.
+
+  Args:
+    chunks (Sequence[ChunkRow]): Watermark-selected chunks to process.
+    source_host (str): PG15 hostname.
+    target_host (str): PG18 hostname.
+    port (int): Shared Postgres port.
+    user (str): Role name.
+    database (str): Database name.
+    dump_dir (str | None): Optional zstd dump directory.
+    force (bool): Passed through to :func:`copy_one_chunk`.
+    workers (int): Max concurrent chunk copies (``1`` = serial).
+
+  Returns:
+    tuple[int, int]: ``(skipped_count, copied_count)``.
+
+  Raises:
+    ValueError: Raised when ``workers`` is less than 1.
+    RuntimeError: Raised when a worker's copy/dump stage fails.
+    ValueError: Raised when a chunk names the parent ``host_data`` relation.
+
+  Examples:
+    >>> run_chunk_copies([], source_host='db', target_host='db18', port=5432, user='u', database='d', dump_dir=None, force=False, workers=2)
+    (0, 0)
+  """
+  if workers < 1:
+    raise ValueError("workers must be >= 1")
+  if not chunks:
+    return 0, 0
+
+  skipped = 0
+  copied = 0
+  with ThreadPoolExecutor(max_workers=workers) as pool:
+    futures = [
+        pool.submit(
+            copy_one_chunk,
+            chunk,
+            source_host=source_host,
+            target_host=target_host,
+            port=port,
+            user=user,
+            database=database,
+            dump_dir=dump_dir,
+            force=force,
+        )
+        for chunk in chunks
+    ]
+    for fut in as_completed(futures):
+      outcome = fut.result()
+      if outcome == "skipped":
+        skipped += 1
+      else:
+        copied += 1
+  return skipped, copied
+
+
 def main(argv: Sequence[str] | None = None) -> int:
   """
   CLI entry: list or copy watermarked ``host_data`` chunks.
@@ -594,6 +668,12 @@ def main(argv: Sequence[str] | None = None) -> int:
       action="store_true",
       help="Re-copy even when source/target row counts already match",
   )
+  parser.add_argument(
+      "--workers",
+      type=int,
+      default=2,
+      help="Max concurrent chunk copies (default 2; use 1 for serial)",
+  )
   parser.add_argument("-v", "--verbose", action="store_true")
   args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -611,10 +691,11 @@ def main(argv: Sequence[str] | None = None) -> int:
   )
   selected = filter_chunks_by_watermark(chunks, watermark=wm)
   LOG.info(
-      "source_chunks=%s selected=%s watermark=%s",
+      "source_chunks=%s selected=%s watermark=%s workers=%s",
       len(chunks),
       len(selected),
       wm.isoformat(),
+      args.workers,
   )
   for c in selected:
     print(
@@ -624,24 +705,24 @@ def main(argv: Sequence[str] | None = None) -> int:
   if args.list_only:
     return 0
 
-  skipped = 0
-  copied = 0
-  for chunk in selected:
-    outcome = copy_one_chunk(
-        chunk,
-        source_host=args.source_host,
-        target_host=args.target_host,
-        port=args.port,
-        user=args.user,
-        database=args.database,
-        dump_dir=args.dump_dir,
-        force=args.force,
-    )
-    if outcome == "skipped":
-      skipped += 1
-    else:
-      copied += 1
-  LOG.info("done skipped=%s copied=%s force=%s", skipped, copied, args.force)
+  skipped, copied = run_chunk_copies(
+      selected,
+      source_host=args.source_host,
+      target_host=args.target_host,
+      port=args.port,
+      user=args.user,
+      database=args.database,
+      dump_dir=args.dump_dir,
+      force=args.force,
+      workers=args.workers,
+  )
+  LOG.info(
+      "done skipped=%s copied=%s force=%s workers=%s",
+      skipped,
+      copied,
+      args.force,
+      args.workers,
+  )
   return 0
 
 
