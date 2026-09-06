@@ -26,7 +26,7 @@ ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
 
 # LLVM major matches docker-library postgres 18/alpine3.24.
 ENV DOCKER_PG_LLVM_DEPS="llvm21-dev clang21"
-ENV OPT_CFLAGS_LIBS="-O3 -march=native -flto=auto -g0"
+ENV OPT_CFLAGS_LIBS="-O3 -march=native -mtune=native -flto=auto -g0"
 ENV OPT_CFLAGS_PG="-O3 -march=native -mprefer-vector-width=512 -mtune=native -flto=auto -g0"
 
 RUN set -eux; \
@@ -104,7 +104,7 @@ RUN set -eux; \
   mkdir -p /usr/src/lz4; \
   tar -xzf /tmp/lz4.tar.gz -C /usr/src/lz4 --strip-components=1; \
   cd /usr/src/lz4; \
-  make -j"$(nproc)" CFLAGS="${OPT_CFLAGS_LIBS}" PREFIX=/opt/lz4; \
+  make -j"$(nproc)" CFLAGS="${OPT_CFLAGS_LIBS} -DLZ4_HEAPMODE=0" PREFIX=/opt/lz4; \
   make install PREFIX=/opt/lz4; \
   rm -rf /usr/src/lz4 /tmp/lz4.tar.gz
 

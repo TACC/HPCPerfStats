@@ -319,6 +319,7 @@ After a successful soak, operators may archive/delete `/data/hpcperfstats_db/pg1
 | Timescale | 2.29.x (not `APACHE_ONLY`; no external lz4/zstd DT_NEEDED on `timescaledb.so`) |
 | `/opt` | jemalloc, **zlib-ng**, icu, liburing, lz4, zstd with rpath on **postgres** + zstd CLI (`HAVE_ZLIB=1` + `HAVE_LZ4=1`; no apk `zlib`) |
 | CFLAGS (PG + Timescale) | `-O3 -march=native -mprefer-vector-width=512 -mtune=native -flto=auto -g0` |
+| CFLAGS (`/opt` libs) | `-O3 -march=native -mtune=native -flto=auto -g0`; LZ4 also `-DLZ4_HEAPMODE=0` |
 | Volume | `/var/lib/postgresql` (PG18 layout) |
 | Seccomp | `seccomp=unconfined` + `label=disable` + `cap_add: SYS_ADMIN` on `db_pg18` for `io_method=io_uring` |
 | Host io_uring | Preferred: `kernel.io_uring_disabled=1` + `kernel.io_uring_group=70`; forbidden: `disabled=2` |

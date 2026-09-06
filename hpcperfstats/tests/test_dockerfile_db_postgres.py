@@ -117,6 +117,19 @@ def test_db_dockerfile_postgres_and_timescale_prefer_512_vector_width() -> None:
     assert "-DAPACHE_ONLY" not in text
 
 
+def test_db_dockerfile_libs_mtune_and_lz4_heapmode() -> None:
+    """OPT_CFLAGS_LIBS include -mtune=native; lz4 bake sets -DLZ4_HEAPMODE=0."""
+    text = _dockerfile()
+    assert (
+        'ENV OPT_CFLAGS_LIBS="-O3 -march=native -mtune=native -flto=auto -g0"'
+        in text
+    )
+    assert "-mtune=native" in text
+    lz4_run = text[text.index("# --- lz4 ---") : text.index("# --- zlib-ng")]
+    assert "-DLZ4_HEAPMODE=0" in lz4_run
+    assert "OPT_CFLAGS_LIBS" in lz4_run
+
+
 def test_db_dockerfile_timescale_229_no_external_lz4_zstd_ldd_gate() -> None:
     """Timescale must not DT_NEEDED jemalloc/lz4/zstd; musl ldd on .so is misleading.
 
