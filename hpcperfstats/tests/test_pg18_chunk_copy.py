@@ -141,3 +141,193 @@ def test_fetch_source_chunks_uses_psycopg_not_psql_binary(monkeypatch: pytest.Mo
     assert rows[0].chunk_name == "_hyper_1_1_chunk"
     assert '"psql"' not in Path(mod.__file__).read_text(encoding="utf-8")
     assert "'psql'" not in Path(mod.__file__).read_text(encoding="utf-8")
+
+
+def test_chunk_row_counts_match_helper() -> None:
+    mod = _load_mod()
+    assert mod.chunk_row_counts_match(0, 0) is True
+    assert mod.chunk_row_counts_match(10, 10) is True
+    assert mod.chunk_row_counts_match(10, 9) is False
+    assert mod.chunk_row_counts_match(0, 1) is False
+
+
+def _sample_chunk(mod: object) -> object:
+    return mod.ChunkRow(
+        "_timescaledb_internal",
+        "_hyper_1_2_chunk",
+        datetime(2026, 8, 10, tzinfo=timezone.utc),
+        datetime(2026, 8, 11, tzinfo=timezone.utc),
+        False,
+    )
+
+
+def test_copy_one_chunk_skips_when_source_and_target_counts_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Already-synced ranges must not delete/COPY again."""
+    mod = _load_mod()
+    chunk = _sample_chunk(mod)
+    executed: list[str] = []
+
+    class _FakeCursor:
+        def __enter__(self) -> "_FakeCursor":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def execute(self, sql: str, _params: object = None) -> None:
+            executed.append(sql if isinstance(sql, str) else str(sql))
+
+        def fetchone(self) -> tuple[int]:
+            return (42,)
+
+        def copy(self, _sql: str) -> object:
+            raise AssertionError("COPY must not run when counts match")
+
+    class _FakeConn:
+        def __enter__(self) -> "_FakeConn":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def cursor(self) -> _FakeCursor:
+            return _FakeCursor()
+
+    monkeypatch.setattr(mod, "connect_pg", lambda **_kw: _FakeConn())
+    result = mod.copy_one_chunk(
+        chunk,
+        source_host="db",
+        target_host="db18",
+        port=5432,
+        user="u",
+        database="d",
+        dump_dir=None,
+        force=False,
+    )
+    assert result == "skipped"
+    assert not any("DELETE FROM host_data" in s for s in executed)
+
+
+def test_copy_one_chunk_copies_when_counts_differ(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load_mod()
+    chunk = _sample_chunk(mod)
+    executed: list[str] = []
+    fetch_values = iter([100, 50])  # source, target
+
+    class _FakeCopy:
+        def __enter__(self) -> "_FakeCopy":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def __iter__(self):
+            return iter(())
+
+        def write(self, _data: object) -> None:
+            return None
+
+    class _FakeCursor:
+        def __enter__(self) -> "_FakeCursor":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def execute(self, sql: str, _params: object = None) -> None:
+            executed.append(sql if isinstance(sql, str) else str(sql))
+
+        def fetchone(self) -> tuple[int]:
+            return (next(fetch_values),)
+
+        def copy(self, _sql: str) -> _FakeCopy:
+            return _FakeCopy()
+
+    class _FakeConn:
+        def __enter__(self) -> "_FakeConn":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def cursor(self) -> _FakeCursor:
+            return _FakeCursor()
+
+    monkeypatch.setattr(mod, "connect_pg", lambda **_kw: _FakeConn())
+    result = mod.copy_one_chunk(
+        chunk,
+        source_host="db",
+        target_host="db18",
+        port=5432,
+        user="u",
+        database="d",
+        dump_dir=None,
+        force=False,
+    )
+    assert result == "copied"
+    assert any("DELETE FROM host_data" in s for s in executed)
+
+
+def test_copy_one_chunk_force_recopies_even_when_counts_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load_mod()
+    chunk = _sample_chunk(mod)
+    executed: list[str] = []
+
+    class _FakeCopy:
+        def __enter__(self) -> "_FakeCopy":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def __iter__(self):
+            return iter(())
+
+        def write(self, _data: object) -> None:
+            return None
+
+    class _FakeCursor:
+        def __enter__(self) -> "_FakeCursor":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def execute(self, sql: str, _params: object = None) -> None:
+            executed.append(sql if isinstance(sql, str) else str(sql))
+
+        def fetchone(self) -> tuple[int]:
+            return (7,)
+
+        def copy(self, _sql: str) -> _FakeCopy:
+            return _FakeCopy()
+
+    class _FakeConn:
+        def __enter__(self) -> "_FakeConn":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def cursor(self) -> _FakeCursor:
+            return _FakeCursor()
+
+    monkeypatch.setattr(mod, "connect_pg", lambda **_kw: _FakeConn())
+    result = mod.copy_one_chunk(
+        chunk,
+        source_host="db",
+        target_host="db18",
+        port=5432,
+        user="u",
+        database="d",
+        dump_dir=None,
+        force=True,
+    )
+    assert result == "copied"
+    assert any("DELETE FROM host_data" in s for s in executed)

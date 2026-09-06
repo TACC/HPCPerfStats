@@ -8,7 +8,8 @@ best-effort while writers stay on PG15; freeze + recount is required before
 cutover (see ``docs/OPERATOR_PG18_MIGRATION.md``).
 
 Uses **psycopg** (already in the ``web`` image) for catalog queries and COPY
-streaming — no PostgreSQL client binary is required on PATH.
+streaming — no PostgreSQL client binary is required on PATH. Chunks whose
+source and target row counts already match are skipped unless ``--force``.
 
 Attributes:
   LOG: Module logger for chunk-copy progress and failures.
@@ -359,6 +360,73 @@ def fetch_source_chunks(
   return rows
 
 
+def chunk_row_counts_match(source_n: int, target_n: int) -> bool:
+  """
+  Return True when source and target row counts are equal (already synced).
+
+  Args:
+    source_n (int): ``count(*)`` from the source chunk relation.
+    target_n (int): ``count(*)`` on target ``host_data`` for the chunk time
+      range.
+
+  Returns:
+    bool: True when both counts are equal (including both zero).
+
+  Examples:
+    >>> chunk_row_counts_match(10, 10)
+    True
+    >>> chunk_row_counts_match(10, 9)
+    False
+  """
+  return source_n == target_n
+
+
+def count_source_chunk_rows(conn: Connection, chunk: ChunkRow) -> int:
+  """
+  Count rows in the source chunk relation.
+
+  Args:
+    conn (Connection): Open source connection.
+    chunk (ChunkRow): Source chunk metadata.
+
+  Returns:
+    int: ``count(*)`` from ``chunk.regclass``.
+
+  Examples:
+    >>> count_source_chunk_rows.__name__
+    'count_source_chunk_rows'
+  """
+  with conn.cursor() as cur:
+    cur.execute(f"SELECT count(*) FROM {chunk.regclass}")
+    row = cur.fetchone()
+  return int(row[0]) if row else 0
+
+
+def count_target_range_rows(conn: Connection, chunk: ChunkRow) -> int:
+  """
+  Count target ``host_data`` rows in ``[range_start, range_end)``.
+
+  Args:
+    conn (Connection): Open target connection.
+    chunk (ChunkRow): Chunk whose time bounds define the range.
+
+  Returns:
+    int: ``count(*)`` on target for that time window.
+
+  Examples:
+    >>> count_target_range_rows.__name__
+    'count_target_range_rows'
+  """
+  with conn.cursor() as cur:
+    cur.execute(
+        "SELECT count(*) FROM host_data "
+        "WHERE time >= %s AND time < %s",
+        (chunk.range_start, chunk.range_end),
+    )
+    row = cur.fetchone()
+  return int(row[0]) if row else 0
+
+
 def copy_one_chunk(
     chunk: ChunkRow,
     *,
@@ -368,11 +436,14 @@ def copy_one_chunk(
     user: str,
     database: str,
     dump_dir: str | None,
-) -> None:
+    force: bool = False,
+) -> str:
   """
-  Delete-range on target then stream COPY out → COPY in (optional zstd dump).
+  Skip when row counts match, else delete-range + COPY (optional zstd dump).
 
-  Uses the Postgres COPY protocol through psycopg on both ends. Optional
+  Compares ``count(*)`` on the source chunk to ``count(*)`` on target
+  ``host_data`` for the same time range. Matching counts skip the expensive
+  delete/COPY (resume-friendly). ``force=True`` always re-copies. Optional
   ``dump_dir`` still shells out to the ``zstd`` CLI when present.
 
   Args:
@@ -383,9 +454,10 @@ def copy_one_chunk(
     user (str): Role name.
     database (str): Database name.
     dump_dir (str | None): Optional directory for ``chunk_*.pgcopy.zst``.
+    force (bool): When True, ignore matching counts and re-copy.
 
   Returns:
-    None: This function does not return a value.
+    str: ``"skipped"`` when counts already match, else ``"copied"``.
 
   Raises:
     RuntimeError: Raised when zstd dump/restore stages fail.
@@ -399,19 +471,33 @@ def copy_one_chunk(
   out_sql = build_copy_out_sql(chunk)
   in_sql = build_copy_in_sql()
 
-  LOG.info(
-      "copy chunk=%s range=[%s,%s) compressed=%s",
-      chunk.regclass,
-      chunk.range_start.isoformat(),
-      chunk.range_end.isoformat(),
-      chunk.is_compressed,
-  )
-
   with connect_pg(
       host=source_host, port=port, user=user, database=database
   ) as src, connect_pg(
       host=target_host, port=port, user=user, database=database
   ) as tgt:
+    src_n = count_source_chunk_rows(src, chunk)
+    tgt_n = count_target_range_rows(tgt, chunk)
+    if not force and chunk_row_counts_match(src_n, tgt_n):
+      LOG.info(
+          "skip chunk=%s range=[%s,%s) rows=%s (already synced)",
+          chunk.regclass,
+          chunk.range_start.isoformat(),
+          chunk.range_end.isoformat(),
+          src_n,
+      )
+      return "skipped"
+
+    LOG.info(
+        "copy chunk=%s range=[%s,%s) compressed=%s src_rows=%s tgt_rows=%s",
+        chunk.regclass,
+        chunk.range_start.isoformat(),
+        chunk.range_end.isoformat(),
+        chunk.is_compressed,
+        src_n,
+        tgt_n,
+    )
+
     with tgt.cursor() as tcur:
       tcur.execute("SET statement_timeout = 0")
       tcur.execute(del_sql)
@@ -455,7 +541,7 @@ def copy_one_chunk(
           raise RuntimeError(
               f"restore-from-dump failed chunk={chunk.regclass} zstd={d_rc}"
           )
-      return
+      return "copied"
 
     with src.cursor() as scur, tgt.cursor() as tcur:
       scur.execute("SET statement_timeout = 0")
@@ -463,6 +549,7 @@ def copy_one_chunk(
       with scur.copy(out_sql) as copy_out, tcur.copy(in_sql) as copy_in:
         for data in copy_out:
           copy_in.write(data)
+  return "copied"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -502,6 +589,11 @@ def main(argv: Sequence[str] | None = None) -> int:
       action="store_true",
       help="Print selected chunks and exit without copying",
   )
+  parser.add_argument(
+      "--force",
+      action="store_true",
+      help="Re-copy even when source/target row counts already match",
+  )
   parser.add_argument("-v", "--verbose", action="store_true")
   args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -532,8 +624,10 @@ def main(argv: Sequence[str] | None = None) -> int:
   if args.list_only:
     return 0
 
+  skipped = 0
+  copied = 0
   for chunk in selected:
-    copy_one_chunk(
+    outcome = copy_one_chunk(
         chunk,
         source_host=args.source_host,
         target_host=args.target_host,
@@ -541,7 +635,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         user=args.user,
         database=args.database,
         dump_dir=args.dump_dir,
+        force=args.force,
     )
+    if outcome == "skipped":
+      skipped += 1
+    else:
+      copied += 1
+  LOG.info("done skipped=%s copied=%s force=%s", skipped, copied, args.force)
   return 0
 
 
