@@ -1472,16 +1472,64 @@ def _day_close_disk_remaining_raw_blocks(coord: Any, tar_path: str) -> bool:
   return False
 
 
+def _day_close_append_or_hot_active(
+    job_store: Any | None,
+    tar_path: str,
+    tgz_archive_dir: str,
+) -> bool:
+  """
+  Return True when append LIST or ingest/populate hot needs this tar.
+
+  H19: ``wait_on_ingest`` must yield only while append or the hot path is
+  actually working this day. Empty append plus no ingest/populate hot is
+  idle — day_close should kick verify/delete instead of forever-yielding.
+
+  Args:
+    job_store (Any | None): In-process job store, or None when unset.
+    tar_path (str): Daily ``.tar`` path.
+    tgz_archive_dir (str): Daily archive directory.
+
+  Returns:
+    bool: True when append depth is positive or ingest/populate is hot.
+
+  Examples:
+    >>> _day_close_append_or_hot_active(None, "/d/2020-01-01.tar", "/d")
+    False
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+      day_close_yield_requested,
+  )
+
+  yielded, _reason = day_close_yield_requested(
+      tar_path,
+      tgz_archive_dir=tgz_archive_dir,
+      phase="wait_on_ingest",
+  )
+  if yielded:
+    return True
+  if job_store is None:
+    return False
+  try:
+    append_n = int(
+        job_store.llen(jq.job_queue_key(jq.JOB_KIND_APPEND)) or 0
+    )
+  except Exception:
+    return False
+  return append_n > 0
+
+
 def _day_close_complete_wait_on_ingest_handoff(
     coord: Any,
     tar_path: str,
 ) -> None:
   """
-  Handoff closed raw to ingest before ``wait_on_ingest`` yield.
+  Handoff closed raw to ingest and kick verify/delete unblock.
 
   Prefer verify-gated ``complete_handoff_to_ingest``. When that returns
   empty (verify-handoff false but closed raw still on disk), kick
   ``kick_closed_raw_paths_to_ingest`` so idle yield still refills ingest.
+  Always call ``kick_closed_raw_unblock`` when present so ``phase=verifying``
+  days start verify instead of only requeueing handoff paths (H19).
 
   Args:
     coord (Any): :class:`DayRawRemovalCoordinator` instance.
@@ -1499,15 +1547,17 @@ def _day_close_complete_wait_on_ingest_handoff(
     result = complete_fn(tar_path, reason="day_close_wait_on_ingest")
     if result:
       paths = list(result)
-  if paths:
-    return
-  kick_fn = getattr(coord, "kick_closed_raw_paths_to_ingest", None)
-  if callable(kick_fn):
-    kick_fn(tar_path, reason="day_close_wait_on_ingest")
-  else:
-    requeue_fn = getattr(coord, "requeue_closed_raw_paths_for_ingest", None)
-    if callable(requeue_fn):
-      requeue_fn(tar_path, reason="day_close_wait_on_ingest")
+  if not paths:
+    kick_fn = getattr(coord, "kick_closed_raw_paths_to_ingest", None)
+    if callable(kick_fn):
+      kick_fn(tar_path, reason="day_close_wait_on_ingest")
+    else:
+      requeue_fn = getattr(coord, "requeue_closed_raw_paths_for_ingest", None)
+      if callable(requeue_fn):
+        requeue_fn(tar_path, reason="day_close_wait_on_ingest")
+  kick_unblock = getattr(coord, "kick_closed_raw_unblock", None)
+  if callable(kick_unblock):
+    kick_unblock(tar_path, reason="day_close_wait_on_ingest")
 
 
 def _day_close_log_claim_if_allowed(
@@ -1815,6 +1865,51 @@ def _run_day_close_job(
       _stage_exit("pre_seal_verify", result="ok")
       return None
 
+    skip_merge_remaining_raw = False
+
+    def _wait_on_ingest_or_advance() -> str | None:
+      """
+      Yield when append/hot needs the tar; otherwise kick and skip merge.
+
+      H17: remaining raw or verify-handoff plus append/hot → ``yielded``.
+      H19: same remaining-raw signal with idle append and no hot → kick
+      verify/delete and continue without merge.
+
+      Returns:
+        str | None: ``yielded`` or None to continue.
+
+      Examples:
+        >>> # nested helper inside _run_day_close_job
+        >>> None is None
+        True
+      """
+      nonlocal skip_merge_remaining_raw
+      handoff_fn = getattr(coord, "should_handoff_to_ingest", None)
+      needs_wait = bool(
+          _day_close_disk_remaining_raw_blocks(coord, tar_path)
+          or (callable(handoff_fn) and handoff_fn(tar_path))
+      )
+      if not needs_wait:
+        return None
+      _day_close_complete_wait_on_ingest_handoff(coord, tar_path)
+      if _day_close_append_or_hot_active(
+          job_store, tar_path, tgz_archive_dir,
+      ):
+        _stage_enter("wait_on_ingest")
+        _stage_exit(
+            "wait_on_ingest",
+            result="yielded",
+            reason="wait_on_ingest",
+        )
+        return "yielded"
+      skip_merge_remaining_raw = True
+      _log(
+          "queue_orchestrator day_close wait_on_ingest skip_yield "
+          "day=%s reason=append_idle" % day_token,
+          log_fn=log_fn,
+      )
+      return None
+
     def _maybe_yield_wait_on_ingest_after_verify() -> str | None:
       """
       Yield when verify says ingest must drain before cold-path work.
@@ -1827,21 +1922,14 @@ def _run_day_close_job(
         >>> None is None
         True
       """
-      handoff_fn = getattr(coord, "should_handoff_to_ingest", None)
-      if callable(handoff_fn) and handoff_fn(tar_path):
-        _stage_enter("wait_on_ingest")
-        _day_close_complete_wait_on_ingest_handoff(coord, tar_path)
-        _stage_exit(
-            "wait_on_ingest",
-            result="yielded",
-            reason="wait_on_ingest",
-        )
-        return "yielded"
-      return None
+      return _wait_on_ingest_or_advance()
 
     def _maybe_yield_disk_remaining_raw() -> str | None:
       """
-      Yield before merge when closed raw is already on disk (H17/H17b).
+      Yield before merge when closed raw is on disk and append/hot is active.
+
+      H19: idle append with no ingest/populate hot skips this yield so
+      kick/verify/delete can run.
 
       Returns:
         str | None: ``yielded`` or None to continue.
@@ -1851,16 +1939,7 @@ def _run_day_close_job(
         >>> None is None
         True
       """
-      if _day_close_disk_remaining_raw_blocks(coord, tar_path):
-        _stage_enter("wait_on_ingest")
-        _day_close_complete_wait_on_ingest_handoff(coord, tar_path)
-        _stage_exit(
-            "wait_on_ingest",
-            result="yielded",
-            reason="wait_on_ingest",
-        )
-        return "yielded"
-      return None
+      return _wait_on_ingest_or_advance()
 
     # H17 DC-01: disk remaining-raw / verify-handoff before merge → merge →
     # verify → dedupe → seal → post-seal → delete → tar-drop.
@@ -1877,107 +1956,117 @@ def _run_day_close_job(
       if early:
         return early
 
-      _stage_enter("reconcile_merge")
-      try:
-        updater = getattr(coord, "update_reconcile_progress", None)
-        if callable(updater):
-          updater(
-              tar_path,
-              worker_stage="reconcile_merge",
-              members_done=0,
-              members_total=0,
-              last_progress_ts=time.monotonic(),
-          )
-
-        def _on_merge_progress(done: int, total: int, last_mono: float) -> None:
-          """
-          Persist reconcile merge counters on the day_raw_removal manifest.
-
-          Args:
-            done (int): Members copied so far.
-            total (int): Union member count.
-            last_mono (float): Monotonic timestamp of last progress.
-
-          Returns:
-            None
-
-          Examples:
-            >>> # nested callback; invoked from rebuild_daily_tar_member_union_in_place
-            >>> None is None
-            True
-          """
+      if skip_merge_remaining_raw:
+        _log(
+            "queue_orchestrator day_close skip_merge day=%s "
+            "reason=append_idle_remaining_raw" % day_token,
+            log_fn=log_fn,
+        )
+      else:
+        _stage_enter("reconcile_merge")
+        try:
+          updater = getattr(coord, "update_reconcile_progress", None)
           if callable(updater):
             updater(
                 tar_path,
                 worker_stage="reconcile_merge",
-                members_done=done,
-                members_total=total,
-                last_progress_ts=last_mono,
+                members_done=0,
+                members_total=0,
+                last_progress_ts=time.monotonic(),
             )
 
-        remaining_fn = getattr(
-            coord, "remaining_raw_paths_blocking_tar_drop", None,
-        )
-        remaining_raw_by_gz = (
-            remaining_fn(tar_path) if callable(remaining_fn) else {}
-        )
-        reconcile_open_tar_with_sealed_zst(
-            tar_path,
-            zstd_threads=get_archive_zstd_threads(),
-            compress_level=get_archive_zstd_level(),
-            remaining_raw_by_gz=remaining_raw_by_gz,
-            force_remove_uncompressed_tar=False,
-            log_fn=quiet,
-            tgz_archive_dir=tgz_archive_dir,
-            keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
-            on_merge_progress=_on_merge_progress,
-        )
-        progress.record(day_token, "reconcile", 1)
-        _stage_exit("reconcile_merge", result="ok")
-      except DayCloseYieldError as exc:
-        reason = str(getattr(exc, "reason", "") or "yield_requested")
-        _stage_exit("reconcile_merge", result="yielded", reason=reason)
-        return "yielded"
-      except Exception as exc:
-        _log(
-            "queue_orchestrator day_close reconcile fail day=%s err=%s"
-            % (day_token, type(exc).__name__),
-            log_fn=log_fn,
-        )
-        _stage_exit(
-            "reconcile_merge",
-            result="fail",
-            reason=type(exc).__name__,
-        )
+          def _on_merge_progress(
+              done: int, total: int, last_mono: float,
+          ) -> None:
+            """
+            Persist reconcile merge counters on the day_raw_removal
+            manifest.
 
-      early = _run_pre_seal_verify()
-      if early:
-        return early
+            Args:
+              done (int): Members copied so far.
+              total (int): Union member count.
+              last_mono (float): Monotonic timestamp of last progress.
 
-      early = _maybe_yield_wait_on_ingest_after_verify()
-      if early:
-        return early
+            Returns:
+              None
 
-      _stage_enter("dedupe")
-      try:
-        dedupe_tar_keep_largest_file_per_member(
-            tar_path,
-            log_fn=quiet,
-            tgz_archive_dir=tgz_archive_dir,
-        )
-        progress.record(day_token, "dedupe", 1)
-        _stage_exit("dedupe", result="ok")
-      except DayCloseYieldError as exc:
-        reason = str(getattr(exc, "reason", "") or "yield_requested")
-        _stage_exit("dedupe", result="yielded", reason=reason)
-        return "yielded"
-      except Exception as exc:
-        _log(
-            "queue_orchestrator day_close dedupe fail day=%s err=%s"
-            % (day_token, type(exc).__name__),
-            log_fn=log_fn,
-        )
-        _stage_exit("dedupe", result="fail", reason=type(exc).__name__)
+            Examples:
+              >>> # nested callback; invoked from rebuild
+              >>> None is None
+              True
+            """
+            if callable(updater):
+              updater(
+                  tar_path,
+                  worker_stage="reconcile_merge",
+                  members_done=done,
+                  members_total=total,
+                  last_progress_ts=last_mono,
+              )
+
+          remaining_fn = getattr(
+              coord, "remaining_raw_paths_blocking_tar_drop", None,
+          )
+          remaining_raw_by_gz = (
+              remaining_fn(tar_path) if callable(remaining_fn) else {}
+          )
+          reconcile_open_tar_with_sealed_zst(
+              tar_path,
+              zstd_threads=get_archive_zstd_threads(),
+              compress_level=get_archive_zstd_level(),
+              remaining_raw_by_gz=remaining_raw_by_gz,
+              force_remove_uncompressed_tar=False,
+              log_fn=quiet,
+              tgz_archive_dir=tgz_archive_dir,
+              keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
+              on_merge_progress=_on_merge_progress,
+          )
+          progress.record(day_token, "reconcile", 1)
+          _stage_exit("reconcile_merge", result="ok")
+        except DayCloseYieldError as exc:
+          reason = str(getattr(exc, "reason", "") or "yield_requested")
+          _stage_exit("reconcile_merge", result="yielded", reason=reason)
+          return "yielded"
+        except Exception as exc:
+          _log(
+              "queue_orchestrator day_close reconcile fail day=%s err=%s"
+              % (day_token, type(exc).__name__),
+              log_fn=log_fn,
+          )
+          _stage_exit(
+              "reconcile_merge",
+              result="fail",
+              reason=type(exc).__name__,
+          )
+
+        early = _run_pre_seal_verify()
+        if early:
+          return early
+
+        early = _maybe_yield_wait_on_ingest_after_verify()
+        if early:
+          return early
+
+        _stage_enter("dedupe")
+        try:
+          dedupe_tar_keep_largest_file_per_member(
+              tar_path,
+              log_fn=quiet,
+              tgz_archive_dir=tgz_archive_dir,
+          )
+          progress.record(day_token, "dedupe", 1)
+          _stage_exit("dedupe", result="ok")
+        except DayCloseYieldError as exc:
+          reason = str(getattr(exc, "reason", "") or "yield_requested")
+          _stage_exit("dedupe", result="yielded", reason=reason)
+          return "yielded"
+        except Exception as exc:
+          _log(
+              "queue_orchestrator day_close dedupe fail day=%s err=%s"
+              % (day_token, type(exc).__name__),
+              log_fn=log_fn,
+          )
+          _stage_exit("dedupe", result="fail", reason=type(exc).__name__)
 
     _stage_enter("seal")
     seal_dirty_daily_archives(

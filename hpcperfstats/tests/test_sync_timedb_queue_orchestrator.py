@@ -466,10 +466,12 @@ def test_day_close_job_remaining_raw_returns_incomplete_raw_not_fake_sealed(
       _Coord,
   )
   logs = []
+  store = _enqueue_append_job(str(tmp_path))
   outcome = qo._run_day_close_job(
       "2020-01-01",
       tgz_archive_dir=str(daily),
       archive_data_dir=str(tmp_path),
+      job_store=store,
       log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   assert outcome == "yielded"
@@ -1522,16 +1524,19 @@ def test_day_close_wait_on_ingest_yield(tmp_path, monkeypatch):
       "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
       _Coord,
   )
+  store = _enqueue_append_job(str(tmp_path))
   outcome = qo._run_day_close_job(
       day,
       tgz_archive_dir=str(daily),
       archive_data_dir=str(tmp_path),
+      job_store=store,
       log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   assert outcome == "yielded"
   assert handoffs and handoffs[0][1] == "day_close_wait_on_ingest"
   assert any("wait_on_ingest" in line for line in logs)
   assert not reconcile_calls
+  print("H17 H18 day_close suite passed")
 
 
 def test_day_close_remaining_raw_map_skips_merge(tmp_path, monkeypatch):
@@ -1572,10 +1577,12 @@ def test_day_close_remaining_raw_map_skips_merge(tmp_path, monkeypatch):
       _Coord,
   )
   logs = []
+  store = _enqueue_append_job(str(tmp_path))
   outcome = qo._run_day_close_job(
       day,
       tgz_archive_dir=str(daily),
       archive_data_dir=str(tmp_path),
+      job_store=store,
       log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   assert outcome == "yielded"
@@ -1630,16 +1637,177 @@ def test_day_close_closed_raw_handoff_false_yields_before_merge(tmp_path, monkey
       "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
       _Coord,
   )
+  store = _enqueue_append_job(str(tmp_path))
   outcome = qo._run_day_close_job(
       day,
       tgz_archive_dir=str(daily),
       archive_data_dir=str(tmp_path),
+      job_store=store,
       log_fn=lambda *a, **k: None,
   )
   assert outcome == "yielded"
   assert not reconcile_calls
   assert not seal_calls
   assert kicks and kicks[0][1] == "day_close_wait_on_ingest"
+
+
+def _enqueue_append_job(archive_dir: str, identity: str = "/raw/closed.stats"):
+  """Put one append LIST job in an in-process store (H17 hot-append)."""
+  store = SyncTimedbJobStore(archive_dir)
+  jq.enqueue_list_job(
+      store,
+      kind=jq.JOB_KIND_APPEND,
+      identity=identity,
+      dedupe=True,
+  )
+  return store
+
+
+def test_day_close_idle_append_verifying_does_not_forever_yield(
+    tmp_path, monkeypatch,
+):
+  """H19: idle append + verifying/has_closed must kick verify, not only yield."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import ReconcileResult
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2020-01-01"
+  tar = daily / ("%s.tar" % day)
+  tar.write_bytes(b"tar")
+  reconcile_calls = []
+  seal_calls = []
+  kicks = []
+  deletes = []
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+      lambda *a, **k: reconcile_calls.append(1) or ReconcileResult(
+          True, "noop", "already_equivalent",
+      ),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: seal_calls.append(1),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+      lambda *a, **k: True,
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return True
+
+    def should_handoff_to_ingest(self, _tar_path):
+      return False
+
+    def complete_handoff_to_ingest(self, _tar_path, reason=""):
+      return []
+
+    def kick_closed_raw_unblock(self, tar_path, reason=""):
+      kicks.append((tar_path, reason))
+      return "verify"
+
+    def kick_closed_raw_paths_to_ingest(self, tar_path, reason=""):
+      return []
+
+    def run_pre_seal_verify_sync(self, _tar_path, **_kw):
+      return True
+
+    def run_post_seal_verify_sync(self, _tar_path):
+      return True
+
+    def apply_batch_delete(self, tar_path):
+      deletes.append(tar_path)
+      return 0
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      return {}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  store = SyncTimedbJobStore(str(tmp_path))
+  logs = []
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      job_store=store,
+      log_fn=lambda msg, **k: logs.append(str(msg)),
+  )
+  assert outcome != "yielded"
+  assert outcome == "incomplete_raw"
+  assert kicks and kicks[0][1] == "day_close_wait_on_ingest"
+  assert kicks[0][0].endswith("2020-01-01.tar")
+  assert not reconcile_calls
+  assert deletes
+  print("H19 idle-append wait_on_ingest tests passed")
+
+
+def test_day_close_append_active_still_yields_before_merge(tmp_path, monkeypatch):
+  """H17/H19: append LIST non-empty + has_closed still yields before merge."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2020-01-01"
+  tar = daily / ("%s.tar" % day)
+  tar.write_bytes(b"tar")
+  reconcile_calls = []
+  kicks = []
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+      lambda *a, **k: reconcile_calls.append(1),
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return True
+
+    def should_handoff_to_ingest(self, _tar_path):
+      return False
+
+    def complete_handoff_to_ingest(self, _tar_path, reason=""):
+      return []
+
+    def kick_closed_raw_unblock(self, tar_path, reason=""):
+      kicks.append((tar_path, reason))
+      return "verify"
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      return {}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  store = _enqueue_append_job(str(tmp_path))
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      job_store=store,
+      log_fn=lambda *a, **k: None,
+  )
+  assert outcome == "yielded"
+  assert not reconcile_calls
+  print("H19 idle-append wait_on_ingest tests passed")
 
 
 def test_day_close_pre_seal_verify_before_reconcile_merge():
@@ -3098,6 +3266,7 @@ def test_day_close_coordinator_sleeps_poll_on_yield_only_churn(monkeypatch):
 def test_day_close_disk_remaining_kick_enqueues_when_verify_handoff_false():
   """Handoff helper kicks closed-raw paths when complete_handoff returns []."""
   kicks = []
+  unblocks = []
 
   class _Coord:
     def complete_handoff_to_ingest(self, tar_path, reason=""):
@@ -3107,8 +3276,28 @@ def test_day_close_disk_remaining_kick_enqueues_when_verify_handoff_false():
       kicks.append((tar_path, reason))
       return ["/raw/x"]
 
+    def kick_closed_raw_unblock(self, tar_path, reason=""):
+      unblocks.append((tar_path, reason))
+      return "verify"
+
   qo._day_close_complete_wait_on_ingest_handoff(_Coord(), "/d/2020-01-01.tar")
   assert kicks == [("/d/2020-01-01.tar", "day_close_wait_on_ingest")]
+  assert unblocks == [("/d/2020-01-01.tar", "day_close_wait_on_ingest")]
+
+
+def test_day_close_append_or_hot_active_false_when_store_empty(tmp_path):
+  """H19 idle predicate: empty append LIST and no hot is not active."""
+  store = SyncTimedbJobStore(str(tmp_path))
+  tar = str(tmp_path / "2020-01-01.tar")
+  assert qo._day_close_append_or_hot_active(store, tar, str(tmp_path)) is False
+  assert qo._day_close_append_or_hot_active(None, tar, str(tmp_path)) is False
+
+
+def test_day_close_append_or_hot_active_true_when_append_queued(tmp_path):
+  """H19 idle predicate: append LIST depth makes wait_on_ingest yield."""
+  store = _enqueue_append_job(str(tmp_path))
+  tar = str(tmp_path / "2020-01-01.tar")
+  assert qo._day_close_append_or_hot_active(store, tar, str(tmp_path)) is True
 
 
 def test_day_close_claim_vacate_yield_log_rate_limited(tmp_path):
