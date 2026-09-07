@@ -365,6 +365,11 @@ services:
         aliases:
           - rabbitmq
 
+volumes:
+  # Ephemeral Redis Unix socket dir shared by redis, web, and pipeline.
+  # Not a host bind — Docker/Podman named volume only.
+  redis_runtime:
+    driver: local
 
 networks:
   hpcperfstats_net:
