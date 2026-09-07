@@ -32,6 +32,10 @@ RUN apk add --no-cache \
     pcre2-dev \
     perl
 
+# Print out compiler platform detection
+
+RUN gcc -march=native -mtune=native -Q --help=target
+
 # --- jemalloc ---
 RUN set -eux; \
   curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2" \

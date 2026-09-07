@@ -55,6 +55,10 @@ RUN set -eux; \
     $DOCKER_PG_LLVM_DEPS
 # libz ABI is /opt/zlib-ng (ZLIB_COMPAT); do not apk-install stock zlib packages.
 
+ # Print out compiler platform detection
+
+RUN gcc -march=native -mtune=native -Q --help=target
+
 # --- jemalloc ---
 RUN set -eux; \
   curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2" \

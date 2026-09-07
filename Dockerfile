@@ -79,6 +79,10 @@ RUN /bin/bash -o pipefail -c '\
   apt-get clean; \
   rm -rf /var/lib/apt/lists/*'
 
+# Print out compiler platform detection
+
+RUN gcc -march=native -mtune=native -Q --help=target
+
 # jemalloc 5.3.1 (shared; keep default initial-exec TLS — do not disable it).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
