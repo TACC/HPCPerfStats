@@ -29,7 +29,7 @@ When you change **`docker-compose.settings.yaml`** in a way operators need after
 | Top-level **`volumes:`** bind **`device:`** paths | All seven named volumes (including **`proxy_ssl_source`**); keep comments for SSH keys and LE override |
 
 | Commented optional **`services:`** knobs | `web`/`db`/`rabbitmq` host ports, pipeline `cap_add`, mem/grace overrides |
-| Volume **names** used by base compose | Service mounts in **`docker-compose.yaml`** must match volume keys in settings; **do not** put empty/null volume stubs in base (podman-compose cannot merge `None` with settings dicts) |
+| Volume **names** used by base compose | Service mounts in **`docker-compose.yaml`** must match volume keys in settings for **site binds**; **do not** put empty/null volume stubs in base (podman-compose cannot merge `None` with settings dicts). **`redis_runtime`** is a named Docker volume in **base** compose (Unix socket dir) — **not** a settings bind and must **not** appear in `.example` |
 
 Service bodies for **`web`** / **`pipeline`** / infra live in **`docker-compose.yaml`** — do not reintroduce an app overlay.
 

@@ -34,6 +34,9 @@ services:
     environment:
       - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
       - STATIC_ROOT=/home/hpcperfstats/staticfiles
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       - staticfiles_data:/home/hpcperfstats/staticfiles
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
@@ -54,7 +57,10 @@ services:
     memswap_limit: 128g
     stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-2m}
     depends_on:
-      - web
+      web:
+        condition: service_started
+      redis:
+        condition: service_healthy
     command: /home/hpcperfstats/services-conf/supervisor_startup.sh
     environment:
       - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini

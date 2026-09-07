@@ -111,6 +111,7 @@ flowchart TB
   WEB -.->|depends_on healthy| DB
   WEB -.->|depends_on healthy| REDIS
   PIPE -.->|depends_on| WEB
+  PIPE -.->|depends_on healthy| REDIS
 ```
 
 **Deployment split:**

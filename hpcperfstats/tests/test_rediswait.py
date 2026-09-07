@@ -127,6 +127,55 @@ def test_django_startup_script_waits_for_redis():
   content = script_path.read_text()
 
   assert "wait_for_redis_available" in content
+  assert "redis_wait_url" in content
+  assert "redis://redis:6379/1" not in content
+
+
+def test_supervisor_startup_script_waits_for_redis_without_tcp_hostname_fallback():
+  repo_root = Path(__file__).resolve().parents[2]
+  content = (repo_root / "services-conf" / "supervisor_startup.sh").read_text()
+
+  assert "wait_for_redis_available" in content
+  assert "redis_wait_url" in content
+  assert "redis://redis:6379/1" not in content
+
+
+def test_redis_wait_url_prefers_ini_then_compose_unix(monkeypatch):
+  from hpcperfstats.dbload.lib import rediswait
+
+  monkeypatch.setattr(
+      rediswait,
+      "_ini_redis_location",
+      lambda: "redis://example:6379/2",
+  )
+  assert rediswait.redis_wait_url() == "redis://example:6379/2"
+
+  monkeypatch.setattr(rediswait, "_ini_redis_location", lambda: "")
+  assert rediswait.redis_wait_url() == rediswait.COMPOSE_REDIS_UNIX_URL
+
+  def boom() -> str:
+    raise RuntimeError("ini unreadable")
+
+  monkeypatch.setattr(rediswait, "_ini_redis_location", boom)
+  assert rediswait.redis_wait_url() == rediswait.COMPOSE_REDIS_UNIX_URL
+
+
+def test_redis_wait_url_remaps_compose_hostname_redis_to_unix(monkeypatch):
+  """Baked redis://redis:6379/1 must not DNS-wait before redis joins the net."""
+  from hpcperfstats.dbload.lib import rediswait
+
+  assert rediswait.compose_redis_tcp_wait_should_use_unix(
+      "redis://redis:6379/1"
+  )
+  assert not rediswait.compose_redis_tcp_wait_should_use_unix(
+      "redis://example:6379/1"
+  )
+  monkeypatch.setattr(
+      rediswait,
+      "_ini_redis_location",
+      lambda: "redis://redis:6379/1",
+  )
+  assert rediswait.redis_wait_url() == rediswait.COMPOSE_REDIS_UNIX_URL
 
 
 def test_django_startup_invokes_spa_static_root_heal():

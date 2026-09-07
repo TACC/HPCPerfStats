@@ -96,6 +96,24 @@ def test_readme_and_design_doc_redis_policy_is_volatile_lru():
     assert "--io-threads 4" in text or "`--io-threads` **4**" in text or "**`--io-threads 4`**" in text
 
 
+def test_docker_compose_web_and_pipeline_wait_for_healthy_redis():
+  """web/pipeline must not race Redis DNS (Name or service not known)."""
+  repo_root = Path(__file__).resolve().parents[2]
+  content = (repo_root / "docker-compose.yaml").read_text()
+  web_m = re.search(r"(?ms)^  web:\n(.*?)(?=^  [a-z].*:|\Z)", content)
+  pipeline_m = re.search(r"(?ms)^  pipeline:\n(.*?)(?=^  [a-z].*:|\Z)", content)
+  assert web_m, "web service not found"
+  assert pipeline_m, "pipeline service not found"
+  web = web_m.group(0)
+  pipeline = pipeline_m.group(0)
+  assert "depends_on:" in web
+  assert "redis:" in web
+  assert "condition: service_healthy" in web
+  assert "depends_on:" in pipeline
+  assert "redis:" in pipeline
+  assert "condition: service_healthy" in pipeline
+
+
 def test_docker_compose_redis_unix_socket_volume_is_shared():
   """Unix socket is applicable only when redis/web/pipeline share the runtime dir."""
   repo_root = Path(__file__).resolve().parents[2]
@@ -106,8 +124,11 @@ def test_docker_compose_redis_unix_socket_volume_is_shared():
   ).read_text()
   assert "redis_runtime:/run/redis" in content
   assert content.count("redis_runtime:/run/redis") >= 3
-  assert "redis_runtime:" in example
-  assert "driver: local" in example
+  assert re.search(
+      r"(?ms)^volumes:\n(?:  #.*\n)*  redis_runtime:\n    driver: local\n",
+      content,
+  ), "redis_runtime is a named volume in base compose, not a settings bind"
+  assert "redis_runtime:" not in example
   assert "redis_runtime:/run/redis" in overlay
 
 
@@ -380,11 +401,11 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
   repo_root = Path(__file__).resolve().parents[2]
   base = (repo_root / "docker-compose.yaml").read_text()
   settings = (repo_root / "docker-compose.settings.yaml.example").read_text()
-  # Top-level volumes live only in settings (include). Bare `name:` under volumes
-  # parses as null and breaks podman-compose rec_merge_one.
-  assert re.search(r"(?m)^volumes:\s*$", base) is None
+  # Site bind volumes live only in settings (include). Bare `name:` under
+  # volumes parses as null and breaks podman-compose rec_merge_one.
+  # redis_runtime is a named Docker volume in base compose — not a setting.
   assert re.search(r"(?m)^volumes:\s*$", settings) is not None
-  for name in (
+  bind_names = (
       "hpcperfstatsdata",
       "staticfiles_data",
       "media_data",
@@ -393,12 +414,18 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
       "rabbitmq_messages",
       "ssh_keys",
       "proxy_ssl_source",
-      "redis_runtime",
-  ):
+  )
+  for name in bind_names:
     assert f"{name}:" in settings
     assert "driver: local" in settings
     # Service mounts in base still reference the volume names.
     assert name in base
+    assert not re.search(rf"(?m)^  {name}:\s*$", base)
+  assert re.search(
+      r"(?ms)^volumes:\n(?:  #.*\n)*  redis_runtime:\n    driver: local\n",
+      base,
+  )
+  assert "redis_runtime:" not in settings
   assert "ssl_certs:" not in settings
   assert "ssl_certs:/etc/ssl/hpcperfstats" not in base
   assert "proxy_ssl_source:/mnt/ssl-source:ro" in base
@@ -478,7 +505,6 @@ _OPERATOR_SETTINGS_VOLUME_NAMES = (
     "rabbitmq_messages:",
     "ssh_keys:",
     "proxy_ssl_source:",
-    "redis_runtime:",
 )
 
 

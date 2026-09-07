@@ -42,8 +42,7 @@ echo "PostgreSQL started"
 echo "Waiting for Redis..."
 
 REDIS_WAIT_URL=$(
-  /usr/local/bin/python3 -c "from hpcperfstats.dbload.lib import conf_parser as cfg; print(cfg.get_redis_location())" 2>/dev/null \
-    || echo "redis://redis:6379/1"
+  /usr/local/bin/python3 -c "from hpcperfstats.dbload.lib.rediswait import redis_wait_url; print(redis_wait_url())"
 )
 
 REDIS_WAIT_TIMEOUT_SECONDS="${REDIS_WAIT_TIMEOUT_SECONDS:-60}"
