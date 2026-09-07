@@ -14,7 +14,7 @@ Attributes:
   _QUEUE_GET_TIMEOUT_S: Idle ``queue.get`` timeout before a flush.
   _RESUME_WATERMARK: Low-watermark fraction that resumes consume.
   _SHUTDOWN_JOIN_TIMEOUT_S: Worker ``join`` budget on ``stop()``.
-  _FLUSH_LOG_MIN_INTERVAL_S: Per-worker INFO throttle for flush timing logs.
+  _FlushWindowStats: Window avg/max flush rows and elapsed for idle monitor.
   _listend_flush_error_is_poison: Classify flush errors that drop the batch.
   _is_listend_statement_timeout: Detect PostgreSQL statement timeout cancels.
   _apply_listend_db_ingest_statement_timeout: Apply listend INI statement_timeout.
@@ -35,7 +35,6 @@ from hpcperfstats.dbload.lib.print_utils import log_print
 
 # Module constants (not INI) — connection / idle hygiene.
 _QUEUE_GET_TIMEOUT_S = 30.0
-_FLUSH_LOG_MIN_INTERVAL_S = 10.0
 _MIN_QUEUED_PAYLOAD_BYTES = 256
 _SHUTDOWN_JOIN_TIMEOUT_S = 15.0
 # Consume pause hysteresis (fractions of total queue byte budget).
@@ -97,71 +96,100 @@ class _ThreadCounter:
     return self._lock
 
 
-class _ThreadMax:
+class _FlushWindowStats:
   """
-  Float plus lock that keeps the highest sample until ``take()``.
+  Thread-safe window aggregator for successful listend DB flushes.
 
-  Workers record flush elapsed seconds; the idle monitor reads and resets
-  the window maximum.
+  Workers call ``record`` after each successful ``bulk_create``. The
+  idle monitor calls ``take`` once per 10-minute line, then the window
+  resets so the next suffix is a fresh interval.
 
   Attributes:
-    _lock: Mutex guarding ``value``.
-    value: Current maximum sample.
+    _elapsed_max: Highest flush elapsed seconds in the window.
+    _elapsed_sum: Sum of flush elapsed seconds in the window.
+    _lock: Mutex guarding all window fields.
+    _n: Successful flush count in the window.
+    _rows_max: Highest host+proc row count in the window.
+    _rows_sum: Sum of host+proc row counts in the window.
   """
 
   def __init__(self) -> None:
     """
-    Create a zeroed in-process maximum tracker.
+    Create an empty flush window (count, sums, and maxima at zero).
 
     Returns:
       None
 
     Examples:
-      >>> _ThreadMax().value
-      0.0
+      >>> _FlushWindowStats().take()
+      (0, 0.0, 0, 0.0, 0.0)
     """
     self._lock = threading.Lock()
-    self.value = 0.0
+    self._n = 0
+    self._rows_sum = 0
+    self._rows_max = 0
+    self._elapsed_sum = 0.0
+    self._elapsed_max = 0.0
 
-  def update(self, sample: float) -> None:
+  def record(self, rows: int, elapsed_s: float) -> None:
     """
-    Raise the stored maximum when ``sample`` is larger.
+    Add one successful flush to the current idle-monitor window.
 
     Args:
-      sample (float): Candidate elapsed seconds (or other magnitude).
+      rows (int): Host plus proc ORM rows written in this flush.
+      elapsed_s (float): Wall seconds for the flush ``bulk_create``.
 
     Returns:
       None
 
     Examples:
-      >>> tracker = _ThreadMax()
-      >>> tracker.update(0.25)
-      >>> tracker.value
-      0.25
+      >>> stats = _FlushWindowStats()
+      >>> stats.record(100, 1.0)
+      >>> stats.take()[0]
+      1
     """
     with self._lock:
-      if sample > self.value:
-        self.value = float(sample)
+      self._n += 1
+      row_count = max(0, int(rows))
+      self._rows_sum += row_count
+      if row_count > self._rows_max:
+        self._rows_max = row_count
+      elapsed = max(0.0, float(elapsed_s))
+      self._elapsed_sum += elapsed
+      if elapsed > self._elapsed_max:
+        self._elapsed_max = elapsed
 
-  def take(self) -> float:
+  def take(self) -> Tuple[int, float, int, float, float]:
     """
-    Return the current maximum and reset it to zero.
+    Return window count, averages, and maxima, then reset to empty.
 
     Returns:
-      float: Previous maximum, or 0.0 when no sample was recorded.
+      Tuple[int, float, int, float, float]: ``(n, rows_avg, rows_max,
+      elapsed_avg_s, elapsed_max_s)``. Averages are 0.0 when ``n`` is 0.
 
     Examples:
-      >>> tracker = _ThreadMax()
-      >>> tracker.update(1.5)
-      >>> tracker.take()
-      1.5
-      >>> tracker.take()
-      0.0
+      >>> stats = _FlushWindowStats()
+      >>> stats.record(100, 1.0)
+      >>> stats.record(300, 3.0)
+      >>> stats.take()
+      (2, 200.0, 300, 2.0, 3.0)
+      >>> stats.take()
+      (0, 0.0, 0, 0.0, 0.0)
     """
     with self._lock:
-      out = float(self.value)
-      self.value = 0.0
-      return out
+      n = int(self._n)
+      if n <= 0:
+        return (0, 0.0, 0, 0.0, 0.0)
+      rows_avg = float(self._rows_sum) / float(n)
+      rows_max = int(self._rows_max)
+      elapsed_avg = float(self._elapsed_sum) / float(n)
+      elapsed_max = float(self._elapsed_max)
+      self._n = 0
+      self._rows_sum = 0
+      self._rows_max = 0
+      self._elapsed_sum = 0.0
+      self._elapsed_max = 0.0
+      return (n, rows_avg, rows_max, elapsed_avg, elapsed_max)
 
 
 def _should_flush_pending(
@@ -937,7 +965,7 @@ def _worker_main(
   per_worker_budget: int,
   flush_max_rows: int = 2000,
   flush_hold_s: float = 5.0,
-  flush_elapsed_max: Any = None,
+  flush_window: Any = None,
 ) -> None:
   """
   Host-affine listend DB worker: parse queued samples and flush ORM batches.
@@ -960,8 +988,9 @@ def _worker_main(
     per_worker_budget (int): Per-shard byte cap (tracked on put).
     flush_max_rows (int): Pending host+proc row cap; ``<= 0`` disables.
     flush_hold_s (float): Hold-age seconds; ``<= 0`` disables age flush.
-    flush_elapsed_max (Any): Optional ``_ThreadMax`` for idle-monitor
-      ``flush_max_s``; ``None`` skips elapsed tracking.
+    flush_window (Any): Optional ``_FlushWindowStats`` for the 10-minute
+      idle-monitor avg/max flush rows and elapsed; ``None`` skips
+      window recording.
 
   Returns:
     None
@@ -999,7 +1028,6 @@ def _worker_main(
   pending_proc: list = []
   sample_count = 0
   hold_started_mono: float | None = None
-  last_flush_log_mono = 0.0
   conn_opened_at = time.monotonic()
   seeded_hosts: set = set()
 
@@ -1046,7 +1074,6 @@ def _worker_main(
       True
     """
     nonlocal sample_count, pending_host, pending_proc, hold_started_mono
-    nonlocal last_flush_log_mono
     if not pending_host and not pending_proc:
       sample_count = 0
       hold_started_mono = None
@@ -1073,18 +1100,11 @@ def _worker_main(
           _release_listend_db_worker_memory()
       return
     elapsed = time.monotonic() - started
-    if flush_elapsed_max is not None:
+    if flush_window is not None:
       try:
-        flush_elapsed_max.update(elapsed)
+        flush_window.record(rows, elapsed)
       except Exception:
         pass
-    if (started - last_flush_log_mono) >= _FLUSH_LOG_MIN_INTERVAL_S:
-      last_flush_log_mono = started
-      log_print(
-          "listend db ingest flush worker=%d rows=%d elapsed_s=%.3f"
-          % (worker_idx, rows, elapsed),
-          flush=True,
-      )
     pending_host = []
     pending_proc = []
     sample_count = 0
@@ -1261,7 +1281,7 @@ class ListendDbIngestPool:
     _byte_counts: Per-worker queued-byte counters.
     _byte_locks: Per-worker locks for those counters.
     _counters: Named idle-monitor counters.
-    _flush_elapsed_max: Window maximum successful flush elapsed seconds.
+    _flush_window: Window avg/max successful flush rows and elapsed.
     _pause_seconds_window: Accumulated pause seconds in the current idle
       monitor window (closed intervals only).
     _pause_started_mono: Monotonic start of an open pause interval, or None.
@@ -1353,7 +1373,7 @@ class ListendDbIngestPool:
     self._started = False
     self._pause_started_mono: float | None = None
     self._pause_seconds_window = 0.0
-    self._flush_elapsed_max = _ThreadMax()
+    self._flush_window = _FlushWindowStats()
     self._worker_lock = threading.Lock()
     # Disabled pools do not start threads or allocate queues.
     if not self.enabled:
@@ -1456,7 +1476,7 @@ class ListendDbIngestPool:
             self.per_worker_budget_bytes,
             self.flush_max_rows,
             self.flush_hold_s,
-            self._flush_elapsed_max,
+            self._flush_window,
         ),
         name="listend-db-%d" % worker_idx,
         daemon=True,
@@ -1847,7 +1867,8 @@ class ListendDbIngestPool:
 
     Heals dead affine workers first so ``alive_db_threads`` reflects the
     post-respawn count. Also reports per-shard queue maxima and the
-    window ``flush_max_s`` (then resets that window max).
+    window flush-row / flush-elapsed averages and maxima (then resets
+    that window).
 
     Returns:
       str: Space-separated ``key=value`` fields for the idle monitor line.
@@ -1871,9 +1892,18 @@ class ListendDbIngestPool:
         max_shard_bytes = max(max_shard_bytes, int(byte_count.value))
       except Exception:
         pass
-    flush_max_s = 0.0
+    flush_rows_avg = 0.0
+    flush_rows_max = 0
+    flush_elapsed_avg_s = 0.0
+    flush_elapsed_max_s = 0.0
     try:
-      flush_max_s = float(self._flush_elapsed_max.take())
+      (
+          _,
+          flush_rows_avg,
+          flush_rows_max,
+          flush_elapsed_avg_s,
+          flush_elapsed_max_s,
+      ) = self._flush_window.take()
     except Exception:
       pass
     return (
@@ -1881,7 +1911,8 @@ class ListendDbIngestPool:
         "schema_miss=%d db_ok=%d db_err=%d conn_recycle=%d "
         "db_queue_depth=%d db_queued_bytes=%d batch_flush=%d "
         "alive_db_threads=%d max_shard_qsize=%d max_shard_bytes=%d "
-        "flush_max_s=%.3f"
+        "flush_rows_avg=%.1f flush_rows_max=%d "
+        "flush_elapsed_avg_s=%.3f flush_elapsed_max_s=%.3f"
         % (
             d.get("queue_drops", 0),
             d.get("pause_enters", 0),
@@ -1897,7 +1928,10 @@ class ListendDbIngestPool:
             alive,
             max_shard_qsize,
             max_shard_bytes,
-            flush_max_s,
+            flush_rows_avg,
+            flush_rows_max,
+            flush_elapsed_avg_s,
+            flush_elapsed_max_s,
         )
     )
 

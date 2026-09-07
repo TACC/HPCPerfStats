@@ -1384,8 +1384,26 @@ def test_ensure_workers_alive_respawns_dead_affine_thread(monkeypatch):
     pool.stop(join_timeout=5.0)
 
 
+def test_flush_window_stats_avg_and_max_reset_on_take():
+  """Window take must return avg/max rows and elapsed, then reset."""
+  from hpcperfstats.dbload.lib.listend_db_ingest import _FlushWindowStats
+
+  stats = _FlushWindowStats()
+  empty = stats.take()
+  assert empty == (0, 0.0, 0, 0.0, 0.0)
+  stats.record(100, 1.0)
+  stats.record(300, 3.0)
+  n, rows_avg, rows_max, elapsed_avg, elapsed_max = stats.take()
+  assert n == 2
+  assert rows_avg == 200.0
+  assert rows_max == 300
+  assert elapsed_avg == 2.0
+  assert elapsed_max == 3.0
+  assert stats.take() == (0, 0.0, 0, 0.0, 0.0)
+
+
 def test_idle_monitor_suffix_includes_shard_liveness(monkeypatch):
-  """Idle-monitor suffix must expose shard liveness and flush timing."""
+  """Idle-monitor suffix must expose shard liveness and flush window stats."""
   from hpcperfstats.dbload.lib import django_bootstrap
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi
 
@@ -1409,17 +1427,40 @@ def test_idle_monitor_suffix_includes_shard_liveness(monkeypatch):
     pool.start()
     pool._queues[0].put_nowait(("h", "x", 3))
     pool._byte_counts[1].value = 4096
-    pool._flush_elapsed_max.update(0.25)
+    pool._flush_window.record(1000, 1.0)
+    pool._flush_window.record(3000, 3.0)
     suffix = pool.format_idle_monitor_suffix()
+    suffix2 = pool.format_idle_monitor_suffix()
   finally:
     pool.stop(join_timeout=5.0)
 
   assert "alive_db_threads=2" in suffix
   assert "max_shard_qsize=" in suffix
   assert "max_shard_bytes=" in suffix
-  assert "flush_max_s=" in suffix
-  assert "flush_max_s=0" not in suffix.split()[-1] or "0.25" in suffix
-  assert "flush_max_s=0.250" in suffix or "flush_max_s=0.25" in suffix
+  assert "flush_rows_avg=2000.0" in suffix
+  assert "flush_rows_max=3000" in suffix
+  assert "flush_elapsed_avg_s=2.000" in suffix
+  assert "flush_elapsed_max_s=3.000" in suffix
+  assert "flush_max_s=" not in suffix
+  assert "flush_rows_avg=0.0" in suffix2
+  assert "flush_rows_max=0" in suffix2
+  assert "flush_elapsed_avg_s=0.000" in suffix2
+  assert "flush_elapsed_max_s=0.000" in suffix2
+
+
+def test_worker_main_does_not_emit_per_flush_info():
+  """Successful flushes must not print a per-flush INFO line."""
+  import inspect
+
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  src = inspect.getsource(ldi._worker_main)
+  assert "listend db ingest flush worker=" not in src
+  assert "_FLUSH_LOG_MIN_INTERVAL_S" not in src
+  assert "flush_window" in src or "_flush_window" in inspect.getsource(
+      ldi.ListendDbIngestPool._make_worker_thread
+  )
+  assert "record(" in src
 
 
 def test_worker_main_uses_bounded_flush_helper():
