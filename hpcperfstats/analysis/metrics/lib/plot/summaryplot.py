@@ -54,6 +54,7 @@ from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
 import numpy as np
 from pandas import isna as pd_isna
 from pandas import to_datetime
+from pandas import to_numeric as pd_to_numeric
 
 from hpcperfstats.analysis.metrics.lib.gen.utils import (
     add_hover_plain_columns,
@@ -1189,44 +1190,35 @@ def _add_node_power_est_column(df: Any) -> Any:
   """
   n = len(df.index)
   out = np.full(n, np.nan, dtype=np.float64)
-  has_mod = "nv_module_power_w" in df.columns
-  has_gpu = "nv_power_w" in df.columns
-  dcg = df["dcg_cpu_power_w"] if "dcg_cpu_power_w" in df.columns else None
-  intel = df["watts"] if "watts" in df.columns else None
-  amd = df["amd_pkg_w"] if "amd_pkg_w" in df.columns else None
-  for i in range(n):
-    if has_mod:
-      modv = df["nv_module_power_w"].iloc[i]
-      if not pd_isna(modv) and float(modv) > 0.0:
-        out[i] = float(modv)
-        continue
-    cpu = float("nan")
-    if dcg is not None:
-      v = dcg.iloc[i]
-      if not pd_isna(v):
-        cpu = float(v)
-    if math.isnan(cpu) and intel is not None:
-      v = intel.iloc[i]
-      if not pd_isna(v):
-        cpu = float(v)
-    if math.isnan(cpu) and amd is not None:
-      v = amd.iloc[i]
-      if not pd_isna(v):
-        cpu = float(v)
-    gpu = float("nan")
-    if has_gpu:
-      gv = df["nv_power_w"].iloc[i]
-      if not pd_isna(gv):
-        gpu = float(gv)
-    if math.isnan(cpu) and math.isnan(gpu):
+  use_mod = np.zeros(n, dtype=bool)
+  if "nv_module_power_w" in df.columns:
+    mod = pd_to_numeric(df["nv_module_power_w"], errors="coerce").to_numpy(
+        dtype=np.float64, copy=False
+    )
+    use_mod = (~np.isnan(mod)) & (mod > 0.0)
+    out = np.where(use_mod, mod, out)
+  cpu = np.full(n, np.nan, dtype=np.float64)
+  filled_cpu = np.zeros(n, dtype=bool)
+  for col_name in ("dcg_cpu_power_w", "watts", "amd_pkg_w"):
+    if col_name not in df.columns:
       continue
-    total = 0.0
-    if math.isfinite(cpu):
-      total += cpu
-    if math.isfinite(gpu):
-      total += gpu
-    if math.isfinite(cpu) or math.isfinite(gpu):
-      out[i] = total
+    col = pd_to_numeric(df[col_name], errors="coerce").to_numpy(
+        dtype=np.float64, copy=False
+    )
+    take = (~np.isnan(col)) & (~filled_cpu)
+    cpu = np.where(take, col, cpu)
+    filled_cpu |= take
+  gpu = np.full(n, np.nan, dtype=np.float64)
+  if "nv_power_w" in df.columns:
+    gv = pd_to_numeric(df["nv_power_w"], errors="coerce").to_numpy(
+        dtype=np.float64, copy=False
+    )
+    gpu = np.where(~np.isnan(gv), gv, gpu)
+  cpu_ok = np.isfinite(cpu)
+  gpu_ok = np.isfinite(gpu)
+  total = np.where(cpu_ok, cpu, 0.0) + np.where(gpu_ok, gpu, 0.0)
+  use_sum = (~use_mod) & (cpu_ok | gpu_ok)
+  out = np.where(use_sum, total, out)
   df["node_power_est_w"] = out
   return df
 

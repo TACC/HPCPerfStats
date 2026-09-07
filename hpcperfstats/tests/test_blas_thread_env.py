@@ -10,9 +10,20 @@ def test_configure_blas_thread_env_idempotent(monkeypatch):
   blas_env.configure_blas_thread_env()
   assert os.environ["OPENBLAS_NUM_THREADS"] == "1"
   assert os.environ["OMP_NUM_THREADS"] == "1"
+  assert os.environ["MKL_NUM_THREADS"] == "1"
+  assert os.environ["NUMEXPR_NUM_THREADS"] == "1"
   monkeypatch.setenv("OPENBLAS_NUM_THREADS", "7")
   blas_env.configure_blas_thread_env()
   assert os.environ["OPENBLAS_NUM_THREADS"] == "7"
+
+
+def test_configure_blas_thread_env_preserves_mkl_override(monkeypatch):
+  for key in blas_env.BLAS_THREAD_ENV_KEYS:
+    monkeypatch.delenv(key, raising=False)
+  monkeypatch.setenv("MKL_NUM_THREADS", "4")
+  blas_env.configure_blas_thread_env()
+  assert os.environ["MKL_NUM_THREADS"] == "4"
+  assert os.environ["OPENBLAS_NUM_THREADS"] == "1"
 
 
 def test_sync_timedb_import_sets_blas_before_numpy(monkeypatch):

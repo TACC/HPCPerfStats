@@ -53,6 +53,22 @@ def test_update_metrics_production_path_has_no_process_pool_contract() -> None:
 
 
 @pytest.mark.machine_unit_mock
+def test_update_metrics_configures_blas_before_numpy_imports() -> None:
+  """Inner MKL/OpenMP must be capped before Django/metrics pull numpy."""
+  src = SCHEDULER_SOURCE.read_text(encoding="utf-8")
+  blas_pos = src.find("configure_blas_thread_env()")
+  django_pos = src.find(
+      "from hpcperfstats.dbload.lib.django_bootstrap import ensure_django"
+  )
+  metrics_pos = src.find("from hpcperfstats.analysis.metrics.lib import metrics")
+  assert blas_pos != -1
+  assert django_pos != -1
+  assert metrics_pos != -1
+  assert blas_pos < django_pos
+  assert blas_pos < metrics_pos
+
+
+@pytest.mark.machine_unit_mock
 def test_removed_process_only_metrics_options_are_absent_from_config() -> None:
   """Keep process recycle and process-wide timer options deleted."""
   sources = {

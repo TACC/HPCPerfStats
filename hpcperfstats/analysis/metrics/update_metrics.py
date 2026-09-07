@@ -84,6 +84,11 @@ import functools
 import gc
 import inspect
 import os
+
+from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
+
+configure_blas_thread_env()
+
 import threading
 import signal
 import sys

@@ -151,6 +151,8 @@ Pool sizes are absolute INI keys: `sync_ingest_pool_processes` (default **16**),
 
 **Metrics thread reset (2026-09-03):** `update_metrics` stall recovery detaches the current executor, cancels Futures that have not started, and creates a fresh titled pool lazily. Python cannot kill a running thread; database statement/lock timeouts must bound ORM work, while `metrics_run_stall_timeout_s` lets the scheduler soft-fail pending JIDs and continue. Operators should see `[thread:metrics-pool]` and `[thread:public-ef-pool]` under one `update_metrics.py [main]` process, with no metrics worker PIDs or forkserver control process.
 
+**MKL / OpenMP (2026-09-06):** `update_metrics` calls `configure_blas_thread_env()` before numpy so inner BLAS/VML threads default to **1**. Outer parallelism is **`metrics_pool_processes`**. Operator env (`MKL_NUM_THREADS`, `OMP_NUM_THREADS`, `NUMEXPR_NUM_THREADS`, and the other `setdefault` keys) still wins. Do not raise inner BLAS threads to match core count while the metrics pool is large — that oversubscribes. Stacking host series for numexpr VML is follow-on work after py-spy of `[thread:metrics-pool]` shows NumPy, not `host_data` SQL.
+
 Archive append and day-close concurrency are fixed caps only (**`sync_archive_pool_processes`** for append slots, **`sync_day_close_max_inflight`** for day-close — one calendar day / daily tar per slot). Overflow calendar days drain on slot finalize (not only on the next ingest chunk). There is no adaptive queue burst/backoff or soft queue watermark logging.
 
 ### Metrics window-coverage readiness (summary plots)
