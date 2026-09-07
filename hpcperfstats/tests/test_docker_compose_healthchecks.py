@@ -5,6 +5,42 @@ import subprocess
 from pathlib import Path
 
 
+def _compose_has_redis_runtime_named_volume(content: str) -> bool:
+  """Return True when top-level volumes define redis_runtime as driver: local.
+
+  Comment lines under ``volumes:`` are skipped with a linear scan. CodeQL
+  py/redos (alerts 26 and 27) flagged a DOTALL nested comment-line star that
+  used ``.`` to match newlines while repeating the comment group.
+  """
+  lines = content.splitlines()
+  try:
+    vol_i = next(i for i, line in enumerate(lines) if line == "volumes:")
+  except StopIteration:
+    return False
+  i = vol_i + 1
+  while i < len(lines) and lines[i].startswith("  #"):
+    i += 1
+  return (
+      i + 1 < len(lines)
+      and lines[i] == "  redis_runtime:"
+      and lines[i + 1] == "    driver: local"
+  )
+
+
+def test_compose_has_redis_runtime_named_volume_skips_comments_linearly():
+  """Regression: CodeQL py/redos on DOTALL comment-star skip (alerts 26, 27)."""
+  assert _compose_has_redis_runtime_named_volume(
+      "volumes:\n  # a\n  # b\n  redis_runtime:\n    driver: local\n"
+  )
+  assert not _compose_has_redis_runtime_named_volume(
+      "volumes:\n  # redis_runtime:\n    driver: local\n"
+  )
+  assert not _compose_has_redis_runtime_named_volume("services:\n  redis:\n")
+  src = Path(__file__).read_text()
+  banned = "".join(("(?:  #.", r"*\n)*"))
+  assert banned not in src
+
+
 def test_docker_compose_has_healthchecks_for_core_services():
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
@@ -165,10 +201,9 @@ def test_docker_compose_redis_unix_socket_volume_is_shared():
   ).read_text()
   assert "redis_runtime:/run/redis" in content
   assert content.count("redis_runtime:/run/redis") >= 3
-  assert re.search(
-      r"(?ms)^volumes:\n(?:  #.*\n)*  redis_runtime:\n    driver: local\n",
-      content,
-  ), "redis_runtime is a named volume in base compose, not a settings bind"
+  assert _compose_has_redis_runtime_named_volume(content), (
+      "redis_runtime is a named volume in base compose, not a settings bind"
+  )
   assert "redis_runtime:" not in example
   assert "redis_runtime:/run/redis" in overlay
 
@@ -480,10 +515,7 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
     # Service mounts in base still reference the volume names.
     assert name in base
     assert not re.search(rf"(?m)^  {name}:\s*$", base)
-  assert re.search(
-      r"(?ms)^volumes:\n(?:  #.*\n)*  redis_runtime:\n    driver: local\n",
-      base,
-  )
+  assert _compose_has_redis_runtime_named_volume(base)
   assert "redis_runtime:" not in settings
   assert "ssl_certs:" not in settings
   assert "ssl_certs:/etc/ssl/hpcperfstats" not in base
