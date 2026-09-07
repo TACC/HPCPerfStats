@@ -96,22 +96,32 @@ def test_readme_and_design_doc_redis_policy_is_volatile_lru():
     assert "--io-threads 4" in text or "`--io-threads` **4**" in text or "**`--io-threads 4`**" in text
 
 
-def test_docker_compose_web_and_pipeline_wait_for_healthy_redis():
-  """web/pipeline must not race Redis DNS (Name or service not known)."""
+def test_docker_compose_web_and_pipeline_do_not_block_on_redis_healthy():
+  """podman-compose service_healthy can create redis and never start it.
+
+  Signature: hpcperfstats_redis_1 exists, ``logs redis`` empty, ``up`` hangs
+  while web/pipeline wait for a healthcheck that never runs.
+  """
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.yaml").read_text()
   web_m = re.search(r"(?ms)^  web:\n(.*?)(?=^  [a-z].*:|\Z)", content)
   pipeline_m = re.search(r"(?ms)^  pipeline:\n(.*?)(?=^  [a-z].*:|\Z)", content)
+  redis_m = re.search(r"(?ms)^  redis:\n(.*?)(?=^  [a-z].*:|\Z)", content)
   assert web_m, "web service not found"
   assert pipeline_m, "pipeline service not found"
+  assert redis_m, "redis service not found"
   web = web_m.group(0)
   pipeline = pipeline_m.group(0)
+  redis = redis_m.group(0)
   assert "depends_on:" in web
   assert "redis:" in web
-  assert "condition: service_healthy" in web
+  assert "condition: service_healthy" not in web
+  assert "condition: service_started" in web
   assert "depends_on:" in pipeline
   assert "redis:" in pipeline
-  assert "condition: service_healthy" in pipeline
+  assert "condition: service_healthy" not in pipeline
+  assert "healthcheck:" in redis
+  assert "redis-cli ping && redis-cli -s /run/redis/redis.sock ping" in redis
 
 
 def test_docker_compose_redis_unix_socket_volume_is_shared():

@@ -109,9 +109,9 @@ flowchart TB
   PIPE -->|listend / sync_timedb keys| REDIS
   PIPE -->|consume| RMQ
   WEB -.->|depends_on healthy| DB
-  WEB -.->|depends_on healthy| REDIS
+  WEB -.->|depends_on started| REDIS
   PIPE -.->|depends_on| WEB
-  PIPE -.->|depends_on healthy| REDIS
+  PIPE -.->|depends_on started| REDIS
 ```
 
 **Deployment split:**
