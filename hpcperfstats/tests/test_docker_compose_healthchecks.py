@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -42,9 +43,11 @@ def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
   assert "test:\n        [" not in content
   assert 'test: ["' not in content
   assert "hps-redis-entrypoint.sh" in content
-  assert "chmod 1777 /run/redis" in (
-      repo_root / "services-conf" / "redis_entrypoint.sh"
-  ).read_text()
+  redis_entrypoint = repo_root / "services-conf" / "redis_entrypoint.sh"
+  assert redis_entrypoint.is_file(), (
+      "redis_entrypoint.sh must be a file; a directory is a leftover Podman bind"
+  )
+  assert "chmod 1777 /run/redis" in redis_entrypoint.read_text()
   assert "command:\n      - redis-server\n" in content
   assert "      - --maxmemory\n      - 16gb\n" in content
   assert "      - --maxmemory-policy\n      - volatile-lru\n" in content
@@ -68,6 +71,33 @@ def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
       "        - pg_isready -U hpcperfstats -d postgres -h 127.0.0.1 -p 5432\n"
   ) in content
   assert "command:\n      - -c\n      - max_connections=500\n" in content
+
+
+def test_redis_entrypoint_sh_is_tracked_file_not_gitignored():
+  """Root *.sh must not hide the Redis bind-mount entrypoint.
+
+  Signature (hpcperfstats04): missing file → Podman creates
+  services-conf/redis_entrypoint.sh as a directory; Redis exits 0 in <1ms.
+  """
+  repo_root = Path(__file__).resolve().parents[2]
+  path = repo_root / "services-conf" / "redis_entrypoint.sh"
+  assert path.is_file(), "must be a file; a directory is a leftover Podman bind"
+  ignored = subprocess.run(
+      ["git", "check-ignore", "-v", "services-conf/redis_entrypoint.sh"],
+      cwd=repo_root,
+      check=False,
+      capture_output=True,
+      text=True,
+  )
+  detail = (ignored.stdout + ignored.stderr).strip()
+  # Tracked files: exit 1 (not ignored). Untracked: ``check-ignore -v`` may
+  # print the ``!`` exception and exit 0. A ``*.sh`` hit without ``!`` is the
+  # bug that left this file off production checkouts.
+  if ignored.returncode == 0:
+    assert "!services-conf/redis_entrypoint.sh" in detail, detail
+  else:
+    assert ignored.returncode == 1, detail
+  assert "!services-conf/redis_entrypoint.sh" in (repo_root / ".gitignore").read_text()
 
 
 def test_docker_compose_redis_maxmemory_policy_is_volatile_lru():

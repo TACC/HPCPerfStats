@@ -36,6 +36,9 @@ tacc_stats.egg-info/
 # Homemade PG18 image entrypoints (db.Dockerfile COPY; must ship on prod checkouts).
 !services-conf/db-docker-entrypoint.sh
 !services-conf/db-docker-ensure-initdb.sh
+# Redis bind-mount entrypoint (compose unix socket prep). Missing file → Podman
+# creates a directory at this path and Redis exits 0 immediately.
+!services-conf/redis_entrypoint.sh
 *.so
 *.d
 .project
