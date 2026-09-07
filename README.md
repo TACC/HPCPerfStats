@@ -358,24 +358,32 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    **`proxy_ssl_source.device`** at **`tests/fixtures/proxy-ssl`**.
    Image rebuilds that leave **`proxy`** running: **[docs/upgrade.md](docs/upgrade.md)**.
 
-   Compose bind-mounts **`./services-conf/nginx.conf`** to **`/etc/nginx/http.d/default.conf`**
+   Compose bind-mounts **`./services-conf/nginx-main.conf`** to **`/etc/nginx/nginx.conf`**
+   (process/http tunables: **`worker_processes auto`**, affinity, sendfile/tcp_*,
+   open_file_cache) and **`./services-conf/nginx.conf`** to **`/etc/nginx/http.d/default.conf`**
    on **`proxy`**, and bind-mounts the shared snippets (**`nginx-static-files.conf`**,
    **`nginx-django-proxy-common.inc`**, **`nginx-edge-security-headers.inc`**,
    **`nginx-csp-no-active.inc`**, **`nginx-csp-django-html.inc`**) as the **only**
-   runtime source for those files (they are **not** baked into **`proxy.Dockerfile`**).
+   runtime source for those snippets (they are **not** baked into **`proxy.Dockerfile`**).
 
-   The proxy image **`cp`**s **`nginx.conf`** into **`default.conf`** at **build** time for a
+   The **`proxy`** image is **source-built** from **`services-conf/proxy.Dockerfile`**:
+   pinned **nginx 1.31.5**, **jemalloc**, **zlib-ng (ZLIB_COMPAT)**, **OpenSSL 3.5.x**,
+   and **ngx_brotli**, with **`-march=native -mtune=native`**. **Build the proxy image on
+   the production host** (native flags are not portable across CPU generations). Do **not**
+   rely on Alpine edge apk nginx packages. The image **`COPY`**s **`nginx-main.conf`** and
+   **`cp`**s **`nginx.conf`** into **`default.conf`** at **build** time for a
    non-Compose baseline, generates **`hps-proxy-allowed-hosts.inc`** from
    **`[DEFAULT] server=`**, and ships **`proxy_entrypoint.sh`** plus the TLS/resolver
-   helpers. Compose still replaces **`default.conf`** with the host **`nginx.conf`**
-   mount. Runtime **`proxy_entrypoint.sh`** materializes TLS PEMs from
+   helpers. Compose still replaces **`nginx.conf`** / **`default.conf`** with the host mounts.
+   Runtime **`proxy_entrypoint.sh`** materializes TLS PEMs from
    **`/mnt/ssl-source`**, regenerates the OCSP **`resolver`** include
    from container **`/etc/resolv.conf`**, waits for SPA HTML under
    **`/srv/static/frontend/{machine,pub}/index.html`**, and may write private
    diagnostic CSP includes under **`/etc/nginx/`** (never under **`/srv/static`**).
    SPA shells carry their own hash CSP via HTML **`<meta http-equiv="Content-Security-Policy">`**
    (written at frontend export / SPA heal); nginx **`/machine/`** and **`/pub/`**
-   locations must **not** send a competing hash CSP header.
+   locations must **not** send a competing hash CSP header (**`open_file_cache off`**
+   on those locations so SPA heal is not stale).
    HTTP GETs for **`*.inc`** under **`/static/`** return **404**.
    Nginx is the public authority for HSTS, framing, COOP, Permissions-Policy, Referrer-Policy,
    and CSP (hash-based for SPA shells; no-active for JSON/redirects). Certificates without an

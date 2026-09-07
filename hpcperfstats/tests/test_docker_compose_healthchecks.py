@@ -282,25 +282,77 @@ def test_docker_compose_proxy_runtime_tls_mount_and_entrypoint_materialize():
   assert not (repo_root / "services-conf" / "proxy-ssl.fixture").exists()
 
 
-def test_proxy_dockerfile_pins_nginx_and_brotli_to_same_edge_version():
-  """Regression: apk world[nginx=X] breaks when Alpine edge advances; bump ARG intentionally."""
+def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
+  """Regression: proxy must SHA-pin source nginx/jemalloc/zlib-ng/OpenSSL/brotli; no apk edge nginx."""
   repo_root = Path(__file__).resolve().parents[2]
   dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
-  match = re.search(
-    r"^ARG NGINX_EDGE_VERSION=([0-9]+\.[0-9]+\.[0-9]+-r[0-9]+)\s*$",
-    dockerfile,
-    flags=re.MULTILINE,
-  )
-  assert match is not None, "proxy.Dockerfile must pin NGINX_EDGE_VERSION"
-  pinned = match.group(1)
-  # Current Alpine edge main (x86_64) nginx + nginx-mod-http-brotli; bump both ARG and this assert.
-  assert pinned == "1.30.4-r3"
-  assert "nginx=${NGINX_EDGE_VERSION}" in dockerfile
-  assert "nginx-mod-http-brotli=${NGINX_EDGE_VERSION}" in dockerfile
-  assert "ALPINE_EDGE_MAIN=" in dockerfile
-  assert "--repository=${ALPINE_EDGE_MAIN}" in dockerfile
-  assert "ca-certificates" in dockerfile
+  assert "ARG NGINX_VERSION=1.31.5" in dockerfile
+  assert "ARG NGINX_SHA256=" in dockerfile
+  assert "ARG JEMALLOC_VERSION=5.3.1" in dockerfile
+  assert "ARG JEMALLOC_SHA256=" in dockerfile
+  assert "ARG ZLIB_NG_VERSION=2.2.5" in dockerfile
+  assert "ARG ZLIB_NG_SHA256=" in dockerfile
+  assert "ARG OPENSSL_VERSION=3.5.7" in dockerfile
+  assert "ARG OPENSSL_SHA256=" in dockerfile
+  assert "ARG NGX_BROTLI_VERSION=" in dockerfile
+  assert "ARG NGX_BROTLI_SHA256=" in dockerfile
+  assert "ARG BROTLI_VERSION=" in dockerfile
+  assert "ARG BROTLI_SHA256=" in dockerfile
+  assert "-mtune=native" in dockerfile
+  assert "-ljemalloc" in dockerfile
+  assert '--with-zlib-opt="--zlib-compat"' in dockerfile
+  # Regression: nginx passes zlib-opt via CFLAGS; wrapper must promote --zlib-compat to argv.
+  assert "configure.zlib-ng" in dockerfile
+  assert "Compiler error reporting is too harsh" in dockerfile
+  # Regression: brotli 1.1 dropped sources.lst; must cmake-install static libs for -lbrotlienc.
+  assert "CMAKE_INSTALL_PREFIX=/opt/brotli" in dockerfile
+  assert "-L/opt/brotli/lib" in dockerfile
+  assert "libbrotlienc.a" in dockerfile
+  assert "/opt/nginx/conf/mime.types" in dockerfile
+  assert "libstdc++" in dockerfile
+  assert "do not ln -sf it onto itself" in dockerfile
+  assert "test -e /opt/jemalloc/lib/libjemalloc.so.2" in dockerfile
+  assert "no-nextprotoneg no-weak-ssl-ciphers no-ssl3 no-shared" in dockerfile
+  assert "--add-module=../ngx_brotli" in dockerfile
+  assert "LD_PRELOAD=/opt/jemalloc/lib/libjemalloc.so.2" in dockerfile
+
+  assert "nginx=${NGINX_EDGE_VERSION}" not in dockerfile
+  assert "nginx-mod-http-brotli" not in dockerfile or "apk info -e nginx-mod-http-brotli" in dockerfile
+  assert "NGINX_EDGE_VERSION" not in dockerfile
+  assert "ALPINE_EDGE_MAIN" not in dockerfile
+  assert "apk add" in dockerfile and "nginx=${" not in dockerfile
   assert 'CMD ["/usr/local/bin/proxy_entrypoint.sh"]' in dockerfile
+  assert "ca-certificates" in dockerfile
+  assert "COPY services-conf/nginx-main.conf /etc/nginx/nginx.conf" in dockerfile
+  main = (repo_root / "services-conf" / "nginx-main.conf").read_text()
+  assert "worker_processes auto;" in main
+  assert "worker_cpu_affinity auto;" in main
+  assert "tcp_nodelay on;" in main
+  assert "open_file_cache max=10000" in main
+  assert "ssl_session_tickets off;" in main
+  assert "worker_processes 20" not in main
+  assert "api;" not in main
+  assert "client_body_early_read" not in main
+  compose = (repo_root / "docker-compose.yaml").read_text()
+  assert (
+      "./services-conf/nginx-main.conf:/etc/nginx/nginx.conf:ro" in compose
+  )
+  for mount_only in (
+      "nginx-edge-security-headers.inc",
+      "nginx-csp-no-active.inc",
+      "nginx-csp-django-html.inc",
+      "nginx-static-files.conf",
+      "nginx-django-proxy-common.inc",
+  ):
+    assert f"COPY services-conf/{mount_only}" not in dockerfile
+
+
+def test_proxy_compose_mounts_main_nginx_conf():
+  """Compose must bind-mount nginx-main.conf as the process config source of truth."""
+  repo_root = Path(__file__).resolve().parents[2]
+  compose = (repo_root / "docker-compose.yaml").read_text()
+  assert "./services-conf/nginx-main.conf:/etc/nginx/nginx.conf:ro" in compose
+  assert "./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro" in compose
 
 
 def test_docker_compose_includes_settings_not_app_or_pinning():

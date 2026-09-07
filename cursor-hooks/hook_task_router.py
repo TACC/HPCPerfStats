@@ -463,6 +463,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         "id": "nginx",
         "patterns": [
             "services-conf/nginx*",
+            "services-conf/proxy.Dockerfile",
         ],
         "rules": [
             "nginx-static-url-prefix.mdc",

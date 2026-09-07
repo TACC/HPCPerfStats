@@ -245,6 +245,39 @@ def test_nginx_conf_completes_ocsp_stapling_contract():
   assert "include /etc/nginx/nginx-resolver.inc;" in conf
 
 
+def test_nginx_main_conf_http_tunables_and_rejects_hardcoded_workers():
+  main = (_SERVICES / "nginx-main.conf").read_text(encoding="utf-8")
+  assert "worker_processes auto;" in main
+  assert "worker_cpu_affinity auto;" in main
+  assert "sendfile on;" in main
+  assert "tcp_nopush on;" in main
+  assert "tcp_nodelay on;" in main
+  assert "open_file_cache max=10000" in main
+  assert "pcre_jit on;" in main
+  assert "ssl_session_tickets off;" in main
+  assert "worker_processes 20" not in main
+  assert "api;" not in main
+  assert "client_body_early_read" not in main
+
+
+def test_nginx_vhost_enables_http2_and_ssl_session_cache():
+  conf = (_SERVICES / "nginx.conf").read_text(encoding="utf-8")
+  assert "http2 on;" in conf
+  assert "ssl_session_cache shared:SSL:10m;" in conf
+  assert "ssl_session_timeout 1d;" in conf
+  assert "api;" not in conf
+  assert "client_body_early_read" not in conf
+
+
+def test_spa_open_file_cache_off_on_machine_and_pub():
+  """SPA heal replaces index.html; locations must not reuse cached fds."""
+  conf = (_SERVICES / "nginx-static-files.conf").read_text(encoding="utf-8")
+  machine = conf.split("location ^~ /machine/")[1].split("location ")[0]
+  pub = conf.split("location ^~ /pub/")[1].split("location ")[0]
+  assert "open_file_cache off;" in machine
+  assert "open_file_cache off;" in pub
+
+
 def test_proxy_dockerfile_wires_ocsp_trust_and_startup_helpers():
   dockerfile = (_SERVICES / "proxy.Dockerfile").read_text(encoding="utf-8")
   assert "ca-certificates" in dockerfile

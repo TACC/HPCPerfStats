@@ -1,7 +1,7 @@
 ---
 description: Production /static/ is served only by nginx; Django must not serve STATIC_URL
 alwaysApply: false
-globs: services-conf/nginx*
+globs: services-conf/nginx*,services-conf/proxy.Dockerfile
 ---
 
 # Nginx-Only `/static/` URL Prefix
@@ -11,11 +11,13 @@ globs: services-conf/nginx*
 ## Production contract
 
 - **Browsers load `/static/*` only through nginx**, not through Gunicorn/Django WSGI.
+- **Custom proxy binary:** [`services-conf/proxy.Dockerfile`](services-conf/proxy.Dockerfile) source-builds **nginx** (pinned SHA, currently **1.31.5**) against **jemalloc**, **zlib-ng (`--zlib-compat`)**, **OpenSSL**, and **ngx_brotli**. Bake on the **prod CPU** (`-O3 -march=native -mtune=native -flto -g0`). **Do not** apk-install `nginx` / `nginx-mod-http-brotli`. Runtime **`LD_PRELOAD`** jemalloc. **Do not** enable nginx Control API / `api;` / `client_body_early_read`.
+- **Main vs vhost:** process/http tunables live in [`services-conf/nginx-main.conf`](services-conf/nginx-main.conf) (`worker_processes auto`, `worker_cpu_affinity auto`, `sendfile` / `tcp_nopush` / `tcp_nodelay`, `open_file_cache`, `ssl_session_tickets off`). **Never** hardcode `worker_processes <N>`. Server blocks stay in [`services-conf/nginx.conf`](services-conf/nginx.conf) (`http2 on`, gzip/brotli, TLS paths).
 - Canonical wiring:
   - [`services-conf/nginx-static-files.conf`](services-conf/nginx-static-files.conf) — `location /static/` → `alias /srv/static/;`
-  - SPA shells under **`/machine/`** and **`/pub/`**; **`/favicon.ico`** returns **404** at the edge; an explicit prefix allowlist proxies to Gunicorn for **`hpcperfstats_site.urls`** (anything else hits **`location / { return 404; }`**). SPA CSP is **document-embedded** (`<meta http-equiv="Content-Security-Policy">` written at export/heal); nginx SPA locations must **not** send a competing hash CSP header. **Never** store nginx config under **`/srv/static`**. **`/static/`** **404**s denylisted suffixes including **`*.inc`** (see **`frontend-static-prod-serve-only.mdc`**).
+  - SPA shells under **`/machine/`** and **`/pub/`** set **`open_file_cache off;`** so SPA heal/`os.replace` of `index.html` is not served from a stale fd; **`/favicon.ico`** returns **404** at the edge; an explicit prefix allowlist proxies to Gunicorn for **`hpcperfstats_site.urls`** (anything else hits **`location / { return 404; }`**). SPA CSP is **document-embedded** (`<meta http-equiv="Content-Security-Policy">` written at export/heal); nginx SPA locations must **not** send a competing hash CSP header. **Never** store nginx config under **`/srv/static`**. **`/static/`** **404**s denylisted suffixes including **`*.inc`** (see **`frontend-static-prod-serve-only.mdc`**).
   - [`services-conf/nginx-django-proxy-common.inc`](services-conf/nginx-django-proxy-common.inc) — shared `proxy_*` headers/timeouts included by each Gunicorn `location`.
-  - [`docker-compose.yaml`](docker-compose.yaml) — shared volume `staticfiles_data` mounted at `STATIC_ROOT` on `web` (`/home/hpcperfstats/staticfiles`) and read-only on `proxy` as `/srv/static`; mounts nginx snippets into the **proxy** container (`nginx-static-files.conf`, `nginx-django-proxy-common.inc`, `nginx-edge-security-headers.inc`, `nginx-csp-no-active.inc`, `nginx-csp-django-html.inc`). Those snippets are **compose mounts only** — **`proxy.Dockerfile`** must not also **`COPY`** them.
+  - [`docker-compose.yaml`](docker-compose.yaml) — shared volume `staticfiles_data` mounted at `STATIC_ROOT` on `web` (`/home/hpcperfstats/staticfiles`) and read-only on `proxy` as `/srv/static`; mounts **`nginx-main.conf` → `/etc/nginx/nginx.conf`**, vhost **`nginx.conf` → `http.d/default.conf`**, and snippets (`nginx-static-files.conf`, `nginx-django-proxy-common.inc`, `nginx-edge-security-headers.inc`, `nginx-csp-no-active.inc`, `nginx-csp-django-html.inc`). Those snippets are **compose mounts only** — **`proxy.Dockerfile`** must not also **`COPY`** them (main conf may be **`COPY`**d for `docker run` parity).
 - **Do not** add Django URL patterns (`django.conf.urls.static.static` for `STATIC_URL`), **WhiteNoise**, or other middleware/views to answer **`STATIC_URL`** (`/static/`). That would duplicate nginx and violate the deployment contract.
 
 ## Django’s role (files on disk, not the `/static/` HTTP path)
