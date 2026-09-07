@@ -109,9 +109,7 @@ flowchart TB
   PIPE -->|listend / sync_timedb keys| REDIS
   PIPE -->|consume| RMQ
   WEB -.->|depends_on healthy| DB
-  WEB -.->|depends_on started| REDIS
   PIPE -.->|depends_on| WEB
-  PIPE -.->|depends_on started| REDIS
 ```
 
 **Deployment split:**
@@ -150,7 +148,7 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 | **db** | TimescaleDB on PostgreSQL 15 (`timescale/timescaledb:2.28.3-pg15`); primary system of record until PG18 cutover. Compose sets large **`shm_size`** and Postgres tuning (`shared_buffers`, timeouts, WAL) for concurrent Django + pipeline load. |
 | **db_pg18** | Optional dual-run homemade PostgreSQL 18 + TimescaleDB (`hpcperfstats-db` from `services-conf/db.Dockerfile`; profile **`pg18-migrate`**, alias **`db18`**). Logical migrate runbook: `docs/OPERATOR_PG18_MIGRATION.md`. Same **`shm_size: "16gb"`** plus **`io_method=io_uring`**. |
 | **redis** | **Dedicated Compose container** (`redis:8.10.0-alpine3.23` in `docker-compose.yaml`). Network alias **`redis`**. Shared instance for Django cache (TTL keys) and listend auxiliaries (`recent_host:*`, `monitor_identity:*`). **`sync_timedb` does not use Redis** — jobs and archive-member maps live in-process with disk sidecars. **`maxmemory` 16gb** with **`volatile-lru`**. `appendonly no`; **`--io-threads 4`**; compact hashes via **`hash-min-template-entries` 1**; Unix socket **`unix:///run/redis/redis.sock?db=1`** on volume **`redis_runtime`**. Healthcheck: TCP `PING` and socket `PING`. |
-| **rabbitmq** | Broker for monitor→site message delivery (`rabbitmq:4.3.4-management-alpine`, AMQP **5672** published; management HTTP **15672** compose-internal only). Admin Monitor queue/node stats use the management API from `web`, not AMQP. Memory cap: Compose **`mem_limit` / `memswap_limit` 96g** plus **`vm_memory_high_watermark.absolute = 80GiB`** (`services-conf/rabbitmq_vm_memory.conf`) so publishers block ~16 GiB below the cgroup wall instead of growing unbounded or hitting Erlang `binary_alloc`. |
+| **rabbitmq** | Broker for monitor→site message delivery (`rabbitmq:4.3.4-management-alpine`, AMQP **5672** published; management HTTP **15672** compose-internal only). Admin Monitor queue/node stats use the management API from `web`, not AMQP. Memory cap: Compose **`mem_limit` / `memswap_limit` 96g** plus **`vm_memory_high_watermark.absolute = 80GiB`** (`services-conf/rabbitmq_vm_memory.conf`) so publishers block ~16 GiB below the cgroup wall instead of growing unbounded or hitting Erlang `binary_alloc`. Erlang allocator: **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`**. |
 | **proxy** | Nginx TLS/front door; **`docker-compose.yaml`** mounts committed **`services-conf/nginx.conf`** as **`default.conf`** and **`proxy_ssl_source:/mnt/ssl-source:ro`**; image build **`cp`**s **`nginx.conf`**, generates **`hps-proxy-allowed-hosts.inc`** from INI; **`proxy_entrypoint.sh`** materializes TLS PEMs from the settings mount into fixed paths under **`/etc/ssl/hpcperfstats`**. Serves staticfiles/media and proxies API/HTML to **`web`**. |
 
 ### 5.3 Python package layout (concise)

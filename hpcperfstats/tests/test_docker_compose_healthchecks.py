@@ -96,11 +96,12 @@ def test_readme_and_design_doc_redis_policy_is_volatile_lru():
     assert "--io-threads 4" in text or "`--io-threads` **4**" in text or "**`--io-threads 4`**" in text
 
 
-def test_docker_compose_web_and_pipeline_do_not_block_on_redis_healthy():
-  """podman-compose service_healthy can create redis and never start it.
+def test_docker_compose_web_and_pipeline_do_not_depend_on_redis():
+  """podman-compose ``depends_on`` ``condition:`` for redis never starts it.
 
-  Signature: hpcperfstats_redis_1 exists, ``logs redis`` empty, ``up`` hangs
-  while web/pipeline wait for a healthcheck that never runs.
+  Signature: hpcperfstats_redis_1 exists, ``logs redis`` empty, ``up`` hangs.
+  ``service_started`` still hangs; do not add redis to web/pipeline depends_on.
+  Startup wait uses the Unix socket in rediswait.py instead.
   """
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.yaml").read_text()
@@ -113,13 +114,13 @@ def test_docker_compose_web_and_pipeline_do_not_block_on_redis_healthy():
   web = web_m.group(0)
   pipeline = pipeline_m.group(0)
   redis = redis_m.group(0)
-  assert "depends_on:" in web
-  assert "redis:" in web
-  assert "condition: service_healthy" not in web
-  assert "condition: service_started" in web
-  assert "depends_on:" in pipeline
-  assert "redis:" in pipeline
-  assert "condition: service_healthy" not in pipeline
+  web_deps = re.search(r"(?ms)^    depends_on:\n(.*?)(?=^    [a-z]|\Z)", web)
+  pipe_deps = re.search(r"(?ms)^    depends_on:\n(.*?)(?=^    [a-z]|\Z)", pipeline)
+  assert web_deps is None, "web must not depends_on redis (podman-compose hang)"
+  assert pipe_deps, "pipeline service not found depends_on"
+  assert "- web" in pipe_deps.group(0)
+  assert "redis" not in pipe_deps.group(0)
+  assert "condition:" not in pipe_deps.group(0)
   assert "healthcheck:" in redis
   assert "redis-cli ping && redis-cli -s /run/redis/redis.sock ping" in redis
 
@@ -184,6 +185,24 @@ def test_docker_compose_rabbitmq_defaults_to_guest_credentials():
 
   assert "RABBITMQ_DEFAULT_USER=guest" in content
   assert "RABBITMQ_DEFAULT_PASS=guest" in content
+
+
+def test_docker_compose_rabbitmq_sets_erl_flags_allocator_tuning():
+  """Keep Erlang carrier sizes + aobf strategy on the rabbitmq service env."""
+  repo_root = Path(__file__).resolve().parents[2]
+  compose_path = repo_root / "docker-compose.yaml"
+  content = compose_path.read_text()
+  rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[0]
+  expected = "ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512"
+
+  assert expected in rabbitmq_block
+  readme = (repo_root / "README.md").read_text()
+  upgrade = (repo_root / "docs" / "upgrade.md").read_text()
+  deploy = (repo_root / "docs" / "DEPLOY_CONCURRENCY_AND_NUMA.md").read_text()
+  assert "ERL_FLAGS" in readme
+  assert "+MBas aobf" in readme
+  assert "ERL_FLAGS" in upgrade
+  assert "ERL_FLAGS" in deploy
 
 
 def test_docker_compose_rabbitmq_allows_large_monitor_messages():

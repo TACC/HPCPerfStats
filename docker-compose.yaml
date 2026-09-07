@@ -34,9 +34,6 @@ services:
     environment:
       - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
       - STATIC_ROOT=/home/hpcperfstats/staticfiles
-    depends_on:
-      redis:
-        condition: service_started
     volumes:
       - staticfiles_data:/home/hpcperfstats/staticfiles
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
@@ -57,10 +54,7 @@ services:
     memswap_limit: 128g
     stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-2m}
     depends_on:
-      web:
-        condition: service_started
-      redis:
-        condition: service_started
+      - web
     command: /home/hpcperfstats/services-conf/supervisor_startup.sh
     environment:
       - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
@@ -345,6 +339,9 @@ services:
       - RABBITMQ_NODENAME=rabbit@rabbitmq-prod
       - RABBITMQ_DEFAULT_USER=guest
       - RABBITMQ_DEFAULT_PASS=guest
+      # Erlang binary/heap carriers: address-order best fit + 512 KiB largest
+      # mbc (reduces allocator fragmentation under many monitor publishers).
+      - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512
     stop_grace_period: 2m 
     healthcheck:
       # `rabbitmq-diagnostics ping` returns non-zero if the node is not ready.
