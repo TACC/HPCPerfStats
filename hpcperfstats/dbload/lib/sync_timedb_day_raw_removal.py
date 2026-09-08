@@ -1112,7 +1112,7 @@ class _DayRawRemovalState:
     Examples:
       >>> _DayRawRemovalState().needs_ghost_delete_retry()  # doctest: +SKIP
     """
-    if not self.delete_phase_done():
+    if self.phase() not in (PHASE_DONE, PHASE_DELETING):
       return False
     if not self._manifest_has_ghost_markers():
       return False
