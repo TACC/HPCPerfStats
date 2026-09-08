@@ -538,7 +538,23 @@ def test_build_postgres_options_disabled_by_env(monkeypatch, temp_ini):
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.build_postgres_connection_options() == {}
+  opts = cfg.build_postgres_connection_options()
+  assert "options" not in opts
+  assert opts.get("application_name")
+
+
+def test_build_postgres_options_always_set_application_name(
+    temp_ini, monkeypatch,
+):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  importlib.reload(cfg)
+  opts = cfg.build_postgres_connection_options()
+  name = opts.get("application_name")
+  assert isinstance(name, str) and name
+  assert "\n" not in name
+  assert len(name) <= 63
 
 
 

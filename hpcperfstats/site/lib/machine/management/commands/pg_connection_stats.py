@@ -56,6 +56,21 @@ class Command(BaseCommand):
           """
       )
       row = cursor.fetchone()
+      cursor.execute(
+          """
+          SELECT
+            COALESCE(NULLIF(application_name, ''), '(unset)')
+              AS application_name,
+            count(*) AS total,
+            count(*) FILTER (WHERE state = 'active') AS active,
+            count(*) FILTER (WHERE state = 'idle') AS idle
+          FROM pg_stat_activity
+          WHERE datname = current_database()
+          GROUP BY 1
+          ORDER BY 2 DESC, 1
+          """
+      )
+      groups = cursor.fetchall()
     if not row:
       self.stdout.write("No rows returned.")
       return
@@ -64,3 +79,8 @@ class Command(BaseCommand):
         "pg_stat_activity for current_database(): "
         "total=%s active=%s idle=%s idle_in_transaction=%s"
         % (total, active, idle, idle_in_tx))
+    for app_name, app_total, app_active, app_idle in groups:
+      self.stdout.write(
+          "  application_name=%s total=%s active=%s idle=%s"
+          % (app_name, app_total, app_active, app_idle)
+      )

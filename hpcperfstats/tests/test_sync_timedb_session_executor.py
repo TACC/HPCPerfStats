@@ -25,6 +25,29 @@ def test_startup_archive_scan_coordinator_construct(tmp_path):
   assert coord.get_snapshot() is None
 
 
+def test_titled_thread_pool_closes_all_thread_local_connections_after_task(
+    monkeypatch,
+):
+  """Worker finally must call connections.close_all(), not only close_old."""
+  calls = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_session_executor.connections.close_all",
+      lambda: calls.append("close_all"),
+  )
+  pool = SyncTimedbThreadPool(
+      max_workers=1,
+      thread_role="metrics-pool",
+      process_title="update_metrics.py",
+  )
+  try:
+    assert pool.apply_async(lambda: 1).get(timeout=5) == 1
+    assert pool.imap_unordered(lambda x: x, [2]).next(timeout=5) == 2
+  finally:
+    pool.terminate()
+    pool.join()
+  assert calls.count("close_all") >= 2
+
+
 def test_titled_thread_pool_imap_unordered_supports_timeout_and_completion_order():
   pool = SyncTimedbThreadPool(
       max_workers=2,

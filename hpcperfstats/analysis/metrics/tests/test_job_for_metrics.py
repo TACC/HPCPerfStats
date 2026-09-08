@@ -490,6 +490,29 @@ def test_reset_pool_hard_detaches_and_cancels_pending_threads():
   assert calls["terminate"] == 1
 
 
+def test_metrics_pool_worker_finally_closes_all_thread_local_connections(
+    monkeypatch,
+):
+  """Detached pool threads must close Django backends (CONN_MAX_AGE never fires)."""
+  calls = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_session_executor.connections.close_all",
+      lambda: calls.append("close_all"),
+  )
+  monkeypatch.setattr(
+      metrics.cfg,
+      "get_metrics_pool_processes",
+      lambda: 1,
+  )
+  m = metrics.Metrics()
+  pool = m.ensure_pool(pool_kind="metrics-pool")
+  try:
+    assert pool.apply_async(lambda: 7).get(timeout=5) == 7
+  finally:
+    m.close_pool()
+  assert "close_all" in calls
+
+
 def test_metrics_run_stall_with_shared_pool_calls_reset(monkeypatch):
   class _SharedPool:
     pass

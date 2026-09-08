@@ -2068,16 +2068,28 @@ def get_db_idle_in_transaction_session_timeout_ms() -> Any:
 
 def build_postgres_connection_options() -> Any:
   """
-  Return Django ``DATABASES`` ``OPTIONS`` for libpq ``-c`` settings, or ``{}``.
-  
+  Return Django ``DATABASES`` ``OPTIONS`` including libpq application_name.
+
+  Always sets ``application_name`` from the live process/thread title so
+  ``pg_stat_activity`` can group backends. Session GUCs
+  (``statement_timeout``, ``idle_in_transaction_session_timeout``) are added
+  under ``options`` when those knobs are non-zero.
+
   Returns:
-    Any: Open return polymorphism from ``build_postgres_connection_options``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Mapping with at least ``application_name``; may include ``options``.
+
   Examples:
-    >>> build_postgres_connection_options()  # doctest: +SKIP
+    >>> opts = build_postgres_connection_options()
+    >>> bool(opts.get("application_name"))
+    True
   """
+  from hpcperfstats.dbload.lib.process_title import (
+      current_libpq_application_name,
+  )
+
+  result: dict[str, Any] = {
+      "application_name": current_libpq_application_name(),
+  }
   parts = []
   st = get_db_statement_timeout_ms()
   if st > 0:
@@ -2085,9 +2097,9 @@ def build_postgres_connection_options() -> Any:
   it = get_db_idle_in_transaction_session_timeout_ms()
   if it > 0:
     parts.append("-c idle_in_transaction_session_timeout=%d" % it)
-  if not parts:
-    return {}
-  return {"options": " ".join(parts)}
+  if parts:
+    result["options"] = " ".join(parts)
+  return result
 
 
 def get_worker_process_count(divisor: int = 4) -> Any:

@@ -1801,6 +1801,12 @@ def main() -> None:
 
   set_daemon_process_title(name="listend.py", role="main")
   log_python_abi_startup()
+  from hpcperfstats.dbload.lib.pg_slot_budget import (
+      log_pg_slot_budget_if_needed,
+  )
+  log_pg_slot_budget_if_needed(
+      log_fn=lambda message: log_print(message, flush=True)
+  )
   global _idle_thread_started
   global _recent_host_worker_thread_started
   global _amqp_reconnect_requested

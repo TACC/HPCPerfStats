@@ -118,6 +118,72 @@ def format_daemon_process_title(
   return f"{base} [{role}]"
 
 
+def _read_thread_title() -> str:
+  """
+  Return the current ``setthreadtitle`` value, or empty when unavailable.
+
+  Returns:
+    str: Thread title, or ``""``.
+
+  Examples:
+    >>> isinstance(_read_thread_title(), str)
+    True
+  """
+  try:
+    from setproctitle import getthreadtitle
+  except ImportError:
+    return ""
+  try:
+    return str(getthreadtitle() or "")
+  except Exception:
+    return ""
+
+
+def _read_process_title() -> str:
+  """
+  Return the current ``setproctitle`` value, or empty when unavailable.
+
+  Returns:
+    str: Process title, or ``""``.
+
+  Examples:
+    >>> isinstance(_read_process_title(), str)
+    True
+  """
+  try:
+    from setproctitle import getproctitle
+  except ImportError:
+    return ""
+  try:
+    return str(getproctitle() or "")
+  except Exception:
+    return ""
+
+
+def current_libpq_application_name() -> str:
+  """
+  Return a libpq ``application_name`` from the live process or thread title.
+
+  Prefers the thread title (metrics / listend pool workers), then the process
+  title (gunicorn workers, daemon mains), then ``hpcperfstats``. Newlines are
+  stripped and the value is truncated to 63 characters (Postgres ``NAMEDATALEN``
+  minus terminator).
+
+  Returns:
+    str: Non-empty libpq application name.
+
+  Examples:
+    >>> name = current_libpq_application_name()
+    >>> bool(name) and len(name) <= 63
+    True
+  """
+  raw = _read_thread_title() or _read_process_title() or "hpcperfstats"
+  cleaned = " ".join(str(raw).split())
+  if not cleaned:
+    cleaned = "hpcperfstats"
+  return cleaned[:63]
+
+
 def format_daemon_thread_title(script_name: str, *, role: str) -> str:
   """
   Build a thread title for daemon helper threads (``setthreadtitle`` only).

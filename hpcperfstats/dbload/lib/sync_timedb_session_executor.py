@@ -8,6 +8,8 @@ Attributes:
   SyncTimedbThreadPool: Titled in-process worker pool.
   ThreadPoolAsyncResult: Future wrapper with ready/get.
   ThreadPoolUnorderedIterator: Completion-order Future iterator.
+  apply_libpq_application_name: Stamp thread title onto Django backends.
+  close_thread_local_django_connections: Close young CONN_MAX_AGE backends.
 """
 
 from __future__ import annotations
@@ -16,12 +18,66 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from queue import Empty, Queue
 from typing import Any, Callable, Iterable, Iterator, Optional, Tuple, TypeVar
 
-from django.db import close_old_connections
+from django.db import close_old_connections, connections
 
-from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
+from hpcperfstats.dbload.lib.process_title import (
+    current_libpq_application_name,
+    set_daemon_thread_title,
+)
 
 T = TypeVar("T")
 R = TypeVar("R")
+
+
+def close_thread_local_django_connections() -> None:
+  """
+  Close every thread-local Django backend, including young CONN_MAX_AGE ones.
+
+  ``close_old_connections()`` leaves backends younger than ``CONN_MAX_AGE``
+  open. Detached metrics threads after ``reset_pool_hard`` never age those
+  sockets, so idle backends accumulate until ``max_connections``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> close_thread_local_django_connections()  # doctest: +SKIP
+  """
+  close_old_connections()
+  try:
+    connections.close_all()
+  except Exception:
+    pass
+
+
+def apply_libpq_application_name() -> None:
+  """
+  Stamp the current process/thread title onto this thread's Django backends.
+
+  Sets ``OPTIONS['application_name']`` before the first connect, and ``SET
+  application_name`` when a backend is already open.
+
+  Returns:
+    None
+
+  Examples:
+    >>> apply_libpq_application_name()  # doctest: +SKIP
+  """
+  try:
+    name = current_libpq_application_name()
+    for conn in connections.all():
+      opts = conn.settings_dict.setdefault("OPTIONS", {})
+      if isinstance(opts, dict):
+        opts["application_name"] = name
+      if getattr(conn, "connection", None) is None:
+        continue
+      try:
+        with conn.cursor() as cursor:
+          cursor.execute("SET application_name = %s", [name])
+      except Exception:
+        pass
+  except Exception:
+    pass
 
 
 class ThreadPoolAsyncResult:
@@ -377,13 +433,14 @@ class SyncTimedbThreadPool:
           script_name=self.process_title,
           role=self.thread_role,
       )
+      apply_libpq_application_name()
       close_old_connections()
       if self._initializer is not None:
         self._initializer(*self._initargs)
       try:
         return fn(*args, **kwargs)
       finally:
-        close_old_connections()
+        close_thread_local_django_connections()
 
     return ThreadPoolAsyncResult(self._executor.submit(_run))
 
@@ -435,13 +492,14 @@ class SyncTimedbThreadPool:
           script_name=self.process_title,
           role=self.thread_role,
       )
+      apply_libpq_application_name()
       close_old_connections()
       if self._initializer is not None:
         self._initializer(*self._initargs)
       try:
         return fn(item)
       finally:
-        close_old_connections()
+        close_thread_local_django_connections()
 
     return ThreadPoolUnorderedIterator(self._executor, _run, items)
 
@@ -660,11 +718,12 @@ class SessionSingleFlightExecutor:
           script_name=self.process_title,
           role=self.thread_role,
       )
+      apply_libpq_application_name()
       close_old_connections()
       try:
         return fn(*args, **kwargs)
       finally:
-        close_old_connections()
+        close_thread_local_django_connections()
 
     return self._executor.submit(_run)
 

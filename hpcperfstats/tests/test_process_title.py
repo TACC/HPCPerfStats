@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from hpcperfstats.dbload.lib.process_title import (
     apply_pool_worker_process_title,
+    current_libpq_application_name,
     enable_parent_death_signal,
     format_daemon_process_title,
     format_daemon_thread_title,
@@ -241,3 +242,18 @@ def test_import_sync_acct_does_not_set_process_title(monkeypatch):
   else:
     importlib.import_module("hpcperfstats.dbload.sync_acct")
   assert calls == []
+
+
+def test_current_libpq_application_name_sanitizes_and_truncates(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.process_title._read_thread_title",
+      lambda: "update_metrics.py [thread:metrics-pool]\nextra",
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.process_title._read_process_title",
+      lambda: "ignored",
+  )
+  name = current_libpq_application_name()
+  assert "\n" not in name
+  assert len(name) <= 63
+  assert "update_metrics.py" in name

@@ -23,7 +23,15 @@ def test_pg_connection_stats_outputs_counts():
   mock_conn = MagicMock()
   mock_conn.vendor = "postgresql"
   inner = MagicMock()
-  inner.fetchone.return_value = (5, 1, 2, 0)
+  inner.fetchone.side_effect = [
+      (5, 1, 2, 0),
+      ("update_metrics.py [thread:metrics-pool]", 4, 0, 4),
+      ("gunicorn: worker", 1, 1, 0),
+  ]
+  inner.fetchall.return_value = [
+      ("update_metrics.py [thread:metrics-pool]", 4, 0, 4),
+      ("gunicorn: worker", 1, 1, 0),
+  ]
   cm = MagicMock()
   cm.__enter__.return_value = inner
   cm.__exit__.return_value = False
@@ -35,6 +43,8 @@ def test_pg_connection_stats_outputs_counts():
   text = out.getvalue()
   assert "total=5" in text
   assert "active=1" in text
+  assert "application_name=" in text
+  assert "update_metrics.py" in text
 
 
 def test_pg_connection_stats_skips_non_postgresql():

@@ -131,11 +131,13 @@ Raw stats on disk remain the **source of truth** until validated archive members
 
 ## PostgreSQL connection budget (operator)
 
-Rough peak connections:
+Rough peak connections (code: ``estimate_django_pg_slot_peak()``):
 
-`web_workers + metrics_pool_processes + sync_timedb_processes + overhead`
+`gunicorn_workers × max(api_small_executor, parallel_db_prefetch) + listend_db_ingest_pool_processes + metrics_pool + sync_ingest_pool_processes + sync_day_close_max_inflight + sync_archive_pool_processes + reserve(32)`
 
-Compose sets **`max_connections=500`** with **reduced `work_mem` / parallel gather / maintenance buffers** to limit RAM spikes while keeping slot headroom. The stack does **not** use an external pooler (no PgBouncer): sizing is direct Django → Postgres. Still use **`WEB_CONCURRENCY`**, **`metrics_pool_processes`**, **`sync_ingest_pool_processes`**, and **`parallel_db_prefetch_max`** so concurrent heavy queries stay bounded.
+Example (hs02 / ini defaults): `32 × 4 + 32 + 24 + 32 + 4 + 2 + 32 = 254` — well under **`max_connections=500`**. A census of hundreds of **idle** backends from `pipeline` is a **leak** (detached `update_metrics` threads after `reset_pool_hard` whose Django sockets were not `connections.close_all()`'d). **Do not raise the GUC** to paper over that; worker `finally` must close thread-local backends because `CONN_MAX_AGE` never fires on abandoned threads.
+
+Compose sets **`max_connections=500`** with **reduced `work_mem` / parallel gather / maintenance buffers** to limit RAM spikes while keeping slot headroom. The stack does **not** use an external pooler (no PgBouncer): sizing is direct Django → Postgres. Still use **`WEB_CONCURRENCY`**, **`metrics_pool_processes`**, **`sync_ingest_pool_processes`**, and **`parallel_db_prefetch_max`** so concurrent heavy queries stay bounded. Startup logs a **WARN** at **80%** of 500 (`log_pg_slot_budget_if_needed`); that check is log-only.
 
 ## Connection lifetime, query timeouts, and staggered pipeline
 

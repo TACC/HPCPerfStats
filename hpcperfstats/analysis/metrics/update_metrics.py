@@ -7468,6 +7468,12 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
       "Metrics absolute pool effective_cores=%d metrics_pool_processes=%d"
       % (cfg.get_effective_cores(), cfg.get_metrics_pool_processes())
   )
+  from hpcperfstats.dbload.lib.pg_slot_budget import (
+      log_pg_slot_budget_if_needed,
+  )
+  log_pg_slot_budget_if_needed(
+      log_fn=lambda message: log_print(message, flush=True)
+  )
 
   log_date_range("metrics to update", startdate, enddate)
   #################################################################
