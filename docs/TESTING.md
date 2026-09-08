@@ -419,6 +419,11 @@ npm run test:coverage -- --run
 | `hpcperfstats/tests/test_sync_timedb_append_tar_race.py` | `_append_to_tar` samples existence under the write lock and uses `tar -r` only; append jobs group per daily tar. |
 | `hpcperfstats/tests/test_sync_timedb_subprocess_hardening.py` | zstd pipe drain, nested `already_held` write lock, pax `tar tf` before replace, decompress stderr capture, tar append timeout. |
 | `hpcperfstats/tests/test_sync_timedb_archive_members_store_required.py` | Retired job store; asserts the process member store is installed. |
+| `hpcperfstats/tests/test_sync_timedb_file_complete_ingest_mark.py` | Durable file-complete mark helpers (empty/missing path, malformed sidecar, `db_skip` tokens, live-listend completeness). Host unit; no Postgres. |
+| `hpcperfstats/tests/test_sync_timedb_zero_host_ingest_mark.py` | Zero-host mark helpers (parsed-count RC-0 gate, empty archive dir, malformed entries). Host unit; no Postgres. |
+| `hpcperfstats/tests/test_sync_timedb_day_close_cooperation.py` | Day-close yield/defer tracker, empty tar-path `normpath` (`.` ), write-lock backoff, chunk-day defer. Host unit mocks. |
+| `hpcperfstats/tests/test_sync_timedb_host_itimes.py` | Mocked `host_data` Unix-second probes: empty second sets, 24h chunk bounds, overflow, statement-timeout overflow. Host unit; no Postgres. |
+| `hpcperfstats/tests/test_sync_timedb_pipeline_edge_cases.py` | Cross-module empty/malformed/boundary units for parsing, `--jid` coercion, persistence envelopes, ingest timeout (always-0 walls), reconstruct bands, readiness live-on, append `peek_first`, idle progress. Host unit; mocks ORM/DB. |
 | `hpcperfstats/tests/test_sync_acct.py` | Accounting ingest (`sync_acct_from_content`, restricted queues, bulk fallback, cache notify) with mocked ORM. |
 | `hpcperfstats/tests/test_listend_drain.py` | RabbitMQ drain loop (ack/nack, empty queue) with mocked pika. |
 | `hpcperfstats/tests/test_listend_archive_pool.py` | Host-affine archive worker pool: per-host FIFO, ack/nack only after durable archive, drop-mode DB submit off the consume thread (`listend_archive_worker_threads`). |
