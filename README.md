@@ -443,7 +443,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    (`manage.py migrate` only — schema changes ship as reviewed, committed
    migration files; production startup never runs `makemigrations`) and
    `collectstatic` so **`STATIC_ROOT`** (the volume nginx serves as `/static/`)
-   is populated before Gunicorn starts. After `collectstatic`, startup verifies
+   is populated before Gunicorn starts. Collectstatic omits ``*.map`` source
+   maps. After `collectstatic`, startup verifies
    SPA shells under **`STATIC_ROOT/frontend/{machine,pub}/index.html`**. If the
    package image lacks the shells, web fail-closes. Volume fingerprint heal
    after a later image rebuild is documented in **[docs/upgrade.md](docs/upgrade.md)**.

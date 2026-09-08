@@ -33,7 +33,7 @@ globs:
 Remove or never publish under served trees:
 
 - **Edge/nginx config:** `nginx-csp-*.inc`, any `*.inc`
-- **Source maps / VCS / docs / samples:** `*.map`, `*.md`, `*.example`, `.git*`, `Dockerfile*`
+- **Source maps / VCS / docs / samples:** `*.map`, `*.md`, `*.example`, `.git*`, `Dockerfile*`. Django **`HPCStaticFilesConfig`** (`hpcperfstats_site/staticfiles_config.py`) adds `*.map` to collectstatic `ignore_patterns` so maps never land in `STATIC_ROOT` (SPA heal still purges leftover `*.map` under `frontend/`).
 - **Scripts / config dumps:** `*.sh`, `*.py`, `*.toml`, `*.ini`, `*.yml` / `*.yaml` (unless a product feature explicitly serves that MIME under a documented path)
 - **Test-only export routes:** dirs in `PRODUCTION_EXCLUDED_EXPORT_DIRS` (`frontend-prod-test-build-boundary.mdc`)
 

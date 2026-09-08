@@ -521,7 +521,7 @@ INSTALLED_APPS = (
     "django.contrib.sessions",
     "django.contrib.sites",
     "django.contrib.messages",
-    "django.contrib.staticfiles",
+    "hpcperfstats.site.hpcperfstats_site.staticfiles_config.HPCStaticFilesConfig",
     "django.contrib.postgres",  # Required for ArrayField and postgres ops (Django 6 system checks).
 )
 INTERNAL_IPS = ["127.0.0.1"]
