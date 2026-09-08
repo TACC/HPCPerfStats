@@ -2197,38 +2197,6 @@ def parse_stats_file_streaming_incremental(
   pending_flush = False
   flush_rows = max(1, int(flush_rows))
 
-  def _emit_flush() -> None:
-    """
-    Internal helper to handle emit flush.
-    
-    Returns:
-      None
-    
-    Examples:
-      >>> _emit_flush()  # doctest: +SKIP
-    """
-    nonlocal pending_flush
-    if not parser.stats and not parser.proc_stats:
-      pending_flush = False
-      return
-    on_chunk(parser.stats, parser.proc_stats)
-    parser.stats = []
-    parser.proc_stats = []
-    pending_flush = False
-
-  def _on_time_sample_boundary() -> None:
-    """
-    Internal helper to handle on time sample boundary.
-    
-    Returns:
-      None
-    
-    Examples:
-      >>> _on_time_sample_boundary()  # doctest: +SKIP
-    """
-    if pending_flush or len(parser.stats) >= flush_rows:
-      _emit_flush()
-
   try:
     with file_read_lock_wait(stats_file):
       with open(stats_file, "r") as fd:
@@ -2241,13 +2209,22 @@ def parse_stats_file_streaming_incremental(
             got_line = True
             if _line_starts_time_sample(
                 line, parser._line_index, parser.start_idx):
-              _on_time_sample_boundary()
+              if pending_flush or len(parser.stats) >= flush_rows:
+                if parser.stats or parser.proc_stats:
+                  on_chunk(parser.stats, parser.proc_stats)
+                  parser.stats = []
+                  parser.proc_stats = []
+                pending_flush = False
             parser.feed_line(line)
             if len(parser.stats) >= flush_rows:
               pending_flush = True
           if not got_line:
             break
-    _emit_flush()
+    if parser.stats or parser.proc_stats:
+      on_chunk(parser.stats, parser.proc_stats)
+      parser.stats = []
+      parser.proc_stats = []
+    pending_flush = False
   except FileNotFoundError:
     return
   finally:

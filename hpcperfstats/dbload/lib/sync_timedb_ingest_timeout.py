@@ -154,12 +154,8 @@ def is_giant_ingest_budget(path: str, *, trigger_s: Any | None = None) -> Any:
   Examples:
     >>> is_giant_ingest_budget("x", None)  # doctest: +SKIP
   """
-  if trigger_s is None:
-    trigger_s = float(GIANT_SUPPLEMENT_TRIGGER_BUDGET_S)
-  if trigger_s <= 0.0:
-    return False
-  resolved = resolve_ingest_per_file_timeout_s(path)
-  return resolved >= float(trigger_s)
+  del path, trigger_s
+  return False
 
 
 def calendar_day_from_sealed_archive_path(sealed_path: str) -> Any:

@@ -272,26 +272,20 @@ def resolve_oldest_queued_day(
 
   candidates: List[date] = []
   try:
-    zkey = jq.job_queue_key(jq.JOB_KIND_INGEST)
     lo, hi = jq.ingest_score_range("catchup")
-    rows = client.zrangebyscore(
-        zkey,
-        jq._score_arg(lo),
-        jq._score_arg(hi),
-        start=0,
-        num=1,
-        withscores=True,
-    )
-    if rows:
-      _member, score = rows[0]
+    for ident in client.ingest_identities():
+      score = client.ingest_score(ident)
+      if score is None or score < lo or score > hi:
+        continue
       cal = jq.decode_catchup_calendar_day(score)
       if cal is not None:
         candidates.append(cal)
+      break
   except Exception:
     pass
   try:
-    lkey = jq.job_queue_key(jq.JOB_KIND_DAY_CLOSE)
-    head = client.lindex(lkey, 0)
+    head_items = client.list_slice(jq.JOB_KIND_DAY_CLOSE, 0, 0)
+    head = head_items[0] if head_items else ""
     tok = day_token_from_day_close_identity(str(head or ""))
     if tok is not None:
       candidates.append(date.fromisoformat(tok))

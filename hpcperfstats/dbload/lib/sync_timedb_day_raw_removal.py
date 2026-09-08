@@ -12,6 +12,7 @@ Attributes:
   VERIFY_STAGE_NONE: Attribute.
   VERIFY_STAGE_POST_SEAL: Attribute.
   VERIFY_STAGE_PRE_SEAL: Attribute.
+  remaining_raw_blocking_day_incomplete: Attribute.
 """
 from __future__ import annotations
 
@@ -2587,45 +2588,7 @@ def blocking_closed_raw_remains_for_day(
   )
 
 
-def remaining_raw_blocking_day_incomplete(
-  tar_path: str,
-  *,
-  archive_data_dir: Optional[str] = None,
-  host_name_ext: Optional[str] = None,
-  tgz_archive_dir: Optional[str] = None,
-  get_quarantine_skip_paths: Optional[Callable[[], Set[str]]] = None,
-  get_maintenance_snapshot: Optional[Callable[[], Any]] = None,
-  log_fn: Any | None = None,
-) -> Dict[str, List[str]]:
-  """
-  Deprecated alias for :func:`blocking_closed_raw_remains_for_day`.
-  
-  Args:
-    tar_path (str): String for tar path.
-    archive_data_dir (Optional[str]): Archive data dir, or None when absent.
-    host_name_ext (Optional[str]): Host name ext, or None when absent.
-    tgz_archive_dir (Optional[str]): Tgz archive dir, or None when absent.
-    get_quarantine_skip_paths (Optional[Callable[[], Set[str]]]): Get
-    quarantine skip paths, or None when absent.
-    get_maintenance_snapshot (Optional[Callable[[], Any]]): Get maintenance
-    snapshot, or None when absent.
-    log_fn (Any | None): One of ``Any``, ``None``.
-  
-  Returns:
-    Dict[str, List[str]]: Dict[str, List[str]] produced by this call.
-  
-  Examples:
-    >>> remaining_raw_blocking_day_incomplete(0)  # doctest: +SKIP
-  """
-  return blocking_closed_raw_remains_for_day(
-      tar_path,
-      archive_data_dir=archive_data_dir,
-      host_name_ext=host_name_ext,
-      tgz_archive_dir=tgz_archive_dir,
-      get_quarantine_skip_paths=get_quarantine_skip_paths,
-      get_maintenance_snapshot=get_maintenance_snapshot,
-      log_fn=log_fn,
-  )
+remaining_raw_blocking_day_incomplete = blocking_closed_raw_remains_for_day
 
 
 class DayRawRemovalCoordinator:
@@ -3590,20 +3553,12 @@ class DayRawRemovalCoordinator:
               or list(blocking)
           )
           if paths:
-            if self.on_handoff_to_ingest is not None:
-              try:
-                self.on_handoff_to_ingest(
-                    tar_norm,
-                    paths,
-                    reason or "closed_raw_unblock_retryable",
-                )
-              except Exception:
-                if self.log_fn:
-                  self.log_fn(
-                      "Day raw removal closed-raw handoff callback failed "
-                      "tar=%s" % tar_norm,
-                      flush=True,
-                  )
+            self._call_on_handoff_to_ingest(
+                tar_norm,
+                paths,
+                reason or "closed_raw_unblock_retryable",
+                closed_raw=True,
+            )
             if self.log_fn:
               self.log_fn(
                   "Day raw removal closed-raw handoff kick tar=%s reason=%s "
@@ -3686,19 +3641,12 @@ class DayRawRemovalCoordinator:
           return "delete_reopen"
       paths = self.paths_for_closed_raw_handoff_requeue(tar_path)
       if paths and self.on_handoff_to_ingest is not None:
-        try:
-          self.on_handoff_to_ingest(
-              tar_norm,
-              paths,
-              reason or "closed_raw_unblock_has_closed",
-          )
-        except Exception:
-          if self.log_fn:
-            self.log_fn(
-                "Day raw removal closed-raw handoff callback failed tar=%s"
-                % tar_norm,
-                flush=True,
-            )
+        self._call_on_handoff_to_ingest(
+            tar_norm,
+            paths,
+            reason or "closed_raw_unblock_has_closed",
+            closed_raw=True,
+        )
         if self.log_fn:
           self.log_fn(
               "Day raw removal closed-raw handoff kick tar=%s reason=%s "
@@ -3772,15 +3720,9 @@ class DayRawRemovalCoordinator:
         normalized.append(path_norm)
       paths = normalized
     if paths:
-      try:
-        self.on_handoff_to_ingest(tar_norm, paths, reason)
-      except Exception:
-        if self.log_fn:
-          self.log_fn(
-              "Day raw removal closed-raw handoff callback failed tar=%s"
-              % tar_norm,
-              flush=True,
-          )
+      if not self._call_on_handoff_to_ingest(
+          tar_norm, paths, reason, closed_raw=True,
+      ):
         return []
       return paths
     kick_action = self.kick_closed_raw_unblock(tar_path, reason=reason)
@@ -3861,6 +3803,47 @@ class DayRawRemovalCoordinator:
       handoffs.append((tar_norm, paths))
     return handoffs
 
+  def _call_on_handoff_to_ingest(
+      self,
+      tar_norm: str,
+      paths: List[str],
+      reason: str,
+      *,
+      closed_raw: bool = False,
+  ) -> bool:
+    """
+    Invoke ``on_handoff_to_ingest`` and swallow callback exceptions.
+
+    Returns True when the callback is unwired or finishes. Returns False
+    only when a wired callback raises.
+
+    Args:
+      tar_norm (str): Normalized daily tar path.
+      paths (List[str]): Closed-raw paths to pass to the callback.
+      reason (str): Handoff reason token.
+      closed_raw (bool): When True, log the closed-raw failed-callback token.
+
+    Returns:
+      bool: False only when the wired callback raised.
+
+    Examples:
+      >>> DayRawRemovalCoordinator()._call_on_handoff_to_ingest("x.tar", [], "")
+    """
+    if self.on_handoff_to_ingest is None or not paths:
+      return True
+    try:
+      self.on_handoff_to_ingest(tar_norm, paths, reason)
+    except Exception:
+      if self.log_fn:
+        token = (
+            "Day raw removal closed-raw handoff callback failed tar=%s"
+            if closed_raw
+            else "Day raw removal handoff callback failed tar=%s"
+        )
+        self.log_fn(token % tar_norm, flush=True)
+      return False
+    return True
+
   def complete_handoff_to_ingest(
     self,
     tar_path: str,
@@ -3887,15 +3870,7 @@ class DayRawRemovalCoordinator:
     if not paths:
       return []
     tar_norm = os.path.normpath(tar_path)
-    if self.on_handoff_to_ingest is not None:
-      try:
-        self.on_handoff_to_ingest(tar_norm, paths, reason)
-      except Exception:
-        if self.log_fn:
-          self.log_fn(
-              "Day raw removal handoff callback failed tar=%s" % tar_norm,
-              flush=True,
-          )
+    self._call_on_handoff_to_ingest(tar_norm, paths, reason)
     return paths
 
   def discover_manifest_handoffs(self) -> List[Tuple[str, List[str]]]:

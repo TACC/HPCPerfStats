@@ -25,15 +25,12 @@ def _store() -> SyncTimedbJobStore:
   return SyncTimedbJobStore("")
 
 
-def test_job_key_names_are_store_local():
-  ingest = jq.job_queue_key("ingest")
-  assert ingest == "hps:job:queue:ingest"
-  assert ":archive_members:" not in ingest
-  assert jq.job_queue_key("append").endswith(":queue:append")
-  assert jq.job_lease_key("ingest", "id").endswith(":lease:ingest:id")
-  assert jq.job_payload_key("day_close", "2026-08-01").endswith(
-      ":payload:day_close:2026-08-01",
-  )
+def test_job_store_kind_native_queue_api():
+  store = _store()
+  assert store.queued_count("ingest") == 0
+  assert store.queued_count("append") == 0
+  assert store.list_slice("append", 0, -1) == []
+  assert store.lease_token("ingest", "id") is None
 
 
 def test_operator_census_uses_disk_sidecars_and_thread_titles():
@@ -101,15 +98,15 @@ def test_claim_is_exclusive_and_non_owner_ack_fails():
       store, band="hot", owner_token=owner, ttl_s=60, now_s=1000.0,
   )
   assert claim is not None
-  assert store.get(jq.job_lease_key("ingest", "p|1|2")) == owner
+  assert store.lease_token("ingest", "p|1|2") == owner
   assert not jq.ack_job(
       store, kind="ingest", identity="p|1|2", owner_token="other:h:b:2",
   )
-  assert store.get(jq.job_lease_key("ingest", "p|1|2")) == owner
+  assert store.lease_token("ingest", "p|1|2") == owner
   assert jq.ack_job(
       store, kind="ingest", identity="p|1|2", owner_token=owner,
   )
-  assert store.get(jq.job_lease_key("ingest", "p|1|2")) is None
+  assert store.lease_token("ingest", "p|1|2") is None
 
 
 def test_steal_lease_when_owner_pid_dead():
@@ -128,8 +125,8 @@ def test_steal_lease_when_owner_pid_dead():
       hostname="host1",
       boot_id="boot1",
   )
-  assert store.get(jq.job_lease_key("append", "day")) is None
-  assert store.llen(jq.job_queue_key("append")) == 1
+  assert store.lease_token("append", "day") is None
+  assert store.queued_count("append") == 1
 
 
 def test_reconcile_this_owner_orphan_lease_requeues():
@@ -141,7 +138,7 @@ def test_reconcile_this_owner_orphan_lease_requeues():
       store, band="hot", owner_token=owner, ttl_s=60, now_s=1000.0,
   )
   assert claim is not None
-  assert store.zcard(jq.job_queue_key("ingest")) == 0
+  assert store.queued_count("ingest") == 0
   kept = jq.reconcile_this_owner_orphan_leases(
       store,
       kind=jq.JOB_KIND_INGEST,
@@ -149,7 +146,7 @@ def test_reconcile_this_owner_orphan_lease_requeues():
       owner_token=owner,
   )
   assert kept == 0
-  assert store.get(jq.job_lease_key("ingest", identity)) is not None
+  assert store.lease_token("ingest", identity) is not None
   n = jq.reconcile_this_owner_orphan_leases(
       store,
       kind=jq.JOB_KIND_INGEST,
@@ -157,8 +154,8 @@ def test_reconcile_this_owner_orphan_lease_requeues():
       owner_token=owner,
   )
   assert n == 1
-  assert store.get(jq.job_lease_key("ingest", identity)) is None
-  assert store.zscore(jq.job_queue_key("ingest"), identity) is not None
+  assert store.lease_token("ingest", identity) is None
+  assert store.ingest_score(identity) is not None
 
 
 def test_ranged_claim_prefers_hot_range_without_starving_catchup():
@@ -185,7 +182,7 @@ def test_ranged_claim_prefers_hot_range_without_starving_catchup():
   assert jq.claim_ingest_job(store, band="hot", owner_token="n:h:b:2") is None
   catch = jq.claim_ingest_job(store, band="catchup", owner_token="n:h:b:3")
   assert catch is not None and catch.identity == catch_id
-  assert store.zcard(jq.job_queue_key("ingest")) == 0
+  assert store.queued_count("ingest") == 0
 
 
 def test_zadd_same_member_reband_overwrites_score():
@@ -200,7 +197,7 @@ def test_zadd_same_member_reband_overwrites_score():
   )
   jq.zadd_ingest_job(store, identity=ident, score=hot)
   jq.zadd_ingest_job(store, identity=ident, score=catch)
-  assert store.zcard(jq.job_queue_key("ingest")) == 1
+  assert store.queued_count("ingest") == 1
   assert jq.claim_ingest_job(store, band="hot", owner_token="n:h:b:1") is None
   claim = jq.claim_ingest_job(store, band="catchup", owner_token="n:h:b:1")
   assert claim is not None and claim.identity == ident
@@ -267,10 +264,8 @@ def test_reconstruct_never_ingested_enqueues_ingest_and_append():
       today=date(2026, 8, 24),
   )
   assert enqueued == {"ingest": True, "append": True}
-  ingest_key = jq.job_queue_key("ingest")
-  append_key = jq.job_queue_key("append")
-  assert client.zscore(ingest_key, plan.identity) is not None
-  assert client.lrange(append_key, 0, -1) == [plan.path]
+  assert client.ingest_score(plan.identity) is not None
+  assert client.list_slice("append", 0, -1) == [plan.path]
 
 
 def test_reconstruct_ingested_not_in_tar_enqueues_append_only():
@@ -293,8 +288,8 @@ def test_reconstruct_ingested_not_in_tar_enqueues_append_only():
       today=date(2026, 8, 24),
   )
   assert enqueued == {"ingest": False, "append": True}
-  assert client.zscore(jq.job_queue_key("ingest"), plan.identity) is None
-  assert client.lrange(jq.job_queue_key("append"), 0, -1) == [plan.path]
+  assert client.ingest_score(plan.identity) is None
+  assert client.list_slice("append", 0, -1) == [plan.path]
 
 
 def test_reconstruct_skips_zadd_when_both_complete():
@@ -318,7 +313,7 @@ def test_reconstruct_skips_zadd_when_both_complete():
   )
   assert enqueued == {"ingest": False, "append": False}
   assert not client.ingest_identities()
-  assert client.llen(jq.job_queue_key("append")) == 0
+  assert client.queued_count("append") == 0
 
 
 def test_reconstruct_ghost_phase_done_still_enqueues_day_close():
@@ -335,7 +330,7 @@ def test_reconstruct_ghost_phase_done_still_enqueues_day_close():
       min_age_elapsed=True,
   )
   assert did is True
-  assert client.lrange(jq.job_queue_key("day_close"), 0, -1) == [tar]
+  assert client.list_slice("day_close", 0, -1) == [tar]
   client2 = _store()
   skipped = jr.enqueue_day_close_if_needed(
       client2,
@@ -346,7 +341,7 @@ def test_reconstruct_ghost_phase_done_still_enqueues_day_close():
       min_age_elapsed=True,
   )
   assert skipped is False
-  assert client2.llen(jq.job_queue_key("day_close")) == 0
+  assert client2.queued_count("day_close") == 0
 
 
 def test_reconstruct_ingest_complete_ignores_head_tail_when_listend_on():
@@ -447,8 +442,8 @@ def test_claim_is_atomic_pop_and_lease():
   )
   assert claim is not None
   assert claim.identity == "/raw/a"
-  assert store.zcard(jq.job_queue_key("ingest")) == 0
-  assert store.get(jq.job_lease_key("ingest", "/raw/a")) == "n:h:b:1"
+  assert store.queued_count("ingest") == 0
+  assert store.lease_token("ingest", "/raw/a") == "n:h:b:1"
   assert "/raw/a" in jq.read_inflight_entries(store, kind="ingest")
 
 
@@ -476,7 +471,7 @@ def test_inflight_reaped_on_expired_deadline():
       store, kind="ingest", now_s=2000.0, ttl_s=60,
   )
   assert recovered == ["/raw/a"]
-  assert store.zscore(jq.job_queue_key("ingest"), "/raw/a") is not None
+  assert store.ingest_score("/raw/a") is not None
 
 
 def test_owner_token_host_scoped():
@@ -497,7 +492,7 @@ def test_steal_refuses_foreign_host():
       hostname="host1",
       boot_id="boot1",
   )
-  assert store.get(jq.job_lease_key("ingest", "/raw/a")) == "n:other:boot:9"
+  assert store.lease_token("ingest", "/raw/a") == "n:other:boot:9"
 
 
 def test_lease_ttl_matches_oq1_per_file_max(monkeypatch):
@@ -543,7 +538,7 @@ def test_lease_identity_excludes_fingerprint():
   jq.zadd_ingest_job(
       store, identity=second, score=2, fingerprint=jq.ingest_fingerprint(20, 2),
   )
-  assert store.zcard(jq.job_queue_key("ingest")) == 1
+  assert store.queued_count("ingest") == 1
 
 
 def test_fingerprint_revalidated_at_dispatch(tmp_path):
@@ -604,9 +599,9 @@ def test_persist_omits_inflight_and_leases(tmp_path):
   )
   store.persist(force=True)
   reloaded = SyncTimedbJobStore(str(tmp_path / "archive"))
-  assert reloaded.llen(jq.job_queue_key("append")) == 1
+  assert reloaded.queued_count("append") == 1
   assert reloaded.inflight_count("ingest") == 0
-  assert reloaded.get(jq.job_lease_key("ingest", "/raw/a")) is None
+  assert reloaded.lease_token("ingest", "/raw/a") is None
 
 
 def test_queue_max_size_blocks_new_zadd(monkeypatch):
@@ -615,9 +610,9 @@ def test_queue_max_size_blocks_new_zadd(monkeypatch):
   assert jq.zadd_ingest_job(store, identity="/a", score=1) == 1
   assert jq.zadd_ingest_job(store, identity="/b", score=2) == 1
   assert jq.zadd_ingest_job(store, identity="/c", score=3) == 0
-  assert store.zcard(jq.job_queue_key("ingest")) == 2
+  assert store.queued_count("ingest") == 2
   assert jq.zadd_ingest_job(store, identity="/a", score=9) >= 0
-  assert store.zscore(jq.job_queue_key("ingest"), "/a") == 9.0
+  assert store.ingest_score("/a") == 9.0
 
 
 def test_append_list_dedupe_skips_queued_identity():
@@ -628,7 +623,7 @@ def test_append_list_dedupe_skips_queued_identity():
   assert jq.enqueue_list_job(
       store, kind="append", identity="/raw/a", dedupe=True,
   ) == 0
-  assert store.llen(jq.job_queue_key("append")) == 1
+  assert store.queued_count("append") == 1
 
 
 def test_census_counts_queued_and_inflight():
@@ -661,7 +656,7 @@ def test_list_claim_lease_conflict_keeps_other_identity():
       store, kind="append", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
   )
   assert claim is not None and claim.identity == "b"
-  remaining = store.lrange(jq.job_queue_key("append"), 0, -1)
+  remaining = store.list_slice("append", 0, -1)
   assert remaining == []
 
 
@@ -684,7 +679,7 @@ def test_reconstruct_append_dedupes_list():
   jr.enqueue_reconstruct_jobs_for_closed_path(
       store, plan, today=date(2026, 8, 24),
   )
-  assert store.llen(jq.job_queue_key("append")) == 1
+  assert store.queued_count("append") == 1
 
 
 def test_rc8b_claim_returns_fingerprint(tmp_path):
@@ -742,12 +737,12 @@ def test_rc8d_steal_does_not_require_hgetall():
       hostname="host1",
       boot_id="boot1",
   )
-  assert store.zscore(jq.job_queue_key("ingest"), identity) is not None
+  assert store.ingest_score(identity) is not None
 
 
 def test_rc8e_census_uses_pipeline():
   store = _store()
   jq.zadd_ingest_job(store, identity="/a", score=1.0)
-  hot, catch, zcard = jq.ingest_zset_census(store)
+  hot, catch, zcard = jq.ingest_queue_census(store)
   assert zcard == 1
   assert hot + catch == 1

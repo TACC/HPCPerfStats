@@ -36,7 +36,7 @@ def test_stream_enqueue_skips_internal_sidecar_paths():
   )
   assert stats.seen == 1
   assert stats.enqueued_ingest == 1
-  assert client.zcard(jq.job_queue_key("ingest")) == 1
+  assert client.queued_count("ingest") == 1
 
 
 def test_stream_enqueue_skips_fnctl_lock_sidecar_paths():
@@ -62,10 +62,9 @@ def test_stream_enqueue_skips_fnctl_lock_sidecar_paths():
   )
   assert stats.seen == 1
   assert stats.enqueued_ingest == 1
-  assert client.zcard(jq.job_queue_key("ingest")) == 1
-  assert client.zscore(jq.job_queue_key("ingest"), "/archive/h/1787359835") is not None
-  assert client.zscore(
-      jq.job_queue_key("ingest"), "/archive/h/1787359835.fnctl.lock",
+  assert client.queued_count("ingest") == 1
+  assert client.ingest_score("/archive/h/1787359835") is not None
+  assert client.ingest_score("/archive/h/1787359835.fnctl.lock",
   ) is None
 
 
@@ -106,7 +105,7 @@ def test_discover_stops_at_queue_max_size_and_resumes(monkeypatch):
   )
   assert stats.enqueued_ingest == 2
   assert stats.stopped_at_capacity is True
-  assert client.zcard(jq.job_queue_key("ingest")) == 2
+  assert client.queued_count("ingest") == 2
 
   jq.claim_ingest_job(
       client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,

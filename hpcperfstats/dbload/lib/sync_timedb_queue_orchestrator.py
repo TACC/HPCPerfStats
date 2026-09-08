@@ -503,13 +503,10 @@ def _status_band_ratios(client: Any) -> dict[str, dict[str, int]]:
     hot_i, catch_i = 0, 0
   hot_q = catch_q = 0
   try:
-    zkey = jq.job_queue_key(jq.JOB_KIND_INGEST)
     hot_lo, hot_hi = jq.ingest_score_range("hot")
     catch_lo, catch_hi = jq.ingest_score_range("catchup")
-    hot_q = int(client.zcount(zkey, jq._score_arg(hot_lo), jq._score_arg(hot_hi)) or 0)
-    catch_q = int(
-        client.zcount(zkey, jq._score_arg(catch_lo), jq._score_arg(catch_hi)) or 0,
-    )
+    hot_q = int(client.ingest_count_in_score_range(hot_lo, hot_hi) or 0)
+    catch_q = int(client.ingest_count_in_score_range(catch_lo, catch_hi) or 0)
   except Exception:
     pass
   out["ingest_hot"] = {"inflight": int(hot_i), "queued": int(hot_q)}
@@ -1591,7 +1588,7 @@ def _day_close_append_or_hot_active(
   if job_store is not None:
     try:
       append_n = int(
-          job_store.llen(jq.job_queue_key(jq.JOB_KIND_APPEND)) or 0
+          job_store.queued_count("append") or 0
       )
     except Exception:
       append_n = 0
@@ -2426,7 +2423,7 @@ def _store_ingest_hlen(client: Any) -> int:
   if client is None:
     return 0
   try:
-    return int(client.hlen(jq.job_inflight_key(jq.JOB_KIND_INGEST)) or 0)
+    return int(client.inflight_count("ingest") or 0)
   except Exception:
     return 0
 
@@ -2485,7 +2482,7 @@ def _reconcile_local_ingest_maps_to_store(
       entry = None
     lease_live = False
     try:
-      lease_raw = client.get(jq.job_lease_key(jq.JOB_KIND_INGEST, identity))
+      lease_raw = client.lease_token("ingest", identity)
       lease_live = lease_raw is not None
     except Exception:
       lease_live = False
@@ -2865,7 +2862,7 @@ def _requeue_ingest_fill_skip(
   return "requeued"
 
 
-def _ingest_fill_skip_budget_for_zcard(zcard: int) -> int:
+def _ingest_fill_skip_budget_for_queued(zcard: int) -> int:
   """
   Scale skip budget when the ingest ZSET is deep.
 
@@ -2876,9 +2873,9 @@ def _ingest_fill_skip_budget_for_zcard(zcard: int) -> int:
     int: Bounded skip budget for one fill tick.
 
   Examples:
-    >>> _ingest_fill_skip_budget_for_zcard(0)
+    >>> _ingest_fill_skip_budget_for_queued(0)
     8
-    >>> _ingest_fill_skip_budget_for_zcard(500)
+    >>> _ingest_fill_skip_budget_for_queued(500)
     10
   """
   if int(zcard or 0) <= 0:
@@ -3420,15 +3417,14 @@ def _drop_expired_ingest_timeout_sentinels(
     0
   """
   dropped = 0
-  key = jq.job_inflight_key(jq.JOB_KIND_INGEST)
   for ident, res in list(inflight.items()):
     if not _is_ingest_timeout_sentinel(res):
       continue
     try:
-      raw = client.hget(key, ident)
+      still_inflight = client.inflight_contains(jq.JOB_KIND_INGEST, ident)
     except Exception:
       continue
-    if raw is not None:
+    if still_inflight:
       continue
     inflight.pop(ident, None)
     claims.pop(ident, None)
@@ -4003,23 +3999,22 @@ def _prioritize_day_close_list_oldest_first(client: Any) -> bool:
   Reorder the day_close LIST so oldest calendar days claim first (H18).
 
   Args:
-    client (Any): In-process job store (must expose ``lrange`` / ``reorder_list``).
+    client (Any): In-process job store (must expose ``list_slice`` / ``reorder_list``).
 
   Returns:
     bool: True when the LIST order changed.
 
   Examples:
     >>> _prioritize_day_close_list_oldest_first(
-    ...     type("C", (), {"lrange": lambda *a: [], "reorder_list": lambda *a: False})()
+    ...     type("C", (), {"list_slice": lambda *a: [], "reorder_list": lambda *a: False})()
     ... )
     False
   """
   reorder = getattr(client, "reorder_list", None)
   if not callable(reorder):
     return False
-  key = jq.job_queue_key(jq.JOB_KIND_DAY_CLOSE)
   try:
-    items = list(client.lrange(key, 0, -1) or [])
+    items = list(client.list_slice(jq.JOB_KIND_DAY_CLOSE, 0, -1) or [])
   except Exception:
     return False
   if len(items) <= 1:
@@ -4369,13 +4364,13 @@ def _protect_local_inflight_deadlines(
   reap cutoff for this tick.
 
   Args:
-    client (Any): job store with ``hget`` / ``hset``.
-    kind (str): Job kind whose inflight HASH is updated.
+    client (Any): job store with ``extend_inflight_deadline``.
+    kind (str): Job kind whose inflight map is updated.
     identities (Iterable[str]): Local identities to protect.
     extend_s (float): Seconds added to ``time.time()`` for the new deadline.
 
   Returns:
-    int: Number of HASH fields rewritten.
+    int: Number of inflight deadlines rewritten.
 
   Examples:
     >>> _protect_local_inflight_deadlines(None, kind="ingest", identities=())
@@ -4386,23 +4381,13 @@ def _protect_local_inflight_deadlines(
   idents = [str(x) for x in identities if str(x)]
   if not idents:
     return 0
-  key = jq.job_inflight_key(kind)
-  deadline = "%.3f" % (time.time() + float(extend_s))
   protected = 0
   for ident in idents:
     try:
-      raw = client.hget(key, ident)
-    except Exception:
-      continue
-    if raw is None:
-      continue
-    text = raw.decode() if isinstance(raw, bytes) else str(raw)
-    parts = text.split("|", 2)
-    owner = parts[1] if len(parts) > 1 else ""
-    score = parts[2] if len(parts) > 2 else ""
-    try:
-      client.hset(key, ident, "%s|%s|%s" % (deadline, owner, score))
-      protected += 1
+      if client.extend_inflight_deadline(
+          kind=kind, identity=ident, extend_s=extend_s,
+      ):
+        protected += 1
     except Exception:
       continue
   return protected
@@ -4661,7 +4646,7 @@ def _ingest_coordinator_fill_tick(
   zcard = 0
   hot_submitted = 0
   try:
-    hot_queued, catchup_queued, zcard = jq.ingest_zset_census(client)
+    hot_queued, catchup_queued, zcard = jq.ingest_queue_census(client)
   except Exception as exc:
     raise RuntimeError(
         "queue orchestrator job-store zcount failed: %s" % type(exc).__name__
@@ -4883,13 +4868,13 @@ def _ingest_coordinator_loop(
       fill_stats = _empty_ingest_fill_stats()
       if not draining and not recycle_gate.recycle_requested.is_set():
         try:
-          _hq, _cq, zcard = jq.ingest_zset_census(client)
+          _hq, _cq, zcard = jq.ingest_queue_census(client)
         except Exception as exc:
           raise RuntimeError(
               "queue orchestrator job-store zcard failed: %s"
               % type(exc).__name__
           ) from exc
-        skip_budget = _ingest_fill_skip_budget_for_zcard(zcard)
+        skip_budget = _ingest_fill_skip_budget_for_queued(zcard)
         store_hlen = _store_ingest_hlen(client)
         if (
             zcard > 0
@@ -5049,7 +5034,7 @@ def _ingest_coordinator_loop(
       elif did == 0 and not ingest_inflight:
         if zcard <= 0:
           try:
-            _hq, _cq, zcard = jq.ingest_zset_census(client)
+            _hq, _cq, zcard = jq.ingest_queue_census(client)
           except Exception:
             zcard = 0
         time.sleep(_ingest_coordinator_idle_sleep_s(zcard=zcard, poll_s=poll_s))

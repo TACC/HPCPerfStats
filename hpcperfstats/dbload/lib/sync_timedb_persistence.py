@@ -16,6 +16,12 @@ Attributes:
   SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION: Attribute.
   UNPARSABLE_RAW_SCHEMA_VERSION: Attribute.
   ZERO_HOST_INGEST_MARK_SCHEMA_VERSION: Attribute.
+  _DICT_ENTRIES_KINDS: Fingerprint-mark kinds whose ``entries`` value is a dict.
+  _DICT_PASSTHROUGH_KINDS: Kinds unwrapped as the raw dict envelope.
+  _KIND_LOAD_DEFAULT_FACTORY: Per-kind default payload constructors.
+  _KIND_SCHEMA_VERSION: Mapping of persistence kind to schema version.
+  _LIST_ENTRY_KINDS: List-shaped kinds stored under envelope ``entries``.
+  _MANIFEST_KINDS: Day-close / day-raw manifest kinds.
   PersistenceContractMismatchError: Raised when allow_reset=False and
     on-disk contract_version disagrees.
 """
@@ -67,6 +73,57 @@ FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION = 1
 JOB_STORE_SNAPSHOT_SCHEMA_VERSION = 1
 
 LogFn = Optional[Callable[..., Any]]
+
+_KIND_SCHEMA_VERSION: Dict[str, int] = {
+    "ingest_checkpoint": INGEST_CHECKPOINT_SCHEMA_VERSION,
+    "archive_dead_letter": DEAD_LETTER_SCHEMA_VERSION,
+    "queue_dead_letter": QUEUE_DEAD_LETTER_SCHEMA_VERSION,
+    "unparsable_raw": UNPARSABLE_RAW_SCHEMA_VERSION,
+    "archive_maint_hints": MAINT_HINTS_SCHEMA_VERSION,
+    "day_close_manifest": MANIFEST_SCHEMA_VERSION,
+    "day_raw_removal": MANIFEST_SCHEMA_VERSION,
+    "zero_host_ingest_mark": ZERO_HOST_INGEST_MARK_SCHEMA_VERSION,
+    "file_complete_ingest_mark": FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION,
+    "job_store_snapshot": JOB_STORE_SNAPSHOT_SCHEMA_VERSION,
+}
+_LIST_ENTRY_KINDS = frozenset({
+    "ingest_checkpoint",
+    "archive_dead_letter",
+    "queue_dead_letter",
+    "unparsable_raw",
+})
+_MANIFEST_KINDS = frozenset({
+    "day_close_manifest",
+    "day_raw_removal",
+})
+_DICT_ENTRIES_KINDS = frozenset({
+    "zero_host_ingest_mark",
+    "file_complete_ingest_mark",
+})
+_DICT_PASSTHROUGH_KINDS = frozenset({
+    "archive_maint_hints",
+    "day_close_manifest",
+    "day_raw_removal",
+    "zero_host_ingest_mark",
+    "file_complete_ingest_mark",
+})
+_KIND_LOAD_DEFAULT_FACTORY: Dict[str, Callable[[], Any]] = {
+    "ingest_checkpoint": list,
+    "archive_dead_letter": list,
+    "queue_dead_letter": list,
+    "unparsable_raw": list,
+    "archive_maint_hints": lambda: None,
+    "day_close_manifest": lambda: None,
+    "day_raw_removal": lambda: None,
+    "zero_host_ingest_mark": lambda: {"entries": {}},
+    "file_complete_ingest_mark": lambda: {"entries": {}},
+    "job_store_snapshot": lambda: {
+        "ingest": {},
+        "lists": {},
+        "pending": {},
+        "payloads": {},
+    },
+}
 
 
 def persistence_contract_path(archive_data_dir: str) -> str:
@@ -447,30 +504,75 @@ def _expected_schema_version(kind: str) -> Optional[int]:
     Optional[int]: Optional[int] — the result, or None when unavailable.
   
   Examples:
-    >>> _expected_schema_version("x")  # doctest: +SKIP
+    >>> _expected_schema_version("ingest_checkpoint")
+    1
   """
-  if kind == "ingest_checkpoint":
-    return INGEST_CHECKPOINT_SCHEMA_VERSION
-  if kind == "archive_dead_letter":
-    return DEAD_LETTER_SCHEMA_VERSION
-  if kind == "queue_dead_letter":
-    return QUEUE_DEAD_LETTER_SCHEMA_VERSION
-  if kind == "unparsable_raw":
-    return UNPARSABLE_RAW_SCHEMA_VERSION
-  if kind == "archive_maint_hints":
-    return MAINT_HINTS_SCHEMA_VERSION
-  if kind in (
-      "day_close_manifest",
-      "day_raw_removal",
-  ):
-    return MANIFEST_SCHEMA_VERSION
-  if kind == "zero_host_ingest_mark":
-    return ZERO_HOST_INGEST_MARK_SCHEMA_VERSION
-  if kind == "file_complete_ingest_mark":
-    return FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION
-  if kind == "job_store_snapshot":
-    return JOB_STORE_SNAPSHOT_SCHEMA_VERSION
-  return None
+  return _KIND_SCHEMA_VERSION.get(kind)
+
+
+def _persistence_schema_version_ok(
+  raw: dict,
+  *,
+  kind: str,
+  expected: int | None,
+  log_fn: LogFn = None,
+  allowed: frozenset[int] | None = None,
+  version_key_fallback: bool = False,
+) -> bool:
+  """
+  Return False when a present schema_version is not an accepted integer.
+
+  Args:
+    raw (dict): Loaded JSON object for this artifact kind.
+    kind (str): Persistence registry kind token.
+    expected (int | None): Current schema version for ``kind``.
+    log_fn (LogFn): Optional reject logger.
+    allowed (frozenset[int] | None): Extra accepted integers besides
+      ``expected``. ``archive_maint_hints`` passes ``frozenset({1})``.
+    version_key_fallback (bool): Also read legacy ``version`` when
+      ``schema_version`` is missing.
+
+  Returns:
+    bool: True when the version is absent or accepted.
+
+  Examples:
+    >>> _persistence_schema_version_ok(
+    ...   {"schema_version": 1},
+    ...   kind="ingest_checkpoint",
+    ...   expected=1,
+    ... )
+    True
+  """
+  if expected is None:
+    return True
+  schema = raw.get("schema_version")
+  if schema is None and version_key_fallback:
+    schema = raw.get("version")
+  if schema is None:
+    return True
+  try:
+    schema_i = int(schema)
+  except (TypeError, ValueError):
+    return False
+  accepted = {expected}
+  if allowed:
+    accepted.update(allowed)
+  if schema_i in accepted:
+    return True
+  if log_fn:
+    if kind == "archive_maint_hints":
+      log_fn(
+          "reject archive_maint_hints schema_version=%s expected=%s"
+          % (schema, expected),
+          flush=True,
+      )
+    else:
+      log_fn(
+          "reject %s schema_version=%s expected=%s"
+          % (kind, schema, expected),
+          flush=True,
+      )
+  return False
 
 
 def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
@@ -486,76 +588,46 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
     bool: True or False for this check.
   
   Examples:
-    >>> _validate_envelope(None, "x", None)  # doctest: +SKIP
+    >>> _validate_envelope(None, kind="ingest_checkpoint")
+    False
   """
   if raw is None:
     return False
   expected = _expected_schema_version(kind)
-  if kind in (
-      "ingest_checkpoint",
-      "archive_dead_letter",
-      "queue_dead_letter",
-      "unparsable_raw",
-  ):
+  if kind in _LIST_ENTRY_KINDS:
     if isinstance(raw, list):
       return True
     if not isinstance(raw, dict):
       return False
-    schema = raw.get("schema_version")
-    if schema is not None and expected is not None:
-      try:
-        if int(schema) != expected:
-          if log_fn:
-            log_fn(
-                "reject %s schema_version=%s expected=%s"
-                % (kind, schema, expected),
-                flush=True,
-            )
-          return False
-      except (TypeError, ValueError):
-        return False
-    if not isinstance(raw.get("entries"), list):
+    if not _persistence_schema_version_ok(
+        raw, kind=kind, expected=expected, log_fn=log_fn,
+    ):
       return False
-    return True
+    return isinstance(raw.get("entries"), list)
   if kind == "archive_maint_hints":
     if not isinstance(raw, dict):
       return False
-    schema = raw.get("schema_version", raw.get("version"))
-    if schema is not None and expected is not None:
-      try:
-        # Legacy on-disk hints used ``version`` 1 before the persistence
-        # envelope standardized on ``schema_version`` == expected (2).
-        schema_i = int(schema)
-        if schema_i not in (expected, 1):
-          if log_fn:
-            log_fn(
-                "reject archive_maint_hints schema_version=%s expected=%s"
-                % (schema, expected),
-                flush=True,
-            )
-          return False
-      except (TypeError, ValueError):
-        return False
-    return True
-  if kind in (
-      "day_close_manifest",
-      "day_raw_removal",
-  ):
+    # Legacy on-disk hints used ``version`` 1 before the persistence
+    # envelope standardized on ``schema_version`` == expected (2).
+    return _persistence_schema_version_ok(
+        raw,
+        kind=kind,
+        expected=expected,
+        log_fn=log_fn,
+        allowed=frozenset({1}),
+        version_key_fallback=True,
+    )
+  if kind in _MANIFEST_KINDS:
     if not isinstance(raw, dict):
       return False
-    schema = raw.get("schema_version", raw.get("version"))
-    if schema is not None and expected is not None:
-      try:
-        if int(schema) != expected:
-          if log_fn:
-            log_fn(
-                "reject %s schema_version=%s expected=%s"
-                % (kind, schema, expected),
-                flush=True,
-            )
-          return False
-      except (TypeError, ValueError):
-        return False
+    if not _persistence_schema_version_ok(
+        raw,
+        kind=kind,
+        expected=expected,
+        log_fn=log_fn,
+        version_key_fallback=True,
+    ):
+      return False
     from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
         validate_manifest_payload,
     )
@@ -567,62 +639,22 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
         )
       return False
     return True
-  if kind == "zero_host_ingest_mark":
+  if kind in _DICT_ENTRIES_KINDS:
     if not isinstance(raw, dict):
       return False
-    schema = raw.get("schema_version")
-    if schema is not None and expected is not None:
-      try:
-        if int(schema) != expected:
-          if log_fn:
-            log_fn(
-                "reject %s schema_version=%s expected=%s"
-                % (kind, schema, expected),
-                flush=True,
-            )
-          return False
-      except (TypeError, ValueError):
-        return False
-    entries = raw.get("entries")
-    if entries is None:
-      return True
-    return isinstance(entries, dict)
-  if kind == "file_complete_ingest_mark":
-    if not isinstance(raw, dict):
+    if not _persistence_schema_version_ok(
+        raw, kind=kind, expected=expected, log_fn=log_fn,
+    ):
       return False
-    schema = raw.get("schema_version")
-    if schema is not None and expected is not None:
-      try:
-        if int(schema) != expected:
-          if log_fn:
-            log_fn(
-                "reject %s schema_version=%s expected=%s"
-                % (kind, schema, expected),
-                flush=True,
-            )
-          return False
-      except (TypeError, ValueError):
-        return False
     entries = raw.get("entries")
-    if entries is None:
-      return True
-    return isinstance(entries, dict)
+    return entries is None or isinstance(entries, dict)
   if kind == "job_store_snapshot":
     if not isinstance(raw, dict):
       return False
-    schema = raw.get("schema_version")
-    if schema is not None and expected is not None:
-      try:
-        if int(schema) != expected:
-          if log_fn:
-            log_fn(
-                "reject %s schema_version=%s expected=%s"
-                % (kind, schema, expected),
-                flush=True,
-            )
-          return False
-      except (TypeError, ValueError):
-        return False
+    if not _persistence_schema_version_ok(
+        raw, kind=kind, expected=expected, log_fn=log_fn,
+    ):
+      return False
     ingest = raw.get("ingest")
     return ingest is None or isinstance(ingest, dict)
   return True
@@ -640,48 +672,17 @@ def _unwrap_envelope(raw: Any, *, kind: str) -> Any:
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> _unwrap_envelope(None, "x")  # doctest: +SKIP
+    >>> _unwrap_envelope(["a"], kind="ingest_checkpoint")
+    ['a']
   """
-  if kind == "ingest_checkpoint":
+  if kind in _LIST_ENTRY_KINDS:
     if isinstance(raw, list):
       return raw
     if isinstance(raw, dict) and isinstance(raw.get("entries"), list):
       return raw["entries"]
     return None
-  if kind in ("archive_dead_letter", "queue_dead_letter"):
-    if isinstance(raw, list):
-      return raw
-    if isinstance(raw, dict) and isinstance(raw.get("entries"), list):
-      return raw["entries"]
-    return None
-  if kind == "unparsable_raw":
-    if isinstance(raw, list):
-      return raw
-    if isinstance(raw, dict) and isinstance(raw.get("entries"), list):
-      return raw["entries"]
-    return None
-  if kind == "archive_maint_hints":
-    if isinstance(raw, dict):
-      return raw
-    return None
-  if kind in (
-      "day_close_manifest",
-  ):
-    if isinstance(raw, dict):
-      return raw
-    return None
-  if kind == "day_raw_removal":
-    if isinstance(raw, dict):
-      return raw
-    return None
-  if kind == "zero_host_ingest_mark":
-    if isinstance(raw, dict):
-      return raw
-    return None
-  if kind == "file_complete_ingest_mark":
-    if isinstance(raw, dict):
-      return raw
-    return None
+  if kind in _DICT_PASSTHROUGH_KINDS:
+    return raw if isinstance(raw, dict) else None
   if kind == "job_store_snapshot":
     if isinstance(raw, dict):
       return {
@@ -717,34 +718,8 @@ def load_persistence_document(
     >>> load_persistence_document("x", "x", None, None)  # doctest: +SKIP
   """
   if default is None:
-    if kind == "ingest_checkpoint":
-      default = []
-    elif kind in (
-        "archive_dead_letter",
-        "queue_dead_letter",
-        "unparsable_raw",
-    ):
-      default = []
-    elif kind == "archive_maint_hints":
-      default = None
-    elif kind in (
-        "day_close_manifest",
-        "day_raw_removal",
-    ):
-      default = None
-    elif kind == "zero_host_ingest_mark":
-      default = {"entries": {}}
-    elif kind == "file_complete_ingest_mark":
-      default = {"entries": {}}
-    elif kind == "job_store_snapshot":
-      default = {
-          "ingest": {},
-          "lists": {},
-          "pending": {},
-          "payloads": {},
-      }
-    else:
-      default = None
+    factory = _KIND_LOAD_DEFAULT_FACTORY.get(kind)
+    default = factory() if factory is not None else None
   if not path or not os.path.isfile(path):
     return default
   raw = _read_json_file(path)
@@ -779,30 +754,11 @@ def save_persistence_document(
     >>> save_persistence_document("x", "x", None, True)  # doctest: +SKIP
   """
   contract_version = SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION
-  if kind == "ingest_checkpoint":
+  schema_version = _KIND_SCHEMA_VERSION.get(kind)
+  if kind in _LIST_ENTRY_KINDS:
     envelope = {
         "contract_version": contract_version,
-        "schema_version": INGEST_CHECKPOINT_SCHEMA_VERSION,
-        "entries": list(payload or []),
-    }
-    _save_json_atomic(path, envelope, compact=compact)
-    return
-  if kind in ("archive_dead_letter", "queue_dead_letter"):
-    envelope = {
-        "contract_version": contract_version,
-        "schema_version": (
-            DEAD_LETTER_SCHEMA_VERSION
-            if kind == "archive_dead_letter"
-            else QUEUE_DEAD_LETTER_SCHEMA_VERSION
-        ),
-        "entries": list(payload or []),
-    }
-    _save_json_atomic(path, envelope, compact=compact)
-    return
-  if kind == "unparsable_raw":
-    envelope = {
-        "contract_version": contract_version,
-        "schema_version": UNPARSABLE_RAW_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "entries": list(payload or []),
     }
     _save_json_atomic(path, envelope, compact=compact)
@@ -816,10 +772,7 @@ def save_persistence_document(
     payload.pop("version", None)
     _save_json_atomic(path, payload, compact=compact)
     return
-  if kind in (
-      "day_close_manifest",
-      "day_raw_removal",
-  ):
+  if kind in _MANIFEST_KINDS:
     if not isinstance(payload, dict):
       payload = {}
     payload = dict(payload)
@@ -827,26 +780,12 @@ def save_persistence_document(
     payload.setdefault("schema_version", MANIFEST_SCHEMA_VERSION)
     _save_json_atomic(path, payload, compact=compact)
     return
-  if kind == "zero_host_ingest_mark":
+  if kind in _DICT_ENTRIES_KINDS:
     if not isinstance(payload, dict):
       payload = {}
     payload = dict(payload)
     payload["contract_version"] = contract_version
-    payload.setdefault(
-        "schema_version", ZERO_HOST_INGEST_MARK_SCHEMA_VERSION,
-    )
-    if not isinstance(payload.get("entries"), dict):
-      payload["entries"] = {}
-    _save_json_atomic(path, payload, compact=compact)
-    return
-  if kind == "file_complete_ingest_mark":
-    if not isinstance(payload, dict):
-      payload = {}
-    payload = dict(payload)
-    payload["contract_version"] = contract_version
-    payload.setdefault(
-        "schema_version", FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION,
-    )
+    payload.setdefault("schema_version", schema_version)
     if not isinstance(payload.get("entries"), dict):
       payload["entries"] = {}
     _save_json_atomic(path, payload, compact=compact)

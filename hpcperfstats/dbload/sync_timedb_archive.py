@@ -39,10 +39,10 @@ from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
 def _configure_blas_thread_env() -> None:
   """
   Cap BLAS/OpenMP worker threads before numpy is first imported.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _configure_blas_thread_env()  # doctest: +SKIP
   """
@@ -400,22 +400,6 @@ def _sealed_paths_from_locked_tasks(tasks_locked: Any) -> Any:
     >>> _sealed_paths_from_locked_tasks(None)  # doctest: +SKIP
   """
   return [str(sealed_path) for _lock, sealed_path in (tasks_locked or ())]
-
-
-def _sealed_paths_from_chunk_locked(chunk_locked: Any) -> Any:
-  """
-  Internal helper to handle sealed paths from chunk locked.
-  
-  Args:
-    chunk_locked (Any): Chunk locked passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _sealed_paths_from_chunk_locked(None)  # doctest: +SKIP
-  """
-  return _sealed_paths_from_locked_tasks(chunk_locked)
 
 
 def _stall_abort_polls_for_sealed_locked_tasks(tasks_locked: Any) -> Any:

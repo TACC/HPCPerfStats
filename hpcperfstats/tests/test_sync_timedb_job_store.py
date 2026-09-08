@@ -15,7 +15,6 @@ from hpcperfstats.dbload.lib.sync_timedb_job_store import (
     claim_list_job,
     encode_ingest_score,
     enqueue_list_job,
-    job_lease_key,
     make_lease_owner_token,
     requeue_job,
     zadd_ingest_job,
@@ -196,5 +195,5 @@ def test_ack_drops_inflight_lease_and_payload(tmp_path):
     assert (JOB_KIND_INGEST, "/raw/done") in store._payloads
     ack_job(store, kind=JOB_KIND_INGEST, identity="/raw/done", owner_token=owner)
     assert store.inflight_count(JOB_KIND_INGEST) == 0
-    assert store.get(job_lease_key(JOB_KIND_INGEST, "/raw/done")) is None
+    assert store.lease_token("ingest", "/raw/done") is None
     assert (JOB_KIND_INGEST, "/raw/done") not in store._payloads

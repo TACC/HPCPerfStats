@@ -31,8 +31,7 @@ def test_arch_predicate_discovered_incomplete_enqueues_ingest_job():
       client, plan, today=date(2026, 8, 24), hot_days=8
   )
   assert enqueued["ingest"] is True
-  ingest_key = jq.job_queue_key(jq.JOB_KIND_INGEST)
-  assert client.zscore(ingest_key, plan.identity) is not None
+  assert client.ingest_score(plan.identity) is not None
 
 
 def test_loaded_snapshot_overlay_reconstruct_enqueues_missing_work(tmp_path):
@@ -55,8 +54,7 @@ def test_loaded_snapshot_overlay_reconstruct_enqueues_missing_work(tmp_path):
       revived, plan, today=date(2026, 8, 24), hot_days=8
   )
   assert enqueued["ingest"] is True
-  ingest_key = jq.job_queue_key(jq.JOB_KIND_INGEST)
-  assert revived.zscore(ingest_key, plan.identity) is not None
+  assert revived.ingest_score(plan.identity) is not None
   assert "/raw/already" in revived.ingest_identities()
 
 
@@ -77,8 +75,7 @@ def test_arch_predicate_remaining_raw_enqueues_ingest_or_append_job():
       client, plan, today=date(2026, 8, 24), hot_days=2
   )
   assert enqueued["append"] is True
-  assert plan.path in client.lrange(
-      jq.job_queue_key(jq.JOB_KIND_APPEND), 0, -1,
+  assert plan.path in client.list_slice("append", 0, -1,
   )
 
 

@@ -30,14 +30,14 @@ This document describes how `sync_timedb` uses **in-process thread pools**, **da
 
 ## Ingest band reservation (job store)
 
-The ingest ZSET is one in-process key (`hps:job:queue:ingest`) with two score bands. Fill paths never `ZPOPMIN` the whole set (catchup would starve).
+The ingest score map is one in-process structure with two score bands. Fill paths never pop the whole set (catchup would starve).
 
 | Token | Formula | Score window |
 |-------|---------|--------------|
 | **`hot_cap`** | `max(1, (2 * pool) // 3)` | `-inf` … `CATCHUP_SCORE_BASE - 1` (`10**15 - 1`) — newest days first |
 | **`catchup_cap`** | `pool - hot_cap`, floored to **1** when `pool >= 2` | `10**15` … `+inf` — oldest days first |
 
-Catchup may use unused pool slots **only when the hot range is empty**. Reband at claim time (`ZADD` the same path identity with a new score). Calendar day comes from the daily tar basename (`YYYY-MM-DD.tar`); unresolved day skips ingest enqueue (never substitute today). Operator census: job-store sidecar `{archive_dir}/.sync_timedb_job_store.json` plus live `zcard`/`zcount` on the in-process store (not Redis `job:v1`).
+Catchup may use unused pool slots **only when the hot range is empty**. Reband at claim time (`zadd_ingest` the same path identity with a new score). Calendar day comes from the daily tar basename (`YYYY-MM-DD.tar`); unresolved day skips ingest enqueue (never substitute today). Operator census: job-store sidecar `{archive_dir}/.sync_timedb_job_store.json` plus live `queued_count` / `ingest_count_in_score_range` on the in-process store (not Redis `job:v1`).
 
 ## B. Session thread executors (day_close + helpers)
 

@@ -372,6 +372,7 @@ def log_janitor_day_close_defer(
   phase: str,
   reason: str,
   log_fn: Any = log_print,
+  action: str = "defer",
 ) -> None:
   """
   Log the janitor day close defer.
@@ -381,6 +382,7 @@ def log_janitor_day_close_defer(
     phase (str): String for phase.
     reason (str): String for reason.
     log_fn (Any): Callable invoked by this helper.
+    action (str): Log token after ``day_close`` (``defer`` or ``yield``).
   
   Returns:
     None
@@ -390,8 +392,8 @@ def log_janitor_day_close_defer(
   """
   if log_fn:
     log_fn(
-        "janitor: day_close defer tar=%s phase=%s reason=%s"
-        % (_tar_norm(tar_path), phase or "", reason or ""),
+        "janitor: day_close %s tar=%s phase=%s reason=%s"
+        % (action or "defer", _tar_norm(tar_path), phase or "", reason or ""),
         flush=True,
     )
 
@@ -418,12 +420,13 @@ def log_janitor_day_close_yield(
   Examples:
     >>> log_janitor_day_close_yield("x", "x", "x", None)  # doctest: +SKIP
   """
-  if log_fn:
-    log_fn(
-        "janitor: day_close yield tar=%s phase=%s reason=%s"
-        % (_tar_norm(tar_path), phase or "", reason or ""),
-        flush=True,
-    )
+  log_janitor_day_close_defer(
+      tar_path,
+      phase=phase,
+      reason=reason,
+      log_fn=log_fn,
+      action="yield",
+  )
 
 
 class JanitorDeferTracker:

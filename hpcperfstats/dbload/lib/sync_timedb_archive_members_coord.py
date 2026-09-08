@@ -1327,34 +1327,6 @@ def renew_daily_tar_restore_lease(day_token: str, lease_value: str) -> bool:
     return store.renew_restore(day_token, lease_value)
 
 
-def set_daily_tar_restore_in_progress(
-    day_token: str,
-    *,
-    reason: str,
-    caller: str,
-) -> str:
-    """
-    Acquire exclusive restore ownership.
-
-    Args:
-      day_token (str): ISO calendar day.
-      reason (str): Restore reason.
-      caller (str): Caller label.
-
-    Returns:
-      str: Owner token, or empty.
-
-    Examples:
-      >>> set_daily_tar_restore_in_progress(
-      ...   "2026-01-01", reason="x", caller="t",
-      ... )
-      ''
-    """
-    return try_acquire_daily_tar_restore(
-        day_token, reason=reason, caller=caller,
-    )
-
-
 def clear_daily_tar_restore_in_progress(
     day_token: str,
     *,
@@ -2147,25 +2119,3 @@ def request_archive_members_populate_and_wait(
     finally:
         if day_token:
             clear_ingest_tar_hot(day_token)
-
-
-def idle_pool_recover_skip_reason_for_paths(
-    paths: Any,
-    tgz_archive_dir: str = "",
-) -> str:
-    """
-    Compatibility no-op: in-process recover never uses a skip key.
-
-    Args:
-      paths (Any): Unused paths.
-      tgz_archive_dir (str): Unused archive dir.
-
-    Returns:
-      str: Empty string.
-
-    Examples:
-      >>> idle_pool_recover_skip_reason_for_paths([])
-      ''
-    """
-    del paths, tgz_archive_dir
-    return ""

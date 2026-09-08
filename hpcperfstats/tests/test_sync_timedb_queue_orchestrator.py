@@ -118,7 +118,7 @@ def test_sliding_window_ingest_enqueues_append_while_other_inflight():
   assert done == 1
   assert "/b|2|2" in inflight
   assert "/a|1|1" not in inflight
-  assert client.lrange(jq.job_queue_key(jq.JOB_KIND_APPEND), 0, -1) == ["/a"]
+  assert client.list_slice("append", 0, -1) == ["/a"]
 
 
 def test_drain_records_ingest_marks_before_ack(monkeypatch):
@@ -202,7 +202,7 @@ def test_handoff_retryable_paths_enqueues_ingest(tmp_path):
   )
   assert enqueued == 1
   ident = os.path.normpath(str(raw))
-  assert client.zscore(jq.job_queue_key("ingest"), ident) is not None
+  assert client.ingest_score(ident) is not None
 
 
 def test_handoff_retryable_paths_skips_when_job_store_missing(tmp_path):
@@ -677,7 +677,7 @@ def test_boot_steals_dead_owner_leases():
       boot_id="boot1",
   )
   assert stolen >= 1
-  assert client.get(jq.job_lease_key("ingest", "/raw/dead")) is None
+  assert client.lease_token("ingest", "/raw/dead") is None
 
 
 def test_orchestrator_starts_pools_before_boot_discover_submit():
@@ -876,16 +876,15 @@ def test_rc7_unused_slot_catchup_when_hot_submitted_nonzero(monkeypatch, tmp_pat
   fill_log: list[dict[str, object]] = []
 
   class _Client:
-    def zcount(self, key, lo, hi):
-      del key
+    def ingest_count_in_score_range(self, lo, hi):
       hi_f = float(hi)
       # Hot scores are below the catchup floor (1e15).
       if hi_f < 1e15:
         return 50
       return 200
 
-    def zcard(self, key):
-      del key
+    def queued_count(self, kind):
+      del kind
       return 250
 
   def _fake_fill(
@@ -991,7 +990,7 @@ def test_reband_at_claim_moves_stale_hot_to_catchup(monkeypatch):
       today=date(2026, 8, 24),
   )
   assert did is True
-  restored = client.zscore(jq.job_queue_key("ingest"), identity)
+  restored = client.ingest_score(identity)
   assert restored is not None
   assert jq.decode_ingest_band(restored) == "catchup"
 
@@ -1024,7 +1023,7 @@ def test_poison_routes_to_dead_letter(tmp_path, monkeypatch):
       reason="boom",
   )
   assert second == "dead_letter"
-  assert client.zcard(jq.job_queue_key("ingest")) == 0
+  assert client.queued_count("ingest") == 0
 
 
 def test_sigterm_drains_and_releases_leases():
@@ -1079,7 +1078,7 @@ def test_dead_pool_worker_frees_slot_and_requeues(monkeypatch):
   )
   assert abandoned == []
   assert "/raw/a" in inflight
-  assert client.get(jq.job_lease_key("ingest", "/raw/a")) is not None
+  assert client.lease_token("ingest", "/raw/a") is not None
 
 
 def test_ingest_deadline_requeues():
@@ -1115,7 +1114,7 @@ def test_day_close_failure_requeues(tmp_path, monkeypatch):
       archive_data_dir=str(tmp_path),
   )
   assert n == 1
-  assert client.llen(jq.job_queue_key("day_close")) == 1
+  assert client.queued_count("day_close") == 1
   assert jq.read_job_attempt(
       client, kind="day_close", identity="2026-08-01",
   ) == 0
@@ -1175,7 +1174,7 @@ def test_day_close_path_identity_records_complete_on_calendar_day(tmp_path):
       archive_data_dir=str(tmp_path),
   )
   assert n == 1
-  assert client.llen(jq.job_queue_key("day_close")) == 0
+  assert client.queued_count("day_close") == 0
   days = pr.get_progress_state().snapshot_days()
   assert days["2026-06-07"].counters["complete"] == 1
   line = pr.format_day_progress_line("2026-06-07", days["2026-06-07"])
@@ -1209,7 +1208,7 @@ def test_day_close_incomplete_raw_requeues_without_ack(tmp_path):
       archive_data_dir=str(tmp_path),
   )
   assert n == 1
-  assert client.llen(jq.job_queue_key("day_close")) == 1
+  assert client.queued_count("day_close") == 1
   assert jq.read_job_attempt(
       client, kind="day_close", identity=ident,
   ) == 0
@@ -1244,7 +1243,7 @@ def test_day_close_fake_sealed_requeues_without_ack(tmp_path):
       archive_data_dir=str(tmp_path),
   )
   assert n == 1
-  assert client.llen(jq.job_queue_key("day_close")) == 1
+  assert client.queued_count("day_close") == 1
   assert jq.read_job_attempt(
       client, kind="day_close", identity=ident,
   ) == 0
@@ -2456,9 +2455,9 @@ def test_ingest_coordinator_idle_sleep_empty_queue():
 
 def test_ingest_fill_skip_budget_scales_with_zcard():
   """B2: deep queue escalates skip budget with a hard cap."""
-  assert qo._ingest_fill_skip_budget_for_zcard(0) == qo.INGEST_FILL_SKIP_BUDGET
-  assert qo._ingest_fill_skip_budget_for_zcard(500) == 10
-  assert qo._ingest_fill_skip_budget_for_zcard(5000) == qo.INGEST_FILL_SKIP_BUDGET_MAX
+  assert qo._ingest_fill_skip_budget_for_queued(0) == qo.INGEST_FILL_SKIP_BUDGET
+  assert qo._ingest_fill_skip_budget_for_queued(500) == 10
+  assert qo._ingest_fill_skip_budget_for_queued(5000) == qo.INGEST_FILL_SKIP_BUDGET_MAX
 
 
 def test_ingest_claim_probe_depth_elevates_when_hot_deep():
@@ -2889,7 +2888,7 @@ def test_tar_dedup_day_close_uses_list_dedupe(monkeypatch):
   # Store enqueue is idempotent; assert LIST depth stays 1.
   jr.enqueue_cheap_day_close_if_needed(client, tar)
   jr.enqueue_cheap_day_close_if_needed(client, tar)
-  depth = int(client.llen(jq.job_queue_key(jq.JOB_KIND_DAY_CLOSE)) or 0)
+  depth = int(client.queued_count("day_close") or 0)
   assert depth <= 1
 
 
@@ -2910,11 +2909,11 @@ def test_cheap_day_close_age_skips_today_and_yesterday(monkeypatch):
   assert jr.enqueue_cheap_day_close_if_needed(
       client, "/d/2026-08-26.tar", now=now,
   ) is False
-  assert int(client.llen(jq.job_queue_key(jq.JOB_KIND_DAY_CLOSE)) or 0) == 0
+  assert int(client.queued_count("day_close") or 0) == 0
   assert jr.enqueue_cheap_day_close_if_needed(
       client, "/d/2026-08-01.tar", now=now,
   ) is True
-  assert int(client.llen(jq.job_queue_key(jq.JOB_KIND_DAY_CLOSE)) or 0) == 1
+  assert int(client.queued_count("day_close") or 0) == 1
 
 
 def test_pause_protocol_AtomicPoolRef_recycle():
@@ -3047,8 +3046,8 @@ def test_drain_bare_TimeoutError_leaves_inflight_no_soft_requeue(
   assert identity in inflight
   assert identity in claims
   assert identity in submitted
-  assert client.get(jq.job_lease_key("ingest", identity)) is not None
-  assert client.zscore(jq.job_queue_key("ingest"), identity) is None
+  assert client.lease_token("ingest", identity) is not None
+  assert client.ingest_score(identity) is None
   joined = "\n".join(logs)
   assert "ingest fail" not in joined
   assert "queue_orchestrator ingest timeout" not in joined
@@ -3114,7 +3113,7 @@ def test_reaper_after_ttl_reclaims_sentinel(tmp_path, monkeypatch):
       log_fn=lambda *a, **k: None,
   )
   assert recovered >= 1
-  assert client.zscore(jq.job_queue_key("ingest"), identity) is not None
+  assert client.ingest_score(identity) is not None
   dropped = qo._drop_expired_ingest_timeout_sentinels(
       client, inflight=inflight, claims=leases,
   )
@@ -3371,9 +3370,9 @@ def test_rc8e_no_50ms_sleep_on_zero_submit_deep_zset():
 
 
 def test_rc8e_census_wired_in_fill_tick():
-  """RC8e: fill tick uses pipelined ingest_zset_census."""
+  """RC8e: fill tick uses pipelined ingest_queue_census."""
   src = inspect.getsource(qo._ingest_coordinator_fill_tick)
-  assert "ingest_zset_census" in src
+  assert "ingest_queue_census" in src
   loop = inspect.getsource(qo._ingest_coordinator_loop)
   assert "_ingest_coordinator_tick_sleep_s" in loop
   assert "_reconcile_local_ingest_maps_to_store" in loop
@@ -3455,7 +3454,7 @@ def test_day_close_yield_backoff_skips_reclaim_without_claim_log(tmp_path, monke
   assert submitted == 0
   assert skips >= 1
   assert not any("day_close claim" in line for line in logs)
-  assert client.llen(jq.job_queue_key("day_close")) == 1
+  assert client.queued_count("day_close") == 1
 
 
 def test_day_close_yield_backoff_clears_on_complete(tmp_path):

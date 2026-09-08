@@ -4,6 +4,10 @@ Idle-clock suspend helpers for ingest workers on non-work waits.
 Populate members-store wait and Manager write-lock *acquire* suspend the idle
 stall clock (touch progress on exit). Internal wall SIGALRM soft-kill is
 deleted — these helpers no longer arm setitimer for wall budgets.
+
+Attributes:
+  suspend_ingest_sigalrm_for_populate_wait: Alias of
+    ``suspend_ingest_sigalrm_for_non_work_wait``.
 """
 from __future__ import annotations
 
@@ -37,20 +41,9 @@ def suspend_ingest_sigalrm_for_non_work_wait() -> Iterator[Any]:
     touch_ingest_progress()
 
 
-@contextmanager
-def suspend_ingest_sigalrm_for_populate_wait() -> Iterator[Any]:
-  """
-  Alias for :func:`suspend_ingest_sigalrm_for_non_work_wait` (populate wait).
-
-  Yields:
-    Iterator[Any]: Same as ``suspend_ingest_sigalrm_for_non_work_wait``.
-
-  Examples:
-    >>> with suspend_ingest_sigalrm_for_populate_wait():
-    ...   pass  # doctest: +SKIP
-  """
-  with suspend_ingest_sigalrm_for_non_work_wait():
-    yield
+suspend_ingest_sigalrm_for_populate_wait = (
+    suspend_ingest_sigalrm_for_non_work_wait
+)
 
 
 @contextmanager

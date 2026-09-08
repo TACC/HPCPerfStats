@@ -10,6 +10,8 @@ a fingerprint mark under ``archive_dir``.
 Attributes:
   LogFn: Attribute.
   ZERO_HOST_INGEST_MARK_SCHEMA_VERSION: Attribute.
+  _default_archive_dir: Re-export of the file-complete archive-dir getter.
+  path_fingerprint_key: Re-export of the file-complete fingerprint helper.
 """
 from __future__ import annotations
 
@@ -18,6 +20,10 @@ import time
 from typing import Any, Callable, Iterable, Optional
 
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
+from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
+    _default_archive_dir,
+    path_fingerprint_key,
+)
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     artifact_path,
     load_persistence_document,
@@ -26,26 +32,6 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
 
 ZERO_HOST_INGEST_MARK_SCHEMA_VERSION = 1
 LogFn = Optional[Callable[..., Any]]
-
-
-def path_fingerprint_key(path: str) -> str | None:
-  """
-  Return ``path|mtime|size`` fingerprint, or ``None`` if the path is missing.
-  
-  Args:
-    path (str): String for path.
-  
-  Returns:
-    str | None: One of ``str``, ``None`` depending on inputs/branch.
-  
-  Examples:
-    >>> path_fingerprint_key("x")  # doctest: +SKIP
-  """
-  try:
-    st = os.stat(path)
-  except OSError:
-    return None
-  return "%s|%d|%d" % (os.path.normpath(path), int(st.st_mtime), int(st.st_size))
 
 
 def zero_host_ingest_mark_path(archive_data_dir: str) -> str:
@@ -62,21 +48,6 @@ def zero_host_ingest_mark_path(archive_data_dir: str) -> str:
     >>> zero_host_ingest_mark_path("x")  # doctest: +SKIP
   """
   return artifact_path(archive_data_dir, "zero_host_ingest_mark")
-
-
-def _default_archive_dir() -> str:
-  """
-  Internal helper to handle default archive dir.
-  
-  Returns:
-    str: str produced by this call.
-  
-  Examples:
-    >>> _default_archive_dir()  # doctest: +SKIP
-  """
-  from hpcperfstats.dbload.lib import conf_parser as cfg
-
-  return str(cfg.get_archive_dir_path() or "")
 
 
 def _load_entries(mark_path: str) -> dict:

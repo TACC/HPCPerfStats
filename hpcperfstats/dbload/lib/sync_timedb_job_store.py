@@ -28,7 +28,6 @@ Attributes:
   SCORE_STRIDE: Day/tie-break stride inside a band score range.
   SyncTimedbJobStore: Thread-safe in-process store.
   _BOOT_ID_CACHE: Memoized host boot identifier.
-  _StorePipeline: Sequential census command collector.
 """
 from __future__ import annotations
 
@@ -748,31 +747,32 @@ class SyncTimedbJobStore:
             return len(self._ingest) < cap
         return len(self._lists[kind]) < cap
 
-    def zcard(self, key: str) -> int:
+    def queued_count(self, kind: str) -> int:
         """
-        Return ingest queue depth for the ingest ZSET key.
+        Return queued (not in-flight) depth for a job kind.
 
         Args:
-          key (str): Queue key from job_queue_key.
+          kind (str): Job kind (``ingest`` or a LIST kind).
 
         Returns:
-          int: Queued ingest count, or 0 for unknown keys.
+          int: Queued member count, or 0 for unknown kinds.
 
         Examples:
-          >>> SyncTimedbJobStore("/tmp/empty").zcard("unused")
+          >>> SyncTimedbJobStore("/tmp/empty").queued_count("ingest")
           0
         """
         with self._lock:
-            if key == job_queue_key(JOB_KIND_INGEST):
+            if str(kind) == JOB_KIND_INGEST:
                 return len(self._ingest)
+            if kind in self._lists:
+                return len(self._lists[kind])
             return 0
 
-    def zcount(self, key: str, lo: Any, hi: Any) -> int:
+    def ingest_count_in_score_range(self, lo: Any, hi: Any) -> int:
         """
-        Count ingest members whose scores fall in an inclusive range.
+        Count queued ingest members whose scores fall in an inclusive range.
 
         Args:
-          key (str): Ingest queue key.
           lo (Any): Inclusive lower bound, including -inf.
           hi (Any): Inclusive upper bound, including +inf.
 
@@ -780,64 +780,39 @@ class SyncTimedbJobStore:
           int: Matching member count.
 
         Examples:
-          >>> SyncTimedbJobStore("/tmp/empty").zcount("unused", 0, 1)
+          >>> SyncTimedbJobStore("/tmp/empty").ingest_count_in_score_range(0, 1)
           0
         """
         low = _bound_to_float(lo, default=float("-inf"))
         high = _bound_to_float(hi, default=float("+inf"))
         with self._lock:
-            if key != job_queue_key(JOB_KIND_INGEST):
-                return 0
             return sum(
                 1 for score in self._ingest.values() if low <= score <= high
             )
 
-    def zscore(self, key: str, member: str) -> Optional[float]:
+    def ingest_score(self, identity: str) -> Optional[float]:
         """
         Return the queued ingest score for one identity.
 
         Args:
-          key (str): Ingest queue key.
-          member (str): Ingest identity.
+          identity (str): Ingest identity.
 
         Returns:
           float | None: Score, or None when the identity is not queued.
 
         Examples:
-          >>> SyncTimedbJobStore("/tmp/empty").zscore("unused", "/a") is None
+          >>> SyncTimedbJobStore("/tmp/empty").ingest_score("/a") is None
           True
         """
         with self._lock:
-            if key != job_queue_key(JOB_KIND_INGEST):
-                return None
-            return self._ingest.get(str(member))
+            return self._ingest.get(str(identity))
 
-    def llen(self, key: str) -> int:
-        """
-        Return LIST queue depth for a discover/append/day_close key.
-
-        Args:
-          key (str): LIST queue key.
-
-        Returns:
-          int: Queued count.
-
-        Examples:
-          >>> SyncTimedbJobStore("/tmp/empty").llen("unused")
-          0
-        """
-        with self._lock:
-            for kind in JOB_KINDS_LIST:
-                if key == job_queue_key(kind):
-                    return len(self._lists[kind])
-            return 0
-
-    def lrange(self, key: str, start: int, end: int) -> List[str]:
+    def list_slice(self, kind: str, start: int, end: int) -> List[str]:
         """
         Return a slice of a LIST queue, matching inclusive LIST indexes.
 
         Args:
-          key (str): LIST queue key.
+          kind (str): LIST job kind.
           start (int): Inclusive start index.
           end (int): Inclusive end index; -1 means through the tail.
 
@@ -845,15 +820,11 @@ class SyncTimedbJobStore:
           list[str]: Identities in the requested slice.
 
         Examples:
-          >>> SyncTimedbJobStore("/tmp/empty").lrange("unused", 0, -1)
+          >>> SyncTimedbJobStore("/tmp/empty").list_slice("append", 0, -1)
           []
         """
         with self._lock:
-            items: List[str] = []
-            for kind in JOB_KINDS_LIST:
-                if key == job_queue_key(kind):
-                    items = list(self._lists[kind])
-                    break
+            items = list(self._lists.get(kind, ()))
         if not items:
             return []
         if end == -1:
@@ -895,196 +866,76 @@ class SyncTimedbJobStore:
             self._lists[kind] = deque(ordered_idents)
             return True
 
-    def hlen(self, key: str) -> int:
+    def lease_token(self, kind: str, identity: str) -> Optional[str]:
         """
-        Return in-flight count for a kind's in-flight map key.
+        Return the owner token for a claimed identity, if a lease is present.
 
         Args:
-          key (str): In-flight key from job_inflight_key.
-
-        Returns:
-          int: In-flight count.
-
-        Examples:
-          >>> SyncTimedbJobStore("/tmp/empty").hlen("unused")
-          0
-        """
-        with self._lock:
-            for kind in JOB_KINDS_ALL:
-                if key == job_inflight_key(kind):
-                    return len(self._inflight[kind])
-            return 0
-
-    def hget(self, key: str, field: str) -> Optional[str]:
-        """
-        Read one in-flight or payload field.
-
-        Args:
-          key (str): In-flight or payload key.
-          field (str): Identity or payload field name.
-
-        Returns:
-          str | None: Stored value, or None when absent.
-
-        Examples:
-          >>> SyncTimedbJobStore("/tmp/empty").hget("unused", "a") is None
-          True
-        """
-        with self._lock:
-            for kind in JOB_KINDS_ALL:
-                if key == job_inflight_key(kind):
-                    entry = self._inflight[kind].get(str(field))
-                    if entry is None:
-                        return None
-                    deadline, owner, score = entry
-                    score_text = "" if score is None else str(score)
-                    return "%.3f|%s|%s" % (deadline, owner, score_text)
-                payload_key = job_payload_key(kind, str(field))
-                if key == payload_key:
-                    return self._payloads.get((kind, str(field)), {}).get(
-                        "fingerprint",
-                    )
-            for (kind, ident), fields in self._payloads.items():
-                if key == job_payload_key(kind, ident):
-                    return fields.get(str(field))
-            return None
-
-    def get(self, key: str) -> Optional[str]:
-        """
-        Return the owner token for a lease key.
-
-        Args:
-          key (str): Lease key from job_lease_key.
+          kind (str): Job kind.
+          identity (str): Job identity.
 
         Returns:
           str | None: Owner token, or None when the lease is absent.
 
         Examples:
-          >>> SyncTimedbJobStore("/tmp/empty").get("unused") is None
+          >>> SyncTimedbJobStore("/tmp/empty").lease_token("ingest", "/a") is None
           True
         """
-        parsed = parse_job_lease_key(key)
-        if parsed is None:
-            return None
-        kind, ident = parsed
         with self._lock:
-            return self._leases.get((kind, ident))
+            return self._leases.get((str(kind), str(identity)))
 
-    def hexists(self, key: str, field: str) -> bool:
+    def inflight_contains(self, kind: str, identity: str) -> bool:
         """
-        Return True when an in-flight identity exists.
+        Return True when an identity is currently in flight for a kind.
 
         Args:
-          key (str): In-flight key.
-          field (str): Job identity.
+          kind (str): Job kind.
+          identity (str): Job identity.
 
         Returns:
           bool: True when the identity is in flight.
 
         Examples:
-          >>> SyncTimedbJobStore("/tmp/empty").hexists("unused", "a")
+          >>> SyncTimedbJobStore("/tmp/empty").inflight_contains("ingest", "a")
           False
         """
         with self._lock:
-            for kind in JOB_KINDS_ALL:
-                if key == job_inflight_key(kind):
-                    return str(field) in self._inflight[kind]
-            return False
+            return str(identity) in self._inflight.get(str(kind), {})
 
-    def pipeline(self, transaction: bool = False) -> "_StorePipeline":
+    def extend_inflight_deadline(
+        self,
+        *,
+        kind: str,
+        identity: str,
+        extend_s: float = 600.0,
+    ) -> bool:
         """
-        Return a tiny pipeline that batches zcount and zcard reads.
+        Push one in-flight deadline forward without a lease heartbeat renew.
 
         Args:
-          transaction (bool): Unused compatibility flag.
+          kind (str): Job kind.
+          identity (str): Job identity.
+          extend_s (float): Seconds added to ``time.time()`` for the new
+            deadline.
 
         Returns:
-          _StorePipeline: Collector that executes against this store.
+          bool: True when the identity was in flight and rewritten.
 
         Examples:
-          >>> isinstance(SyncTimedbJobStore("/tmp/empty").pipeline(), object)
-          True
+          >>> SyncTimedbJobStore("/tmp/empty").extend_inflight_deadline(
+          ...   kind="ingest", identity="a",
+          ... )
+          False
         """
-        del transaction
-        return _StorePipeline(self)
-
-
-class _StorePipeline:
-    """
-    Sequential command collector used by ingest_zset_census.
-
-    Attributes:
-      store: Job store that executes queued commands.
-      _ops: Pending callable list.
-    """
-
-    def __init__(self, store: SyncTimedbJobStore) -> None:
-        """
-        Bind the pipeline to one job store.
-
-        Args:
-          store (SyncTimedbJobStore): Store that will run queued commands.
-
-        Returns:
-          None
-
-        Examples:
-          >>> _StorePipeline(SyncTimedbJobStore("/tmp/empty")).execute()
-          []
-        """
-        self.store = store
-        self._ops: List[Any] = []
-
-    def zcount(self, key: str, lo: Any, hi: Any) -> "_StorePipeline":
-        """
-        Queue a zcount read.
-
-        Args:
-          key (str): Ingest queue key.
-          lo (Any): Inclusive lower bound.
-          hi (Any): Inclusive upper bound.
-
-        Returns:
-          _StorePipeline: This pipeline.
-
-        Examples:
-          >>> p = _StorePipeline(SyncTimedbJobStore("/tmp/empty"))
-          >>> p.zcount("k", 0, 1) is p
-          True
-        """
-        self._ops.append(lambda: self.store.zcount(key, lo, hi))
-        return self
-
-    def zcard(self, key: str) -> "_StorePipeline":
-        """
-        Queue a zcard read.
-
-        Args:
-          key (str): Ingest queue key.
-
-        Returns:
-          _StorePipeline: This pipeline.
-
-        Examples:
-          >>> p = _StorePipeline(SyncTimedbJobStore("/tmp/empty"))
-          >>> p.zcard("k") is p
-          True
-        """
-        self._ops.append(lambda: self.store.zcard(key))
-        return self
-
-    def execute(self) -> List[Any]:
-        """
-        Run queued commands in order and return their results.
-
-        Returns:
-          list: Per-command return values.
-
-        Examples:
-          >>> _StorePipeline(SyncTimedbJobStore("/tmp/empty")).execute()
-          []
-        """
-        return [op() for op in self._ops]
+        ident = str(identity)
+        deadline = time.time() + float(extend_s)
+        with self._lock:
+            entry = self._inflight.get(str(kind), {}).get(ident)
+            if entry is None:
+                return False
+            _old, owner, score = entry
+            self._inflight[str(kind)][ident] = (deadline, owner, score)
+            return True
 
 
 def _bound_to_float(value: Any, *, default: float) -> float:
@@ -1110,130 +961,6 @@ def _bound_to_float(value: Any, *, default: float) -> float:
     if text == "+inf":
         return float("+inf")
     return float(value)
-
-
-def job_queue_key(kind: str) -> str:
-    """
-    Return the stable queue key name for a job kind.
-
-    Args:
-      kind (str): discover, ingest, append, or day_close.
-
-    Returns:
-      str: Queue key used by census helpers.
-
-    Raises:
-      ValueError: When kind is unknown.
-
-    Examples:
-      >>> job_queue_key("ingest").endswith(":queue:ingest")
-      True
-    """
-    text = str(kind or "").strip()
-    if text == JOB_KIND_INGEST:
-        return "hps:job:queue:ingest"
-    if text in JOB_KINDS_LIST:
-        return "hps:job:queue:%s" % text
-    raise ValueError("unknown job kind %r" % (kind,))
-
-
-def job_inflight_key(kind: str) -> str:
-    """
-    Return the in-flight map key for a job kind.
-
-    Args:
-      kind (str): Job kind.
-
-    Returns:
-      str: In-flight key.
-
-    Raises:
-      ValueError: When kind is unknown.
-
-    Examples:
-      >>> job_inflight_key("ingest").endswith(":inflight:ingest")
-      True
-    """
-    text = str(kind or "").strip()
-    if text not in JOB_KINDS_ALL:
-        raise ValueError("unknown job kind %r" % (kind,))
-    return "hps:job:inflight:%s" % text
-
-
-def job_lease_key(kind: str, identity: str) -> str:
-    """
-    Return the lease key for one identity.
-
-    Args:
-      kind (str): Job kind.
-      identity (str): Job identity.
-
-    Returns:
-      str: Lease key.
-
-    Raises:
-      ValueError: When kind or identity is empty.
-
-    Examples:
-      >>> ":lease:ingest:" in job_lease_key("ingest", "p|1|2")
-      True
-    """
-    kind_text = str(kind or "").strip()
-    ident = str(identity or "").strip()
-    if not kind_text or not ident:
-        raise ValueError("kind and identity are required for a lease key")
-    return "hps:job:lease:%s:%s" % (kind_text, ident)
-
-
-def job_payload_key(kind: str, identity: str) -> str:
-    """
-    Return the payload key for one identity.
-
-    Args:
-      kind (str): Job kind.
-      identity (str): Job identity.
-
-    Returns:
-      str: Payload key.
-
-    Raises:
-      ValueError: When kind or identity is empty.
-
-    Examples:
-      >>> job_payload_key("append", "day").endswith(":payload:append:day")
-      True
-    """
-    kind_text = str(kind or "").strip()
-    ident = str(identity or "").strip()
-    if not kind_text or not ident:
-        raise ValueError("kind and identity are required for a payload key")
-    return "hps:job:payload:%s:%s" % (kind_text, ident)
-
-
-def parse_job_lease_key(key: str) -> tuple[str, str] | None:
-    """
-    Parse kind and identity from a lease key.
-
-    Args:
-      key (str): Lease key.
-
-    Returns:
-      tuple[str, str] | None: (kind, identity), or None when the key
-      does not match.
-
-    Examples:
-      >>> parse_job_lease_key(job_lease_key("ingest", "p"))
-      ('ingest', 'p')
-    """
-    prefix = "hps:job:lease:"
-    text = str(key or "")
-    if not text.startswith(prefix):
-        return None
-    rest = text[len(prefix):]
-    kind, sep, ident = rest.partition(":")
-    if not sep or kind not in JOB_KINDS_ALL or not ident:
-        return None
-    return (kind, ident)
 
 
 def ingest_score_range(band: str) -> tuple[float, float]:
@@ -1894,7 +1621,7 @@ def claim_ingest_jobs(
     )
 
 
-def ingest_zset_census(store: SyncTimedbJobStore) -> tuple[int, int, int]:
+def ingest_queue_census(store: SyncTimedbJobStore) -> tuple[int, int, int]:
     """
     Return (hot_queued, catchup_queued, total) for the ingest map.
 
@@ -1905,18 +1632,17 @@ def ingest_zset_census(store: SyncTimedbJobStore) -> tuple[int, int, int]:
       tuple[int, int, int]: Hot depth, catchup depth, and total queued.
 
     Examples:
-      >>> ingest_zset_census(SyncTimedbJobStore(""))
+      >>> ingest_queue_census(SyncTimedbJobStore(""))
       (0, 0, 0)
     """
     if store is None:
         return (0, 0, 0)
-    zkey = job_queue_key(JOB_KIND_INGEST)
     hot_lo, hot_hi = ingest_score_range("hot")
     catch_lo, catch_hi = ingest_score_range("catchup")
     return (
-        store.zcount(zkey, hot_lo, hot_hi),
-        store.zcount(zkey, catch_lo, catch_hi),
-        store.zcard(zkey),
+        store.ingest_count_in_score_range(hot_lo, hot_hi),
+        store.ingest_count_in_score_range(catch_lo, catch_hi),
+        store.queued_count(JOB_KIND_INGEST),
     )
 
 
@@ -1962,9 +1688,7 @@ def queue_depth(store: SyncTimedbJobStore, *, kind: str) -> int:
     """
     if store is None:
         return 0
-    if str(kind) == JOB_KIND_INGEST:
-        return store.zcard(job_queue_key(kind))
-    return store.llen(job_queue_key(kind))
+    return store.queued_count(kind)
 
 
 def queue_census(store: SyncTimedbJobStore) -> Dict[str, Dict[str, int]]:
@@ -1985,7 +1709,7 @@ def queue_census(store: SyncTimedbJobStore) -> Dict[str, Dict[str, int]]:
     for kind in JOB_KINDS_ALL:
         out[kind] = {
             "queued": queue_depth(store, kind=kind),
-            "inflight": store.hlen(job_inflight_key(kind)),
+            "inflight": store.inflight_count(kind),
         }
     return out
 
@@ -2277,29 +2001,6 @@ def identity_in_queue_dead_letter(
         if str(entry.get("identity") or "") == want_id:
             return True
     return False
-
-
-def _score_arg(value: float) -> str:
-    """
-    Render a score bound as a range argument.
-
-    Args:
-      value (float): Finite score, -inf, or +inf.
-
-    Returns:
-      str: -inf, +inf, or the integer score as text.
-
-    Examples:
-      >>> _score_arg(float("-inf"))
-      '-inf'
-      >>> _score_arg(7.0)
-      '7'
-    """
-    if value == float("-inf"):
-        return "-inf"
-    if value == float("+inf"):
-        return "+inf"
-    return str(int(value))
 
 
 def parse_lease_owner(owner_token: str) -> LeaseOwner:

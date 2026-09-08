@@ -34,16 +34,12 @@ Attributes:
   _DAY_CLOSE_DISQUALIFY_CODES: Attribute.
   _DEFERRED_PREWARM_FLUSH_HOOK: Attribute.
   _FNCTL_POPULATE_RETRY_DELAYS_S: Attribute.
-  _INGEST_SEALED_LOOKUP_WARNED: Attribute.
-  _INGEST_SEALED_LOOKUP_WARNED_MAX: Attribute.
   _INGEST_SKIPPED_CALENDAR_DAYS: Attribute.
   _INGEST_SKIPPED_CALENDAR_DAYS_MAX: Attribute.
   _LOGGED_ARCHIVE_DAY_INGEST_SKIP: Attribute.
   _LOGGED_ARCHIVE_DAY_INGEST_SKIP_MAX: Attribute.
   _UNMAPPED_DISQUALIFY_CACHE: Attribute.
   _UNMAPPED_DISQUALIFY_TTL_S: Attribute.
-  _oldest_waiting_ingest_frozen_state: Attribute.
-  SYNC_DAY_CLOSE_CANDIDATE_REPORT: Attribute.
   RECONCILE_STALL_WARN_S: Attribute.
   RECONCILE_STALL_YIELD_S: Attribute.
   RECONCILE_STAGE_PROGRESS_LOG_INTERVAL_S: Attribute.
@@ -102,9 +98,6 @@ from hpcperfstats.dbload.lib.file_locking import (
 )
 from hpcperfstats.dbload.lib.print_utils import janitorial_logging, log_print
 
-
-# Retired B INI: permanently off; tests may monkeypatch this name.
-SYNC_DAY_CLOSE_CANDIDATE_REPORT = False
 
 def get_archive_zstd_thread_count() -> Any:
   """
@@ -260,23 +253,13 @@ def daily_tar_paths_from_pending_archive_tasks(
   """
   if not pending_archive_tasks:
     return frozenset()
-  tar_paths = set()
+  items = []
   for entry in pending_archive_tasks:
     if isinstance(entry, (tuple, list)) and len(entry) >= 4:
-      item = entry[3]
+      items.append(entry[3])
     else:
-      item = entry
-    task = item.get("task") if isinstance(item, dict) else None
-    if task is None:
-      continue
-    archive_info = getattr(task, "archive_info", None)
-    if not archive_info or len(archive_info) < 1:
-      continue
-    compressed_path = archive_info[0]
-    if not compressed_path:
-      continue
-    tar_paths.add(os.path.normpath(daily_tar_path_from_compressed(compressed_path)))
-  return frozenset(tar_paths)
+      items.append(entry)
+  return daily_tar_paths_for_archive_job_tasks(items)
 
 
 def _derive_stats_path_date(
@@ -758,28 +741,18 @@ def sort_archive_items_oldest_day_first(items: Any) -> Any:
   Examples:
     >>> sort_archive_items_oldest_day_first(None)  # doctest: +SKIP
   """
-  def _key(item: Any) -> Any:
-    """
-    Internal helper to handle key.
-    
-    Args:
-      item (Any): Value to inspect (typically a numeric scalar).
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> _key(None)  # doctest: +SKIP
-    """
+  keyed = []
+  for item in items or ():
     try:
       compressed = item[0]
     except (TypeError, IndexError, KeyError):
-      return (date.max, "")
+      keyed.append(((date.max, ""), item))
+      continue
     tar = daily_tar_path_from_compressed(compressed)
     day = calendar_date_from_daily_tar_path(tar)
-    return (day or date.max, os.path.normpath(str(tar or "")))
-
-  return sorted(list(items or ()), key=_key)
+    keyed.append(((day or date.max, os.path.normpath(str(tar or ""))), item))
+  keyed.sort(key=lambda pair: pair[0])
+  return [item for _key, item in keyed]
 
 
 def stats_path_ingest_sort_epoch(stats_path: str) -> Any:
@@ -1056,22 +1029,6 @@ def supplement_pending_paths_from_closed_paths(
           newest_first=newest_first,
       )
 
-  def _candidate_epoch_key(path: str) -> Any:
-    """
-    Internal helper to handle candidate epoch key.
-    
-    Args:
-      path (str): String for path.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> _candidate_epoch_key("x")  # doctest: +SKIP
-    """
-    ep = _basename_ingest_sort_epoch(path)
-    return (ep is None, ep if ep is not None else 0, path)
-
   if newest_first:
     candidates_ordered = sorted(
         retainable,
@@ -1082,7 +1039,14 @@ def supplement_pending_paths_from_closed_paths(
         ),
     )
   else:
-    candidates_ordered = sorted(retainable, key=_candidate_epoch_key)
+    candidates_ordered = sorted(
+        retainable,
+        key=lambda path: (
+            _basename_ingest_sort_epoch(path) is None,
+            (_basename_ingest_sort_epoch(path) or 0),
+            path,
+        ),
+    )
 
   result = list(before)
   seen = set(before)
@@ -1397,6 +1361,7 @@ def remaining_raw_on_disk_counts_for_tar(
   tar_key = os.path.normpath(str(tar_norm or ""))
   if not tar_key or not tgz_archive_dir:
     return 0, 0
+  aligned_set = set(aligned_paths)
   cross_day_n = 0
   for gz_key, paths in (remaining_raw_by_gz or {}).items():
     if not paths:
@@ -1404,13 +1369,7 @@ def remaining_raw_on_disk_counts_for_tar(
     if os.path.normpath(daily_tar_path_from_compressed(gz_key)) != tar_key:
       continue
     for path in paths:
-      if not path or not os.path.isfile(path):
-        continue
-      if not stats_path_aligned_to_daily_tar(
-          path,
-          tar_key,
-          tgz_archive_dir=tgz_archive_dir,
-      ):
+      if path and os.path.isfile(path) and path not in aligned_set:
         cross_day_n += 1
   return len(aligned_paths), cross_day_n
 
@@ -1776,7 +1735,10 @@ def classify_day_close_candidates(
   universe |= set(unprocessed.keys())
   universe |= set(disq.keys())
   universe |= async_active | debt_tars | newly_queued
-  ranked = sorted(universe, key=_calendar_date_from_tar_sort_key)
+  ranked = sorted(
+      universe,
+      key=lambda tar_path: calendar_date_from_daily_tar_path(tar_path) or date.max,
+  )
   entries = []
   for tar_norm in ranked:
     reasons = set(disq.get(tar_norm, set()))
@@ -1826,17 +1788,18 @@ def classify_day_close_candidates(
         day_phases=day_phases,
         remaining_raw_by_gz=remaining_raw_by_gz,
     )
+    _entry = lambda status: {
+        "tar_path": tar_norm,
+        "status": status,
+        "reasons": sorted(reasons),
+        "on_disk": on_disk_total,
+        "unprocessed": unprocessed_count,
+        "phase": phase_name,
+        "mutable_tar": mutable_tar,
+        "processed_but_on_disk": processed_but_on_disk,
+    }
     if not needs_work:
-      entry = {
-          "tar_path": tar_norm,
-          "status": "skipped_no_work",
-          "reasons": sorted(reasons),
-          "on_disk": on_disk_total,
-          "unprocessed": unprocessed_count,
-          "phase": phase_name,
-          "mutable_tar": mutable_tar,
-          "processed_but_on_disk": processed_but_on_disk,
-      }
+      entry = _entry("skipped_no_work")
       if cross_day_n:
         entry["unprocessed_cross_day_n"] = cross_day_n
       if processed_cross_day_n:
@@ -1869,16 +1832,7 @@ def classify_day_close_candidates(
       reasons.add("awaiting_janitor_discover")
     if mutable_tar:
       reasons.add("mutable_tar_present")
-    entry = {
-        "tar_path": tar_norm,
-        "status": status,
-        "reasons": sorted(reasons),
-        "on_disk": on_disk_total,
-        "unprocessed": unprocessed_count,
-        "phase": phase_name,
-        "mutable_tar": mutable_tar,
-        "processed_but_on_disk": processed_but_on_disk,
-    }
+    entry = _entry(status)
     if unprocessed_list_count != unprocessed_count:
       entry["unprocessed_list"] = unprocessed_list_count
     if cross_day_n:
@@ -1887,211 +1841,6 @@ def classify_day_close_candidates(
       entry["processed_cross_day_n"] = processed_cross_day_n
     entries.append(entry)
   return entries
-
-
-_oldest_waiting_ingest_frozen_state = {
-    "tar": None,
-    "unprocessed": None,
-    "streak": 0,
-}
-
-
-def reset_oldest_day_unprocessed_frozen_state_for_tests() -> None:
-  """
-  Test helper: clear module-level frozen tracker.
-  
-  Returns:
-    None
-  
-  Examples:
-    >>> reset_oldest_day_unprocessed_frozen_state_for_tests()  # doctest: +SKIP
-  """
-  _oldest_waiting_ingest_frozen_state.update(
-      tar=None,
-      unprocessed=None,
-      streak=0,
-  )
-
-
-def maybe_log_oldest_day_unprocessed_frozen(
-  waiting_entries: Any,
-  *,
-  log_fn: Any = log_print,
-) -> None:
-  """
-  WARN when oldest waiting_on_ingest unprocessed count is unchanged across.
-  
-    reports.
-  
-  Args:
-    waiting_entries (Any): Waiting entries passed to this helper.
-    log_fn (Any): Callable invoked by this helper.
-  
-  Returns:
-    None
-  
-  Examples:
-    >>> maybe_log_oldest_day_unprocessed_frozen(None, None)  # doctest: +SKIP
-  """
-  waiting = list(waiting_entries or ())
-  state = _oldest_waiting_ingest_frozen_state
-  if not waiting:
-    state.update(tar=None, unprocessed=None, streak=0)
-    return
-  oldest = min(waiting, key=lambda entry: str(entry.get("tar_path") or ""))
-  tar = oldest.get("tar_path")
-  unprocessed = int(oldest.get("unprocessed") or 0)
-  if state["tar"] == tar and state["unprocessed"] == unprocessed:
-    state["streak"] = int(state.get("streak") or 0) + 1
-  else:
-    state.update(tar=tar, unprocessed=unprocessed, streak=1)
-  if int(state["streak"]) >= 2:
-    log_fn(
-        "WARN: oldest_day_unprocessed_frozen oldest_tar=%s unprocessed=%d streak=%d"
-        % (tar, unprocessed, int(state["streak"])),
-        flush=True,
-    )
-
-
-def log_day_close_candidate_report(
-  entries: Any,
-  *,
-  reason: Any,
-  log_fn: Any = log_print,
-  async_progress_fn: Any | None = None,
-) -> None:
-  """
-  Log day-close candidates (silent skipped_no_work), oldest calendar day first.
-  
-  Args:
-    entries (Any): Entries passed to this helper.
-    reason (Any): Reason passed to this helper.
-    log_fn (Any): Callable invoked by this helper.
-    async_progress_fn (Any | None): One of ``Any``, ``None``.
-  
-  Returns:
-    None
-  
-  Examples:
-    >>> log_day_close_candidate_report(None, None, None, None)  # doctest: +SKIP
-  """
-  if not SYNC_DAY_CLOSE_CANDIDATE_REPORT:
-    return
-  queued = [e for e in entries if e.get("status") == "queued"]
-  waiting = [e for e in entries if e.get("status") == "waiting_on_ingest"]
-  ready = [e for e in entries if e.get("status") == "ready_for_enqueue"]
-  disqualified = [e for e in entries if e.get("status") == "disqualified"]
-  maybe_log_oldest_day_unprocessed_frozen(waiting, log_fn=log_fn)
-  reportable = [
-      e for e in entries if e.get("status") != "skipped_no_work"
-  ]
-  if not reportable:
-    return
-  reportable.sort(key=lambda e: _calendar_date_from_tar_sort_key(e.get("tar_path")))
-  queued_ordered = [
-      e for e in reportable if e.get("status") == "queued"
-  ]
-  queue_slot = {
-      os.path.normpath(str(e.get("tar_path") or "")): index
-      for index, e in enumerate(queued_ordered, start=1)
-  }
-  mutable_tar_n = sum(1 for e in reportable if e.get("mutable_tar"))
-  log_fn(
-      "janitor: day_close candidate report reason=%s queued=%d "
-      "waiting_on_ingest=%d ready_for_enqueue=%d disqualified=%d "
-      "mutable_tar_n=%d"
-      % (
-          reason,
-          len(queued),
-          len(waiting),
-          len(ready),
-          len(disqualified),
-          mutable_tar_n,
-      ),
-      flush=True,
-  )
-  for entry in reportable:
-    reasons = list(entry.get("reasons") or ())
-    async_suffix = ""
-    if (
-        async_progress_fn is not None
-        and entry.get("status") == "queued"
-        and "day_close_in_progress" in reasons
-    ):
-      tar_path = entry.get("tar_path")
-      if tar_path:
-        try:
-          progress = async_progress_fn(tar_path) or {}
-        except Exception:
-          progress = {}
-        last_progress = progress.get("last_progress") or ""
-        age_s = progress.get("last_progress_age_s")
-        if last_progress or age_s is not None:
-          age_text = (
-              "%.0f" % float(age_s)
-              if age_s is not None
-              else ""
-          )
-          async_suffix = " async_last_progress=%s async_age_s=%s" % (
-              last_progress,
-              age_text,
-          )
-    unprocessed_on_disk = int(entry.get("unprocessed") or 0)
-    on_disk_total = int(entry.get("on_disk") or 0)
-    if on_disk_total <= 0:
-      on_disk_total = unprocessed_on_disk + int(
-          entry.get("processed_but_on_disk") or 0,
-      )
-    unprocessed_list = entry.get("unprocessed_list")
-    cross_day_n = int(entry.get("unprocessed_cross_day_n") or 0)
-    ghost_suffix = " on_disk=%d" % on_disk_total
-    if unprocessed_list is not None:
-      ghosts = max(0, int(unprocessed_list) - unprocessed_on_disk - cross_day_n)
-      ghost_suffix += " ghosts=%d" % ghosts
-      if ghosts > 0 and entry.get("status") == "waiting_on_ingest":
-        log_fn(
-            "WARN: day_close candidate tar=%s checkpoint_unprocessed_ghosts=%d "
-            "list=%d on_disk_unprocessed=%d"
-            % (
-                entry.get("tar_path"),
-                ghosts,
-                int(unprocessed_list),
-                unprocessed_on_disk,
-            ),
-            flush=True,
-        )
-    if cross_day_n:
-      ghost_suffix += " unprocessed_cross_day_n=%d" % cross_day_n
-    processed_but_on_disk = int(entry.get("processed_but_on_disk") or 0)
-    processed_cross_day_n = int(entry.get("processed_cross_day_n") or 0)
-    leftover_suffix = " processed_but_on_disk=%d" % processed_but_on_disk
-    if processed_cross_day_n:
-      leftover_suffix += " processed_cross_day_n=%d" % processed_cross_day_n
-    tar_key = os.path.normpath(str(entry.get("tar_path") or ""))
-    slot = queue_slot.get(tar_key)
-    queue_order_token = (
-        "queue_order=%d" % slot if slot is not None else "queue_order="
-    )
-    mutable_tar = bool(entry.get("mutable_tar"))
-    if "mutable_tar" not in entry and tar_key:
-      mutable_tar = os.path.isfile(tar_key)
-    log_fn(
-        "janitor: day_close candidate tar=%s status=%s reasons=%s "
-        "unprocessed=%d phase=%s mutable_tar=%s %s%s%s%s"
-        % (
-            entry.get("tar_path"),
-            entry.get("status"),
-            ",".join(reasons),
-            unprocessed_on_disk,
-            entry.get("phase") or "",
-            "yes" if mutable_tar else "no",
-            queue_order_token,
-            ghost_suffix,
-            leftover_suffix,
-            async_suffix,
-        ),
-        flush=True,
-    )
 
 
 def effective_keep_uncompressed_tar(
@@ -3312,64 +3061,6 @@ def daily_tar_path_for_calendar_day(
   return os.path.normpath(os.path.join(tgz_archive_dir, day + ".tar"))
 
 
-def calendar_days_checkpoint_ingest_complete(
-  candidate_calendar_days: Any,
-  *,
-  archive_data_dir: str,
-  host_name_ext: Any,
-  tgz_archive_dir: str,
-  checkpoint_path: Any | None = None,
-  pending_stats_paths: Any | None = None,
-  maintenance_snapshot: Any | None = None,
-) -> Any:
-  """
-  Return sorted ISO days with no checkpoint-unprocessed closed raw on disk.
-  
-  Args:
-    candidate_calendar_days (Any): Candidate calendar days passed to this
-    helper.
-    archive_data_dir (str): String for archive data dir.
-    host_name_ext (Any): Host name ext passed to this helper.
-    tgz_archive_dir (str): String for tgz archive dir.
-    checkpoint_path (Any | None): One of ``Any``, ``None``.
-    pending_stats_paths (Any | None): One of ``Any``, ``None``.
-    maintenance_snapshot (Any | None): One of ``Any``, ``None``.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> calendar_days_checkpoint_ingest_complete(0)  # doctest: +SKIP
-  """
-  if not candidate_calendar_days:
-    return []
-  unprocessed_by_tar = build_unprocessed_raw_by_daily_tar(
-      archive_data_dir,
-      host_name_ext,
-      tgz_archive_dir,
-      checkpoint_path=checkpoint_path,
-      maintenance_snapshot=maintenance_snapshot,
-  )
-  unprocessed_by_tar = augment_unprocessed_by_tar_with_pending_paths(
-      unprocessed_by_tar,
-      pending_stats_paths=pending_stats_paths,
-      tgz_archive_dir=tgz_archive_dir,
-      checkpoint_path=checkpoint_path,
-  )
-  complete = []
-  for day_iso in sorted(str(day) for day in candidate_calendar_days):
-    tar_norm = daily_tar_path_for_calendar_day(tgz_archive_dir, day_iso)
-    if not tar_norm:
-      continue
-    if not aligned_unprocessed_tar_paths_still_on_disk(
-        unprocessed_by_tar,
-        tar_norm,
-        tgz_archive_dir=tgz_archive_dir,
-    ):
-      complete.append(day_iso)
-  return complete
-
-
 def day_close_queued_reason_for_report_reason(reason: Any) -> Any:
   """
   Map janitor/startup report ``reason`` to classify queued-reason code.
@@ -3490,87 +3181,6 @@ def daily_tar_needs_day_close_work(
   if remaining_raw_by_gz_has_paths_on_disk(blocking, zst_path):
     return True
   return False
-
-
-def days_ingest_complete_by_checkpoint(
-  unprocessed_by_tar: Any,
-  *,
-  tgz_archive_dir: str,
-  day_phases: Any | None = None,
-  remaining_raw_by_gz: Any | None = None,
-  local_tz: Any | None = None,
-  now: Any | None = None,
-  disqualified_daily_tars: Any | None = None,
-) -> Any:
-  """
-  Oldest-first daily ``.tar`` paths with zero unprocessed mapped raw and work.
-  
-    left.
-  
-  Args:
-    unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
-    tgz_archive_dir (str): String for tgz archive dir.
-    day_phases (Any | None): One of ``Any``, ``None``.
-    remaining_raw_by_gz (Any | None): One of ``Any``, ``None``.
-    local_tz (Any | None): One of ``Any``, ``None``.
-    now (Any | None): One of ``Any``, ``None``.
-    disqualified_daily_tars (Any | None): One of ``Any``, ``None``.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> days_ingest_complete_by_checkpoint(0)  # doctest: +SKIP
-  """
-  if not tgz_archive_dir:
-    return []
-  ranked = []
-  seen = set()
-  universe = set(unprocessed_by_tar or ())
-  for tar_path in iter_daily_tar_paths(tgz_archive_dir):
-    universe.add(os.path.normpath(tar_path))
-  for tar_norm in sorted(universe, key=lambda p: _calendar_date_from_tar_sort_key(p)):
-    if tar_norm in seen:
-      continue
-    seen.add(tar_norm)
-    eligible, _reason = daily_tar_eligible_for_day_close_submit(
-        tar_norm,
-        unprocessed_by_tar=unprocessed_by_tar,
-        disqualified_daily_tars=disqualified_daily_tars or (),
-        day_phases=day_phases,
-        remaining_raw_by_gz=remaining_raw_by_gz,
-        local_tz=local_tz,
-        now=now,
-        tgz_archive_dir=tgz_archive_dir,
-    )
-    if not eligible:
-      continue
-    day_date = calendar_date_from_daily_tar_path(tar_norm)
-    if day_date is None:
-      continue
-    ranked.append((day_date, tar_norm))
-  ranked.sort(key=lambda item: item[0])
-  return [tar_norm for _, tar_norm in ranked]
-
-
-def unprocessed_tar_paths_still_on_disk(
-  unprocessed_by_tar: Any,
-  tar_norm: Any,
-) -> Any:
-  """
-  True when any checkpoint-unprocessed path for ``tar_norm`` still exists.
-  
-  Args:
-    unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
-    tar_norm (Any): Tar norm passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> unprocessed_tar_paths_still_on_disk(None, None)  # doctest: +SKIP
-  """
-  return count_unprocessed_paths_on_disk(unprocessed_by_tar, tar_norm) > 0
 
 
 def count_unprocessed_paths_on_disk(
@@ -3709,122 +3319,6 @@ def aligned_unprocessed_tar_paths_still_on_disk(
   ) > 0
 
 
-def all_on_disk_unprocessed_paths(unprocessed_by_tar: Any) -> Any:
-  """
-  Deduped on-disk checkpoint-unprocessed paths across all daily tars.
-  
-  Args:
-    unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> all_on_disk_unprocessed_paths(None)  # doctest: +SKIP
-  """
-  seen = set()
-  result = []
-  for tar_norm in (unprocessed_by_tar or {}):
-    for path in on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_norm):
-      if path in seen:
-        continue
-      seen.add(path)
-      result.append(path)
-  return result
-
-
-def iter_checkpoint_incomplete_days_oldest_first(
-  unprocessed_by_tar: Any,
-  *,
-  tgz_archive_dir: str,
-) -> Iterator[Any]:
-  """
-  Yield ``(day_date, tar_norm, aligned_on_disk_paths)`` oldest calendar day.
-  
-    first.
-  
-  Args:
-    unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
-    tgz_archive_dir (str): String for tgz archive dir.
-  
-  Yields:
-    Iterator[Any]: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> iter_checkpoint_incomplete_days_oldest_first(None, "x")
-  """
-  if not tgz_archive_dir or not unprocessed_by_tar:
-    return
-  ranked = []
-  seen = set()
-  for tar_path in iter_daily_tar_paths(tgz_archive_dir):
-    tar_norm = os.path.normpath(tar_path)
-    if tar_norm in seen:
-      continue
-    seen.add(tar_norm)
-    paths = aligned_on_disk_unprocessed_paths_for_tar(
-        unprocessed_by_tar,
-        tar_norm,
-        tgz_archive_dir=tgz_archive_dir,
-    )
-    if not paths:
-      continue
-    day_date = calendar_date_from_daily_tar_path(tar_norm)
-    if day_date is None:
-      continue
-    ranked.append((day_date, tar_norm, paths))
-  for tar_norm in (unprocessed_by_tar or {}):
-    tar_norm = os.path.normpath(str(tar_norm or ""))
-    if not tar_norm or tar_norm in seen:
-      continue
-    paths = aligned_on_disk_unprocessed_paths_for_tar(
-        unprocessed_by_tar,
-        tar_norm,
-        tgz_archive_dir=tgz_archive_dir,
-    )
-    if not paths:
-      continue
-    day_date = calendar_date_from_daily_tar_path(tar_norm)
-    if day_date is None:
-      continue
-    ranked.append((day_date, tar_norm, paths))
-  ranked.sort(key=lambda item: item[0])
-  for item in ranked:
-    yield item
-
-
-def tail_eligible_days_from_unprocessed(
-  unprocessed_by_tar: Any,
-  *,
-  tgz_archive_dir: str,
-  max_files: Any,
-) -> Any:
-  """
-  Oldest-first ``(tar_norm, paths)`` with ``1 <= len(paths) <= max_files``.
-  
-  Args:
-    unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
-    tgz_archive_dir (str): String for tgz archive dir.
-    max_files (Any): Iterable of filesystem paths as strings.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> tail_eligible_days_from_unprocessed(None, "x", None)  # doctest: +SKIP
-  """
-  max_files = max(1, int(max_files))
-  result = []
-  for _day, tar_norm, paths in iter_checkpoint_incomplete_days_oldest_first(
-      unprocessed_by_tar,
-      tgz_archive_dir=tgz_archive_dir,
-  ):
-    count = len(paths)
-    if 1 <= count <= max_files:
-      result.append((tar_norm, paths))
-  return result
-
-
 def oldest_checkpoint_incomplete_tar(
   unprocessed_by_tar: Any,
   *,
@@ -3882,31 +3376,6 @@ def oldest_checkpoint_incomplete_tar(
     return ""
   ranked.sort(key=lambda item: item[0])
   return ranked[-1][1] if newest_first else ranked[0][1]
-
-
-def build_chunk_day_histogram(paths: Any, tgz_archive_dir: str) -> Any:
-  """
-  Count chunk paths per calendar day (for handoff chunk telemetry).
-  
-  Args:
-    paths (Any): Iterable of filesystem paths as strings.
-    tgz_archive_dir (str): String for tgz archive dir.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> build_chunk_day_histogram(None, "x")  # doctest: +SKIP
-  """
-  histogram = {}
-  for path in paths or ():
-    for tar_path in daily_tar_paths_for_stats_paths([path], tgz_archive_dir):
-      day_date = calendar_date_from_daily_tar_path(tar_path)
-      if day_date is None:
-        continue
-      token = day_date.isoformat()
-      histogram[token] = histogram.get(token, 0) + 1
-  return histogram
 
 
 def reconcile_orphan_inflight_for_oldest_tar(
@@ -4011,7 +3480,6 @@ def reconcile_orphan_inflight_for_oldest_tar(
       msg += " cross_day_n=%d detail=cross_day_bucket" % cross_day_reclaimed
     log_fn(msg, flush=True)
   return reclaimed
-
 
 
 def merge_daily_archive_members_l1_cache(
@@ -4291,168 +3759,6 @@ def daily_tar_filesystem_quiescent(
   return True
 
 
-def daily_tar_eligible_for_quiescent_day_close_submit(
-  tar_norm: Any,
-  *,
-  unprocessed_by_tar: Any,
-  disqualified_daily_tars: Any,
-  remaining_raw_by_gz: Any | None = None,
-  day_phases: Any | None = None,
-  local_tz: Any | None = None,
-  now: Any | None = None,
-  archive_data_dir: Any | None = None,
-  host_name_ext: Any | None = None,
-  tgz_archive_dir: Any | None = None,
-  maintenance_snapshot: Any | None = None,
-) -> Any:
-  """
-  Return ``(eligible, skip_reason)`` for quiescent startup DAY_CLOSE submit.
-  
-  Args:
-    tar_norm (Any): Tar norm passed to this helper.
-    unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
-    disqualified_daily_tars (Any): Disqualified daily tars passed to this
-    helper.
-    remaining_raw_by_gz (Any | None): One of ``Any``, ``None``.
-    day_phases (Any | None): One of ``Any``, ``None``.
-    local_tz (Any | None): One of ``Any``, ``None``.
-    now (Any | None): One of ``Any``, ``None``.
-    archive_data_dir (Any | None): One of ``Any``, ``None``.
-    host_name_ext (Any | None): One of ``Any``, ``None``.
-    tgz_archive_dir (Any | None): One of ``Any``, ``None``.
-    maintenance_snapshot (Any | None): One of ``Any``, ``None``.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> daily_tar_eligible_for_quiescent_day_close_submit(0)  # doctest: +SKIP
-  """
-  tar_norm = os.path.normpath(str(tar_norm or ""))
-  if not tar_norm:
-    return False, "invalid_tar_path"
-  archive_dir = tgz_archive_dir or os.path.dirname(tar_norm)
-  if aligned_unprocessed_tar_paths_still_on_disk(
-      unprocessed_by_tar,
-      tar_norm,
-      tgz_archive_dir=archive_dir,
-  ):
-    return False, "checkpoint_incomplete"
-  if not daily_tar_filesystem_quiescent(
-      tar_norm,
-      remaining_raw_by_gz,
-      archive_data_dir=archive_data_dir,
-      host_name_ext=host_name_ext,
-      tgz_archive_dir=tgz_archive_dir,
-      maintenance_snapshot=maintenance_snapshot,
-  ):
-    return False, "filesystem_not_quiescent"
-  disqualified = _normalize_daily_tar_path_set(disqualified_daily_tars)
-  if tar_norm in disqualified:
-    return False, "disqualified"
-  if local_tz is not None and not daily_tar_seal_calendar_eligible(
-      tar_norm, local_tz, now=now):
-    return False, "calendar_grace"
-  if not daily_tar_needs_day_close_work(
-      tar_norm,
-      day_phases=day_phases,
-      remaining_raw_by_gz=remaining_raw_by_gz,
-  ):
-    return False, "no_work"
-  return True, ""
-
-
-def days_quiescent_tar_needs_day_close_at_startup(
-  unprocessed_by_tar: Any,
-  *,
-  tgz_archive_dir: str,
-  checkpoint_complete_eligible: Any,
-  remaining_raw_by_gz: Any | None = None,
-  day_phases: Any | None = None,
-  local_tz: Any | None = None,
-  now: Any | None = None,
-  disqualified_daily_tars: Any | None = None,
-  archive_data_dir: Any | None = None,
-  host_name_ext: Any | None = None,
-  maintenance_snapshot: Any | None = None,
-) -> Any:
-  """
-  Oldest-first quiescent dirty ``.tar`` paths outside checkpoint-complete set.
-  
-  Args:
-    unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
-    tgz_archive_dir (str): String for tgz archive dir.
-    checkpoint_complete_eligible (Any): Checkpoint complete eligible passed to
-    this helper.
-    remaining_raw_by_gz (Any | None): One of ``Any``, ``None``.
-    day_phases (Any | None): One of ``Any``, ``None``.
-    local_tz (Any | None): One of ``Any``, ``None``.
-    now (Any | None): One of ``Any``, ``None``.
-    disqualified_daily_tars (Any | None): One of ``Any``, ``None``.
-    archive_data_dir (Any | None): One of ``Any``, ``None``.
-    host_name_ext (Any | None): One of ``Any``, ``None``.
-    maintenance_snapshot (Any | None): One of ``Any``, ``None``.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> days_quiescent_tar_needs_day_close_at_startup(0)  # doctest: +SKIP
-  """
-  if not tgz_archive_dir:
-    return []
-  skip = _normalize_daily_tar_path_set(checkpoint_complete_eligible)
-  ranked = []
-  seen = set()
-  universe = set(unprocessed_by_tar or ())
-  for tar_path in iter_daily_tar_paths(tgz_archive_dir):
-    universe.add(os.path.normpath(tar_path))
-  for tar_norm in sorted(universe, key=_calendar_date_from_tar_sort_key):
-    if tar_norm in seen or tar_norm in skip:
-      continue
-    seen.add(tar_norm)
-    eligible, _reason = daily_tar_eligible_for_quiescent_day_close_submit(
-        tar_norm,
-        unprocessed_by_tar=unprocessed_by_tar,
-        disqualified_daily_tars=disqualified_daily_tars or (),
-        remaining_raw_by_gz=remaining_raw_by_gz,
-        day_phases=day_phases,
-        local_tz=local_tz,
-        now=now,
-        archive_data_dir=archive_data_dir,
-        host_name_ext=host_name_ext,
-        tgz_archive_dir=tgz_archive_dir,
-        maintenance_snapshot=maintenance_snapshot,
-    )
-    if not eligible:
-      continue
-    day_date = calendar_date_from_daily_tar_path(tar_norm)
-    if day_date is None:
-      continue
-    ranked.append((day_date, tar_norm))
-  ranked.sort(key=lambda item: item[0])
-  return [tar_norm for _, tar_norm in ranked]
-
-
-def _calendar_date_from_tar_sort_key(tar_path: str) -> Any:
-  """
-  Internal helper to handle calendar date from tar sort key.
-  
-  Args:
-    tar_path (str): String for tar path.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _calendar_date_from_tar_sort_key("x")  # doctest: +SKIP
-  """
-  day = calendar_date_from_daily_tar_path(tar_path)
-  if day is not None:
-    return day
-  return date.max
-
-
 def build_disqualification_reasons_by_tar(
   *,
   tgz_archive_dir: str,
@@ -4598,12 +3904,20 @@ MIGRATE_GZ_STATUS_KEPT_MISMATCH = "kept_mismatch"
 MIGRATE_GZ_STATUS_PLANNED = "planned"
 
 
-def _get_archive_validation_worker_count(total_items: Any) -> Any:
+def _get_archive_validation_worker_count(
+  total_items: Any,
+  *,
+  env_key: str = "SYNC_ARCHIVE_VALIDATION_WORKERS",
+  configured_fn: Any = None,
+) -> Any:
   """
   Bounded worker count for archive read/validation fanout.
   
   Args:
     total_items (Any): Total items passed to this helper.
+    env_key (str): Environment override for the worker cap.
+    configured_fn (Any): INI getter for the worker cap. Default is
+      ``get_sync_archive_validation_max_workers``.
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -4613,14 +3927,15 @@ def _get_archive_validation_worker_count(total_items: Any) -> Any:
   """
   if total_items <= 0:
     return 1
-  env = os.environ.get("SYNC_ARCHIVE_VALIDATION_WORKERS", "").strip()
+  getter = configured_fn or cfg.get_sync_archive_validation_max_workers
+  env = os.environ.get(env_key, "").strip()
   if env:
     try:
       configured = max(1, int(env))
     except ValueError:
-      configured = max(1, int(cfg.get_sync_archive_validation_max_workers()))
+      configured = max(1, int(getter()))
   else:
-    configured = max(1, int(cfg.get_sync_archive_validation_max_workers()))
+    configured = max(1, int(getter()))
   return max(1, min(total_items, configured))
 
 
@@ -4665,25 +3980,12 @@ def _iter_archive_validation_results_stream(
       yield gz_path, ok, members
     return
 
-  def _validate_one(gz_path: str) -> Any:
-    """
-    Internal helper to validate the one.
-    
-    Args:
-      gz_path (str): String for gz path.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> _validate_one("x")  # doctest: +SKIP
-    """
-    return validate_sealed_daily_archive_for_raw_removal(
-        gz_path,
-        log_fn=log_fn,
-        validation_cache=None,
-        allow_auto_seal=allow_auto_seal,
-    )
+  _validate_one = lambda gz_path: validate_sealed_daily_archive_for_raw_removal(
+      gz_path,
+      log_fn=log_fn,
+      validation_cache=None,
+      allow_auto_seal=allow_auto_seal,
+  )
 
   for gz_path, packed, err in iter_bounded_thread_pool(
       gz_paths,
@@ -5067,28 +4369,19 @@ def verify_tar_archive_readable(
     return False
   tar_bin = _tar_list_executable()
 
-  def _locked_scan() -> Any:
-    """
-    Internal helper to handle locked scan.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> _locked_scan()  # doctest: +SKIP
-    """
-    if detect_compressed_format(tar_path) in ("zst", "gz"):
-      return zstd_compressed_archive_pipe_readable(
+  _locked_scan = lambda: (
+      zstd_compressed_archive_pipe_readable(
           tar_path,
           get_archive_zstd_thread_count(),
       )
-    result = subprocess.run(
-        [tar_bin, "tf", tar_path],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.returncode == 0
+      if detect_compressed_format(tar_path) in ("zst", "gz")
+      else subprocess.run(
+          [tar_bin, "tf", tar_path],
+          capture_output=True,
+          text=True,
+          check=False,
+      ).returncode == 0
+  )
 
   try:
     if assume_write_lock_held:
@@ -5122,7 +4415,7 @@ def get_file_member_sizes_from_gzip_archive(gz_path: str) -> Any:
   """
   if not gz_path.endswith(".tar.gz") or not os.path.isfile(gz_path):
     return {}
-  _readable, members = _scan_gzip_archive_members_and_readable(gz_path)
+  _readable, members = _scan_compressed_archive_members_and_readable(gz_path)
   return members
 
 
@@ -5862,8 +5155,6 @@ def _sealed_archive_member_has_exact_size(
     return match_result[0]
 
 
-_INGEST_SEALED_LOOKUP_WARNED = set()
-_INGEST_SEALED_LOOKUP_WARNED_MAX = 256
 _INGEST_SKIPPED_CALENDAR_DAYS = OrderedDict()
 _INGEST_SKIPPED_CALENDAR_DAYS_MAX = 512
 _LOGGED_ARCHIVE_DAY_INGEST_SKIP = set()
@@ -5908,10 +5199,7 @@ def _is_fnctl_read_lock_timeout_detail(detail: Any) -> Any:
   Examples:
     >>> _is_fnctl_read_lock_timeout_detail(None)  # doctest: +SKIP
   """
-  if not detail:
-    return False
-  msg = str(detail).lower()
-  return "timed out waiting" in msg and "fnctl.lock" in msg
+  return bool(detail) and _is_fnctl_read_lock_timeout_error(detail)
 
 
 _FNCTL_POPULATE_RETRY_DELAYS_S = (2.0, 5.0)
@@ -6390,28 +5678,6 @@ def _log_archive_day_ingest_skip_once(exc: Any) -> None:
   )
 
 
-def _log_ingest_sealed_lookup_issue(sealed_path: str, message: Any) -> None:
-  """
-  Internal helper to log the ingest sealed lookup issue.
-  
-  Args:
-    sealed_path (str): String for sealed path.
-    message (Any): Message passed to this helper.
-  
-  Returns:
-    None
-  
-  Examples:
-    >>> _log_ingest_sealed_lookup_issue("x", None)  # doctest: +SKIP
-  """
-  if len(_INGEST_SEALED_LOOKUP_WARNED) >= _INGEST_SEALED_LOOKUP_WARNED_MAX:
-    _INGEST_SEALED_LOOKUP_WARNED.clear()
-  if sealed_path in _INGEST_SEALED_LOOKUP_WARNED:
-    return
-  _INGEST_SEALED_LOOKUP_WARNED.add(sealed_path)
-  log_print(message, flush=True)
-
-
 def _member_match_via_store_or_sealed_point(
   canonical: Any,
   cache_key: Any,
@@ -6603,22 +5869,6 @@ def _scan_compressed_archive_members_and_readable(
   return readable, members
 
 
-def _scan_gzip_archive_members_and_readable(gz_path: str) -> Any:
-  """
-  Return ``(readable, members)`` from one streamed gzip pass.
-  
-  Args:
-    gz_path (str): String for gz path.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _scan_gzip_archive_members_and_readable("x")  # doctest: +SKIP
-  """
-  return _scan_compressed_archive_members_and_readable(gz_path)
-
-
 def _sealed_archive_members_via_store_or_scan(
   sealed_path: str,
   *,
@@ -6713,14 +5963,13 @@ def validate_sealed_daily_archive_for_raw_removal(
   Examples:
     >>> validate_sealed_daily_archive_for_raw_removal("x", None, None, True)
   """
+  _log_skip = lambda msg: log_fn(msg, flush=True) if log_fn else None
   fmt = detect_compressed_format(archive_compressed_path)
   if fmt not in ("zst", "gz"):
-    if log_fn:
-      log_fn(
-          "Skipping removal validation: not a daily compressed archive: %s"
-          % archive_compressed_path,
-          flush=True,
-      )
+    _log_skip(
+        "Skipping removal validation: not a daily compressed archive: %s"
+        % archive_compressed_path,
+    )
     return False, None
   sealed_path = archive_compressed_path
   tar_path = daily_tar_path_from_compressed(sealed_path)
@@ -6740,44 +5989,30 @@ def validate_sealed_daily_archive_for_raw_removal(
         get_archive_zstd_thread_count(),
         log_fn=log_fn,
     ):
-      if log_fn:
-        log_fn(
-            "Skipping removal: uncompressed tar failed check: %s" % tar_path,
-            flush=True,
-        )
+      _log_skip("Skipping removal: uncompressed tar failed check: %s" % tar_path)
       return False, None
     members_tar = get_existing_archive_members(tar_path)
     if not members_tar:
-      if log_fn:
-        log_fn(
-            "Skipping removal: uncompressed tar has no file members: %s" % tar_path,
-            flush=True,
-        )
+      _log_skip(
+          "Skipping removal: uncompressed tar has no file members: %s" % tar_path,
+      )
       return False, None
 
   zst_path, _gz_path = compressed_sibling_paths(tar_path)
   if not os.path.isfile(sealed_path):
     if members_tar is None:
-      if log_fn:
-        log_fn(
-            "Skipping removal: sealed archive missing: %s" % sealed_path,
-            flush=True,
-        )
+      _log_skip("Skipping removal: sealed archive missing: %s" % sealed_path)
       return False, None
     if not allow_auto_seal:
-      if log_fn:
-        log_fn(
-            "Skipping removal: sealed archive missing and auto-seal disabled "
-            "(janitor seal already ran this pass): %s" % tar_path,
-            flush=True,
-        )
-      return False, None
-    if log_fn:
-      log_fn(
-          "Sealed archive missing; creating from valid uncompressed tar: %s"
-          % tar_path,
-          flush=True,
+      _log_skip(
+          "Skipping removal: sealed archive missing and auto-seal disabled "
+          "(janitor seal already ran this pass): %s" % tar_path,
       )
+      return False, None
+    _log_skip(
+        "Sealed archive missing; creating from valid uncompressed tar: %s"
+        % tar_path,
+    )
     try:
       atomic_seal_tar_to_zst(
           tar_path,
@@ -6792,33 +6027,27 @@ def validate_sealed_daily_archive_for_raw_removal(
           sealed_path,
       )
       if not sealed_readable or members_sealed != members_tar:
-        if log_fn:
-          log_fn(
-              "Skipping removal: auto-seal member mismatch for %s "
-              "(tar count=%s sealed count=%s)"
-              % (sealed_path, len(members_tar), len(members_sealed)),
-              flush=True,
-          )
+        _log_skip(
+            "Skipping removal: auto-seal member mismatch for %s "
+            "(tar count=%s sealed count=%s)"
+            % (sealed_path, len(members_tar), len(members_sealed)),
+        )
         return False, None
     except (OSError, subprocess.CalledProcessError) as exc:
-      if log_fn:
-        log_fn(
-            "Skipping removal: failed to seal tar into zstd for %s (%s)"
-            % (tar_path, exc),
-            flush=True,
-        )
+      _log_skip(
+          "Skipping removal: failed to seal tar into zstd for %s (%s)"
+          % (tar_path, exc),
+      )
       return False, None
 
   sealed_readable, members_sealed = _sealed_archive_members_via_store_or_scan(
       sealed_path,
   )
   if not sealed_readable:
-    if log_fn:
-      log_fn(
-          "Skipping removal: sealed archive failed integrity check: %s"
-          % sealed_path,
-          flush=True,
-      )
+    _log_skip(
+        "Skipping removal: sealed archive failed integrity check: %s"
+        % sealed_path,
+    )
     result = (False, None)
     if validation_cache is not None:
       validation_cache[cache_key] = {"ok": result[0], "members": result[1]}
@@ -6826,13 +6055,11 @@ def validate_sealed_daily_archive_for_raw_removal(
 
   if members_tar is not None:
     if members_tar != members_sealed:
-      if log_fn:
-        log_fn(
-            "Skipping removal: tar vs sealed member mismatch for %s "
-            "(uncompressed count=%s sealed count=%s)"
-            % (sealed_path, len(members_tar), len(members_sealed)),
-            flush=True,
-        )
+      _log_skip(
+          "Skipping removal: tar vs sealed member mismatch for %s "
+          "(uncompressed count=%s sealed count=%s)"
+          % (sealed_path, len(members_tar), len(members_sealed)),
+      )
       result = (False, None)
       if validation_cache is not None:
         validation_cache[cache_key] = {"ok": result[0], "members": result[1]}
@@ -6890,9 +6117,11 @@ def ensure_daily_tar_restored_for_append(
         % (tar_path, sealed, remove_compressed),
         flush=True,
     )
-  if os.path.isfile(zst_path):
+  for sealed_src in (zst_path, gz_path):
+    if not os.path.isfile(sealed_src):
+      continue
     if decompress_compressed_to_tar(
-        zst_path,
+        sealed_src,
         tar_path,
         zstd_threads,
         remove_compressed=remove_compressed,
@@ -6900,21 +6129,7 @@ def ensure_daily_tar_restored_for_append(
     ):
       log_print(
           "INFO: archive decompress restore tar=%s from=%s remove_compressed=%s"
-          % (tar_path, zst_path, remove_compressed),
-          flush=True,
-      )
-      return True
-  if os.path.isfile(gz_path):
-    if decompress_compressed_to_tar(
-        gz_path,
-        tar_path,
-        zstd_threads,
-        remove_compressed=remove_compressed,
-        wait_for_other_owner=wait_for_other_owner,
-    ):
-      log_print(
-          "INFO: archive decompress restore tar=%s from=%s remove_compressed=%s"
-          % (tar_path, gz_path, remove_compressed),
+          % (tar_path, sealed_src, remove_compressed),
           flush=True,
       )
       return True
@@ -6954,20 +6169,11 @@ def replace_corrupt_tar_from_compressed_backup(
       if os.path.isfile(tar_path):
         os.remove(tar_path)
       remove_compressed = _decompress_should_unlink_compressed(tar_path)
-      if os.path.isfile(zst_path):
+      for sealed_src in (zst_path, gz_path):
+        if not os.path.isfile(sealed_src):
+          continue
         if decompress_compressed_to_tar(
-            zst_path,
-            tar_path,
-            zstd_threads,
-            remove_compressed=remove_compressed,
-            restore_reason="corrupt_tar",
-            restore_caller="replace_corrupt_tar_from_compressed_backup",
-            already_locked=True,
-        ):
-          return True
-      if os.path.isfile(gz_path):
-        if decompress_compressed_to_tar(
-            gz_path,
+            sealed_src,
             tar_path,
             zstd_threads,
             remove_compressed=remove_compressed,
@@ -7033,44 +6239,6 @@ def restore_tar_from_sealed_if_unreadable(
         flush=True,
     )
   return False
-
-
-def iter_archive_file_member_infos(
-  tar_path: str,
-  *,
-  thread_count: Any | None = None,
-  apply_priority_wrap: bool = True,
-) -> Iterator[Any]:
-  """
-  Yield tarfile member info for file members (shared scan surface).
-  
-  Args:
-    tar_path (str): String for tar path.
-    thread_count (Any | None): One of ``Any``, ``None``.
-    apply_priority_wrap (bool): Boolean flag for apply priority wrap.
-  
-  Yields:
-    Iterator[Any]: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> iter_archive_file_member_infos("x", None, True)  # doctest: +SKIP
-  """
-  if thread_count is None:
-    thread_count = get_archive_zstd_thread_count()
-  open_path = resolve_preferred_archive_path_for_read(tar_path)
-  with file_read_lock_wait(open_path):
-    with _open_tarfile_for_read(
-        open_path,
-        thread_count,
-        apply_priority_wrap=apply_priority_wrap,
-    ) as archive_tar:
-      try:
-        member_infos = iter(archive_tar)
-      except TypeError:
-        member_infos = archive_tar.getmembers()
-      for member_info in member_infos:
-        if member_info.isfile():
-          yield member_info
 
 
 def _run_gnu_tvf_file_members(
@@ -7578,27 +6746,15 @@ def _populate_members_from_sealed_scan(
     tar_path = daily_tar_path_from_compressed(canonical)
   zst_path, gz_path = compressed_sibling_paths(tar_path)
 
-  def _scan_fn(on_member: Any) -> Any:
-    """
-    Internal helper to handle scan function.
-    
-    Args:
-      on_member (Any): On member passed to this helper.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> _scan_fn(None)  # doctest: +SKIP
-    """
-    readable, _members, saw_duplicates, stream_error = (
-        _stream_compressed_archive_members(
-            sealed_path,
-            on_member,
-            apply_priority_wrap=False,
-        )
-    )
-    return readable, saw_duplicates, stream_error
+  _scan_fn = lambda on_member: (
+      lambda packed: (packed[0], packed[2], packed[3])
+  )(
+      _stream_compressed_archive_members(
+          sealed_path,
+          on_member,
+          apply_priority_wrap=False,
+      )
+  )
 
   members = None
   try:
@@ -8270,24 +7426,12 @@ def remove_verified_archived_raw_files(
       return
     mapping = build_archive_mapping(paths, tgz_archive_dir)
 
-  def _path_ingest_ready(path: str) -> Any:
-    """
-    Internal helper to check if the path ingest is ready.
-    
-    Args:
-      path (str): String for path.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> _path_ingest_ready("x")  # doctest: +SKIP
-    """
-    if ready_paths_set is not None:
-      return path in ready_paths_set
-    if ingest_ready_fn is None:
-      return True
-    return bool(ingest_ready_fn(path))
+  if ready_paths_set is not None:
+    _path_ingest_ready = lambda path: path in ready_paths_set
+  elif ingest_ready_fn is None:
+    _path_ingest_ready = lambda path: True
+  else:
+    _path_ingest_ready = lambda path: bool(ingest_ready_fn(path))
 
   skip_raw_norm = {
       os.path.normpath(p) for p in (skip_raw_paths or ()) if p
@@ -8295,6 +7439,7 @@ def remove_verified_archived_raw_files(
 
   if not paths:
     return
+  _log = lambda msg: log_fn(msg, flush=True) if log_fn else None
   if archive_stats_files_fn is None:
     import hpcperfstats.dbload.sync_timedb as _sync_timedb_mod
 
@@ -8316,41 +7461,34 @@ def remove_verified_archived_raw_files(
       ]
       if (not os.path.isfile(archive_path) and not os.path.isfile(tar_path)
           and bootstrap_ready):
-        if log_fn:
-          log_fn(
-              "Bootstrapping missing daily archive from %d raw stats file(s): %s"
-              % (len(bootstrap_ready), archive_path),
-              flush=True,
-          )
+        _log(
+            "Bootstrapping missing daily archive from %d raw stats file(s): %s"
+            % (len(bootstrap_ready), archive_path),
+        )
         if not archive_stats_files_fn((archive_path, list(bootstrap_ready))):
-          if log_fn:
-            log_fn(
-                "Skipping removal: could not bootstrap daily archive: %s"
-                % archive_path,
-                flush=True,
-            )
+          _log(
+              "Skipping removal: could not bootstrap daily archive: %s"
+              % archive_path,
+          )
           continue
       elif (not os.path.isfile(archive_path) and not os.path.isfile(tar_path)
-            and stats_paths and not bootstrap_ready and log_fn):
-        log_fn(
+            and stats_paths and not bootstrap_ready):
+        _log(
             "Skipping bootstrap for %s: %d path(s) without sampled timestamps in DB"
             % (archive_path, len(stats_paths)),
-            flush=True,
         )
     validation_targets.append((archive_path, list(stats_paths)))
 
-  if validation_targets:
-    workers = _get_archive_validation_worker_count(len(validation_targets))
-    validation_started = time.time()
-    success_count = 0
-    failed_count = 0
-    stats_paths_by_gz = {gz_path: stats_paths for gz_path, stats_paths in validation_targets}
-  else:
-    workers = 1
-    validation_started = time.time()
-    success_count = 0
-    failed_count = 0
-    stats_paths_by_gz = {}
+  workers = (
+      _get_archive_validation_worker_count(len(validation_targets))
+      if validation_targets else 1
+  )
+  validation_started = time.time()
+  success_count = 0
+  failed_count = 0
+  stats_paths_by_gz = {
+      gz_path: stats_paths for gz_path, stats_paths in validation_targets
+  }
 
   for gz_path, ok, members in _iter_archive_validation_results_stream(
       [gz_path for gz_path, _stats_paths in validation_targets],
@@ -8381,11 +7519,7 @@ def remove_verified_archived_raw_files(
             and deletes_this_pass >= max_deletes_per_pass
         ):
           return
-        if log_fn:
-          log_fn(
-              "removing stats file (scheduled archive maintenance): " + path,
-              flush=True,
-          )
+        _log("removing stats file (scheduled archive maintenance): " + path)
         if require_fingerprint_at_delete:
           fp = raw_stats_path_fingerprint(path)
           if not delete_raw_stats_path_if_fingerprint_unchanged(
@@ -8399,8 +7533,7 @@ def remove_verified_archived_raw_files(
             os.remove(path)
           deletes_this_pass += 1
         except OSError as exc:
-          if log_fn:
-            log_fn("Could not remove %s: %s" % (path, exc), flush=True)
+          _log("Could not remove %s: %s" % (path, exc))
   _log_archive_validation_summary(
       log_fn=log_fn,
       validation_targets_count=len(validation_targets),
@@ -8733,6 +7866,7 @@ def remove_verified_uncompressed_daily_tars(
   """
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
     return
+  _log = lambda msg: log_fn(msg, flush=True) if log_fn else None
   if validation_cache is None:
     validation_cache = {"hits": 0, "misses": 0}
   validation_targets = []
@@ -8753,16 +7887,13 @@ def remove_verified_uncompressed_daily_tars(
     validation_targets.append(sealed_path)
     tar_by_gz[sealed_path] = tar_path
 
-  if validation_targets:
-    workers = _get_archive_validation_worker_count(len(validation_targets))
-    validation_started = time.time()
-    success_count = 0
-    failed_count = 0
-  else:
-    workers = 1
-    validation_started = time.time()
-    success_count = 0
-    failed_count = 0
+  workers = (
+      _get_archive_validation_worker_count(len(validation_targets))
+      if validation_targets else 1
+  )
+  validation_started = time.time()
+  success_count = 0
+  failed_count = 0
 
   for gz_path, ok, members in _iter_archive_validation_results_stream(
       validation_targets,
@@ -8781,25 +7912,18 @@ def remove_verified_uncompressed_daily_tars(
         not force_remove_uncompressed_tar
         and remaining_raw_by_gz_has_paths_on_disk(remaining_raw_by_gz, gz_path)
     ):
-      if log_fn:
-        log_fn(
-            "Skipping removal of verified uncompressed tar (raw stats still "
-            "present for day): %s" % tar_path,
-            flush=True,
-        )
+      _log(
+          "Skipping removal of verified uncompressed tar (raw stats still "
+          "present for day): %s" % tar_path,
+      )
       continue
     try:
       with file_write_lock(tar_path):
         if os.path.isfile(tar_path):
           os.remove(tar_path)
-      if log_fn:
-        log_fn(
-            "Maintenance removed verified uncompressed tar: %s" % tar_path,
-            flush=True,
-        )
+      _log("Maintenance removed verified uncompressed tar: %s" % tar_path)
     except OSError as exc:
-      if log_fn:
-        log_fn("Could not remove verified tar %s: %s" % (tar_path, exc), flush=True)
+      _log("Could not remove verified tar %s: %s" % (tar_path, exc))
   _log_archive_validation_summary(
       log_fn=log_fn,
       validation_targets_count=len(validation_targets),
@@ -9047,12 +8171,10 @@ def tar_members_recoverable_despite_gnu_tf_fail(tar_path: str) -> bool:
   Examples:
     >>> tar_members_recoverable_despite_gnu_tf_fail("/missing.tar")
   """
-  if not os.path.isfile(tar_path):
-    return False
-  # Prefer a cheap GNU listing probe before streaming a large tar via tarfile.
-  if bool(_gnu_tvf_file_member_map_despite_fail(tar_path)):
-    return True
-  return tar_members_recoverable_via_tarfile(tar_path)
+  return (
+      tar_members_recoverable_via_partial_gnu_listing(tar_path)
+      or tar_members_recoverable_via_tarfile(tar_path)
+  )
 
 
 def _log_truncated_tar_recoverability(
@@ -9335,62 +8457,33 @@ def repair_truncated_daily_tar_in_place(
   except OSError:
     pass
 
-  def _repair_via_gnu_extract() -> bool:
-    """
-    Repair using GNU extract + recreate when partial listing succeeded.
-
-    Returns:
-      bool: True when repair completed.
-
-    Examples:
-      >>> # nested repair helper; invoked from repair_truncated_daily_tar_in_place
-      >>> True
-      True
-    """
-    expected = _gnu_tvf_file_member_map_despite_fail(tar_path)
-    if not expected:
-      return False
-    return _repair_truncated_daily_tar_via_extract_recreate(
-        tar_path,
-        expected,
-        log_fn=log_fn,
-    )
-
-  def _repair_via_tarfile_rewrite() -> bool:
-    """
-    Repair by streaming members through Python tarfile into a temp tar.
-
-    Returns:
-      bool: True when rewrite + verify succeeded.
-
-    Examples:
-      >>> # nested rewrite helper; invoked from repair_truncated_daily_tar_in_place
-      >>> True
-      True
-    """
-    _rewrite_daily_tar_largest_member_wins(
-        tar_path,
-        tmp_path,
-        tgz_archive_dir=tgz_archive_dir,
-        yield_phase=yield_phase,
-    )
-    if not verify_tar_archive_readable(tmp_path):
-      try:
-        os.remove(tmp_path)
-      except OSError:
-        pass
-      return False
-    os.replace(tmp_path, tar_path)
-    return True
-
   try:
     with file_write_lock(tar_path):
       ok = False
       if partial_gnu:
-        ok = _repair_via_gnu_extract()
+        expected = _gnu_tvf_file_member_map_despite_fail(tar_path)
+        ok = bool(expected) and _repair_truncated_daily_tar_via_extract_recreate(
+            tar_path,
+            expected,
+            log_fn=log_fn,
+        )
       else:
         try:
-          ok = _repair_via_tarfile_rewrite()
+          _rewrite_daily_tar_largest_member_wins(
+              tar_path,
+              tmp_path,
+              tgz_archive_dir=tgz_archive_dir,
+              yield_phase=yield_phase,
+          )
+          if not verify_tar_archive_readable(tmp_path):
+            try:
+              os.remove(tmp_path)
+            except OSError:
+              pass
+            ok = False
+          else:
+            os.replace(tmp_path, tar_path)
+            ok = True
         except Exception as exc:
           if log_fn:
             log_fn(
@@ -9400,7 +8493,12 @@ def repair_truncated_daily_tar_in_place(
             )
           ok = False
         if not ok and tar_members_recoverable_via_partial_gnu_listing(tar_path):
-          ok = _repair_via_gnu_extract()
+          expected = _gnu_tvf_file_member_map_despite_fail(tar_path)
+          ok = bool(expected) and _repair_truncated_daily_tar_via_extract_recreate(
+              tar_path,
+              expected,
+              log_fn=log_fn,
+          )
       if not ok:
         return False
     invalidate_after_daily_tar_mutation(
@@ -10220,35 +9318,6 @@ def reconcile_open_tar_with_sealed_zst(
   )
 
 
-def _dedupe_member_indices_keep_largest_file_per_name(members: Any) -> Any:
-  """
-  Indices to keep: all non-file members; for each file name, one entry with max.
-  
-    size (tie: last).
-  
-  Args:
-    members (Any): Iterable of filesystem paths as strings.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _dedupe_member_indices_keep_largest_file_per_name(None)
-  """
-  keep = set()
-  by_name = defaultdict(list)
-  for i, m in enumerate(members):
-    if m.isfile():
-      by_name[m.name].append((i, m.size))
-    else:
-      keep.add(i)
-  for _name, lst in by_name.items():
-    max_sz = max(s for _i, s in lst)
-    tie_indices = [i for i, s in lst if s == max_sz]
-    keep.add(tie_indices[-1])
-  return keep
-
-
 def dedupe_tar_keep_largest_file_per_member(
   tar_path: str,
   log_fn: Any = log_print,
@@ -10287,8 +9356,6 @@ def dedupe_tar_keep_largest_file_per_member(
   """
   from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
       DayCloseYieldError,
-      check_day_close_yield_or_continue,
-      day_close_yield_requested,
   )
 
   if not os.path.isfile(tar_path):
@@ -10301,52 +9368,12 @@ def dedupe_tar_keep_largest_file_per_member(
     pass
   try:
     with file_write_lock(tar_path):
-      file_keep = {}
-      last_yield_poll = time.monotonic()
-      with tarfile.open(tar_path, "r") as tin:
-        for idx, member in enumerate(_iter_tar_members(tin)):
-          last_yield_poll, _ = check_day_close_yield_or_continue(
-              tar_path,
-              last_poll_monotonic=last_yield_poll,
-              tgz_archive_dir=tgz_archive_dir,
-              phase=yield_phase,
-          )
-          if not member.isfile():
-            continue
-          prev = file_keep.get(member.name)
-          if prev is None or member.size > prev[0] or (
-              member.size == prev[0] and idx > prev[1]
-          ):
-            file_keep[member.name] = (member.size, idx)
-      with tarfile.open(tar_path, "r") as tin:
-        with tarfile.open(tmp_path, "w") as tout:
-          for idx, member in enumerate(_iter_tar_members(tin)):
-            last_yield_poll, _ = check_day_close_yield_or_continue(
-                tar_path,
-                last_poll_monotonic=last_yield_poll,
-                tgz_archive_dir=tgz_archive_dir,
-                phase=yield_phase,
-            )
-            if member.isfile():
-              keep = file_keep.get(member.name)
-              if keep is None or keep[1] != idx:
-                continue
-              fobj = tin.extractfile(member)
-              if fobj is None:
-                continue
-              try:
-                tout.addfile(member, fobj)
-              finally:
-                fobj.close()
-              continue
-            tout.addfile(member)
-      requested, reason = day_close_yield_requested(
+      _rewrite_daily_tar_largest_member_wins(
           tar_path,
+          tmp_path,
           tgz_archive_dir=tgz_archive_dir,
-          phase=yield_phase,
+          yield_phase=yield_phase,
       )
-      if requested:
-        raise DayCloseYieldError(tar_path, phase=yield_phase, reason=reason)
       if not verify_tar_archive_readable(tmp_path):
         try:
           os.remove(tmp_path)
@@ -10954,25 +9981,14 @@ def iter_tar_file_tasks(tar_path: str) -> Iterator[Any]:
     for name in names:
       yield (open_path, name)
 
-  def _restore_from_compressed() -> Any:
-    """
-    Internal helper to handle restore from compressed.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> _restore_from_compressed()  # doctest: +SKIP
-    """
-    zst_path, gz_path, tar_out = _compressed_backup_and_uncompressed_targets(
-        open_path,
-    )
-    return replace_corrupt_tar_from_compressed_backup(
-        tar_out,
-        zst_path,
-        gz_path,
-        get_archive_zstd_thread_count(),
-    )
+  _restore_from_compressed = lambda: (
+      lambda zst_path, gz_path, tar_out: replace_corrupt_tar_from_compressed_backup(
+          tar_out,
+          zst_path,
+          gz_path,
+          get_archive_zstd_thread_count(),
+      )
+  )(*_compressed_backup_and_uncompressed_targets(open_path))
 
   try:
     yield from _iter_members()
@@ -11024,13 +10040,7 @@ def parse_archive_date_from_daily_tar_path(tar_path: str) -> Any:
   Examples:
     >>> parse_archive_date_from_daily_tar_path("x")  # doctest: +SKIP
   """
-  base = os.path.basename(tar_path)
-  if not _DAILY_TAR_BASENAME_RE.match(base):
-    return None
-  try:
-    return datetime.strptime(base[:10], "%Y-%m-%d").date()
-  except ValueError:
-    return None
+  return calendar_date_from_daily_tar_path(tar_path)
 
 
 def is_daily_tar_sealed_dirty(
@@ -11569,17 +10579,11 @@ def _get_archive_seal_worker_count(total_candidates: Any) -> Any:
   Examples:
     >>> _get_archive_seal_worker_count(None)  # doctest: +SKIP
   """
-  if total_candidates <= 0:
-    return 1
-  env = os.environ.get("SYNC_ARCHIVE_SEAL_WORKERS", "").strip()
-  if env:
-    try:
-      configured = max(1, int(env))
-    except ValueError:
-      configured = max(1, int(cfg.get_archive_seal_parallel_workers()))
-  else:
-    configured = max(1, int(cfg.get_archive_seal_parallel_workers()))
-  return max(1, min(total_candidates, configured))
+  return _get_archive_validation_worker_count(
+      total_candidates,
+      env_key="SYNC_ARCHIVE_SEAL_WORKERS",
+      configured_fn=cfg.get_archive_seal_parallel_workers,
+  )
 
 
 def _seal_one_daily_tar(
@@ -11742,22 +10746,9 @@ def seal_dirty_daily_archives(
       _seal_one_daily_tar(tar_path, zst_path, gz_path, **seal_kwargs)
     return
 
-  def _seal_candidate(candidate: Any) -> None:
-    """
-    Internal helper to seal the candidate.
-    
-    Args:
-      candidate (Any): Candidate passed to this helper.
-    
-    Returns:
-      None
-    
-    Examples:
-      >>> _seal_candidate(None)  # doctest: +SKIP
-    """
-    tar_path, zst_path, gz_path = candidate
-    _seal_one_daily_tar(tar_path, zst_path, gz_path, **seal_kwargs)
-
+  _seal_candidate = lambda candidate: _seal_one_daily_tar(
+      candidate[0], candidate[1], candidate[2], **seal_kwargs
+  )
   for _candidate, _result, err in iter_bounded_thread_pool(
       candidates,
       _seal_candidate,
@@ -12095,45 +11086,6 @@ def migrate_one_daily_legacy_gz(
     return MIGRATE_GZ_STATUS_SKIPPED_LOCKED
 
 
-def _migrate_summary_init() -> Any:
-  """
-  Internal helper to handle migrate summary init.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _migrate_summary_init()  # doctest: +SKIP
-  """
-  return {
-      MIGRATE_GZ_STATUS_CONVERTED: 0,
-      MIGRATE_GZ_STATUS_DROPPED_ONLY: 0,
-      MIGRATE_GZ_STATUS_SKIPPED_LOCKED: 0,
-      MIGRATE_GZ_STATUS_SKIPPED_NO_GZ: 0,
-      MIGRATE_GZ_STATUS_FAILED: 0,
-      MIGRATE_GZ_STATUS_KEPT_MISMATCH: 0,
-      MIGRATE_GZ_STATUS_PLANNED: 0,
-  }
-
-
-def _migrate_summary_bump(summary: Any, status: Any) -> None:
-  """
-  Internal helper to handle migrate summary bump.
-  
-  Args:
-    summary (Any): Summary passed to this helper.
-    status (Any): Status passed to this helper.
-  
-  Returns:
-    None
-  
-  Examples:
-    >>> _migrate_summary_bump(None, None)  # doctest: +SKIP
-  """
-  if status in summary:
-    summary[status] = summary.get(status, 0) + 1
-
-
 def migrate_legacy_daily_gz_archives(
   daily_archive_dir: str,
   *,
@@ -12202,7 +11154,15 @@ def migrate_legacy_daily_gz_archives(
     if limit is not None and len(gz_paths) >= int(limit):
       break
 
-  summary = _migrate_summary_init()
+  summary = {
+      MIGRATE_GZ_STATUS_CONVERTED: 0,
+      MIGRATE_GZ_STATUS_DROPPED_ONLY: 0,
+      MIGRATE_GZ_STATUS_SKIPPED_LOCKED: 0,
+      MIGRATE_GZ_STATUS_SKIPPED_NO_GZ: 0,
+      MIGRATE_GZ_STATUS_FAILED: 0,
+      MIGRATE_GZ_STATUS_KEPT_MISMATCH: 0,
+      MIGRATE_GZ_STATUS_PLANNED: 0,
+  }
   if not gz_paths:
     summary["gz_remaining"] = 0
     return summary
@@ -12224,28 +11184,20 @@ def migrate_legacy_daily_gz_archives(
     worker_count = _get_archive_seal_worker_count(len(gz_paths))
   worker_count = max(1, min(int(worker_count), len(gz_paths)))
 
-  def _run_one(path: str) -> Any:
-    """
-    Internal helper to run the one.
-    
-    Args:
-      path (str): String for path.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> _run_one("x")  # doctest: +SKIP
-    """
-    if dry_run:
-      tar_path = daily_tar_path_from_compressed(path)
-      zst_path, _ = compressed_sibling_paths(tar_path)
-      return _planned_migrate_action_for_legacy_gz(path, tar_path, zst_path)
-    return migrate_one_daily_legacy_gz(path, **migrate_kwargs)
+  if dry_run:
+    _run_one = lambda path: _planned_migrate_action_for_legacy_gz(
+        path,
+        daily_tar_path_from_compressed(path),
+        compressed_sibling_paths(daily_tar_path_from_compressed(path))[0],
+    )
+  else:
+    _run_one = lambda path: migrate_one_daily_legacy_gz(path, **migrate_kwargs)
 
   if worker_count <= 1 or len(gz_paths) <= 1:
     for gz_path in gz_paths:
-      _migrate_summary_bump(summary, _run_one(gz_path))
+      status = _run_one(gz_path)
+      if status in summary:
+        summary[status] = summary.get(status, 0) + 1
   else:
     for gz_path, result, err in iter_bounded_thread_pool(
         gz_paths,
@@ -12254,7 +11206,8 @@ def migrate_legacy_daily_gz_archives(
     ):
       if err is not None:
         raise err
-      _migrate_summary_bump(summary, result)
+      if result in summary:
+        summary[result] = summary.get(result, 0) + 1
 
   remaining = sum(1 for _ in iter_daily_gz_paths(daily_archive_dir))
   summary["gz_remaining"] = remaining

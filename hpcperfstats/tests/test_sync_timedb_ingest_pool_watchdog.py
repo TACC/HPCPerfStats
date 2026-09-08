@@ -85,7 +85,7 @@ def test_abandon_timed_out_ingest_is_noop_even_past_budget(monkeypatch):
   assert identity in inflight
   assert identity in claims
   assert submitted == {identity: 100.0}
-  assert client.get(jq.job_lease_key(jq.JOB_KIND_INGEST, identity)) is not None
+  assert client.lease_token("ingest", identity) is not None
   assert jq.read_job_attempt(client, kind=jq.JOB_KIND_INGEST, identity=identity) == 0
 
 
@@ -187,7 +187,7 @@ def test_recycle_requeues_healthy_survivors_without_burning_an_attempt():
 
   assert requeued == 1
   assert inflight == {} and claims == {} and submitted == {}
-  assert client.zscore(jq.job_queue_key(jq.JOB_KIND_INGEST), survivor) == -3.0
+  assert client.ingest_score(survivor) == -3.0
   assert jq.read_job_attempt(client, kind=jq.JOB_KIND_INGEST, identity=survivor) == 0
 
 

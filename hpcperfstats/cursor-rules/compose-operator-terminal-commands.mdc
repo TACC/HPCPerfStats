@@ -568,8 +568,8 @@ from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 arch = cfg.get_archive_dir_path()
 store = SyncTimedbJobStore(arch)
-print(\"ingest\", store.zcard(\"hps:job:queue:ingest\"), \"append\", store.llen(\"hps:job:queue:append\"))
-print(\"discover\", store.llen(\"hps:job:queue:discover\"), \"day_close\", store.llen(\"hps:job:queue:day_close\"))
+print(\"ingest\", store.queued_count(\"ingest\"), \"append\", store.queued_count(\"append\"))
+print(\"discover\", store.queued_count(\"discover\"), \"day_close\", store.queued_count(\"day_close\"))
 "'
 ```
 

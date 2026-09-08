@@ -41,11 +41,11 @@ def test_claim_ingest_moves_member_to_inflight_under_lease():
   assert claim.identity == "p|1|1"
   assert claim.score == 5.0
   assert claim.deadline == pytest.approx(1060.0)
-  assert store.zcard(jq.job_queue_key("ingest")) == 0
+  assert store.queued_count("ingest") == 0
   inflight = jq.read_inflight_entries(store, kind="ingest")
   assert set(inflight) == {"p|1|1"}
   assert inflight["p|1|1"][1] == OWNER_A
-  assert store.get(jq.job_lease_key("ingest", "p|1|1")) == OWNER_A
+  assert store.lease_token("ingest", "p|1|1") == OWNER_A
 
 
 def test_claim_skips_leased_member_and_deprioritizes_it():
@@ -86,8 +86,8 @@ def test_crashed_owner_ingest_job_is_reaped_back_onto_queue():
 
   assert reaped == ["p|1|1"]
   assert jq.read_inflight_entries(store, kind="ingest") == {}
-  assert store.get(jq.job_lease_key("ingest", "p|1|1")) is None
-  assert store.zscore(jq.job_queue_key("ingest"), "p|1|1") == (
+  assert store.lease_token("ingest", "p|1|1") is None
+  assert store.ingest_score("p|1|1") == (
       7.0 + jq.LEASE_CONFLICT_SCORE_PENALTY
   )
 
@@ -116,7 +116,7 @@ def test_reaped_job_reclaim_survives_late_ack_from_dead_owner():
 
   inflight = jq.read_inflight_entries(store, kind="ingest")
   assert inflight["p|1|1"][1] == OWNER_B
-  assert store.get(jq.job_lease_key("ingest", "p|1|1")) == OWNER_B
+  assert store.lease_token("ingest", "p|1|1") == OWNER_B
   assert jq.read_job_attempt(store, kind="ingest", identity="p|1|1") == 1
   assert jq.read_job_fingerprint(
       store, kind="ingest", identity="p|1|1",
@@ -162,7 +162,7 @@ def test_ack_clears_inflight_lease_payload_and_pending():
   )
 
   assert jq.read_inflight_entries(store, kind="append") == {}
-  assert store.get(jq.job_lease_key("append", "/raw/a")) is None
+  assert store.lease_token("append", "/raw/a") is None
   assert jq.read_job_attempt(store, kind="append", identity="/raw/a") == 0
   assert jq.enqueue_list_job(
       store, kind="append", identity="/raw/a", dedupe=True,
@@ -185,9 +185,9 @@ def test_requeue_returns_ingest_job_with_explicit_score():
       score=claim.score,
   )
 
-  assert store.zscore(jq.job_queue_key("ingest"), "p|1|1") == 7.0
+  assert store.ingest_score("p|1|1") == 7.0
   assert jq.read_inflight_entries(store, kind="ingest") == {}
-  assert store.get(jq.job_lease_key("ingest", "p|1|1")) is None
+  assert store.lease_token("ingest", "p|1|1") is None
 
 
 def test_requeue_without_score_lands_in_catchup_band():
@@ -201,7 +201,7 @@ def test_requeue_without_score_lands_in_catchup_band():
       store, kind="ingest", identity="p|1|1", owner_token=OWNER_A,
   )
 
-  score = store.zscore(jq.job_queue_key("ingest"), "p|1|1")
+  score = store.ingest_score("p|1|1")
   assert jq.decode_ingest_band(score) == "catchup"
 
 
@@ -262,7 +262,7 @@ def test_steal_dead_owner_requeues_inflight():
       store, band="hot", owner_token=OWNER_A, ttl_s=60, now_s=1000.0,
   )
   assert claim is not None
-  assert store.zcard(jq.job_queue_key("ingest")) == 0
+  assert store.queued_count("ingest") == 0
 
   assert jq.steal_job_lease_if_owner_dead(
       store,
@@ -272,9 +272,9 @@ def test_steal_dead_owner_requeues_inflight():
       hostname="host1",
       boot_id="boot1",
   )
-  assert store.get(jq.job_lease_key("ingest", "/raw/steal")) is None
+  assert store.lease_token("ingest", "/raw/steal") is None
   assert jq.read_inflight_entries(store, kind="ingest") == {}
-  assert store.zscore(jq.job_queue_key("ingest"), "/raw/steal") is not None
+  assert store.ingest_score("/raw/steal") is not None
 
 
 def test_hot_range_claims_negative_scores():
@@ -299,7 +299,7 @@ def test_steal_lease_requires_local_host_and_boot():
       hostname="host1",
       boot_id="boot1",
   )
-  assert store.get(jq.job_lease_key("append", "day")) == "n:otherhost:boot1:99999"
+  assert store.lease_token("append", "day") == "n:otherhost:boot1:99999"
 
   store._leases[(jq.JOB_KIND_APPEND, "day")] = "n:host1:oldboot:99999"
   assert not jq.steal_job_lease_if_owner_dead(
@@ -320,8 +320,8 @@ def test_steal_lease_requires_local_host_and_boot():
       hostname="host1",
       boot_id="boot1",
   )
-  assert store.get(jq.job_lease_key("append", "day")) is None
-  assert store.llen(jq.job_queue_key("append")) == 0
+  assert store.lease_token("append", "day") is None
+  assert store.queued_count("append") == 0
 
 
 def test_steal_list_without_inflight_does_not_rpush():
@@ -329,7 +329,7 @@ def test_steal_list_without_inflight_does_not_rpush():
   store = _store()
   identity = "/raw/ghost-append"
   store._leases[(jq.JOB_KIND_APPEND, identity)] = "n:host1:boot1:99999"
-  assert store.llen(jq.job_queue_key("append")) == 0
+  assert store.queued_count("append") == 0
   assert jq.steal_job_lease_if_owner_dead(
       store,
       kind="append",
@@ -338,8 +338,8 @@ def test_steal_list_without_inflight_does_not_rpush():
       hostname="host1",
       boot_id="boot1",
   )
-  assert store.get(jq.job_lease_key("append", identity)) is None
-  assert store.llen(jq.job_queue_key("append")) == 0
+  assert store.lease_token("append", identity) is None
+  assert store.queued_count("append") == 0
 
 
 def test_steal_lease_skips_legacy_two_field_token():
@@ -353,7 +353,7 @@ def test_steal_lease_skips_legacy_two_field_token():
       hostname="host1",
       boot_id="boot1",
   )
-  assert store.get(jq.job_lease_key("append", "day")) == "legacy:99999"
+  assert store.lease_token("append", "day") == "legacy:99999"
 
 
 def test_owner_token_embeds_host_and_boot():
@@ -373,7 +373,7 @@ def test_dedupe_enqueue_skips_queued_and_inflight_identities():
   assert jq.enqueue_list_job(
       store, kind="append", identity="/raw/a", dedupe=True,
   ) == 0
-  assert store.llen(jq.job_queue_key("append")) == 1
+  assert store.queued_count("append") == 1
 
   claim = jq.claim_list_job(
       store, kind="append", owner_token=OWNER_A, ttl_s=60, now_s=1000.0,
@@ -382,7 +382,7 @@ def test_dedupe_enqueue_skips_queued_and_inflight_identities():
   assert jq.enqueue_list_job(
       store, kind="append", identity="/raw/a", dedupe=True,
   ) == 0
-  assert store.llen(jq.job_queue_key("append")) == 0
+  assert store.queued_count("append") == 0
 
 
 def test_list_claim_conflict_puts_member_back_on_queue():
@@ -477,7 +477,7 @@ def test_reap_recovers_list_kind_without_score():
       store, kind="day_close", now_s=1200.0, ttl_s=60,
   )
   assert reaped == ["/d/x.tar"]
-  assert store.lrange(jq.job_queue_key("day_close"), 0, -1) == ["/d/x.tar"]
+  assert store.list_slice("day_close", 0, -1) == ["/d/x.tar"]
 
 
 def test_reap_respects_limit():
@@ -492,4 +492,4 @@ def test_reap_respects_limit():
       store, kind="ingest", now_s=1200.0, limit=2, ttl_s=60,
   )
   assert len(reaped) == 2
-  assert store.hlen(jq.job_inflight_key("ingest")) == 3
+  assert store.inflight_count("ingest") == 3

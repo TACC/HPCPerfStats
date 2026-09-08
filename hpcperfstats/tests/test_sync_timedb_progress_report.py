@@ -109,16 +109,22 @@ def test_record_prefer_day_and_emit_reset():
 
 
 def test_resolve_oldest_queued_day_from_catchup_score():
-  class _C:
-    def zrangebyscore(self, *a, **k):
-      d = date(2025, 5, 5)
-      score = jq.encode_ingest_score(
-          band="catchup", day=d, today=d, identity="p|1|2",
-      )
-      return [("p|1|2", float(score))]
+  d = date(2025, 5, 5)
+  score = jq.encode_ingest_score(
+      band="catchup", day=d, today=d, identity="p|1|2",
+  )
 
-    def lindex(self, *a, **k):
-      return None
+  class _C:
+    def ingest_identities(self):
+      return ["p|1|2"]
+
+    def ingest_score(self, identity):
+      del identity
+      return float(score)
+
+    def list_slice(self, kind, start, end):
+      del kind, start, end
+      return []
 
   day, age = pr.resolve_oldest_queued_day(
       _C(),
@@ -147,11 +153,16 @@ def test_day_token_from_day_close_identity_parses_tar_path():
 
 def test_resolve_oldest_queued_day_from_day_close_tar_path():
   class _C:
-    def zrangebyscore(self, *a, **k):
+    def ingest_identities(self):
       return []
 
-    def lindex(self, *a, **k):
-      return "/hpcperfstats/daily_archive/2026-07-15.tar"
+    def ingest_score(self, identity):
+      del identity
+      return None
+
+    def list_slice(self, kind, start, end):
+      del kind, start, end
+      return ["/hpcperfstats/daily_archive/2026-07-15.tar"]
 
   day, age = pr.resolve_oldest_queued_day(
       _C(),
