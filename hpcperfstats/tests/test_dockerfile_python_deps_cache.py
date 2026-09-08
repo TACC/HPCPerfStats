@@ -202,10 +202,12 @@ def test_hpcperfstats_child_stages_do_not_reinstall_python_deps():
   for stage_name in ("hpcperfstats-full", "hpcperfstats-pipeline-refresh"):
     stage = _stage_body(dockerfile, stage_name)
     assert "pip install" not in stage, stage_name
-    assert "collectstatic --noinput" in stage, stage_name
+    assert "collectstatic --noinput --clear" in stage, stage_name
     compress_token = "-m hpcperfstats.site.lib.compress_static_sidecars"
     assert compress_token in stage, stage_name
-    assert stage.index("collectstatic --noinput") < stage.index(compress_token)
+    assert stage.index("collectstatic --noinput --clear") < stage.index(
+        compress_token
+    )
 
 
 def test_hpcperfstats_full_is_last_dockerfile_stage():
@@ -232,7 +234,7 @@ def test_dockerfile_documents_spa_volume_fingerprint_heal_contract():
   assert "services-conf/django_startup.sh" in dockerfile
   full = _stage_body(dockerfile, "hpcperfstats-full")
   assert "masks" in full.lower() or "mask" in full.lower()
-  assert "collectstatic --noinput" in full
+  assert "collectstatic --noinput --clear" in full
 
 
 def test_dockerfile_pins_dual_cpython_prefixes_from_python_build():

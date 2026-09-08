@@ -66,7 +66,7 @@ chown -R hpcperfstats:hpcperfstats /hpcperfstats/
 # Apply reviewed, committed migrations only — never auto-generate in production
 # (makemigrations would write ephemeral DDL into site-packages and race migrate).
 /usr/local/bin/python3 hpcperfstats/site/manage.py migrate
-/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput
+/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput --clear
 # Fail-closed SPA shells; auto-heal Vite-era STATIC_ROOT/frontend from package Next export.
 /usr/local/bin/python3 - <<'PY'
 import os

@@ -183,7 +183,7 @@ def test_django_startup_invokes_spa_static_root_heal():
   script_path = repo_root / "services-conf" / "django_startup.sh"
   content = script_path.read_text()
 
-  assert "collectstatic --noinput" in content
+  assert "collectstatic --noinput --clear" in content
   assert "ensure_spa_shells_from_django_settings" in content
   assert "hpcperfstats.site.lib.spa_static_root_heal" in content
 
@@ -193,7 +193,7 @@ def test_django_startup_compresses_static_sidecars_after_heal():
   script_path = repo_root / "services-conf" / "django_startup.sh"
   content = script_path.read_text()
 
-  collect_idx = content.index("collectstatic --noinput")
+  collect_idx = content.index("collectstatic --noinput --clear")
   heal_idx = content.index("ensure_spa_shells_from_django_settings")
   compress_idx = content.index(
       "-m hpcperfstats.site.lib.compress_static_sidecars"

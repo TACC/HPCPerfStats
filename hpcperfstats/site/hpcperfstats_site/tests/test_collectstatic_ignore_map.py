@@ -32,6 +32,7 @@ def test_collectstatic_skips_js_map_files(tmp_path: Path, settings):
   (nested / "chunk.js.map").write_text("{}\n", encoding="utf-8")
   dest = tmp_path / "collected"
   dest.mkdir()
+  (dest / "obsolete.js").write_text("stale leftover\n", encoding="utf-8")
   settings.STATICFILES_DIRS = [str(src)]
   settings.STATIC_ROOT = str(dest)
   settings.STATICFILES_FINDERS = (
@@ -40,5 +41,6 @@ def test_collectstatic_skips_js_map_files(tmp_path: Path, settings):
   call_command("collectstatic", interactive=False, verbosity=0, clear=True)
   assert (dest / "app.js").is_file()
   assert (dest / "chunks" / "chunk.js").is_file()
+  assert not (dest / "obsolete.js").exists()
   assert not (dest / "app.js.map").exists()
   assert not (dest / "chunks" / "chunk.js.map").exists()

@@ -726,7 +726,7 @@ COPY .build/pipeline-rebuild-frontend/ \
 RUN chown -R hpcperfstats:hpcperfstats \
     /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
 
-RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput && /usr/local/bin/python3 -m hpcperfstats.site.lib.compress_static_sidecars"
+RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput --clear && /usr/local/bin/python3 -m hpcperfstats.site.lib.compress_static_sidecars"
 
 # Default image: npm-built frontend from frontend-builder (last stage = default target).
 FROM hpcperfstats-base AS hpcperfstats-full
@@ -743,4 +743,4 @@ COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
 # package vs volume machine/index.html and replaces STATIC_ROOT/frontend on
 # drift, then compress_static_sidecars writes Brotli/Gzip siblings. Optional
 # SPA-only hot path: scripts/rebuild_frontend.sh (no full rebuild).
-RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput && /usr/local/bin/python3 -m hpcperfstats.site.lib.compress_static_sidecars"
+RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput --clear && /usr/local/bin/python3 -m hpcperfstats.site.lib.compress_static_sidecars"

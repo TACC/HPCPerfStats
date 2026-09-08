@@ -442,8 +442,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    On first startup, the `web` container runs Django migrations
    (`manage.py migrate` only — schema changes ship as reviewed, committed
    migration files; production startup never runs `makemigrations`) and
-   `collectstatic` so **`STATIC_ROOT`** (the volume nginx serves as `/static/`)
-   is populated before Gunicorn starts. Collectstatic omits ``*.map`` source
+   `collectstatic --noinput --clear` so **`STATIC_ROOT`** (the volume nginx serves as `/static/`)
+   is emptied of unused leftovers then populated before Gunicorn starts. Collectstatic omits ``*.map`` source
    maps. After `collectstatic`, startup verifies
    SPA shells under **`STATIC_ROOT/frontend/{machine,pub}/index.html`**. If the
    package image lacks the shells, web fail-closes. Volume fingerprint heal
