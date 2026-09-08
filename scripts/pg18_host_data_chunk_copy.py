@@ -387,6 +387,9 @@ def count_source_chunk_rows(conn: Connection, chunk: ChunkRow) -> int:
   """
   Count rows in the source chunk relation.
 
+  Disables ``statement_timeout`` for this session first so large compressed
+  chunks are not canceled mid-count.
+
   Args:
     conn (Connection): Open source connection.
     chunk (ChunkRow): Source chunk metadata.
@@ -399,6 +402,7 @@ def count_source_chunk_rows(conn: Connection, chunk: ChunkRow) -> int:
     'count_source_chunk_rows'
   """
   with conn.cursor() as cur:
+    cur.execute("SET statement_timeout = 0")
     cur.execute(f"SELECT count(*) FROM {chunk.regclass}")
     row = cur.fetchone()
   return int(row[0]) if row else 0
@@ -407,6 +411,9 @@ def count_source_chunk_rows(conn: Connection, chunk: ChunkRow) -> int:
 def count_target_range_rows(conn: Connection, chunk: ChunkRow) -> int:
   """
   Count target ``host_data`` rows in ``[range_start, range_end)``.
+
+  Disables ``statement_timeout`` for this session first so large ranges are
+  not canceled mid-count (prod: ``QueryCanceled`` on skip-check counts).
 
   Args:
     conn (Connection): Open target connection.
@@ -420,6 +427,7 @@ def count_target_range_rows(conn: Connection, chunk: ChunkRow) -> int:
     'count_target_range_rows'
   """
   with conn.cursor() as cur:
+    cur.execute("SET statement_timeout = 0")
     cur.execute(
         "SELECT count(*) FROM host_data "
         "WHERE time >= %s AND time < %s",

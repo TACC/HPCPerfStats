@@ -388,3 +388,59 @@ def test_run_chunk_copies_rejects_non_positive_workers() -> None:
             force=False,
             workers=0,
         )
+
+
+def test_count_target_range_rows_disables_statement_timeout_first() -> None:
+    """Regression: large host_data range counts hit QueryCanceled without timeout=0."""
+    mod = _load_mod()
+    chunk = _sample_chunk(mod)
+    executed: list[str] = []
+
+    class _FakeCursor:
+        def __enter__(self) -> "_FakeCursor":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def execute(self, sql: str, _params: object = None) -> None:
+            executed.append(sql if isinstance(sql, str) else str(sql))
+
+        def fetchone(self) -> tuple[int]:
+            return (1,)
+
+    class _FakeConn:
+        def cursor(self) -> _FakeCursor:
+            return _FakeCursor()
+
+    mod.count_target_range_rows(_FakeConn(), chunk)
+    assert executed, "expected SQL"
+    assert "statement_timeout" in executed[0]
+    assert any("count(*)" in s.lower() for s in executed[1:])
+
+
+def test_count_source_chunk_rows_disables_statement_timeout_first() -> None:
+    mod = _load_mod()
+    chunk = _sample_chunk(mod)
+    executed: list[str] = []
+
+    class _FakeCursor:
+        def __enter__(self) -> "_FakeCursor":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def execute(self, sql: str, _params: object = None) -> None:
+            executed.append(sql if isinstance(sql, str) else str(sql))
+
+        def fetchone(self) -> tuple[int]:
+            return (1,)
+
+    class _FakeConn:
+        def cursor(self) -> _FakeCursor:
+            return _FakeCursor()
+
+    mod.count_source_chunk_rows(_FakeConn(), chunk)
+    assert "statement_timeout" in executed[0]
+    assert any("count(*)" in s.lower() for s in executed[1:])
