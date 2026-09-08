@@ -39,6 +39,7 @@ Remove or never publish under served trees:
 
 - Next App Router static-export **`index.txt` / `__next.*.txt`** — RSC flight payloads used by client navigation.
 - `index.html`, `_next/static/**` JS/CSS/fonts/media, `robots.txt`, `404.html` as emitted by the production export.
+- **Precompressed sidecars** **`*.br`** and **`*.gz`** beside HTTP-served text assets (JS/CSS/SVG/JSON/txt/xml). **Allowed on disk**; nginx **`brotli_static` / `gzip_static`** serve them when the client asks for the **original URL**. Direct **`*.br` / `*.gz` / `*.zst` HTTP URLs** under `/static/` **404**. Do **not** write sidecars for SPA **`machine/**/*.html`** / **`pub/**/*.html`** (heal rewrites those files). Do **not** purge `.br`/`.gz` in `spa_static_root_heal` or `proxy_entrypoint`.
 
 ## Runtime contract (proxy)
 
@@ -48,7 +49,7 @@ Remove or never publish under served trees:
 4. `copy-next-export.mjs` may still write private artifacts under `hpcperfstats_site/edge_nginx/` (not collected as `/static/`).
 5. **`proxy_entrypoint.sh`** may regenerate private `/etc/nginx/nginx-csp-*.inc` for diagnostics/validation; those files are **not** included by SPA locations. Validation must reject **`script-src 'unsafe-inline'`** only — path-justified **`style-src 'unsafe-inline'`** for Bokeh is required and must not crash-loop the proxy.
 6. **`spa_static_root_heal`** purges leaked `*.inc` from `STATIC_ROOT/frontend` and injects CSP meta after verify/heal.
-7. **`/static/`** **404**s denylisted suffixes including `*.inc`.
+7. **`/static/`** **404**s denylisted suffixes including `*.inc` and direct sidecar `*.br` / `*.gz` / `*.zst`.
 
 ## Agent checklist (same task)
 

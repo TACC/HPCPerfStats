@@ -84,6 +84,7 @@ def test_nginx_static_files_conf_includes_edge_headers_on_every_owned_location()
   for location in (
       "location = /favicon.ico",
       "location /static/",
+      "location /static/frontend/_next/",
       "location /media/",
       "location = /machine",
       "location ^~ /machine/",
@@ -110,11 +111,20 @@ def test_nginx_static_files_conf_spa_uses_document_csp_not_nginx_hash_header():
 
 
 def test_nginx_static_files_conf_denies_non_web_static_suffixes():
-  """Config/docs/source-map leftovers under /static/ must 404 at the edge."""
+  """Config/docs/source-map leftovers and direct sidecar URLs under /static/ must 404."""
   conf = (_SERVICES / "nginx-static-files.conf").read_text(encoding="utf-8")
-  assert r"location ~* ^/static/.*\.(inc|md|markdown|map|example|sh|py|toml|ini|ya?ml)$" in conf
-  deny_idx = conf.index(r"location ~* ^/static/.*\.(inc|md|markdown|map|example|sh|py|toml|ini|ya?ml)$")
+  deny = r"location ~* ^/static/.*\.(inc|md|markdown|map|example|sh|py|toml|ini|ya?ml|br|gz|zst)$"
+  assert deny in conf
+  deny_idx = conf.index(deny)
   assert "return 404" in conf[deny_idx : deny_idx + 400]
+  assert "location /static/frontend/_next/" in conf
+  assert "location ^~ /static/frontend/_next/" not in conf
+  next_loc = conf.split("location /static/frontend/_next/")[1].split("location ")[0]
+  assert "expires 1y;" in next_loc
+  assert "max-age=31536000" in next_loc
+  static_loc = conf.split("location /static/")[1].split("location ")[0]
+  assert "expires 30d;" in static_loc
+  assert "max-age=2592000" in static_loc
 
 
 def test_proxy_entrypoint_writes_csp_only_under_etc_nginx():
@@ -223,6 +233,7 @@ def test_nginx_django_proxy_common_hides_upstream_security_headers():
   common = (_SERVICES / "nginx-django-proxy-common.inc").read_text(encoding="utf-8")
   assert "proxy_pass" not in common
   assert "proxy_set_header Host $host;" in common
+  assert 'proxy_set_header Accept-Encoding "";' in common
   for header in _UPSTREAM_HIDE_HEADERS:
     assert f"proxy_hide_header {header};" in common
   assert "include /etc/nginx/nginx-edge-security-headers.inc" in common
@@ -293,6 +304,8 @@ def test_proxy_dockerfile_wires_ocsp_trust_and_startup_helpers():
       "nginx-csp-django-html.inc",
       "nginx-static-files.conf",
       "nginx-django-proxy-common.inc",
+      "nginx-compress-proxy.inc",
+      "nginx-compress-static.inc",
   ):
     assert f"COPY services-conf/{mount_only}" not in dockerfile
 
@@ -312,6 +325,44 @@ def test_proxy_entrypoint_sh_is_tracked_not_gitignored():
   assert ignored.returncode != 0, ignored.stdout + ignored.stderr
   assert (_SERVICES / "proxy_entrypoint.sh").is_file()
   assert (_SERVICES / "proxy_entrypoint.sh").stat().st_mode & 0o111
+
+
+def test_nginx_hybrid_compression_location_split():
+  """Zstd on proxy/SPA; Brotli/Gzip sidecars on /static/; no CORS wildcard."""
+  main = (_SERVICES / "nginx-main.conf").read_text(encoding="utf-8")
+  vhost = (_SERVICES / "nginx.conf").read_text(encoding="utf-8")
+  static_conf = (_SERVICES / "nginx-static-files.conf").read_text(encoding="utf-8")
+  common = (_SERVICES / "nginx-django-proxy-common.inc").read_text(encoding="utf-8")
+  proxy_inc = (_SERVICES / "nginx-compress-proxy.inc").read_text(encoding="utf-8")
+  static_inc = (_SERVICES / "nginx-compress-static.inc").read_text(encoding="utf-8")
+  assert "gzip off;" in main
+  assert "brotli off;" in main
+  assert "zstd off;" in main
+  assert "gzip_min_length 256;" in main
+  assert "brotli_min_length 256;" in main
+  assert "zstd_min_length 256;" in main
+  assert "gzip_vary on;" in main
+  assert "gzip on;" not in vhost
+  assert "brotli on;" not in vhost
+  assert "zstd on;" in proxy_inc
+  assert "zstd_comp_level 3;" in proxy_inc
+  assert "brotli_comp_level 4;" in proxy_inc
+  assert "brotli_static off;" in proxy_inc
+  assert "gzip_static off;" in proxy_inc
+  assert "zstd off;" in static_inc
+  assert "brotli_static on;" in static_inc
+  assert "gzip_static on;" in static_inc
+  assert "include /etc/nginx/nginx-compress-proxy.inc;" in common
+  machine = static_conf.split("location ^~ /machine/")[1].split("location ")[0]
+  pub = static_conf.split("location ^~ /pub/")[1].split("location ")[0]
+  assert "include /etc/nginx/nginx-compress-proxy.inc;" in machine
+  assert "include /etc/nginx/nginx-compress-proxy.inc;" in pub
+  assert "include /etc/nginx/nginx-compress-static.inc;" in static_conf
+  assert "Access-Control-Allow-Origin *" not in static_conf
+  assert "Access-Control-Allow-Origin *" not in static_inc
+  assert "Access-Control-Allow-Origin *" not in proxy_inc
+  media = static_conf.split("location /media/")[1].split("location ")[0]
+  assert "nginx-compress-" not in media
 
 
 def test_nginx_csp_no_active_inc_forbids_scripts_and_styles():

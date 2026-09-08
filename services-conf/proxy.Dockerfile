@@ -21,6 +21,10 @@ ARG NGX_BROTLI_VERSION=1.0.0rc
 ARG NGX_BROTLI_SHA256=c85cdcfd76703c95aa4204ee4c2e619aa5b075cac18f428202f65552104add3b
 ARG BROTLI_VERSION=1.1.0
 ARG BROTLI_SHA256=e720a6ca29428b803f4ad165371771f5398faba397edf6778837a18599ea13ff
+ARG ZSTD_VERSION=1.5.7
+ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
+ARG ZSTD_NGINX_MODULE_VERSION=0.2.1
+ARG ZSTD_NGINX_MODULE_SHA256=1ea7bf2f9973593a8c3055fe7d99e4e2d226c35b12b674830f79d5d22f079465
 
 ENV OPT_CFLAGS_LIBS="-O3 -march=native -mtune=native -flto -g0"
 
@@ -125,6 +129,34 @@ RUN set -eux; \
   test -f /opt/brotli/lib/libbrotlicommon.a; \
   rm -f /tmp/ngx_brotli.tar.gz /tmp/brotli.tar.gz
 
+# --- zstd (static libzstd.a) + GetPageSpeed zstd-nginx-module (tokers fork) ---
+# Proxy has no /opt/zlib-ng or /opt/lz4; do not enable HAVE_ZLIB/HAVE_LZ4 (those
+# are for the db/Python zstd CLI). Do not lib-mt: nginx already has one worker
+# per CPU. Fold libzstd.a into nginx; do not COPY /opt/zstd into the runtime.
+RUN set -eux; \
+  curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" \
+    -o /tmp/zstd.tar.gz; \
+  echo "${ZSTD_SHA256}  /tmp/zstd.tar.gz" | sha256sum -c -; \
+  mkdir -p /usr/src/zstd; \
+  tar -xzf /tmp/zstd.tar.gz -C /usr/src/zstd --strip-components=1; \
+  make -j"$(nproc)" -C /usr/src/zstd/lib libzstd.a \
+    PREFIX=/opt/zstd \
+    MOREFLAGS="${OPT_CFLAGS_LIBS}" \
+    ZSTD_LEGACY_SUPPORT=0 \
+    HAVE_ZLIB=0 \
+    HAVE_LZ4=0; \
+  make -C /usr/src/zstd/lib install-static PREFIX=/opt/zstd; \
+  make -C /usr/src/zstd/lib install-includes PREFIX=/opt/zstd; \
+  test -f /opt/zstd/lib/libzstd.a; \
+  test -f /opt/zstd/include/zstd.h; \
+  curl -fsSL "https://github.com/GetPageSpeed/zstd-nginx-module/archive/refs/tags/${ZSTD_NGINX_MODULE_VERSION}.tar.gz" \
+    -o /tmp/zstd-nginx-module.tar.gz; \
+  echo "${ZSTD_NGINX_MODULE_SHA256}  /tmp/zstd-nginx-module.tar.gz" | sha256sum -c -; \
+  mkdir -p /usr/src/zstd-nginx-module; \
+  tar -xzf /tmp/zstd-nginx-module.tar.gz -C /usr/src/zstd-nginx-module --strip-components=1; \
+  test -f /usr/src/zstd-nginx-module/config; \
+  rm -rf /usr/src/zstd /tmp/zstd.tar.gz /tmp/zstd-nginx-module.tar.gz
+
 # --- nginx ---
 RUN set -eux; \
   curl -fsSL "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
@@ -133,6 +165,8 @@ RUN set -eux; \
   mkdir -p /usr/src/nginx; \
   tar -xzf /tmp/nginx.tar.gz -C /usr/src/nginx --strip-components=1; \
   cd /usr/src/nginx; \
+  export ZSTD_INC=/opt/zstd/include; \
+  export ZSTD_LIB=/opt/zstd/lib; \
   ./configure \
     --prefix=/opt/nginx \
     --sbin-path=/usr/sbin/nginx \
@@ -154,11 +188,12 @@ RUN set -eux; \
     --with-http_stub_status_module \
     --with-pcre \
     --add-module=../ngx_brotli \
+    --add-module=../zstd-nginx-module \
     --with-openssl=../openssl-${OPENSSL_VERSION} \
     --with-zlib=../zlib-ng \
-    --with-cc-opt="${OPT_CFLAGS_LIBS}" \
-    --with-ld-opt="-flto -L/opt/jemalloc/lib -L/opt/brotli/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -lbrotlienc -lbrotlidec -lbrotlicommon" \
-    --with-openssl-opt="no-nextprotoneg no-weak-ssl-ciphers no-ssl3 no-shared enable-ec_nistp_64_gcc_128" \
+    --with-cc-opt="${OPT_CFLAGS_LIBS} -I/opt/zstd/include" \
+    --with-ld-opt="-flto -L/opt/jemalloc/lib -L/opt/brotli/lib -L/opt/zstd/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -lbrotlienc -lbrotlidec -lbrotlicommon -l:libzstd.a" \
+    --with-openssl-opt="no-nextprotoneg no-weak-ssl-ciphers no-ssl3 no-shared enable-ec_nistp_64_gcc_128 ${OPT_CFLAGS_LIBS}" \
     --with-zlib-opt="--zlib-compat"; \
   make -j"$(nproc)"; \
   make install; \
@@ -182,7 +217,15 @@ RUN set -eux; \
     grep -F -- '--with-zlib-opt="--zlib-compat"' /tmp/nginx-V.txt; \
   grep -Fi openssl /tmp/nginx-V.txt; \
   grep -Fi brotli /tmp/nginx-V.txt; \
+  grep -Fi zstd /tmp/nginx-V.txt; \
   ldd /usr/sbin/nginx | tee /tmp/nginx-ldd.txt; \
+  grep -F /opt/jemalloc /tmp/nginx-ldd.txt; \
+  if grep -E '/usr/lib/libzstd|/lib/libzstd' /tmp/nginx-ldd.txt; then \
+    echo "apk libzstd leaked into nginx"; exit 1; \
+  fi; \
+  if apk info -e zstd >/dev/null 2>&1; then echo "apk zstd present"; exit 1; fi; \
+  if apk info -e libzstd >/dev/null 2>&1; then echo "apk libzstd present"; exit 1; fi; \
+  if apk info -e zstd-dev >/dev/null 2>&1; then echo "apk zstd-dev present"; exit 1; fi; \
   grep -F /opt/jemalloc /tmp/nginx-ldd.txt; \
   rm -rf /usr/src /tmp/nginx.tar.gz /tmp/nginx-V.txt /tmp/nginx-ldd.txt; \
   if [ -e /usr/src ]; then echo "leftover /usr/src"; exit 1; fi
@@ -227,11 +270,19 @@ RUN set -eux; \
   ls -la /opt/jemalloc/lib/libjemalloc.so*; \
   nginx -V 2>&1 | tee /tmp/nginx-V-runtime.txt; \
   grep -F "nginx/${NGINX_VERSION}" /tmp/nginx-V-runtime.txt; \
+  grep -Fi zstd /tmp/nginx-V-runtime.txt; \
   ldd /usr/sbin/nginx | tee /tmp/nginx-ldd-runtime.txt; \
+  grep -F /opt/jemalloc /tmp/nginx-ldd-runtime.txt; \
+  if grep -E '/usr/lib/libzstd|/lib/libzstd' /tmp/nginx-ldd-runtime.txt; then \
+    echo "apk libzstd leaked into runtime nginx"; exit 1; \
+  fi; \
   grep -F /opt/jemalloc /tmp/nginx-ldd-runtime.txt; \
   # Fail closed: never ship apk nginx packages.
   if apk info -e nginx >/dev/null 2>&1; then echo "apk nginx present"; exit 1; fi; \
   if apk info -e nginx-mod-http-brotli >/dev/null 2>&1; then echo "apk brotli mod present"; exit 1; fi; \
+  if apk info -e zstd >/dev/null 2>&1; then echo "apk zstd present"; exit 1; fi; \
+  if apk info -e libzstd >/dev/null 2>&1; then echo "apk libzstd present"; exit 1; fi; \
+  if apk info -e zstd-dev >/dev/null 2>&1; then echo "apk zstd-dev present"; exit 1; fi; \
   rm -f /tmp/nginx-V-runtime.txt /tmp/nginx-ldd-runtime.txt
 
 ENV LD_PRELOAD=/opt/jemalloc/lib/libjemalloc.so.2

@@ -157,6 +157,22 @@ def test_package_has_required_shells_and_resolve(tmp_path: Path):
   assert resolved == frontend
 
 
+def test_purge_nginx_config_from_public_frontend_keeps_br_gz_sidecars(tmp_path: Path):
+  """Brotli/Gzip sidecars must remain on the public frontend tree after heal purge."""
+  frontend = tmp_path / "frontend"
+  chunk = frontend / "_next" / "static" / "chunks" / "app.js"
+  _write(chunk, "console.log('chunk');\n")
+  _write(Path(str(chunk) + ".br"), "br-bytes")
+  _write(Path(str(chunk) + ".gz"), "gz-bytes")
+  _write(frontend / "nginx-csp-machine.inc", "leak\n")
+  removed = purge_nginx_config_from_public_frontend(frontend)
+  assert "nginx-csp-machine.inc" in removed
+  assert not any(rel.endswith(".br") or rel.endswith(".gz") for rel in removed)
+  assert chunk.is_file()
+  assert Path(str(chunk) + ".br").is_file()
+  assert Path(str(chunk) + ".gz").is_file()
+
+
 def test_purge_nginx_config_from_public_frontend_removes_inc(tmp_path: Path):
   frontend = tmp_path / "frontend"
   _write(frontend / "machine" / "index.html", "ok")

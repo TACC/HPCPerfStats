@@ -344,6 +344,8 @@ def test_docker_compose_proxy_runtime_tls_mount_and_entrypoint_materialize():
   assert "NGINX_SSL_CERT" not in content
   assert "PROXY_NGINX_TLS" not in content
   assert "./services-conf/nginx-django-proxy-common.inc:/etc/nginx/nginx-django-proxy-common.inc:ro" in content
+  assert "./services-conf/nginx-compress-proxy.inc:/etc/nginx/nginx-compress-proxy.inc:ro" in content
+  assert "./services-conf/nginx-compress-static.inc:/etc/nginx/nginx-compress-static.inc:ro" in content
   assert "./services-conf/nginx-edge-security-headers.inc:/etc/nginx/nginx-edge-security-headers.inc:ro" in content
   assert "./services-conf/nginx-csp-no-active.inc:/etc/nginx/nginx-csp-no-active.inc:ro" in content
   assert "./services-conf/nginx-csp-django-html.inc:/etc/nginx/nginx-csp-django-html.inc:ro" in content
@@ -372,6 +374,8 @@ def test_docker_compose_proxy_runtime_tls_mount_and_entrypoint_materialize():
   assert "COPY services-conf/nginx-csp-no-active.inc" not in dockerfile
   assert "COPY services-conf/nginx-csp-django-html.inc" not in dockerfile
   assert "COPY services-conf/nginx-django-proxy-common.inc" not in dockerfile
+  assert "COPY services-conf/nginx-compress-proxy.inc" not in dockerfile
+  assert "COPY services-conf/nginx-compress-static.inc" not in dockerfile
   assert "nginx.conf.example" not in dockerfile
   assert "COPY services-conf/nginx.conf /build/nginx.conf" in dockerfile
   assert "COPY --from=ssl_certs" not in dockerfile
@@ -429,7 +433,50 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "test -e /opt/jemalloc/lib/libjemalloc.so.2" in dockerfile
   assert "no-nextprotoneg no-weak-ssl-ciphers no-ssl3 no-shared" in dockerfile
   assert "--add-module=../ngx_brotli" in dockerfile
+  assert "--add-module=../zstd-nginx-module" in dockerfile
   assert "LD_PRELOAD=/opt/jemalloc/lib/libjemalloc.so.2" in dockerfile
+
+  # Hybrid compression: pin Facebook zstd + GetPageSpeed (tokers fork) module.
+  assert "ARG ZSTD_VERSION=1.5.7" in dockerfile
+  assert "ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3" in dockerfile
+  assert "ARG ZSTD_NGINX_MODULE_VERSION=0.2.1" in dockerfile
+  assert "ARG ZSTD_NGINX_MODULE_SHA256=1ea7bf2f9973593a8c3055fe7d99e4e2d226c35b12b674830f79d5d22f079465" in dockerfile
+  assert "GetPageSpeed/zstd-nginx-module" in dockerfile
+  assert 'MOREFLAGS="${OPT_CFLAGS_LIBS}"' in dockerfile
+  assert "HAVE_ZLIB=0" in dockerfile
+  assert "HAVE_LZ4=0" in dockerfile
+  assert "libzstd.a" in dockerfile
+  assert "-I/opt/zstd/include" in dockerfile
+  assert "-L/opt/zstd/lib" in dockerfile
+  assert "-l:libzstd.a" in dockerfile
+  assert "ZSTD_INC=/opt/zstd/include" in dockerfile
+  assert "ZSTD_LIB=/opt/zstd/lib" in dockerfile
+  assert "grep -Fi zstd" in dockerfile
+  assert "/usr/lib/libzstd" in dockerfile
+  assert "apk info -e zstd" in dockerfile
+  assert "COPY --from=proxy-build /opt/zstd" not in dockerfile
+
+  def _first_line_containing(needle: str) -> str:
+    matches = [ln for ln in dockerfile.splitlines() if needle in ln]
+    assert matches, f"missing Dockerfile line containing {needle!r}"
+    return matches[0]
+
+  env_cflags = _first_line_containing("ENV OPT_CFLAGS_LIBS=")
+  assert "-mtune=native" in env_cflags
+  jemalloc_cflags = _first_line_containing('CFLAGS="${OPT_CFLAGS_LIBS}"')
+  assert 'CFLAGS="${OPT_CFLAGS_LIBS}"' in jemalloc_cflags
+  brotli_cflags = _first_line_containing('CMAKE_C_FLAGS="${OPT_CFLAGS_LIBS}"')
+  assert 'CMAKE_C_FLAGS="${OPT_CFLAGS_LIBS}"' in brotli_cflags
+  zstd_moreflags = _first_line_containing('MOREFLAGS="${OPT_CFLAGS_LIBS}"')
+  assert 'MOREFLAGS="${OPT_CFLAGS_LIBS}"' in zstd_moreflags
+  cc_opt = _first_line_containing("--with-cc-opt=")
+  assert "${OPT_CFLAGS_LIBS}" in cc_opt
+  openssl_opt = _first_line_containing("--with-openssl-opt=")
+  assert "${OPT_CFLAGS_LIBS}" in openssl_opt
+  assert "enable-ec_nistp_64_gcc_128" in openssl_opt
+  zlib_opt = _first_line_containing("--with-zlib-opt=")
+  assert "-mtune=native" not in zlib_opt
+  assert "--zlib-compat" in zlib_opt
 
   assert "nginx=${NGINX_EDGE_VERSION}" not in dockerfile
   assert "nginx-mod-http-brotli" not in dockerfile or "apk info -e nginx-mod-http-brotli" in dockerfile
@@ -458,8 +505,11 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
       "nginx-csp-django-html.inc",
       "nginx-static-files.conf",
       "nginx-django-proxy-common.inc",
+      "nginx-compress-proxy.inc",
+      "nginx-compress-static.inc",
   ):
     assert f"COPY services-conf/{mount_only}" not in dockerfile
+    assert f"./services-conf/{mount_only}:/etc/nginx/{mount_only}:ro" in compose
 
 
 def test_proxy_compose_mounts_main_nginx_conf():

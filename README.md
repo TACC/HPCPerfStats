@@ -362,13 +362,16 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    (process/http tunables: **`worker_processes auto`**, affinity, sendfile/tcp_*,
    open_file_cache) and **`./services-conf/nginx.conf`** to **`/etc/nginx/http.d/default.conf`**
    on **`proxy`**, and bind-mounts the shared snippets (**`nginx-static-files.conf`**,
-   **`nginx-django-proxy-common.inc`**, **`nginx-edge-security-headers.inc`**,
+   **`nginx-django-proxy-common.inc`**, **`nginx-compress-proxy.inc`**,
+   **`nginx-compress-static.inc`**, **`nginx-edge-security-headers.inc`**,
    **`nginx-csp-no-active.inc`**, **`nginx-csp-django-html.inc`**) as the **only**
    runtime source for those snippets (they are **not** baked into **`proxy.Dockerfile`**).
 
    The **`proxy`** image is **source-built** from **`services-conf/proxy.Dockerfile`**:
    pinned **nginx 1.31.5**, **jemalloc**, **zlib-ng (ZLIB_COMPAT)**, **OpenSSL 3.5.x**,
-   and **ngx_brotli**, with **`-march=native -mtune=native`**. **Build the proxy image on
+   **ngx_brotli**, and **zstd 1.5.7** (static **`libzstd.a`** + GetPageSpeed
+   **zstd-nginx-module**), with **`-march=native -mtune=native`** on every source-built
+   lib (including OpenSSL **`--with-openssl-opt`**). **Build the proxy image on
    the production host** (native flags are not portable across CPU generations). Do **not**
    rely on Alpine edge apk nginx packages. The image **`COPY`**s **`nginx-main.conf`** and
    **`cp`**s **`nginx.conf`** into **`default.conf`** at **build** time for a
@@ -384,7 +387,10 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    (written at frontend export / SPA heal); nginx **`/machine/`** and **`/pub/`**
    locations must **not** send a competing hash CSP header (**`open_file_cache off`**
    on those locations so SPA heal is not stale).
-   HTTP GETs for **`*.inc`** under **`/static/`** return **404**.
+   HTTP GETs for **`*.inc`** (and direct **`*.br` / `*.gz` / `*.zst` sidecar URLs**) under **`/static/`** return **404**.
+   Nginx compresses Gunicorn and SPA HTML on the fly (**zstd**, then Brotli, then gzip) and
+   serves precompressed **`.br`/`.gz`** siblings for hashed **`/static/frontend/_next/`**
+   files (**1y** cache); unhashed **`/static/`** stays **30d**.
    Nginx is the public authority for HSTS, framing, COOP, Permissions-Policy, Referrer-Policy,
    and CSP (hash-based for SPA shells; no-active for JSON/redirects). Certificates without an
    AIA OCSP URL will not staple; that must not take the site offline.
@@ -416,7 +422,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    compose including **`proxy`**, or run **`manage.py runserver --nostatic`** and
    still obtain **`/static/`** via nginx rather than Django’s dev static handler.
    The proxy container is built from **`services-conf/proxy.Dockerfile`** and
-   enables Brotli + gzip compression.
+   enables hybrid compression (on-the-fly zstd/Brotli/gzip for proxied and SPA HTML;
+   Brotli/Gzip sidecars for hashed static files).
 
 8. **Build and start:**
 

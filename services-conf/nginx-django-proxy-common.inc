@@ -12,6 +12,7 @@ proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 proxy_set_header X-Forwarded-Proto $scheme;
 proxy_set_header X-Forwarded-Host nginx;
 proxy_set_header X-Forwarded-Port $server_port;
+proxy_set_header Accept-Encoding "";
 proxy_buffer_size 16k;
 proxy_buffers 8 16k;
 proxy_busy_buffers_size 32k;
@@ -30,3 +31,4 @@ proxy_hide_header Cross-Origin-Opener-Policy;
 proxy_hide_header Permissions-Policy;
 
 include /etc/nginx/nginx-edge-security-headers.inc;
+include /etc/nginx/nginx-compress-proxy.inc;
