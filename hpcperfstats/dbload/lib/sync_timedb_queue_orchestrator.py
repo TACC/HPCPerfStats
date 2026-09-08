@@ -1472,17 +1472,62 @@ def _day_close_disk_remaining_raw_blocks(coord: Any, tar_path: str) -> bool:
   return False
 
 
-def _day_close_append_or_hot_active(
+def _day_close_ingest_jobs_active_for_day(
+    job_store: Any | None,
+    day_token: str,
+    tgz_archive_dir: str,
+) -> bool:
+  """
+  Return True when queued or in-flight ingest work belongs to this day.
+
+  Used by H20a so leftover ``ingest_tar_hot`` is not treated as live ingest.
+  Kick-enqueued identities must be measured *before* handoff so a
+  wait_on_ingest kick cannot flip idle to hot on the same claim.
+
+  Args:
+    job_store (Any | None): In-process job store, or None when unset.
+    day_token (str): ISO calendar day.
+    tgz_archive_dir (str): Daily archive directory.
+
+  Returns:
+    bool: True when an ingest identity resolves to ``day_token``.
+
+  Examples:
+    >>> _day_close_ingest_jobs_active_for_day(None, "2020-01-01", "/d")
+    False
+  """
+  if job_store is None or not day_token:
+    return False
+  try:
+    want = date.fromisoformat(day_token)
+  except ValueError:
+    return False
+  idents: list[str] = []
+  try:
+    idents.extend(job_store.ingest_identities() or [])
+  except Exception:
+    return False
+  inflight = getattr(job_store, "_inflight", None)
+  if isinstance(inflight, dict):
+    idents.extend(list(inflight.get(jq.JOB_KIND_INGEST, {}) or []))
+  for ident in idents:
+    resolved = _calendar_day_for_ingest_path(str(ident), tgz_archive_dir)
+    if resolved == want:
+      return True
+  return False
+
+
+def _day_close_live_ingest_or_populate(
     job_store: Any | None,
     tar_path: str,
     tgz_archive_dir: str,
 ) -> bool:
   """
-  Return True when append LIST or ingest/populate hot needs this tar.
+  Return True when live ingest/populate currently uses this day's tar.
 
-  H19: ``wait_on_ingest`` must yield only while append or the hot path is
-  actually working this day. Empty append plus no ingest/populate hot is
-  idle — day_close should kick verify/delete instead of forever-yielding.
+  H20a: leftover ``ingest_tar_hot`` and a complete members map are not
+  live holders. Global append LIST depth is also not a per-day live
+  signal — callers that need that use ``_day_close_append_or_hot_active``.
 
   Args:
     job_store (Any | None): In-process job store, or None when unset.
@@ -1490,32 +1535,71 @@ def _day_close_append_or_hot_active(
     tgz_archive_dir (str): Daily archive directory.
 
   Returns:
-    bool: True when append depth is positive or ingest/populate is hot.
+    bool: True when append inflight, a populate owner, or ingest jobs
+    resolve to this day.
+
+  Examples:
+    >>> _day_close_live_ingest_or_populate(None, "/d/2020-01-01.tar", "/d")
+    False
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      archive_append_inflight_for_day,
+      archive_members_populate_owner_active_for_day,
+  )
+
+  day = calendar_date_from_daily_tar_path(tar_path)
+  day_token = _day_token_from_date(day) or ""
+  if not day_token:
+    return False
+  if archive_append_inflight_for_day(day_token):
+    return True
+  if archive_members_populate_owner_active_for_day(day_token):
+    return True
+  return _day_close_ingest_jobs_active_for_day(
+      job_store, day_token, tgz_archive_dir,
+  )
+
+
+def _day_close_append_or_hot_active(
+    job_store: Any | None,
+    tar_path: str,
+    tgz_archive_dir: str,
+) -> bool:
+  """
+  Return True when append LIST or live ingest/populate needs this tar.
+
+  H19: ``wait_on_ingest`` must yield only while append or the hot path is
+  actually working this day. Empty append plus no ingest/populate hot is
+  idle — day_close should kick verify/delete instead of forever-yielding.
+
+  H20a: leftover ``ingest_tar_hot`` and a complete members map are not
+  live holders. Yield only for append LIST depth, append inflight, a
+  populate owner thread, or ingest jobs that resolve to this day.
+
+  Args:
+    job_store (Any | None): In-process job store, or None when unset.
+    tar_path (str): Daily ``.tar`` path.
+    tgz_archive_dir (str): Daily archive directory.
+
+  Returns:
+    bool: True when append depth is positive or ingest/populate is live.
 
   Examples:
     >>> _day_close_append_or_hot_active(None, "/d/2020-01-01.tar", "/d")
     False
   """
-  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
-      day_close_yield_requested,
+  if job_store is not None:
+    try:
+      append_n = int(
+          job_store.llen(jq.job_queue_key(jq.JOB_KIND_APPEND)) or 0
+      )
+    except Exception:
+      append_n = 0
+    if append_n > 0:
+      return True
+  return _day_close_live_ingest_or_populate(
+      job_store, tar_path, tgz_archive_dir,
   )
-
-  yielded, _reason = day_close_yield_requested(
-      tar_path,
-      tgz_archive_dir=tgz_archive_dir,
-      phase="wait_on_ingest",
-  )
-  if yielded:
-    return True
-  if job_store is None:
-    return False
-  try:
-    append_n = int(
-        job_store.llen(jq.job_queue_key(jq.JOB_KIND_APPEND)) or 0
-    )
-  except Exception:
-    return False
-  return append_n > 0
 
 
 def _day_close_complete_wait_on_ingest_handoff(
@@ -1694,14 +1778,9 @@ def _run_day_close_job(
     )
   except Exception:
     pass
-  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
-      day_close_yield_requested,
-  )
-
-  yielded, _reason = day_close_yield_requested(
-      tar_path, tgz_archive_dir=tgz_archive_dir, phase="day_close",
-  )
-  if yielded:
+  if _day_close_live_ingest_or_populate(
+      job_store, tar_path, tgz_archive_dir,
+  ):
     return "yielded"
   try:
     cal = date.fromisoformat(day_token)
@@ -1874,6 +1953,8 @@ def _run_day_close_job(
       H17: remaining raw or verify-handoff plus append/hot → ``yielded``.
       H19: same remaining-raw signal with idle append and no hot → kick
       verify/delete and continue without merge.
+      H20a: measure live append/ingest/populate *before* kick so leftover
+      or kick-set ``ingest_tar_hot`` cannot forever-yield.
 
       Returns:
         str | None: ``yielded`` or None to continue.
@@ -1891,10 +1972,11 @@ def _run_day_close_job(
       )
       if not needs_wait:
         return None
-      _day_close_complete_wait_on_ingest_handoff(coord, tar_path)
-      if _day_close_append_or_hot_active(
+      append_or_hot = _day_close_append_or_hot_active(
           job_store, tar_path, tgz_archive_dir,
-      ):
+      )
+      _day_close_complete_wait_on_ingest_handoff(coord, tar_path)
+      if append_or_hot:
         _stage_enter("wait_on_ingest")
         _stage_exit(
             "wait_on_ingest",

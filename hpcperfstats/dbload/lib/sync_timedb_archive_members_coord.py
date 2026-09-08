@@ -1855,6 +1855,36 @@ def describe_archive_members_populate_for_day(
     )
 
 
+def archive_members_populate_owner_active_for_day(day_token: str) -> bool:
+    """
+    Return True when a populate owner thread currently holds this day.
+
+    A leftover ``ingest_tar_hot`` flag or a complete members map is not a
+    live holder. Day-close ``wait_on_ingest`` uses this to distinguish
+    in-flight populate from stale occupancy (H20a).
+
+    Args:
+      day_token (str): ISO calendar day.
+
+    Returns:
+      bool: True when a populate owner is set for the day.
+
+    Examples:
+      >>> archive_members_populate_owner_active_for_day("2026-01-01")
+      False
+    """
+    if not day_token:
+        return False
+    store = get_process_archive_members_store()
+    if store is None:
+        return False
+    with store._lock:
+        for (day, _identity) in store._populate_owner:
+            if day == day_token:
+                return True
+    return False
+
+
 def archive_members_populate_shows_progress_for_day(
     day_token: str,
     tgz_archive_dir: str = "",
@@ -1877,13 +1907,12 @@ def archive_members_populate_shows_progress_for_day(
       False
     """
     del tgz_archive_dir, progress_state
+    if archive_members_populate_owner_active_for_day(day_token):
+        return True
     store = get_process_archive_members_store()
     if store is None:
         return False
     with store._lock:
-        for (day, _identity) in store._populate_owner:
-            if day == day_token:
-                return True
         for (day, _identity), flag in store._complete.items():
             if day == day_token and flag:
                 return True
