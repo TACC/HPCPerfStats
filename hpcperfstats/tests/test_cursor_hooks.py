@@ -375,6 +375,19 @@ def test_hook_task_router_rules_exist_and_are_documented():
       assert rule in core_text, rule
 
 
+def test_triggered_rules_product_python_dispatches_surgical_bug_fix():
+  py_rules = triggered_rules_for_paths(["hpcperfstats/listend.py"])
+  assert "grok-surgical-bug-fix-mandate.mdc" in py_rules
+  nested_rules = triggered_rules_for_paths(
+      ["hpcperfstats/dbload/lib/listend_db_ingest.py"],
+  )
+  assert "grok-surgical-bug-fix-mandate.mdc" in nested_rules
+  fe_rules = triggered_rules_for_paths(
+      ["hpcperfstats/site/frontend/src/views/JobDetail.tsx"],
+  )
+  assert "grok-surgical-bug-fix-mandate.mdc" in fe_rules
+
+
 def test_triggered_rules_for_cursor_hooks_path():
   rules = triggered_rules_for_paths([HOOK_LIB_PATH])
   assert "testing-best-practices.mdc" in rules
@@ -532,6 +545,37 @@ def test_plan_content_issues_detects_missing_sections():
 
 def test_plan_content_issues_accepts_minimal_plan():
   assert lib.plan_content_issues(_minimal_plan_markdown()) == []
+
+
+def test_plan_template_includes_root_cause_surgical_fix_block():
+  """PLAN_TEMPLATE.md keeps RCA in facts and target/fix subsections in Approach."""
+  repo_root = Path(__file__).resolve().parents[2]
+  templates = (
+      repo_root / "docs" / "plans" / "PLAN_TEMPLATE.md",
+      repo_root / "monitor" / "docs" / "plans" / "PLAN_TEMPLATE.md",
+  )
+  required = (
+      "### Root Cause Analysis",
+      "### Target File & Line Numbers",
+      "### Minimally Invasive Fix",
+      "1 sentence explaining exactly why the bug is happening",
+      "[Path/to/file.py] around lines [X to Y]",
+      "Show the exact 1-5 lines of code you will change, add, or delete",
+  )
+  for template in templates:
+    text = template.read_text(encoding="utf-8")
+    for snippet in required:
+      assert snippet in text, f"{template} missing {snippet!r}"
+    facts_idx = text.index("## 1. Problem and facts")
+    approach_idx = text.index("## 2. Approach")
+    testing_idx = text.index("## 3. Testing")
+    facts = text[facts_idx:approach_idx]
+    approach = text[approach_idx:testing_idx]
+    assert "### Root Cause Analysis" in facts
+    assert "### Target File & Line Numbers" not in facts
+    assert "### Minimally Invasive Fix" not in facts
+    assert "### Target File & Line Numbers" in approach
+    assert "### Minimally Invasive Fix" in approach
 
 
 def test_plan_content_issues_requires_git_hooks_pre_close_todo():

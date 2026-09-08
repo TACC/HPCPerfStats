@@ -21,7 +21,7 @@ Per **`plan-live-disk-sync.mdc`**:
 
 ## Every implementation plan must include
 
-1. All required sections in order per **`plan-creation-contract.mdc`** (Plan disk file → Problem and facts → Operator discovery when needed → Approach → Testing → Implementation → Cursor rules → Final code review).
+1. All required sections in order per **`plan-creation-contract.mdc`** (Plan disk file → Problem and facts → Operator discovery when needed → Approach → Testing → Implementation → Cursor rules → Final code review). Bug/hotfix/regression plans must include **Root Cause Analysis** in Problem and facts, and Approach subsections **Target File & Line Numbers** and **Minimally Invasive Fix** (`PLAN_TEMPLATE.md`).
 2. **`Final code review (mandatory before implementation close)`** per **`PLAN_TEMPLATE.md`**.
 3. **`Post-implementation review (required before close)`** per **`PLAN_TEMPLATE.md`**.
 4. Closing YAML todos (order fixed; **`post-implementation-review` last**):

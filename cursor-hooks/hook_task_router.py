@@ -611,6 +611,20 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "surgical_bug_fix",
+        "patterns": [
+            "hpcperfstats/*.py",
+            "hpcperfstats/**/*.py",
+            "hpcperfstats/site/frontend/**",
+            "scripts/**/*.py",
+            "services-conf/**",
+            "hpcperfstats/cursor-rules/grok-surgical-bug-fix-mandate.mdc",
+        ],
+        "rules": [
+            "grok-surgical-bug-fix-mandate.mdc",
+        ],
+    },
+    {
         "id": "package_lib_colocation",
         "patterns": [
             "hpcperfstats/**/lib/**",

@@ -52,7 +52,8 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `hpcperfstats/analysis/metrics/` | `runtime-resource-and-metrics-safety.mdc`, `pipeline-metrics-e2e-maintenance.mdc`, `update-metrics-job-listing-new-data-type.mdc`, `update-metrics-batch-resilience.mdc`, `monitor-analysis-architecture-sync.mdc`, `gpu-host-data-source-priority.mdc` |
 | `gpu_job_detail_summary.py`, Job Detail GPU inventory / `nvidia_gpu`·`amd_gpu` precedence | `gpu-host-data-source-priority.mdc`, `monitor-analysis-architecture-sync.mdc` |
 | `docs/monitor_variable_rename_map.yaml`, `hpcperfstats/dbload/lib/monitor_naming/**` | `monitor-analysis-architecture-sync.mdc` |
-| Bug form / traceback / stall / timeout | `bugfix-and-perf-change-playbook.mdc`, `exhaustive-error-path-analysis.mdc`, `logic-change-checklist.mdc` |
+| Bug form / traceback / stall / timeout | `bugfix-and-perf-change-playbook.mdc`, `exhaustive-error-path-analysis.mdc`, `logic-change-checklist.mdc`, `grok-surgical-bug-fix-mandate.mdc` |
+| `hpcperfstats/*.py`, `hpcperfstats/**/*.py`, `hpcperfstats/site/frontend/**`, `scripts/**/*.py`, `services-conf/**` (bug-fix / ticket / error-refactor patches) | `grok-surgical-bug-fix-mandate.mdc` |
 
 ### Django API, backend Python
 
@@ -126,6 +127,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 ## Implementation habits (short)
 
 - **Test-first** for behavior changes: `test-first-discipline.mdc`, `testing-best-practices.mdc`
+- **Surgical bug-fixes:** line-level repair, no adjacent cleanup — Read `grok-surgical-bug-fix-mandate.mdc` before the first product-code patch
 - **3+ duplicate logic** → shared helper: `duplicate-threshold-helper-mandate.mdc`
 - **Multi-layer features** → wire all layers: `end-to-end-feature-wiring-contract.mdc`
 - **Run compose** on this machine via **Colima** when rules require it—do not skip after one `docker` failure

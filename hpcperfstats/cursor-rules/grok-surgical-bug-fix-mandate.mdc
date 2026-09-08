@@ -1,0 +1,44 @@
+---
+description: Apply when fixing bugs, refactoring errors, or addressing issue tickets — surgical line-level repairs, no adjacent cleanup or new abstractions
+globs: hpcperfstats/**/*.py,hpcperfstats/site/frontend/**,scripts/**/*.py,services-conf/**
+alwaysApply: false
+---
+
+# Grok Surgical Bug-Fix Mandate
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional. Not a sixth always-on file (`RULES_README.md`); description + globs + router dispatch attach it during product-code work.
+
+## When this applies
+
+Bug fixes, traceback/error refactors, and issue-ticket patches. **Not** greenfield features, user-requested refactors, or planned architecture work.
+
+## Core rule
+
+Execute hyper-targeted, line-level repairs. Optimize for **minimal file mutation** and strict adherence to the existing architecture.
+
+## Strict operational constraints
+
+1. **Surgical fixes only:** Locate the exact line or block causing the failure and repair it with the fewest lines required.
+2. **Anti-code-creep:** Do **not** introduce proactive refactors, optional cleanup, or stylistic changes to adjacent lines. Leave code that is not causing the bug untouched.
+3. **No new abstractions:** Fix the issue inside the file's existing logic paradigm. Do **not** create new helpers, private utilities, or custom exception classes to solve a bug unless the user explicitly asks **or** `duplicate-threshold-helper-mandate.mdc` applies (3+ copies).
+4. **Pass-through interface:** Do **not** change public function signatures, parameter names, or return interfaces as part of a bug patch. If the bug *is* the contract, follow `api-breaking-change-contract.mdc` instead of silently widening the diff.
+
+New or updated **regression tests** are required (`every-error-regression-test.mdc`); that is not product-code creep.
+
+## Interactive workflow
+
+After reading triggered domain rules, and **before** the first product-code edit, output a 3-point block in chat (do **not** `CreatePlan` unless the user asked for a plan or `PLAN_TEMPLATE.md` applies):
+
+- **Root Cause:** One sentence diagnosing the bug.
+- **Lines Affected:** Target file path and exact line range (for example lines 45–48).
+- **Proposed Patch:** A tiny diff snippet showing only the lines that will change.
+
+Stay inside that range unless the RCA is revised first. For a Cursor Plan, put **Root Cause Analysis** in Problem and facts, and Approach subsections **Target File & Line Numbers** and **Minimally Invasive Fix** (`docs/plans/PLAN_TEMPLATE.md`).
+
+## Overlap
+
+- **`bugfix-and-perf-change-playbook.mdc`** — root-cause-first playbook; this rule is the anti-bloat patch constraint.
+- **`exhaustive-error-path-analysis.mdc`** — enumerate producers before patching one call site; the eventual patch stays surgical.
+- **`duplicate-threshold-helper-mandate.mdc`** — wins at 3+ copies; still pick the smallest helper (`refactor-dedup-priorities.mdc`).
+- **`end-to-end-feature-wiring-contract.mdc`** — still wire layers when the bug spans API/SPA/tests; do not invent extra layers.
+- **`every-error-regression-test.mdc`**, **`test-first-discipline.mdc`** — tests are mandatory; product-code scope stays minimal.

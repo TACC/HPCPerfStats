@@ -11,7 +11,7 @@ When the task is a traceback fix, timeout fix, memory/runtime reduction, or oper
 
 ## Implementation defaults
 
-- Start from the concrete failure signature (traceback line, SQL timeout, or log message) and patch the smallest root-cause path first.
+- Start from the concrete failure signature (traceback line, SQL timeout, or log message) and patch the smallest root-cause path first. Plans must fill **Root Cause Analysis** in Problem and facts, plus Approach subsections **Target File & Line Numbers** and **Minimally Invasive Fix** in **`docs/plans/PLAN_TEMPLATE.md`**: one-sentence RCA, target file and line numbers, and the exact 1–5 lines to change — nothing else.
 - If the failure is not fixed after the first request, deep dive into the code and find the systemic failure. Don't patch the symptoms. Do root cause analysis first.
 - Preserve existing user-facing behavior unless the user asks for behavior changes.
 - Make resource/concurrency choices configuration-driven (thread count, batch size, retry policy, timeout), not hidden magic constants. If hardcoded fallback defaults are required, keep them centralized and documented.
@@ -34,3 +34,4 @@ When the task is a traceback fix, timeout fix, memory/runtime reduction, or oper
 - **`implementation-review-workflow.mdc`** — plan before patching, ask when the failure context is incomplete, self-review after the fix.
 - Complements `runtime-resource-and-metrics-safety.mdc`, `docker-compose-non-unit-testing.mdc`, `full-test-with-db-redis.mdc`, and `testing-doc-sync.mdc`.
 - See also `exhaustive-error-path-analysis.mdc` to require searching and analyzing all plausible code paths for a failure signature before finalizing a fix.
+- **`grok-surgical-bug-fix-mandate.mdc`** — anti-bloat patch constraint: 3-point RCA in chat, then the fewest product-code lines; no adjacent cleanup.

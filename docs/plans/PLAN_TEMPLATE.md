@@ -2,13 +2,15 @@
 
 One-line overview of the outcome.
 
-**Governed by:** `agent-discipline-core.mdc` (always-on), `plan-completion-gate.mdc`, `plan-creation-contract.mdc` (plan authoring), **`plan-live-disk-sync.mdc`** (disk authority — chat does not count), `implementation-review-workflow.mdc`.
+**Governed by:** `agent-discipline-core.mdc` (always-on), `plan-completion-gate.mdc`, `plan-creation-contract.mdc` (plan authoring), `plan-live-disk-sync.mdc` (disk authority — chat does not count), `implementation-review-workflow.mdc`.
 
 **Applies to:** pre-code chat plans, committed design docs in `docs/plans/`, monitor **Consumer follow-up plan** sections, and Cursor Plan mode output.
 
-**Artifact placement:** this file is a **committed design baseline** (`test-runs-output-directory.mdc`). Ephemeral run logs and pytest captures go under **`test_runs/`**, not `docs/`.
+**Artifact placement:** this file is a **committed design baseline** (`test-runs-output-directory.mdc`). Ephemeral run logs and pytest captures go under `test_runs/`, not `docs/`.
 
 ---
+
+
 
 ## How to request a plan (user phrasing)
 
@@ -18,9 +20,9 @@ Use any of these when you want the agent to follow this template and the close g
 - **“Include final code review per plan-creation-contract”**
 - **“Implement this plan”** (with attached plan or Cursor Plan todos)
 
-The agent must read this file, **Write the plan to** **`.cursor/plans/<name>.plan.md`** (chat and CreatePlan alone do not count — `plan-live-disk-sync.mdc`), include **Plan disk file**, **Final code review**, and **Post-implementation review** sections, and add closing todos **`git-hooks-pre-close`** then **`post-implementation-review`**. See **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`**.
+The agent must read this file, **Write the plan to** `.cursor/plans/<name>.plan.md` (chat and CreatePlan alone do not count — `plan-live-disk-sync.mdc`), include **Plan disk file**, **Final code review**, and **Post-implementation review** sections, add closing todos `git-hooks-pre-close` then `post-implementation-review`, and for bug/hotfix/regression plans fill **Root Cause Analysis** (Problem and facts) plus Approach subsections **Target File & Line Numbers** and **Minimally Invasive Fix**. See `plan-template-enforcement.mdc` and `plan-completion-gate.mdc`.
 
-**Do not mark implementation done** until the **close sequence** is complete (see **`plan-completion-gate.mdc`** → *Blocking close gate*): (1) **Agent rule dispatch** — list triggered **`*.mdc`** rules Read or N/A, (2) **all commit + push git hooks** green (`git-hooks-pre-close` — **required**), (3) senior final code review on the diff and affected workflows finds no unfixed gaps, and (4) structured chat self-review is delivered (**Why it works**, **Edge cases**, **Convention check**). This applies to **all non-trivial code changes**, not only plan-driven work. **When implementing a plan:** also sync plan YAML todos (`status: completed` for every finished step—status-only plan edits are allowed even when plan prose must not change) and complete **`git-hooks-pre-close`** then **`post-implementation-review`**.
+**Do not mark implementation done** until the **close sequence** is complete (see `plan-completion-gate.mdc` → *Blocking close gate*): (1) **Agent rule dispatch** — list triggered `*.mdc` rules Read or N/A, (2) **all commit + push git hooks** green (`git-hooks-pre-close` — **required**), (3) senior final code review on the diff and affected workflows finds no unfixed gaps, and (4) structured chat self-review is delivered (**Why it works**, **Edge cases**, **Convention check**). This applies to **all non-trivial code changes**, not only plan-driven work. **When implementing a plan:** also sync plan YAML todos (`status: completed` for every finished step—status-only plan edits are allowed even when plan prose must not change) and complete `git-hooks-pre-close` then `post-implementation-review`.
 
 ### Recommended Cursor User Rule (paste first in Settings → Rules → User Rules)
 
@@ -28,9 +30,11 @@ The agent must read this file, **Write the plan to** **`.cursor/plans/<name>.pla
 
 ---
 
+
+
 ## Cursor Plan frontmatter (optional)
 
-Use when authoring in Cursor Plan mode. Do **not** edit committed plan files the user marked read-only (except **status-only** todo updates on the active implementation checklist per **`plan-completion-gate.mdc`**).
+Use when authoring in Cursor Plan mode. Do **not** edit committed plan files the user marked read-only (except **status-only** todo updates on the active implementation checklist per `plan-completion-gate.mdc`).
 
 ```yaml
 ---
@@ -53,37 +57,47 @@ isProject: false
 
 ---
 
+
+
 ## Plan disk file (authority — chat does not count)
 
-Per **`plan-live-disk-sync.mdc`** — update this block on **every** plan edit.
+Per `plan-live-disk-sync.mdc` — update this block on **every** plan edit.
 
-| Field | Value |
-|-------|-------|
-| **Live path** | `<workspace_root>/.cursor/plans/<short-kebab-name>.plan.md` |
-| **Last updated** | YYYY-MM-DD |
-| **Authority** | Only Write/StrReplace to the live path counts; chat summaries, CreatePlan-only output, and TodoWrite do not. |
+
+| Field            | Value                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| **Live path**    | `<workspace_root>/.cursor/plans/<short-kebab-name>.plan.md`                                                  |
+| **Last updated** | YYYY-MM-DD                                                                                                   |
+| **Authority**    | Only Write/StrReplace to the live path counts; chat summaries, CreatePlan-only output, and TodoWrite do not. |
+
 
 ---
 
+
+
 ## Operator discovery
 
-Per **`plan-live-disk-sync.mdc`** and **`compose-operator-terminal-commands.mdc`**.
+Per `plan-live-disk-sync.mdc` and `compose-operator-terminal-commands.mdc`.
 
 **Status:** `not needed` | `in progress` | `complete`
 
-When status is **`not needed`**, keep **Completed findings** empty and omit **Pending commands**. When **`in progress`**, maintain both subsections below. When **`complete`**, all rows live under **Completed findings** and **Pending commands** is empty or removed.
+When status is `not needed`, keep **Completed findings** empty and omit **Pending commands**. When `in progress`, maintain both subsections below. When `complete`, all rows live under **Completed findings** and **Pending commands** is empty or removed.
 
 ### Completed findings
 
 Record every command that has run — **remove** its copy/paste block from Pending when adding a row.
 
-| # | Service | Asked for | Found | Date |
-|---|---------|-----------|-------|------|
-| | | | | |
+
+| #   | Service | Asked for | Found | Date |
+| --- | ------- | --------- | ----- | ---- |
+|     |         |           |       |      |
+
+
+
 
 ### Pending commands
 
-**Compose cwd (prose only):** git checkout containing `docker-compose.yaml` (typically `HPCPerfStats/`). **Do not** include `cd …` before `docker compose` in paste blocks — see **`compose-operator-terminal-commands.mdc`**. **One fenced `bash` block per Compose service** — chain multiple commands on the same service with `&&` or `sh -lc '…'`.
+**Compose cwd (prose only):** git checkout containing `docker-compose.yaml` (typically `HPCPerfStats/`). **Do not** include `cd …` before `docker compose` in paste blocks — see `compose-operator-terminal-commands.mdc`. **One fenced** `bash` **block per Compose service** — chain multiple commands on the same service with `&&` or `sh -lc '…'`.
 
 #### `<service>` — `<what output to paste back>`
 
@@ -93,6 +107,8 @@ docker compose exec <service> …
 
 ---
 
+
+
 ## 1. Problem and facts
 
 **Grounding (no guessing)** — per `plan-creation-contract.mdc`:
@@ -101,6 +117,12 @@ docker compose exec <service> …
 - Constraints and **user-confirmed** decisions.
 - Affected layers (monitor ingest, dbload, analysis, API, SPA, compose, operator docs).
 - Open questions: list any unclear requirement and **ask the user** before implementing.
+
+### Root Cause Analysis
+
+**Required** when this plan addresses a bug, hotfix, traceback, timeout, regression, or incorrect behavior. For greenfield features with no failure signature, write **N/A** and one sentence of rationale.
+
+- [1 sentence explaining exactly why the bug is happening]
 
 ## 2. Approach
 
@@ -117,23 +139,41 @@ sequenceDiagram
   A->>B: key interaction
 ```
 
+### Target File & Line Numbers
+
+**Required** for bug/hotfix/regression plans (same N/A rule as Root Cause Analysis).
+
+- [Path/to/file.py] around lines [X to Y]
+
+### Minimally Invasive Fix
+
+**Required** for bug/hotfix/regression plans (same N/A rule as Root Cause Analysis). Show the exact 1–5 lines of code you will change, add, or delete. Do not show or change anything else.
+
+```
+[Show the exact 1-5 lines of code you will change, add, or delete. Do not show or change anything else.]
+```
+
 ## 3. Testing
 
 Every behavior change needs at least one **regression and/or unit test** at the narrowest layer (`test-first-discipline.mdc`, `every-error-regression-test.mdc` for fixes).
 
-| Test | Module | Contract |
-|------|--------|----------|
+
+| Test     | Module                                          | Contract       |
+| -------- | ----------------------------------------------- | -------------- |
 | `test_…` | `hpcperfstats/tests/…` or colocated `test_*.py` | What it proves |
+
 
 **Pre-merge verification matrix** (`testing-best-practices.mdc`) — pick the minimum tier:
 
-| Change touches | Minimum run |
-|----------------|-------------|
-| Pure Python utils / dbload helpers | `python scripts/run_tests.py --no-django` + targeted module |
-| Django API / machine models | Host mock tests + `tests/run_db_pytest_workflow.sh` if DB semantics change |
-| Ingest / archive / metrics | Compose db pytest + contract tests |
-| Web UI / routes | Vitest + `tests/run_web_e2e_workflow.sh` |
-| Metrics catalog / monitor types | Unit + pipeline E2E when payloads change |
+
+| Change touches                     | Minimum run                                                                |
+| ---------------------------------- | -------------------------------------------------------------------------- |
+| Pure Python utils / dbload helpers | `python scripts/run_tests.py --no-django` + targeted module                |
+| Django API / machine models        | Host mock tests + `tests/run_db_pytest_workflow.sh` if DB semantics change |
+| Ingest / archive / metrics         | Compose db pytest + contract tests                                         |
+| Web UI / routes                    | Vitest + `tests/run_web_e2e_workflow.sh`                                   |
+| Metrics catalog / monitor types    | Unit + pipeline E2E when payloads change                                   |
+
 
 Runner (copy-paste from git checkout with `pyproject.toml`):
 
@@ -145,10 +185,10 @@ cd HPCPerfStats && ../.venv/bin/python3 -m pytest -q path/to/tests …
 
 1. Run smallest targeted test modules first.
 2. Escalate to compose workflows when DB/Redis/RabbitMQ semantics apply (`compose-required-for-data-services-changes.mdc`, `colima-docker-runtime.mdc`).
-3. Append results to **`test_runs/test_run_log_YYYY-MM-DD.md`** (command, exit code, blockers) — not `docs/`.
+3. Append results to `test_runs/test_run_log_YYYY-MM-DD.md` (command, exit code, blockers) — not `docs/`.
 4. Record residual risks if anything was skipped.
 
-**Bugfix / perf / reliability** — also follow `bugfix-and-perf-change-playbook.mdc` and `exhaustive-error-path-analysis.mdc` when chasing a specific failure signature.
+**Bugfix / perf / reliability** — also follow `bugfix-and-perf-change-playbook.mdc`, `exhaustive-error-path-analysis.mdc`, and `grok-surgical-bug-fix-mandate.mdc` when chasing a specific failure signature.
 
 **Git hooks before plan done (required)** — per `plan-creation-contract.mdc`. Do **not** mark the plan complete until both stages are green (does **not** require creating a commit or pushing):
 
@@ -158,15 +198,17 @@ pre-commit run --all-files
 pre-commit run --hook-stage pre-push --all-files
 ```
 
-Install hooks if missing: `./scripts/install-git-hooks.sh`. Log results under **`test_runs/`**. Fix failures in the same task before **`git-hooks-pre-close`** / **`post-implementation-review`**.
+Install hooks if missing: `./scripts/install-git-hooks.sh`. Log results under `test_runs/`. Fix failures in the same task before `git-hooks-pre-close` / `post-implementation-review`.
 
 ## 4. Implementation
 
-| Concern | Location |
-|---------|----------|
-| … | `path/to/module.py` |
 
-Omit this section for answer-only or doc-only work with no logic change.
+| Concern | Location            |
+| ------- | ------------------- |
+| …       | `path/to/module.py` |
+
+
+When Approach has **Minimally Invasive Fix**, stay inside those **1–5 lines** unless Root Cause Analysis is revised first. Omit this section for answer-only or doc-only work with no logic change.
 
 ## 5. Cursor rules / docs sync
 
@@ -179,12 +221,16 @@ Per `plan-creation-contract.mdc` step 5:
 
 **Docs sync** (when triggered):
 
-| Trigger | Update |
-|---------|--------|
-| Test workflow / commands | `docs/TESTING.md` (`testing-doc-sync.mdc`) |
-| Operator setup / compose | `README.md` (`readme-installation-sync.mdc`) |
+
+| Trigger                        | Update                                                         |
+| ------------------------------ | -------------------------------------------------------------- |
+| Test workflow / commands       | `docs/TESTING.md` (`testing-doc-sync.mdc`)                     |
+| Operator setup / compose       | `README.md` (`readme-installation-sync.mdc`)                   |
 | User-visible metrics/search/UI | `docs/using-the-website-as-a-researcher.md`, frontend metadata |
-| Deploy / concurrency tuning | `docs/DEPLOY_CONCURRENCY_AND_NUMA.md` |
+| Deploy / concurrency tuning    | `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`                          |
+
+
+
 
 ## 6. Consumer follow-up plan (optional)
 
@@ -202,9 +248,11 @@ State in the monitor summary: **consumer plan attached** or **no consumer change
 
 ## Invariants / edge cases
 
+
 | Case | Expected |
-|------|----------|
-| … | … |
+| ---- | -------- |
+| …    | …        |
+
 
 **Runtime logic** — also cover `logic-change-checklist.mdc` when behavior changes:
 
@@ -212,6 +260,8 @@ State in the monitor summary: **consumer plan attached** or **no consumer change
 - Invariants before/after (idempotence, cache freshness, staff vs non-staff)
 - ≥1 transient failure mode + expected fallback
 - Cross-layer name consistency (analysis → API → frontend → tests)
+
+
 
 ## Final code review (mandatory before implementation close)
 
@@ -259,9 +309,12 @@ Work described by this plan is **not complete** until:
 - Structured chat self-review delivered (`plan-completion-gate.mdc` step 2)
 - Conclusions trace to **verified facts**
 
+
+
 ## Narrow exceptions
 
 Skip full plan structure only for:
 
 - Answer-only questions with no implementation
 - Trivial typo or comment-only edits with no behavioral contract change
+

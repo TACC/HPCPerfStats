@@ -8,7 +8,7 @@ globs: HPCPerfStats/monitor/src/**,HPCPerfStats/monitor/tests/**
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-- When a traceback or runtime error log is provided, identify the **first frame in project-owned code** (any language) and fix the root cause there.
+- When a traceback or runtime error log is provided, identify the **first frame in project-owned code** (any language) and fix the root cause there. Plans must fill **Root Cause Analysis** in Problem and facts, plus Approach subsections **Target File & Line Numbers** and **Minimally Invasive Fix** in **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`**: one-sentence RCA, target file and line numbers, and the exact 1–5 lines to change — nothing else.
 - Do not implement symptom-only patches in downstream code paths when the upstream cause is actionable.
 - Add or update regression tests that fail before the fix and pass after the fix.
 - Use unit tests by default; use integration tests when the failure spans multiple components.

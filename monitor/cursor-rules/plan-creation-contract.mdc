@@ -27,10 +27,10 @@ Applies to **every plan**: pre-code chat plans, **`HPCPerfStats/monitor/docs/pla
 
 ## Required plan steps (in order)
 
-1. **Problem and facts** — constraints, verified current behavior, affected layers.
-2. **Approach** — ordered steps with trade-offs tied to the best-practice callouts above.
+1. **Problem and facts** — constraints, verified current behavior, affected layers. For bug/hotfix/traceback/timeout/regression plans, include **Root Cause Analysis** (one sentence explaining exactly why the bug is happening). Greenfield features with no failure signature: **N/A** plus one sentence of rationale.
+2. **Approach** — ordered steps with trade-offs tied to the best-practice callouts above. For bug/hotfix/regression plans, include Approach subsections **Target File & Line Numbers** (`[Path/to/file.py] around lines [X to Y]`) and **Minimally Invasive Fix** (the exact 1–5 lines to change/add/delete — do not show or change anything else).
 3. **Testing** — every behavior change must include at least one **regression test and/or unit test** at the narrowest layer that proves the contract. Cite existing `tests/test_*.c` modules or name new ones. For fixes, follow **`every-error-regression-test.mdc`** and **`test-first-discipline.mdc`**.
-4. **Implementation** — what will change (files/layers). Omit for answer-only or doc-only work with no logic change.
+4. **Implementation** — what will change (files/layers). When **Minimally Invasive Fix** is present in Approach, stay inside those 1–5 lines unless Root Cause Analysis is revised first. Omit for answer-only or doc-only work with no logic change.
 5. **Cursor rules** — enshrine modalities, best practices, contracts, and failure modes that should guide future work:
  - When this plan introduces or clarifies a **recurring** pattern, **add or update** a focused **`.mdc`** rule in **`HPCPerfStats/monitor/cursor-rules/`** (authoritative; symlinked from **`.cursor/rules/`**).
  - **Every new or re-scoped domain rule** must be registered in the **task router** in **`agent-discipline-core.mdc`** in the **same task** and in **`cursor-hooks/hook_task_router.py`** (`MONITOR_ROUTER_ENTRIES`). Default **`alwaysApply: false`**; add **`globs:`** when possible.

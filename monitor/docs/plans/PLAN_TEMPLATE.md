@@ -18,7 +18,7 @@ Use any of these when you want the agent to follow this template and the close g
 - **“Include final code review per plan-creation-contract”**
 - **“Implement this plan”** (with attached plan or Cursor Plan todos)
 
-The agent must read this file, include **Final code review** and **Post-implementation review** sections, and add the **`post-implementation-review`** todo last. See **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`**.
+The agent must read this file, include **Final code review** and **Post-implementation review** sections, add the **`post-implementation-review`** todo last, and for bug/hotfix/regression plans fill **Root Cause Analysis** (Problem and facts) plus Approach subsections **Target File & Line Numbers** and **Minimally Invasive Fix**. See **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`**.
 
 **Do not mark implementation done** until the **close sequence** is complete (see **`plan-completion-gate.mdc`** → *Blocking close gate*): (1) **Agent rule dispatch** — list triggered **`*.mdc`** rules Read or N/A, (2) senior final code review on the diff and affected workflows finds no unfixed gaps, and (3) structured chat self-review is delivered (**Why it works**, **Edge cases**, **Convention check**). This applies to **all non-trivial code changes**, not only plan-driven work. **When implementing a plan:** also sync plan YAML todos (`status: completed` for every finished step—status-only plan edits are allowed even when plan prose must not change) and complete **`post-implementation-review`**.
 
@@ -55,6 +55,12 @@ isProject: false
 - Affected layers (monitor C, emit/schema, RabbitMQ, consumer `listend.py` contract, packaging/spec).
 - Open questions: list any unclear requirement and **ask the user** before implementing.
 
+### Root Cause Analysis
+
+**Required** when this plan addresses a bug, hotfix, traceback, timeout, regression, or incorrect behavior. For greenfield features with no failure signature, write **N/A** and one sentence of rationale.
+
+- [1 sentence explaining exactly why the bug is happening]
+
 ## 2. Approach
 
 Ordered steps with trade-offs.
@@ -70,6 +76,20 @@ sequenceDiagram
   participant L as listend.py
   M->>Q: stats/schema payload
   Q->>L: consume
+```
+
+### Target File & Line Numbers
+
+**Required** for bug/hotfix/regression plans (same N/A rule as Root Cause Analysis).
+
+- [Path/to/file.py] around lines [X to Y]
+
+### Minimally Invasive Fix
+
+**Required** for bug/hotfix/regression plans (same N/A rule as Root Cause Analysis). Show the exact 1–5 lines of code you will change, add, or delete. Do not show or change anything else.
+
+```
+[Show the exact 1-5 lines of code you will change, add, or delete. Do not show or change anything else.]
 ```
 
 ## 3. Testing
@@ -120,7 +140,7 @@ make -C .build-static distclean
 |---------|----------|
 | … | `HPCPerfStats/monitor/src/…` |
 
-Omit this section for answer-only or doc-only work with no logic change.
+When Approach has **Minimally Invasive Fix**, stay inside those **1–5 lines** unless Root Cause Analysis is revised first. Omit this section for answer-only or doc-only work with no logic change.
 
 ## 5. Cursor rules / docs sync
 

@@ -12,7 +12,7 @@ Agents must not treat plan structure or the **close sequence** as optional under
 
 ## Every implementation plan must include
 
-1. All required sections in order per **`plan-creation-contract.mdc`** (Problem and facts → Approach → Testing → Implementation → Cursor rules → Final code review).
+1. All required sections in order per **`plan-creation-contract.mdc`** (Problem and facts → Approach → Testing → Implementation → Cursor rules → Final code review). Bug/hotfix/regression plans must include **Root Cause Analysis** in Problem and facts, and Approach subsections **Target File & Line Numbers** and **Minimally Invasive Fix** (`PLAN_TEMPLATE.md`).
 2. **`Final code review (mandatory before implementation close)`** per **`PLAN_TEMPLATE.md`**.
 3. **`Post-implementation review (required before close)`** per **`PLAN_TEMPLATE.md`**.
 4. Final YAML todo:

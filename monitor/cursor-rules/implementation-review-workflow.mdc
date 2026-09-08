@@ -17,7 +17,7 @@ For non-trivial implementation work, plan first:
 1. **Break down the problem** — constraints, required inputs, edge cases, and logical steps in order.
 2. **Ground in the repo** — read surrounding code, callers, tests, and applicable workspace rules; do not assume APIs, config keys, or behavior that you have not verified.
 3. **Ask, do not guess** — if a variable, parameter, requirement, or acceptance criterion is undefined or ambiguous, ask the user for clarification before implementing.
-4. **Share structured reasoning** — for non-trivial tasks, present the plan (or key trade-offs) before the diff so the user can correct direction early. Keep it concise; do not dump raw chain-of-thought.
+4. **Share structured reasoning** — for non-trivial tasks, present the plan (or key trade-offs) before the diff so the user can correct direction early. Keep it concise; do not dump raw chain-of-thought. Bug/hotfix plans must include **Root Cause Analysis** in Problem and facts, plus Approach subsections **Target File & Line Numbers** and **Minimally Invasive Fix** from **`PLAN_TEMPLATE.md`**.
 
 Narrow exceptions: one-line typo/format fixes, pure documentation edits with no logic change, and answer-only questions that do not request code.
 
