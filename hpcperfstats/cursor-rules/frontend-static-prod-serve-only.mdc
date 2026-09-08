@@ -4,6 +4,8 @@ alwaysApply: false
 globs:
   - hpcperfstats/site/frontend/scripts/copy-next-export.mjs
   - hpcperfstats/site/hpcperfstats_site/static/frontend/**
+  - hpcperfstats/site/lib/compress_static_sidecars.py
+  - services-conf/django_startup.sh
   - services-conf/proxy_entrypoint.sh
   - services-conf/nginx-static-files.conf
   - services-conf/nginx*.conf
@@ -39,7 +41,7 @@ Remove or never publish under served trees:
 
 - Next App Router static-export **`index.txt` / `__next.*.txt`** — RSC flight payloads used by client navigation.
 - `index.html`, `_next/static/**` JS/CSS/fonts/media, `robots.txt`, `404.html` as emitted by the production export.
-- **Precompressed sidecars** **`*.br`** and **`*.gz`** beside HTTP-served text assets (JS/CSS/SVG/JSON/txt/xml). **Allowed on disk**; nginx **`brotli_static` / `gzip_static`** serve them when the client asks for the **original URL**. Direct **`*.br` / `*.gz` / `*.zst` HTTP URLs** under `/static/` **404**. Do **not** write sidecars for SPA **`machine/**/*.html`** / **`pub/**/*.html`** (heal rewrites those files). Do **not** purge `.br`/`.gz` in `spa_static_root_heal` or `proxy_entrypoint`.
+- **Precompressed sidecars** **`*.br`** and **`*.gz`** beside HTTP-served text assets (JS/CSS/SVG/JSON/txt/xml). Written by [`compress_static_sidecars.py`](hpcperfstats/site/lib/compress_static_sidecars.py) after `collectstatic` and SPA heal (`django_startup.sh` and both Dockerfile `collectstatic` RUNs). **Allowed on disk**; nginx **`brotli_static` / `gzip_static`** serve them when the client asks for the **original URL**. Direct **`*.br` / `*.gz` / `*.zst` HTTP URLs** under `/static/` **404**. Do **not** write sidecars for SPA **`machine/**/*.html`** / **`pub/**/*.html`** (heal rewrites those files). Do **not** purge `.br`/`.gz` in `spa_static_root_heal` or `proxy_entrypoint`. **`copy-next-export.mjs`** does **not** compress.
 
 ## Runtime contract (proxy)
 
@@ -57,7 +59,7 @@ When adding anything under `hpcperfstats_site/static/frontend/` or changing expo
 
 1. Ask: **does a browser need this URL in prod?** If no → do not leave it on a served path after proxy start.
 2. Extend entrypoint strip denylist and/or nginx `/static/` deny regex in the **same** change.
-3. Add/extend regression tests (`test_nginx_static_wsgi_contract.py`, `copy-next-export.production.test.ts`, entrypoint string/order asserts).
+3. Add/extend regression tests (`test_nginx_static_wsgi_contract.py`, `test_compress_static_sidecars.py`, `copy-next-export.production.test.ts`, entrypoint string/order asserts).
 4. Cross-check **`frontend-prod-test-build-boundary.mdc`** for test-route exclusions.
 
 ## Scan baseline (2026-08-05)

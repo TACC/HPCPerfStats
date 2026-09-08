@@ -93,9 +93,21 @@ def test_mkl_source_stack_run_order_and_flags():
       and "--constraint /tmp/requirements-mkl-src.txt" in b
   )
 
+  gil_brotli_i, gil_brotli = _find(
+      lambda b: "--no-binary brotli" in b
+      and "import brotli" in b
+      and "python3.14t" not in b
+  )
+  ft_brotli_i, ft_brotli = _find(
+      lambda b: "--no-binary brotli" in b
+      and "import brotli" in b
+      and "python3.14t" in b
+  )
+
   assert gil_build_i < gil_compile_i < gil_rest_i
   assert ft_build_i < ft_compile_i < ft_rest_i
-  assert gil_rest_i < ft_build_i
+  assert gil_rest_i < gil_brotli_i < ft_build_i
+  assert ft_rest_i < ft_brotli_i
 
   for build in (gil_build, ft_build):
     assert "-r /tmp/requirements-rest.txt" not in build
@@ -186,6 +198,15 @@ def test_mkl_source_stack_run_order_and_flags():
     # pandas import needs dateutil from rest; smoke after rest install.
     assert "import pandas" in rest
     assert "pd.__version__" in rest
+
+  for native in (gil_brotli, ft_brotli):
+    assert "--force-reinstall" in native
+    assert "-march=native" in native
+    assert "-mtune=native" in native
+    assert "-flto" in native
+    assert "-r /tmp/requirements-rest.txt" not in native
+    assert "brotli.compress" in native
+    assert "brotli.decompress" in native
 
   assert "ldconfig" in ft_compile
   assert "mkl-gil.conf" in gil_compile

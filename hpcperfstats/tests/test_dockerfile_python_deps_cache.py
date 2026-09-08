@@ -196,13 +196,16 @@ def test_pyproject_dependencies_write_valid_pip_requirements_file():
 
 
 def test_hpcperfstats_child_stages_do_not_reinstall_python_deps():
-  """hpcperfstats-full and pipeline-refresh inherit base; only collectstatic locally."""
+  """hpcperfstats-full and pipeline-refresh inherit base; collectstatic locally."""
   dockerfile = (_repo_root() / "Dockerfile").read_text()
 
   for stage_name in ("hpcperfstats-full", "hpcperfstats-pipeline-refresh"):
     stage = _stage_body(dockerfile, stage_name)
     assert "pip install" not in stage, stage_name
     assert "collectstatic --noinput" in stage, stage_name
+    compress_token = "-m hpcperfstats.site.lib.compress_static_sidecars"
+    assert compress_token in stage, stage_name
+    assert stage.index("collectstatic --noinput") < stage.index(compress_token)
 
 
 def test_hpcperfstats_full_is_last_dockerfile_stage():

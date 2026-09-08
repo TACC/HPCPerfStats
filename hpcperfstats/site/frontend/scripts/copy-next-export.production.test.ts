@@ -158,4 +158,13 @@ describe("copy-next-export production mode", () => {
     });
     expect(rebuilt).toBe(machineInc);
   });
+
+  it("does not import or invoke Node sidecar compression", () => {
+    const src = fs.readFileSync(
+      path.join(process.cwd(), "scripts/copy-next-export.mjs"),
+      "utf8",
+    );
+    expect(src).not.toContain("compress-static-sidecars");
+    expect(src).not.toContain("compressStaticSidecars");
+  });
 });

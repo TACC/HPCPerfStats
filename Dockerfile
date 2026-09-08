@@ -450,6 +450,15 @@ RUN /bin/bash -o pipefail -c '\
     -r /tmp/requirements-rest.txt; \
   python3 -c "import pandas as pd; assert pd.__version__"'
 
+# 4b) GIL native brotli (replace rest-layer wheel; host .venv keeps the wheel).
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  export CFLAGS="-O3 -march=native -mtune=native -flto -g0" \
+    CXXFLAGS="-O3 -march=native -mtune=native -flto -g0"; \
+  python3 -m pip install --no-cache-dir --force-reinstall --no-binary brotli \
+    --constraint /tmp/requirements.txt brotli; \
+  python3 -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""'
+
 # 5) Free-threaded image-build wheels only (pip already from --with-ensurepip=install).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
@@ -527,11 +536,22 @@ RUN /bin/bash -o pipefail -c '\
     -r /tmp/requirements-rest.txt; \
   /opt/python3.14t/bin/python3.14t -c "import pandas as pd; assert pd.__version__"'
 
+# 7b) Free-threaded native brotli (same CFLAGS as GIL; rest layer stays wheels).
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  export CFLAGS="-O3 -march=native -mtune=native -flto -g0" \
+    CXXFLAGS="-O3 -march=native -mtune=native -flto -g0"; \
+  /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir \
+    --force-reinstall --no-binary brotli \
+    --constraint /tmp/requirements.txt brotli; \
+  /opt/python3.14t/bin/python3.14t -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""'
+
 # Install debugging tools into GIL prefix (py-spy / pyinstrument).
 RUN /bin/bash -o pipefail -c 'python3 -m pip install --no-cache-dir pyinstrument py-spy'
 
 # Uninstall image-build-only toolchain/devel from both ABIs after all pip layers
-# (image-build + MKL source numpy/numexpr/pandas + rest wheels + pyinstrument).
+# (image-build + MKL source numpy/numexpr/pandas + rest wheels + native brotli +
+# pyinstrument).
 # Keep: cython (operator); mkl + OpenMP/TBB/UR runtime; setuptools/wheel/packaging
 # (packaging is a runtime dep of bokeh; setuptools/wheel stay for pip tooling).
 # Prune: meson/meson-python/ninja/versioneer/pyproject-metadata (build backends)
@@ -678,7 +698,8 @@ RUN rm -rf /home/hpcperfstats/.git
 
 # Cloud-synced checkouts may not preserve host execute bits; compose invokes these
 # scripts directly as container commands.
-# django_startup.sh runs collectstatic + spa_static_root_heal on every web start:
+# django_startup.sh runs collectstatic + spa_static_root_heal + sidecar
+# compress on every web start:
 # that fingerprint heal is what lands a new SPA into compose staticfiles_data after
 # a from-scratch image rebuild (image collectstatic alone cannot write the volume).
 RUN chmod +x \
@@ -705,7 +726,7 @@ COPY .build/pipeline-rebuild-frontend/ \
 RUN chown -R hpcperfstats:hpcperfstats \
     /home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend
 
-RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput"
+RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput && /usr/local/bin/python3 -m hpcperfstats.site.lib.compress_static_sidecars"
 
 # Default image: npm-built frontend from frontend-builder (last stage = default target).
 FROM hpcperfstats-base AS hpcperfstats-full
@@ -720,5 +741,6 @@ COPY --from=frontend-builder --chown=hpcperfstats:hpcperfstats \
 # sync the live volume. After recreate, django_startup.sh (above) runs
 # collectstatic on the volume, then spa_static_root_heal fingerprint-compares
 # package vs volume machine/index.html and replaces STATIC_ROOT/frontend on
-# drift. Optional SPA-only hot path: scripts/rebuild_frontend.sh (no full rebuild).
-RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput"
+# drift, then compress_static_sidecars writes Brotli/Gzip siblings. Optional
+# SPA-only hot path: scripts/rebuild_frontend.sh (no full rebuild).
+RUN /bin/bash -o pipefail -c "/usr/local/bin/python3 hpcperfstats/site/manage.py collectstatic --noinput && /usr/local/bin/python3 -m hpcperfstats.site.lib.compress_static_sidecars"

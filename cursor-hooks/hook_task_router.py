@@ -289,6 +289,8 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         "id": "frontend_static_prod_serve",
         "patterns": [
             "hpcperfstats/site/hpcperfstats_site/static/frontend/*",
+            "hpcperfstats/site/lib/compress_static_sidecars.py",
+            "services-conf/django_startup.sh",
             "services-conf/proxy_entrypoint.sh",
             "services-conf/nginx-static-files.conf",
             "services-conf/nginx*.conf",

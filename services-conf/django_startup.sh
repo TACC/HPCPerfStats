@@ -78,6 +78,9 @@ from hpcperfstats.site.lib.spa_static_root_heal import ensure_spa_shells_from_dj
 ensure_spa_shells_from_django_settings()
 PY
 
+# Brotli-11 / Gzip-9 sidecars for nginx brotli_static/gzip_static (mtime skip).
+/usr/local/bin/python3 -m hpcperfstats.site.lib.compress_static_sidecars
+
 # Gunicorn workers: WEB_CONCURRENCY overrides; else absolute [PORTAL] gunicorn_workers (default 32).
 WORKERS=$(/usr/local/bin/python3 -c "
 import os

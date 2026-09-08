@@ -188,6 +188,21 @@ def test_django_startup_invokes_spa_static_root_heal():
   assert "hpcperfstats.site.lib.spa_static_root_heal" in content
 
 
+def test_django_startup_compresses_static_sidecars_after_heal():
+  repo_root = Path(__file__).resolve().parents[2]
+  script_path = repo_root / "services-conf" / "django_startup.sh"
+  content = script_path.read_text()
+
+  collect_idx = content.index("collectstatic --noinput")
+  heal_idx = content.index("ensure_spa_shells_from_django_settings")
+  compress_idx = content.index(
+      "-m hpcperfstats.site.lib.compress_static_sidecars"
+  )
+  gunicorn_idx = content.index("gunicorn")
+  assert collect_idx < heal_idx < compress_idx < gunicorn_idx
+  assert "manage.py makemigrations" not in content
+
+
 @pytest.mark.machine_unit_mock
 def test_django_startup_does_not_run_makemigrations():
   """Production startup must apply reviewed migrations only — never autogenerate."""

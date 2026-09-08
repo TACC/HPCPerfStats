@@ -447,6 +447,10 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    SPA shells under **`STATIC_ROOT/frontend/{machine,pub}/index.html`**. If the
    package image lacks the shells, web fail-closes. Volume fingerprint heal
    after a later image rebuild is documented in **[docs/upgrade.md](docs/upgrade.md)**.
+   After heal, startup writes Brotli-11 / Gzip-9 sidecars beside compressible
+   static files (hashed Next chunks, Django/DRF admin assets). Existing stacks
+   pick this up on the next **`web`** restart; no compose volume migrate.
+   Direct `*.br` / `*.gz` URLs stay 404 at nginx.
 
    The compose DB service includes explicit PostgreSQL checkpoint/memory tuning (`max_connections`, `shared_buffers`, `work_mem`, `maintenance_work_mem`, `autovacuum_work_mem`, `checkpoint_*`, `min_wal_size`, `max_wal_size`, and parallel-worker caps) plus `shm_size`. Keep these aligned with host RAM and service memory limits; tune upward one notch at a time only after confirming checkpoint stability and no OOM events. The **pipeline** daemons (`listend`, `sync_timedb`, and `update_metrics`) use in-process threads and ordinary Python objects, so the pipeline service does not reserve a separate `shm_size` for worker IPC. Do **not** change **`db`** `shm_size: "16gb"`.
 

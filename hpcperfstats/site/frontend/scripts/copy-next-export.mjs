@@ -2,7 +2,6 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { compressStaticSidecars } from "./compress-static-sidecars.mjs";
 
 /** Next static export dirs omitted from production deploy (Playwright / test-only routes). */
 export const PRODUCTION_EXCLUDED_EXPORT_DIRS = ["bokeh-playwright-smoke"];
@@ -317,7 +316,6 @@ export function runCopyNextExport({
   }
   // Per-document CSP meta travels with HTML (avoids stale nginx hash headers).
   injectCspMetaIntoFrontendTree(target);
-  compressStaticSidecars(target);
   writeNginxCspIncludes(target, edgeNginxDir);
   return {
     out,
