@@ -21,7 +21,7 @@ Per **`plan-live-disk-sync.mdc`**:
 
 ## Every implementation plan must include
 
-1. All required sections in order per **`plan-creation-contract.mdc`** (Plan disk file → Problem and facts → Operator discovery when needed → Approach → Testing → Implementation → Cursor rules → Final code review). Bug/hotfix/regression plans must include **Root Cause Analysis** in Problem and facts, and Approach subsections **Target File & Line Numbers** and **Minimally Invasive Fix** (`PLAN_TEMPLATE.md`).
+1. All required sections in order per **`plan-creation-contract.mdc`** (Plan disk file → Problem and facts → Operator discovery when needed → Approach → Testing → Implementation → Cursor rules → Final code review). Bug/hotfix/regression plans must include **Root Cause Analysis** in Problem and facts, and Approach subsections **Target File & Line Numbers**, **Fix compression sequence**, **Minimally Invasive Fix**, and **Compression metric block** (`PLAN_TEMPLATE.md`).
 2. **`Final code review (mandatory before implementation close)`** per **`PLAN_TEMPLATE.md`**.
 3. **`Post-implementation review (required before close)`** per **`PLAN_TEMPLATE.md`**.
 4. Closing YAML todos (order fixed; **`post-implementation-review` last**):
@@ -80,3 +80,4 @@ Paste as the **first** user rule for highest signal:
 - **`plan-creation-contract.mdc`** — mandatory plan authoring structure and completion bar.
 - **`plan-completion-gate.mdc`** — execution gate: senior final code review then structured chat self-review before close.
 - **`implementation-review-workflow.mdc`** — pre-code planning and post-code review content.
+- **`grok-surgical-bug-fix-mandate.mdc`** — bug plans: zero-expansion compression sequence + metric block (`PLAN_TEMPLATE.md`).

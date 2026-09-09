@@ -18,6 +18,10 @@ When refactoring or removing duplication (Python under `hpcperfstats/`, React/JS
 3. **Execution branch reduction** — Fewer `if` / `elif` chains and symmetric duplicate branches; prefer one parameterized path or a small data-driven loop (e.g. threshold table, `SECTIONS.map`, shared loader factory) when it **reduces** branches **and** fits 1–2.
 4. **Merge surface reduction** — One canonical place for shared logic so fewer files need parallel edits. Treat as a **bonus** after 1–3, unless it coincides with deleting a duplicate.
 
+## Bug-fix Boy Scout (root-cause block only)
+
+When the task is a **bug/hotfix** (`grok-surgical-bug-fix-mandate.mdc`), apply priorities 1–2 **inside the failing block** (~30 surrounding lines): absorb the fix by flattening nests and deleting redundant branches so net lines go down (or stay zero). Do **not** append nested conditionals. Do **not** restyle or rewrite unrelated neighbors. Record projected net line impact on bug plans (`PLAN_TEMPLATE.md` → **Compression metric block**).
+
 ## Heuristics
 
 - After a refactor, if a named helper is only referenced **once**, **inline** it unless the name makes the call site materially clearer.
@@ -33,3 +37,4 @@ When refactoring or removing duplication (Python under `hpcperfstats/`, React/JS
 ## Overlap
 
 - Complements `duplicate-threshold-helper-mandate.mdc` (when extraction is mandatory), `react-js-cursor-rule.mdc` (React style and tests on touch), and `django-python-cursor-rules.mdc` (Django patterns). This rule is the **decision order** for refactors; those rules still govern style, security, and framework usage.
+- **`grok-surgical-bug-fix-mandate.mdc`** — bug patches compress the failing block per this order; they do not become whole-file cleanups.

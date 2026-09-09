@@ -1,5 +1,5 @@
 ---
-description: Apply when fixing bugs, refactoring errors, or addressing issue tickets — surgical line-level repairs, no adjacent cleanup or new abstractions
+description: Apply when fixing bugs, refactoring errors, or addressing issue tickets — zero-expansion repair of the root-cause block (compress, do not append nested conditionals)
 globs: hpcperfstats/**/*.py,hpcperfstats/site/frontend/**,scripts/**/*.py,services-conf/**
 alwaysApply: false
 ---
@@ -10,35 +10,49 @@ alwaysApply: false
 
 ## When this applies
 
-Bug fixes, traceback/error refactors, and issue-ticket patches. **Not** greenfield features, user-requested refactors, or planned architecture work.
+Bug fixes, traceback/error refactors, and issue-ticket patches. **Not** greenfield features, user-requested whole-file refactors, or planned architecture work.
 
 ## Core rule
 
-Execute hyper-targeted, line-level repairs. Optimize for **minimal file mutation** and strict adherence to the existing architecture.
+Execute hyper-targeted repairs of the **root-cause block**. Optimize for **minimal file mutation** and **zero expansion**: the shipped patch must not grow the failing logic with nested conditionals. Prefer compressing that block so the corrected path is naturally immune, with **100% functional parity**.
 
 ## Strict operational constraints
 
-1. **Surgical fixes only:** Locate the exact line or block causing the failure and repair it with the fewest lines required.
-2. **Anti-code-creep:** Do **not** introduce proactive refactors, optional cleanup, or stylistic changes to adjacent lines. Leave code that is not causing the bug untouched.
-3. **No new abstractions:** Fix the issue inside the file's existing logic paradigm. Do **not** create new helpers, private utilities, or custom exception classes to solve a bug unless the user explicitly asks **or** `duplicate-threshold-helper-mandate.mdc` applies (3+ copies).
-4. **Pass-through interface:** Do **not** change public function signatures, parameter names, or return interfaces as part of a bug patch. If the bug *is* the contract, follow `api-breaking-change-contract.mdc` instead of silently widening the diff.
+1. **Surgical fixes only:** Locate the exact line or block causing the failure. Repair it with the fewest lines required **after** the compression sequence below — not by appending wrappers.
+2. **Zero-expansion:** Do **not** append a structural patch or nested `if`/`elif` blocks to cover the edge case. If complexity caused the bug, rewrite the root-cause block so the concise logic absorbs the fix.
+3. **Anti-code-creep:** Do **not** introduce proactive refactors, optional cleanup, or stylistic changes to lines **outside** the root-cause block. Unrelated neighbors stay untouched. Compressing the failing block is the patch, not extra cleanup.
+4. **No new abstractions:** Fix the issue inside the file's existing logic paradigm. Do **not** create new helpers, private utilities, or custom exception classes to solve a bug unless the user explicitly asks **or** `duplicate-threshold-helper-mandate.mdc` applies (3+ copies).
+5. **Pass-through interface:** Do **not** change public function signatures, parameter names, or return interfaces as part of a bug patch. If the bug *is* the contract, follow `api-breaking-change-contract.mdc` instead of silently widening the diff.
+6. **No code golf:** Condensed code must stay readable; do not sacrifice type safety, error handling, or performance (`refactor-dedup-priorities.mdc`).
 
 New or updated **regression tests** are required (`every-error-regression-test.mdc`); that is not product-code creep.
 
+## Compression sequence (before the first product-code edit)
+
+Complete this chain **in the plan or chat block** before writing a diff:
+
+1. **Root Cause Analysis (RCA):** Identify exactly why the bug occurs.
+2. **Expansion Fix (mental draft):** Formulate the raw, naive patch. **Do not ship it.**
+3. **Compression Refactor:** Analyze that draft against the surrounding ~30 lines of the **same** block. Consolidate variables, flatten nested loops, merge conditions, use early exits or native utilities so the fix is absorbed **while netting negative (or zero) lines**.
+4. **Readability & Safety Audit:** Ensure the condensed code remains readable and does not drop type safety, error handling, or performance.
+
 ## Interactive workflow
 
-After reading triggered domain rules, and **before** the first product-code edit, output a 3-point block in chat (do **not** `CreatePlan` unless the user asked for a plan or `PLAN_TEMPLATE.md` applies):
+After reading triggered domain rules, and **before** the first product-code edit, output this block in chat (do **not** `CreatePlan` unless the user asked for a plan or `PLAN_TEMPLATE.md` applies):
 
 - **Root Cause:** One sentence diagnosing the bug.
-- **Lines Affected:** Target file path and exact line range (for example lines 45–48).
-- **Proposed Patch:** A tiny diff snippet showing only the lines that will change.
+- **Lines Affected:** Target file path and exact line range (the root-cause block, for example lines 45–48 or the ~30-line function).
+- **Proposed Patch:** The **compressed** snippet that will change — not the Expansion Fix draft.
+- **Compression metrics:** Redundant blocks slated for deletion; modern-syntax mechanism; projected net line impact (`0` if the 1–5 line patch is already immune).
 
-Stay inside that range unless the RCA is revised first. For a Cursor Plan, put **Root Cause Analysis** in Problem and facts, and Approach subsections **Target File & Line Numbers** and **Minimally Invasive Fix** (`docs/plans/PLAN_TEMPLATE.md`).
+Stay inside that range unless the RCA is revised first. For a Cursor Plan, put **Root Cause Analysis** in Problem and facts, and Approach subsections **Target File & Line Numbers**, **Fix compression sequence**, **Minimally Invasive Fix**, and **Compression metric block** (`docs/plans/PLAN_TEMPLATE.md`).
 
 ## Overlap
 
 - **`bugfix-and-perf-change-playbook.mdc`** — root-cause-first playbook; this rule is the anti-bloat patch constraint.
 - **`exhaustive-error-path-analysis.mdc`** — enumerate producers before patching one call site; the eventual patch stays surgical.
 - **`duplicate-threshold-helper-mandate.mdc`** — wins at 3+ copies; still pick the smallest helper (`refactor-dedup-priorities.mdc`).
+- **`refactor-dedup-priorities.mdc`** — less code first, simplicity, no golf; Compression Refactor follows that order inside the failing block.
 - **`end-to-end-feature-wiring-contract.mdc`** — still wire layers when the bug spans API/SPA/tests; do not invent extra layers.
-- **`every-error-regression-test.mdc`**, **`test-first-discipline.mdc`** — tests are mandatory; product-code scope stays minimal.
+- **`every-error-regression-test.mdc`**, **`test-first-discipline.mdc`** — tests are mandatory; product-code scope stays the root-cause block.
+- **`plan-creation-contract.mdc`** / **`PLAN_TEMPLATE.md`** — bug plans record the compression sequence and metric block before execution.

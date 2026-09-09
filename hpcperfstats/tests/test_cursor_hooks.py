@@ -378,14 +378,17 @@ def test_hook_task_router_rules_exist_and_are_documented():
 def test_triggered_rules_product_python_dispatches_surgical_bug_fix():
   py_rules = triggered_rules_for_paths(["hpcperfstats/listend.py"])
   assert "grok-surgical-bug-fix-mandate.mdc" in py_rules
+  assert "refactor-dedup-priorities.mdc" in py_rules
   nested_rules = triggered_rules_for_paths(
       ["hpcperfstats/dbload/lib/listend_db_ingest.py"],
   )
   assert "grok-surgical-bug-fix-mandate.mdc" in nested_rules
+  assert "refactor-dedup-priorities.mdc" in nested_rules
   fe_rules = triggered_rules_for_paths(
       ["hpcperfstats/site/frontend/src/views/JobDetail.tsx"],
   )
   assert "grok-surgical-bug-fix-mandate.mdc" in fe_rules
+  assert "refactor-dedup-priorities.mdc" in fe_rules
 
 
 def test_triggered_rules_for_cursor_hooks_path():
@@ -486,6 +489,8 @@ def test_rule_dual_registration_issues_flags_orphan_rule(tmp_path):
 def test_rule_dual_registration_issues_passes_for_registered_rule():
   registered_path = str(RULES_DIR / "testing-best-practices.mdc")
   assert lib.rule_dual_registration_issues([registered_path]) == []
+  refactor_path = str(RULES_DIR / "refactor-dedup-priorities.mdc")
+  assert lib.rule_dual_registration_issues([refactor_path]) == []
 
 
 def test_rule_dual_registration_issues_skips_non_rule_paths():
@@ -576,6 +581,26 @@ def test_plan_template_includes_root_cause_surgical_fix_block():
     assert "### Minimally Invasive Fix" not in facts
     assert "### Target File & Line Numbers" in approach
     assert "### Minimally Invasive Fix" in approach
+
+  hps = repo_root / "docs" / "plans" / "PLAN_TEMPLATE.md"
+  hps_text = hps.read_text(encoding="utf-8")
+  hps_facts_idx = hps_text.index("## 1. Problem and facts")
+  hps_approach_idx = hps_text.index("## 2. Approach")
+  hps_testing_idx = hps_text.index("## 3. Testing")
+  hps_approach = hps_text[hps_approach_idx:hps_testing_idx]
+  for snippet in (
+      "### Fix compression sequence",
+      "Expansion Fix (mental draft)",
+      "### Compression metric block",
+      "Redundant Blocks Slated for Deletion",
+      "Target Modern Syntax/Refactoring Mechanism",
+      "Projected Net Line Impact",
+      "Zero-expansion",
+  ):
+    assert snippet in hps_text, f"HPCPerfStats PLAN_TEMPLATE missing {snippet!r}"
+  assert "### Fix compression sequence" in hps_approach
+  assert "### Compression metric block" in hps_approach
+  assert "### Compression metric block" not in hps_text[hps_facts_idx:hps_approach_idx]
 
 
 def test_plan_content_issues_requires_git_hooks_pre_close_todo():

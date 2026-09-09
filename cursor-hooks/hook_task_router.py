@@ -621,9 +621,11 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
             "scripts/**/*.py",
             "services-conf/**",
             "hpcperfstats/cursor-rules/grok-surgical-bug-fix-mandate.mdc",
+            "hpcperfstats/cursor-rules/refactor-dedup-priorities.mdc",
         ],
         "rules": [
             "grok-surgical-bug-fix-mandate.mdc",
+            "refactor-dedup-priorities.mdc",
         ],
     },
     {
