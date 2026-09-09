@@ -149,6 +149,10 @@ def test_chunk_row_counts_match_helper() -> None:
     assert mod.chunk_row_counts_match(10, 10) is True
     assert mod.chunk_row_counts_match(10, 9) is False
     assert mod.chunk_row_counts_match(0, 1) is False
+    # Unknown counts (-1) must never look synced (would skip real work).
+    assert mod.chunk_row_counts_match(-1, -1) is False
+    assert mod.chunk_row_counts_match(-1, 0) is False
+    assert mod.chunk_row_counts_match(5, -1) is False
 
 
 def _sample_chunk(mod: object) -> object:
@@ -415,8 +419,9 @@ def test_count_target_range_rows_disables_statement_timeout_first() -> None:
 
     mod.count_target_range_rows(_FakeConn(), chunk)
     assert executed, "expected SQL"
-    assert "statement_timeout" in executed[0]
-    assert any("count(*)" in s.lower() for s in executed[1:])
+    assert any("statement_timeout" in s for s in executed[:2])
+    assert any("max_parallel_workers_per_gather" in s for s in executed[:3])
+    assert any("count(*)" in s.lower() for s in executed)
 
 
 def test_count_source_chunk_rows_disables_statement_timeout_first() -> None:
@@ -442,5 +447,139 @@ def test_count_source_chunk_rows_disables_statement_timeout_first() -> None:
             return _FakeCursor()
 
     mod.count_source_chunk_rows(_FakeConn(), chunk)
-    assert "statement_timeout" in executed[0]
-    assert any("count(*)" in s.lower() for s in executed[1:])
+    assert any("statement_timeout" in s for s in executed[:2])
+    assert any("max_parallel_workers_per_gather" in s for s in executed[:3])
+    assert any("count(*)" in s.lower() for s in executed)
+
+
+def test_count_target_retries_operation_canceled_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: PG18 io_uring 'Operation canceled' on skip-check must retry."""
+    from psycopg import errors as pg_errors
+
+    mod = _load_mod()
+    chunk = _sample_chunk(mod)
+    monkeypatch.setattr(mod.time, "sleep", lambda _s: None)
+    calls = {"n": 0}
+
+    class _FakeCursor:
+        def __enter__(self) -> "_FakeCursor":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def execute(self, sql: str, _params: object = None) -> None:
+            if "count(*)" in sql.lower():
+                calls["n"] += 1
+                if calls["n"] < 3:
+                    raise pg_errors.InternalError_(
+                        'could not read blocks 143..158 in file '
+                        '"base/16388/39111": Operation canceled'
+                    )
+
+        def fetchone(self) -> tuple[int]:
+            return (42,)
+
+    class _FakeConn:
+        def cursor(self) -> _FakeCursor:
+            return _FakeCursor()
+
+    assert mod.count_target_range_rows(_FakeConn(), chunk) == 42
+    assert calls["n"] == 3
+
+
+def test_count_target_gives_up_as_minus_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persistent Operation canceled returns -1 so copy falls through (no abort)."""
+    from psycopg import errors as pg_errors
+
+    mod = _load_mod()
+    chunk = _sample_chunk(mod)
+    monkeypatch.setattr(mod.time, "sleep", lambda _s: None)
+
+    class _FakeCursor:
+        def __enter__(self) -> "_FakeCursor":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def execute(self, sql: str, _params: object = None) -> None:
+            if "count(*)" in sql.lower():
+                raise pg_errors.InternalError_(
+                    'could not read blocks 143..158: Operation canceled'
+                )
+
+        def fetchone(self) -> tuple[int]:
+            return (0,)
+
+    class _FakeConn:
+        def cursor(self) -> _FakeCursor:
+            return _FakeCursor()
+
+    assert mod.count_target_range_rows(_FakeConn(), chunk) == -1
+
+
+def test_copy_one_chunk_recopies_when_counts_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both counts -1 must not skip; delete+COPY must still run."""
+    mod = _load_mod()
+    chunk = _sample_chunk(mod)
+    executed: list[str] = []
+
+    class _FakeCopy:
+        def __enter__(self) -> "_FakeCopy":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def __iter__(self):
+            return iter(())
+
+        def write(self, _data: object) -> None:
+            return None
+
+    class _FakeCursor:
+        def __enter__(self) -> "_FakeCursor":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def execute(self, sql: str, _params: object = None) -> None:
+            executed.append(sql if isinstance(sql, str) else str(sql))
+
+        def copy(self, _sql: str) -> _FakeCopy:
+            return _FakeCopy()
+
+    class _FakeConn:
+        def __enter__(self) -> "_FakeConn":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def cursor(self) -> _FakeCursor:
+            return _FakeCursor()
+
+    monkeypatch.setattr(mod, "connect_pg", lambda **_kw: _FakeConn())
+    monkeypatch.setattr(mod, "count_source_chunk_rows", lambda *_a, **_k: -1)
+    monkeypatch.setattr(mod, "count_target_range_rows", lambda *_a, **_k: -1)
+
+    outcome = mod.copy_one_chunk(
+        chunk,
+        source_host="s",
+        target_host="t",
+        port=5432,
+        user="u",
+        database="d",
+        dump_dir=None,
+        force=False,
+    )
+    assert outcome == "copied"
+    assert any("DELETE FROM host_data" in s for s in executed)

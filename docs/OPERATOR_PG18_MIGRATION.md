@@ -154,7 +154,7 @@ Optional audit/resume files (path must be writable inside `web`):
 docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate run --rm --no-deps -e PGPASSWORD=hpcperfstats web python3 /home/hpcperfstats/scripts/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --dump-dir /tmp/pg18_chunk_dumps -v
 ```
 
-Per chunk the tool compares ``count(*)`` on the source chunk to ``count(*)`` on target ``host_data`` for that time range: **matching counts are skipped** (resume-friendly). Mismatches (or ``--force``) **delete the target range then COPY**. Default **`--workers 2`** runs two chunk copies at once (`--workers 1` for serial). It never COPY's the empty parent `host_data`.
+Per chunk the tool compares ``count(*)`` on the source chunk to ``count(*)`` on target ``host_data`` for that time range: **matching counts are skipped** (resume-friendly). Mismatches (or ``--force``) **delete the target range then COPY**. Skip-check counts disable ``statement_timeout``, set ``max_parallel_workers_per_gather=0``, and **retry** transient PG18 ``Operation canceled`` / ``QueryCanceled``; if counts still fail they return unsynced (``-1``) and the chunk is **re-copied** instead of aborting the job. Default **`--workers 2`** runs two chunk copies at once (`--workers 1` for serial; prefer ≤2 under heavy I/O cancel noise). It never COPY's the empty parent `host_data`.
 
 ---
 

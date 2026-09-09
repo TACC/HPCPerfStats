@@ -23,6 +23,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -31,8 +32,10 @@ from typing import Iterable, Sequence
 
 import psycopg
 from psycopg import Connection
+from psycopg import errors as pg_errors
 
 LOG = logging.getLogger("pg18_host_data_chunk_copy")
+_COUNT_ATTEMPTS = 5
 
 
 @dataclass(frozen=True)
@@ -366,75 +369,162 @@ def chunk_row_counts_match(source_n: int, target_n: int) -> bool:
   """
   Return True when source and target row counts are equal (already synced).
 
+  Negative counts mean a skip-check count failed after retries and must not
+  be treated as synced.
+
   Args:
-    source_n (int): ``count(*)`` from the source chunk relation.
+    source_n (int): ``count(*)`` from the source chunk relation, or ``-1``
+      when the count could not be completed.
     target_n (int): ``count(*)`` on target ``host_data`` for the chunk time
-      range.
+      range, or ``-1`` when the count could not be completed.
 
   Returns:
-    bool: True when both counts are equal (including both zero).
+    bool: True when both counts are non-negative and equal (including both
+      zero).
 
   Examples:
     >>> chunk_row_counts_match(10, 10)
     True
     >>> chunk_row_counts_match(10, 9)
     False
+    >>> chunk_row_counts_match(-1, -1)
+    False
   """
-  return source_n == target_n
+  return source_n >= 0 and target_n >= 0 and source_n == target_n
+
+
+def _is_retryable_count_error(exc: BaseException) -> bool:
+  """
+  Return True for transient count failures (timeout / PG18 I/O cancel).
+
+  Args:
+    exc (BaseException): Exception raised during ``count(*)``.
+
+  Returns:
+    bool: True when the error is safe to retry or treat as unsynced.
+
+  Examples:
+    >>> _is_retryable_count_error(RuntimeError('x'))
+    False
+  """
+  if isinstance(exc, pg_errors.QueryCanceled):
+    return True
+  if isinstance(exc, pg_errors.InternalError_):
+    return "operation canceled" in str(exc).lower()
+  return False
+
+
+def _count_with_retry(
+    conn: Connection,
+    sql: str,
+    params: Sequence[object] = (),
+    *,
+    label: str,
+) -> int:
+  """
+  Run ``count(*)`` with timeout disabled, retries, and ``-1`` on give-up.
+
+  Args:
+    conn (Connection): Open Postgres connection.
+    sql (str): Count SQL (``SELECT count(*) …``).
+    params (Sequence[object]): Bind parameters for ``sql``.
+    label (str): Log label for retries (source/target).
+
+  Returns:
+    int: Row count, or ``-1`` when retryable cancels persist.
+
+  Raises:
+    Exception: Re-raised when the failure is not a retryable cancel.
+
+  Examples:
+    >>> _count_with_retry.__name__
+    '_count_with_retry'
+  """
+  delay = 0.25
+  last: BaseException | None = None
+  for attempt in range(1, _COUNT_ATTEMPTS + 1):
+    try:
+      with conn.cursor() as cur:
+        cur.execute("SET statement_timeout = 0")
+        cur.execute("SET max_parallel_workers_per_gather = 0")
+        cur.execute(sql, params)
+        row = cur.fetchone()
+      return int(row[0]) if row else 0
+    except Exception as exc:
+      last = exc
+      if not _is_retryable_count_error(exc):
+        raise
+      LOG.warning(
+          "%s count attempt %s/%s failed: %s",
+          label,
+          attempt,
+          _COUNT_ATTEMPTS,
+          exc,
+      )
+      if attempt == _COUNT_ATTEMPTS:
+        break
+      time.sleep(delay)
+      delay = min(delay * 2.0, 4.0)
+  LOG.warning(
+      "%s count giving up after retries; treat range as unsynced: %s",
+      label,
+      last,
+  )
+  return -1
 
 
 def count_source_chunk_rows(conn: Connection, chunk: ChunkRow) -> int:
   """
   Count rows in the source chunk relation.
 
-  Disables ``statement_timeout`` for this session first so large compressed
-  chunks are not canceled mid-count.
+  Retries transient cancels; returns ``-1`` if they persist so the caller
+  re-copies instead of aborting the migrate.
 
   Args:
     conn (Connection): Open source connection.
     chunk (ChunkRow): Source chunk metadata.
 
   Returns:
-    int: ``count(*)`` from ``chunk.regclass``.
+    int: ``count(*)`` from ``chunk.regclass``, or ``-1`` on persistent
+      cancel.
 
   Examples:
     >>> count_source_chunk_rows.__name__
     'count_source_chunk_rows'
   """
-  with conn.cursor() as cur:
-    cur.execute("SET statement_timeout = 0")
-    cur.execute(f"SELECT count(*) FROM {chunk.regclass}")
-    row = cur.fetchone()
-  return int(row[0]) if row else 0
+  return _count_with_retry(
+      conn,
+      f"SELECT count(*) FROM {chunk.regclass}",
+      label=f"source {chunk.regclass}",
+  )
 
 
 def count_target_range_rows(conn: Connection, chunk: ChunkRow) -> int:
   """
   Count target ``host_data`` rows in ``[range_start, range_end)``.
 
-  Disables ``statement_timeout`` for this session first so large ranges are
-  not canceled mid-count (prod: ``QueryCanceled`` on skip-check counts).
+  Retries transient cancels (statement timeout / PG18 ``Operation canceled``
+  under parallel workers); returns ``-1`` if they persist so the caller
+  re-copies instead of aborting the migrate.
 
   Args:
     conn (Connection): Open target connection.
     chunk (ChunkRow): Chunk whose time bounds define the range.
 
   Returns:
-    int: ``count(*)`` on target for that time window.
+    int: ``count(*)`` on target for that time window, or ``-1`` on
+      persistent cancel.
 
   Examples:
     >>> count_target_range_rows.__name__
     'count_target_range_rows'
   """
-  with conn.cursor() as cur:
-    cur.execute("SET statement_timeout = 0")
-    cur.execute(
-        "SELECT count(*) FROM host_data "
-        "WHERE time >= %s AND time < %s",
-        (chunk.range_start, chunk.range_end),
-    )
-    row = cur.fetchone()
-  return int(row[0]) if row else 0
+  return _count_with_retry(
+      conn,
+      "SELECT count(*) FROM host_data WHERE time >= %s AND time < %s",
+      (chunk.range_start, chunk.range_end),
+      label=f"target {chunk.regclass}",
+  )
 
 
 def copy_one_chunk(
@@ -452,8 +542,9 @@ def copy_one_chunk(
   Skip when row counts match, else delete-range + COPY (optional zstd dump).
 
   Compares ``count(*)`` on the source chunk to ``count(*)`` on target
-  ``host_data`` for the same time range. Matching counts skip the expensive
-  delete/COPY (resume-friendly). ``force=True`` always re-copies. Optional
+  ``host_data`` for the same time range. Matching non-negative counts skip
+  the expensive delete/COPY (resume-friendly). Failed counts (``-1`` after
+  retries) never skip. ``force=True`` always re-copies. Optional
   ``dump_dir`` still shells out to the ``zstd`` CLI when present.
 
   Args:
