@@ -1386,6 +1386,38 @@ def test_ghost_deleted_manifest_path_on_disk_triggers_delete_retry_while_phase_d
   assert not state._ghost_deleted_paths_on_disk()
 
 
+def test_h20c_reclassify_blocking_while_deleting_fingerprint(tmp_path):
+  """H20c: blocking skip + verified_pending=0 must reclassify then unlink."""
+  day = datetime(2026, 8, 17)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
+  state = coord._get_or_create_day(tar_path)
+  seg_str = str(seg)
+  state._record_entry(
+      seg_str,
+      zst,
+      "skipped_fingerprint_changed",
+      "fingerprint_changed_before_delete",
+  )
+  with state._lock:
+    state._manifest["phase"] = PHASE_DELETING
+    _save_manifest(state._manifest_path, state._manifest)
+
+  assert state.phase() == PHASE_DELETING
+  assert state._manifest_verified_pending_count() == 0
+  assert state._manifest_retryable_paths_on_disk() == []
+  assert state._blocking_manifest_paths_on_disk() == [seg_str]
+  assert os.path.isfile(seg_str)
+
+  deleted = coord.apply_batch_delete(tar_path)
+  assert deleted == 1
+  assert not os.path.isfile(seg_str)
+  entry = state._manifest["entries"][seg_str]
+  assert entry.get("status") == "verified"
+  assert entry.get("deleted") is True
+
+
 def test_kick_closed_raw_unblock_no_deadlock_retryable_only(tmp_path):
   """Retryable-only must handoff (not begin_deleting) and stay fast (no lock re-entry)."""
   handoffs = []

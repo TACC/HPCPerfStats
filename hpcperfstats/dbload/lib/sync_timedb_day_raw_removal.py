@@ -1315,7 +1315,11 @@ class _DayRawRemovalState:
         PHASE_VERIFICATION_COMPLETE,
     ):
       return 0
-    retryable_paths = self._manifest_retryable_paths_on_disk()
+    retryable_paths = (
+        self._blocking_manifest_paths_on_disk()
+        if not self._manifest_verified_pending_count()
+        else self._manifest_retryable_paths_on_disk()
+    )
     if not retryable_paths:
       return 0
     if not ensure_daily_tar_restored_for_append(
