@@ -626,6 +626,66 @@ describe("JobList", () => {
     expect(screen.getByText("job1")).toBeInTheDocument();
     expect(screen.getByText("COMPLETED")).toBeInTheDocument();
     expect(screen.getByText("Metrics & Plots available")).toBeInTheDocument();
+    expect(screen.getByText("01:00:00")).toBeInTheDocument();
+    expect(screen.queryByText("3,600.00")).not.toBeInTheDocument();
+  });
+
+  it("places nodes, cores, and HH:MM:SS runtime immediately after Project", async () => {
+    setJobListQueryMock({ data:{
+      job_list: [
+        {
+          jid: 1,
+          performance: {
+            label: "Metrics & Plots available",
+            tone: "success",
+            aria_label: "Performance: Metrics & Plots available",
+            sort_rank: 0,
+          },
+          username: "alice",
+          account: "acct",
+          start_time: "2024-01-01T00:00:00Z",
+          end_time: "2024-01-01T01:00:00Z",
+          runtime: 3600,
+          queue: "normal",
+          jobname: "job1",
+          state: "COMPLETED",
+          ncores: 32,
+          nhosts: 2,
+          node_hrs: 64,
+        },
+      ],
+      nj: 1,
+      aggregates: { total_node_hours: 64 },
+      qname: "Jobs",
+      order_by: "-end_time",
+      pagination: { page: 1, num_pages: 1 },
+    } });
+
+    renderJobList();
+
+    await waitFor(() => {
+      expect(screen.getByText("Jobs = 1")).toBeInTheDocument();
+    });
+
+    const tableHeaders = within(screen.getByRole("table")).getAllByRole("columnheader");
+    const labels = tableHeaders.map((header) =>
+      (header.textContent || "").replace(/[↑↓]/g, "").trim(),
+    );
+    const projectIdx = labels.findIndex((label) => /^project$/i.test(label));
+    expect(projectIdx).toBeGreaterThanOrEqual(0);
+    expect(labels.slice(projectIdx, projectIdx + 4)).toEqual([
+      "Project",
+      "nodes",
+      "cores",
+      "run time (HH:MM:SS)",
+    ]);
+    expect(labels).not.toContain("run time (s)");
+
+    const dataRow = within(screen.getByRole("table")).getAllByRole("row")[1];
+    const cells = within(dataRow).getAllByRole("cell");
+    expect(cells[projectIdx + 1].textContent).toBe("2.00");
+    expect(cells[projectIdx + 2].textContent).toBe("32.00");
+    expect(cells[projectIdx + 3].textContent).toBe("01:00:00");
   });
 
   it("renders desktop distributions above Refine this list", async () => {

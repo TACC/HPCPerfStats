@@ -4,7 +4,8 @@ These tests serve the stub SPA shell at ``/machine/...`` deep links and assert
 status codes, headers (including CSP), and a few API/JSON flows. They do not
 render the React bundle, so SPA-only behavior such as the JobList pagination
 top/bottom rendering and per-column first-click sort direction is covered by
-the Vitest suite at ``hpcperfstats/site/frontend/src/pages/JobList.test.jsx``.
+the Vitest suite at ``hpcperfstats/site/frontend/src/views/__tests__/JobList.test.tsx``
+(including column order after Project: nodes, cores, then runtime as HH:MM:SS).
 
 Bokeh job-list embed regressions (real BokehJS + Playwright) live in
 ``test_bokeh_job_list_embed_browser_e2e.py``.

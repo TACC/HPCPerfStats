@@ -51,6 +51,7 @@ import PageBreadcrumbs from "../components/PageBreadcrumbs";
 import { useExtendedSearchLayout } from "../context/extended-search-layout-context";
 import { formatDateTime } from "../utils/formatDateTime";
 import { formatDecimalStandard } from "../utils/formatDecimal";
+import { formatRuntimeHms } from "../utils/formatRuntimeHms";
 import { buildJobListApiParams, buildJobListHistogramApiParams } from "../utils/build-job-list-api-params";
 import { filterIdentitySearchParamsKey } from "../utils/filter-identity-params";
 import {
@@ -344,13 +345,13 @@ export default function JobList() {
     makeColumn(JOB_LIST_TABLE_HEADERS.performanceData, "performance_sort_rank", true, "asc"),
     makeColumn(JOB_LIST_TABLE_HEADERS.user, "username", true),
     makeColumn(JOB_LIST_TABLE_HEADERS.project, "account", true),
+    makeColumn("nodes", "nhosts", true),
+    makeColumn("cores", "ncores", true),
+    makeColumn("run time (HH:MM:SS)", "runtime", true),
     makeColumn("start time", "start_time", true),
     makeColumn("end time", "end_time", true),
-    makeColumn("run time (s)", "runtime", true),
     makeColumn("queue", "queue", true),
     makeColumn("status", "state", true),
-    makeColumn("cores", "ncores", true),
-    makeColumn("nodes", "nhosts", true),
     makeColumn("node hrs", "node_hrs", true),
     makeColumn("name", "jobname", false),
   ];
@@ -800,9 +801,11 @@ export default function JobList() {
                   "None"
                 )}
               </TableCell>
+              <TableCell>{formatDecimalStandard(job.nhosts)}</TableCell>
+              <TableCell>{formatDecimalStandard(job.ncores)}</TableCell>
+              <TableCell>{formatRuntimeHms(job.runtime)}</TableCell>
               <TableCell>{formatDateTime(job.start_time)}</TableCell>
               <TableCell>{formatDateTime(job.end_time)}</TableCell>
-              <TableCell>{formatDecimalStandard(job.runtime)}</TableCell>
               <TableCell>
                 {job.queue ? (
                   <TextLink href={`/machine/queue/${encodeURIComponent(job.queue)}/`}>{job.queue}</TextLink>
@@ -811,8 +814,6 @@ export default function JobList() {
                 )}
               </TableCell>
               <TableCell>{job.state}</TableCell>
-              <TableCell>{formatDecimalStandard(job.ncores)}</TableCell>
-              <TableCell>{formatDecimalStandard(job.nhosts)}</TableCell>
               <TableCell>{formatDecimalStandard(job.node_hrs)}</TableCell>
               <TableCell>{job.jobname}</TableCell>
             </TableRow>

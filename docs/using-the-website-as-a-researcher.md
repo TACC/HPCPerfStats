@@ -1,7 +1,7 @@
 # Using HPCPerfStats on the Web — Guide for Researchers and HPC Users
 
 
-This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-08-12.
+This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-09-08.
 
 
 This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections.
@@ -29,7 +29,7 @@ This document is ordered so the **most decision-relevant ideas come first**. Dee
 - **Find Job** (navbar): Enter a job ID to open that job’s detail page directly in the browser. Host-based lookup from the navbar routes to host-centric views in the SPA (there is no separate JSON redirect endpoint for search).
 - **Active filter summary**: When a list is filtered, a summary bar above the table shows the active criteria in plain language. Use **Modify search** to reopen expanded search with the same parameters pre-filled.
 - **Empty results**: When no jobs match the current filters, the list stays on the page with a **No jobs match these filters** message in the table (this is not an error page). Adjust filters via **Modify search** or clear criteria from expanded search.
-- **Job list table**: Typical columns include job ID, submit/start/end times, **runtime**, **requested time (timelimit)**, resource shape (**nodes**, **cores**), **user**, **project**, **queue**, **state**, and **job name**. Row **background color** reflects completion state (e.g. completed vs failed vs other).
+- **Job list table**: Typical columns include job ID, **user**, **project**, resource shape (**nodes**, then **cores**), **runtime** as **HH:MM:SS** (hours may exceed 24 for long jobs), start/end times, **queue**, **state**, node hours, and **job name**. After **project**, the next three columns are **nodes**, **cores**, and **runtime**. Row **background color** reflects completion state (e.g. completed vs failed vs other).
 - **Histograms** (where configured): Distribution thumbnails for metrics such as **runtime**, **node count**, and **queue wait** help you see whether your job is typical for that filter.
 - **Performance Data** column: Short status labels indicate readiness for each row. **Metrics & Plots available** means metrics and prewarmed plot/detail artifacts are ready. **Metrics available** means metrics values exist but plots are still preparing. Other labels cover jobs that are too short, have too few samples to complete, or have not yet gone through metrics/plot computation.
 
@@ -341,5 +341,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-08-12 | Summary hardware errors: one per-host subplot per non-zero IB/Ethernet/OPA error counter (no job-wide legend overlay); blue `?` on each subplot plus Hardware errors strip help. |
 | 2026-08-13 | Metrics tab: each CPU/GPU/File System/Network/Misc section keeps valued rows visible and moves non-value rows into a default-collapsed **Metrics not computed** table. |
 | 2026-08-07 | Job Detail: removed page h1 and **Full scheduling record**; **Print** sits beside breadcrumbs. `mem_hwm` reads canonical `host_mem` snake_case events (KB→GiB). |
+| 2026-09-08 | Job list: after **Project**, columns are **nodes**, **cores**, then **runtime** as **HH:MM:SS** (not seconds). |
 
 

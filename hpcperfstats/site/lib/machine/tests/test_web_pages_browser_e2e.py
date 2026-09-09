@@ -1,4 +1,9 @@
-"""Browser-driven end-to-end tests for Django-served web page flows."""
+"""Browser-driven end-to-end tests for Django-served web page flows.
+
+WSGI does not render the React job list. Column order after Project
+(nodes, cores, then runtime as HH:MM:SS) is covered by
+``hpcperfstats/site/frontend/src/views/__tests__/JobList.test.tsx``.
+"""
 
 import threading
 from contextlib import contextmanager
