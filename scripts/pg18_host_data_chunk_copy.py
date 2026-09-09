@@ -14,6 +14,7 @@ Up to ``--workers`` chunks copy concurrently (default 2).
 
 Attributes:
   LOG: Module logger for chunk-copy progress and failures.
+  _COUNT_ATTEMPTS: Retry count for source/target row-count queries.
 """
 
 from __future__ import annotations

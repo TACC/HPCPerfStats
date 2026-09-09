@@ -23,6 +23,21 @@ def test_format_day_progress_empty_when_idle():
   assert pr.format_day_progress_line("2025-05-05", pr.DayActivityLedger()) == ""
 
 
+def test_format_status_always_includes_ingest_bands():
+  line = pr.format_status_line(
+      band_ratios={},
+      queue_deltas={},
+      busy_kinds=[],
+      orphan_inflight={},
+  )
+  assert "ingest_hot=0/0" in line
+  assert "ingest_catchup=0/0" in line
+  assert "idle" not in line
+  assert "append=" not in line
+  assert "discover=" not in line
+  assert "day_close=" not in line
+
+
 def test_format_status_idle_and_busy_includes_discover():
   idle = pr.format_status_line(
       band_ratios={},
@@ -30,7 +45,9 @@ def test_format_status_idle_and_busy_includes_discover():
       busy_kinds=[],
       orphan_inflight={},
   )
-  assert idle == "queue_orchestrator status idle"
+  assert idle == (
+      "queue_orchestrator status ingest_hot=0/0 ingest_catchup=0/0"
+  )
   line = pr.format_status_line(
       band_ratios={"ingest_hot": {"inflight": 8, "queued": 200}},
       queue_deltas={"append": 0, "ingest_catchup": 3},

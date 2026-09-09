@@ -46,6 +46,10 @@ Attributes:
   _discover_bg_lock: Serializes submit/shutdown of background discover.
   _last_idle_reconstruct_mono: Monotonic timestamp of last idle reconstruct.
   PROGRESS_REPORT_INTERVAL_S: Alias of progress module 600s emit interval.
+  _TOTAL_INGESTED: Process-lifetime successful ingest ACK count.
+  _TOTAL_INGESTED_LOCK: Guards ``_TOTAL_INGESTED``.
+  reset_total_ingested_for_tests: Zero the counter in unit tests.
+  get_total_ingested_for_tests: Read the counter in unit tests.
 """
 from __future__ import annotations
 
@@ -118,6 +122,8 @@ INGEST_FILL_BLOCK_LOG_INTERVAL_S = 60.0
 # (not requeued) so a deep LIST of gone paths cannot livelock MainThread.
 APPEND_FILL_SKIP_BUDGET = 8
 _APPEND_DAY_LISTS = AppendDayClaimLists()
+_TOTAL_INGESTED = 0
+_TOTAL_INGESTED_LOCK = threading.Lock()
 _TRANSIENT_DAY_CLOSE_OUTCOMES = frozenset({
     "deferred_age",
     "yielded",
@@ -3450,6 +3456,7 @@ def _drain_ingest_ready(
     ... )
     0
   """
+  global _TOTAL_INGESTED
   done = 0
   for identity, async_res in list(inflight.items()):
     if not async_res.ready():
@@ -3583,6 +3590,8 @@ def _drain_ingest_ready(
       progress.record(day_tok, "db_skip", 1)
     else:
       progress.record(day_tok, "ingested", 1)
+      with _TOTAL_INGESTED_LOCK:
+        _TOTAL_INGESTED += 1
     if need_archival and path:
       jq.enqueue_list_job(
           client, kind=jq.JOB_KIND_APPEND, identity=path, dedupe=True,
@@ -3608,6 +3617,38 @@ def reset_append_day_lists_for_tests() -> None:
     >>> reset_append_day_lists_for_tests()
   """
   _APPEND_DAY_LISTS.clear()
+
+
+def reset_total_ingested_for_tests() -> None:
+  """
+  Zero the process-lifetime ingest ACK counter (unit tests).
+
+  Returns:
+    None
+
+  Examples:
+    >>> reset_total_ingested_for_tests()
+  """
+  global _TOTAL_INGESTED
+  with _TOTAL_INGESTED_LOCK:
+    _TOTAL_INGESTED = 0
+
+
+def get_total_ingested_for_tests() -> int:
+  """
+  Return the process-lifetime ingest ACK count (unit tests).
+
+  Returns:
+    int: Successful ``ingested`` drain ACKs since process start or
+    last reset.
+
+  Examples:
+    >>> reset_total_ingested_for_tests()
+    >>> get_total_ingested_for_tests()
+    0
+  """
+  with _TOTAL_INGESTED_LOCK:
+    return _TOTAL_INGESTED
 
 
 def _try_submit_pending_append_days(
@@ -5278,10 +5319,13 @@ def _reconstruct_coordinator_loop(
           busy_kinds = list(busy_kinds) + ["discover"]
         busy_tok = progress.format_busy_token(busy_kinds)
         if census:
+          with _TOTAL_INGESTED_LOCK:
+            total_ingested = _TOTAL_INGESTED
           _log(
-              "queue_orchestrator census %s%s"
+              "queue_orchestrator census %s total_ingested=%d%s"
               % (
                   jq.format_queue_census(census),
+                  total_ingested,
                   (" " + busy_tok) if busy_tok else "",
               ),
               log_fn=log_fn,

@@ -69,7 +69,7 @@ set +e
   hpcperfstats/tests/test_sync_timedb_jid.py \
   hpcperfstats/tests/test_sync_timedb_day_raw_removal.py \
   -k "$BATTERY_FILTER" \
-  "${PYTEST_EXTRA[@]}" \
+  ${PYTEST_EXTRA[@]+"${PYTEST_EXTRA[@]}"} \
   2>&1 | tee "$LOG"
 status=${PIPESTATUS[0]}
 set -e

@@ -415,7 +415,8 @@ def format_status_line(
     fill_block (Optional[str]): Last ingest fill-block reason token.
 
   Returns:
-    str: Status line (``status idle`` when nothing else).
+    str: Status line. Always includes ``ingest_hot=`` /
+    ``ingest_catchup=`` even at ``0/0``.
 
   Examples:
     >>> format_status_line(
@@ -424,7 +425,7 @@ def format_status_line(
     ...   busy_kinds=["append"],
     ...   orphan_inflight={},
     ... )
-    'queue_orchestrator status append=1/2 busy=append'
+    'queue_orchestrator status ingest_hot=0/0 ingest_catchup=0/0 append=1/2 busy=append'
   """
   parts = ["queue_orchestrator status"]
   for name in (
@@ -435,13 +436,10 @@ def format_status_line(
       "day_close",
   ):
     entry = band_ratios.get(name) or {}
-    tok = format_queue_ratio_token(
-        name,
-        int(entry.get("inflight", 0) or 0),
-        int(entry.get("queued", 0) or 0),
-    )
-    if tok:
-      parts.append(tok)
+    i = int(entry.get("inflight", 0) or 0)
+    q = int(entry.get("queued", 0) or 0)
+    if name in ("ingest_hot", "ingest_catchup") or i or q:
+      parts.append("%s=%d/%d" % (name, i, q))
   for name, delta in sorted(queue_deltas.items()):
     d = int(delta or 0)
     if d == 0:
@@ -646,7 +644,7 @@ class ProgressReportState:
       ...   band_ratios={}, busy_kinds=[], census_inflight={},
       ...   queue_depth_now={},
       ... )
-      ['queue_orchestrator status idle']
+      ['queue_orchestrator status ingest_hot=0/0 ingest_catchup=0/0']
     """
     with self._lock:
       day_items = sorted(self._days.items())

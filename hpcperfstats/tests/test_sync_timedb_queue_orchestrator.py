@@ -3285,6 +3285,86 @@ def test_drain_ingest_marks_quiet_log_fn_none(monkeypatch, tmp_path):
   assert "log_fn=None" in src
 
 
+def test_drain_ingest_increments_total_ingested(monkeypatch, tmp_path):
+  """Packed outcome=ingested bumps total_ingested; db_skip does not."""
+  qo.reset_total_ingested_for_tests()
+  monkeypatch.setattr(
+      st, "_record_ingest_marks_from_worker_result", lambda *a, **k: None,
+  )
+  monkeypatch.setattr(jq, "ack_job", lambda *a, **k: True)
+
+  class _Ready:
+    def __init__(self, outcome: str):
+      self._outcome = outcome
+
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      del timeout
+      return ("/a", True, True, 0.1, {"outcome": self._outcome})
+
+  def _claim(identity: str) -> jq.ClaimedJob:
+    return jq.ClaimedJob(
+        kind=jq.JOB_KIND_INGEST,
+        identity=identity,
+        owner_token="n:h:b:1",
+        deadline=1.0,
+        score=5.0,
+    )
+
+  client = SyncTimedbJobStore("")
+  done = qo._drain_ingest_ready(
+      client,
+      inflight={"/ingested": _Ready("ingested")},
+      claims={"/ingested": _claim("/ingested")},
+      tgz_archive_dir="/daily",
+      archive_data_dir=str(tmp_path),
+  )
+  assert done == 1
+  assert qo.get_total_ingested_for_tests() == 1
+  done_skip = qo._drain_ingest_ready(
+      client,
+      inflight={"/skip": _Ready("db_skip")},
+      claims={"/skip": _claim("/skip")},
+      tgz_archive_dir="/daily",
+      archive_data_dir=str(tmp_path),
+  )
+  assert done_skip == 1
+  assert qo.get_total_ingested_for_tests() == 1
+
+
+def test_census_log_always_includes_total_ingested():
+  """60s census format always includes total_ingested= including 0."""
+  src = inspect.getsource(qo._reconstruct_coordinator_loop)
+  assert "total_ingested=%d" in src
+  qo.reset_total_ingested_for_tests()
+  census = {
+      "ingest": {"queued": 0, "inflight": 0},
+      "append": {"queued": 0, "inflight": 0},
+      "discover": {"queued": 0, "inflight": 0},
+      "day_close": {"queued": 0, "inflight": 0},
+  }
+  line = "queue_orchestrator census %s total_ingested=%d" % (
+      jq.format_queue_census(census),
+      qo.get_total_ingested_for_tests(),
+  )
+  assert "total_ingested=0" in line
+  assert "ingest=0/0" in line
+
+
+def test_regression_battery_script_nounset_empty_extra():
+  """No-arg battery must not expand empty PYTEST_EXTRA under bash set -u."""
+  script = (
+      Path(__file__).resolve().parents[2]
+      / "tests"
+      / "run_sync_timedb_regression_battery.sh"
+  )
+  src = script.read_text(encoding="utf-8")
+  assert script.is_file()
+  assert 'PYTEST_EXTRA[@]+"${PYTEST_EXTRA[@]}"' in src
+
+
 def test_rc8_reconcile_prunes_local_when_store_hlen_low():
   """RC8: phantom local maps prune when the job store has no inflight/lease."""
   class _Client:
