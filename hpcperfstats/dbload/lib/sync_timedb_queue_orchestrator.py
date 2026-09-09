@@ -2252,30 +2252,35 @@ def _retry_or_dead_letter(
   archive_data_dir: str,
   reason: str,
   log_fn: Callable[..., None] | None = None,
+  score: float | int | None = None,
 ) -> str:
   """
   Requeue a failed claim, or dead-letter it once attempts are exhausted.
 
   Shared by the ingest, append, and day_close drains so every failure path
   accounts for its attempt exactly once and no claim is dropped silently.
+  Ingest fill skip passes a penalty ``score`` override.
 
   Args:
     client (Any): job store.
     kind (str): Job kind.
     claim (Any): :class:`sync_timedb_job_store.ClaimedJob` for the failure.
-    archive_data_dir (str): Archive data root holding the dead-letter sidecar.
+    archive_data_dir (str): Archive data root holding the dead-letter
+      sidecar. Empty skips the sidecar write.
     reason (str): Short failure reason recorded on give-up.
     log_fn (Callable[..., None] | None): Optional logger.
+    score (float | int | None): Requeue score override. Defaults to the
+      claim score.
 
   Returns:
-    str: ``\"requeued\"`` or ``\"dead_letter\"``.
+    str: ``requeued``, ``dead_letter``, or ``dropped_no_claim``.
 
   Examples:
     >>> _retry_or_dead_letter(
     ...   None, kind="ingest", claim=None, archive_data_dir="/a",
     ...   reason="x",
     ... )
-    'requeued'
+    'dropped_no_claim'
   """
   if claim is None or client is None:
     _log(
@@ -2296,17 +2301,20 @@ def _retry_or_dead_letter(
         kind=kind,
         identity=identity,
         owner_token=claim.owner_token,
-        score=getattr(claim, "score", None),
+        score=(
+            score if score is not None else getattr(claim, "score", None)
+        ),
     )
     return "requeued"
-  progress.get_progress_state().record_dead_letter(day_tok, kind, 1)
-  jq.append_queue_dead_letter(
-      archive_data_dir,
-      kind=kind,
-      identity=identity,
-      attempt=attempt,
-      reason=reason,
-  )
+  if archive_data_dir:
+    progress.get_progress_state().record_dead_letter(day_tok, kind, 1)
+    jq.append_queue_dead_letter(
+        archive_data_dir,
+        kind=kind,
+        identity=identity,
+        attempt=attempt,
+        reason=reason,
+    )
   jq.ack_job(
       client, kind=kind, identity=identity, owner_token=claim.owner_token,
   )
@@ -2815,51 +2823,18 @@ def _requeue_ingest_fill_skip(
   """
   if claim is None or client is None:
     return "dropped_no_claim"
-  identity = claim.identity
-  attempt = jq.bump_job_attempt(
-      client, kind=jq.JOB_KIND_INGEST, identity=identity,
-  )
-  if attempt >= jq.job_max_attempts():
-    if archive_data_dir:
-      progress.get_progress_state().record_dead_letter(
-          None, jq.JOB_KIND_INGEST, 1,
-      )
-      jq.append_queue_dead_letter(
-          archive_data_dir,
-          kind=jq.JOB_KIND_INGEST,
-          identity=identity,
-          attempt=attempt,
-          reason=reason,
-      )
-    jq.ack_job(
-        client,
-        kind=jq.JOB_KIND_INGEST,
-        identity=identity,
-        owner_token=claim.owner_token,
-    )
-    _log(
-        "queue_orchestrator ingest fill %s dead_letter identity=%s attempt=%d"
-        % (reason, identity, attempt),
-        log_fn=log_fn,
-    )
-    return "dead_letter"
   penalized = _penalized_ingest_requeue_score(
       score if score is not None else getattr(claim, "score", None),
   )
-  jq.requeue_job(
+  return _retry_or_dead_letter(
       client,
       kind=jq.JOB_KIND_INGEST,
-      identity=identity,
-      owner_token=claim.owner_token,
+      claim=claim,
+      archive_data_dir=str(archive_data_dir or ""),
+      reason=reason,
+      log_fn=log_fn,
       score=penalized,
   )
-  _log(
-      "queue_orchestrator ingest fill %s penalty identity=%s attempt=%d"
-      " score=%.0f"
-      % (reason, identity, attempt, penalized),
-      log_fn=log_fn,
-  )
-  return "requeued"
 
 
 def _ingest_fill_skip_budget_for_queued(zcard: int) -> int:
@@ -4245,60 +4220,6 @@ def _drain_day_close_ready(
   else:
     cooperative_only = saw_cooperative
   return done, cooperative_only
-
-
-def _renew_active_claims(
-  client: Any,
-  claim_maps: Iterable[tuple[str, dict[str, Any]]],
-  *,
-  log_fn: Callable[..., None] | None = None,
-) -> int:
-  """
-  Compare-and-extend every lease this coordinator still owns.
-
-  **OQ-1 forbidden in the production loop.** Leases use per-file EX (default
-  86400s) with no heartbeat renew. This helper remains only for tests or an
-  explicit operator abandon path — ``run_sync_timedb_queue_orchestrator``
-  must not call it on each tick.
-
-  Args:
-    client (Any): job store.
-    claim_maps (Iterable[tuple[str, dict[str, Any]]]): ``(kind, claims)`` pairs.
-    log_fn (Callable[..., None] | None): Optional logger.
-
-  Returns:
-    int: Number of leases that could not be renewed (lost ownership).
-
-  Examples:
-    >>> _renew_active_claims(None, [])
-    0
-  """
-  lost = 0
-  for kind, claims in claim_maps:
-    for _map_key, claim in list(claims.items()):
-      for job in _iter_claim_jobs(claim):
-        try:
-          ok = jq.renew_job_lease(
-              client,
-              kind=kind,
-              identity=job.identity,
-              owner_token=job.owner_token,
-          )
-        except Exception as exc:
-          _log(
-              "queue_orchestrator lease renew error kind=%s identity=%s err=%s"
-              % (kind, job.identity, type(exc).__name__),
-              log_fn=log_fn,
-          )
-          continue
-        if not ok:
-          lost += 1
-          _log(
-              "queue_orchestrator lease lost kind=%s identity=%s"
-              % (kind, job.identity),
-              log_fn=log_fn,
-          )
-  return lost
 
 
 def _release_claims_on_shutdown(

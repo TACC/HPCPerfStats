@@ -245,10 +245,12 @@ def test_raise_if_ingest_per_file_deadline_uses_effective_timeout(monkeypatch):
     reset_ingest_task_deadline_monotonic(deadline_token)
 
 
-def test_ingest_remaining_count_never_negative():
-  assert st._ingest_remaining_count(100, 150) == 0
-  assert st._ingest_remaining_count(100, 99) == 0
-  assert st._ingest_remaining_count(100, 50) == 49
+def test_ingest_remaining_count_absent():
+  """Unused leftover deleted; remaining-count helper is gone."""
+  import inspect
+
+  assert not hasattr(st, "_ingest_remaining_count")
+  assert "def _ingest_remaining_count" not in inspect.getsource(st)
 
 
 

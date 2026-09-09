@@ -8832,7 +8832,7 @@ def test_archive_stats_files_body_soft_skips_when_daily_tar_restore(
   assert result.soft_requeue is True
   assert inflight_calls == []
   assert any("soft_skip" in line and "daily_tar_restore" in line for line in logs)
-  assert st._archive_task_succeeded(result) is False
+  assert not hasattr(st, "_archive_task_succeeded")
 
 def test_archive_append_soft_requeue_keeps_attempt():
   """Finalize soft_requeue must requeue without burning archive_retry attempts."""
@@ -8869,7 +8869,7 @@ def test_archive_stats_files_body_gate_skip_returns_handoff_outcome(
   assert result.ok is False
   assert result.skipped_paths == tuple(skipped)
   assert st._archive_append_outcome_is_gate_skip(result)
-  assert st._archive_task_succeeded(result) is False
+  assert not hasattr(st, "_archive_task_succeeded")
 
 
 def test_archive_stats_files_restores_when_to_add_positive_sealed(

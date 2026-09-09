@@ -37,6 +37,9 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     read_stats_file_tail_identity,
 )
 from hpcperfstats.dbload.lib.print_utils import log_print
+from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
+    day_phase_at_least,
+)
 
 SYNC_ARCHIVE_MAINT_HINTS_BASENAME = ".sync_archive_maint_hints.json"
 # Retired B INI: permanently off; tests may monkeypatch this name.
@@ -346,7 +349,7 @@ def prune_day_phases_hints(day_phases: Dict[str, Any]) -> Dict[str, Any]:
     tar_identity = _daily_tar_hint_identity(tar_path)
     if tar_identity is None:
       phase_text = str(phase)
-      if phase_text in ("tar_dropped", "sealed"):
+      if day_phase_at_least({tar_path: phase_text}, tar_path, "sealed"):
         zst_path, gz_path = compressed_sibling_paths(str(tar_path))
         if os.path.isfile(zst_path) or os.path.isfile(gz_path):
           pruned[tar_path] = value

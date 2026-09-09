@@ -2141,6 +2141,7 @@ def test_run_once_exits_with_future_dated_file_present():
 def test_oq1_lease_no_heartbeat_renew_in_orchestrator_loop():
   """OQ-1 / F2: main loop must not renew job leases each tick."""
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  assert "def _renew_active_claims" not in inspect.getsource(qo)
   assert "_renew_active_claims" not in src
 
 
@@ -2641,6 +2642,7 @@ def test_ingest_coordinator_loop_uses_zcard_for_idle_sleep():
 def test_renew_helper_not_called_from_loop():
   """P1-21/OQ-1: production loop must not heartbeat-renew leases."""
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  assert "def _renew_active_claims" not in inspect.getsource(qo)
   assert "_renew_active_claims(" not in src
 
 

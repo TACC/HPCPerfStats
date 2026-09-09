@@ -69,6 +69,59 @@ def _resolve_registry() -> Any:
     return None
 
 
+def _registry_set(registry: Any, key: str, value: Any) -> None:
+  """Best-effort Manager-safe mapping assignment.
+
+  Tries item assignment, then ``update``. Swallows proxy/Manager errors so
+  ingest workers never die on a dead registry server (cov-ex-5).
+
+  Args:
+    registry (Any): Shared mapping (``dict`` or Manager proxy).
+    key (str): Mapping key (worker pid or ``dispatch:`` identity).
+    value (Any): Stage payload to store.
+
+  Returns:
+    None
+
+  Examples:
+    >>> d = {}
+    >>> _registry_set(d, "1", {"stage": "ingest"})
+    >>> d["1"]["stage"]
+    'ingest'
+  """
+  try:
+    registry[key] = value
+  except Exception:
+    try:
+      registry.update({key: value})
+    except Exception:
+      pass
+
+
+def _registry_pop(registry: Any, key: str) -> None:
+  """Best-effort Manager-safe mapping delete.
+
+  Swallows proxy/Manager errors (same path as a crashed Manager server).
+
+  Args:
+    registry (Any): Shared mapping (``dict`` or Manager proxy).
+    key (str): Mapping key to remove.
+
+  Returns:
+    None
+
+  Examples:
+    >>> d = {"1": {}}
+    >>> _registry_pop(d, "1")
+    >>> d
+    {}
+  """
+  try:
+    registry.pop(key, None)
+  except Exception:
+    pass
+
+
 def get_worker_pool_kind() -> Any:
   """
   Return the worker pool kind.
@@ -203,13 +256,7 @@ def record_worker_stage(
     except (TypeError, ValueError):
       payload["timeout_s"] = str(timeout_s)
   pid = str(os.getpid())
-  try:
-    registry[pid] = payload
-  except Exception:
-    try:
-      registry.update({pid: payload})
-    except Exception:
-      pass
+  _registry_set(registry, pid, payload)
 
 
 def clear_worker_stage() -> None:
@@ -226,10 +273,7 @@ def clear_worker_stage() -> None:
   if registry is None:
     return
   pid = str(os.getpid())
-  try:
-    registry.pop(pid, None)
-  except Exception:
-    pass
+  _registry_pop(registry, pid)
 
 
 def seed_dispatch_worker_stages(registry: Any, paths: Any) -> None:
@@ -253,23 +297,15 @@ def seed_dispatch_worker_stages(registry: Any, paths: Any) -> None:
     if not path:
       continue
     key = "dispatch:%s" % os.path.normpath(path)
-    try:
-      registry[key] = {
-          "path": str(path),
-          "stage": "dispatched",
-          "t0": now,
-      }
-    except Exception:
-      try:
-        registry.update({
-            key: {
-                "path": str(path),
-                "stage": "dispatched",
-                "t0": now,
-            },
-        })
-      except Exception:
-        pass
+    _registry_set(
+        registry,
+        key,
+        {
+            "path": str(path),
+            "stage": "dispatched",
+            "t0": now,
+        },
+    )
 
 
 def clear_dispatch_worker_stages(registry: Any, paths: Any) -> None:
@@ -292,10 +328,7 @@ def clear_dispatch_worker_stages(registry: Any, paths: Any) -> None:
     if not path:
       continue
     key = "dispatch:%s" % os.path.normpath(path)
-    try:
-      registry.pop(key, None)
-    except Exception:
-      pass
+    _registry_pop(registry, key)
 
 
 def update_worker_substage(substage: Any, **extra: Any) -> None:
@@ -326,7 +359,7 @@ def update_worker_substage(substage: Any, **extra: Any) -> None:
     for key, value in extra.items():
       if value is not None:
         entry[key] = str(value)
-    registry[pid] = entry
+    _registry_set(registry, pid, entry)
   except Exception:
     pass
 
@@ -665,10 +698,10 @@ def prune_stale_worker_stages(
       if pid in alive:
         continue
       if not isinstance(raw, dict):
-        registry.pop(pid, None)
+        _registry_pop(registry, pid)
         continue
       t0 = raw.get("t0")
       if t0 is None or (now - float(t0)) >= float(max_age_s):
-        registry.pop(pid, None)
+        _registry_pop(registry, pid)
   except Exception:
     pass

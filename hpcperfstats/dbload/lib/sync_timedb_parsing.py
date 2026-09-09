@@ -30,6 +30,7 @@ Attributes:
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any, Iterator
 
 import os
@@ -941,6 +942,36 @@ def _maybe_raise_ingest_read_deadline(line_idx: Any, bytes_read: Any) -> None:
     _raise_if_ingest_deadline_exceeded()
 
 
+@contextmanager
+def _stats_file_read_lock(stats_file: str) -> Iterator[None]:
+  """Hold a stats-file read lock and unlink the fnctl sidecar afterward.
+
+  Args:
+    stats_file (str): Absolute or relative stats file path.
+
+  Yields:
+    None: Control returns to the caller while the lock is held.
+
+  Examples:
+    >>> import os, tempfile
+    >>> fd, path = tempfile.mkstemp()
+    >>> os.close(fd)
+    >>> with _stats_file_read_lock(path):
+    ...   os.path.isfile(path)
+    True
+    >>> os.remove(path)
+  """
+  try:
+    with file_read_lock_wait(stats_file):
+      yield
+  finally:
+    lock_path = "%s%s" % (stats_file, LOCK_SUFFIX)
+    try:
+      os.remove(lock_path)
+    except OSError:
+      pass
+
+
 def load_stats_file_lines(
   stats_file: str,
   stats_file_contents: Any | None = None,
@@ -963,7 +994,7 @@ def load_stats_file_lines(
   lines = []
   bytes_read = 0
   try:
-    with file_read_lock_wait(stats_file):
+    with _stats_file_read_lock(stats_file):
       with open(stats_file, "r") as fd:
         line_idx = 0
         while True:
@@ -977,12 +1008,6 @@ def load_stats_file_lines(
     return lines, None
   except FileNotFoundError:
     return None, "Stats file disappeared: %s" % stats_file
-  finally:
-    lock_path = "%s%s" % (stats_file, LOCK_SUFFIX)
-    try:
-      os.remove(lock_path)
-    except OSError:
-      pass
 
 
 def iter_stats_file_lines(stats_file: str) -> Iterator[Any]:
@@ -999,7 +1024,7 @@ def iter_stats_file_lines(stats_file: str) -> Iterator[Any]:
     >>> iter_stats_file_lines("x")  # doctest: +SKIP
   """
   try:
-    with file_read_lock_wait(stats_file):
+    with _stats_file_read_lock(stats_file):
       with open(stats_file, "r") as fd:
         line_idx = 0
         bytes_read = 0
@@ -1013,12 +1038,6 @@ def iter_stats_file_lines(stats_file: str) -> Iterator[Any]:
           yield line
   except FileNotFoundError:
     return
-  finally:
-    lock_path = "%s%s" % (stats_file, LOCK_SUFFIX)
-    try:
-      os.remove(lock_path)
-    except OSError:
-      pass
 
 
 def _digit_line_identity(s: Any) -> Any:
@@ -1160,7 +1179,7 @@ def parse_last_timestamp_line_streaming(
   chunk_size = max(4096, int(tail_read_bytes))
   carry = b""
   try:
-    with file_read_lock_wait(stats_file):
+    with _stats_file_read_lock(stats_file):
       with open(stats_file, "rb") as fd:
         offset = size
         while offset > 0:
@@ -1189,12 +1208,6 @@ def parse_last_timestamp_line_streaming(
               return parsed
   except FileNotFoundError:
     return (None, None, None)
-  finally:
-    lock_path = "%s%s" % (stats_file, LOCK_SUFFIX)
-    try:
-      os.remove(lock_path)
-    except OSError:
-      pass
   return (None, None, None)
 
 
@@ -1393,7 +1406,7 @@ def _collect_tail_timestamp_lines(
   collected = []
   offset = size
   try:
-    with file_read_lock_wait(stats_file):
+    with _stats_file_read_lock(stats_file):
       with open(stats_file, "rb") as fd:
         while offset > 0 and len(collected) < max_lines:
           read_size = min(chunk_size, offset)
@@ -1421,12 +1434,6 @@ def _collect_tail_timestamp_lines(
             collected.append(line)
   except FileNotFoundError:
     return []
-  finally:
-    lock_path = "%s%s" % (stats_file, LOCK_SUFFIX)
-    try:
-      os.remove(lock_path)
-    except OSError:
-      pass
   return collected
 
 
@@ -1731,7 +1738,7 @@ def parse_stats_file_streaming(
   emission_start = max(int(start_line_idx or 0), int(parse_start_idx or 0))
   parser = IncrementalStatsParser(emission_start, exclude_types_list)
   try:
-    with file_read_lock_wait(stats_file):
+    with _stats_file_read_lock(stats_file):
       with open(stats_file, "r") as fd:
         while True:
           batch = []
@@ -1746,12 +1753,6 @@ def parse_stats_file_streaming(
           del batch
   except FileNotFoundError:
     return [], []
-  finally:
-    lock_path = "%s%s" % (stats_file, LOCK_SUFFIX)
-    try:
-      os.remove(lock_path)
-    except OSError:
-      pass
   return parser.finish()
 
 
@@ -2198,7 +2199,7 @@ def parse_stats_file_streaming_incremental(
   flush_rows = max(1, int(flush_rows))
 
   try:
-    with file_read_lock_wait(stats_file):
+    with _stats_file_read_lock(stats_file):
       with open(stats_file, "r") as fd:
         while True:
           got_line = False
@@ -2227,9 +2228,3 @@ def parse_stats_file_streaming_incremental(
     pending_flush = False
   except FileNotFoundError:
     return
-  finally:
-    lock_path = "%s%s" % (stats_file, LOCK_SUFFIX)
-    try:
-      os.remove(lock_path)
-    except OSError:
-      pass

@@ -424,6 +424,7 @@ npm run test:coverage -- --run
 | `hpcperfstats/tests/test_sync_timedb_day_close_cooperation.py` | Day-close yield/defer tracker, empty tar-path `normpath` (`.` ), write-lock backoff, chunk-day defer. Host unit mocks. |
 | `hpcperfstats/tests/test_sync_timedb_host_itimes.py` | Mocked `host_data` Unix-second probes: empty second sets, 24h chunk bounds, overflow, statement-timeout overflow. Host unit; no Postgres. |
 | `hpcperfstats/tests/test_sync_timedb_pipeline_edge_cases.py` | Cross-module empty/malformed/boundary units for parsing, `--jid` coercion, persistence envelopes, ingest timeout (always-0 walls), reconstruct bands, readiness live-on, append `peek_first`, idle progress. Host unit; mocks ORM/DB. |
+| `hpcperfstats/tests/test_sync_timedb_*_harvest.py` | Host-unit harvest coverage for remaining loc-shrink leftovers (`leftover`, N10 registry, N9 timeout, N8 ingest-complete, H14/N5 classify+prune, S14 restore-log, Q5 fill-skip, N7b parse lock, Q4 verify log). No Postgres. |
 | `hpcperfstats/tests/test_sync_acct.py` | Accounting ingest (`sync_acct_from_content`, restricted queues, bulk fallback, cache notify) with mocked ORM. |
 | `hpcperfstats/tests/test_listend_drain.py` | RabbitMQ drain loop (ack/nack, empty queue) with mocked pika. |
 | `hpcperfstats/tests/test_listend_archive_pool.py` | Host-affine archive worker pool: per-host FIFO, ack/nack only after durable archive, drop-mode DB submit off the consume thread (`listend_archive_worker_threads`). |

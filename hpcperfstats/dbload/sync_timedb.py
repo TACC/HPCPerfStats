@@ -134,11 +134,9 @@ from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
   MultiprocessingWorkerExitError,
   alive_pool_worker_count,
   hard_exit_pool_worker_error,
-  maintain_ingest_pool_after_supervisor_retire,
   pool_workers_all_idle,
   reap_pool_worker_pids,
   reap_zombie_children_of_self,
-  retire_pool_worker_pid,
   terminate_pool_bounded,  # noqa: F401
   warn_unreaped_zombie_children,
 )
@@ -211,12 +209,8 @@ from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
   create_sync_timedb_thread_pool,
 )
 from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
-  classify_supervisor_reap_kind,
   increment_worker_tasks_on_worker,
   measure_worker_rss_after_release,
-  resolve_worker_pid_from_meta_or_registry,
-  should_defer_supervisor_retire,
-  should_supervisor_retire_worker,
 )
 
 
@@ -471,100 +465,6 @@ def _merge_worker_memory_meta(result: Any, mem_meta: Any) -> Any:
   return _pack_ingest_worker_result(
       stats_file, need_archival, ingest_ok, elapsed_s, merged,
   )
-
-
-def _handle_ingest_worker_memory_after_imap(
-  *,
-  pool: Any,
-  registry: Any,
-  result: Any,
-  accumulator: Any,
-  pool_health_context: Any | None = None,
-  recreate_ingest_pool_fn: Any | None = None,
-  on_pool_replaced: Any | None = None,
-  pending_inflight: Any | None = None,
-  max_inflight: Any | None = None,
-) -> Any:
-  """
-  Internal helper to handle the ingest worker memory after imap.
-  
-  Args:
-    pool (Any): Live handle (pool, client, or connection).
-    registry (Any): Registry passed to this helper.
-    result (Any): Result passed to this helper.
-    accumulator (Any): Accumulator passed to this helper.
-    pool_health_context (Any | None): One of ``Any``, ``None``.
-    recreate_ingest_pool_fn (Any | None): One of ``Any``, ``None``.
-    on_pool_replaced (Any | None): One of ``Any``, ``None``.
-    pending_inflight (Any | None): One of ``Any``, ``None``.
-    max_inflight (Any | None): One of ``Any``, ``None``.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _handle_ingest_worker_memory_after_imap(0)  # doctest: +SKIP
-  """
-  stats_fname, _need_archival, ingest_ok, _elapsed_s, outcome_meta = (
-      _unpack_ingest_worker_result(result)
-  )
-  meta = dict(outcome_meta or {})
-  outcome = str(meta.get("outcome") or "")
-  if not outcome:
-    outcome = "ingested" if meta.get("stats_rows") else "db_skip"
-  reap_kind = classify_supervisor_reap_kind(
-      ingest_ok=ingest_ok,
-      outcome=outcome,
-      meta=meta,
-      path=stats_fname,
-  )
-  if should_supervisor_retire_worker(reap_kind):
-    if str(meta.get("reconcile_skip") or "") == "yes":
-      return reap_kind
-    if should_defer_supervisor_retire(
-        reap_kind,
-        accumulator=accumulator,
-        pending_inflight=pending_inflight,
-        max_inflight=max_inflight,
-    ):
-      log_print(
-          "INFO: sync_timedb worker_memory: retire deferred reap_kind=%s "
-          "pending_inflight=%s max_inflight=%s path=%s"
-          % (
-              reap_kind,
-              pending_inflight,
-              max_inflight,
-              stats_fname,
-          ),
-          flush=True,
-      )
-    else:
-      worker_pid = resolve_worker_pid_from_meta_or_registry(
-          meta, registry, stats_fname,
-      )
-      if worker_pid is not None:
-        retire_pool_worker_pid(
-            pool,
-            worker_pid,
-            context="ingest_%s" % reap_kind,
-        )
-        maintained_pool = maintain_ingest_pool_after_supervisor_retire(
-            pool,
-            pool_health_context=pool_health_context,
-            recreate_pool_fn=recreate_ingest_pool_fn,
-        )
-        if maintained_pool is not pool and callable(on_pool_replaced):
-          on_pool_replaced(maintained_pool)
-      else:
-        log_print(
-            "WARN: sync_timedb worker_memory: retire skipped missing worker_pid "
-            "path=%s reap_kind=%s likely_cause=meta_or_registry_gap"
-            % (stats_fname, reap_kind),
-            flush=True,
-        )
-  if accumulator is not None:
-    accumulator.record_completion(reap_kind, meta)
-  return reap_kind
 
 
 def _log_ingest_per_file_timeout(exc: Any) -> None:
@@ -2521,28 +2421,6 @@ def _archive_append_outcome_is_gate_skip(result: Any) -> Any:
   return isinstance(result, ArchiveAppendOutcome) and bool(result.gate_skipped)
 
 
-def _archive_task_succeeded(result: Any) -> Any:
-  """
-  Internal helper to archive the task succeeded.
-  
-  Args:
-    result (Any): Result passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _archive_task_succeeded(None)  # doctest: +SKIP
-  """
-  if result is False or result is None:
-    return False
-  if isinstance(result, ArchiveAppendOutcome):
-    if result.soft_requeue or result.gate_skipped:
-      return False
-    return result.ok
-  return bool(result)
-
-
 def _archive_finalize_skip_invalidate_log_reason(result: Any) -> Any:
   """
   Internal helper to archive the finalize skip invalidate log reason.
@@ -3214,26 +3092,6 @@ def _write_stats_payload_to_db(
           individual_need_archival=individual_need_archival,
       ),
   )
-
-
-def _ingest_remaining_count(
-  pending_total: Any,
-  chunk_ingest_finished: Any,
-) -> Any:
-  """
-  Internal helper to ingest the remaining count.
-  
-  Args:
-    pending_total (Any): Pending total passed to this helper.
-    chunk_ingest_finished (Any): Chunk ingest finished passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _ingest_remaining_count(None, None)  # doctest: +SKIP
-  """
-  return max(0, int(pending_total) - int(chunk_ingest_finished) - 1)
 
 
 _DB_COMPLETE_REASON_TO_SKIP = {
@@ -5100,6 +4958,34 @@ def _restore_daily_tar_or_log_failure(
   return False
 
 
+def _decompress_sealed_or_log_append_fail(
+  compressed_path: str,
+  label: str,
+) -> bool:
+  """Decompress a sealed archive before tar append, or log and fail closed.
+
+  Args:
+    compressed_path (str): Sealed ``.tar.zst`` / ``.tar.gz`` path.
+    label (str): ERROR-line token (``sealed zst``, ``sealed gzip``,
+      or ``sealed archive``).
+
+  Returns:
+    bool: True when decompress succeeded; False after logging.
+
+  Examples:
+    >>> _decompress_sealed_or_log_append_fail("", "sealed zst")
+    False
+  """
+  if _decompress_compressed_archive(compressed_path):
+    return True
+  log_print(
+      "ERROR: could not restore daily tar from %s before append; "
+      "leaving raw stats files in place: %s" % (label, compressed_path),
+      flush=True,
+  )
+  return False
+
+
 def format_tar_append_failure_log(
   tar_path: str,
   exc: Any,
@@ -5542,28 +5428,17 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
     # Restore / decompress only when append will mutate the daily tar.
     if not os.path.exists(archive_tar_fname):
       if os.path.isfile(zst_path):
-        if not _decompress_compressed_archive(zst_path):
-          log_print(
-              "ERROR: could not restore daily tar from sealed zst before append; "
-              "leaving raw stats files in place: %s" % zst_path,
-              flush=True,
-          )
+        if not _decompress_sealed_or_log_append_fail(zst_path, "sealed zst"):
           return False
       elif os.path.isfile(gz_path):
-        if not _decompress_compressed_archive(gz_path):
-          log_print(
-              "ERROR: could not restore daily tar from sealed gzip before append; "
-              "leaving raw stats files in place: %s" % gz_path,
-              flush=True,
-          )
+        if not _decompress_sealed_or_log_append_fail(gz_path, "sealed gzip"):
           return False
-      elif os.path.isfile(archive_fname) and detect_compressed_format(archive_fname):
-        if not _decompress_compressed_archive(archive_fname):
-          log_print(
-              "ERROR: could not restore daily tar from sealed archive before append; "
-              "leaving raw stats files in place: %s" % archive_fname,
-              flush=True,
-          )
+      elif os.path.isfile(archive_fname) and detect_compressed_format(
+          archive_fname,
+      ):
+        if not _decompress_sealed_or_log_append_fail(
+            archive_fname, "sealed archive",
+        ):
           return False
     if not os.path.exists(archive_tar_fname) and sealed_exists:
       log_print(

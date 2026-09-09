@@ -1440,51 +1440,6 @@ def daily_tar_path_for_stats_path(
   return _daily_tar_path_for_date(tgz_archive_dir, file_date)
 
 
-def _day_phase_name_from_hints(day_phases: Any, tar_path: str) -> Any:
-  """
-  Internal helper to handle day phase name from hints.
-  
-  Args:
-    day_phases (Any): Day phases passed to this helper.
-    tar_path (str): String for tar path.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _day_phase_name_from_hints(None, "x")  # doctest: +SKIP
-  """
-  from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
-      day_phase_name_from_hints,
-  )
-  return day_phase_name_from_hints(day_phases, tar_path)
-
-
-def _day_phase_at_least_hints(
-  day_phases: Any,
-  tar_path: str,
-  target: Any,
-) -> Any:
-  """
-  Internal helper to handle day phase at least hints.
-  
-  Args:
-    day_phases (Any): Day phases passed to this helper.
-    tar_path (str): String for tar path.
-    target (Any): Target passed to this helper.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _day_phase_at_least_hints(None, "x", None)  # doctest: +SKIP
-  """
-  from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
-      day_phase_at_least,
-  )
-  return day_phase_at_least(day_phases, tar_path, target)
-
-
 def ingest_stream_past_calendar_day(
   day_date: Any,
   *,
@@ -1781,7 +1736,10 @@ def classify_day_close_candidates(
     _ = remaining_aligned_n  # census diagnostic only; decision uses partition
     if unprocessed_count == 0:
       reasons.discard("checkpoint_incomplete")
-    phase_name = _day_phase_name_from_hints(day_phases, tar_norm) or ""
+    from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
+        day_phase_name_from_hints,
+    )
+    phase_name = day_phase_name_from_hints(day_phases, tar_norm) or ""
     mutable_tar = os.path.isfile(tar_norm)
     needs_work = daily_tar_needs_day_close_work(
         tar_norm,
@@ -3169,7 +3127,10 @@ def daily_tar_needs_day_close_work(
   # Always use quarantine-aware blocking map for FS-complete (never raw census).
   if day_close_filesystem_complete(tar_norm):
     return False
-  if not _day_phase_at_least_hints(day_phases, tar_norm, "tar_dropped"):
+  from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
+      day_phase_at_least,
+  )
+  if not day_phase_at_least(day_phases, tar_norm, "tar_dropped"):
     return True
   if os.path.isfile(tar_norm):
     return True
@@ -7143,6 +7104,47 @@ def classify_removable_raw_paths_for_members(
   return results
 
 
+def _classify_removable_after_ok(
+  stats_paths: Any,
+  ok: bool,
+  members: Any,
+  *,
+  ingest_ready_fn: Any | None = None,
+) -> list:
+  """Classify raw paths after seal or open-tar validation.
+
+  Empty ``stats_paths`` is a no-op. Failed validation (``ok`` false or
+  ``members`` None) marks every path ``skipped_seal_invalid``.
+
+  Args:
+    stats_paths (Any): Iterable of raw stats filesystem paths.
+    ok (bool): True when the archive member map is usable.
+    members (Any): Member name to size map, or None when invalid.
+    ingest_ready_fn (Any | None): Optional per-path DB-ready predicate.
+
+  Returns:
+    list: ``(path, status, reason)`` tuples.
+
+  Examples:
+    >>> _classify_removable_after_ok([], True, {})
+    []
+    >>> _classify_removable_after_ok(["/p"], False, None)[0][1]
+    'skipped_seal_invalid'
+  """
+  if not stats_paths:
+    return []
+  if not ok or members is None:
+    return [
+        (path, "skipped_seal_invalid", "seal_validation_failed")
+        for path in stats_paths
+    ]
+  return classify_removable_raw_paths_for_members(
+      stats_paths,
+      members,
+      ingest_ready_fn=ingest_ready_fn,
+  )
+
+
 def classify_removable_raw_paths_for_daily_gz(
   gz_path: str,
   stats_paths: Any,
@@ -7171,8 +7173,6 @@ def classify_removable_raw_paths_for_daily_gz(
   Examples:
     >>> classify_removable_raw_paths_for_daily_gz(0)  # doctest: +SKIP
   """
-  if not stats_paths:
-    return []
   if sealed_members is not None:
     ok, members = True, dict(sealed_members)
   else:
@@ -7182,13 +7182,9 @@ def classify_removable_raw_paths_for_daily_gz(
         validation_cache=validation_cache,
         allow_auto_seal=allow_auto_seal,
     )
-  if not ok or members is None:
-    return [
-        (path, "skipped_seal_invalid", "seal_validation_failed")
-        for path in stats_paths
-    ]
-  return classify_removable_raw_paths_for_members(
+  return _classify_removable_after_ok(
       stats_paths,
+      ok,
       members,
       ingest_ready_fn=ingest_ready_fn,
   )
@@ -7281,8 +7277,6 @@ def classify_removable_raw_paths_for_open_tar(
   Examples:
     >>> classify_removable_raw_paths_for_open_tar(0)  # doctest: +SKIP
   """
-  if not stats_paths:
-    return []
   if open_tar_members is not None:
     ok, members = True, dict(open_tar_members)
   else:
@@ -7291,13 +7285,9 @@ def classify_removable_raw_paths_for_open_tar(
         log_fn=log_fn,
         validation_cache=validation_cache,
     )
-  if not ok or members is None:
-    return [
-        (path, "skipped_seal_invalid", "seal_validation_failed")
-        for path in stats_paths
-    ]
-  return classify_removable_raw_paths_for_members(
+  return _classify_removable_after_ok(
       stats_paths,
+      ok,
       members,
       ingest_ready_fn=ingest_ready_fn,
   )

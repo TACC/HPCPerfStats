@@ -12,6 +12,7 @@ Attributes:
   VERIFY_STAGE_NONE: Attribute.
   VERIFY_STAGE_POST_SEAL: Attribute.
   VERIFY_STAGE_PRE_SEAL: Attribute.
+  _log_day_raw_verify_complete: Attribute.
   remaining_raw_blocking_day_incomplete: Attribute.
 """
 from __future__ import annotations
@@ -87,6 +88,53 @@ KICK_NO_HANDOFF_PROGRESS = frozenset({"noop", "quarantine_terminal"})
 VERIFY_STAGE_NONE = "none"
 VERIFY_STAGE_PRE_SEAL = "pre_seal_complete"
 VERIFY_STAGE_POST_SEAL = "post_seal_complete"
+
+
+def _log_day_raw_verify_complete(
+  log_fn: Any,
+  *,
+  label: str,
+  day_iso: str,
+  verified: int,
+  skipped: int,
+) -> None:
+  """Emit the day-raw verify-complete INFO line.
+
+  ``label=""`` is post-seal verify. ``label="pre-seal"`` is the pre-seal
+  pass. Missing ``log_fn`` is a no-op.
+
+  Args:
+    log_fn (Any): Logger callable, or None.
+    label (str): Empty or ``pre-seal``.
+    day_iso (str): Calendar day ISO token.
+    verified (int): Verified path count from the manifest.
+    skipped (int): Skipped path count from the manifest.
+
+  Returns:
+    None
+
+  Examples:
+    >>> logs = []
+    >>> _log_day_raw_verify_complete(
+    ...   lambda msg, **_k: logs.append(msg),
+    ...   label="",
+    ...   day_iso="2026-01-02",
+    ...   verified=3,
+    ...   skipped=1,
+    ... )
+    >>> logs[0]
+    'Day raw removal verify complete day=2026-01-02 verified=3 skipped=1'
+  """
+  if not log_fn:
+    return
+  prefix = "Day raw removal verify complete"
+  if label:
+    prefix = "Day raw removal %s verify complete" % label
+  log_fn(
+      "%s day=%s verified=%d skipped=%d"
+      % (prefix, day_iso, verified, skipped),
+      flush=True,
+  )
 
 
 def day_removal_manifest_dir(archive_data_dir: str) -> str:
@@ -1787,16 +1835,13 @@ class _DayRawRemovalState:
     with self._lock:
       self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
       _save_manifest(self._manifest_path, self._manifest)
-    if self.log_fn:
-      self.log_fn(
-          "Day raw removal verify complete day=%s verified=%d skipped=%d"
-          % (
-              self.day_date.isoformat(),
-              int(self._manifest.get("verified_count", 0)),
-              int(self._manifest.get("skipped_count", 0)),
-          ),
-          flush=True,
-      )
+    _log_day_raw_verify_complete(
+        self.log_fn,
+        label="",
+        day_iso=self.day_date.isoformat(),
+        verified=int(self._manifest.get("verified_count", 0)),
+        skipped=int(self._manifest.get("skipped_count", 0)),
+    )
 
   def update_reconcile_progress(
     self,
@@ -2034,16 +2079,13 @@ class _DayRawRemovalState:
       self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
       self._manifest.pop("pre_seal_classify_index", None)
       _save_manifest(self._manifest_path, self._manifest)
-    if self.log_fn:
-      self.log_fn(
-          "Day raw removal pre-seal verify complete day=%s verified=%d skipped=%d"
-          % (
-              self.day_date.isoformat(),
-              int(self._manifest.get("verified_count", 0)),
-              int(self._manifest.get("skipped_count", 0)),
-          ),
-          flush=True,
-      )
+    _log_day_raw_verify_complete(
+        self.log_fn,
+        label="pre-seal",
+        day_iso=self.day_date.isoformat(),
+        verified=int(self._manifest.get("verified_count", 0)),
+        skipped=int(self._manifest.get("skipped_count", 0)),
+    )
     return True
 
   def _post_seal_verify_body(self) -> bool:

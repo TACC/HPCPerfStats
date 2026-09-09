@@ -128,8 +128,11 @@ def test_oq1_no_heartbeat_renew_in_orchestrator_source():
   """OQ-1: orchestrator must not renew job leases on every busy tick."""
   import inspect
   from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
-  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
-  assert "_renew_active_claims" not in src
+  src = inspect.getsource(qo)
+  assert "def _renew_active_claims" not in src
+  assert "_renew_active_claims" not in inspect.getsource(
+      qo.run_sync_timedb_queue_orchestrator,
+  )
 
 
 def test_handoff_priority_paths_not_in_orchestrator():
@@ -310,6 +313,7 @@ def test_orchestrator_omits_b_pending_cap_and_heartbeat_renew():
   from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  assert "def _renew_active_claims" not in inspect.getsource(qo)
   assert "_renew_active_claims" not in src
   assert "cap_pending_stats" not in src
   assert "_add_processed_path" not in src
