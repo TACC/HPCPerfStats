@@ -94,12 +94,36 @@ def test_hot_path_populate_active(monkeypatch):
     lambda _d: False,
   )
   monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord.archive_members_populate_shows_progress_for_day",
-    lambda day, tgz: day == "2020-01-01" and tgz == "/tgz",
+    "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord.archive_members_populate_owner_active_for_day",
+    lambda day: day == "2020-01-01",
   )
   hot, reason = coop._hot_path_contention_reasons(tar, tgz_archive_dir="/tgz")
   assert hot is True
   assert reason == "populate_active"
+
+
+def test_hot_path_complete_members_map_is_not_populate_active(monkeypatch):
+  """H20d: a complete members map must not yield populate_active."""
+  tar = "/daily/2020-01-01.tar"
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.calendar_date_from_daily_tar_path",
+    lambda _p: type("D", (), {"isoformat": lambda self: "2020-01-01"})(),
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord.ingest_tar_hot_for_day",
+    lambda _d: False,
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord.archive_members_populate_shows_progress_for_day",
+    lambda day, tgz=None: True,
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord.archive_members_populate_owner_active_for_day",
+    lambda _d: False,
+  )
+  hot, reason = coop._hot_path_contention_reasons(tar, tgz_archive_dir="/tgz")
+  assert hot is False
+  assert reason == ""
 
 
 def test_should_poll_day_close_yield_boundary():

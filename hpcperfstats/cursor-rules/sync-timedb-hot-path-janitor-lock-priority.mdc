@@ -37,7 +37,7 @@ globs: hpcperfstats/dbload/sync_timedb*.py,hpcperfstats/dbload/lib/sync_timedb_a
 
 ## Starvation
 
-After **3** defer attempts or **15 min** wall without hot-path signals, day_close may proceed with bounded `file_write_lock` — log `janitor: mutation proceed reason=defer_cap_exceeded`. **`defer_cap_exceeded` must still run write-lock / hot / populate / restore checks** (F5) — cap stops aging forever, it does **not** skip safety. Sticky yield Event alone must not abort after hot/populate clear (F11c).
+After **3** defer attempts or **15 min** wall without hot-path signals, day_close may proceed with bounded `file_write_lock` — log `janitor: mutation proceed reason=defer_cap_exceeded`. **`defer_cap_exceeded` must still run write-lock / hot / populate / restore checks** (F5) — cap stops aging forever, it does **not** skip safety. Sticky yield Event alone must not abort after hot/populate clear (F11c). **H20d:** day-close merge yield ``populate_active`` is live populate **owner** (`archive_members_populate_owner_active_for_day`), not a complete members map (`archive_members_populate_shows_progress_for_day`). Ingest stall defer still treats a complete map as stall-safe via ``shows_progress``.
 
 **`write_lock_contended` sticky backoff:** after a live flock defer, `JanitorDeferTracker` sets `write_lock_until` (30s…300s escalate) so workers **skip** re-popping that tar. Do **not** busy-spin seal for 500s+ with zero progress.
 

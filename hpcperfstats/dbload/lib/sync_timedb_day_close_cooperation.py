@@ -190,7 +190,7 @@ def _hot_path_contention_reasons(
       calendar_date_from_daily_tar_path,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      archive_members_populate_shows_progress_for_day,
+      archive_members_populate_owner_active_for_day,
       ingest_tar_hot_for_day,
   )
 
@@ -203,8 +203,7 @@ def _hot_path_contention_reasons(
     return True, "ingest_tar_hot"
   populate_active = bool(
       day_token
-      and tgz_archive_dir
-      and archive_members_populate_shows_progress_for_day(day_token, tgz_archive_dir)
+      and archive_members_populate_owner_active_for_day(day_token)
   )
   if populate_active:
     return True, "populate_active"
