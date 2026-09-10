@@ -5743,6 +5743,7 @@ def _stream_compressed_archive_members(
   on_member: Any | None = None,
   *,
   apply_priority_wrap: bool = True,
+  already_locked: bool = False,
 ) -> Any:
   """
   Stream file members from a sealed archive.
@@ -5754,6 +5755,8 @@ def _stream_compressed_archive_members(
     compressed_path (str): String for compressed path.
     on_member (Any | None): One of ``Any``, ``None``.
     apply_priority_wrap (bool): Boolean flag for apply priority wrap.
+    already_locked (bool): Skip the shared fnctl wait when the caller already
+    holds the exclusive write lock on ``compressed_path``.
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -5769,8 +5772,13 @@ def _stream_compressed_archive_members(
       compressed_path,
   ):
     return False, {}, False, None
+  lock_cm = (
+      contextlib.nullcontext()
+      if already_locked
+      else _archive_file_read_lock_wait(compressed_path)
+  )
   try:
-    with _archive_file_read_lock_wait(compressed_path):
+    with lock_cm:
       with _open_tarfile_for_read(
           compressed_path,
           zstd_thread_count_for_wrap(apply_priority_wrap),
@@ -5810,6 +5818,7 @@ def _scan_compressed_archive_members_and_readable(
   compressed_path: str,
   *,
   apply_priority_wrap: bool = True,
+  already_locked: bool = False,
 ) -> Any:
   """
   Return ``(readable, members)`` from one streamed zstd/gzip pass.
@@ -5817,6 +5826,8 @@ def _scan_compressed_archive_members_and_readable(
   Args:
     compressed_path (str): String for compressed path.
     apply_priority_wrap (bool): Boolean flag for apply priority wrap.
+    already_locked (bool): Skip the shared fnctl wait when the caller already
+    holds the exclusive write lock on ``compressed_path``.
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -5827,6 +5838,7 @@ def _scan_compressed_archive_members_and_readable(
   readable, members, _duplicates, _stream_error = _stream_compressed_archive_members(
       compressed_path,
       apply_priority_wrap=apply_priority_wrap,
+      already_locked=already_locked,
   )
   return readable, members
 
@@ -10261,6 +10273,7 @@ def compare_compressed_archive_members(
   *,
   gz_members: Any | None = None,
   zst_members: Any | None = None,
+  already_locked: bool = False,
 ) -> Any:
   """
   Return ``(gz_contained_in_zst, gz_members, zst_members)`` for migration.
@@ -10272,6 +10285,8 @@ def compare_compressed_archive_members(
     zst_path (str): String for zst path.
     gz_members (Any | None): One of ``Any``, ``None``.
     zst_members (Any | None): One of ``Any``, ``None``.
+    already_locked (bool): Skip gzip fnctl when the caller holds the gz write
+    lock.
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -10282,7 +10297,9 @@ def compare_compressed_archive_members(
   if gz_members is not None:
     gz_ok, gz_members = True, dict(gz_members)
   else:
-    gz_ok, gz_members = _scan_compressed_archive_members_and_readable(gz_path)
+    gz_ok, gz_members = _scan_compressed_archive_members_and_readable(
+        gz_path, already_locked=already_locked,
+    )
   if zst_members is not None:
     zst_ok, zst_members = True, dict(zst_members)
   else:
@@ -10303,6 +10320,7 @@ def drop_legacy_gz_if_equivalent_to_zst(
   *,
   gz_members: Any | None = None,
   zst_members: Any | None = None,
+  already_locked: bool = False,
 ) -> None:
   """
   Remove legacy ``.tar.gz`` when all gzip members match in ``.tar.zst``.
@@ -10313,6 +10331,8 @@ def drop_legacy_gz_if_equivalent_to_zst(
     log_fn (Any): Callable invoked by this helper.
     gz_members (Any | None): One of ``Any``, ``None``.
     zst_members (Any | None): One of ``Any``, ``None``.
+    already_locked (bool): Skip gzip fnctl when the caller holds the gz write
+    lock.
   
   Returns:
     None
@@ -10327,10 +10347,11 @@ def drop_legacy_gz_if_equivalent_to_zst(
       zst_path,
       gz_members=gz_members,
       zst_members=zst_members,
+      already_locked=already_locked,
   )
   if gz_contained_in_zst:
     try:
-      with file_write_lock(gz_path):
+      with file_write_lock(gz_path, already_held=already_locked):
         os.remove(gz_path)
       if log_fn:
         log_fn(
@@ -10812,6 +10833,7 @@ def _migrate_one_daily_legacy_gz_locked(
   force_remove_uncompressed_tar: bool,
   decompress_tmp_dir: str,
   log_fn: Any,
+  gz_already_locked: bool = False,
 ) -> Any:
   """
   Migrate one day while the caller holds the write lock on tar or gz.
@@ -10828,6 +10850,8 @@ def _migrate_one_daily_legacy_gz_locked(
     uncompressed tar.
     decompress_tmp_dir (str): String for decompress tmp dir.
     log_fn (Any): Callable invoked by this helper.
+    gz_already_locked (bool): True when the caller holds the exclusive write
+    lock on ``gz_path`` (gz-only; no sibling tar lock).
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -10879,6 +10903,7 @@ def _migrate_one_daily_legacy_gz_locked(
           zst_path,
           log_fn=log_fn,
           zst_members=zst_members,
+          already_locked=gz_already_locked,
       )
     if os.path.isfile(gz_path):
       return MIGRATE_GZ_STATUS_KEPT_MISMATCH
@@ -10886,7 +10911,7 @@ def _migrate_one_daily_legacy_gz_locked(
 
   if os.path.isfile(zst_path):
     gz_contained, gz_members, zst_members = compare_compressed_archive_members(
-        gz_path, zst_path,
+        gz_path, zst_path, already_locked=gz_already_locked,
     )
     if gz_contained and os.path.isfile(gz_path):
       drop_legacy_gz_if_equivalent_to_zst(
@@ -10895,6 +10920,7 @@ def _migrate_one_daily_legacy_gz_locked(
           log_fn=log_fn,
           gz_members=gz_members,
           zst_members=zst_members,
+          already_locked=gz_already_locked,
       )
       if os.path.isfile(gz_path):
         return MIGRATE_GZ_STATUS_KEPT_MISMATCH
@@ -11066,6 +11092,7 @@ def migrate_one_daily_legacy_gz(
           force_remove_uncompressed_tar=force_remove_uncompressed_tar,
           decompress_tmp_dir=decompress_tmp_dir,
           log_fn=log_fn,
+          gz_already_locked=(primary_path == gz_path),
       )
   except TimeoutError:
     if log_fn:

@@ -124,6 +124,8 @@ print(\"members_dir\", os.path.join(arch, \".sync_timedb_archive_members\"), os.
 
 **Anti-pattern — migrate gz-only unlinks gzip after empty mkstemp dest (hpcperfstats02 2026-09-10):** `_migrate_one_daily_legacy_gz_locked` created an empty `mkstemp` dest; `decompress_compressed_to_tar` treated `os.path.isfile(dest)` as success and skipped zstd; then `os.remove(gz)` ran before seal. **Do not re-run** `scripts/migrate_daily_archive_gz_to_zst.py` until the fail-closed unlink fix is deployed. Restore hole days from Ranch (`sharrell@ranch:`) into INI `get_daily_archive_dir_path()` with `--ignore-existing`. Never unlink the only production `.tar.gz` / `.tar.zst` / open `.tar` until a verified replacement exists (`workspace-guardrails.mdc`, `sync-timedb-lock-and-archive-contract.mdc` A–D).
 
+**Anti-pattern — migrate gz-only drop nested-locks gzip (hpcperfstats02 2026-09-10):** after the unlink-fix image, canary `--since 2025-03-20 --limit 1` sealed `.tar.zst` then `Timed out waiting 180.0s for read lock: …/YYYY-MM-DD.tar.gz.fnctl.lock` and kept gzip (`gzip_members=0` while locked). Do **not** `rm` gzip by hand. Redeploy nested-lock skip (`already_locked` / `already_held`) before remaining gz migrate. Do not chain `canary && full` in one podman-compose `-c` (canary exit 1 skips the full run).
+
 **Anti-pattern — `DayRawRemovalCoordinator(...)` missing required kwargs (hpcperfstats02 2026-09-04):** constructing with only `archive_data_dir=` / `tgz_archive_dir=` raises **`TypeError: missing … host_name_ext … get_quarantine_skip_paths`**. Always pass **`host_name_ext`** (from `cfg.get_host_name_ext() or ""`) and **`get_quarantine_skip_paths`** (e.g. `lambda: set()` for read-only census), plus **`ensure_django()`** before import:
 
 ```bash

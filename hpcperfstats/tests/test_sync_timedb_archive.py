@@ -1633,6 +1633,60 @@ def test_drop_legacy_gz_uses_provided_zst_members_no_zst_scan(monkeypatch, tmp_p
   assert not gz_path.exists()
 
 
+def test_drop_legacy_gz_already_locked_unlinks_under_held_write_lock(
+    monkeypatch, tmp_path,
+):
+  """Migrate holds gz write lock; drop must not nested-lock the same path."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.file_locking import file_write_lock
+
+  gz_path = tmp_path / "2025-03-20.tar.gz"
+  zst_path = tmp_path / "2025-03-20.tar.zst"
+  gz_path.write_bytes(b"gz")
+  zst_path.write_bytes(b"zst")
+
+  monkeypatch.setattr(
+      helpers,
+      "_scan_compressed_archive_members_and_readable",
+      lambda path, **kwargs: (True, {"a.txt": 10}),
+  )
+  monkeypatch.setattr(
+      helpers,
+      "_sealed_archive_members_via_store_or_scan",
+      lambda path, **kwargs: (True, {"a.txt": 10}),
+  )
+  with file_write_lock(str(gz_path), timeout_seconds=1):
+    drop_legacy_gz_if_equivalent_to_zst(
+        str(gz_path),
+        str(zst_path),
+        log_fn=None,
+        already_locked=True,
+    )
+  assert not gz_path.exists()
+
+
+def test_scan_already_locked_does_not_wait_on_held_write_lock(
+    monkeypatch, tmp_path,
+):
+  """Gz-only migrate scan must not flock SH while EX is already held."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.file_locking import file_write_lock
+
+  gz_path = tmp_path / "2025-03-20.tar.gz"
+  gz_path.write_bytes(b"not-a-real-gzip")
+  monkeypatch.setattr(
+      helpers,
+      "_archive_members_fnctl_read_lock_timeout_seconds",
+      lambda: 0,
+  )
+  with file_write_lock(str(gz_path), timeout_seconds=1):
+    readable, members = helpers._scan_compressed_archive_members_and_readable(
+        str(gz_path), already_locked=True,
+    )
+  assert readable is False
+  assert members == {}
+
+
 def test_compare_compressed_members_coordinated_zst_cold(monkeypatch, tmp_path):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
@@ -5323,6 +5377,152 @@ def test_migrate_one_gz_only_avoids_nested_lock_failure(monkeypatch, tmp_path):
   assert status == helpers.MIGRATE_GZ_STATUS_CONVERTED
   assert not gz_path.exists()
   assert zst_path.exists()
+
+
+def test_migrate_one_gz_only_drop_does_not_nested_lock_gz(
+    monkeypatch, tmp_path,
+):
+  """Canary 2025-03-20: real drop while migrate holds gz write lock."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2025-03-20.tar.gz"
+  tar_path = tmp_path / "2025-03-20.tar"
+  zst_path = tmp_path / "2025-03-20.tar.zst"
+  gz_path.write_bytes(b"gz")
+
+  def _scan(path, **_kwargs):
+    del path
+    return True, {"a.txt": 10}
+
+  monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
+  monkeypatch.setattr(
+      helpers,
+      "_sealed_archive_members_via_store_or_scan",
+      lambda path, **kwargs: (True, {"a.txt": 10}),
+  )
+
+  def _decompress(gz, tar, threads, remove_compressed=True, **kwargs):
+    del gz, threads, remove_compressed, kwargs
+    Path(tar).write_bytes(b"tar-bytes")
+    return True
+
+  def _seal(tar, zst, *args, **kwargs):
+    del tar, args, kwargs
+    Path(zst).write_bytes(b"zst")
+    return {"a.txt": 10}
+
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _decompress)
+  monkeypatch.setattr(helpers, "atomic_seal_tar_to_zst", _seal)
+
+  lock_held = []
+  real = helpers.file_write_lock
+
+  @contextlib.contextmanager
+  def _lock(path, timeout_seconds=0, expiry_seconds=None, already_held=False):
+    lock_held.append(already_held)
+    kw = {"timeout_seconds": timeout_seconds, "already_held": already_held}
+    if expiry_seconds is not None:
+      kw["expiry_seconds"] = expiry_seconds
+    with real(path, **kw):
+      yield
+
+  monkeypatch.setattr(helpers, "file_write_lock", _lock)
+  status = helpers.migrate_one_daily_legacy_gz(
+      str(gz_path),
+      zstd_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  assert status == helpers.MIGRATE_GZ_STATUS_CONVERTED
+  assert not gz_path.exists()
+  assert zst_path.exists()
+  assert tar_path.exists()
+  assert True in lock_held
+
+
+def test_migrate_one_dropped_only_does_not_nested_lock_gz(
+    monkeypatch, tmp_path,
+):
+  """Canary drop-only: zst exists; migrate still holds gz write lock."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2025-03-20.tar.gz"
+  zst_path = tmp_path / "2025-03-20.tar.zst"
+  gz_path.write_bytes(b"gz")
+  zst_path.write_bytes(b"zst")
+
+  def _scan(path, **_kwargs):
+    del path
+    return True, {"a.txt": 10}
+
+  monkeypatch.setattr(helpers, "_scan_compressed_archive_members_and_readable", _scan)
+  monkeypatch.setattr(
+      helpers,
+      "_sealed_archive_members_via_store_or_scan",
+      lambda path, **kwargs: (True, {"a.txt": 10}),
+  )
+
+  lock_held = []
+  real = helpers.file_write_lock
+
+  @contextlib.contextmanager
+  def _lock(path, timeout_seconds=0, expiry_seconds=None, already_held=False):
+    lock_held.append(already_held)
+    kw = {"timeout_seconds": timeout_seconds, "already_held": already_held}
+    if expiry_seconds is not None:
+      kw["expiry_seconds"] = expiry_seconds
+    with real(path, **kw):
+      yield
+
+  monkeypatch.setattr(helpers, "file_write_lock", _lock)
+  status = helpers.migrate_one_daily_legacy_gz(
+      str(gz_path),
+      zstd_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  assert status == helpers.MIGRATE_GZ_STATUS_DROPPED_ONLY
+  assert not gz_path.exists()
+  assert zst_path.exists()
+  assert True in lock_held
+
+
+def test_migrate_with_sibling_tar_drop_does_not_claim_gz_already_locked(
+    monkeypatch, tmp_path,
+):
+  """When migrate locked the sibling tar, gzip is not already held."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-03-17.tar.gz"
+  tar_path = tmp_path / "2024-03-17.tar"
+  gz_path.write_bytes(b"gz")
+  tar_path.write_bytes(b"tar-bytes")
+  drop_kwargs = []
+
+  def _seal(tar, zst, *args, **kwargs):
+    del tar, args, kwargs
+    Path(zst).write_bytes(b"zst")
+    return {"a.txt": 10}
+
+  def _drop(gz, zst, log_fn=None, **kwargs):
+    del gz, zst, log_fn
+    drop_kwargs.append(kwargs)
+    gz_path.unlink(missing_ok=True)
+
+  monkeypatch.setattr(helpers, "atomic_seal_tar_to_zst", _seal)
+  monkeypatch.setattr(helpers, "drop_legacy_gz_if_equivalent_to_zst", _drop)
+  status = helpers.migrate_one_daily_legacy_gz(
+      str(gz_path),
+      zstd_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+  )
+  assert status == helpers.MIGRATE_GZ_STATUS_CONVERTED
+  assert drop_kwargs
+  assert drop_kwargs[0].get("already_locked") is not True
 
 
 def test_migrate_one_gz_only_uses_tmp_decompress_dir(monkeypatch, tmp_path):

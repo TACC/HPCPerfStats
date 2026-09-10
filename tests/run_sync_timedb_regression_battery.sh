@@ -52,7 +52,7 @@ done
 # Queue cutover battery: job schema, reconstruct/discover, orchestrator flock/entry,
 # B-09 predicates, plus durable archive/members/find/jid helpers still valid without
 # the retired supervisor_loop / ArchiveJanitor coordinator.
-BATTERY_FILTER='test_arch_ or architecture or find_stats or printf or rescan_mtime or rescan_full or gfind or jid or host_scoped or flock or orchestrator or job_queue or reconstruct or streaming or ingest_identity or lease or ranged or hot_cap or catchup or empty_job or checkpoint_sidecar or day_close_min_age or discovered_incomplete or remaining_raw_enqueues or claim_is_atomic or populate_pool or fingerprint or verify_failure or allkeys or census or append_jobs or drain_subprocess or already_held or handoff or ghost_deleted or populate_active'
+BATTERY_FILTER='test_arch_ or architecture or find_stats or printf or rescan_mtime or rescan_full or gfind or jid or host_scoped or flock or orchestrator or job_queue or reconstruct or streaming or ingest_identity or lease or ranged or hot_cap or catchup or empty_job or checkpoint_sidecar or day_close_min_age or discovered_incomplete or remaining_raw_enqueues or claim_is_atomic or populate_pool or fingerprint or verify_failure or allkeys or census or append_jobs or drain_subprocess or already_held or already_locked or nested_lock or handoff or ghost_deleted or populate_active'
 
 set +e
 "$PYTHON" -m pytest -q \
