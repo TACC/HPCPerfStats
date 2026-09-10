@@ -165,9 +165,10 @@ def test_persist_accounting_daily_file_creates_file(mock_acct_path, tmp_path):
   content = _sacct_content(_sacct_row(jid="701"))
   ingest_date = date(2024, 6, 15)
 
-  persist_accounting_daily_file(ingest_date, content)
+  wrote = persist_accounting_daily_file(ingest_date, content)
 
   path = tmp_path / "2024-06-15.txt"
+  assert wrote is True
   assert path.read_text(encoding="utf-8") == content
 
 
@@ -182,8 +183,9 @@ def test_persist_accounting_daily_file_overwrites_when_not_shrinking(mock_acct_p
   path.write_text(original, encoding="utf-8")
   updated = _sacct_content(_sacct_row(jid="801"), _sacct_row(jid="803"))
 
-  persist_accounting_daily_file(ingest_date, updated)
+  wrote = persist_accounting_daily_file(ingest_date, updated)
 
+  assert wrote is True
   assert path.read_text(encoding="utf-8") == updated
 
 
@@ -206,6 +208,50 @@ def test_persist_accounting_daily_file_rejects_shrink(mock_acct_path, tmp_path):
 
   assert exc_info.value.existing_lines == 3
   assert exc_info.value.incoming_lines == 2
+  assert path.read_text(encoding="utf-8") == original
+
+
+@patch("hpcperfstats.dbload.sync_acct.cfg.get_accounting_path")
+def test_persist_accounting_daily_file_skips_empty(mock_acct_path, tmp_path):
+  from hpcperfstats.dbload.sync_acct import persist_accounting_daily_file
+
+  mock_acct_path.return_value = str(tmp_path)
+  ingest_date = date(2024, 6, 15)
+
+  wrote = persist_accounting_daily_file(ingest_date, "  \n")
+
+  assert wrote is False
+  assert not (tmp_path / "2024-06-15.txt").exists()
+
+
+@patch("hpcperfstats.dbload.sync_acct.cfg.get_accounting_path")
+def test_persist_accounting_daily_file_skips_header_only(mock_acct_path, tmp_path):
+  from hpcperfstats.dbload.sync_acct import persist_accounting_daily_file
+
+  mock_acct_path.return_value = str(tmp_path)
+  ingest_date = date(2024, 6, 15)
+
+  wrote = persist_accounting_daily_file(ingest_date, "JobID|User\n\n")
+
+  assert wrote is False
+  assert not (tmp_path / "2024-06-15.txt").exists()
+
+
+@patch("hpcperfstats.dbload.sync_acct.cfg.get_accounting_path")
+def test_persist_accounting_daily_file_skip_does_not_replace_existing(
+    mock_acct_path, tmp_path,
+):
+  from hpcperfstats.dbload.sync_acct import persist_accounting_daily_file
+
+  mock_acct_path.return_value = str(tmp_path)
+  ingest_date = date(2024, 6, 15)
+  path = tmp_path / "2024-06-15.txt"
+  original = _sacct_content(_sacct_row(jid="901"), _sacct_row(jid="902"))
+  path.write_text(original, encoding="utf-8")
+
+  wrote = persist_accounting_daily_file(ingest_date, "JobID|User\n")
+
+  assert wrote is False
   assert path.read_text(encoding="utf-8") == original
 
 

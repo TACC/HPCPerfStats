@@ -71,7 +71,7 @@ hpcperfstats-jobstats --insecure 12345
 
 Runs `sacct` for a date range in one of two **mutually exclusive** modes:
 
-- **API mode** (default): POSTs the pipe-delimited output to the HPCPerfStats ingest endpoint. The API stores the data using the same logic as the portal’s sync_acct and also writes `{acct_path}/YYYY-MM-DD.txt` for scheduled `sync_acct.py` reingest. The API returns HTTP 409 when a POST would replace an on-disk file with fewer lines (staff API key required).
+- **API mode** (default): POSTs the pipe-delimited output to the HPCPerfStats ingest endpoint when that day’s sacct body has at least one job row (header-only or empty days are skipped, same as `-f`). The API stores the data using the same logic as the portal’s sync_acct and also writes `{acct_path}/YYYY-MM-DD.txt` for scheduled `sync_acct.py` reingest only when the body has at least one job row. The API returns HTTP 409 when a POST would replace an on-disk file with fewer lines (staff API key required). Header-only or empty POSTs skip the write without a 409.
 - **File mode** (`-f DIR`): writes the same pipe-delimited body to `DIR/YYYY-MM-DD.txt` locally (same naming as the ingest API). `DIR` must already exist. No API URL or key required. Do not combine with `--api-key`.
 
 ```bash

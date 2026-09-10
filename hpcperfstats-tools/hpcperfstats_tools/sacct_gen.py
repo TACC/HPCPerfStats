@@ -300,6 +300,9 @@ def _run_api_mode(args: Any, start_date: datetime, end_date: datetime) -> None:
             print(f"Warning: sacct failed for {date_str}", file=sys.stderr)
             continue
         body = output.decode("utf-8", errors="replace")
+        if not sacct_body_has_job_rows(body):
+            print(f"{date_str}: no jobs; skipped")
+            continue
         ok, msg = send_to_api(base_url, api_key, date_str, body)
         if ok:
             print(f"{date_str}: ingested {msg} new job(s)")

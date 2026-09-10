@@ -173,7 +173,9 @@ class TestSessionMutatingPostCsrf:
     key_obj = SimpleNamespace(username="pipeline", is_staff=True)
     with patch.object(api.ApiKey, "hash_raw_key", return_value="hashed"), patch.object(
         api.ApiKey.objects, "get", return_value=key_obj
-    ), patch.object(api, "persist_accounting_daily_file"), patch.object(
+    ), patch.object(
+        api, "persist_accounting_daily_file", return_value=False
+    ), patch.object(
         api.job_data.objects, "filter"
     ) as mock_filter:
       mock_filter.return_value.values_list.return_value.iterator.return_value = iter([])

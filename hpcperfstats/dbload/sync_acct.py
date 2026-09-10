@@ -223,29 +223,39 @@ def _read_accounting_file_line_count(path: str) -> Any:
       return len(fh.read().splitlines())
 
 
-def persist_accounting_daily_file(ingest_date: Any, content: Any) -> None:
+def persist_accounting_daily_file(ingest_date: Any, content: Any) -> bool:
   """
   Create or overwrite the daily accounting file with raw sacct POST body.
-  
-  Raises AccountingFileShrinkError when the incoming payload has fewer lines
-  than the existing file for that date.
-  
+
+  Skips the write when the payload has fewer than two non-empty lines
+  (empty body or header-only, no job rows). That skip does not replace
+  an existing file and does not raise AccountingFileShrinkError.
+
+  Raises AccountingFileShrinkError when a job-row payload has fewer
+  lines than the existing file for that date.
+
   Args:
-    ingest_date (Any): Ingest date passed to this helper.
-    content (Any): Content passed to this helper.
-  
+    ingest_date (Any): Calendar date used to name ``YYYY-MM-DD.txt``.
+    content (Any): Pipe-delimited sacct body as ``str`` or ``bytes``.
+
   Returns:
-    None
-  
+    bool: True when the daily file was written; False when the payload
+    has no job rows and the write was skipped.
+
   Raises:
-    AccountingFileShrinkError: Raised when ``persist_accounting_daily_file``
-    hits a ``AccountingFileShrinkError`` failure path.
-  
+    AccountingFileShrinkError: When a job-row payload has fewer lines
+    than the existing on-disk file for that date.
+
   Examples:
-    >>> persist_accounting_daily_file(None, None)  # doctest: +SKIP
+    >>> from datetime import date
+    >>> persist_accounting_daily_file(
+    ...     date(2024, 6, 15), "JobID|User\\n1|alice\\n"
+    ... )  # doctest: +SKIP
   """
   if isinstance(content, bytes):
     content = content.decode("utf-8", errors="replace")
+  if len([ln for ln in content.splitlines() if ln.strip()]) < 2:
+    return False
   path = accounting_daily_file_path(ingest_date)
   incoming_lines = count_accounting_content_lines(content)
   if os.path.isfile(path):
@@ -259,6 +269,7 @@ def persist_accounting_daily_file(ingest_date: Any, content: Any) -> None:
     with open(tmp_path, "w", encoding="utf-8") as fh:
       fh.write(content)
     os.replace(tmp_path, path)
+  return True
 
 
 def sync_acct_from_content(content: Any, jobs_in_db: Any) -> Any:

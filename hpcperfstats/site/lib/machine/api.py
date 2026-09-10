@@ -4733,7 +4733,7 @@ def sacct_ingest(request: Any) -> Any:
         )
 
     try:
-        persist_accounting_daily_file(ingest_date, body)
+        file_written = persist_accounting_daily_file(ingest_date, body)
     except AccountingFileShrinkError as e:
         return Response(
             {
@@ -4754,7 +4754,7 @@ def sacct_ingest(request: Any) -> Any:
 
     if not body.strip():
         return Response(
-            {"inserted": 0, "date": date_str, "file_written": True},
+            {"inserted": 0, "date": date_str, "file_written": file_written},
         )
 
     searchdate = ingest_date - timedelta(days=2)
@@ -4775,5 +4775,5 @@ def sacct_ingest(request: Any) -> Any:
         )
 
     return Response(
-        {"inserted": inserted, "date": date_str, "file_written": True},
+        {"inserted": inserted, "date": date_str, "file_written": file_written},
     )

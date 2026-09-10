@@ -87,6 +87,27 @@ def test_main_file_mode_skips_header_only_no_job_rows(tmp_path, capsys):
     assert "wrote" not in out
 
 
+def test_main_api_mode_skips_header_only_no_job_rows(capsys):
+    """API mode must not POST header-only sacct days (same skip as -f)."""
+    with patch(
+        "hpcperfstats_tools.sacct_gen.run_sacct_for_date",
+        return_value=("2024-01-01", b"JobID|User\n"),
+    ), patch(
+        "hpcperfstats_tools.sacct_gen.get_api_base_url",
+        return_value="https://example.test/api/",
+    ), patch(
+        "hpcperfstats_tools.sacct_gen.load_cached_api_key",
+        return_value="secret",
+    ), patch(
+        "hpcperfstats_tools.sacct_gen.send_to_api",
+    ) as mock_send:
+        main(["2024-01-01", "2024-01-01"])
+    mock_send.assert_not_called()
+    out = capsys.readouterr().out
+    assert "no jobs" in out.lower() or "skipped" in out.lower()
+    assert "ingested" not in out
+
+
 def test_main_file_mode_skips_empty_sacct_output(tmp_path, capsys):
     with patch(
         "hpcperfstats_tools.sacct_gen.run_sacct_for_date",

@@ -399,13 +399,36 @@ class TestSacctIngestApi:
 
     request = _plain_post("/api/sacct/ingest/?date=2024-01-02", b"  \n")
     with patch.object(api, "_require_staff", return_value=None), patch.object(
-        api, "persist_accounting_daily_file"
+        api, "persist_accounting_daily_file", return_value=False
     ) as mock_persist:
       response = api.sacct_ingest(request)
     assert response.status_code == 200
     assert response.data["inserted"] == 0
-    assert response.data["file_written"] is True
+    assert response.data["file_written"] is False
     mock_persist.assert_called_once()
+
+  def test_header_only_body_does_not_write(self):
+    from hpcperfstats.site.lib.machine import api
+
+    request = _plain_post(
+        "/api/sacct/ingest/?date=2024-01-02",
+        b"JobID|User\n",
+    )
+    jd = MagicMock()
+    vs = MagicMock()
+    vs.iterator.return_value = iter([])
+    jd.objects.filter.return_value.values_list.return_value = vs
+    with patch.object(api, "_require_staff", return_value=None), patch.object(
+        api, "persist_accounting_daily_file", return_value=False
+    ) as mock_persist, patch.object(
+        api, "sync_acct_from_content", return_value=0
+    ) as mock_sync, patch.object(api, "job_data", jd):
+      response = api.sacct_ingest(request)
+    assert response.status_code == 200
+    assert response.data["inserted"] == 0
+    assert response.data["file_written"] is False
+    mock_persist.assert_called_once()
+    mock_sync.assert_called_once()
 
   def test_empty_body_requires_date(self):
     from hpcperfstats.site.lib.machine import api
@@ -447,6 +470,7 @@ class TestSacctIngestApi:
 
     def _persist(_ingest_date, _body):
       call_order.append("persist")
+      return True
 
     def _sync(_body, _jobs):
       call_order.append("sync")
