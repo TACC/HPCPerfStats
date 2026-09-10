@@ -80,6 +80,7 @@ from hpcperfstats.dbload.lib.archive_compress import (
     sum_member_bytes,
 )
 from hpcperfstats.dbload.lib.zstd_cli import (
+    _tar_dest_is_nonempty,
     decompress_compressed_to_tar,
     zstd_compressed_archive_pipe_readable,
     zstd_decompress_stdout,
@@ -6064,7 +6065,7 @@ def ensure_daily_tar_restored_for_append(
   Examples:
     >>> ensure_daily_tar_restored_for_append("x", None, True)  # doctest: +SKIP
   """
-  if os.path.isfile(tar_path):
+  if _tar_dest_is_nonempty(tar_path):
     return True
   zst_path, gz_path = compressed_sibling_paths(tar_path)
   remove_compressed = _decompress_should_unlink_compressed(tar_path)
@@ -6106,12 +6107,16 @@ def replace_corrupt_tar_from_compressed_backup(
   zstd_threads: Any,
 ) -> Any:
   """
-  Remove corrupt ``tar_path``, then restore from ``.tar.zst`` or legacy ``.gz``.
-  
-  Returns True if the filesystem is in a consistent state for the caller to
-  append: either ``tar_path`` exists (restored from backup) or both backups
-  and tar are absent. Returns False only if restore was attempted but
-  ``tar_path`` is still missing afterward.
+  Restore a corrupt ``tar_path`` from ``.tar.zst`` or legacy ``.gz``.
+
+  Writes a sibling ``.rebuild.tmp``, then ``os.replace`` onto ``tar_path``
+  only after decompress returns True. Never unlinks ``tar_path`` before a
+  verified replacement exists.
+
+  Returns True when ``os.replace`` installed a replacement, or when no
+  sealed backup exists (``tar_path`` is left as-is). Returns False when a
+  sealed ``.tar.zst`` or ``.tar.gz`` exists but restore did not replace
+  ``tar_path``.
   
   Args:
     tar_path (str): String for tar path.
@@ -6127,24 +6132,32 @@ def replace_corrupt_tar_from_compressed_backup(
   """
   try:
     with file_write_lock(tar_path):
-      if os.path.isfile(tar_path):
-        os.remove(tar_path)
       remove_compressed = _decompress_should_unlink_compressed(tar_path)
+      rebuild = tar_path + ".rebuild.tmp"
+      try:
+        if os.path.exists(rebuild):
+          os.remove(rebuild)
+      except OSError:
+        pass
       for sealed_src in (zst_path, gz_path):
         if not os.path.isfile(sealed_src):
           continue
         if decompress_compressed_to_tar(
             sealed_src,
-            tar_path,
+            rebuild,
             zstd_threads,
             remove_compressed=remove_compressed,
             restore_reason="corrupt_tar",
             restore_caller="replace_corrupt_tar_from_compressed_backup",
             already_locked=True,
         ):
+          os.replace(rebuild, tar_path)
           return True
-      if os.path.isfile(tar_path):
-        return True
+      try:
+        if os.path.exists(rebuild):
+          os.remove(rebuild)
+      except OSError:
+        pass
       if os.path.isfile(zst_path) or os.path.isfile(gz_path):
         return False
       return True
@@ -10926,6 +10939,10 @@ def _migrate_one_daily_legacy_gz_locked(
       )
       os.close(fd)
       remove_temp_tar_after = True
+      try:
+        os.unlink(temp_tar_path)
+      except OSError:
+        pass
     if not decompress_compressed_to_tar(
         gz_path,
         temp_tar_path,
@@ -10935,23 +10952,6 @@ def _migrate_one_daily_legacy_gz_locked(
       if log_fn:
         log_fn(
             "Migration decompress failed for legacy gzip: %s" % gz_path,
-            flush=True,
-        )
-      if remove_temp_tar_after:
-        try:
-          if os.path.exists(temp_tar_path):
-            os.remove(temp_tar_path)
-        except OSError:
-          pass
-      return MIGRATE_GZ_STATUS_FAILED
-    try:
-      if os.path.isfile(gz_path):
-        os.remove(gz_path)
-    except OSError as exc:
-      if log_fn:
-        log_fn(
-            "Migration failed removing legacy gzip after decompress %s: %s"
-            % (gz_path, exc),
             flush=True,
         )
       if remove_temp_tar_after:

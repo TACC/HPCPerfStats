@@ -285,6 +285,61 @@ def test_day_close_job_tar_drops_when_sealed_and_no_raw(tmp_path, monkeypatch):
   assert zst.exists()
 
 
+def test_day_close_skips_tar_drop_when_post_seal_verify_fails(tmp_path, monkeypatch):
+  """post_seal_verify failure must not unlink tar; raw_delete still runs."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2020-01-02"
+  tar = daily / ("%s.tar" % day)
+  zst = daily / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  zst.write_bytes(b"zst")
+  deleted = []
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: None,
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def apply_batch_delete(self, tar_path):
+      deleted.append(tar_path)
+      return 0
+
+    def run_pre_seal_verify_sync(self, _tar_path):
+      return True
+
+    def run_post_seal_verify_sync(self, _tar_path):
+      raise RuntimeError("verify boom")
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return False
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+  )
+  assert outcome == "incomplete_raw"
+  assert tar.exists()
+  assert zst.exists()
+  assert deleted == [str(tar)]
+
+
 def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
   """DC-01 order: pre-seal → reconcile → pre-seal → dedupe → seal → post-seal → delete."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr

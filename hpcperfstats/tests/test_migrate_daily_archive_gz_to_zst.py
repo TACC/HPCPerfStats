@@ -94,6 +94,75 @@ def test_migrate_main_calls_ensure_django_before_remaining_raw(monkeypatch, tmp_
   assert "migrate" in order
 
 
+def test_migrate_cli_installs_archive_members_store(monkeypatch, tmp_path):
+  """CLI must install the in-process members store from INI archive_dir."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      get_process_archive_members_store,
+      set_process_archive_members_store,
+  )
+
+  mod = _load_migrate_script()
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  archive = tmp_path / "archive"
+  archive.mkdir()
+  seen = {"during": None}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser._ensure_cfg_loaded",
+      lambda: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_daily_archive_dir_path",
+      lambda: str(daily),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_archive_dir_path",
+      lambda: str(archive),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_host_name_ext",
+      lambda: "example.com",
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.django_bootstrap.ensure_django",
+      lambda: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+      "check_archive_migration_prerequisites",
+      lambda: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+      "build_remaining_raw_stats_by_daily_gz",
+      lambda *_a, **_k: {},
+  )
+
+  def fake_migrate(*_a, **_k):
+    seen["during"] = get_process_archive_members_store()
+    return {
+        "converted": 0,
+        "dropped_only": 0,
+        "failed": 0,
+        "gz_remaining": 0,
+    }
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+      "migrate_legacy_daily_gz_archives",
+      fake_migrate,
+  )
+  set_process_archive_members_store(None)
+  try:
+    rc = mod.main(["--daily-archive-dir", str(daily), "--dry-run"])
+  finally:
+    set_process_archive_members_store(None)
+  assert rc == 0
+  assert seen["during"] is not None
+  assert get_process_archive_members_store() is None
+
+
 def test_build_archive_maintenance_snapshot_ensures_django(monkeypatch):
   """Shared helper must bootstrap Django before ingest_readiness/host_data import."""
   from hpcperfstats.dbload.lib import sync_timedb_archive_maint as maint

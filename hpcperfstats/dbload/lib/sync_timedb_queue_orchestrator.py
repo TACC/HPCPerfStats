@@ -2175,10 +2175,12 @@ def _run_day_close_job(
     _stage_exit("seal", result="ok")
     remaining_raw = bool(coord.has_closed_raw_on_disk(tar_path))
 
+    post_seal_ok = False
     if os.path.isfile(tar_path) or os.path.isfile(tar_path + ".zst"):
       _stage_enter("post_seal_verify")
       try:
         coord.run_post_seal_verify_sync(tar_path)
+        post_seal_ok = True
         _stage_exit("post_seal_verify", result="ok")
       except Exception as exc:
         _log(
@@ -2203,6 +2205,7 @@ def _run_day_close_job(
         os.path.isfile(zst_path)
         and os.path.isfile(tar_path)
         and not remaining_raw
+        and post_seal_ok
     ):
       _stage_enter("tar_drop")
       try:

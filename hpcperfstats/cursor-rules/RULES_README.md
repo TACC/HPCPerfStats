@@ -9,7 +9,7 @@ Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` f
 | `agent-discipline-core.mdc` | **Control plane** — pre-close checklist, task router, when to Read domain rules |
 | `plan-completion-gate.mdc` | Close sequence (senior review + self-review) |
 | `every-error-regression-test.mdc` | Regression test law for fixes |
-| `workspace-guardrails.mdc` | `monitor/` read-only, compose wiring |
+| `workspace-guardrails.mdc` | `monitor/` read-only, compose wiring, fail-closed unique-copy unlink |
 | `workspace-layout-and-python-env.mdc` | `.venv` path, rules directory |
 
 ## Domain rules (~70 files — `alwaysApply: false`)

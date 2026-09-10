@@ -35,3 +35,9 @@ alwaysApply: true
 
 ## Production asset delivery
 - Do not load scripts, styles, or fonts from public CDNs in user-facing code paths. Follow **`no-cdn-in-production.mdc`** (bundle via `npm`/Vite/staticfiles; tests may use CDNs where documented).
+
+## Fail-closed unique-copy unlink
+- Never unlink the only production copy of a daily archive (legacy `.tar.gz`, sealed `.tar.zst`, open `.tar`, or closed raw stats) until a **verified replacement** exists.
+- Forbidden: unlink-before-seal/restore; treating a size-0 dest (`mkstemp` empty file) as decompress success; day-close `tar_drop` after post-seal verify failure.
+- Temps, lock sidecars, and rebuild/decomp tmp files may be unlinked without a replacement.
+- Incident: hpcperfstats02 2026-09-10 migrate gz-only + empty mkstemp dest skipped zstd then `os.remove(gz)` before seal. Do not re-run migrate until the fail-closed fix is deployed. Details in **`sync-timedb-lock-and-archive-contract.mdc`**.

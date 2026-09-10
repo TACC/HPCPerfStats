@@ -170,6 +170,42 @@ def main(argv: Any | None = None) -> Any:
   ensure_django()
 
   import hpcperfstats.dbload.lib.conf_parser as cfg_mod
+  from hpcperfstats.dbload.lib.print_utils import log_print
+
+  cfg_mod._ensure_cfg_loaded()
+
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      SyncTimedbArchiveMembersStore,
+      set_process_archive_members_store,
+  )
+
+  archive_root = cfg_mod.get_archive_dir_path()
+  if archive_root:
+    set_process_archive_members_store(
+        SyncTimedbArchiveMembersStore(archive_root),
+    )
+  try:
+    return _run_migrate_after_store(args, cfg_mod, log_print)
+  finally:
+    set_process_archive_members_store(None)
+
+
+def _run_migrate_after_store(args: Any, cfg_mod: Any, log_print: Any) -> Any:
+  """
+  Run migrate after Django, INI, and the archive members store are ready.
+
+  Args:
+    args (Any): Parsed CLI arguments.
+    cfg_mod (Any): Loaded ``conf_parser`` module.
+    log_print (Any): Logger callable imported by ``main``.
+
+  Returns:
+    Any: Process exit code.
+
+  Examples:
+    >>> callable(_run_migrate_after_store)
+    True
+  """
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
       MIGRATE_GZ_STATUS_CONVERTED,
       MIGRATE_GZ_STATUS_DROPPED_ONLY,
@@ -179,9 +215,6 @@ def main(argv: Any | None = None) -> Any:
       migrate_legacy_daily_gz_archives,
   )
   from hpcperfstats.dbload.lib.file_locking import cleanup_stale_fnctl_lock_sidecars
-  from hpcperfstats.dbload.lib.print_utils import log_print
-
-  cfg_mod._ensure_cfg_loaded()
 
   daily_archive_dir = (
       args.daily_archive_dir.strip()

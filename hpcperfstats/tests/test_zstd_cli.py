@@ -639,3 +639,99 @@ def test_decompress_uses_file_lock_when_store_unset(monkeypatch, tmp_path):
   t.join(timeout=5)
   assert calls == [1]
   assert results == [True]
+
+
+def test_decompress_compressed_to_tar_does_not_skip_empty_dest(
+    monkeypatch, tmp_path,
+):
+  """Size-0 dest (mkstemp) must run decompress, not short-circuit as present."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      set_process_archive_members_store,
+  )
+
+  day = "2026-06-03"
+  zst_path = tmp_path / ("%s.tar.zst" % day)
+  tar_path = tmp_path / ("%s.tar" % day)
+  zst_path.write_bytes(b"zst")
+  tar_path.write_bytes(b"")
+  set_process_archive_members_store(None)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
+      lambda p: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
+      ".invalidate_after_daily_tar_mutation",
+      lambda *a, **k: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
+      ".notify_daily_tar_restore_cleared",
+      lambda *a, **k: None,
+  )
+  called = []
+
+  def _write_tmp(compressed_path, output_path, thread_count):
+    del compressed_path, thread_count
+    called.append(output_path)
+    member = tmp_path / "m.txt"
+    member.write_text("ok")
+    with tarfile.open(output_path, "w") as tf:
+      tf.add(str(member), arcname="m.txt")
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
+      _write_tmp,
+  )
+  assert decompress_compressed_to_tar(
+      str(zst_path), str(tar_path), 1, remove_compressed=False,
+  )
+  assert called
+  assert tar_path.stat().st_size > 0
+
+
+def test_decompress_wait_owner_empty_dest_is_not_success(monkeypatch, tmp_path):
+  """Waiter must not treat an empty dest left by the owner as restore success."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+      try_acquire_daily_tar_restore,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+      SyncTimedbArchiveMembersStore,
+      set_process_archive_members_store,
+  )
+
+  day = "2026-06-04"
+  zst_path = tmp_path / ("%s.tar.zst" % day)
+  tar_path = tmp_path / ("%s.tar" % day)
+  zst_path.write_bytes(b"zst")
+  store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+  set_process_archive_members_store(store)
+  try:
+    assert try_acquire_daily_tar_restore(
+        day, reason="missing_tar", caller="owner",
+    )
+    called = []
+    monkeypatch.setattr(
+        "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
+        lambda *a, **k: called.append(1),
+    )
+
+    def _wait(target_path, *, log_fn=None):
+      del target_path, log_fn
+      tar_path.write_bytes(b"")
+
+    monkeypatch.setattr(
+        "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord"
+        ".wait_for_daily_tar_restore_before_populate",
+        _wait,
+    )
+    assert not decompress_compressed_to_tar(
+        str(zst_path),
+        str(tar_path),
+        1,
+        wait_for_other_owner=True,
+        remove_compressed=False,
+    )
+    assert called == []
+  finally:
+    set_process_archive_members_store(None)

@@ -1038,13 +1038,13 @@ def test_get_file_member_sizes_from_gzip_uses_zstd_pipe_when_zstd_present(
   assert "-T5" in zstd_cmds[0]
 
 
-def test_replace_corrupt_tar_from_compressed_backup_without_backup_removes_tar(tmp_path):
+def test_replace_corrupt_tar_from_compressed_backup_without_backup_keeps_tar(tmp_path):
   tar_path = tmp_path / "2020-01-01.tar"
   tar_path.write_text("corrupt")
   zst, gz = str(tmp_path / "2020-01-01.tar.zst"), str(tmp_path / "2020-01-01.tar.gz")
   assert replace_corrupt_tar_from_compressed_backup(
       str(tar_path), zst, gz, 1)
-  assert not tar_path.exists()
+  assert tar_path.exists()
 
 
 def test_replace_corrupt_tar_from_compressed_backup_restores_via_zstd(monkeypatch, tmp_path):
@@ -1061,10 +1061,10 @@ def test_replace_corrupt_tar_from_compressed_backup_restores_via_zstd(monkeypatc
       remove_compressed=True, **kwargs,
   ):
     assert compressed_path == str(zst_path)
-    assert out_tar_path == str(tar_path)
+    assert out_tar_path == str(tar_path) + ".rebuild.tmp"
     inner = tmp_path / "inn.txt"
     inner.write_text("ok")
-    with tarfile.open(str(tar_path), "w") as tf:
+    with tarfile.open(str(out_tar_path), "w") as tf:
       tf.add(str(inner), arcname="only.txt")
     return True
 
@@ -1122,8 +1122,58 @@ def test_replace_corrupt_tar_returns_false_when_zst_only_restore_fails(
   monkeypatch.setattr(helpers, "decompress_compressed_to_tar", lambda *a, **k: False)
   assert not replace_corrupt_tar_from_compressed_backup(
       str(tar_path), str(zst_path), str(gz_path), 1)
-  assert not tar_path.exists()
+  assert tar_path.exists()
+  assert tar_path.read_text() == "bad"
   assert zst_path.is_file()
+  assert not (tmp_path / "2020-01-03b.tar.rebuild.tmp").exists()
+
+
+def test_replace_corrupt_tar_keeps_tar_when_restore_fails(monkeypatch, tmp_path):
+  """Fail-closed: restore miss must not unlink the only remaining tar copy."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2020-01-03c.tar"
+  zst_path = tmp_path / "2020-01-03c.tar.zst"
+  gz_path = tmp_path / "2020-01-03c.tar.gz"
+  tar_path.write_text("only-copy")
+  zst_path.write_text("bad-zst")
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", lambda *a, **k: False)
+  assert not replace_corrupt_tar_from_compressed_backup(
+      str(tar_path), str(zst_path), str(gz_path), 1)
+  assert tar_path.read_text() == "only-copy"
+
+
+def test_replace_corrupt_tar_replaces_via_rebuild_tmp(monkeypatch, tmp_path):
+  """Restore must write ``.rebuild.tmp`` then replace; never unlink-first."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2020-01-03d.tar"
+  zst_path = tmp_path / "2020-01-03d.tar.zst"
+  gz_path = tmp_path / "2020-01-03d.tar.gz"
+  tar_path.write_text("bad")
+  zst_path.write_text("not-used")
+  seen = {}
+
+  def _fake_decomp(
+      compressed_path, out_tar_path, thread_count, *,
+      remove_compressed=True, **kwargs,
+  ):
+    del compressed_path, thread_count, remove_compressed, kwargs
+    seen["dest"] = out_tar_path
+    seen["tar_during_restore"] = tar_path.read_text()
+    inner = tmp_path / "inn.txt"
+    inner.write_text("ok")
+    with tarfile.open(str(out_tar_path), "w") as tf:
+      tf.add(str(inner), arcname="only.txt")
+    return True
+
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decomp)
+  assert replace_corrupt_tar_from_compressed_backup(
+      str(tar_path), str(zst_path), str(gz_path), 1)
+  assert seen["dest"] == str(tar_path) + ".rebuild.tmp"
+  assert seen["tar_during_restore"] == "bad"
+  assert verify_tar_archive_readable(str(tar_path))
+  assert not Path(str(tar_path) + ".rebuild.tmp").exists()
 
 
 def test_seal_skip_rejects_same_aggregate_different_members(monkeypatch, tmp_path):
@@ -5194,7 +5244,11 @@ def test_migrate_one_gz_only_converts_via_decompress_and_seal(monkeypatch, tmp_p
 
   monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _decompress)
   monkeypatch.setattr(helpers, "atomic_seal_tar_to_zst", _seal)
-  monkeypatch.setattr(helpers, "drop_legacy_gz_if_equivalent_to_zst", lambda *a, **k: None)
+
+  def _drop_gz(*_a, **_k):
+    gz_path.unlink(missing_ok=True)
+
+  monkeypatch.setattr(helpers, "drop_legacy_gz_if_equivalent_to_zst", _drop_gz)
   status = helpers.migrate_one_daily_legacy_gz(
       str(gz_path),
       zstd_threads=1,
@@ -5252,7 +5306,11 @@ def test_migrate_one_gz_only_avoids_nested_lock_failure(monkeypatch, tmp_path):
 
   monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _decompress)
   monkeypatch.setattr(helpers, "atomic_seal_tar_to_zst", _seal)
-  monkeypatch.setattr(helpers, "drop_legacy_gz_if_equivalent_to_zst", lambda *a, **k: None)
+
+  def _drop_gz(*_a, **_k):
+    gz_path.unlink(missing_ok=True)
+
+  monkeypatch.setattr(helpers, "drop_legacy_gz_if_equivalent_to_zst", _drop_gz)
 
   status = helpers.migrate_one_daily_legacy_gz(
       str(gz_path),
@@ -5292,7 +5350,11 @@ def test_migrate_one_gz_only_uses_tmp_decompress_dir(monkeypatch, tmp_path):
 
   monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _decompress)
   monkeypatch.setattr(helpers, "atomic_seal_tar_to_zst", _seal)
-  monkeypatch.setattr(helpers, "drop_legacy_gz_if_equivalent_to_zst", lambda *a, **k: None)
+
+  def _drop_gz(*_a, **_k):
+    gz_path.unlink(missing_ok=True)
+
+  monkeypatch.setattr(helpers, "drop_legacy_gz_if_equivalent_to_zst", _drop_gz)
 
   status = helpers.migrate_one_daily_legacy_gz(
       str(gz_path),
@@ -5311,6 +5373,52 @@ def test_migrate_one_gz_only_uses_tmp_decompress_dir(monkeypatch, tmp_path):
   for path in seen_tar_targets:
     assert path.startswith(str(temp_dir))
     assert not Path(path).exists()
+
+
+def test_migrate_gz_only_empty_tmp_does_not_unlink_gz(monkeypatch, tmp_path):
+  """Empty mkstemp dest must not skip decompress or unlink the only gzip."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  gz_path = tmp_path / "2024-03-17.tar.gz"
+  gz_path.write_bytes(b"gz-bytes")
+  temp_dir = tmp_path / "tmp-work"
+  temp_dir.mkdir()
+  seen = {}
+
+  def _decompress(gz, tar, threads, remove_compressed=True):
+    del threads, remove_compressed
+    seen["gz"] = gz
+    seen["dest"] = tar
+    seen["dest_exists"] = os.path.isfile(tar)
+    seen["dest_size"] = os.path.getsize(tar) if os.path.isfile(tar) else None
+    return False
+
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _decompress)
+  monkeypatch.setattr(
+      helpers,
+      "atomic_seal_tar_to_zst",
+      lambda *a, **k: (_ for _ in ()).throw(AssertionError("seal")),
+  )
+  monkeypatch.setattr(
+      helpers,
+      "drop_legacy_gz_if_equivalent_to_zst",
+      lambda *a, **k: (_ for _ in ()).throw(AssertionError("drop")),
+  )
+  status = helpers.migrate_one_daily_legacy_gz(
+      str(gz_path),
+      zstd_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      decompress_tmp_dir=str(temp_dir),
+      log_fn=None,
+  )
+  assert status == helpers.MIGRATE_GZ_STATUS_FAILED
+  assert gz_path.exists()
+  assert gz_path.read_bytes() == b"gz-bytes"
+  assert seen["gz"] == str(gz_path)
+  assert seen["dest_exists"] is False
+  assert seen["dest_size"] is None
+  assert seen["dest"].startswith(str(temp_dir))
 
 
 # ---------------------------------------------------------------------------
@@ -10065,6 +10173,31 @@ def test_decompress_restore_keeps_zst_on_active_ingest_day(monkeypatch, tmp_path
   assert helpers.ensure_daily_tar_restored_for_append(str(tar_path), 1) is True
   assert captured.get("remove_compressed") is False
   assert zst_path.is_file()
+
+
+def test_ensure_daily_tar_restored_does_not_treat_empty_dest_as_present(
+    monkeypatch, tmp_path,
+):
+  """Size-0 sibling ``.tar`` must still restore from sealed, not short-circuit."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2024-06-09.tar"
+  zst_path = tmp_path / "2024-06-09.tar.zst"
+  tar_path.write_bytes(b"")
+  zst_path.write_bytes(b"placeholder-zst")
+  called = []
+
+  def _fake_decompress(src, dst, zstd_threads, remove_compressed=True, **kwargs):
+    del zstd_threads, remove_compressed, kwargs
+    called.append((src, dst))
+    with tarfile.open(dst, "w") as tf:
+      tf.addfile(tarfile.TarInfo(name="host/raw"), io.BytesIO(b"x"))
+    return True
+
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decompress)
+  assert helpers.ensure_daily_tar_restored_for_append(str(tar_path), 1) is True
+  assert called == [(str(zst_path), str(tar_path))]
+  assert tar_path.stat().st_size > 0
 
 
 @pytest.mark.skipif(

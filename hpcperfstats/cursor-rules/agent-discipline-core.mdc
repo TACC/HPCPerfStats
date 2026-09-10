@@ -15,7 +15,7 @@ alwaysApply: true
 |------|-----|
 | **`plan-completion-gate.mdc`** | No "done" without **Final code review (senior engineer pass)** + **Post-implementation review** (all non-trivial code changes) |
 | **`every-error-regression-test.mdc`** | Every fix for a failure needs a regression test before close |
-| **`workspace-guardrails.mdc`** | `monitor/` read-only; compose service wiring |
+| **`workspace-guardrails.mdc`** | `monitor/` read-only; compose service wiring; fail-closed unique-copy unlink |
 | **`workspace-layout-and-python-env.mdc`** | Single `<workspace_root>/.venv/bin/python3`; edit rules in `hpcperfstats/cursor-rules/` |
 
 ## Pre-close checklist (verify before final message)

@@ -236,59 +236,6 @@ def _load_member_maps(
   return tar_members, zst_readable, dict(zst_members or {})
 
 
-def _drop_equivalent_tar(
-  tar_path: str,
-  zst_path: str,
-  *,
-  zstd_threads: int,
-  lock_timeout_seconds: float,
-  log_fn: Any,
-) -> None:
-  """
-  Remove ``tar_path`` when sealed zstd already matches tar members.
-
-  Args:
-    tar_path (str): Open daily tar to unlink.
-    zst_path (str): Verified sealed sibling.
-    zstd_threads (int): Thread count for ``zstd -t``.
-    lock_timeout_seconds (float): Seconds to wait for tar write lock.
-    log_fn (Any): Logger callable.
-
-  Returns:
-    None
-
-  Raises:
-    OSError: When tar removal fails after validation.
-
-  Examples:
-    >>> _drop_equivalent_tar("/no.tar", "/no.zst", zstd_threads=1, log_fn=None)  # doctest: +SKIP
-  """
-  from hpcperfstats.dbload.lib.file_locking import file_write_lock
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      invalidate_after_daily_tar_mutation,
-      zstd_drop_page_cache_for_paths,
-  )
-  from hpcperfstats.dbload.lib.zstd_cli import zstd_test
-
-  zstd_test(zst_path, zstd_threads)
-  zstd_drop_page_cache_for_paths(tar_path)
-  with file_write_lock(
-      tar_path,
-      timeout_seconds=int(max(0, lock_timeout_seconds)),
-  ):
-    os.remove(tar_path)
-  invalidate_after_daily_tar_mutation(
-      zst_path,
-      reason="operator_drop_equivalent_tar",
-      log_fn=log_fn,
-  )
-  if log_fn:
-    log_fn(
-        "Dropped equivalent uncompressed tar (zst unchanged): %s" % tar_path,
-        flush=True,
-    )
-
-
 def _seal_and_drop_tar(
   tar_path: str,
   zst_path: str,

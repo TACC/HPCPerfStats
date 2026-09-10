@@ -575,6 +575,31 @@ def _decompress_to_path(
   zstd_drop_page_cache_for_paths(compressed_path, output_path)
 
 
+def _tar_dest_is_nonempty(tar_path: str) -> bool:
+  """
+  Return True when ``tar_path`` is an existing nonempty regular file.
+
+  Empty files (including ``mkstemp`` dests) are treated as absent so restore
+  and migrate do not skip decompress.
+
+  Args:
+    tar_path (str): Filesystem path of the intended sibling ``.tar``.
+
+  Returns:
+    bool: True when the path is a regular file with size greater than zero.
+
+  Examples:
+    >>> _tar_dest_is_nonempty("")
+    False
+  """
+  try:
+    return bool(tar_path) and os.path.isfile(tar_path) and os.path.getsize(
+        tar_path,
+    ) > 0
+  except OSError:
+    return False
+
+
 def decompress_compressed_to_tar(
   compressed_path: str,
   tar_path: str,
@@ -626,7 +651,7 @@ def decompress_compressed_to_tar(
     thread_count = num_threads
   if not compressed_path or not os.path.isfile(compressed_path):
     return False
-  if os.path.isfile(tar_path):
+  if _tar_dest_is_nonempty(tar_path):
     return True
   from hpcperfstats.dbload.lib import conf_parser as cfg
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
@@ -660,7 +685,7 @@ def decompress_compressed_to_tar(
       return False
     else:
       wait_for_daily_tar_restore_before_populate(tar_path, log_fn=log_print)
-      return os.path.isfile(tar_path)
+      return _tar_dest_is_nonempty(tar_path)
 
   renew_stop = threading.Event()
   renew_thread = None
@@ -690,7 +715,7 @@ def decompress_compressed_to_tar(
       >>> _run_owned_restore()  # doctest: +SKIP
     """
     nonlocal renew_thread
-    if os.path.isfile(tar_path):
+    if _tar_dest_is_nonempty(tar_path):
       return True
     if lease_value and day_token:
       renew_thread = threading.Thread(
