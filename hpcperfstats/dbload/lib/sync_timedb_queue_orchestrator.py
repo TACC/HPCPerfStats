@@ -1145,6 +1145,9 @@ def _idle_reconstruct_pass(
   ``force`` (``run_once`` exit path). ``force=True`` claims discover on this
   thread so tests and run_once can observe a complete pass; ``force=False``
   enqueues discover and runs GNU find on the background executor (P1-10).
+  When discover-bg is already busy, skip discover enqueue/submit (H8) but still
+  scan the daily dir for cheap day_close refill (H21) without burning the
+  reconstruct throttle.
 
   Args:
     client (Any): job store.
@@ -1176,9 +1179,12 @@ def _idle_reconstruct_pass(
   ):
     return 0
   # H8: do not enqueue/submit discover while discover-bg is already running.
-  # Skip without burning the throttle so the next tick can retry promptly.
+  # H21: still cheap-enqueue age-eligible open tars; do not burn the throttle.
   if not force and _discover_bg_is_busy():
-    return 0
+    return _enqueue_day_closes_for_daily_dir(
+        client,
+        tgz_archive_dir=tgz_archive_dir,
+    )
   _last_idle_reconstruct_mono = now
   identity = discover_job_identity(archive_dir, mtime_days)
   try:

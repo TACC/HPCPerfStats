@@ -635,6 +635,52 @@ def test_idle_reconstruct_off_main_does_not_run_boot_inline(monkeypatch):
   assert n == 0
 
 
+def test_idle_reconstruct_busy_discover_still_enqueues_day_closes(
+    tmp_path, monkeypatch,
+):
+  """H21: discover-bg busy still cheap-enqueues age-eligible open tars."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  (daily / "2020-01-01.tar").write_bytes(b"x")
+  seen = []
+  calls = {"submit": 0, "discover_enq": 0}
+
+  monkeypatch.setattr(qo, "_discover_bg_is_busy", lambda: True)
+  monkeypatch.setattr(
+      qo,
+      "_submit_background_discover",
+      lambda *a, **k: calls.__setitem__("submit", calls["submit"] + 1),
+  )
+  monkeypatch.setattr(
+      jq,
+      "enqueue_list_job",
+      lambda *a, **k: calls.__setitem__(
+          "discover_enq", calls["discover_enq"] + 1,
+      ),
+  )
+  monkeypatch.setattr(
+      jr,
+      "enqueue_cheap_day_close_if_needed",
+      lambda client, tar_path, **k: seen.append(tar_path) or True,
+  )
+  qo._last_idle_reconstruct_mono = 0.0
+  n = qo._idle_reconstruct_pass(
+      object(),
+      "/archive",
+      tgz_archive_dir=str(daily),
+      force=False,
+  )
+  assert n == 1
+  assert any(str(p).endswith("2020-01-01.tar") for p in seen)
+  assert calls["submit"] == 0
+  assert calls["discover_enq"] == 0
+  assert qo._last_idle_reconstruct_mono == 0.0
+
+
 def test_cli_backlog_current_retired():
   """Dual-mode backlog/current argv must fail closed."""
   with pytest.raises(SystemExit) as ei:
