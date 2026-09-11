@@ -130,6 +130,25 @@ def test_listend_db_ingest_backpressure_unknown_falls_back_to_drop(
   assert cfg.get_listend_db_ingest_backpressure() == "drop"
 
 
+def test_listend_db_ingest_queue_max_gb_ini_12_clamped_to_8(
+    temp_ini, monkeypatch
+):
+  """INI 12 must not recreate a 12 GiB live-DB copy budget."""
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "[PIPELINE]\n",
+      "[PIPELINE]\nlistend_db_ingest_queue_max_gb = 12\n",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_listend_db_ingest_queue_max_gb() == 8.0
+
+
 def test_get_worker_process_count(temp_ini, monkeypatch):
   """get_worker_process_count uses effective_cores // divisor, clamped to at least 1."""
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)

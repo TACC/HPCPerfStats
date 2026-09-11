@@ -377,7 +377,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Size against Postgres max_connections alongside sync_ingest_pool_processes.
 # listend_db_ingest_pool_processes = 32
 
-# Total in-flight listend DB-queue memory budget in GiB across all workers (default 8).
+# Total in-flight listend DB-queue memory budget in GiB across all workers (default 8; values above 8 are clipped to 8).
 # listend_db_ingest_queue_max_gb = 8
 
 # Samples cached per listend DB worker before one bulk_create (default 100).

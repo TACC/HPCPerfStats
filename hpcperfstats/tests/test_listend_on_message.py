@@ -967,3 +967,31 @@ def test_worker_reconnect_schedules_teardown_callback(monkeypatch):
   assert close_calls == [True]
   listend.clear_amqp_connection()
   listend._amqp_reconnect_requested = False
+
+
+def test_archive_submit_skips_full_decode(tmp_path, monkeypatch):
+  """Sync archive-ack path must submit empty message plus archive range."""
+  import hpcperfstats.listend as listend
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  submitted = []
+
+  def capture_submit(host, message, **kwargs):
+    submitted.append((host, message, kwargs))
+    return True
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+      capture_submit,
+  )
+  channel = _FakeChannel()
+  body = b"1710000001.0 1 myhost x\n"
+  listend.on_message(channel, _FakeMethodFrame(3), None, body)
+  assert channel.acked == [3]
+  assert submitted
+  host, message, kwargs = submitted[0]
+  assert host == "myhost"
+  assert message == ""
+  assert kwargs.get("archive_path", "").endswith("/myhost/current")
+  assert kwargs.get("offset") == 0
+  assert kwargs.get("length") == len(body)

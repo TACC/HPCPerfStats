@@ -276,3 +276,34 @@ def test_archive_thread_title_role(monkeypatch):
   roles = {r for _s, r in titles if r and r.startswith("archive-")}
   assert "archive-0" in roles
   assert "archive-1" in roles
+
+
+def test_archive_submit_skips_full_decode(archive_pool_env, monkeypatch):
+  """Archive-thread submit must pass empty message plus ArchiveAppendResult."""
+  listend, channel, tmp = archive_pool_env
+  del tmp
+  submitted = []
+
+  def capture_submit(host, message, **kwargs):
+    submitted.append((host, message, kwargs))
+    return True
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+      capture_submit,
+  )
+  body = b"1710000001.0 1 myhost.example.com x\n"
+  listend.on_message(channel, _FakeMethodFrame(11), None, body)
+  deadline = time.time() + 5.0
+  while time.time() < deadline and not submitted:
+    time.sleep(0.01)
+  assert channel.acked == [11]
+  assert submitted
+  host, message, kwargs = submitted[0]
+  assert host == "myhost.example.com"
+  assert message == ""
+  assert str(kwargs.get("archive_path", "")).endswith(
+      "/myhost.example.com/current"
+  )
+  assert kwargs.get("offset") == 0
+  assert kwargs.get("length") == len(body)

@@ -1,8 +1,43 @@
 """Unit tests for listend live DB ingest pool helpers and contracts."""
 from __future__ import annotations
 
+import os
 import queue
 from unittest import mock
+
+
+def _write_archive_sample(tmp_path, host, text):
+  """Write ``text`` to ``{tmp_path}/{host}/current`` and return path/range."""
+  host_dir = tmp_path / host
+  host_dir.mkdir(parents=True, exist_ok=True)
+  path = host_dir / "current"
+  data = text.encode("utf-8") if isinstance(text, str) else bytes(text)
+  path.write_bytes(data)
+  return str(path), 0, len(data)
+
+
+def _wire_started_pool(pool, *, q=None, maxsize=1000):
+  """Attach a real Queue and mock byte counters without starting threads."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool._stop = mock.Mock()
+  pool._stop.is_set.return_value = False
+  work_q = q if q is not None else queue.Queue(maxsize=maxsize)
+  byte_count = mock.Mock()
+  byte_count.value = 0
+  byte_lock = mock.MagicMock()
+  byte_lock.__enter__ = mock.Mock(return_value=None)
+  byte_lock.__exit__ = mock.Mock(return_value=False)
+  pool._queues = [work_q]
+  pool._byte_counts = [byte_count]
+  pool._byte_locks = [byte_lock]
+  pool._counters = {name: mock.Mock(value=0) for name in ldi._COUNTER_NAMES}
+  for c in pool._counters.values():
+    c.get_lock.return_value = mock.MagicMock()
+    c.get_lock.return_value.__enter__ = mock.Mock(return_value=None)
+    c.get_lock.return_value.__exit__ = mock.Mock(return_value=False)
+  pool._started = True
+  return work_q
 
 
 def test_compute_listend_db_queue_budgets_splits_evenly():
@@ -19,6 +54,7 @@ def test_compute_listend_db_queue_budgets_splits_evenly():
   assert budgets["budget_bytes"] == 1024 ** 3
   assert budgets["per_worker_budget_bytes"] == (1024 ** 3) // 4
   assert budgets["queue_maxsize"] == budgets["per_worker_budget_bytes"] // 256
+  assert budgets["queue_max_gb_clipped"] is False
 
 
 def test_disabled_pool_does_not_start_threads():
@@ -85,7 +121,7 @@ def test_schema_covers_and_measurement_types():
   assert not payload_has_schema_bang(sample)
 
 
-def test_submit_drops_when_byte_budget_exceeded(monkeypatch):
+def test_submit_drops_when_byte_budget_exceeded(tmp_path):
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi
 
   pool = ldi.ListendDbIngestPool(
@@ -94,27 +130,18 @@ def test_submit_drops_when_byte_budget_exceeded(monkeypatch):
       batch_samples=10,
       enabled=True,
   )
-  # Wire a real Queue for put/drop math without starting worker threads.
-  pool._stop = mock.Mock()
-  pool._stop.is_set.return_value = False
-  q = queue.Queue(maxsize=1000)
-  byte_count = mock.Mock()
-  byte_count.value = 0
-  byte_lock = mock.MagicMock()
-  byte_lock.__enter__ = mock.Mock(return_value=None)
-  byte_lock.__exit__ = mock.Mock(return_value=False)
-  pool._queues = [q]
-  pool._byte_counts = [byte_count]
-  pool._byte_locks = [byte_lock]
-  pool._counters = {name: mock.Mock(value=0) for name in ldi._COUNTER_NAMES}
-  for c in pool._counters.values():
-    c.get_lock.return_value = mock.MagicMock()
-    c.get_lock.return_value.__enter__ = mock.Mock(return_value=None)
-    c.get_lock.return_value.__exit__ = mock.Mock(return_value=False)
-  pool._started = True
+  _wire_started_pool(pool)
   pool.per_worker_budget_bytes = 10
 
-  ok = pool.submit("h1", "x" * 20)
+  body = "x" * 20
+  path, offset, length = _write_archive_sample(tmp_path, "h1", body)
+  ok = pool.submit(
+      "h1",
+      "",
+      archive_path=path,
+      offset=offset,
+      length=length,
+  )
   assert ok is False
   assert pool._counters["queue_drops"].value >= 1
 
@@ -1103,8 +1130,8 @@ def test_wait_connection_loss_does_not_note_pause_exit(monkeypatch):
   listend._db_backpressure_pause = False
 
 
-def test_submit_puts_host_message_nbytes():
-  """Submit must enqueue the payload string, not a shm or path tuple."""
+def test_submit_does_not_retain_sample_string(tmp_path):
+  """Submit must queue fd+range, never the sample string."""
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi
 
   pool = ldi.ListendDbIngestPool(
@@ -1113,38 +1140,149 @@ def test_submit_puts_host_message_nbytes():
       batch_samples=10,
       enabled=True,
   )
-  q = queue.Queue(maxsize=1000)
-  byte_count = mock.Mock()
-  byte_count.value = 0
-  byte_lock = mock.MagicMock()
-  byte_lock.__enter__ = mock.Mock(return_value=None)
-  byte_lock.__exit__ = mock.Mock(return_value=False)
-  pool._queues = [q]
-  pool._byte_counts = [byte_count]
-  pool._byte_locks = [byte_lock]
-  pool._counters = {name: mock.Mock(value=0) for name in ldi._COUNTER_NAMES}
-  for c in pool._counters.values():
-    c.get_lock.return_value = mock.MagicMock()
-    c.get_lock.return_value.__enter__ = mock.Mock(return_value=None)
-    c.get_lock.return_value.__exit__ = mock.Mock(return_value=False)
-  pool._started = True
+  q = _wire_started_pool(pool)
   pool.per_worker_budget_bytes = 10**9
 
   body = "1710000001.0 1 myhost x\n"
+  path, offset, length = _write_archive_sample(tmp_path, "myhost", body)
   assert pool.submit(
       "myhost",
       body,
-      archive_path="/tmp/current",
-      offset=10,
-      length=7,
+      archive_path=path,
+      offset=offset,
+      length=length,
   ) is True
   item = q.get_nowait()
-  assert item == ("myhost", body, len(body.encode("utf-8")))
-  assert "shm" not in item
-  assert "/tmp/current" not in item
+  host, fd, item_offset, item_length, size = item
+  try:
+    assert host == "myhost"
+    assert isinstance(fd, int)
+    assert item_offset == offset
+    assert item_length == length
+    assert size == length
+    assert body not in item
+    assert path not in item
+  finally:
+    os.close(int(fd))
 
 
-def test_submit_full_queue_increments_drops():
+def test_submit_pread_survives_current_rotate(tmp_path):
+  """Held fd must still pread original bytes after ``current`` unlink/replace."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  q = _wire_started_pool(pool)
+  pool.per_worker_budget_bytes = 10**9
+
+  original = b"1710000001.0 1 myhost original-payload\n"
+  path, offset, length = _write_archive_sample(tmp_path, "myhost", original)
+  assert pool.submit(
+      "myhost",
+      "",
+      archive_path=path,
+      offset=offset,
+      length=length,
+  ) is True
+  host, fd, item_offset, item_length, size = q.get_nowait()
+  try:
+    os.unlink(path)
+    replacement = b"1710000002.0 1 myhost replacement-payload\n"
+    with open(path, "wb") as handle:
+      handle.write(replacement)
+    raw = os.pread(int(fd), int(item_length), int(item_offset))
+    assert raw == original
+    assert raw != replacement
+    assert size == length
+    assert host == "myhost"
+  finally:
+    os.close(int(fd))
+
+
+def test_submit_drops_when_open_fails(tmp_path):
+  """Missing archive path must drop without raising to the caller."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  q = _wire_started_pool(pool)
+  pool.per_worker_budget_bytes = 10**9
+
+  missing = str(tmp_path / "no-such-host" / "current")
+  assert pool.submit(
+      "myhost",
+      "ignored-body",
+      archive_path=missing,
+      offset=0,
+      length=12,
+  ) is False
+  assert pool._counters["queue_drops"].value >= 1
+  assert q.empty()
+
+
+def test_submit_closes_fd_on_queue_full(tmp_path, monkeypatch):
+  """put_nowait Full after open must close the fd and increment queue_drops."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  q = queue.Queue(maxsize=1)
+  q.put_nowait("blocker")
+  _wire_started_pool(pool, q=q)
+  pool.per_worker_budget_bytes = 10**9
+
+  opened = []
+  closed = []
+
+  def fake_open(path, flags, *args, **kwargs):
+    opened.append((path, flags))
+    return 77
+
+  def fake_close(fd):
+    closed.append(fd)
+
+  monkeypatch.setattr(ldi.os, "open", fake_open)
+  monkeypatch.setattr(ldi.os, "close", fake_close)
+
+  path, offset, length = _write_archive_sample(tmp_path, "myhost", "payload-data")
+  assert pool.submit(
+      "myhost",
+      "",
+      archive_path=path,
+      offset=offset,
+      length=length,
+  ) is False
+  assert pool._counters["queue_drops"].value >= 1
+  assert opened
+  assert closed == [77]
+
+
+def test_queue_max_gb_ini_clamped():
+  """INI or constructor values above 8 GiB must not create a 12 GiB budget."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  budgets = ldi.compute_listend_db_queue_budgets(
+      pool_processes=48,
+      queue_max_gb=12.0,
+  )
+  assert budgets["budget_bytes"] == 8 * (1024 ** 3)
+  assert budgets["queue_max_gb_clipped"] is True
+  assert budgets["per_worker_budget_bytes"] == (8 * (1024 ** 3)) // 48
+
+
+def test_submit_full_queue_increments_drops(tmp_path):
   """A full in-process queue must drop and increment queue_drops."""
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi
 
@@ -1156,24 +1294,45 @@ def test_submit_full_queue_increments_drops():
   )
   q = queue.Queue(maxsize=1)
   q.put_nowait("blocker")
-  byte_count = mock.Mock()
-  byte_count.value = 0
-  byte_lock = mock.MagicMock()
-  byte_lock.__enter__ = mock.Mock(return_value=None)
-  byte_lock.__exit__ = mock.Mock(return_value=False)
-  pool._queues = [q]
-  pool._byte_counts = [byte_count]
-  pool._byte_locks = [byte_lock]
-  pool._counters = {name: mock.Mock(value=0) for name in ldi._COUNTER_NAMES}
-  for c in pool._counters.values():
-    c.get_lock.return_value = mock.MagicMock()
-    c.get_lock.return_value.__enter__ = mock.Mock(return_value=None)
-    c.get_lock.return_value.__exit__ = mock.Mock(return_value=False)
-  pool._started = True
+  _wire_started_pool(pool, q=q)
   pool.per_worker_budget_bytes = 10**9
 
-  assert pool.submit("myhost", "payload-data") is False
+  path, offset, length = _write_archive_sample(tmp_path, "myhost", "payload-data")
+  assert pool.submit(
+      "myhost",
+      "",
+      archive_path=path,
+      offset=offset,
+      length=length,
+  ) is False
   assert pool._counters["queue_drops"].value >= 1
+
+
+def test_submit_drops_without_archive_range():
+  """Submit without archive_path/offset/length must drop, never copy message."""
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  pool = ldi.ListendDbIngestPool(
+      pool_processes=1,
+      queue_max_gb=1.0,
+      batch_samples=10,
+      enabled=True,
+  )
+  q = _wire_started_pool(pool)
+  pool.per_worker_budget_bytes = 10**9
+  assert pool.submit("myhost", "payload-must-not-be-queued") is False
+  assert pool._counters["queue_drops"].value >= 1
+  assert q.empty()
+
+
+def test_worker_pread_closes_fd_source_contract():
+  """Worker must pread the queued range and close the fd."""
+  import inspect
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  src = inspect.getsource(ldi._worker_main)
+  assert "os.pread" in src
+  assert "os.close" in src
 
 
 def test_listend_production_path_has_no_spawn_or_shared_memory():

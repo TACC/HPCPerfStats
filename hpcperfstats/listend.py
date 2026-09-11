@@ -1699,7 +1699,8 @@ def _archive_and_submit_then_ack(delivery_tag: Any, message: Any) -> None:
   Archive payload, threadsafe ack, then best-effort live-DB submit.
 
   Hard order: durable filesystem archive → ACK → submit. Never ACK without
-  a successful archive append. Live-DB decode/copy happens after ack.
+  a successful archive append. Live-DB enqueue after ack holds an archive
+  fd plus byte range; this path must not decode the full sample.
 
   Args:
     delivery_tag (Any): AMQP delivery tag.
@@ -1722,7 +1723,7 @@ def _archive_and_submit_then_ack(delivery_tag: Any, message: Any) -> None:
 
       submit_listend_db_ingest(
           result.host,
-          _monitor_payload_as_text(message),
+          "",
           archive_path=result.path,
           offset=result.offset,
           length=result.length,
@@ -1965,7 +1966,7 @@ def on_message(
 
       submit_listend_db_ingest(
           result.host,
-          _monitor_payload_as_text(payload),
+          "",
           archive_path=result.path,
           offset=result.offset,
           length=result.length,

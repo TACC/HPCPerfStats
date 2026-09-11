@@ -4299,22 +4299,39 @@ def get_listend_db_ingest_pool_processes() -> Any:
   return max(1, _pipeline_getint("listend_db_ingest_pool_processes"))
 
 
-def get_listend_db_ingest_queue_max_gb() -> Any:
+def _listend_db_ingest_queue_max_gb_raw() -> float:
   """
-  Total in-flight listend DB-queue memory budget in GiB across workers (default.
-  
-    8).
-  
+  Return the unclamped ``listend_db_ingest_queue_max_gb`` INI value.
+
+  Floor is 0.001 GiB. The public getter and budget helper still hard-cap
+  at 8.0 GiB so a site INI of 12 cannot recreate a 12 GiB copy heap.
+
   Returns:
-    Any: Open return polymorphism from ``get_listend_db_ingest_queue_max_gb``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    float: INI GiB budget before the 8 GiB hard cap.
+
   Examples:
-    >>> get_listend_db_ingest_queue_max_gb()  # doctest: +SKIP
+    >>> isinstance(_listend_db_ingest_queue_max_gb_raw(), float)
+    True
   """
   _ensure_cfg_loaded()
-  return max(0.001, _pipeline_getfloat("listend_db_ingest_queue_max_gb"))
+  return max(0.001, float(_pipeline_getfloat("listend_db_ingest_queue_max_gb")))
+
+
+def get_listend_db_ingest_queue_max_gb() -> Any:
+  """
+  Total in-flight listend DB-queue memory budget in GiB across workers.
+
+  Default is 8. Values above 8.0 are clipped to 8.0 so INI 12 cannot
+  pin a 12 GiB live-DB copy budget.
+
+  Returns:
+    float: Clipped GiB budget, never below 0.001 and never above 8.0.
+
+  Examples:
+    >>> get_listend_db_ingest_queue_max_gb() <= 8.0
+    True
+  """
+  return min(8.0, _listend_db_ingest_queue_max_gb_raw())
 
 
 def get_listend_db_ingest_batch_samples() -> Any:

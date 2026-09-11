@@ -495,22 +495,35 @@ def compute_listend_db_queue_budgets(
 ) -> dict:
   """
   Derive per-worker byte budget and Queue maxsize from total GiB budget.
-  
+
+  Hard-caps ``queue_max_gb`` at 8.0 GiB. When ``queue_max_gb`` is None,
+  reads the raw INI value so callers can log a clip of site INI 12.
+
   Args:
-    pool_processes (int | None): One of ``int``, ``None``.
-    queue_max_gb (float | None): One of ``float``, ``None``.
-    min_payload_bytes (int): Integer value for min payload bytes.
-  
+    pool_processes (int | None): Worker count override, or INI default.
+    queue_max_gb (float | None): Total queue budget in GiB, or raw INI.
+    min_payload_bytes (int): Minimum payload floor for Queue maxsize.
+
   Returns:
-    dict: dict produced by this call.
-  
+    dict: ``pool_processes``, ``budget_bytes``,
+    ``per_worker_budget_bytes``, ``queue_maxsize``,
+    ``queue_max_gb_clipped``.
+
   Examples:
-    >>> compute_listend_db_queue_budgets(None, None, 0)  # doctest: +SKIP
+    >>> compute_listend_db_queue_budgets(
+    ...     pool_processes=4, queue_max_gb=1.0,
+    ... )["budget_bytes"] == 1024 ** 3
+    True
   """
   n = max(1, int(pool_processes if pool_processes is not None else cfg.get_listend_db_ingest_pool_processes()))
-  max_gb = float(
-      queue_max_gb if queue_max_gb is not None else cfg.get_listend_db_ingest_queue_max_gb()
+  raw_gb = float(
+      queue_max_gb
+      if queue_max_gb is not None
+      else cfg._listend_db_ingest_queue_max_gb_raw()
   )
+  cap_gb = 8.0
+  clipped = raw_gb > cap_gb
+  max_gb = min(cap_gb, max(0.001, raw_gb))
   budget_bytes = int(max(0.001, max_gb) * (1024 ** 3))
   per_worker_budget = max(min_payload_bytes, budget_bytes // n)
   floor = max(1, int(min_payload_bytes))
@@ -520,6 +533,7 @@ def compute_listend_db_queue_budgets(
       "budget_bytes": budget_bytes,
       "per_worker_budget_bytes": per_worker_budget,
       "queue_maxsize": maxsize,
+      "queue_max_gb_clipped": clipped,
   }
 
 
@@ -1227,9 +1241,9 @@ def _worker_main(
     host = ""
     message = ""
     size = 0
+    fd = None
     try:
-      host, message, size = item
-      size = int(size)
+      host, fd, offset, length, size = item
     except Exception as unpack_exc:
       _inc_counter(counters, "db_err")
       log_print(
@@ -1237,16 +1251,30 @@ def _worker_main(
           % (worker_idx, unpack_exc),
           flush=True,
       )
-      with byte_lock:
-        byte_count.value = max(0, int(byte_count.value) - int(size or 0))
       item = None
       continue
     item = None
-
+    try:
+      size = int(size)
+    except Exception:
+      size = 0
     with byte_lock:
       byte_count.value = max(0, int(byte_count.value) - int(size))
 
     try:
+      try:
+        raw = os.pread(int(fd), int(length), int(offset))
+        message = raw.decode("utf-8", errors="replace")
+        raw = None
+      except Exception as pread_exc:
+        _inc_counter(counters, "db_err")
+        log_print(
+            "ERROR: listend db ingest pread failed worker=%d host=%s: %s"
+            % (worker_idx, host, pread_exc),
+            flush=True,
+        )
+        message = None
+        continue
       if message and message[0] == "$":
         schema, schema_fast = parse_schema_from_bang_lines(message)
         if schema:
@@ -1307,6 +1335,13 @@ def _worker_main(
       hold_started_mono = None
       message = None
       _release_listend_db_worker_memory()
+    finally:
+      if fd is not None:
+        try:
+          os.close(int(fd))
+        except Exception:
+          pass
+        fd = None
 
   _flush(force_memory_release=True)
   try:
@@ -1325,9 +1360,9 @@ class ListendDbIngestPool:
 
   Each worker is a dedicated ``threading.Thread`` with its own
   ``queue.Queue``. Host affinity (``adler32 % N``) keeps per-host FIFO
-  and ``DeltaCarryState`` on one writer. Payloads stay ordinary Python
-  strings on in-process queues — no spawn Process and no ``/dev/shm``
-  payload bus.
+  and ``DeltaCarryState`` on one writer. Queue items are held archive
+  fds plus a byte range — no spawn Process, no ``/dev/shm`` payload bus,
+  and no full-sample strings on the shard queues.
 
   Attributes:
     _byte_counts: Per-worker queued-byte counters.
@@ -1337,6 +1372,7 @@ class ListendDbIngestPool:
     _pause_seconds_window: Accumulated pause seconds in the current idle
       monitor window (closed intervals only).
     _pause_started_mono: Monotonic start of an open pause interval, or None.
+    _queue_max_gb_clipped: True when INI or constructor GiB exceeded 8.
     _queues: Per-worker ``queue.Queue`` objects.
     _started: True after ``start()`` has launched threads.
     _stop: In-process stop event shared with workers.
@@ -1394,6 +1430,7 @@ class ListendDbIngestPool:
     self.budget_bytes = int(budgets["budget_bytes"])
     self.per_worker_budget_bytes = int(budgets["per_worker_budget_bytes"])
     self.queue_maxsize = int(budgets["queue_maxsize"])
+    self._queue_max_gb_clipped = bool(budgets.get("queue_max_gb_clipped"))
     self.batch_samples = max(
         1,
         int(
@@ -1483,6 +1520,12 @@ class ListendDbIngestPool:
         thread.start()
     self._started = True
     self._window_baseline = self.snapshot_counters()
+    if self._queue_max_gb_clipped:
+      log_print(
+          "listend db ingest queue_max_gb clipped to 8.0 GiB "
+          "(INI or constructor above cap)",
+          flush=True,
+      )
     log_print(
         "listend db ingest pool started workers=%d queue_maxsize=%d "
         "per_worker_budget_bytes=%d batch_samples=%d flush_max_rows=%d "
@@ -1811,17 +1854,19 @@ class ListendDbIngestPool:
     length: int | None = None,
   ) -> bool:
     """
-    Nonblocking enqueue of ``(host, message, nbytes)`` on the affine queue.
+    Nonblocking enqueue of ``(host, fd, offset, length, size)``.
 
-    ``archive_path`` / ``offset`` / ``length`` are accepted for caller
-    compatibility and ignored — there is no path-range fallback.
+    Opens ``archive_path`` ``O_RDONLY`` and queues the held fd plus the
+    already-appended byte range. Never copies the sample string onto the
+    shard queue. Missing path, open failure, over-budget, or
+    ``queue.Full`` increments ``queue_drops`` (caller already acked).
 
     Args:
       host (str): Monitor hostname token.
-      message (str): Raw monitor payload string.
-      archive_path (str | None): Ignored leftover caller kwarg.
-      offset (int | None): Ignored leftover caller kwarg.
-      length (int | None): Ignored leftover caller kwarg.
+      message (str): Ignored leftover; callers pass ``""``.
+      archive_path (str | None): Durable ``{host}/current`` path after append.
+      offset (int | None): Byte offset of this sample in that file.
+      length (int | None): Byte length of this sample; queued size.
 
     Returns:
       bool: True when enqueued; False on drop / disabled / not started.
@@ -1830,23 +1875,30 @@ class ListendDbIngestPool:
       >>> ListendDbIngestPool(enabled=False).submit("h", "x")
       False
     """
-    del archive_path, offset, length
+    del message
     if not self.enabled or not self._started or self._stop.is_set():
       return False
-    if not host or message is None:
+    if not host:
+      return False
+    if not archive_path or offset is None or length is None:
+      _inc_counter(self._counters, "queue_drops")
       return False
     idx = host_affine_worker_index(host, self.pool_processes)
-    size = _payload_byte_size(message)
+    size = int(length)
+    offset_i = int(offset)
     q = self._queues[idx]
     byte_count = self._byte_counts[idx]
     byte_lock = self._byte_locks[idx]
+    fd = None
     try:
+      fd = os.open(str(archive_path), os.O_RDONLY)
       with byte_lock:
         if int(byte_count.value) + size > self.per_worker_budget_bytes:
           _inc_counter(self._counters, "queue_drops")
           return False
-        q.put_nowait((host, message, size))
+        q.put_nowait((host, fd, offset_i, size, size))
         byte_count.value = int(byte_count.value) + size
+      fd = None
       return True
     except queue.Full:
       _inc_counter(self._counters, "queue_drops")
@@ -1854,6 +1906,12 @@ class ListendDbIngestPool:
     except Exception:
       _inc_counter(self._counters, "queue_drops")
       return False
+    finally:
+      if fd is not None:
+        try:
+          os.close(int(fd))
+        except Exception:
+          pass
 
   def snapshot_counters(self) -> dict:
     """
@@ -2079,10 +2137,10 @@ def submit_listend_db_ingest(
 
   Args:
     host (str): Monitor hostname token.
-    message (str): Raw monitor payload.
-    archive_path (str | None): Ignored leftover caller kwarg.
-    offset (int | None): Ignored leftover caller kwarg.
-    length (int | None): Ignored leftover caller kwarg.
+    message (str): Ignored leftover; callers pass ``""``.
+    archive_path (str | None): Durable ``{host}/current`` path after append.
+    offset (int | None): Byte offset of this sample in that file.
+    length (int | None): Byte length of this sample.
 
   Returns:
     bool: True when enqueued; False when pool missing or drop.
