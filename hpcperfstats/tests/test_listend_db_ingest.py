@@ -1486,6 +1486,27 @@ def test_parse_host_from_monitor_payload_first_line_matches_full_split():
   assert parse_host_from_monitor_payload(msg) == msg.split()[2]
 
 
+def test_parse_host_skips_leading_newline_monitor_sample_header():
+  """Monitor ``stats_buffer_collect`` prefixes samples with ``\\n%f %s %s\\n``.
+
+  Peeking ``raw[:first_nl]`` is empty and used to raise
+  ``not enough fields to get host``; ``str.split()`` skipped that newline.
+  """
+  import inspect
+
+  from hpcperfstats.dbload.lib.listend_db_ingest import (
+      parse_host_from_monitor_payload,
+  )
+
+  msg = "\n1710000001.123 job42 c001.example.edu extra\ncpu 1 2 3\n"
+  raw = msg.encode("utf-8")
+  assert parse_host_from_monitor_payload(msg) == "c001.example.edu"
+  assert parse_host_from_monitor_payload(raw) == "c001.example.edu"
+  assert parse_host_from_monitor_payload(msg) == msg.split()[2]
+  src = inspect.getsource(parse_host_from_monitor_payload)
+  assert ".lstrip()" not in src
+
+
 def test_parse_host_peek_does_not_tokenize_past_first_newline():
   """Host peek must not ``str.split()`` the whole ~3 MiB payload."""
   import inspect

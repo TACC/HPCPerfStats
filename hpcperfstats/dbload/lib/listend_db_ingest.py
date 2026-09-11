@@ -546,9 +546,11 @@ def parse_host_from_monitor_payload(message: str | bytes) -> str:
   """
   Return FQDN host token from the sample first line or ``$`` host line.
 
-  Peeks only the first newline-delimited line (or the second line when the
-  payload starts with ``$``). Does not tokenize the remainder of a multi-MiB
-  sample. Accepts AMQP ``bytes`` or decoded ``str``.
+  Peeks only the first newline-delimited line after leading ASCII
+  whitespace (or the second line when that prefix starts with ``$``).
+  Monitor ``stats_buffer_collect`` prefixes samples with ``\\n`` before
+  ``timestamp jobid host``. Does not tokenize the remainder of a
+  multi-MiB sample. Accepts AMQP ``bytes`` or decoded ``str``.
 
   Args:
     message (str | bytes): Monitor payload (AMQP body or UTF-8 text).
@@ -563,6 +565,8 @@ def parse_host_from_monitor_payload(message: str | bytes) -> str:
   Examples:
     >>> parse_host_from_monitor_payload("1710000001.0 1 host.example.edu extra")
     'host.example.edu'
+    >>> parse_host_from_monitor_payload("\\n1710000001.0 1 host.example.edu\\n")
+    'host.example.edu'
     >>> parse_host_from_monitor_payload("$\\n1 c001.example.edu\\n")
     'c001.example.edu'
   """
@@ -570,28 +574,40 @@ def parse_host_from_monitor_payload(message: str | bytes) -> str:
     raise ValueError("Empty message body")
   if isinstance(message, (bytes, bytearray, memoryview)):
     raw = bytes(message)
-    is_dollar = raw[:1] == b"$"
+    i = 0
+    n = len(raw)
+    while i < n and raw[i] in b" \t\n\r\v\f":
+      i += 1
+    if i >= n:
+      raise ValueError("Empty message body")
+    is_dollar = raw[i:i + 1] == b"$"
     if is_dollar:
-      first_nl = raw.find(b"\n")
+      first_nl = raw.find(b"\n", i)
       if first_nl < 0:
         raise ValueError("Malformed '$' message: missing host line")
       second_nl = raw.find(b"\n", first_nl + 1)
-      prefix = raw[: second_nl if second_nl >= 0 else len(raw)]
+      prefix = raw[i: second_nl if second_nl >= 0 else n]
     else:
-      nl = raw.find(b"\n")
-      prefix = raw if nl < 0 else raw[:nl]
+      nl = raw.find(b"\n", i)
+      prefix = raw[i: n if nl < 0 else nl]
     text = prefix.decode("utf-8", errors="replace")
   else:
-    is_dollar = message[:1] == "$"
+    i = 0
+    n = len(message)
+    while i < n and message[i] in " \t\n\r\v\f":
+      i += 1
+    if i >= n:
+      raise ValueError("Empty message body")
+    is_dollar = message[i:i + 1] == "$"
     if is_dollar:
-      first_nl = message.find("\n")
+      first_nl = message.find("\n", i)
       if first_nl < 0:
         raise ValueError("Malformed '$' message: missing host line")
       second_nl = message.find("\n", first_nl + 1)
-      text = message[: second_nl if second_nl >= 0 else len(message)]
+      text = message[i: second_nl if second_nl >= 0 else n]
     else:
-      nl = message.find("\n")
-      text = message if nl < 0 else message[:nl]
+      nl = message.find("\n", i)
+      text = message[i: n if nl < 0 else nl]
   if is_dollar:
     lines = text.split("\n", 2)
     if len(lines) < 2:

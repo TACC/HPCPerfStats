@@ -190,6 +190,22 @@ def test_on_message_nacks_and_requeues_on_malformed_message(tmp_path, monkeypatc
   assert channel.nacked == [(9, True)]
 
 
+def test_on_message_acks_monitor_sample_with_leading_newline(tmp_path, monkeypatch):
+  """Live AMQP samples start with newline then ``timestamp jobid host``."""
+  import hpcperfstats.listend as listend
+
+  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  channel = _FakeChannel()
+  method_frame = _FakeMethodFrame(delivery_tag=11)
+  body = b"\n1710000001.0 job42 c001.example.edu extra\ncpu 1 2 3\n"
+
+  listend.on_message(channel, method_frame, None, body)
+
+  assert channel.acked == [11]
+  assert channel.nacked == []
+  assert (tmp_path / "c001.example.edu" / "current").exists()
+
+
 def test_set_recent_host_timestamp_writes_expected_redis_key(monkeypatch):
   import hpcperfstats.listend as listend
 
