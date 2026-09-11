@@ -2200,6 +2200,268 @@ def test_day_close_pre_seal_verify_before_reconcile_merge():
   assert disk_raw_call < pre_seal_call < merge_idx
 
 
+def test_day_close_job_entry_stage_enter_before_remaining_raw_probe():
+  """Open-tar claims must log stage_enter before remaining-raw / yield probe."""
+  src = inspect.getsource(qo._run_day_close_job)
+  enter_idx = src.index('_stage_enter("disk_remaining_raw")')
+  disk_raw_call = src.index("early = _maybe_yield_disk_remaining_raw()")
+  assert enter_idx < disk_raw_call
+
+
+def test_day_close_disk_remaining_raw_blocks_uses_cheap_phase_not_has_closed():
+  """Leftover verifying phase must not call remaining-raw find helpers."""
+
+  class _HangCoord:
+    def phase(self, _tar_path):
+      return "verifying"
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      raise AssertionError("remaining-raw find")
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      raise AssertionError("remaining-raw find")
+
+    def should_handoff_to_ingest(self, _tar_path):
+      raise AssertionError("handoff remaining-raw")
+
+  assert qo._day_close_disk_remaining_raw_blocks(
+      _HangCoord(),
+      "/d/2026-07-28.tar",
+  ) is True
+
+
+def test_day_close_disk_remaining_raw_blocks_without_phase_uses_has_closed():
+  """Test doubles without phase() still use has_closed_raw_on_disk (H17/H19)."""
+
+  class _NoPhase:
+    def has_closed_raw_on_disk(self, _tar_path):
+      return True
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      raise AssertionError("remaining-raw find should not run after has_closed")
+
+  assert qo._day_close_disk_remaining_raw_blocks(
+      _NoPhase(),
+      "/d/2026-07-28.tar",
+  ) is True
+
+
+def test_day_close_disk_remaining_raw_blocks_phase_done_skips_has_closed():
+  """Cheap phase=done must not call remaining-raw find at the job-entry gate."""
+
+  class _Done:
+    def phase(self, _tar_path):
+      return "done"
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      raise AssertionError("remaining-raw find")
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      raise AssertionError("remaining-raw find")
+
+  assert qo._day_close_disk_remaining_raw_blocks(
+      _Done(),
+      "/d/2026-07-28.tar",
+  ) is False
+
+
+def test_day_close_disk_remaining_raw_blocks_verification_complete_empty_does_not_block():
+  """H20d: remaining=0 verification_complete must not skip merge via cheap phase."""
+
+  class _VcEmpty:
+    def phase(self, _tar_path):
+      return "verification_complete"
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      raise AssertionError("remaining-raw find")
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      raise AssertionError("remaining-raw find")
+
+  assert qo._day_close_disk_remaining_raw_blocks(
+      _VcEmpty(),
+      "/d/2022-11-05.tar",
+  ) is False
+
+
+def test_day_close_disk_remaining_raw_blocks_verification_complete_pending_blocks():
+  """Leftover verification_complete with cheap pending must not remaining-raw find."""
+
+  class _State:
+    def _manifest_verified_pending_count(self):
+      return 799
+
+  class _VcPending:
+    def phase(self, _tar_path):
+      return "verification_complete"
+
+    def _get_or_create_day(self, _tar_path):
+      return _State()
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      raise AssertionError("remaining-raw find")
+
+  assert qo._day_close_disk_remaining_raw_blocks(
+      _VcPending(),
+      "/d/2026-08-03.tar",
+  ) is True
+
+
+def test_day_close_verification_complete_empty_still_reconciles(
+    tmp_path, monkeypatch,
+):
+  """H20d: leftover-style phase() must not skip reconcile when remaining is 0."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import ReconcileResult
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2022-11-05"
+  tar = daily / ("%s.tar" % day)
+  zst = daily / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  zst.write_bytes(b"zst")
+  stages = []
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: stages.append("seal"),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+      lambda *a, **k: stages.append("dedupe") or True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+      lambda *a, **k: stages.append("reconcile") or ReconcileResult(
+          True, "noop", "already_equivalent",
+      ),
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def phase(self, _tar_path):
+      return "verification_complete"
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      if not any(s == "reconcile" for s in stages):
+        raise AssertionError("remaining-raw find")
+      return False
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      return {}
+
+    def should_handoff_to_ingest(self, _tar_path):
+      return False
+
+    def run_pre_seal_verify_sync(self, _tar_path, **_kw):
+      stages.append("pre_seal")
+      return True
+
+    def run_post_seal_verify_sync(self, _tar_path):
+      stages.append("post_seal")
+      return True
+
+    def apply_batch_delete(self, _tar_path):
+      stages.append("delete")
+      return 0
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      job_store=SyncTimedbJobStore(str(tmp_path)),
+      log_fn=lambda *a, **k: None,
+  )
+  assert outcome == "complete"
+  assert "reconcile" in stages
+  assert stages.index("pre_seal") < stages.index("reconcile")
+
+
+def test_day_close_open_tar_verifying_does_not_call_has_closed(
+    tmp_path, monkeypatch,
+):
+  """Job-entry leftover verifying must stage_enter without has_closed find."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2026-07-28"
+  tar = daily / ("%s.tar" % day)
+  tar.write_bytes(b"tar")
+  logs = []
+  kicks = []
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: None,
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def phase(self, _tar_path):
+      return "verifying"
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      if not any("stage=pre_seal_verify" in ln for ln in logs):
+        raise AssertionError("remaining-raw find")
+      return False
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      raise AssertionError("remaining-raw find")
+
+    def should_handoff_to_ingest(self, _tar_path):
+      raise AssertionError("handoff remaining-raw")
+
+    def complete_handoff_to_ingest(self, _tar_path, reason=""):
+      return []
+
+    def kick_closed_raw_unblock(self, tar_path, reason=""):
+      kicks.append((tar_path, reason))
+      return "verify"
+
+    def kick_closed_raw_paths_to_ingest(self, tar_path, reason=""):
+      return []
+
+    def run_pre_seal_verify_sync(self, _tar_path, **_kw):
+      return True
+
+    def run_post_seal_verify_sync(self, _tar_path):
+      return True
+
+    def apply_batch_delete(self, _tar_path):
+      return 0
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      job_store=SyncTimedbJobStore(str(tmp_path)),
+      log_fn=lambda msg, **k: logs.append(str(msg)),
+  )
+  assert any("stage_enter" in line and "disk_remaining_raw" in line for line in logs)
+  assert kicks
+  assert outcome != "yielded"
+
+
 def test_startup_has_no_redis_eviction_gate():
   """In-process queues do not consult a queue eviction policy."""
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)

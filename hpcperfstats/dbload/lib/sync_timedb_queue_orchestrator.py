@@ -1454,10 +1454,14 @@ def _handoff_retryable_paths_to_ingest(
 
 def _day_close_disk_remaining_raw_blocks(coord: Any, tar_path: str) -> bool:
   """
-  Return True when closed raw on disk should block merge/seal this claim.
+  Return True when closed raw / verify phase should block merge this claim.
 
-  Uses ``has_closed_raw_on_disk`` (broader than verify-handoff) and the
-  remaining-raw map passed into reconcile.
+  Prefer cheap manifest ``phase`` so leftover ``verifying`` / ``deleting``
+  days do not call ``has_closed_raw_on_disk`` or remaining-raw find (those
+  walks hung day_close inflight before the first ``stage_enter``).
+  ``verification_complete`` blocks only when cheap manifest verified-pending
+  is non-zero — remaining=0 days must still merge (H20d). Test doubles
+  without ``phase`` still use ``has_closed_raw_on_disk``.
 
   Args:
     coord (Any): :class:`DayRawRemovalCoordinator` instance.
@@ -1470,6 +1474,23 @@ def _day_close_disk_remaining_raw_blocks(coord: Any, tar_path: str) -> bool:
     >>> _day_close_disk_remaining_raw_blocks(object(), "/tmp/x.tar")
     False
   """
+  phase_fn = getattr(coord, "phase", None)
+  if callable(phase_fn):
+    phase = str(phase_fn(tar_path) or "").strip()
+    if phase in ("verifying", "deleting"):
+      return True
+    if phase == "done":
+      return False
+    if phase == "verification_complete":
+      get_day = getattr(coord, "_get_or_create_day", None)
+      if callable(get_day):
+        state = get_day(tar_path)
+        pending_fn = getattr(
+            state, "_manifest_verified_pending_count", None,
+        )
+        if callable(pending_fn) and int(pending_fn() or 0) > 0:
+          return True
+      return False
   has_closed_fn = getattr(coord, "has_closed_raw_on_disk", None)
   if callable(has_closed_fn) and has_closed_fn(tar_path):
     return True
@@ -2035,6 +2056,7 @@ def _run_day_close_job(
     # H17 DC-01: disk remaining-raw / verify-handoff before merge → merge →
     # verify → dedupe → seal → post-seal → delete → tar-drop.
     if os.path.isfile(tar_path):
+      _stage_enter("disk_remaining_raw")
       early = _maybe_yield_disk_remaining_raw()
       if early:
         return early
