@@ -1,5 +1,7 @@
 """Tests for monitor payload append helper (archive layout)."""
 
+import os
+
 import pytest
 
 import hpcperfstats.listend as ld
@@ -55,3 +57,72 @@ def test_append_second_sample_offset_after_first(tmp_path, monkeypatch):
   assert r1.offset == 0
   assert r2.offset == r1.length
   assert r2.length == len(second.encode("utf-8"))
+
+
+def _release_sticky_archive_writer():
+  release = getattr(ld, "_release_sticky_archive_writer", None)
+  if callable(release):
+    release()
+
+
+def test_append_writes_raw_amqp_bytes_without_utf8_roundtrip(
+    tmp_path, monkeypatch,
+):
+  """Archive ``current`` must be the AMQP bytes, not decode/encode."""
+  monkeypatch.setattr(ld.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  host = "n001.demo.cluster.local"
+  body = b"1700000000.0 12345 %s \xff\xfe\ncpu 0 1 2\n" % host.encode("ascii")
+  try:
+    result = ld.append_monitor_payload_to_archive(body)
+    assert result.host == host
+    current = tmp_path / host / "current"
+    assert current.read_bytes() == body
+  finally:
+    _release_sticky_archive_writer()
+
+
+def test_n_appends_do_not_unlink_flock_sidecar_each_sample(
+    tmp_path, monkeypatch,
+):
+  """Sticky flock keeps ``current.fnctl.lock`` across samples (Approach B)."""
+  monkeypatch.setattr(ld.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  host = "n003.demo.cluster.local"
+  removed_locks = []
+  real_remove = os.remove
+
+  def spy_remove(path, *args, **kwargs):
+    if str(path).endswith(".fnctl.lock"):
+      removed_locks.append(str(path))
+    return real_remove(path, *args, **kwargs)
+
+  monkeypatch.setattr(os, "remove", spy_remove)
+  try:
+    for i in range(20):
+      body = "17000000%02d.0 1 %s\ncpu %d\n" % (i, host, i)
+      ld.append_monitor_payload_to_archive(body)
+    assert len(removed_locks) <= 1
+  finally:
+    _release_sticky_archive_writer()
+
+
+def test_current_hardlink_cache_skips_scandir_on_same_inode(
+    tmp_path, monkeypatch,
+):
+  """Cached digit inode must skip host_dir scandir on the next $ check."""
+  host_dir = tmp_path / "h.example.edu"
+  host_dir.mkdir()
+  current = host_dir / "current"
+  current.write_text("x")
+  epoch = host_dir / "1700000000"
+  os.link(current, epoch)
+  assert ld._current_is_hardlinked_to_digit_epoch(
+      str(host_dir), str(current),
+  ) is True
+
+  def boom(*_a, **_k):
+    raise AssertionError("scandir should be skipped on cache hit")
+
+  monkeypatch.setattr(os, "scandir", boom)
+  assert ld._current_is_hardlinked_to_digit_epoch(
+      str(host_dir), str(current),
+  ) is True

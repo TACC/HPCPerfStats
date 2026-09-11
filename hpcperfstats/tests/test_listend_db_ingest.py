@@ -1473,3 +1473,52 @@ def test_worker_main_uses_bounded_flush_helper():
   assert "_should_flush_pending" in src
   assert "flush_max_rows" in src
   assert "flush_hold_s" in src
+
+
+def test_parse_host_from_monitor_payload_first_line_matches_full_split():
+  """Well-formed sample: first-line host equals today's full-whitespace split."""
+  from hpcperfstats.dbload.lib.listend_db_ingest import (
+      parse_host_from_monitor_payload,
+  )
+
+  rest = "cpu " + " ".join("1" for _ in range(200))
+  msg = "1710000001.0 99 host.example.edu\n%s\n" % rest
+  assert parse_host_from_monitor_payload(msg) == msg.split()[2]
+
+
+def test_parse_host_peek_does_not_tokenize_past_first_newline():
+  """Host peek must not ``str.split()`` the whole ~3 MiB payload."""
+  import inspect
+
+  from hpcperfstats.dbload.lib.listend_db_ingest import (
+      parse_host_from_monitor_payload,
+  )
+
+  src = inspect.getsource(parse_host_from_monitor_payload)
+  assert "split(None," in src
+  assert "message.split()" not in src
+  msg = "$build extra token\n1 realhost.example.edu\n!cpu a,E\n"
+  assert parse_host_from_monitor_payload(msg) == "realhost.example.edu"
+  assert parse_host_from_monitor_payload(msg.encode("utf-8")) == (
+      "realhost.example.edu"
+  )
+
+
+def test_parse_host_bytes_prefix_equals_str():
+  """AMQP bytes and decoded text must yield the same str host token."""
+  from hpcperfstats.dbload.lib.listend_db_ingest import (
+      parse_host_from_monitor_payload,
+  )
+
+  text = "1710000001.0 1 host.example.edu extra\ncpu 1 2 3\n"
+  host = parse_host_from_monitor_payload(text.encode("utf-8"))
+  assert host == parse_host_from_monitor_payload(text)
+  assert isinstance(host, str)
+
+
+def test_payload_byte_size_accepts_bytes_without_encode():
+  from hpcperfstats.dbload.lib.listend_db_ingest import _payload_byte_size
+
+  raw = b"1710000001.0 1 host.example.edu \xff\n"
+  assert _payload_byte_size(raw) == len(raw)
+  assert _payload_byte_size(raw.decode("utf-8", errors="replace")) != len(raw)

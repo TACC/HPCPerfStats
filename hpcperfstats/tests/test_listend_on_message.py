@@ -719,9 +719,20 @@ def test_listend_amqp_prefetch_defaults():
 
   assert cfg.get_listend_archive_worker_threads() >= 1
   assert cfg.get_listend_amqp_prefetch() >= 1
-  # Registry defaults.
-  assert cfg.INI_OPTION_DEFAULTS["listend_archive_worker_threads"] == "8"
-  assert cfg.INI_OPTION_DEFAULTS["listend_amqp_prefetch"] == "32"
+  # Registry defaults (drop-mode prefetch 128; archive threads 16).
+  assert cfg.INI_OPTION_DEFAULTS["listend_archive_worker_threads"] == "16"
+  assert cfg.INI_OPTION_DEFAULTS["listend_amqp_prefetch"] == "128"
+
+
+def test_on_message_does_not_decode_or_str_split_whole_body():
+  """AMQP callback must peek host from bytes, not decode+split the payload."""
+  import inspect
+
+  import hpcperfstats.listend as listend
+
+  src = inspect.getsource(listend.on_message)
+  assert "body.decode" not in src
+  assert "message.split(" not in src
 
 
 def test_drop_mode_uses_ini_prefetch_not_only_pause(monkeypatch):

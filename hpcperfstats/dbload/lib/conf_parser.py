@@ -319,8 +319,8 @@ INI_OPTION_DEFAULTS = {
     'listend_db_ingest_flush_hold_s': '5',
     'listend_db_ingest_proc_peak_lookup_chunk': '256',
     'listend_db_ingest_statement_timeout_ms': '600000',
-    'listend_archive_worker_threads': '8',
-    'listend_amqp_prefetch': '32',
+    'listend_archive_worker_threads': '16',
+    'listend_amqp_prefetch': '128',
     'acct_path': None,
     'archive_dir': None,
     'daily_archive_dir': None,
@@ -4420,7 +4420,7 @@ def get_listend_db_ingest_statement_timeout_ms() -> int:
 
 def get_listend_archive_worker_threads() -> int:
   """
-  Host-affine archive writer threads for listend consume (default 8).
+  Host-affine archive writer threads for listend consume (default 16).
 
   Parallelizes per-host ``current`` append/rotate off the AMQP callback
   thread. Same host always maps to one thread (adler32 affine).
@@ -4436,14 +4436,14 @@ def get_listend_archive_worker_threads() -> int:
   try:
     return max(1, int(_pipeline_get("listend_archive_worker_threads")))
   except (TypeError, ValueError, OverflowError):
-    return 8
+    return 16
 
 
 def get_listend_amqp_prefetch() -> int:
   """
   RabbitMQ ``basic_qos`` prefetch for listend in drop backpressure mode.
 
-  Default ``32``. Pause mode always uses prefetch ``1`` regardless of this
+  Default ``128``. Pause mode always uses prefetch ``1`` regardless of this
   value so overflow stays on the broker ready queue.
 
   Returns:
@@ -4457,7 +4457,7 @@ def get_listend_amqp_prefetch() -> int:
   try:
     return max(1, int(_pipeline_get("listend_amqp_prefetch")))
   except (TypeError, ValueError, OverflowError):
-    return 32
+    return 128
 
 
 def get_redis_location() -> Any:

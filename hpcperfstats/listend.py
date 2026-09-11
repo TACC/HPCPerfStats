@@ -38,19 +38,23 @@ Attributes:
     timestamp (schema host line ``1 <fqdn>`` is below this).
   _DIGIT_EPOCH_NAME_MAX_ATTEMPTS: Max digit names to probe when finding a
     free epoch filename during ``$`` rotate.
+  _sticky_archive_tls: Per-archive-thread kept ``current`` fd and flock sidecar.
+  _digit_epoch_link_cache: host_dir → (digit epoch path, inode) for ``$`` rotate.
+  _digit_epoch_link_cache_lock: Guard for the digit-link cache.
 """
 from __future__ import annotations
 
 from typing import Any, NamedTuple
 
+import errno
 import os
 import queue
 import signal
 import sys
 import time
 from collections import deque
-from threading import Event, Lock, Thread, current_thread, main_thread
-from fcntl import LOCK_EX, LOCK_NB, flock
+from threading import Event, Lock, Thread, current_thread, local, main_thread
+from fcntl import LOCK_EX, LOCK_NB, LOCK_UN, flock
 
 import pika
 import redis
@@ -62,7 +66,15 @@ from pika.exceptions import (
 )
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.dbload.lib.file_locking import file_write_lock
+from hpcperfstats.dbload.lib.file_locking import (
+    POLL_INTERVAL_SECONDS,
+    READ_WAIT_TIMEOUT_SECONDS,
+    _lock_path,
+    _maybe_reset_stale_lock_file,
+    _refresh_lock_sidecar_mtime,
+    _try_open_write_lock_fd,
+    file_write_lock,
+)
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.shutdown_utils import send_sigchld_to_parent
 from hpcperfstats.lib.monitor_identity import (
@@ -89,6 +101,9 @@ RECENT_HOST_TTL_SECONDS = 7 * 24 * 60 * 60  # 1 week
 # a sample unix second. Real host_data timestamps are post-2001.
 _MIN_PLAUSIBLE_UNIX_SECONDS = 1_000_000_000
 _DIGIT_EPOCH_NAME_MAX_ATTEMPTS = 10_000
+_sticky_archive_tls = local()
+_digit_epoch_link_cache: dict[str, tuple[str, int]] = {}
+_digit_epoch_link_cache_lock = Lock()
 
 
 class ArchiveAppendResult(NamedTuple):
@@ -230,6 +245,27 @@ def _get_first_timestamp_seconds(
     return None
 
 
+def _remember_digit_epoch_link(host_dir: str, epoch_path: str) -> None:
+  """Cache the digit epoch path and inode that currently shares ``current``.
+
+  Args:
+    host_dir (str): Per-host archive directory.
+    epoch_path (str): Digit-named hardlink of ``current``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _remember_digit_epoch_link("/no/host", "/no/epoch")
+  """
+  try:
+    ino = os.stat(epoch_path).st_ino
+  except OSError:
+    return
+  with _digit_epoch_link_cache_lock:
+    _digit_epoch_link_cache[host_dir] = (epoch_path, ino)
+
+
 def _current_is_hardlinked_to_digit_epoch(
     host_dir: str,
     current_path: str,
@@ -238,7 +274,8 @@ def _current_is_hardlinked_to_digit_epoch(
 
   Any samefile digit name is durable enough to unlink ``current`` as long
   as the new-current link uses a different unused name (never
-  ``os.remove`` of that inode).
+  ``os.remove`` of that inode). A cached (path, inode) skips ``scandir``
+  when it still matches.
 
   Args:
     host_dir (str): Per-host archive directory.
@@ -251,6 +288,19 @@ def _current_is_hardlinked_to_digit_epoch(
     >>> _current_is_hardlinked_to_digit_epoch("/no/host", "/no/current")
     False
   """
+  with _digit_epoch_link_cache_lock:
+    cached = _digit_epoch_link_cache.get(host_dir)
+  if cached is not None:
+    epoch_path, ino = cached
+    try:
+      cur = os.stat(current_path)
+      ep = os.stat(epoch_path)
+      if cur.st_ino == ep.st_ino == ino:
+        return True
+    except OSError:
+      pass
+    with _digit_epoch_link_cache_lock:
+      _digit_epoch_link_cache.pop(host_dir, None)
   try:
     with os.scandir(host_dir) as it:
       for entry in it:
@@ -261,6 +311,7 @@ def _current_is_hardlinked_to_digit_epoch(
           continue
         try:
           if os.path.samefile(current_path, entry.path):
+            _remember_digit_epoch_link(host_dir, entry.path)
             return True
         except OSError:
           continue
@@ -310,12 +361,14 @@ def _link_current_to_unique_digit_epoch(
     if os.path.exists(link_path):
       try:
         if os.path.samefile(current_path, link_path):
+          _remember_digit_epoch_link(host_dir, link_path)
           return ts
       except OSError:
         pass
       ts += step
       continue
     os.link(current_path, link_path)
+    _remember_digit_epoch_link(host_dir, link_path)
     return ts
   raise RuntimeError(
       "Unable to find unused digit epoch name in %s (start=%s step=%s)"
@@ -545,61 +598,272 @@ def _recent_host_worker() -> None:
       _recent_host_queue.task_done()
 
 
+def _coerce_monitor_payload(message: Any) -> bytes:
+  """Return AMQP/archive bytes for a monitor payload.
+
+  Args:
+    message (Any): AMQP body bytes, UTF-8 ``str``, or empty.
+
+  Returns:
+    bytes: Payload bytes to append; empty when ``message`` is empty.
+
+  Examples:
+    >>> _coerce_monitor_payload("ab")
+    b'ab'
+    >>> _coerce_monitor_payload(b"ab")
+    b'ab'
+  """
+  if isinstance(message, (bytes, bytearray, memoryview)):
+    return bytes(message)
+  if isinstance(message, str):
+    return message.encode("utf-8")
+  if not message:
+    return b""
+  return bytes(message)
+
+
+def _monitor_payload_as_text(message: Any) -> str:
+  """Decode a monitor payload to UTF-8 text after durable archive.
+
+  Args:
+    message (Any): AMQP body bytes or already-decoded ``str``.
+
+  Returns:
+    str: UTF-8 text (``errors=replace`` for non-text bytes).
+
+  Examples:
+    >>> _monitor_payload_as_text(b"ab")
+    'ab'
+  """
+  if isinstance(message, str):
+    return message
+  if isinstance(message, (bytes, bytearray, memoryview)):
+    return bytes(message).decode("utf-8", errors="replace")
+  return str(message)
+
+
+def _release_sticky_archive_writer(*, unlink_sidecar: bool = True) -> None:
+  """Close this thread's kept ``current`` fd and optional flock sidecar.
+
+  Args:
+    unlink_sidecar (bool): When True, remove ``{current}.fnctl.lock`` after
+      unlock (host switch, ``$`` rotate, worker exit).
+
+  Returns:
+    None
+
+  Examples:
+    >>> _release_sticky_archive_writer()
+  """
+  st = getattr(_sticky_archive_tls, "state", None)
+  _sticky_archive_tls.state = None
+  if not st:
+    return
+  data_fd = st.get("data_fd")
+  lock_fd = st.get("lock_fd")
+  lock_path = st.get("lock_path")
+  if data_fd is not None:
+    try:
+      data_fd.close()
+    except OSError:
+      pass
+  if lock_fd is not None:
+    try:
+      flock(lock_fd, LOCK_UN)
+    except OSError:
+      pass
+    try:
+      lock_fd.close()
+    except OSError:
+      pass
+  if unlink_sidecar and lock_path:
+    try:
+      os.remove(lock_path)
+    except FileNotFoundError:
+      pass
+    except OSError:
+      pass
+
+
+def _sticky_append_sample_bytes(
+    host: str,
+    host_dir: str,
+    current_path: str,
+    payload_bytes: bytes,
+) -> int:
+  """Append sample bytes on a kept O_APPEND fd under a sticky flock sidecar.
+
+  Reuses the per-thread ``current`` fd and ``{current}.fnctl.lock`` fd.
+  Takes ``LOCK_EX`` only around the write, then ``LOCK_UN`` so
+  ``sync_timedb`` can read ``current``. Does not unlink the sidecar between
+  samples. Does not change ``file_write_lock`` (tar callers still unlink).
+
+  Args:
+    host (str): Hostname token (affine worker / TLS key).
+    host_dir (str): Per-host archive directory.
+    current_path (str): Path to the live ``current`` file.
+    payload_bytes (bytes): Raw AMQP body to write.
+
+  Returns:
+    int: Byte offset of this payload in ``current`` before the write.
+
+  Raises:
+    OSError: Open or write of ``current`` or the sidecar failed.
+    TimeoutError: Exclusive flock was not acquired in time.
+    Exception: Unexpected failure while opening the kept fd or sidecar
+      (fd is closed, then the original error is re-raised).
+
+  Examples:
+    >>> callable(_sticky_append_sample_bytes)
+    True
+  """
+  st = getattr(_sticky_archive_tls, "state", None)
+  need_open = (
+      st is None
+      or st.get("host") != host
+      or st.get("current_path") != current_path
+  )
+  if not need_open and st is not None:
+    data_fd = st.get("data_fd")
+    lock_fd = st.get("lock_fd")
+    lock_path = st.get("lock_path") or _lock_path(current_path)
+    if data_fd is None or lock_fd is None:
+      need_open = True
+    else:
+      try:
+        os.fstat(data_fd.fileno())
+        fd_stat = os.fstat(lock_fd.fileno())
+        path_stat = os.stat(lock_path)
+        if fd_stat.st_ino != path_stat.st_ino:
+          need_open = True
+      except OSError:
+        need_open = True
+  if need_open:
+    _release_sticky_archive_writer(unlink_sidecar=True)
+    data_fd = None
+    try:
+      try:
+        data_fd = open(current_path, "ab")
+      except FileNotFoundError:
+        os.makedirs(host_dir, exist_ok=True)
+        data_fd = open(current_path, "ab")
+      start = time.time()
+      lock_fd = None
+      while True:
+        now = time.time()
+        _maybe_reset_stale_lock_file(current_path, now, 0)
+        try:
+          lock_fd = _try_open_write_lock_fd(current_path)
+          break
+        except OSError as exc:
+          if exc.errno not in (errno.EACCES, errno.EAGAIN):
+            raise
+          if (now - start) >= READ_WAIT_TIMEOUT_SECONDS:
+            raise TimeoutError(
+                "Timed out waiting for write lock: %s" % current_path
+            ) from exc
+          time.sleep(POLL_INTERVAL_SECONDS)
+      flock(lock_fd, LOCK_UN)
+      try:
+        size = int(os.fstat(data_fd.fileno()).st_size)
+      except OSError:
+        size = 0
+      st = {
+          "host": host,
+          "current_path": current_path,
+          "data_fd": data_fd,
+          "lock_fd": lock_fd,
+          "lock_path": _lock_path(current_path),
+          "size": size,
+      }
+      _sticky_archive_tls.state = st
+    except Exception:
+      if data_fd is not None:
+        try:
+          data_fd.close()
+        except OSError:
+          pass
+      raise
+  data_fd = st["data_fd"]
+  lock_fd = st["lock_fd"]
+  start = time.time()
+  while True:
+    try:
+      flock(lock_fd, LOCK_EX | LOCK_NB)
+      break
+    except OSError as exc:
+      if exc.errno not in (errno.EACCES, errno.EAGAIN):
+        raise
+      if (time.time() - start) >= READ_WAIT_TIMEOUT_SECONDS:
+        raise TimeoutError(
+            "Timed out waiting for write lock: %s" % current_path
+        ) from exc
+      time.sleep(POLL_INTERVAL_SECONDS)
+  try:
+    _refresh_lock_sidecar_mtime(lock_fd)
+    offset = int(st["size"])
+    data_fd.write(payload_bytes)
+    data_fd.flush()
+    st["size"] = offset + len(payload_bytes)
+    return offset
+  except OSError:
+    _release_sticky_archive_writer(unlink_sidecar=False)
+    raise
+  finally:
+    try:
+      flock(lock_fd, LOCK_UN)
+    except OSError:
+      pass
+
+
 def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
   """
   Append one monitor payload to the per-host archive ``current`` file.
 
   Used by the long-running daemon and by ``listend_drain`` integration tests.
-  Returns host plus the byte range written so live-DB enqueue can fall back
-  to path+offset without re-pickling the body.
+  Writes AMQP bytes as-is (no UTF-8 roundtrip). Sample appends reuse a
+  kept O_APPEND fd and sticky flock sidecar. ``$`` rotate still uses
+  ``file_write_lock``.
 
   Args:
-    message (Any): Monitor payload string (UTF-8 text).
+    message (Any): Monitor payload ``str`` or AMQP ``bytes``.
 
   Returns:
-    ArchiveAppendResult: Host, path, byte offset, and UTF-8 length.
+    ArchiveAppendResult: Host, path, byte offset, and byte length.
 
   Raises:
     RuntimeError: When ``$`` rotate cannot hardlink ``current`` safely.
     ValueError: When the payload is empty or malformed.
+    OSError: When the archive write fails.
+    TimeoutError: When the exclusive flock cannot be acquired.
 
   Examples:
-    >>> append_monitor_payload_to_archive("")  # doctest: +SKIP
+    >>> callable(append_monitor_payload_to_archive)
+    True
   """
-  if not message:
+  from hpcperfstats.dbload.lib.listend_db_ingest import (
+      parse_host_from_monitor_payload,
+  )
+
+  payload_bytes = _coerce_monitor_payload(message)
+  if not payload_bytes:
     raise ValueError("Empty message body")
-  if not isinstance(message, str):
-    message = message.decode("utf-8", errors="replace")
+  host = parse_host_from_monitor_payload(payload_bytes)
+  is_dollar = payload_bytes.startswith(b"$")
 
   # `$`-prefixed messages are *schema/header* dumps from `hpcperfstatsd`:
   # they are emitted when `rotate_timer_cb()` runs (immediately at daemon
   # start, then every 86400s). Regular sampling messages do not include
   # these `$` lines; if sending fails during a rotate, the same `$` payload
   # is later resent from the in-memory ring buffer or dumpfile.
-  if message[0] == "$":
-    parts = message.split("\n")
-    if len(parts) < 2:
-      raise ValueError("Malformed '$' message: missing host line")
-    host_parts = parts[1].split()
-    if len(host_parts) < 2:
-      raise ValueError("Malformed '$' message: host line missing field")
-    host = host_parts[1]
-  else:
-    msg_parts = message.split()
-    if len(msg_parts) < 3:
-      raise ValueError("Malformed message: not enough fields to get host")
-    host = msg_parts[2]
-
   host_dir = os.path.join(cfg.get_archive_dir_path(), host)
-  if not os.path.exists(host_dir):
-    os.makedirs(host_dir)
-
   current_path = os.path.join(host_dir, "current")
-  payload_bytes = message.encode("utf-8")
   payload_len = len(payload_bytes)
   write_offset = 0
   unlinked_current = False
-  if message[0] == "$":
+  if is_dollar:
+    _release_sticky_archive_writer(unlink_sidecar=True)
+    os.makedirs(host_dir, exist_ok=True)
     # Wall clock is only the safety-link cutoff / fallback when the ``$``
     # payload has no sample timestamp. New digit names prefer the first
     # plausible sample second in the newly written ``current`` file.
@@ -629,17 +893,16 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
       # Epoch name and current share an inode until the next ``$`` rotation.
       # sync_timedb skips epoch files same-inode-as-current to avoid read races.
   else:
-    with file_write_lock(current_path):
-      with open(current_path, "ab") as fd:
-        write_offset = fd.tell()
-        fd.write(payload_bytes)
+    write_offset = _sticky_append_sample_bytes(
+        host, host_dir, current_path, payload_bytes,
+    )
   _enqueue_recent_host_update(host)
   # Redis-only identity snapshot on ``$`` rotation (tolerant if ``$build``
   # absent). Does not change ack, pause/resume, or archive/DB gate semantics.
-  if message[0] == "$":
+  if is_dollar:
     try:
       identity = parse_monitor_identity_from_dollar_message(
-          message,
+          _monitor_payload_as_text(message),
           updated_at=int(time.time()),
       )
     except Exception:
@@ -1431,25 +1694,27 @@ def _threadsafe_basic_nack(delivery_tag: Any, *, requeue: bool = True) -> None:
       log_print("add_callback_threadsafe nack failed: %s" % exc)
 
 
-def _archive_and_submit_then_ack(delivery_tag: Any, message: str) -> None:
+def _archive_and_submit_then_ack(delivery_tag: Any, message: Any) -> None:
   """
-  Archive payload, best-effort live-DB submit, then ack (or nack on I/O error).
+  Archive payload, threadsafe ack, then best-effort live-DB submit.
 
-  Hard order: durable filesystem archive → submit → ACK. Never ACK without
-  a successful archive append.
+  Hard order: durable filesystem archive → ACK → submit. Never ACK without
+  a successful archive append. Live-DB decode/copy happens after ack.
 
   Args:
     delivery_tag (Any): AMQP delivery tag.
-    message (str): Decoded monitor payload.
+    message (Any): Monitor payload ``str`` or AMQP ``bytes``.
 
   Returns:
     None
 
   Examples:
-    >>> _archive_and_submit_then_ack(1, "x")  # doctest: +SKIP
+    >>> callable(_archive_and_submit_then_ack)
+    True
   """
   try:
     result = append_monitor_payload_to_archive(message)
+    _threadsafe_basic_ack(delivery_tag)
     try:
       from hpcperfstats.dbload.lib.listend_db_ingest import (
           submit_listend_db_ingest,
@@ -1457,7 +1722,7 @@ def _archive_and_submit_then_ack(delivery_tag: Any, message: str) -> None:
 
       submit_listend_db_ingest(
           result.host,
-          message,
+          _monitor_payload_as_text(message),
           archive_path=result.path,
           offset=result.offset,
           length=result.length,
@@ -1465,7 +1730,6 @@ def _archive_and_submit_then_ack(delivery_tag: Any, message: str) -> None:
     except Exception as submit_err:
       if DEBUG:
         log_print("listend db ingest submit error: %s" % submit_err)
-    _threadsafe_basic_ack(delivery_tag)
   except Exception as e:
     if _is_amqp_channel_or_connection_dead(e, _amqp_channel):
       _request_amqp_full_reconnect(_amqp_channel, str(e))
@@ -1476,7 +1740,7 @@ def _archive_and_submit_then_ack(delivery_tag: Any, message: str) -> None:
 
 def _archive_worker_main(worker_idx: int, work_queue: queue.Queue) -> None:
   """
-  Host-affine archive thread: archive → submit → threadsafe ack/nack.
+  Host-affine archive thread: archive → threadsafe ack → best-effort submit.
 
   Args:
     worker_idx (int): Archive worker index (0..N-1).
@@ -1495,22 +1759,25 @@ def _archive_worker_main(worker_idx: int, work_queue: queue.Queue) -> None:
       script_name="listend.py",
       role="archive-%d" % int(worker_idx),
   )
-  while not _archive_pool_stop.is_set():
-    try:
-      item = work_queue.get(timeout=1.0)
-    except queue.Empty:
-      continue
-    if item is None:
-      work_queue.task_done()
-      break
-    try:
-      delivery_tag, message = item
-      _archive_and_submit_then_ack(delivery_tag, message)
-    finally:
+  try:
+    while not _archive_pool_stop.is_set():
       try:
+        item = work_queue.get(timeout=1.0)
+      except queue.Empty:
+        continue
+      if item is None:
         work_queue.task_done()
-      except Exception:
-        pass
+        break
+      try:
+        delivery_tag, message = item
+        _archive_and_submit_then_ack(delivery_tag, message)
+      finally:
+        try:
+          work_queue.task_done()
+        except Exception:
+          pass
+  finally:
+    _release_sticky_archive_writer(unlink_sidecar=True)
 
 
 def start_listend_archive_pool(n_threads: int | None = None) -> int:
@@ -1600,22 +1867,23 @@ def stop_listend_archive_pool(*, join_timeout: float = 15.0) -> None:
 
 def _dispatch_to_archive_pool(
   delivery_tag: Any,
-  message: str,
+  message: Any,
   host: str,
 ) -> None:
   """
-  Put ``(delivery_tag, message)`` on the host-affine archive queue.
+  Put ``(delivery_tag, payload)`` on the host-affine archive queue.
 
   Args:
     delivery_tag (Any): AMQP delivery tag.
-    message (str): Decoded monitor payload.
+    message (Any): Raw AMQP body bytes (or ``str`` in tests).
     host (str): Host token for affine index.
 
   Returns:
     None
 
   Examples:
-    >>> _dispatch_to_archive_pool(1, "x", "h")  # doctest: +SKIP
+    >>> callable(_dispatch_to_archive_pool)
+    True
   """
   from hpcperfstats.dbload.lib.listend_db_ingest import host_affine_worker_index
 
@@ -1633,11 +1901,11 @@ def on_message(
   """
   Consume callback: pause-check, then host-affine archive dispatch (or sync).
 
-  When the archive pool is running, parse host cheaply, enqueue
-  ``(delivery_tag, message)``, and return without archive/ack on this thread.
-  Archive workers perform durable append → best-effort DB submit → threadsafe
-  ack. Without a started pool (unit tests), process synchronously on this
-  thread.
+  When the archive pool is running, peek host from the AMQP bytes, enqueue
+  ``(delivery_tag, payload_bytes)``, and return without archive/ack on this
+  thread. Archive workers perform durable append → threadsafe ack →
+  best-effort DB submit. Without a started pool (unit tests), process
+  synchronously on this thread.
 
   When live DB ingest is on and backpressure mode is ``pause``, high-watermark
   queues cause nack+requeue without archive until the resume watermark. Mode
@@ -1653,12 +1921,16 @@ def on_message(
     None
 
   Examples:
-    >>> on_message(None, None, None, None)  # doctest: +SKIP
+    >>> callable(on_message)
+    True
   """
   global _db_backpressure_pause
   delivery_tag = getattr(method_frame, "delivery_tag", None)
   try:
-    message = body.decode(errors="replace")
+    payload = (
+        body if isinstance(body, (bytes, bytearray))
+        else _coerce_monitor_payload(body)
+    )
     pool = _live_db_ingest_pool_active()
     if pool is not None and _listend_db_backpressure_mode_is_pause():
       from hpcperfstats.dbload.lib.listend_db_ingest import (
@@ -1666,12 +1938,12 @@ def on_message(
       )
 
       try:
-        peek_host = parse_host_from_monitor_payload(message)
+        peek_host = parse_host_from_monitor_payload(payload)
       except Exception:
         peek_host = ""
       if (
           pool.should_pause_consume()
-          or (peek_host and not pool.can_enqueue(peek_host, message))
+          or (peek_host and not pool.can_enqueue(peek_host, payload))
       ):
         _request_db_backpressure_pause(channel, delivery_tag)
         return
@@ -1681,18 +1953,19 @@ def on_message(
           parse_host_from_monitor_payload,
       )
 
-      host = parse_host_from_monitor_payload(message)
-      _dispatch_to_archive_pool(delivery_tag, message, host)
+      host = parse_host_from_monitor_payload(payload)
+      _dispatch_to_archive_pool(delivery_tag, payload, host)
       return
 
-    # Sync path (tests / pool not started): archive → submit → ack.
-    result = append_monitor_payload_to_archive(message)
+    # Sync path (tests / pool not started): archive → ack → submit.
+    result = append_monitor_payload_to_archive(payload)
+    channel.basic_ack(delivery_tag=delivery_tag)
     try:
       from hpcperfstats.dbload.lib.listend_db_ingest import submit_listend_db_ingest
 
       submit_listend_db_ingest(
           result.host,
-          message,
+          _monitor_payload_as_text(payload),
           archive_path=result.path,
           offset=result.offset,
           length=result.length,
@@ -1700,7 +1973,6 @@ def on_message(
     except Exception as submit_err:
       if DEBUG:
         log_print("listend db ingest submit error: %s" % submit_err)
-    channel.basic_ack(delivery_tag=delivery_tag)
   except Exception as e:
     # Critical behavior: do not acknowledge on failure.
     if _is_amqp_channel_or_connection_dead(e, channel):

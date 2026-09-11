@@ -64,14 +64,20 @@ def test_same_host_fifo_on_archive_worker(archive_pool_env, monkeypatch):
   order_lock = threading.Lock()
   real_append = listend.append_monitor_payload_to_archive
 
+  def _token(message, idx):
+    tok = message.split()[idx]
+    if isinstance(tok, (bytes, bytearray)):
+      return tok.decode("utf-8", errors="replace")
+    return tok
+
   def slow_append(message):
-    host = message.split()[2]
+    host = _token(message, 2)
     with order_lock:
-      order.append(("start", host, message.split()[0]))
+      order.append(("start", host, _token(message, 0)))
     time.sleep(0.05)
     result = real_append(message)
     with order_lock:
-      order.append(("end", host, message.split()[0]))
+      order.append(("end", host, _token(message, 0)))
     return result
 
   monkeypatch.setattr(listend, "append_monitor_payload_to_archive", slow_append)
@@ -191,6 +197,63 @@ def test_drop_mode_submit_not_on_consume_thread(archive_pool_env, monkeypatch):
   assert channel.acked == [5]
   assert submit_tids
   assert all(tid != consume_tid for tid in submit_tids)
+
+
+def test_ack_scheduled_before_db_submit(archive_pool_env, monkeypatch):
+  """Durable append then threadsafe ack, then fire-and-forget live-DB submit."""
+  listend, channel, _tmp = archive_pool_env
+  order = []
+
+  def tracking_append(message):
+    order.append("archive")
+    return listend.ArchiveAppendResult(
+        host="h", path="/tmp/x", offset=0, length=1,
+    )
+
+  real_ack = listend._threadsafe_basic_ack
+
+  def tracking_ack(delivery_tag):
+    order.append("ack")
+    return real_ack(delivery_tag)
+
+  def tracking_submit(*_a, **_k):
+    order.append("submit")
+    return True
+
+  monkeypatch.setattr(listend, "append_monitor_payload_to_archive", tracking_append)
+  monkeypatch.setattr(listend, "_threadsafe_basic_ack", tracking_ack)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+      tracking_submit,
+  )
+  listend.on_message(
+      channel, _FakeMethodFrame(42), None,
+      b"1710000001.0 1 myhost.example.com x\n",
+  )
+  deadline = time.time() + 5.0
+  while time.time() < deadline and "submit" not in order:
+    time.sleep(0.01)
+  assert order == ["archive", "ack", "submit"]
+  assert channel.acked == [42]
+
+
+def test_on_message_dispatches_amqp_bytes(archive_pool_env, monkeypatch):
+  """Consume callback must enqueue the raw AMQP body, not a decoded str."""
+  listend, channel, _tmp = archive_pool_env
+  captured = []
+
+  def capture(delivery_tag, payload, host):
+    captured.append((delivery_tag, payload, host))
+
+  monkeypatch.setattr(listend, "_dispatch_to_archive_pool", capture)
+  body = b"1710000001.0 1 myhost.example.com \xff\n"
+  listend.on_message(channel, _FakeMethodFrame(8), None, body)
+  assert len(captured) == 1
+  tag, payload, host = captured[0]
+  assert tag == 8
+  assert payload == body
+  assert isinstance(payload, (bytes, bytearray))
+  assert host == "myhost.example.com"
 
 
 def test_archive_thread_title_role(monkeypatch):

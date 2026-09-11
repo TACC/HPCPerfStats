@@ -542,34 +542,65 @@ def host_affine_worker_index(host: str, pool_processes: int) -> int:
   return int(zlib.adler32(raw) & 0xFFFFFFFF) % n
 
 
-def parse_host_from_monitor_payload(message: str) -> str:
+def parse_host_from_monitor_payload(message: str | bytes) -> str:
   """
-  Return FQDN host token (same contract as listend archive write).
-  
+  Return FQDN host token from the sample first line or ``$`` host line.
+
+  Peeks only the first newline-delimited line (or the second line when the
+  payload starts with ``$``). Does not tokenize the remainder of a multi-MiB
+  sample. Accepts AMQP ``bytes`` or decoded ``str``.
+
   Args:
-    message (str): String for message.
-  
+    message (str | bytes): Monitor payload (AMQP body or UTF-8 text).
+
   Returns:
-    str: str produced by this call.
-  
+    str: Hostname token (field 3 of a sample header, or field 2 of the
+    ``$`` host line).
+
   Raises:
-    ValueError: Raised when ``parse_host_from_monitor_payload`` hits a
-    ``ValueError`` failure path.
-  
+    ValueError: Empty body or a malformed header that lacks the host field.
+
   Examples:
-    >>> parse_host_from_monitor_payload("x")  # doctest: +SKIP
+    >>> parse_host_from_monitor_payload("1710000001.0 1 host.example.edu extra")
+    'host.example.edu'
+    >>> parse_host_from_monitor_payload("$\\n1 c001.example.edu\\n")
+    'c001.example.edu'
   """
   if not message:
     raise ValueError("Empty message body")
-  if message[0] == "$":
-    parts = message.split("\n")
-    if len(parts) < 2:
+  if isinstance(message, (bytes, bytearray, memoryview)):
+    raw = bytes(message)
+    is_dollar = raw[:1] == b"$"
+    if is_dollar:
+      first_nl = raw.find(b"\n")
+      if first_nl < 0:
+        raise ValueError("Malformed '$' message: missing host line")
+      second_nl = raw.find(b"\n", first_nl + 1)
+      prefix = raw[: second_nl if second_nl >= 0 else len(raw)]
+    else:
+      nl = raw.find(b"\n")
+      prefix = raw if nl < 0 else raw[:nl]
+    text = prefix.decode("utf-8", errors="replace")
+  else:
+    is_dollar = message[:1] == "$"
+    if is_dollar:
+      first_nl = message.find("\n")
+      if first_nl < 0:
+        raise ValueError("Malformed '$' message: missing host line")
+      second_nl = message.find("\n", first_nl + 1)
+      text = message[: second_nl if second_nl >= 0 else len(message)]
+    else:
+      nl = message.find("\n")
+      text = message if nl < 0 else message[:nl]
+  if is_dollar:
+    lines = text.split("\n", 2)
+    if len(lines) < 2:
       raise ValueError("Malformed '$' message: missing host line")
-    host_parts = parts[1].split()
+    host_parts = lines[1].split(None, 2)
     if len(host_parts) < 2:
       raise ValueError("Malformed '$' message: host line missing field")
     return host_parts[1]
-  msg_parts = message.split()
+  msg_parts = text.split(None, 3)
   if len(msg_parts) < 3:
     raise ValueError("Malformed message: not enough fields to get host")
   return msg_parts[2]
@@ -707,19 +738,24 @@ def seed_schema_from_current_file(host: str) -> Tuple[dict, dict]:
   return parse_schema_from_bang_lines(chunk)
 
 
-def _payload_byte_size(message: str) -> int:
+def _payload_byte_size(message: str | bytes) -> int:
   """
-  Internal helper to handle payload byte size.
-  
+  Return queued-byte size of a live-DB payload.
+
   Args:
-    message (str): String for message.
-  
+    message (str | bytes): Monitor sample text or AMQP body bytes.
+
   Returns:
-    int: int produced by this call.
-  
+    int: ``len`` of bytes as-is; UTF-8 length of ``str``.
+
   Examples:
-    >>> _payload_byte_size("x")  # doctest: +SKIP
+    >>> _payload_byte_size(b"abc")
+    3
+    >>> _payload_byte_size("ab")
+    2
   """
+  if isinstance(message, (bytes, bytearray, memoryview)):
+    return len(message)
   return len(message.encode("utf-8", errors="replace"))
 
 
