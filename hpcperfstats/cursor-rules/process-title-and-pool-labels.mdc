@@ -27,6 +27,8 @@ Supervisor/batch daemons (`sync_timedb`, `update_metrics`, `listend`, etc.) must
 | Metrics compute thread | `update_metrics.py [thread:metrics-pool]` |
 | Public EF thread | `update_metrics.py [thread:public-ef-pool]` |
 | listend live-DB thread | `listend.py [thread:listend-db-N]` (not `[worker:listend-db-pool]`) |
+| listend AMQP consume thread | `listend.py [thread:amqp-consumer-N]` (one BlockingConnection each) |
+| listend archive thread | `listend.py [thread:archive-N]` |
 | Post-chunk hygiene thread | `sync_timedb.py [thread:archive-post-chunk-hygiene]` |
 
 Use a **distinct, stable role** per pool type in the same script (e.g. `ingest-pool`, `append-pool`, `metrics-pool`, `public-ef-pool`).

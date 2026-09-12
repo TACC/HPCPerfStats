@@ -212,9 +212,9 @@ def test_ack_scheduled_before_db_submit(archive_pool_env, monkeypatch):
 
   real_ack = listend._threadsafe_basic_ack
 
-  def tracking_ack(delivery_tag):
+  def tracking_ack(delivery_tag, **_kwargs):
     order.append("ack")
-    return real_ack(delivery_tag)
+    return real_ack(delivery_tag, **_kwargs)
 
   def tracking_submit(*_a, **_k):
     order.append("submit")
@@ -242,7 +242,7 @@ def test_on_message_dispatches_amqp_bytes(archive_pool_env, monkeypatch):
   listend, channel, _tmp = archive_pool_env
   captured = []
 
-  def capture(delivery_tag, payload, host):
+  def capture(delivery_tag, payload, host, **_kwargs):
     captured.append((delivery_tag, payload, host))
 
   monkeypatch.setattr(listend, "_dispatch_to_archive_pool", capture)

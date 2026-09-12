@@ -79,6 +79,10 @@ def test_format_daemon_thread_title():
       == "listend.py [thread:listend-db-0]"
   )
   assert (
+      format_daemon_thread_title("listend.py", role="amqp-consumer-0")
+      == "listend.py [thread:amqp-consumer-0]"
+  )
+  assert (
       format_daemon_thread_title("update_metrics.py", role="metrics-pool")
       == "update_metrics.py [thread:metrics-pool]"
   )

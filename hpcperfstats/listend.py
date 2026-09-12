@@ -41,12 +41,25 @@ Attributes:
   _sticky_archive_tls: Per-archive-thread kept ``current`` fd and flock sidecar.
   _digit_epoch_link_cache: host_dir → (digit epoch path, inode) for ``$`` rotate.
   _digit_epoch_link_cache_lock: Guard for the digit-link cache.
+  _ARCHIVE_REORDER_HOLD_SECONDS: Per-host reorder hold when N>1 consumers.
+  _AMQP_CONSUME_STAGGER_SECONDS: Delay before first consume per consumer index.
+  _AmqpConsumeSession: Per-consumer connection, generation, and reconnect flag.
+  _ArchiveWorkItem: Archive queue item with originating connection and peek.
+  _amqp_tls: Thread-local consume session for ``on_message``.
+  _amqp_consumer_count: Competing AMQP consumer threads (default 1 in tests).
+  _amqp_applied_prefetch: Last per-consumer ``basic_qos`` prefetch.
+  _amqp_consumer_threads: Live AMQP consume Thread list.
+  _amqp_sessions: ``_AmqpConsumeSession`` list matching consume threads.
+  _archive_inflight: Items popped from archive queues not yet acked.
+  _archive_inflight_lock: Guard for ``_archive_inflight``.
 """
 from __future__ import annotations
 
 from typing import Any, NamedTuple
 
 import errno
+import heapq
+import itertools
 import os
 import queue
 import signal
@@ -122,6 +135,86 @@ class ArchiveAppendResult(NamedTuple):
   length: int
 
 
+class _AmqpConsumeSession:
+  """Per-AMQP-consumer BlockingConnection state for ack and reconnect.
+
+  Attributes:
+    index: Consumer index (0..N-1).
+    connection: Current pika BlockingConnection, or None.
+    channel: Current consume channel, or None.
+    generation: Bumped on each bind so stale acks no-op.
+    reconnect_requested: True when this consumer should rebuild.
+    io_thread_ident: ``ident`` of the consume I/O thread, or None.
+    attach_monotonic: When the current consume session started, or None.
+  """
+
+  def __init__(self, index: int) -> None:
+    """
+    Store a new unconnected consume session.
+
+    Args:
+      index (int): Consumer index (0..N-1).
+
+    Returns:
+      None
+
+    Examples:
+      >>> _AmqpConsumeSession(0).index
+      0
+    """
+    self.index = int(index)
+    self.connection: Any = None
+    self.channel: Any = None
+    self.generation = 0
+    self.reconnect_requested = False
+    self.io_thread_ident: int | None = None
+    self.attach_monotonic: float | None = None
+
+  def bind(self, connection: Any, channel: Any) -> None:
+    """
+    Attach a live connection/channel and bump the generation.
+
+    Args:
+      connection (Any): Pika ``BlockingConnection``, or ``None`` to clear.
+      channel (Any): Consume channel, or ``None`` to clear.
+
+    Returns:
+      None
+
+    Examples:
+      >>> s = _AmqpConsumeSession(1)
+      >>> s.bind(None, None)
+      >>> s.generation
+      1
+    """
+    self.connection = connection
+    self.channel = channel
+    self.generation += 1
+    self.reconnect_requested = False
+
+
+class _ArchiveWorkItem(NamedTuple):
+  """Host-affine archive queue item with originating AMQP session.
+
+  Attributes:
+    delivery_tag: AMQP delivery tag (channel-scoped).
+    message: Raw AMQP body bytes (or ``str`` in tests).
+    host: Host token for affine index and reorder.
+    unix_second: Peeked sample unix second, or None.
+    is_dollar: True when the payload starts with ``$`` after whitespace.
+    session: Originating ``_AmqpConsumeSession``, or None (global ack).
+    recv_monotonic: ``time.monotonic()`` when queued.
+  """
+
+  delivery_tag: Any
+  message: Any
+  host: str
+  unix_second: int | None
+  is_dollar: bool
+  session: Any
+  recv_monotonic: float
+
+
 _message_timestamps = deque()
 _unlink_timestamps = deque()
 _timestamps_lock = Lock()
@@ -155,6 +248,15 @@ _archive_pool_stop = Event()
 _archive_pool_started = False
 _archive_pool_n = 0
 _archive_pool_lock = Lock()
+_ARCHIVE_REORDER_HOLD_SECONDS = 1.0
+_AMQP_CONSUME_STAGGER_SECONDS = 0.5
+_amqp_tls = local()
+_amqp_consumer_count = 1
+_amqp_applied_prefetch = 0
+_amqp_consumer_threads: list = []
+_amqp_sessions: list = []
+_archive_inflight = 0
+_archive_inflight_lock = Lock()
 
 
 def _parse_plausible_unix_seconds(token: str) -> int | None:
@@ -971,27 +1073,35 @@ def _get_rmq_queue_depth_for_monitor() -> int | str:
         pass
 
 
-def _maybe_reset_amqp_reconnect_backoff_after_stable_consume() -> None:
+def _maybe_reset_amqp_reconnect_backoff_after_stable_consume(
+    session: _AmqpConsumeSession | None = None,
+) -> None:
   """
   Reset reconnect backoff after a stable consume session (≥30s).
 
   Backoff must not reset on ``Begining Consume`` alone; only after the
   consumer has been attached long enough to indicate broker health.
 
+  Args:
+    session (_AmqpConsumeSession | None): Per-consumer session whose
+      attach time should be used, or ``None`` for the process-global
+      attach stamp.
+
   Returns:
     None
 
   Examples:
-    >>> _maybe_reset_amqp_reconnect_backoff_after_stable_consume()  # doctest: +SKIP
+    >>> _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
   """
   global _amqp_reconnect_backoff_seconds
-  global _consume_attach_monotonic
-  if _consume_attach_monotonic is None:
+  attach = (
+      session.attach_monotonic
+      if session is not None
+      else _consume_attach_monotonic
+  )
+  if attach is None:
     return
-  if (
-      time.monotonic() - _consume_attach_monotonic
-      >= AMQP_RECONNECT_STABLE_CONSUME_SECONDS
-  ):
+  if time.monotonic() - attach >= AMQP_RECONNECT_STABLE_CONSUME_SECONDS:
     _amqp_reconnect_backoff_seconds = AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
 
 
@@ -1243,23 +1353,128 @@ def _is_amqp_channel_or_connection_dead(
   return any(marker in msg for marker in dead_markers)
 
 
-def _is_amqp_io_thread() -> bool:
+def split_listend_amqp_prefetch(total: int, consumer_count: int) -> int:
+  """
+  Split the process-wide drop-mode prefetch across competing consumers.
+
+  Args:
+    total (int): ``listend_amqp_prefetch`` (process-wide unacked window).
+    consumer_count (int): Number of AMQP consume threads.
+
+  Returns:
+    int: Per-consumer ``basic_qos`` prefetch, at least 1.
+
+  Examples:
+    >>> split_listend_amqp_prefetch(128, 8)
+    16
+    >>> split_listend_amqp_prefetch(7, 8)
+    1
+  """
+  n = max(1, int(consumer_count))
+  try:
+    t = int(total)
+  except (TypeError, ValueError):
+    t = 1
+  return max(1, t // n)
+
+
+def _current_amqp_session() -> _AmqpConsumeSession | None:
+  """
+  Return the consume session bound to this thread, if any.
+
+  Returns:
+    _AmqpConsumeSession | None: Thread-local session, or ``None``.
+
+  Examples:
+    >>> _current_amqp_session() is None
+    True
+  """
+  return getattr(_amqp_tls, "session", None)
+
+
+def _listend_qos_prefetch_count() -> int:
+  """
+  Return the ``basic_qos`` prefetch for one consume channel.
+
+  Pause mode uses 1 per consumer. Drop mode splits
+  ``get_listend_amqp_prefetch`` across ``_amqp_consumer_count``.
+
+  Returns:
+    int: Prefetch count, at least 1.
+
+  Examples:
+    >>> callable(_listend_qos_prefetch_count)
+    True
+  """
+  live_pool = _live_db_ingest_pool_active()
+  if live_pool is not None and _listend_db_backpressure_mode_is_pause():
+    return 1
+  return split_listend_amqp_prefetch(
+      int(cfg.get_listend_amqp_prefetch()),
+      max(1, int(_amqp_consumer_count)),
+  )
+
+
+def _negotiated_amqp_frame_max(connection: Any, parameters: Any) -> int:
+  """
+  Return negotiated ``frame_max``, falling back to requested parameters.
+
+  Args:
+    connection (Any): Open pika ``BlockingConnection``, or ``None``.
+    parameters (Any): ``ConnectionParameters`` used to connect.
+
+  Returns:
+    int: Frame max bytes, or 0 when unknown.
+
+  Examples:
+    >>> _negotiated_amqp_frame_max(None, None)
+    0
+  """
+  try:
+    impl = getattr(connection, "_impl", None)
+    params = getattr(impl, "params", None)
+    fm = getattr(params, "frame_max", None)
+    if fm:
+      return int(fm)
+  except Exception:
+    pass
+  try:
+    fm = getattr(parameters, "frame_max", None)
+    if fm:
+      return int(fm)
+  except Exception:
+    pass
+  return 0
+
+
+def _is_amqp_io_thread(session: _AmqpConsumeSession | None = None) -> bool:
   """
   Return True when this thread owns the consume BlockingConnection I/O.
 
-  ``listend.main`` drives ``process_data_events`` / ``start_consuming`` on the
-  process MainThread. Archive and idle-monitor threads must not close that
-  connection: pika ``BlockingConnection`` is not thread-safe, and
-  ``add_callback_threadsafe()`` on a closed or closing connection raises
-  ``ConnectionWrongStateError``.
+  Competing AMQP consumers each own a connection. Archive and idle-monitor
+  threads must not close those connections: pika ``BlockingConnection`` is
+  not thread-safe, and ``add_callback_threadsafe()`` on a closed or closing
+  connection raises ``ConnectionWrongStateError``. Tests without a session
+  still treat the process MainThread as the I/O thread.
+
+  Args:
+    session (_AmqpConsumeSession | None): Consume session whose I/O thread
+      should be compared, or ``None`` to use thread-local then MainThread.
 
   Returns:
-    bool: ``True`` on the process MainThread.
+    bool: ``True`` on the session I/O thread or, without a session, the
+    process MainThread.
 
   Examples:
     >>> isinstance(_is_amqp_io_thread(), bool)
     True
   """
+  sess = session if session is not None else _current_amqp_session()
+  if sess is not None and sess.io_thread_ident is not None:
+    try:
+      return current_thread().ident == sess.io_thread_ident
+    except Exception:
+      return False
   try:
     return current_thread() is main_thread()
   except Exception:
@@ -1297,13 +1512,19 @@ def _consume_connection_unusable(conn: Any, channel: Any = None) -> bool:
   return _is_amqp_channel_or_connection_dead(None, channel)
 
 
-def _consume_amqp_for_threadsafe_op() -> tuple[Any, Any, int] | None:
+def _consume_amqp_for_threadsafe_op(
+    session: _AmqpConsumeSession | None = None,
+) -> tuple[Any, Any, int] | None:
   """
   Return the current consume connection snapshot, or ``None`` if unusable.
 
   Marks a connection-scoped reconnect when the stored connection is already
   closed/closing so archive threads never call ``add_callback_threadsafe``
   on a dead ``BlockingConnection``.
+
+  Args:
+    session (_AmqpConsumeSession | None): Originating consume session, or
+      ``None`` to use the process-global snapshot (tests / N=1).
 
   Returns:
     tuple[Any, Any, int] | None: ``(connection, channel, generation)`` when
@@ -1314,6 +1535,18 @@ def _consume_amqp_for_threadsafe_op() -> tuple[Any, Any, int] | None:
     >>> _consume_amqp_for_threadsafe_op() is None
     True
   """
+  if session is not None:
+    conn = session.connection
+    ch = session.channel
+    gen = session.generation
+    if conn is None or ch is None:
+      return None
+    if session.reconnect_requested or _consume_connection_unusable(conn, ch):
+      _request_amqp_full_reconnect(
+          ch, "consume connection unusable before ack/nack", session=session
+      )
+      return None
+    return conn, ch, gen
   conn = _amqp_connection
   ch = _amqp_channel
   gen = _amqp_connection_generation
@@ -1327,13 +1560,19 @@ def _consume_amqp_for_threadsafe_op() -> tuple[Any, Any, int] | None:
   return conn, ch, gen
 
 
-def _consume_amqp_callback_stale(conn: Any, generation: int) -> bool:
+def _consume_amqp_callback_stale(
+    conn: Any,
+    generation: int,
+    session: _AmqpConsumeSession | None = None,
+) -> bool:
   """
   Return True when a deferred ack/nack belongs to a prior consume session.
 
   Args:
     conn (Any): Connection captured when the callback was scheduled.
-    generation (int): ``_amqp_connection_generation`` at schedule time.
+    generation (int): Session generation at schedule time.
+    session (_AmqpConsumeSession | None): Originating session, or ``None``
+      to compare against the process-global snapshot.
 
   Returns:
     bool: ``True`` when reconnect ran or the stored connection changed.
@@ -1342,6 +1581,12 @@ def _consume_amqp_callback_stale(conn: Any, generation: int) -> bool:
     >>> _consume_amqp_callback_stale(object(), -1)
     True
   """
+  if session is not None:
+    return (
+        session.generation != generation
+        or session.reconnect_requested
+        or session.connection is not conn
+    )
   return (
       _amqp_connection_generation != generation
       or _amqp_reconnect_requested
@@ -1349,32 +1594,60 @@ def _consume_amqp_callback_stale(conn: Any, generation: int) -> bool:
   )
 
 
-def _request_amqp_full_reconnect(channel: Any, reason: str) -> None:
+def _request_amqp_full_reconnect(
+    channel: Any,
+    reason: str,
+    session: _AmqpConsumeSession | None = None,
+) -> None:
   """
-  Request a consume-connection rebuild; close only on the AMQP I/O thread.
+  Request a consume-connection rebuild; close only on that connection's I/O
+  thread.
 
-  Sets ``_amqp_reconnect_requested`` and logs at most once while the flag is
-  already set (avoids per-message ERROR storms after the channel dies). Does
-  not set ``_db_backpressure_pause``; pause/resume remains same-connection.
+  Sets the session (or process-global) reconnect flag and logs at most once
+  while the flag is already set. Does not set ``_db_backpressure_pause``;
+  pause/resume remains same-connection. Does not close sibling consumer
+  connections.
 
-  Archive workers (and any non-MainThread caller) only set the flag: pika
+  Archive workers (and any non-I/O-thread caller) only set the flag: pika
   ``BlockingConnection`` is not thread-safe, so ``stop_consuming`` /
-  ``close()`` from ``listend-archive-N`` races the consume loop and can
-  leave leftover ``add_callback_threadsafe`` acks that 406 on the next
-  channel. MainThread still tears down channel then connection.
+  ``close()`` from ``listend-archive-N`` races the consume loop.
 
   Args:
     channel (Any): Pika channel whose connection should be torn down on
       the I/O thread, or inspected for ``connection``.
     reason (str): Short reason string for the reconnect log line.
+    session (_AmqpConsumeSession | None): Originating session, or ``None``
+      to use thread-local then the process-global flag.
 
   Returns:
     None
 
   Examples:
-    >>> _request_amqp_full_reconnect(None, "Channel is closed.")  # doctest: +SKIP
+    >>> callable(_request_amqp_full_reconnect)
+    True
   """
   global _amqp_reconnect_requested
+  sess = session if session is not None else _current_amqp_session()
+  if sess is not None:
+    already = sess.reconnect_requested
+    sess.reconnect_requested = True
+    if already:
+      return
+    log_print(
+        "AMQP reconnect requested (channel/connection dead): %s" % reason
+    )
+    if _is_amqp_io_thread(sess):
+      conn = (
+          sess.connection
+          if sess.connection is not None
+          else (getattr(channel, "connection", None) if channel is not None else None)
+      )
+      ch = sess.channel if sess.channel is not None else channel
+      _close_amqp_channel_and_connection_gracefully(
+          ch, conn, stop_consuming=True)
+      return
+    _schedule_amqp_reconnect_teardown_on_io_thread(channel, session=sess)
+    return
   already = _amqp_reconnect_requested
   _amqp_reconnect_requested = True
   if already:
@@ -1390,7 +1663,10 @@ def _request_amqp_full_reconnect(channel: Any, reason: str) -> None:
   _schedule_amqp_reconnect_teardown_on_io_thread(channel)
 
 
-def _schedule_amqp_reconnect_teardown_on_io_thread(channel: Any) -> None:
+def _schedule_amqp_reconnect_teardown_on_io_thread(
+    channel: Any,
+    session: _AmqpConsumeSession | None = None,
+) -> None:
   """
   Ask the consume I/O thread to stop consuming and close the connection.
 
@@ -1400,6 +1676,8 @@ def _schedule_amqp_reconnect_teardown_on_io_thread(channel: Any) -> None:
 
   Args:
     channel (Any): Channel that reported the failure, or ``None``.
+    session (_AmqpConsumeSession | None): Originating session, or ``None``
+      for the process-global consume connection.
 
   Returns:
     None
@@ -1416,8 +1694,22 @@ def _schedule_amqp_reconnect_teardown_on_io_thread(channel: Any) -> None:
       None
 
     Examples:
-      >>> _teardown()  # doctest: +SKIP
+      >>> callable(_teardown)
+      True
     """
+    if session is not None:
+      if not session.reconnect_requested:
+        return
+      ch = session.channel if session.channel is not None else channel
+      conn = (
+          session.connection
+          if session.connection is not None
+          else (getattr(ch, "connection", None) if ch is not None else None)
+      )
+      _close_amqp_channel_and_connection_gracefully(
+          ch, conn, stop_consuming=True
+      )
+      return
     if not _amqp_reconnect_requested:
       return
     ch = _amqp_channel if _amqp_channel is not None else channel
@@ -1430,7 +1722,11 @@ def _schedule_amqp_reconnect_teardown_on_io_thread(channel: Any) -> None:
         ch, conn, stop_consuming=True
     )
 
-  conn = _amqp_connection
+  conn = None
+  if session is not None:
+    conn = session.connection
+  if conn is None:
+    conn = _amqp_connection
   if conn is None and channel is not None:
     conn = getattr(channel, "connection", None)
   if conn is None:
@@ -1581,27 +1877,126 @@ def archive_queue_depth() -> int:
   return total
 
 
-def _threadsafe_basic_ack(delivery_tag: Any) -> None:
+def archive_inflight_count() -> int:
   """
-  Schedule ``basic_ack`` on the consume connection I/O thread.
+  Return archive items popped from queues and not yet acked.
 
-  Skips ``add_callback_threadsafe`` when the consume connection is already
-  closed/closing (pika raises ``ConnectionWrongStateError``). Deferred
-  callbacks no-op after ``set_amqp_connection`` so leftover tags cannot
-  406 on a new channel.
+  Includes per-host reorder-held items.
+
+  Returns:
+    int: In-flight count, never negative.
+
+  Examples:
+    >>> archive_inflight_count() >= 0
+    True
+  """
+  with _archive_inflight_lock:
+    return int(_archive_inflight)
+
+
+def _archive_inflight_add(delta: int) -> None:
+  """
+  Add ``delta`` to the archive in-flight counter (floor at 0).
 
   Args:
-    delivery_tag (Any): AMQP delivery tag to acknowledge.
+    delta (int): Positive on queue get; negative after ack/nack/flush.
 
   Returns:
     None
 
   Examples:
-    >>> _threadsafe_basic_ack(1)  # doctest: +SKIP
+    >>> _archive_inflight_add(0)
+  """
+  global _archive_inflight
+  with _archive_inflight_lock:
+    _archive_inflight = max(0, int(_archive_inflight) + int(delta))
+
+
+def alive_amqp_consumer_count() -> int:
+  """
+  Return how many AMQP consume threads are still alive.
+
+  Returns:
+    int: Count of living consume threads.
+
+  Examples:
+    >>> alive_amqp_consumer_count() >= 0
+    True
+  """
+  n = 0
+  for t in _amqp_consumer_threads:
+    try:
+      if t.is_alive():
+        n += 1
+    except Exception:
+      pass
+  return n
+
+
+def _format_listend_idle_archive_suffix() -> str:
+  """
+  Return idle-monitor suffix for archive queues and AMQP consumers.
+
+  Returns:
+    str: Leading ``; `` suffix, or empty when neither pool is active.
+
+  Examples:
+    >>> isinstance(_format_listend_idle_archive_suffix(), str)
+    True
+  """
+  parts: list[str] = []
+  try:
+    if _archive_pool_started:
+      parts.append(
+          "archive_q_depth=%d inflight=%d"
+          % (archive_queue_depth(), archive_inflight_count())
+      )
+  except Exception:
+    pass
+  try:
+    if _amqp_consumer_threads or _amqp_applied_prefetch:
+      n_alive = alive_amqp_consumer_count()
+      if n_alive <= 0:
+        n_alive = max(0, int(_amqp_consumer_count))
+      parts.append(
+          "amqp_consumers=%d prefetch=%d"
+          % (n_alive, int(_amqp_applied_prefetch or 0))
+      )
+  except Exception:
+    pass
+  if not parts:
+    return ""
+  return "; " + "; ".join(parts)
+
+
+def _threadsafe_basic_ack(
+    delivery_tag: Any,
+    *,
+    session: _AmqpConsumeSession | None = None,
+) -> None:
+  """
+  Schedule ``basic_ack`` on the originating consume connection I/O thread.
+
+  Skips ``add_callback_threadsafe`` when the consume connection is already
+  closed/closing (pika raises ``ConnectionWrongStateError``). Deferred
+  callbacks no-op after generation/connection change so leftover tags
+  cannot 406 on a new channel.
+
+  Args:
+    delivery_tag (Any): AMQP delivery tag to acknowledge.
+    session (_AmqpConsumeSession | None): Originating consume session, or
+      ``None`` to use the process-global snapshot.
+
+  Returns:
+    None
+
+  Examples:
+    >>> callable(_threadsafe_basic_ack)
+    True
   """
   if delivery_tag is None:
     return
-  snapshot = _consume_amqp_for_threadsafe_op()
+  snapshot = _consume_amqp_for_threadsafe_op(session)
   if snapshot is None:
     return
   conn, ch, gen = snapshot
@@ -1614,15 +2009,16 @@ def _threadsafe_basic_ack(delivery_tag: Any) -> None:
       None
 
     Examples:
-      >>> _ack()  # doctest: +SKIP
+      >>> callable(_ack)
+      True
     """
-    if _consume_amqp_callback_stale(conn, gen):
+    if _consume_amqp_callback_stale(conn, gen, session):
       return
     try:
       ch.basic_ack(delivery_tag=delivery_tag)
     except Exception as exc:
       if _is_amqp_channel_or_connection_dead(exc, ch):
-        _request_amqp_full_reconnect(ch, str(exc))
+        _request_amqp_full_reconnect(ch, str(exc), session=session)
       elif DEBUG:
         log_print("threadsafe basic_ack failed: %s" % exc)
 
@@ -1633,30 +2029,38 @@ def _threadsafe_basic_ack(delivery_tag: Any) -> None:
       _ack()
   except Exception as exc:
     if _is_amqp_channel_or_connection_dead(exc, ch):
-      _request_amqp_full_reconnect(ch, str(exc))
+      _request_amqp_full_reconnect(ch, str(exc), session=session)
     elif DEBUG:
       log_print("add_callback_threadsafe ack failed: %s" % exc)
 
 
-def _threadsafe_basic_nack(delivery_tag: Any, *, requeue: bool = True) -> None:
+def _threadsafe_basic_nack(
+    delivery_tag: Any,
+    *,
+    requeue: bool = True,
+    session: _AmqpConsumeSession | None = None,
+) -> None:
   """
-  Schedule ``basic_nack`` on the consume connection I/O thread.
+  Schedule ``basic_nack`` on the originating consume connection I/O thread.
 
   Same closed-connection and generation guards as ``_threadsafe_basic_ack``.
 
   Args:
     delivery_tag (Any): AMQP delivery tag to negatively acknowledge.
     requeue (bool): When ``True``, requeue the message on the broker.
+    session (_AmqpConsumeSession | None): Originating consume session, or
+      ``None`` to use the process-global snapshot.
 
   Returns:
     None
 
   Examples:
-    >>> _threadsafe_basic_nack(1)  # doctest: +SKIP
+    >>> callable(_threadsafe_basic_nack)
+    True
   """
   if delivery_tag is None:
     return
-  snapshot = _consume_amqp_for_threadsafe_op()
+  snapshot = _consume_amqp_for_threadsafe_op(session)
   if snapshot is None:
     return
   conn, ch, gen = snapshot
@@ -1669,16 +2073,17 @@ def _threadsafe_basic_nack(delivery_tag: Any, *, requeue: bool = True) -> None:
       None
 
     Examples:
-      >>> _nack()  # doctest: +SKIP
+      >>> callable(_nack)
+      True
     """
-    if _consume_amqp_callback_stale(conn, gen):
+    if _consume_amqp_callback_stale(conn, gen, session):
       return
     try:
       if hasattr(ch, "basic_nack"):
         ch.basic_nack(delivery_tag=delivery_tag, requeue=requeue)
     except Exception as exc:
       if _is_amqp_channel_or_connection_dead(exc, ch):
-        _request_amqp_full_reconnect(ch, str(exc))
+        _request_amqp_full_reconnect(ch, str(exc), session=session)
       elif DEBUG:
         log_print("threadsafe basic_nack failed: %s" % exc)
 
@@ -1689,12 +2094,17 @@ def _threadsafe_basic_nack(delivery_tag: Any, *, requeue: bool = True) -> None:
       _nack()
   except Exception as exc:
     if _is_amqp_channel_or_connection_dead(exc, ch):
-      _request_amqp_full_reconnect(ch, str(exc))
+      _request_amqp_full_reconnect(ch, str(exc), session=session)
     elif DEBUG:
       log_print("add_callback_threadsafe nack failed: %s" % exc)
 
 
-def _archive_and_submit_then_ack(delivery_tag: Any, message: Any) -> None:
+def _archive_and_submit_then_ack(
+    delivery_tag: Any,
+    message: Any,
+    *,
+    session: _AmqpConsumeSession | None = None,
+) -> None:
   """
   Archive payload, threadsafe ack, then best-effort live-DB submit.
 
@@ -1705,6 +2115,8 @@ def _archive_and_submit_then_ack(delivery_tag: Any, message: Any) -> None:
   Args:
     delivery_tag (Any): AMQP delivery tag.
     message (Any): Monitor payload ``str`` or AMQP ``bytes``.
+    session (_AmqpConsumeSession | None): Originating consume session, or
+      ``None`` to ack on the process-global connection.
 
   Returns:
     None
@@ -1713,9 +2125,10 @@ def _archive_and_submit_then_ack(delivery_tag: Any, message: Any) -> None:
     >>> callable(_archive_and_submit_then_ack)
     True
   """
+  ack_channel = session.channel if session is not None else _amqp_channel
   try:
     result = append_monitor_payload_to_archive(message)
-    _threadsafe_basic_ack(delivery_tag)
+    _threadsafe_basic_ack(delivery_tag, session=session)
     try:
       from hpcperfstats.dbload.lib.listend_db_ingest import (
           submit_listend_db_ingest,
@@ -1732,26 +2145,56 @@ def _archive_and_submit_then_ack(delivery_tag: Any, message: Any) -> None:
       if DEBUG:
         log_print("listend db ingest submit error: %s" % submit_err)
   except Exception as e:
-    if _is_amqp_channel_or_connection_dead(e, _amqp_channel):
-      _request_amqp_full_reconnect(_amqp_channel, str(e))
+    if _is_amqp_channel_or_connection_dead(e, ack_channel):
+      _request_amqp_full_reconnect(ack_channel, str(e), session=session)
       return
     log_print("Error processing message; leaving on server: %s" % e)
-    _threadsafe_basic_nack(delivery_tag, requeue=True)
+    _threadsafe_basic_nack(delivery_tag, requeue=True, session=session)
+
+
+def _archive_reorder_sort_key(
+    unix_second: int | None,
+    is_dollar: bool,
+    recv_seq: int,
+) -> tuple[int, int, int]:
+  """
+  Return heap order: unix second, ``$`` before digit, then receive seq.
+
+  Args:
+    unix_second (int | None): Peeked sample timestamp, or None.
+    is_dollar (bool): True when the payload is a ``$`` rotation.
+    recv_seq (int): Per-worker receive sequence for stable ties.
+
+  Returns:
+    tuple[int, int, int]: Sort key for ``heapq``.
+
+  Examples:
+    >>> _archive_reorder_sort_key(1710000001, True, 0) < (
+    ...     _archive_reorder_sort_key(1710000001, False, 1))
+    True
+  """
+  return (int(unix_second or 0), 0 if is_dollar else 1, int(recv_seq))
 
 
 def _archive_worker_main(worker_idx: int, work_queue: queue.Queue) -> None:
   """
-  Host-affine archive thread: archive → threadsafe ack → best-effort submit.
+  Host-affine archive thread: optional reorder, archive, threadsafe ack.
+
+  When ``_amqp_consumer_count > 1``, same-host items wait in a small heap
+  keyed by ``(unix_second, $ before digit, recv_seq)`` so competing
+  consumers cannot invert ``current`` chronology. N=1 and missing
+  timestamps flush immediately.
 
   Args:
     worker_idx (int): Archive worker index (0..N-1).
-    work_queue (queue.Queue): Per-worker ``(delivery_tag, message)`` queue.
+    work_queue (queue.Queue): Per-worker ``_ArchiveWorkItem`` queue.
 
   Returns:
     None
 
   Examples:
-    >>> _archive_worker_main(0, queue.Queue())  # doctest: +SKIP
+    >>> callable(_archive_worker_main)
+    True
   """
   from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
@@ -1760,24 +2203,131 @@ def _archive_worker_main(worker_idx: int, work_queue: queue.Queue) -> None:
       script_name="listend.py",
       role="archive-%d" % int(worker_idx),
   )
+  recv_seq = itertools.count()
+  heaps: dict[str, list] = {}
+
+  def _flush_work(work: _ArchiveWorkItem) -> None:
+    """
+    Archive one item then decrement in-flight.
+
+    Args:
+      work (_ArchiveWorkItem): Queued payload and originating session.
+
+    Returns:
+      None
+
+    Examples:
+      >>> callable(_flush_work)
+      True
+    """
+    try:
+      _archive_and_submit_then_ack(
+          work.delivery_tag, work.message, session=work.session
+      )
+    finally:
+      _archive_inflight_add(-1)
+
+  def _drain_host(host: str, *, force: bool = False) -> None:
+    """
+    Flush ready reorder-held items for one host.
+
+    Args:
+      host (str): Host token whose heap should drain.
+      force (bool): When True, flush the entire heap (shutdown).
+
+    Returns:
+      None
+
+    Examples:
+      >>> callable(_drain_host)
+      True
+    """
+    heap = heaps.get(host)
+    if not heap:
+      return
+    now = time.monotonic()
+    flushed_any = False
+    while heap:
+      _key, recv_mono, work = heap[0]
+      ready = (
+          force
+          or flushed_any
+          or (now - recv_mono) >= _ARCHIVE_REORDER_HOLD_SECONDS
+          or len(heap) >= 2
+      )
+      if not ready:
+        break
+      heapq.heappop(heap)
+      _flush_work(work)
+      flushed_any = True
+    if not heap:
+      heaps.pop(host, None)
+
+  def _drain_all(*, force: bool = False) -> None:
+    """
+    Drain every per-host reorder heap.
+
+    Args:
+      force (bool): When True, flush remaining held items immediately.
+
+    Returns:
+      None
+
+    Examples:
+      >>> callable(_drain_all)
+      True
+    """
+    for host_key in list(heaps):
+      _drain_host(host_key, force=force)
+
   try:
     while not _archive_pool_stop.is_set():
       try:
-        item = work_queue.get(timeout=1.0)
+        item = work_queue.get(timeout=0.25)
       except queue.Empty:
+        _drain_all(force=False)
         continue
       if item is None:
         work_queue.task_done()
         break
       try:
-        delivery_tag, message = item
-        _archive_and_submit_then_ack(delivery_tag, message)
+        _archive_inflight_add(1)
+        if isinstance(item, _ArchiveWorkItem):
+          work = item
+        else:
+          delivery_tag, message = item
+          work = _ArchiveWorkItem(
+              delivery_tag=delivery_tag,
+              message=message,
+              host="",
+              unix_second=None,
+              is_dollar=False,
+              session=None,
+              recv_monotonic=time.monotonic(),
+          )
+        skip_reorder = (
+            int(_amqp_consumer_count) <= 1 or work.unix_second is None
+        )
+        if skip_reorder:
+          _flush_work(work)
+        else:
+          host = work.host or ""
+          seq = next(recv_seq)
+          key = _archive_reorder_sort_key(
+              work.unix_second, work.is_dollar, seq
+          )
+          heapq.heappush(
+              heaps.setdefault(host, []),
+              (key, work.recv_monotonic, work),
+          )
+          _drain_host(host, force=False)
       finally:
         try:
           work_queue.task_done()
         except Exception:
           pass
   finally:
+    _drain_all(force=True)
     _release_sticky_archive_writer(unlink_sidecar=True)
 
 
@@ -1870,14 +2420,21 @@ def _dispatch_to_archive_pool(
   delivery_tag: Any,
   message: Any,
   host: str,
+  *,
+  session: _AmqpConsumeSession | None = None,
+  unix_second: int | None = None,
+  is_dollar: bool = False,
 ) -> None:
   """
-  Put ``(delivery_tag, payload)`` on the host-affine archive queue.
+  Put an ``_ArchiveWorkItem`` on the host-affine archive queue.
 
   Args:
     delivery_tag (Any): AMQP delivery tag.
     message (Any): Raw AMQP body bytes (or ``str`` in tests).
     host (str): Host token for affine index.
+    session (_AmqpConsumeSession | None): Originating consume session.
+    unix_second (int | None): Peeked sample unix second, or None.
+    is_dollar (bool): True when the payload is a ``$`` rotation.
 
   Returns:
     None
@@ -1890,7 +2447,17 @@ def _dispatch_to_archive_pool(
 
   n = max(1, int(_archive_pool_n) if _archive_pool_n else 1)
   idx = host_affine_worker_index(host, n)
-  _archive_queues[idx].put((delivery_tag, message))
+  _archive_queues[idx].put(
+      _ArchiveWorkItem(
+          delivery_tag=delivery_tag,
+          message=message,
+          host=host,
+          unix_second=unix_second,
+          is_dollar=bool(is_dollar),
+          session=session,
+          recv_monotonic=time.monotonic(),
+      )
+  )
 
 
 def on_message(
@@ -1935,11 +2502,11 @@ def on_message(
     pool = _live_db_ingest_pool_active()
     if pool is not None and _listend_db_backpressure_mode_is_pause():
       from hpcperfstats.dbload.lib.listend_db_ingest import (
-          parse_host_from_monitor_payload,
+          parse_monitor_payload_archive_hint,
       )
 
       try:
-        peek_host = parse_host_from_monitor_payload(payload)
+        peek_host, _ts, _dollar = parse_monitor_payload_archive_hint(payload)
       except Exception:
         peek_host = ""
       if (
@@ -1951,11 +2518,20 @@ def on_message(
 
     if _archive_pool_started and _archive_queues:
       from hpcperfstats.dbload.lib.listend_db_ingest import (
-          parse_host_from_monitor_payload,
+          parse_monitor_payload_archive_hint,
       )
 
-      host = parse_host_from_monitor_payload(payload)
-      _dispatch_to_archive_pool(delivery_tag, payload, host)
+      host, unix_second, is_dollar = parse_monitor_payload_archive_hint(
+          payload
+      )
+      _dispatch_to_archive_pool(
+          delivery_tag,
+          payload,
+          host,
+          session=_current_amqp_session(),
+          unix_second=unix_second,
+          is_dollar=is_dollar,
+      )
       return
 
     # Sync path (tests / pool not started): archive → ack → submit.
@@ -2041,8 +2617,7 @@ def _idle_monitor() -> None:
 
     archive_suffix = ""
     try:
-      if _archive_pool_started:
-        archive_suffix = "; archive_q_depth=%d" % archive_queue_depth()
+      archive_suffix = _format_listend_idle_archive_suffix()
     except Exception:
       pass
 
@@ -2054,6 +2629,234 @@ def _idle_monitor() -> None:
          archive_suffix))
 
     _last_idle_report_time = now
+
+
+def _stop_amqp_consumer_sessions(*, join_timeout: float = 15.0) -> None:
+  """
+  Stop competing AMQP consume threads and close their connections.
+
+  Args:
+    join_timeout (float): Seconds to wait for each consumer join.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _stop_amqp_consumer_sessions(join_timeout=0.1)
+  """
+  global _amqp_consumer_threads, _amqp_sessions
+  _idle_monitor_stop_event.set()
+  for session in list(_amqp_sessions):
+    session.reconnect_requested = True
+    conn = session.connection
+    ch = session.channel
+    if conn is None:
+      continue
+    try:
+      if getattr(conn, "is_closed", False) or getattr(conn, "is_closing", False):
+        continue
+    except Exception:
+      continue
+    try:
+      if hasattr(conn, "add_callback_threadsafe"):
+        conn.add_callback_threadsafe(
+            lambda c=ch, k=conn: _close_amqp_channel_and_connection_gracefully(
+                c, k, stop_consuming=True
+            )
+        )
+    except Exception:
+      pass
+  deadline = time.monotonic() + max(0.1, float(join_timeout))
+  for t in list(_amqp_consumer_threads):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+      break
+    try:
+      t.join(timeout=remaining)
+    except Exception:
+      pass
+  _amqp_consumer_threads = []
+  _amqp_sessions = []
+
+
+def _amqp_consumer_main(session: _AmqpConsumeSession) -> None:
+  """
+  Own one BlockingConnection and consume until stop or process exit.
+
+  Reconnect/541 backoff is local to this thread. Does not close sibling
+  consumer connections.
+
+  Args:
+    session (_AmqpConsumeSession): Per-consumer connection state.
+
+  Returns:
+    None
+
+  Raises:
+    KeyboardInterrupt: Re-raised when consume is interrupted.
+    SystemExit: Re-raised when the process is asked to exit.
+    Exception: Re-raised from the consume loop interrupt path.
+
+  Examples:
+    >>> callable(_amqp_consumer_main)
+    True
+  """
+  global _amqp_applied_prefetch
+  global _amqp_reconnect_requested
+  global _consume_attach_monotonic
+  from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
+
+  set_daemon_thread_title(
+      "",
+      script_name="listend.py",
+      role="amqp-consumer-%d" % int(session.index),
+  )
+  session.io_thread_ident = current_thread().ident
+  _amqp_tls.session = session
+  connection = None
+  while not _idle_monitor_stop_event.is_set():
+    log_print("Starting Connection")
+    parameters = listend_amqp_connection_parameters(cfg.get_rmq_server())
+    reconnect_sleep_s = AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
+    channel = None
+    try:
+      connection = pika.BlockingConnection(parameters)
+      channel = connection.channel()
+      session.bind(connection, channel)
+      if int(_amqp_consumer_count) <= 1:
+        set_amqp_connection(connection, channel)
+      queue_name = cfg.get_rmq_queue()
+      channel = declare_durable_quorum_queue(channel, queue_name)
+      session.bind(connection, channel)
+      if int(_amqp_consumer_count) <= 1:
+        set_amqp_connection(connection, channel)
+      if session.index == 0:
+        try:
+          q = channel.queue_declare(
+              queue=queue_name, durable=True, passive=True)
+          log_print(
+              "Messages waiting to be consumed at startup: %d" %
+              q.method.message_count)
+        except Exception as e:
+          log_print("Failed to get startup queue depth: %s" % e)
+      prefetch = _listend_qos_prefetch_count()
+      channel.basic_qos(prefetch_count=prefetch)
+      _amqp_applied_prefetch = prefetch
+      frame_max = _negotiated_amqp_frame_max(connection, parameters)
+      log_print(
+          "listend amqp consumer=%d prefetch=%d frame_max=%s queue=%s"
+          % (session.index, prefetch, frame_max, queue_name),
+          flush=True,
+      )
+      consume_start_logged = False
+      had_consumer = False
+      stagger_done = False
+      while not _idle_monitor_stop_event.is_set():
+        if _db_backpressure_pause:
+          if not _wait_for_db_backpressure_resume(connection):
+            break
+          if connection.is_closed:
+            break
+          try:
+            prefetch = _listend_qos_prefetch_count()
+            channel.basic_qos(prefetch_count=prefetch)
+            _amqp_applied_prefetch = prefetch
+          except Exception:
+            break
+          had_consumer = False
+        if not stagger_done and session.index:
+          time.sleep(
+              _AMQP_CONSUME_STAGGER_SECONDS * int(session.index)
+          )
+          stagger_done = True
+        _bind_listend_consume(
+            channel, queue_name, had_consumer=had_consumer)
+        had_consumer = True
+        if not consume_start_logged:
+          log_print("Begining Consume from queue: " + queue_name)
+          consume_start_logged = True
+          session.attach_monotonic = time.monotonic()
+          if int(_amqp_consumer_count) <= 1:
+            _consume_attach_monotonic = session.attach_monotonic
+        try:
+          channel.start_consuming()
+        except (KeyboardInterrupt, SystemExit):
+          try:
+            channel.stop_consuming()
+          except Exception:
+            pass
+          raise
+        except StreamLostError as e:
+          if DEBUG:
+            log_print("RabbitMQ stream lost while consuming: %s" % e)
+          _maybe_reset_amqp_reconnect_backoff_after_stable_consume(session)
+          reconnect_sleep_s = _apply_amqp_reconnect_backoff()
+          break
+        except AttributeError as e:
+          msg = str(e)
+          if "NoneType" in msg and "poll" in msg:
+            if DEBUG:
+              log_print(
+                  "RabbitMQ connection poller torn down during consume: %s"
+                  % e
+              )
+            _maybe_reset_amqp_reconnect_backoff_after_stable_consume(session)
+            reconnect_sleep_s = _apply_amqp_reconnect_backoff()
+          else:
+            log_print(
+                "Error while consuming from RabbitMQ: %s"
+                % _format_amqp_consume_error(e)
+            )
+          break
+        except Exception as e:
+          if should_use_amqp_exponential_reconnect_backoff(e):
+            if is_quorum_consume_setup_error(e):
+              log_print(
+                  "AMQP quorum consume-setup timeout (541): %s" % e)
+            elif is_amqp_peer_reset_reconnect_error(e):
+              log_print(
+                  "AMQP peer reset / stream lost during consume: %s" % e)
+            _maybe_reset_amqp_reconnect_backoff_after_stable_consume(session)
+            reconnect_sleep_s = _apply_amqp_reconnect_backoff()
+          else:
+            log_print(
+                "Error while consuming from RabbitMQ: %s"
+                % _format_amqp_consume_error(e)
+            )
+          break
+        if _db_backpressure_pause:
+          continue
+        if session.reconnect_requested:
+          session.reconnect_requested = False
+          _maybe_reset_amqp_reconnect_backoff_after_stable_consume(session)
+          reconnect_sleep_s = _apply_amqp_reconnect_backoff()
+        else:
+          _maybe_reset_amqp_reconnect_backoff_after_stable_consume(session)
+        break
+    except (KeyboardInterrupt, SystemExit):
+      log_print("Shutting down listend daemon on user request")
+      break
+    except Exception as e:
+      kind = _log_amqp_outer_loop_error(e)
+      _maybe_reset_amqp_reconnect_backoff_after_stable_consume(session)
+      if kind in ("quorum_consume_setup", "peer_reset"):
+        reconnect_sleep_s = _apply_amqp_reconnect_backoff()
+      elif should_use_amqp_exponential_reconnect_backoff(e):
+        reconnect_sleep_s = _apply_amqp_reconnect_backoff()
+      else:
+        reconnect_sleep_s = AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
+    finally:
+      session.bind(None, None)
+      if int(_amqp_consumer_count) <= 1:
+        clear_amqp_connection()
+        _amqp_reconnect_requested = False
+        _consume_attach_monotonic = None
+      _close_amqp_channel_and_connection_gracefully(channel, connection)
+      session.reconnect_requested = False
+      session.attach_monotonic = None
+    if _idle_monitor_stop_event.is_set():
+      break
+    time.sleep(reconnect_sleep_s)
 
 
 def main() -> None:
@@ -2085,10 +2888,12 @@ def main() -> None:
   global _amqp_reconnect_requested
   global _amqp_reconnect_backoff_seconds
   global _consume_attach_monotonic
+  global _amqp_consumer_count
+  global _amqp_consumer_threads
+  global _amqp_sessions
   # Use a mutable container so the SIGTERM handler can update state without
   # relying on `nonlocal` (which is only valid for enclosing function scopes).
   sigterm_received = {"value": False}
-  connection = None
 
   def _sigterm_handler(signum: Any, frame: Any) -> None:
     """
@@ -2149,162 +2954,36 @@ def main() -> None:
       except Exception as arch_err:
         log_print("Failed to start listend archive pool: %s" % arch_err)
 
-      # Outer loop: keep the daemon running indefinitely by reconnecting to
-      # RabbitMQ on failure instead of exiting. The process will typically only
-      # terminate when it receives a signal (e.g. SIGTERM) from the service
-      # manager.
-      while True:
-        log_print("Starting Connection")
-        parameters = listend_amqp_connection_parameters(cfg.get_rmq_server())
-        reconnect_sleep_s = AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
-        channel = None
-        try:
-          connection = pika.BlockingConnection(parameters)
-
-          channel = connection.channel()
-          set_amqp_connection(connection, channel)
-          queue_name = cfg.get_rmq_queue()
-          channel = declare_durable_quorum_queue(channel, queue_name)
-          set_amqp_connection(connection, channel)
-          # Report how many messages are waiting to be consumed at startup.
-          try:
-            q = channel.queue_declare(
-                queue=queue_name, durable=True, passive=True)
-            log_print(
-                "Messages waiting to be consumed at startup: %d" %
-                q.method.message_count)
-          except Exception as e:
-            log_print("Failed to get startup queue depth: %s" % e)
-
-          live_pool = _live_db_ingest_pool_active()
-          if live_pool is not None and _listend_db_backpressure_mode_is_pause():
-            # Prefetch=1 so pause leaves work on the broker ready queue.
-            channel.basic_qos(prefetch_count=1)
-          else:
-            channel.basic_qos(
-                prefetch_count=int(cfg.get_listend_amqp_prefetch()))
-
-          # Log consume-start once per RabbitMQ connection; pause/resume
-          # rebinds must not re-emit (that was log spam with backpressure).
-          consume_start_logged = False
-          # Fresh channel: skip cancel before first basic_consume (quorum Ra).
-          had_consumer = False
-
-          # Inner loop: consume until connection error, or pause for DB
-          # backpressure then resume on the same connection.
-          while not _idle_monitor_stop_event.is_set():
-            if _db_backpressure_pause:
-              if not _wait_for_db_backpressure_resume(connection):
-                break
-              if connection.is_closed:
-                break
-              # Channel may still be open after stop_consuming; re-bind.
-              try:
-                if (
-                    live_pool is not None
-                    and _listend_db_backpressure_mode_is_pause()
-                ):
-                  channel.basic_qos(prefetch_count=1)
-                else:
-                  channel.basic_qos(
-                      prefetch_count=int(cfg.get_listend_amqp_prefetch()))
-              except Exception:
-                break
-              # stop_consuming already cleared the consumer tag.
-              had_consumer = False
-
-            _bind_listend_consume(
-                channel, queue_name, had_consumer=had_consumer)
-            had_consumer = True
-            if not consume_start_logged:
-              log_print("Begining Consume from queue: " + queue_name)
-              consume_start_logged = True
-              _consume_attach_monotonic = time.monotonic()
-            try:
-              channel.start_consuming()
-            except (KeyboardInterrupt, SystemExit):
-              try:
-                channel.stop_consuming()
-              except Exception:
-                pass
-              raise
-            except StreamLostError as e:
-              if DEBUG:
-                log_print("RabbitMQ stream lost while consuming: %s" % e)
-              _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
-              reconnect_sleep_s = _apply_amqp_reconnect_backoff()
-              break
-            except AttributeError as e:
-              # Some pika versions raise an AttributeError like "'NoneType' object
-              # has no attribute 'poll'" during shutdown when the underlying poller
-              # has already been torn down. This is effectively equivalent to a
-              # lost stream and should not be treated as a hard error.
-              msg = str(e)
-              if "NoneType" in msg and "poll" in msg:
-                if DEBUG:
-                  log_print(
-                      "RabbitMQ connection poller torn down during consume: %s" % e)
-                _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
-                reconnect_sleep_s = _apply_amqp_reconnect_backoff()
-              else:
-                log_print(
-                    "Error while consuming from RabbitMQ: %s"
-                    % _format_amqp_consume_error(e)
-                )
-              break
-            except Exception as e:
-              if should_use_amqp_exponential_reconnect_backoff(e):
-                if is_quorum_consume_setup_error(e):
-                  log_print(
-                      "AMQP quorum consume-setup timeout (541): %s" % e)
-                elif is_amqp_peer_reset_reconnect_error(e):
-                  log_print(
-                      "AMQP peer reset / stream lost during consume: %s" % e)
-                _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
-                reconnect_sleep_s = _apply_amqp_reconnect_backoff()
-              else:
-                log_print(
-                    "Error while consuming from RabbitMQ: %s"
-                    % _format_amqp_consume_error(e)
-                )
-              break
-
-            if _db_backpressure_pause:
-              # stop_consuming from on_message — wait then resume.
-              continue
-            # Dead channel/connection or unexpected stop_consuming → reconnect.
-            if _amqp_reconnect_requested:
-              _amqp_reconnect_requested = False
-              _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
-              reconnect_sleep_s = _apply_amqp_reconnect_backoff()
-            else:
-              _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
+      n = min(16, max(1, int(cfg.get_listend_amqp_consumer_count())))
+      _amqp_consumer_count = n
+      _amqp_consumer_threads = []
+      _amqp_sessions = []
+      log_print("listend amqp consumers=%d" % n, flush=True)
+      for i in range(n):
+        session = _AmqpConsumeSession(i)
+        _amqp_sessions.append(session)
+        t = Thread(
+            target=_amqp_consumer_main,
+            args=(session,),
+            name="listend-amqp-%d" % i,
+            daemon=True,
+        )
+        _amqp_consumer_threads.append(t)
+        t.start()
+      try:
+        while not _idle_monitor_stop_event.is_set():
+          if sigterm_received["value"]:
             break
-        except (KeyboardInterrupt, SystemExit):
-          # Allow clean shutdown on explicit termination signals.
-          log_print("Shutting down listend daemon on user request")
-          break
-        except Exception as e:
-          kind = _log_amqp_outer_loop_error(e)
-          _maybe_reset_amqp_reconnect_backoff_after_stable_consume()
-          if kind in ("quorum_consume_setup", "peer_reset"):
-            reconnect_sleep_s = _apply_amqp_reconnect_backoff()
-          elif should_use_amqp_exponential_reconnect_backoff(e):
-            reconnect_sleep_s = _apply_amqp_reconnect_backoff()
-          else:
-            reconnect_sleep_s = AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
-        finally:
-          clear_amqp_connection()
-          _close_amqp_channel_and_connection_gracefully(channel, connection)
-          _amqp_reconnect_requested = False
-          _consume_attach_monotonic = None
-
-        # Sleep before reconnect. 541 consume-setup uses exponential backoff
-        # so we do not hammer Ra checkout under load.
-        time.sleep(reconnect_sleep_s)
+          time.sleep(0.5)
+      except (KeyboardInterrupt, SystemExit):
+        log_print("Shutting down listend daemon on user request")
   finally:
     _idle_monitor_stop_event.set()
     _recent_host_worker_stop_event.set()
+    try:
+      _stop_amqp_consumer_sessions()
+    except Exception:
+      pass
     try:
       stop_listend_archive_pool()
     except Exception:
@@ -2316,11 +2995,6 @@ def main() -> None:
     except Exception:
       pass
     clear_amqp_connection()
-    try:
-      if connection and not connection.is_closed:
-        connection.close()
-    except Exception:
-      pass
     if sigterm_received["value"]:
       send_sigchld_to_parent()
     signal.signal(signal.SIGTERM, previous_sigterm_handler)

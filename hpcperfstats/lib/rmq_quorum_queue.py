@@ -12,6 +12,8 @@ Attributes:
   LISTEND_AMQP_HEARTBEAT_SECONDS: Pika heartbeat interval for listend paths.
   LISTEND_AMQP_BLOCKED_CONNECTION_TIMEOUT_SECONDS: Pika blocked-connection
     timeout.
+  LISTEND_AMQP_FRAME_MAX: Client AMQP frame_max (8 MiB) so ~3 MiB monitor
+    bodies are not sliced at the 131072 default.
   AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS: First reconnect sleep after 541.
   AMQP_RECONNECT_BACKOFF_CAP_SECONDS: Max exponential reconnect sleep.
   AMQP_RECONNECT_STABLE_CONSUME_SECONDS: Consume duration before backoff reset.
@@ -28,6 +30,7 @@ from hpcperfstats.dbload.lib.print_utils import log_print
 QUORUM_QUEUE_TYPE = "quorum"
 LISTEND_AMQP_HEARTBEAT_SECONDS = 60
 LISTEND_AMQP_BLOCKED_CONNECTION_TIMEOUT_SECONDS = 300
+LISTEND_AMQP_FRAME_MAX = 8388608
 AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS = 5
 AMQP_RECONNECT_BACKOFF_CAP_SECONDS = 60
 AMQP_RECONNECT_STABLE_CONSUME_SECONDS = 30
@@ -239,7 +242,13 @@ def declare_durable_quorum_queue(channel: Any, queue_name: str) -> Any:
 
 def listend_amqp_connection_parameters(host: str) -> pika.ConnectionParameters:
   """
-  Build BlockingConnection parameters with heartbeat and blocked timeout.
+  Build BlockingConnection parameters with heartbeat, blocked timeout, and
+  ``frame_max``.
+
+  Pika 1.4.x ``ConnectionParameters.frame_max`` rejects values above
+  ``pika.spec.FRAME_MAX_SIZE`` (131072). RabbitMQ accepts 8 MiB frames;
+  raise that ceiling before constructing parameters so tune negotiation
+  can keep ``LISTEND_AMQP_FRAME_MAX``.
 
   Args:
     host (str): RabbitMQ hostname (compose service name or DNS).
@@ -253,11 +262,16 @@ def listend_amqp_connection_parameters(host: str) -> pika.ConnectionParameters:
     'rabbitmq'
     >>> p.heartbeat
     60
+    >>> p.frame_max
+    8388608
   """
+  if int(getattr(pika.spec, "FRAME_MAX_SIZE", 0) or 0) < LISTEND_AMQP_FRAME_MAX:
+    pika.spec.FRAME_MAX_SIZE = LISTEND_AMQP_FRAME_MAX
   return pika.ConnectionParameters(
       host,
       heartbeat=LISTEND_AMQP_HEARTBEAT_SECONDS,
       blocked_connection_timeout=LISTEND_AMQP_BLOCKED_CONNECTION_TIMEOUT_SECONDS,
+      frame_max=LISTEND_AMQP_FRAME_MAX,
   )
 
 

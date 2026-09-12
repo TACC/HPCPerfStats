@@ -283,6 +283,21 @@ def test_docker_compose_rabbitmq_allows_large_monitor_messages():
   assert "max_message_size = 134217728" not in conf_text
 
 
+def test_docker_compose_rabbitmq_frame_max_conf():
+  """Listend AMQP frame_max 8 MiB must ship on broker and compose conf.d."""
+  repo_root = Path(__file__).resolve().parents[2]
+  compose_path = repo_root / "docker-compose.yaml"
+  content = compose_path.read_text()
+  conf_path = repo_root / "services-conf" / "rabbitmq_frame_max.conf"
+
+  assert (
+      "rabbitmq_frame_max.conf:/etc/rabbitmq/conf.d/22-frame_max.conf"
+      in content
+  )
+  conf_text = conf_path.read_text()
+  assert "frame_max = 8388608" in conf_text
+
+
 def test_docker_compose_rabbitmq_defaults_to_quorum_queue_type():
   """Classic queues OOM under many monitor connections; keep quorum default."""
   repo_root = Path(__file__).resolve().parents[2]

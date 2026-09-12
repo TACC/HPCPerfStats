@@ -20,6 +20,8 @@ Attributes:
   _apply_listend_db_ingest_statement_timeout: Apply listend INI statement_timeout.
   _should_flush_pending: Row-cap / hold-age / batch_samples flush policy.
   _write_proc_chunk_with_timeout_bisect: Peak-merge write with timeout bisect.
+  _ARCHIVE_HINT_PEEK_BYTES: Max bytes scanned for archive host/ts/dollar peek.
+  _MIN_PLAUSIBLE_UNIX_SECONDS: Lowest unix seconds accepted as a stats timestamp.
 """
 from __future__ import annotations
 
@@ -634,6 +636,130 @@ def parse_host_from_monitor_payload(message: str | bytes) -> str:
   if len(msg_parts) < 3:
     raise ValueError("Malformed message: not enough fields to get host")
   return msg_parts[2]
+
+
+_ARCHIVE_HINT_PEEK_BYTES = 4096
+_MIN_PLAUSIBLE_UNIX_SECONDS = 1_000_000_000
+
+
+def _plausible_unix_seconds_token(token: str) -> int | None:
+  """
+  Return truncated unix seconds when ``token`` is a sample timestamp.
+
+  Schema host lines (``1 <fqdn>``) are below the plausible floor.
+
+  Args:
+    token (str): Leading field from a digit-starting stats line.
+
+  Returns:
+    int | None: Truncated unix seconds, or ``None`` when not plausible.
+
+  Examples:
+    >>> _plausible_unix_seconds_token("1710000001.0")
+    1710000001
+    >>> _plausible_unix_seconds_token("1") is None
+    True
+  """
+  try:
+    ts = int(float(token))
+  except (TypeError, ValueError):
+    return None
+  if ts < _MIN_PLAUSIBLE_UNIX_SECONDS:
+    return None
+  return ts
+
+
+def _peek_monitor_dollar_and_unix_second(
+    message: str | bytes,
+) -> tuple[bool, int | None]:
+  """
+  Peek ``$`` vs digit and a bounded unix-second from the payload prefix.
+
+  Reads at most ``_ARCHIVE_HINT_PEEK_BYTES``. Does not tokenize the
+  remainder of a multi-MiB sample.
+
+  Args:
+    message (str | bytes): Monitor payload (AMQP body or UTF-8 text).
+
+  Returns:
+    tuple[bool, int | None]: ``(is_dollar, unix_second_or_none)``.
+
+  Examples:
+    >>> _peek_monitor_dollar_and_unix_second(
+    ...     "1710000001.0 1 host.example.edu extra")
+    (False, 1710000001)
+    >>> _peek_monitor_dollar_and_unix_second("$\\n1 c001.example.edu\\n")
+    (True, None)
+  """
+  if not message:
+    return False, None
+  if isinstance(message, (bytes, bytearray, memoryview)):
+    raw = bytes(message[:_ARCHIVE_HINT_PEEK_BYTES])
+    i = 0
+    n = len(raw)
+    while i < n and raw[i] in b" \t\n\r\v\f":
+      i += 1
+    if i >= n:
+      return False, None
+    is_dollar = raw[i:i + 1] == b"$"
+    text = raw[i:].decode("utf-8", errors="replace")
+  else:
+    prefix = message[:_ARCHIVE_HINT_PEEK_BYTES]
+    i = 0
+    n = len(prefix)
+    while i < n and prefix[i] in " \t\n\r\v\f":
+      i += 1
+    if i >= n:
+      return False, None
+    is_dollar = prefix[i:i + 1] == "$"
+    text = prefix[i:]
+  lines = text.split("\n", 16)
+  if is_dollar:
+    for line in lines[1:]:
+      s = line.lstrip()
+      if not s or not s[0].isdigit():
+        continue
+      parts = s.split(None, 1)
+      ts = _plausible_unix_seconds_token(parts[0] if parts else "")
+      if ts is not None:
+        return True, ts
+    return True, None
+  first = lines[0] if lines else ""
+  parts = first.split(None, 1)
+  ts = _plausible_unix_seconds_token(parts[0] if parts else "")
+  return False, ts
+
+
+def parse_monitor_payload_archive_hint(
+    message: str | bytes,
+) -> tuple[str, int | None, bool]:
+  """
+  Return host, unix second, and ``$`` flag from a bounded payload prefix.
+
+  Host peek matches ``parse_host_from_monitor_payload``. The timestamp is
+  the first plausible unix second on a digit sample header, or on a ``$``
+  payload the first plausible digit line after the host line (bounded).
+  Missing timestamps return ``None`` so archive workers flush immediately.
+
+  Args:
+    message (str | bytes): Monitor payload (AMQP body or UTF-8 text).
+
+  Returns:
+    tuple[str, int | None, bool]: ``(host, unix_second_or_none, is_dollar)``.
+
+  Raises:
+    ValueError: Empty body or a malformed header that lacks the host field.
+
+  Examples:
+    >>> parse_monitor_payload_archive_hint(
+    ...     "1710000001.0 1 host.example.edu extra")
+    ('host.example.edu', 1710000001, False)
+    >>> parse_monitor_payload_archive_hint("$\\n1 c001.example.edu\\n")
+    ('c001.example.edu', None, True)
+  """
+  host = parse_host_from_monitor_payload(message)
+  is_dollar, unix_second = _peek_monitor_dollar_and_unix_second(message)
+  return host, unix_second, is_dollar
 
 
 def payload_has_schema_bang(message: str) -> bool:

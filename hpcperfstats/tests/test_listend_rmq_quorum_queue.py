@@ -63,6 +63,21 @@ def test_listend_amqp_connection_parameters_sets_heartbeat():
   assert p.heartbeat == LISTEND_AMQP_HEARTBEAT_SECONDS
 
 
+def test_listend_amqp_connection_parameters_sets_frame_max():
+  from hpcperfstats.lib.rmq_quorum_queue import (
+      LISTEND_AMQP_FRAME_MAX,
+      LISTEND_AMQP_HEARTBEAT_SECONDS,
+      listend_amqp_connection_parameters,
+  )
+  import pika
+
+  p = listend_amqp_connection_parameters("rabbitmq")
+  assert p.frame_max == LISTEND_AMQP_FRAME_MAX
+  assert p.frame_max == 8388608
+  assert p.heartbeat == LISTEND_AMQP_HEARTBEAT_SECONDS
+  assert pika.spec.FRAME_MAX_SIZE >= LISTEND_AMQP_FRAME_MAX
+
+
 def test_bind_consume_skips_cancel_on_fresh_channel(monkeypatch):
   """Fresh channel must not cancel before the first basic_consume."""
   import hpcperfstats.listend as listend

@@ -50,6 +50,7 @@ def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
   assert cfg.get_listend_db_ingest_backpressure() == "drop"
   assert cfg.get_listend_db_ingest_flush_max_rows() == 2000
   assert cfg.get_listend_db_ingest_flush_hold_s() == 5.0
+  assert cfg.get_listend_amqp_consumer_count() == 8
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
   assert cfg.get_sync_process_tree_rss_limit_mb() == 110000
   for dead in (
@@ -147,6 +148,36 @@ def test_listend_db_ingest_queue_max_gb_ini_12_clamped_to_8(
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   assert cfg.get_listend_db_ingest_queue_max_gb() == 8.0
+
+
+def test_get_listend_amqp_consumer_count_default_8(temp_ini, monkeypatch):
+  """Registry default 8; getter clamps 1..16."""
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.INI_OPTION_DEFAULTS["listend_amqp_consumer_count"] == "8"
+  assert cfg.get_listend_amqp_consumer_count() == 8
+
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "[PIPELINE]\n",
+      "[PIPELINE]\nlistend_amqp_consumer_count = 0\n",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_listend_amqp_consumer_count() == 1
+
+  content = content.replace(
+      "listend_amqp_consumer_count = 0",
+      "listend_amqp_consumer_count = 99",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_listend_amqp_consumer_count() == 16
 
 
 def test_get_worker_process_count(temp_ini, monkeypatch):

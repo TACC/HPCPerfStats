@@ -756,9 +756,11 @@ def test_drop_mode_uses_ini_prefetch_not_only_pause(monkeypatch):
   import inspect
   import hpcperfstats.listend as listend
 
-  src = inspect.getsource(listend.main)
-  assert "get_listend_amqp_prefetch" in src
-  assert "prefetch_count=1" in src
+  src = inspect.getsource(listend._amqp_consumer_main)
+  qos = inspect.getsource(listend._listend_qos_prefetch_count)
+  assert "_listend_qos_prefetch_count" in src
+  assert "get_listend_amqp_prefetch" in qos
+  assert "prefetch_count=1" in qos or "return 1" in qos
 
 
 def test_format_amqp_consume_error_uses_type_when_str_empty():

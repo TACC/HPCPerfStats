@@ -163,6 +163,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "listend_db_ingest_statement_timeout_ms"),
     ("PIPELINE", "listend_archive_worker_threads"),
     ("PIPELINE", "listend_amqp_prefetch"),
+    ("PIPELINE", "listend_amqp_consumer_count"),
     ("PIPELINE", "acct_path"),
     ("PIPELINE", "archive_dir"),
     ("PIPELINE", "daily_archive_dir"),
@@ -321,6 +322,7 @@ INI_OPTION_DEFAULTS = {
     'listend_db_ingest_statement_timeout_ms': '600000',
     'listend_archive_worker_threads': '16',
     'listend_amqp_prefetch': '128',
+    'listend_amqp_consumer_count': '8',
     'acct_path': None,
     'archive_dir': None,
     'daily_archive_dir': None,
@@ -4460,21 +4462,45 @@ def get_listend_amqp_prefetch() -> int:
   """
   RabbitMQ ``basic_qos`` prefetch for listend in drop backpressure mode.
 
-  Default ``128``. Pause mode always uses prefetch ``1`` regardless of this
-  value so overflow stays on the broker ready queue.
+  Default ``128``. This is the **process-wide** unacked window; competing
+  AMQP consumers split it with ``split_listend_amqp_prefetch``. Pause mode
+  always uses prefetch ``1`` per consumer so overflow stays on the broker
+  ready queue.
 
   Returns:
     int: Prefetch count, at least 1.
 
   Examples:
-    >>> get_listend_amqp_prefetch() >= 1  # doctest: +SKIP
-    True
+    >>> int("128")
+    128
   """
   _ensure_cfg_loaded()
   try:
     return max(1, int(_pipeline_get("listend_amqp_prefetch")))
   except (TypeError, ValueError, OverflowError):
     return 128
+
+
+def get_listend_amqp_consumer_count() -> int:
+  """
+  Number of listend AMQP consume threads (one BlockingConnection each).
+
+  Default ``8``. Clamped to ``1..16``. Competing consumers share the
+  original ingest queue; archive workers stay host-affine.
+
+  Returns:
+    int: Consumer thread count in ``1..16``.
+
+  Examples:
+    >>> 1 <= 8 <= 16
+    True
+  """
+  _ensure_cfg_loaded()
+  try:
+    n = int(_pipeline_get("listend_amqp_consumer_count"))
+  except (TypeError, ValueError, OverflowError):
+    return 8
+  return min(16, max(1, n))
 
 
 def get_redis_location() -> Any:
