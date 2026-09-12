@@ -45,7 +45,6 @@ def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
   assert cfg.get_metrics_pool_processes() == 24
   assert cfg.get_gunicorn_workers() == 32
   assert cfg.get_summary_aggregate_prefetch_max_threads() == 2
-  assert cfg.get_sync_write_lock_shards() == 8
   assert cfg.get_listend_db_ingest_pool_processes() == 32
   assert cfg.get_listend_db_ingest_backpressure() == "drop"
   assert cfg.get_listend_db_ingest_flush_max_rows() == 2000
@@ -54,6 +53,7 @@ def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
   assert cfg.get_metrics_plot_prewarm_mode() == "pipeline_required"
   assert cfg.get_sync_process_tree_rss_limit_mb() == 110000
   for dead in (
+      "get_sync_write_lock_shards",
       "get_max_gunicorn_workers",
       "get_sync_pool_process_cap",
       "get_metrics_pool_process_cap",
@@ -88,7 +88,6 @@ def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):
       "metrics_pool_processes = 5\n"
       "gunicorn_workers = 9\n"
       "summary_aggregate_prefetch_max_threads = 1\n"
-      "sync_write_lock_shards = 4\n"
       "listend_db_ingest_pool_processes = 11\n"
       "listend_db_ingest_backpressure = pause\n"
       "metrics_plot_prewarm_mode = inline\n",
@@ -103,7 +102,6 @@ def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):
   assert cfg.get_metrics_pool_processes() == 5
   assert cfg.get_gunicorn_workers() == 9
   assert cfg.get_summary_aggregate_prefetch_max_threads() == 1
-  assert cfg.get_sync_write_lock_shards() == 4
   assert cfg.get_listend_db_ingest_pool_processes() == 11
   assert cfg.get_listend_db_ingest_backpressure() == "pause"
   assert cfg.get_metrics_plot_prewarm_mode() == "inline"
@@ -948,29 +946,14 @@ def test_sync_host_itimes_cache_max_timestamps_per_entry(temp_ini, monkeypatch):
   assert cfg.get_sync_host_itimes_cache_max_timestamps_per_entry() == 50000
 
 
-def test_sync_write_lock_shards_absolute_default_eight(temp_ini, monkeypatch):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-  import hpcperfstats.dbload.lib.conf_parser as cfg
 
-  with open(temp_ini) as f:
-    content = f.read()
-  content = content.replace("total_cores = 4", "total_cores = 40")
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  importlib.reload(cfg)
-  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 40)
-  assert cfg.get_sync_write_lock_shards() == 8
-
-
-def test_sync_phase2_feature_flags_and_shards(temp_ini, monkeypatch):
+def test_sync_phase2_feature_flags(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 16)
-  assert cfg.get_sync_write_lock_shards() == 8
   # Ingest-first durability is on by default (fallback=yes in conf_parser).
   assert cfg.get_sync_enable_ingest_first_durability_mode() is True
 
@@ -979,13 +962,11 @@ def test_sync_phase2_feature_flags_and_shards(temp_ini, monkeypatch):
   content = content.replace(
       "total_cores = 4",
       "total_cores = 4\n"
-      "sync_write_lock_shards = 4\n"
       "sync_enable_ingest_first_durability_mode = true",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
   importlib.reload(cfg)
-  assert cfg.get_sync_write_lock_shards() == 4
   assert cfg.get_sync_enable_ingest_first_durability_mode() is True
 
   assert cfg.get_sync_process_tree_rss_limit_mb() == 110000

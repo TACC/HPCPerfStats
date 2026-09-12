@@ -95,7 +95,7 @@ def test_archive_sliding_window_imap_wires_stall_guards(monkeypatch):
   sta._process_sealed_tasks_sliding_window(
       object(),
       lambda args: args,
-      [("lock", sealed)],
+      [sealed],
       results.append,
       stall_diagnostics=diag,
       stall_poll_state={},

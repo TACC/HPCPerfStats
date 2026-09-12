@@ -149,7 +149,7 @@ Compose sets **`max_connections=500`** with **reduced `work_mem` / parallel gath
 
 ## Absolute pipeline / portal pool sizes
 
-Pool sizes are absolute INI keys: `sync_ingest_pool_processes` (default **16**), `metrics_pool_processes` (default **24**; in-process metrics + plot/detail prewarm threads), `gunicorn_workers` (default **32**), `listend_db_ingest_pool_processes` (default **32**), `sync_write_lock_shards` (default **8**), `summary_aggregate_prefetch_max_threads` (default **2**). Secondary formula/budget/cap/overlap/`metrics_prewarm_*` gates were removed.
+Pool sizes are absolute INI keys: `sync_ingest_pool_processes` (default **16**), `metrics_pool_processes` (default **24**; in-process metrics + plot/detail prewarm threads), `gunicorn_workers` (default **32**), `listend_db_ingest_pool_processes` (default **32**), `summary_aggregate_prefetch_max_threads` (default **2**). Secondary formula/budget/cap/overlap/`metrics_prewarm_*` gates were removed.
 
 **Metrics thread reset (2026-09-03):** `update_metrics` stall recovery detaches the current executor, cancels Futures that have not started, and creates a fresh titled pool lazily. Python cannot kill a running thread; database statement/lock timeouts must bound ORM work, while `metrics_run_stall_timeout_s` lets the scheduler soft-fail pending JIDs and continue. Operators should see `[thread:metrics-pool]` and `[thread:public-ef-pool]` under one `update_metrics.py [main]` process, with no metrics worker PIDs or forkserver control process.
 
@@ -287,7 +287,7 @@ docker compose -p hpcperfstats logs pipeline 2>&1 | \
   grep -E 'populate-pool|chunk prewarm|sealed archive member stream failed|ingest per-file timeout' | tail -40
 ```
 
-Expect `sync_timedb:worker:populate-pool` with **`populate_source=tar`** when sibling `.tar` exists (active or closed days), or **`populate_source=sealed`** only when tar was dropped; **no** `ingest per-file timeout` from `ingest-pool` workers while the members-store populate lock is held and progressing (populate wait suspends per-file SIGALRM; stall/max limits bound wait duration). Manager write-shard **`acquire`** waits (`DB lock wait … batch`) likewise suspend/extend the per-file deadline; ORM/`bulk_create` hold time remains charged. Outcome lines include `parse_elapsed_s=` / `db_shard_lock_s=` / `postgres_s=` / `elapsed_s=`.
+Expect `sync_timedb:worker:populate-pool` with **`populate_source=tar`** when sibling `.tar` exists (active or closed days), or **`populate_source=sealed`** only when tar was dropped; **no** `ingest per-file timeout` from `ingest-pool` workers while the members-store populate lock is held and progressing (populate wait suspends per-file SIGALRM; stall/max limits bound wait duration). `DB lock wait … batch` must not appear. Outcome lines include `parse_elapsed_s=` / `postgres_s=` / `elapsed_s=`.
 
 Duplicate file members detected during populate set a store **`dedupe_hint`**; the archive janitor enqueues **`DAY_CLOSE`** (inline `.tar` dedupe or sealed-only `dedupe_sealed_daily_archive` last resort).
 

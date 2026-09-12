@@ -1528,21 +1528,26 @@ docker compose logs pipeline 2>&1 | grep -E 'dispatch_probe failed|proactive swa
 
 **Pass (T0):** `child_ingest` equals configured processes shortly after any `proactive swap` / idle recover. **Pass (T1):** census stays ≤ configured across further per-file timeouts; thin `in_flight_n` under long budgets is a separate utilization question, not proof of orphans.
 
-### T0 / T1 — Manager `DB lock wait` vs Postgres + ingest timing tokens (2026-08-27)
+### T0 / T1 — ingest `DB lock wait` must not appear (2026-09-12)
 
-**Failure signature (pre-fix):** multi-hour `DB lock wait proc|host batch file=… wait=…` immediately before `ERROR: ingest per-file timeout` and coordinator `queue_orchestrator ingest fail … err=TimeoutError`, while `ingest_catchup` queued depth rises under a saturated pool. Operators may misread `DB lock wait` as Postgres `lock_timeout`.
+**Failure signature (pre-fix, hpcperfstats03 2026-08-27):** multi-hour `DB lock wait proc|host batch file=… wait=…` immediately before `ERROR: ingest per-file timeout` and coordinator `queue_orchestrator ingest fail … err=TimeoutError`, while `ingest_catchup` queued depth rises under a saturated pool. Operators may misread `DB lock wait` as Postgres `lock_timeout`.
 
-**What the token means:** `DB lock wait` is **multiprocessing Manager write-shard `acquire` wait** (`sync_write_lock_shards`), **not** Postgres. Per-file SIGALRM / monotonic deadline now **suspends/extends during acquire** (same class as members-store populate wait); time **holding** the shard for ORM/`bulk_create` remains charged.
+**What the token meant:** `DB lock wait` was an in-process `threading.Lock.acquire` around ORM writes, **not** Postgres. Uniqueness is Postgres unique indexes plus `ON CONFLICT` / `ignore_conflicts`. `postgres_s=` remains real ORM/`bulk_create` time.
 
 **Acceptance (post-deploy):**
 
-- Long `DB lock wait … wait=` lines may still appear under shard contention, but they must **not** alone exhaust the per-file budget into false timeouts.
-- Packed timeouts soft-requeue (`outcome=timeout`) — prefer **no** `queue_orchestrator ingest fail … TimeoutError` for per-file budget expiry (coordinator may log `ingest timeout` then soft-requeue).
-- Success / outcome lines include timing tokens: `parse_elapsed_s=`, `db_shard_lock_s=` (sum of acquire waits), `postgres_s=` (sum of hold/`bulk_create`), `elapsed_s=` (total wall). Residual wall time may remain (populate wait, duplicate scan).
+- `DB lock wait` must not appear on the ingest write path.
+- Packed timeouts still soft-requeue (`outcome=timeout`) — prefer **no** `queue_orchestrator ingest fail … TimeoutError` for per-file budget expiry (coordinator may log `ingest timeout` then soft-requeue).
+- Success / outcome lines include timing tokens: `parse_elapsed_s=`, `postgres_s=` (ORM/`bulk_create`), `elapsed_s=` (total wall). Residual wall time may remain (populate wait, duplicate scan).
+- T1: `pg_stat_activity` may show concurrent ingest inserts up to `sync_ingest_pool_processes` plus listend. If Timescale insert waits melt a site, **lower ingest pool**.
 - One INFO `file_complete_ingest_mark recorded` per successful path (worker); coordinator persists without a second INFO.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'DB lock wait|ingest per-file timeout|ingest timeout identity=|ingest fail .*TimeoutError|file_complete_ingest_mark recorded|db_shard_lock_s=|postgres_s=|parse_elapsed_s=' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'DB lock wait|ingest per-file timeout|ingest timeout identity=|ingest fail .*TimeoutError|file_complete_ingest_mark recorded|postgres_s=|parse_elapsed_s=' | tail -80
+```
+
+```bash
+docker compose -p hpcperfstats exec db psql -h localhost -U hpcperfstats -c "SELECT pid, state, wait_event_type, wait_event, left(query,80) AS query FROM pg_stat_activity WHERE datname = current_database() AND (query ILIKE '%host_data%' OR query ILIKE '%proc_data%') ORDER BY pid;"
 ```
 
 ### T0 / T1 — sticky ingest 0/N + bare TimeoutError thrash (H7) + idle stall (2026-08-29)
@@ -1814,7 +1819,7 @@ grep -E 'archive decompress restore begin|Archive members cache invalidated.*rea
 
 **Failure signature (pre-fix):** ingest-pool workers spam ``error in single host_data insert:`` / ``error in single proc_data insert:`` with ``sending query failed: another command is already in progress`` after a failed ``bulk_create`` (often interleaved with ``IngestPerFileTimeoutError`` / SIGALRM ``_handler``). Cascading single-insert logs for every remaining row in the frame.
 
-**Root cause (fixed):** write path swallowed timeouts into individual fallback without ``rollback`` / ``close_old_connections``, and did not hold ``write_lock`` on fallback. See ``sync-timedb-change-regression-gate.mdc`` → *Write-path connection reset*.
+**Root cause (fixed):** write path swallowed timeouts into individual fallback without ``rollback`` / ``close_old_connections``. See ``sync-timedb-change-regression-gate.mdc`` → *Write-path connection reset*.
 
 ```bash
 # T0 — InterfaceError spam check (full pipeline log; never --tail before grep)

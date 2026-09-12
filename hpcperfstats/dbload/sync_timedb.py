@@ -17,8 +17,8 @@ one idle reconstruct pass. ``backlog`` / ``current`` dual-mode CLI is retired.
 ``--jid <JID>`` is a one-shot ingest-only path (no archival / day_close).
 
 DB access is process-safe: pool workers use close_old_connections() at task
-start and connections.close_all() at task end. Writes are serialized with a
-shared lock.
+start and connections.close_all() at task end. Uniqueness is Postgres unique
+indexes plus ``ON CONFLICT`` / ``ignore_conflicts``.
 
 Attributes:
   ARCHIVE_RESTORE_SOFT_REQUEUE_BACKOFF_S: Attribute.
@@ -29,7 +29,6 @@ Attributes:
   FINALIZE_POLL_TIMEOUT_SECONDS: Attribute.
   INGEST_PER_FILE_TIMEOUT_LOG_MIN_S: Attribute.
   INGEST_STALL_WATCHDOG_IDLE_S: Attribute.
-  LOCK_WAIT_LOG_THRESHOLD_SECONDS: Attribute.
   PENDING_RECONCILE_UNPROCESSED_HARD_CEILING_S: Attribute.
   PENDING_RECONCILE_UNPROCESSED_TTL_S: Attribute.
   SYNC_TIMEDB_CHECKPOINT_BASENAME: Attribute.
@@ -50,7 +49,6 @@ Attributes:
   _SYNC_STATE_TRANSITIONS: Attribute.
   _SYNC_TIMEDB_INGEST_INLINE_ENV: Attribute.
   _TREE_RSS_DEFER_SLEEP_SECONDS: Attribute.
-  _ingest_db_shard_lock_s: Attribute.
   _ingest_postgres_s: Attribute.
   _last_supervisor_child_reap_mono: Attribute.
   _sealed_archive_ingest_progress: Attribute.
@@ -69,7 +67,6 @@ from __future__ import annotations
 import contextvars
 import ctypes
 import gc
-import hashlib
 import itertools
 import os
 from contextlib import contextmanager
@@ -84,7 +81,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import types
 import warnings
@@ -271,9 +267,6 @@ processed_files_max_size = 200000
 SYNC_TIMEDB_CHECKPOINT_BASENAME = ".sync_timedb_state.json"
 SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES = cfg.get_sync_checkpoint_flush_batch_size()
 
-
-# Emit DB lock-wait logs only for sustained contention.
-LOCK_WAIT_LOG_THRESHOLD_SECONDS = 30.0
 
 INGEST_PER_FILE_TIMEOUT_LOG_MIN_S = 7200.0
 
@@ -2196,39 +2189,6 @@ def _sync_worker_db_task() -> Iterator[Any]:
       pass
 
 
-def _log_db_lock_wait(batch_kind: Any, stats_file: str, lock_wait: Any) -> None:
-  """
-  Log Manager write-shard acquire waits above the threshold.
-
-  Log text keeps the historical ``DB lock wait`` token; this is **not**
-  Postgres ``lock_timeout`` — it is multiprocessing ``Manager`` shard
-  ``acquire`` wait time (``sync_write_lock_shards``).
-
-  Args:
-    batch_kind (Any): Batch kind token (``proc`` / ``host``).
-    stats_file (str): Stats file path for the waiting worker.
-    lock_wait (Any): Seconds spent waiting to acquire the shard lock.
-
-  Returns:
-    None
-
-  Examples:
-    >>> _log_db_lock_wait("proc", "/x", 0.0)
-  """
-  if lock_wait <= LOCK_WAIT_LOG_THRESHOLD_SECONDS:
-    return
-  log_print(
-      "DB lock wait %s batch file=%s wait=%.3fs" % (
-          batch_kind, stats_file, lock_wait
-      ),
-      flush=True,
-  )
-
-
-_ingest_db_shard_lock_s: contextvars.ContextVar[float] = contextvars.ContextVar(
-    "ingest_db_shard_lock_s",
-    default=0.0,
-)
 _ingest_postgres_s: contextvars.ContextVar[float] = contextvars.ContextVar(
     "ingest_postgres_s",
     default=0.0,
@@ -2237,7 +2197,7 @@ _ingest_postgres_s: contextvars.ContextVar[float] = contextvars.ContextVar(
 
 def _reset_ingest_write_timing() -> None:
   """
-  Zero per-file Manager-acquire and Postgres-hold timing accumulators.
+  Zero per-file Postgres-write timing accumulators.
 
   Returns:
     None
@@ -2245,33 +2205,12 @@ def _reset_ingest_write_timing() -> None:
   Examples:
     >>> _reset_ingest_write_timing()
   """
-  _ingest_db_shard_lock_s.set(0.0)
   _ingest_postgres_s.set(0.0)
-
-
-def _add_ingest_db_shard_lock_s(delta_s: float) -> None:
-  """
-  Add Manager write-shard acquire wait seconds for this file.
-
-  Args:
-    delta_s (float): Non-negative seconds to accumulate.
-
-  Returns:
-    None
-
-  Examples:
-    >>> _reset_ingest_write_timing()
-    >>> _add_ingest_db_shard_lock_s(1.25)
-  """
-  delta = float(delta_s)
-  if delta <= 0.0:
-    return
-  _ingest_db_shard_lock_s.set(float(_ingest_db_shard_lock_s.get()) + delta)
 
 
 def _add_ingest_postgres_s(delta_s: float) -> None:
   """
-  Add seconds spent holding the Manager shard during ORM writes.
+  Add seconds spent in the ORM write body (``bulk_create`` / fallback).
 
   Args:
     delta_s (float): Non-negative hold seconds to accumulate.
@@ -2291,18 +2230,17 @@ def _add_ingest_postgres_s(delta_s: float) -> None:
 
 def _snapshot_ingest_write_timing() -> dict[str, float]:
   """
-  Return accumulated ``db_shard_lock_s`` and ``postgres_s`` for this file.
+  Return accumulated ``postgres_s`` for this file.
 
   Returns:
     dict[str, float]: Timing keys for outcome meta / logs.
 
   Examples:
     >>> _reset_ingest_write_timing()
-    >>> _snapshot_ingest_write_timing()["db_shard_lock_s"]
+    >>> _snapshot_ingest_write_timing()["postgres_s"]
     0.0
   """
   return {
-      "db_shard_lock_s": float(_ingest_db_shard_lock_s.get()),
       "postgres_s": float(_ingest_postgres_s.get()),
   }
 
@@ -2315,7 +2253,7 @@ def _merge_ingest_write_timing_into_meta(meta: Any) -> dict[str, Any]:
     meta (Any): Existing outcome meta mapping or ``None``.
 
   Returns:
-    dict[str, Any]: Meta with ``db_shard_lock_s`` / ``postgres_s`` set.
+    dict[str, Any]: Meta with ``postgres_s`` set.
 
   Examples:
     >>> _reset_ingest_write_timing()
@@ -2574,30 +2512,6 @@ def _host_recent_timestamps_cached(
       hostname, ts_low, ts_high)
 
 
-def _pick_write_lock_for_path(lock_or_locks: Any, stats_file: str) -> Any:
-  """
-  Internal helper to handle pick write lock for path.
-  
-  Args:
-    lock_or_locks (Any): Lock or locks passed to this helper.
-    stats_file (str): String for stats file.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _pick_write_lock_for_path(None, "x")  # doctest: +SKIP
-  """
-  if isinstance(lock_or_locks, list) and lock_or_locks:
-    digest = hashlib.blake2b(
-        os.path.basename(str(stats_file or "")).encode("utf-8"),
-        digest_size=8,
-    ).digest()
-    idx = int.from_bytes(digest, "big") % len(lock_or_locks)
-    return lock_or_locks[idx]
-  return lock_or_locks
-
-
 def _host_timestamp_second_present_in_db(host: Any, unix_second: Any) -> Any:
   """
   Internal helper to handle host timestamp second present in db.
@@ -2841,48 +2755,22 @@ def _invalidate_jid_caches(stats: Any, proc_stats: Any) -> None:
 
 
 @contextmanager
-def _held_ingest_write_lock(
-  write_lock: Any,
-  stats_file: str,
-  kind: Any,
-) -> Iterator[Any]:
+def _held_ingest_write_timing() -> Iterator[None]:
   """
-  Acquire Manager write shard; always release (including deadline raises).
-
-  Acquire wait suspends per-file SIGALRM and extends the monotonic deadline
-  (same class as members-store populate wait). Hold time during ORM/bulk_create is
-  charged to the budget and summed into the ``postgres_s`` timing token.
-
-  Args:
-    write_lock (Any): Multiprocessing Manager lock (or shard) to acquire.
-    stats_file (str): Stats file path for lock-wait logging.
-    kind (Any): Batch kind token (``proc`` / ``host``).
+  Time the ORM write body into ``postgres_s``.
 
   Yields:
-    Iterator[Any]: Control while the shard lock is held.
+    Iterator[None]: Control while the ORM write body runs.
 
   Examples:
-    >>> with _held_ingest_write_lock(type("L", (), {
-    ...   "acquire": lambda self: None, "release": lambda self: None,
-    ... })(), "/x", "proc"):
+    >>> with _held_ingest_write_timing():
     ...   pass
   """
-  from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
-      suspend_ingest_sigalrm_for_non_work_wait,
-  )
-
-  wait_t0 = time.monotonic()
-  with suspend_ingest_sigalrm_for_non_work_wait():
-    write_lock.acquire()
-  wait_s = time.monotonic() - wait_t0
-  _add_ingest_db_shard_lock_s(wait_s)
   hold_t0 = time.monotonic()
   try:
-    _log_db_lock_wait(kind, stats_file, wait_s)
     yield
   finally:
     _add_ingest_postgres_s(time.monotonic() - hold_t0)
-    write_lock.release()
 
 
 def _reset_ingest_db_connection_after_write_error() -> None:
@@ -2993,17 +2881,18 @@ def _ingest_ok_from_host_write_path(
 
 
 def _write_stats_payload_to_db(
-  lock: Any,
   stats_file: str,
   stats: Any,
   proc_stats: Any,
   need_archival: bool = True,
 ) -> Any:
   """
-  Persist parsed payload into DB using fixed-size batches and lock sharding.
-  
+  Persist parsed payload into DB using fixed-size batches.
+
+  Uniqueness is Postgres unique indexes plus ``ON CONFLICT`` /
+  ``ignore_conflicts``.
+
   Args:
-    lock (Any): Lock object used to serialize access.
     stats_file (str): String for stats file.
     stats (Any): Stats passed to this helper.
     proc_stats (Any): Proc stats passed to this helper.
@@ -3017,10 +2906,9 @@ def _write_stats_payload_to_db(
     failure path.
   
   Examples:
-    >>> _write_stats_payload_to_db(None, "x", None, None, True)
+    >>> _write_stats_payload_to_db("x", None, None, True)
   """
   update_worker_substage("db_write")
-  write_lock = _pick_write_lock_for_path(lock, stats_file)
   individual_need_archival = None
   try:
     proc_it = proc_stats.itertuples(index=False)
@@ -3033,7 +2921,7 @@ def _write_stats_payload_to_db(
           proc_data(**_proc_data_row_kwargs(row)) for row in batch
       ]
       proc_objs = _peak_merge_proc_objs_with_existing(proc_objs)
-      with _held_ingest_write_lock(write_lock, stats_file, "proc"):
+      with _held_ingest_write_timing():
         _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
         proc_data.objects.bulk_create(
             proc_objs,
@@ -3050,7 +2938,7 @@ def _write_stats_payload_to_db(
     if DEBUG:
       log_print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
     _reset_ingest_db_connection_after_write_error()
-    with _held_ingest_write_lock(write_lock, stats_file, "proc"):
+    with _held_ingest_write_timing():
       _insert_proc_data_individually(proc_stats)
   try:
     with warnings.catch_warnings():
@@ -3066,7 +2954,7 @@ def _write_stats_payload_to_db(
         if not batch:
           break
         host_objs = [host_data_instance_from_stats_row(row) for row in batch]
-        with _held_ingest_write_lock(write_lock, stats_file, "host"):
+        with _held_ingest_write_timing():
           _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
           host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
   except Exception as e:
@@ -3078,7 +2966,7 @@ def _write_stats_payload_to_db(
     if DEBUG:
       log_print("error in host_data bulk_create:", str(e))
     _reset_ingest_db_connection_after_write_error()
-    with _held_ingest_write_lock(write_lock, stats_file, "host"):
+    with _held_ingest_write_timing():
       need_archival = _insert_host_data_individually(stats)
       individual_need_archival = need_archival
 
@@ -3151,7 +3039,6 @@ class IngestFileOutcome:
 
   Attributes:
     archive_skip: Archive skip token when archival was skipped.
-    db_shard_lock_s: Sum of Manager shard acquire waits (seconds).
     db_skip: DB-complete skip token (``no`` when not skipped).
     elapsed_s: Total wall seconds for the worker task.
     fail_reason: Failure / timeout stage token when present.
@@ -3160,7 +3047,7 @@ class IngestFileOutcome:
     outcome: Outcome token (``ingested``, ``timeout``, …).
     parse_elapsed_s: Parse/load stage seconds when known.
     path: Stats file path.
-    postgres_s: Sum of shard-hold / ORM write seconds.
+    postgres_s: Sum of ORM write body seconds.
     proc_rows: Proc row count when known.
     stats_rows: Host stats row count when known.
     stats_rows_parsed: Parsed stats rows when known.
@@ -3173,7 +3060,6 @@ class IngestFileOutcome:
   outcome: str
   db_skip: str = "no"
   parse_elapsed_s: float | None = None
-  db_shard_lock_s: float | None = None
   postgres_s: float | None = None
   timeout_s: float | None = None
   stats_rows: int | None = None
@@ -3380,7 +3266,6 @@ def _ingest_file_outcome_from_worker(
       outcome=outcome,
       db_skip=db_skip,
       parse_elapsed_s=meta.get("parse_elapsed_s"),
-      db_shard_lock_s=meta.get("db_shard_lock_s"),
       postgres_s=meta.get("postgres_s"),
       timeout_s=(
           float(timeout_s) if timeout_s is not None else None
@@ -3460,8 +3345,6 @@ def _log_ingest_file_outcome(
   ]
   if outcome.parse_elapsed_s is not None:
     parts.append("parse_elapsed_s=%.1f" % float(outcome.parse_elapsed_s))
-  if outcome.db_shard_lock_s is not None:
-    parts.append("db_shard_lock_s=%.1f" % float(outcome.db_shard_lock_s))
   if outcome.postgres_s is not None:
     parts.append("postgres_s=%.1f" % float(outcome.postgres_s))
   if outcome.stats_rows is not None:
@@ -3989,7 +3872,6 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
 
 
 def _add_stats_file_to_db_streaming_incremental(
-  lock: Any,
   stats_file: str,
   t0: Any,
 ) -> Any:
@@ -3997,7 +3879,6 @@ def _add_stats_file_to_db_streaming_incremental(
   Parse → DB → parse loop for large segments (combined ingest only).
   
   Args:
-    lock (Any): Lock object used to serialize access.
     stats_file (str): String for stats file.
     t0 (Any): T0 passed to this helper.
   
@@ -4005,7 +3886,7 @@ def _add_stats_file_to_db_streaming_incremental(
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> _add_stats_file_to_db_streaming_incremental(None, "x", None)
+    >>> _add_stats_file_to_db_streaming_incremental("x", None)
   """
   parse_t0 = time.time()
   carry = DeltaCarryState()
@@ -4065,7 +3946,6 @@ def _add_stats_file_to_db_streaming_incremental(
           flush=True,
       )
     stats_file_local, need_archival, chunk_ok = _write_stats_payload_to_db(
-        lock,
         stats_file,
         stats_chunk,
         proc_chunk,
@@ -4299,7 +4179,6 @@ def _parse_stats_file_payload_impl(
 
 # This routine will read the file until a timestamp is read that is not in the database. It then reads in the rest of the file.
 def add_stats_file_to_db(
-  lock: Any,
   stats_file: str,
   stats_file_contents: Any | None = None,
 ) -> Any:
@@ -4312,10 +4191,9 @@ def add_stats_file_to_db(
   
   Returns (stats_file, need_archival, ingest_ok, elapsed_s) where elapsed_s is
     wall
-  seconds for the attempted ingest path. Uses lock for DB writes.
+  seconds for the attempted ingest path.
   
   Args:
-    lock (Any): Lock object used to serialize access.
     stats_file (str): String for stats file.
     stats_file_contents (Any | None): One of ``Any``, ``None``.
   
@@ -4323,7 +4201,7 @@ def add_stats_file_to_db(
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> add_stats_file_to_db(None, "x", None)  # doctest: +SKIP
+    >>> add_stats_file_to_db("x", None)  # doctest: +SKIP
   """
   result = None
   record_worker_stage(stats_file, "ingest", substage="worker_entry")
@@ -4334,7 +4212,7 @@ def add_stats_file_to_db(
           stats_file,
           "ingest",
           lambda: _add_stats_file_to_db_impl(
-              lock, stats_file, stats_file_contents=stats_file_contents
+              stats_file, stats_file_contents=stats_file_contents
           ),
       )
     except IngestPerFileTimeoutError as exc:
@@ -4374,7 +4252,6 @@ def add_stats_file_to_db(
 
 
 def _add_stats_file_to_db_impl(
-  lock: Any,
   stats_file: str,
   stats_file_contents: Any | None = None,
 ) -> Any:
@@ -4382,7 +4259,6 @@ def _add_stats_file_to_db_impl(
   Implementation for :func:`add_stats_file_to_db` (parse + write combined).
   
   Args:
-    lock (Any): Lock object used to serialize access.
     stats_file (str): String for stats file.
     stats_file_contents (Any | None): One of ``Any``, ``None``.
   
@@ -4394,7 +4270,7 @@ def _add_stats_file_to_db_impl(
     failure path.
   
   Examples:
-    >>> _add_stats_file_to_db_impl(None, "x", None)  # doctest: +SKIP
+    >>> _add_stats_file_to_db_impl("x", None)  # doctest: +SKIP
   """
   stats = None
   proc_stats = None
@@ -4403,7 +4279,7 @@ def _add_stats_file_to_db_impl(
   _reset_ingest_write_timing()
   if _should_stream_stats_file(stats_file, stats_file_contents):
     return _add_stats_file_to_db_streaming_incremental(
-        lock, stats_file, t0,
+        stats_file, t0,
     )
   with _sync_worker_db_task():
     try:
@@ -4433,7 +4309,7 @@ def _add_stats_file_to_db_impl(
       stats_rows = len(stats)
       proc_rows = len(proc_stats)
       stats_file, need_archival, ingest_ok = _write_stats_payload_to_db(
-          lock, stats_file, stats, proc_stats, need_archival=need_archival
+          stats_file, stats, proc_stats, need_archival=need_archival
       )
       elapsed_total = time.time() - t0
       meta = dict(outcome_meta)
@@ -5889,7 +5765,6 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
       log_print("sync_timedb --jid: nothing to ingest jid=%s" % scope.jid, flush=True)
       return 0
 
-    write_lock = threading.Lock()
     checkpoint_entries = deque(_load_sync_checkpoint(checkpoint_path))
     processed_files = set(checkpoint_paths)
     processed_files_order = deque(processed_files)
@@ -5899,7 +5774,7 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
       if shutdown_requested[0]:
         log_print("sync_timedb --jid: shutdown requested", flush=True)
         break
-      result = add_stats_file_to_db(write_lock, path)
+      result = add_stats_file_to_db(path)
       stats_fname, _need_archival, ingest_ok, elapsed_s, outcome_meta = (
           _unpack_ingest_worker_result(result)
       )
@@ -5999,22 +5874,15 @@ def run_sync_timedb_supervisor_from_parsed(
 
   log_print(
       "Pipeline absolute pools effective_cores=%d sync_ingest=%d sync_archive=%d "
-      "metrics=%d write_lock_shards=%d"
+      "metrics=%d"
       % (
           cfg.get_effective_cores(),
           cfg.get_sync_ingest_pool_processes(),
           cfg.get_sync_archive_pool_processes(),
           cfg.get_metrics_pool_processes(),
-          cfg.get_sync_write_lock_shards(),
       ),
       flush=True,
   )
-  lock_shards = max(1, int(cfg.get_sync_write_lock_shards()))
-  if lock_shards == 1:
-    manager_lock = threading.Lock()
-  else:
-    manager_lock = [threading.Lock() for _ in range(lock_shards)]
-    log_print("Using %d sync_timedb write-lock shards" % lock_shards, flush=True)
   with create_sync_timedb_thread_pool(
       max_workers=archive_thread_count,
       thread_role="archive-pool",
@@ -6026,7 +5894,6 @@ def run_sync_timedb_supervisor_from_parsed(
           startdate,
           enddate,
           host_name_ext,
-          manager_lock,
           archive_pool,
           run_once=run_once,
           log_fn=log_print,

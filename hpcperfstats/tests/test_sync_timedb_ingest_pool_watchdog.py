@@ -140,7 +140,6 @@ def test_fill_ingest_band_records_submission_time(monkeypatch, tmp_path):
       claims=claims,
       submitted=submitted,
       ingest_pool=_Pool(),
-      manager_lock=None,
   )
 
   assert list(submitted) == list(inflight)

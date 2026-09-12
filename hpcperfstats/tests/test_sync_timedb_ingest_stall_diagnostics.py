@@ -34,7 +34,7 @@ def test_add_stats_file_to_db_records_worker_entry_before_ingest(monkeypatch):
       "_add_stats_file_to_db_impl",
       lambda *_a, **_k: ("/tmp/f", True, True, 0.0),
   )
-  st.add_stats_file_to_db(object(), "/tmp/f")
+  st.add_stats_file_to_db("/tmp/f")
   assert recorded[0] == ("/tmp/f", "ingest", "worker_entry", None, None)
 
 

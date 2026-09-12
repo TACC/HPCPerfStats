@@ -307,7 +307,7 @@ def test_run_sync_timedb_jid_ingest_no_archive_or_janitor(monkeypatch, tmp_path)
 
   ingest_calls = []
 
-  def _fake_ingest(lock, path, stats_file_contents=None):
+  def _fake_ingest(path, stats_file_contents=None):
     ingest_calls.append(path)
     assert st.should_archive is False
     return (path, False, True, 0.01, {"outcome": "ingested"})

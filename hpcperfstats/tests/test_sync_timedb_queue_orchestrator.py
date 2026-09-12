@@ -997,11 +997,10 @@ def test_rc7_unused_slot_catchup_when_hot_submitted_nonzero(monkeypatch, tmp_pat
       claims,
       submitted,
       ingest_pool,
-      manager_lock,
       band_cap=None,
       **kw,
   ):
-    del client, claims, submitted, ingest_pool, manager_lock, cap
+    del client, claims, submitted, ingest_pool, cap
     fill_log.append({
         "band": band,
         "band_cap": band_cap,
@@ -1036,7 +1035,6 @@ def test_rc7_unused_slot_catchup_when_hot_submitted_nonzero(monkeypatch, tmp_pat
   did, hot_q, zcard, hot_n = qo._ingest_coordinator_fill_tick(
       client=_Client(),
       pool_ref=qo.AtomicPoolRef(object()),
-      manager_lock=None,
       directory=str(tmp_path),
       tgz_archive_dir=str(tmp_path),
       hot_cap=hot_cap,
@@ -2565,7 +2563,6 @@ def test_missing_path_requeues_ingest_not_ack(monkeypatch, tmp_path):
       claims={},
       submitted={},
       ingest_pool=_Pool(),
-      manager_lock=None,
       band_cap=1,
       tgz_archive_dir=str(tmp_path),
   )
@@ -2618,7 +2615,6 @@ def test_missing_path_acks_when_ingest_complete(monkeypatch, tmp_path):
       claims={},
       submitted={},
       ingest_pool=_Pool(),
-      manager_lock=None,
       band_cap=1,
       tgz_archive_dir=str(tmp_path),
       ingest_is_complete_fn=lambda *_a, **_k: True,
@@ -2674,7 +2670,6 @@ def test_fill_ingest_ack_drops_fnctl_lock_sidecar(monkeypatch, tmp_path):
       claims={},
       submitted={},
       ingest_pool=_Pool(),
-      manager_lock=None,
       band_cap=1,
       tgz_archive_dir=str(tmp_path),
   )
@@ -2724,7 +2719,6 @@ def test_fill_ingest_skip_budget_breaks(monkeypatch, tmp_path):
       claims={},
       submitted={},
       ingest_pool=_Pool(),
-      manager_lock=None,
       tgz_archive_dir=str(tmp_path),
       ingest_is_complete_fn=lambda *_a, **_k: False,
   )
@@ -2885,7 +2879,6 @@ def test_skip_missing_penalty_requeues_with_score_bump(monkeypatch, tmp_path):
       claims={},
       submitted={},
       ingest_pool=_Pool(),
-      manager_lock=None,
       band_cap=1,
       tgz_archive_dir=str(tmp_path),
       archive_data_dir=str(tmp_path),
@@ -2941,7 +2934,7 @@ def test_skip_fp_penalty_lets_claimable_job_behind_submit(monkeypatch, tmp_path)
 
   class _Pool:
     def apply_async(self, func, args=(), **k):
-      submitted.append(args[1])
+      submitted.append(args[0])
       return type("_R", (), {"ready": lambda self: False})()
 
   n = qo._fill_ingest_band(
@@ -2952,7 +2945,6 @@ def test_skip_fp_penalty_lets_claimable_job_behind_submit(monkeypatch, tmp_path)
       claims={},
       submitted={},
       ingest_pool=_Pool(),
-      manager_lock=None,
       band_cap=2,
       tgz_archive_dir=str(tmp_path),
       archive_data_dir=str(tmp_path),
@@ -3576,7 +3568,6 @@ def test_drain_packed_timeout_rich_log(tmp_path, monkeypatch):
               "outcome": "timeout",
               "fail_reason": "write",
               "timeout_s": 8000.2,
-              "db_shard_lock_s": 3.0,
               "postgres_s": 4.0,
               "parse_elapsed_s": 1.5,
           },
@@ -3596,7 +3587,6 @@ def test_drain_packed_timeout_rich_log(tmp_path, monkeypatch):
   assert "queue_orchestrator ingest timeout" in joined
   assert "timeout_s=8000.2" in joined
   assert "stage=write" in joined
-  assert "db_shard_lock_s=3.0" in joined
   assert "postgres_s=4.0" in joined
   assert "parse_elapsed_s=1.5" in joined
 

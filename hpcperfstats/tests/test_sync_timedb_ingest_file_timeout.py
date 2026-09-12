@@ -527,30 +527,23 @@ def test_suspend_sigalrm_for_non_work_extends_deadline_monotonic(monkeypatch):
     reset_ingest_task_deadline_monotonic(token)
 
 
-def test_write_lock_wait_extends_deadline_and_accumulates_timing(monkeypatch):
-  """Manager acquire wait accumulates timing; wall deadline unchanged."""
+def test_ingest_write_timing_accumulates_postgres_s(monkeypatch):
+  """ORM write timing context accumulates postgres_s without changing the deadline."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       get_ingest_task_deadline_monotonic,
       reset_ingest_task_deadline_monotonic,
       set_ingest_task_deadline_monotonic,
   )
 
-  class _SlowLock:
-    def acquire(self):
-      time.sleep(0.12)
-
-    def release(self):
-      return None
-
   st._reset_ingest_write_timing()
   base = time.monotonic() + 5.0
   token = set_ingest_task_deadline_monotonic(base)
   try:
-    with st._held_ingest_write_lock(_SlowLock(), "/tmp/seg", "proc"):
+    with st._held_ingest_write_timing():
       time.sleep(0.05)
     snap = st._snapshot_ingest_write_timing()
     assert get_ingest_task_deadline_monotonic() == base
-    assert snap["db_shard_lock_s"] >= 0.08
+    assert "db_shard_lock_s" not in snap
     assert snap["postgres_s"] >= 0.03
   finally:
     reset_ingest_task_deadline_monotonic(token)
@@ -558,7 +551,7 @@ def test_write_lock_wait_extends_deadline_and_accumulates_timing(monkeypatch):
 
 
 def test_ingest_file_outcome_timing_breakdown_tokens(monkeypatch):
-  """Outcome log must emit parse / lock / postgres / elapsed / timeout_s."""
+  """Outcome log must emit parse / postgres / elapsed / timeout_s."""
   monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 1657207171)
   outcome = st.IngestFileOutcome(
       path="/archive/host/seg",
@@ -567,7 +560,6 @@ def test_ingest_file_outcome_timing_breakdown_tokens(monkeypatch):
       need_archival=False,
       outcome="ingested",
       parse_elapsed_s=1.5,
-      db_shard_lock_s=3.25,
       postgres_s=4.0,
       timeout_s=8000.2,
       stats_rows=10,
@@ -590,7 +582,6 @@ def test_ingest_file_outcome_timing_breakdown_tokens(monkeypatch):
   assert logged
   joined = " ".join(logged)
   assert "parse_elapsed_s=1.5" in joined
-  assert "db_shard_lock_s=3.2" in joined
   assert "postgres_s=4.0" in joined
   assert "elapsed_s=12.5" in joined
   assert "timeout_s=8000.2" in joined
@@ -608,7 +599,6 @@ def test_timeout_s_on_outcome_from_meta():
           "outcome": "timeout",
           "fail_reason": "write",
           "timeout_s": 7200.0,
-          "db_shard_lock_s": 1.0,
           "postgres_s": 2.0,
       },
   )

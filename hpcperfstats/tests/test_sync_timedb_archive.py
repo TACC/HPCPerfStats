@@ -2414,7 +2414,7 @@ def test_sliding_window_refills_idle_worker_slot(monkeypatch):
       "/daily/fast3.tar.zst",
       "/daily/slow4.tar.zst",
   ]
-  tasks_locked = [("lock", path) for path in sealed_paths]
+  tasks = list(sealed_paths)
   results = []
   errors = []
 
@@ -2422,8 +2422,8 @@ def test_sliding_window_refills_idle_worker_slot(monkeypatch):
     try:
       sta._process_sealed_tasks_sliding_window(
           pool,
-          lambda task: task[1],
-          tasks_locked,
+          lambda path: path,
+          tasks,
           results.append,
           worker_registry={},
       )
@@ -2439,7 +2439,7 @@ def test_sliding_window_refills_idle_worker_slot(monkeypatch):
   fast_first_batch = [
       ar
       for ar, task in pool.inflight.items()
-      if "fast" in task[1]
+      if "fast" in task
   ]
   assert len(fast_first_batch) == 3
   for async_result in fast_first_batch:
@@ -4780,7 +4780,7 @@ def test_process_tar_chunk_stops_when_shutdown_requested(monkeypatch):
   def fake_sliding_window(_pool, _worker, tasks, **kwargs):
     del kwargs
     for item in tasks:
-      yield item[1]
+      yield item
 
   monkeypatch.setattr(sta, "imap_sliding_window_watch_pool", fake_sliding_window)
   monkeypatch.setattr(
@@ -4800,7 +4800,7 @@ def test_process_tar_chunk_stops_when_shutdown_requested(monkeypatch):
     sta._process_task_chunk_interruptibly(
         object(),
         lambda x: x,
-        [("lock", "/a.tar.zst")],
+        ["/a.tar.zst"],
         _capture,
         worker_registry={},
     )
@@ -4812,15 +4812,9 @@ def test_process_tar_chunk_stops_when_shutdown_requested(monkeypatch):
 def test_process_stream_archive_task_spawn_picklable():
   """Spawn Pool workers must unpickle the stream worker callable."""
   from multiprocessing.reduction import ForkingPickler
-  import multiprocessing
 
   ForkingPickler.dumps(sta._process_stream_archive_task)
-  mgr = multiprocessing.Manager()
-  try:
-    lock = mgr.Lock()
-    ForkingPickler.dumps((lock, "/tmp/x.tar.zst"))
-  finally:
-    mgr.shutdown()
+  ForkingPickler.dumps("/tmp/x.tar.zst")
 
 
 def test_configure_blas_thread_env_idempotent():
@@ -5029,10 +5023,7 @@ def test_process_stream_archive_task_ingests_all_members(monkeypatch, tmp_path):
   )
   calls = []
 
-  class _Lock:
-    pass
-
-  def fake_add(lock, member_path, stats_file_contents=None):
+  def fake_add(member_path, stats_file_contents=None):
     calls.append((member_path, stats_file_contents))
 
   monkeypatch.setattr(
@@ -5051,7 +5042,7 @@ def test_process_stream_archive_task_ingests_all_members(monkeypatch, tmp_path):
       "django.db.close_old_connections",
       lambda: None,
   )
-  sta._process_stream_archive_task((_Lock(), zst_p))
+  sta._process_stream_archive_task(zst_p)
   assert len(calls) == 1
   member_path, contents = calls[0]
   assert contents is None

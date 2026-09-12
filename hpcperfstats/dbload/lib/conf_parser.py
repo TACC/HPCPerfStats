@@ -135,7 +135,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_archive_members_fnctl_read_lock_timeout_seconds"),
     ("PIPELINE", "sync_archive_members_wait_poll_seconds"),
     ("PIPELINE", "sync_archive_members_populate_pool_processes"),
-    ("PIPELINE", "sync_write_lock_shards"),
     ("PIPELINE", "sync_bulk_create_batch_size"),
     ("PIPELINE", "sync_supervisor_rss_limit_mb"),
     ("PIPELINE", "sync_process_tree_rss_limit_mb"),
@@ -294,7 +293,6 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_members_fnctl_read_lock_timeout_seconds': '180',
     'sync_archive_members_wait_poll_seconds': '0.25',
     'sync_archive_members_populate_pool_processes': '4',
-    'sync_write_lock_shards': '8',
     'sync_bulk_create_batch_size': '10000',
     'sync_supervisor_rss_limit_mb': '0',
     'sync_process_tree_rss_limit_mb': '110000',
@@ -3531,24 +3529,6 @@ def get_sync_host_itimes_cache_max_timestamps_per_entry() -> Any:
       _pipeline_getint("sync_host_itimes_cache_max_timestamps_per_entry"),
   )
 
-
-def get_sync_write_lock_shards() -> Any:
-  """
-  Absolute write-lock shard count for sync_timedb ingest writes.
-
-  INI ``[PIPELINE] sync_write_lock_shards`` (default **8**).
-
-  Returns:
-    Any: Positive int shard count.
-
-  Examples:
-    >>> get_sync_write_lock_shards()  # doctest: +SKIP
-  """
-  env = os.environ.get("SYNC_WRITE_LOCK_SHARDS", "").strip()
-  if env:
-    return max(1, int(env))
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_write_lock_shards"))
 
 def get_sync_ingest_chunk_size() -> Any:
   """

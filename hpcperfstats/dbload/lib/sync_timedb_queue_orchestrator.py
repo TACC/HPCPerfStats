@@ -1247,19 +1247,18 @@ def _idle_reconstruct_pass(
   return work
 
 
-def _ingest_worker(lock: Any, path: str) -> Any:
+def _ingest_worker(path: str) -> Any:
   """
   Spawn-pool ingest entry: parse + write one closed raw stats path.
 
   Args:
-    lock (Any): Manager write lock (or shard list handled by callee).
     path (str): Absolute closed raw stats path.
 
   Returns:
     Any: Packed ingest worker result from ``add_stats_file_to_db``.
 
   Examples:
-    >>> _ingest_worker(None, "/x")  # doctest: +SKIP
+    >>> _ingest_worker("/x")  # doctest: +SKIP
   """
   from hpcperfstats.dbload.sync_timedb import (
       IngestPerFileTimeoutError,
@@ -1275,7 +1274,7 @@ def _ingest_worker(lock: Any, path: str) -> Any:
 
   _apply_ingest_session_statement_timeout()
   try:
-    result = add_stats_file_to_db(lock, path)
+    result = add_stats_file_to_db(path)
   except TimeoutError as exc:
     # Multiprocessing may surface IngestPerFileTimeoutError as TimeoutError.
     elapsed = float(getattr(exc, "elapsed_s", 0.0) or 0.0)
@@ -2938,7 +2937,6 @@ def _fill_ingest_band(
   claims: dict[str, Any],
   submitted: dict[str, float],
   ingest_pool: Any,
-  manager_lock: Any,
   band_cap: int | None = None,
   band_used: dict[str, int] | None = None,
   tgz_archive_dir: str = "",
@@ -2964,7 +2962,6 @@ def _fill_ingest_band(
     claims (dict[str, Any]): Identity → claim map.
     submitted (dict[str, float]): Identity → submit monotonic time (mutated).
     ingest_pool (Any): Spawn ``multiprocessing.Pool``.
-    manager_lock (Any): Write lock for ingest workers.
     band_cap (int | None): Optional reserved cap for this band alone.
     band_used (dict[str, int] | None): Hot/catchup used counters (mutated).
     tgz_archive_dir (str): Daily archive directory used to reband claims.
@@ -2994,7 +2991,6 @@ def _fill_ingest_band(
     ...   claims={},
     ...   submitted={},
     ...   ingest_pool=None,
-    ...   manager_lock=None,
     ... )
     0
   """
@@ -3141,7 +3137,7 @@ def _fill_ingest_band(
         continue
       try:
         async_res = ingest_pool.apply_async(
-            _ingest_worker, (manager_lock, path),
+            _ingest_worker, (path,),
         )
       except Exception:
         stats["submit_err"] += 1
@@ -3251,7 +3247,6 @@ def _log_orchestrator_ingest_timeout(
   timeout_s = 0.0
   elapsed_s = 0.0
   stage = "unknown"
-  db_shard_lock_s = None
   postgres_s = None
   parse_elapsed_s = None
   err = outcome
@@ -3261,7 +3256,6 @@ def _log_orchestrator_ingest_timeout(
     size_bytes = int(getattr(exc, "size_bytes", 0) or 0)
     elapsed_s = float(getattr(exc, "elapsed_s", 0.0) or 0.0)
     stage = str(getattr(exc, "stage", "") or "unknown")
-    db_shard_lock_s = getattr(exc, "db_shard_lock_s", None)
     postgres_s = getattr(exc, "postgres_s", None)
     parse_elapsed_s = getattr(exc, "parse_elapsed_s", None)
   if result is not None:
@@ -3271,8 +3265,6 @@ def _log_orchestrator_ingest_timeout(
     elapsed_s = float(elapsed_packed or elapsed_s)
     if isinstance(meta, dict):
       stage = str(meta.get("fail_reason") or meta.get("outcome") or stage)
-      if meta.get("db_shard_lock_s") is not None:
-        db_shard_lock_s = meta.get("db_shard_lock_s")
       if meta.get("postgres_s") is not None:
         postgres_s = meta.get("postgres_s")
       if meta.get("parse_elapsed_s") is not None:
@@ -3300,8 +3292,6 @@ def _log_orchestrator_ingest_timeout(
       "elapsed_s=%.1f" % float(elapsed_s),
       "stage=%s" % stage,
   ]
-  if db_shard_lock_s is not None:
-    parts.append("db_shard_lock_s=%.1f" % float(db_shard_lock_s))
   if postgres_s is not None:
     parts.append("postgres_s=%.1f" % float(postgres_s))
   if parse_elapsed_s is not None:
@@ -4591,7 +4581,6 @@ def _ingest_coordinator_fill_tick(
   *,
   client: Any,
   pool_ref: AtomicPoolRef,
-  manager_lock: Any,
   directory: str,
   tgz_archive_dir: str,
   hot_cap: int,
@@ -4616,7 +4605,6 @@ def _ingest_coordinator_fill_tick(
   Args:
     client (Any): job store.
     pool_ref (AtomicPoolRef): Current ingest pool holder.
-    manager_lock (Any): Write lock for ingest workers.
     directory (str): Archive data directory.
     tgz_archive_dir (str): Daily archive directory.
     hot_cap (int): Reserved hot ingest slots.
@@ -4675,7 +4663,6 @@ def _ingest_coordinator_fill_tick(
         claims=ingest_leases,
         submitted=ingest_submitted,
         ingest_pool=pool,
-        manager_lock=manager_lock,
         band_cap=hot_cap,
         **fill_kw,
     )
@@ -4699,7 +4686,6 @@ def _ingest_coordinator_fill_tick(
         claims=ingest_leases,
         submitted=ingest_submitted,
         ingest_pool=pool_ref.get(),
-        manager_lock=manager_lock,
         band_cap=catchup_limit,
         **fill_kw,
     )
@@ -4715,7 +4701,6 @@ def _ingest_coordinator_fill_tick(
         claims=ingest_leases,
         submitted=ingest_submitted,
         ingest_pool=pool_ref.get(),
-        manager_lock=manager_lock,
         **fill_kw,
     )
     did += n
@@ -4736,7 +4721,6 @@ def _ingest_coordinator_fill_tick(
             claims=ingest_leases,
             submitted=ingest_submitted,
             ingest_pool=pool_ref.get(),
-            manager_lock=manager_lock,
             **retry_kw,
         )
         did += n
@@ -4761,7 +4745,6 @@ def _ingest_coordinator_fill_tick(
             claims=ingest_leases,
             submitted=ingest_submitted,
             ingest_pool=pool_ref.get(),
-            manager_lock=manager_lock,
             band_cap=catchup_limit,
             **fill_kw,
         )
@@ -4776,7 +4759,6 @@ def _ingest_coordinator_loop(
   client: Any,
   directory: str,
   tgz_archive_dir: str,
-  manager_lock: Any,
   pool_ref: AtomicPoolRef,
   recycle_gate: IngestRecycleGate,
   barrier: SubsystemShutdownBarrier,
@@ -4802,7 +4784,6 @@ def _ingest_coordinator_loop(
     client (Any): job store.
     directory (str): Archive data directory.
     tgz_archive_dir (str): Daily archive directory.
-    manager_lock (Any): Write lock passed to ingest workers.
     pool_ref (AtomicPoolRef): Current ingest pool published by MainThread.
     recycle_gate (IngestRecycleGate): Pause protocol with MainThread.
     barrier (SubsystemShutdownBarrier): Shared draining/drained Events.
@@ -4904,7 +4885,6 @@ def _ingest_coordinator_loop(
         fill_tick_kw = {
             "client": client,
             "pool_ref": pool_ref,
-            "manager_lock": manager_lock,
             "directory": directory,
             "tgz_archive_dir": tgz_archive_dir,
             "hot_cap": hot_cap,
@@ -5416,7 +5396,6 @@ def run_sync_timedb_queue_orchestrator(
   startdate: Any,
   enddate: Any,
   host_name_ext: str,
-  manager_lock: Any,
   archive_pool: Any,
   *,
   run_once: bool = False,
@@ -5437,7 +5416,6 @@ def run_sync_timedb_queue_orchestrator(
       for entry parity (date filtering remains find/discover responsibility).
     enddate (Any): CLI end date (retained for entry parity).
     host_name_ext (str): Host directory suffix (validated by caller).
-    manager_lock (Any): Manager write lock or shard list.
     archive_pool (Any): Spawn pool for append workers.
     run_once (bool): When True, exit after one idle pass with empty queues and
       no in-flight work (pipeline / once mode).
@@ -5453,7 +5431,7 @@ def run_sync_timedb_queue_orchestrator(
 
   Examples:
     >>> run_sync_timedb_queue_orchestrator(  # doctest: +SKIP
-    ...   "/data", "backlog", None, ".ext", None, None, run_once=True
+    ...   "/data", "backlog", None, ".ext", None, run_once=True
     ... )
   """
   del host_name_ext  # entry parity; discover uses find root + CLI dates
@@ -5622,7 +5600,6 @@ def run_sync_timedb_queue_orchestrator(
             "client": client,
             "directory": directory,
             "tgz_archive_dir": tgz_archive_dir,
-            "manager_lock": manager_lock,
             "pool_ref": pool_ref,
             "recycle_gate": recycle_gate,
             "barrier": barrier,

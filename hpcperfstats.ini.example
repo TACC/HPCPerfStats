@@ -306,9 +306,6 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Dedicated threads that stream sealed/tar archives into the in-process member store (default 4).
 # sync_archive_members_populate_pool_processes = 4
 
-# Absolute write-lock shard count for sync ingest (default 8).
-# sync_write_lock_shards = 8
-
 # Supervisor RSS limit MiB; 0 disables fail-fast exit (default 0).
 # sync_supervisor_rss_limit_mb = 0
 
