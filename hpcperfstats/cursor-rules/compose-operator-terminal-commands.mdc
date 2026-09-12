@@ -621,6 +621,8 @@ The **`hpcperfstats-base`** image ( **`pipeline`**, **`web`**, and siblings buil
 
 **Anti-pattern — empty `stage_` / `vacate` / `janitor: day_close` after leftover claims is a failed grep (hpcperfstats04 2026-09-11):** claims without `stage_enter` mean hang **before** first `_stage_enter` (job-entry remaining-raw / `has_closed_raw_on_disk`), not log-rotation of expected verify soak and not job-entry yield (yield vacates). Empty paste is a **valid** finding.
 
+**Anti-pattern — leftover `stage_enter disk_remaining_raw` without vacate is expected verify soak (hpcperfstats04 2026-09-11):** after H22, leftover claims **do** emit `stage_enter disk_remaining_raw`. No following `vacate` / `wait_on_ingest` is remaining-raw **kick** hang (`kick_closed_raw_paths_to_ingest` after cheap `needs_wait` — H23), not GNU tvf/merge soak. **Corrected:** grep `queue_orchestrator day_close (claim|vacate|stage_)` without `progress day=`; pass is yield/`skip_yield`/`vacate` without occupying inflight on that kick walk. Do not raise `sync_day_close_max_inflight`. Do not call remaining_raw over all tars.
+
 **Anti-pattern — `sys.argv` after `python3 -c` through podman-compose `exec` (hpcperfstats04 2026-09-10):** `.tar` and day tokens after the `-c` payload became **compose args**, not Python argv → **`IndexError: list index out of range`** on `sys.argv[1]`, then `bash: syntax error near unexpected token ';'`. **Corrected:** no argv; `os.listdir` + `chr()` suffix (or skip argv entirely). Chain fallible Python to logs as a **second host-side line** in the same `#### pipeline` fence, not a lone `;` after a broken exec.
 
 **Example** — pipeline block after stall hypothesis:

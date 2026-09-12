@@ -1640,10 +1640,14 @@ def _day_close_complete_wait_on_ingest_handoff(
   Handoff closed raw to ingest and kick verify/delete unblock.
 
   Prefer verify-gated ``complete_handoff_to_ingest``. When that returns
-  empty (verify-handoff false but closed raw still on disk), kick
-  ``kick_closed_raw_paths_to_ingest`` so idle yield still refills ingest.
-  Always call ``kick_closed_raw_unblock`` when present so ``phase=verifying``
-  days start verify instead of only requeueing handoff paths (H19).
+  empty and cheap phase does not already answer ``needs_wait``, kick
+  ``kick_closed_raw_paths_to_ingest`` so idle yield still refills ingest
+  (H17). Skip that remaining-raw kick when cheap ``phase=verifying`` /
+  ``deleting`` / ``verification_complete``+pending already blocked
+  (H23 leftover hang after ``stage_enter disk_remaining_raw``). Always
+  call ``kick_closed_raw_unblock`` when present so leftover verifying
+  days start verify instead of occupying inflight on remaining-raw find
+  (H19).
 
   Args:
     coord (Any): :class:`DayRawRemovalCoordinator` instance.
@@ -1661,7 +1665,10 @@ def _day_close_complete_wait_on_ingest_handoff(
     result = complete_fn(tar_path, reason="day_close_wait_on_ingest")
     if result:
       paths = list(result)
-  if not paths:
+  if (
+      not paths
+      and not _day_close_disk_remaining_raw_blocks(coord, tar_path)
+  ):
     kick_fn = getattr(coord, "kick_closed_raw_paths_to_ingest", None)
     if callable(kick_fn):
       kick_fn(tar_path, reason="day_close_wait_on_ingest")
