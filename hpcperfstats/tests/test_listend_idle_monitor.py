@@ -11,9 +11,67 @@ class _FakeQueue:
     self.method = _FakeQueueMethod(message_count)
 
 
+def _management_http_unavailable(monkeypatch):
+  def _boom(*_a, **_k):
+    raise OSError("management unavailable")
+
+  monkeypatch.setattr("urllib.request.urlopen", _boom)
+
+
+def test_get_rmq_queue_depth_uses_management_messages_ready_when_amqp_is_zero(
+    monkeypatch,
+):
+  """Quorum AMQP message_count is 0; waiting must match rabbitmqctl ready."""
+  import json
+
+  import hpcperfstats.listend as listend
+
+  captured = {}
+
+  class _HttpResp:
+    def read(self):
+      return json.dumps(
+          {
+              "messages_ready": 126034,
+              "messages_unacknowledged": 768,
+              "messages": 126802,
+          }
+      ).encode()
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *_exc):
+      return False
+
+  def _urlopen(req, timeout=None):
+    captured["url"] = getattr(req, "full_url", str(req))
+    captured["timeout"] = timeout
+    return _HttpResp()
+
+  def _amqp_must_not_run(_p):
+    raise AssertionError(
+        "AMQP declare must not hide management messages_ready"
+    )
+
+  monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+  monkeypatch.setattr(listend.pika, "BlockingConnection", _amqp_must_not_run)
+  monkeypatch.setattr(
+      listend,
+      "listend_amqp_connection_parameters",
+      lambda _h: object(),
+  )
+  monkeypatch.setattr(listend.cfg, "get_rmq_server", lambda: "rabbitmq")
+  monkeypatch.setattr(listend.cfg, "get_rmq_queue", lambda: "stampede3")
+
+  assert listend._get_rmq_queue_depth_for_monitor() == 126034
+  assert "/api/queues/%2F/stampede3" in captured["url"]
+
+
 def test_get_rmq_queue_depth_for_monitor_passive_ok(monkeypatch):
   import hpcperfstats.listend as listend
 
+  _management_http_unavailable(monkeypatch)
   declare_calls = []
 
   class _FakeChannel:
@@ -50,6 +108,7 @@ def test_get_rmq_queue_depth_for_monitor_passive_only_returns_na_on_fail(
   """Idle depth must not non-passive-declare; probe failure is n/a not 0."""
   import hpcperfstats.listend as listend
 
+  _management_http_unavailable(monkeypatch)
   declare_calls = []
 
   class _FakeChannel:
@@ -82,6 +141,8 @@ def test_get_rmq_queue_depth_for_monitor_passive_only_returns_na_on_fail(
 
 def test_get_rmq_queue_depth_for_monitor_returns_na_when_connect_fails(monkeypatch):
   import hpcperfstats.listend as listend
+
+  _management_http_unavailable(monkeypatch)
 
   def _boom(_p):
     raise OSError("no broker")

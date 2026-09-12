@@ -60,12 +60,16 @@ from typing import Any, NamedTuple
 import errno
 import heapq
 import itertools
+import json
 import os
 import queue
 import signal
 import sys
 import time
+import urllib.request
+from base64 import b64encode
 from collections import deque
+from urllib.parse import quote
 from threading import Event, Lock, Thread, current_thread, local, main_thread
 from fcntl import LOCK_EX, LOCK_NB, LOCK_UN, flock
 
@@ -1035,30 +1039,51 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
 
 def _get_rmq_queue_depth_for_monitor() -> int | str:
   """
-  Return ``message_count`` for the configured queue.
+  Return ready-queue depth for the configured ingest queue.
 
-  Uses a **separate** short-lived connection. Pika ``BlockingConnection`` and
-  its channels are not thread-safe; the idle monitor runs in a background
-  thread and must not touch the channel used by ``start_consuming()`` in the
-  main thread (that sharing caused ``Channel is closed``, transport state
-  errors, and ``IndexError: pop from an empty deque`` in pika).
-
-  Depth probe is **passive-only** so the idle thread never non-passive-declares
-  (avoids Ra checkout contention with consume setup).
+  Prefers RabbitMQ management HTTP ``messages_ready`` (same field as
+  ``rabbitmqctl list_queues``). AMQP ``queue.declare-ok.message_count`` is
+  0 for quorum queues with consumers. Passive AMQP on a separate
+  short-lived connection is fallback only. Probe failure is ``n/a``, not 0.
 
   Returns:
-    int | str: Message count integer, or ``\"n/a\"`` when the probe fails.
+    int | str: Ready count integer, or ``n/a`` when both probes fail.
 
   Examples:
+    >>> # rabbitmqctl messages_ready=126034 while AMQP message_count=0
     >>> _get_rmq_queue_depth_for_monitor()  # doctest: +SKIP
+    126034
   """
-  parameters = listend_amqp_connection_parameters(cfg.get_rmq_server())
+  host = cfg.get_rmq_server()
+  queue_name = cfg.get_rmq_queue()
+  try:
+    base = os.environ.get(
+        "RABBITMQ_MANAGEMENT_URL", "http://%s:15672" % host)
+    user = os.environ.get("RABBITMQ_MANAGEMENT_USER", "guest")
+    password = os.environ.get("RABBITMQ_MANAGEMENT_PASSWORD", "guest")
+    url = "%s/api/queues/%%2F/%s" % (
+        str(base).rstrip("/"),
+        quote(str(queue_name), safe=""),
+    )
+    token = b64encode(("%s:%s" % (user, password)).encode()).decode()
+    req = urllib.request.Request(
+        url, headers={"Authorization": "Basic %s" % token})
+    with urllib.request.urlopen(req, timeout=2) as resp:
+      data = json.loads(resp.read().decode())
+    ready = data.get("messages_ready")
+    if ready is not None:
+      return int(ready)
+  except Exception as e:
+    if DEBUG:
+      log_print("Failed to get queue depth via management API: %s" % e)
+
+  parameters = listend_amqp_connection_parameters(host)
   connection = None
   try:
     connection = pika.BlockingConnection(parameters)
     channel = connection.channel()
     q = channel.queue_declare(
-        queue=cfg.get_rmq_queue(), durable=True, passive=True)
+        queue=queue_name, durable=True, passive=True)
     return q.method.message_count
   except Exception as e:
     if DEBUG:
@@ -2703,14 +2728,9 @@ def _amqp_consumer_main(session: _AmqpConsumeSession) -> None:
       if int(_amqp_consumer_count) <= 1:
         set_amqp_connection(connection, channel)
       if session.index == 0:
-        try:
-          q = channel.queue_declare(
-              queue=queue_name, durable=True, passive=True)
-          log_print(
-              "Messages waiting to be consumed at startup: %d" %
-              q.method.message_count)
-        except Exception as e:
-          log_print("Failed to get startup queue depth: %s" % e)
+        log_print(
+            "Messages waiting to be consumed at startup: %s" %
+            _get_rmq_queue_depth_for_monitor())
       prefetch = _listend_qos_prefetch_count()
       channel.basic_qos(prefetch_count=prefetch)
       _amqp_applied_prefetch = prefetch
