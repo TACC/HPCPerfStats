@@ -117,8 +117,8 @@ archive_dir = %(data_dir)s/archive
 # Daily sealed monitor archive directory.
 daily_archive_dir = %(data_dir)s/daily_archive
 
-# Absolute update_metrics + plot/detail prewarm thread pool size (default 24).
-# metrics_pool_processes = 24
+# Absolute update_metrics + plot/detail prewarm thread pool size (default 32).
+# metrics_pool_processes = 32
 
 # Metrics scheduler: strict_date, global_fifo, or global_priority (default global_priority).
 # metrics_scheduler_mode = global_priority
@@ -203,8 +203,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # End edge tolerance seconds (default 600): MAX(time) in window must be >= end - margin.
 # metrics_readiness_end_margin_seconds = 600
 
-# Absolute sync_timedb ingest pool size; archive discovery/day-raw use the same getter (default 16).
-# sync_ingest_pool_processes = 16
+# Absolute sync_timedb ingest pool size; archive discovery/day-raw use the same getter (default 64).
+# sync_ingest_pool_processes = 64
 
 # Concurrent daily-tar append slots / archive spawn pool size (default 2).
 # sync_archive_pool_processes = 2

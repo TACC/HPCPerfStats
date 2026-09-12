@@ -227,7 +227,7 @@ INI_OPTION_DEFAULTS = {
     'db_statement_timeout_ms': '120000',
     'db_idle_in_transaction_session_timeout_ms': '300000',
     'separate_test_login': 'no',
-    'metrics_pool_processes': '24',
+    'metrics_pool_processes': '32',
     'metrics_scheduler_mode': 'global_priority',
     'metrics_scheduler_prefetch_chunks': '8',
     'metrics_scheduler_ready_queue_target': '100',
@@ -258,7 +258,7 @@ INI_OPTION_DEFAULTS = {
     'metrics_readiness_require_window_coverage': 'yes',
     'metrics_readiness_start_margin_seconds': '600',
     'metrics_readiness_end_margin_seconds': '600',
-    'sync_ingest_pool_processes': '16',
+    'sync_ingest_pool_processes': '64',
     'sync_archive_pool_processes': '2',
         'sync_ingest_queue_max_size': '3000',
     'sync_ingest_rescan_mtime_days': '1',
@@ -1916,7 +1916,7 @@ def get_metrics_pool_processes() -> Any:
   """
   Absolute metrics (+ prewarm) thread pool size.
 
-  INI ``[PIPELINE] metrics_pool_processes`` (default **24**). The option name
+  INI ``[PIPELINE] metrics_pool_processes`` (default **32**). The option name
   is retained for deployment compatibility; workers are in-process threads.
 
   Returns:
@@ -2117,7 +2117,7 @@ def get_sync_ingest_pool_processes() -> Any:
   Absolute ``sync_timedb`` ingest process pool size.
 
   Also used as the archive discovery / day-raw thread ceiling (replace,
-  do not alias a separate discovery key). INI default **16**.
+  do not alias a separate discovery key). INI default **64**.
 
   Returns:
     Any: Positive int process/thread count.
