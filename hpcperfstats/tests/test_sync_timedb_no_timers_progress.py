@@ -15,39 +15,23 @@ from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ingest_timeout
 from hpcperfstats.dbload.lib import sync_timedb_progress_io as progress_io
 
 
-def test_resolve_timeout_always_zero_cannot_rearm(monkeypatch, tmp_path):
-  """Wall soft-kill cannot be re-armed via size helpers even if floor patched."""
-  monkeypatch.setattr(
-      ingest_timeout.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 9999.0,
-  )
-  monkeypatch.setattr(
-      ingest_timeout.cfg,
-      "get_sync_ingest_per_file_timeout_s_per_mib",
-      lambda: 99.0,
-  )
-  monkeypatch.setattr(
-      ingest_timeout.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 99999.0,
-  )
-  stats = tmp_path / "a"
-  stats.write_bytes(b"x" * 1024)
-  assert ingest_timeout.resolve_ingest_per_file_timeout_s(str(stats)) == 0.0
-  assert ingest_timeout.resolve_ingest_per_file_timeout_for_size_bytes(1 << 40) == 0.0
-  assert (
-      ingest_timeout.max_ingest_per_file_timeout_for_paths([str(stats)]) == 0.0
-  )
-  monkeypatch.undo()
-  assert cfg.get_sync_ingest_per_file_timeout_s() == 0.0
-  assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == 0.0
-  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 0
+def test_resolve_timeout_helpers_gone():
+  """Wall soft-kill names are not importable."""
+  for name in (
+      "resolve_ingest_per_file_timeout_s",
+      "resolve_ingest_per_file_timeout_for_size_bytes",
+      "max_ingest_per_file_timeout_for_paths",
+      "stall_abort_polls_for_paths",
+      "stall_abort_polls_for_sealed_archives",
+  ):
+    assert not hasattr(ingest_timeout, name), name
+  assert not hasattr(cfg, "get_sync_ingest_per_file_timeout_s")
+  assert not hasattr(cfg, "get_sync_ingest_per_file_timeout_s_per_mib")
+  assert not hasattr(cfg, "get_sync_pool_stall_abort_after_timeouts")
 
 
 def test_stall_abort_polls_disabled_pool_reclaim():
-  """Poll-count stall abort is deleted (0); recover has no exit-124 wall."""
-  assert ingest_timeout.stall_abort_polls_for_paths(["/a"]) == 0
-  assert (
-      ingest_timeout.stall_abort_polls_for_sealed_archives(["/a.tar.zst"]) == 0
-  )
-  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 0
+  """Poll-count stall abort name is gone; recover has no exit-124 wall."""
   src = inspect.getsource(mph)
   assert "idle pool recover exceeded wall_s" not in src
   assert "recover_thread.join()" in src
@@ -163,4 +147,4 @@ def test_arch_no_internal_wall_timers_append_and_ingest():
   assert "setitimer" not in timed_src
   assert "signal.alarm" not in timed_src
   assert "signal.signal" not in timed_src
-  assert ingest_timeout.stall_abort_polls_for_paths(["x"]) == 0
+  assert not hasattr(ingest_timeout, "stall_abort_polls_for_paths")

@@ -30,8 +30,6 @@ Attributes:
     WARN.
   _archive_pre_append_member_lookup: ContextVar marking archive-pool
     pre-append lookup.
-  _ingest_task_deadline_monotonic: Retired ingest wall-deadline ContextVar.
-  _ingest_task_effective_timeout_s: Retired ingest timeout ContextVar.
 """
 from __future__ import annotations
 
@@ -61,14 +59,6 @@ _EMPTY_RECOVER_DEFER_LOG_STATE: Dict[str, Dict[str, float]] = {}
 _archive_pre_append_member_lookup = contextvars.ContextVar(
     "sync_timedb_archive_pre_append_member_lookup",
     default=False,
-)
-_ingest_task_deadline_monotonic = contextvars.ContextVar(
-    "ingest_task_deadline_monotonic",
-    default=None,
-)
-_ingest_task_effective_timeout_s = contextvars.ContextVar(
-    "ingest_task_effective_timeout_s",
-    default=None,
 )
 
 _SELF_INGEST_TAR_HOT_REASONS = frozenset({
@@ -265,156 +255,6 @@ def is_populate_pool_unavailable_error(exc: Any) -> bool:
         return False
     msg = str(exc).lower()
     return "populate-pool unavailable" in msg or "refusing sealed stream" in msg
-
-
-def set_ingest_task_deadline_monotonic(deadline: Any) -> Any:
-    """
-    Set monotonic deadline for ingest worker archive lookups.
-
-    Args:
-      deadline (Any): Monotonic deadline, or None.
-
-    Returns:
-      Any: ContextVar reset token.
-
-    Examples:
-      >>> token = set_ingest_task_deadline_monotonic(None)
-      >>> reset_ingest_task_deadline_monotonic(token)
-    """
-    return _ingest_task_deadline_monotonic.set(deadline)
-
-
-def reset_ingest_task_deadline_monotonic(token: Any) -> None:
-    """
-    Restore the previous ingest deadline ContextVar.
-
-    Args:
-      token (Any): Token from set_ingest_task_deadline_monotonic.
-
-    Returns:
-      None
-
-    Examples:
-      >>> token = set_ingest_task_deadline_monotonic(1.0)
-      >>> reset_ingest_task_deadline_monotonic(token)
-    """
-    _ingest_task_deadline_monotonic.reset(token)
-
-
-def get_ingest_task_deadline_monotonic() -> Any:
-    """
-    Return the ingest task deadline, or None.
-
-    Returns:
-      Any: Monotonic deadline.
-
-    Examples:
-      >>> get_ingest_task_deadline_monotonic() is None
-      True
-    """
-    return _ingest_task_deadline_monotonic.get()
-
-
-def extend_ingest_task_deadline_monotonic(delta_seconds: int) -> None:
-    """
-    Extend the active ingest worker deadline by populate-wait wall time.
-
-    Args:
-      delta_seconds (int): Seconds to add.
-
-    Returns:
-      None
-
-    Examples:
-      >>> extend_ingest_task_deadline_monotonic(0)
-    """
-    delta_seconds = float(delta_seconds)
-    if delta_seconds <= 0.0:
-        return
-    deadline = get_ingest_task_deadline_monotonic()
-    if deadline is None:
-        return
-    _ingest_task_deadline_monotonic.set(float(deadline) + delta_seconds)
-
-
-def set_ingest_task_effective_timeout_s(timeout_s: Any) -> Any:
-    """
-    Store the resolved per-file ingest budget for this worker task.
-
-    Args:
-      timeout_s (Any): Seconds, or None.
-
-    Returns:
-      Any: ContextVar reset token.
-
-    Examples:
-      >>> token = set_ingest_task_effective_timeout_s(None)
-      >>> reset_ingest_task_effective_timeout_s(token)
-    """
-    return _ingest_task_effective_timeout_s.set(timeout_s)
-
-
-def reset_ingest_task_effective_timeout_s(token: Any) -> None:
-    """
-    Restore the previous ingest effective-timeout ContextVar.
-
-    Args:
-      token (Any): Token from set_ingest_task_effective_timeout_s.
-
-    Returns:
-      None
-
-    Examples:
-      >>> token = set_ingest_task_effective_timeout_s(1.0)
-      >>> reset_ingest_task_effective_timeout_s(token)
-    """
-    _ingest_task_effective_timeout_s.reset(token)
-
-
-def get_ingest_task_effective_timeout_s() -> Any:
-    """
-    Return the ingest effective timeout, or None.
-
-    Returns:
-      Any: Seconds.
-
-    Examples:
-      >>> get_ingest_task_effective_timeout_s() is None
-      True
-    """
-    return _ingest_task_effective_timeout_s.get()
-
-
-def _raise_if_ingest_deadline_exceeded() -> None:
-    """
-    Wall-budget archive-lookup abort — retired (no-op).
-
-    Returns:
-      None
-
-    Examples:
-      >>> _raise_if_ingest_deadline_exceeded()
-    """
-    return
-
-
-def _raise_if_ingest_deadline_exceeded_when_enabled(
-    respect_ingest_deadline: Any,
-) -> None:
-    """
-    No-op deadline check retained for caller compatibility.
-
-    Args:
-      respect_ingest_deadline (Any): Unused flag.
-
-    Returns:
-      None
-
-    Examples:
-      >>> _raise_if_ingest_deadline_exceeded_when_enabled(True)
-    """
-    if respect_ingest_deadline:
-        _raise_if_ingest_deadline_exceeded()
 
 
 def _identity_pair(identity: Any) -> tuple:
@@ -1732,8 +1572,7 @@ def wait_for_complete_members(
       ...   timeout_s=0.01,
       ... )
     """
-    del canonical
-    _raise_if_ingest_deadline_exceeded_when_enabled(respect_ingest_deadline)
+    del canonical, respect_ingest_deadline
     _raise_if_archive_day_ingest_skip(keys, sealed_path)
     store = require_process_archive_members_store()
     timeout_s = float(_populate_max_seconds() or populate_wait_max_seconds() or 30)

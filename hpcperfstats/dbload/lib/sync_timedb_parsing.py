@@ -927,19 +927,9 @@ def _maybe_raise_ingest_read_deadline(line_idx: Any, bytes_read: Any) -> None:
   if line_idx and line_idx % _READ_LOOP_DEADLINE_EVERY_LINES == 0:
     touch_ingest_progress()
     raise_if_ingest_idle_stalled(stage="idle_stall")
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-        _raise_if_ingest_deadline_exceeded,
-    )
-
-    _raise_if_ingest_deadline_exceeded()
   if bytes_read and bytes_read % _READ_LOOP_DEADLINE_EVERY_BYTES == 0:
     touch_ingest_progress()
     raise_if_ingest_idle_stalled(stage="idle_stall")
-    from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-        _raise_if_ingest_deadline_exceeded,
-    )
-
-    _raise_if_ingest_deadline_exceeded()
 
 
 @contextmanager
@@ -1259,15 +1249,11 @@ def find_processing_start_index(
   need_archival = True
   for i, line in enumerate(lines):
     if i and i % 1000 == 0:
-      from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-          _raise_if_ingest_deadline_exceeded,
-      )
       from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
           update_worker_substage,
       )
 
       update_worker_substage("duplicate_scan_lines")
-      _raise_if_ingest_deadline_exceeded()
     if not line:
       continue
     s = line.lstrip()
@@ -1306,9 +1292,6 @@ def find_processing_start_index_streaming(
   Examples:
     >>> find_processing_start_index_streaming("x", None, None)  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      _raise_if_ingest_deadline_exceeded,
-  )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       update_worker_substage,
   )
@@ -1320,7 +1303,6 @@ def find_processing_start_index_streaming(
   for line in iter_stats_file_lines(stats_file):
     if line_idx and line_idx % 1000 == 0:
       update_worker_substage("duplicate_scan_streaming")
-      _raise_if_ingest_deadline_exceeded()
     if not line:
       line_idx += 1
       continue
@@ -1460,9 +1442,6 @@ def tail_window_timestamps_all_present_streaming(
     >>> tail_window_timestamps_all_present_streaming("x", None, None, None)
   """
   import hpcperfstats.dbload.lib.conf_parser as cfg
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      _raise_if_ingest_deadline_exceeded,
-  )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
       update_worker_substage,
   )
@@ -1474,7 +1453,6 @@ def tail_window_timestamps_all_present_streaming(
   if not lines:
     return False
   for line in lines:
-    _raise_if_ingest_deadline_exceeded()
     s = line.lstrip()
     if not s or not s[0].isdigit():
       continue

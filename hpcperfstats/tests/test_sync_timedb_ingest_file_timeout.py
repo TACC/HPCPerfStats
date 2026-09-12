@@ -36,36 +36,9 @@ _MAX_TIMEOUT_DEFAULT = 86400.0
 
 
 def _default_timeout_getters(monkeypatch):
-  # Kept for older tests that still patch floor/per_mib; resolvers ignore them.
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: _FLOOR_DEFAULT)
-  monkeypatch.setattr(
-      st.cfg,
-      "get_sync_ingest_per_file_timeout_s_per_mib",
-      lambda: _PER_MIB_DEFAULT,
-  )
   monkeypatch.setattr(
       st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: _MAX_TIMEOUT_DEFAULT,
   )
-
-
-def test_resolve_ingest_per_file_timeout_s_table(
-    monkeypatch, tmp_path,
-):
-  """Wall soft-kill deleted: size table always resolves to 0."""
-  _default_timeout_getters(monkeypatch)
-  stats_file = tmp_path / "segment"
-  stats_file.write_bytes(b"x")
-  for size_bytes in (0, _mib_bytes(66), _mib_bytes(30720), _mib_bytes(35000)):
-    _patch_stats_file_size_bytes(monkeypatch, lambda _p, s=size_bytes: s)
-    assert st.resolve_ingest_per_file_timeout_s(str(stats_file)) == 0.0
-
-
-def test_resolve_ingest_per_file_timeout_s_disabled_when_floor_zero(monkeypatch, tmp_path):
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.0)
-  stats_file = tmp_path / "segment"
-  stats_file.write_bytes(b"x")
-  _patch_stats_file_size_bytes(monkeypatch, lambda _p: _mib_bytes(5120))
-  assert st.resolve_ingest_per_file_timeout_s(str(stats_file)) == 0.0
 
 
 def test_run_ingest_timed_uses_resolved_timeout(monkeypatch, tmp_path):
@@ -92,102 +65,33 @@ def test_ingest_per_file_timeout_log_min_default():
   assert st.INGEST_PER_FILE_TIMEOUT_LOG_MIN_S == 7200.0
 
 
-def test_c672_017_class_budget_covers_slow_cohort_success(monkeypatch, tmp_path):
-  """Wall deleted: giant cohort no longer gets an internal size budget."""
-  _default_timeout_getters(monkeypatch)
-  stats_file = tmp_path / "c672-017-class"
-  size_bytes = 14984928
-  stats_file.write_bytes(b"x")
-  _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
-  assert st.resolve_ingest_per_file_timeout_s(str(stats_file)) == 0.0
+def test_c672_017_class_budget_covers_slow_cohort_success():
+  """Internal size budget helper is gone; leftover purge covers absence."""
+  assert not hasattr(st, "resolve_ingest_per_file_timeout_s")
 
 
 def test_long_timeout_budget_no_warn_log(monkeypatch, tmp_path, capsys):
-  """With wall deleted, long-budget WARN path is idle (timeout_s always 0)."""
-  _default_timeout_getters(monkeypatch)
+  """Long-budget WARN path stays idle when timeout_s is 0."""
   stats_file = tmp_path / "segment"
-  size_bytes = _mib_bytes(1500)
   stats_file.write_bytes(b"x")
-  _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
-  timeout_s = st.resolve_ingest_per_file_timeout_s(str(stats_file))
-  assert timeout_s == 0.0
-  st._log_long_ingest_timeout_budget_if_needed(str(stats_file), timeout_s)
+  st._log_long_ingest_timeout_budget_if_needed(str(stats_file), 0.0)
   out = capsys.readouterr().out
   assert "WARN: ingest per-file timeout budget" not in out
 
 
 def test_long_timeout_budget_skips_small_files(monkeypatch, tmp_path, capsys):
-  _default_timeout_getters(monkeypatch)
   stats_file = tmp_path / "segment"
-  size_bytes = _mib_bytes(66)
   stats_file.write_bytes(b"x")
-  _patch_stats_file_size_bytes(monkeypatch, lambda _p: size_bytes)
-  timeout_s = st.resolve_ingest_per_file_timeout_s(str(stats_file))
-  assert timeout_s < st.INGEST_PER_FILE_TIMEOUT_LOG_MIN_S
-  st._log_long_ingest_timeout_budget_if_needed(str(stats_file), timeout_s)
+  st._log_long_ingest_timeout_budget_if_needed(str(stats_file), 0.0)
   assert "WARN: ingest per-file timeout budget" not in capsys.readouterr().out
 
 
-def test_warn_if_pool_stall_wall_below_ingest_timeout_max(monkeypatch, capsys):
-  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 192)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0)
-  st._warn_if_pool_stall_wall_below_ingest_timeout_max()
-  out = capsys.readouterr().out
-  assert "WARN: sync_pool stall ceiling wall" in out
-  assert "sync_ingest_per_file_timeout_max_s=14400s" in out
-  assert "sync_pool_stall_abort_after_timeouts ceiling to at least 2881" in out
-
-
-def test_warn_if_pool_stall_wall_ok_at_shipped_defaults(monkeypatch, capsys):
-  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 17320)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 86400.0)
-  st._warn_if_pool_stall_wall_below_ingest_timeout_max()
-  assert "WARN: sync_pool stall ceiling wall" not in capsys.readouterr().out
-
-
-def test_stall_abort_polls_for_batch_small_files(monkeypatch, tmp_path):
-  """Stall abort wall deleted — always 0 polls."""
-  _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 17320)
-  small = tmp_path / "small"
-  small.write_bytes(b"x" * 1024)
-  assert st._stall_abort_polls_for_batch([str(small)]) == 0
-
-
-def test_stall_abort_polls_for_batch_large_file(monkeypatch, tmp_path):
-  _default_timeout_getters(monkeypatch)
-  large = tmp_path / "large"
-  large.write_bytes(b"x")
-  _patch_stats_file_size_bytes(monkeypatch, lambda _p: _mib_bytes(30720))
-  assert st.resolve_ingest_per_file_timeout_s(str(large)) == 0.0
-  assert st._stall_abort_polls_for_batch([str(large)]) == 0
-
-
-def test_stall_abort_polls_scales_to_30gib_budget(monkeypatch, tmp_path):
-  _default_timeout_getters(monkeypatch)
-  giant = tmp_path / "giant30g"
-  giant.write_bytes(b"x")
-  _patch_stats_file_size_bytes(monkeypatch, lambda _p: _mib_bytes(30720))
-  assert st._stall_abort_polls_for_batch([str(giant)]) == 0
-
-
-def test_stall_abort_polls_includes_grace_beyond_batch_max(monkeypatch, tmp_path):
-  _default_timeout_getters(monkeypatch)
-  small = tmp_path / "small"
-  small.write_bytes(b"x")
-  assert ingest_timeout_mod.stall_abort_polls_for_paths([str(small)]) == 0
-
-
-def test_stall_abort_polls_respects_ini_ceiling(monkeypatch, tmp_path):
-  """INI ceiling cannot re-arm poll-count stall abort."""
-  _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100)
-  large = tmp_path / "large"
-  large.write_bytes(b"x")
-  assert st._stall_abort_polls_for_batch([str(large)]) == 0
+def test_warn_if_pool_stall_wall_helper_gone():
+  assert not hasattr(st, "_warn_if_pool_stall_wall_below_ingest_timeout_max")
+  assert not hasattr(st, "_stall_abort_polls_for_batch")
+  assert not hasattr(ingest_timeout_mod, "stall_abort_polls_for_paths")
+  assert not hasattr(ingest_timeout_mod, "stall_abort_polls_for_sealed_archives")
 
 
 def test_calendar_day_from_sealed_archive_path(tmp_path):
@@ -203,46 +107,16 @@ def test_calendar_day_from_sealed_archive_path(tmp_path):
   ) == "2024-03-15"
 
 
-def test_stall_abort_polls_for_sealed_archives_respects_ini_ceiling(monkeypatch, tmp_path):
-  _default_timeout_getters(monkeypatch)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 100)
-  from hpcperfstats.dbload.lib import (
-    sync_timedb_ingest_timeout as ingest_timeout_mod,
-  )
-
-  monkeypatch.setattr(
-      ingest_timeout_mod,
-      "_store_member_count_for_sealed_day",
-      lambda _day: 500,
-  )
-  sealed = tmp_path / "2024-01-01.tar.zst"
-  sealed.write_bytes(b"x")
-  monkeypatch.setattr(ingest_timeout_mod.os.path, "getsize", lambda _p: 64 * 1024 * 1024)
-  assert ingest_timeout_mod.stall_abort_polls_for_sealed_archives([str(sealed)]) == 0
-
-
-def test_raise_if_ingest_per_file_deadline_uses_effective_timeout(monkeypatch):
-  """Wall deadline branch deleted — past ContextVar deadline is a no-op."""
-  import time
-
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      reset_ingest_task_deadline_monotonic,
-      reset_ingest_task_effective_timeout_s,
-      set_ingest_task_deadline_monotonic,
-      set_ingest_task_effective_timeout_s,
-  )
+def test_raise_if_ingest_per_file_deadline_idle_only(monkeypatch):
+  """Idle stall with idle_s=0 must not raise."""
   from hpcperfstats.dbload.lib import sync_timedb_ingest_progress as prog
 
-  deadline_token = set_ingest_task_deadline_monotonic(time.monotonic() - 1.0)
-  effective_token = set_ingest_task_effective_timeout_s(5183.0)
+  del monkeypatch
   toks = prog.begin_ingest_progress("/tmp/f", idle_s=0.0)
   try:
     st._raise_if_ingest_per_file_deadline_exceeded("/tmp/f", "db_write_host")
   finally:
     prog.end_ingest_progress(toks)
-    reset_ingest_task_effective_timeout_s(effective_token)
-    reset_ingest_task_deadline_monotonic(deadline_token)
 
 
 def test_ingest_remaining_count_absent():
@@ -259,38 +133,15 @@ def test_ingest_remaining_count_absent():
 
 
 
-def test_extend_ingest_task_deadline_monotonic():
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      extend_ingest_task_deadline_monotonic,
-      get_ingest_task_deadline_monotonic,
-      reset_ingest_task_deadline_monotonic,
-      set_ingest_task_deadline_monotonic,
-  )
-
-  token = set_ingest_task_deadline_monotonic(100.0)
-  try:
-    extend_ingest_task_deadline_monotonic(0.0)
-    assert get_ingest_task_deadline_monotonic() == 100.0
-    extend_ingest_task_deadline_monotonic(1.5)
-    assert get_ingest_task_deadline_monotonic() == 101.5
-  finally:
-    reset_ingest_task_deadline_monotonic(token)
-
-
 def test_suspend_sigalrm_extends_deadline_monotonic(monkeypatch):
-  """Wall deleted: suspend touches idle progress; does not extend wall deadline."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      get_ingest_task_deadline_monotonic,
-      reset_ingest_task_deadline_monotonic,
-      set_ingest_task_deadline_monotonic,
-  )
+  """Suspend touches idle progress; wall deadline ContextVars are gone."""
   from hpcperfstats.dbload.lib import sync_timedb_ingest_progress as prog
   from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
       suspend_ingest_sigalrm_for_populate_wait,
   )
+  from hpcperfstats.dbload.lib import sync_timedb_archive_members_coord as coord
 
-  base = time.monotonic() + 2.0
-  token = set_ingest_task_deadline_monotonic(base)
+  del monkeypatch
   clock = {"t": 10.0}
   toks = prog.begin_ingest_progress("/raw/a", idle_s=100.0, clock=lambda: clock["t"])
   try:
@@ -298,10 +149,9 @@ def test_suspend_sigalrm_extends_deadline_monotonic(monkeypatch):
     assert prog.get_ingest_last_progress_mono() == 10.0
     with suspend_ingest_sigalrm_for_populate_wait():
       clock["t"] = 40.0
-    assert get_ingest_task_deadline_monotonic() == base
+    assert not hasattr(coord, "get_ingest_task_deadline_monotonic")
   finally:
     prog.end_ingest_progress(toks)
-    reset_ingest_task_deadline_monotonic(token)
 
 
 @pytest.mark.skipif(not _SIGALRM_AVAILABLE, reason="SIGALRM not available")
@@ -319,8 +169,6 @@ def test_ingest_populate_wait_survives_sigalrm(monkeypatch, tmp_path):
     set_process_archive_members_store,
   )
 
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.15)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s_per_mib", lambda: 0.0)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 0.15)
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_cache_enabled",
@@ -372,8 +220,7 @@ def test_ingest_populate_wait_survives_sigalrm(monkeypatch, tmp_path):
 
 
 def test_parse_still_times_out_without_populate_wait(monkeypatch, tmp_path):
-  """Wall deleted: short sleep without checkpoints must not soft-kill."""
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.1)
+  """Idle stall disabled: short sleep without checkpoints must not soft-kill."""
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 0.0)
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "clear_worker_stage", lambda: None, raising=False)
@@ -422,8 +269,6 @@ def test_ingest_timeout_during_streaming_parse_not_quarantined(monkeypatch, tmp_
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "_log_ingest_per_file_timeout", lambda *_a, **_k: None)
-  # Disable SIGALRM wrapper so the raised timeout is caught by the outer handler.
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.0)
 
   result = st._parse_stats_file_payload(target)
   (
@@ -507,46 +352,29 @@ def test_log_ingest_per_file_timeout_includes_size_and_rate(capsys, tmp_path):
 
 
 def test_suspend_sigalrm_for_non_work_extends_deadline_monotonic(monkeypatch):
-  """Wall deleted: non-work suspend touches idle; wall deadline unchanged."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      get_ingest_task_deadline_monotonic,
-      reset_ingest_task_deadline_monotonic,
-      set_ingest_task_deadline_monotonic,
-  )
+  """Non-work suspend must not require wall deadline ContextVars."""
   from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
       suspend_ingest_sigalrm_for_non_work_wait,
   )
+  from hpcperfstats.dbload.lib import sync_timedb_archive_members_coord as coord
 
-  base = time.monotonic() + 2.0
-  token = set_ingest_task_deadline_monotonic(base)
-  try:
-    with suspend_ingest_sigalrm_for_non_work_wait():
-      time.sleep(0.05)
-    assert get_ingest_task_deadline_monotonic() == base
-  finally:
-    reset_ingest_task_deadline_monotonic(token)
+  del monkeypatch
+  with suspend_ingest_sigalrm_for_non_work_wait():
+    time.sleep(0.01)
+  assert not hasattr(coord, "set_ingest_task_deadline_monotonic")
 
 
 def test_ingest_write_timing_accumulates_postgres_s(monkeypatch):
-  """ORM write timing context accumulates postgres_s without changing the deadline."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      get_ingest_task_deadline_monotonic,
-      reset_ingest_task_deadline_monotonic,
-      set_ingest_task_deadline_monotonic,
-  )
-
+  """ORM write timing context accumulates postgres_s without a wall deadline."""
+  del monkeypatch
   st._reset_ingest_write_timing()
-  base = time.monotonic() + 5.0
-  token = set_ingest_task_deadline_monotonic(base)
   try:
     with st._held_ingest_write_timing():
       time.sleep(0.05)
     snap = st._snapshot_ingest_write_timing()
-    assert get_ingest_task_deadline_monotonic() == base
     assert "db_shard_lock_s" not in snap
     assert snap["postgres_s"] >= 0.03
   finally:
-    reset_ingest_task_deadline_monotonic(token)
     st._reset_ingest_write_timing()
 
 
@@ -651,12 +479,10 @@ def test_idle_stall_progress_resets_window(monkeypatch):
 
 def test_run_ingest_timed_wall_b_disabled_uses_idle_only(monkeypatch, tmp_path):
   """Wall soft-kill deleted; idle progress still begins when idle_s > 0."""
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 0.0)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 30.0)
   stats = tmp_path / "seg"
   stats.write_bytes(b"x")
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: 10)
-  assert st.resolve_ingest_per_file_timeout_s(str(stats)) == 0.0
   seen = {"n": 0}
 
   def _body():

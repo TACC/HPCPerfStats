@@ -426,27 +426,6 @@ class StartupArchiveScanCoordinator:
     self._log_snapshot_ready(published, wait_s)
     return published
 
-  def wait_or_build_snapshot(
-    self,
-    *,
-    build_fn: Optional[Callable[[], ArchiveMaintenanceSnapshot]] = None,
-  ) -> ArchiveMaintenanceSnapshot:
-    """
-    Backward-compatible alias; never returns None.
-    
-    Args:
-      build_fn (Optional[Callable[[], ArchiveMaintenanceSnapshot]]): Build fn,
-      or None when absent.
-    
-    Returns:
-      ArchiveMaintenanceSnapshot: ArchiveMaintenanceSnapshot produced by this
-      call.
-    
-    Examples:
-      >>> StartupArchiveScanCoordinator().wait_or_build_snapshot(None)
-    """
-    return self.wait_for_snapshot(allow_build=True, build_fn=build_fn)
-
   def _default_build(self) -> ArchiveMaintenanceSnapshot:
     """
     Internal helper to handle default build.

@@ -219,16 +219,14 @@ def test_close_pool_bounded_terminates_when_worker_dead():
 
 
 def test_imap_unordered_watch_pool_aborts_on_stuck_worker_stall(monkeypatch):
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
-      lambda: 2,
-  )
+  del monkeypatch
   pool = _BlockingPool()
   iterator = mph.imap_unordered_watch_pool(
       pool,
       lambda x: x,
       [1],
       poll_timeout_s=0.01,
+      stall_abort_after_timeouts=2,
       context="test_stall",
   )
   with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
@@ -237,10 +235,6 @@ def test_imap_unordered_watch_pool_aborts_on_stuck_worker_stall(monkeypatch):
 
 
 def test_imap_stall_logs_before_raise(monkeypatch):
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
-      lambda: 2,
-  )
   logs = []
   monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
   pool = _BlockingPool()
@@ -249,6 +243,7 @@ def test_imap_stall_logs_before_raise(monkeypatch):
       lambda x: x,
       [1],
       poll_timeout_s=0.01,
+      stall_abort_after_timeouts=2,
       context="test_stall_log",
   )
   with pytest.raises(mph.MultiprocessingPoolStallError):
@@ -258,10 +253,7 @@ def test_imap_stall_logs_before_raise(monkeypatch):
 
 
 def test_imap_stall_warning_callback(monkeypatch):
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
-      lambda: 4,
-  )
+  del monkeypatch
   warnings = []
 
   def on_stall_warning(consecutive, abort_after, poll_timeout_s, context):
@@ -275,6 +267,7 @@ def test_imap_stall_warning_callback(monkeypatch):
       lambda x: x,
       [1],
       poll_timeout_s=0.01,
+      stall_abort_after_timeouts=4,
       context="test_warn",
       on_stall_warning=on_stall_warning,
   )
@@ -286,10 +279,7 @@ def test_imap_stall_warning_callback(monkeypatch):
 
 
 def test_imap_unordered_watch_pool_honors_stall_abort_override(monkeypatch):
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
-      lambda: 100,
-  )
+  del monkeypatch
   warnings = []
 
   def on_stall_warning(consecutive, abort_after, poll_timeout_s, context):
@@ -311,10 +301,6 @@ def test_imap_unordered_watch_pool_honors_stall_abort_override(monkeypatch):
 
 
 def test_imap_stall_fatal_summary_appended_to_error(monkeypatch):
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
-      lambda: 2,
-  )
   logs = []
   monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
 
@@ -328,6 +314,7 @@ def test_imap_stall_fatal_summary_appended_to_error(monkeypatch):
       lambda x: x,
       [1],
       poll_timeout_s=0.01,
+      stall_abort_after_timeouts=2,
       context="test_fatal_summary",
       on_stall_fatal_summary=on_stall_fatal_summary,
   )
@@ -364,16 +351,14 @@ class _DeferStallPool:
 
 
 def test_imap_stall_counter_resets_during_store_populate_progress(monkeypatch):
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
-      lambda: 2,
-  )
+  del monkeypatch
   pool = _DeferStallPool(release_after=5)
   iterator = mph.imap_unordered_watch_pool(
       pool,
       lambda x: x,
       [42],
       poll_timeout_s=0.01,
+      stall_abort_after_timeouts=2,
       on_stall_poll=lambda *_a, **_k: True,
   )
   assert next(iterator) == 42
@@ -877,10 +862,6 @@ def test_imap_unordered_watch_pool_logs_stall_poll_failure(monkeypatch):
   logs = []
   mph.reset_zombie_reap_observability_for_tests()
   monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
-  monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_pool_stall_abort_after_timeouts",
-      lambda: 50,
-  )
   pool = _DeferStallPool(release_after=2)
 
   def _boom(*_a, **_k):
@@ -891,6 +872,7 @@ def test_imap_unordered_watch_pool_logs_stall_poll_failure(monkeypatch):
       lambda x: x,
       [7],
       poll_timeout_s=0.01,
+      stall_abort_after_timeouts=50,
       on_stall_poll=_boom,
   )
   assert next(iterator) == 7
@@ -1255,15 +1237,13 @@ def test_imap_sliding_window_watch_pool_peak_concurrency():
 
 
 def test_imap_sliding_window_recomputes_stall_abort_for_in_flight(monkeypatch):
-  """Stall abort polls stay 0 (wall deleted); polls_fn still consulted."""
-  from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as timeout_mod
-
+  """Polls_fn still consulted; wall abort stays 0 when the helper returns 0."""
+  del monkeypatch
   recorded = []
 
   def _polls_fn(in_flight):
-    value = timeout_mod.stall_abort_polls_for_paths(in_flight)
-    recorded.append((list(in_flight), value))
-    return value
+    recorded.append((list(in_flight), 0))
+    return 0
 
   pool = _ManualPool()
   paths = ["large0", "small1", "small2", "small3"]

@@ -839,9 +839,6 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_queue_max_size() == 3000
   assert cfg.get_sync_ingest_rescan_mtime_days() == 1
-  # Thrown B keys: getters return hard-coded retired defaults (not INI).
-  assert cfg.get_sync_ingest_chunk_size() == 3000
-  assert cfg.get_sync_ingest_chunk_size() == cfg.get_sync_ingest_queue_max_size()
   assert cfg.get_sync_archive_queue_max_size() == 1000
   assert cfg.get_sync_archive_retry_max_attempts() == 5
   assert cfg.get_sync_archive_retry_backoff_base_seconds() == 1.0
@@ -849,14 +846,11 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_checkpoint_flush_batch_size() == 100
   assert cfg.get_sync_timedb_tar_append_batch_size() == 1024
   assert cfg.get_sync_bulk_create_batch_size() == 10000
-  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 0
   assert cfg.get_sync_pool_poll_timeout_s() == 5.0
   assert cfg.get_sync_pool_worker_recycle_grace_seconds() == 60.0
   assert cfg.get_sync_pool_stall_defer_log_interval_s() == 60.0
-  assert cfg.get_sync_ingest_per_file_timeout_s() == 0.0
   assert cfg.get_sync_ingest_stall_idle_s() == 1800.0
   assert cfg.get_sync_ingest_per_file_timeout_max_s() == 86400.0
-  assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == 0.0
   assert cfg.get_sync_archive_members_cache_enabled() is True
   assert cfg.get_sync_archive_members_cache_max_entries() == 64
   assert cfg.get_sync_archive_members_populate_max_seconds() == 0
@@ -894,27 +888,22 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_queue_max_size() == 111
   assert cfg.get_sync_ingest_rescan_mtime_days() == 3
-  # Thrown: INI overrides ignored; hard-coded retired defaults.
-  assert cfg.get_sync_ingest_chunk_size() == 111
   assert cfg.get_sync_archive_queue_max_size() == 222
   assert cfg.get_sync_archive_retry_max_attempts() == 7
   assert cfg.get_sync_archive_retry_backoff_base_seconds() == 2.5
   assert cfg.get_sync_archive_retry_backoff_max_seconds() == 12.5
   assert cfg.get_sync_checkpoint_flush_batch_size() == 42
   assert cfg.get_sync_timedb_tar_append_batch_size() == 2048
-  assert cfg.get_sync_pool_stall_abort_after_timeouts() == 0
   assert cfg.get_sync_pool_poll_timeout_s() == 2.5
   assert cfg.get_sync_pool_stall_defer_log_interval_s() == 30.0
-  assert cfg.get_sync_ingest_per_file_timeout_s() == 0.0
   assert cfg.get_sync_ingest_per_file_timeout_max_s() == 7200.0
-  assert cfg.get_sync_ingest_per_file_timeout_s_per_mib() == 0.0
   assert cfg.get_sync_archive_members_cache_enabled() is False
   assert cfg.get_sync_archive_members_cache_max_entries() == 32
   assert cfg.get_sync_archive_members_populate_max_seconds() == 1800
   assert cfg.get_sync_archive_members_fnctl_read_lock_timeout_seconds() == 300
   assert cfg.get_sync_archive_members_wait_poll_seconds() == 0.5
-  monkeypatch.setenv("HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S", "45")
-  assert cfg.get_sync_ingest_per_file_timeout_s() == 0.0
+  monkeypatch.setenv("HPCPERFSTATS_SYNC_INGEST_STALL_IDLE_S", "45")
+  assert cfg.get_sync_ingest_stall_idle_s() == 45.0
 
 
 def test_sync_ingest_rescan_mtime_days_clamp(temp_ini, monkeypatch):

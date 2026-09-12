@@ -171,12 +171,10 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
   ArchiveMembersStoreConnectionError,
   ArchiveMembersStoreUnavailableError,
   IngestArchiveLookupBudgetExceededError,
-  _raise_if_ingest_deadline_exceeded,
   archive_append_inflight_for_day,
   archive_members_populate_shows_progress_for_day,
   build_archive_members_keys,
   describe_archive_members_populate_for_day,
-  get_ingest_task_effective_timeout_s,
   is_populate_pool_unavailable_error,
   is_transient_fnctl_populate_unavailable,
   maybe_clear_orphan_incomplete_archive_members,
@@ -184,10 +182,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
 )
 from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
   calendar_day_from_sealed_archive_path,
-  resolve_ingest_per_file_timeout_s,
-)
-from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
-  stall_abort_polls_for_paths as _stall_abort_polls_for_batch,  # noqa: F401
 )
 from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
   count_worker_registry_entries,
@@ -393,8 +387,6 @@ def _run_ingest_timed(
   stats_file: str,
   stage: Any,
   fn: Any,
-  *,
-  enable_sigalrm: bool = True,
 ) -> Any:
   """
   Run ingest worker body under idle-stall progress tracking (no wall timers).
@@ -402,13 +394,11 @@ def _run_ingest_timed(
   Internal wall soft-kill is deleted. Idle stall uses heartbeats from
   ``touch_ingest_progress`` / checkpoint ``raise_if_ingest_idle_stalled``.
   Postgres ``statement_timeout`` remains the external ceiling.
-  ``enable_sigalrm`` is retained for API compatibility and ignored.
 
   Args:
     stats_file (str): Absolute closed raw stats path.
     stage (Any): Worker stage token for registry / logs.
     fn (Any): Callable invoked by this helper.
-    enable_sigalrm (bool): Ignored (wall SIGALRM removed).
 
   Returns:
     Any: Value produced by ``fn``.
@@ -416,7 +406,6 @@ def _run_ingest_timed(
   Examples:
     >>> _run_ingest_timed("x", None, lambda: 1)  # doctest: +SKIP
   """
-  del enable_sigalrm
   from hpcperfstats.dbload.lib.sync_timedb_ingest_progress import (
       begin_ingest_progress,
       end_ingest_progress,
@@ -1089,21 +1078,16 @@ class IngestStallDiagnostics:
 
 def _pool_stall_wall_seconds() -> Any:
   """
-  INI ceiling stall wall (maximum across batches).
-  
+  Poll-count stall wall is deleted (always ``0``).
+
   Returns:
-    Any: Open return polymorphism from ``_pool_stall_wall_seconds``: concrete
-    type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    float: Always ``0.0``.
+
   Examples:
-    >>> _pool_stall_wall_seconds()  # doctest: +SKIP
+    >>> _pool_stall_wall_seconds()
+    0.0
   """
-  poll_s = float(cfg.get_sync_pool_poll_timeout_s())
-  abort_n = int(cfg.get_sync_pool_stall_abort_after_timeouts())
-  if poll_s <= 0.0:
-    return 0.0
-  return poll_s * abort_n
+  return 0.0
 
 
 def _dynamic_stall_wall_seconds(stall_diagnostics: Any) -> Any:
@@ -1364,42 +1348,6 @@ def _max_effective_ingest_timeout_from_registry(registry: Any) -> Any:
   return best
 
 
-def _warn_if_pool_stall_wall_below_ingest_timeout_max() -> None:
-  """
-  Internal helper to handle warn if pool stall wall below ingest timeout max.
-  
-  Returns:
-    None
-  
-  Examples:
-    >>> _warn_if_pool_stall_wall_below_ingest_timeout_max()  # doctest: +SKIP
-  """
-  poll_s = float(cfg.get_sync_pool_poll_timeout_s())
-  abort_n = int(cfg.get_sync_pool_stall_abort_after_timeouts())
-  max_per_file = float(cfg.get_sync_ingest_per_file_timeout_max_s())
-  if max_per_file <= 0.0 or poll_s <= 0.0:
-    return
-  stall_wall_s = poll_s * abort_n
-  if stall_wall_s > max_per_file:
-    return
-  min_abort = int(max_per_file / poll_s) + 1
-  log_print(
-      "WARN: sync_pool stall ceiling wall %.0fs (abort=%d poll=%.0fs) is not "
-      "above sync_ingest_per_file_timeout_max_s=%.0fs; raise "
-      "sync_pool_stall_abort_after_timeouts ceiling to at least %d "
-      "(wall %.0fs at current poll; per-batch abort is dynamic from largest file)"
-      % (
-          stall_wall_s,
-          abort_n,
-          poll_s,
-          max_per_file,
-          min_abort,
-          min_abort * poll_s,
-      ),
-      flush=True,
-  )
-
-
 def _build_ingest_stall_log_suffix(
   *,
   sample: Any,
@@ -1440,7 +1388,6 @@ def _build_ingest_stall_log_suffix(
       pool=getattr(stall_diagnostics, "active_pool", None),
       sample=sample,
   )
-  floor_timeout_s = float(cfg.get_sync_ingest_per_file_timeout_s())
   max_timeout_s = float(cfg.get_sync_ingest_per_file_timeout_max_s())
   diag = stall_diagnostics or IngestStallDiagnostics()
   worker_registry = diag.worker_registry
@@ -1476,7 +1423,7 @@ def _build_ingest_stall_log_suffix(
   else:
     store_suffix_fn = store_populate_for_sample_fn
   return (
-      " sync_ingest_per_file_timeout_s=%s sync_ingest_per_file_timeout_max_s=%s"
+      " sync_ingest_per_file_timeout_max_s=%s"
       " batch_max_ingest_timeout_s=%.1f dynamic_stall_abort_after=%d"
       " dynamic_stall_wall_s=%.0f effective_ingest_timeout_s=%s"
       " stall_defer=%s defer_reason=%s imap_batch_cap=%d chunk_batch=%d imap_batch=%d"
@@ -1485,7 +1432,6 @@ def _build_ingest_stall_log_suffix(
       " sync_ingest_pool_processes=%s day_close=%s chunk_prewarm=%s"
       " worker_registry_n=%d in_flight_n=%d worker_stages=%s%s%s"
       % (
-          floor_timeout_s,
           max_timeout_s,
           batch_max_s,
           dynamic_abort,
@@ -2700,8 +2646,6 @@ def _try_db_complete_tail_window_fast_path(
           >>> _timestamp_present_with_budget(None)  # doctest: +SKIP
         """
         probe_count["n"] += 1
-        if probe_count["n"] % 100 == 0:
-          _raise_if_ingest_deadline_exceeded()
         if probe_count["n"] > max_overflow_probes:
           raise IngestArchiveLookupBudgetExceededError(
               "itimes overflow DB probe budget exceeded path=%s probes=%d"
@@ -3147,17 +3091,6 @@ def _pack_ingest_worker_result(
     >>> _pack_ingest_worker_result("x", None, None, None, None)
   """
   meta = dict(outcome_meta or {})
-  if meta.get("timeout_s") is None:
-    effective = get_ingest_task_effective_timeout_s()
-    if effective is not None:
-      meta["timeout_s"] = float(effective)
-    else:
-      try:
-        meta["timeout_s"] = float(
-            resolve_ingest_per_file_timeout_s(str(stats_file or "")),
-        )
-      except Exception:
-        pass
   return (stats_file, need_archival, ingest_ok, float(elapsed_s), meta)
 
 
@@ -3254,10 +3187,6 @@ def _ingest_file_outcome_from_worker(
       outcome = "parse_fail"
   db_skip = str(meta.get("db_skip") or "no")
   timeout_s = meta.get("timeout_s")
-  if timeout_s is None:
-    effective = get_ingest_task_effective_timeout_s()
-    if effective is not None:
-      timeout_s = float(effective)
   return IngestFileOutcome(
       path=str(stats_file or ""),
       elapsed_s=float(elapsed_s),
@@ -3282,8 +3211,8 @@ def _resolve_outcome_timeout_s(outcome: Any) -> float:
   """
   Resolve the per-file timeout budget for an outcome log line.
 
-  Prefers ``outcome.timeout_s``, then the task effective timeout, then
-  ``resolve_ingest_per_file_timeout_s(path)``.
+  Prefers ``outcome.timeout_s``; wall budgets are deleted so missing values
+  become ``0.0`` on the log line.
 
   Args:
     outcome (Any): ``IngestFileOutcome`` (or duck-typed) instance.
@@ -3300,15 +3229,6 @@ def _resolve_outcome_timeout_s(outcome: Any) -> float:
   """
   if getattr(outcome, "timeout_s", None) is not None:
     return float(outcome.timeout_s)
-  effective = get_ingest_task_effective_timeout_s()
-  if effective is not None:
-    return float(effective)
-  path = str(getattr(outcome, "path", "") or "")
-  if path:
-    try:
-      return float(resolve_ingest_per_file_timeout_s(path))
-    except Exception:
-      return 0.0
   return 0.0
 
 
@@ -3684,8 +3604,6 @@ def _duplicate_window_start_index(
             flush=True,
         )
         overflow_logged["done"] = True
-      if probe_count["n"] % 100 == 0:
-        _raise_if_ingest_deadline_exceeded()
       if probe_count["n"] > max_overflow_probes:
         raise IngestArchiveLookupBudgetExceededError(
             "itimes overflow DB probe budget exceeded path=%s probes=%d"
@@ -5867,8 +5785,6 @@ def run_sync_timedb_supervisor_from_parsed(
         "ERROR: DEFAULT.host_name_ext must be set; sync_timedb uses archive "
         "subdirectories whose names end with this suffix.")
     sys.exit(1)
-
-  _warn_if_pool_stall_wall_below_ingest_timeout_max()
 
   directory = cfg.get_archive_dir_path()
 

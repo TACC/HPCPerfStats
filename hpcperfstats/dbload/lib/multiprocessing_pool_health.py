@@ -2853,10 +2853,8 @@ def imap_unordered_watch_pool(
       _abort_pool_health()
       yield item
     return
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-
   if stall_abort_after_timeouts is None:
-    stall_abort_after = max(0, int(cfg.get_sync_pool_stall_abort_after_timeouts()))
+    stall_abort_after = 0
   else:
     stall_abort_after = max(0, int(stall_abort_after_timeouts))
   warn_thresholds = (
@@ -3058,9 +3056,7 @@ def imap_sliding_window_watch_pool(
   if health_ctx.get("active_pool") is None:
     health_ctx["active_pool"] = pool
 
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-
-  default_stall_abort = cfg.get_sync_pool_stall_abort_after_timeouts()
+  default_stall_abort = 0
   path_iter = iter(path_list)
   pending_async = {}
   consecutive_timeouts = 0

@@ -153,7 +153,7 @@ def test_stale_manifest_recovery_downgrades_raw_delete_pending(tmp_path, monkeyp
 
 
 @pytest.mark.django_db(databases=[])
-def test_reconcile_supervisor_raw_delete_pending_is_noop(tmp_path):
+def test_reconcile_supervisor_raw_delete_pending_gone(tmp_path):
   coord = async_dc_mod.DayCloseManifestCoordinator(
       archive_data_dir=str(tmp_path / "archive"),
       host_name_ext="",
@@ -162,20 +162,9 @@ def test_reconcile_supervisor_raw_delete_pending_is_noop(tmp_path):
       log_fn=lambda *_a, **_k: None,
       get_disqualified_daily_tars=lambda: set(),
   )
-  assert coord.reconcile_supervisor_raw_delete_pending(reason="delete_pass") == 0
-
-
-@pytest.mark.django_db(databases=[])
-def test_tar_paths_raw_delete_pending_empty(tmp_path):
-  coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=str(tmp_path / "archive"),
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-  )
-  assert coord.tar_paths_raw_delete_pending() == []
+  assert not hasattr(coord, "reconcile_supervisor_raw_delete_pending")
+  assert not hasattr(coord, "tar_paths_raw_delete_pending")
+  assert not hasattr(coord, "shutdown")
 
 
 @pytest.mark.django_db(databases=[])

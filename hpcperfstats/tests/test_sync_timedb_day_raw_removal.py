@@ -231,7 +231,7 @@ def test_day_raw_removal_start_async_verify_eventually_completes(tmp_path):
   assert coord.phase(tar_path) == PHASE_VERIFICATION_COMPLETE
 
 
-def test_start_async_day_pipeline_alias_runs_verify_only(tmp_path, monkeypatch):
+def test_start_async_verify_runs_verify_only(tmp_path, monkeypatch):
   day = datetime(2022, 6, 6)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _seal_day(tmp_path, seg, day)
@@ -241,7 +241,7 @@ def test_start_async_day_pipeline_alias_runs_verify_only(tmp_path, monkeypatch):
       on_pipeline_complete=lambda tar: completed.append(tar),
   )
   monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
-  coord.start_async_day_pipeline(tar_path)
+  coord.start_async_verify(tar_path)
   state = coord._get_or_create_day(tar_path)
   state._pipeline_future.result(timeout=10.0)
   assert coord.phase(tar_path) == PHASE_VERIFICATION_COMPLETE

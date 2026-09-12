@@ -79,7 +79,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     verify_tar_archive_readable,
 )
 from hpcperfstats.dbload.sync_timedb_archive import (
-    _iter_stream_tasks_chunked,
     parse_sync_timedb_archive_argv,
 )
 import hpcperfstats.dbload.sync_timedb_archive as sta
@@ -2357,7 +2356,7 @@ def test_get_tar_file_tasks_prefers_uncompressed_tar_when_both_exist(tmp_path):
 
 
 def test_iter_stream_tasks_chunked_respects_concurrency(monkeypatch):
-  """Stream task chunks are bounded by max concurrent sealed days."""
+  """Product chunk helper is gone; tests chunk locally against ingest tasks."""
   monkeypatch.setattr(
       sta.cfg,
       "get_sync_timedb_archive_max_concurrent_sealed_days",
@@ -2375,12 +2374,11 @@ def test_iter_stream_tasks_chunked_respects_concurrency(monkeypatch):
           (STREAM_ARCHIVE_TASK, p) for p in paths
       ],
   )
-  chunks = list(
-      _iter_stream_tasks_chunked(
-          ["/a.tar.zst", "/b.tar.zst", "/c.tar.zst"],
-          chunk_size=2,
-      ),
-  )
+  assert not hasattr(sta, "_iter_stream_tasks_chunked")
+  paths = ["/a.tar.zst", "/b.tar.zst", "/c.tar.zst"]
+  tasks = list(sta.iter_archive_ingest_tasks(paths, "/daily"))
+  chunk_size = 2
+  chunks = [tasks[off:off + chunk_size] for off in range(0, len(tasks), chunk_size)]
   assert chunks == [
       [(STREAM_ARCHIVE_TASK, "/a.tar.zst"), (STREAM_ARCHIVE_TASK, "/b.tar.zst")],
       [(STREAM_ARCHIVE_TASK, "/c.tar.zst")],
@@ -4797,7 +4795,7 @@ def test_process_tar_chunk_stops_when_shutdown_requested(monkeypatch):
       results.append(item)
       shutdown_requested[0] = True
 
-    sta._process_task_chunk_interruptibly(
+    sta._process_sealed_tasks_sliding_window(
         object(),
         lambda x: x,
         ["/a.tar.zst"],
@@ -6666,8 +6664,6 @@ def test_sealed_stream_timeout_no_longer_ingest_per_file(
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       IngestArchiveLookupBudgetExceededError,
-      reset_ingest_task_deadline_monotonic,
-      set_ingest_task_deadline_monotonic,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
       set_process_archive_members_store,
@@ -6699,7 +6695,6 @@ def test_sealed_stream_timeout_no_longer_ingest_per_file(
 
   monkeypatch.setattr(helpers, "_stream_compressed_archive_members", _slow_stream)
 
-  deadline_token = set_ingest_task_deadline_monotonic(time.monotonic() - 1.0)
   errors = []
   results = []
 
@@ -6725,7 +6720,6 @@ def test_sealed_stream_timeout_no_longer_ingest_per_file(
     )
     assert results == [True]
   finally:
-    reset_ingest_task_deadline_monotonic(deadline_token)
     stop.set()
     reset_populate_pool_controller_for_tests()
     set_process_archive_members_store(None)

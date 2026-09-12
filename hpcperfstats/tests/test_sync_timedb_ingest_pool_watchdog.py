@@ -54,39 +54,11 @@ def _claim(identity, *, score=5.0, owner="n:h:b:1"):
   )
 
 
-def test_ingest_watchdog_budget_retired_always_zero(tmp_path):
-  path = tmp_path / "stats"
-  path.write_bytes(b"x" * 1024)
-  assert qo._ingest_watchdog_budget_s(str(path)) == 0.0
-  assert qo._ingest_watchdog_budget_s("/missing/path") == 0.0
-
-
-def test_abandon_timed_out_ingest_is_noop_even_past_budget(monkeypatch):
-  """Retired watchdog must not free slots or bump attempts."""
-  client = SyncTimedbJobStore("")
-  identity = "/raw/a|1|1"
-  claim = _real_claim(client, identity, score=5.0)
-  inflight = {identity: _NeverReady()}
-  claims = {identity: claim}
-  submitted = {identity: 100.0}
-  monkeypatch.setattr(qo, "_ingest_watchdog_budget_s", lambda _p: 60.0)
-
-  abandoned = qo._abandon_timed_out_ingest(
-      client,
-      inflight=inflight,
-      claims=claims,
-      submitted=submitted,
-      archive_data_dir="/archive",
-      now=100.0 + 60.0 + 1.0,
-      log_fn=lambda *a, **k: None,
-  )
-
-  assert abandoned == []
-  assert identity in inflight
-  assert identity in claims
-  assert submitted == {identity: 100.0}
-  assert client.lease_token("ingest", identity) is not None
-  assert jq.read_job_attempt(client, kind=jq.JOB_KIND_INGEST, identity=identity) == 0
+def test_ingest_watchdog_names_gone():
+  """Submit-age watchdog helpers must not remain as importable no-ops."""
+  assert not hasattr(qo, "_ingest_watchdog_budget_s")
+  assert not hasattr(qo, "_abandon_timed_out_ingest")
+  assert not hasattr(qo, "INGEST_WATCHDOG_GRACE_S")
 
 
 def test_ingest_coordinator_loop_does_not_call_abandon():

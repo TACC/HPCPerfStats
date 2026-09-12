@@ -1271,7 +1271,7 @@ When the prefix has no `:role` segment, use message substrings:
 
 **Shared stages (RC-A):** stall snapshots may show workers in **`populate_queue_wait`** while other workers parse giants. An idle-looking `populate_queue_wait` row next to `long_ingest_budget` is **normal shared-stage telemetry**, not proof that ingest is stuck on populate. Prefer `chunk ingest summary`, `giant pool supplement begin|replenish`, and busy `worker:ingest-pool` PIDs over a single stage token.
 
-**RC-D queue semantics:** no-supplement process queue = **`sync_ingest_queue_max_size`** (default **3000**). Ingest **chunk size** follows the same knob (`get_sync_ingest_chunk_size` alias — leftover `sync_ingest_chunk_size=` INI lines are ignored). Giant-supplement reservoir = **queue × `sync_ingest_giant_pool_supplement_queue_multiplier`** (default **2 → 6000**) at **batch start and mid-imap refresh**. Grep **`giant pool supplement replenish`** when giants run for hours with disk backlog; **`giant pool supplement empty reason=exhausted|size_filter`** when the reservoir has nothing eligible.
+**RC-D queue semantics:** no-supplement process queue = **`sync_ingest_queue_max_size`** (default **3000**). Ingest **chunk size** follows that same knob (`get_sync_ingest_queue_max_size`; leftover `sync_ingest_chunk_size=` INI lines and `get_sync_ingest_chunk_size` are gone). Giant-supplement reservoir = **queue × `sync_ingest_giant_pool_supplement_queue_multiplier`** (default **2 → 6000**) at **batch start and mid-imap refresh**. Grep **`giant pool supplement replenish`** when giants run for hours with disk backlog; **`giant pool supplement empty reason=exhausted|size_filter`** when the reservoir has nothing eligible.
 
 **RC-E stop condition (2026-07):** pool supplement may run **only while a path from the batch's own set is in flight**. Primary-iterator exhausted + idle slots is the normal end-of-chunk condition — it must **not** by itself authorize unbounded replenish against a live-growing closed-path snapshot. **Fail (pre-fix / regression):** one `chunk imap start` then hours of `giant pool supplement replenish` / `begin … in_flight_giants=[]` with **no** `chunk_elapsed_s` / `chunk ingest summary`. **Pass:** `giant pool supplement stop reason=batch_paths_complete` after original paths complete; `chunk_elapsed_s` advances; healthy giant-tail still shows `supplement=yes` / `replenish` **while** the original giant remains in flight.
 
@@ -1558,7 +1558,7 @@ docker compose -p hpcperfstats exec db psql -h localhost -U hpcperfstats -c "SEL
 
 - Bare drain `TimeoutError` must **not** soft-requeue or clear local inflight (no thrash sticky 0/N).
 - Soft-requeue uses packed/rich timeout or `stage=idle_stall`; coordinator submit-age watchdog is **retired** (no fallback).
-- Image defaults: `sync_ingest_per_file_timeout_s` always **0** (wall soft-kill **deleted**, cannot re-arm), `sync_ingest_stall_idle_s=1800`, `sync_pool_stall_abort_after_timeouts=0`.
+- Image defaults: `sync_ingest_stall_idle_s=1800`; internal wall soft-kill getters are **deleted** (no `sync_ingest_per_file_timeout_s` / stall-abort INI).
 - Discover/fill do not keep `*.fnctl.lock` on the ingest ZSET.
 - Progress SOP: `progress stage=… advancing=true|false idle_s=… metric=bytes|lines|members`; tar append idle stall → `tar append idle stall`.
 
@@ -1569,9 +1569,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
-print(\"per_file_timeout_s\", cfg.get_sync_ingest_per_file_timeout_s())
 print(\"stall_idle_s\", cfg.get_sync_ingest_stall_idle_s())
-print(\"stall_abort\", cfg.get_sync_pool_stall_abort_after_timeouts())
 print(\"max_s\", cfg.get_sync_ingest_per_file_timeout_max_s())
 "'
 ```
@@ -1593,8 +1591,7 @@ print(\"max_s\", cfg.get_sync_ingest_per_file_timeout_max_s())
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
-print(\"per_file_timeout_s\", cfg.get_sync_ingest_per_file_timeout_s())
-print(\"per_mib\", cfg.get_sync_ingest_per_file_timeout_s_per_mib())
+print(\"stall_idle_s\", cfg.get_sync_ingest_stall_idle_s())
 print(\"max_s\", cfg.get_sync_ingest_per_file_timeout_max_s())
 "'
 

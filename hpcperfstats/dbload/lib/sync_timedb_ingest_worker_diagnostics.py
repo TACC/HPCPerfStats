@@ -511,8 +511,7 @@ def worker_registry_shows_member_match_wait(
     except Exception:
       progress_grace_s = 7200.0
     if progress_grace_s <= 0.0:
-      floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
-      progress_grace_s = floor_s if floor_s > 0.0 else 900.0
+      progress_grace_s = 900.0
   else:
     progress_grace_s = float(progress_grace_s)
   if alive_pids is None and pool is not None:
@@ -627,14 +626,8 @@ def worker_registry_shows_recent_progress(
   """
   if registry is None:
     return False
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
-      resolve_ingest_per_file_timeout_s,
-  )
-
-  floor_s = float(cfg.get_sync_ingest_per_file_timeout_s())
   if progress_grace_s is None:
-    progress_grace_s = floor_s if floor_s > 0.0 else 900.0
+    progress_grace_s = 900.0
   else:
     progress_grace_s = float(progress_grace_s)
   if alive_pids is None and pool is not None:
@@ -660,11 +653,7 @@ def worker_registry_shows_recent_progress(
     if t0 is None:
       continue
     age_s = max(0.0, now - float(t0))
-    path = raw.get("path") or ""
-    budget_s = resolve_ingest_per_file_timeout_s(str(path)) if path else progress_grace_s
-    if budget_s <= 0.0:
-      budget_s = progress_grace_s
-    if age_s < budget_s:
+    if age_s < progress_grace_s:
       return True
   return False
 

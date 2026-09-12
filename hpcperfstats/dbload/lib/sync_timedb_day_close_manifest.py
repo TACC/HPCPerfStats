@@ -380,21 +380,6 @@ class DayCloseManifestCoordinator:
         entry["submitted_at"] = time.time()
         self._touch_manifest_locked("queued", tar_norm=tar_norm)
 
-  def reconcile_supervisor_raw_delete_pending(self, *, reason: str) -> int:
-    """
-    Legacy no-op; janitor owns delete on ``DAY_CLOSE`` debt.
-    
-    Args:
-      reason (str): String for reason.
-    
-    Returns:
-      int: int produced by this call.
-    
-    Examples:
-      >>> reconcile_supervisor_raw_delete_pending(0)  # doctest: +SKIP
-    """
-    return 0
-
   def entry_progress_snapshot(self, tar_path: str) -> Dict[str, Any]:
     """
     Entry progress snapshot.
@@ -422,22 +407,6 @@ class DayCloseManifestCoordinator:
           "last_progress": str(entry.get("last_progress") or ""),
           "last_progress_age_s": age_s,
       }
-
-  def shutdown(self, wait: bool = True) -> None:
-    """
-    Legacy no-op; day-close workers drain via janitor pool shutdown.
-    
-    Args:
-      wait (bool): Boolean flag for wait.
-    
-    Returns:
-      None
-    
-    Examples:
-      >>> DayCloseManifestCoordinator().shutdown(True)  # doctest: +SKIP
-    """
-    del wait
-    return
 
   def _active_tar_paths_unlocked(self) -> Set[str]:
     """
@@ -750,20 +719,6 @@ class DayCloseManifestCoordinator:
         "discover_cap_n": len(discover_cap),
         "worker_occupancy_n": len(worker_occupancy),
     }
-
-  def tar_paths_raw_delete_pending(self) -> List[str]:
-    """
-    Legacy no-op; janitor ``DayRawRemovalCoordinator`` owns delete pending.
-    
-      state.
-    
-    Returns:
-      List[str]: List[str] produced by this call.
-    
-    Examples:
-      >>> DayCloseManifestCoordinator().tar_paths_raw_delete_pending()
-    """
-    return []
 
   def _remaining_raw_for_tar_drop(self, tar_norm: str) -> Dict[str, List[str]]:
     """

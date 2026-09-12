@@ -1149,42 +1149,18 @@ def test_executor_shutdown_cancels():
   assert "cancel_futures" in src or "fut.cancel()" in src or ".cancel()" in src
 
 
-def test_dead_pool_worker_frees_slot_and_requeues(monkeypatch):
-  """T2 retired: submit-age abandon is a no-op (idle stall owns soft-kill)."""
-  client = SyncTimedbJobStore("")
-  jq.reset_job_queue_script_cache_for_tests()
-  jq.zadd_ingest_job(client, identity="/raw/a", score=1)
-  claim = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+def test_dead_pool_worker_frees_slot_and_requeues():
+  """T2 retired: submit-age abandon helper is gone (idle stall owns soft-kill)."""
+  assert not hasattr(qo, "_ingest_watchdog_budget_s")
+  assert not hasattr(qo, "_abandon_timed_out_ingest")
+  assert "_abandon_timed_out_ingest" not in inspect.getsource(
+      qo._ingest_coordinator_loop,
   )
-
-  class _Pending:
-    def ready(self):
-      return False
-
-  monkeypatch.setattr(qo, "_ingest_watchdog_budget_s", lambda path: 1.0)
-  inflight = {"/raw/a": _Pending()}
-  claims = {"/raw/a": claim}
-  submitted = {"/raw/a": 0.0}
-  abandoned = qo._abandon_timed_out_ingest(
-      client,
-      inflight=inflight,
-      claims=claims,
-      submitted=submitted,
-      archive_data_dir="/archive",
-      now=10.0,
-      log_fn=lambda *a, **k: None,
-  )
-  assert abandoned == []
-  assert "/raw/a" in inflight
-  assert client.lease_token("ingest", "/raw/a") is not None
 
 
 def test_ingest_deadline_requeues():
-  """T3 retired: abandon helper must not soft-requeue via retry/dead-letter."""
-  src = inspect.getsource(qo._abandon_timed_out_ingest)
-  assert "return []" in src
-  assert "_retry_or_dead_letter" not in src
+  """T3 retired: abandon helper must not remain as a retry/dead-letter shim."""
+  assert not hasattr(qo, "_abandon_timed_out_ingest")
   assert "_abandon_timed_out_ingest" not in inspect.getsource(
       qo._ingest_coordinator_loop,
   )
@@ -3543,7 +3519,6 @@ def test_drain_packed_timeout_rich_log(tmp_path, monkeypatch):
   """Packed outcome=timeout soft-requeue must emit rich coordinator timeout line."""
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
   monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 42)
-  monkeypatch.setattr(st, "resolve_ingest_per_file_timeout_s", lambda _p: 3600.0)
   client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   identity = "/raw/packed_timeout"

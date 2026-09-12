@@ -357,16 +357,10 @@ def test_validate_manifest_payload_empty_malformed():
 
 
 def test_timeout_helpers_always_zero_on_empty_and_max():
-  assert ingest_timeout.resolve_ingest_per_file_timeout_s("") == 0.0
-  assert (
-    ingest_timeout.resolve_ingest_per_file_timeout_for_size_bytes(0) == 0.0
-  )
-  assert (
-    ingest_timeout.resolve_ingest_per_file_timeout_for_size_bytes(2**63)
-    == 0.0
-  )
-  assert ingest_timeout.max_ingest_per_file_timeout_for_paths([]) == 0.0
-  assert ingest_timeout.max_ingest_per_file_timeout_for_paths(None) == 0.0
+  assert ingest_timeout.estimate_sealed_archive_ingest_budget_s("/x") == 0.0
+  assert ingest_timeout.max_sealed_archive_ingest_budget_for_paths([]) == 0.0
+  assert ingest_timeout.max_sealed_archive_ingest_budget_for_paths(None) == 0.0
+  assert not hasattr(ingest_timeout, "resolve_ingest_per_file_timeout_s")
 
 
 def test_calendar_day_from_sealed_empty_malformed_and_valid():
@@ -417,12 +411,8 @@ def test_sealed_member_count_hint_garbage_and_missing(tmp_path):
   assert hint >= 1
 
 
-def test_estimate_sealed_budget_zero_floor(monkeypatch, tmp_path):
-  monkeypatch.setattr(
-    ingest_timeout.cfg,
-    "get_sync_ingest_per_file_timeout_s",
-    lambda: 0.0,
-  )
+def test_estimate_sealed_budget_zero_floor(tmp_path):
+  del tmp_path
   assert ingest_timeout.estimate_sealed_archive_ingest_budget_s("/x") == 0.0
   assert (
     ingest_timeout.max_sealed_archive_ingest_budget_for_paths(None) == 0.0
@@ -440,15 +430,9 @@ def test_is_giant_ingest_budget_current_wall_deleted():
   assert ingest_timeout.is_giant_ingest_budget("/x") is False
 
 
-def test_default_giant_supplement_trigger_budget_s(monkeypatch):
-  monkeypatch.setattr(
-    ingest_timeout.cfg,
-    "get_sync_ingest_per_file_timeout_s_per_mib",
-    lambda: 2.0,
-  )
-  assert (
-    ingest_timeout.default_giant_supplement_trigger_budget_s()
-    == 900.0 + 2048.0 * 2.0
+def test_default_giant_supplement_trigger_budget_s():
+  assert not hasattr(
+    ingest_timeout, "default_giant_supplement_trigger_budget_s",
   )
 
 

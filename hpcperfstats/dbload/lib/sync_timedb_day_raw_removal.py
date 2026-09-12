@@ -4113,21 +4113,6 @@ class DayRawRemovalCoordinator:
       return
     self._submit_async_verify(state)
 
-  def start_async_day_pipeline(self, tar_path: str) -> None:
-    """
-    Backward-compatible alias: verify-only async (delete on supervisor thread).
-    
-    Args:
-      tar_path (str): String for tar path.
-    
-    Returns:
-      None
-    
-    Examples:
-      >>> DayRawRemovalCoordinator().start_async_day_pipeline("x")
-    """
-    self.start_async_verify(tar_path)
-
   def _notify_delete_complete(self, tar_path: str) -> None:
     """
     Internal helper to handle notify delete complete.

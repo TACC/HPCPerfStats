@@ -16,8 +16,6 @@ supervisor loop.
 Attributes:
   CENSUS_LOG_INTERVAL_S: Minimum seconds between structured census log lines.
   DAY_CLOSE_THREAD_NAME_PREFIX: Thread name prefix for day_close workers.
-  INGEST_WATCHDOG_GRACE_S: Slack added to the per-file ingest budget before a
-    still-unready worker is treated as dead.
   INGEST_FILL_SKIP_BUDGET: Max unsubmittable ingest claims processed per fill
     tick before returning to the main loop.
   INGEST_FILL_SKIP_BUDGET_MAX: Hard cap on escalated skip budget for deep queues.
@@ -64,7 +62,6 @@ from typing import Any, Callable, Iterable
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.dbload.lib import shutdown_utils as _shutdown_utils
-from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as it
 from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
 from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
@@ -135,9 +132,6 @@ _DAY_CLOSE_YIELD_BACKOFF = JanitorDeferTracker()
 _DAY_CLOSE_CLAIM_LOG_STATE: dict[str, dict[str, float]] = {}
 _DAY_CLOSE_VACATE_LOG_STATE: dict[str, dict[str, float]] = {}
 DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S = 30.0
-# Slack over the per-file budget: a worker that is merely slow (contended DB,
-# large file) must not be abandoned before the ingest path itself gives up.
-INGEST_WATCHDOG_GRACE_S = it.STALL_ABORT_GRACE_S
 _IDLE_RECONSTRUCT_MIN_INTERVAL_S = 30.0
 _last_idle_reconstruct_mono = 0.0
 _SHUTDOWN_REQUESTED = threading.Event()
@@ -1671,10 +1665,6 @@ def _day_close_complete_wait_on_ingest_handoff(
     kick_fn = getattr(coord, "kick_closed_raw_paths_to_ingest", None)
     if callable(kick_fn):
       kick_fn(tar_path, reason="day_close_wait_on_ingest")
-    else:
-      requeue_fn = getattr(coord, "requeue_closed_raw_paths_for_ingest", None)
-      if callable(requeue_fn):
-        requeue_fn(tar_path, reason="day_close_wait_on_ingest")
   kick_unblock = getattr(coord, "kick_closed_raw_unblock", None)
   if callable(kick_unblock):
     kick_unblock(tar_path, reason="day_close_wait_on_ingest")
@@ -2589,66 +2579,6 @@ def _ingest_coordinator_tick_sleep_s(
   return min(0.05, float(poll_s))
 
 
-def _ingest_watchdog_budget_s(path: str) -> float:
-  """
-  Retired: coordinator wall-clock abandon budget (always unused).
-
-  Soft-kill is idle-stall + Postgres statement_timeout; this helper remains
-  only so older tests can import the name.
-
-  Args:
-    path (str): Absolute closed raw stats path (ignored).
-
-  Returns:
-    float: ``0.0`` (watchdog disabled).
-
-  Examples:
-    >>> _ingest_watchdog_budget_s("/missing")
-    0.0
-  """
-  del path
-  return 0.0
-
-
-def _abandon_timed_out_ingest(
-  client: Any,
-  *,
-  inflight: dict[str, AsyncResult],
-  claims: dict[str, Any],
-  submitted: dict[str, float],
-  archive_data_dir: str,
-  now: float | None = None,
-  log_fn: Callable[..., None] | None = None,
-) -> list[str]:
-  """
-  Retired no-op: do not wall-clock abandon ingest slots.
-
-  Formerly reclaimed slots when submit age exceeded per-file budget + grace.
-  That path is removed — idle-stall soft-requeue and statement_timeout own
-  give-up; do not fall back to this watchdog.
-
-  Args:
-    client (Any): job store (unused).
-    inflight (dict[str, AsyncResult]): In-flight ingest map (unused).
-    claims (dict[str, Any]): Claim map (unused).
-    submitted (dict[str, float]): Submit-time map (unused).
-    archive_data_dir (str): Archive root (unused).
-    now (float | None): Monotonic override (unused).
-    log_fn (Callable[..., None] | None): Optional logger (unused).
-
-  Returns:
-    list[str]: Always empty.
-
-  Examples:
-    >>> _abandon_timed_out_ingest(
-    ...   None, inflight={}, claims={}, submitted={}, archive_data_dir="/a",
-    ... )
-    []
-  """
-  del client, inflight, claims, submitted, archive_data_dir, now, log_fn
-  return []
-
-
 def _requeue_pool_collateral(
   client: Any,
   *,
@@ -3239,7 +3169,6 @@ def _log_orchestrator_ingest_timeout(
   """
   from hpcperfstats.dbload.sync_timedb import (
       _unpack_ingest_worker_result,
-      resolve_ingest_per_file_timeout_s,
       stats_file_size_bytes,
   )
 
@@ -3278,11 +3207,6 @@ def _log_orchestrator_ingest_timeout(
       size_bytes = int(stats_file_size_bytes(path_s))
     except Exception:
       size_bytes = 0
-  if timeout_s <= 0.0 and path_s:
-    try:
-      timeout_s = float(resolve_ingest_per_file_timeout_s(path_s))
-    except Exception:
-      timeout_s = 0.0
   parts = [
       "queue_orchestrator ingest timeout",
       "identity=%s" % identity,

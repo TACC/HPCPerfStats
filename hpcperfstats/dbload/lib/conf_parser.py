@@ -119,14 +119,11 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_host_itimes_cache_max_timestamps_per_entry"),
     ("PIPELINE", "sync_pool_poll_timeout_s"),
     ("PIPELINE", "sync_pool_stall_defer_log_interval_s"),
-    ("PIPELINE", "sync_pool_stall_abort_after_timeouts"),
     ("PIPELINE", "sync_pool_worker_recycle_grace_polls"),
     ("PIPELINE", "sync_pool_worker_recycle_grace_seconds"),
     ("PIPELINE", "sync_pool_idle_reconcile_max_rounds"),
     ("PIPELINE", "sync_pool_idle_reconcile_polls_per_round"),
-    ("PIPELINE", "sync_ingest_per_file_timeout_s"),
     ("PIPELINE", "sync_ingest_per_file_timeout_max_s"),
-    ("PIPELINE", "sync_ingest_per_file_timeout_s_per_mib"),
     ("PIPELINE", "sync_ingest_stall_idle_s"),
     ("PIPELINE", "sync_archive_members_cache_enabled"),
     ("PIPELINE", "sync_archive_members_cache_max_entries"),
@@ -276,14 +273,11 @@ INI_OPTION_DEFAULTS = {
     'sync_host_itimes_cache_max_timestamps_per_entry': '100000',
     'sync_pool_poll_timeout_s': '5',
     'sync_pool_stall_defer_log_interval_s': '60',
-    'sync_pool_stall_abort_after_timeouts': '0',
     'sync_pool_worker_recycle_grace_polls': '2',
     'sync_pool_worker_recycle_grace_seconds': '60',
     'sync_pool_idle_reconcile_max_rounds': '3',
     'sync_pool_idle_reconcile_polls_per_round': '4',
-    'sync_ingest_per_file_timeout_s': '0',
     'sync_ingest_per_file_timeout_max_s': '86400',
-    'sync_ingest_per_file_timeout_s_per_mib': '0',
     'sync_ingest_stall_idle_s': '1800',
     'sync_archive_members_cache_enabled': 'yes',
     'sync_archive_members_cache_max_entries': '64',
@@ -2717,24 +2711,6 @@ def get_sync_archive_validation_max_workers() -> Any:
     return 2
 
 
-def get_sync_pool_stall_abort_after_timeouts() -> Any:
-  """
-  Consecutive pool poll timeouts before imap exit-124 (``0`` = disabled).
-
-  Internal stall-wall reclaim is retired; default is ``0``. Dead-worker and
-  packed ``idle_stall`` soft-requeue remain. Site INI values are ignored for
-  soft-kill (always disabled).
-
-  Returns:
-    int: Always ``0`` (poll-count wall abort deleted).
-
-  Examples:
-    >>> get_sync_pool_stall_abort_after_timeouts() == 0
-    True
-  """
-  return 0
-
-
 def get_sync_pool_worker_recycle_grace_polls() -> Any:
   """
   Polls to tolerate dead workers with exitcode 0 during maxtasksperchild.
@@ -3038,23 +3014,6 @@ def get_sync_archive_members_populate_pool_processes() -> Any:
     return 4
 
 
-def get_sync_ingest_per_file_timeout_s() -> Any:
-  """
-  Retired internal wall floor — always ``0`` (cannot re-arm soft-kill).
-
-  Idle stall uses ``sync_ingest_stall_idle_s``; Postgres statement_timeout
-  remains the external ceiling.
-
-  Returns:
-    float: Always ``0.0``.
-
-  Examples:
-    >>> get_sync_ingest_per_file_timeout_s() == 0.0
-    True
-  """
-  return 0.0
-
-
 def get_sync_ingest_stall_idle_s() -> Any:
   """
   Seconds without parse/write progress before ingest soft-requeues (idle stall).
@@ -3128,20 +3087,6 @@ def get_sync_ingest_per_file_timeout_max_s() -> Any:
     )
   except (TypeError, ValueError, OverflowError):
     return _SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT
-
-
-def get_sync_ingest_per_file_timeout_s_per_mib() -> Any:
-  """
-  Retired size-proportional wall slope — always ``0`` (cannot re-arm).
-
-  Returns:
-    float: Always ``0.0``.
-
-  Examples:
-    >>> get_sync_ingest_per_file_timeout_s_per_mib() == 0.0
-    True
-  """
-  return 0.0
 
 
 def get_metrics_run_stall_timeout_s() -> Any:
@@ -3526,24 +3471,6 @@ def get_sync_host_itimes_cache_max_timestamps_per_entry() -> Any:
       1,
       _pipeline_getint("sync_host_itimes_cache_max_timestamps_per_entry"),
   )
-
-
-def get_sync_ingest_chunk_size() -> Any:
-  """
-  Stats files processed per ingest chunk — alias of queue max (default 3000).
-  
-  Not an independent INI key; leftover ``sync_ingest_chunk_size=`` lines are
-    ignored.
-  
-  Returns:
-    Any: Open return polymorphism from ``get_sync_ingest_chunk_size``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
-  Examples:
-    >>> get_sync_ingest_chunk_size()  # doctest: +SKIP
-  """
-  return get_sync_ingest_queue_max_size()
 
 
 def get_sync_supervisor_rss_limit_mb() -> Any:

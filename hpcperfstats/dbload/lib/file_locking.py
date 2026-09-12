@@ -494,16 +494,6 @@ def file_read_lock_wait(
         raise TimeoutError(
             "Timed out waiting for read lock: %s" % lock_path
         ) from exc
-      try:
-        from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-            _raise_if_ingest_deadline_exceeded,
-        )
-
-        _raise_if_ingest_deadline_exceeded()
-      except ImportError:
-        pass
-      except Exception:
-        raise
       time.sleep(POLL_INTERVAL_SECONDS)
 
   try:

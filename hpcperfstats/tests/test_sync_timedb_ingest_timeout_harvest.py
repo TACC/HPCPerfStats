@@ -8,46 +8,23 @@ from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ingest_timeout
 
 
 def test_always_zero_public_shells():
-    assert ingest_timeout.resolve_ingest_per_file_timeout_s("/x") == 0.0
-    assert (
-        ingest_timeout.resolve_ingest_per_file_timeout_for_size_bytes(1 << 30)
-        == 0.0
-    )
-    assert (
-        ingest_timeout.resolve_ingest_per_file_timeout_for_size_bytes(0, base=9)
-        == 0.0
-    )
-    assert (
-        ingest_timeout.max_ingest_per_file_timeout_for_paths(["/a", "/b"])
-        == 0.0
-    )
-    assert ingest_timeout.stall_abort_polls_for_paths(["/a"]) == 0
-    assert (
-        ingest_timeout.stall_abort_polls_for_sealed_archives(["/a.tar.zst"])
-        == 0
-    )
-    assert (
-        ingest_timeout.stall_abort_polls_for_sealed_archives(
-            ["/a"],
-            member_counts={"/a": 3},
-        )
-        == 0
-    )
     assert ingest_timeout.is_giant_ingest_budget("/x", trigger_s=0.0) is False
     assert ingest_timeout.is_giant_ingest_budget("/x", trigger_s=-1) is False
     assert ingest_timeout.is_giant_ingest_budget("/x") is False
-
-
-def test_default_giant_supplement_trigger_budget_s(monkeypatch):
-    monkeypatch.setattr(
-        ingest_timeout.cfg,
-        "get_sync_ingest_per_file_timeout_s_per_mib",
-        lambda: 2.0,
-    )
+    assert ingest_timeout.estimate_sealed_archive_ingest_budget_s("/x") == 0.0
     assert (
-        ingest_timeout.default_giant_supplement_trigger_budget_s()
-        == 900.0 + 2048.0 * 2.0
+        ingest_timeout.max_sealed_archive_ingest_budget_for_paths(["/a"])
+        == 0.0
     )
+    for name in (
+        "resolve_ingest_per_file_timeout_s",
+        "resolve_ingest_per_file_timeout_for_size_bytes",
+        "max_ingest_per_file_timeout_for_paths",
+        "stall_abort_polls_for_paths",
+        "stall_abort_polls_for_sealed_archives",
+        "default_giant_supplement_trigger_budget_s",
+    ):
+        assert not hasattr(ingest_timeout, name), name
 
 
 def test_calendar_day_iso_and_fallbacks(monkeypatch):
@@ -191,116 +168,26 @@ def test_sealed_member_count_hint_branches(tmp_path, monkeypatch):
     )
 
 
-def test_estimate_and_max_sealed_budget_when_floor_positive(
-    tmp_path, monkeypatch
-):
+def test_estimate_and_max_sealed_budget_always_zero(tmp_path):
     sealed = tmp_path / "2026-01-01.tar.zst"
     sealed.write_bytes(b"x" * 100)
-    monkeypatch.setattr(
-        ingest_timeout.cfg,
-        "get_sync_ingest_per_file_timeout_s",
-        lambda: 10.0,
-    )
-    monkeypatch.setattr(
-        ingest_timeout.cfg,
-        "get_sync_ingest_per_file_timeout_max_s",
-        lambda: 100.0,
-    )
-    monkeypatch.setattr(
-        ingest_timeout.cfg,
-        "get_sync_pool_poll_timeout_s",
-        lambda: 1.0,
-    )
-    monkeypatch.setattr(
-        ingest_timeout.cfg,
-        "get_sync_pool_stall_abort_after_timeouts",
-        lambda: 5,
-    )
-    assert (
-        ingest_timeout.estimate_sealed_archive_ingest_budget_s(str(sealed))
-        == 10.0
-    )
+    assert ingest_timeout.estimate_sealed_archive_ingest_budget_s(str(sealed)) == 0.0
     assert (
         ingest_timeout.estimate_sealed_archive_ingest_budget_s(
             str(sealed),
             member_count=2,
         )
-        == 10.0
+        == 0.0
     )
-
-    monkeypatch.setattr(
-        ingest_timeout.cfg,
-        "get_sync_ingest_per_file_timeout_max_s",
-        lambda: 0.0,
-    )
-    monkeypatch.setattr(
-        ingest_timeout.cfg,
-        "get_sync_pool_poll_timeout_s",
-        lambda: 0.0,
-    )
-    monkeypatch.setattr(
-        ingest_timeout.cfg,
-        "get_sync_pool_stall_abort_after_timeouts",
-        lambda: 0,
-    )
-    monkeypatch.setattr(
-        ingest_timeout.os.path,
-        "getsize",
-        lambda _p: (_ for _ in ()).throw(OSError("gone")),
-    )
-    assert (
-        ingest_timeout.estimate_sealed_archive_ingest_budget_s(str(sealed))
-        == 10.0
-    )
-
-    monkeypatch.setattr(ingest_timeout.os.path, "getsize", lambda _p: 100)
-    assert (
-        ingest_timeout.max_sealed_archive_ingest_budget_for_paths(None) == 10.0
-    )
+    assert ingest_timeout.max_sealed_archive_ingest_budget_for_paths(None) == 0.0
     assert (
         ingest_timeout.max_sealed_archive_ingest_budget_for_paths(["", None])
-        == 10.0
+        == 0.0
     )
     assert (
         ingest_timeout.max_sealed_archive_ingest_budget_for_paths(
             [str(sealed)],
             member_counts={str(sealed): 3},
         )
-        == 10.0
-    )
-
-
-def test_max_sealed_updates_best_when_estimate_exceeds_floor(monkeypatch):
-    monkeypatch.setattr(
-        ingest_timeout.cfg,
-        "get_sync_ingest_per_file_timeout_s",
-        lambda: 10.0,
-    )
-
-    def _fake_estimate(path: str, *, member_count=None):
-        del member_count
-        return 50.0 if "big" in path else 10.0
-
-    monkeypatch.setattr(
-        ingest_timeout,
-        "estimate_sealed_archive_ingest_budget_s",
-        _fake_estimate,
-    )
-    assert (
-        ingest_timeout.max_sealed_archive_ingest_budget_for_paths(
-            ["/small", "/big"],
-        )
-        == 50.0
-    )
-
-
-def test_estimate_zero_floor(monkeypatch):
-    monkeypatch.setattr(
-        ingest_timeout.cfg,
-        "get_sync_ingest_per_file_timeout_s",
-        lambda: 0.0,
-    )
-    assert ingest_timeout.estimate_sealed_archive_ingest_budget_s("/x") == 0.0
-    assert (
-        ingest_timeout.max_sealed_archive_ingest_budget_for_paths(["/x"]) == 0.0
+        == 0.0
     )

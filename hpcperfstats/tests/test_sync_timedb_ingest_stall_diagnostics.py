@@ -39,28 +39,20 @@ def test_add_stats_file_to_db_records_worker_entry_before_ingest(monkeypatch):
 
 
 def test_raise_if_ingest_per_file_deadline_exceeded_is_noop(monkeypatch):
-  import time
+  from hpcperfstats.dbload.lib import sync_timedb_ingest_progress as prog
 
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      reset_ingest_task_deadline_monotonic,
-      reset_ingest_task_effective_timeout_s,
-      set_ingest_task_deadline_monotonic,
-      set_ingest_task_effective_timeout_s,
-  )
-
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
-  deadline_token = set_ingest_task_deadline_monotonic(time.monotonic() - 1.0)
-  effective_token = set_ingest_task_effective_timeout_s(900.0)
+  del monkeypatch
+  toks = prog.begin_ingest_progress("/tmp/f", idle_s=0.0)
   try:
     st._raise_if_ingest_per_file_deadline_exceeded("/tmp/f", "db_write_host")
   finally:
-    reset_ingest_task_effective_timeout_s(effective_token)
-    reset_ingest_task_deadline_monotonic(deadline_token)
+    prog.end_ingest_progress(toks)
+
 
 
 def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
   monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0,
+      st.cfg, "get_sync_ingest_stall_idle_s", lambda: 1800.0,
   )
   monkeypatch.setattr(
       st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0,
@@ -90,7 +82,7 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
       poll_timeout_s=5.0,
   )
   assert "stall_defer=off defer_reason=store_warm" in suffix
-  assert "sync_ingest_per_file_timeout_s=900.0" in suffix
+  assert "sync_ingest_per_file_timeout_s=" not in suffix
   assert "sync_ingest_per_file_timeout_max_s=14400.0" in suffix
   assert "effective_ingest_timeout_s=-" in suffix
   assert "ingest_pipeline=combined" in suffix
@@ -103,7 +95,7 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
 
 
 def test_ingest_stall_defer_state_worker_progress_active(monkeypatch):
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 1800.0)
   registry = {
       "4242": {
           "path": "/data/host.example/1700000000",
@@ -136,7 +128,6 @@ def test_ingest_stall_defer_long_budget_when_effective_exceeds_stall_wall(monkey
   import time
 
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 192)
   registry = {
       "1001": {
           "path": "/data/host.example/1700000000",
@@ -163,8 +154,7 @@ def test_ingest_stall_defer_long_budget_off_when_effective_matches_batch(monkeyp
   import time
 
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_abort_after_timeouts", lambda: 192)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 1800.0)
   registry = {
       "1001": {
           "path": "/data/host.example/1700000000",
@@ -266,7 +256,7 @@ def test_build_ingest_stall_log_suffix_includes_worker_registry_counts(monkeypat
   }
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = registry
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 1800.0)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0)
   monkeypatch.setattr(
       st, "_ingest_stall_defer_state", lambda _d, _s, **kwargs: (False, "store_warm"),
@@ -539,7 +529,7 @@ def test_ingest_stall_defer_worker_progress_combined_pipeline(monkeypatch):
       "members_cache_is_fully_warm",
       lambda *_a, **_k: True,
   )
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_s", lambda: 900.0)
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 1800.0)
   registry = {
       "4242": {
           "path": "/data/host.example/1700000000",

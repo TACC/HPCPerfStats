@@ -26,7 +26,7 @@ Attributes:
 """
 from __future__ import annotations
 
-from typing import Any, Iterator
+from typing import Any
 
 import os
 import re
@@ -69,7 +69,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
 from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
     max_sealed_archive_ingest_budget_for_paths,
     sealed_archive_member_count_hint,
-    stall_abort_polls_for_sealed_archives,
 )
 from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     clear_dispatch_worker_stages,
@@ -354,33 +353,6 @@ def _process_stream_archive_task(sealed_path: str) -> str:
   return sealed_path
 
 
-def _iter_stream_tasks_chunked(
-  sealed_paths: Any,
-  chunk_size: Any | None = None,
-) -> Iterator[Any]:
-  """
-  Yield bounded chunks of ``(STREAM_ARCHIVE_TASK, sealed_path)`` tasks.
-  
-  Legacy helper for tests; main backfill uses sliding-window dispatch instead.
-  
-  Args:
-    sealed_paths (Any): Iterable of filesystem paths as strings.
-    chunk_size (Any | None): One of ``Any``, ``None``.
-  
-  Yields:
-    Iterator[Any]: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _iter_stream_tasks_chunked(None, None)  # doctest: +SKIP
-  """
-  if chunk_size is None:
-    chunk_size = cfg.get_sync_timedb_archive_max_concurrent_sealed_days()
-  chunk_size = max(1, int(chunk_size))
-  tasks = list(iter_archive_ingest_tasks(sealed_paths, cfg.get_daily_archive_dir_path()))
-  for off in range(0, len(tasks), chunk_size):
-    yield tasks[off : off + chunk_size]
-
-
 def _sealed_paths_from_tasks(tasks: Any) -> list[str]:
   """
   Normalize sealed-archive task items to path strings.
@@ -396,24 +368,6 @@ def _sealed_paths_from_tasks(tasks: Any) -> list[str]:
     ['/d/2026-01-01.tar.zst']
   """
   return [str(path) for path in (tasks or ())]
-
-
-def _stall_abort_polls_for_sealed_tasks(tasks: Any) -> Any:
-  """
-  Stall-abort poll count for the current sealed-archive in-flight set.
-
-  Args:
-    tasks (Any): Iterable of sealed daily archive paths.
-
-  Returns:
-    Any: Poll count from ``stall_abort_polls_for_sealed_archives``.
-
-  Examples:
-    >>> _stall_abort_polls_for_sealed_tasks(None)  # doctest: +SKIP
-  """
-  return stall_abort_polls_for_sealed_archives(
-      _sealed_paths_from_tasks(tasks),
-  )
 
 
 def _update_archive_sliding_window_stall_diagnostics(
@@ -441,7 +395,7 @@ def _update_archive_sliding_window_stall_diagnostics(
   sealed_paths = _sealed_paths_from_tasks(in_flight_tasks)
   poll_s = float(cfg.get_sync_pool_poll_timeout_s())
   batch_max_s = max_sealed_archive_ingest_budget_for_paths(sealed_paths)
-  batch_abort = stall_abort_polls_for_sealed_archives(sealed_paths)
+  batch_abort = 0
   if stall_diagnostics is not None:
     stall_diagnostics.current_imap_in_flight = len(sealed_paths)
     stall_diagnostics.current_imap_batch_max_timeout_s = batch_max_s
@@ -577,7 +531,6 @@ def _process_sealed_tasks_sliding_window(
         tasks,
         max_inflight=max_inflight,
         context="sync_timedb_archive pool",
-        stall_abort_polls_fn=_stall_abort_polls_for_sealed_tasks,
         on_in_flight_change=_on_in_flight_change,
         on_stall_warning=_make_ingest_stall_warning_fn(
             None,
@@ -629,45 +582,6 @@ def _process_sealed_tasks_sliding_window(
     raise
 
 
-def _process_task_chunk_interruptibly(
-  pool: Any,
-  worker: Any,
-  chunk: Any,
-  on_result: Any,
-  *,
-  stall_diagnostics: Any | None = None,
-  stall_poll_state: Any | None = None,
-  worker_registry: Any | None = None,
-) -> Any:
-  """
-  Backward-compatible alias for tests; delegates to sliding-window dispatch.
-  
-  Args:
-    pool (Any): Live handle (pool, client, or connection).
-    worker (Any): Callable invoked by this helper.
-    chunk (Any): Sealed daily archive paths for this chunk.
-    on_result (Any): On result passed to this helper.
-    stall_diagnostics (Any | None): One of ``Any``, ``None``.
-    stall_poll_state (Any | None): One of ``Any``, ``None``.
-    worker_registry (Any | None): One of ``Any``, ``None``.
-  
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
-  Examples:
-    >>> _process_task_chunk_interruptibly(0)  # doctest: +SKIP
-  """
-  return _process_sealed_tasks_sliding_window(
-      pool,
-      worker,
-      chunk,
-      on_result,
-      stall_diagnostics=stall_diagnostics,
-      stall_poll_state=stall_poll_state,
-      worker_registry=worker_registry,
-  )
-
-
 if __name__ == "__main__":
   _configure_blas_thread_env()
 
@@ -678,7 +592,6 @@ if __name__ == "__main__":
       IngestStallDiagnostics,
       _handle_pool_worker_exit_fatal,
       _reset_sync_runtime_caches,
-      _warn_if_pool_stall_wall_below_ingest_timeout_max,
       database_startup,
   )
 
@@ -687,7 +600,6 @@ if __name__ == "__main__":
     ensure_django()
     database_startup()
     _reset_sync_runtime_caches()
-    _warn_if_pool_stall_wall_below_ingest_timeout_max()
     close_old_connections()
     connections.close_all()
 
