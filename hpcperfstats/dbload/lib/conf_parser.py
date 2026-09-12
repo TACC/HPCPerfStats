@@ -160,7 +160,6 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "listend_db_ingest_flush_hold_s"),
     ("PIPELINE", "listend_db_ingest_proc_peak_lookup_chunk"),
     ("PIPELINE", "listend_db_ingest_statement_timeout_ms"),
-    ("PIPELINE", "listend_archive_worker_threads"),
     ("PIPELINE", "listend_amqp_prefetch"),
     ("PIPELINE", "listend_amqp_consumer_count"),
     ("PIPELINE", "acct_path"),
@@ -309,7 +308,7 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_rss_recheck_delay_ms': '50',
     'sync_enable_ingest_first_durability_mode': 'yes',
     'sync_archive_require_db_ingest': 'yes',
-    'listend_db_ingest_enabled': 'yes',
+    'listend_db_ingest_enabled': 'no',
     'listend_db_ingest_backpressure': 'drop',
     'listend_db_ingest_pool_processes': '32',
     'listend_db_ingest_queue_max_gb': '8',
@@ -318,9 +317,8 @@ INI_OPTION_DEFAULTS = {
     'listend_db_ingest_flush_hold_s': '5',
     'listend_db_ingest_proc_peak_lookup_chunk': '256',
     'listend_db_ingest_statement_timeout_ms': '600000',
-    'listend_archive_worker_threads': '16',
-    'listend_amqp_prefetch': '128',
-    'listend_amqp_consumer_count': '8',
+    'listend_amqp_prefetch': '32',
+    'listend_amqp_consumer_count': '16',
     'acct_path': None,
     'archive_dir': None,
     'daily_archive_dir': None,
@@ -4226,20 +4224,22 @@ def get_sync_archive_require_db_ingest() -> Any:
 
 def get_listend_db_ingest_enabled() -> Any:
   """
-  Whether listend asynchronously dual-writes samples to Timescale (default on).
-  
+  Whether listend asynchronously dual-writes samples to Timescale (default off).
+
+  Opt in with ``listend_db_ingest_enabled = yes``.
+
   Returns:
     Any: Open return polymorphism from ``get_listend_db_ingest_enabled``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> get_listend_db_ingest_enabled()  # doctest: +SKIP
   """
   _ensure_cfg_loaded()
   return _parse_bool(
       _pipeline_get("listend_db_ingest_enabled"),
-      default=True,
+      default=False,
   )
 
 
@@ -4419,10 +4419,10 @@ def get_listend_db_ingest_statement_timeout_ms() -> int:
 
 def get_listend_archive_worker_threads() -> int:
   """
-  Host-affine archive writer threads for listend consume (default 16).
+  Host-affine archive writer threads for listend consume.
 
-  Parallelizes per-host ``current`` append/rotate off the AMQP callback
-  thread. Same host always maps to one thread (adler32 affine).
+  Derived as ``2 * get_listend_amqp_consumer_count()`` (floor 1). Leftover
+  INI ``listend_archive_worker_threads`` is ignored.
 
   Returns:
     int: Thread count, at least 1.
@@ -4431,56 +4431,52 @@ def get_listend_archive_worker_threads() -> int:
     >>> get_listend_archive_worker_threads() >= 1  # doctest: +SKIP
     True
   """
-  _ensure_cfg_loaded()
-  try:
-    return max(1, int(_pipeline_get("listend_archive_worker_threads")))
-  except (TypeError, ValueError, OverflowError):
-    return 16
+  return max(1, 2 * get_listend_amqp_consumer_count())
 
 
 def get_listend_amqp_prefetch() -> int:
   """
-  RabbitMQ ``basic_qos`` prefetch for listend in drop backpressure mode.
+  Per-consumer RabbitMQ ``basic_qos`` prefetch in drop backpressure mode.
 
-  Default ``128``. This is the **process-wide** unacked window; competing
-  AMQP consumers split it with ``split_listend_amqp_prefetch``. Pause mode
-  always uses prefetch ``1`` per consumer so overflow stays on the broker
-  ready queue.
+  Default ``32``. Process-wide unacked is this value times
+  ``listend_amqp_consumer_count``. Pause mode always uses prefetch ``1``
+  per consumer so overflow stays on the broker ready queue.
 
   Returns:
     int: Prefetch count, at least 1.
 
   Examples:
-    >>> int("128")
-    128
+    >>> int("32")
+    32
   """
   _ensure_cfg_loaded()
   try:
     return max(1, int(_pipeline_get("listend_amqp_prefetch")))
   except (TypeError, ValueError, OverflowError):
-    return 128
+    return 32
 
 
 def get_listend_amqp_consumer_count() -> int:
   """
   Number of listend AMQP consume threads (one BlockingConnection each).
 
-  Default ``8``. Clamped to ``1..16``. Competing consumers share the
-  original ingest queue; archive workers stay host-affine.
+  Default ``16``. Floor is ``1`` so INI ``0`` still starts one consumer.
+  There is no upper clamp. Competing consumers share the original ingest
+  queue; archive workers stay host-affine.
 
   Returns:
-    int: Consumer thread count in ``1..16``.
+    int: Consumer thread count, at least 1.
 
   Examples:
-    >>> 1 <= 8 <= 16
-    True
+    >>> max(1, 16)
+    16
   """
   _ensure_cfg_loaded()
   try:
     n = int(_pipeline_get("listend_amqp_consumer_count"))
   except (TypeError, ValueError, OverflowError):
-    return 8
-  return min(16, max(1, n))
+    return 16
+  return max(1, n)
 
 
 def get_redis_location() -> Any:

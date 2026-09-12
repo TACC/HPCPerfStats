@@ -427,7 +427,7 @@ npm run test:coverage -- --run
 | `hpcperfstats/tests/test_sync_timedb_*_harvest.py` | Host-unit harvest coverage for remaining loc-shrink leftovers (`leftover`, N10 registry, N9 timeout, N8 ingest-complete, H14/N5 classify+prune, S14 restore-log, Q5 fill-skip, N7b parse lock, Q4 verify log). No Postgres. |
 | `hpcperfstats/tests/test_sync_acct.py` | Accounting ingest (`sync_acct_from_content`, restricted queues, bulk fallback, cache notify) with mocked ORM. |
 | `hpcperfstats/tests/test_listend_drain.py` | RabbitMQ drain loop (ack/nack, empty queue) with mocked pika. |
-| `hpcperfstats/tests/test_listend_archive_pool.py` | Host-affine archive worker pool: per-host FIFO, ack/nack only after durable archive, drop-mode DB submit off the consume thread (`listend_archive_worker_threads`). |
+| `hpcperfstats/tests/test_listend_archive_pool.py` | Host-affine archive worker pool: per-host FIFO, ack/nack only after durable archive, drop-mode DB submit off the consume thread (archive threads = 2 × `listend_amqp_consumer_count`). |
 | `hpcperfstats/tests/test_django_bootstrap.py` | `ensure_django()` thread safety: `django.setup()` runs once under a lock (listend DB threads previously raced it into `AttributeError: 'NoneType' object has no attribute 'LOGGING'`), failures are not latched, reentrant calls no-op. |
 | `hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage.py` | Window-coverage readiness helpers and legacy fallback (host unit mocks). |
 | `hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage_compose.py` | Compose-backed defer→ready when early `host_data` is inserted (`tests/run_db_pytest_workflow.sh`). |

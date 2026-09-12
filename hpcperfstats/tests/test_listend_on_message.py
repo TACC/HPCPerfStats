@@ -733,11 +733,33 @@ def test_db_backpressure_pause_does_not_set_amqp_reconnect(monkeypatch):
 def test_listend_amqp_prefetch_defaults():
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
-  assert cfg.get_listend_archive_worker_threads() >= 1
   assert cfg.get_listend_amqp_prefetch() >= 1
-  # Registry defaults (drop-mode prefetch 128; archive threads 16).
-  assert cfg.INI_OPTION_DEFAULTS["listend_archive_worker_threads"] == "16"
-  assert cfg.INI_OPTION_DEFAULTS["listend_amqp_prefetch"] == "128"
+  assert cfg.INI_OPTION_DEFAULTS["listend_amqp_prefetch"] == "32"
+  assert "listend_archive_worker_threads" not in cfg.INI_OPTION_DEFAULTS
+  assert (
+      cfg.get_listend_archive_worker_threads()
+      == 2 * cfg.get_listend_amqp_consumer_count()
+  )
+
+
+def test_listend_archive_worker_threads_derived(monkeypatch):
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  assert "listend_archive_worker_threads" not in cfg.INI_OPTION_DEFAULTS
+  real_get = cfg._pipeline_get
+
+  def fake_pipeline_get(option, *args, **kwargs):
+    if option == "listend_archive_worker_threads":
+      return "999"
+    return real_get(option, *args, **kwargs)
+
+  monkeypatch.setattr(cfg, "_pipeline_get", fake_pipeline_get)
+  monkeypatch.setattr(cfg, "get_listend_amqp_consumer_count", lambda: 16)
+  assert cfg.get_listend_archive_worker_threads() == 32
+  monkeypatch.setattr(cfg, "get_listend_amqp_consumer_count", lambda: 24)
+  assert cfg.get_listend_archive_worker_threads() == 48
+  monkeypatch.setattr(cfg, "get_listend_amqp_consumer_count", lambda: 1)
+  assert cfg.get_listend_archive_worker_threads() == 2
 
 
 def test_on_message_does_not_decode_or_str_split_whole_body():

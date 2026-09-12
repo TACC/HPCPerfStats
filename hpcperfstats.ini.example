@@ -367,8 +367,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 
 # Persist archive maintenance hints for faster restarts (default yes).
 
-# listend async dual-write of samples to Timescale after archive append (default yes).
-# listend_db_ingest_enabled = yes
+# listend async dual-write of samples to Timescale after archive append (default no; opt-in = yes).
+# listend_db_ingest_enabled = no
 
 # Host-affine thread count for listend live DB ingest (default 32).
 # Size against Postgres max_connections alongside sync_ingest_pool_processes.
@@ -396,14 +396,11 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # When live DB queues are full: drop (archive+ack, shed DB) or pause (nack, stop consume).
 # listend_db_ingest_backpressure = drop
 
-# Host-affine archive writer threads for listend consume (default 16).
-# listend_archive_worker_threads = 16
+# Per-consumer RabbitMQ basic_qos prefetch in drop mode (default 32; 16 consumers → 512 process-wide; leftover 512 is 512 each — set 32). Pause still uses 1.
+# listend_amqp_prefetch = 32
 
-# RabbitMQ basic_qos prefetch in drop mode (default 128); pause mode always uses 1.
-# listend_amqp_prefetch = 128
-
-# Competing AMQP consume threads, one BlockingConnection each (default 8; clamp 1..16).
-# listend_amqp_consumer_count = 8
+# Competing AMQP consume threads, one BlockingConnection each (default 16; floor 1; no upper clamp). Archive writers are 2× this count.
+# listend_amqp_consumer_count = 16
 
 # Keep uncompressed YYYY-MM-DD.tar after sealing globally (default no).
 # Prior days drop at seal when raw is gone; calendar-today uses grace hours below.

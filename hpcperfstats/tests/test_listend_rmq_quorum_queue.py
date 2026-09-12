@@ -73,7 +73,7 @@ def test_listend_amqp_connection_parameters_sets_frame_max():
 
   p = listend_amqp_connection_parameters("rabbitmq")
   assert p.frame_max == LISTEND_AMQP_FRAME_MAX
-  assert p.frame_max == 8388608
+  assert p.frame_max == 131072
   assert p.heartbeat == LISTEND_AMQP_HEARTBEAT_SECONDS
   assert pika.spec.FRAME_MAX_SIZE >= LISTEND_AMQP_FRAME_MAX
 

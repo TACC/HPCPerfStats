@@ -57,6 +57,13 @@ def test_compute_listend_db_queue_budgets_splits_evenly():
   assert budgets["queue_max_gb_clipped"] is False
 
 
+def test_listend_db_ingest_enabled_defaults():
+  """Registry and getter fallback are off (opt-in = yes)."""
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  assert cfg.INI_OPTION_DEFAULTS["listend_db_ingest_enabled"] == "no"
+
+
 def test_disabled_pool_does_not_start_threads():
   """listend_db_ingest_enabled=no must not start DB threads or queues."""
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi

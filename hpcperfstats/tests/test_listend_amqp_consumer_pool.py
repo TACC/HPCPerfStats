@@ -1,4 +1,4 @@
-"""Host tests for competing AMQP consumers, prefetch split, and reorder."""
+"""Host tests for competing AMQP consumers, per-consumer prefetch, and reorder."""
 from __future__ import annotations
 
 import threading
@@ -57,13 +57,25 @@ def archive_pool_env(tmp_path, monkeypatch):
   listend._archive_inflight_add(-listend.archive_inflight_count())
 
 
-def test_amqp_prefetch_split_across_consumers():
+def test_amqp_prefetch_is_per_consumer_not_split(monkeypatch):
   import hpcperfstats.listend as listend
 
-  assert listend.split_listend_amqp_prefetch(128, 8) == 16
-  assert listend.split_listend_amqp_prefetch(128, 1) == 128
-  assert listend.split_listend_amqp_prefetch(7, 8) == 1
-  assert listend.split_listend_amqp_prefetch(0, 8) == 1
+  monkeypatch.setattr(
+      listend.cfg, "get_listend_amqp_prefetch", lambda: 32
+  )
+  monkeypatch.setattr(listend, "_live_db_ingest_pool_active", lambda: None)
+  listend._amqp_consumer_count = 16
+  assert listend._listend_qos_prefetch_count() == 32
+  listend._amqp_consumer_count = 1
+  assert listend._listend_qos_prefetch_count() == 32
+  monkeypatch.setattr(
+      listend, "_live_db_ingest_pool_active", lambda: object()
+  )
+  monkeypatch.setattr(
+      listend, "_listend_db_backpressure_mode_is_pause", lambda: True
+  )
+  assert listend._listend_qos_prefetch_count() == 1
+  listend._amqp_consumer_count = 1
 
 
 def test_n1_skips_reorder(archive_pool_env, monkeypatch):

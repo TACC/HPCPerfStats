@@ -1353,31 +1353,6 @@ def _is_amqp_channel_or_connection_dead(
   return any(marker in msg for marker in dead_markers)
 
 
-def split_listend_amqp_prefetch(total: int, consumer_count: int) -> int:
-  """
-  Split the process-wide drop-mode prefetch across competing consumers.
-
-  Args:
-    total (int): ``listend_amqp_prefetch`` (process-wide unacked window).
-    consumer_count (int): Number of AMQP consume threads.
-
-  Returns:
-    int: Per-consumer ``basic_qos`` prefetch, at least 1.
-
-  Examples:
-    >>> split_listend_amqp_prefetch(128, 8)
-    16
-    >>> split_listend_amqp_prefetch(7, 8)
-    1
-  """
-  n = max(1, int(consumer_count))
-  try:
-    t = int(total)
-  except (TypeError, ValueError):
-    t = 1
-  return max(1, t // n)
-
-
 def _current_amqp_session() -> _AmqpConsumeSession | None:
   """
   Return the consume session bound to this thread, if any.
@@ -1396,8 +1371,8 @@ def _listend_qos_prefetch_count() -> int:
   """
   Return the ``basic_qos`` prefetch for one consume channel.
 
-  Pause mode uses 1 per consumer. Drop mode splits
-  ``get_listend_amqp_prefetch`` across ``_amqp_consumer_count``.
+  Pause mode uses 1 per consumer. Drop mode uses
+  ``get_listend_amqp_prefetch`` as the per-consumer window.
 
   Returns:
     int: Prefetch count, at least 1.
@@ -1409,10 +1384,7 @@ def _listend_qos_prefetch_count() -> int:
   live_pool = _live_db_ingest_pool_active()
   if live_pool is not None and _listend_db_backpressure_mode_is_pause():
     return 1
-  return split_listend_amqp_prefetch(
-      int(cfg.get_listend_amqp_prefetch()),
-      max(1, int(_amqp_consumer_count)),
-  )
+  return max(1, int(cfg.get_listend_amqp_prefetch()))
 
 
 def _negotiated_amqp_frame_max(connection: Any, parameters: Any) -> int:
@@ -2336,8 +2308,8 @@ def start_listend_archive_pool(n_threads: int | None = None) -> int:
   Start host-affine archive writer threads (idempotent).
 
   Args:
-    n_threads (int | None): Worker count; default from INI
-      ``listend_archive_worker_threads``.
+    n_threads (int | None): Worker count; default from
+      ``get_listend_archive_worker_threads`` (2× AMQP consumer count).
 
   Returns:
     int: Number of archive worker threads started (or already running).
@@ -2954,7 +2926,7 @@ def main() -> None:
       except Exception as arch_err:
         log_print("Failed to start listend archive pool: %s" % arch_err)
 
-      n = min(16, max(1, int(cfg.get_listend_amqp_consumer_count())))
+      n = max(1, int(cfg.get_listend_amqp_consumer_count()))
       _amqp_consumer_count = n
       _amqp_consumer_threads = []
       _amqp_sessions = []

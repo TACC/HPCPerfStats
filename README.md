@@ -471,7 +471,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 | Get queues and message counts from rabbitmq | `docker compose exec rabbitmq rabbitmqctl list_queues name messages consumers` |
 | RabbitMQ default queue type | Compose mounts `services-conf/rabbitmq_default_queue_type.conf` (`default_queue_type = quorum`). New durable monitor ingest queues are declared quorum. Existing brokers: **[docs/upgrade.md](docs/upgrade.md)**. |
 | RabbitMQ memory cap | Compose **`mem_limit` / `memswap_limit` 96g** plus `services-conf/rabbitmq_vm_memory.conf` (`vm_memory_high_watermark.absolute = 80GiB` headroom). Erlang allocator: **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`**. Inspect: `docker compose exec rabbitmq rabbitmqctl status` (Alarms + watermark; do **not** use `rabbitmqctl list_alarms` — absent on 4.3.x). |
-| RabbitMQ frame_max | Compose mounts `services-conf/rabbitmq_frame_max.conf` (`frame_max = 8388608`) so listend AMQP frames match pika `LISTEND_AMQP_FRAME_MAX`. Recreate **rabbitmq** and **pipeline** after changing that file ([docs/upgrade.md](docs/upgrade.md)). |
+| RabbitMQ frame_max | Compose mounts `services-conf/rabbitmq_frame_max.conf` (`frame_max = 131072`, RabbitMQ default) so listend AMQP frames match pika `LISTEND_AMQP_FRAME_MAX`. Recreate **rabbitmq** and **pipeline** after changing that file ([docs/upgrade.md](docs/upgrade.md)). |
 | Admin Monitor RabbitMQ stats | Staff Admin Monitor → RabbitMQ statistics uses the **management HTTP API** on compose-internal **`http://rabbitmq:15672`** (image `rabbitmq:*-management-alpine`). Port **15672 is not published on the host**; `loopback_users.guest = false` in `services-conf/rabbitmq_management.conf` allows `web`→`rabbitmq` auth. |
 
 ---
