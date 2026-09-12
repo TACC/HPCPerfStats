@@ -1635,11 +1635,13 @@ def _day_close_complete_wait_on_ingest_handoff(
   Prefer verify-gated ``complete_handoff_to_ingest``. When that returns
   empty and cheap phase does not already answer ``needs_wait``, kick
   ``kick_closed_raw_paths_to_ingest`` so idle yield still refills ingest
-  (H17). Skip that remaining-raw kick when cheap ``phase=verifying`` /
-  ``deleting`` / ``verification_complete``+pending already blocked
-  (H23 leftover hang after ``stage_enter disk_remaining_raw``). Always
-  call ``kick_closed_raw_unblock`` when present so leftover verifying
-  days start verify instead of occupying inflight on remaining-raw find
+  (H17). Skip both ``complete_handoff_to_ingest`` and that remaining-raw
+  kick when cheap ``phase=verifying`` / ``deleting`` /
+  ``verification_complete``+pending already blocked (H23 leftover hang
+  after ``stage_enter disk_remaining_raw``; H24 leftover
+  ``complete_handoff`` remaining-raw walk). Always call
+  ``kick_closed_raw_unblock`` when present so leftover verifying days
+  start verify instead of occupying inflight on remaining-raw find
   (H19).
 
   Args:
@@ -1652,16 +1654,14 @@ def _day_close_complete_wait_on_ingest_handoff(
   Examples:
     >>> _day_close_complete_wait_on_ingest_handoff(object(), "/tmp/x.tar")
   """
+  cheap_blocks = _day_close_disk_remaining_raw_blocks(coord, tar_path)
   paths: list[str] = []
   complete_fn = getattr(coord, "complete_handoff_to_ingest", None)
-  if callable(complete_fn):
+  if callable(complete_fn) and not cheap_blocks:
     result = complete_fn(tar_path, reason="day_close_wait_on_ingest")
     if result:
       paths = list(result)
-  if (
-      not paths
-      and not _day_close_disk_remaining_raw_blocks(coord, tar_path)
-  ):
+  if not paths and not cheap_blocks:
     kick_fn = getattr(coord, "kick_closed_raw_paths_to_ingest", None)
     if callable(kick_fn):
       kick_fn(tar_path, reason="day_close_wait_on_ingest")

@@ -4040,6 +4040,75 @@ def test_day_close_vc_pending_skips_remaining_raw_kick():
   assert unblocks == [("/d/2026-08-03.tar", "day_close_wait_on_ingest")]
 
 
+def test_day_close_cheap_phase_verifying_skips_complete_handoff():
+  """H24: leftover phase=verifying must not call complete_handoff remaining-raw."""
+  handoffs = []
+  kicks = []
+  unblocks = []
+
+  class _Coord:
+    def phase(self, _tar_path):
+      return "verifying"
+
+    def complete_handoff_to_ingest(self, tar_path, reason=""):
+      handoffs.append((tar_path, reason))
+      raise AssertionError("complete_handoff remaining-raw")
+
+    def kick_closed_raw_paths_to_ingest(self, tar_path, reason=""):
+      kicks.append((tar_path, reason))
+      raise AssertionError("remaining-raw kick")
+
+    def kick_closed_raw_unblock(self, tar_path, reason=""):
+      unblocks.append((tar_path, reason))
+      return "verify"
+
+  qo._day_close_complete_wait_on_ingest_handoff(
+      _Coord(),
+      "/d/2026-07-28.tar",
+  )
+  assert handoffs == []
+  assert kicks == []
+  assert unblocks == [("/d/2026-07-28.tar", "day_close_wait_on_ingest")]
+
+
+def test_day_close_vc_pending_skips_complete_handoff_remaining_raw():
+  """H24: leftover verification_complete+pending must not call complete_handoff."""
+  handoffs = []
+  kicks = []
+  unblocks = []
+
+  class _State:
+    def _manifest_verified_pending_count(self):
+      return 799
+
+  class _Coord:
+    def phase(self, _tar_path):
+      return "verification_complete"
+
+    def _get_or_create_day(self, _tar_path):
+      return _State()
+
+    def complete_handoff_to_ingest(self, tar_path, reason=""):
+      handoffs.append((tar_path, reason))
+      raise AssertionError("complete_handoff remaining-raw")
+
+    def kick_closed_raw_paths_to_ingest(self, tar_path, reason=""):
+      kicks.append((tar_path, reason))
+      raise AssertionError("remaining-raw kick")
+
+    def kick_closed_raw_unblock(self, tar_path, reason=""):
+      unblocks.append((tar_path, reason))
+      return "verify"
+
+  qo._day_close_complete_wait_on_ingest_handoff(
+      _Coord(),
+      "/d/2026-08-03.tar",
+  )
+  assert handoffs == []
+  assert kicks == []
+  assert unblocks == [("/d/2026-08-03.tar", "day_close_wait_on_ingest")]
+
+
 def test_day_close_leftover_verifying_skips_remaining_raw_kick(
     tmp_path, monkeypatch,
 ):
@@ -4080,6 +4149,88 @@ def test_day_close_leftover_verifying_skips_remaining_raw_kick(
 
     def complete_handoff_to_ingest(self, _tar_path, reason=""):
       return []
+
+    def kick_closed_raw_unblock(self, tar_path, reason=""):
+      unblocks.append((tar_path, reason))
+      return "verify"
+
+    def kick_closed_raw_paths_to_ingest(self, tar_path, reason=""):
+      raise AssertionError("remaining-raw kick")
+
+    def run_pre_seal_verify_sync(self, _tar_path, **_kw):
+      return True
+
+    def run_post_seal_verify_sync(self, _tar_path):
+      return True
+
+    def apply_batch_delete(self, _tar_path):
+      return 0
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      job_store=SyncTimedbJobStore(str(tmp_path)),
+      log_fn=lambda msg, **k: logs.append(str(msg)),
+  )
+  assert any(
+      "stage_enter" in line and "disk_remaining_raw" in line for line in logs
+  )
+  assert unblocks
+  assert outcome != "yielded"
+
+
+def test_day_close_leftover_vc_pending_skips_complete_handoff(
+    tmp_path, monkeypatch,
+):
+  """H24: leftover vc+pending must not complete_handoff after stage_enter."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2026-08-03"
+  tar = daily / ("%s.tar" % day)
+  tar.write_bytes(b"tar")
+  logs = []
+  unblocks = []
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: None,
+  )
+
+  class _State:
+    def _manifest_verified_pending_count(self):
+      return 799
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def phase(self, _tar_path):
+      return "verification_complete"
+
+    def _get_or_create_day(self, _tar_path):
+      return _State()
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      raise AssertionError("remaining-raw find")
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      raise AssertionError("remaining-raw find")
+
+    def should_handoff_to_ingest(self, _tar_path):
+      raise AssertionError("complete_handoff remaining-raw")
+
+    def complete_handoff_to_ingest(self, _tar_path, reason=""):
+      raise AssertionError("complete_handoff remaining-raw")
 
     def kick_closed_raw_unblock(self, tar_path, reason=""):
       unblocks.append((tar_path, reason))
