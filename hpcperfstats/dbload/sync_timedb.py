@@ -3650,6 +3650,7 @@ def _resolve_streaming_ingest_start(
   Examples:
     >>> _resolve_streaming_ingest_start("x", None)  # doctest: +SKIP
   """
+  update_worker_substage("parse:start_resolve")
   if lines is not None:
     t, _jid, host = parse_first_timestamp_line(lines)
   else:

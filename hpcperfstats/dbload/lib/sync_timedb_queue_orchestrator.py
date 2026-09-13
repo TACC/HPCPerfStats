@@ -5385,7 +5385,13 @@ def run_sync_timedb_queue_orchestrator(
       )
     _reap_stale_inflight(client, log_fn=log_fn)
 
-    ingest_pool_size = max(1, int(cfg.get_sync_ingest_pool_processes()))
+    ingest_pool_size = max(
+        1,
+        min(
+            int(cfg.get_sync_ingest_pool_processes()),
+            int(cfg.get_effective_cores()),
+        ),
+    )
     hot_cap, catchup_cap = jq.ingest_band_slot_caps(ingest_pool_size)
     append_cap = max(1, int(cfg.get_sync_archive_pool_processes()))
     poll_s = float(cfg.get_sync_pool_poll_timeout_s())

@@ -1034,6 +1034,9 @@ class SyncTimedbArchiveMembersStore:
         """
         Write one calendar day's durable maps to the sidecar directory.
 
+        Snapshot identity refs and cheap flags under the store lock, then
+        copy giant member maps and persist after the lock is released.
+
         Args:
           day_token (str): ISO calendar day.
 
@@ -1047,24 +1050,27 @@ class SyncTimedbArchiveMembersStore:
         """
         day = str(day_token)
         with self._lock:
-            identities: Dict[str, Any] = {}
-            for (stored_day, identity), members in self._members.items():
-                if stored_day != day:
-                    continue
-                if not self._complete.get((day, identity)):
-                    continue
-                identities[identity] = {
-                    "members": dict(members),
-                    "complete": True,
-                }
-            payload = {
-                "schema_version": MEMBERS_DAY_SCHEMA_VERSION,
-                "day_token": day,
-                "identities": identities,
-                "day_skip": self._day_skip.get(day),
-                "degraded": bool(self._degraded.get(day)),
-                "dedupe_hint": bool(self._dedupe_hint.get(day)),
-            }
+            snapshots = tuple(
+                (identity, members)
+                for (stored_day, identity), members in self._members.items()
+                if stored_day == day and self._complete.get((day, identity))
+            )
+            skip = self._day_skip.get(day)
+            if isinstance(skip, dict):
+                skip = dict(skip)
+            degraded = bool(self._degraded.get(day))
+            dedupe = bool(self._dedupe_hint.get(day))
+        payload = {
+            "schema_version": MEMBERS_DAY_SCHEMA_VERSION,
+            "day_token": day,
+            "identities": {
+                identity: {"members": dict(members), "complete": True}
+                for identity, members in snapshots
+            },
+            "day_skip": skip,
+            "degraded": degraded,
+            "dedupe_hint": dedupe,
+        }
         path = self._day_path(day)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         save_persistence_document(path, "archive_members_day", payload)

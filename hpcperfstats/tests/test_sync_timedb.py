@@ -1301,3 +1301,28 @@ def test_stats_file_size_bytes_reads_file(tmp_path):
   stats_file = tmp_path / "seg"
   stats_file.write_text("x", encoding="utf-8")
   assert stats_file_size_bytes(str(stats_file)) == 1
+
+
+def test_parse_t0_includes_resolve_streaming_ingest_start():
+  """Hours of parse_elapsed_s include start-resolve, not proven feed_line CPU."""
+  from pathlib import Path
+
+  src = (
+      Path(__file__).resolve().parents[1] / "dbload" / "sync_timedb.py"
+  ).read_text(encoding="utf-8")
+  streaming = src.split(
+      "def _parse_stats_file_payload_impl_streaming", 1,
+  )[1].split("\ndef ", 1)[0]
+  incremental = src.split(
+      "def _add_stats_file_to_db_streaming_incremental", 1,
+  )[1].split("\ndef ", 1)[0]
+  resolve = src.split(
+      "def _resolve_streaming_ingest_start", 1,
+  )[1].split("\ndef ", 1)[0]
+  assert streaming.index("parse_t0") < streaming.index(
+      "_resolve_streaming_ingest_start",
+  )
+  assert incremental.index("parse_t0") < incremental.index(
+      "_resolve_streaming_ingest_start",
+  )
+  assert 'update_worker_substage("parse:start_resolve")' in resolve

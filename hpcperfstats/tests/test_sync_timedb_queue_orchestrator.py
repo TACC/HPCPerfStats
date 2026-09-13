@@ -4402,3 +4402,13 @@ def test_day_close_claim_vacate_yield_log_rate_limited(tmp_path):
   assert "outcome=yielded" in vacate_lines[0]
   # After the first emit, subsequent cycles accumulate suppressed_n on the
   # next allowed emit; with interval 30s only one line in this burst.
+
+
+def test_ingest_pool_size_clamped_to_effective_cores():
+  """Occupancy cap: INI pool must not exceed get_effective_cores (not 40-core fill)."""
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  idx = src.index("ingest_pool_size =")
+  window = src[idx:idx + 280]
+  assert "get_sync_ingest_pool_processes()" in window
+  assert "get_effective_cores()" in window
+  assert "min(" in window

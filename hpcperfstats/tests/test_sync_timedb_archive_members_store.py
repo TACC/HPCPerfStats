@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Mapping
 
 import pytest
 
@@ -237,3 +238,55 @@ def test_degraded_survives_reload(tmp_path):
     revived.clear_degraded("2026-08-10")
     again = SyncTimedbArchiveMembersStore(archive)
     assert not again.is_degraded("2026-08-10")
+
+
+class _SlowMemberMap(Mapping):
+    """Mapping whose iteration sleeps so persist copy can be timed vs the RLock."""
+
+    def __init__(self, data, started, hold_s=0.4):
+        self._data = dict(data)
+        self._started = started
+        self._hold_s = hold_s
+
+    def __iter__(self):
+        self._started.set()
+        time.sleep(self._hold_s)
+        return iter(self._data)
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def __len__(self):
+        return len(self._data)
+
+
+@pytest.mark.django_db(databases=[])
+def test_persist_day_copy_releases_lock(tmp_path):
+    """Giant persist copy must not serialize ingest waiters on the store RLock."""
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    started = threading.Event()
+    slow = _SlowMemberMap({"host/1": 11}, started, hold_s=0.5)
+    with store._lock:
+        store._members[("2026-09-01", "id-a")] = slow
+        store._complete[("2026-09-01", "id-a")] = True
+    acquired = []
+
+    def persist() -> None:
+        store.persist_day("2026-09-01")
+
+    def waiter() -> None:
+        assert started.wait(timeout=2)
+        got = store._lock.acquire(timeout=0.05)
+        acquired.append(got)
+        if got:
+            store._lock.release()
+
+    persist_thread = threading.Thread(target=persist)
+    waiter_thread = threading.Thread(target=waiter)
+    persist_thread.start()
+    waiter_thread.start()
+    persist_thread.join(timeout=3)
+    waiter_thread.join(timeout=3)
+    assert acquired == [True]
+    revived = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    assert revived.lookup_member("2026-09-01", "id-a", "host/1") == 11
