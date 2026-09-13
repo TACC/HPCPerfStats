@@ -13,7 +13,8 @@ Attributes:
   _idle_thread_started: Attribute.
   _last_idle_report_time: Attribute.
   _last_message_time: Attribute.
-  _message_timestamps: Attribute.
+  _message_timestamps: In-window ``(unix_ts, payload_bytes)`` consume
+    records for the 10-minute idle-monitor line.
   _db_backpressure_pause: Attribute.
   _amqp_reconnect_requested: Attribute.
   _amqp_connection_generation: Consume-session id; stale ack/nack callbacks
@@ -1020,11 +1021,11 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
   with _timestamps_lock:
     global _last_message_time
     _last_message_time = now
-    _message_timestamps.append(now)
+    _message_timestamps.append((now, int(payload_len)))
     if unlinked_current:
       _unlink_timestamps.append(now)
     cutoff_window = now - MESSAGE_WINDOW_SECONDS
-    while _message_timestamps and _message_timestamps[0] < cutoff_window:
+    while _message_timestamps and _message_timestamps[0][0] < cutoff_window:
       _message_timestamps.popleft()
     while _unlink_timestamps and _unlink_timestamps[0] < cutoff_window:
       _unlink_timestamps.popleft()
@@ -2566,66 +2567,117 @@ def on_message(
     return
 
 
+def _consume_window_totals(now: float) -> tuple[int, int, int]:
+  """
+  Count in-window consumed messages, payload bytes, and current unlinks.
+
+  Entries are ``(unix_ts, payload_bytes)`` recorded after a durable
+  archive append. Bytes are AMQP body length, not broker frame size.
+
+  Args:
+    now (float): Unix time used as the window end.
+
+  Returns:
+    tuple[int, int, int]: ``(messages, bytes, unlinks)`` whose timestamps
+    are at or after ``now - MESSAGE_WINDOW_SECONDS``.
+
+  Examples:
+    >>> n, nbytes, u = _consume_window_totals(1_000_000.0)
+    >>> n >= 0 and nbytes >= 0 and u >= 0
+    True
+  """
+  cutoff_10 = now - MESSAGE_WINDOW_SECONDS
+  with _timestamps_lock:
+    count_last_10 = 0
+    bytes_last_10 = 0
+    for ts, nbytes in _message_timestamps:
+      if ts >= cutoff_10:
+        count_last_10 += 1
+        bytes_last_10 += int(nbytes)
+    unlink_count_last_10 = sum(
+        1 for ts in _unlink_timestamps if ts >= cutoff_10
+    )
+  return count_last_10, bytes_last_10, unlink_count_last_10
+
+
+def _emit_idle_monitor_report(now: float) -> None:
+  """
+  Log one 10-minute consume/queue/unlink status line when the window elapsed.
+
+  Args:
+    now (float): Unix time of this idle-monitor sample.
+
+  Returns:
+    None
+
+  Examples:
+    >>> callable(_emit_idle_monitor_report)
+    True
+  """
+  global _last_idle_report_time
+  if (_last_idle_report_time is not None and
+      (now - _last_idle_report_time) < MESSAGE_WINDOW_SECONDS):
+    return
+
+  count_last_10, bytes_last_10, unlink_count_last_10 = (
+      _consume_window_totals(now)
+  )
+
+  # Queue depth via a dedicated connection (see
+  # ``_get_rmq_queue_depth_for_monitor``).
+  queue_depth = _get_rmq_queue_depth_for_monitor()
+
+  db_suffix = ""
+  try:
+    from hpcperfstats.dbload.lib.listend_db_ingest import (
+        get_listend_db_ingest_pool,
+    )
+
+    pool = get_listend_db_ingest_pool()
+    if pool is not None and pool.enabled and pool._started:
+      db_suffix = "; " + pool.format_idle_monitor_suffix()
+  except Exception:
+    pass
+
+  archive_suffix = ""
+  try:
+    archive_suffix = _format_listend_idle_archive_suffix()
+  except Exception:
+    pass
+
+  log_print(
+      "Messages consumed in the last 10 minutes: %d (%d bytes); "
+      "messages waiting to be consumed: %s; "
+      "current file unlinks (last 10 minutes): %d%s%s" %
+      (count_last_10, bytes_last_10, queue_depth, unlink_count_last_10,
+       db_suffix, archive_suffix))
+
+  _last_idle_report_time = now
+
+
 def _idle_monitor() -> None:
   """
   Periodically report messages consumed in the last 10 minutes and queue depth.
-  
+
   Runs every IDLE_CHECK_INTERVAL seconds, but only logs once per
-  MESSAGE_WINDOW_SECONDS window.
-  
+  MESSAGE_WINDOW_SECONDS window. The consume count includes AMQP body
+  bytes archived in that window.
+
   Returns:
     None
-  
+
   Examples:
-    >>> _idle_monitor()  # doctest: +SKIP
+    >>> callable(_idle_monitor)
+    True
   """
   from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
   set_daemon_thread_title("", script_name="listend.py", role="idle-monitor")
-  global _last_idle_report_time
   while not _idle_monitor_stop_event.is_set():
     time.sleep(IDLE_CHECK_INTERVAL)
     if _idle_monitor_stop_event.is_set():
       break
-    now = time.time()
-    if (_last_idle_report_time is not None and
-        (now - _last_idle_report_time) < MESSAGE_WINDOW_SECONDS):
-      continue
-
-    with _timestamps_lock:
-      cutoff_10 = now - MESSAGE_WINDOW_SECONDS
-      count_last_10 = sum(1 for ts in _message_timestamps if ts >= cutoff_10)
-      unlink_count_last_10 = sum(
-          1 for ts in _unlink_timestamps if ts >= cutoff_10
-      )
-
-    # Queue depth via a dedicated connection (see _get_rmq_queue_depth_for_monitor).
-    queue_depth = _get_rmq_queue_depth_for_monitor()
-
-    db_suffix = ""
-    try:
-      from hpcperfstats.dbload.lib.listend_db_ingest import get_listend_db_ingest_pool
-
-      pool = get_listend_db_ingest_pool()
-      if pool is not None and pool.enabled and pool._started:
-        db_suffix = "; " + pool.format_idle_monitor_suffix()
-    except Exception:
-      pass
-
-    archive_suffix = ""
-    try:
-      archive_suffix = _format_listend_idle_archive_suffix()
-    except Exception:
-      pass
-
-    log_print(
-        "Messages consumed in the last 10 minutes: %d; "
-        "messages waiting to be consumed: %s; "
-        "current file unlinks (last 10 minutes): %d%s%s" %
-        (count_last_10, queue_depth, unlink_count_last_10, db_suffix,
-         archive_suffix))
-
-    _last_idle_report_time = now
+    _emit_idle_monitor_report(time.time())
 
 
 def _stop_amqp_consumer_sessions(*, join_timeout: float = 15.0) -> None:
