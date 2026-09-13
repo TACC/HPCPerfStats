@@ -646,8 +646,10 @@ def members_cache_is_fully_warm(
       ... )
     """
     del client
-    members = lookup_full_members(keys)
-    return bool(members)
+    store = get_process_archive_members_store()
+    if store is None:
+        return False
+    return store.is_fully_warm(keys.day_token, keys.identity)
 
 
 def member_match_when_warm(

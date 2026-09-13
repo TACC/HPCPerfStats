@@ -290,3 +290,65 @@ def test_persist_day_copy_releases_lock(tmp_path):
     assert acquired == [True]
     revived = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
     assert revived.lookup_member("2026-09-01", "id-a", "host/1") == 11
+
+
+@pytest.mark.django_db(databases=[])
+def test_lookup_complete_map_copy_releases_lock(tmp_path):
+    """lookup_complete_map must copy the map after releasing the store RLock."""
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    started = threading.Event()
+    slow = _SlowMemberMap({"host/1": 11}, started, hold_s=0.5)
+    with store._lock:
+        store._members[("2026-09-01", "id-a")] = slow
+        store._complete[("2026-09-01", "id-a")] = True
+    acquired = []
+
+    def lookup() -> None:
+        assert store.lookup_complete_map("2026-09-01", "id-a") == {"host/1": 11}
+
+    def waiter() -> None:
+        assert started.wait(timeout=2)
+        got = store._lock.acquire(timeout=0.05)
+        acquired.append(got)
+        if got:
+            store._lock.release()
+
+    lookup_thread = threading.Thread(target=lookup)
+    waiter_thread = threading.Thread(target=waiter)
+    lookup_thread.start()
+    waiter_thread.start()
+    lookup_thread.join(timeout=3)
+    waiter_thread.join(timeout=3)
+    assert acquired == [True]
+
+
+@pytest.mark.django_db(databases=[])
+def test_wait_for_complete_copy_releases_lock(tmp_path):
+    """wait_for_complete success path must copy after releasing the RLock."""
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    started = threading.Event()
+    slow = _SlowMemberMap({"host/1": 11}, started, hold_s=0.5)
+    with store._lock:
+        store._members[("2026-09-01", "id-a")] = slow
+        store._complete[("2026-09-01", "id-a")] = True
+    acquired = []
+
+    def wait() -> None:
+        assert store.wait_for_complete(
+            "2026-09-01", "id-a", timeout_s=2.0,
+        ) == {"host/1": 11}
+
+    def waiter() -> None:
+        assert started.wait(timeout=2)
+        got = store._lock.acquire(timeout=0.05)
+        acquired.append(got)
+        if got:
+            store._lock.release()
+
+    wait_thread = threading.Thread(target=wait)
+    waiter_thread = threading.Thread(target=waiter)
+    wait_thread.start()
+    waiter_thread.start()
+    wait_thread.join(timeout=3)
+    waiter_thread.join(timeout=3)
+    assert acquired == [True]

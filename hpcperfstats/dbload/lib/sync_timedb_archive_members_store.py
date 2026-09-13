@@ -306,19 +306,26 @@ class SyncTimedbArchiveMembersStore:
         key = (str(day_token), str(identity))
         deadline = time.time() + float(timeout_s)
         while time.time() < deadline:
+            members_ref = None
             with self._lock:
                 if day_token in self._day_skip:
                     return None
                 if self._complete.get(key):
-                    return dict(self._members.get(key) or {})
-                event = self._event(day_token, identity)
+                    members_ref = self._members.get(key) or {}
+                else:
+                    event = self._event(day_token, identity)
+            if members_ref is not None:
+                return dict(members_ref)
             remaining = deadline - time.time()
             if remaining <= 0:
                 break
             event.wait(timeout=min(0.25, remaining))
+        members_ref = None
         with self._lock:
             if self._complete.get(key):
-                return dict(self._members.get(key) or {})
+                members_ref = self._members.get(key) or {}
+        if members_ref is not None:
+            return dict(members_ref)
         return None
 
     def store_complete(
@@ -507,7 +514,32 @@ class SyncTimedbArchiveMembersStore:
             key = (str(day_token), str(identity))
             if not self._complete.get(key):
                 return None
-            return dict(self._members.get(key) or {})
+            members_ref = self._members.get(key) or {}
+        return dict(members_ref)
+
+    def is_fully_warm(self, day_token: str, identity: str) -> bool:
+        """
+        Return True when a complete non-empty member map is present.
+
+        Args:
+          day_token (str): ISO calendar day.
+          identity (str): Archive identity suffix.
+
+        Returns:
+          bool: True when complete and the map has at least one member.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").is_fully_warm(
+          ...   "2026-01-01", "id",
+          ... )
+          False
+        """
+        with self._lock:
+            key = (str(day_token), str(identity))
+            if not self._complete.get(key):
+                return False
+            members = self._members.get(key)
+            return bool(members)
 
     def merge_members(
         self,

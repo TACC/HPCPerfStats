@@ -1,6 +1,8 @@
 """In-process sync_timedb job-store claim, band, and snapshot contracts."""
 from __future__ import annotations
 
+import threading
+import time
 from datetime import date
 
 import pytest
@@ -19,6 +21,7 @@ from hpcperfstats.dbload.lib.sync_timedb_job_store import (
     requeue_job,
     zadd_ingest_job,
 )
+import hpcperfstats.dbload.lib.sync_timedb_job_store as job_store_mod
 
 
 @pytest.mark.django_db(databases=[])
@@ -147,6 +150,41 @@ def test_reload_keeps_queues_drops_inflight(tmp_path):
     assert "/raw/busy" in queued
     assert "/raw/queued" not in queued
     assert revived.inflight_count(JOB_KIND_INGEST) == 0
+
+
+@pytest.mark.django_db(databases=[])
+def test_persist_releases_lock_before_disk_write(tmp_path, monkeypatch):
+    """persist must not hold the job-store RLock across save_persistence_document."""
+    store = SyncTimedbJobStore(str(tmp_path / "archive"))
+    zadd_ingest_job(store, identity="/raw/a", score=1.0)
+    started = threading.Event()
+    real_save = job_store_mod.save_persistence_document
+    acquired = []
+
+    def slow_save(*args, **kwargs):
+        started.set()
+        time.sleep(0.5)
+        return real_save(*args, **kwargs)
+
+    monkeypatch.setattr(job_store_mod, "save_persistence_document", slow_save)
+
+    def persist() -> None:
+        store.persist(force=True)
+
+    def waiter() -> None:
+        assert started.wait(timeout=2)
+        got = store._lock.acquire(timeout=0.05)
+        acquired.append(got)
+        if got:
+            store._lock.release()
+
+    persist_thread = threading.Thread(target=persist)
+    waiter_thread = threading.Thread(target=waiter)
+    persist_thread.start()
+    waiter_thread.start()
+    persist_thread.join(timeout=3)
+    waiter_thread.join(timeout=3)
+    assert acquired == [True]
 
 
 @pytest.mark.django_db(databases=[])

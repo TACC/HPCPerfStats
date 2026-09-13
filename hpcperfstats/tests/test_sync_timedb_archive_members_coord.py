@@ -59,6 +59,25 @@ def test_populate_store_single_flight_and_warm_lookup(tmp_path):
     assert wait_for_member_match(keys, "missing", 1) is False
 
 
+def test_members_cache_is_fully_warm_without_full_map_copy(tmp_path, monkeypatch):
+    """Warm gate must not call lookup_full_members (full dict copy) for a bool."""
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    set_process_archive_members_store(store)
+    keys = _keys("2026-09-01")
+    store.store_complete(keys.day_token, keys.identity, {"host/1": 1})
+
+    def _forbid_full_lookup(*_a, **_k):
+        raise AssertionError("lookup_full_members must not run for warm bool")
+
+    monkeypatch.setattr(
+        "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord.lookup_full_members",
+        _forbid_full_lookup,
+    )
+    assert members_cache_is_fully_warm(keys) is True
+    store.store_complete(keys.day_token, keys.identity, {})
+    assert members_cache_is_fully_warm(keys) is False
+
+
 def test_sticky_skip_survives_reload(tmp_path):
     archive = str(tmp_path / "archive")
     store = SyncTimedbArchiveMembersStore(archive)

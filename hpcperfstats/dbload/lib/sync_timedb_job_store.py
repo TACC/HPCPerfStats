@@ -285,9 +285,9 @@ class SyncTimedbJobStore:
                 },
             }
             path = artifact_path(self.archive_dir, JOB_STORE_SNAPSHOT_KIND)
-            save_persistence_document(path, JOB_STORE_SNAPSHOT_KIND, payload)
             self._dirty = False
             self._last_persist = now
+        save_persistence_document(path, JOB_STORE_SNAPSHOT_KIND, payload)
 
     def load(self) -> None:
         """
