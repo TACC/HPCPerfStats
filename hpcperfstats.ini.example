@@ -449,8 +449,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Inclusive hot-band window for ingest job scores (days; default 2).
 # sync_ingest_hot_days = 2
 
-# DAY_CLOSE pipeline occupancy and parallel worker count (default 4).
-# sync_day_close_max_inflight = 4
+# DAY_CLOSE pipeline occupancy and parallel worker count (default 8).
+# sync_day_close_max_inflight = 8
 
 # Recover stale day-close manifest entries on coordinator init (default 7200s; 0 = off).
 # sync_day_close_manifest_stale_seconds = 7200

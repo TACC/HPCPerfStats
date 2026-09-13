@@ -34,7 +34,7 @@ Daily monitor archives are sealed inside the **`pipeline`** container. **`web`**
 | **`archive_zstd_level`** | **`7`** | Compression level; benchmark before raising above **9** |
 | **`archive_zstd_drop_page_cache`** | **`yes`** | Linux-only **`posix_fadvise`** hints around archive zstd reads/writes to drop hot pages after one-shot seal/decompress/integrity paths; set **`no`** to disable |
 
-**Tuning:** If seals are too slow, raise **`sync_day_close_max_inflight`** (parallel day-close workers, default **4**). If web/API or Postgres latency spikes during seal/zstd, raise **`archive_zstd_nice`** or **`archive_zstd_ionice_level`**. Override env **`SYNC_ARCHIVE_SEAL_WORKERS`** mirrors validation fanout.
+**Tuning:** If seals are too slow, raise **`sync_day_close_max_inflight`** (parallel day-close workers, default **8**). If web/API or Postgres latency spikes during seal/zstd, raise **`archive_zstd_nice`** or **`archive_zstd_ionice_level`**. Override env **`SYNC_ARCHIVE_SEAL_WORKERS`** mirrors validation fanout.
 
 **Page cache:** Large daily archives fill the Linux page cache during zstd I/O. With **`archive_zstd_drop_page_cache=yes`** (default), **`zstd_cli.py`** issues **`POSIX_FADV_SEQUENTIAL`** before reads and **`POSIX_FADV_DONTNEED`** after successful one-shot access. This is a hint only (not **`O_DIRECT`**); macOS dev hosts no-op. Decompress restore materializes to a temp ``.tar``, verifies with **`tar tf`** on that tmp, then replaces the canonical sibling (one zst pass; no pipe preflight on the restore path).
 
@@ -44,7 +44,7 @@ Ingest is always-on under **`run_sync_timedb_queue_orchestrator`**. Cold-path ar
 
 | `[PIPELINE]` key | Default | Role |
 |----------------|---------|------|
-| **`sync_day_close_max_inflight`** | **`4`** | Parallel day_close worker threads |
+| **`sync_day_close_max_inflight`** | **`8`** | Parallel day_close worker threads |
 | **`sync_day_close_min_age_hours`** | **`32`** | Min hours after calendar day end before day_close may complete |
 | **`sync_day_close_raw_paths_per_batch`** | **`1000`** | Incremental raw deletes per day_close batch |
 | **`sync_ingest_hot_days`** | **`2`** | Hot-band calendar-day window for ingest ZSET scoring |
@@ -77,7 +77,7 @@ Kernel OOM may kill an ingest pool worker (`[worker:ingest-pool]`) with a **tran
 | **`sync_supervisor_rss_limit_mb`** | Supervisor-only fail-fast (legacy; insufficient alone for worker spikes) |
 | **`abort_if_pool_workers_dead`** | Parent exits **137** when a worker is OOM-killed first (fail-fast vs hang) |
 
-**Catch-up INI starting points** (until backlog of multi‑GiB segments clears): defaults above ship in **`hpcperfstats.ini.example`** with the release — **`sync_ingest_pool_processes=64`**, **`sync_ingest_pool_maxtasksperchild=0`**, **`sync_ingest_malloc_trim_after_file=yes`**, **`sync_process_tree_rss_limit_mb=110000`**. On **small dev compose** hosts (e.g. 8–16 GiB pipeline cgroup), set **`sync_process_tree_rss_limit_mb=0`** to disable tree defer and optionally lower **`sync_ingest_pool_processes`** if RAM-bound. Ingest chunk size follows **`sync_ingest_queue_max_size`** (default **3000**; not a separate INI key). On very large trees (~100k+ closed paths), tune **`sync_startup_snapshot_wait_seconds`** (default **300**) and **`sync_day_close_max_inflight`** (default **4**, pipeline occupancy and parallel workers). Boot **`DAY_CLOSE`** discover runs on the janitor thread only; ingest begins after handoff recover without waiting for day-close completion.
+**Catch-up INI starting points** (until backlog of multi‑GiB segments clears): defaults above ship in **`hpcperfstats.ini.example`** with the release — **`sync_ingest_pool_processes=64`**, **`sync_ingest_pool_maxtasksperchild=0`**, **`sync_ingest_malloc_trim_after_file=yes`**, **`sync_process_tree_rss_limit_mb=110000`**. On **small dev compose** hosts (e.g. 8–16 GiB pipeline cgroup), set **`sync_process_tree_rss_limit_mb=0`** to disable tree defer and optionally lower **`sync_ingest_pool_processes`** if RAM-bound. Ingest chunk size follows **`sync_ingest_queue_max_size`** (default **3000**; not a separate INI key). On very large trees (~100k+ closed paths), tune **`sync_startup_snapshot_wait_seconds`** (default **300**) and **`sync_day_close_max_inflight`** (default **8**, pipeline occupancy and parallel workers). Boot **`DAY_CLOSE`** discover runs on the janitor thread only; ingest begins after handoff recover without waiting for day-close completion.
 
 **Post-fix disk-release progress grep:** `janitor: discover_ready_day_close`, `janitor: day_close enqueue`, `Archive janitor tick done` (expect `debt_popped>0` or progressing day-close), `sync_timedb: startup archive scan ready`, `sync_timedb: pending rescan done`, `idle_rescan_snapshot_source=`, `pending cap supplement from snapshot`.
 
@@ -126,7 +126,7 @@ Raw stats on disk remain the **source of truth** until validated archive members
 | **Unparsable closed raw blocking a day** | Inspect **`{archive_data_dir}/.sync_timedb_unparsable_raw.json`** and **`{archive_data_dir}/.sync_timedb_unparsable_raw/`**; ingest moves permanently unparseable closed raw off the hot tree when parse fails (look for `error: process data failed` / `Possibly corrupt file` in `sync_timedb` logs). Restore only after fixing content or deliberate operator review—do not delete manifest entries casually. Parsable-but-unmapped raw still blocks until ingest/archive catches up. |
 | **Canonical startup archive scan** | One **`build_archive_maintenance_snapshot`** per boot: janitor calls **`begin_build()`** → build → **`publish(from_janitor=True)`** → **`invalidate_unmapped_disqualify_cache()`**; supervisor rescan may **`wait_for_snapshot(allow_build=True)`** after **`sync_startup_snapshot_wait_seconds`**. Deep-copied coordinator snapshot retains **`closed_paths`** after accrual trim for unmapped disqualify. Log: **`sync_timedb: startup archive scan ready paths=N`**. |
 | **Quiescent dirty `.tar` at startup** | When a daily **`.tar`** is dirty but **no closed raw remains on disk** for that calendar day, janitor **`_discover_and_enqueue_ready_day_close(reason=startup)`** enqueues **`DAY_CLOSE`** debt (`awaiting_janitor_discover`). Requires filesystem truth (`os.path.isfile` on every unprocessed path). |
-| **Checkpoint-complete DAY_CLOSE at startup** | When all **mapped** closed raw for a calendar day is checkpoint-complete but **`.tar`** / raw remain on disk, janitor boot discover enqueues via manifest coordinator → **`DAY_CLOSE`** debt. Cap (startup and steady-state): **`sync_day_close_max_inflight`** (default **4** = occupancy and parallel workers). Candidate log: **`queued` / `waiting_on_ingest` / `disqualified`**. |
+| **Checkpoint-complete DAY_CLOSE at startup** | When all **mapped** closed raw for a calendar day is checkpoint-complete but **`.tar`** / raw remain on disk, janitor boot discover enqueues via manifest coordinator → **`DAY_CLOSE`** debt. Cap (startup and steady-state): **`sync_day_close_max_inflight`** (default **8** = occupancy and parallel workers). Candidate log: **`queued` / `waiting_on_ingest` / `disqualified`**. |
 | **Day-close seal/delete/tar-drop on day_close threads** | Queue orchestrator **`_run_day_close_job`**: age gate → **`seal_dirty_daily_archives`** → **`DayRawRemovalCoordinator.apply_batch_delete`** → drop uncompressed `.tar` when `.tar.zst` exists and no closed raw remains. Grep: **`queue_orchestrator day_close`**. |
 
 ## PostgreSQL connection budget (operator)
@@ -177,7 +177,7 @@ Jobs with long monitor prolog gaps (telemetry begins hours after Slurm start) st
 
 ## Archive janitor and seal/append lock contention
 
-The queue orchestrator runs up to **`sync_day_close_max_inflight`** (default **4**) **day_close** jobs in parallel (continuous refill; seal → raw → tar-drop per day). Tune **`sync_day_close_raw_paths_per_batch`** on sites ingesting **~15k raw files/day**.
+The queue orchestrator runs up to **`sync_day_close_max_inflight`** (default **8**) **day_close** jobs in parallel (continuous refill; seal → raw → tar-drop per day). Tune **`sync_day_close_raw_paths_per_batch`** on sites ingesting **~15k raw files/day**.
 
 **Seal vs append:** `atomic_seal_tar_to_zst` holds an exclusive **`file_write_lock`** on the daily `.tar` for the full compress/replace window. Hot-path append uses the same lock (default **60s** timeout). Large-day seals during ingest can surface append **`TimeoutError`** (fail-closed). Mitigations: use **`archive_keep_uncompressed_tar=yes`** (or rely on today's grace window) during heavy same-day append, isolate **`pipeline`** CPU budget from **`web`**/**`db`** when possible, and rely on janitor disqualification for in-flight days.
 

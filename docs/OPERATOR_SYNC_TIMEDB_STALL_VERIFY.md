@@ -823,13 +823,13 @@ podman-compose logs pipeline 2>&1 | grep -E \
   'janitor: day_close pre_seal_verify|janitor: day_close seal|janitor: day_close post_seal_verify|janitor: day_close delete|day_close handoff requeue' | tail -60
 ```
 
-**T0 (first janitor pass on a backlog day):** grep shows **`pre_seal_verify`** before **`seal`** for the same `tar=` path; retryable paths log **`day_close handoff requeue`** and **no seal** for that pass. Stall diagnostics use **`day_close=`** (not `async_day_close=`). Up to **`sync_day_close_max_inflight`** (default **4**) days may run **`DAY_CLOSE`** in parallel on `day-close-N` worker threads; tick logs use **`days_started=`** / **`days_completed=`**.
+**T0 (first janitor pass on a backlog day):** grep shows **`pre_seal_verify`** before **`seal`** for the same `tar=` path; retryable paths log **`day_close handoff requeue`** and **no seal** for that pass. Stall diagnostics use **`day_close=`** (not `async_day_close=`). Up to **`sync_day_close_max_inflight`** (default **8**) days may run **`DAY_CLOSE`** in parallel on `day-close-N` worker threads; tick logs use **`days_started=`** / **`days_completed=`**.
 
 **T1 (steady progress):** sealed days show **`post_seal_verify`** then **`delete`**; candidate report no longer lists **`closed_raw_on_disk`** as submit block; **`waiting_on_ingest`** remains only for **`checkpoint_incomplete`** days.
 
 ### T0 / T1 / T2 verify — day-close delete defer (`active_ingest`, RC-S, 2026-07)
 
-Up to **`sync_day_close_max_inflight`** (default **4**) janitor workers run as **`day-close-1` … `day-close-4`**. Different **`delete start tar=`** lines on the same prefix are **different workers or passes**, not one thread deleting two tars atomically. Interleaved prefixes like **`[day-close-1][day-close-3]`** are log line mashups from concurrent **`log_print`** (fixed with line lock in 2026-07).
+Up to **`sync_day_close_max_inflight`** (default **8**) janitor workers run as **`day-close-1` … `day-close-8`**. Different **`delete start tar=`** lines on the same prefix are **different workers or passes**, not one thread deleting two tars atomically. Interleaved prefixes like **`[day-close-1][day-close-3]`** are log line mashups from concurrent **`log_print`** (fixed with line lock in 2026-07).
 
 **T0 (pre-deploy baseline):** `preflight_n=0` with massive **`delete defer reason=active_ingest`** means verified paths self-blocked via global **`paths_pending_delete`** in the quarantine skip union (RC-S).
 
@@ -890,7 +890,7 @@ podman-compose logs pipeline 2>&1 | grep -E \
   'discover_ready_day_close|janitor: day_close enqueue|day_close candidate report|Archive janitor tick done' | tail -40
 ```
 
-**Pass:** checkpoint-complete older calendar days show **`discover_ready_day_close enqueued=`** or **`janitor: day_close enqueue`**; candidate report uses **`waiting_on_ingest`** / **`ready_for_enqueue`** / **`disqualified`** (no **`eligible_deferred`**); ingest head day stays **`waiting_on_ingest`** while janitor processes prior days; **`Archive janitor tick done`** shows **`days_started>0`** / **`debt_popped>0`** or progressing **`day_phases`** without **`ingest_stall_watchdog`** within 30 min. Under backlog, expect up to **4** concurrent day-close workers (`sync_day_close_max_inflight`) unless tuned lower.
+**Pass:** checkpoint-complete older calendar days show **`discover_ready_day_close enqueued=`** or **`janitor: day_close enqueue`**; candidate report uses **`waiting_on_ingest`** / **`ready_for_enqueue`** / **`disqualified`** (no **`eligible_deferred`**); ingest head day stays **`waiting_on_ingest`** while janitor processes prior days; **`Archive janitor tick done`** shows **`days_started>0`** / **`debt_popped>0`** or progressing **`day_phases`** without **`ingest_stall_watchdog`** within 30 min. Under backlog, expect up to **8** concurrent day-close workers (`sync_day_close_max_inflight`) unless tuned lower.
 
 ### T1 verify — day-close candidacy honesty (mutable `.tar` + report order, 2026-07)
 

@@ -1172,7 +1172,7 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   importlib.reload(cfg)
   # Thrown B janitor keys: hard-coded stubs; NEW day_close keys remain live.
   assert cfg.get_sync_day_close_raw_paths_per_batch() == 1000
-  assert cfg.get_sync_day_close_max_inflight() == 4
+  assert cfg.get_sync_day_close_max_inflight() == 8
   assert cfg.get_sync_day_close_manifest_stale_seconds() == 7200.0
   assert cfg.get_sync_day_close_raw_removal_max_deletes_per_pass() == 0
   assert cfg.get_archive_keep_uncompressed_tar() is False
@@ -1199,11 +1199,11 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert not hasattr(cfg, "get_sync_archive_pool_process_cap")
 
 
-def test_day_close_max_inflight_default_4(temp_ini, monkeypatch):
+def test_day_close_max_inflight_default_8(temp_ini, monkeypatch):
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.get_sync_day_close_max_inflight() == 4
+  assert cfg.get_sync_day_close_max_inflight() == 8
 
 
 def test_legacy_portal_fallback_for_archive_dir(tmp_path, monkeypatch):
