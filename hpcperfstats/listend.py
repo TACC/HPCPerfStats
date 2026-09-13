@@ -13,8 +13,8 @@ Attributes:
   _idle_thread_started: Attribute.
   _last_idle_report_time: Attribute.
   _last_message_time: Attribute.
-  _message_timestamps: In-window ``(unix_ts, payload_bytes)`` consume
-    records for the 10-minute idle-monitor line.
+  _message_timestamps: In-window unix timestamps for the 10-minute
+    idle-monitor consume count.
   _db_backpressure_pause: Attribute.
   _amqp_reconnect_requested: Attribute.
   _amqp_connection_generation: Consume-session id; stale ack/nack callbacks
@@ -1021,11 +1021,11 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
   with _timestamps_lock:
     global _last_message_time
     _last_message_time = now
-    _message_timestamps.append((now, int(payload_len)))
+    _message_timestamps.append(now)
     if unlinked_current:
       _unlink_timestamps.append(now)
     cutoff_window = now - MESSAGE_WINDOW_SECONDS
-    while _message_timestamps and _message_timestamps[0][0] < cutoff_window:
+    while _message_timestamps and _message_timestamps[0] < cutoff_window:
       _message_timestamps.popleft()
     while _unlink_timestamps and _unlink_timestamps[0] < cutoff_window:
       _unlink_timestamps.popleft()
@@ -2567,37 +2567,33 @@ def on_message(
     return
 
 
-def _consume_window_totals(now: float) -> tuple[int, int, int]:
+def _consume_window_totals(now: float) -> tuple[int, int]:
   """
-  Count in-window consumed messages, payload bytes, and current unlinks.
+  Count in-window consumed messages and current file unlinks.
 
-  Entries are ``(unix_ts, payload_bytes)`` recorded after a durable
-  archive append. Bytes are AMQP body length, not broker frame size.
+  Entries are unix timestamps recorded after a durable archive append.
 
   Args:
     now (float): Unix time used as the window end.
 
   Returns:
-    tuple[int, int, int]: ``(messages, bytes, unlinks)`` whose timestamps
-    are at or after ``now - MESSAGE_WINDOW_SECONDS``.
+    tuple[int, int]: ``(messages, unlinks)`` whose timestamps are at or
+    after ``now - MESSAGE_WINDOW_SECONDS``.
 
   Examples:
-    >>> n, nbytes, u = _consume_window_totals(1_000_000.0)
-    >>> n >= 0 and nbytes >= 0 and u >= 0
+    >>> n, u = _consume_window_totals(1_000_000.0)
+    >>> n >= 0 and u >= 0
     True
   """
   cutoff_10 = now - MESSAGE_WINDOW_SECONDS
   with _timestamps_lock:
-    count_last_10 = 0
-    bytes_last_10 = 0
-    for ts, nbytes in _message_timestamps:
-      if ts >= cutoff_10:
-        count_last_10 += 1
-        bytes_last_10 += int(nbytes)
+    count_last_10 = sum(
+        1 for ts in _message_timestamps if ts >= cutoff_10
+    )
     unlink_count_last_10 = sum(
         1 for ts in _unlink_timestamps if ts >= cutoff_10
     )
-  return count_last_10, bytes_last_10, unlink_count_last_10
+  return count_last_10, unlink_count_last_10
 
 
 def _emit_idle_monitor_report(now: float) -> None:
@@ -2619,9 +2615,7 @@ def _emit_idle_monitor_report(now: float) -> None:
       (now - _last_idle_report_time) < MESSAGE_WINDOW_SECONDS):
     return
 
-  count_last_10, bytes_last_10, unlink_count_last_10 = (
-      _consume_window_totals(now)
-  )
+  count_last_10, unlink_count_last_10 = _consume_window_totals(now)
 
   # Queue depth via a dedicated connection (see
   # ``_get_rmq_queue_depth_for_monitor``).
@@ -2646,11 +2640,11 @@ def _emit_idle_monitor_report(now: float) -> None:
     pass
 
   log_print(
-      "Messages consumed in the last 10 minutes: %d (%d bytes); "
+      "Messages consumed in the last 10 minutes: %d; "
       "messages waiting to be consumed: %s; "
       "current file unlinks (last 10 minutes): %d%s%s" %
-      (count_last_10, bytes_last_10, queue_depth, unlink_count_last_10,
-       db_suffix, archive_suffix))
+      (count_last_10, queue_depth, unlink_count_last_10, db_suffix,
+       archive_suffix))
 
   _last_idle_report_time = now
 
@@ -2660,8 +2654,7 @@ def _idle_monitor() -> None:
   Periodically report messages consumed in the last 10 minutes and queue depth.
 
   Runs every IDLE_CHECK_INTERVAL seconds, but only logs once per
-  MESSAGE_WINDOW_SECONDS window. The consume count includes AMQP body
-  bytes archived in that window.
+  MESSAGE_WINDOW_SECONDS window.
 
   Returns:
     None

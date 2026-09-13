@@ -164,15 +164,13 @@ def test_idle_monitor_reports_real_queue_depth(monkeypatch):
   monkeypatch.setattr(listend, "_format_listend_idle_archive_suffix", lambda: "")
 
   now = 1_000_000.0
-  body_a = 100
-  body_b = 250
 
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
-    listend._message_timestamps.append((now - 10, body_a))
-    listend._message_timestamps.append((now - 5, body_b))
+    listend._message_timestamps.append(now - 10)
+    listend._message_timestamps.append(now - 5)
     listend._message_timestamps.append(
-        (now - listend.MESSAGE_WINDOW_SECONDS - 1, 9999)
+        now - listend.MESSAGE_WINDOW_SECONDS - 1
     )
     listend._unlink_timestamps.clear()
     listend._unlink_timestamps.append(now - 10)
@@ -187,42 +185,41 @@ def test_idle_monitor_reports_real_queue_depth(monkeypatch):
   assert any("messages waiting to be consumed: 42" in m for m in messages)
   assert any("current file unlinks (last 10 minutes): 2" in m for m in messages)
   assert any(
-      "Messages consumed in the last 10 minutes: 2 (350 bytes)" in m
-      for m in messages
+      "Messages consumed in the last 10 minutes: 2;" in m for m in messages
   )
+  assert not any("bytes)" in m for m in messages)
 
   messages.clear()
   listend._emit_idle_monitor_report(now + 1)
   assert messages == []
 
 
-def test_consume_window_totals_sums_in_window_payload_bytes():
+def test_consume_window_totals_counts_in_window_messages():
   import hpcperfstats.listend as listend
 
   now = 2_000_000.0
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
     listend._unlink_timestamps.clear()
-    listend._message_timestamps.append((now - 1, 40))
-    listend._message_timestamps.append((now - 2, 60))
+    listend._message_timestamps.append(now - 1)
+    listend._message_timestamps.append(now - 2)
     listend._message_timestamps.append(
-        (now - listend.MESSAGE_WINDOW_SECONDS - 5, 5000)
+        now - listend.MESSAGE_WINDOW_SECONDS - 5
     )
     listend._unlink_timestamps.append(now - 1)
 
-  messages, nbytes, unlinks = listend._consume_window_totals(now)
+  messages, unlinks = listend._consume_window_totals(now)
   assert messages == 2
-  assert nbytes == 100
   assert unlinks == 1
 
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
     listend._unlink_timestamps.clear()
-  messages, nbytes, unlinks = listend._consume_window_totals(now)
-  assert (messages, nbytes, unlinks) == (0, 0, 0)
+  messages, unlinks = listend._consume_window_totals(now)
+  assert (messages, unlinks) == (0, 0)
 
 
-def test_append_records_payload_bytes_for_idle_window(tmp_path, monkeypatch):
+def test_append_records_timestamp_not_payload_bytes(tmp_path, monkeypatch):
   import hpcperfstats.listend as listend
 
   monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
@@ -234,9 +231,10 @@ def test_append_records_payload_bytes_for_idle_window(tmp_path, monkeypatch):
   listend.append_monitor_payload_to_archive(body)
 
   now = listend.time.time()
-  messages, nbytes, unlinks = listend._consume_window_totals(now)
+  messages, unlinks = listend._consume_window_totals(now)
   assert messages == 1
-  assert nbytes == len(body)
   assert unlinks == 0
   with listend._timestamps_lock:
-    assert listend._message_timestamps[-1][1] == len(body)
+    entry = listend._message_timestamps[-1]
+    assert isinstance(entry, float)
+    assert not isinstance(entry, tuple)

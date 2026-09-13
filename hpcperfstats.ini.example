@@ -446,8 +446,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Hours after calendar day end before day_close seal/delete (default 32).
 # sync_day_close_min_age_hours = 32
 
-# Inclusive hot-band window for ingest job scores (days; default 2).
-# sync_ingest_hot_days = 2
+# Inclusive hot-band window for ingest job scores (days; default 3, minimum 1).
+# sync_ingest_hot_days = 3
 
 # DAY_CLOSE pipeline occupancy and parallel worker count (default 8).
 # sync_day_close_max_inflight = 8

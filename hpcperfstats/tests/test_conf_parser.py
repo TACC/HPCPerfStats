@@ -45,6 +45,7 @@ def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
   assert cfg.INI_OPTION_DEFAULTS["metrics_pool_processes"] == "32"
   assert cfg.get_sync_ingest_pool_processes() == 64
   assert cfg.get_metrics_pool_processes() == 32
+  assert cfg.get_sync_ingest_hot_days() == 3
   assert cfg.get_gunicorn_workers() == 32
   assert cfg.get_summary_aggregate_prefetch_max_threads() == 2
   assert cfg.get_listend_db_ingest_pool_processes() == 32
@@ -78,6 +79,34 @@ def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
       "_apply_sync_pool_cap",
   ):
     assert not hasattr(cfg, dead)
+
+
+def test_sync_ingest_hot_days_floors_at_one(temp_ini, monkeypatch):
+  """INI sync_ingest_hot_days=0 must floor to 1; explicit 1 is honored."""
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "total_cores = 4",
+      "total_cores = 4\nsync_ingest_hot_days = 0\n",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  importlib.reload(cfg)
+  assert cfg.get_sync_ingest_hot_days() == 1
+
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "sync_ingest_hot_days = 0",
+      "sync_ingest_hot_days = 1",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_sync_ingest_hot_days() == 1
 
 
 def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):

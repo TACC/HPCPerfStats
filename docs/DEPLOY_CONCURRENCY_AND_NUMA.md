@@ -47,7 +47,7 @@ Ingest is always-on under **`run_sync_timedb_queue_orchestrator`**. Cold-path ar
 | **`sync_day_close_max_inflight`** | **`8`** | Parallel day_close worker threads |
 | **`sync_day_close_min_age_hours`** | **`32`** | Min hours after calendar day end before day_close may complete |
 | **`sync_day_close_raw_paths_per_batch`** | **`1000`** | Incremental raw deletes per day_close batch |
-| **`sync_ingest_hot_days`** | **`2`** | Hot-band calendar-day window for ingest ZSET scoring |
+| **`sync_ingest_hot_days`** | **`3`** (min **1**) | Hot-band calendar-day window for ingest ZSET scoring (`age < N`: today + prior N−1 days when N≥2; today only when N=1) |
 | **`archive_keep_uncompressed_tar`** | **`no`** | Drop prior-day `.tar` at seal when raw is gone; global `yes` retains until tar-drop |
 | **`archive_today_uncompressed_tar_grace_hours`** | **`24`** | Keep calendar-today `.tar` after local midnight (hours) when global keep is `no` |
 | **`sync_archive_pool_processes`** | **`2`** | Sole knob: archive thread pool workers **and** concurrent daily-tar append slots (one day per slot) |
