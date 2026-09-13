@@ -655,7 +655,7 @@ def test_idle_reconstruct_does_not_log_work_total():
 
 
 def test_idle_reconstruct_off_main_does_not_run_boot_inline(monkeypatch):
-  """P1-10: periodic reconstruct must not block MainThread on GNU find."""
+  """P1-10: periodic reconstruct must not block MainThread on fd -X stat."""
   from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
   from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 
@@ -734,6 +734,61 @@ def test_idle_reconstruct_busy_discover_still_enqueues_day_closes(
   assert calls["submit"] == 0
   assert calls["discover_enq"] == 0
   assert qo._last_idle_reconstruct_mono == 0.0
+
+
+def test_idle_reconstruct_min_interval_is_300_seconds():
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  assert qo._IDLE_RECONSTRUCT_MIN_INTERVAL_S == 300.0
+
+
+def test_idle_reconstruct_skips_when_interval_not_elapsed(monkeypatch):
+  import time
+
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  calls = {"submit": 0}
+  monkeypatch.setattr(qo, "_discover_bg_is_busy", lambda: False)
+  monkeypatch.setattr(
+      qo,
+      "_submit_background_discover",
+      lambda *a, **k: calls.__setitem__("submit", calls["submit"] + 1),
+  )
+  qo._last_idle_reconstruct_mono = time.monotonic() - 299.0
+  n = qo._idle_reconstruct_pass(
+      object(),
+      "/archive",
+      tgz_archive_dir="/daily",
+      force=False,
+  )
+  assert n == 0
+  assert calls["submit"] == 0
+
+
+def test_idle_reconstruct_submits_after_interval(monkeypatch):
+  import time
+
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  calls = {"submit": 0}
+  monkeypatch.setattr(qo, "_discover_bg_is_busy", lambda: False)
+  monkeypatch.setattr(qo, "_enqueue_day_closes_for_daily_dir", lambda *a, **k: 0)
+  monkeypatch.setattr(jq, "enqueue_list_job", lambda *a, **k: True)
+  monkeypatch.setattr(
+      qo,
+      "_submit_background_discover",
+      lambda *a, **k: calls.__setitem__("submit", calls["submit"] + 1),
+  )
+  qo._last_idle_reconstruct_mono = time.monotonic() - 301.0
+  n = qo._idle_reconstruct_pass(
+      object(),
+      "/archive",
+      tgz_archive_dir="/daily",
+      force=False,
+  )
+  assert calls["submit"] == 1
+  assert n == 0
 
 
 def test_cli_backlog_current_retired():

@@ -605,7 +605,7 @@ RUN /bin/bash -o pipefail -c "apt-get update -y \
        supervisor rsync syslog-ng util-linux time \
        net-tools lsof procps gdb strace netcat-openbsd \
        vim nano openssh-client\
-       curl ca-certificates \
+       curl ca-certificates fd-find \
        libssl3t64 libsqlite3-0 libbz2-1.0 liblzma5 \
        libreadline8t64 libncursesw6 libuuid1 libgdbm6t64 libexpat1 \
        libpq5 libmariadb3 \

@@ -9,7 +9,7 @@ pools for ingest/append, and day_close threads (seal → raw removal → tar-dro
 The B ``run_sync_timedb_supervisor_loop`` / ``ArchiveJanitor`` coordinator is
 retired.
 
-CLI: no args (``startdate=enddate=None``) streams the full GNU find into
+CLI: no args (``startdate=enddate=None``) streams the full fd ``-X`` GNU stat into
 single orchestrator with hot+catchup ingest bands over the archive. One
 ``YYYY-MM-DD`` or two dates set an explicit discover range hint at entry
 (orchestrator reconstruct still uses full find). Prefix ``once`` to exit after

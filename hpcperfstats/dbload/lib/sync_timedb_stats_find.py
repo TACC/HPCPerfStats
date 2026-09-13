@@ -1,16 +1,19 @@
 """
-GNU find -printf discovery for sync_timedb raw stats files.
+fd/fdfind ``-X`` GNU stat discovery for sync_timedb raw stats files.
 
-Emits path/mtime/size/inode from find itself so discovery does not re-stat those
-fields in Python. Fail-closed when GNU find / -printf is unavailable.
+Emits path/mtime/size/inode from GNU ``stat --printf`` so discovery does not
+re-stat those fields in Python. Fail-closed when ``fdfind``/``fd`` or GNU
+stat ``--printf`` is unavailable. There is no GNU find fallback.
 
-On macOS host tests, prefer Homebrew ``gfind`` (findutils) via PATH order or
-``HPCPERFSTATS_FIND_BIN`` — do not emulate find.
+On macOS host tests, prefer Homebrew ``fd`` via PATH order or
+``HPCPERFSTATS_FIND_BIN``; the image ships Debian ``fdfind``.
 
 Attributes:
-  FIND_CURRENT_INODE_PRINTF: Attribute.
-  FIND_PRINTF_FORMAT: Attribute.
+  FD_BATCH_SIZE: Attribute.
+  FD_THREADS: Attribute.
   JID_NEIGHBOR_FILES: Attribute.
+  STAT_CURRENT_INODE_PRINTF: Attribute.
+  STAT_PRINTF_FORMAT: Attribute.
   _FNCTL_LOCK_ENOENT_RE: Attribute.
   _host_fp_cache: Attribute.
   _path_fp_cache: Attribute.
@@ -29,10 +32,12 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequ
 from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX
 import hpcperfstats.dbload.lib.conf_parser as cfg
 
-# -printf format string for argv: find interprets \0 as NUL (do not embed real NULs —
+# GNU stat --printf argv: interpret \0 as NUL (do not embed real NULs —
 # Python subprocess rejects embedded null bytes in argv on some platforms).
-FIND_PRINTF_FORMAT = "%p\\0%T@\\0%s\\0%i\\0"
-FIND_CURRENT_INODE_PRINTF = "%p\\0%i\\0"
+STAT_PRINTF_FORMAT = "%n\\0%Y\\0%s\\0%i\\0"
+STAT_CURRENT_INODE_PRINTF = "%n\\0%i\\0"
+FD_THREADS = 4
+FD_BATCH_SIZE = 1000
 
 _FNCTL_LOCK_ENOENT_RE = re.compile(
     r"No such file or directory.*\.fnctl\.lock|"
@@ -64,7 +69,7 @@ class FindStatsRecord:
 
 class FindStatsDiscoveryError(RuntimeError):
   """
-  Raised when GNU find discovery cannot run (fail-closed).
+  Raised when fd/fdfind -X GNU stat discovery cannot run (fail-closed).
   """
 
 
@@ -120,7 +125,7 @@ def update_fingerprint_caches_from_records(
   records: Sequence[FindStatsRecord],
 ) -> None:
   """
-  Refresh path/host fingerprint caches from find -printf records.
+  Refresh path/host fingerprint caches from fd -X GNU stat records.
   
   Args:
     records (Sequence[FindStatsRecord]): records as
@@ -198,103 +203,184 @@ def is_internal_archive_stats_path(path: str) -> bool:
   return host_dir_is_internal_for_stats_discovery(os.path.dirname(path))
 
 
-def build_find_stats_argv(
-  archive_dir: str,
+def _fd_x_stat_argv(
   *,
+  find_bin: str,
+  stat_bin: str,
+  search_path: str,
+  min_depth: int,
+  max_depth: int,
+  printf_format: str,
+  pattern: str = ".",
+  glob: bool = False,
+  exclude: Optional[str] = None,
   mtime_days: Optional[int] = None,
-  find_bin: str = "find",
 ) -> List[str]:
   """
-  Build GNU find argv for archive stats discovery (-mindepth/maxdepth 2).
-  
+  Build one ``fd``/``fdfind -X`` GNU stat argv (no shell, no xargs).
+
   Args:
-    archive_dir (str): String for archive dir.
-    mtime_days (Optional[int]): Mtime days, or None when absent.
-    find_bin (str): String for find bin.
-  
+    find_bin (str): Walker binary (``fdfind`` or ``fd``).
+    stat_bin (str): GNU ``stat`` / ``gstat`` binary.
+    search_path (str): Directory to walk (absolutized).
+    min_depth (int): fd ``--min-depth``.
+    max_depth (int): fd ``--max-depth``.
+    printf_format (str): GNU ``stat --printf`` format with ``\\0`` escapes.
+    pattern (str): fd search pattern (``.`` or glob ``current``).
+    glob (bool): When True, pass ``--glob``.
+    exclude (Optional[str]): Optional fd ``--exclude`` glob.
+    mtime_days (Optional[int]): Optional ``--changed-within Nd`` window.
+
   Returns:
-    List[str]: List[str] produced by this call.
-  
+    List[str]: argv for a single ``Popen`` (``-X`` last before ``stat``).
+
   Examples:
-    >>> build_find_stats_argv("x", None, "x")  # doctest: +SKIP
+    >>> _fd_x_stat_argv(
+    ...   find_bin="fd",
+    ...   stat_bin="stat",
+    ...   search_path="/a",
+    ...   min_depth=2,
+    ...   max_depth=2,
+    ...   printf_format=STAT_PRINTF_FORMAT,
+    ... )[0]
+    'fd'
   """
   argv = [
       find_bin,
-      archive_dir,
-      "(",
-      "-mindepth",
-      "1",
-      "-maxdepth",
-      "1",
-      "-name",
-      ".*",
-      "-prune",
-      ")",
-      "-o",
-      "(",
-      "-mindepth",
-      "2",
-      "-maxdepth",
-      "2",
-      "-type",
+      "--threads",
+      str(int(FD_THREADS)),
+      "--no-ignore",
+      "--absolute-path",
+      "--max-depth",
+      str(int(max_depth)),
+      "--min-depth",
+      str(int(min_depth)),
+      "--type",
       "f",
   ]
+  if glob:
+    argv.append("--glob")
+  if exclude:
+    argv.extend(["--exclude", str(exclude)])
   if mtime_days is not None and int(mtime_days) > 0:
-    argv.extend(["-mtime", "-%d" % int(mtime_days)])
+    argv.extend(["--changed-within", "%dd" % int(mtime_days)])
   argv.extend(
       [
-          "!",
-          "-name",
-          ".*",
-          "!",
-          "-name",
-          "current*",
-          "-printf",
-          FIND_PRINTF_FORMAT,
-          ")",
+          "--batch-size",
+          str(int(FD_BATCH_SIZE)),
+          pattern,
+          os.path.abspath(search_path),
+          "-X",
+          stat_bin,
+          "--printf=" + printf_format,
       ]
   )
   return argv
 
 
+def build_find_stats_argv(
+  archive_dir: str,
+  *,
+  mtime_days: Optional[int] = None,
+  find_bin: str = "fd",
+  stat_bin: str = "stat",
+) -> List[str]:
+  """
+  Build fd ``-X`` GNU stat argv for archive stats discovery (depth 2).
+
+  Args:
+    archive_dir (str): String for archive dir.
+    mtime_days (Optional[int]): Mtime days, or None when absent.
+    find_bin (str): Walker binary.
+    stat_bin (str): GNU stat binary.
+
+  Returns:
+    List[str]: List[str] produced by this call.
+
+  Examples:
+    >>> "--threads" in build_find_stats_argv("/a", find_bin="fd")
+    True
+  """
+  return _fd_x_stat_argv(
+      find_bin=find_bin,
+      stat_bin=stat_bin,
+      search_path=archive_dir,
+      min_depth=2,
+      max_depth=2,
+      printf_format=STAT_PRINTF_FORMAT,
+      exclude="current*",
+      mtime_days=mtime_days,
+  )
+
+
 def build_find_current_inode_argv(
   archive_dir: str,
   *,
-  find_bin: str = "find",
+  find_bin: str = "fd",
+  stat_bin: str = "stat",
 ) -> List[str]:
   """
-  Find host ``current`` files and emit ``pathinode``.
-  
+  Find host ``current`` files and emit ``path`` + inode via GNU stat.
+
   Args:
     archive_dir (str): String for archive dir.
-    find_bin (str): String for find bin.
-  
+    find_bin (str): Walker binary.
+    stat_bin (str): GNU stat binary.
+
   Returns:
     List[str]: List[str] produced by this call.
-  
+
   Examples:
-    >>> build_find_current_inode_argv("x", "x")  # doctest: +SKIP
+    >>> "--glob" in build_find_current_inode_argv("/a", find_bin="fd")
+    True
   """
-  return [
-      find_bin,
-      archive_dir,
-      "-mindepth",
-      "2",
-      "-maxdepth",
-      "2",
-      "-type",
-      "f",
-      "-name",
-      "current",
-      "-printf",
-      FIND_CURRENT_INODE_PRINTF,
-  ]
+  return _fd_x_stat_argv(
+      find_bin=find_bin,
+      stat_bin=stat_bin,
+      search_path=archive_dir,
+      min_depth=2,
+      max_depth=2,
+      printf_format=STAT_CURRENT_INODE_PRINTF,
+      pattern="current",
+      glob=True,
+  )
+
+
+def build_find_host_scoped_argv(
+  host_dir: str,
+  *,
+  find_bin: str = "fd",
+  stat_bin: str = "stat",
+) -> List[str]:
+  """
+  Build fd ``-X`` GNU stat argv for one host directory (depth 1).
+
+  Args:
+    host_dir (str): Absolute or relative host directory under archive.
+    find_bin (str): Walker binary.
+    stat_bin (str): GNU stat binary.
+
+  Returns:
+    List[str]: List[str] produced by this call.
+
+  Examples:
+    >>> build_find_host_scoped_argv("/a/h", find_bin="fd")[0]
+    'fd'
+  """
+  return _fd_x_stat_argv(
+      find_bin=find_bin,
+      stat_bin=stat_bin,
+      search_path=host_dir,
+      min_depth=1,
+      max_depth=1,
+      printf_format=STAT_PRINTF_FORMAT,
+  )
 
 
 def parse_find_printf_records(data: bytes) -> List[FindStatsRecord]:
   """
-  Parse NUL records produced by GNU find ``-printf`` with
-  ``FIND_PRINTF_FORMAT``.
+  Parse NUL records produced by GNU ``stat --printf`` with
+  ``STAT_PRINTF_FORMAT``.
 
   Args:
     data (bytes): Full find stdout buffer (may be empty).
@@ -317,7 +403,7 @@ def iter_find_printf_records_streaming(
   chunks: Iterable[bytes],
 ) -> Iterator[FindStatsRecord]:
   """
-  Yield find ``-printf`` records as each four-field NUL group completes.
+  Yield fd ``-X`` GNU stat records as each four-field NUL group completes.
 
   Does not wait for the producer to finish: the first complete record is
   yielded as soon as its trailing NUL arrives, even when more chunks follow.
@@ -366,7 +452,7 @@ def iter_find_printf_records_streaming(
         inode = int(inode_b)
       except (ValueError, TypeError, UnicodeDecodeError) as exc:
         raise FindStatsDiscoveryError(
-            "invalid find -printf record at index %d: %s" % (index, exc)
+            "invalid fd -X stat record at index %d: %s" % (index, exc)
         ) from exc
       index += 1
       yield FindStatsRecord(
@@ -374,7 +460,7 @@ def iter_find_printf_records_streaming(
       )
   if fields or buf:
     raise FindStatsDiscoveryError(
-        "find -printf record stream length is not a multiple of 4 fields "
+        "fd -X stat record stream length is not a multiple of 4 fields "
         "(got %d leftover tokens, %d leftover bytes)"
         % (len(fields) + (1 if buf else 0), len(buf))
     )
@@ -404,7 +490,7 @@ def parse_current_inode_records(data: bytes) -> Dict[str, int]:
     parts.pop()
   if len(parts) % 2 != 0:
     raise FindStatsDiscoveryError(
-        "find current inode stream length is not a multiple of 2 fields"
+        "fd -X stat current inode stream length is not a multiple of 2 fields"
     )
   out: Dict[str, int] = {}
   for i in range(0, len(parts), 2):
@@ -441,22 +527,77 @@ def _stderr_is_only_fnctl_races(stderr: str) -> bool:
   return True
 
 
+def _resolve_named_binary(candidate: str, *, kind: str) -> str:
+  """
+  Resolve an executable path or PATH name.
+
+  Args:
+    candidate (str): Absolute path, relative path, or PATH basename.
+    kind (str): Label for error messages (``fd/fdfind`` or ``GNU stat``).
+
+  Returns:
+    str: Resolved executable path.
+
+  Raises:
+    FindStatsDiscoveryError: When the binary is missing or not executable.
+
+  Examples:
+    >>> _resolve_named_binary("/bin/sh", kind="fd/fdfind")  # doctest: +SKIP
+  """
+  if os.path.isabs(candidate) or os.sep in candidate:
+    if not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
+      raise FindStatsDiscoveryError("%s binary not found: %s" % (kind, candidate))
+    return candidate
+  resolved = shutil.which(candidate)
+  if not resolved:
+    raise FindStatsDiscoveryError(
+        "%s binary not found on PATH: %s" % (kind, candidate)
+    )
+  return resolved
+
+
+def _gnu_stat_supports_printf(stat_bin: str) -> bool:
+  """
+  Return True when ``stat_bin`` accepts GNU ``--printf``.
+
+  Args:
+    stat_bin (str): Candidate ``stat`` / ``gstat`` path.
+
+  Returns:
+    bool: True when ``--printf=%n`` succeeds against ``stat_bin``.
+
+  Examples:
+    >>> isinstance(_gnu_stat_supports_printf("/bin/sh"), bool)
+    True
+  """
+  try:
+    proc = subprocess.run(
+        [stat_bin, "--printf=%n", stat_bin],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=5,
+    )
+  except (OSError, subprocess.TimeoutExpired):
+    return False
+  return proc.returncode == 0 and bool(proc.stdout)
+
+
 def _resolve_find_bin(find_bin: Optional[str] = None) -> str:
   """
-  Resolve GNU find binary (prefer ``gfind`` on macOS Homebrew).
-  
+  Resolve the archive walker (``fdfind`` then Homebrew ``fd``). Never GNU find.
+
   Args:
-    find_bin (Optional[str]): Find bin, or None when absent.
-  
+    find_bin (Optional[str]): Walker override, or None to use env then PATH.
+
   Returns:
-    str: str produced by this call.
-  
+    str: Resolved ``fdfind`` or ``fd`` path.
+
   Raises:
-    FindStatsDiscoveryError: Raised when ``_resolve_find_bin`` hits a
-    ``FindStatsDiscoveryError`` failure path.
-  
+    FindStatsDiscoveryError: When no walker is available.
+
   Examples:
-    >>> _resolve_find_bin(None)  # doctest: +SKIP
+    >>> _resolve_find_bin("fd")  # doctest: +SKIP
   """
   if find_bin:
     candidate = find_bin
@@ -465,26 +606,52 @@ def _resolve_find_bin(find_bin: Optional[str] = None) -> str:
     candidate = env_bin or None
 
   if candidate:
-    if os.path.isabs(candidate) or os.sep in candidate:
-      if not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
-        raise FindStatsDiscoveryError("find binary not found: %s" % candidate)
-      return candidate
-    resolved = shutil.which(candidate)
-    if not resolved:
-      raise FindStatsDiscoveryError(
-          "find binary not found on PATH: %s" % candidate
-      )
-    return resolved
+    return _resolve_named_binary(candidate, kind="fd/fdfind")
 
-  # Prefer Homebrew gfind (GNU findutils) before BSD /usr/bin/find on macOS.
-  for name in ("gfind", "find"):
+  for name in ("fdfind", "fd"):
     resolved = shutil.which(name)
     if resolved:
       return resolved
   raise FindStatsDiscoveryError(
-      "GNU find not found on PATH (install findutils / gfind; "
-      "required for stats discovery)"
+      "fd/fdfind not found on PATH (install fd-find in the image or fd on "
+      "the host; required for stats discovery)"
   )
+
+
+def _resolve_stat_bin(stat_bin: Optional[str] = None) -> str:
+  """
+  Resolve GNU ``stat`` (prefer Homebrew ``gstat``, then ``stat``).
+
+  Args:
+    stat_bin (Optional[str]): Override path or PATH name, or None.
+
+  Returns:
+    str: Resolved GNU stat path that supports ``--printf``.
+
+  Raises:
+    FindStatsDiscoveryError: When GNU ``stat --printf`` is unavailable.
+
+  Examples:
+    >>> _resolve_stat_bin(None)  # doctest: +SKIP
+  """
+  if stat_bin:
+    candidates = [stat_bin]
+  else:
+    candidates = ["gstat", "stat"]
+  last_error = "GNU stat --printf not found"
+  for name in candidates:
+    try:
+      resolved = _resolve_named_binary(name, kind="GNU stat")
+    except FindStatsDiscoveryError as exc:
+      last_error = str(exc)
+      continue
+    if _gnu_stat_supports_printf(resolved):
+      return resolved
+    last_error = (
+        "GNU stat --printf is required for stats discovery (rejected %s)"
+        % resolved
+    )
+  raise FindStatsDiscoveryError(last_error)
 
 
 def _run_find_capture(
@@ -518,7 +685,7 @@ def _run_find_capture(
     )
   except FileNotFoundError as exc:
     raise FindStatsDiscoveryError(
-        "GNU find not found (required for stats discovery)"
+        "fd/fdfind or GNU stat not found (required for stats discovery)"
     ) from exc
   stderr_text = (proc.stderr or b"").decode("utf-8", errors="replace")
   if proc.returncode == 0:
@@ -529,14 +696,8 @@ def _run_find_capture(
       and _stderr_is_only_fnctl_races(stderr_text)
   ):
     return proc.stdout or b""
-  lower = stderr_text.lower()
-  if "unknown primary" in lower or ("printf" in lower and "illegal" in lower):
-    raise FindStatsDiscoveryError(
-        "find does not support -printf (GNU findutils required): %s"
-        % stderr_text.strip()
-    )
   raise FindStatsDiscoveryError(
-      "find failed exit=%d: %s"
+      "fd/fdfind -X stat failed exit=%d: %s"
       % (proc.returncode, stderr_text.strip() or "(no stderr)")
   )
 
@@ -546,27 +707,29 @@ def iter_find_stats_stdout_chunks(
   *,
   mtime_days: Optional[int] = None,
   find_bin: Optional[str] = None,
+  stat_bin: Optional[str] = None,
   chunk_size: int = 65536,
 ) -> Iterator[bytes]:
   """
-  Run GNU find and yield stdout chunks as they arrive (streaming).
+  Run fd ``-X`` GNU stat and yield stdout chunks as they arrive (streaming).
 
-  Does not buffer the entire find output before the first yield. Callers
+  Does not buffer the entire walker output before the first yield. Callers
   should feed chunks into
   :func:`iter_find_printf_records_streaming` / discover enqueue helpers.
 
   Args:
-    archive_dir (str): Archive data directory (find root).
-    mtime_days (Optional[int]): Optional ``-mtime`` window.
-    find_bin (Optional[str]): Override find binary path.
+    archive_dir (str): Archive data directory (walker root).
+    mtime_days (Optional[int]): Optional ``--changed-within`` window.
+    find_bin (Optional[str]): Override walker binary path.
+    stat_bin (Optional[str]): Override GNU stat binary path.
     chunk_size (int): Read size for ``stdout`` (minimum 1).
 
   Yields:
-    bytes: Successive non-empty stdout chunks from GNU find.
+    bytes: Successive non-empty stdout chunks from GNU stat via fd ``-X``.
 
   Raises:
-    FindStatsDiscoveryError: When find is missing or exits non-zero
-      (except benign fnctl race exit 1).
+    FindStatsDiscoveryError: When fd/fdfind or GNU stat is missing or the
+      walker exits non-zero (except benign fnctl race exit 1).
 
   Examples:
     >>> list(iter_find_stats_stdout_chunks("/nope"))
@@ -575,8 +738,12 @@ def iter_find_stats_stdout_chunks(
   if not archive_dir or not os.path.isdir(archive_dir):
     return
   bin_path = _resolve_find_bin(find_bin)
+  stat_path = _resolve_stat_bin(stat_bin)
   argv = build_find_stats_argv(
-      archive_dir, mtime_days=mtime_days, find_bin=bin_path
+      archive_dir,
+      mtime_days=mtime_days,
+      find_bin=bin_path,
+      stat_bin=stat_path,
   )
   read_n = max(1, int(chunk_size))
   try:
@@ -587,7 +754,7 @@ def iter_find_stats_stdout_chunks(
     )
   except FileNotFoundError as exc:
     raise FindStatsDiscoveryError(
-        "GNU find not found (required for stats discovery)"
+        "fd/fdfind or GNU stat not found (required for stats discovery)"
     ) from exc
   assert proc.stdout is not None
   last_progress = time.monotonic()
@@ -600,7 +767,7 @@ def iter_find_stats_stdout_chunks(
         break
       bytes_seen += len(chunk)
       now = time.monotonic()
-      # Unit progress = bytes streamed from find stdout.
+      # Unit progress = bytes streamed from walker stdout.
       last_progress = now
       from hpcperfstats.dbload.lib.sync_timedb_progress_io import log_progress_sop
 
@@ -630,14 +797,8 @@ def iter_find_stats_stdout_chunks(
     return
   if rc == 1 and _stderr_is_only_fnctl_races(stderr_text):
     return
-  lower = stderr_text.lower()
-  if "unknown primary" in lower or ("printf" in lower and "illegal" in lower):
-    raise FindStatsDiscoveryError(
-        "find does not support -printf (GNU findutils required): %s"
-        % stderr_text.strip()
-    )
   raise FindStatsDiscoveryError(
-      "find failed exit=%d: %s"
+      "fd/fdfind -X stat failed exit=%d: %s"
       % (rc, stderr_text.strip() or "(no stderr)")
   )
 
@@ -647,10 +808,11 @@ def run_find_stats(
   *,
   mtime_days: Optional[int] = None,
   find_bin: Optional[str] = None,
+  stat_bin: Optional[str] = None,
   log_fn: Optional[Callable[..., None]] = None,
 ) -> List[FindStatsRecord]:
   """
-  Run GNU find and return parsed stats records (fail-closed).
+  Run fd ``-X`` GNU stat and return parsed stats records (fail-closed).
 
   Prefer :func:`iter_find_stats_stdout_chunks` for orchestrator boot so
   enqueue can start before the scan finishes.
@@ -658,7 +820,8 @@ def run_find_stats(
   Args:
     archive_dir (str): String for archive dir.
     mtime_days (Optional[int]): Mtime days, or None when absent.
-    find_bin (Optional[str]): Find bin, or None when absent.
+    find_bin (Optional[str]): Walker bin, or None when absent.
+    stat_bin (Optional[str]): GNU stat bin, or None when absent.
     log_fn (Optional[Callable[..., None]]): Log fn, or None when absent.
 
   Returns:
@@ -671,8 +834,12 @@ def run_find_stats(
     return []
   t0 = time.monotonic()
   bin_path = _resolve_find_bin(find_bin)
+  stat_path = _resolve_stat_bin(stat_bin)
   argv = build_find_stats_argv(
-      archive_dir, mtime_days=mtime_days, find_bin=bin_path
+      archive_dir,
+      mtime_days=mtime_days,
+      find_bin=bin_path,
+      stat_bin=stat_path,
   )
   raw = _run_find_capture(argv)
   records = parse_find_printf_records(raw)
@@ -694,24 +861,29 @@ def load_current_inode_map(
   archive_dir: str,
   *,
   find_bin: Optional[str] = None,
+  stat_bin: Optional[str] = None,
 ) -> Dict[str, int]:
   """
-  Return host_dir → inode for each host ``current`` file via find.
-  
+  Return host_dir → inode for each host ``current`` file via fd ``-X`` stat.
+
   Args:
     archive_dir (str): String for archive dir.
-    find_bin (Optional[str]): Find bin, or None when absent.
-  
+    find_bin (Optional[str]): Walker bin, or None when absent.
+    stat_bin (Optional[str]): GNU stat bin, or None when absent.
+
   Returns:
     Dict[str, int]: Dict[str, int] produced by this call.
-  
+
   Examples:
     >>> load_current_inode_map("x", None)  # doctest: +SKIP
   """
   if not archive_dir or not os.path.isdir(archive_dir):
     return {}
   bin_path = _resolve_find_bin(find_bin)
-  argv = build_find_current_inode_argv(archive_dir, find_bin=bin_path)
+  stat_path = _resolve_stat_bin(stat_bin)
+  argv = build_find_current_inode_argv(
+      archive_dir, find_bin=bin_path, stat_bin=stat_path,
+  )
   raw = _run_find_capture(argv, allow_fnctl_race_exit=True)
   return parse_current_inode_records(raw)
 
@@ -1039,10 +1211,10 @@ def discover_host_scoped_stats_records(
   log_fn: Optional[Callable[..., None]] = None,
 ) -> List[FindStatsRecord]:
   """
-  Discover stats under named host dirs only (no full-archive find).
-  
-  Runs GNU find per existing ``{archive_dir}/{fqdn}`` directory. Missing host
-  dirs are skipped. Does not walk unrelated hosts.
+  Discover stats under named host dirs only (no full-archive walk).
+
+  Runs fd ``-X`` GNU stat per existing ``{archive_dir}/{fqdn}`` directory.
+  Missing host dirs are skipped. Does not walk unrelated hosts.
   
   Args:
     archive_dir (str): String for archive dir.
@@ -1068,6 +1240,7 @@ def discover_host_scoped_stats_records(
   if not hosts:
     return []
   bin_path = _resolve_find_bin(find_bin)
+  stat_path = _resolve_stat_bin(None)
   records: List[FindStatsRecord] = []
   for host in hosts:
     host_dir = os.path.join(archive_dir, host)
@@ -1078,17 +1251,9 @@ def discover_host_scoped_stats_records(
             flush=True,
         )
       continue
-    argv = [
-        bin_path,
-        host_dir,
-        "-mindepth",
-        "1",
-        "-maxdepth",
-        "1",
-        "-type",
-        "f",
-    ]
-    argv.extend(["-printf", FIND_PRINTF_FORMAT])
+    argv = build_find_host_scoped_argv(
+        host_dir, find_bin=bin_path, stat_bin=stat_path,
+    )
     t0 = time.monotonic()
     raw = _run_find_capture(argv, allow_fnctl_race_exit=True)
     host_recs = parse_find_printf_records(raw)

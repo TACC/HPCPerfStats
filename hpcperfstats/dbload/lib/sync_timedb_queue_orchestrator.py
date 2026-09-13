@@ -39,7 +39,7 @@ Attributes:
     lines per calendar day (yielded reclaim spam guard).
   _day_close_identity_sort_key: Calendar sort key for oldest-first fill (H18).
   _prioritize_day_close_list_oldest_first: Reorder day_close LIST before claim.
-  _discover_bg_executor: Single-worker executor for idle GNU find (P1-10).
+  _discover_bg_executor: Single-worker executor for idle fd -X GNU stat (P1-10).
   _discover_bg_future: In-flight background discover future, or ``None``.
   _discover_bg_lock: Serializes submit/shutdown of background discover.
   _last_idle_reconstruct_mono: Monotonic timestamp of last idle reconstruct.
@@ -132,7 +132,7 @@ _DAY_CLOSE_YIELD_BACKOFF = JanitorDeferTracker()
 _DAY_CLOSE_CLAIM_LOG_STATE: dict[str, dict[str, float]] = {}
 _DAY_CLOSE_VACATE_LOG_STATE: dict[str, dict[str, float]] = {}
 DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S = 30.0
-_IDLE_RECONSTRUCT_MIN_INTERVAL_S = 30.0
+_IDLE_RECONSTRUCT_MIN_INTERVAL_S = 300.0
 _last_idle_reconstruct_mono = 0.0
 _SHUTDOWN_REQUESTED = threading.Event()
 _discover_bg_lock = threading.Lock()
@@ -835,7 +835,7 @@ def _boot_stream_discover(
   enddate: Any = None,
 ) -> jd.StreamingDiscoverStats:
   """
-  Stream GNU find stdout into ingest/append/day_close jobs as paths arrive.
+  Stream fd ``-X`` GNU stat stdout into ingest/append/day_close jobs as paths arrive.
 
   Does **not** call capture-all ``run_find_stats``. Empty job store before or after
   this call does **not** mean caught up. ``mtime_days=None`` is a full scan
@@ -848,7 +848,7 @@ def _boot_stream_discover(
     archive_dir (str): Archive data directory (find root).
     tgz_archive_dir (str): Daily archive directory for append classify.
     log_fn (Callable[..., None] | None): Optional logger.
-    mtime_days (int | None): Optional GNU find ``-mtime`` window.
+    mtime_days (int | None): Optional fd ``--changed-within`` window.
     startdate (Any): Inclusive CLI start date, or ``None``.
     enddate (Any): Inclusive CLI end date, or ``None``.
 
@@ -1138,7 +1138,7 @@ def _idle_reconstruct_pass(
   Throttled to at most once per ``_IDLE_RECONSTRUCT_MIN_INTERVAL_S`` unless
   ``force`` (``run_once`` exit path). ``force=True`` claims discover on this
   thread so tests and run_once can observe a complete pass; ``force=False``
-  enqueues discover and runs GNU find on the background executor (P1-10).
+  enqueues discover and runs fd ``-X`` GNU stat on the background executor (P1-10).
   When discover-bg is already busy, skip discover enqueue/submit (H8) but still
   scan the daily dir for cheap day_close refill (H21) without burning the
   reconstruct throttle.

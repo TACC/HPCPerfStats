@@ -11331,7 +11331,7 @@ def stats_file_is_active_segment(stats_path: str) -> Any:
   when ``current`` is unlinked from that inode. Only then is the epoch file a
   complete, stable segment. Same-inode-as-``current`` means still active.
   
-  Discovery uses GNU find inode maps (see ``sync_timedb_stats_find``); this
+  Discovery uses fd ``-X`` GNU stat inode maps (see ``sync_timedb_stats_find``); this
   helper remains for single-path checks and unit tests.
   
   Args:
@@ -11366,15 +11366,15 @@ def collect_stats_files_in_range(
   mtime_days: Any | None = None,
 ) -> Any:
   """
-  Discover stats files under ``archive_dir`` via GNU find ``-printf``.
+  Discover stats files under ``archive_dir`` via fd ``-X`` GNU stat.
   
   Skips the live segment: epoch files whose inode matches host ``current`` are
   omitted so sync does not race with listend appends.
   
-  When ``mtime_days`` is a positive int, find uses ``-mtime -N`` (incremental
-  rescan). When ``None`` (or ``force_full_scan``), the full archive ages are
-  scanned. ``host_scan_hints`` still tracks ``__rescan_count__`` for callers;
-  per-host dir-mtime skip is retired (find is cheap enough).
+  When ``mtime_days`` is a positive int, the walker uses ``--changed-within Nd``
+  (incremental rescan). When ``None`` (or ``force_full_scan``), the full archive
+  ages are scanned. ``host_scan_hints`` still tracks ``__rescan_count__`` for
+  callers; per-host dir-mtime skip is retired (the walker is cheap enough).
   
   When startdate is ``'all'``, ``'backlog'``, or ``'current'``, every eligible file is
     returned

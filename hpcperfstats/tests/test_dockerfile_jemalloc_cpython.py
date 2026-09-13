@@ -255,6 +255,14 @@ def test_hpcperfstats_base_apt_includes_curl_for_supervisor_startup():
   assert 'curl -s -o /dev/null -w "%{http_code}"' in startup
 
 
+def test_hpcperfstats_base_apt_includes_fd_find():
+  """pipeline discover walks with fdfind; slim must ship fd-find."""
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  base = _stage_body(dockerfile, "hpcperfstats-base")
+  apt_install = base[base.index("apt-get install") : base.index("apt-get clean")]
+  assert re.search(r"\bfd-find\b", apt_install), apt_install
+
+
 def test_dockerfile_avoids_nested_quotes_inside_command_substitution():
   """Podman/buildah: RUN is sh -c \"…\"; $(… \" …) and bare \" break quoting."""
   text = (_repo_root() / "Dockerfile").read_text()

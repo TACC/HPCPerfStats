@@ -348,15 +348,18 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 
 ### T0 / T1 — find-based pending discovery (every chunk + mtime window)
 
-After deploy of **GNU find `-printf` stats discovery** (`sync_timedb_stats_find`, `rescan_every_chunks=1`, `sync_ingest_rescan_mtime_days=1`): multi-hour silent gaps between `pending rescan done` / `find_stats` lines on ``current``/idle must **not** return. Discovery must complete in seconds (operator baseline: full archive ~0.7s, `-mtime -1` ~2s on ~350k files).
+After deploy of **`fdfind`/`fd -X` GNU `stat` stats discovery** (`sync_timedb_stats_find`, `rescan_every_chunks=1`, `sync_ingest_rescan_mtime_days=1`): multi-hour silent gaps between `pending rescan done` / `find_stats` lines on ``current``/idle must **not** return. Discovery must complete in seconds (operator baseline: full archive ~0.7s, `--changed-within 1d` ~2s on ~350k files). Image rebuild is required so Debian **`fdfind`** is on PATH.
 
 ```bash
+# T0 — fdfind present in the pipeline image (after rebuild)
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline command -v fdfind
+
 # T0 — find cadence after deploy (full pipeline log; never --tail before grep)
-podman-compose -p hpcperfstats logs pipeline 2>&1 | tee /tmp/pipeline-full.log
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 grep -E 'find_stats paths=|collect_stats_files_in_range: find paths=|Rescanned after 1 chunks|pending rescan done' /tmp/pipeline-full.log | tail -80
 
-# T0 — fail-closed signature (should be absent on GNU find images)
-grep -E 'FindStatsDiscoveryError|does not support -printf|GNU find not found' /tmp/pipeline-full.log | tail -20 || true
+# T0 — fail-closed signature (should be absent after image rebuild)
+grep -E 'FindStatsDiscoveryError|fd/fdfind not found|GNU stat --printf' /tmp/pipeline-full.log | tail -20 || true
 ```
 
 **Pass (T0):** `find_stats` / `collect_stats_files_in_range: find` lines appear with small `elapsed_s` (typically **&lt;5s**); after ingest chunks expect **`Rescan boundary after 1 chunks`** (or legacy **`Rescanned after 1 chunks`**); no multi-hour silence with only occasional `idle_finalize`.

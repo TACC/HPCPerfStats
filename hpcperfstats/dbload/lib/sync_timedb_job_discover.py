@@ -1,7 +1,7 @@
 """
 Streaming discover → ingest ZADD helpers for the greenfield orchestrator.
 
-Library-only (slice 3): consume GNU find ``-printf`` records (or any
+Library-only (slice 3): consume fd ``-X`` GNU stat NUL records (or any
 :class:`FindStatsRecord` iterator) and enqueue ingest/append jobs as each
 path arrives — without waiting for the scan iterator to exhaust. Skips
 identities whose reconstruct complete predicates are already true. Not wired
@@ -54,10 +54,10 @@ class StreamingDiscoverStats:
 
 def find_record_mtime_ns(mtime: float) -> int:
   """
-  Convert find ``%T@`` epoch seconds to nanoseconds for ingest identity.
+  Convert discover epoch seconds to nanoseconds for ingest identity.
 
   Args:
-    mtime (float): Epoch seconds from GNU find ``%T@``.
+    mtime (float): Epoch seconds from GNU ``stat %Y`` (integer) or parser float.
 
   Returns:
     int: Rounded nanosecond fingerprint.
