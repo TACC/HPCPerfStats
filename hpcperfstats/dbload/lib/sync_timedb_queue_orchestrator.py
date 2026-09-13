@@ -4470,6 +4470,7 @@ def _ingest_runtime_lease_hygiene(
         client,
         local_identities=identities,
         kind=jq.JOB_KIND_INGEST,
+        owner_token=jq.make_lease_owner_token(),
     )
   except Exception as exc:
     _log(

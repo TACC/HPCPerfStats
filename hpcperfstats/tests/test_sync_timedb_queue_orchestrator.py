@@ -3006,6 +3006,8 @@ def test_ingest_coordinator_uses_runtime_steal_on_fill_empty():
   assert "steal_dead_owner_leases" in hy
   assert "ingest runtime steal" in hy
   assert "reconcile_this_owner_orphan_leases" in hy
+  assert "owner_token=" in hy
+  assert "make_lease_owner_token" in hy
   assert "store_underfull" in hy or "store_hlen" in hy
   assert "zcard" in hy
   fill_src = inspect.getsource(qo._ingest_coordinator_loop)
@@ -3791,16 +3793,24 @@ def test_rc8_reconcile_prunes_local_when_store_hlen_low():
 
 def test_rc8_hygiene_runs_when_local_full_store_underfull(monkeypatch):
   """RC8: hygiene must not skip when local looks full but store HLEN is low."""
-  calls = {"steal": 0}
+  calls = {"steal": 0, "reconcile_kwargs": None}
 
   def fake_steal(client):
     del client
     calls["steal"] += 1
     return 0
 
+  def fake_reconcile(client, **kwargs):
+    del client
+    calls["reconcile_kwargs"] = kwargs
+    return 0
+
   monkeypatch.setattr(jq, "steal_dead_owner_leases", fake_steal)
   monkeypatch.setattr(
-      jq, "reconcile_this_owner_orphan_leases", lambda **k: 0,
+      jq, "reconcile_this_owner_orphan_leases", fake_reconcile,
+  )
+  monkeypatch.setattr(
+      jq, "make_lease_owner_token", lambda: "n:h:b:test-owner",
   )
   class _Ready:
     pass
@@ -3818,6 +3828,16 @@ def test_rc8_hygiene_runs_when_local_full_store_underfull(monkeypatch):
   )
   assert now > 0
   assert calls["steal"] == 1
+  assert calls["reconcile_kwargs"] is not None
+  assert calls["reconcile_kwargs"].get("owner_token") == "n:h:b:test-owner"
+
+
+def test_ingest_runtime_lease_hygiene_passes_owner_token():
+  """Orphan reconcile must receive owner_token= (TypeError without it)."""
+  hy = inspect.getsource(qo._ingest_runtime_lease_hygiene)
+  assert "owner_token=" in hy
+  assert "make_lease_owner_token" in hy
+  assert "reconcile_this_owner_orphan_leases" in hy
 
 
 def test_rc8_band_cap_uses_counters_not_full_scan():

@@ -603,9 +603,46 @@ The **`hpcperfstats-base`** image ( **`pipeline`**, **`web`**, and siblings buil
 3. Combine with **INI-resolved paths** and **filtered logs** — e.g. `py-spy` on the `sync_timedb` supervisor PID after grep confirms a stall signature.
 4. Label the block with **which signal** you need (stack sample, open files, port open, syscall on `open`/`read`).
 
+**Anti-pattern — treat sole `[worker:populate-pool]` under supervisord as a dead orphan (hpcperfstats02 2026-09-13):** when populate threads called `setproctitle`, live main argv became `[worker:populate-pool]` (PPID=supervisord, large `nlwp`, GiB RSS) while census `ingest=` was thread-pool occupancy and logs still showed ingest/reconstruct coordinators. **Corrected:** after the title fix, expect process `[main]` and thread `populate-pool`. Pre-fix images: sole populate title + **large `nlwp`** is retitled main, not a kill target. Absence of `[worker:ingest-pool]` **processes** is expected (in-process ThreadPool). Do not `pgrep -f worker:ingest` inside a script that greps the same string.
+
 **Anti-pattern — process-level `ps -eo` for `setthreadtitle` workers (hpcperfstats01 2026-09-04):** `ps -eo pid,nlwp,rss,etime,cmd` matching `[thread:listend-db-` counts **processes**, not threads. `setthreadtitle` / `set_daemon_thread_title` does **not** change process argv, so titled `listend-db-N` / `archive-N` / `idle-monitor` threads are invisible. Use **`/proc/<pid>/task/*/comm`** or **`ps -T -p <pid>`** (thread view; **no** `-e`). Product liveness must use **`Thread.is_alive()`**, not `ps` argv.
 
 **Anti-pattern — `ps -eT -p PID` for a single-PID thread dump (hpcperfstats02 2026-09-13):** on this procps, **`-e` (all processes) wins over `-p`**, so `ps -eT -p 67` dumps the **entire container** (listend, update_metrics, zstd, …). Operators then misread foreign TIDs as sync_timedb ingest. **Corrected:** `ps -T -p <pid>` (no `-e`). Filter COMMAND for `sync_timedb.py` when needed.
+
+**Anti-pattern — `REPLACE_WITH_*` / manual PID placeholders in live paste (hpcperfstats02 2026-09-13):** operators paste the literal token → `ps` “process ID list syntax error” / `/proc/REPLACE_…`. **Corrected:** resolve `SUP` inside the container from `ps` lines that contain `sync_timedb.py [main]` (no placeholders).
+
+**Anti-pattern — `pgrep -f worker:ingest-…` inside a script that also greps that string (hpcperfstats02 2026-09-13):** `pgrep` matched the diagnostic `sh` cmdline → fake `SAMPLE_WORKER`, `SUP=0`, `ps` “process ID out of range”. **Corrected:** do **not** use `pgrep` for this census. Use `exec pipeline sh -c '…'` with **host single quotes** (no `su`, no `\$`), `grep '[s]ync_timedb'` / `grep '[w]orker:ingest-pool'`, and `SUP` from the `[main]` `ps` line.
+
+**Anti-pattern — `su … "sh -lc '…\$…'"` for sync_timedb ps census (hpcperfstats02 2026-09-13):** nested `\$` through podman-compose is fragile. **Corrected:** `docker compose … exec pipeline sh -c '…'` (container root is fine for read-only `ps`).
+
+**Anti-pattern — `python3 -c` ingest-supervisor census through podman-compose (hpcperfstats02 2026-09-13):** string-literal title matching often prints **nothing**. **Corrected:** shell `ps` + self-excluding `grep '[s]ync_timedb'` only.
+
+**Anti-pattern — assume `py-spy` is on PATH (hpcperfstats02 2026-09-13):** `sh: py-spy: not found` on this pipeline image. **Corrected:** classify with `ps`/`wchan`/`pcpu` first; treat `py-spy` as optional only when `command -v py-spy` succeeds.
+
+**Good — sync_timedb process/thread census (hpcperfstats02 2026-09-13):**
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline sh -c '
+echo === sync_timedb processes ===
+ps -eo pid,ppid,pcpu,rss,nlwp,stat,wchan:32,args | grep "[s]ync_timedb" || true
+echo === SUP from main ===
+SUP=$(ps -eo pid=,args= | grep "[s]ync_timedb.py \[main\]" | grep -v "\[worker:" | awk "{print \$1; exit}")
+echo SUP=$SUP
+if [ -n "$SUP" ] && [ "$SUP" -gt 1 ]; then
+  echo === supervisor ===
+  ps -p "$SUP" -o pid,ppid,nlwp,pcpu,rss,stat,wchan:32,args=
+  readlink /proc/"$SUP"/exe || true
+  echo === supervisor threads ===
+  ps -T -p "$SUP" -o pid,spid,pcpu,stat,wchan:32,comm=
+fi
+echo === ingest-pool workers ===
+ps -eo pid,ppid,pcpu,rss,stat,wchan:32,args | grep "[w]orker:ingest-pool" | sort -k3 -nr || true
+echo === ingest-pool wchan tally ===
+ps -eo wchan:32,args | grep "[w]orker:ingest-pool" | awk "{print \$1}" | sort | uniq -c | sort -nr || true
+echo === populate-pool ===
+ps -eo pid,ppid,pcpu,rss,stat,wchan:32,args | grep "[w]orker:populate-pool" || true
+'
+```
 
 **Anti-pattern — treating Linux `comm` as a unique thread name (hpcperfstats01 2026-09-04):** Linux `comm` is **15 characters**. `listend.py [thread:listend-db-N]`, `listend.py [thread:archive-N]`, and `listend.py [thread:idle-monitor]` all print as **`listend.py [thr`**. A census of 66× that string is **not** one thread and is **not** proof that `listend-db-*` workers are dead or that they can be split from archive/idle-monitor. Prefer idle-monitor **`alive_db_threads=`** after deploy of the liveness suffix.
 

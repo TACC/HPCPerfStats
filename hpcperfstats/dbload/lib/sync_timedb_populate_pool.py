@@ -13,9 +13,10 @@ from typing import Any
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-    apply_ingest_pool_worker_init,
     clear_worker_stage,
     record_worker_stage,
+    set_worker_diagnostics_registry,
+    set_worker_pool_kind,
 )
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
     create_sync_timedb_thread_pool,
@@ -229,7 +230,8 @@ def _populate_pool_worker_entry(
   Claim and scan populate-queue jobs until shutdown is set.
 
   Args:
-    script_name (Any): Script name for worker titles and init.
+    script_name (Any): Kept for ThreadPoolExecutor submit signature parity;
+    unused after process-title init was removed from this thread entry.
     registry (Any): Worker diagnostics registry.
     shutdown (Any): Event that stops the worker loop.
 
@@ -240,7 +242,9 @@ def _populate_pool_worker_entry(
     >>> callable(_populate_pool_worker_entry)
     True
   """
-  apply_ingest_pool_worker_init(script_name, "populate-pool", registry)
+  del script_name
+  set_worker_pool_kind("populate-pool")
+  set_worker_diagnostics_registry(registry)
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
       archive_members_populate_queue_claim,
       complete_populate_queue_job,
