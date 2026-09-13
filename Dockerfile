@@ -603,11 +603,11 @@ RUN /bin/bash -o pipefail -c "apt-get update -y \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
        supervisor rsync syslog-ng util-linux time \
-       net-tools lsof procps gdb strace netcat-openbsd \
-       vim nano openssh-client\
-       curl ca-certificates fd-find \
+       net-tools procps gdb strace netcat-openbsd \
+       vim nano lsof openssh-client fd-find\
+       curl ca-certificates libreadline8t64 \
        libssl3t64 libsqlite3-0 libbz2-1.0 liblzma5 \
-       libreadline8t64 libncursesw6 libuuid1 libgdbm6t64 libexpat1 \
+       libncursesw6 libuuid1 libgdbm6t64 libexpat1 \
        libpq5 libmariadb3 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*"
