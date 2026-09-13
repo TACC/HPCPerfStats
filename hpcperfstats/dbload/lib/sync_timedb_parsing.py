@@ -1014,18 +1014,18 @@ def iter_stats_file_lines(stats_file: str) -> Iterator[Any]:
     >>> iter_stats_file_lines("x")  # doctest: +SKIP
   """
   try:
-    with _stats_file_read_lock(stats_file):
-      with open(stats_file, "r") as fd:
-        line_idx = 0
-        bytes_read = 0
-        while True:
+    with open(stats_file, "r") as fd:
+      line_idx = 0
+      bytes_read = 0
+      while True:
+        with _stats_file_read_lock(stats_file):
           line = fd.readline()
-          if not line:
-            break
-          line_idx += 1
-          bytes_read += len(line)
-          _maybe_raise_ingest_read_deadline(line_idx, bytes_read)
-          yield line
+        if not line:
+          break
+        line_idx += 1
+        bytes_read += len(line)
+        _maybe_raise_ingest_read_deadline(line_idx, bytes_read)
+        yield line
   except FileNotFoundError:
     return
 
@@ -1167,7 +1167,7 @@ def parse_last_timestamp_line_streaming(
   if size <= 0:
     return (None, None, None)
   chunk_size = max(4096, int(tail_read_bytes))
-  carry = b""
+  pieces: list[tuple[int, bytes]] = []
   try:
     with _stats_file_read_lock(stats_file):
       with open(stats_file, "rb") as fd:
@@ -1176,28 +1176,31 @@ def parse_last_timestamp_line_streaming(
           read_size = min(chunk_size, offset)
           offset -= read_size
           fd.seek(offset)
-          block = fd.read(read_size) + carry
-          parts = block.split(b"\n")
-          if offset > 0:
-            carry = parts[0]
-            parts = parts[1:]
-          else:
-            carry = b""
-          for raw in reversed(parts):
-            if not raw:
-              continue
-            try:
-              line = raw.decode("utf-8", errors="replace")
-            except Exception:
-              continue
-            s = line.lstrip()
-            if not s or not s[0].isdigit():
-              continue
-            parsed = _digit_line_identity(s)
-            if parsed is not None:
-              return parsed
+          pieces.append((offset, fd.read(read_size)))
   except FileNotFoundError:
     return (None, None, None)
+  carry = b""
+  for offset, raw_block in pieces:
+    block = raw_block + carry
+    parts = block.split(b"\n")
+    if offset > 0:
+      carry = parts[0]
+      parts = parts[1:]
+    else:
+      carry = b""
+    for raw in reversed(parts):
+      if not raw:
+        continue
+      try:
+        line = raw.decode("utf-8", errors="replace")
+      except Exception:
+        continue
+      s = line.lstrip()
+      if not s or not s[0].isdigit():
+        continue
+      parsed = _digit_line_identity(s)
+      if parsed is not None:
+        return parsed
   return (None, None, None)
 
 
@@ -1384,38 +1387,43 @@ def _collect_tail_timestamp_lines(
   if size <= 0 or max_lines <= 0:
     return []
   chunk_size = max(4096, int(tail_read_bytes))
-  carry = b""
-  collected = []
+  pieces: list[tuple[int, bytes]] = []
   offset = size
   try:
     with _stats_file_read_lock(stats_file):
       with open(stats_file, "rb") as fd:
-        while offset > 0 and len(collected) < max_lines:
+        while offset > 0:
           read_size = min(chunk_size, offset)
           offset -= read_size
           fd.seek(offset)
-          block = fd.read(read_size) + carry
-          parts = block.split(b"\n")
-          if offset > 0:
-            carry = parts[0]
-            parts = parts[1:]
-          else:
-            carry = b""
-          for raw in reversed(parts):
-            if len(collected) >= max_lines:
-              break
-            if not raw:
-              continue
-            try:
-              line = raw.decode("utf-8", errors="replace")
-            except Exception:
-              continue
-            s = line.lstrip()
-            if not s or not s[0].isdigit():
-              continue
-            collected.append(line)
+          pieces.append((offset, fd.read(read_size)))
   except FileNotFoundError:
     return []
+  carry = b""
+  collected = []
+  for offset, raw_block in pieces:
+    if len(collected) >= max_lines:
+      break
+    block = raw_block + carry
+    parts = block.split(b"\n")
+    if offset > 0:
+      carry = parts[0]
+      parts = parts[1:]
+    else:
+      carry = b""
+    for raw in reversed(parts):
+      if len(collected) >= max_lines:
+        break
+      if not raw:
+        continue
+      try:
+        line = raw.decode("utf-8", errors="replace")
+      except Exception:
+        continue
+      s = line.lstrip()
+      if not s or not s[0].isdigit():
+        continue
+      collected.append(line)
   return collected
 
 
@@ -1716,19 +1724,19 @@ def parse_stats_file_streaming(
   emission_start = max(int(start_line_idx or 0), int(parse_start_idx or 0))
   parser = IncrementalStatsParser(emission_start, exclude_types_list)
   try:
-    with _stats_file_read_lock(stats_file):
-      with open(stats_file, "r") as fd:
-        while True:
-          batch = []
+    with open(stats_file, "r") as fd:
+      while True:
+        batch = []
+        with _stats_file_read_lock(stats_file):
           for _ in range(int(batch_size)):
             line = fd.readline()
             if not line:
               break
             batch.append(line)
-          if not batch:
-            break
-          parser.feed_lines(batch)
-          del batch
+        if not batch:
+          break
+        parser.feed_lines(batch)
+        del batch
   except FileNotFoundError:
     return [], []
   return parser.finish()
@@ -2177,10 +2185,11 @@ def parse_stats_file_streaming_incremental(
   flush_rows = max(1, int(flush_rows))
 
   try:
-    with _stats_file_read_lock(stats_file):
-      with open(stats_file, "r") as fd:
-        while True:
-          got_line = False
+    with open(stats_file, "r") as fd:
+      while True:
+        emit: list[tuple[list, list]] = []
+        got_line = False
+        with _stats_file_read_lock(stats_file):
           for _ in range(int(line_batch_size)):
             line = fd.readline()
             if not line:
@@ -2190,15 +2199,17 @@ def parse_stats_file_streaming_incremental(
                 line, parser._line_index, parser.start_idx):
               if pending_flush or len(parser.stats) >= flush_rows:
                 if parser.stats or parser.proc_stats:
-                  on_chunk(parser.stats, parser.proc_stats)
+                  emit.append((parser.stats, parser.proc_stats))
                   parser.stats = []
                   parser.proc_stats = []
                 pending_flush = False
             parser.feed_line(line)
             if len(parser.stats) >= flush_rows:
               pending_flush = True
-          if not got_line:
-            break
+        for stats_chunk, proc_chunk in emit:
+          on_chunk(stats_chunk, proc_chunk)
+        if not got_line:
+          break
     if parser.stats or parser.proc_stats:
       on_chunk(parser.stats, parser.proc_stats)
       parser.stats = []

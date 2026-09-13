@@ -67,7 +67,7 @@ Look for:
 
 **Fix anything found** and re-run relevant tests. Do not proceed to step 2 or mark todos complete while open review items remain.
 
-Aligns with **`plan-creation-contract.mdc`** step 6 and **`docs/plans/PLAN_TEMPLATE.md`** → *Final code review*.
+Aligns with **`plan-creation-contract.mdc`** step 6 and **`docs/plans/PLAN_TEMPLATE.md`** → *Final code review*. When a plan has **N distinct changes**, that template requires **N Approach groups** (one Target File / compression / minimally invasive block per change).
 
 ### 2. Structured chat self-review
 

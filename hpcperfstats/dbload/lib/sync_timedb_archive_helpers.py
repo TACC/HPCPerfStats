@@ -5744,12 +5744,17 @@ def _stream_compressed_archive_members(
   *,
   apply_priority_wrap: bool = True,
   already_locked: bool = False,
+  defer_on_member: bool = False,
 ) -> Any:
   """
   Stream file members from a sealed archive.
   
   ``on_member(name, size)`` is invoked for each file member when provided.
   Returns ``(readable, members_dict, saw_duplicate_names, stream_error)``.
+
+  Populate-only callers pass ``defer_on_member=True`` so callbacks run after
+  the shared read lock is released. Size lookups that raise
+  ``_MemberStreamEarlyExit`` must keep the default in-stream callback.
   
   Args:
     compressed_path (str): String for compressed path.
@@ -5757,6 +5762,9 @@ def _stream_compressed_archive_members(
     apply_priority_wrap (bool): Boolean flag for apply priority wrap.
     already_locked (bool): Skip the shared fnctl wait when the caller already
     holds the exclusive write lock on ``compressed_path``.
+    defer_on_member (bool): Invoke ``on_member`` after releasing the shared
+      read lock. Keep False when the callback may raise
+      ``_MemberStreamEarlyExit``.
   
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -5777,6 +5785,8 @@ def _stream_compressed_archive_members(
       if already_locked
       else _archive_file_read_lock_wait(compressed_path)
   )
+  occurrences: list[tuple[str, int]] = []
+  result = (False, {}, False, None)
   try:
     with lock_cm:
       with _open_tarfile_for_read(
@@ -5795,9 +5805,16 @@ def _stream_compressed_archive_members(
           seen_names.add(m.name)
           by_name[m.name].append(m.size)
           if on_member is not None:
-            on_member(m.name, m.size)
+            if defer_on_member:
+              occurrences.append((m.name, m.size))
+            else:
+              on_member(m.name, m.size)
         members = {name: max(sizes) for name, sizes in by_name.items()}
-        return True, members, saw_duplicates, None
+        result = (True, members, saw_duplicates, None)
+    if defer_on_member and on_member is not None:
+      for name, size in occurrences:
+        on_member(name, size)
+    return result
   except _MemberStreamEarlyExit:
     raise
   except Exception as exc:
@@ -6739,6 +6756,7 @@ def _populate_members_from_sealed_scan(
           sealed_path,
           on_member,
           apply_priority_wrap=False,
+          defer_on_member=True,
       )
   )
 

@@ -358,5 +358,5 @@ def log_print(*args: Any, **kwargs: Any) -> None:
   line = sep.join(str(part) for part in (prefix, *args)) + end
   with _log_print_lock:
     stream.write(line)
-    if flush:
-      stream.flush()
+  if flush:
+    stream.flush()

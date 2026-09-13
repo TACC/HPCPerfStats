@@ -34,6 +34,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from datetime import date
+from itertools import islice
 from typing import Any, Deque, Dict, Iterable, List, Optional, Tuple
 
 import hashlib
@@ -191,12 +192,11 @@ class SyncTimedbJobStore:
           []
         """
         with self._lock:
-            return [
-                ident
-                for ident, _score in sorted(
-                    self._ingest.items(), key=lambda item: item[1],
-                )
-            ]
+            items = list(self._ingest.items())
+        return [
+            ident
+            for ident, _score in sorted(items, key=lambda item: item[1])
+        ]
 
     def inflight_count(self, kind: str) -> int:
         """
@@ -248,11 +248,17 @@ class SyncTimedbJobStore:
         Returns:
           None
 
+        Raises:
+          OSError: When the snapshot sidecar cannot be written.
+          Exception: The original write error is re-raised after `_dirty`
+            is restored so a later persist can retry.
+
         Examples:
           >>> store = SyncTimedbJobStore("/tmp/empty")
           >>> store.persist(force=True)
         """
         now = time.time()
+        snapshot = None
         with self._lock:
             if not self.archive_dir:
                 return
@@ -269,25 +275,40 @@ class SyncTimedbJobStore:
             queued = self._queued_identities_locked()
             live = queued | self._inflight_identities_locked()
             self._prune_orphan_payloads_locked(active=live)
-            payload = {
-                "ingest": dict(self._ingest),
-                "lists": {
-                    kind: list(items) for kind, items in self._lists.items()
-                },
-                "pending": {
-                    kind: sorted(idents)
-                    for kind, idents in self._pending.items()
-                },
-                "payloads": {
-                    "%s|%s" % (kind, ident): dict(fields)
+            snapshot = (
+                artifact_path(self.archive_dir, JOB_STORE_SNAPSHOT_KIND),
+                dict(self._ingest),
+                {kind: list(items) for kind, items in self._lists.items()},
+                {kind: list(idents) for kind, idents in self._pending.items()},
+                {
+                    (kind, ident): dict(fields)
                     for (kind, ident), fields in self._payloads.items()
                     if (kind, ident) in queued
                 },
-            }
-            path = artifact_path(self.archive_dir, JOB_STORE_SNAPSHOT_KIND)
+            )
+        if snapshot is None:
+            return
+        path, ingest_c, lists_c, pending_c, payloads_src = snapshot
+        payload = {
+            "ingest": ingest_c,
+            "lists": lists_c,
+            "pending": {
+                kind: sorted(idents) for kind, idents in pending_c.items()
+            },
+            "payloads": {
+                "%s|%s" % (kind, ident): fields
+                for (kind, ident), fields in payloads_src.items()
+            },
+        }
+        try:
+            save_persistence_document(path, JOB_STORE_SNAPSHOT_KIND, payload)
+        except OSError:
+            with self._lock:
+                self._dirty = True
+            raise
+        with self._lock:
             self._dirty = False
             self._last_persist = now
-        save_persistence_document(path, JOB_STORE_SNAPSHOT_KIND, payload)
 
     def load(self) -> None:
         """
@@ -311,27 +332,32 @@ class SyncTimedbJobStore:
         lists = raw.get("lists") or {}
         pending = raw.get("pending") or {}
         payloads = raw.get("payloads") or {}
-        with self._lock:
-            self._ingest = {
-                str(ident): float(score)
-                for ident, score in ingest.items()
-            }
-            for kind in JOB_KINDS_LIST:
-                self._lists[kind] = deque(
-                    str(item) for item in (lists.get(kind) or [])
-                )
-                self._pending[kind] = {
-                    str(item) for item in (pending.get(kind) or [])
+        ingest_built = {
+            str(ident): float(score) for ident, score in ingest.items()
+        }
+        lists_built = {
+            kind: deque(str(item) for item in (lists.get(kind) or []))
+            for kind in JOB_KINDS_LIST
+        }
+        pending_built = {
+            kind: {str(item) for item in (pending.get(kind) or [])}
+            for kind in JOB_KINDS_LIST
+        }
+        payloads_built: Dict[tuple[str, str], Dict[str, str]] = {}
+        if isinstance(payloads, dict):
+            for key, fields in payloads.items():
+                if not isinstance(fields, dict) or "|" not in str(key):
+                    continue
+                kind, ident = str(key).split("|", 1)
+                payloads_built[(kind, ident)] = {
+                    str(name): str(value) for name, value in fields.items()
                 }
-            self._payloads = {}
-            if isinstance(payloads, dict):
-                for key, fields in payloads.items():
-                    if not isinstance(fields, dict) or "|" not in str(key):
-                        continue
-                    kind, ident = str(key).split("|", 1)
-                    self._payloads[(kind, ident)] = {
-                        str(name): str(value) for name, value in fields.items()
-                    }
+        with self._lock:
+            self._ingest = ingest_built
+            for kind in JOB_KINDS_LIST:
+                self._lists[kind] = lists_built[kind]
+                self._pending[kind] = pending_built[kind]
+            self._payloads = payloads_built
             for kind in JOB_KINDS_ALL:
                 self._inflight[kind] = {}
             self._leases.clear()
@@ -460,11 +486,14 @@ class SyncTimedbJobStore:
           1
         """
         ident = str(identity)
+        cap = queue_capacity_limit()
         with self._lock:
             if ident in self._inflight[JOB_KIND_INGEST]:
                 return 0
             existed = ident in self._ingest
-            if not existed and not self._has_capacity_locked(JOB_KIND_INGEST):
+            if not existed and not self._has_capacity_locked(
+                JOB_KIND_INGEST, cap,
+            ):
                 return 0
             self._ingest[ident] = float(score)
             if fingerprint:
@@ -504,11 +533,12 @@ class SyncTimedbJobStore:
         if str(kind) not in JOB_KINDS_LIST:
             raise ValueError("kind %r is not a LIST queue kind" % (kind,))
         ident = str(identity)
+        cap = queue_capacity_limit()
         with self._lock:
             if dedupe:
                 if ident in self._pending[kind] or ident in self._inflight[kind]:
                     return 0
-            if not self._has_capacity_locked(kind):
+            if not self._has_capacity_locked(kind, cap):
                 return 0
             self._lists[kind].append(ident)
             self._pending[kind].add(ident)
@@ -558,21 +588,20 @@ class SyncTimedbJobStore:
         deadline = now + ttl
         claimed: List[ClaimedJob] = []
         with self._lock:
-            candidates = [
-                (ident, score)
-                for ident, score in sorted(
-                    self._ingest.items(), key=lambda item: item[1],
-                )
-                if lo <= float(score) <= hi
-            ]
-            for ident, score in candidates:
+            snapshot = list(self._ingest.items())
+        ranked = sorted(snapshot, key=lambda item: item[1])
+        with self._lock:
+            for ident, _snap_score in ranked:
                 if len(claimed) >= want:
                     break
                 if ident in self._inflight[JOB_KIND_INGEST]:
                     continue
+                live = self._ingest.get(ident)
+                if live is None or not (lo <= float(live) <= hi):
+                    continue
                 self._ingest.pop(ident, None)
                 self._inflight[JOB_KIND_INGEST][ident] = (
-                    deadline, owner_token, float(score),
+                    deadline, owner_token, float(live),
                 )
                 self._leases[(JOB_KIND_INGEST, ident)] = owner_token
                 fields = self._payloads.get((JOB_KIND_INGEST, ident), {})
@@ -582,7 +611,7 @@ class SyncTimedbJobStore:
                         identity=ident,
                         owner_token=owner_token,
                         deadline=deadline,
-                        score=float(score),
+                        score=float(live),
                         fingerprint=str(fields.get("fingerprint") or ""),
                     ),
                 )
@@ -728,21 +757,23 @@ class SyncTimedbJobStore:
         self._maybe_persist_locked()
         return True
 
-    def _has_capacity_locked(self, kind: str) -> bool:
+    def _has_capacity_locked(self, kind: str, cap: int) -> bool:
         """
         Return True when another durable member may be queued.
 
         Args:
           kind (str): Job kind.
+          cap (int): Capacity bound from ``queue_capacity_limit()``, read
+            before the store RLock.
 
         Returns:
           bool: True when the queue is below the configured cap.
 
         Examples:
-          >>> SyncTimedbJobStore("/tmp/empty")._has_capacity_locked("ingest")
+          >>> store = SyncTimedbJobStore("/tmp/empty")
+          >>> store._has_capacity_locked("ingest", queue_capacity_limit())
           True
         """
-        cap = queue_capacity_limit()
         if str(kind) == JOB_KIND_INGEST:
             return len(self._ingest) < cap
         return len(self._lists[kind]) < cap
@@ -786,9 +817,8 @@ class SyncTimedbJobStore:
         low = _bound_to_float(lo, default=float("-inf"))
         high = _bound_to_float(hi, default=float("+inf"))
         with self._lock:
-            return sum(
-                1 for score in self._ingest.values() if low <= score <= high
-            )
+            scores = list(self._ingest.values())
+        return sum(1 for score in scores if low <= score <= high)
 
     def ingest_score(self, identity: str) -> Optional[float]:
         """
@@ -824,16 +854,21 @@ class SyncTimedbJobStore:
           []
         """
         with self._lock:
-            items = list(self._lists.get(kind, ()))
-        if not items:
-            return []
-        if end == -1:
-            end = len(items) - 1
-        if start < 0:
-            start = max(0, len(items) + start)
-        if end < 0:
-            end = max(-1, len(items) + end)
-        return items[start:end + 1]
+            dq = self._lists.get(kind)
+            if not dq:
+                return []
+            n = len(dq)
+            start_i = start
+            end_i = end
+            if end_i == -1:
+                end_i = n - 1
+            if start_i < 0:
+                start_i = max(0, n + start_i)
+            if end_i < 0:
+                end_i = max(-1, n + end_i)
+            if start_i > end_i or start_i >= n:
+                return []
+            return list(islice(dq, start_i, end_i + 1))
 
     def reorder_list(self, kind: str, ordered_idents: List[str]) -> bool:
         """
@@ -855,15 +890,19 @@ class SyncTimedbJobStore:
         """
         if kind not in self._lists:
             return False
+        desired = list(ordered_idents)
         with self._lock:
             current = list(self._lists[kind])
-            if len(current) != len(ordered_idents):
+        if len(current) != len(desired):
+            return False
+        if sorted(current) != sorted(desired):
+            return False
+        if current == desired:
+            return False
+        with self._lock:
+            if list(self._lists[kind]) != current:
                 return False
-            if sorted(current) != sorted(ordered_idents):
-                return False
-            if current == list(ordered_idents):
-                return False
-            self._lists[kind] = deque(ordered_idents)
+            self._lists[kind] = deque(desired)
             return True
 
     def lease_token(self, kind: str, identity: str) -> Optional[str]:

@@ -130,6 +130,8 @@ Before the first product-code edit, complete Approach **Fix compression sequence
 
 Ordered steps with trade-offs.
 
+**One Approach group per change (required):** When the plan has **N distinct changes**, write **N Approach groups**. Each group must include **Target File & Line Numbers**, **Fix compression sequence**, **Minimally Invasive Fix**, and a **Compression metric block**. Do not collapse N root-cause blocks into one Approach group.
+
 **Industry best practices** — name what informs the plan (e.g. test pyramid — unit before compose E2E; fail-closed ingest; WCAG 2.2 AA for web). Prefer project rules (`testing-best-practices.mdc`, layer-specific `*.mdc`) where they already encode local practice.
 
 Optional architecture diagram:

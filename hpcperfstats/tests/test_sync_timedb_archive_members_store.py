@@ -352,3 +352,253 @@ def test_wait_for_complete_copy_releases_lock(tmp_path):
     wait_thread.join(timeout=3)
     waiter_thread.join(timeout=3)
     assert acquired == [True]
+
+
+def _lock_hold_waiter(lock, started, timeout=0.05):
+    acquired = []
+
+    def waiter() -> None:
+        assert started.wait(timeout=2)
+        got = lock.acquire(timeout=timeout)
+        acquired.append(got)
+        if got:
+            lock.release()
+
+    return acquired, waiter
+
+
+class _SlowItems(dict):
+    """Dict whose items() sleeps so normalize CPU can be timed vs RLock."""
+
+    def __init__(self, data, started, hold_s=0.4):
+        super().__init__(data)
+        self._started = started
+        self._hold_s = hold_s
+
+    def items(self):
+        self._started.set()
+        time.sleep(self._hold_s)
+        return list(super().items())
+
+
+class _SlowEvent(threading.Event):
+    """Event whose set() sleeps so waiters can probe the store RLock."""
+
+    def __init__(self, started, hold_s=0.4):
+        super().__init__()
+        self._started = started
+        self._hold_s = hold_s
+
+    def set(self):
+        self._started.set()
+        time.sleep(self._hold_s)
+        super().set()
+
+
+@pytest.mark.django_db(databases=[])
+def test_finish_populate_lock_hold_normalizes_before_rlock(tmp_path):
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    assert store.try_begin_populate("2026-09-01", "id-a")
+    started = threading.Event()
+    acquired, waiter = _lock_hold_waiter(store._lock, started)
+    slow = _SlowItems({"host/1": 11}, started)
+
+    def finish() -> None:
+        store.finish_populate(
+            "2026-09-01", "id-a", members=slow, complete=True,
+        )
+
+    finish_thread = threading.Thread(target=finish)
+    waiter_thread = threading.Thread(target=waiter)
+    finish_thread.start()
+    waiter_thread.start()
+    finish_thread.join(timeout=3)
+    waiter_thread.join(timeout=3)
+    assert acquired == [True]
+    assert store.lookup_member("2026-09-01", "id-a", "host/1") == 11
+
+
+@pytest.mark.django_db(databases=[])
+def test_store_complete_lock_hold_normalizes_before_rlock(tmp_path):
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    started = threading.Event()
+    acquired, waiter = _lock_hold_waiter(store._lock, started)
+    slow = _SlowItems({"host/1": 11}, started)
+
+    def complete() -> None:
+        store.store_complete("2026-09-01", "id-a", slow)
+
+    complete_thread = threading.Thread(target=complete)
+    waiter_thread = threading.Thread(target=waiter)
+    complete_thread.start()
+    waiter_thread.start()
+    complete_thread.join(timeout=3)
+    waiter_thread.join(timeout=3)
+    assert acquired == [True]
+    assert store.lookup_complete_map("2026-09-01", "id-a") == {"host/1": 11}
+
+
+@pytest.mark.django_db(databases=[])
+def test_merge_members_lock_hold_cas_none_first_key(tmp_path):
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    assert store.merge_members("2026-09-01", "id-a", {"host/1": 11}) is True
+    assert store.lookup_complete_map("2026-09-01", "id-a") == {"host/1": 11}
+
+
+@pytest.mark.django_db(databases=[])
+def test_merge_members_lock_hold_concurrent_cas(tmp_path):
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    errors = []
+
+    def merge_one(name: str, size: int) -> None:
+        try:
+            store.merge_members("2026-09-01", "id-a", {name: size})
+        except Exception as exc:
+            errors.append(exc)
+
+    t1 = threading.Thread(target=merge_one, args=("host/1", 11))
+    t2 = threading.Thread(target=merge_one, args=("host/2", 22))
+    t1.start()
+    t2.start()
+    t1.join(timeout=3)
+    t2.join(timeout=3)
+    assert errors == []
+    got = store.lookup_complete_map("2026-09-01", "id-a")
+    assert got == {"host/1": 11, "host/2": 22}
+
+
+@pytest.mark.django_db(databases=[])
+def test_merge_members_lock_hold_copy_releases_lock(tmp_path):
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    started = threading.Event()
+    slow = _SlowMemberMap({"host/1": 11}, started, hold_s=0.5)
+    with store._lock:
+        store._members[("2026-09-01", "id-a")] = slow
+        store._complete[("2026-09-01", "id-a")] = True
+    acquired, waiter = _lock_hold_waiter(store._lock, started)
+
+    def merge() -> None:
+        assert store.merge_members("2026-09-01", "id-a", {"host/2": 22}) is True
+
+    merge_thread = threading.Thread(target=merge)
+    waiter_thread = threading.Thread(target=waiter)
+    merge_thread.start()
+    waiter_thread.start()
+    merge_thread.join(timeout=3)
+    waiter_thread.join(timeout=3)
+    assert acquired == [True]
+    assert store.lookup_complete_map("2026-09-01", "id-a") == {
+        "host/1": 11, "host/2": 22,
+    }
+
+
+@pytest.mark.django_db(databases=[])
+def test_members_load_hydrate_lock_hold_builds_outside_rlock(
+    tmp_path, monkeypatch,
+):
+    archive = str(tmp_path / "archive")
+    store = SyncTimedbArchiveMembersStore(archive)
+    started = threading.Event()
+    acquired, waiter = _lock_hold_waiter(store._lock, started)
+
+    def fake_isdir(_path: str) -> bool:
+        return True
+
+    def fake_listdir(_path: str) -> list[str]:
+        return ["2026-09-01.json"]
+
+    def fake_load(_path: str, _kind: str, default=None):
+        return {
+            "day_token": "2026-09-01",
+            "identities": {
+                "id-a": {
+                    "complete": True,
+                    "members": _SlowMemberMap({"host/1": 11}, started),
+                },
+            },
+        }
+
+    monkeypatch.setattr(
+        "hpcperfstats.dbload.lib.sync_timedb_archive_members_store.os.path.isdir",
+        fake_isdir,
+    )
+    monkeypatch.setattr(
+        "hpcperfstats.dbload.lib.sync_timedb_archive_members_store.os.listdir",
+        fake_listdir,
+    )
+    monkeypatch.setattr(
+        "hpcperfstats.dbload.lib.sync_timedb_archive_members_store.load_persistence_document",
+        fake_load,
+    )
+    load_thread = threading.Thread(target=store.load)
+    waiter_thread = threading.Thread(target=waiter)
+    load_thread.start()
+    waiter_thread.start()
+    load_thread.join(timeout=3)
+    waiter_thread.join(timeout=3)
+    assert acquired == [True]
+    assert store.lookup_member("2026-09-01", "id-a", "host/1") == 11
+
+
+@pytest.mark.django_db(databases=[])
+def test_get_day_skip_lock_hold_copies_after_release(tmp_path):
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    started = threading.Event()
+
+    class SlowSkip(Mapping):
+        def __init__(self, data):
+            self._data = dict(data)
+
+        def __iter__(self):
+            started.set()
+            time.sleep(0.4)
+            return iter(self._data)
+
+        def __getitem__(self, key):
+            return self._data[key]
+
+        def __len__(self):
+            return len(self._data)
+
+    slow = SlowSkip({"kind": "read_error", "detail": "x"})
+    with store._lock:
+        store._day_skip["2026-09-01"] = slow
+    acquired, waiter = _lock_hold_waiter(store._lock, started)
+
+    def lookup() -> None:
+        assert store.get_day_skip("2026-09-01") == {
+            "kind": "read_error", "detail": "x",
+        }
+
+    lookup_thread = threading.Thread(target=lookup)
+    waiter_thread = threading.Thread(target=waiter)
+    lookup_thread.start()
+    waiter_thread.start()
+    lookup_thread.join(timeout=3)
+    waiter_thread.join(timeout=3)
+    assert acquired == [True]
+
+
+@pytest.mark.django_db(databases=[])
+def test_event_set_lock_hold_after_release(tmp_path):
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    assert store.try_begin_populate("2026-09-01", "id-a")
+    started = threading.Event()
+    slow_event = _SlowEvent(started)
+    with store._lock:
+        store._events[("2026-09-01", "id-a")] = slow_event
+    acquired, waiter = _lock_hold_waiter(store._lock, started)
+
+    def finish() -> None:
+        store.finish_populate(
+            "2026-09-01", "id-a", members={"host/1": 11}, complete=True,
+        )
+
+    finish_thread = threading.Thread(target=finish)
+    waiter_thread = threading.Thread(target=waiter)
+    finish_thread.start()
+    waiter_thread.start()
+    finish_thread.join(timeout=3)
+    waiter_thread.join(timeout=3)
+    assert acquired == [True]
+    assert slow_event.is_set()

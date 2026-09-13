@@ -14,19 +14,42 @@ Attributes:
   SyncTimedbArchiveMembersStore: Thread-safe in-process member store.
   _PROCESS_STORE: Process-local store installed by the orchestrator.
   _PROCESS_STORE_LOCK: Lock covering process-local store install/get.
+  _set_threading_events: Wake Events after the store RLock is released.
 """
 from __future__ import annotations
 
 import os
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     artifact_path,
     load_persistence_document,
     save_persistence_document,
 )
+
+
+def _set_threading_events(
+    events: Iterable[threading.Event | None],
+) -> None:
+    """
+    Wake Events collected under the members-store RLock after release.
+
+    Args:
+      events (Iterable[threading.Event | None]): Events popped while holding
+        the store lock. ``None`` entries are skipped.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _set_threading_events([])
+    """
+    for event in events:
+        if event is not None:
+            event.set()
+
 
 ARCHIVE_MEMBERS_STORE_DIR_KIND = "archive_members_store_dir"
 ARCHIVE_MEMBERS_STORE_DIR_RELPATH = ".sync_timedb_archive_members"
@@ -157,57 +180,59 @@ class SyncTimedbArchiveMembersStore:
         self,
         day_token: str,
         identity: str,
-    ) -> None:
+    ) -> Optional[threading.Event]:
         """
-        Wake waiters for one identity and drop the Event once unused.
+        Drop the waiter Event for one identity; caller sets it after unlock.
 
         Args:
           day_token (str): ISO calendar day.
           identity (str): Archive identity suffix.
 
         Returns:
-          None
+          threading.Event | None: Popped Event, or None when none was stored.
 
         Examples:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
-          >>> store._wake_and_drop_event_locked("2026-01-01", "id")
+          >>> store._wake_and_drop_event_locked("2026-01-01", "id") is None
+          True
         """
-        event = self._events.pop((str(day_token), str(identity)), None)
-        if event is not None:
-            event.set()
+        return self._events.pop((str(day_token), str(identity)), None)
 
     def _drop_stale_identities_for_day_locked(
         self,
         day_token: str,
         keep_identity: str,
-    ) -> None:
+    ) -> list[threading.Event]:
         """
         Drop abandoned sibling identities after the live identity completes.
 
         Identity drift (T1→T2) otherwise leaves Events and incomplete maps
-        for the rest of the supervisor life.
+        for the rest of the supervisor life. Caller sets popped Events after
+        releasing the store RLock.
 
         Args:
           day_token (str): ISO calendar day.
           keep_identity (str): Identity that just became complete.
 
         Returns:
-          None
+          list[threading.Event]: Events to wake after the lock is released.
 
         Examples:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store._drop_stale_identities_for_day_locked("2026-01-01", "id")
+          []
         """
         day = str(day_token)
         keep = (day, str(keep_identity))
+        events: list[threading.Event] = []
         for key in list(self._members):
             if key[0] == day and key != keep and key not in self._populate_owner:
                 self._members.pop(key, None)
                 self._complete.pop(key, None)
         for key in list(self._events):
             if key[0] == day and key != keep and key not in self._populate_owner:
-                event = self._events.pop(key)
-                event.set()
+                events.append(self._events.pop(key))
+        return events
 
     def try_begin_populate(self, day_token: str, identity: str) -> bool:
         """
@@ -264,17 +289,28 @@ class SyncTimedbArchiveMembersStore:
           ... )
         """
         key = (str(day_token), str(identity))
+        normalized = None
+        if members is not None:
+            normalized = {
+                str(name): int(size) for name, size in members.items()
+            }
+        events: list[threading.Event | None] = []
         with self._lock:
-            if members is not None:
-                self._members[key] = {
-                    str(name): int(size) for name, size in members.items()
-                }
+            if normalized is not None:
+                self._members[key] = normalized
             if complete:
                 self._complete[key] = True
             self._populate_owner.pop(key, None)
-            self._wake_and_drop_event_locked(day_token, identity)
+            events.append(
+                self._wake_and_drop_event_locked(day_token, identity),
+            )
             if complete:
-                self._drop_stale_identities_for_day_locked(day_token, identity)
+                events.extend(
+                    self._drop_stale_identities_for_day_locked(
+                        day_token, identity,
+                    ),
+                )
+        _set_threading_events(events)
         if complete:
             self.persist_day(day_token)
 
@@ -353,15 +389,24 @@ class SyncTimedbArchiveMembersStore:
           >>> store.store_complete("2026-01-01", "id", {"a": 1})
         """
         key = (str(day_token), str(identity))
+        normalized = {
+            str(name): int(size) for name, size in members.items()
+        }
+        events: list[threading.Event | None] = []
         with self._lock:
-            self._members[key] = {
-                str(name): int(size) for name, size in members.items()
-            }
+            self._members[key] = normalized
             self._complete[key] = True
             if saw_duplicates:
                 self._dedupe_hint[str(day_token)] = True
-            self._wake_and_drop_event_locked(day_token, identity)
-            self._drop_stale_identities_for_day_locked(day_token, identity)
+            events.append(
+                self._wake_and_drop_event_locked(day_token, identity),
+            )
+            events.extend(
+                self._drop_stale_identities_for_day_locked(
+                    day_token, identity,
+                ),
+            )
+        _set_threading_events(events)
         self.persist_day(day_token)
 
     def is_complete(self, day_token: str, identity: str) -> bool:
@@ -439,6 +484,7 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.set_day_skip("2026-01-01", kind="read_error")
         """
+        events: list[threading.Event] = []
         with self._lock:
             self._day_skip[str(day_token)] = {
                 "kind": str(kind),
@@ -447,8 +493,8 @@ class SyncTimedbArchiveMembersStore:
             day = str(day_token)
             for key in list(self._events):
                 if key[0] == day:
-                    event = self._events.pop(key)
-                    event.set()
+                    events.append(self._events.pop(key))
+        _set_threading_events(events)
         self.persist_day(day_token)
 
     def get_day_skip(self, day_token: str) -> Optional[Dict[str, str]]:
@@ -469,7 +515,9 @@ class SyncTimedbArchiveMembersStore:
         """
         with self._lock:
             payload = self._day_skip.get(str(day_token))
-            return None if payload is None else dict(payload)
+        if payload is None:
+            return None
+        return dict(payload)
 
     def clear_day_skip(self, day_token: str) -> None:
         """
@@ -567,28 +615,40 @@ class SyncTimedbArchiveMembersStore:
           ... )
           False
         """
+        if not member_map:
+            return False
         key = (str(day_token), str(identity))
-        with self._lock:
-            if not self._complete.get(key):
-                current = dict(self._members.get(key) or {})
-            else:
-                current = dict(self._members.get(key) or {})
-            if not member_map:
-                return False
-            for name, size in member_map.items():
-                size_i = int(size)
-                prev = current.get(str(name))
+        incoming = {
+            str(name): int(size) for name, size in member_map.items()
+        }
+        while True:
+            with self._lock:
+                members_ref = self._members.get(key)
+            current = dict(members_ref) if members_ref is not None else {}
+            for name, size_i in incoming.items():
+                prev = current.get(name)
                 if prev is None or size_i > int(prev):
-                    current[str(name)] = size_i
-            self._members[key] = current
-            self._complete[key] = True
-            if saw_duplicates:
-                self._dedupe_hint[str(day_token)] = True
-            self._degraded.pop(str(day_token), None)
-            self._wake_and_drop_event_locked(day_token, identity)
-            self._drop_stale_identities_for_day_locked(day_token, identity)
-        self.persist_day(day_token)
-        return True
+                    current[name] = size_i
+            events: list[threading.Event | None] = []
+            with self._lock:
+                if self._members.get(key) is not members_ref:
+                    continue
+                self._members[key] = current
+                self._complete[key] = True
+                if saw_duplicates:
+                    self._dedupe_hint[str(day_token)] = True
+                self._degraded.pop(str(day_token), None)
+                events.append(
+                    self._wake_and_drop_event_locked(day_token, identity),
+                )
+                events.extend(
+                    self._drop_stale_identities_for_day_locked(
+                        day_token, identity,
+                    ),
+                )
+            _set_threading_events(events)
+            self.persist_day(day_token)
+            return True
 
     def clear_incomplete(self, day_token: str, identity: str) -> None:
         """
@@ -606,12 +666,14 @@ class SyncTimedbArchiveMembersStore:
           >>> store.clear_incomplete("2026-01-01", "id")
         """
         key = (str(day_token), str(identity))
+        event = None
         with self._lock:
             if self._complete.get(key):
                 return
             self._members.pop(key, None)
             self._populate_owner.pop(key, None)
-            self._wake_and_drop_event_locked(day_token, identity)
+            event = self._wake_and_drop_event_locked(day_token, identity)
+        _set_threading_events([event])
 
     def set_degraded(self, day_token: str) -> None:
         """
@@ -887,12 +949,14 @@ class SyncTimedbArchiveMembersStore:
           >>> store.invalidate("2026-01-01", "id")
         """
         key = (str(day_token), str(identity))
+        event = None
         with self._lock:
             self._members.pop(key, None)
             self._complete.pop(key, None)
             self._populate_owner.pop(key, None)
             self._drop_populate_source_for_day_locked(day_token)
-            self._wake_and_drop_event_locked(day_token, identity)
+            event = self._wake_and_drop_event_locked(day_token, identity)
+        _set_threading_events([event])
         self.persist_day(day_token)
 
     def invalidate_all(self) -> None:
@@ -907,6 +971,7 @@ class SyncTimedbArchiveMembersStore:
         Examples:
           >>> SyncTimedbArchiveMembersStore("/tmp/empty").invalidate_all()
         """
+        events: list[threading.Event] = []
         with self._lock:
             self._members.clear()
             self._complete.clear()
@@ -914,8 +979,7 @@ class SyncTimedbArchiveMembersStore:
             self._degraded.clear()
             self._dedupe_hint.clear()
             self._populate_owner.clear()
-            for event in self._events.values():
-                event.set()
+            events.extend(self._events.values())
             self._events.clear()
             self._tar_hot.clear()
             self._append_inflight.clear()
@@ -924,6 +988,7 @@ class SyncTimedbArchiveMembersStore:
             self._populate_jobs.clear()
             self._populate_queued.clear()
             self._populate_cv.notify_all()
+        _set_threading_events(events)
         store_dir = self._store_dir()
         if not os.path.isdir(store_dir):
             return
@@ -1132,29 +1197,32 @@ class SyncTimedbArchiveMembersStore:
             day = str(raw.get("day_token") or name[:-5])
             identities = raw.get("identities") or {}
             skip = raw.get("day_skip")
-            with self._lock:
-                if isinstance(skip, dict) and skip.get("kind"):
-                    self._day_skip[day] = {
-                        "kind": str(skip.get("kind")),
-                        "detail": str(skip.get("detail") or ""),
+            skip_payload = None
+            if isinstance(skip, dict) and skip.get("kind"):
+                skip_payload = {
+                    "kind": str(skip.get("kind")),
+                    "detail": str(skip.get("detail") or ""),
+                }
+            members_ready: Dict[tuple[str, str], Dict[str, int]] = {}
+            if isinstance(identities, dict):
+                for identity, body in identities.items():
+                    if not isinstance(body, dict) or not body.get("complete"):
+                        continue
+                    members = body.get("members") or {}
+                    members_ready[(day, str(identity))] = {
+                        str(member): int(size)
+                        for member, size in members.items()
                     }
+            with self._lock:
+                if skip_payload is not None:
+                    self._day_skip[day] = skip_payload
                 if raw.get("degraded"):
                     self._degraded[day] = True
                 if raw.get("dedupe_hint"):
                     self._dedupe_hint[day] = True
-                if isinstance(identities, dict):
-                    for identity, body in identities.items():
-                        if not isinstance(body, dict):
-                            continue
-                        key = (day, str(identity))
-                        members = body.get("members") or {}
-                        if not body.get("complete"):
-                            continue
-                        self._members[key] = {
-                            str(member): int(size)
-                            for member, size in members.items()
-                        }
-                        self._complete[key] = True
+                self._members.update(members_ready)
+                for key in members_ready:
+                    self._complete[key] = True
 
     def try_acquire_restore(self, day_token: str, token: str) -> bool:
         """

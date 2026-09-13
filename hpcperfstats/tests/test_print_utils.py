@@ -224,3 +224,74 @@ def test_log_print_unset_role_treated_as_main_for_ingest(monkeypatch):
   with ingest_logging():
     log_print("pending reconcile")
   assert writes == ["[sync_timedb:main] ingest: pending reconcile\n"]
+
+
+def test_log_print_flush_lock_hold_after_release(monkeypatch):
+  import threading
+  import time
+
+  from hpcperfstats.dbload.lib.print_utils import _log_print_lock
+
+  class DummyMain:
+    __file__ = "/tmp/tool.py"
+
+  monkeypatch.setitem(sys.modules, "__main__", DummyMain)
+  started = threading.Event()
+  acquired = []
+
+  class SlowStream:
+    def write(self, data):
+      return len(data)
+
+    def flush(self):
+      started.set()
+      time.sleep(0.4)
+
+  def waiter() -> None:
+    assert started.wait(timeout=2)
+    got = _log_print_lock.acquire(timeout=0.05)
+    acquired.append(got)
+    if got:
+      _log_print_lock.release()
+
+  waiter_thread = threading.Thread(target=waiter)
+  waiter_thread.start()
+  log_print("hello", file=SlowStream(), flush=True)
+  waiter_thread.join(timeout=3)
+  assert acquired == [True]
+
+
+def test_log_print_flush_lock_hold_write_still_under_lock(monkeypatch):
+  import threading
+  import time
+
+  from hpcperfstats.dbload.lib.print_utils import _log_print_lock
+
+  class DummyMain:
+    __file__ = "/tmp/tool.py"
+
+  monkeypatch.setitem(sys.modules, "__main__", DummyMain)
+  started = threading.Event()
+  acquired = []
+
+  class SlowWriteStream:
+    def write(self, data):
+      started.set()
+      time.sleep(0.4)
+      return len(data)
+
+    def flush(self):
+      return None
+
+  def waiter() -> None:
+    assert started.wait(timeout=2)
+    got = _log_print_lock.acquire(timeout=0.05)
+    acquired.append(got)
+    if got:
+      _log_print_lock.release()
+
+  waiter_thread = threading.Thread(target=waiter)
+  waiter_thread.start()
+  log_print("hello", file=SlowWriteStream(), flush=True)
+  waiter_thread.join(timeout=3)
+  assert acquired == [False]
