@@ -6,7 +6,8 @@ Do **not** add ``django.conf.urls.static.static(..., document_root=..., )`` for
 answer ``/static/*`` in production: **nginx** serves that prefix from the shared
 static volume (see ``services-conf/nginx-static-files.conf`` and ``docker-
 compose.yaml``). Django still runs ``collectstatic`` to populate ``STATIC_ROOT``
-on disk; Gunicorn must not duplicate HTTP static serving.
+on disk; Gunicorn must not duplicate HTTP static serving. nginx reads the
+published tmpfs copy at ``/srv/static`` (not the disk staging volume).
 
 Production **proxy** nginx forwards only an explicit allowlist of URL prefixes
 to Gunicorn (same file). When adding a new **top-level** path here, extend that

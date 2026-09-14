@@ -401,6 +401,14 @@ def test_triggered_rules_for_dockerignore_path():
   assert "dockerignore-test-artifacts-sync.mdc" in rules
 
 
+def test_triggered_rules_staticfiles_ram_publish_dispatches_nginx_static():
+  rules = triggered_rules_for_paths(
+      ["hpcperfstats/site/lib/staticfiles_ram_publish.py"],
+  )
+  assert "nginx-static-url-prefix.mdc" in rules
+  assert "frontend-static-prod-serve-only.mdc" in rules
+
+
 def test_triggered_rules_sync_timedb_lib_helper_path():
   rules = triggered_rules_for_paths(
       ["hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py"],

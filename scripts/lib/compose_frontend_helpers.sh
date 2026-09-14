@@ -420,6 +420,12 @@ sha256_in_proxy_container() {
     "if [[ ! -f '${container_path}' ]]; then exit 2; fi; sha256sum '${container_path}' | awk '{print \$1}'"
 }
 
+publish_web_static_tree_to_ram() {
+  echo "Publishing STATIC_ROOT onto tmpfs for nginx (proxy /srv/static) ..."
+  docker compose exec -T web /usr/local/bin/python3 \
+    -m hpcperfstats.site.lib.staticfiles_ram_publish --kind static
+}
+
 verify_proxy_frontend_matches_web() {
   local web_probe="${CONTAINER_STATIC_ROOT_FRONTEND}/machine/index.html"
   local proxy_probe="${PROXY_STATIC_ROOT_FRONTEND}/machine/index.html"

@@ -415,8 +415,12 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    Django’s root **`urlpatterns`**.
 
    **Production:** browsers must load **`/static/*` through the `proxy` service**
-   (ports 80/443); nginx reads the same **`staticfiles_data`** volume mounted at
-   **`STATIC_ROOT`** on **`web`**. Hitting **`web:8000` directly** is not a
+   (ports 80/443); nginx reads the **`staticfiles_ram`** tmpfs volume at
+   **`/srv/static`**, published from disk **`STATIC_ROOT`** (`staticfiles_data`)
+   on **`web`** startup after collectstatic, SPA heal, and sidecar compress.
+   **`/media/`** is the same pattern: disk **`media_data`** stays **`MEDIA_ROOT`**
+   staging; nginx reads **`media_ram`** at **`/srv/media`** (empty media is
+   valid). Hitting **`web:8000` directly** is not a
    supported way to load hashed SPA assets (Gunicorn does not implement
    **`/static/`** URL serving). For **local parity** with that layout, use full
    compose including **`proxy`**, or run **`manage.py runserver --nostatic`** and
@@ -442,15 +446,20 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    On first startup, the `web` container runs Django migrations
    (`manage.py migrate` only — schema changes ship as reviewed, committed
    migration files; production startup never runs `makemigrations`) and
-   `collectstatic --noinput --clear` so **`STATIC_ROOT`** (the volume nginx serves as `/static/`)
+   `collectstatic --noinput --clear` so **disk `STATIC_ROOT`** (staging for the
+   tmpfs nginx serves as `/static/`)
    is emptied of unused leftovers then populated before Gunicorn starts. Collectstatic omits ``*.map`` source
    maps. After `collectstatic`, startup verifies
    SPA shells under **`STATIC_ROOT/frontend/{machine,pub}/index.html`**. If the
    package image lacks the shells, web fail-closes. Volume fingerprint heal
    after a later image rebuild is documented in **[docs/upgrade.md](docs/upgrade.md)**.
    After heal, startup writes Brotli-11 / Gzip-9 sidecars beside compressible
-   static files (hashed Next chunks, Django/DRF admin assets). Existing stacks
-   pick this up on the next **`web`** restart; no compose volume migrate.
+   static files (hashed Next chunks, Django/DRF admin assets), then **always**
+   publishes **`STATIC_ROOT`** and **`MEDIA_ROOT`** onto shared tmpfs
+   (**`staticfiles_ram`** / **`media_ram`**) that **`proxy`** mounts at
+   **`/srv/static`** and **`/srv/media`**. Existing stacks
+   pick this up on the next **`web`** restart; keep the host ``mkdir`` for
+   **`/data/hpcperfstats_site/staticfiles`** and **`/data/hpcperfstats_site/media`**.
    Direct `*.br` / `*.gz` URLs stay 404 at nginx.
 
    The compose DB service includes explicit PostgreSQL checkpoint/memory tuning (`max_connections`, `shared_buffers`, `work_mem`, `maintenance_work_mem`, `autovacuum_work_mem`, `checkpoint_*`, `min_wal_size`, `max_wal_size`, and parallel-worker caps) plus `shm_size`. Keep these aligned with host RAM and service memory limits; tune upward one notch at a time only after confirming checkpoint stability and no OOM events. The **pipeline** daemons (`listend`, `sync_timedb`, and `update_metrics`) use in-process threads and ordinary Python objects, so the pipeline service does not reserve a separate `shm_size` for worker IPC. Do **not** change **`db`** `shm_size: "16gb"`.

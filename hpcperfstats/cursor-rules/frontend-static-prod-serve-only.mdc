@@ -5,6 +5,7 @@ globs:
   - hpcperfstats/site/frontend/scripts/copy-next-export.mjs
   - hpcperfstats/site/hpcperfstats_site/static/frontend/**
   - hpcperfstats/site/lib/compress_static_sidecars.py
+  - hpcperfstats/site/lib/staticfiles_ram_publish.py
   - services-conf/django_startup.sh
   - services-conf/proxy_entrypoint.sh
   - services-conf/nginx-static-files.conf
@@ -24,9 +25,9 @@ globs:
 
 | URL prefix | Disk | Allowed |
 |------------|------|---------|
-| `/static/` | `/srv/static/` (`STATIC_ROOT`) | Hashed SPA under `frontend/_next/`, Django admin/app static, `frontend/robots.txt` via dedicated location |
+| `/static/` | `/srv/static/` (tmpfs published from disk `STATIC_ROOT`) | Hashed SPA under `frontend/_next/`, Django admin/app static, `frontend/robots.txt` via dedicated location |
 | `/machine/`, `/pub/` | `/srv/static/frontend/{machine,pub}/` | HTML shells, Next RSC `.txt` payloads, assets referenced by those shells |
-| `/media/` | `/srv/media/` | User/media objects only |
+| `/media/` | `/srv/media/` (tmpfs published from disk `MEDIA_ROOT`) | User/media objects only |
 
 ## Forbidden on the public volume (non-exhaustive)
 

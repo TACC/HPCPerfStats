@@ -15,7 +15,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for fn in copy_frontend_into_web compose_cp_supported web_container_ref verify_container_frontend_matches_host verify_proxy_frontend_matches_web copy_tree_via_staged_tar compose_backend_is_podman deploy_frontend_via_staged_volume verify_container_extract_fingerprint verify_job_list_date_filter_in_spa_build; do
+for fn in copy_frontend_into_web compose_cp_supported web_container_ref verify_container_frontend_matches_host verify_proxy_frontend_matches_web copy_tree_via_staged_tar compose_backend_is_podman deploy_frontend_via_staged_volume verify_container_extract_fingerprint verify_job_list_date_filter_in_spa_build publish_web_static_tree_to_ram; do
   if ! declare -F "${fn}" >/dev/null; then
     echo "expected ${fn} to be defined in rebuild_frontend.sh" >&2
     exit 1
@@ -74,6 +74,16 @@ fi
 
 if ! grep -q 'CONTAINER_STATIC_ROOT_FRONTEND' "${REBUILD_SCRIPT}"; then
   echo "expected STATIC_ROOT/frontend volume deploy in rebuild_frontend.sh" >&2
+  exit 1
+fi
+
+if ! grep -q 'staticfiles_ram_publish --kind static' "${REBUILD_SCRIPT}" "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"; then
+  echo "expected static ram publish after frontend copy" >&2
+  exit 1
+fi
+
+if grep -q 'staticfiles_ram_publish --kind media' "${REBUILD_SCRIPT}" "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"; then
+  echo "rebuild_frontend must not publish media ram" >&2
   exit 1
 fi
 

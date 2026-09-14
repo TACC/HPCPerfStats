@@ -4,7 +4,8 @@
 # Pipeline and web share the hpcperfstats image, but ingest keeps running because this
 # script never rebuilds that image or restarts the pipeline service. Fresh bundles are
 # copied into the running web container's STATIC_ROOT frontend tree (shared
-# staticfiles_data volume) that nginx (proxy) serves as /static/ and /machine/.
+# staticfiles_data staging volume). Startup and this script then publish that
+# tree onto tmpfs that nginx (proxy) serves as /static/ and /machine/.
 #
 # Usage (from the git checkout that contains docker-compose.yaml):
 #   ./scripts/rebuild_frontend.sh
@@ -210,6 +211,7 @@ deploy_to_compose() {
 
   echo "Copying built assets into web:${CONTAINER_STATIC_ROOT_FRONTEND} (nginx staticfiles volume) ..."
   copy_frontend_into_web
+  publish_web_static_tree_to_ram
   verify_container_frontend_matches_host
   verify_container_file_count_matches_host \
     "${CONTAINER_STATIC_ROOT_FRONTEND}" \

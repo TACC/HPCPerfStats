@@ -34,9 +34,13 @@ services:
     environment:
       - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
       - STATIC_ROOT=/home/hpcperfstats/staticfiles
+      - STATICFILES_RAM_ROOT=/home/hpcperfstats/staticfiles-ram
+      - MEDIAFILES_RAM_ROOT=/home/hpcperfstats/media-ram
     volumes:
       - staticfiles_data:/home/hpcperfstats/staticfiles
       - media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
+      - staticfiles_ram:/home/hpcperfstats/staticfiles-ram
+      - media_ram:/home/hpcperfstats/media-ram
       - hpcperfstatsdata:/hpcperfstats/
       - redis_runtime:/run/redis
     networks:
@@ -153,8 +157,8 @@ services:
       - ./services-conf/nginx-edge-security-headers.inc:/etc/nginx/nginx-edge-security-headers.inc:ro
       - ./services-conf/nginx-csp-no-active.inc:/etc/nginx/nginx-csp-no-active.inc:ro
       - ./services-conf/nginx-csp-django-html.inc:/etc/nginx/nginx-csp-django-html.inc:ro
-      - staticfiles_data:/srv/static:ro
-      - media_data:/srv/media:ro
+      - staticfiles_ram:/srv/static:ro
+      - media_ram:/srv/media:ro
     networks:
       hpcperfstats_net:
         aliases:
@@ -376,6 +380,21 @@ volumes:
   # Not a host bind — Docker/Podman named volume only.
   redis_runtime:
     driver: local
+  # Finished STATIC_ROOT / MEDIA_ROOT copies nginx serves. Disk binds stay
+  # collectstatic / MEDIA_ROOT staging. Not settings binds (same class as
+  # redis_runtime). Podman tmpfs reject → same-redeploy /dev/shm bind.
+  staticfiles_ram:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=256m
+  media_ram:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=64m
 
 networks:
   hpcperfstats_net:

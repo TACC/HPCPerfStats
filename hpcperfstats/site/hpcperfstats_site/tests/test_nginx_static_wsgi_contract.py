@@ -30,6 +30,23 @@ _UPSTREAM_HIDE_HEADERS = (
 )
 
 
+def test_nginx_static_and_media_alias_srv_paths():
+  """Nginx aliases stay /srv/static and /srv/media; compose retargets those mounts."""
+  conf = (_SERVICES / "nginx-static-files.conf").read_text(encoding="utf-8")
+  assert "alias /srv/static/;" in conf
+  assert "alias /srv/media/;" in conf
+  urls = (
+      _REPO_ROOT / "hpcperfstats" / "site" / "hpcperfstats_site" / "urls.py"
+  ).read_text(encoding="utf-8")
+  settings = (
+      _REPO_ROOT / "hpcperfstats" / "site" / "hpcperfstats_site" / "settings.py"
+  ).read_text(encoding="utf-8")
+  assert "from django.conf.urls.static" not in urls
+  assert "static(settings.STATIC_URL" not in urls
+  assert "import whitenoise" not in urls.lower()
+  assert "WhiteNoiseMiddleware" not in settings
+
+
 def test_wsgi_client_does_not_serve_static_url_prefix():
   """If Django adds static() routes or static middleware, this contract breaks."""
   client = Client()

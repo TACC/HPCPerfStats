@@ -17,6 +17,8 @@ services:
       - test_hpcperfstatsdata:/hpcperfstats/
       - test_staticfiles_data:/home/hpcperfstats/staticfiles
       - test_media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
+      - test_staticfiles_ram:/home/hpcperfstats/staticfiles-ram
+      - test_media_ram:/home/hpcperfstats/media-ram
       - redis_runtime:/run/redis
   pipeline:
     volumes:
@@ -25,8 +27,8 @@ services:
       - redis_runtime:/run/redis
   proxy:
     volumes:
-      - test_staticfiles_data:/srv/static:ro
-      - test_media_data:/srv/media:ro
+      - test_staticfiles_ram:/srv/static:ro
+      - test_media_ram:/srv/media:ro
       - test_proxy_ssl_source:/mnt/ssl-source:ro
   db:
     volumes:
@@ -42,6 +44,8 @@ volumes:
   test_hpcperfstatsdata:
   test_staticfiles_data:
   test_media_data:
+  test_staticfiles_ram:
+  test_media_ram:
   test_postgres_data:
   test_postgres_data_pg18:
   test_rabbitmq_messages:

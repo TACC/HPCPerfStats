@@ -81,6 +81,10 @@ PY
 # Brotli-11 / Gzip-9 sidecars for nginx brotli_static/gzip_static (mtime skip).
 /usr/local/bin/python3 -m hpcperfstats.site.lib.compress_static_sidecars
 
+# Pin finished STATIC_ROOT / MEDIA_ROOT onto shared tmpfs for nginx /srv/*.
+/usr/local/bin/python3 -m hpcperfstats.site.lib.staticfiles_ram_publish --kind static
+/usr/local/bin/python3 -m hpcperfstats.site.lib.staticfiles_ram_publish --kind media
+
 # Gunicorn workers: WEB_CONCURRENCY overrides; else absolute [PORTAL] gunicorn_workers (default 32).
 WORKERS=$(/usr/local/bin/python3 -c "
 import os

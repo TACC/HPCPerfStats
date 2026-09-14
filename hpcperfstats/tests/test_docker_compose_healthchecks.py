@@ -5,6 +5,36 @@ import subprocess
 from pathlib import Path
 
 
+def _compose_has_named_tmpfs_volume(
+    content: str, name: str, size_opt: str
+) -> bool:
+  """Return True when top-level volumes define ``name`` as a sized tmpfs.
+
+  Args:
+    content: Full docker-compose.yaml text.
+    name: Volume key such as ``staticfiles_ram``.
+    size_opt: ``driver_opts.o`` size token such as ``256m``.
+  """
+  lines = content.splitlines()
+  try:
+    vol_i = next(i for i, line in enumerate(lines) if line == "volumes:")
+  except StopIteration:
+    return False
+  key = f"  {name}:"
+  for i, line in enumerate(lines[vol_i + 1 :], start=vol_i + 1):
+    if line.startswith("  #"):
+      continue
+    if line == key:
+      block = "\n".join(lines[i : i + 8])
+      return (
+          "driver: local" in block
+          and "type: tmpfs" in block
+          and "device: tmpfs" in block
+          and f"o: size={size_opt}" in block
+      )
+  return False
+
+
 def _compose_has_redis_runtime_named_volume(content: str) -> bool:
   """Return True when top-level volumes define redis_runtime as driver: local.
 
@@ -586,6 +616,35 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
   assert "ssl_certs:" not in settings
   assert "ssl_certs:/etc/ssl/hpcperfstats" not in base
   assert "proxy_ssl_source:/mnt/ssl-source:ro" in base
+  assert "staticfiles_ram:" not in settings
+  assert "media_ram:" not in settings
+
+
+def test_docker_compose_staticfiles_ram_and_media_ram_tmpfs_not_null_stub():
+  """Named tmpfs volumes live in base compose; overlay remaps for Colima/CI."""
+  repo_root = Path(__file__).resolve().parents[2]
+  base = (repo_root / "docker-compose.yaml").read_text()
+  settings = (repo_root / "docker-compose.settings.yaml.example").read_text()
+  overlay = (
+      repo_root / "tests" / "docker-compose.test-overlay.yaml.example"
+  ).read_text()
+  assert _compose_has_named_tmpfs_volume(base, "staticfiles_ram", "256m")
+  assert _compose_has_named_tmpfs_volume(base, "media_ram", "64m")
+  assert "staticfiles_ram:/home/hpcperfstats/staticfiles-ram" in base
+  assert "media_ram:/home/hpcperfstats/media-ram" in base
+  assert "staticfiles_data:/home/hpcperfstats/staticfiles" in base
+  assert "staticfiles_ram:/srv/static:ro" in base
+  assert "media_ram:/srv/media:ro" in base
+  assert "staticfiles_data:/srv/static:ro" not in base
+  assert "media_data:/srv/media:ro" not in base
+  assert "STATICFILES_RAM_ROOT=/home/hpcperfstats/staticfiles-ram" in base
+  assert "MEDIAFILES_RAM_ROOT=/home/hpcperfstats/media-ram" in base
+  assert "staticfiles_ram:" not in settings
+  assert "media_ram:" not in settings
+  assert "test_staticfiles_ram:/home/hpcperfstats/staticfiles-ram" in overlay
+  assert "test_media_ram:/home/hpcperfstats/media-ram" in overlay
+  assert "test_staticfiles_ram:/srv/static:ro" in overlay
+  assert "test_media_ram:/srv/media:ro" in overlay
 
 
 def test_docker_compose_db_pg18_dual_run_beside_hub_pg15():
@@ -718,6 +777,8 @@ def test_docker_compose_test_overlay_clears_host_binds():
         "test_hpcperfstatsdata",
         "test_staticfiles_data",
         "test_media_data",
+        "test_staticfiles_ram",
+        "test_media_ram",
         "test_postgres_data",
         "test_postgres_data_pg18",
         "test_rabbitmq_messages",
@@ -731,6 +792,8 @@ def test_docker_compose_test_overlay_clears_host_binds():
       "test_hpcperfstatsdata",
       "test_staticfiles_data",
       "test_media_data",
+      "test_staticfiles_ram",
+      "test_media_ram",
       "test_postgres_data",
       "test_postgres_data_pg18",
       "test_rabbitmq_messages",
@@ -738,6 +801,10 @@ def test_docker_compose_test_overlay_clears_host_binds():
       "test_proxy_ssl_source",
   ):
     assert name in overlay
+  assert "test_staticfiles_ram:/srv/static:ro" in overlay
+  assert "test_media_ram:/srv/media:ro" in overlay
+  assert "test_staticfiles_data:/srv/static:ro" not in overlay
+  assert "test_media_data:/srv/media:ro" not in overlay
   assert "test_postgres_data_pg18:/var/lib/postgresql" in overlay
   assert "test_proxy_ssl_source:/mnt/ssl-source:ro" in overlay
   assert "device: ./tests/fixtures/proxy-ssl" in overlay
