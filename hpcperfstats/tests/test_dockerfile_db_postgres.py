@@ -27,8 +27,8 @@ def test_db_dockerfile_pins_postgres_18_sha_and_timescale() -> None:
     text = _dockerfile()
     assert "ARG PG_VERSION=18.6" in text
     assert "555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f" in text
-    assert "ARG TIMESCALEDB_VERSION=2.29.2" in text
-    assert "3817f8acb8e167bf22b873a4c4e17d801089ed5a34c232eedd4f86dc222c8dc6" in text
+    assert "ARG TIMESCALEDB_VERSION=2.30.0" in text
+    assert "dac2fba0cd4eee9f4adcd04c91b7929850e24bc36f62eaee8bda4230a9fcee66" in text
 
 
 def test_db_dockerfile_pins_jemalloc_icu_liburing_lz4_zlib_ng_zstd() -> None:
@@ -100,8 +100,12 @@ def test_db_dockerfile_links_opt_icu_liburing_lz4_zstd_into_postgres() -> None:
     assert "-Wl,-rpath,/opt/lz4/lib" in text
     assert "-Wl,-rpath,/opt/zstd/lib" in text
     assert "-Wl,-rpath,/opt/zlib-ng/lib" in text
-    # Must not pass docker-library's --disable-rpath to ./configure.
-    configure_block = text[text.index("./configure") : text.index("make -j")]
+    # Must not pass docker-library's --disable-rpath to postgres ./configure.
+    # Slice stops before the fail-closed config.status grep (which names the flag).
+    pg_run = text[text.index("# --- PostgreSQL") : text.index("# --- TimescaleDB")]
+    configure_block = pg_run[
+        pg_run.index("./configure") : pg_run.index("if grep -q -- '--disable-rpath'")
+    ]
     assert "--disable-rpath" not in configure_block
     # PG18 removed --enable-thread-safety (always on); --enable-option-checking=fatal
     # rejects unrecognized options (bake failure on prod: 2026-09-04).
@@ -125,9 +129,48 @@ def test_db_dockerfile_libs_mtune_and_lz4_heapmode() -> None:
         in text
     )
     assert "-mtune=native" in text
-    lz4_run = text[text.index("# --- lz4 ---") : text.index("# --- zlib-ng")]
+    lz4_run = text[text.index("# --- lz4 ---") : text.index("# --- ICU")]
     assert "-DLZ4_HEAPMODE=0" in lz4_run
     assert "OPT_CFLAGS_LIBS" in lz4_run
+
+
+def test_db_dockerfile_opt_lib_bake_order_cache_and_deps() -> None:
+    """Slowest-changing independent /opt pins first; zstd after lz4 + zlib-ng.
+
+    Docker layer cache is linear: bumping a fast pin (zlib-ng) must not
+    rebuild jemalloc/lz4/icu/liburing. zstd DT_NEEDED those two codecs, so
+    its RUN stays after both even though zstd itself ships ~yearly.
+    """
+    text = _dockerfile()
+    markers = [
+        "ARG ALPINE_VERSION=",
+        "ARG JEMALLOC_VERSION=",
+        "ARG LZ4_VERSION=",
+        "ARG ICU_VERSION=",
+        "ARG LIBURING_VERSION=",
+        "ARG ZLIB_NG_VERSION=",
+        "ARG ZSTD_VERSION=",
+        "ARG PG_VERSION=",
+        "ARG TIMESCALEDB_VERSION=",
+    ]
+    idxs = [text.index(m) for m in markers]
+    assert idxs == sorted(idxs), (
+        "db.Dockerfile /opt bake order must be Alpine, jemalloc, lz4, "
+        "ICU, liburing, zlib-ng, zstd, Postgres, Timescale"
+    )
+    assert text.index("# --- lz4 ---") < text.index("# --- zstd")
+    assert text.index("# --- zlib-ng") < text.index("# --- zstd")
+    runtime_copies = [
+        "COPY --from=db-build /opt/jemalloc",
+        "COPY --from=db-build /opt/lz4",
+        "COPY --from=db-build /opt/icu",
+        "COPY --from=db-build /opt/liburing",
+        "COPY --from=db-build /opt/zlib-ng",
+        "COPY --from=db-build /opt/zstd",
+        "COPY --from=db-build /usr/local",
+    ]
+    copy_idxs = [text.index(m) for m in runtime_copies]
+    assert copy_idxs == sorted(copy_idxs)
 
 
 def test_db_dockerfile_timescale_229_no_external_lz4_zstd_ldd_gate() -> None:
