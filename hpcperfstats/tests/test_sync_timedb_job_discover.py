@@ -68,6 +68,95 @@ def test_stream_enqueue_skips_fnctl_lock_sidecar_paths():
   ) is None
 
 
+def test_calendar_day_from_find_record_digit_epoch_basename():
+  """Listend digit-epoch basenames resolve a real calendar day, not None."""
+  epoch = 1773864970
+  rec = FindStatsRecord(
+      path="/hpcperfstats/archive/host/%s" % epoch,
+      mtime=1.0,
+      size=10,
+      inode=1,
+  )
+  day = jd.calendar_day_from_find_record(rec, "/daily")
+  assert day == datetime.fromtimestamp(epoch).date()
+
+
+def test_basename_date_still_rejects_non_iso_non_epoch():
+  """Open current and non-epoch names stay unresolved."""
+  assert jd._basename_date("/archive/host/current") is None
+  assert jd._basename_date("/archive/host/foo") is None
+  unknown = FindStatsRecord(
+      path="/archive/host/current", mtime=1.0, size=1, inode=1,
+  )
+  assert jd.calendar_day_from_find_record(unknown, "/daily") is None
+
+
+def test_stream_enqueue_digit_epoch_lands_in_hot():
+  """Default day resolver ZADDs a same-day digit-epoch file into hot."""
+  epoch = 1773864970
+  today = datetime.fromtimestamp(epoch).date()
+  path = "/archive/host/%s" % epoch
+  client = SyncTimedbJobStore("")
+  stats = jd.stream_enqueue_ingest_from_find_records(
+      client,
+      [FindStatsRecord(path=path, mtime=1.0, size=10, inode=1)],
+      tgz_archive_dir="/daily",
+      today=today,
+      hot_days=3,
+      ingest_is_complete_fn=lambda **_k: False,
+      append_is_complete_fn=lambda **_k: True,
+  )
+  assert stats.enqueued_ingest == 1
+  identity = jq.ingest_identity(path, 10, jd.find_record_mtime_ns(1.0))
+  score = client.ingest_score(identity)
+  assert score is not None
+  assert jq.decode_ingest_band(score) == "hot"
+
+
+def test_stream_enqueue_over_cap_still_zadds_hot_skips_catchup(monkeypatch):
+  """Catchup-full ingest cap must not abort the walk or refuse hot ZADD."""
+  monkeypatch.setattr(jq, "queue_capacity_limit", lambda: 2)
+  client = SyncTimedbJobStore("")
+  today = date(2026, 9, 14)
+  for ident in ("/old/a", "/old/b"):
+    score = jq.encode_ingest_score(
+        band="catchup",
+        day=date(2026, 6, 1),
+        today=today,
+        identity=ident,
+    )
+    assert jq.zadd_ingest_job(client, identity=ident, score=score) == 1
+
+  hot_path = "/archive/h/1789308786"
+  catch_path = "/archive/h/oldcatch"
+
+  def _day(rec):
+    if rec.path == hot_path:
+      return today
+    return date(2026, 6, 1)
+
+  stats = jd.stream_enqueue_ingest_from_find_records(
+      client,
+      [
+          FindStatsRecord(path=hot_path, mtime=1.0, size=10, inode=3),
+          FindStatsRecord(path=catch_path, mtime=1.0, size=10, inode=4),
+      ],
+      tgz_archive_dir="/daily",
+      today=today,
+      hot_days=3,
+      calendar_day_fn=_day,
+      ingest_is_complete_fn=lambda **_k: False,
+      append_is_complete_fn=lambda **_k: True,
+  )
+  assert stats.stopped_at_capacity is True
+  assert stats.seen > 0
+  hot_id = jq.ingest_identity(hot_path, 10, jd.find_record_mtime_ns(1.0))
+  catch_id = jq.ingest_identity(catch_path, 10, jd.find_record_mtime_ns(1.0))
+  assert client.ingest_score(hot_id) is not None
+  assert jq.decode_ingest_band(client.ingest_score(hot_id)) == "hot"
+  assert client.ingest_score(catch_id) is None
+
+
 def test_calendar_day_from_find_record_uses_daily_tar(tmp_path):
   """B1: discover must resolve the calendar day from the daily tar path."""
   daily = tmp_path / "daily"
@@ -99,7 +188,7 @@ def test_discover_stops_at_queue_max_size_and_resumes(monkeypatch):
       records,
       tgz_archive_dir="/daily",
       today=date(2026, 8, 24),
-      calendar_day_fn=lambda _r: date(2026, 8, 20),
+      calendar_day_fn=lambda _r: date(2026, 6, 1),
       ingest_is_complete_fn=lambda **_k: False,
       append_is_complete_fn=lambda **_k: True,
   )
@@ -108,7 +197,7 @@ def test_discover_stops_at_queue_max_size_and_resumes(monkeypatch):
   assert client.queued_count("ingest") == 2
 
   jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+      client, band="catchup", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
   )
   jq.ack_job(
       client, kind="ingest", identity="/archive/h/a", owner_token="n:h:b:1",
@@ -118,7 +207,7 @@ def test_discover_stops_at_queue_max_size_and_resumes(monkeypatch):
       records,
       tgz_archive_dir="/daily",
       today=date(2026, 8, 24),
-      calendar_day_fn=lambda _r: date(2026, 8, 20),
+      calendar_day_fn=lambda _r: date(2026, 6, 1),
       ingest_is_complete_fn=lambda **_k: False,
       append_is_complete_fn=lambda **_k: True,
   )

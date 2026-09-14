@@ -598,8 +598,10 @@ def classify_closed_raw_path(
   """
   Classify one closed raw path into would-enqueue ingest/append needs.
 
-  Does not read ``.sync_timedb_state.json``. Callers inject complete
-  predicates for host unit tests; production defaults use marks / open-tar.
+  Treats internal archive sidecars and live ``current`` hardlinks as
+  not-closed (``needs_ingest`` and ``needs_append`` false). Does not read
+  ``.sync_timedb_state.json``. Callers inject complete predicates for host
+  unit tests; production defaults use marks / open-tar.
 
   Args:
     path (str): Closed raw stats path.
@@ -631,8 +633,14 @@ def classify_closed_raw_path(
     >>> p.needs_ingest and p.needs_append
     True
   """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      stats_file_is_active_segment,
+  )
+
   norm = os.path.normpath(str(path or ""))
-  if is_internal_archive_stats_path(norm):
+  if is_internal_archive_stats_path(norm) or stats_file_is_active_segment(
+      norm,
+  ):
     return ClosedPathReconstructPlan(
         path=norm,
         identity=jq.ingest_identity(norm, size, mtime_ns),

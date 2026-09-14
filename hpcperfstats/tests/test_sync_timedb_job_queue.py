@@ -1,6 +1,7 @@
 """Host unit tests for in-process sync_timedb job-store queue helpers."""
 from __future__ import annotations
 
+import os
 from datetime import date
 from pathlib import Path
 
@@ -607,12 +608,69 @@ def test_persist_omits_inflight_and_leases(tmp_path):
 def test_queue_max_size_blocks_new_zadd(monkeypatch):
   monkeypatch.setattr(jq, "queue_capacity_limit", lambda: 2)
   store = _store()
-  assert jq.zadd_ingest_job(store, identity="/a", score=1) == 1
-  assert jq.zadd_ingest_job(store, identity="/b", score=2) == 1
-  assert jq.zadd_ingest_job(store, identity="/c", score=3) == 0
+  today = date(2026, 8, 24)
+  catch_a = jq.encode_ingest_score(
+      band="catchup", day=date(2026, 6, 1), today=today, identity="/a",
+  )
+  catch_b = jq.encode_ingest_score(
+      band="catchup", day=date(2026, 6, 1), today=today, identity="/b",
+  )
+  catch_c = jq.encode_ingest_score(
+      band="catchup", day=date(2026, 6, 1), today=today, identity="/c",
+  )
+  assert jq.zadd_ingest_job(store, identity="/a", score=catch_a) == 1
+  assert jq.zadd_ingest_job(store, identity="/b", score=catch_b) == 1
+  assert jq.zadd_ingest_job(store, identity="/c", score=catch_c) == 0
   assert store.queued_count("ingest") == 2
-  assert jq.zadd_ingest_job(store, identity="/a", score=9) >= 0
-  assert store.ingest_score("/a") == 9.0
+  assert jq.zadd_ingest_job(store, identity="/a", score=catch_a + 1) >= 0
+  assert store.ingest_score("/a") == float(catch_a + 1)
+
+
+def test_zadd_ingest_hot_bypasses_member_cap(monkeypatch):
+  """Hot-band identities may join an ingest map already at the member cap."""
+  monkeypatch.setattr(jq, "queue_capacity_limit", lambda: 2)
+  store = _store()
+  today = date(2026, 9, 14)
+  catch_a = jq.encode_ingest_score(
+      band="catchup", day=date(2026, 6, 1), today=today, identity="/old/a",
+  )
+  catch_b = jq.encode_ingest_score(
+      band="catchup", day=date(2026, 6, 1), today=today, identity="/old/b",
+  )
+  hot = jq.encode_ingest_score(
+      band="hot", day=today, today=today, identity="/hot/a",
+  )
+  assert jq.zadd_ingest_job(store, identity="/old/a", score=catch_a) == 1
+  assert jq.zadd_ingest_job(store, identity="/old/b", score=catch_b) == 1
+  assert jq.zadd_ingest_job(store, identity="/hot/a", score=hot) == 1
+  assert jq.decode_ingest_band(store.ingest_score("/hot/a")) == "hot"
+
+
+def test_classify_active_current_hardlink_skips_ingest(tmp_path):
+  """Same-inode-as-current digit-epoch files are not closed for ingest."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  host = tmp_path / "host.cluster.integration.test"
+  host.mkdir()
+  cur = host / "current"
+  epoch = host / "1789308786"
+  cur.write_text("live")
+  try:
+    os.link(str(cur), str(epoch))
+  except OSError:
+    pytest.skip("hard links not supported on this filesystem")
+  st = epoch.stat()
+  plan = jr.classify_closed_raw_path(
+      str(epoch),
+      tgz_archive_dir=str(tmp_path / "daily"),
+      size=st.st_size,
+      mtime_ns=st.st_mtime_ns,
+      calendar_day=date(2026, 9, 14),
+      ingest_is_complete_fn=lambda **_k: False,
+      append_is_complete_fn=lambda **_k: False,
+  )
+  assert plan.needs_ingest is False
+  assert plan.needs_append is False
 
 
 def test_append_list_dedupe_skips_queued_identity():

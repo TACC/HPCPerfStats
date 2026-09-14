@@ -472,6 +472,10 @@ class SyncTimedbJobStore:
         """
         Queue or reband one ingest identity.
 
+        New catchup identities are refused when the member cap is full.
+        New hot-band identities still join so live listend files are not
+        starved behind a catchup-full ZSET.
+
         Args:
           identity (str): Normalized ingest path.
           score (float): Band-encoded score.
@@ -494,7 +498,8 @@ class SyncTimedbJobStore:
             if not existed and not self._has_capacity_locked(
                 JOB_KIND_INGEST, cap,
             ):
-                return 0
+                if decode_ingest_band(score) != "hot":
+                    return 0
             self._ingest[ident] = float(score)
             if fingerprint:
                 self._payloads.setdefault(

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Iterator
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 import os
 
@@ -40,8 +40,9 @@ class StreamingDiscoverStats:
     enqueued_append: Paths that received an append ``RPUSH``.
     skipped_complete: Paths with neither ingest nor append needed.
     enqueued_day_close: Days that received a day_close ``RPUSH``.
-    stopped_at_capacity: True when enqueue stopped because the ingest queue
-      hit its configured member cap.
+    stopped_at_capacity: True when the ingest member cap was hit during
+      the walk. Catchup ingest stops; the find walk and hot-band ZADD
+      continue.
   """
 
   seen: int
@@ -74,14 +75,16 @@ def calendar_day_from_find_record(
   tgz_archive_dir: str,
 ) -> date | None:
   """
-  Resolve a find record's calendar day from its daily tar path.
+  Resolve a find record's calendar day from its basename.
 
-  Returns ``None`` rather than substituting today when the tar day cannot be
-  derived — banding without a real day would mis-schedule catchup work.
+  Accepts an ISO ``YYYY-MM-DD`` prefix or a listend digit-epoch basename.
+  Returns ``None`` rather than substituting today or ``rec.mtime`` when the
+  name cannot be parsed — banding without a real day would mis-schedule
+  catchup work. ``tgz_archive_dir`` is kept for caller compatibility.
 
   Args:
     rec (FindStatsRecord): One GNU find record.
-    tgz_archive_dir (str): Daily archive directory.
+    tgz_archive_dir (str): Daily archive directory (unused for day identity).
 
   Returns:
     date | None: Calendar day, or ``None`` when unresolved.
@@ -93,19 +96,8 @@ def calendar_day_from_find_record(
     ... ) is None
     True
   """
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      calendar_date_from_daily_tar_path,
-      daily_tar_path_for_stats_path,
-  )
-
-  if _basename_date(rec.path) is None:
-    return None
-  tar = daily_tar_path_for_stats_path(
-      rec.path, tgz_archive_dir, rec.mtime,
-  )
-  if not tar:
-    return None
-  return calendar_date_from_daily_tar_path(tar)
+  _ = tgz_archive_dir
+  return _basename_date(rec.path)
 
 
 def filter_find_records_for_date_range(
@@ -171,7 +163,10 @@ def _coerce_filter_date(value: Any) -> date | None:
 
 def _basename_date(path: str) -> date | None:
   """
-  Parse ``YYYY-MM-DD`` from a stats-file basename prefix.
+  Parse a calendar day from a stats-file basename.
+
+  Accepts an ISO ``YYYY-MM-DD`` prefix or a listend digit-epoch name
+  (unix seconds ``>= 1e9``). Other names stay unresolved.
 
   Args:
     path (str): Raw stats path.
@@ -186,11 +181,22 @@ def _basename_date(path: str) -> date | None:
   name = os.path.basename(str(path or ""))
   if name.endswith(".json"):
     return None
-  if len(name) < 10:
+  if len(name) >= 10:
+    try:
+      return datetime.strptime(name[:10], "%Y-%m-%d").date()
+    except ValueError:
+      pass
+  if not name.isdigit():
     return None
   try:
-    return datetime.strptime(name[:10], "%Y-%m-%d").date()
+    epoch = int(name)
   except ValueError:
+    return None
+  if epoch < 1_000_000_000:
+    return None
+  try:
+    return datetime.fromtimestamp(epoch).date()
+  except (OSError, OverflowError, ValueError):
     return None
 
 
@@ -340,7 +346,6 @@ def stream_enqueue_ingest_from_find_records(
       has_cap = True
     if not has_cap:
       stopped_at_capacity = True
-      break
     seen += 1
     cal = day_fn(rec) if day_fn is not None else None
     day_tok = None
@@ -363,6 +368,13 @@ def stream_enqueue_ingest_from_find_records(
         ingest_is_complete_fn=ingest_is_complete_fn,
         append_is_complete_fn=append_is_complete_fn,
     )
+    if not has_cap and (
+        plan.calendar_day is None
+        or jr.select_ingest_band(
+            plan.calendar_day, today=today, hot_days=hot_days,
+        ) != "hot"
+    ):
+      plan = replace(plan, needs_ingest=False)
     enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
         client,
         plan,
