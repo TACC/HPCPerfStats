@@ -57,6 +57,7 @@ def test_python_build_gil_pip_invokes_via_python3_m():
   assert "python3 -m pip install --no-cache-dir -r /tmp/requirements-build.txt" in build
   assert "python3 -m pip download" in build
   assert "python3 -m pip install --no-cache-dir pyinstrument" in build
+  assert "python3 -m pip install --no-cache-dir pyinstrument py-spy" not in build
   assert "python3 -m pip uninstall" in build
   assert "python3 -m pip cache purge" in build
   # Strip allowed forms; remaining bare pip argv breaks the builder under default PATH.

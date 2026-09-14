@@ -546,8 +546,35 @@ RUN /bin/bash -o pipefail -c '\
     --constraint /tmp/requirements.txt brotli; \
   /opt/python3.14t/bin/python3.14t -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""'
 
-# Install debugging tools into GIL prefix (py-spy / pyinstrument).
-RUN /bin/bash -o pipefail -c 'python3 -m pip install --no-cache-dir pyinstrument py-spy'
+# Install pyinstrument into the GIL prefix (operator CPU profiler).
+RUN /bin/bash -o pipefail -c 'python3 -m pip install --no-cache-dir pyinstrument'
+
+# TEMPORARY: cargo pin of py-spy 0.4.2 + PR #860 (ee757909) until official >0.4.2
+# advertises libpython3.14t. Drop this RUN, the dump-smoke RUN, and rustup when
+# that wheel exists. rustup 1.88.0 stays in python-build only (not COPY'd).
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  apt-get update -y; \
+  apt-get install -y --no-install-recommends libunwind-dev; \
+  curl -fsSL https://sh.rustup.rs -o /tmp/rustup-init.sh; \
+  sh /tmp/rustup-init.sh -y --default-toolchain 1.88.0 --profile minimal; \
+  rm -f /tmp/rustup-init.sh; \
+  . "$HOME/.cargo/env"; \
+  rustc --version | grep -F "rustc 1.88.0"; \
+  curl -fsSL https://github.com/honglei/py-spy/archive/ee757909a5698526a7df04687ecbe6d4daad5f8b.tar.gz \
+    -o /tmp/py-spy.tar.gz; \
+  echo "aad4fc01436299b68001120c414d15e88b6c9c53270ea9f9a31ffb060604adce  /tmp/py-spy.tar.gz" | sha256sum -c -; \
+  mkdir -p /usr/src/py-spy; \
+  tar -xzf /tmp/py-spy.tar.gz -C /usr/src/py-spy --strip-components=1; \
+  rm -f /tmp/py-spy.tar.gz; \
+  cd /usr/src/py-spy; \
+  cargo build --release --locked; \
+  install -m 0755 target/release/py-spy /opt/python3.14/bin/py-spy; \
+  test -x /opt/python3.14/bin/py-spy; \
+  /opt/python3.14/bin/py-spy --version; \
+  rm -rf /usr/src/py-spy "$HOME/.cargo" "$HOME/.rustup"; \
+  apt-get clean; \
+  rm -rf /var/lib/apt/lists/*'
 
 # Uninstall image-build-only toolchain/devel from both ABIs after all pip layers
 # (image-build + MKL source numpy/numexpr/pandas + rest wheels + native brotli +
@@ -587,7 +614,30 @@ RUN /bin/bash -o pipefail -c '\
   test ! -d /usr/src/zlib-ng; \
   test ! -d /usr/src/zstd; \
   test ! -d /usr/src/jemalloc; \
-  test ! -d /usr/src/python'
+  test ! -d /usr/src/python; \
+  test ! -d /usr/src/py-spy'
+
+# Fail-closed: stripped py-spy dump must print a Python frame on GIL python3 and
+# FT /opt/python3.14t/bin/python. Never pass --gil against free-threaded targets.
+RUN /bin/bash -o pipefail -c '\
+  set -euo pipefail; \
+  python3 -c "import time; time.sleep(60)" & \
+  gpid=$!; \
+  sleep 1; \
+  gout=$(timeout 30 /opt/python3.14/bin/py-spy dump --pid "$gpid" 2>&1) || { echo "$gout"; kill "$gpid" 2>/dev/null || true; false; }; \
+  kill "$gpid" 2>/dev/null || true; \
+  wait "$gpid" 2>/dev/null || true; \
+  if echo "$gout" | grep -Fq "Failed to find python version"; then echo "GIL version-detect"; echo "$gout"; false; fi; \
+  echo "$gout" | grep -Eq "time.sleep|<module>" || { echo "GIL no python frame"; echo "$gout"; false; }; \
+  /opt/python3.14t/bin/python -c "import time; time.sleep(60)" & \
+  tpid=$!; \
+  sleep 1; \
+  tout=$(timeout 30 /opt/python3.14/bin/py-spy dump --pid "$tpid" 2>&1) || { echo "$tout"; kill "$tpid" 2>/dev/null || true; false; }; \
+  kill "$tpid" 2>/dev/null || true; \
+  wait "$tpid" 2>/dev/null || true; \
+  if echo "$tout" | grep -Fq "Failed to find python version"; then echo "FT version-detect"; echo "$tout"; false; fi; \
+  echo "$tout" | grep -Eq "time.sleep|<module>" || { echo "FT no python frame"; echo "$tout"; false; }; \
+  /opt/python3.14/bin/py-spy --version'
 
 # Slim runtime: COPY only /opt install prefixes (never /usr/src or cmake build dirs).
 FROM debian:trixie-slim AS hpcperfstats-base
@@ -608,7 +658,7 @@ RUN /bin/bash -o pipefail -c "apt-get update -y \
        curl ca-certificates libreadline8t64 \
        libssl3t64 libsqlite3-0 libbz2-1.0 liblzma5 \
        libncursesw6 libuuid1 libgdbm6t64 libexpat1 \
-       libpq5 libmariadb3 \
+       libpq5 libmariadb3 libunwind8\
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*"
 
