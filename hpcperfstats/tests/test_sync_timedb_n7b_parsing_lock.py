@@ -8,7 +8,9 @@ from hpcperfstats.dbload.lib import sync_timedb_parsing as parsing
 from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     parse_stats_file_streaming,
+    parse_stats_file_streaming_incremental,
     parse_stats_lines,
+    stats_payload_to_records,
 )
 from hpcperfstats.tests.test_sync_timedb import _resume_schema_fixture_lines
 
@@ -145,12 +147,44 @@ def test_tail_parse_lock_hold_after_byte_snapshot(tmp_path, monkeypatch):
     assert held["n"] == 0
 
 
-def test_on_chunk_lock_hold_outside_shared_lock(tmp_path, monkeypatch):
+def test_feed_line_lock_hold_outside_shared_lock(tmp_path, monkeypatch):
     from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-        parse_stats_file_streaming_incremental,
+        IncrementalStatsParser,
     )
-    from hpcperfstats.tests.test_sync_timedb import _resume_schema_fixture_lines
 
+    stats = tmp_path / "host.example.com" / "1709123456"
+    stats.parent.mkdir(parents=True)
+    stats.write_text("".join(_resume_schema_fixture_lines()), encoding="utf-8")
+    held = {"n": 0}
+    monkeypatch.setattr(
+        parsing, "_stats_file_read_lock", _tracking_stats_lock(held),
+    )
+    real_feed = IncrementalStatsParser.feed_line
+
+    def wrapped(self, line):
+        assert held["n"] == 0
+        return real_feed(self, line)
+
+    monkeypatch.setattr(IncrementalStatsParser, "feed_line", wrapped)
+    chunks = []
+
+    def on_chunk(stats_rows, proc_rows):
+        assert held["n"] == 0
+        chunks.append((
+            stats_payload_to_records(stats_rows),
+            list(proc_rows),
+        ))
+
+    parse_stats_file_streaming_incremental(
+        str(stats),
+        flush_rows=1,
+        on_chunk=on_chunk,
+        line_batch_size=1,
+    )
+    assert chunks
+
+
+def test_on_chunk_lock_hold_outside_shared_lock(tmp_path, monkeypatch):
     stats = tmp_path / "host.example.com" / "1709123456"
     stats.parent.mkdir(parents=True)
     stats.write_text("".join(_resume_schema_fixture_lines()), encoding="utf-8")
@@ -162,7 +196,10 @@ def test_on_chunk_lock_hold_outside_shared_lock(tmp_path, monkeypatch):
 
     def on_chunk(stats_rows, proc_rows):
         assert held["n"] == 0
-        chunks.append((list(stats_rows), list(proc_rows)))
+        chunks.append((
+            stats_payload_to_records(stats_rows),
+            list(proc_rows),
+        ))
 
     parse_stats_file_streaming_incremental(
         str(stats),

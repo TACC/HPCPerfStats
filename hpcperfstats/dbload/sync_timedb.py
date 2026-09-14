@@ -228,10 +228,10 @@ from hpcperfstats.dbload.lib.sync_timedb_parsing import (
   parse_last_timestamp_line,
   parse_last_timestamp_line_streaming,
   parse_stats_file_path,
-  parse_stats_file_streaming,
   parse_stats_file_streaming_incremental,
   parse_stats_lines,
   stats_file_size_bytes,
+  stats_payload_row_count,
   tail_window_timestamps_all_present_streaming,
 )
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
@@ -3750,12 +3750,49 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
       if done:
         return result
       start_line_idx, need_archival = result
+      carry = DeltaCarryState()
+      stats_parts: list = []
+      proc_parts: list = []
+      parsed_n = 0
+
+      def _on_parse_chunk(stats_payload: Any, proc_payload: Any) -> None:
+        """
+        Collapse one flushed sample batch without holding raw event dicts.
+
+        Args:
+          stats_payload (Any): Columnar hardware stats or empty payload.
+          proc_payload (Any): Parsed host_proc row dicts.
+
+        Returns:
+          None
+
+        Examples:
+          >>> callable(_on_parse_chunk)
+          True
+        """
+        nonlocal parsed_n
+        parsed_n += stats_payload_row_count(stats_payload)
+        update_worker_substage("parse:dataframes")
+        stats_chunk, proc_chunk = build_stats_dataframes(
+            stats_payload, proc_payload,
+        )
+        if stats_chunk.empty and proc_chunk.empty:
+          return
+        update_worker_substage("parse:deltas_arc")
+        if not stats_chunk.empty:
+          stats_chunk = compute_deltas_and_arc_chunk(stats_chunk, carry=carry)
+          stats_parts.append(stats_chunk)
+        if not proc_chunk.empty:
+          proc_parts.append(proc_chunk)
+
       try:
         update_worker_substage("parse:accumulate")
-        stats_list, proc_stats_list = parse_stats_file_streaming(
+        parse_stats_file_streaming_incremental(
             stats_file,
             start_line_idx=start_line_idx,
             parse_start_idx=0,
+            flush_rows=bulk_create_batch_size(),
+            on_chunk=_on_parse_chunk,
             exclude_types_list=exclude_types,
         )
       except Exception as e:
@@ -3763,23 +3800,28 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
         return _parse_failure_after_quarantine(
             stats_file, _parse_elapsed(), error_detail=str(e),
         )
-      update_worker_substage("parse:dataframes")
-      stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
-      del stats_list
-      del proc_stats_list
+      from pandas import concat as _pd_concat
+      empty_stats, empty_proc = build_stats_dataframes([], [])
+      stats = (
+          _pd_concat(stats_parts, ignore_index=True)
+          if stats_parts else empty_stats
+      )
+      proc_stats = (
+          _pd_concat(proc_parts, ignore_index=True)
+          if proc_parts else empty_proc
+      )
       if stats.empty and proc_stats.empty:
         if DEBUG:
           log_print("Unable to process stats file %s" % stats_file)
         return _parse_failure_after_quarantine(
             stats_file, _parse_elapsed(), error_detail="empty stats and proc_stats",
         )
-      update_worker_substage("parse:deltas_arc")
-      stats = compute_deltas_and_arc(stats)
       parse_elapsed = _parse_elapsed()
       meta = _ingest_outcome_meta(
           outcome="ingested",
           parse_elapsed_s=parse_elapsed,
           stats_rows=len(stats),
+          stats_rows_parsed=parsed_n,
           proc_rows=len(proc_stats),
       )
       return (stats_file, (stats, proc_stats), need_archival, True, parse_elapsed, meta)
@@ -3844,7 +3886,7 @@ def _add_stats_file_to_db_streaming_incremental(
     """
     nonlocal need_archival, ingest_ok, total_stats_rows
     nonlocal total_stats_rows_parsed, total_proc_rows
-    parsed_stats_n = len(stats_list) if stats_list else 0
+    parsed_stats_n = stats_payload_row_count(stats_list)
     update_worker_substage("parse:dataframes")
     stats_chunk, proc_chunk = build_stats_dataframes(stats_list, proc_stats_list)
     del stats_list
@@ -4057,12 +4099,11 @@ def _parse_stats_file_payload_impl(
       if done:
         return result
       start_idx, need_archival = result
-      lines = lines[start_idx:]
       try:
         update_worker_substage("parse:accumulate")
         stats_list, proc_stats_list = parse_stats_lines(
             lines,
-            0,
+            start_idx,
             eventmaps_by_type=EVENTMAPS_BY_TYPE,
             exclude_types_list=exclude_types,
         )
@@ -4071,6 +4112,7 @@ def _parse_stats_file_payload_impl(
         return _parse_failure_after_quarantine(
             stats_file, _parse_elapsed(), error_detail=str(e),
         )
+      parsed_n = stats_payload_row_count(stats_list)
       update_worker_substage("parse:dataframes")
       stats, proc_stats = build_stats_dataframes(stats_list, proc_stats_list)
       del stats_list
@@ -4088,6 +4130,7 @@ def _parse_stats_file_payload_impl(
           outcome="ingested",
           parse_elapsed_s=parse_elapsed,
           stats_rows=len(stats),
+          stats_rows_parsed=parsed_n,
           proc_rows=len(proc_stats),
       )
       return (stats_file, (stats, proc_stats), need_archival, True, parse_elapsed, meta)
@@ -4238,6 +4281,9 @@ def _add_stats_file_to_db_impl(
           stats_rows=stats_rows,
           proc_rows=proc_rows,
       )
+      parsed_n = outcome_meta.get("stats_rows_parsed")
+      if parsed_n is not None:
+        meta["stats_rows_parsed"] = parsed_n
       return _pack_ingest_worker_result(
           stats_file,
           need_archival,

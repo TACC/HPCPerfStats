@@ -18,6 +18,7 @@ from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     compute_deltas_and_arc,
     compute_deltas_and_arc_chunk,
     parse_stats_file_streaming_incremental,
+    stats_payload_to_records,
 )
 
 
@@ -54,10 +55,8 @@ def _apply_counter_deltas_rowwise_ref(stats_df, carry=None):
       prev = carry.raw.get(key)
       if prev is None:
         continue
-      delta = float(row["value"]) - float(prev["value"])
-      if delta < 0:
-        delta = 2 ** int(row["wid"]) + delta
-      stats_df.at[idx, "delta"] = delta * float(row["mult"])
+      delta = float(row["value"]) - float(prev[0] if isinstance(prev, tuple) else prev["value"])
+      stats_df.at[idx, "delta"] = delta
 
   stats_df["delta"] = stats_df["delta"].mask(
       stats_df["delta"] < 0, 2 ** stats_df["wid"] + stats_df["delta"])
@@ -66,12 +65,12 @@ def _apply_counter_deltas_rowwise_ref(stats_df, carry=None):
   if carry is not None:
     for key, group in stats_df.groupby(_COUNTER_GROUP_COLS, observed=True):
       last = group.iloc[-1]
-      carry.raw[key] = {
-          "value": float(last["value"]),
-          "wid": int(last["wid"]),
-          "mult": float(last["mult"]),
-          "time": float(last["time"]),
-      }
+      carry.raw[key] = (
+          float(last["value"]),
+          int(last["wid"]),
+          float(last["mult"]),
+          float(last["time"]),
+      )
 
   stats_df.drop(columns=["wid", "mult"], inplace=True)
   return stats_df
@@ -93,7 +92,9 @@ def _apply_arc_and_finalize_rowwise_ref(stats_df, carry=None):
       prev = carry.arc.get(key)
       if prev is None:
         continue
-      dt = float(row["time"]) - float(prev["time"])
+      dt = float(row["time"]) - float(
+          prev["time"] if isinstance(prev, dict) else prev
+      )
       if dt > 0 and np.isfinite(row["delta"]):
         _arc[stats_df.index.get_loc(idx)] = float(row["delta"]) / dt
 
@@ -113,9 +114,8 @@ def _apply_arc_and_finalize_rowwise_ref(stats_df, carry=None):
             str(last.get("dev") or ""),
             last["event"],
         )
-      carry.arc[carry_key] = {"time": float(last["time"])}
+      carry.arc[carry_key] = float(last["time"])
 
-  stats_df["time"] = pd.to_datetime(stats_df["time"], unit="s").dt.tz_localize("UTC")
   return stats_df.dropna(subset=["host", "type", "event", "time", "value"])
 
 
@@ -252,6 +252,58 @@ def test_carry_state_survives_flush_boundary_split():
   )
 
 
+def test_apply_counter_deltas_carry_mult_matches_full_file():
+  """Carry deltas stay unscaled until the single wrap + ``* mult`` pass.
+
+  Chunked ingest and listend share ``_apply_counter_deltas``. Scaling inside
+  the carry loop double-applies ``mult`` (legacy ``U=64B``). Full-file
+  ``compute_deltas_and_arc`` (no carry) is the golden.
+  """
+  base = {
+      "host": "h1",
+      "type": "cpu",
+      "dev": "0",
+      "event": "cas_count",
+      "unit": "B",
+      "wid": 8,
+      "mult": 64.0,
+  }
+  flush1 = pd.DataFrame(
+      [
+          {**base, "time": 10.0, "value": 200.0},
+          {**base, "time": 20.0, "value": 250.0},
+      ]
+  )
+  flush2 = pd.DataFrame(
+      [
+          {**base, "time": 30.0, "value": 10.0},
+          {**base, "time": 40.0, "value": 40.0},
+      ]
+  )
+  expected = compute_deltas_and_arc(pd.concat([flush1, flush2], ignore_index=True))
+  carry = DeltaCarryState()
+  part1 = compute_deltas_and_arc_chunk(flush1.copy(), carry=carry)
+  part2 = compute_deltas_and_arc_chunk(flush2.copy(), carry=carry)
+  combined = pd.concat([part1, part2], ignore_index=True).sort_values(
+      by=["host", "type", "event", "time"],
+  ).reset_index(drop=True)
+  expected = expected.sort_values(
+      by=["host", "type", "event", "time"],
+  ).reset_index(drop=True)
+  pd.testing.assert_frame_equal(
+      combined[["host", "type", "event", "delta", "arc"]],
+      expected[["host", "type", "event", "delta", "arc"]],
+      check_dtype=False,
+      rtol=1e-9,
+      atol=1e-9,
+  )
+  wrap_delta = float(
+      combined.loc[combined["time"] == 30.0, "delta"].iloc[0]
+  )
+  # Unscaled wrap is 10 - 250 + 256 = 16; one ``* 64`` → 1024, not 65536.
+  assert abs(wrap_delta - 1024.0) < 1e-9
+
+
 def test_apply_counter_deltas_no_rowwise_group_access():
   src = (
       inspect.getsource(_apply_counter_deltas)
@@ -279,7 +331,10 @@ def test_incremental_parse_flushes_at_time_sample_boundary(tmp_path):
   chunks = []
 
   def on_chunk(stats_list, proc_stats_list):
-    chunks.append((list(stats_list), list(proc_stats_list)))
+    chunks.append((
+        stats_payload_to_records(stats_list),
+        list(proc_stats_list),
+    ))
 
   parse_stats_file_streaming_incremental(
       str(stats_file),

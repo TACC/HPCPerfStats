@@ -26,6 +26,7 @@ from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     parse_stats_file_streaming_incremental,
     parse_stats_lines,
     stats_file_size_bytes,
+    stats_payload_to_records,
 )
 
 
@@ -1207,7 +1208,10 @@ def test_streaming_resume_matches_nonstreaming_parse(tmp_path):
     chunks = []
 
     def on_chunk(stats_list, proc_list):
-      chunks.append((list(stats_list), list(proc_list)))
+      chunks.append((
+          stats_payload_to_records(stats_list),
+          list(proc_list),
+      ))
 
     parse_stats_file_streaming_incremental(
         str(stats_file),
@@ -1301,6 +1305,94 @@ def test_stats_file_size_bytes_reads_file(tmp_path):
   stats_file = tmp_path / "seg"
   stats_file.write_text("x", encoding="utf-8")
   assert stats_file_size_bytes(str(stats_file)) == 1
+
+
+def test_parse_stats_file_payload_impl_resume_keeps_header_schema(
+    monkeypatch, tmp_path,
+):
+  """Small-file payload resume must feed ``!`` schema, not ``lines[start_idx:]``."""
+  from hpcperfstats.dbload import sync_timedb as st
+
+  lines = _resume_schema_fixture_lines()
+  stats_file = tmp_path / "host.example.com" / "1709123456"
+  stats_file.parent.mkdir(parents=True)
+  stats_file.write_text("".join(lines), encoding="utf-8")
+  start_idx = 3
+  expected_stats, _ = parse_stats_lines(lines, start_idx)
+  assert len(expected_stats) > 0
+
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st, "update_worker_substage", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "_should_stream_stats_file", lambda *_a, **_k: False)
+  monkeypatch.setattr(
+      st,
+      "_resolve_streaming_ingest_start",
+      lambda *_a, **_k: (False, (start_idx, True)),
+  )
+
+  result = st._parse_stats_file_payload_impl(str(stats_file))
+  (
+      _path,
+      payload,
+      _need_archival,
+      ingest_ok,
+      _elapsed,
+      meta,
+  ) = st._unpack_parse_payload_result(result)
+  assert ingest_ok is True
+  assert payload is not None
+  stats, proc_stats = payload
+  assert not stats.empty
+  assert meta.get("outcome") != "parse_fail"
+  times = set(stats["time"].tolist())
+  assert 1709123456.0 not in times
+  assert 1709123457.0 in times
+
+
+def test_payload_meta_includes_stats_rows_parsed(monkeypatch, tmp_path):
+  """Parsed hardware that collapses empty still records ``stats_rows_parsed``."""
+  from hpcperfstats.dbload import sync_timedb as st
+
+  lines = _resume_schema_fixture_lines()
+  stats_file = tmp_path / "host.example.com" / "1709123456"
+  stats_file.parent.mkdir(parents=True)
+  stats_file.write_text("".join(lines), encoding="utf-8")
+
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st, "update_worker_substage", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "_should_stream_stats_file", lambda *_a, **_k: False)
+  monkeypatch.setattr(
+      st,
+      "_resolve_streaming_ingest_start",
+      lambda *_a, **_k: (False, (0, True)),
+  )
+
+  empty_stats, empty_proc = build_stats_dataframes([], [])
+
+  def collapse_to_empty(stats_df):
+    del stats_df
+    return empty_stats.copy()
+
+  monkeypatch.setattr(st, "compute_deltas_and_arc", collapse_to_empty)
+
+  result = st._parse_stats_file_payload_impl(str(stats_file))
+  (
+      _path,
+      payload,
+      _need_archival,
+      ingest_ok,
+      _elapsed,
+      meta,
+  ) = st._unpack_parse_payload_result(result)
+  assert ingest_ok is True
+  assert payload is not None
+  stats, _proc = payload
+  assert stats.empty
+  parsed_n = meta.get("stats_rows_parsed")
+  assert parsed_n is not None
+  assert int(parsed_n) > 0
 
 
 def test_parse_t0_includes_resolve_streaming_ingest_start():

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Iterator
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from hpcperfstats.dbload.lib.print_utils import log_print
@@ -13,24 +13,44 @@ from hpcperfstats.dbload.lib.print_utils import log_print
 
 def to_pydatetime_or_none(ts: Any) -> Any:
   """
-  Convert pandas Timestamp/NaT to Python datetime or None.
-  
+  Convert Timestamp, unix seconds, or NaT to a Python datetime or None.
+
   Uses ``warn=False`` because Python ``datetime`` only has microsecond
   resolution; monitor/pandas timestamps often carry nanoseconds and the
-  default warning floods listend/sync_timedb logs.
-  
+  default warning floods listend/sync_timedb logs. Unix-second floats from
+  ingest parse stay numeric until this ORM boundary.
+
   Args:
-    ts (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
-  
+    ts (Any): ``datetime``, pandas ``Timestamp``, unix seconds, ISO string,
+      sentinel, or ``None``.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: Timezone-aware UTC ``datetime``, or ``None`` when missing.
+
   Examples:
-    >>> to_pydatetime_or_none(None)  # doctest: +SKIP
+    >>> to_pydatetime_or_none(None) is None
+    True
+    >>> to_pydatetime_or_none(float("nan")) is None
+    True
   """
-  if pd.isna(ts):
+  if ts is None:
     return None
-  return ts.to_pydatetime(warn=False)
+  try:
+    if pd.isna(ts):
+      return None
+  except (TypeError, ValueError):
+    pass
+  to_py = getattr(ts, "to_pydatetime", None)
+  if callable(to_py):
+    dt = to_py(warn=False)
+    if dt is None:
+      return None
+    if getattr(dt, "tzinfo", None) is None:
+      return dt.replace(tzinfo=timezone.utc)
+    return dt
+  if isinstance(ts, datetime):
+    return ts
+  return datetime.fromtimestamp(float(ts), tz=timezone.utc)
 
 
 def parse_start_end_dates(

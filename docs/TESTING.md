@@ -406,6 +406,7 @@ npm run test:coverage -- --run
 | `tests/pip_compose_test_extras_fallback.sh` | When `pip install -e ".[test]"` fails on a bind mount, inner compose scripts source this helper so **Django 6.x** and **pytest 9+ / pytest-django 4.12+** match `pyproject.toml` (not legacy `pytest>=7` / `pytest-django>=4.5` floors). |
 | `hpcperfstats/tests/test_sync_timedb_parsing_canonical.py` | Canonical stats-line ingest (semantic PMC/IMC events, no CTL/CTR eventmaps). |
 | `hpcperfstats/tests/test_sync_timedb_parsing_legacy.py` | Legacy ingest path (`map_hardware_counter_vals`, hex eventmaps, KNL type aliases). |
+| `hpcperfstats/tests/test_sync_timedb_parse_efficiency.py` | Columnar schema compile, packed carry, unix-seconds collapse, streaming incremental chunks, listend one-sample kernel (host unit). |
 | `hpcperfstats/tests/test_monitor_naming_resolve.py` | Dual-read probe order for `monitor_naming/resolve.py`. |
 | `hpcperfstats/tests/test_monitor_analysis_typename_contract.py` | Monitor `.st_name` coverage vs `canonical.py` and roofline peak rows. |
 | `hpcperfstats/tests/test_archive_compress.py` | Pure path helpers in `archive_compress.py` (detect format, tar/zst/gz siblings, member maps). |

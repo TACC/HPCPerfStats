@@ -106,13 +106,34 @@ def test_daterange_single_day_exclusive():
 
 def test_to_pydatetime_or_none_nanosecond_no_warning():
   """Regression: ns timestamps must convert without UserWarning noise."""
+  from datetime import timezone
+
   ts = pd.Timestamp("2020-06-01 12:00:00.123456789")
   with warnings.catch_warnings(record=True) as caught:
     warnings.simplefilter("always")
     dt = to_pydatetime_or_none(ts)
-  assert dt == ts.to_pydatetime(warn=False)
+  naive = ts.to_pydatetime(warn=False)
+  assert dt == naive.replace(tzinfo=timezone.utc)
   assert not any("nanoseconds" in str(w.message).lower() for w in caught)
+
+
+def test_to_pydatetime_or_none_naive_timestamp_attaches_utc():
+  """Naive pandas Timestamp at the ORM boundary is UTC-aware, matching floats."""
+  from datetime import timezone
+
+  ts = pd.Timestamp("2020-06-01 12:00:00")
+  dt = to_pydatetime_or_none(ts)
+  assert dt.tzinfo is timezone.utc
+  assert dt.replace(tzinfo=None) == ts.to_pydatetime(warn=False)
 
 
 def test_to_pydatetime_or_none_nat():
   assert to_pydatetime_or_none(pd.NaT) is None
+
+
+def test_to_pydatetime_or_none_unix_seconds_utc():
+  """Ingest unix seconds convert at the ORM boundary to UTC datetime."""
+  from datetime import datetime, timezone
+
+  dt = to_pydatetime_or_none(1710000001.0)
+  assert dt == datetime.fromtimestamp(1710000001.0, tz=timezone.utc)

@@ -1091,6 +1091,7 @@ def _process_sample_to_orm(
       IncrementalStatsParser,
       build_stats_dataframes,
       compute_deltas_and_arc_chunk,
+      stats_payload_row_count,
   )
 
   types = sample_measurement_types(message)
@@ -1102,21 +1103,23 @@ def _process_sample_to_orm(
   parser = IncrementalStatsParser(0)
   parser.schema = dict(schema)
   parser.schema_fast = dict(schema_fast)
+  parser.compile_injected_schema()
   try:
     parser.feed_lines(message.splitlines())
-    stats_list, proc_list = parser.finish()
+    stats_cols = parser.take_stats_columns()
+    proc_list = parser.proc_stats
   except Exception:
     return [], []
 
   # All-or-nothing: non-proc typed lines must produce host stats rows.
   non_proc = [t for t in types if t not in ("proc", "host_proc")]
-  if non_proc and not stats_list:
+  if non_proc and stats_payload_row_count(stats_cols) == 0:
     return [], []
-  if not stats_list and not proc_list:
+  if stats_payload_row_count(stats_cols) == 0 and not proc_list:
     return [], []
 
-  stats_df, proc_df = build_stats_dataframes(stats_list, proc_list)
-  del stats_list, proc_list
+  stats_df, proc_df = build_stats_dataframes(stats_cols, proc_list)
+  del stats_cols, proc_list
   host_objs: list = []
   proc_objs: list = []
   try:

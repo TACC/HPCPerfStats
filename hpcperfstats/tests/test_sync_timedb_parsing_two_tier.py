@@ -151,4 +151,5 @@ def test_archive_round_trip_tiered_fixture():
   deltas_df = compute_deltas_and_arc(stats_df)
   assert not deltas_df.empty
   assert {"delta", "arc"}.issubset(deltas_df.columns)
-  assert pd.api.types.is_datetime64_any_dtype(deltas_df["time"])
+  assert pd.api.types.is_float_dtype(deltas_df["time"])
+  assert 1700000000.0 in set(deltas_df["time"].unique())

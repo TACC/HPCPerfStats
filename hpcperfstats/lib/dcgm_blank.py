@@ -95,24 +95,36 @@ def is_dcgm_numeric_blank(value: Any) -> bool:
   return is_dcgm_fp64_blank(value) or is_dcgm_int64_blank(value)
 
 
-def nan_out_dcgm_numeric_blanks(values: Any) -> np.ndarray:
+def nan_out_dcgm_numeric_blanks(
+  values: Any,
+  copy: bool = True,
+) -> np.ndarray:
   """
-  Return float64 copy of ``values`` with DCGM blank-family entries set to NaN.
-  
+  Replace DCGM blank-family entries with NaN on a float64 array.
+
   Args:
-    values (Any): Values passed to this helper.
-  
+    values (Any): Numeric series or ndarray of DCGM telemetry.
+    copy (bool): When True (default), copy before mutating. When False,
+      mutate ``values`` in place if it is already a writeable float64
+      ndarray.
+
   Returns:
-    np.ndarray: np.ndarray produced by this call.
-  
+    np.ndarray: Float64 array with blank-family entries set to NaN.
+
   Examples:
-    >>> nan_out_dcgm_numeric_blanks(None)  # doctest: +SKIP
+    >>> nan_out_dcgm_numeric_blanks([1.0, DCGM_FP64_BLANK])[0]
+    1.0
+    >>> import numpy as np
+    >>> np.isnan(nan_out_dcgm_numeric_blanks([DCGM_FP64_BLANK])[0])
+    True
   """
   arr = np.asarray(values, dtype=np.float64)
   if arr.size == 0:
     return arr.copy() if arr.ndim else np.asarray([], dtype=np.float64)
-  out = arr.copy()
-  # FP64 blank base catches INT64 blanks too (INT64 blank >> FP64 blank).
+  if copy or not getattr(arr, "flags", None) or not arr.flags.writeable:
+    out = arr.copy()
+  else:
+    out = arr
   blank = np.isfinite(out) & (out >= DCGM_FP64_BLANK)
   out[blank] = np.nan
   return out

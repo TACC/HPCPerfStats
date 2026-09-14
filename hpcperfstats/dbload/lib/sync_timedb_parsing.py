@@ -7,6 +7,7 @@ Attributes:
   HOST_PROC_KEYS: Attribute.
   HOST_PROC_PEAK_KEYS: Attribute.
   STREAM_PARSE_LINE_BATCH: Attribute.
+  _STATS_COL_NAMES: Attribute.
   _ARC_GROUP_COLS: Attribute.
   _COLLAPSE_GROUP_COLS: Attribute.
   _COLLAPSE_GROUP_COLS_WITH_DEV: Attribute.
@@ -37,7 +38,7 @@ import os
 import warnings
 import numpy as np
 import pandas as pd
-from pandas import DataFrame, concat, to_datetime
+from pandas import DataFrame, concat
 
 from hpcperfstats.dbload.lib import sync_timedb_parsing_legacy as legacy_parsing
 from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX, file_read_lock_wait
@@ -55,7 +56,7 @@ from hpcperfstats.lib.dcgm_blank import (
 )
 
 # Types skipped on ingest (canonical monitor names).
-exclude_types = [
+exclude_types = frozenset({
     "intel_x86_uncore_cha_skx",
     "host_ps",
     "host_sysv_shm",
@@ -69,7 +70,7 @@ exclude_types = [
     "sysv_shm",
     "tmpfs",
     "vfs",
-]
+})
 
 # Default host_proc KEYS matching monitor/src/proc.c. Proc-field ingest is a
 # T0 smoke contract (docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md), not a stall fix.
@@ -421,6 +422,235 @@ def _fast_schema_keys(full_events: list[str]) -> list[str]:
   return [e for e in full_events if not _schema_token_is_slow_tier(e)]
 
 
+_STATS_COL_NAMES = (
+    "time",
+    "host",
+    "jid",
+    "type",
+    "dev",
+    "event",
+    "value",
+    "wid",
+    "mult",
+    "unit",
+)
+
+
+def _empty_stats_columns() -> dict[str, list]:
+  """
+  Return empty parallel lists for hardware stats emit.
+
+  Returns:
+    dict[str, list]: Column name to empty list for each stats field.
+
+  Examples:
+    >>> cols = _empty_stats_columns()
+    >>> cols["time"]
+    []
+    >>> set(cols) == set(_STATS_COL_NAMES)
+    True
+  """
+  return {name: [] for name in _STATS_COL_NAMES}
+
+
+def _compile_schema_token(token: str) -> tuple[str, int, float, str]:
+  """
+  Compile one ``!`` schema token into event name, width, multiplier, unit.
+
+  Args:
+    token (str): Schema entry such as ``CAS_READS,W=48,U=64B``.
+
+  Returns:
+    tuple[str, int, float, str]: ``(event, wid, mult, unit)`` with the same
+      defaults as the former per-row ``W=`` / ``U=`` walk (wid 64, mult 1,
+      unit ``#``).
+
+  Examples:
+    >>> _compile_schema_token("user")
+    ('user', 64, 1, '#')
+    >>> _compile_schema_token("CAS_READS,W=48,U=64B")
+    ('CAS_READS', 48, 64.0, 'B')
+  """
+  eve_parts = token.split(",")
+  width = 64
+  mult: float | int = 1
+  unit = "#"
+  for ele in eve_parts[1:]:
+    if "W=" in ele:
+      width = int(ele.lstrip("W="))
+    if "U=" in ele:
+      ele = ele.lstrip("U=")
+      try:
+        mult = float("".join(filter(str.isdigit, ele)))
+      except Exception:
+        pass
+      try:
+        unit = "".join(filter(str.isalpha, ele))
+      except Exception:
+        pass
+  return eve_parts[0], width, mult, unit
+
+
+def _compile_schema_tokens(
+  tokens: list[str],
+) -> list[tuple[str, int, float, str]]:
+  """
+  Compile an ordered ``!`` schema key list.
+
+  Args:
+    tokens (list[str]): Schema tokens for one hardware type.
+
+  Returns:
+    list[tuple[str, int, float, str]]: Compiled fields aligned with ``tokens``.
+
+  Examples:
+    >>> _compile_schema_tokens(["user,W=48", "sys"])
+    [('user', 48, 1, '#'), ('sys', 64, 1, '#')]
+  """
+  return [_compile_schema_token(token) for token in tokens]
+
+
+def stats_payload_row_count(payload: Any) -> int:
+  """
+  Return parsed hardware row count for a list of dicts or column dict.
+
+  Zero-host archive marks must use this parsed count, not post-collapse
+  lengths.
+
+  Args:
+    payload (Any): Columnar ``dict[str, list]``, sequence of row dicts, or
+      empty/``None``.
+
+  Returns:
+    int: Number of hardware stats rows.
+
+  Examples:
+    >>> stats_payload_row_count({"time": [1.0, 2.0]})
+    2
+    >>> stats_payload_row_count([{"time": 1.0}])
+    1
+    >>> stats_payload_row_count(None)
+    0
+  """
+  if payload is None:
+    return 0
+  if isinstance(payload, dict):
+    times = payload.get("time")
+    return len(times) if times is not None else 0
+  return len(payload)
+
+
+def stats_payload_to_records(payload: Any) -> list[dict[str, Any]]:
+  """
+  Convert columnar stats or row dicts into a list of row dicts.
+
+  Production builders take columns; tests and ``parse_stats_lines`` use this
+  adapter.
+
+  Args:
+    payload (Any): Columnar ``dict[str, list]``, sequence of row dicts, or
+      empty/``None``.
+
+  Returns:
+    list[dict[str, Any]]: One dict per hardware event row.
+
+  Examples:
+    >>> stats_payload_to_records({"time": [1.0], "host": ["h"]})
+    [{'time': 1.0, 'host': 'h'}]
+    >>> stats_payload_to_records([{"time": 1.0}])
+    [{'time': 1.0}]
+  """
+  if payload is None:
+    return []
+  if isinstance(payload, dict):
+    n = stats_payload_row_count(payload)
+    if n == 0:
+      return []
+    keys = [k for k, values in payload.items() if len(values) == n]
+    return [{k: payload[k][i] for k in keys} for i in range(n)]
+  return list(payload)
+
+
+def _append_compiled_stats_columns(
+  cols: dict[str, list],
+  *,
+  time: float,
+  host: str,
+  jid: str,
+  typ: str,
+  dev: str,
+  compiled: list[tuple[str, int, float, str]],
+  vals: list[str],
+) -> None:
+  """
+  Append one hardware line into columnar lists using a compiled schema.
+
+  Args:
+    cols (dict[str, list]): Parallel stats columns mutated in place.
+    time (float): Sample unix seconds from the digit header.
+    host (str): Hostname token from the digit header.
+    jid (str): Jobid token from the digit header (``-`` when idle).
+    typ (str): Output hardware type (legacy remapped when needed).
+    dev (str): Device token from the stats line.
+    compiled (list[tuple[str, int, float, str]]): Compiled schema aligned
+      with ``vals``.
+    vals (list[str]): Value tokens after an optional ``@fast``/``@full``
+      marker.
+
+  Returns:
+    None
+
+  Examples:
+    >>> cols = _empty_stats_columns()
+    >>> _append_compiled_stats_columns(
+    ...     cols, time=1.0, host="h", jid="j", typ="cpu", dev="0",
+    ...     compiled=[("user", 48, 1, "#")], vals=["10"],
+    ... )
+    >>> cols["event"], cols["value"]
+    (['user'], [10.0])
+  """
+  n = len(compiled)
+  if len(vals) != n:
+    warnings.warn(
+        "stats line value count %d != schema key count %d for type=%s dev=%s"
+        % (len(vals), n, typ, dev),
+        stacklevel=3,
+    )
+    return
+  cols["time"].extend((time,) * n)
+  cols["host"].extend((host,) * n)
+  cols["jid"].extend((jid,) * n)
+  cols["type"].extend((typ,) * n)
+  cols["dev"].extend((dev,) * n)
+  events, wids, mults, units = zip(*compiled) if n else ((), (), (), ())
+  cols["event"].extend(events)
+  cols["wid"].extend(wids)
+  cols["mult"].extend(mults)
+  cols["unit"].extend(units)
+  cols["value"].extend(float(v) for v in vals)
+
+
+def _decode_stats_readline(raw: bytes | str) -> str:
+  """
+  Decode one stats-file readline from bytes or str.
+
+  Args:
+    raw (bytes | str): Line as returned by text or binary ``readline``.
+
+  Returns:
+    str: ASCII text with ``errors=replace`` for non-ASCII bytes.
+
+  Examples:
+    >>> _decode_stats_readline(b"cpu 0 1\\n")
+    'cpu 0 1\\n'
+    >>> _decode_stats_readline("cpu 0 1\\n")
+    'cpu 0 1\\n'
+  """
+  if isinstance(raw, bytes):
+    return raw.decode("ascii", "replace")
+  return raw
+
+
 def _zip_schema_vals(
   schema_keys: Any,
   vals: Any,
@@ -469,20 +699,20 @@ def _cluster_mean_sum_sorted(values: Any, gap_threshold: Any) -> Any:
     >>> _cluster_mean_sum_sorted(None, None)  # doctest: +SKIP
   """
   v = np.asarray(values, dtype=np.float64)
+  v = nan_out_dcgm_numeric_blanks(v)
   v = v[np.isfinite(v)]
   if v.size == 0:
     return float("nan")
   v.sort()
-  total = 0.0
-  cluster = [float(v[0])]
-  for i in range(1, v.size):
-    if v[i] - v[i - 1] <= gap_threshold:
-      cluster.append(float(v[i]))
-    else:
-      total += float(np.mean(cluster))
-      cluster = [float(v[i])]
-  total += float(np.mean(cluster))
-  return total
+  if v.size == 1:
+    return float(v[0])
+  split_idx = np.flatnonzero(np.diff(v) > gap_threshold) + 1
+  starts = np.empty(split_idx.size + 1, dtype=np.intp)
+  starts[0] = 0
+  starts[1:] = split_idx
+  sums = np.add.reduceat(v, starts)
+  counts = np.diff(np.append(starts, v.size))
+  return float(np.sum(sums / counts))
 
 
 def _dcg_delta_gap_threshold(dvals: Any) -> Any:
@@ -633,14 +863,16 @@ def _nvidia_bitwise_or_values(series: Any) -> Any:
     Any: Value produced by this call (type depends on inputs).
   
   Examples:
-    >>> _nvidia_bitwise_or_values(None)  # doctest: +SKIP
+    >>> _nvidia_bitwise_or_values(pd.Series([1.0, 2.0]))
+    3.0
   """
-  acc = 0
-  mask64 = (1 << 64) - 1
-  for v in series:
-    if pd.notna(v) and not is_dcgm_numeric_blank(v):
-      acc |= int(v) & mask64
-  return float(acc & mask64)
+  vals = np.asarray(series, dtype=np.float64)
+  finite = np.isfinite(vals) & (vals < DCGM_FP64_BLANK)
+  if not finite.any():
+    return 0.0
+  ints = vals[finite].astype(np.uint64, copy=False)
+  mask64 = np.uint64((1 << 64) - 1)
+  return float(int(np.bitwise_or.reduce(ints) & mask64))
 
 
 def _optional_jid_first_agg(df: Any) -> dict[str, tuple[str, str]]:
@@ -681,16 +913,11 @@ def _groupby_sum_min_count(df: Any, gcols: Any) -> Any:
   """
   if df.empty:
     return _empty_delta_arc_frame()
-  grouped = df.groupby(gcols, observed=True).agg(
-      value=("value", "sum"),
-      delta=("delta", "sum"),
-      _value_n=("value", "count"),
-      _delta_n=("delta", "count"),
-      **_optional_jid_first_agg(df),
-  ).reset_index()
-  grouped["value"] = grouped["value"].where(grouped["_value_n"] > 0)
-  grouped["delta"] = grouped["delta"].where(grouped["_delta_n"] > 0)
-  return grouped.drop(columns=["_value_n", "_delta_n"])
+  grouped = df.groupby(gcols, observed=True, sort=False)
+  out = grouped[["value", "delta"]].sum(min_count=1)
+  if "jid" in getattr(df, "columns", ()):
+    out = out.join(grouped["jid"].first())
+  return out.reset_index()
 
 
 def _nvidia_nan_out_dcgm_blanks(nv_df: Any) -> Any:
@@ -713,8 +940,9 @@ def _nvidia_nan_out_dcgm_blanks(nv_df: Any) -> Any:
   blank = np.isfinite(vals) & (vals >= DCGM_FP64_BLANK)
   if not blank.any():
     return nv_df
+  cleaned = nan_out_dcgm_numeric_blanks(vals, copy=True)
   out = nv_df.copy()
-  out["value"] = nan_out_dcgm_numeric_blanks(vals)
+  out["value"] = cleaned
   return out
 
 
@@ -814,47 +1042,54 @@ def _vals_dict_from_line(
   return _zip_schema_vals(schema_keys, vals, typ=typ, dev=dev)
 
 
-def _append_stats_rows(stats: Any, rec: Any, vals_dict: Any) -> None:
+def _append_vals_dict_columns(
+  cols: dict[str, list],
+  *,
+  time: float,
+  host: str,
+  jid: str,
+  typ: str,
+  dev: str,
+  vals_dict: dict[str, Any],
+) -> None:
   """
-  Internal helper to handle append stats rows.
-  
+  Append a legacy decoded event map into columnar stats lists.
+
   Args:
-    stats (Any): Stats passed to this helper.
-    rec (Any): Rec passed to this helper.
-    vals_dict (Any): Vals dict passed to this helper.
-  
+    cols (dict[str, list]): Parallel stats columns mutated in place.
+    time (float): Sample unix seconds from the digit header.
+    host (str): Hostname token from the digit header.
+    jid (str): Jobid token from the digit header (``-`` when idle).
+    typ (str): Output hardware type after legacy remap.
+    dev (str): Device token from the stats line.
+    vals_dict (dict[str, Any]): Event token to numeric value from legacy
+      decode.
+
   Returns:
     None
-  
+
   Examples:
-    >>> _append_stats_rows(None, None, None)  # doctest: +SKIP
+    >>> cols = _empty_stats_columns()
+    >>> _append_vals_dict_columns(
+    ...     cols, time=1.0, host="h", jid="j", typ="cpu", dev="0",
+    ...     vals_dict={"user,W=48": 10},
+    ... )
+    >>> cols["event"], cols["wid"], cols["value"]
+    (['user'], [48], [10.0])
   """
-  for eve, val in vals_dict.items():
-    eve_parts = eve.split(",")
-    width = 64
-    mult = 1
-    unit = "#"
-    for ele in eve_parts[1:]:
-      if "W=" in ele:
-        width = int(ele.lstrip("W="))
-      if "U=" in ele:
-        ele = ele.lstrip("U=")
-        try:
-          mult = float("".join(filter(str.isdigit, ele)))
-        except Exception:
-          pass
-        try:
-          unit = "".join(filter(str.isalpha, ele))
-        except Exception:
-          pass
-    stats.append({
-        **rec,
-        "event": eve_parts[0],
-        "value": float(val),
-        "wid": width,
-        "mult": mult,
-        "unit": unit,
-    })
+  if not vals_dict:
+    return
+  compiled = _compile_schema_tokens(list(vals_dict.keys()))
+  _append_compiled_stats_columns(
+      cols,
+      time=time,
+      host=host,
+      jid=jid,
+      typ=typ,
+      dev=dev,
+      compiled=compiled,
+      vals=[str(v) for v in vals_dict.values()],
+  )
 
 
 def parse_stats_file_path(stats_file: str) -> Any:
@@ -1002,30 +1237,37 @@ def load_stats_file_lines(
 
 def iter_stats_file_lines(stats_file: str) -> Iterator[Any]:
   """
-  Yield lines from a stats file under the read lock (streaming).
-  
+  Yield lines from a stats file, holding the read lock per line batch.
+
   Args:
-    stats_file (str): String for stats file.
-  
+    stats_file (str): Path to a monitor stats file.
+
   Yields:
-    Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+    str: Decoded stats-file lines in order.
+
   Examples:
-    >>> iter_stats_file_lines("x")  # doctest: +SKIP
+    >>> list(iter_stats_file_lines("/missing/stats"))
+    []
   """
   try:
-    with open(stats_file, "r") as fd:
+    with open(stats_file, "rb") as fd:
       line_idx = 0
       bytes_read = 0
       while True:
+        batch: list[str] = []
         with _stats_file_read_lock(stats_file):
-          line = fd.readline()
-        if not line:
+          for _ in range(int(STREAM_PARSE_LINE_BATCH)):
+            raw = fd.readline()
+            if not raw:
+              break
+            batch.append(_decode_stats_readline(raw))
+        if not batch:
           break
-        line_idx += 1
-        bytes_read += len(line)
-        _maybe_raise_ingest_read_deadline(line_idx, bytes_read)
-        yield line
+        for line in batch:
+          line_idx += 1
+          bytes_read += len(line)
+          _maybe_raise_ingest_read_deadline(line_idx, bytes_read)
+          yield line
   except FileNotFoundError:
     return
 
@@ -1484,9 +1726,11 @@ class IncrementalStatsParser:
     line_ctx: Attribute.
     proc_stats: Attribute.
     schema: Attribute.
+    schema_compiled: Attribute.
     schema_fast: Attribute.
+    schema_fast_compiled: Attribute.
     start_idx: Attribute.
-    stats: Attribute.
+    _stats_cols: Attribute.
   """
 
   def __init__(
@@ -1505,7 +1749,8 @@ class IncrementalStatsParser:
       None
     
     Examples:
-      >>> IncrementalStatsParser(0, None)  # doctest: +SKIP
+      >>> IncrementalStatsParser(0).start_idx
+      0
     """
     self.start_idx = int(start_idx)
     self.exclude_types_list = (
@@ -1514,10 +1759,97 @@ class IncrementalStatsParser:
     self._line_index = 0
     self.schema = {}
     self.schema_fast = {}
-    self.stats = []
+    self.schema_compiled = {}
+    self.schema_fast_compiled = {}
+    self._stats_cols = _empty_stats_columns()
     self.proc_stats = []
     self.insert = False
     self.line_ctx = {"tags": None, "tags2": None}
+
+  def compile_injected_schema(self) -> None:
+    """
+    Compile ``schema`` / ``schema_fast`` after listend injects ``!`` maps.
+
+    Returns:
+      None
+
+    Examples:
+      >>> p = IncrementalStatsParser(0)
+      >>> p.schema = {"cpu": ["user,W=48"]}
+      >>> p.schema_fast = {"cpu": ["user,W=48"]}
+      >>> p.compile_injected_schema()
+      >>> p.schema_compiled["cpu"][0][0]
+      'user'
+    """
+    for typ, tokens in self.schema.items():
+      self.schema_compiled[typ] = _compile_schema_tokens(list(tokens))
+    for typ, tokens in self.schema_fast.items():
+      self.schema_fast_compiled[typ] = _compile_schema_tokens(list(tokens))
+
+  def _compiled_schema_for(
+    self,
+    typ: str,
+    *,
+    fast: bool,
+  ) -> list[tuple[str, int, float, str]]:
+    """
+    Return compiled fields for ``typ``, compiling on first use.
+
+    Args:
+      typ (str): Hardware type label from the stats line.
+      fast (bool): True to use ``schema_fast`` (``@fast`` samples).
+
+    Returns:
+      list[tuple[str, int, float, str]]: Compiled schema, or empty when the
+        type is unknown.
+
+    Examples:
+      >>> p = IncrementalStatsParser(0)
+      >>> p.schema = {"cpu": ["user"]}
+      >>> p._compiled_schema_for("cpu", fast=False)[0][0]
+      'user'
+    """
+    store = self.schema_fast_compiled if fast else self.schema_compiled
+    compiled = store.get(typ)
+    if compiled is not None:
+      return compiled
+    tokens = self.schema_fast.get(typ) if fast else self.schema.get(typ)
+    if not tokens:
+      return []
+    compiled = _compile_schema_tokens(list(tokens))
+    store[typ] = compiled
+    return compiled
+
+  @property
+  def stats_len(self) -> int:
+    """
+    Return the number of hardware event rows currently buffered.
+
+    Returns:
+      int: Length of the columnar ``time`` list.
+
+    Examples:
+      >>> IncrementalStatsParser(0).stats_len
+      0
+    """
+    return len(self._stats_cols["time"])
+
+  def take_stats_columns(self) -> dict[str, list]:
+    """
+    Detach buffered hardware columns and start a new empty buffer.
+
+    Compiled ``!`` schema is held across flushes.
+
+    Returns:
+      dict[str, list]: Columnar stats payload for ``build_stats_dataframes``.
+
+    Examples:
+      >>> IncrementalStatsParser(0).take_stats_columns()["time"]
+      []
+    """
+    cols = self._stats_cols
+    self._stats_cols = _empty_stats_columns()
+    return cols
 
   def feed_line(self, line: Any) -> None:
     """
@@ -1601,20 +1933,41 @@ class IncrementalStatsParser:
       if tier_marker == "@fast":
         if schema_needs_legacy_hardware_decode(typ, self.schema[typ]):
           return
-        schema_keys = self.schema_fast.get(typ, [])
+        compiled = self._compiled_schema_for(typ, fast=True)
         use_legacy = False
       else:
-        schema_keys = self.schema[typ]
+        compiled = self._compiled_schema_for(typ, fast=False)
         use_legacy = schema_needs_legacy_hardware_decode(typ, self.schema[typ])
 
-      vals_dict = _vals_dict_from_line(
-          typ, self.schema, schema_keys, vals, use_legacy, dev=dev)
-      if vals_dict is None:
+      tags = self.line_ctx["tags"]
+      if tags is None:
         return
-
       out_typ = legacy_parsing.legacy_output_type(typ) if use_legacy else typ
-      rec = {**self.line_ctx["tags"], "type": out_typ, "dev": dev}
-      _append_stats_rows(self.stats, rec, vals_dict)
+      if use_legacy:
+        vals_dict = _vals_dict_from_line(
+            typ, self.schema, self.schema[typ], vals, True, dev=dev)
+        if vals_dict is None:
+          return
+        _append_vals_dict_columns(
+            self._stats_cols,
+            time=float(tags["time"]),
+            host=tags["host"],
+            jid=tags["jid"],
+            typ=out_typ,
+            dev=dev,
+            vals_dict=vals_dict,
+        )
+        return
+      _append_compiled_stats_columns(
+          self._stats_cols,
+          time=float(tags["time"]),
+          host=tags["host"],
+          jid=tags["jid"],
+          typ=out_typ,
+          dev=dev,
+          compiled=compiled,
+          vals=vals,
+      )
 
     elif i >= self.start_idx and s[0].isdigit():
       parsed = _digit_line_identity(s)
@@ -1630,6 +1983,10 @@ class IncrementalStatsParser:
       typ, events = label[1:], events.split()
       self.schema[typ] = events
       self.schema_fast[typ] = _fast_schema_keys(events)
+      self.schema_compiled[typ] = _compile_schema_tokens(events)
+      self.schema_fast_compiled[typ] = _compile_schema_tokens(
+          self.schema_fast[typ],
+      )
 
   def feed_lines(self, lines: Any) -> None:
     """
@@ -1655,9 +2012,10 @@ class IncrementalStatsParser:
       Any: Value produced by this call (type depends on inputs).
     
     Examples:
-      >>> IncrementalStatsParser().finish()  # doctest: +SKIP
+      >>> IncrementalStatsParser().finish()
+      ([], [])
     """
-    return self.stats, self.proc_stats
+    return stats_payload_to_records(self._stats_cols), self.proc_stats
 
 
 def parse_stats_lines(
@@ -1724,15 +2082,15 @@ def parse_stats_file_streaming(
   emission_start = max(int(start_line_idx or 0), int(parse_start_idx or 0))
   parser = IncrementalStatsParser(emission_start, exclude_types_list)
   try:
-    with open(stats_file, "r") as fd:
+    with open(stats_file, "rb") as fd:
       while True:
         batch = []
         with _stats_file_read_lock(stats_file):
           for _ in range(int(batch_size)):
-            line = fd.readline()
-            if not line:
+            raw = fd.readline()
+            if not raw:
               break
-            batch.append(line)
+            batch.append(_decode_stats_readline(raw))
         if not batch:
           break
         parser.feed_lines(batch)
@@ -1742,28 +2100,60 @@ def parse_stats_file_streaming(
   return parser.finish()
 
 
+def _stats_payload_to_frame(stats_list: Any) -> Any:
+  """
+  Build a hardware stats DataFrame from columns or row dicts.
+
+  Args:
+    stats_list (Any): Columnar ``dict[str, list]``, sequence of row dicts,
+      or empty/``None``.
+
+  Returns:
+    Any: ``DataFrame`` of hardware stats rows (possibly empty).
+
+  Examples:
+    >>> _stats_payload_to_frame({"time": [1.0], "host": ["h"]}).iloc[0]["host"]
+    'h'
+    >>> _stats_payload_to_frame([]).empty
+    True
+  """
+  if stats_list is None:
+    return DataFrame()
+  if isinstance(stats_list, dict):
+    if stats_payload_row_count(stats_list) == 0:
+      return DataFrame()
+    return DataFrame(stats_list, copy=False)
+  if not stats_list:
+    return DataFrame()
+  return DataFrame(stats_list)
+
+
 def build_stats_dataframes(stats_list: Any, proc_stats_list: Any) -> Any:
   """
-  Build the stats dataframes.
-  
+  Build stats and proc DataFrames from parse payloads.
+
   Args:
-    stats_list (Any): Stats list passed to this helper.
-    proc_stats_list (Any): Proc stats list passed to this helper.
-  
+    stats_list (Any): Columnar hardware stats or a list of row dicts.
+    proc_stats_list (Any): Parsed host_proc row dicts, or empty/``None``.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: Tuple ``(stats_df, proc_stats_df)``.
+
   Examples:
-    >>> build_stats_dataframes(None, None)  # doctest: +SKIP
+    >>> stats_df, proc_df = build_stats_dataframes([], [])
+    >>> stats_df.empty and proc_df.empty
+    True
   """
-  proc_stats_df = DataFrame.from_records(proc_stats_list)
-  if not proc_stats_df.empty:
-    # Peak-merge duplicate (jid, host, proc): GREATEST for vm_stk/exe/lib.
-    merged = dedupe_proc_stats_peak_merge(
-        proc_stats_df.to_dict(orient="records")
-    )
-    proc_stats_df = DataFrame.from_records(merged)
-  stats_df = DataFrame.from_records(stats_list)
+  if not proc_stats_list:
+    proc_stats_df = DataFrame()
+  else:
+    proc_stats_df = DataFrame(proc_stats_list)
+    if not proc_stats_df.empty:
+      merged = dedupe_proc_stats_peak_merge(
+          proc_stats_df.to_dict(orient="records")
+      )
+      proc_stats_df = DataFrame(merged)
+  stats_df = _stats_payload_to_frame(stats_list)
   return stats_df, proc_stats_df
 
 
@@ -1848,7 +2238,7 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
   Examples:
     >>> _apply_counter_deltas(None, None)  # doctest: +SKIP
   """
-  stats_df = stats_df.sort_values(by=_COUNTER_GROUP_COLS + ["time"]).copy()
+  stats_df = stats_df.sort_values(by=_COUNTER_GROUP_COLS + ["time"])
   stats_df["delta"] = stats_df.groupby(
       _COUNTER_GROUP_COLS, observed=True)["value"].diff()
 
@@ -1860,8 +2250,6 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
       devs = first["dev"].to_numpy()
       events = first["event"].to_numpy()
       values = first["value"].to_numpy(dtype=np.float64, copy=False)
-      wids = first["wid"].to_numpy(copy=False)
-      mults = first["mult"].to_numpy(dtype=np.float64, copy=False)
       idxs = first.index.to_numpy()
       carry_deltas = np.full(len(first), np.nan, dtype=np.float64)
       apply_mask = np.zeros(len(first), dtype=bool)
@@ -1869,10 +2257,8 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
         prev = carry.raw.get((hosts[i], types[i], devs[i], events[i]))
         if prev is None:
           continue
-        delta = float(values[i]) - float(prev["value"])
-        if delta < 0:
-          delta = (2 ** int(wids[i])) + delta
-        carry_deltas[i] = delta * float(mults[i])
+        prev_value = prev[0] if isinstance(prev, tuple) else prev["value"]
+        carry_deltas[i] = float(values[i]) - float(prev_value)
         apply_mask[i] = True
       if apply_mask.any():
         stats_df.loc[idxs[apply_mask], "delta"] = carry_deltas[apply_mask]
@@ -1893,12 +2279,12 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
       mults = last["mult"].to_numpy(dtype=np.float64, copy=False)
       times = last["time"].to_numpy(dtype=np.float64, copy=False)
       for i in range(len(last)):
-        carry.raw[(hosts[i], types[i], devs[i], events[i])] = {
-            "value": float(values[i]),
-            "wid": int(wids[i]),
-            "mult": float(mults[i]),
-            "time": float(times[i]),
-        }
+        carry.raw[(hosts[i], types[i], devs[i], events[i])] = (
+            float(values[i]),
+            int(wids[i]),
+            float(mults[i]),
+            float(times[i]),
+        )
 
   stats_df.drop(columns=["wid", "mult"], inplace=True)
   return stats_df
@@ -1918,15 +2304,11 @@ def _normalize_collapse_dev_column(stats_df: Any) -> Any:
     >>> _normalize_collapse_dev_column(None)  # doctest: +SKIP
   """
   if "dev" not in stats_df.columns:
-    out = stats_df.copy()
-    out["dev"] = ""
-    return out
-  out = stats_df.copy()
-  dev = out["dev"]
-  out["dev"] = dev.where(dev.notna(), "").astype(str).replace(
-      {"nan": "", "None": "", "<NA>": ""}
-  )
-  return out
+    stats_df["dev"] = ""
+    return stats_df
+  dev = stats_df["dev"]
+  stats_df["dev"] = dev.where(dev.notna(), "")
+  return stats_df
 
 
 def _collapse_stats_with_deltas(stats_df: Any) -> Any:
@@ -2021,7 +2403,8 @@ def _apply_arc_and_finalize(stats_df: Any, carry: Any | None = None) -> Any:
         prev = carry.arc.get((hosts[i], types[i], str(devs[i] or ""), events[i]))
         if prev is None:
           continue
-        dt = float(times[i]) - float(prev["time"])
+        prev_time = prev["time"] if isinstance(prev, dict) else prev
+        dt = float(times[i]) - float(prev_time)
         if dt > 0 and np.isfinite(deltas[i]):
           _arc[pos] = float(deltas[i]) / dt
 
@@ -2037,11 +2420,10 @@ def _apply_arc_and_finalize(stats_df: Any, carry: Any | None = None) -> Any:
       events = last["event"].to_numpy()
       times = last["time"].to_numpy(dtype=np.float64, copy=False)
       for i in range(len(last)):
-        carry.arc[(hosts[i], types[i], str(devs[i] or ""), events[i])] = {
-            "time": float(times[i]),
-        }
+        carry.arc[(hosts[i], types[i], str(devs[i] or ""), events[i])] = (
+            float(times[i])
+        )
 
-  stats_df["time"] = to_datetime(stats_df["time"], unit="s").dt.tz_localize("UTC")
   return stats_df.dropna(subset=["host", "type", "event", "time", "value"])
 
 
@@ -2084,7 +2466,7 @@ def compute_deltas_and_arc(stats_df: Any) -> Any:
   if not _stats_df_has_required_delta_cols(stats_df):
     _warn_nonempty_stats_collapsed_to_empty(stats_df)
     return _empty_delta_arc_frame()
-  stats_df = _apply_counter_deltas(stats_df.copy())
+  stats_df = _apply_counter_deltas(stats_df)
   stats_df = _collapse_stats_with_deltas(stats_df)
   if stats_df.empty:
     return stats_df
@@ -2177,7 +2559,8 @@ def parse_stats_file_streaming_incremental(
     None
   
   Examples:
-    >>> parse_stats_file_streaming_incremental("x", 0, 0, None, None, 0, None)
+    >>> parse_stats_file_streaming_incremental(
+    ...     "/missing", flush_rows=1, on_chunk=lambda s, p: None)
   """
   emission_start = max(int(start_line_idx or 0), int(parse_start_idx or 0))
   parser = IncrementalStatsParser(emission_start, exclude_types_list)
@@ -2185,34 +2568,33 @@ def parse_stats_file_streaming_incremental(
   flush_rows = max(1, int(flush_rows))
 
   try:
-    with open(stats_file, "r") as fd:
+    with open(stats_file, "rb") as fd:
       while True:
-        emit: list[tuple[list, list]] = []
-        got_line = False
+        emit: list[tuple[Any, list]] = []
+        batch: list[str] = []
         with _stats_file_read_lock(stats_file):
           for _ in range(int(line_batch_size)):
-            line = fd.readline()
-            if not line:
+            raw = fd.readline()
+            if not raw:
               break
-            got_line = True
-            if _line_starts_time_sample(
-                line, parser._line_index, parser.start_idx):
-              if pending_flush or len(parser.stats) >= flush_rows:
-                if parser.stats or parser.proc_stats:
-                  emit.append((parser.stats, parser.proc_stats))
-                  parser.stats = []
-                  parser.proc_stats = []
-                pending_flush = False
-            parser.feed_line(line)
-            if len(parser.stats) >= flush_rows:
-              pending_flush = True
+            batch.append(_decode_stats_readline(raw))
+        if not batch:
+          break
+        for line in batch:
+          if _line_starts_time_sample(
+              line, parser._line_index, parser.start_idx):
+            if pending_flush or parser.stats_len >= flush_rows:
+              if parser.stats_len or parser.proc_stats:
+                emit.append((parser.take_stats_columns(), parser.proc_stats))
+                parser.proc_stats = []
+              pending_flush = False
+          parser.feed_line(line)
+          if parser.stats_len >= flush_rows:
+            pending_flush = True
         for stats_chunk, proc_chunk in emit:
           on_chunk(stats_chunk, proc_chunk)
-        if not got_line:
-          break
-    if parser.stats or parser.proc_stats:
-      on_chunk(parser.stats, parser.proc_stats)
-      parser.stats = []
+    if parser.stats_len or parser.proc_stats:
+      on_chunk(parser.take_stats_columns(), parser.proc_stats)
       parser.proc_stats = []
     pending_flush = False
   except FileNotFoundError:
