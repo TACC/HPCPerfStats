@@ -209,6 +209,15 @@ def test_should_stream_stats_file_for_4_6gib_class_segment(monkeypatch, tmp_path
   assert st._should_stream_stats_file(str(stats_file), None) is True
 
 
+def test_should_stream_stats_file_always_when_contents_none(tmp_path):
+  """Disk paths always stream — size gates must not force full-file SH load."""
+  stats_file = tmp_path / "host.example.com" / "1"
+  stats_file.parent.mkdir(parents=True)
+  stats_file.write_text("1 0 host.example.com\n")
+  assert st._should_stream_stats_file(str(stats_file), None) is True
+  assert st._should_stream_stats_file(str(stats_file), ["x\n"]) is False
+
+
 def test_mutable_tar_authority_cache_trims_to_max_entries(monkeypatch):
   archive_helpers._MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.clear()
   monkeypatch.setattr(

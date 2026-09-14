@@ -1219,17 +1219,23 @@ def load_stats_file_lines(
   lines = []
   bytes_read = 0
   try:
-    with _stats_file_read_lock(stats_file):
-      with open(stats_file, "r") as fd:
-        line_idx = 0
-        while True:
-          line = fd.readline()
-          if not line:
-            break
-          lines.append(line)
+    with open(stats_file, "r") as fd:
+      line_idx = 0
+      while True:
+        batch: list[str] = []
+        with _stats_file_read_lock(stats_file):
+          for _ in range(int(STREAM_PARSE_LINE_BATCH)):
+            line = fd.readline()
+            if not line:
+              break
+            batch.append(line)
+        if not batch:
+          break
+        for line in batch:
           line_idx += 1
           bytes_read += len(line)
           _maybe_raise_ingest_read_deadline(line_idx, bytes_read)
+          lines.append(line)
     return lines, None
   except FileNotFoundError:
     return None, "Stats file disappeared: %s" % stats_file

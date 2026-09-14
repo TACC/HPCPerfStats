@@ -21,7 +21,8 @@ from __future__ import annotations
 import os
 import threading
 import time
-from typing import Any, Dict, Iterable, Optional
+from collections import deque
+from typing import Any, Deque, Dict, Iterable, Optional
 
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     artifact_path,
@@ -74,7 +75,8 @@ class SyncTimedbArchiveMembersStore:
       _lock: Re-entrant lock covering maps and flags.
       _members: Member name to size maps by (day, identity).
       _populate_owner: Thread ident of the populate owner by (day, identity).
-      _populate_jobs: In-process populate job list (not persisted).
+      _populate_jobs_hot: Ingest-hot populate jobs (deque; not persisted).
+      _populate_jobs_cold: Cold populate jobs (deque; not persisted).
       _populate_queued: Calendar days already queued for populate.
       _populate_cv: Condition used by populate waiters and owners.
       _populate_source: Ephemeral populate-source token by canonical path.
@@ -111,7 +113,8 @@ class SyncTimedbArchiveMembersStore:
         self._append_inflight: Dict[str, bool] = {}
         self._restore: Dict[str, str] = {}
         self._populate_source: Dict[str, str] = {}
-        self._populate_jobs: list[Any] = []
+        self._populate_jobs_hot: Deque[Any] = deque()
+        self._populate_jobs_cold: Deque[Any] = deque()
         self._populate_queued: set[str] = set()
         self._populate_cv = threading.Condition(self._lock)
         if self.archive_dir:
@@ -830,9 +833,41 @@ class SyncTimedbArchiveMembersStore:
                 return False
             if day:
                 self._populate_queued.add(day)
-            self._populate_jobs.append(job)
+            self._enqueue_populate_job_locked(job)
             self._populate_cv.notify()
         return True
+
+    def _enqueue_populate_job_locked(self, job: Any) -> None:
+        """
+        Append one populate job to the hot or cold deque by ingest-hot rank.
+
+        Args:
+          job (Any): Populate job payload.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
+          >>> store._enqueue_populate_job_locked({"day_token": "x"})
+        """
+        if self._populate_job_hot_rank_locked(job) > 0:
+            self._populate_jobs_hot.append(job)
+        else:
+            self._populate_jobs_cold.append(job)
+
+    def _populate_queue_empty_locked(self) -> bool:
+        """
+        Return True when both populate deques are empty.
+
+        Returns:
+          bool: True when no populate jobs are queued.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty")._populate_queue_empty_locked()
+          True
+        """
+        return not self._populate_jobs_hot and not self._populate_jobs_cold
 
     def _populate_job_hot_rank_locked(self, job: Any) -> int:
         """
@@ -877,19 +912,14 @@ class SyncTimedbArchiveMembersStore:
         """
         deadline = time.time() + max(0.0, float(timeout_s))
         with self._populate_cv:
-            while not self._populate_jobs:
+            while self._populate_queue_empty_locked():
                 remaining = deadline - time.time()
                 if remaining <= 0:
                     return None
                 self._populate_cv.wait(timeout=remaining)
-            best_i = 0
-            best_rank = -1
-            for index, job in enumerate(self._populate_jobs):
-                rank = self._populate_job_hot_rank_locked(job)
-                if rank > best_rank:
-                    best_rank = rank
-                    best_i = index
-            return self._populate_jobs.pop(best_i)
+            if self._populate_jobs_hot:
+                return self._populate_jobs_hot.popleft()
+            return self._populate_jobs_cold.popleft()
 
     def complete_populate_job(self, job: Any) -> None:
         """
@@ -930,7 +960,7 @@ class SyncTimedbArchiveMembersStore:
         if not isinstance(job, dict):
             return
         with self._populate_cv:
-            self._populate_jobs.append(job)
+            self._enqueue_populate_job_locked(job)
             self._populate_cv.notify()
 
     def invalidate(self, day_token: str, identity: str) -> None:
@@ -985,7 +1015,8 @@ class SyncTimedbArchiveMembersStore:
             self._append_inflight.clear()
             self._restore.clear()
             self._populate_source.clear()
-            self._populate_jobs.clear()
+            self._populate_jobs_hot.clear()
+            self._populate_jobs_cold.clear()
             self._populate_queued.clear()
             self._populate_cv.notify_all()
         _set_threading_events(events)

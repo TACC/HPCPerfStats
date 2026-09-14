@@ -619,6 +619,21 @@ The **`hpcperfstats-base`** image ( **`pipeline`**, **`web`**, and siblings buil
 
 **Anti-pattern — assume `py-spy` is on PATH (hpcperfstats02 2026-09-13):** `sh: py-spy: not found` on this pipeline image. **Corrected:** classify with `ps`/`wchan`/`pcpu` first; treat `py-spy` as optional only when `command -v py-spy` succeeds.
 
+**Anti-pattern — block classify on `py-spy` against free-threaded 3.14t (hpcperfstats01/02 2026-09-14):** `py-spy dump` / `top` against `/opt/python3.14t/bin/python` often fails version-detect or returns empty stacks. Do **not** treat that as undeployed code or a dead daemon. **Corrected:** require `readlink /proc/<pid>/exe`; classify ACK-moving worker-futex with `ps`/`wchan` + **`futex_comm` tally** (below); never silence `py-spy` stderr (`2>/dev/null`) when you do try it — keep the failure visible.
+
+**Anti-pattern — process-level wchan alone for ACK-moving futex (hpcperfstats01/02 2026-09-14):** a single `wchan=futex_do_wait` count mixes ingest workers, jemalloc helpers, and discover. **Corrected:** after the Good census block, tally futex by truncated `comm` (exclude jemalloc when measuring the &lt;50% non-jemalloc gate):
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline sh -c '
+SUP=$(ps -eo pid=,args= | grep "[s]ync_timedb.py \[main\]" | grep -v "\[worker:" | awk "{print \$1; exit}")
+echo SUP=$SUP NLWP=$(ps -p "$SUP" -o nlwp=) CPU=$(ps -p "$SUP" -o pcpu=)
+echo === wchan ===
+ps -T -p "$SUP" -o wchan:32= | sort | uniq -c | sort -nr | head -10
+echo === futex_comm_tally ===
+ps -T -p "$SUP" -o wchan:32=,comm= | awk "\$1 ~ /futex/ {print \$2}" | sort | uniq -c | sort -nr
+'
+```
+
 **Good — sync_timedb process/thread census (hpcperfstats02 2026-09-13):**
 
 ```bash

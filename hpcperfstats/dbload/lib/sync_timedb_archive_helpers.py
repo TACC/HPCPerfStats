@@ -5109,6 +5109,7 @@ def _sealed_archive_member_has_exact_size(
         sealed_path,
         on_member,
         apply_priority_wrap=False,
+        defer_on_member=False,
     )
     if not readable:
       return None
@@ -5744,7 +5745,7 @@ def _stream_compressed_archive_members(
   *,
   apply_priority_wrap: bool = True,
   already_locked: bool = False,
-  defer_on_member: bool = False,
+  defer_on_member: bool = True,
 ) -> Any:
   """
   Stream file members from a sealed archive.
@@ -5752,9 +5753,9 @@ def _stream_compressed_archive_members(
   ``on_member(name, size)`` is invoked for each file member when provided.
   Returns ``(readable, members_dict, saw_duplicate_names, stream_error)``.
 
-  Populate-only callers pass ``defer_on_member=True`` so callbacks run after
-  the shared read lock is released. Size lookups that raise
-  ``_MemberStreamEarlyExit`` must keep the default in-stream callback.
+  Full-walk / populate callers keep the default ``defer_on_member=True`` so
+  callbacks run after the shared read lock is released. Size lookups that
+  raise ``_MemberStreamEarlyExit`` must pass ``defer_on_member=False``.
   
   Args:
     compressed_path (str): String for compressed path.
@@ -5763,7 +5764,7 @@ def _stream_compressed_archive_members(
     already_locked (bool): Skip the shared fnctl wait when the caller already
     holds the exclusive write lock on ``compressed_path``.
     defer_on_member (bool): Invoke ``on_member`` after releasing the shared
-      read lock. Keep False when the callback may raise
+      read lock (default True). Pass False when the callback may raise
       ``_MemberStreamEarlyExit``.
   
   Returns:

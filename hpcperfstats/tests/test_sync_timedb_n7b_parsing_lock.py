@@ -56,6 +56,35 @@ def test_load_stats_file_lines_contents_bypass_skips_lock():
     assert lines == ["a\n"]
 
 
+def test_load_stats_file_lines_lock_hold_batches_readline(tmp_path, monkeypatch):
+    """Full-file load must not hold SH across the whole readline loop."""
+    stats = tmp_path / "host" / "1"
+    stats.parent.mkdir(parents=True)
+    stats.write_text("1709123456 job1 cn001\n1709123457 job1 cn001\n")
+    held = {"n": 0, "max": 0}
+    real_lock = parsing._stats_file_read_lock
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def tracking_lock(path):
+        held["n"] += 1
+        held["max"] = max(held["max"], held["n"])
+        try:
+            with real_lock(path):
+                yield
+        finally:
+            held["n"] -= 1
+
+    monkeypatch.setattr(parsing, "_stats_file_read_lock", tracking_lock)
+    monkeypatch.setattr(parsing, "STREAM_PARSE_LINE_BATCH", 1)
+    lines, err = parsing.load_stats_file_lines(str(stats))
+    assert err is None
+    assert lines == ["1709123456 job1 cn001\n", "1709123457 job1 cn001\n"]
+    assert held["n"] == 0
+    assert held["max"] == 1
+
+
 def test_streaming_resume_feeds_schema_prefix(tmp_path):
     lines = _resume_schema_fixture_lines()
     stats_file = tmp_path / "host.example.com" / "1709123456"
@@ -301,7 +330,29 @@ def test_sealed_on_member_lock_hold_in_stream_early_exit(tmp_path, monkeypatch):
         raise helpers._MemberStreamEarlyExit()
 
     try:
-        helpers._stream_compressed_archive_members(str(path), on_member)
+        helpers._stream_compressed_archive_members(
+            str(path), on_member, defer_on_member=False,
+        )
         raise AssertionError("expected _MemberStreamEarlyExit")
     except helpers._MemberStreamEarlyExit:
         pass
+
+
+def test_sealed_populate_scan_fn_defers_on_member():
+    """Populate sealed scan must keep defer_on_member=True (lock-hold shrink)."""
+    import inspect
+
+    from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+    src = inspect.getsource(helpers._populate_members_from_sealed_scan)
+    assert "defer_on_member=True" in src
+
+
+def test_sealed_member_size_lookup_keeps_in_stream_callback():
+    """Early-exit size lookup must pass defer_on_member=False."""
+    import inspect
+
+    from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+    src = inspect.getsource(helpers._sealed_archive_member_has_exact_size)
+    assert "defer_on_member=False" in src

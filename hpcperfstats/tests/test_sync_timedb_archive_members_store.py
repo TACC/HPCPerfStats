@@ -602,3 +602,22 @@ def test_event_set_lock_hold_after_release(tmp_path):
     waiter_thread.join(timeout=3)
     assert acquired == [True]
     assert slow_event.is_set()
+
+
+@pytest.mark.django_db(databases=[])
+def test_dequeue_populate_prefers_hot_over_cold_without_scan(tmp_path):
+    """Hot deque popleft must beat cold without an O(n) rank scan."""
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    assert store.enqueue_populate({"day_token": "2026-01-01", "kind": "cold"})
+    store.set_ingest_tar_hot("2026-01-02", reason="chunk_prewarm")
+    assert store.enqueue_populate({"day_token": "2026-01-02", "kind": "hot"})
+    store.set_ingest_tar_hot("2026-01-03", reason="populate_wait")
+    assert store.enqueue_populate({"day_token": "2026-01-03", "kind": "hot2"})
+    first = store.dequeue_populate(timeout_s=0.05)
+    second = store.dequeue_populate(timeout_s=0.05)
+    third = store.dequeue_populate(timeout_s=0.05)
+    assert first["day_token"] == "2026-01-02"
+    assert second["day_token"] == "2026-01-03"
+    assert third["day_token"] == "2026-01-01"
+    assert store.dequeue_populate(timeout_s=0.01) is None
+    assert store._populate_queue_empty_locked()

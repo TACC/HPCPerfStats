@@ -10651,7 +10651,9 @@ def test_ingest_worker_never_streams_sealed_when_populate_pool_down(
   assert stream_calls["n"] == 0
   store = get_process_archive_members_store()
   assert store is not None
-  assert len(store._populate_jobs) == 1
+  assert (
+      len(store._populate_jobs_hot) + len(store._populate_jobs_cold)
+  ) == 1
 
 def test_raw_stats_path_needs_tar_append_when_store_claims_but_open_tar_missing(
     monkeypatch, tmp_path,

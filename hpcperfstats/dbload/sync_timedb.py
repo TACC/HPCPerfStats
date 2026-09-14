@@ -2506,14 +2506,7 @@ def _should_stream_stats_file(stats_file: str, stats_file_contents: Any) -> Any:
   """
   if stats_file_contents is not None:
     return False
-  size = stats_file_size_bytes(stats_file)
-  max_bytes = cfg.get_sync_ingest_max_file_read_bytes()
-  if max_bytes > 0 and size > max_bytes:
-    return True
-  stream_dup_bytes = cfg.get_sync_ingest_stream_duplicate_scan_bytes()
-  if stream_dup_bytes > 0 and size > stream_dup_bytes:
-    return True
-  return False
+  return True
 
 
 def _timestamp_second_present_for_duplicate(
