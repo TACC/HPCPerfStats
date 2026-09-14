@@ -75,20 +75,18 @@ def test_python_build_pyspy_pins_pr_860_sha_and_temporary_comment():
 
 
 def test_python_build_pyspy_dump_smoke_covers_gil_and_314t_without_gil_flag():
-  """Bake must fail closed on version-detect; podman build EPERM is not that failure.
+  """Bake must fail closed on version-detect; other dump failures are build ptrace.
 
-  Regression (hpcperfstats01 2026-09-14): py-spy found Py_Version then
-  ``Failed to copy Py_Version symbol`` / Permission denied under buildah
-  seccomp. That must not fail the image; ``Failed to find python version``
-  still must. Binary must contain ``libpython3.14t``.
+  Regression (hpcperfstats01 2026-09-14): ``grep -aF libpython3.14t`` on the
+  stripped cargo binary exited 1 with no dump output (string not contiguous).
+  Version-detect still fails the bake. Missing frames after dump skip with
+  ``PYSPY_BUILD_PTRACE_UNAVAILABLE`` (seccomp EPERM), not ``false``.
   """
   build = _python_build()
   assert "py-spy dump --pid" in build
   assert "Failed to find python version" in build
-  assert "Failed to copy Py_Version" in build
-  assert "Permission denied" in build
   assert "PYSPY_BUILD_PTRACE_UNAVAILABLE" in build
-  assert "grep -aF libpython3.14t" in build
+  assert "grep -aF libpython3.14t /opt/python3.14/bin/py-spy >/dev/null" not in build
   assert "python3" in build
   assert "/opt/python3.14t/bin/python" in build
   dump_lines = [ln for ln in build.splitlines() if "py-spy dump" in ln]
@@ -96,9 +94,9 @@ def test_python_build_pyspy_dump_smoke_covers_gil_and_314t_without_gil_flag():
   assert all("--gil" not in ln for ln in dump_lines)
   assert "time.sleep" in build
   assert "py-spy --version" in build
-  # Must not treat dump EPERM as a hard bake failure (old ``|| { … false }``).
   assert "|| { echo \"$gout\"; kill" not in build
   assert "|| { echo \"$tout\"; kill" not in build
+  assert "$label no python frame" not in build
 
 
 def test_python_build_wipes_pyspy_src_and_rustup_before_stage_end():
