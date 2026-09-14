@@ -7,22 +7,6 @@ ARG ALPINE_VERSION=3.24.1
 
 FROM alpine:${ALPINE_VERSION} AS db-build
 
-ARG PG_VERSION=18.6
-ARG PG_SHA256=555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f
-ARG TIMESCALEDB_VERSION=2.29.2
-ARG TIMESCALEDB_SHA256=3817f8acb8e167bf22b873a4c4e17d801089ed5a34c232eedd4f86dc222c8dc6
-ARG JEMALLOC_VERSION=5.3.1
-ARG JEMALLOC_SHA256=3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
-ARG ICU_VERSION=78.3
-ARG ICU_SHA256=3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0
-ARG LIBURING_VERSION=2.15
-ARG LIBURING_SHA256=8d052f2622dcb3678cbaee5ff582a87572672a6c0a56533cdda5b65cb636120a
-ARG LZ4_VERSION=1.10.0
-ARG LZ4_SHA256=537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b
-ARG ZLIB_NG_VERSION=2.2.5
-ARG ZLIB_NG_SHA256=5b3b022489f3ced82384f06db1e13ba148cbce38c7941e424d6cb414416acd18
-ARG ZSTD_VERSION=1.5.7
-ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
 
 # LLVM major matches docker-library postgres 18/alpine3.24.
 ENV DOCKER_PG_LLVM_DEPS="llvm21-dev clang21"
@@ -59,6 +43,8 @@ RUN set -eux; \
 
 RUN gcc -march=native -mtune=native -Q --help=target
 
+ARG JEMALLOC_VERSION=5.3.1
+ARG JEMALLOC_SHA256=3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
 # --- jemalloc ---
 RUN set -eux; \
   curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2" \
@@ -73,6 +59,8 @@ RUN set -eux; \
   make install; \
   rm -rf /usr/src/jemalloc /tmp/jemalloc.tar.bz2
 
+ARG ICU_VERSION=78.3
+ARG ICU_SHA256=3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0
 # --- ICU (source under /opt/icu; not apk icu-dev as linked ABI) ---
 RUN set -eux; \
   curl -fsSL "https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION}-sources.tgz" \
@@ -87,6 +75,8 @@ RUN set -eux; \
   make install; \
   rm -rf /usr/src/icu /tmp/icu.tgz
 
+ARG LIBURING_VERSION=2.15
+ARG LIBURING_SHA256=8d052f2622dcb3678cbaee5ff582a87572672a6c0a56533cdda5b65cb636120a
 # --- liburing ---
 RUN set -eux; \
   curl -fsSL "https://github.com/axboe/liburing/archive/refs/tags/liburing-${LIBURING_VERSION}.tar.gz" \
@@ -100,6 +90,8 @@ RUN set -eux; \
   make install; \
   rm -rf /usr/src/liburing /tmp/liburing.tar.gz
 
+ARG LZ4_VERSION=1.10.0
+ARG LZ4_SHA256=537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b
 # --- lz4 ---
 RUN set -eux; \
   curl -fsSL "https://github.com/lz4/lz4/archive/refs/tags/v${LZ4_VERSION}.tar.gz" \
@@ -112,6 +104,8 @@ RUN set -eux; \
   make install PREFIX=/opt/lz4; \
   rm -rf /usr/src/lz4 /tmp/lz4.tar.gz
 
+ARG ZLIB_NG_VERSION=2.2.5
+ARG ZLIB_NG_SHA256=5b3b022489f3ced82384f06db1e13ba148cbce38c7941e424d6cb414416acd18
 # --- zlib-ng (ZLIB_COMPAT → libz.so; match Python image /opt/zlib-ng pin) ---
 RUN set -eux; \
   curl -fsSL "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" \
@@ -137,6 +131,8 @@ RUN set -eux; \
   test -f /opt/zlib-ng/lib/libz.so || test -f /opt/zlib-ng/lib/libz.so.1; \
   rm -rf /usr/src/zlib-ng /tmp/zlib-ng.tar.gz
 
+ARG ZSTD_VERSION=1.5.7
+ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
 # --- zstd (match Python image /opt/zstd 1.5.7 pin; gzip→zlib-ng, .lz4→/opt/lz4) ---
 RUN set -eux; \
   curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" \
@@ -165,6 +161,8 @@ ENV PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig:/opt/icu/lib/pkgconfig:/opt/libu
   CFLAGS="${OPT_CFLAGS_PG}" \
   CXXFLAGS="${OPT_CFLAGS_PG}"
 
+ARG PG_VERSION=18.6
+ARG PG_SHA256=555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f
 # --- PostgreSQL 18 ---
 RUN set -eux; \
   curl -fsSL "https://ftp.postgresql.org/pub/source/v${PG_VERSION}/postgresql-${PG_VERSION}.tar.bz2" \
@@ -223,6 +221,8 @@ RUN set -eux; \
   strip --strip-unneeded /usr/local/bin/postgres /usr/local/bin/psql || true; \
   postgres --version
 
+ARG TIMESCALEDB_VERSION=2.30.0
+ARG TIMESCALEDB_SHA256=dac2fba0cd4eee9f4adcd04c91b7929850e24bc36f62eaee8bda4230a9fcee66
 # --- TimescaleDB (not APACHE_ONLY). timescaledb.so must NOT DT_NEEDED jemalloc
 # (or lz4/zstd): the extension is loaded into the postgres process, which
 # already has jemalloc via DT_NEEDED + LD_PRELOAD. unset LDFLAGS is not enough

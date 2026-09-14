@@ -1,6 +1,6 @@
 # Operator guide: PostgreSQL 15 → homemade PG18 + Timescale logical migrate
 
-**Audience:** site operators cutting over from Hub `timescale/timescaledb:2.28.3-pg15` to the homemade `hpcperfstats-db` image (PostgreSQL 18 + TimescaleDB 2.29.x on Alpine 3.24 musl with jemalloc, ICU, liburing, lz4, zstd).
+**Audience:** site operators cutting over from Hub `timescale/timescaledb:2.28.3-pg15` to the homemade `hpcperfstats-db` image (PostgreSQL 18 + TimescaleDB 2.30.x on Alpine 3.24 musl with jemalloc, ICU, liburing, lz4, zstd).
 
 **Do not use `pg_upgrade`.** Timescale 2.29 drops PG15; do **not** restore `_timescaledb_catalog` from PG15. Create a fresh hypertable via Django migrations on PG18, then **COPY rows**.
 
@@ -316,7 +316,7 @@ After a successful soak, operators may archive/delete `/data/hpcperfstats_db/pg1
 |------|----------|
 | Base | `alpine:3.24.1` (not `latest`) |
 | Postgres | 18.x SHA-pinned in `services-conf/db.Dockerfile` |
-| Timescale | 2.29.x (not `APACHE_ONLY`; no external lz4/zstd DT_NEEDED on `timescaledb.so`) |
+| Timescale | 2.30.x (not `APACHE_ONLY`; no external lz4/zstd DT_NEEDED on `timescaledb.so`) |
 | `/opt` | jemalloc, **zlib-ng**, icu, liburing, lz4, zstd with rpath on **postgres** + zstd CLI (`HAVE_ZLIB=1` + `HAVE_LZ4=1`; no apk `zlib`) |
 | CFLAGS (PG + Timescale) | `-O3 -march=native -mprefer-vector-width=512 -mtune=native -flto=auto -g0` |
 | CFLAGS (`/opt` libs) | `-O3 -march=native -mtune=native -flto=auto -g0`; LZ4 also `-DLZ4_HEAPMODE=0` |
