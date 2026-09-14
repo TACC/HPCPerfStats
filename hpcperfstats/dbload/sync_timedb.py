@@ -65,7 +65,6 @@ Attributes:
 from __future__ import annotations
 
 import contextvars
-import ctypes
 import gc
 import itertools
 import os
@@ -1784,15 +1783,18 @@ def _release_ingest_worker_heap() -> None:
   Examples:
     >>> _release_ingest_worker_heap()  # doctest: +SKIP
   """
+  from hpcperfstats.dbload.lib.sync_timedb_worker_memory import _libc_handle
+
   _clear_ingest_worker_file_caches()
   if not cfg.get_sync_ingest_malloc_trim_after_file():
     return
   gc.collect()
-  try:
-    libc = ctypes.CDLL("libc.so.6")
-    libc.malloc_trim(0)
-  except (OSError, AttributeError):
-    pass
+  libc = _libc_handle()
+  if libc is not None:
+    try:
+      libc.malloc_trim(0)
+    except AttributeError:
+      pass
 
 
 def _release_ingest_worker_memory(stats_file: str = "") -> Any:
@@ -5143,8 +5145,34 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       job_begin_logged = True
 
   try:
+    from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+        read_stats_file_head_identity,
+    )
+    from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
+        collect_gate_identities_for_paths,
+    )
+
+    head_identity_by_path = {}
+    for path in stats_files:
+      try:
+        host, timestamp_utc = read_stats_file_head_identity(path)
+      except Exception:
+        continue
+      if host is None or timestamp_utc is None:
+        continue
+      head_identity_by_path[path] = (
+          str(host).strip(),
+          int(timestamp_utc.timestamp()),
+      )
+    gate_identities_by_path, _gate_stats = collect_gate_identities_for_paths(
+        stats_files,
+        head_identity_by_path,
+        log_fn=log_print,
+    )
     stats_files, gate_skipped = filter_paths_head_ingested(
-        stats_files, log_fn=log_print,
+        stats_files,
+        log_fn=log_print,
+        gate_identities_by_path=gate_identities_by_path,
     )
     if not stats_files:
       job_outcome = "gate_skip"

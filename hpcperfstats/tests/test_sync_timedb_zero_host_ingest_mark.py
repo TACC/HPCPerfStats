@@ -238,3 +238,26 @@ def test_default_archive_dir_empty_when_conf_none(monkeypatch):
     lambda: None,
   )
   assert zhm._default_archive_dir() == ""
+
+
+def test_has_zero_host_mark_cache_one_json_load(tmp_path, monkeypatch):
+  from hpcperfstats.dbload.lib import sync_timedb_mark_entries_cache as mec
+
+  mec.reset_mark_entries_cache_for_tests()
+  seg = _seg(tmp_path)
+  assert zhm.record_zero_host_ingest_mark(
+      seg, archive_data_dir=str(tmp_path),
+  )
+  loads = {"n": 0}
+  real = zhm.load_persistence_document
+
+  def _count(path, kind, default=None):
+    loads["n"] += 1
+    return real(path, kind, default=default)
+
+  monkeypatch.setattr(zhm, "load_persistence_document", _count)
+  for _ in range(5):
+    assert zhm.has_zero_host_ingest_mark(
+        seg, archive_data_dir=str(tmp_path),
+    )
+  assert loads["n"] == 1

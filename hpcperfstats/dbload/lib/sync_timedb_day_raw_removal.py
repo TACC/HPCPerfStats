@@ -608,7 +608,7 @@ class _DayRawRemovalState:
     """
     Day-scoped or snapshot remaining_raw for this daily tar.
 
-    Within one ``apply_batch_delete`` / handoff pass, reuse the memoized map so
+    Within one day_close job (or delete/handoff pass), reuse the memoized map so
     completion helpers do not rebuild/log ``day-scoped closed_raw`` many times.
 
     Returns:
@@ -638,7 +638,7 @@ class _DayRawRemovalState:
 
   def _clear_closed_raw_pass_memo(self) -> None:
     """
-    Drop day-scoped closed_raw memo for the next delete/handoff pass.
+    Drop day-scoped closed_raw memo for the next day_close job or delete pass.
 
     Returns:
       None
@@ -652,7 +652,7 @@ class _DayRawRemovalState:
 
   def _begin_closed_raw_pass_memo(self) -> None:
     """
-    Start a fresh closed_raw memo window for one delete/handoff pass.
+    Start a fresh closed_raw memo window for one day_close job (or delete pass).
 
     Returns:
       None

@@ -7,6 +7,7 @@ Attributes:
   REAP_KEEP: Attribute.
   REAP_RSS: Attribute.
   _FAILED_OUTCOMES: Attribute.
+  _LIBC: Cached ``ctypes.CDLL("libc.so.6")`` handle for malloc_trim.
   _WORKER_TASKS_ON_WORKER: Attribute.
 """
 
@@ -16,6 +17,7 @@ from typing import Any
 
 import os
 import time
+import ctypes
 
 from hpcperfstats.dbload.lib.print_utils import log_print
 
@@ -32,6 +34,41 @@ _FAILED_OUTCOMES = frozenset({
 })
 
 _WORKER_TASKS_ON_WORKER = 0
+_LIBC: Any | None = None
+
+
+def _libc_handle() -> Any | None:
+  """
+  Return a process-cached ``libc.so.6`` handle, or ``None`` if unavailable.
+
+  Returns:
+    Any | None: Cached ``ctypes.CDLL`` instance, or ``None``.
+
+  Examples:
+    >>> _libc_handle()  # doctest: +SKIP
+  """
+  global _LIBC
+  if _LIBC is not None:
+    return _LIBC
+  try:
+    _LIBC = ctypes.CDLL("libc.so.6")
+  except (OSError, AttributeError):
+    return None
+  return _LIBC
+
+
+def reset_libc_handle_for_tests() -> None:
+  """
+  Drop the cached libc handle (unit tests only).
+
+  Returns:
+    None
+
+  Examples:
+    >>> reset_libc_handle_for_tests()  # doctest: +SKIP
+  """
+  global _LIBC
+  _LIBC = None
 
 
 def reset_worker_tasks_on_worker_for_tests() -> None:
@@ -90,7 +127,6 @@ def release_spawn_pool_worker_memory() -> None:
   Examples:
     >>> release_spawn_pool_worker_memory()  # doctest: +SKIP
   """
-  import ctypes
   import gc
 
   import hpcperfstats.dbload.lib.conf_parser as cfg
@@ -106,10 +142,12 @@ def release_spawn_pool_worker_memory() -> None:
   clear_daily_archive_members_cache()
   if cfg.get_sync_ingest_malloc_trim_after_file():
     gc.collect()
-    try:
-      ctypes.CDLL("libc.so.6").malloc_trim(0)
-    except (OSError, AttributeError):
-      pass
+    libc = _libc_handle()
+    if libc is not None:
+      try:
+        libc.malloc_trim(0)
+      except AttributeError:
+        pass
   clear_worker_stage()
 
 

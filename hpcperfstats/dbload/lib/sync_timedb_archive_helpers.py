@@ -10762,7 +10762,10 @@ def seal_dirty_daily_archives(
       from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
           remaining_raw_blocking_day_incomplete,
       )
-      blocking = remaining_raw_blocking_day_incomplete(tar_path)
+      if remaining_raw_by_gz is not None:
+        blocking = remaining_raw_by_gz
+      else:
+        blocking = remaining_raw_blocking_day_incomplete(tar_path)
       if remaining_raw_by_gz_has_paths_on_disk(blocking, zst_path):
         if log_fn:
           log_fn(

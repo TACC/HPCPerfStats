@@ -24,6 +24,10 @@ from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
     _default_archive_dir,
     path_fingerprint_key,
 )
+from hpcperfstats.dbload.lib.sync_timedb_mark_entries_cache import (
+    clear_mark_entries_cache,
+    load_cached_mark_entries,
+)
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     artifact_path,
     load_persistence_document,
@@ -50,18 +54,18 @@ def zero_host_ingest_mark_path(archive_data_dir: str) -> str:
   return artifact_path(archive_data_dir, "zero_host_ingest_mark")
 
 
-def _load_entries(mark_path: str) -> dict:
+def _load_entries_uncached(mark_path: str) -> dict:
   """
-  Internal helper to load the entries.
-  
+  Load zero-host mark entries from disk without the process-local L1 cache.
+
   Args:
-    mark_path (str): String for mark path.
-  
+    mark_path (str): Path to the zero-host mark JSON.
+
   Returns:
-    dict: dict produced by this call.
-  
+    dict: Fingerprint -> metadata entries (empty on malformed payloads).
+
   Examples:
-    >>> _load_entries("x")  # doctest: +SKIP
+    >>> _load_entries_uncached("x")  # doctest: +SKIP
   """
   raw = load_persistence_document(
       mark_path,
@@ -76,17 +80,36 @@ def _load_entries(mark_path: str) -> dict:
   return dict(entries)
 
 
+def _load_entries(mark_path: str) -> dict:
+  """
+  Load zero-host mark entries via process-local mtime/size L1 cache.
+
+  Args:
+    mark_path (str): Path to the zero-host mark JSON.
+
+  Returns:
+    dict: Fingerprint -> metadata entries.
+
+  Examples:
+    >>> _load_entries("x")  # doctest: +SKIP
+  """
+  return load_cached_mark_entries(
+      mark_path,
+      load_uncached=_load_entries_uncached,
+  )
+
+
 def _save_entries(mark_path: str, entries: dict) -> None:
   """
-  Internal helper to save the entries.
-  
+  Persist zero-host mark entries and invalidate the process-local L1 cache.
+
   Args:
-    mark_path (str): String for mark path.
-    entries (dict): Mapping for entries.
-  
+    mark_path (str): Path to the zero-host mark JSON.
+    entries (dict): Fingerprint -> metadata mapping to write.
+
   Returns:
     None
-  
+
   Examples:
     >>> _save_entries("x", {})  # doctest: +SKIP
   """
@@ -98,6 +121,7 @@ def _save_entries(mark_path: str, entries: dict) -> None:
           "entries": entries,
       },
   )
+  clear_mark_entries_cache(mark_path)
 
 
 def has_zero_host_ingest_mark(

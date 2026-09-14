@@ -2161,3 +2161,47 @@ def test_skip_only_apply_batch_delete_memos_day_scoped_closed_raw(
   )
 
 
+def test_day_close_job_scoped_closed_raw_pass_memo(tmp_path, monkeypatch):
+  """One day_close job must census closed_raw at most once across stages."""
+  day = datetime(2026, 6, 3)
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True, exist_ok=True)
+  ts0 = int(datetime(day.year, day.month, day.day, 10, 0, 0).timestamp())
+  seg0 = host / str(ts0)
+  seg0.write_text("%d job1 cn001\nline\n" % ts0)
+  os.utime(seg0, (ts0, ts0))
+  tar_path, zst = _seal_day(tmp_path, seg0, day)
+  del zst
+  census_calls = []
+
+  import hpcperfstats.dbload.lib.sync_timedb_day_raw_removal as drm
+
+  real_build = drm.build_remaining_raw_for_daily_tar
+
+  def spy_build(*args, **kwargs):
+    census_calls.append(1)
+    return real_build(*args, **kwargs)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      spy_build,
+  )
+
+  coord = _make_coordinator(
+      tmp_path,
+      ingest_ready_fn=lambda _p: False,
+  )
+  state = coord._get_or_create_day(tar_path)
+  state._begin_closed_raw_pass_memo()
+  try:
+    state._build_remaining_raw_for_daily_tar()
+    state._build_remaining_raw_for_daily_tar()
+    state._has_closed_raw_existing_on_disk()
+    state._remaining_raw_paths_blocking_tar_drop()
+  finally:
+    state._clear_closed_raw_pass_memo()
+  assert len(census_calls) == 1, (
+      "job-scoped memo must census once across pre_seal/seal probes "
+      "(got %d)" % len(census_calls)
+  )
+

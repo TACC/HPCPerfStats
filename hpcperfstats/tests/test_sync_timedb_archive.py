@@ -2773,6 +2773,41 @@ def test_remove_verified_archived_raw_files_skips_removal_until_ingest_ready(
   assert seg.is_file()
 
 
+def test_archive_stats_files_builds_gate_identities_once(monkeypatch, tmp_path):
+  """Append body must collect gate identities once before filter_paths."""
+  import hpcperfstats.dbload.sync_timedb as st
+
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-02.tar.zst")
+  collect_calls = {"n": 0}
+
+  def _collect(paths, head_identity_by_path, **kwargs):
+    collect_calls["n"] += 1
+    return ({}, {})
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint."
+      "collect_gate_identities_for_paths",
+      _collect,
+  )
+  monkeypatch.setattr(
+      st,
+      "filter_paths_head_ingested",
+      lambda paths, **kwargs: ([], list(paths)),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+      "read_stats_file_head_identity",
+      lambda path: ("cn001", __import__("datetime").datetime.utcfromtimestamp(1709123456)),
+  )
+
+  result = st.archive_stats_files((archive_key, [str(raw_file)]))
+  assert isinstance(result, st.ArchiveAppendOutcome)
+  assert result.gate_skipped is True
+  assert collect_calls["n"] == 1
+
+
 def test_archive_stats_files_skips_append_when_not_head_ingested(monkeypatch, tmp_path):
   """Paths failing the DB gate must not reach tar append."""
   import hpcperfstats.dbload.sync_timedb as st
@@ -2783,11 +2818,20 @@ def test_archive_stats_files_skips_append_when_not_head_ingested(monkeypatch, tm
   append_calls = {"n": 0}
 
   monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint."
+      "collect_gate_identities_for_paths",
+      lambda paths, head_identity_by_path, **kwargs: ({}, {}),
+  )
+  monkeypatch.setattr(
       st,
       "filter_paths_head_ingested",
       lambda paths, **_: ([], list(paths)),
   )
-  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1))
+  monkeypatch.setattr(
+      st,
+      "_append_to_tar",
+      lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1),
+  )
 
   # Gate-skip is a non-ok outcome carrying the skipped paths so the append
   # drain hands them back to ingest instead of ACK-dropping them (see

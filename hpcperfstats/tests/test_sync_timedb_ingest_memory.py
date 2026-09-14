@@ -5,7 +5,6 @@ from __future__ import annotations
 import gc
 
 import pytest
-import ctypes
 
 from hpcperfstats.dbload import sync_timedb as st
 from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as archive_helpers
@@ -15,6 +14,7 @@ from hpcperfstats.dbload.lib import sync_timedb_worker_memory as worker_memory
 def test_release_spawn_pool_worker_memory_clears_caches_and_trims(monkeypatch):
   trim_calls = []
   stage_clear = []
+  cdll_calls = []
 
   class _Libc:
     @staticmethod
@@ -22,13 +22,18 @@ def test_release_spawn_pool_worker_memory_clears_caches_and_trims(monkeypatch):
       trim_calls.append(_arg)
       return 1
 
+  def _cdll(_name):
+    cdll_calls.append(_name)
+    return _Libc()
+
+  worker_memory.reset_libc_handle_for_tests()
   archive_helpers._DAILY_ARCHIVE_MEMBERS_CACHE["day"] = {"m": True}
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_malloc_trim_after_file",
       lambda: True,
   )
   monkeypatch.setattr(gc, "collect", lambda: None)
-  monkeypatch.setattr(ctypes, "CDLL", lambda _name: _Libc())
+  monkeypatch.setattr(worker_memory.ctypes, "CDLL", _cdll)
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_host_itimes.reset_host_itimes_caches",
       lambda: None,
@@ -39,10 +44,51 @@ def test_release_spawn_pool_worker_memory_clears_caches_and_trims(monkeypatch):
   )
 
   worker_memory.release_spawn_pool_worker_memory()
+  worker_memory.release_spawn_pool_worker_memory()
 
-  assert trim_calls == [0]
+  assert trim_calls == [0, 0]
+  assert cdll_calls == ["libc.so.6"]
   assert archive_helpers._DAILY_ARCHIVE_MEMBERS_CACHE == {}
-  assert stage_clear == [True]
+  assert stage_clear == [True, True]
+
+
+def test_libc_reuse_across_release_spawn_pool_worker_memory(monkeypatch):
+  """Two malloc_trim releases must construct CDLL once."""
+  cdll_calls = []
+
+  class _Libc:
+    @staticmethod
+    def malloc_trim(_arg):
+      return 1
+
+  def _cdll(_name):
+    cdll_calls.append(_name)
+    return _Libc()
+
+  worker_memory.reset_libc_handle_for_tests()
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_malloc_trim_after_file",
+      lambda: True,
+  )
+  monkeypatch.setattr(gc, "collect", lambda: None)
+  monkeypatch.setattr(worker_memory.ctypes, "CDLL", _cdll)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_host_itimes.reset_host_itimes_caches",
+      lambda: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics.clear_worker_stage",
+      lambda: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+      "clear_daily_archive_members_cache",
+      lambda: None,
+  )
+
+  worker_memory.release_spawn_pool_worker_memory()
+  worker_memory.release_spawn_pool_worker_memory()
+  assert cdll_calls == ["libc.so.6"]
 
 
 def test_release_ingest_worker_heap_calls_malloc_trim_when_enabled(monkeypatch):
@@ -56,10 +102,11 @@ def test_release_ingest_worker_heap_calls_malloc_trim_when_enabled(monkeypatch):
       trim_calls.append(_arg)
       return 1
 
+  worker_memory.reset_libc_handle_for_tests()
   monkeypatch.setattr(st.cfg, "get_sync_ingest_malloc_trim_after_file", lambda: True)
   monkeypatch.setattr(st, "gc", gc)
   monkeypatch.setattr(st.gc, "collect", lambda: collect_calls.append(True))
-  monkeypatch.setattr(st.ctypes, "CDLL", lambda _name: _Libc())
+  monkeypatch.setattr(worker_memory.ctypes, "CDLL", lambda _name: _Libc())
   monkeypatch.setattr(
       st,
       "clear_daily_archive_members_cache",
@@ -80,6 +127,7 @@ def test_release_ingest_worker_heap_calls_malloc_trim_when_enabled(monkeypatch):
 def test_release_ingest_worker_memory_clears_l1_and_returns_meta(monkeypatch):
   trim_calls = []
   archive_helpers._DAILY_ARCHIVE_MEMBERS_CACHE["day"] = {"m": True}
+  worker_memory.reset_libc_handle_for_tests()
   monkeypatch.setattr(st.cfg, "get_sync_ingest_malloc_trim_after_file", lambda: True)
   monkeypatch.setattr(st, "gc", gc)
   monkeypatch.setattr(st.gc, "collect", lambda: None)
@@ -90,7 +138,7 @@ def test_release_ingest_worker_memory_clears_l1_and_returns_meta(monkeypatch):
       trim_calls.append(_arg)
       return 1
 
-  monkeypatch.setattr(st.ctypes, "CDLL", lambda _name: _Libc())
+  monkeypatch.setattr(worker_memory.ctypes, "CDLL", lambda _name: _Libc())
   monkeypatch.setattr(st, "measure_worker_rss_after_release", lambda _p: {
       "worker_pid": 999,
       "tasks_on_worker": 1,
@@ -106,7 +154,7 @@ def test_release_ingest_worker_memory_clears_l1_and_returns_meta(monkeypatch):
 def test_release_ingest_worker_heap_skips_malloc_trim_when_disabled(monkeypatch):
   monkeypatch.setattr(st.cfg, "get_sync_ingest_malloc_trim_after_file", lambda: False)
   monkeypatch.setattr(
-      st.ctypes,
+      worker_memory.ctypes,
       "CDLL",
       lambda _name: pytest.fail("CDLL should not run when trim disabled"),
   )

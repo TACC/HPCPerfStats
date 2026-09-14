@@ -19,6 +19,10 @@ import time
 from typing import Any, Callable, Iterable, Optional
 
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
+from hpcperfstats.dbload.lib.sync_timedb_mark_entries_cache import (
+    clear_mark_entries_cache,
+    load_cached_mark_entries,
+)
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     artifact_path,
     load_persistence_document,
@@ -80,18 +84,18 @@ def _default_archive_dir() -> str:
   return str(cfg.get_archive_dir_path() or "")
 
 
-def _load_entries(mark_path: str) -> dict:
+def _load_entries_uncached(mark_path: str) -> dict:
   """
-  Internal helper to load the entries.
-  
+  Load mark entries from disk without the process-local L1 cache.
+
   Args:
-    mark_path (str): String for mark path.
-  
+    mark_path (str): Path to the file-complete mark JSON.
+
   Returns:
-    dict: dict produced by this call.
-  
+    dict: Fingerprint -> metadata entries (empty on malformed payloads).
+
   Examples:
-    >>> _load_entries("x")  # doctest: +SKIP
+    >>> _load_entries_uncached("x")  # doctest: +SKIP
   """
   raw = load_persistence_document(
       mark_path,
@@ -106,17 +110,36 @@ def _load_entries(mark_path: str) -> dict:
   return dict(entries)
 
 
+def _load_entries(mark_path: str) -> dict:
+  """
+  Load mark entries via process-local mtime/size L1 cache.
+
+  Args:
+    mark_path (str): Path to the file-complete mark JSON.
+
+  Returns:
+    dict: Fingerprint -> metadata entries.
+
+  Examples:
+    >>> _load_entries("x")  # doctest: +SKIP
+  """
+  return load_cached_mark_entries(
+      mark_path,
+      load_uncached=_load_entries_uncached,
+  )
+
+
 def _save_entries(mark_path: str, entries: dict) -> None:
   """
-  Internal helper to save the entries.
-  
+  Persist mark entries and invalidate the process-local L1 cache.
+
   Args:
-    mark_path (str): String for mark path.
-    entries (dict): Mapping for entries.
-  
+    mark_path (str): Path to the file-complete mark JSON.
+    entries (dict): Fingerprint -> metadata mapping to write.
+
   Returns:
     None
-  
+
   Examples:
     >>> _save_entries("x", {})  # doctest: +SKIP
   """
@@ -128,6 +151,7 @@ def _save_entries(mark_path: str, entries: dict) -> None:
           "entries": entries,
       },
   )
+  clear_mark_entries_cache(mark_path)
 
 
 def has_file_complete_ingest_mark(

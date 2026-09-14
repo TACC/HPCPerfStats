@@ -315,3 +315,56 @@ def test_default_archive_dir_uses_conf(monkeypatch):
     lambda: None,
   )
   assert fcm._default_archive_dir() == ""
+
+
+def test_has_file_complete_mark_cache_one_json_load(tmp_path, monkeypatch):
+  """N has_* against an unchanged mark file must hit disk load once."""
+  from hpcperfstats.dbload.lib import sync_timedb_mark_entries_cache as mec
+
+  mec.reset_mark_entries_cache_for_tests()
+  seg = _seg(tmp_path)
+  assert fcm.record_file_complete_ingest_mark(
+      seg, archive_data_dir=str(tmp_path),
+  )
+  loads = {"n": 0}
+  real = fcm.load_persistence_document
+
+  def _count(path, kind, default=None):
+    loads["n"] += 1
+    return real(path, kind, default=default)
+
+  monkeypatch.setattr(fcm, "load_persistence_document", _count)
+  for _ in range(5):
+    assert fcm.has_file_complete_ingest_mark(
+        seg, archive_data_dir=str(tmp_path),
+    )
+  assert loads["n"] == 1
+
+
+def test_record_invalidates_file_complete_mark_cache(tmp_path, monkeypatch):
+  from hpcperfstats.dbload.lib import sync_timedb_mark_entries_cache as mec
+
+  mec.reset_mark_entries_cache_for_tests()
+  seg = _seg(tmp_path)
+  assert fcm.record_file_complete_ingest_mark(
+      seg, archive_data_dir=str(tmp_path),
+  )
+  loads = {"n": 0}
+  real = fcm.load_persistence_document
+
+  def _count(path, kind, default=None):
+    loads["n"] += 1
+    return real(path, kind, default=default)
+
+  monkeypatch.setattr(fcm, "load_persistence_document", _count)
+  assert fcm.has_file_complete_ingest_mark(
+      seg, archive_data_dir=str(tmp_path),
+  )
+  assert loads["n"] == 1
+  assert fcm.record_file_complete_ingest_mark(
+      seg, archive_data_dir=str(tmp_path),
+  )
+  assert fcm.has_file_complete_ingest_mark(
+      seg, archive_data_dir=str(tmp_path),
+  )
+  assert loads["n"] == 2

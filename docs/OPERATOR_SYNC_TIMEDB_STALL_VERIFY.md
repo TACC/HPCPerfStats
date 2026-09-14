@@ -801,13 +801,19 @@ Either line during catch-up is a **merge blocker** until RC is classified (see j
 
 Use a **single** `sh -lc` inside the container so PID resolution and `py-spy` share the same namespace. **Do not** pass a host `$MAIN_PID` or split across two `exec` calls — **podman-compose eats `--pid`** (`ParseIntError` / `InvalidDigit`).
 
+**Do not** use `py-spy dump --tid` (unsupported on the pinned image). Headers are `Thread N (idle|active)` — extract with `awk '$1=="Thread" && $2==tid'`. Top-5 `pcpu` SPIDs alone are **not** sole RCA; always add a frame-class tally (`json.load`, remaining_raw/find, zstd, merge_proc/parse, CDLL). Run `docker compose logs` on the **host**, never nested inside `exec`.
+
+Giant-file ingest with `parse_elapsed_s≈elapsed_s` is expected CPU; small files with high parse wall under full fill are contention — fix competing mark/find/gate work, do not raise pool size or rewrite streaming parse as the stall fix. Distinct-day `daily_tar_restore … reason=missing_tar` is expected unseal.
+
 ```bash
-cd hpcperfstats   # or HPCPerfStats checkout on site
-podman-compose exec -T pipeline su hpcperfstats -c "sh -lc '
-SUP=\$(pgrep -f \"[s]ync_timedb\" | head -1)
-echo main_pid=\$SUP
-py-spy dump --pid \"\$SUP\" 2>&1 | tail -80
-'"
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline sh -c '
+SUP=$(ps -eo pid=,args= | grep "[s]ync_timedb.py \[main\]" | grep -v "\[worker:" | awk "{print \$1; exit}")
+echo main_pid=$SUP
+py-spy dump --pid "$SUP" 2>&1 | tee /tmp/pyspy-sup.dump >/dev/null
+grep -c "json.load\|JSONDecoder" /tmp/pyspy-sup.dump || true
+grep -c "iter_find_printf_records_streaming\|build_remaining_raw_for_daily_tar" /tmp/pyspy-sup.dump || true
+grep -c "merge_proc_row_dicts\|parse_stats_file_streaming" /tmp/pyspy-sup.dump || true
+'
 ```
 
 **RC-F signature:** all pools idle; MainThread in `defer_for_ingest_handoff` ← `_requeue_day_close_handoff_paths` ← `complete_handoff_to_ingest` (pre-seal retryable) ← `_maybe_enqueue_immediate_day_close`.
@@ -815,7 +821,7 @@ py-spy dump --pid \"\$SUP\" 2>&1 | tail -80
 **T1 pass grep** (after deploy):
 
 ```bash
-podman-compose logs pipeline 2>&1 | grep -E 'chunk ingest summary|immediate day_close defer|ingest_stall_watchdog|oldest_day_unprocessed_frozen' | tail -40
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'chunk ingest summary|immediate day_close defer|ingest_stall_watchdog|oldest_day_unprocessed_frozen' | tail -40
 ```
 
 Expect `chunk ingest summary` to resume after `immediate day_close defer` for **`handoff_priority`** / **`handoff_recovery`** only (no **`closed_raw_guard`**); no `ingest_stall_watchdog` within 30 min of handoff enqueue.

@@ -1824,6 +1824,7 @@ def _run_day_close_job(
   remaining_raw = False
   tar_dropped = False
   stage = "init"
+  day_state = None
   try:
     from django.db import close_old_connections
 
@@ -1873,6 +1874,16 @@ def _run_day_close_job(
             )
         ),
     )
+    day_state = None
+    get_day = getattr(coord, "_get_or_create_day", None)
+    if callable(get_day):
+      try:
+        day_state = get_day(tar_path)
+        begin_memo = getattr(day_state, "_begin_closed_raw_pass_memo", None)
+        if callable(begin_memo):
+          begin_memo()
+      except Exception:
+        day_state = None
 
     def _stage_enter(name: str) -> None:
       """
@@ -2178,6 +2189,12 @@ def _run_day_close_job(
           _stage_exit("dedupe", result="fail", reason=type(exc).__name__)
 
     _stage_enter("seal")
+    remaining_fn = getattr(
+        coord, "remaining_raw_paths_blocking_tar_drop", None,
+    )
+    remaining_for_seal = (
+        remaining_fn(tar_path) if callable(remaining_fn) else {}
+    )
     seal_dirty_daily_archives(
         tgz_archive_dir,
         local_tz=get_local_timezone(),
@@ -2188,6 +2205,7 @@ def _run_day_close_job(
         seal_immediately_if_dirty=True,
         only_daily_tar_paths={tar_path},
         only_when_no_remaining_raw=True,
+        remaining_raw_by_gz=remaining_for_seal,
         log_fn=quiet,
     )
     _stage_exit("seal", result="ok")
@@ -2258,6 +2276,16 @@ def _run_day_close_job(
     )
     return "skipped"
   finally:
+    clear_memo = (
+        getattr(day_state, "_clear_closed_raw_pass_memo", None)
+        if day_state is not None
+        else None
+    )
+    if callable(clear_memo):
+      try:
+        clear_memo()
+      except Exception:
+        pass
     try:
       from django.db import close_old_connections as _close
 
