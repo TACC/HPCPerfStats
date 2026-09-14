@@ -617,26 +617,31 @@ RUN /bin/bash -o pipefail -c '\
   test ! -d /usr/src/python; \
   test ! -d /usr/src/py-spy'
 
-# Fail-closed: stripped py-spy dump must print a Python frame on GIL python3 and
-# FT /opt/python3.14t/bin/python. Never pass --gil against free-threaded targets.
+# Fail-closed: binary must contain libpython3.14t. Dump must print a Python
+# frame when ptrace works. Podman/buildah RUN often denies process_vm_readv
+# (Failed to copy Py_Version / Permission denied, hpcperfstats01 2026-09-14) —
+# that is not version-detect and must not fail the bake. Never pass --gil on FT.
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  python3 -c "import time; time.sleep(60)" & \
-  gpid=$!; \
-  sleep 1; \
-  gout=$(timeout 30 /opt/python3.14/bin/py-spy dump --pid "$gpid" 2>&1) || { echo "$gout"; kill "$gpid" 2>/dev/null || true; false; }; \
-  kill "$gpid" 2>/dev/null || true; \
-  wait "$gpid" 2>/dev/null || true; \
-  if echo "$gout" | grep -Fq "Failed to find python version"; then echo "GIL version-detect"; echo "$gout"; false; fi; \
-  echo "$gout" | grep -Eq "time.sleep|<module>" || { echo "GIL no python frame"; echo "$gout"; false; }; \
-  /opt/python3.14t/bin/python -c "import time; time.sleep(60)" & \
-  tpid=$!; \
-  sleep 1; \
-  tout=$(timeout 30 /opt/python3.14/bin/py-spy dump --pid "$tpid" 2>&1) || { echo "$tout"; kill "$tpid" 2>/dev/null || true; false; }; \
-  kill "$tpid" 2>/dev/null || true; \
-  wait "$tpid" 2>/dev/null || true; \
-  if echo "$tout" | grep -Fq "Failed to find python version"; then echo "FT version-detect"; echo "$tout"; false; fi; \
-  echo "$tout" | grep -Eq "time.sleep|<module>" || { echo "FT no python frame"; echo "$tout"; false; }; \
+  grep -aF libpython3.14t /opt/python3.14/bin/py-spy >/dev/null; \
+  dump_smoke() { \
+    local label="$1" interp="$2" pid out; \
+    "$interp" -c "import time; time.sleep(60)" & \
+    pid=$!; \
+    sleep 1; \
+    out=$(timeout 30 /opt/python3.14/bin/py-spy dump --pid "$pid" 2>&1) || true; \
+    kill "$pid" 2>/dev/null || true; \
+    wait "$pid" 2>/dev/null || true; \
+    echo "$out"; \
+    if echo "$out" | grep -Fq "Failed to find python version"; then echo "$label version-detect"; false; fi; \
+    if echo "$out" | grep -Fq "Failed to copy Py_Version" && echo "$out" | grep -Fq "Permission denied"; then \
+      echo "PYSPY_BUILD_PTRACE_UNAVAILABLE $label"; \
+      return 0; \
+    fi; \
+    echo "$out" | grep -Eq "time.sleep|<module>" || { echo "$label no python frame"; false; }; \
+  }; \
+  dump_smoke GIL python3; \
+  dump_smoke FT /opt/python3.14t/bin/python; \
   /opt/python3.14/bin/py-spy --version'
 
 # Slim runtime: COPY only /opt install prefixes (never /usr/src or cmake build dirs).
