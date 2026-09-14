@@ -222,7 +222,7 @@ services:
       timeout: 3s
       retries: 10
     stop_signal: SIGINT  # Preferred for faster, yet still graceful, shutdowns
-    stop_grace_period: 2m
+    stop_grace_period: 10m
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     environment:
@@ -313,7 +313,7 @@ services:
       timeout: 3s
       retries: 10
     stop_signal: SIGINT
-    stop_grace_period: 2m
+    stop_grace_period: 10m
     # PG18 docker-library prefers VOLUME /var/lib/postgresql (not .../data only).
     volumes:
       - postgres_data_pg18:/var/lib/postgresql
