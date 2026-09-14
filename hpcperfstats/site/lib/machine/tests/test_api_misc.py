@@ -876,6 +876,9 @@ class TestAdminMonitorHostStatDict:
     assert api._admin_monitor_host_stat_dict("", t0, now) is None
     assert api._admin_monitor_host_stat_dict("host", None, now) is None
     assert api._admin_monitor_host_stat_dict("short", t0, now) is None
+    assert api._admin_monitor_host_stat_dict(
+      "None Assigned.local", t0, now
+    ) is None
 
   def test_returns_row_with_isoformat_and_bucket(self):
     from hpcperfstats.site.lib.machine import api

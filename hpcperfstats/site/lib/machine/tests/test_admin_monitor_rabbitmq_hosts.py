@@ -116,6 +116,75 @@ class TestRabbitmqHostsSilentCensus:
     assert "c101-001.local" in hosts
     assert "c101-002.local" in hosts
 
+  def test_is_node_fqdn_rejects_none_assigned_placeholder(self):
+    from hpcperfstats.site.lib.machine import api
+
+    assert api._admin_monitor_is_node_fqdn("c101-001.local") is True
+    assert api._admin_monitor_is_node_fqdn("None Assigned.local") is False
+    assert api._admin_monitor_is_node_fqdn(
+      "none assigned.tacc.utexas.edu"
+    ) is False
+    assert api._admin_monitor_is_node_fqdn("None Assigned") is False
+    assert api._admin_monitor_is_node_fqdn("") is False
+
+  def test_job_table_census_skips_none_assigned_placeholder(self):
+    from hpcperfstats.site.lib.machine import api
+
+    cursor = MagicMock()
+    cursor.fetchall.return_value = [
+      ("c101-001",),
+      ("None Assigned",),
+      ("None Assigned.local",),
+    ]
+    cursor_cm = MagicMock()
+    cursor_cm.__enter__.return_value = cursor
+    cursor_cm.__exit__.return_value = None
+
+    with patch.object(api.connection, "vendor", "postgresql"), patch.object(
+      api.transaction,
+      "atomic",
+      return_value=contextlib.nullcontext(),
+    ), patch.object(
+      api.connection,
+      "cursor",
+      return_value=cursor_cm,
+    ), patch(
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_host_name_ext",
+      return_value="local",
+    ):
+      hosts = api._job_table_host_fqdns_last_7d()
+
+    assert hosts == ["c101-001.local"]
+    assert not any("none assigned" in h.casefold() for h in hosts)
+
+  def test_section_skips_none_assigned_from_redis_and_census(self):
+    from hpcperfstats.site.lib.machine import api
+
+    redis_row = {
+      "host": "None Assigned.example.com",
+      "last_time": "2026-09-14T10:00:00+00:00",
+      "age_bucket": "ok",
+    }
+    real_row = {
+      "host": "seen.example.com",
+      "last_time": "2026-09-14T10:00:00+00:00",
+      "age_bucket": "ok",
+    }
+    with patch.object(
+      api,
+      "_get_recent_rabbitmq_host_stats",
+      return_value=[redis_row, real_row],
+    ), patch.object(
+      api,
+      "_job_table_host_fqdns_last_7d",
+      return_value=["None Assigned.local", "silent.example.com"],
+    ), patch.object(api, "cached_orm", side_effect=lambda _k, _t, fn: fn()):
+      rows = api._get_rabbitmq_hosts_section()
+
+    hosts = [r["host"] for r in rows]
+    assert hosts == ["seen.example.com", "silent.example.com"]
+    assert not any("none assigned" in h.casefold() for h in hosts)
+
   def test_section_refresh_deletes_job_hosts_cache_key(self):
     from hpcperfstats.site.lib.machine import api
 

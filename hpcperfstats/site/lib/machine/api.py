@@ -617,6 +617,33 @@ def _age_bucket(age: timedelta) -> str:
     return "ok"
 
 
+def _admin_monitor_is_node_fqdn(host: Any) -> bool:
+    """
+    Return True when ``host`` is a real node FQDN for Admin Monitor.
+
+    Empty strings, names without a ``.``, and the job-log placeholder
+    ``None Assigned`` (including FQDN form ``None Assigned.<ext>``) are
+    not nodes.
+
+    Args:
+      host (Any): Hostname or FQDN from Redis, ``job_data.host_list``, or
+        census inventory. Non-strings are coerced with ``str``.
+
+    Returns:
+      bool: True when Admin Monitor should list this host.
+
+    Examples:
+      >>> _admin_monitor_is_node_fqdn("c101-001.local")
+      True
+      >>> _admin_monitor_is_node_fqdn("None Assigned.local")
+      False
+    """
+    host_s = str(host or "").strip()
+    if not host_s or "." not in host_s:
+        return False
+    return host_s.split(".", 1)[0].casefold() != "none assigned"
+
+
 def _admin_monitor_host_stat_dict(host: Any, last_time: Any, now: Any) -> Any:
     """
     Build one ``host_stats`` row for admin monitor, or ``None`` to skip this.
@@ -635,7 +662,7 @@ def _admin_monitor_host_stat_dict(host: Any, last_time: Any, now: Any) -> Any:
       >>> _admin_monitor_host_stat_dict(None, None, None)  # doctest: +SKIP
     """
     host = host or ""
-    if not host or last_time is None or "." not in host:
+    if last_time is None or not _admin_monitor_is_node_fqdn(host):
         return None
     age = now - last_time
     return {
@@ -1859,7 +1886,7 @@ def _get_recent_rabbitmq_host_stats() -> Any:
                 if not key_str.startswith("recent_host:"):
                     continue
                 host = key_str.split("recent_host:", 1)[1]
-                if not host or "." not in host:
+                if not _admin_monitor_is_node_fqdn(host):
                     continue
                 try:
                     raw_val = client.get(key)
@@ -1916,7 +1943,7 @@ def _job_table_host_fqdns_last_7d() -> list[str]:
         for row in rows:
             raw = row[0] if row else None
             fqdn = str(_as_host_data_fqdn(raw) or "").strip()
-            if not fqdn or "." not in fqdn:
+            if not _admin_monitor_is_node_fqdn(fqdn):
                 continue
             key = fqdn.casefold()
             if key in seen:
@@ -1957,7 +1984,11 @@ def _get_rabbitmq_hosts_section() -> list[dict[str, Any]]:
       >>> row["last_time"] is None and row["age_bucket"] == "gt_week"
       True
     """
-    rabbitmq_host_stats = list(_get_recent_rabbitmq_host_stats())
+    rabbitmq_host_stats = [
+        row
+        for row in _get_recent_rabbitmq_host_stats()
+        if _admin_monitor_is_node_fqdn(row.get("host"))
+    ]
     seen = {
         str(row.get("host") or "").casefold() for row in rabbitmq_host_stats
     }
@@ -1976,7 +2007,7 @@ def _get_rabbitmq_hosts_section() -> list[dict[str, Any]]:
         inventory = []
     for host in inventory or []:
         host_s = str(host or "").strip()
-        if not host_s or "." not in host_s:
+        if not _admin_monitor_is_node_fqdn(host_s):
             continue
         key = host_s.casefold()
         if key in seen:
