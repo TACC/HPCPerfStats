@@ -43,6 +43,10 @@ RUN set -eux; \
 
 RUN gcc -march=native -mtune=native -Q --help=target
 
+# /opt source pins: slowest-changing independent layers first (Docker cache).
+# zstd links /opt/lz4 + /opt/zlib-ng, so it stays after both even though zstd
+# itself ships ~yearly. Postgres + Timescale consume every /opt lib.
+
 ARG JEMALLOC_VERSION=5.3.1
 ARG JEMALLOC_SHA256=3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
 # --- jemalloc ---
@@ -58,6 +62,20 @@ RUN set -eux; \
   make -j"$(nproc)"; \
   make install; \
   rm -rf /usr/src/jemalloc /tmp/jemalloc.tar.bz2
+
+ARG LZ4_VERSION=1.10.0
+ARG LZ4_SHA256=537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b
+# --- lz4 ---
+RUN set -eux; \
+  curl -fsSL "https://github.com/lz4/lz4/archive/refs/tags/v${LZ4_VERSION}.tar.gz" \
+    -o /tmp/lz4.tar.gz; \
+  echo "${LZ4_SHA256}  /tmp/lz4.tar.gz" | sha256sum -c -; \
+  mkdir -p /usr/src/lz4; \
+  tar -xzf /tmp/lz4.tar.gz -C /usr/src/lz4 --strip-components=1; \
+  cd /usr/src/lz4; \
+  make -j"$(nproc)" CFLAGS="${OPT_CFLAGS_LIBS} -DLZ4_HEAPMODE=0" PREFIX=/opt/lz4; \
+  make install PREFIX=/opt/lz4; \
+  rm -rf /usr/src/lz4 /tmp/lz4.tar.gz
 
 ARG ICU_VERSION=78.3
 ARG ICU_SHA256=3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0
@@ -89,20 +107,6 @@ RUN set -eux; \
   make -j"$(nproc)" CFLAGS="${OPT_CFLAGS_LIBS}"; \
   make install; \
   rm -rf /usr/src/liburing /tmp/liburing.tar.gz
-
-ARG LZ4_VERSION=1.10.0
-ARG LZ4_SHA256=537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b
-# --- lz4 ---
-RUN set -eux; \
-  curl -fsSL "https://github.com/lz4/lz4/archive/refs/tags/v${LZ4_VERSION}.tar.gz" \
-    -o /tmp/lz4.tar.gz; \
-  echo "${LZ4_SHA256}  /tmp/lz4.tar.gz" | sha256sum -c -; \
-  mkdir -p /usr/src/lz4; \
-  tar -xzf /tmp/lz4.tar.gz -C /usr/src/lz4 --strip-components=1; \
-  cd /usr/src/lz4; \
-  make -j"$(nproc)" CFLAGS="${OPT_CFLAGS_LIBS} -DLZ4_HEAPMODE=0" PREFIX=/opt/lz4; \
-  make install PREFIX=/opt/lz4; \
-  rm -rf /usr/src/lz4 /tmp/lz4.tar.gz
 
 ARG ZLIB_NG_VERSION=2.2.5
 ARG ZLIB_NG_SHA256=5b3b022489f3ced82384f06db1e13ba148cbce38c7941e424d6cb414416acd18
@@ -324,10 +328,10 @@ ENV LANG=en_US.utf8
 RUN mkdir /docker-entrypoint-initdb.d
 
 COPY --from=db-build /opt/jemalloc /opt/jemalloc
-COPY --from=db-build /opt/zlib-ng /opt/zlib-ng
+COPY --from=db-build /opt/lz4 /opt/lz4
 COPY --from=db-build /opt/icu /opt/icu
 COPY --from=db-build /opt/liburing /opt/liburing
-COPY --from=db-build /opt/lz4 /opt/lz4
+COPY --from=db-build /opt/zlib-ng /opt/zlib-ng
 COPY --from=db-build /opt/zstd /opt/zstd
 COPY --from=db-build /usr/local /usr/local
 
