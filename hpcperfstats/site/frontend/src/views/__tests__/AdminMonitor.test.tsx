@@ -13,7 +13,13 @@ vi.mock("../../utils/copy-to-clipboard", () => ({
   copyToClipboard: vi.fn().mockResolvedValue(true),
 }));
 
+vi.mock("../../utils/download-text-file", () => ({
+  downloadTextFile: vi.fn(),
+}));
+
 import { copyToClipboard } from "../../utils/copy-to-clipboard";
+import { downloadTextFile } from "../../utils/download-text-file";
+import { RABBITMQ_HOST_BUCKET_DOWNLOAD_FILENAME } from "../../utils/format-rabbitmq-host-bucket-download";
 
 function mockSectionQuery(
   sectionResponses: Record<
@@ -145,6 +151,102 @@ describe("AdminMonitor", () => {
     await waitFor(() => {
       expect(screen.getByText("node2.example.com")).toBeInTheDocument();
     });
+  });
+
+  it("downloads all RabbitMQ freshness buckets and shows silent hosts without a count line", async () => {
+    mockSectionQuery({
+      rabbitmq_hosts: {
+        data: [
+          {
+            host: "fresh.example.com",
+            last_time: "2024-01-01T00:00:00Z",
+            age_bucket: "ok",
+          },
+          {
+            host: "silent.example.com",
+            last_time: null,
+            age_bucket: "gt_week",
+          },
+        ],
+      },
+    });
+
+    renderWithProviders(<AdminMonitor />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Most recent host data timestamps in RabbitMQ/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("fresh.example.com")).toBeInTheDocument();
+    });
+    expect(screen.getByText("silent.example.com")).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.getByText("> 1 week")).toBeInTheDocument();
+    expect(screen.queryByText(/silent host/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Download RabbitMQ host freshness buckets" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Download RabbitMQ host freshness buckets" }),
+    );
+    expect(downloadTextFile).toHaveBeenCalledWith(
+      RABBITMQ_HOST_BUCKET_DOWNLOAD_FILENAME,
+      [
+        "10_m_or_less = [fresh.example.com]",
+        "10_m_more = []",
+        "1_h_more = []",
+        "1_d_more = []",
+        "1_w_more = [silent.example.com]",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("hides Download while RabbitMQ host timestamps are initially loading", () => {
+    mockSectionQuery({
+      rabbitmq_hosts: { data: [], initialLoading: true },
+    });
+    renderWithProviders(<AdminMonitor />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Most recent host data timestamps in RabbitMQ/i,
+      }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Download RabbitMQ host freshness buckets" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("has no serious axe violations with RabbitMQ host timestamps expanded", async () => {
+    mockSectionQuery({
+      rabbitmq_hosts: {
+        data: [
+          {
+            host: "node2.example.com",
+            last_time: "2024-01-01T00:00:00Z",
+            age_bucket: "ok",
+          },
+          {
+            host: "silent.example.com",
+            last_time: null,
+            age_bucket: "gt_week",
+          },
+        ],
+      },
+    });
+    const view = renderWithProviders(<AdminMonitor />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Most recent host data timestamps in RabbitMQ/i,
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText("silent.example.com")).toBeInTheDocument();
+    });
+    expect(await axeSeriousViolations(view.container)).toEqual([]);
   });
 
   it("paginates host rows when many FQDN hosts are returned", async () => {

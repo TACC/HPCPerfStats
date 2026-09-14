@@ -32,6 +32,19 @@ describe("parse-api-response", () => {
     expect(parsed).toEqual(wire);
   });
 
+  it("accepts admin monitor rabbitmq_host_stats with null last_time", () => {
+    const wire = {
+      rabbitmq_host_stats: [
+        {
+          host: "silent.cluster.example",
+          last_time: null,
+          age_bucket: "gt_week",
+        },
+      ],
+    };
+    expect(parseApiResponse("GET", "/api/admin_monitor/", wire)).toEqual(wire);
+  });
+
   it("accepts job monitor wire envelope", () => {
     const wire = {
       window_days: 30,

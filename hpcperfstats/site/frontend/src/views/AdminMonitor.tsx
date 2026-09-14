@@ -38,6 +38,11 @@ import { copyToClipboard } from "../utils/copy-to-clipboard";
 import { formatDecimalStandard } from "../utils/formatDecimal";
 import { tableSortAriaSort, tableSortColumnArrow } from "../utils/table-sort-a11y";
 import { useDocumentTitle } from "../utils/useDocumentTitle";
+import { downloadTextFile } from "../utils/download-text-file";
+import {
+  formatRabbitmqHostBucketDownload,
+  RABBITMQ_HOST_BUCKET_DOWNLOAD_FILENAME,
+} from "../utils/format-rabbitmq-host-bucket-download";
 
 function formatAdminMonitorNumericStatistic(value: unknown) {
   if (value === null || value === undefined) return "—";
@@ -79,14 +84,16 @@ function AdminMonitorSectionRefreshButton({
   initialLoading,
   sectionBusy,
   onRefresh,
+  trailing,
 }: {
   initialLoading: boolean;
   sectionBusy: boolean;
   onRefresh: () => void;
+  trailing?: ReactNode;
 }) {
   if (initialLoading) return null;
   return (
-    <div className="mb-2 flex justify-end">
+    <div className="mb-2 flex justify-end gap-2">
       <Button
         type="button"
         variant="outline"
@@ -97,6 +104,7 @@ function AdminMonitorSectionRefreshButton({
       >
         {sectionBusy ? "Refreshing…" : "Refresh Data"}
       </Button>
+      {trailing}
     </div>
   );
 }
@@ -792,6 +800,24 @@ export default function AdminMonitor() {
             initialLoading={rabbitHostInitialLoading}
             sectionBusy={rabbitHostSectionBusy}
             onRefresh={() => setRabbitHostRefreshSeq((s) => s + 1)}
+            trailing={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-w-[110px]"
+                disabled={rabbitHostSectionBusy}
+                aria-label="Download RabbitMQ host freshness buckets"
+                onClick={() =>
+                  downloadTextFile(
+                    RABBITMQ_HOST_BUCKET_DOWNLOAD_FILENAME,
+                    formatRabbitmqHostBucketDownload(fqdnRabbitHostStats),
+                  )
+                }
+              >
+                Download
+              </Button>
+            }
           />
           {rabbitHostInitialLoading && (
             <LoadingMessage message="Loading RabbitMQ host timestamps…" />
@@ -807,8 +833,10 @@ export default function AdminMonitor() {
             <div className="rounded-md border">
             <Table className="border-0 text-sm">
                 <TableCaption className="sr-only">
-                  Hosts seen via RabbitMQ and their last data timestamps. Sort by host, last
-                  timestamp, or status freshness using the column header buttons.
+                  Hosts seen via RabbitMQ plus last-7-day job-table hosts with no
+                  Redis recent_host key, and their last data timestamps. Sort by
+                  host, last timestamp, or status freshness using the column
+                  header buttons.
                 </TableCaption>
                 <TableHeader>
                   <TableRow>

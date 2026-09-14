@@ -8,6 +8,7 @@ Cache keys should be unique per query; timeouts are in seconds.
 Attributes:
   KEY_ADMIN_CACHE_STATS: Attribute.
   KEY_ADMIN_HOST_STATS: Attribute.
+  KEY_ADMIN_RMQ_JOB_HOSTS_7D: Attribute.
   KEY_ADMIN_RMQ_SNAPSHOT: Attribute.
   KEY_ADMIN_RMQ_STATS: Attribute.
   KEY_ADMIN_TELEMETRY_HEALTH: Attribute.
@@ -672,6 +673,7 @@ KEY_HOST_SCHEMA = "host_schema"
 KEY_ADMIN_CACHE_STATS = "admin_monitor_cache_stats"
 KEY_ADMIN_RMQ_STATS = "admin_monitor_rmq_stats"
 KEY_ADMIN_RMQ_SNAPSHOT = "admin_monitor_rmq_snapshot"
+KEY_ADMIN_RMQ_JOB_HOSTS_7D = "admin_monitor_rmq_job_hosts_7d"
 KEY_ADMIN_TIMESCALE_STATS = "admin_monitor_timescaledb_stats"
 KEY_ADMIN_HOST_STATS = "admin_monitor_host_stats"
 KEY_ADMIN_XALT_STATS = "admin_monitor_xalt_stats"

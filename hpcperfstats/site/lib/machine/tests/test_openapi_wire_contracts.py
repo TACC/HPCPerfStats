@@ -177,6 +177,18 @@ ADMIN_MONITOR_HOSTS_WIRE = {
             "age_bucket": "ok",
         },
     ],
+    "rabbitmq_host_stats": [
+        {
+            "host": "n001.cluster.example",
+            "last_time": "2024-06-01T12:00:00+00:00",
+            "age_bucket": "ok",
+        },
+        {
+            "host": "silent.cluster.example",
+            "last_time": None,
+            "age_bucket": "gt_week",
+        },
+    ],
 }
 
 ADMIN_MONITOR_TELEMETRY_HEALTH_WIRE = {

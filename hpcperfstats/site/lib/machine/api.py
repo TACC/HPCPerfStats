@@ -106,6 +106,7 @@ from .cache_utils import (
     KEY_ADMIN_CACHE_STATS,
     KEY_ADMIN_RMQ_STATS,
     KEY_ADMIN_RMQ_SNAPSHOT,
+    KEY_ADMIN_RMQ_JOB_HOSTS_7D,
     KEY_ADMIN_TIMESCALE_STATS,
     KEY_ADMIN_HOST_STATS,
     KEY_ADMIN_XALT_STATS,
@@ -1880,6 +1881,115 @@ def _get_recent_rabbitmq_host_stats() -> Any:
     except Exception:
         host_stats = []
     return host_stats
+
+
+def _job_table_host_fqdns_last_7d() -> list[str]:
+    """
+    Distinct job_data.host_list FQDNs whose jobs ended in the last 7 days.
+
+    Uses ``SELECT DISTINCT unnest(host_list)`` (Postgres ``text[]``). Does not
+    scan ``host_data``. Fail-closed: returns ``[]`` on query errors.
+
+    Returns:
+      list[str]: Unique host_data-form FQDNs (must contain a ``.``).
+
+    Examples:
+      Short names become FQDNs before they are kept:
+
+      >>> from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+      ...     _as_host_data_fqdn)
+      >>> "." in str(_as_host_data_fqdn("c101-001") or "")
+      True
+    """
+    cutoff = timezone.now() - timedelta(days=7)
+    hosts: list[str] = []
+    seen: set[str] = set()
+    try:
+        with _pg_session_statement_timeout_for_admin_host_stats_query():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT DISTINCT unnest(host_list) "
+                    "FROM job_data WHERE end_time >= %s",
+                    [cutoff],
+                )
+                rows = cursor.fetchall()
+        for row in rows:
+            raw = row[0] if row else None
+            fqdn = str(_as_host_data_fqdn(raw) or "").strip()
+            if not fqdn or "." not in fqdn:
+                continue
+            key = fqdn.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            hosts.append(fqdn)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Failed to load last-7-day job_data hosts for admin_monitor: %s",
+            exc,
+            exc_info=True,
+        )
+        return []
+    return hosts
+
+
+def _get_rabbitmq_hosts_section() -> list[dict[str, Any]]:
+    """
+    Redis recent_host rows plus last-7-day job_data hosts missing from Redis.
+
+    Silent hosts are appended as ``gt_week`` rows with ``last_time`` ``None``
+    (``_admin_monitor_host_stat_dict`` skips missing timestamps). Census
+    inventory is cached under ``KEY_ADMIN_RMQ_JOB_HOSTS_7D``. Census errors
+    leave Redis rows unchanged.
+
+    Returns:
+      list[dict[str, Any]]: ``host``, ``last_time`` (ISO or ``None``),
+      ``age_bucket`` rows for Admin Monitor RabbitMQ timestamps.
+
+    Examples:
+      Silent rows use a null timestamp and the ``gt_week`` bucket:
+
+      >>> row = {
+      ...     "host": "n1.example.com",
+      ...     "last_time": None,
+      ...     "age_bucket": "gt_week",
+      ... }
+      >>> row["last_time"] is None and row["age_bucket"] == "gt_week"
+      True
+    """
+    rabbitmq_host_stats = list(_get_recent_rabbitmq_host_stats())
+    seen = {
+        str(row.get("host") or "").casefold() for row in rabbitmq_host_stats
+    }
+    try:
+        inventory = cached_orm(
+            KEY_ADMIN_RMQ_JOB_HOSTS_7D,
+            TIMEOUT_ADMIN_STATS,
+            _job_table_host_fqdns_last_7d,
+        )
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Failed to cache last-7-day job_data hosts for admin_monitor: %s",
+            exc,
+            exc_info=True,
+        )
+        inventory = []
+    for host in inventory or []:
+        host_s = str(host or "").strip()
+        if not host_s or "." not in host_s:
+            continue
+        key = host_s.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        rabbitmq_host_stats.append(
+            {
+                "host": host_s,
+                "last_time": None,
+                "age_bucket": "gt_week",
+            }
+        )
+    return rabbitmq_host_stats
 
 
 @ensure_csrf_cookie
@@ -4374,6 +4484,7 @@ def admin_monitor(request: Any) -> Any:
             "hosts": [KEY_ADMIN_HOST_STATS],
             "cache": [KEY_ADMIN_CACHE_STATS],
             "rabbitmq": [KEY_ADMIN_RMQ_STATS, KEY_ADMIN_RMQ_SNAPSHOT],
+            "rabbitmq_hosts": [KEY_ADMIN_RMQ_JOB_HOSTS_7D],
             "timescaledb": [KEY_ADMIN_TIMESCALE_STATS],
             "xalt": [KEY_ADMIN_XALT_STATS],
             "telemetry_health": [KEY_ADMIN_TELEMETRY_HEALTH],
@@ -4394,7 +4505,7 @@ def admin_monitor(request: Any) -> Any:
         host_stats = cached_orm(KEY_ADMIN_HOST_STATS, TIMEOUT_ADMIN_STATS, _host_stats_fn)
         return Response({"host_stats": host_stats})
     if section == "rabbitmq_hosts":
-        return Response({"rabbitmq_host_stats": _get_recent_rabbitmq_host_stats()})
+        return Response({"rabbitmq_host_stats": _get_rabbitmq_hosts_section()})
     if section == "cache":
         return Response({"cache_stats": _get_cache_stats()})
     if section == "rabbitmq":
@@ -4409,7 +4520,7 @@ def admin_monitor(request: Any) -> Any:
         )
 
     host_stats = cached_orm(KEY_ADMIN_HOST_STATS, TIMEOUT_ADMIN_STATS, _host_stats_fn)
-    rabbitmq_host_stats = _get_recent_rabbitmq_host_stats()
+    rabbitmq_host_stats = _get_rabbitmq_hosts_section()
     cache_stats = _get_cache_stats()
     rabbitmq_stats = _get_rabbitmq_stats()
     timescaledb_stats = _get_timescaledb_stats()

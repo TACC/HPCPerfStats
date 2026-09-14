@@ -132,6 +132,7 @@ class TestAdminMonitorRefresh:
     assert api.KEY_ADMIN_XALT_STATS in deleted_keys
     assert api.KEY_ADMIN_RMQ_SNAPSHOT in deleted_keys
     assert api.KEY_ADMIN_TELEMETRY_HEALTH in deleted_keys
+    assert api.KEY_ADMIN_RMQ_JOB_HOSTS_7D in deleted_keys
 
 
 @pytest.mark.django_db(databases=[])
@@ -742,6 +743,9 @@ class TestAdminMonitor:
             "last_time": "2026-03-23T10:00:00+00:00",
             "age_bucket": "ok",
         }],
+    ), patch(
+        "hpcperfstats.site.lib.machine.api._job_table_host_fqdns_last_7d",
+        return_value=[],
     ):
       response = api.admin_monitor(request)
 

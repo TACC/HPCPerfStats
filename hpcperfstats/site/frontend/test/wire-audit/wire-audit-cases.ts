@@ -196,6 +196,13 @@ export const WIRE_AUDIT_CASES: WireAuditCase[] = [
           age_bucket: "ok",
         },
       ],
+      rabbitmq_host_stats: [
+        {
+          host: "silent.cluster.example",
+          last_time: null,
+          age_bucket: "gt_week",
+        },
+      ],
       telemetry_health: {
         window_hours: 12,
         computed_at: "2024-01-01T00:00:00+00:00",
