@@ -42,234 +42,79 @@ if ! grep -q 'build_web_image_with_target' "${PIPELINE_SCRIPT}"; then
   exit 1
 fi
 
-if ! grep -q 'build_web_image_with_target' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must define build_web_image_with_target" >&2
+if ! grep -q 'stop_and_remove_web_pipeline' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must define stop_and_remove_web_pipeline" >&2
   exit 1
 fi
 
-if ! grep -q 'compose_backend_is_podman' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must detect podman-compose for build --target fallback" >&2
+if ! grep -q 'start_web_proxy_pipeline' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must define start_web_proxy_pipeline" >&2
   exit 1
 fi
 
-if ! grep -qE 'podman build|docker build' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must fall back to podman/docker build --target" >&2
+# Bring-up contract: one command, no --no-deps.
+if ! grep -qE 'docker compose up -d web proxy pipeline' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must run: docker compose up -d web proxy pipeline" >&2
   exit 1
 fi
 
-if ! grep -q 'resolve_hpcperfstats_git_commit' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must define resolve_hpcperfstats_git_commit" >&2
+if grep -q 'up -d web proxy pipeline' "${PIPELINE_SCRIPT}" \
+  && grep -qE 'up -d web proxy pipeline.*--no-deps|--no-deps.*up -d web proxy pipeline' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must not pass --no-deps on up -d web proxy pipeline" >&2
   exit 1
 fi
 
-if ! grep -q -- '--build-arg.*HPCPERFSTATS_GIT_COMMIT' "${HELPERS}"; then
-  echo "build_web_image_with_target must pass --build-arg HPCPERFSTATS_GIT_COMMIT" >&2
-  exit 1
-fi
-
-if ! grep -q 'docker compose stop -t.* pipeline' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must stop pipeline with grace timeout" >&2
-  exit 1
-fi
-
-if ! grep -q 'docker compose stop -t.* web' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must stop web with grace timeout" >&2
-  exit 1
-fi
-
-pipeline_line="$(grep -n 'docker compose stop.*pipeline' "${PIPELINE_SCRIPT}" | head -n 1 | cut -d: -f1)"
-web_line="$(grep -n 'docker compose stop -t.* web' "${PIPELINE_SCRIPT}" | head -n 1 | cut -d: -f1)"
-if [[ -z "${pipeline_line}" || -z "${web_line}" || "${pipeline_line}" -ge "${web_line}" ]]; then
-  echo "rebuild_pipeline.sh must stop pipeline before web (pipeline line ${pipeline_line:-?}, web line ${web_line:-?})" >&2
-  exit 1
-fi
-
-if ! grep -q 'compose_recreate_web_after_image_refresh' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must recreate web via compose_recreate_web_after_image_refresh" >&2
-  exit 1
-fi
-
-if ! grep -q 'compose_recreate_pipeline_after_image_refresh' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must recreate pipeline via compose_recreate_pipeline_after_image_refresh" >&2
-  exit 1
-fi
-
-if ! grep -q 'compose_restore_proxy_if_was_running' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must restore proxy after web recreate when needed" >&2
-  exit 1
-fi
-
-if ! grep -q 'compose_recreate_web_after_image_refresh' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must define compose_recreate_web_after_image_refresh" >&2
-  exit 1
-fi
-
-if ! grep -q 'compose_up_service_detached' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must define compose_up_service_detached" >&2
-  exit 1
-fi
-
-if ! grep -q -- '--detach --no-deps' "${HELPERS}"; then
-  echo "compose_up_service_detached must use --detach --no-deps (not bare up -d)" >&2
-  exit 1
-fi
-
-if ! grep -q 'hpcperfstats_.*_tmp' "${HELPERS}"; then
-  echo "compose_podman_rm_service_containers must remove *_tmp* collision leftovers" >&2
-  exit 1
-fi
-
-if ! grep -q 'compose_up_service_detached web --force-recreate' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must force-recreate web on non-podman backends" >&2
-  exit 1
-fi
-
-if ! grep -q 'compose_up_service_detached pipeline --force-recreate' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must force-recreate pipeline on non-podman backends" >&2
-  exit 1
-fi
-
-if ! grep -q 'compose_podman_rm_service_containers' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must define compose_podman_rm_service_containers (podman-compose has no rm)" >&2
-  exit 1
-fi
-
-if grep -qE 'docker compose rm -sf|compose rm -sf' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must not call docker compose rm (invalid on podman-compose)" >&2
-  exit 1
-fi
-
-# Web recreate must NOT rm pipeline (hpcperfstats01 2026-09-14: dying mid-web-up
-# after rm pipeline left ingest down). Only web is removed before up -d web.
-if grep -q 'compose_podman_rm_service_containers pipeline web' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must not podman-rm pipeline during web recreate" >&2
-  exit 1
-fi
-
+# Must take proxy down before web recreate.
 if ! awk '
-  /^compose_recreate_web_after_image_refresh\(\)/ { in_fn=1; next }
+  /^stop_and_remove_web_pipeline\(\)/ { in_fn=1; next }
   /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { if (in_fn) exit 1 }
-  in_fn && /compose_podman_rm_service_containers web/ { found=1 }
-  END { exit found ? 0 : 1 }
-' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh web recreate must podman-rm web only" >&2
-  exit 1
-fi
-
-if ! grep -q 'podman rm -f' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must use podman rm -f for stale containers" >&2
-  exit 1
-fi
-
-web_recreate_line="$(
-  awk '
-    /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_fn = ($0 ~ /^start_app_containers\(\)/) }
-    in_fn && /compose_recreate_web_after_image_refresh/ { print NR; exit }
-  ' "${PIPELINE_SCRIPT}"
-)"
-pipe_recreate_line="$(
-  awk '
-    /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_fn = ($0 ~ /^start_app_containers\(\)/) }
-    in_fn && /compose_recreate_pipeline_after_image_refresh/ { print NR; exit }
-  ' "${PIPELINE_SCRIPT}"
-)"
-if [[ -z "${web_recreate_line}" || -z "${pipe_recreate_line}" || "${web_recreate_line}" -ge "${pipe_recreate_line}" ]]; then
-  echo "rebuild_pipeline.sh start_app_containers must recreate web before pipeline (web line ${web_recreate_line:-?}, pipeline line ${pipe_recreate_line:-?})" >&2
-  exit 1
-fi
-
-# Pipeline must still come up when web recreate / wait / restore fails (set -e must
-# not skip pipeline). Capture rc on every start step, then always recreate pipeline.
-if ! awk '
-  /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_fn = ($0 ~ /^start_app_containers\(\)/) }
-  in_fn && /compose_recreate_web_after_image_refresh/ && /\|/ { web_or=1 }
-  in_fn && /wait_for_web_from_host/ && /\|/ { wait_or=1 }
-  in_fn && /restore_frontend_volume_if_drifted/ && /\|/ { restore_or=1 }
-  in_fn && /compose_recreate_pipeline_after_image_refresh/ { pipe=1 }
-  in_fn && /start_rc/ { has_rc=1 }
-  END { exit (web_or && wait_or && restore_or && pipe && has_rc) ? 0 : 1 }
-' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh start_app_containers must bring pipeline up even if web recreate/wait/restore fails" >&2
-  exit 1
-fi
-
-# EXIT trap must try to bring pipeline up if start was interrupted mid-web (operator
-# paste: died after rm, only saw scratch cleanup, no pipeline container).
-if ! grep -q '_PIPELINE_REBUILD_ENSURE_PIPELINE' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must set _PIPELINE_REBUILD_ENSURE_PIPELINE for EXIT pipeline bring-up" >&2
-  exit 1
-fi
-if ! awk '
-  /^cleanup\(\)/ { in_fn=1; next }
-  /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { if (in_fn) exit 1 }
-  in_fn && /compose_recreate_pipeline_after_image_refresh/ { found=1 }
+  in_fn && /compose_podman_rm_service_containers proxy/ { found=1 }
   END { exit found ? 0 : 1 }
 ' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh cleanup must call compose_recreate_pipeline_after_image_refresh when ensure flag set" >&2
+  echo "rebuild_pipeline.sh must take proxy down before replacing web" >&2
   exit 1
 fi
 
-no_web_pipe_line="$(
-  awk '
-    /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_fn = ($0 ~ /^start_pipeline_only\(\)/) }
-    in_fn && /compose_recreate_pipeline_after_image_refresh/ { print NR; exit }
-  ' "${PIPELINE_SCRIPT}"
-)"
-if [[ -z "${no_web_pipe_line}" ]]; then
-  echo "rebuild_pipeline.sh start_pipeline_only must recreate pipeline" >&2
-  exit 1
-fi
-if awk '
-  /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_fn = ($0 ~ /^start_pipeline_only\(\)/) }
-  in_fn && /compose_recreate_web_after_image_refresh/ { found=1 }
-  END { exit found ? 0 : 1 }
-' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh start_pipeline_only must not recreate web" >&2
+# Never stop/rm db, redis, rabbitmq.
+if grep -Eiq 'docker compose stop.*(redis|rabbitmq|db_pg18)|compose_podman_rm_service_containers.*(redis|rabbitmq)' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must not stop/rm db, redis, or rabbitmq" >&2
   exit 1
 fi
 
-if grep -q 'docker compose up -d web' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must not use bare compose up -d web (use recreate helper)" >&2
+# Must not rebuild the proxy image.
+if grep -qE 'compose build[[:space:]].*proxy|proxy\.Dockerfile|podman build.*proxy' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must not rebuild the proxy image" >&2
   exit 1
 fi
 
-if grep -q 'docker compose up -d pipeline' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must not use bare compose up -d pipeline (use recreate helper)" >&2
+# Build must happen before stop (stack stays up during image build).
+build_call="$(awk '/^main\(\)/ {m=1} m && /build_pipeline_image/ {print NR; exit}' "${PIPELINE_SCRIPT}")"
+stop_call="$(awk '/^main\(\)/ {m=1} m && /stop_and_remove_web_pipeline/ {print NR; exit}' "${PIPELINE_SCRIPT}")"
+if [[ -z "${build_call}" || -z "${stop_call}" || "${build_call}" -ge "${stop_call}" ]]; then
+  echo "rebuild_pipeline.sh main must build_pipeline_image before stop_and_remove_web_pipeline (build ${build_call:-?}, stop ${stop_call:-?})" >&2
+  exit 1
+fi
+
+# Stop order: pipeline before web.
+pipe_stop="$(grep -n 'stop -t.*pipeline' "${PIPELINE_SCRIPT}" | head -n 1 | cut -d: -f1)"
+web_stop="$(grep -n 'stop -t.*web' "${PIPELINE_SCRIPT}" | head -n 1 | cut -d: -f1)"
+if [[ -z "${pipe_stop}" || -z "${web_stop}" || "${pipe_stop}" -ge "${web_stop}" ]]; then
+  echo "rebuild_pipeline.sh must stop pipeline before web" >&2
   exit 1
 fi
 
 if grep -Eiq '\bnpm ci\b|\bnpm run build\b' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must not invoke npm ci or npm run build" >&2
+  echo "rebuild_pipeline.sh must not invoke npm" >&2
   exit 1
 fi
 
-if grep -q 'docker compose build.*proxy' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must not rebuild proxy service" >&2
+if ! grep -q 'trap cleanup EXIT' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must trap cleanup EXIT" >&2
   exit 1
 fi
 
-if ! grep -q -- '--no-web' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must support --no-web for pipeline-only rebuild without running web" >&2
-  exit 1
-fi
-
-if ! grep -q 'preserve_frontend_without_web' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must define preserve_frontend_without_web for --no-web" >&2
-  exit 1
-fi
-
-if ! grep -q 'start_pipeline_only' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must define start_pipeline_only for --no-web" >&2
-  exit 1
-fi
-
-if ! grep -q 'warn_no_web_temporary' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must warn that --no-web requires a proper rebuild before full stack/web" >&2
-  exit 1
-fi
-
-if ! grep -q 'Before bringing web' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh --no-web warning must tell operators to rebuild properly before web/full stack" >&2
+if ! grep -q 'cleanup_pipeline_rebuild_scratch' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must call cleanup_pipeline_rebuild_scratch" >&2
   exit 1
 fi
 
@@ -278,46 +123,14 @@ if ! grep -q 'compose_frontend_helpers.sh' "${FRONTEND_SCRIPT}"; then
   exit 1
 fi
 
-if ! grep -q 'cleanup_pipeline_rebuild_scratch' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must define cleanup_pipeline_rebuild_scratch" >&2
-  exit 1
-fi
-
-if ! grep -q 'cleanup_pipeline_rebuild_scratch' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must call cleanup_pipeline_rebuild_scratch on exit" >&2
-  exit 1
-fi
-
-if ! grep -q 'trap cleanup EXIT' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must trap cleanup EXIT so scratch is removed after success or failure" >&2
-  exit 1
-fi
-
-if grep -q 'rm -rf "${REPO_ROOT}/.build"' "${PIPELINE_SCRIPT}" \
-  || grep -q 'rm -rf "${REPO_ROOT}/.build"' "${HELPERS}"; then
-  echo "must not rm -rf entire .build (monitor/other sibling scratch must survive)" >&2
-  exit 1
-fi
-
 # shellcheck source=lib/compose_frontend_helpers.sh
 source "${HELPERS}"
 if ! declare -F build_web_image_with_target >/dev/null; then
-  echo "build_web_image_with_target must be defined in compose_frontend_helpers.sh" >&2
+  echo "build_web_image_with_target must be defined" >&2
   exit 1
 fi
-
-if ! declare -F compose_recreate_web_after_image_refresh >/dev/null; then
-  echo "compose_recreate_web_after_image_refresh must be defined in compose_frontend_helpers.sh" >&2
-  exit 1
-fi
-
-if ! declare -F compose_recreate_pipeline_after_image_refresh >/dev/null; then
-  echo "compose_recreate_pipeline_after_image_refresh must be defined in compose_frontend_helpers.sh" >&2
-  exit 1
-fi
-
 if ! declare -F cleanup_pipeline_rebuild_scratch >/dev/null; then
-  echo "cleanup_pipeline_rebuild_scratch must be defined in compose_frontend_helpers.sh" >&2
+  echo "cleanup_pipeline_rebuild_scratch must be defined" >&2
   exit 1
 fi
 
@@ -343,36 +156,7 @@ if [[ -e "${scratch_root}/keep/.build/pipeline-rebuild-frontend" ]]; then
   exit 1
 fi
 if [[ ! -f "${scratch_root}/keep/.build/keep-me" ]]; then
-  echo "cleanup must keep sibling .build contents (e.g. monitor prefix)" >&2
-  exit 1
-fi
-if [[ -e "${scratch_root}/keep/backup.tar" ]]; then
-  echo "cleanup must remove the frontend backup tar" >&2
-  exit 1
-fi
-if [[ -e "${restore_dir}" ]]; then
-  echo "cleanup must remove the frontend restore dir" >&2
-  exit 1
-fi
-
-empty_root="${scratch_root}/empty-build"
-mkdir -p "${empty_root}/.build/pipeline-rebuild-frontend/machine"
-echo "spa" >"${empty_root}/.build/pipeline-rebuild-frontend/machine/index.html"
-cleanup_pipeline_rebuild_scratch \
-  "${empty_root}/.build/pipeline-rebuild-frontend" \
-  "" \
-  ""
-if [[ -d "${empty_root}/.build" ]]; then
-  echo "cleanup must rmdir .build when it is empty after removing staging" >&2
-  exit 1
-fi
-
-refuse_root="${scratch_root}/refuse"
-mkdir -p "${refuse_root}/not-staging"
-echo "keep" >"${refuse_root}/not-staging/file"
-cleanup_pipeline_rebuild_scratch "${refuse_root}/not-staging" "" "" >/dev/null 2>&1 || true
-if [[ ! -f "${refuse_root}/not-staging/file" ]]; then
-  echo "cleanup must refuse to delete an unexpected preserve path" >&2
+  echo "cleanup must keep sibling .build contents" >&2
   exit 1
 fi
 

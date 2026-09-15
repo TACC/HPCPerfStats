@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# Rebuild the shared hpcperfstats image (Python/pipeline code) without rerunning npm.
+# Rebuild the shared hpcperfstats image (Python/pipeline; no npm), then recreate
+# web + pipeline. Leaves db, redis, rabbitmq alone. Does NOT rebuild the proxy
+# image — proxy is taken down, then restored via ``up -d web proxy pipeline``.
 #
-# web and pipeline share the hpcperfstats image tag. This script stops pipeline and
-# web, builds the hpcperfstats-pipeline-refresh Dockerfile target (preserved frontend
-# tree from the live deployment), then recreates web and always brings pipeline
-# back up last (EXIT trap also starts pipeline if start was interrupted). db,
-# redis, rabbitmq, and proxy are left running (podman-compose briefly stops
-# proxy while recreating web; web recreate does not rm the pipeline container).
+# Flow (minimize downtime — build while old containers keep running):
+#   1. Preserve live STATIC_ROOT/frontend into the build context (web still up)
+#   2. Build --target hpcperfstats-pipeline-refresh (stack still up on old image)
+#   3. Stop pipeline + web; down proxy
+#   4. Remove web + pipeline (+ proxy) containers
+#   5. docker compose up -d web proxy pipeline  (new image)
 #
 # Usage (from the git checkout that contains docker-compose.yaml):
 #   ./scripts/rebuild_pipeline.sh
 #   ./scripts/rebuild_pipeline.sh --dry-run
 #   ./scripts/rebuild_pipeline.sh --build-only
 #   ./scripts/rebuild_pipeline.sh --no-start
-#   ./scripts/rebuild_pipeline.sh --no-web
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,43 +29,36 @@ FRONTEND_RESTORE_DIR=""
 _PIPELINE_REBUILD_CLEANUP_DONE=0
 PIPELINE_STOP_TIMEOUT="${HPCPERFSTATS_PIPELINE_STOP_TIMEOUT:-300}"
 WEB_STOP_TIMEOUT="${HPCPERFSTATS_WEB_STOP_TIMEOUT:-120}"
+PROXY_STOP_TIMEOUT="${HPCPERFSTATS_PROXY_STOP_TIMEOUT:-30}"
 WEB_WAIT_TIMEOUT="${HPCPERFSTATS_WEB_WAIT_TIMEOUT:-600}"
-# Set when start begins so EXIT can still ``up -d pipeline`` if the script dies
-# mid-web (hpcperfstats01 2026-09-14: died after container rm, no pipeline).
-_PIPELINE_REBUILD_ENSURE_PIPELINE=0
-_PIPELINE_REBUILD_PIPELINE_STARTED=0
 
 DRY_RUN=0
 BUILD_ONLY=0
 NO_START=0
-NO_WEB=0
 SKIP_FRONTEND_VERIFY=0
 
 usage() {
   cat <<'EOF'
 Usage: scripts/rebuild_pipeline.sh [options]
 
-Rebuild web/pipeline image (Python only) without npm frontend-builder. Preserves
-live STATIC_ROOT/frontend from the running web container, stops pipeline then web,
-builds --target hpcperfstats-pipeline-refresh, recreates web, then always brings
-pipeline back up last (even if web wait / SPA restore fails).
+Rebuild the shared hpcperfstats image (Python only, no npm) while the stack
+stays up, then cut over: down proxy / web / pipeline and
+
+  docker compose up -d web proxy pipeline
+
+Leaves db / db_pg18 / redis / rabbitmq running. Does not rebuild the proxy image.
 
 IMPORTANT: This does NOT ship SPA/OpenAPI/Orval fixes. After frontend changes run:
   ./scripts/rebuild_frontend.sh
-Otherwise the browser keeps the previous /machine/ bundle (stale job-list date filter,
-hollow Bokeh Zod, etc.).
 
 Options:
   --dry-run                 Print planned steps only
   --build-only              Preserve frontend + build image; do not stop/start
-  --no-start                Stop + build; skip compose up
-  --no-web                  Pipeline-only: no running web required; do not start web.
-                            Seeds SPA from the existing image (or placeholders).
-                            Temporary — run a proper rebuild before bringing web /
-                            the full stack back into service.
+  --no-start                Build + stop; skip compose up
   --skip-frontend-verify    Skip live SPA shell / fingerprint checks (dev only)
   --pipeline-stop-timeout S Timeout for compose stop pipeline (default 300)
-  Env HPCPERFSTATS_WEB_STOP_TIMEOUT  Grace seconds for compose stop web (default 120)
+  Env HPCPERFSTATS_WEB_STOP_TIMEOUT    Grace for stop web (default 120)
+  Env HPCPERFSTATS_PROXY_STOP_TIMEOUT  Grace for proxy down (default 30)
   -h, --help                Show this help
 EOF
 }
@@ -84,9 +78,8 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --no-web)
-      NO_WEB=1
-      SKIP_FRONTEND_VERIFY=1
-      shift
+      echo "rebuild_pipeline.sh: --no-web removed; web must be cycled with the shared image" >&2
+      exit 2
       ;;
     --skip-frontend-verify)
       SKIP_FRONTEND_VERIFY=1
@@ -117,14 +110,6 @@ run_cmd() {
   "$@"
 }
 
-warn_no_web_temporary() {
-  cat <<'EOF' >&2
-WARN: --no-web is a temporary pipeline-only rebuild (web is not required and will not be started).
-Before bringing web / the full stack back into service, rebuild properly with web available:
-  ./scripts/rebuild_pipeline.sh
-EOF
-}
-
 preflight() {
   if [[ ! -f "${REPO_ROOT}/docker-compose.yaml" ]]; then
     echo "rebuild_pipeline.sh: docker-compose.yaml not found under ${REPO_ROOT}" >&2
@@ -135,14 +120,13 @@ preflight() {
     exit 1
   fi
   cd "${REPO_ROOT}"
-  if ! docker compose config --services 2>/dev/null | grep -qx web; then
-    echo "rebuild_pipeline.sh: compose stack has no web service" >&2
-    exit 1
-  fi
-  if ! docker compose config --services 2>/dev/null | grep -qx pipeline; then
-    echo "rebuild_pipeline.sh: compose stack has no pipeline service" >&2
-    exit 1
-  fi
+  local svc
+  for svc in web pipeline; do
+    if ! docker compose config --services 2>/dev/null | grep -qx "${svc}"; then
+      echo "rebuild_pipeline.sh: compose stack has no ${svc} service" >&2
+      exit 1
+    fi
+  done
 }
 
 capture_live_frontend_fingerprint() {
@@ -158,8 +142,8 @@ verify_live_frontend_ready() {
     return 0
   fi
   if ! web_service_running; then
-    echo "rebuild_pipeline.sh: web is not running; cannot verify live frontend" >&2
-    echo "Start web, or pass --no-web for a temporary pipeline-only rebuild." >&2
+    echo "rebuild_pipeline.sh: web is not running; cannot preserve live frontend" >&2
+    echo "Start web first, or pass --skip-frontend-verify." >&2
     exit 1
   fi
   verify_spa_shells_via_compose \
@@ -202,62 +186,6 @@ preserve_frontend_for_build() {
   verify_spa_shells "${PRESERVE_FRONTEND_DIR}" "pipeline-rebuild preserve dir"
 }
 
-# Copy package static frontend from an existing image (no running web container).
-try_extract_frontend_from_image() {
-  local image_name="$1"
-  local dest="$2"
-  local cid=""
-  local cli=()
-
-  if podman_cli_available && podman image exists "${image_name}" >/dev/null 2>&1; then
-    cli=(podman)
-  elif command -v docker >/dev/null 2>&1 \
-    && docker image inspect "${image_name}" >/dev/null 2>&1; then
-    cli=(docker)
-  else
-    return 1
-  fi
-
-  cid="$("${cli[@]}" create "${image_name}")" || return 1
-  if ! "${cli[@]}" cp "${cid}:${CONTAINER_STATIC_FRONTEND}/." "${dest}/"; then
-    "${cli[@]}" rm -f "${cid}" >/dev/null 2>&1 || true
-    return 1
-  fi
-  "${cli[@]}" rm -f "${cid}" >/dev/null 2>&1 || true
-  [[ -f "${dest}/machine/index.html" && -f "${dest}/pub/index.html" ]]
-}
-
-write_placeholder_spa_shells() {
-  local dest="$1"
-  mkdir -p "${dest}/machine" "${dest}/pub"
-  printf '%s\n' '<!doctype html><title>hpcperfstats --no-web placeholder</title>' \
-    >"${dest}/machine/index.html"
-  cp "${dest}/machine/index.html" "${dest}/pub/index.html"
-}
-
-preserve_frontend_without_web() {
-  echo "Seeding ${PRESERVE_FRONTEND_DIR} without a running web container ..."
-  if [[ "${DRY_RUN}" -eq 1 ]]; then
-    echo "[dry-run] would seed ${PRESERVE_FRONTEND_DIR} from image or placeholders"
-    return 0
-  fi
-
-  mkdir -p "${PRESERVE_FRONTEND_DIR}"
-  rm -rf "${PRESERVE_FRONTEND_DIR:?}/"*
-
-  local image_name
-  image_name="$(compose_web_image_name)"
-  if try_extract_frontend_from_image "${image_name}" "${PRESERVE_FRONTEND_DIR}"; then
-    echo "Seeded SPA shells from image ${image_name}"
-    verify_spa_shells "${PRESERVE_FRONTEND_DIR}" "pipeline-rebuild preserve dir (--no-web from image)"
-    return 0
-  fi
-
-  echo "WARN: could not extract SPA from image ${image_name}; writing placeholder shells" >&2
-  write_placeholder_spa_shells "${PRESERVE_FRONTEND_DIR}"
-  verify_spa_shells "${PRESERVE_FRONTEND_DIR}" "pipeline-rebuild preserve dir (--no-web placeholders)"
-}
-
 restore_frontend_volume_if_drifted() {
   if [[ "${SKIP_FRONTEND_VERIFY}" -eq 1 ]]; then
     return 0
@@ -283,7 +211,7 @@ restore_frontend_volume_if_drifted() {
   post_fp="$(fingerprint_in_container web "${CONTAINER_STATIC_ROOT_FRONTEND}/machine/index.html")"
   if [[ "${post_fp}" != "${LIVE_FRONTEND_FINGERPRINT}" ]]; then
     echo "rebuild_pipeline.sh: frontend restore failed (expected ${LIVE_FRONTEND_FINGERPRINT}, got ${post_fp})" >&2
-    exit 1
+    return 1
   fi
   echo "Restored live frontend volume fingerprint: ${post_fp}"
 }
@@ -313,69 +241,45 @@ wait_for_web_from_host() {
 }
 
 build_pipeline_image() {
-  echo "Building web image target=${PIPELINE_BUILD_TARGET} (no npm frontend-builder) ..."
+  echo "Building image target=${PIPELINE_BUILD_TARGET} (no npm; no proxy rebuild) ..."
   if [[ "${DRY_RUN}" -eq 1 ]]; then
-    echo "[dry-run] would build web image target=${PIPELINE_BUILD_TARGET}"
+    echo "[dry-run] would build image target=${PIPELINE_BUILD_TARGET}"
     return 0
   fi
   build_web_image_with_target "${PIPELINE_BUILD_TARGET}"
 }
 
-stop_pipeline_only() {
-  echo "Stopping pipeline (grace ${PIPELINE_STOP_TIMEOUT}s; --no-web leaves web alone) ..."
-  run_cmd docker compose stop -t "${PIPELINE_STOP_TIMEOUT}" pipeline
-}
-
-stop_app_containers() {
+# Stop/rm pipeline + web; always down proxy (no proxy image rebuild).
+# Never touch db / redis / rabbitmq.
+stop_and_remove_web_pipeline() {
+  echo "Leaving db / redis / rabbitmq running. Not rebuilding proxy image."
   echo "Stopping pipeline (grace ${PIPELINE_STOP_TIMEOUT}s) ..."
-  run_cmd docker compose stop -t "${PIPELINE_STOP_TIMEOUT}" pipeline
+  run_cmd docker compose stop -t "${PIPELINE_STOP_TIMEOUT}" pipeline || true
   echo "Stopping web (grace ${WEB_STOP_TIMEOUT}s) ..."
-  run_cmd docker compose stop -t "${WEB_STOP_TIMEOUT}" web
+  run_cmd docker compose stop -t "${WEB_STOP_TIMEOUT}" web || true
+
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    echo "[dry-run] would down proxy, then rm web+pipeline+proxy"
+    return 0
+  fi
+
+  echo "Taking proxy down ..."
+  docker compose stop -t "${PROXY_STOP_TIMEOUT}" proxy >/dev/null 2>&1 || true
+  compose_podman_rm_service_containers proxy
+
+  echo "Removing web + pipeline containers ..."
+  compose_podman_rm_service_containers web pipeline
 }
 
-start_pipeline_only() {
-  export HPCPERFSTATS_SCRIPT_DRY_RUN="${DRY_RUN}"
-  _PIPELINE_REBUILD_ENSURE_PIPELINE=1
-  echo "Recreating pipeline on refreshed image (--no-web; web not started) ..."
-  compose_recreate_pipeline_after_image_refresh
-  _PIPELINE_REBUILD_PIPELINE_STARTED=1
-  echo "Pipeline-only image refresh complete."
-}
-
-start_app_containers() {
-  export HPCPERFSTATS_SCRIPT_DRY_RUN="${DRY_RUN}"
-  # Always bring pipeline up at the end — including when web recreate fails under
-  # set -e (hpcperfstats01: died after podman rm, EXIT only cleaned scratch).
-  local start_rc=0
-  _PIPELINE_REBUILD_ENSURE_PIPELINE=1
-  echo "Recreating web on refreshed image ..."
-  compose_recreate_web_after_image_refresh || start_rc=$?
-  if [[ "${DRY_RUN}" -eq 0 && "${start_rc}" -eq 0 ]]; then
-    wait_for_web_from_host || start_rc=$?
+# Proxy is already down. One detached up for web, proxy, and pipeline.
+start_web_proxy_pipeline() {
+  echo "Starting web, proxy, and pipeline: docker compose up -d web proxy pipeline"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    echo "[dry-run] docker compose up -d web proxy pipeline"
+    return 0
   fi
-  if [[ "${start_rc}" -eq 0 ]]; then
-    restore_frontend_volume_if_drifted || start_rc=$?
-  else
-    echo "WARN: skipping frontend restore after earlier start failure (rc=${start_rc})" >&2
-  fi
-  compose_restore_proxy_if_was_running || true
-  if [[ "${start_rc}" -eq 0 && "${SKIP_FRONTEND_VERIFY}" -eq 0 && "${DRY_RUN}" -eq 0 ]]; then
-    verify_spa_shells_via_compose \
-      "${CONTAINER_STATIC_ROOT_FRONTEND}" \
-      "STATIC_ROOT/frontend (post-rebuild)" || start_rc=$?
-    if [[ "${start_rc}" -eq 0 ]] && docker compose exec -T proxy true >/dev/null 2>&1; then
-      verify_proxy_frontend_matches_web || true
-    fi
-  fi
-  echo "Recreating pipeline on refreshed image ..."
-  compose_recreate_pipeline_after_image_refresh
-  _PIPELINE_REBUILD_PIPELINE_STARTED=1
-  if [[ "${start_rc}" -ne 0 ]]; then
-    echo "rebuild_pipeline.sh: pipeline was recreated, but earlier start step failed (rc=${start_rc})" >&2
-    return "${start_rc}"
-  fi
-  echo "Pipeline image refresh complete (SPA bundle unchanged)."
-  echo "If you changed frontend/OpenAPI, also run: ./scripts/rebuild_frontend.sh"
+  cd "${REPO_ROOT}"
+  docker compose up -d web proxy pipeline
 }
 
 cleanup() {
@@ -383,15 +287,6 @@ cleanup() {
     return 0
   fi
   _PIPELINE_REBUILD_CLEANUP_DONE=1
-  if [[ "${_PIPELINE_REBUILD_ENSURE_PIPELINE}" -eq 1 \
-    && "${_PIPELINE_REBUILD_PIPELINE_STARTED}" -eq 0 \
-    && "${DRY_RUN}" -eq 0 ]]; then
-    echo "EXIT: ensuring pipeline is started after interrupted rebuild ..." >&2
-    export HPCPERFSTATS_SCRIPT_DRY_RUN=0
-    compose_recreate_pipeline_after_image_refresh || \
-      echo "rebuild_pipeline.sh: EXIT pipeline bring-up failed (rc=$?)" >&2
-    _PIPELINE_REBUILD_PIPELINE_STARTED=1
-  fi
   cleanup_pipeline_rebuild_scratch \
     "${PRESERVE_FRONTEND_DIR:-}" \
     "${FRONTEND_BACKUP_TAR:-}" \
@@ -401,44 +296,44 @@ cleanup() {
 main() {
   preflight
 
-  if [[ "${NO_WEB}" -eq 1 ]]; then
-    warn_no_web_temporary
-    preserve_frontend_without_web
-  else
-    verify_live_frontend_ready
-    backup_live_frontend_volume
-    preserve_frontend_for_build
-  fi
-
-  if [[ "${BUILD_ONLY}" -eq 0 ]]; then
-    if [[ "${NO_WEB}" -eq 1 ]]; then
-      stop_pipeline_only
-    else
-      stop_app_containers
-    fi
-  fi
-
+  # Keep running containers up through the (long) image build.
+  verify_live_frontend_ready
+  backup_live_frontend_volume
+  preserve_frontend_for_build
   build_pipeline_image
 
-  if [[ "${BUILD_ONLY}" -eq 1 || "${NO_START}" -eq 1 ]]; then
-    echo "Skipping container start (--build-only or --no-start)."
-    if [[ "${NO_WEB}" -eq 1 ]]; then
-      warn_no_web_temporary
+  if [[ "${BUILD_ONLY}" -eq 1 ]]; then
+    echo "Skipping stop/start (--build-only). New image is tagged; containers still on old image."
+    return 0
+  fi
+
+  stop_and_remove_web_pipeline
+
+  if [[ "${NO_START}" -eq 1 ]]; then
+    echo "Skipping container start (--no-start). Stack is down; up when ready:"
+    echo "  docker compose up -d web proxy pipeline"
+    return 0
+  fi
+
+  start_web_proxy_pipeline
+
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    wait_for_web_from_host || \
+      echo "WARN: web host wait failed; containers may still be starting" >&2
+    restore_frontend_volume_if_drifted || \
+      echo "WARN: frontend restore skipped/failed" >&2
+    if [[ "${SKIP_FRONTEND_VERIFY}" -eq 0 ]]; then
+      verify_spa_shells_via_compose \
+        "${CONTAINER_STATIC_ROOT_FRONTEND}" \
+        "STATIC_ROOT/frontend (post-rebuild)" || true
     fi
-    return 0
   fi
 
-  if [[ "${NO_WEB}" -eq 1 ]]; then
-    start_pipeline_only
-    warn_no_web_temporary
-    echo "Pipeline-only rebuild complete. Confirm with:"
-    echo "  docker compose logs -f pipeline | grep -E 'pending reconcile cap|startup maintenance idle|Number of host stats files'"
-    return 0
+  echo "Rebuild complete (built while up → cut over to new image). Status:"
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    docker compose ps web pipeline proxy 2>/dev/null || docker compose ps 2>/dev/null || true
   fi
-
-  start_app_containers
-  echo "Pipeline rebuild complete. Confirm ingest with:"
-  echo "  docker compose logs -f pipeline | grep -E 'pending reconcile cap|startup maintenance idle|Number of host stats files'"
+  echo "If you changed frontend/OpenAPI, also run: ./scripts/rebuild_frontend.sh"
 }
 
 trap cleanup EXIT

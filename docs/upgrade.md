@@ -15,12 +15,11 @@ Do **not** mix these procedures into a greenfield install. Fresh clones should `
    | Task | Command |
    |------|---------|
    | Rebuild SPA in running stack (optional hot path; no pipeline restart) | `./scripts/rebuild_frontend.sh` |
-   | Rebuild web/pipeline image after Python-only changes (preserves live frontend, no npm) | `./scripts/rebuild_pipeline.sh` |
-   | Temporary pipeline-only rebuild (no running web; recreate pipeline only) | `./scripts/rebuild_pipeline.sh --no-web` |
-   | Detached recreate of web+pipeline only (no build, no log attach) | `./scripts/recreate_web_pipeline.sh` |
+   | Rebuild shared hpcperfstats image; down proxy; ``up -d web proxy pipeline`` (db/redis/rabbitmq stay up; proxy image not rebuilt) | `./scripts/rebuild_pipeline.sh` |
+   | Detached recreate of web+pipeline only (no image build) | `./scripts/recreate_web_pipeline.sh` |
    | Rebuild just the app and keep persistent services running | `docker compose stop -t 120 web pipeline proxy && docker compose up --build -d web pipeline && docker compose start proxy` |
 
-   **`./scripts/rebuild_pipeline.sh`** and **`./scripts/recreate_web_pipeline.sh`** start containers with **`--detach --no-deps`** (never foreground `up`, never `logs -f`). **`rebuild_pipeline.sh`** does **not** restart **`proxy`** except when the podman path briefly stopped it during web recreate. After Let's Encrypt renew or changing **`server=`** / TLS source path, **`docker compose restart proxy`**.
+   **`./scripts/rebuild_pipeline.sh`** rebuilds **`hpcperfstats`**, preserves live SPA, takes **proxy** down (same image), then **`docker compose up -d web proxy pipeline`**. Leaves **db** / **redis** / **rabbitmq** running. After Let's Encrypt renew or changing **`server=`** / TLS source path, **`docker compose restart proxy`**.
 
 3. SPA rebuilds and image builds bake the running git SHA into the staff actions menu (`SITE_GIT_COMMIT`). Image builds copy context `.git` into `frontend-builder` for `git rev-parse` (then strip `.git` from the runtime image after `COPY . .`). Optional `HPCPERFSTATS_GIT_COMMIT` build-arg / env still overrides when set. SPA-only **`./scripts/rebuild_frontend.sh`** exports the host SHA the same way.
 

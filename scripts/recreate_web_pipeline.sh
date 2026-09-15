@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Replace web then pipeline in the background and exit. No log attach, no watch.
 #
-# Use after an image rebuild left containers missing / named ``*_tmp*``, or when
-# you need a fire-and-forget recreate without a foreground compose up or
-# following container logs.
+# This does NOT rebuild the image. For a Python/code image rebuild use:
+#   ./scripts/rebuild_pipeline.sh
+#
+# Use when containers are missing / named ``*_tmp*``, or you need a fire-and-forget
+# recreate of existing ``localhost/hpcperfstats:latest`` without watching logs.
 #
 # Usage (from the git checkout that contains docker-compose.yaml):
 #   ./scripts/recreate_web_pipeline.sh
@@ -23,8 +25,10 @@ usage() {
   cat <<'EOF'
 Usage: scripts/recreate_web_pipeline.sh [options]
 
-Recreate compose ``web`` then ``pipeline`` detached (--detach --no-deps).
-Prints ``compose ps`` and exits — does NOT attach logs or wait on supervisord.
+Recreate compose web then pipeline from the CURRENT image (no docker build).
+Uses --detach --no-deps; prints compose ps and exits (does not attach logs).
+
+For an image rebuild: ./scripts/rebuild_pipeline.sh
 
 Options:
   --pipeline-only   Skip web; recreate pipeline only
@@ -75,6 +79,10 @@ preflight() {
 main() {
   preflight
   export HPCPERFSTATS_SCRIPT_DRY_RUN="${DRY_RUN}"
+
+  echo "NOTE: this script does NOT rebuild the image (no docker/podman build)."
+  echo "      It only replaces web/pipeline containers from localhost/hpcperfstats:latest."
+  echo "      Image rebuild: ./scripts/rebuild_pipeline.sh"
 
   if [[ "${PIPELINE_ONLY}" -eq 0 ]]; then
     echo "Recreating web (detached) ..."

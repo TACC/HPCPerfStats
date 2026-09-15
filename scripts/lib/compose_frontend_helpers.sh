@@ -493,13 +493,37 @@ wait_for_web_http() {
   return 1
 }
 
-# Set to 1 when compose_recreate_web_after_image_refresh stopped a running proxy (podman path).
+# Set to 1 when compose_recreate_web_after_image_refresh removed proxy (podman path).
 COMPOSE_PROXY_WAS_RUNNING="${COMPOSE_PROXY_WAS_RUNNING:-0}"
 
 compose_service_running() {
   local service="$1"
   cd "${REPO_ROOT}"
   docker compose ps --status running --services "${service}" 2>/dev/null | grep -qx "${service}"
+}
+
+# True if the project container exists (running or stopped). Podman refuses
+# ``rm`` of web while proxy still exists as a dependent — stop alone is not enough
+# (hpcperfstats01 2026-09-14: dependent container must be removed).
+compose_service_container_exists() {
+  local service="$1"
+  local name="hpcperfstats_${service}_1"
+  cd "${REPO_ROOT}"
+  if podman_cli_available; then
+    if podman container exists "${name}" >/dev/null 2>&1; then
+      return 0
+    fi
+    if podman ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${name}"; then
+      return 0
+    fi
+  fi
+  if docker compose ps -a --services 2>/dev/null | grep -qx "${service}"; then
+    return 0
+  fi
+  if command -v docker >/dev/null 2>&1     && docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${name}"; then
+    return 0
+  fi
+  return 1
 }
 
 # podman-compose has no ``rm`` subcommand (Docker Compose v2 only). Remove stale
@@ -519,22 +543,24 @@ compose_podman_rm_service_containers() {
     # podman-compose ``ps`` often exits non-zero; never abort the rebuild on probe.
     cid="$(docker compose ps -q "${service}" 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)"
     if [[ -n "${cid}" ]]; then
-      "${rm_cli[@]}" "${cid}" 2>/dev/null || true
+      "${rm_cli[@]}" "${cid}" >/dev/null 2>&1 || true
     fi
     name="$(docker compose ps --format '{{.Name}}' "${service}" 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)"
     if [[ -n "${name}" ]]; then
-      "${rm_cli[@]}" "${name}" 2>/dev/null || true
+      "${rm_cli[@]}" "${name}" >/dev/null 2>&1 || true
     fi
-    "${rm_cli[@]}" "hpcperfstats_${service}_1" 2>/dev/null || true
+    "${rm_cli[@]}" "hpcperfstats_${service}_1" >/dev/null 2>&1 || true
     if podman_cli_available; then
+      # --depend clears podman dependency edges (proxy->web) when present.
+      podman rm -f --depend "hpcperfstats_${service}_1" >/dev/null 2>&1 || true
       while IFS= read -r tmp; do
         [[ -n "${tmp}" ]] || continue
-        podman rm -f "${tmp}" 2>/dev/null || true
+        podman rm -f --depend "${tmp}" >/dev/null 2>&1 || true
       done < <(podman ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^hpcperfstats_${service}_tmp" || true)
     elif command -v docker >/dev/null 2>&1; then
       while IFS= read -r tmp; do
         [[ -n "${tmp}" ]] || continue
-        docker rm -f "${tmp}" 2>/dev/null || true
+        docker rm -f "${tmp}" >/dev/null 2>&1 || true
       done < <(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^hpcperfstats_${service}_tmp" || true)
     fi
   done
@@ -555,7 +581,7 @@ compose_recreate_web_after_image_refresh() {
   cd "${REPO_ROOT}"
   if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
     if compose_backend_is_podman; then
-      echo "[dry-run] podman: stop proxy; podman rm -f web (+ web_tmp*); compose up --detach --no-deps web"
+      echo "[dry-run] podman: rm proxy (depend); podman rm -f web (+ web_tmp*); compose up --detach --no-deps web"
     else
       echo "[dry-run] docker compose up --detach --force-recreate --no-deps web"
     fi
@@ -564,13 +590,17 @@ compose_recreate_web_after_image_refresh() {
 
   if compose_backend_is_podman; then
     COMPOSE_PROXY_WAS_RUNNING=0
-    if compose_service_running proxy; then
+    # Podman: proxy depends_on web — ``podman rm web`` fails while proxy exists
+    # even if proxy is only stopped. Remove proxy, then restore after web is up.
+    if compose_service_running proxy || compose_service_container_exists proxy; then
       COMPOSE_PROXY_WAS_RUNNING=1
-      echo "Stopping proxy (podman: release web container dependency) ..."
-      docker compose stop proxy || true
+      echo "Removing proxy (podman: must clear dependent container before web rm) ..."
+      docker compose stop proxy >/dev/null 2>&1 || true
+      compose_podman_rm_service_containers proxy
     fi
-    # Do NOT rm pipeline here. A mid-web failure must not leave ingest deleted;
-    # pipeline is recreated separately at the end of rebuild_pipeline.sh.
+    # Do NOT intentionally rm pipeline here; recreate it after web.
+    # (podman rm --depend on web may still drop pipeline if linked — start_app /
+    # recreate_web_pipeline always brings pipeline back up.)
     echo "Removing stopped web container (and any web_tmp* leftovers) ..."
     compose_podman_rm_service_containers web
     compose_up_service_detached web
