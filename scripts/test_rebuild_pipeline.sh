@@ -119,8 +119,20 @@ if grep -qE 'docker compose rm -sf|compose rm -sf' "${HELPERS}"; then
   exit 1
 fi
 
-if ! grep -q 'compose_podman_rm_service_containers pipeline web' "${HELPERS}"; then
-  echo "compose_frontend_helpers.sh must podman-rm pipeline+web before web up" >&2
+# Web recreate must NOT rm pipeline (hpcperfstats01 2026-09-14: dying mid-web-up
+# after rm pipeline left ingest down). Only web is removed before up -d web.
+if grep -q 'compose_podman_rm_service_containers pipeline web' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must not podman-rm pipeline during web recreate" >&2
+  exit 1
+fi
+
+if ! awk '
+  /^compose_recreate_web_after_image_refresh\(\)/ { in_fn=1; next }
+  /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { if (in_fn) exit 1 }
+  in_fn && /compose_podman_rm_service_containers web/ { found=1 }
+  END { exit found ? 0 : 1 }
+' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh web recreate must podman-rm web only" >&2
   exit 1
 fi
 
@@ -146,17 +158,34 @@ if [[ -z "${web_recreate_line}" || -z "${pipe_recreate_line}" || "${web_recreate
   exit 1
 fi
 
-# Pipeline must still come up when web wait / frontend restore fails (podman already
-# removed the pipeline container during web recreate). Capture rc, then recreate.
+# Pipeline must still come up when web recreate / wait / restore fails (set -e must
+# not skip pipeline). Capture rc on every start step, then always recreate pipeline.
 if ! awk '
   /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_fn = ($0 ~ /^start_app_containers\(\)/) }
+  in_fn && /compose_recreate_web_after_image_refresh/ && /\|/ { web_or=1 }
   in_fn && /wait_for_web_from_host/ && /\|/ { wait_or=1 }
   in_fn && /restore_frontend_volume_if_drifted/ && /\|/ { restore_or=1 }
   in_fn && /compose_recreate_pipeline_after_image_refresh/ { pipe=1 }
   in_fn && /start_rc/ { has_rc=1 }
-  END { exit (wait_or && restore_or && pipe && has_rc) ? 0 : 1 }
+  END { exit (web_or && wait_or && restore_or && pipe && has_rc) ? 0 : 1 }
 ' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh start_app_containers must bring pipeline up at the end even if web wait/restore fails" >&2
+  echo "rebuild_pipeline.sh start_app_containers must bring pipeline up even if web recreate/wait/restore fails" >&2
+  exit 1
+fi
+
+# EXIT trap must try to bring pipeline up if start was interrupted mid-web (operator
+# paste: died after rm, only saw scratch cleanup, no pipeline container).
+if ! grep -q '_PIPELINE_REBUILD_ENSURE_PIPELINE' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must set _PIPELINE_REBUILD_ENSURE_PIPELINE for EXIT pipeline bring-up" >&2
+  exit 1
+fi
+if ! awk '
+  /^cleanup\(\)/ { in_fn=1; next }
+  /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { if (in_fn) exit 1 }
+  in_fn && /compose_recreate_pipeline_after_image_refresh/ { found=1 }
+  END { exit found ? 0 : 1 }
+' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh cleanup must call compose_recreate_pipeline_after_image_refresh when ensure flag set" >&2
   exit 1
 fi
 

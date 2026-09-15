@@ -4,8 +4,9 @@
 # web and pipeline share the hpcperfstats image tag. This script stops pipeline and
 # web, builds the hpcperfstats-pipeline-refresh Dockerfile target (preserved frontend
 # tree from the live deployment), then recreates web and always brings pipeline
-# back up last (even if web wait / SPA restore fails). db, redis, rabbitmq, and
-# proxy are left running (podman-compose briefly stops proxy while recreating web).
+# back up last (EXIT trap also starts pipeline if start was interrupted). db,
+# redis, rabbitmq, and proxy are left running (podman-compose briefly stops
+# proxy while recreating web; web recreate does not rm the pipeline container).
 #
 # Usage (from the git checkout that contains docker-compose.yaml):
 #   ./scripts/rebuild_pipeline.sh
@@ -28,6 +29,10 @@ _PIPELINE_REBUILD_CLEANUP_DONE=0
 PIPELINE_STOP_TIMEOUT="${HPCPERFSTATS_PIPELINE_STOP_TIMEOUT:-300}"
 WEB_STOP_TIMEOUT="${HPCPERFSTATS_WEB_STOP_TIMEOUT:-120}"
 WEB_WAIT_TIMEOUT="${HPCPERFSTATS_WEB_WAIT_TIMEOUT:-600}"
+# Set when start begins so EXIT can still ``up -d pipeline`` if the script dies
+# mid-web (hpcperfstats01 2026-09-14: died after container rm, no pipeline).
+_PIPELINE_REBUILD_ENSURE_PIPELINE=0
+_PIPELINE_REBUILD_PIPELINE_STARTED=0
 
 DRY_RUN=0
 BUILD_ONLY=0
@@ -330,27 +335,30 @@ stop_app_containers() {
 
 start_pipeline_only() {
   export HPCPERFSTATS_SCRIPT_DRY_RUN="${DRY_RUN}"
+  _PIPELINE_REBUILD_ENSURE_PIPELINE=1
   echo "Recreating pipeline on refreshed image (--no-web; web not started) ..."
   compose_recreate_pipeline_after_image_refresh
+  _PIPELINE_REBUILD_PIPELINE_STARTED=1
   echo "Pipeline-only image refresh complete."
 }
 
 start_app_containers() {
   export HPCPERFSTATS_SCRIPT_DRY_RUN="${DRY_RUN}"
-  # Podman web recreate removes the pipeline container first; always bring
-  # pipeline back up at the end even if web wait / SPA restore fails.
+  # Always bring pipeline up at the end — including when web recreate fails under
+  # set -e (hpcperfstats01: died after podman rm, EXIT only cleaned scratch).
   local start_rc=0
+  _PIPELINE_REBUILD_ENSURE_PIPELINE=1
   echo "Recreating web on refreshed image ..."
-  compose_recreate_web_after_image_refresh
-  if [[ "${DRY_RUN}" -eq 0 ]]; then
+  compose_recreate_web_after_image_refresh || start_rc=$?
+  if [[ "${DRY_RUN}" -eq 0 && "${start_rc}" -eq 0 ]]; then
     wait_for_web_from_host || start_rc=$?
   fi
   if [[ "${start_rc}" -eq 0 ]]; then
     restore_frontend_volume_if_drifted || start_rc=$?
   else
-    echo "WARN: skipping frontend restore after web wait failure (rc=${start_rc})" >&2
+    echo "WARN: skipping frontend restore after earlier start failure (rc=${start_rc})" >&2
   fi
-  compose_restore_proxy_if_was_running
+  compose_restore_proxy_if_was_running || true
   if [[ "${start_rc}" -eq 0 && "${SKIP_FRONTEND_VERIFY}" -eq 0 && "${DRY_RUN}" -eq 0 ]]; then
     verify_spa_shells_via_compose \
       "${CONTAINER_STATIC_ROOT_FRONTEND}" \
@@ -361,6 +369,7 @@ start_app_containers() {
   fi
   echo "Recreating pipeline on refreshed image ..."
   compose_recreate_pipeline_after_image_refresh
+  _PIPELINE_REBUILD_PIPELINE_STARTED=1
   if [[ "${start_rc}" -ne 0 ]]; then
     echo "rebuild_pipeline.sh: pipeline was recreated, but earlier start step failed (rc=${start_rc})" >&2
     return "${start_rc}"
@@ -374,6 +383,15 @@ cleanup() {
     return 0
   fi
   _PIPELINE_REBUILD_CLEANUP_DONE=1
+  if [[ "${_PIPELINE_REBUILD_ENSURE_PIPELINE}" -eq 1 \
+    && "${_PIPELINE_REBUILD_PIPELINE_STARTED}" -eq 0 \
+    && "${DRY_RUN}" -eq 0 ]]; then
+    echo "EXIT: ensuring pipeline is started after interrupted rebuild ..." >&2
+    export HPCPERFSTATS_SCRIPT_DRY_RUN=0
+    compose_recreate_pipeline_after_image_refresh || \
+      echo "rebuild_pipeline.sh: EXIT pipeline bring-up failed (rc=$?)" >&2
+    _PIPELINE_REBUILD_PIPELINE_STARTED=1
+  fi
   cleanup_pipeline_rebuild_scratch \
     "${PRESERVE_FRONTEND_DIR:-}" \
     "${FRONTEND_BACKUP_TAR:-}" \

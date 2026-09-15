@@ -515,12 +515,13 @@ compose_podman_rm_service_containers() {
     rm_cli=(docker rm -f)
   fi
   for service in "$@"; do
-    cid="$(docker compose ps -q "${service}" 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+    # podman-compose ``ps`` often exits non-zero; never abort the rebuild on probe.
+    cid="$(docker compose ps -q "${service}" 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)"
     if [[ -n "${cid}" ]]; then
       "${rm_cli[@]}" "${cid}" 2>/dev/null || true
       continue
     fi
-    name="$(docker compose ps --format '{{.Name}}' "${service}" 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+    name="$(docker compose ps --format '{{.Name}}' "${service}" 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)"
     if [[ -z "${name}" ]]; then
       name="hpcperfstats_${service}_1"
     fi
@@ -532,7 +533,7 @@ compose_recreate_web_after_image_refresh() {
   cd "${REPO_ROOT}"
   if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
     if compose_backend_is_podman; then
-      echo "[dry-run] podman: stop proxy; podman rm -f pipeline+web containers; compose up -d web"
+      echo "[dry-run] podman: stop proxy; podman rm -f web container; compose up -d web"
     else
       echo "[dry-run] docker compose up -d --force-recreate --no-deps web"
     fi
@@ -546,8 +547,10 @@ compose_recreate_web_after_image_refresh() {
       echo "Stopping proxy (podman: release web container dependency) ..."
       docker compose stop proxy || true
     fi
-    echo "Removing stopped pipeline and web containers (podman) ..."
-    compose_podman_rm_service_containers pipeline web
+    # Do NOT rm pipeline here. A mid-web failure must not leave ingest deleted;
+    # pipeline is recreated separately at the end of rebuild_pipeline.sh.
+    echo "Removing stopped web container (podman) ..."
+    compose_podman_rm_service_containers web
     echo "Starting web with refreshed image ..."
     docker compose up -d web
     return 0
