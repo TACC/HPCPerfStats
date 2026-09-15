@@ -27,8 +27,8 @@ PRESERVE_FRONTEND_DIR="${REPO_ROOT}/.build/pipeline-rebuild-frontend"
 FRONTEND_BACKUP_TAR=""
 FRONTEND_RESTORE_DIR=""
 _PIPELINE_REBUILD_CLEANUP_DONE=0
-PIPELINE_STOP_TIMEOUT="${HPCPERFSTATS_PIPELINE_STOP_TIMEOUT:-300}"
-WEB_STOP_TIMEOUT="${HPCPERFSTATS_WEB_STOP_TIMEOUT:-120}"
+PIPELINE_STOP_TIMEOUT="${HPCPERFSTATS_PIPELINE_STOP_TIMEOUT:-30}"
+WEB_STOP_TIMEOUT="${HPCPERFSTATS_WEB_STOP_TIMEOUT:-30}"
 PROXY_STOP_TIMEOUT="${HPCPERFSTATS_PROXY_STOP_TIMEOUT:-30}"
 WEB_WAIT_TIMEOUT="${HPCPERFSTATS_WEB_WAIT_TIMEOUT:-600}"
 
@@ -56,8 +56,8 @@ Options:
   --build-only              Preserve frontend + build image; do not stop/start
   --no-start                Build + stop; skip compose up
   --skip-frontend-verify    Skip live SPA shell / fingerprint checks (dev only)
-  --pipeline-stop-timeout S Timeout for compose stop pipeline (default 300)
-  Env HPCPERFSTATS_WEB_STOP_TIMEOUT    Grace for stop web (default 120)
+  --pipeline-stop-timeout S Timeout for compose stop pipeline (default 30)
+  Env HPCPERFSTATS_WEB_STOP_TIMEOUT    Grace for stop web (default 30)
   Env HPCPERFSTATS_PROXY_STOP_TIMEOUT  Grace for proxy down (default 30)
   -h, --help                Show this help
 EOF

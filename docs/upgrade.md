@@ -8,7 +8,7 @@ Do **not** mix these procedures into a greenfield install. Fresh clones should `
 
 ## Pull a new image / code release
 
-1. Stop app services with enough grace for pipeline drain. Prefer `docker compose stop -t 180 pipeline` (or rebuild’s default **300s** via `HPCPERFSTATS_PIPELINE_STOP_TIMEOUT`) so wall clock exceeds sync_timedb’s **`SHUTDOWN_DRAIN_TIMEOUT_S` (120s)**. Keep compose **`stop_grace_period` ≥ 2m**. In **`services-conf/supervisord.conf`**, the three Python programs set **`stopwaitsecs=130`**. Approximate solo budgets: listend ~**20s**, update_metrics ~**30–60s**, sync_timedb up to **120s**. Expected SIGTERM-driven exit **143** (see **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`**). Do **not** `docker kill` / SIGKILL unless wedged past grace.
+1. Stop app services deliberately. Default compose **`stop_grace_period`** for **`web`** / **`pipeline`** is **30s** (`HPCPERFSTATS_WEB_STOP_GRACE` / **`HPCPERFSTATS_PIPELINE_STOP_GRACE`**); **`scripts/rebuild_pipeline.sh`** uses the same **30s** stop `-t` defaults (`HPCPERFSTATS_PIPELINE_STOP_TIMEOUT` / **`HPCPERFSTATS_WEB_STOP_TIMEOUT`**). That is shorter than sync_timedb’s **`SHUTDOWN_DRAIN_TIMEOUT_S` (120s)** and supervisord **`stopwaitsecs=130`**, so rebuild cutovers may SIGKILL mid-drain — raise the env overrides when you need a full cooperative exit. Approximate solo budgets when grace is long enough: listend ~**20s**, update_metrics ~**30–60s**, sync_timedb up to **120s**. Expected clean SIGTERM-driven exit **143** (see **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`**).
 
 2. Rebuild and recreate the app. A full **`docker compose up --build`** (or equivalent from-scratch image rebuild) plus recreating **`web`** is the primary way to land SPA fixes: startup fingerprint heal syncs the new package frontend into **`staticfiles_data`**.
 
@@ -17,7 +17,7 @@ Do **not** mix these procedures into a greenfield install. Fresh clones should `
    | Rebuild SPA in running stack (optional hot path; no pipeline restart) | `./scripts/rebuild_frontend.sh` |
    | Rebuild shared hpcperfstats image; down proxy; ``up -d web proxy pipeline`` (db/redis/rabbitmq stay up; proxy image not rebuilt) | `./scripts/rebuild_pipeline.sh` |
    | Detached recreate of web+pipeline only (no image build) | `./scripts/recreate_web_pipeline.sh` |
-   | Rebuild just the app and keep persistent services running | `docker compose stop -t 120 web pipeline proxy && docker compose up --build -d web pipeline && docker compose start proxy` |
+   | Rebuild just the app and keep persistent services running | `docker compose stop -t 30 web pipeline proxy && docker compose up --build -d web pipeline && docker compose start proxy` |
 
    **`./scripts/rebuild_pipeline.sh`** rebuilds **`hpcperfstats`**, preserves live SPA, takes **proxy** down (same image), then **`docker compose up -d web proxy pipeline`**. Leaves **db** / **redis** / **rabbitmq** running. After Let's Encrypt renew or changing **`server=`** / TLS source path, **`docker compose restart proxy`**.
 

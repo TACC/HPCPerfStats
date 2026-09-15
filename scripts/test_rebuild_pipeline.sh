@@ -87,6 +87,26 @@ if grep -qE 'compose build[[:space:]].*proxy|proxy\.Dockerfile|podman build.*pro
   exit 1
 fi
 
+# Default stop grace for pipeline/web is 30s (matches compose stop_grace_period).
+if ! grep -q 'PIPELINE_STOP_TIMEOUT="${HPCPERFSTATS_PIPELINE_STOP_TIMEOUT:-30}"' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh default PIPELINE_STOP_TIMEOUT must be 30" >&2
+  exit 1
+fi
+if ! grep -q 'WEB_STOP_TIMEOUT="${HPCPERFSTATS_WEB_STOP_TIMEOUT:-30}"' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh default WEB_STOP_TIMEOUT must be 30" >&2
+  exit 1
+fi
+
+COMPOSE_YAML="${SCRIPT_DIR}/../docker-compose.yaml"
+if ! grep -q 'HPCPERFSTATS_PIPELINE_STOP_GRACE:-30s' "${COMPOSE_YAML}"; then
+  echo "docker-compose.yaml pipeline stop_grace_period default must be 30s" >&2
+  exit 1
+fi
+if ! grep -q 'HPCPERFSTATS_WEB_STOP_GRACE:-30s' "${COMPOSE_YAML}"; then
+  echo "docker-compose.yaml web stop_grace_period default must be 30s" >&2
+  exit 1
+fi
+
 # Build must happen before stop (stack stays up during image build).
 build_call="$(awk '/^main\(\)/ {m=1} m && /build_pipeline_image/ {print NR; exit}' "${PIPELINE_SCRIPT}")"
 stop_call="$(awk '/^main\(\)/ {m=1} m && /stop_and_remove_web_pipeline/ {print NR; exit}' "${PIPELINE_SCRIPT}")"

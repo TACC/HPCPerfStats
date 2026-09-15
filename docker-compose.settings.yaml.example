@@ -95,4 +95,4 @@ volumes:
 #     # Per-site cgroup overrides (defaults are 128g in docker-compose.yaml):
 #     # mem_limit: 128g
 #     # memswap_limit: 128g
-#     # stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-2m}
+#     # stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-30s}
