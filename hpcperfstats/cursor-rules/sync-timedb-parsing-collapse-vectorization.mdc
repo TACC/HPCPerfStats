@@ -79,6 +79,7 @@ Digit-line jobid belongs on stats ``tags`` (same value as proc ``tags2``). Colla
 - `_read_stats_line_batch_decode_after_lock` — rb batch under SH; decode after release
 - `IncrementalStatsParser` — compiled schema SoA + columnar `_stats_cols`; `take_stats_columns()` for production flushes; `parse_stats_lines` records adapter for tests
 - `stats_payload_row_count` — zero-host marks use parsed row counts, not post-collapse lengths
+- INI-gated parse-stage holds (`_held_parse_stage` / `PARSE_STAGE_HOLD_KEYS`) — measurement only; `build_df_s` is derived from `proc_merge_s`+`hw_df_s`+`proc_df_s`; never wrap the whole builder in an outer `build_df` hold
 
 ## New collapse / carry behavior
 

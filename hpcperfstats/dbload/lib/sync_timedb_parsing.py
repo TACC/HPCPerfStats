@@ -8,12 +8,10 @@ Attributes:
   HOST_PROC_PEAK_KEYS: Attribute.
   STREAM_PARSE_LINE_BATCH: Attribute.
   _HOST_PROC_KEY_SET: Attribute.
-  _PARSE_STAGE_BUILD_DF: Attribute.
-  _PARSE_STAGE_COLLAPSE: Attribute.
-  _PARSE_STAGE_FEED: Attribute.
-  _ingest_build_df_s: Attribute.
-  _ingest_collapse_s: Attribute.
-  _ingest_feed_s: Attribute.
+  PARSE_STAGE_BUILD_DF_PARTS: Attribute.
+  PARSE_STAGE_HOLD_KEYS: Attribute.
+  PARSE_STAGE_LOG_KEYS: Attribute.
+  _parse_stage_s: Attribute.
   _parse_stage_telem_on: Attribute.
   _STATS_COL_NAMES: Attribute.
   _ARC_GROUP_COLS: Attribute.
@@ -101,25 +99,38 @@ HOST_PROC_KEYS = (
 )
 _HOST_PROC_KEY_SET = frozenset(HOST_PROC_KEYS)
 
-# Lite parse-stage telemetry (INI-gated; default off). Mirrors sync_timedb postgres_s.
-_PARSE_STAGE_FEED = "feed"
-_PARSE_STAGE_COLLAPSE = "collapse"
-_PARSE_STAGE_BUILD_DF = "build_df"
+# Exhaustive parse-stage telemetry (INI-gated; default off).
+# Hold keys are timed; build_df_s / stages_sum_s / parse_unaccounted_s are derived.
+PARSE_STAGE_HOLD_KEYS: tuple[str, ...] = (
+    "lock_s",
+    "decode_s",
+    "feed_s",
+    "proc_merge_s",
+    "hw_df_s",
+    "proc_df_s",
+    "delta_s",
+    "collapse_s",
+    "arc_s",
+    "concat_s",
+    "start_s",
+)
+PARSE_STAGE_BUILD_DF_PARTS: tuple[str, ...] = (
+    "proc_merge_s",
+    "hw_df_s",
+    "proc_df_s",
+)
+PARSE_STAGE_LOG_KEYS: tuple[str, ...] = PARSE_STAGE_HOLD_KEYS + (
+    "build_df_s",
+    "stages_sum_s",
+    "parse_unaccounted_s",
+)
 _parse_stage_telem_on: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "parse_stage_telem_on",
     default=False,
 )
-_ingest_feed_s: contextvars.ContextVar[float] = contextvars.ContextVar(
-    "ingest_feed_s",
-    default=0.0,
-)
-_ingest_collapse_s: contextvars.ContextVar[float] = contextvars.ContextVar(
-    "ingest_collapse_s",
-    default=0.0,
-)
-_ingest_build_df_s: contextvars.ContextVar[float] = contextvars.ContextVar(
-    "ingest_build_df_s",
-    default=0.0,
+_parse_stage_s: contextvars.ContextVar[dict[str, float]] = contextvars.ContextVar(
+    "parse_stage_s",
+    default={},
 )
 
 
@@ -142,9 +153,7 @@ def reset_parse_stage_timing(*, enabled: bool | None = None) -> None:
     from hpcperfstats.dbload.lib import conf_parser as cfg
     enabled = bool(cfg.get_sync_ingest_parse_stage_telemetry())
   _parse_stage_telem_on.set(bool(enabled))
-  _ingest_feed_s.set(0.0)
-  _ingest_collapse_s.set(0.0)
-  _ingest_build_df_s.set(0.0)
+  _parse_stage_s.set({key: 0.0 for key in PARSE_STAGE_HOLD_KEYS})
 
 
 def snapshot_parse_stage_timing() -> dict[str, float]:
@@ -152,8 +161,8 @@ def snapshot_parse_stage_timing() -> dict[str, float]:
   Return stage seconds when telemetry is enabled for this file.
 
   Returns:
-    dict[str, float]: Empty when disabled; else ``feed_s`` / ``collapse_s`` /
-      ``build_df_s``.
+    dict[str, float]: Empty when disabled; else every hold key plus derived
+      ``build_df_s`` and ``stages_sum_s`` (zeros allowed).
 
   Examples:
     >>> reset_parse_stage_timing(enabled=False)
@@ -162,19 +171,45 @@ def snapshot_parse_stage_timing() -> dict[str, float]:
   """
   if not _parse_stage_telem_on.get():
     return {}
-  return {
-      "feed_s": float(_ingest_feed_s.get()),
-      "collapse_s": float(_ingest_collapse_s.get()),
-      "build_df_s": float(_ingest_build_df_s.get()),
-  }
+  acc = _parse_stage_s.get()
+  out = {key: float(acc.get(key, 0.0)) for key in PARSE_STAGE_HOLD_KEYS}
+  out["build_df_s"] = sum(out[key] for key in PARSE_STAGE_BUILD_DF_PARTS)
+  out["stages_sum_s"] = sum(out[key] for key in PARSE_STAGE_HOLD_KEYS)
+  return out
+
+
+def attach_parse_unaccounted(meta: dict[str, Any]) -> dict[str, Any]:
+  """
+  Set ``parse_unaccounted_s`` from parse wall minus holds minus ``postgres_s``.
+
+  Args:
+    meta (dict[str, Any]): Outcome meta that may already include stage keys.
+
+  Returns:
+    dict[str, Any]: Same mapping; adds ``parse_unaccounted_s`` when stages and
+      ``parse_elapsed_s`` are present.
+
+  Examples:
+    >>> attach_parse_unaccounted(
+    ...     {"parse_elapsed_s": 10.0, "stages_sum_s": 3.0, "postgres_s": 2.0},
+    ... )["parse_unaccounted_s"]
+    5.0
+  """
+  if "stages_sum_s" not in meta or meta.get("parse_elapsed_s") is None:
+    return meta
+  parse_s = float(meta["parse_elapsed_s"])
+  stages_sum = float(meta.get("stages_sum_s") or 0.0)
+  postgres_s = float(meta.get("postgres_s") or 0.0)
+  meta["parse_unaccounted_s"] = max(0.0, parse_s - stages_sum - postgres_s)
+  return meta
 
 
 def _add_parse_stage_s(stage: str, delta_s: float) -> None:
   """
-  Accumulate non-negative seconds into one parse-stage ContextVar.
+  Accumulate non-negative seconds into the parse-stage dict ContextVar.
 
   Args:
-    stage (str): One of ``feed`` / ``collapse`` / ``build_df``.
+    stage (str): A key in ``PARSE_STAGE_HOLD_KEYS``.
     delta_s (float): Hold duration in seconds (non-positive values ignored).
 
   Returns:
@@ -182,17 +217,14 @@ def _add_parse_stage_s(stage: str, delta_s: float) -> None:
 
   Examples:
     >>> reset_parse_stage_timing(enabled=True)
-    >>> _add_parse_stage_s("feed", 0.25)
+    >>> _add_parse_stage_s("feed_s", 0.25)
   """
   delta = float(delta_s)
-  if delta <= 0.0:
+  if delta <= 0.0 or stage not in PARSE_STAGE_HOLD_KEYS:
     return
-  if stage == _PARSE_STAGE_FEED:
-    _ingest_feed_s.set(float(_ingest_feed_s.get()) + delta)
-  elif stage == _PARSE_STAGE_COLLAPSE:
-    _ingest_collapse_s.set(float(_ingest_collapse_s.get()) + delta)
-  elif stage == _PARSE_STAGE_BUILD_DF:
-    _ingest_build_df_s.set(float(_ingest_build_df_s.get()) + delta)
+  acc = dict(_parse_stage_s.get())
+  acc[stage] = float(acc.get(stage, 0.0)) + delta
+  _parse_stage_s.set(acc)
 
 
 @contextmanager
@@ -201,14 +233,14 @@ def _held_parse_stage(stage: str) -> Iterator[None]:
   Hold ``perf_counter`` for ``stage`` only when telemetry is enabled.
 
   Args:
-    stage (str): One of ``feed`` / ``collapse`` / ``build_df``.
+    stage (str): A key in ``PARSE_STAGE_HOLD_KEYS``.
 
   Yields:
     None
 
   Examples:
     >>> reset_parse_stage_timing(enabled=False)
-    >>> with _held_parse_stage("feed"):
+    >>> with _held_parse_stage("feed_s"):
     ...   pass
   """
   if not _parse_stage_telem_on.get():
@@ -845,13 +877,15 @@ def _read_stats_line_batch_decode_after_lock(
     >>> _read_stats_line_batch_decode_after_lock(None, "x", 1)  # doctest: +SKIP
   """
   raw_batch: list[bytes] = []
-  with _stats_file_read_lock(stats_file):
-    for _ in range(int(batch_size)):
-      raw = fd.readline()
-      if not raw:
-        break
-      raw_batch.append(raw)
-  return [_decode_stats_readline(raw) for raw in raw_batch]
+  with _held_parse_stage("lock_s"):
+    with _stats_file_read_lock(stats_file):
+      for _ in range(int(batch_size)):
+        raw = fd.readline()
+        if not raw:
+          break
+        raw_batch.append(raw)
+  with _held_parse_stage("decode_s"):
+    return [_decode_stats_readline(raw) for raw in raw_batch]
 
 
 def _zip_schema_vals(
@@ -2257,7 +2291,7 @@ class IncrementalStatsParser:
     Examples:
       >>> IncrementalStatsParser().feed_lines(None)  # doctest: +SKIP
     """
-    with _held_parse_stage(_PARSE_STAGE_FEED):
+    with _held_parse_stage("feed_s"):
       for line in lines:
         self.feed_line(line)
 
@@ -2397,14 +2431,16 @@ def build_stats_dataframes(stats_list: Any, proc_stats_list: Any) -> Any:
     >>> stats_df.empty and proc_df.empty
     True
   """
-  with _held_parse_stage(_PARSE_STAGE_BUILD_DF):
-    if not proc_stats_list:
-      proc_stats_df = DataFrame()
-    else:
+  if not proc_stats_list:
+    proc_stats_df = DataFrame()
+  else:
+    with _held_parse_stage("proc_merge_s"):
       merged = dedupe_proc_stats_peak_merge(list(proc_stats_list))
+    with _held_parse_stage("proc_df_s"):
       proc_stats_df = DataFrame(merged) if merged else DataFrame()
+  with _held_parse_stage("hw_df_s"):
     stats_df = _stats_payload_to_frame(stats_list)
-    return stats_df, proc_stats_df
+  return stats_df, proc_stats_df
 
 
 _EMPTY_DELTA_ARC_COLUMNS = [
@@ -2574,7 +2610,7 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
   Examples:
     >>> _collapse_stats_with_deltas(None)  # doctest: +SKIP
   """
-  with _held_parse_stage(_PARSE_STAGE_COLLAPSE):
+  with _held_parse_stage("collapse_s"):
     stats_df = _normalize_collapse_dev_column(stats_df)
     gcols = _COLLAPSE_GROUP_COLS
     gcols_gpu = _COLLAPSE_GROUP_COLS_WITH_DEV
@@ -2719,11 +2755,13 @@ def compute_deltas_and_arc(stats_df: Any) -> Any:
   if not _stats_df_has_required_delta_cols(stats_df):
     _warn_nonempty_stats_collapsed_to_empty(stats_df)
     return _empty_delta_arc_frame()
-  stats_df = _apply_counter_deltas(stats_df)
+  with _held_parse_stage("delta_s"):
+    stats_df = _apply_counter_deltas(stats_df)
   stats_df = _collapse_stats_with_deltas(stats_df)
   if stats_df.empty:
     return stats_df
-  return _apply_arc_and_finalize(stats_df)
+  with _held_parse_stage("arc_s"):
+    return _apply_arc_and_finalize(stats_df)
 
 
 def compute_deltas_and_arc_chunk(stats_df: Any, *, carry: Any) -> Any:
@@ -2749,11 +2787,13 @@ def compute_deltas_and_arc_chunk(stats_df: Any, *, carry: Any) -> Any:
   if not _stats_df_has_required_delta_cols(stats_df):
     _warn_nonempty_stats_collapsed_to_empty(stats_df)
     return _empty_delta_arc_frame()
-  stats_df = _apply_counter_deltas(stats_df, carry=carry)
+  with _held_parse_stage("delta_s"):
+    stats_df = _apply_counter_deltas(stats_df, carry=carry)
   stats_df = _collapse_stats_with_deltas(stats_df)
   if stats_df.empty:
     return stats_df
-  return _apply_arc_and_finalize(stats_df, carry=carry)
+  with _held_parse_stage("arc_s"):
+    return _apply_arc_and_finalize(stats_df, carry=carry)
 
 
 def _line_starts_time_sample(line: Any, line_index: Any, start_idx: Any) -> Any:
@@ -2829,7 +2869,7 @@ def parse_stats_file_streaming_incremental(
         )
         if not batch:
           break
-        with _held_parse_stage(_PARSE_STAGE_FEED):
+        with _held_parse_stage("feed_s"):
           for line in batch:
             if _line_starts_time_sample(
                 line, parser._line_index, parser.start_idx):

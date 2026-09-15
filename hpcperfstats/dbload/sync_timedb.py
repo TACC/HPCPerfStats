@@ -231,6 +231,9 @@ from hpcperfstats.dbload.lib.sync_timedb_parsing import (
   parse_stats_lines,
   reset_parse_stage_timing,
   snapshot_parse_stage_timing,
+  attach_parse_unaccounted,
+  PARSE_STAGE_LOG_KEYS,
+  _held_parse_stage,
   stats_file_size_bytes,
   stats_payload_row_count,
   tail_window_timestamps_all_present_streaming,
@@ -2204,8 +2207,7 @@ def _merge_ingest_write_timing_into_meta(meta: Any) -> dict[str, Any]:
 
   Returns:
     dict[str, Any]: Meta with ``postgres_s`` set; when parse-stage telemetry
-      is enabled for the file, also ``feed_s`` / ``collapse_s`` /
-      ``build_df_s``.
+      is enabled, also hold/derived stage keys and ``parse_unaccounted_s``.
 
   Examples:
     >>> _reset_ingest_write_timing()
@@ -2217,6 +2219,7 @@ def _merge_ingest_write_timing_into_meta(meta: Any) -> dict[str, Any]:
   stage = snapshot_parse_stage_timing()
   if stage:
     out.update(stage)
+    attach_parse_unaccounted(out)
   return out
 
 
@@ -2998,9 +3001,7 @@ class IngestFileOutcome:
     stats_rows: Host stats row count when known.
     stats_rows_parsed: Parsed stats rows when known.
     timeout_s: Resolved per-file timeout budget (seconds) when known.
-    feed_s: Optional feed-stage seconds when parse-stage telemetry is on.
-    collapse_s: Optional collapse-stage seconds when telemetry is on.
-    build_df_s: Optional build_df-stage seconds when telemetry is on.
+    parse_stage: Optional exhaustive parse-stage seconds when telemetry is on.
   """
   path: str
   elapsed_s: float
@@ -3016,9 +3017,7 @@ class IngestFileOutcome:
   proc_rows: int | None = None
   fail_reason: str | None = None
   archive_skip: str | None = None
-  feed_s: float | None = None
-  collapse_s: float | None = None
-  build_df_s: float | None = None
+  parse_stage: dict[str, float] | None = None
 
 
 def _archive_skip_token_for_outcome(outcome: Any) -> Any:
@@ -3195,6 +3194,11 @@ def _ingest_file_outcome_from_worker(
       outcome = "parse_fail"
   db_skip = str(meta.get("db_skip") or "no")
   timeout_s = meta.get("timeout_s")
+  stage = {
+      key: float(meta[key])
+      for key in PARSE_STAGE_LOG_KEYS
+      if meta.get(key) is not None
+  }
   return IngestFileOutcome(
       path=str(stats_file or ""),
       elapsed_s=float(elapsed_s),
@@ -3212,9 +3216,7 @@ def _ingest_file_outcome_from_worker(
       proc_rows=meta.get("proc_rows"),
       fail_reason=meta.get("fail_reason"),
       archive_skip=meta.get("archive_skip"),
-      feed_s=meta.get("feed_s"),
-      collapse_s=meta.get("collapse_s"),
-      build_df_s=meta.get("build_df_s"),
+      parse_stage=stage or None,
   )
 
 
@@ -3278,12 +3280,10 @@ def _log_ingest_file_outcome(
     parts.append("parse_elapsed_s=%.1f" % float(outcome.parse_elapsed_s))
   if outcome.postgres_s is not None:
     parts.append("postgres_s=%.1f" % float(outcome.postgres_s))
-  if outcome.feed_s is not None:
-    parts.append("feed_s=%.1f" % float(outcome.feed_s))
-  if outcome.collapse_s is not None:
-    parts.append("collapse_s=%.1f" % float(outcome.collapse_s))
-  if outcome.build_df_s is not None:
-    parts.append("build_df_s=%.1f" % float(outcome.build_df_s))
+  if outcome.parse_stage:
+    for key in PARSE_STAGE_LOG_KEYS:
+      if key in outcome.parse_stage:
+        parts.append("%s=%.1f" % (key, float(outcome.parse_stage[key])))
   if outcome.stats_rows is not None:
     parts.append("stats_rows=%d" % int(outcome.stats_rows))
   if outcome.stats_rows_parsed is not None:
@@ -3667,6 +3667,31 @@ def _resolve_streaming_ingest_start(
   Examples:
     >>> _resolve_streaming_ingest_start("x", None)  # doctest: +SKIP
   """
+  with _held_parse_stage("start_s"):
+    return _resolve_streaming_ingest_start_impl(
+        stats_file, parse_elapsed_fn, lines=lines,
+    )
+
+
+def _resolve_streaming_ingest_start_impl(
+  stats_file: str,
+  parse_elapsed_fn: Any,
+  lines: Any | None = None,
+) -> Any:
+  """
+  Implementation for :func:`_resolve_streaming_ingest_start`.
+
+  Args:
+    stats_file (str): String for stats file.
+    parse_elapsed_fn (Any): Callable invoked by this helper.
+    lines (Any | None): Optional in-memory lines.
+
+  Returns:
+    Any: Same return contract as ``_resolve_streaming_ingest_start``.
+
+  Examples:
+    >>> _resolve_streaming_ingest_start_impl("x", None)  # doctest: +SKIP
+  """
   update_worker_substage("parse:start_resolve")
   if lines is not None:
     t, _jid, host = parse_first_timestamp_line(lines)
@@ -3819,14 +3844,15 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
         )
       from pandas import concat as _pd_concat
       empty_stats, empty_proc = build_stats_dataframes([], [])
-      stats = (
-          _pd_concat(stats_parts, ignore_index=True)
-          if stats_parts else empty_stats
-      )
-      proc_stats = (
-          _pd_concat(proc_parts, ignore_index=True)
-          if proc_parts else empty_proc
-      )
+      with _held_parse_stage("concat_s"):
+        stats = (
+            _pd_concat(stats_parts, ignore_index=True)
+            if stats_parts else empty_stats
+        )
+        proc_stats = (
+            _pd_concat(proc_parts, ignore_index=True)
+            if proc_parts else empty_proc
+        )
       if stats.empty and proc_stats.empty:
         if DEBUG:
           log_print("Unable to process stats file %s" % stats_file)
@@ -3841,6 +3867,7 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
           stats_rows_parsed=parsed_n,
           proc_rows=len(proc_stats),
       )
+      meta = _merge_ingest_write_timing_into_meta(meta)
       return (stats_file, (stats, proc_stats), need_archival, True, parse_elapsed, meta)
     except FileNotFoundError:
       load_err = "stats_file_disappeared"
