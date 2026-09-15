@@ -104,8 +104,28 @@ if ! grep -q 'compose_recreate_web_after_image_refresh' "${HELPERS}"; then
   exit 1
 fi
 
-if ! grep -q 'force-recreate --no-deps web' "${HELPERS}"; then
+if ! grep -q 'compose_up_service_detached' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must define compose_up_service_detached" >&2
+  exit 1
+fi
+
+if ! grep -q -- '--detach --no-deps' "${HELPERS}"; then
+  echo "compose_up_service_detached must use --detach --no-deps (not bare up -d)" >&2
+  exit 1
+fi
+
+if ! grep -q 'hpcperfstats_.*_tmp' "${HELPERS}"; then
+  echo "compose_podman_rm_service_containers must remove *_tmp* collision leftovers" >&2
+  exit 1
+fi
+
+if ! grep -q 'compose_up_service_detached web --force-recreate' "${HELPERS}"; then
   echo "compose_frontend_helpers.sh must force-recreate web on non-podman backends" >&2
+  exit 1
+fi
+
+if ! grep -q 'compose_up_service_detached pipeline --force-recreate' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must force-recreate pipeline on non-podman backends" >&2
   exit 1
 fi
 

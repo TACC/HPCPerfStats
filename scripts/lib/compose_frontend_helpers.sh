@@ -503,10 +503,11 @@ compose_service_running() {
 }
 
 # podman-compose has no ``rm`` subcommand (Docker Compose v2 only). Remove stale
-# project containers by name/id via podman/docker CLI so ``up -d`` can reuse
-# fixed names like ``hpcperfstats_web_1``.
+# project containers by name/id via podman/docker CLI so ``up --detach`` can reuse
+# fixed names like ``hpcperfstats_web_1``. Also wipe ``*_tmp*`` collision leftovers
+# (hpcperfstats01 2026-09-14: ``hpcperfstats_web_tmp27279`` blocked a real web_1).
 compose_podman_rm_service_containers() {
-  local service cid name
+  local service cid name tmp
   local -a rm_cli
   cd "${REPO_ROOT}"
   if podman_cli_available; then
@@ -519,23 +520,44 @@ compose_podman_rm_service_containers() {
     cid="$(docker compose ps -q "${service}" 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)"
     if [[ -n "${cid}" ]]; then
       "${rm_cli[@]}" "${cid}" 2>/dev/null || true
-      continue
     fi
     name="$(docker compose ps --format '{{.Name}}' "${service}" 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)"
-    if [[ -z "${name}" ]]; then
-      name="hpcperfstats_${service}_1"
+    if [[ -n "${name}" ]]; then
+      "${rm_cli[@]}" "${name}" 2>/dev/null || true
     fi
-    "${rm_cli[@]}" "${name}" 2>/dev/null || true
+    "${rm_cli[@]}" "hpcperfstats_${service}_1" 2>/dev/null || true
+    if podman_cli_available; then
+      while IFS= read -r tmp; do
+        [[ -n "${tmp}" ]] || continue
+        podman rm -f "${tmp}" 2>/dev/null || true
+      done < <(podman ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^hpcperfstats_${service}_tmp" || true)
+    elif command -v docker >/dev/null 2>&1; then
+      while IFS= read -r tmp; do
+        [[ -n "${tmp}" ]] || continue
+        docker rm -f "${tmp}" 2>/dev/null || true
+      done < <(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^hpcperfstats_${service}_tmp" || true)
+    fi
   done
+}
+
+# Always detached + no-deps. Never attach to container logs (operators must not
+# have to watch supervisord/gunicorn). Prefer long ``--detach`` over short ``-d``
+# (podman-compose has mishandled ``-d`` / waited on depends_on without --no-deps).
+compose_up_service_detached() {
+  local service="${1:?compose_up_service_detached requires service}"
+  shift
+  cd "${REPO_ROOT}"
+  echo "Starting ${service} detached (--detach --no-deps; will not attach logs) ..."
+  docker compose up --detach --no-deps "$@" "${service}"
 }
 
 compose_recreate_web_after_image_refresh() {
   cd "${REPO_ROOT}"
   if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
     if compose_backend_is_podman; then
-      echo "[dry-run] podman: stop proxy; podman rm -f web container; compose up -d web"
+      echo "[dry-run] podman: stop proxy; podman rm -f web (+ web_tmp*); compose up --detach --no-deps web"
     else
-      echo "[dry-run] docker compose up -d --force-recreate --no-deps web"
+      echo "[dry-run] docker compose up --detach --force-recreate --no-deps web"
     fi
     return 0
   fi
@@ -549,36 +571,38 @@ compose_recreate_web_after_image_refresh() {
     fi
     # Do NOT rm pipeline here. A mid-web failure must not leave ingest deleted;
     # pipeline is recreated separately at the end of rebuild_pipeline.sh.
-    echo "Removing stopped web container (podman) ..."
+    echo "Removing stopped web container (and any web_tmp* leftovers) ..."
     compose_podman_rm_service_containers web
-    echo "Starting web with refreshed image ..."
-    docker compose up -d web
+    compose_up_service_detached web
     return 0
   fi
 
   echo "Recreating web with refreshed image ..."
-  docker compose up -d --force-recreate --no-deps web
+  compose_up_service_detached web --force-recreate
 }
 
 compose_recreate_pipeline_after_image_refresh() {
   cd "${REPO_ROOT}"
   if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
     if compose_backend_is_podman; then
-      echo "[dry-run] podman: podman rm -f pipeline container; compose up -d pipeline"
+      echo "[dry-run] podman: podman rm -f pipeline (+ pipeline_tmp*); compose up --detach --no-deps pipeline"
     else
-      echo "[dry-run] docker compose up -d --force-recreate --no-deps pipeline"
+      echo "[dry-run] docker compose up --detach --force-recreate --no-deps pipeline"
     fi
     return 0
   fi
 
   if compose_backend_is_podman; then
+    echo "Removing stopped pipeline container (and any pipeline_tmp* leftovers) ..."
     compose_podman_rm_service_containers pipeline
-    docker compose up -d pipeline
+    # --no-deps: pipeline depends_on web; without it podman-compose can wait/attach
+    # on web and look like a foreground ``up``.
+    compose_up_service_detached pipeline
     return 0
   fi
 
   echo "Recreating pipeline with refreshed image ..."
-  docker compose up -d --force-recreate --no-deps pipeline
+  compose_up_service_detached pipeline --force-recreate
 }
 
 # Remove host scratch created for hpcperfstats-pipeline-refresh (preserve dir,
@@ -633,5 +657,5 @@ compose_restore_proxy_if_was_running() {
     return 0
   fi
   echo "Starting proxy ..."
-  docker compose up -d proxy
+  compose_up_service_detached proxy
 }
