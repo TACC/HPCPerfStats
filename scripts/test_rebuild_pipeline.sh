@@ -146,6 +146,20 @@ if [[ -z "${web_recreate_line}" || -z "${pipe_recreate_line}" || "${web_recreate
   exit 1
 fi
 
+# Pipeline must still come up when web wait / frontend restore fails (podman already
+# removed the pipeline container during web recreate). Capture rc, then recreate.
+if ! awk '
+  /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_fn = ($0 ~ /^start_app_containers\(\)/) }
+  in_fn && /wait_for_web_from_host/ && /\|/ { wait_or=1 }
+  in_fn && /restore_frontend_volume_if_drifted/ && /\|/ { restore_or=1 }
+  in_fn && /compose_recreate_pipeline_after_image_refresh/ { pipe=1 }
+  in_fn && /start_rc/ { has_rc=1 }
+  END { exit (wait_or && restore_or && pipe && has_rc) ? 0 : 1 }
+' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh start_app_containers must bring pipeline up at the end even if web wait/restore fails" >&2
+  exit 1
+fi
+
 no_web_pipe_line="$(
   awk '
     /^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ { in_fn = ($0 ~ /^start_pipeline_only\(\)/) }

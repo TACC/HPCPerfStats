@@ -3,8 +3,9 @@
 #
 # web and pipeline share the hpcperfstats image tag. This script stops pipeline and
 # web, builds the hpcperfstats-pipeline-refresh Dockerfile target (preserved frontend
-# tree from the live deployment), then recreates web and pipeline. db, redis,
-# rabbitmq, and proxy are left running (podman-compose briefly stops proxy while recreating web).
+# tree from the live deployment), then recreates web and always brings pipeline
+# back up last (even if web wait / SPA restore fails). db, redis, rabbitmq, and
+# proxy are left running (podman-compose briefly stops proxy while recreating web).
 #
 # Usage (from the git checkout that contains docker-compose.yaml):
 #   ./scripts/rebuild_pipeline.sh
@@ -40,7 +41,8 @@ Usage: scripts/rebuild_pipeline.sh [options]
 
 Rebuild web/pipeline image (Python only) without npm frontend-builder. Preserves
 live STATIC_ROOT/frontend from the running web container, stops pipeline then web,
-builds --target hpcperfstats-pipeline-refresh, and recreates web then pipeline.
+builds --target hpcperfstats-pipeline-refresh, recreates web, then always brings
+pipeline back up last (even if web wait / SPA restore fails).
 
 IMPORTANT: This does NOT ship SPA/OpenAPI/Orval fixes. After frontend changes run:
   ./scripts/rebuild_frontend.sh
@@ -335,23 +337,34 @@ start_pipeline_only() {
 
 start_app_containers() {
   export HPCPERFSTATS_SCRIPT_DRY_RUN="${DRY_RUN}"
+  # Podman web recreate removes the pipeline container first; always bring
+  # pipeline back up at the end even if web wait / SPA restore fails.
+  local start_rc=0
   echo "Recreating web on refreshed image ..."
   compose_recreate_web_after_image_refresh
   if [[ "${DRY_RUN}" -eq 0 ]]; then
-    wait_for_web_from_host
+    wait_for_web_from_host || start_rc=$?
   fi
-  restore_frontend_volume_if_drifted
+  if [[ "${start_rc}" -eq 0 ]]; then
+    restore_frontend_volume_if_drifted || start_rc=$?
+  else
+    echo "WARN: skipping frontend restore after web wait failure (rc=${start_rc})" >&2
+  fi
   compose_restore_proxy_if_was_running
-  if [[ "${SKIP_FRONTEND_VERIFY}" -eq 0 && "${DRY_RUN}" -eq 0 ]]; then
+  if [[ "${start_rc}" -eq 0 && "${SKIP_FRONTEND_VERIFY}" -eq 0 && "${DRY_RUN}" -eq 0 ]]; then
     verify_spa_shells_via_compose \
       "${CONTAINER_STATIC_ROOT_FRONTEND}" \
-      "STATIC_ROOT/frontend (post-rebuild)"
-    if docker compose exec -T proxy true >/dev/null 2>&1; then
+      "STATIC_ROOT/frontend (post-rebuild)" || start_rc=$?
+    if [[ "${start_rc}" -eq 0 ]] && docker compose exec -T proxy true >/dev/null 2>&1; then
       verify_proxy_frontend_matches_web || true
     fi
   fi
   echo "Recreating pipeline on refreshed image ..."
   compose_recreate_pipeline_after_image_refresh
+  if [[ "${start_rc}" -ne 0 ]]; then
+    echo "rebuild_pipeline.sh: pipeline was recreated, but earlier start step failed (rc=${start_rc})" >&2
+    return "${start_rc}"
+  fi
   echo "Pipeline image refresh complete (SPA bundle unchanged)."
   echo "If you changed frontend/OpenAPI, also run: ./scripts/rebuild_frontend.sh"
 }
