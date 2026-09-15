@@ -406,7 +406,7 @@ def test_parse_stats_lines_host_proc_at_full_production_shape():
 
 
 def test_parse_stats_lines_host_proc_at_fast_omits_slow_keys():
-  """@fast maps schema_fast only; slow KEYS stay None (never invent 0)."""
+  """@fast maps schema_fast only; slow KEYS stay omitted (never invent 0)."""
   keys = (
       "uid,R=S vm_peak,U=kB vm_size,U=kB vm_lck,U=kB,R=S vm_hwm,U=kB,R=S "
       "vm_rss,U=kB vm_data,U=kB vm_stk,U=kB vm_exe,U=kB vm_lib,U=kB "
@@ -422,10 +422,8 @@ def test_parse_stats_lines_host_proc_at_fast_omits_slow_keys():
   _stats, proc_list = parse_stats_lines(lines, start_idx=0)
   assert len(proc_list) == 1
   row = proc_list[0]
-  assert row["uid"] is None
-  assert row["vm_lck"] is None
-  assert row["vm_hwm"] is None
-  assert row["vm_pte"] is None
+  for slow in ("uid", "vm_lck", "vm_hwm", "vm_pte"):
+    assert slow not in row
   assert row["vm_peak"] == 9000
   assert row["vm_size"] == 8000
   assert row["vm_rss"] == 6000

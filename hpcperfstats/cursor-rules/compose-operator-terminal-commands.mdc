@@ -691,6 +691,8 @@ ps -eo pid,ppid,pcpu,rss,stat,wchan:32,args | grep "[w]orker:populate-pool" || t
 
 **Anti-pattern — treat `parse_elapsed_s≈elapsed_s` on giant files as a parse-algo bug (hpcperfstats02 2026-09-14):** multi‑MiB / 100k+ `stats_rows_parsed` files are expected CPU; small files with high parse wall-time under full fill are **contention**. Do **not** raise ingest pool size or rewrite streaming parse as a stall fix; reduce competing mark/find/gate work first. Distinct-day `daily_tar_restore … reason=missing_tar` is **expected** unseal, not same-day restore thrash.
 
+**Anti-pattern — mid-cohort size-before-elapsed order (hpcperfstats02 2026-09-15):** a Python filter that requires the log substring `size_bytes=` to appear *before* `elapsed_s=` (or any fixed token order) yields **`mid_cohort_n 0`** even when mid files are present — outcome tokens are unordered. **Corrected:** named-field regex, e.g. `elapsed_s=(?P<elapsed>[0-9.]+)` and `size_bytes=(?P<size>[0-9]+)`, then filter on the groups. Optional Wave 4 stage fields (`feed_s` / `collapse_s` / `build_df_s`) appear only when `sync_ingest_parse_stage_telemetry=yes`.
+
 **Anti-pattern — `sys.argv` after `python3 -c` through podman-compose `exec` (hpcperfstats04 2026-09-10):** `.tar` and day tokens after the `-c` payload became **compose args**, not Python argv → **`IndexError: list index out of range`** on `sys.argv[1]`, then `bash: syntax error near unexpected token ';'`. **Corrected:** no argv; `os.listdir` + `chr()` suffix (or skip argv entirely). Chain fallible Python to logs as a **second host-side line** in the same `#### pipeline` fence, not a lone `;` after a broken exec.
 
 **Example** — pipeline block after stall hypothesis:

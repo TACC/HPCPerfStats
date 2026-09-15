@@ -297,3 +297,71 @@ def test_host_microbench_parse_fixture_runs():
   stats_df, proc_df = build_stats_dataframes(stats_list, proc_list)
   assert proc_df.empty
   assert not stats_df.empty
+
+
+def test_append_compiled_stats_value_extend_is_materialized_list():
+  """Approach A: value column extend must use a list, not a float generator."""
+  text = Path(__file__).resolve().parents[1].joinpath(
+      "dbload/lib/sync_timedb_parsing.py",
+  ).read_text(encoding="utf-8")
+  start = text.index("def _append_compiled_stats_columns(")
+  end = text.index("\ndef ", start + 1)
+  body = text[start:end]
+  assert 'cols["value"].extend([float(v) for v in vals])' in body
+  assert 'cols["value"].extend(float(v) for v in vals)' not in body
+
+
+def test_sparse_host_proc_omits_missing_keys():
+  """Approach B: host_proc rows omit unparsed HOST_PROC_KEYS (no None prefill)."""
+  keys = (
+      "uid,R=S vm_peak,U=kB vm_size,U=kB vm_lck,U=kB,R=S vm_hwm,U=kB,R=S "
+      "vm_rss,U=kB vm_data,U=kB vm_stk,U=kB vm_exe,U=kB vm_lib,U=kB "
+      "vm_pte,U=kB,R=S vm_swap,U=kB threads"
+  )
+  parser = IncrementalStatsParser(0)
+  parser.feed_line(f"!host_proc {keys}\n")
+  parser.feed_line("1709123456 job1 cn001\n")
+  parser.feed_line(
+      "host_proc python/1/0/0 @fast "
+      "9000 8000 6000 5000 4000 3000 2000 500 8\n",
+  )
+  row = parser.proc_stats[0]
+  for slow in ("uid", "vm_lck", "vm_hwm", "vm_pte"):
+    assert slow not in row
+  assert row["vm_peak"] == 9000
+  assert row["threads"] == 8
+
+
+def test_build_stats_dataframes_peak_merge_without_to_dict_roundtrip():
+  """Approach C: peak-merge list-native; no DataFrame.to_dict in builder."""
+  text = Path(__file__).resolve().parents[1].joinpath(
+      "dbload/lib/sync_timedb_parsing.py",
+  ).read_text(encoding="utf-8")
+  start = text.index("def build_stats_dataframes(")
+  end = text.index("\ndef ", start + 1)
+  body = text[start:end]
+  assert 'to_dict(orient="records")' not in body
+  proc_list = [
+      {
+          "time": 1,
+          "host": "h",
+          "jid": "j",
+          "proc": "p",
+          "device": "p/1",
+          "vm_peak": 10,
+          "vm_hwm": 5,
+      },
+      {
+          "time": 2,
+          "host": "h",
+          "jid": "j",
+          "proc": "p",
+          "device": "p/1",
+          "vm_peak": 20,
+          "vm_hwm": 3,
+      },
+  ]
+  _stats_df, proc_df = build_stats_dataframes([], proc_list)
+  assert len(proc_df) == 1
+  assert int(proc_df.iloc[0]["vm_peak"]) == 20
+  assert int(proc_df.iloc[0]["vm_hwm"]) == 5

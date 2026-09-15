@@ -143,6 +143,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_malloc_trim_after_file"),
     ("PIPELINE", "sync_ingest_worker_memory_telemetry"),
     ("PIPELINE", "sync_ingest_worker_memory_telemetry_every_n_chunks"),
+    ("PIPELINE", "sync_ingest_parse_stage_telemetry"),
     ("PIPELINE", "sync_ingest_recycle_worker_on_failure"),
     ("PIPELINE", "sync_ingest_cooperative_recycle_rss_fraction"),
     ("PIPELINE", "sync_ingest_rss_recheck_delay_ms"),
@@ -297,6 +298,7 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_malloc_trim_after_file': 'yes',
     'sync_ingest_worker_memory_telemetry': 'no',
     'sync_ingest_worker_memory_telemetry_every_n_chunks': '1',
+    'sync_ingest_parse_stage_telemetry': 'no',
     'sync_ingest_recycle_worker_on_failure': 'yes',
     'sync_ingest_cooperative_recycle_rss_fraction': '0.5',
     'sync_ingest_rss_recheck_delay_ms': '50',
@@ -3648,6 +3650,23 @@ def get_sync_ingest_worker_memory_telemetry_every_n_chunks() -> Any:
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_ingest_worker_memory_telemetry_every_n_chunks"))
+
+
+def get_sync_ingest_parse_stage_telemetry() -> Any:
+  """
+  Append feed_s/collapse_s/build_df_s on ingest outcome lines (default no).
+
+  Returns:
+    Any: Bool-like from ``sync_ingest_parse_stage_telemetry`` (default off).
+
+  Examples:
+    >>> get_sync_ingest_parse_stage_telemetry() in (True, False)
+    True
+  """
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("sync_ingest_parse_stage_telemetry"),
+  )
 
 
 def get_sync_ingest_recycle_worker_on_failure() -> Any:

@@ -229,6 +229,8 @@ from hpcperfstats.dbload.lib.sync_timedb_parsing import (
   parse_stats_file_path,
   parse_stats_file_streaming_incremental,
   parse_stats_lines,
+  reset_parse_stage_timing,
+  snapshot_parse_stage_timing,
   stats_file_size_bytes,
   stats_payload_row_count,
   tail_window_timestamps_all_present_streaming,
@@ -2195,13 +2197,15 @@ def _snapshot_ingest_write_timing() -> dict[str, float]:
 
 def _merge_ingest_write_timing_into_meta(meta: Any) -> dict[str, Any]:
   """
-  Copy outcome meta and attach write-path timing snapshot keys.
+  Copy outcome meta and attach write-path and optional parse-stage timing.
 
   Args:
     meta (Any): Existing outcome meta mapping or ``None``.
 
   Returns:
-    dict[str, Any]: Meta with ``postgres_s`` set.
+    dict[str, Any]: Meta with ``postgres_s`` set; when parse-stage telemetry
+      is enabled for the file, also ``feed_s`` / ``collapse_s`` /
+      ``build_df_s``.
 
   Examples:
     >>> _reset_ingest_write_timing()
@@ -2210,6 +2214,9 @@ def _merge_ingest_write_timing_into_meta(meta: Any) -> dict[str, Any]:
   """
   out = dict(meta or {})
   out.update(_snapshot_ingest_write_timing())
+  stage = snapshot_parse_stage_timing()
+  if stage:
+    out.update(stage)
   return out
 
 
@@ -2991,6 +2998,9 @@ class IngestFileOutcome:
     stats_rows: Host stats row count when known.
     stats_rows_parsed: Parsed stats rows when known.
     timeout_s: Resolved per-file timeout budget (seconds) when known.
+    feed_s: Optional feed-stage seconds when parse-stage telemetry is on.
+    collapse_s: Optional collapse-stage seconds when telemetry is on.
+    build_df_s: Optional build_df-stage seconds when telemetry is on.
   """
   path: str
   elapsed_s: float
@@ -3006,6 +3016,9 @@ class IngestFileOutcome:
   proc_rows: int | None = None
   fail_reason: str | None = None
   archive_skip: str | None = None
+  feed_s: float | None = None
+  collapse_s: float | None = None
+  build_df_s: float | None = None
 
 
 def _archive_skip_token_for_outcome(outcome: Any) -> Any:
@@ -3199,6 +3212,9 @@ def _ingest_file_outcome_from_worker(
       proc_rows=meta.get("proc_rows"),
       fail_reason=meta.get("fail_reason"),
       archive_skip=meta.get("archive_skip"),
+      feed_s=meta.get("feed_s"),
+      collapse_s=meta.get("collapse_s"),
+      build_df_s=meta.get("build_df_s"),
   )
 
 
@@ -3262,6 +3278,12 @@ def _log_ingest_file_outcome(
     parts.append("parse_elapsed_s=%.1f" % float(outcome.parse_elapsed_s))
   if outcome.postgres_s is not None:
     parts.append("postgres_s=%.1f" % float(outcome.postgres_s))
+  if outcome.feed_s is not None:
+    parts.append("feed_s=%.1f" % float(outcome.feed_s))
+  if outcome.collapse_s is not None:
+    parts.append("collapse_s=%.1f" % float(outcome.collapse_s))
+  if outcome.build_df_s is not None:
+    parts.append("build_df_s=%.1f" % float(outcome.build_df_s))
   if outcome.stats_rows is not None:
     parts.append("stats_rows=%d" % int(outcome.stats_rows))
   if outcome.stats_rows_parsed is not None:
@@ -4234,6 +4256,7 @@ def _add_stats_file_to_db_impl(
   payload = None
   t0 = time.time()
   _reset_ingest_write_timing()
+  reset_parse_stage_timing()
   if _should_stream_stats_file(stats_file, stats_file_contents):
     return _add_stats_file_to_db_streaming_incremental(
         stats_file, t0,

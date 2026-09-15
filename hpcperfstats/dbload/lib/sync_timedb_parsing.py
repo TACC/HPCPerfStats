@@ -8,6 +8,13 @@ Attributes:
   HOST_PROC_PEAK_KEYS: Attribute.
   STREAM_PARSE_LINE_BATCH: Attribute.
   _HOST_PROC_KEY_SET: Attribute.
+  _PARSE_STAGE_BUILD_DF: Attribute.
+  _PARSE_STAGE_COLLAPSE: Attribute.
+  _PARSE_STAGE_FEED: Attribute.
+  _ingest_build_df_s: Attribute.
+  _ingest_collapse_s: Attribute.
+  _ingest_feed_s: Attribute.
+  _parse_stage_telem_on: Attribute.
   _STATS_COL_NAMES: Attribute.
   _ARC_GROUP_COLS: Attribute.
   _COLLAPSE_GROUP_COLS: Attribute.
@@ -32,6 +39,8 @@ Attributes:
 """
 from __future__ import annotations
 
+import contextvars
+import time
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -91,6 +100,125 @@ HOST_PROC_KEYS = (
     "threads",
 )
 _HOST_PROC_KEY_SET = frozenset(HOST_PROC_KEYS)
+
+# Lite parse-stage telemetry (INI-gated; default off). Mirrors sync_timedb postgres_s.
+_PARSE_STAGE_FEED = "feed"
+_PARSE_STAGE_COLLAPSE = "collapse"
+_PARSE_STAGE_BUILD_DF = "build_df"
+_parse_stage_telem_on: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "parse_stage_telem_on",
+    default=False,
+)
+_ingest_feed_s: contextvars.ContextVar[float] = contextvars.ContextVar(
+    "ingest_feed_s",
+    default=0.0,
+)
+_ingest_collapse_s: contextvars.ContextVar[float] = contextvars.ContextVar(
+    "ingest_collapse_s",
+    default=0.0,
+)
+_ingest_build_df_s: contextvars.ContextVar[float] = contextvars.ContextVar(
+    "ingest_build_df_s",
+    default=0.0,
+)
+
+
+def reset_parse_stage_timing(*, enabled: bool | None = None) -> None:
+  """
+  Zero per-file parse-stage accumulators; optionally set enable flag.
+
+  Args:
+    enabled (bool | None): When ``None``, read
+      ``sync_ingest_parse_stage_telemetry`` from conf. When ``False``, no
+      ``perf_counter`` holds run for this file.
+
+  Returns:
+    None
+
+  Examples:
+    >>> reset_parse_stage_timing(enabled=False)
+  """
+  if enabled is None:
+    from hpcperfstats.dbload.lib import conf_parser as cfg
+    enabled = bool(cfg.get_sync_ingest_parse_stage_telemetry())
+  _parse_stage_telem_on.set(bool(enabled))
+  _ingest_feed_s.set(0.0)
+  _ingest_collapse_s.set(0.0)
+  _ingest_build_df_s.set(0.0)
+
+
+def snapshot_parse_stage_timing() -> dict[str, float]:
+  """
+  Return stage seconds when telemetry is enabled for this file.
+
+  Returns:
+    dict[str, float]: Empty when disabled; else ``feed_s`` / ``collapse_s`` /
+      ``build_df_s``.
+
+  Examples:
+    >>> reset_parse_stage_timing(enabled=False)
+    >>> snapshot_parse_stage_timing()
+    {}
+  """
+  if not _parse_stage_telem_on.get():
+    return {}
+  return {
+      "feed_s": float(_ingest_feed_s.get()),
+      "collapse_s": float(_ingest_collapse_s.get()),
+      "build_df_s": float(_ingest_build_df_s.get()),
+  }
+
+
+def _add_parse_stage_s(stage: str, delta_s: float) -> None:
+  """
+  Accumulate non-negative seconds into one parse-stage ContextVar.
+
+  Args:
+    stage (str): One of ``feed`` / ``collapse`` / ``build_df``.
+    delta_s (float): Hold duration in seconds (non-positive values ignored).
+
+  Returns:
+    None
+
+  Examples:
+    >>> reset_parse_stage_timing(enabled=True)
+    >>> _add_parse_stage_s("feed", 0.25)
+  """
+  delta = float(delta_s)
+  if delta <= 0.0:
+    return
+  if stage == _PARSE_STAGE_FEED:
+    _ingest_feed_s.set(float(_ingest_feed_s.get()) + delta)
+  elif stage == _PARSE_STAGE_COLLAPSE:
+    _ingest_collapse_s.set(float(_ingest_collapse_s.get()) + delta)
+  elif stage == _PARSE_STAGE_BUILD_DF:
+    _ingest_build_df_s.set(float(_ingest_build_df_s.get()) + delta)
+
+
+@contextmanager
+def _held_parse_stage(stage: str) -> Iterator[None]:
+  """
+  Hold ``perf_counter`` for ``stage`` only when telemetry is enabled.
+
+  Args:
+    stage (str): One of ``feed`` / ``collapse`` / ``build_df``.
+
+  Yields:
+    None
+
+  Examples:
+    >>> reset_parse_stage_timing(enabled=False)
+    >>> with _held_parse_stage("feed"):
+    ...   pass
+  """
+  if not _parse_stage_telem_on.get():
+    yield
+    return
+  t0 = time.perf_counter()
+  try:
+    yield
+  finally:
+    _add_parse_stage_s(stage, time.perf_counter() - t0)
 
 # Instantaneous gauges and kernel peaks retained as high-water marks across
 # samples / upserts for the same ``(jid, host, proc)`` name. Includes kernel
@@ -673,7 +801,7 @@ def _append_compiled_stats_columns(
   cols["wid"].extend(compiled["wids"])
   cols["mult"].extend(compiled["mults"])
   cols["unit"].extend(compiled["units"])
-  cols["value"].extend(float(v) for v in vals)
+  cols["value"].extend([float(v) for v in vals])
 
 
 def _decode_stats_readline(raw: bytes | str) -> str:
@@ -2029,9 +2157,6 @@ class IncrementalStatsParser:
             "proc": proc_name,
             "device": dev,
         }
-        for key in HOST_PROC_KEYS:
-          # Omitted slow-tier keys on ``@fast`` stay None (never invent 0).
-          row[key] = None
         for i, bare in enumerate(bare_keys):
           if i >= len(vals):
             break
@@ -2132,8 +2257,9 @@ class IncrementalStatsParser:
     Examples:
       >>> IncrementalStatsParser().feed_lines(None)  # doctest: +SKIP
     """
-    for line in lines:
-      self.feed_line(line)
+    with _held_parse_stage(_PARSE_STAGE_FEED):
+      for line in lines:
+        self.feed_line(line)
 
   def finish(self) -> Any:
     """
@@ -2271,17 +2397,14 @@ def build_stats_dataframes(stats_list: Any, proc_stats_list: Any) -> Any:
     >>> stats_df.empty and proc_df.empty
     True
   """
-  if not proc_stats_list:
-    proc_stats_df = DataFrame()
-  else:
-    proc_stats_df = DataFrame(proc_stats_list)
-    if not proc_stats_df.empty:
-      merged = dedupe_proc_stats_peak_merge(
-          proc_stats_df.to_dict(orient="records")
-      )
-      proc_stats_df = DataFrame(merged)
-  stats_df = _stats_payload_to_frame(stats_list)
-  return stats_df, proc_stats_df
+  with _held_parse_stage(_PARSE_STAGE_BUILD_DF):
+    if not proc_stats_list:
+      proc_stats_df = DataFrame()
+    else:
+      merged = dedupe_proc_stats_peak_merge(list(proc_stats_list))
+      proc_stats_df = DataFrame(merged) if merged else DataFrame()
+    stats_df = _stats_payload_to_frame(stats_list)
+    return stats_df, proc_stats_df
 
 
 _EMPTY_DELTA_ARC_COLUMNS = [
@@ -2451,42 +2574,45 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
   Examples:
     >>> _collapse_stats_with_deltas(None)  # doctest: +SKIP
   """
-  stats_df = _normalize_collapse_dev_column(stats_df)
-  gcols = _COLLAPSE_GROUP_COLS
-  gcols_gpu = _COLLAPSE_GROUP_COLS_WITH_DEV
-  nv_df = stats_df[stats_df["type"] == "nvidia_gpu"]
-  other_gpu_df = stats_df[stats_df["type"].isin({"amd_gpu", "intel_gpu"})]
-  rest_df = stats_df[~stats_df["type"].isin(_GPU_STATS_TYPES)]
-  parts = []
-  if not rest_df.empty:
-    ccm_power_mask = (
-        rest_df["type"].isin(_HOST_CPU_HW_TYPES)
-        & rest_df["event"].isin(_DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS))
-    ccm_power_df = rest_df[ccm_power_mask]
-    rest_other = rest_df[~ccm_power_mask]
-    if not rest_other.empty:
-      collapsed_rest = _groupby_sum_min_count(rest_other, gcols)
-      collapsed_rest["dev"] = ""
-      parts.append(collapsed_rest)
-    if not ccm_power_df.empty:
-      collapsed_ccm = _collapse_dcg_cpu_power_vectorized(ccm_power_df, gcols)
-      collapsed_ccm["dev"] = ""
-      parts.append(collapsed_ccm)
-  if not other_gpu_df.empty:
-    # Identity groups when each (host,dev,event,time) is unique.
-    parts.append(_groupby_sum_min_count(other_gpu_df, gcols_gpu))
-  if not nv_df.empty:
-    parts.append(_collapse_nvidia_gpu_vectorized(nv_df, gcols_gpu))
+  with _held_parse_stage(_PARSE_STAGE_COLLAPSE):
+    stats_df = _normalize_collapse_dev_column(stats_df)
+    gcols = _COLLAPSE_GROUP_COLS
+    gcols_gpu = _COLLAPSE_GROUP_COLS_WITH_DEV
+    nv_df = stats_df[stats_df["type"] == "nvidia_gpu"]
+    other_gpu_df = stats_df[stats_df["type"].isin({"amd_gpu", "intel_gpu"})]
+    rest_df = stats_df[~stats_df["type"].isin(_GPU_STATS_TYPES)]
+    parts = []
+    if not rest_df.empty:
+      ccm_power_mask = (
+          rest_df["type"].isin(_HOST_CPU_HW_TYPES)
+          & rest_df["event"].isin(_DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS))
+      ccm_power_df = rest_df[ccm_power_mask]
+      rest_other = rest_df[~ccm_power_mask]
+      if not rest_other.empty:
+        collapsed_rest = _groupby_sum_min_count(rest_other, gcols)
+        collapsed_rest["dev"] = ""
+        parts.append(collapsed_rest)
+      if not ccm_power_df.empty:
+        collapsed_ccm = _collapse_dcg_cpu_power_vectorized(ccm_power_df, gcols)
+        collapsed_ccm["dev"] = ""
+        parts.append(collapsed_ccm)
+    if not other_gpu_df.empty:
+      # Identity groups when each (host,dev,event,time) is unique.
+      parts.append(_groupby_sum_min_count(other_gpu_df, gcols_gpu))
+    if not nv_df.empty:
+      parts.append(_collapse_nvidia_gpu_vectorized(nv_df, gcols_gpu))
 
-  if not parts:
-    return _empty_delta_arc_frame()
-  collapsed = concat(parts, ignore_index=True) if len(parts) > 1 else parts[0]
-  del parts
-  if "dev" not in collapsed.columns:
-    collapsed["dev"] = ""
-  else:
-    collapsed["dev"] = collapsed["dev"].fillna("").astype(str)
-  return collapsed.sort_values(by=_ARC_GROUP_COLS + ["time"])
+    if not parts:
+      return _empty_delta_arc_frame()
+    collapsed = (
+        concat(parts, ignore_index=True) if len(parts) > 1 else parts[0]
+    )
+    del parts
+    if "dev" not in collapsed.columns:
+      collapsed["dev"] = ""
+    else:
+      collapsed["dev"] = collapsed["dev"].fillna("").astype(str)
+    return collapsed.sort_values(by=_ARC_GROUP_COLS + ["time"])
 
 
 def _apply_arc_and_finalize(stats_df: Any, carry: Any | None = None) -> Any:
@@ -2703,17 +2829,20 @@ def parse_stats_file_streaming_incremental(
         )
         if not batch:
           break
-        for line in batch:
-          if _line_starts_time_sample(
-              line, parser._line_index, parser.start_idx):
-            if pending_flush or parser.stats_len >= flush_rows:
-              if parser.stats_len or parser.proc_stats:
-                emit.append((parser.take_stats_columns(), parser.proc_stats))
-                parser.proc_stats = []
-              pending_flush = False
-          parser.feed_line(line)
-          if parser.stats_len >= flush_rows:
-            pending_flush = True
+        with _held_parse_stage(_PARSE_STAGE_FEED):
+          for line in batch:
+            if _line_starts_time_sample(
+                line, parser._line_index, parser.start_idx):
+              if pending_flush or parser.stats_len >= flush_rows:
+                if parser.stats_len or parser.proc_stats:
+                  emit.append(
+                      (parser.take_stats_columns(), parser.proc_stats),
+                  )
+                  parser.proc_stats = []
+                pending_flush = False
+            parser.feed_line(line)
+            if parser.stats_len >= flush_rows:
+              pending_flush = True
         for stats_chunk, proc_chunk in emit:
           on_chunk(stats_chunk, proc_chunk)
     if parser.stats_len or parser.proc_stats:
