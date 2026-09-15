@@ -216,28 +216,10 @@ restore_frontend_volume_if_drifted() {
   echo "Restored live frontend volume fingerprint: ${post_fp}"
 }
 
-wait_for_web_from_host() {
-  local port="${HPCPERFSTATS_WEB_PORT:-8000}"
-  local url="http://127.0.0.1:${port}/"
-  local waited=0
-  echo "Waiting for web on host ${url} (timeout ${WEB_WAIT_TIMEOUT}s) ..."
-  while (( waited < WEB_WAIT_TIMEOUT )); do
-    if command -v curl >/dev/null 2>&1; then
-      if curl -s -o /dev/null -w '%{http_code}' "${url}" 2>/dev/null | grep -qE '^[23]'; then
-        echo "web responded on host (${url})"
-        return 0
-      fi
-    elif command -v nc >/dev/null 2>&1; then
-      if nc -z 127.0.0.1 "${port}" 2>/dev/null; then
-        echo "web port open on host (${port})"
-        return 0
-      fi
-    fi
-    sleep 5
-    waited=$((waited + 5))
-  done
-  echo "rebuild_pipeline.sh: timed out waiting for web on host port ${port}" >&2
-  return 1
+wait_for_web_ready() {
+  # Host does not publish web:8000 by default (proxy :80/:443 only).
+  # Probe via compose network DNS from inside the web container.
+  wait_for_web_http "http://web:8000/" "${WEB_WAIT_TIMEOUT}"
 }
 
 build_pipeline_image() {
@@ -318,8 +300,8 @@ main() {
   start_web_proxy_pipeline
 
   if [[ "${DRY_RUN}" -eq 0 ]]; then
-    wait_for_web_from_host || \
-      echo "WARN: web host wait failed; containers may still be starting" >&2
+    wait_for_web_ready || \
+      echo "WARN: web wait failed; containers may still be starting" >&2
     restore_frontend_volume_if_drifted || \
       echo "WARN: frontend restore skipped/failed" >&2
     if [[ "${SKIP_FRONTEND_VERIFY}" -eq 0 ]]; then

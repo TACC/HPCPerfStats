@@ -87,6 +87,16 @@ if grep -qE 'compose build[[:space:]].*proxy|proxy\.Dockerfile|podman build.*pro
   exit 1
 fi
 
+# Must wait via compose network (web is not published on host :8000 by default).
+if grep -q 'Waiting for web on host' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must not wait on host-published web:8000" >&2
+  exit 1
+fi
+if ! grep -q 'wait_for_web_http "http://web:8000/"' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must wait via wait_for_web_http http://web:8000/ (compose network)" >&2
+  exit 1
+fi
+
 # Default stop grace for pipeline/web is 30s (matches compose stop_grace_period).
 if ! grep -q 'PIPELINE_STOP_TIMEOUT="${HPCPERFSTATS_PIPELINE_STOP_TIMEOUT:-30}"' "${PIPELINE_SCRIPT}"; then
   echo "rebuild_pipeline.sh default PIPELINE_STOP_TIMEOUT must be 30" >&2
