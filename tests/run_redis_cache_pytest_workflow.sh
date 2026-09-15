@@ -7,7 +7,6 @@ cd "$ROOT_DIR"
 . "$(dirname "${BASH_SOURCE[0]}")/colima_compose_teardown.sh"
 # shellcheck source=compose_test_cmd.sh
 . "$(dirname "${BASH_SOURCE[0]}")/compose_test_cmd.sh"
-colima_export_docker_env
 
 KEEP_ENV=0
 SKIP_BUILD=0
@@ -70,6 +69,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+colima_export_docker_env
 
 cleanup() {
   cleanup_args_file

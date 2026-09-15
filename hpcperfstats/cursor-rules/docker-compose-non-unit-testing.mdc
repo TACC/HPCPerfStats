@@ -6,6 +6,10 @@ description: Use Docker Compose workflows for integration, stress, E2E, and DB/R
 
 Host-side `pytest` often **cannot** resolve `db` / `redis`, match production DB settings, or provide Timescale behavior. **Do not** tell users to run integration-style tests with bare `pytest` on the Mac host unless the test is explicitly **unit-only** (mocks, `django_db(databases=[])`).
 
+## Local Docker disable (current machine)
+
+While **`colima-docker-runtime.mdc`** disable is in force, agents **must not** run `tests/run_*_workflow.sh` or start Colima. Workflows exit **78** unless **`HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1`**. Prefer host unit/mock coverage and mark compose validation **deferred**.
+
 ## Test compose overlay
 
 All **`tests/run_*_workflow.sh`** scripts source **`tests/compose_test_cmd.sh`**, which runs:
@@ -36,3 +40,4 @@ Stress tests are **opt-in** (`HPCPERFSTATS_STRESS_HOST_DATA=1`); the workflow sc
 - Complements `full-test-with-db-redis.mdc` and `local-compose-db-lifecycle-for-web-tests.mdc`.
 - Stress-specific: `job-plot-artifacts-caching.mdc` / `runtime-resource-and-metrics-safety.mdc` when touching plot persistence or metrics.
 - Host Python location: **`workspace-layout-and-python-env.mdc`**.
+- Local disable: **`colima-docker-runtime.mdc`**.

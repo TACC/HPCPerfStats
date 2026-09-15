@@ -7,7 +7,6 @@ cd "$ROOT_DIR"
 . "$(dirname "${BASH_SOURCE[0]}")/colima_compose_teardown.sh"
 # shellcheck source=compose_test_cmd.sh
 . "$(dirname "${BASH_SOURCE[0]}")/compose_test_cmd.sh"
-colima_export_docker_env
 
 if [[ ! -f hpcperfstats.ini ]]; then
   echo "hpcperfstats.ini not found; copying from hpcperfstats.ini.example"
@@ -65,6 +64,8 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+colima_export_docker_env
 
 cleanup() {
   compose_cleanup_bind_mount

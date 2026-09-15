@@ -16,6 +16,11 @@ web/DB availability, keep local runtime and data lifecycle consistent for UI tes
 - Changes that affect migration order or DB readiness checks.
 
 ## Required actions
+
+While **`colima-docker-runtime.mdc`** local-Docker disable is in force, **do not** run the compose lifecycle below; defer web E2E to the new Docker test platform (or `HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1`).
+
+When local Docker is enabled:
+
 - Before running each web E2E test, fully reset Docker state (handled by **`tests/run_web_e2e_workflow.sh`** at startup):
   - `docker-compose down -v --remove-orphans`
   - `docker-compose build web`

@@ -2,6 +2,13 @@
 # Shared docker-compose invocation for test workflows (source, do not execute).
 # Usage: . "$(dirname "${BASH_SOURCE[0]}")/compose_test_cmd.sh"
 #        compose_test up -d db redis
+#
+# Local Docker is OFF unless HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1 (see colima_compose_teardown.sh).
+
+if ! declare -F hpcperfstats_require_local_docker >/dev/null 2>&1; then
+  # shellcheck source=colima_compose_teardown.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/colima_compose_teardown.sh"
+fi
 
 COMPOSE_TEST=(docker-compose -f docker-compose.yaml -f tests/docker-compose.test-overlay.yaml)
 COMPOSE_BIND_MOUNT_DIR=""
@@ -225,6 +232,7 @@ compose_test_project_args() {
 }
 
 compose_test() {
+  hpcperfstats_require_local_docker
   compose_ensure_settings_yaml || return 1
   compose_ensure_test_overlay_yaml || return 1
   local project_args=()

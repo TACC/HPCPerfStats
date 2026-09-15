@@ -16,6 +16,8 @@ P0 triage notes live in **`docs/chat_failure_registry_p0_triage.json`**. Local r
 
 ## Quick start
 
+**Local Docker/Colima compose workflows are currently disabled** on this developer machine (pending a new Docker-capable test platform). Do **not** run `tests/run_*_workflow.sh` unless you explicitly set **`HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1`**. Scripts exit **78** with a clear message when the flag is unset. Prefer host `.venv` unit/mock tests below. See **`hpcperfstats/cursor-rules/colima-docker-runtime.mdc`**.
+
 From the project root (directory containing `pyproject.toml`):
 
 ```bash
@@ -168,6 +170,8 @@ If editable install on the bind mount fails with macOS cloud-sync locking (`Errn
 
 ## Testing on macOS (Docker + full suite)
 
+**Status:** local Colima/Docker compose gates are **disabled by default**. Set **`HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1`** before any section below that invokes compose workflows. Until then, use host `.venv` pytest only.
+
 ### 1. Install and start Docker
 
 - **Docker Desktop (Homebrew, Apple Silicon):** run in **Terminal.app** (or another interactive shell) so macOS can prompt for your password if needed:
@@ -228,6 +232,8 @@ pytest hpcperfstats/site/lib/machine/tests/test_openapi_schema_drift.py
 ```
 
 ### 3. Full compose-backed gate (Django DB, Playwright browser E2E, live Redis)
+
+**Prerequisite:** `export HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1` (otherwise every `tests/run_*_workflow.sh` exits **78** and does not touch Docker/Colima).
 
 All commands below assume your current directory is **`HPCPerfStats/`** (the one with `docker-compose.yaml`).
 
@@ -393,6 +399,7 @@ npm run test:coverage -- --run
 
 | Date | Change |
 |------|--------|
+| 2026-09-14 | Local Docker/Colima compose workflows disabled by default (`HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1` to re-enable); `hpcperfstats_require_local_docker` in `tests/colima_compose_teardown.sh` / `compose_test_cmd.sh` |
 | 2026-06-05 | `api.py` line coverage complete (100% gate); removed `artifacts/api_py_coverage_baseline.md`; added `test_api_coverage_closure.py` and `tests/coverage_api_py_line_only.ini` |
 | 2026-06-05 | Added best-practices section, frontend inventory, `api.py` coverage modules, new dbload/API/frontend unit tests |
 | 2026-06-05 | Colima post-test cleanup: `tests/colima_docker_cleanup.sh`, `tests/colima_compose_teardown.sh`; wired into all `tests/run_*_workflow.sh` scripts |
@@ -401,8 +408,8 @@ npm run test:coverage -- --run
 
 | Location | Description |
 |---------|-------------|
-| `tests/colima_docker_cleanup.sh` | After compose workflows: prune stopped containers, unused images, build cache, volumes, and networks (Colima **`DOCKER_HOST`**). Skip with **`COLIMA_DOCKER_CLEANUP_SKIP=1`**. |
-| `tests/colima_compose_teardown.sh` | Shared helper sourced by **`tests/run_*_workflow.sh`**: **`colima_compose_teardown`** runs compose **`down -v --remove-orphans`** then invokes **`colima_docker_cleanup.sh`**. |
+| `tests/colima_docker_cleanup.sh` | After compose workflows: prune stopped containers, unused images, build cache, volumes, and networks (Colima **`DOCKER_HOST`**). No-ops when local Docker is disabled; skip prune with **`COLIMA_DOCKER_CLEANUP_SKIP=1`**. |
+| `tests/colima_compose_teardown.sh` | Shared helper sourced by **`tests/run_*_workflow.sh`**: **`hpcperfstats_require_local_docker`** (exit **78** unless **`HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1`**); **`colima_compose_teardown`** runs compose **`down -v --remove-orphans`** then invokes **`colima_docker_cleanup.sh`**. |
 | `tests/pip_compose_test_extras_fallback.sh` | When `pip install -e ".[test]"` fails on a bind mount, inner compose scripts source this helper so **Django 6.x** and **pytest 9+ / pytest-django 4.12+** match `pyproject.toml` (not legacy `pytest>=7` / `pytest-django>=4.5` floors). |
 | `hpcperfstats/tests/test_sync_timedb_parsing_canonical.py` | Canonical stats-line ingest (semantic PMC/IMC events, no CTL/CTR eventmaps). |
 | `hpcperfstats/tests/test_sync_timedb_parsing_legacy.py` | Legacy ingest path (`map_hardware_counter_vals`, hex eventmaps, KNL type aliases). |

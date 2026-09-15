@@ -1,65 +1,42 @@
 ---
-description: This workspace uses Colima for Docker; use compose-backed tests when Colima is running.
+description: Local Colima/Docker compose tests are disabled until a new Docker test platform is ready.
 alwaysApply: false
-globs: docker-compose*.yaml
+globs: docker-compose*.yaml,tests/run_*_workflow.sh,tests/colima_*.sh,tests/compose_test_cmd.sh
 ---
 
-# Colima Docker Runtime (this environment)
+# Local Docker / Colima — DISABLED (temporary)
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-On the **primary developer machine** for this workspace, container workloads run through **Colima** (macOS Virtualization.Framework), not Docker Desktop.
+On this developer machine, **local Colima/Docker compose test workflows are disabled** until a new Docker-capable test platform is ready. Do **not** start Colima or run compose-backed validation locally.
 
 ## Required agent behavior
 
-- **Do not** conclude that Docker is unavailable because `docker` is missing from `PATH`, `docker info` fails once, or a prior session reported `docker_missing`. Check Colima first.
-- **Do** treat Docker as available when `colima status` reports **running** (or after starting Colima successfully).
-- **Do** run compose-backed validation required by project rules (`full-test-with-db-redis.mdc`, `compose-required-for-data-services-changes.mdc`, `docker-compose-non-unit-testing.mdc`, pipeline/web E2E workflows) when Colima is up—do not skip them solely based on an earlier failed probe.
+- **Do not** run `colima start`, set `DOCKER_HOST` to Colima, or invoke `tests/run_*_workflow.sh` / `tests/run_all_compose_workflows.sh` / ad-hoc `docker-compose` for agent validation.
+- **Do not** probe `colima status` / `docker info` hoping to “fix” Docker and then run compose tests.
+- **Do** use host `<workspace_root>/.venv/bin/python3` pytest for unit and host-safe Django mock tests.
+- Treat compose-required / full DB+Redis / web E2E completion gates as **deferred** for this machine: close with **`N/A — local Docker disabled`** (cite this rule) rather than attempting Colima.
+- Workflow scripts refuse to run unless **`HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1`** (exit **78**).
 
-## Verify / start (copy-paste)
-
-From any shell:
-
-```bash
-colima status
-```
-
-If not running:
+## Re-enable (future platform or explicit override)
 
 ```bash
-colima start
+export HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1
+# then: colima status / DOCKER_HOST / tests/run_*_workflow.sh as before
 ```
 
-Wire the Docker CLI to Colima (required for `docker` / `docker-compose`):
+Historical Colima wiring (only when re-enabled):
 
 ```bash
 export DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock"
 export PATH="/opt/homebrew/bin:${PATH}"
-docker info
-docker-compose version
 ```
 
-Older Colima builds also support `eval "$(colima docker-env)"`; if that command is unknown, use `DOCKER_HOST` above.
+## Post-test cleanup (only when enabled)
 
-Compose commands run from the git checkout directory that contains `docker-compose.yaml` (typically `HPCPerfStats/` inside the workspace).
-
-## Post-test Docker cleanup (Colima)
-
-After compose-backed test workflows finish, **`tests/colima_docker_cleanup.sh`** prunes stopped containers, unused images, build cache, volumes, and networks so the Colima VM disk does not fill up. Workflow scripts source **`tests/colima_compose_teardown.sh`** and call **`colima_compose_teardown`** on exit (unless **`--keep-env`**).
-
-- Skip cleanup: **`COLIMA_DOCKER_CLEANUP_SKIP=1`**
-- Manual cleanup: **`bash tests/colima_docker_cleanup.sh`** from `HPCPerfStats/`
-
-## Install gap
-
-If `colima` exists but `docker` / `docker-compose` CLIs are missing, install them (this machine uses Homebrew arm64):
-
-```bash
-arch -arm64 brew install docker docker-compose
-eval "$(colima docker-env)"
-```
+When local Docker is re-enabled, workflow scripts still call **`colima_compose_teardown`** → **`tests/colima_docker_cleanup.sh`** unless **`--keep-env`**. Skip prune with **`COLIMA_DOCKER_CLEANUP_SKIP=1`**.
 
 ## Overlap
 
-- Complements **`docker-compose-non-unit-testing.mdc`** and **`full-test-with-db-redis.mdc`** (which workflows to run)—this rule states **that Colima supplies Docker here**, not that compose tests are optional.
-- Complements **`workspace-layout-and-python-env.mdc`** (host `.venv` vs compose `web` service).
+- **`compose-required-for-data-services-changes.mdc`**, **`full-test-with-db-redis.mdc`**, **`docker-compose-non-unit-testing.mdc`**, **`web-pages-full-e2e-completion-gate.mdc`** — compose validation is deferred while this disable is in force.
+- Complements **`workspace-layout-and-python-env.mdc`** (host `.venv` remains the local test interpreter).

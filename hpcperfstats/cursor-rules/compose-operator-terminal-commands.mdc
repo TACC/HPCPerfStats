@@ -683,6 +683,14 @@ ps -eo pid,ppid,pcpu,rss,stat,wchan:32,args | grep "[w]orker:populate-pool" || t
 
 **Anti-pattern — leftover `stage_enter disk_remaining_raw` without vacate is expected verify soak (hpcperfstats04 2026-09-11):** after H22, leftover claims **do** emit `stage_enter disk_remaining_raw`. No following `vacate` / `wait_on_ingest` without `pre_seal_verify` is remaining-raw **complete_handoff** hang (`complete_handoff_to_ingest` after cheap `needs_wait` — H24), not GNU tvf/merge soak. H23 skipped the remaining-raw **kick** only. **Corrected:** grep `queue_orchestrator day_close (claim|vacate|stage_)` without `progress day=`; pass is yield/`skip_yield`/`vacate` without occupying inflight on that remaining-raw walk. Do not raise `sync_day_close_max_inflight`. Do not call remaining_raw over all tars.
 
+**Anti-pattern — `py-spy dump --tid` (hpcperfstats01/02/04 2026-09-14):** pinned image py-spy has **no `--tid`**. **Corrected:** full `py-spy dump --pid "$SUP"` then extract with `awk '$1=="Thread" && $2==tid'` — headers are **`Thread N (idle|active)`**, not `Thread N:`.
+
+**Anti-pattern — top-5 `pcpu` SPIDs as sole RCA (hpcperfstats01/02/04 2026-09-14):** momentary top TIDs miss discover-bg mark JSON reload and under-count coexisting RCAs. **Corrected:** always pair top-SPID extract with a **frame-class tally** (`json.load`, `build_remaining_raw`/`iter_find`, `decompress`/`zstd`, `merge_proc`/`parse`, `CDLL`/`malloc_trim`) and host-side day_close stage greps.
+
+**Anti-pattern — nested `docker compose logs` inside `exec pipeline` (hpcperfstats01/04 2026-09-14):** stage_counts always **0**. **Corrected:** run `docker compose … logs pipeline` on the **host**; use `exec` only for in-container `ps`/`py-spy`.
+
+**Anti-pattern — treat `parse_elapsed_s≈elapsed_s` on giant files as a parse-algo bug (hpcperfstats02 2026-09-14):** multi‑MiB / 100k+ `stats_rows_parsed` files are expected CPU; small files with high parse wall-time under full fill are **contention**. Do **not** raise ingest pool size or rewrite streaming parse as a stall fix; reduce competing mark/find/gate work first. Distinct-day `daily_tar_restore … reason=missing_tar` is **expected** unseal, not same-day restore thrash.
+
 **Anti-pattern — `sys.argv` after `python3 -c` through podman-compose `exec` (hpcperfstats04 2026-09-10):** `.tar` and day tokens after the `-c` payload became **compose args**, not Python argv → **`IndexError: list index out of range`** on `sys.argv[1]`, then `bash: syntax error near unexpected token ';'`. **Corrected:** no argv; `os.listdir` + `chr()` suffix (or skip argv entirely). Chain fallible Python to logs as a **second host-side line** in the same `#### pipeline` fence, not a lone `;` after a broken exec.
 
 **Example** — pipeline block after stall hypothesis:
@@ -692,9 +700,20 @@ docker compose -f docker-compose.yaml exec pipeline sh -c '
 SUP=$(ps -eo pid=,args= | grep "[s]ync_timedb.py \[main\]" | grep -v "\[worker:" | awk "{print \$1; exit}")
 echo "sync_timedb pid=$SUP"
 ps -o pid,ppid,rss,etime,cmd -p "$SUP"
-py-spy dump --pid "$SUP" | head -80
-lsof -p "$SUP" | head -30
+py-spy dump --pid "$SUP" 2>&1 | tee /tmp/pyspy-sup.dump >/dev/null
+echo === frame_class_tally ===
+grep -c "json.load\|JSONDecoder" /tmp/pyspy-sup.dump || true
+grep -c "iter_find_printf_records_streaming\|build_remaining_raw_for_daily_tar" /tmp/pyspy-sup.dump || true
+grep -c "decompress_compressed_to_tar\|_run_zstd" /tmp/pyspy-sup.dump || true
+grep -c "merge_proc_row_dicts\|parse_stats_file_streaming" /tmp/pyspy-sup.dump || true
+grep -c "CDLL\|malloc_trim\|release_spawn_pool_worker_memory" /tmp/pyspy-sup.dump || true
 '
+```
+
+Host-side (same paste session — **not** inside `exec`):
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator day_close (claim|vacate|stage_)' | tail -60
 ```
 
 **Example** — compose DNS / port check from pipeline:

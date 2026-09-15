@@ -370,11 +370,14 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
         "patterns": [
             "docker-compose*.yaml",
             "tests/run_*_workflow.sh",
+            "tests/colima_*.sh",
+            "tests/compose_test_cmd.sh",
         ],
         "rules": [
             "colima-docker-runtime.mdc",
             "compose-required-for-data-services-changes.mdc",
             "docker-compose-non-unit-testing.mdc",
+            "full-test-with-db-redis.mdc",
         ],
     },
     {

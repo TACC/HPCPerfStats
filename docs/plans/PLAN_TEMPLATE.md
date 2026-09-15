@@ -210,7 +210,7 @@ cd HPCPerfStats && ../.venv/bin/python3 -m pytest -q path/to/tests …
 **Validation runbook** (`logic-change-checklist.mdc`):
 
 1. Run smallest targeted test modules first.
-2. Escalate to compose workflows when DB/Redis/RabbitMQ semantics apply (`compose-required-for-data-services-changes.mdc`, `colima-docker-runtime.mdc`).
+2. Escalate to compose workflows when DB/Redis/RabbitMQ semantics apply (`compose-required-for-data-services-changes.mdc`, `colima-docker-runtime.mdc`) — while local Docker is disabled on this machine, document **`N/A — local Docker disabled`** instead of starting Colima.
 3. Append results to `test_runs/test_run_log_YYYY-MM-DD.md` (command, exit code, blockers) — not `docs/`.
 4. Record residual risks if anything was skipped.
 

@@ -2,6 +2,11 @@
 # Prune Colima Docker after compose-backed test workflows (containers, images, build cache, volumes, networks).
 set -uo pipefail
 
+if [[ "${HPCPERFSTATS_ENABLE_LOCAL_DOCKER:-0}" != "1" ]]; then
+  echo "Colima Docker cleanup skipped (local Docker disabled; set HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1 to enable)."
+  exit 0
+fi
+
 export PATH="/opt/homebrew/bin:/usr/local/bin:${PATH:-}"
 export DOCKER_HOST="${DOCKER_HOST:-unix://${HOME}/.colima/default/docker.sock}"
 

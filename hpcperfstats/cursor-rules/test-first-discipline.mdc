@@ -29,7 +29,7 @@ Treat every non-trivial change as test-first work.
 
 ## Integration with existing testing rules
 - **`testing-best-practices.mdc`** — canonical pyramid, mock boundaries, drift guards, refactor-for-testability.
-- Follow compose-network workflows for non-unit tests per `docker-compose-non-unit-testing.mdc` and `full-test-with-db-redis.mdc`.
+- Follow compose-network workflows for non-unit tests per `docker-compose-non-unit-testing.mdc` and `full-test-with-db-redis.mdc` — **except** while **`colima-docker-runtime.mdc`** local-Docker disable is in force (defer compose; host unit/mocks only).
 - When web pages/routes change, also follow `web-pages-e2e-test-maintenance.mdc` and `pipeline-endpoint-matrix-drift-guard.mdc`.
 - When ingest/metrics behavior changes, also follow `pipeline-metrics-e2e-maintenance.mdc` and `runtime-resource-and-metrics-safety.mdc`.
 - When test workflows/scope/prereqs change, update `HPCPerfStats/docs/TESTING.md` per `testing-doc-sync.mdc`.

@@ -7,8 +7,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 # shellcheck source=colima_compose_teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/colima_compose_teardown.sh"
-colima_export_docker_env
-
 # shellcheck source=compose_test_cmd.sh
 . "$(dirname "${BASH_SOURCE[0]}")/compose_test_cmd.sh"
 
@@ -33,6 +31,7 @@ Options:
 
 Environment:
   HPCPERFSTATS_PIPELINE_E2E      Set to 1 inside container by this script (gate for pytest).
+  HPCPERFSTATS_ENABLE_LOCAL_DOCKER Set to 1 to allow local Docker/Colima (default: disabled)
 
 Prerequisites:
   docker-compose.yaml plus tests/docker-compose.test-overlay.yaml (named /hpcperfstats volume).
@@ -65,6 +64,8 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+colima_export_docker_env
 
 cleanup() {
   compose_cleanup_bind_mount

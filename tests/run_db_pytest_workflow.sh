@@ -7,7 +7,6 @@ cd "$ROOT_DIR"
 . "$(dirname "${BASH_SOURCE[0]}")/colima_compose_teardown.sh"
 # shellcheck source=compose_test_cmd.sh
 . "$(dirname "${BASH_SOURCE[0]}")/compose_test_cmd.sh"
-colima_export_docker_env
 
 SEED_CMD="${DB_TEST_SEED_CMD:-}"
 KEEP_ENV=0
@@ -34,7 +33,8 @@ Options:
   -h, --help                Show this help
 
 Environment:
-  DB_TEST_SEED_CMD          Seed command (same as --seed-cmd)
+  DB_TEST_SEED_CMD                 Seed command (same as --seed-cmd)
+  HPCPERFSTATS_ENABLE_LOCAL_DOCKER Set to 1 to allow local Docker/Colima (default: disabled)
 
 Arguments after a lone "--" are forwarded to pytest (one argument per line internally).
 EOF
@@ -92,6 +92,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+colima_export_docker_env
 
 cleanup() {
   cleanup_args_file
