@@ -308,6 +308,8 @@ def _nullable_int_max(left: Any, right: Any) -> Any:
     >>> _nullable_int_max(None, None) is None
     True
   """
+  if type(left) is int and type(right) is int:
+    return left if left >= right else right
   left_ok: int | None
   right_ok: int | None
   try:
@@ -394,7 +396,8 @@ def dedupe_proc_stats_peak_merge(
     if key in by_key:
       by_key[key] = merge_proc_row_dicts(by_key[key], row)
     else:
-      by_key[key] = dict(row)
+      # Take ownership — callers must not mutate ``row`` after pass-in.
+      by_key[key] = row
   return list(by_key.values())
 
 
@@ -1960,6 +1963,7 @@ class IncrementalStatsParser:
   
   Attributes:
     _line_index: Attribute.
+    _proc_by_key: Online peak-merged host_proc rows keyed by ``(jid, host, proc)``.
     exclude_types_list: Attribute.
     insert: Attribute.
     line_ctx: Attribute.
@@ -2005,9 +2009,89 @@ class IncrementalStatsParser:
     self.schema_bare = {}
     self.schema_fast_bare = {}
     self._stats_cols = _empty_stats_columns()
-    self.proc_stats = []
+    self._proc_by_key: dict[tuple[Any, Any, Any], dict[str, Any]] = {}
     self.insert = False
     self.line_ctx = {"tags": None, "tags2": None}
+
+  @property
+  def proc_stats(self) -> list[dict[str, Any]]:
+    """
+    Current host_proc rows (already peak-merged by ``(jid, host, proc)``).
+
+    Returns:
+      list[dict[str, Any]]: One row per unique key (insertion order).
+
+    Examples:
+      >>> IncrementalStatsParser(0).proc_stats
+      []
+    """
+    return list(self._proc_by_key.values())
+
+  @proc_stats.setter
+  def proc_stats(self, value: Any) -> None:
+    """
+    Replace or clear the online proc map (``[]`` / falsy clears).
+
+    Args:
+      value (Any): Empty clears; a sequence of row dicts rehydrates the map.
+
+    Returns:
+      None
+
+    Examples:
+      >>> p = IncrementalStatsParser(0)
+      >>> p.proc_stats = []
+    """
+    self._proc_by_key = {}
+    if not value:
+      return
+    for row in value:
+      self._merge_proc_row_online(row)
+
+  def take_proc_stats(self) -> list[dict[str, Any]]:
+    """
+    Return and clear online-merged host_proc rows for a flush.
+
+    Returns:
+      list[dict[str, Any]]: Peak-merged rows; map is empty afterward.
+
+    Examples:
+      >>> IncrementalStatsParser(0).take_proc_stats()
+      []
+    """
+    rows = list(self._proc_by_key.values())
+    self._proc_by_key = {}
+    return rows
+
+  def _merge_proc_row_online(self, row: dict[str, Any]) -> None:
+    """
+    Merge one host_proc row into ``_proc_by_key`` (GREATEST peaks / last-write).
+
+    Args:
+      row (dict[str, Any]): Sparse host_proc sample (owned after first insert).
+
+    Returns:
+      None
+
+    Examples:
+      >>> p = IncrementalStatsParser(0)
+      >>> p._merge_proc_row_online(
+      ...     {"jid": "j", "host": "h", "proc": "p", "vm_peak": 1})
+    """
+    key = (row.get("jid"), row.get("host"), row.get("proc"))
+    if not _parse_stage_telem_on.get():
+      existing = self._proc_by_key.get(key)
+      if existing is None:
+        self._proc_by_key[key] = row
+      else:
+        merge_proc_row_dicts(existing, row)
+      return
+    with _held_parse_stage("proc_merge_s"):
+      existing = self._proc_by_key.get(key)
+      if existing is None:
+        self._proc_by_key[key] = row
+      else:
+        merge_proc_row_dicts(existing, row)
 
   def compile_injected_schema(self) -> None:
     """
@@ -2204,7 +2288,7 @@ class IncrementalStatsParser:
               row[bare] = int(float(raw))
             except (TypeError, ValueError):
               row[bare] = None
-        self.proc_stats.append(row)
+        self._merge_proc_row_online(row)
         return
 
       if typ not in self.schema:
@@ -2306,7 +2390,7 @@ class IncrementalStatsParser:
       >>> IncrementalStatsParser().finish()
       ([], [])
     """
-    return stats_payload_to_records(self._stats_cols), self.proc_stats
+    return stats_payload_to_records(self._stats_cols), self.take_proc_stats()
 
 
 def parse_stats_lines(
@@ -2435,7 +2519,8 @@ def build_stats_dataframes(stats_list: Any, proc_stats_list: Any) -> Any:
     proc_stats_df = DataFrame()
   else:
     with _held_parse_stage("proc_merge_s"):
-      merged = dedupe_proc_stats_peak_merge(list(proc_stats_list))
+      # Parser flushes already collapse online; dedupe is O(unique) + ownership.
+      merged = dedupe_proc_stats_peak_merge(proc_stats_list)
     with _held_parse_stage("proc_df_s"):
       proc_stats_df = DataFrame(merged) if merged else DataFrame()
   with _held_parse_stage("hw_df_s"):
@@ -2874,20 +2959,18 @@ def parse_stats_file_streaming_incremental(
             if _line_starts_time_sample(
                 line, parser._line_index, parser.start_idx):
               if pending_flush or parser.stats_len >= flush_rows:
-                if parser.stats_len or parser.proc_stats:
+                if parser.stats_len or parser._proc_by_key:
                   emit.append(
-                      (parser.take_stats_columns(), parser.proc_stats),
+                      (parser.take_stats_columns(), parser.take_proc_stats()),
                   )
-                  parser.proc_stats = []
                 pending_flush = False
             parser.feed_line(line)
             if parser.stats_len >= flush_rows:
               pending_flush = True
         for stats_chunk, proc_chunk in emit:
           on_chunk(stats_chunk, proc_chunk)
-    if parser.stats_len or parser.proc_stats:
-      on_chunk(parser.take_stats_columns(), parser.proc_stats)
-      parser.proc_stats = []
+    if parser.stats_len or parser._proc_by_key:
+      on_chunk(parser.take_stats_columns(), parser.take_proc_stats())
     pending_flush = False
   except FileNotFoundError:
     return

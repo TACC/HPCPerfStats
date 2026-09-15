@@ -25,6 +25,7 @@ Multi-`dev` metric collapse in ingest parse (`_collapse_stats_with_deltas` and h
 - `cols["value"].extend(float(v) for v in vals)` generator extend — materialize `[float(v) for v in vals]` once then extend.
 - Prefilling every `HOST_PROC_KEYS` entry to `None` on each proc sample — sparse rows omit missing keys; `@fast` slow keys stay absent (never invent 0).
 - `build_stats_dataframes` round-trip `DataFrame` → `to_dict(orient="records")` → peak-merge → `DataFrame` — peak-merge the proc list, then one frame.
+- Append-all `host_proc` samples then batch `dedupe_proc_stats_peak_merge` on the ingest hot path — online-collapse by `(jid, host, proc)` during `feed_line` (`_proc_by_key` / `take_proc_stats`); keep batch dedupe only for non-parser list inputs.
 - Calling `schema_key_basename` on every proc sample — compile bare names at `!` into `schema_bare` / `schema_fast_bare`.
 - Decoding ASCII under `_stats_file_read_lock` on rb streaming readers — use `_read_stats_line_batch_decode_after_lock` (bytes under SH, `_decode_stats_readline` after release).
 - Adding Polars, PyArrow, or numba as runtime parse engines before a logged host/pipeline flamegraph shows leftover exclusive time in `feed_line` / `split` / `float`.

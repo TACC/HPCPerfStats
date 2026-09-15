@@ -7,16 +7,21 @@ import numpy as np
 import pandas as pd
 
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+    HOST_PROC_KEYS,
     IncrementalStatsParser,
     _cluster_mean_sum_sorted,
     _compile_schema_token,
+    _nullable_int_max,
     _nvidia_bitwise_or_values,
     build_stats_dataframes,
     compute_deltas_and_arc,
     compute_deltas_and_arc_chunk,
+    dedupe_proc_stats_peak_merge,
     exclude_types,
     parse_stats_file_streaming_incremental,
     parse_stats_lines,
+    reset_parse_stage_timing,
+    snapshot_parse_stage_timing,
     stats_payload_row_count,
     stats_payload_to_records,
 )
@@ -365,3 +370,115 @@ def test_build_stats_dataframes_peak_merge_without_to_dict_roundtrip():
   assert len(proc_df) == 1
   assert int(proc_df.iloc[0]["vm_peak"]) == 20
   assert int(proc_df.iloc[0]["vm_hwm"]) == 5
+
+
+def _host_proc_schema_line() -> str:
+  keys = " ".join(
+      f"{k},U=kB" if k.startswith("vm_") else k for k in HOST_PROC_KEYS
+  )
+  return f"!host_proc {keys}\n"
+
+
+def _host_proc_vals(*, vm_peak: int, threads: int) -> str:
+  """Build full host_proc value tokens; override peak + threads."""
+  vals = []
+  for i, k in enumerate(HOST_PROC_KEYS):
+    if k == "vm_peak":
+      vals.append(str(vm_peak))
+    elif k == "threads":
+      vals.append(str(threads))
+    else:
+      vals.append(str(1000 + i))
+  return " ".join(vals)
+
+
+def test_online_proc_merge_equals_batch_dedupe():
+  """Wave 4: online (jid,host,proc) merge must match batch peak-merge."""
+  schema = _host_proc_schema_line()
+  lines = [
+      schema,
+      "1709123456 job1 cn001\n",
+      f"host_proc python/1/0/0 {_host_proc_vals(vm_peak=9000, threads=1)}\n",
+      "1709123457 job1 cn001\n",
+      f"host_proc python/1/0/0 {_host_proc_vals(vm_peak=8000, threads=8)}\n",
+      "1709123458 job1 cn001\n",
+      f"host_proc other/2/0/0 {_host_proc_vals(vm_peak=100, threads=2)}\n",
+  ]
+  parser = IncrementalStatsParser(0)
+  parser.feed_lines(lines)
+  online = parser.take_proc_stats()
+  assert parser.proc_stats == []
+  assert len(online) == 2
+  by_proc = {r["proc"]: r for r in online}
+  assert by_proc["python"]["vm_peak"] == 9000
+  assert by_proc["python"]["threads"] == 8
+  assert by_proc["other"]["vm_peak"] == 100
+  explicit = [
+      {
+          "time": 1709123456.0,
+          "host": "cn001",
+          "jid": "job1",
+          "proc": "python",
+          "device": "python/1/0/0",
+          "vm_peak": 9000,
+          "threads": 1,
+      },
+      {
+          "time": 1709123457.0,
+          "host": "cn001",
+          "jid": "job1",
+          "proc": "python",
+          "device": "python/1/0/0",
+          "vm_peak": 8000,
+          "threads": 8,
+      },
+      {
+          "time": 1709123458.0,
+          "host": "cn001",
+          "jid": "job1",
+          "proc": "other",
+          "device": "other/2/0/0",
+          "vm_peak": 100,
+          "threads": 2,
+      },
+  ]
+  batch_by = {r["proc"]: r for r in dedupe_proc_stats_peak_merge(explicit)}
+  assert by_proc["python"]["vm_peak"] == batch_by["python"]["vm_peak"]
+  assert by_proc["python"]["threads"] == batch_by["python"]["threads"]
+
+
+def test_nullable_int_max_fastpath_and_dirty():
+  """Wave 4 Approach B: int/int fast path; None/dirty keep prior contract."""
+  assert _nullable_int_max(10, 3) == 10
+  assert _nullable_int_max(3, 10) == 10
+  assert _nullable_int_max(None, 5) == 5
+  assert _nullable_int_max(5, None) == 5
+  assert _nullable_int_max(None, None) is None
+  assert _nullable_int_max("12", 7) == 12
+  assert _nullable_int_max("bad", 7) == 7
+
+
+def test_peak_merge_ownership_first_hit_no_copy():
+  """First insert must take row ownership (same object identity)."""
+  row = {"jid": "j", "host": "h", "proc": "p", "vm_peak": 1, "threads": 1}
+  out = dedupe_proc_stats_peak_merge([row])
+  assert len(out) == 1
+  assert out[0] is row
+
+
+def test_online_proc_merge_telem_under_proc_merge_s():
+  """Online merge work must still accumulate under proc_merge_s when telem on."""
+  reset_parse_stage_timing(enabled=True)
+  try:
+    parser = IncrementalStatsParser(0)
+    parser.feed_line(_host_proc_schema_line())
+    parser.feed_line("1709123456 job1 cn001\n")
+    vals = _host_proc_vals(vm_peak=1, threads=1)
+    for _ in range(20):
+      parser.feed_line(f"host_proc python/1/0/0 {vals}\n")
+    snap = snapshot_parse_stage_timing()
+    assert "proc_merge_s" in snap
+    assert snap["proc_merge_s"] >= 0.0
+    assert len(parser.take_proc_stats()) == 1
+  finally:
+    reset_parse_stage_timing(enabled=False)
