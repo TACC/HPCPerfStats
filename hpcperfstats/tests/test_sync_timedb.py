@@ -441,10 +441,10 @@ def test_merge_proc_row_dicts_greatest_peak_and_hwm():
   """vm_peak/vm_hwm use GREATEST so later 0 cannot erase job-level high water."""
   from hpcperfstats.dbload.lib.sync_timedb_parsing import merge_proc_row_dicts
 
-  merged = merge_proc_row_dicts(
-      {"vm_peak": 9000, "vm_hwm": 7000, "vm_stk": 100, "threads": 1},
-      {"vm_peak": 0, "vm_hwm": 100, "vm_stk": 40, "threads": 8},
-  )
+  earlier = {"vm_peak": 9000, "vm_hwm": 7000, "vm_stk": 100, "threads": 1}
+  later = {"vm_peak": 0, "vm_hwm": 100, "vm_stk": 40, "threads": 8}
+  merged = merge_proc_row_dicts(earlier, later)
+  assert merged is earlier
   assert merged["vm_peak"] == 9000
   assert merged["vm_hwm"] == 7000
   assert merged["vm_stk"] == 100

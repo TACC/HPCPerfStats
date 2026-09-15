@@ -7,6 +7,7 @@ Attributes:
   HOST_PROC_KEYS: Attribute.
   HOST_PROC_PEAK_KEYS: Attribute.
   STREAM_PARSE_LINE_BATCH: Attribute.
+  _HOST_PROC_KEY_SET: Attribute.
   _STATS_COL_NAMES: Attribute.
   _ARC_GROUP_COLS: Attribute.
   _COLLAPSE_GROUP_COLS: Attribute.
@@ -89,6 +90,7 @@ HOST_PROC_KEYS = (
     "vm_swap",
     "threads",
 )
+_HOST_PROC_KEY_SET = frozenset(HOST_PROC_KEYS)
 
 # Instantaneous gauges and kernel peaks retained as high-water marks across
 # samples / upserts for the same ``(jid, host, proc)`` name. Includes kernel
@@ -172,13 +174,14 @@ def merge_proc_row_dicts(
 
   Non-peak fields take ``later`` (last-write). Peak keys
   (``HOST_PROC_PEAK_KEYS``) take the max of non-null values.
+  Mutates and returns ``earlier`` (no per-merge dict copy).
 
   Args:
-    earlier (dict[str, Any]): Prior sample for the unique key.
+    earlier (dict[str, Any]): Prior sample for the unique key (mutated).
     later (dict[str, Any]): Newer sample (last-write source).
 
   Returns:
-    dict[str, Any]: Merged row (new dict); peak fields are GREATEST.
+    dict[str, Any]: ``earlier`` after merge; peak fields are GREATEST.
 
   Examples:
     >>> merge_proc_row_dicts(
@@ -197,11 +200,12 @@ def merge_proc_row_dicts(
     ... )["vm_hwm"]
     7000
   """
-  out = dict(earlier)
-  out.update(later)
+  for key, value in later.items():
+    if key not in HOST_PROC_PEAK_KEYS:
+      earlier[key] = value
   for key in HOST_PROC_PEAK_KEYS:
-    out[key] = _nullable_int_max(earlier.get(key), later.get(key))
-  return out
+    earlier[key] = _nullable_int_max(earlier.get(key), later.get(key))
+  return earlier
 
 
 def dedupe_proc_stats_peak_merge(
@@ -649,6 +653,35 @@ def _decode_stats_readline(raw: bytes | str) -> str:
   if isinstance(raw, bytes):
     return raw.decode("ascii", "replace")
   return raw
+
+
+def _read_stats_line_batch_decode_after_lock(
+  fd: Any,
+  stats_file: str,
+  batch_size: int,
+) -> list[str]:
+  """
+  Read up to ``batch_size`` raw lines under SH; decode after release.
+
+  Args:
+    fd (Any): Binary file object open for the stats path.
+    stats_file (str): Path used for ``_stats_file_read_lock``.
+    batch_size (int): Max ``readline`` calls per lock hold.
+
+  Returns:
+    list[str]: Decoded lines (empty at EOF).
+
+  Examples:
+    >>> _read_stats_line_batch_decode_after_lock(None, "x", 1)  # doctest: +SKIP
+  """
+  raw_batch: list[bytes] = []
+  with _stats_file_read_lock(stats_file):
+    for _ in range(int(batch_size)):
+      raw = fd.readline()
+      if not raw:
+        break
+      raw_batch.append(raw)
+  return [_decode_stats_readline(raw) for raw in raw_batch]
 
 
 def _zip_schema_vals(
@@ -1260,13 +1293,9 @@ def iter_stats_file_lines(stats_file: str) -> Iterator[Any]:
       line_idx = 0
       bytes_read = 0
       while True:
-        batch: list[str] = []
-        with _stats_file_read_lock(stats_file):
-          for _ in range(int(STREAM_PARSE_LINE_BATCH)):
-            raw = fd.readline()
-            if not raw:
-              break
-            batch.append(_decode_stats_readline(raw))
+        batch = _read_stats_line_batch_decode_after_lock(
+            fd, stats_file, STREAM_PARSE_LINE_BATCH,
+        )
         if not batch:
           break
         for line in batch:
@@ -1886,7 +1915,7 @@ class IncrementalStatsParser:
 
       if typ in ("proc", "host_proc"):
         # device = full monitor token (name/pid/cmask/mmask); proc = name only.
-        proc_name = dev.split("/")[0]
+        proc_name = dev.split("/", 1)[0]
         full_schema_keys = (
             self.schema.get(typ)
             or self.schema.get("host_proc")
@@ -1904,27 +1933,31 @@ class IncrementalStatsParser:
         else:
           # ``@full`` or legacy lines without a tier marker use the full KEYS.
           schema_keys = full_schema_keys
-        vals_by_key = {}
-        for i, key in enumerate(schema_keys):
-          if i >= len(vals):
-            break
-          raw = vals[i]
-          bare = schema_key_basename(key)
-          try:
-            vals_by_key[bare] = int(raw)
-          except (TypeError, ValueError):
-            try:
-              vals_by_key[bare] = int(float(raw))
-            except (TypeError, ValueError):
-              vals_by_key[bare] = None
+        tags2 = self.line_ctx["tags2"]
         row = {
-            **self.line_ctx["tags2"],
+            "time": tags2["time"],
+            "host": tags2["host"],
+            "jid": tags2["jid"],
             "proc": proc_name,
             "device": dev,
         }
         for key in HOST_PROC_KEYS:
           # Omitted slow-tier keys on ``@fast`` stay None (never invent 0).
-          row[key] = vals_by_key.get(key)
+          row[key] = None
+        for i, key in enumerate(schema_keys):
+          if i >= len(vals):
+            break
+          bare = schema_key_basename(key)
+          if bare not in _HOST_PROC_KEY_SET:
+            continue
+          raw = vals[i]
+          try:
+            row[bare] = int(raw)
+          except (TypeError, ValueError):
+            try:
+              row[bare] = int(float(raw))
+            except (TypeError, ValueError):
+              row[bare] = None
         self.proc_stats.append(row)
         return
 
@@ -1982,8 +2015,9 @@ class IncrementalStatsParser:
       t, jid, host = parsed
       self.insert = True
       # Same sample-header jid as tags2; idle monitors emit "-".
-      self.line_ctx["tags"] = {"time": float(t), "host": host, "jid": jid}
-      self.line_ctx["tags2"] = {"time": float(t), "host": host, "jid": jid}
+      ctx = {"time": float(t), "host": host, "jid": jid}
+      self.line_ctx["tags"] = ctx
+      self.line_ctx["tags2"] = ctx
     elif s[0] == "!":
       label, events = s.split(maxsplit=1)
       typ, events = label[1:], events.split()
@@ -2090,13 +2124,9 @@ def parse_stats_file_streaming(
   try:
     with open(stats_file, "rb") as fd:
       while True:
-        batch = []
-        with _stats_file_read_lock(stats_file):
-          for _ in range(int(batch_size)):
-            raw = fd.readline()
-            if not raw:
-              break
-            batch.append(_decode_stats_readline(raw))
+        batch = _read_stats_line_batch_decode_after_lock(
+            fd, stats_file, batch_size,
+        )
         if not batch:
           break
         parser.feed_lines(batch)
@@ -2577,13 +2607,9 @@ def parse_stats_file_streaming_incremental(
     with open(stats_file, "rb") as fd:
       while True:
         emit: list[tuple[Any, list]] = []
-        batch: list[str] = []
-        with _stats_file_read_lock(stats_file):
-          for _ in range(int(line_batch_size)):
-            raw = fd.readline()
-            if not raw:
-              break
-            batch.append(_decode_stats_readline(raw))
+        batch = _read_stats_line_batch_decode_after_lock(
+            fd, stats_file, line_batch_size,
+        )
         if not batch:
           break
         for line in batch:

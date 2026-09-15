@@ -356,3 +356,89 @@ def test_sealed_member_size_lookup_keeps_in_stream_callback():
 
     src = inspect.getsource(helpers._sealed_archive_member_has_exact_size)
     assert "defer_on_member=False" in src
+
+
+def _assert_decode_outside_lock(tmp_path, monkeypatch, runner):
+    """Shared probe: ``_decode_stats_readline`` must not run under SH."""
+    stats = tmp_path / "host.example.com" / "1709123456"
+    stats.parent.mkdir(parents=True)
+    stats.write_text("".join(_resume_schema_fixture_lines()), encoding="utf-8")
+    held = {"n": 0}
+    monkeypatch.setattr(
+        parsing, "_stats_file_read_lock", _tracking_stats_lock(held),
+    )
+    real_decode = parsing._decode_stats_readline
+
+    def wrapped(raw):
+        assert held["n"] == 0, "decode must run after SH release"
+        return real_decode(raw)
+
+    monkeypatch.setattr(parsing, "_decode_stats_readline", wrapped)
+    runner(str(stats))
+    assert held["n"] == 0
+
+
+def test_streaming_incremental_decode_outside_shared_lock(tmp_path, monkeypatch):
+    def runner(path):
+        parse_stats_file_streaming_incremental(
+            path,
+            flush_rows=10_000,
+            on_chunk=lambda *_a: None,
+            line_batch_size=2,
+        )
+
+    _assert_decode_outside_lock(tmp_path, monkeypatch, runner)
+
+
+def test_streaming_decode_outside_shared_lock(tmp_path, monkeypatch):
+    def runner(path):
+        stats_list, _proc = parse_stats_file_streaming(path, batch_size=2)
+        assert stats_list is not None
+
+    _assert_decode_outside_lock(tmp_path, monkeypatch, runner)
+
+
+def test_iter_decode_outside_shared_lock(tmp_path, monkeypatch):
+    def runner(path):
+        assert list(parsing.iter_stats_file_lines(path))
+
+    _assert_decode_outside_lock(tmp_path, monkeypatch, runner)
+
+
+def test_feed_line_proc_row_peak_fields_without_intermediate_vals_dict():
+    """Proc rows keep peak fields; sample tags share one dict (alloc shrink)."""
+    from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+        IncrementalStatsParser,
+        HOST_PROC_KEYS,
+        merge_proc_row_dicts,
+    )
+
+    keys = " ".join(HOST_PROC_KEYS)
+    parser = IncrementalStatsParser(0)
+    parser.feed_line(f"!host_proc {keys}\n")
+    parser.feed_line("1709123456 job1 cn001\n")
+    assert parser.line_ctx["tags"] is parser.line_ctx["tags2"]
+    parser.feed_line(
+        "host_proc python/4242/0-7/0 "
+        "1001 9000 8000 0 7000 6000 5000 4000 3000 2000 1000 500 8\n",
+    )
+    assert len(parser.proc_stats) == 1
+    row = parser.proc_stats[0]
+    assert row["proc"] == "python"
+    assert row["vm_peak"] == 9000
+    assert row["vm_hwm"] == 7000
+    assert row["vm_stk"] == 4000
+    assert row["threads"] == 8
+    earlier = row
+    later = {
+        "vm_peak": 0,
+        "vm_hwm": 100,
+        "vm_stk": 40,
+        "vm_exe": 1,
+        "vm_lib": 2,
+        "threads": 16,
+    }
+    merged = merge_proc_row_dicts(earlier, later)
+    assert merged is earlier
+    assert earlier["vm_peak"] == 9000
+    assert earlier["threads"] == 16
