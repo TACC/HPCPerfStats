@@ -21,6 +21,9 @@ Multi-`dev` metric collapse in ingest parse (`_collapse_stats_with_deltas` and h
 - Per-event `dict` / `{**rec}` / `DataFrame.from_records` on the hardware emit hot path — compile `!` schema once and append columnar lists.
 - Extra pandas `.copy()` / `.astype(str)` / object-string `groupby` when native `sum(min_count=1)`, integer/category keys, or unix seconds until ORM suffice.
 - Re-parsing `W=`/`U=` schema tokens on every value token.
+- Per-line `zip(*compiled)` in `_append_compiled_stats_columns` — compiled schema must be parallel arrays (`events` / `wids` / `mults` / `units`) extended directly.
+- Calling `schema_key_basename` on every proc sample — compile bare names at `!` into `schema_bare` / `schema_fast_bare`.
+- Decoding ASCII under `_stats_file_read_lock` on rb streaming readers — use `_read_stats_line_batch_decode_after_lock` (bytes under SH, `_decode_stats_readline` after release).
 - Adding Polars, PyArrow, or numba as runtime parse engines before a logged host/pipeline flamegraph shows leftover exclusive time in `feed_line` / `split` / `float`.
 - Shipping a Cython `.so` by default; dual-ABI bake is required if a later gate still shows ASCII split/float as the bottleneck.
 
@@ -68,7 +71,10 @@ Digit-line jobid belongs on stats ``tags`` (same value as proc ``tags2``). Colla
 - `_collapse_dcg_cpu_power_vectorized` — DCGM explicit group loop
 - `_collapse_nvidia_gpu_group` / `_collapse_dcg_cpu_power_gauge_group` — apply-reference only (tests)
 - `_apply_counter_deltas` / `_apply_arc_and_finalize` — vectorized carry continuity for incremental flush; carry deltas unscaled until wrap + `* mult`; keep unix seconds until `to_pydatetime_or_none`
-- `IncrementalStatsParser` — compiled schema + columnar `_stats_cols`; `take_stats_columns()` for production flushes; `parse_stats_lines` records adapter for tests
+- `_compile_schema_tokens` — SoA (`events`/`wids`/`mults`/`units`); `_append_compiled_stats_columns` extends without `zip(*compiled)`
+- `_compile_schema_bare_names` / `schema_bare` — proc basenames compiled at `!`
+- `_read_stats_line_batch_decode_after_lock` — rb batch under SH; decode after release
+- `IncrementalStatsParser` — compiled schema SoA + columnar `_stats_cols`; `take_stats_columns()` for production flushes; `parse_stats_lines` records adapter for tests
 - `stats_payload_row_count` — zero-host marks use parsed row counts, not post-collapse lengths
 
 ## New collapse / carry behavior

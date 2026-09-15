@@ -49,9 +49,50 @@ def test_compile_schema_is_idempotent_on_bang_replay():
   """Re-feeding the same ``!`` line must not change compiled fields."""
   parser = IncrementalStatsParser(0)
   parser.feed_line("!cpu user,W=48 sys,W=48\n")
-  first = list(parser.schema_compiled["cpu"])
+  first = {
+      k: list(v) for k, v in parser.schema_compiled["cpu"].items()
+  }
   parser.feed_line("!cpu user,W=48 sys,W=48\n")
-  assert list(parser.schema_compiled["cpu"]) == first
+  assert {
+      k: list(v) for k, v in parser.schema_compiled["cpu"].items()
+  } == first
+
+
+def test_compile_schema_soa_has_no_per_line_zip_in_append():
+  """Approach C: emit must extend SoA columns without ``zip(*compiled)``."""
+  text = Path(__file__).resolve().parents[1].joinpath(
+      "dbload/lib/sync_timedb_parsing.py",
+  ).read_text(encoding="utf-8")
+  start = text.index("def _append_compiled_stats_columns(")
+  end = text.index("\ndef ", start + 1)
+  body = text[start:end]
+  assert "zip(*compiled)" not in body
+  compiled = IncrementalStatsParser(0)
+  compiled.feed_line("!cpu user,W=48 sys\n")
+  soa = compiled.schema_compiled["cpu"]
+  assert soa["events"] == ["user", "sys"]
+  assert soa["wids"] == [48, 64]
+  assert compiled.schema_bare["cpu"] == ["user", "sys"]
+
+
+def test_proc_bare_names_compiled_at_bang_not_per_sample():
+  """Proc ``schema_key_basename`` runs at ``!``, not on every sample line."""
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import HOST_PROC_KEYS
+
+  keys = " ".join(
+      f"{k},U=kB" if k.startswith("vm_") else k for k in HOST_PROC_KEYS
+  )
+  parser = IncrementalStatsParser(0)
+  parser.feed_line(f"!host_proc {keys}\n")
+  assert parser.schema_bare["host_proc"] == list(HOST_PROC_KEYS)
+  parser.feed_line("1709123456 job1 cn001\n")
+  # HOST_PROC_KEYS order: uid vm_size vm_rss ... threads (13 fields).
+  vals = " ".join(str(1000 + i) for i in range(len(HOST_PROC_KEYS)))
+  parser.feed_line(f"host_proc python/4242/0-7/0 {vals}\n")
+  row = parser.proc_stats[0]
+  assert row["proc"] == "python"
+  assert row["uid"] == 1000
+  assert row["threads"] == 1000 + len(HOST_PROC_KEYS) - 1
 
 
 def test_parse_stats_lines_records_adapter_matches_columnar_builder():

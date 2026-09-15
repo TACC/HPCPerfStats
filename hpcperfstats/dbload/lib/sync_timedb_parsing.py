@@ -495,23 +495,64 @@ def _compile_schema_token(token: str) -> tuple[str, int, float, str]:
   return eve_parts[0], width, mult, unit
 
 
+def _empty_compiled_schema() -> dict[str, list]:
+  """
+  Return empty parallel arrays for a compiled ``!`` schema.
+
+  Returns:
+    dict[str, list]: ``events`` / ``wids`` / ``mults`` / ``units`` lists.
+
+  Examples:
+    >>> _empty_compiled_schema()["events"]
+    []
+  """
+  return {"events": [], "wids": [], "mults": [], "units": []}
+
+
 def _compile_schema_tokens(
   tokens: list[str],
-) -> list[tuple[str, int, float, str]]:
+) -> dict[str, list]:
   """
-  Compile an ordered ``!`` schema key list.
+  Compile an ordered ``!`` schema key list into parallel arrays.
 
   Args:
     tokens (list[str]): Schema tokens for one hardware type.
 
   Returns:
-    list[tuple[str, int, float, str]]: Compiled fields aligned with ``tokens``.
+    dict[str, list]: SoA with ``events``, ``wids``, ``mults``, ``units``
+      aligned with ``tokens`` (no per-line ``zip(*compiled)`` at emit).
 
   Examples:
-    >>> _compile_schema_tokens(["user,W=48", "sys"])
-    [('user', 48, 1, '#'), ('sys', 64, 1, '#')]
+    >>> _compile_schema_tokens(["user,W=48", "sys"])["events"]
+    ['user', 'sys']
+    >>> _compile_schema_tokens(["user,W=48", "sys"])["wids"]
+    [48, 64]
   """
-  return [_compile_schema_token(token) for token in tokens]
+  out = _empty_compiled_schema()
+  for token in tokens:
+    event, wid, mult, unit = _compile_schema_token(token)
+    out["events"].append(event)
+    out["wids"].append(wid)
+    out["mults"].append(mult)
+    out["units"].append(unit)
+  return out
+
+
+def _compile_schema_bare_names(tokens: list[str]) -> list[str]:
+  """
+  Compile schema token basenames once for proc emit.
+
+  Args:
+    tokens (list[str]): Schema tokens (may include ``,U=`` / ``,E`` suffixes).
+
+  Returns:
+    list[str]: Bare key names aligned with ``tokens``.
+
+  Examples:
+    >>> _compile_schema_bare_names(["vm_peak,U=kB", "threads"])
+    ['vm_peak', 'threads']
+  """
+  return [schema_key_basename(token) for token in tokens]
 
 
 def stats_payload_row_count(payload: Any) -> int:
@@ -583,11 +624,11 @@ def _append_compiled_stats_columns(
   jid: str,
   typ: str,
   dev: str,
-  compiled: list[tuple[str, int, float, str]],
+  compiled: dict[str, list],
   vals: list[str],
 ) -> None:
   """
-  Append one hardware line into columnar lists using a compiled schema.
+  Append one hardware line into columnar lists using a compiled SoA schema.
 
   Args:
     cols (dict[str, list]): Parallel stats columns mutated in place.
@@ -596,7 +637,7 @@ def _append_compiled_stats_columns(
     jid (str): Jobid token from the digit header (``-`` when idle).
     typ (str): Output hardware type (legacy remapped when needed).
     dev (str): Device token from the stats line.
-    compiled (list[tuple[str, int, float, str]]): Compiled schema aligned
+    compiled (dict[str, list]): SoA from ``_compile_schema_tokens`` aligned
       with ``vals``.
     vals (list[str]): Value tokens after an optional ``@fast``/``@full``
       marker.
@@ -608,12 +649,14 @@ def _append_compiled_stats_columns(
     >>> cols = _empty_stats_columns()
     >>> _append_compiled_stats_columns(
     ...     cols, time=1.0, host="h", jid="j", typ="cpu", dev="0",
-    ...     compiled=[("user", 48, 1, "#")], vals=["10"],
+    ...     compiled={"events": ["user"], "wids": [48], "mults": [1],
+    ...               "units": ["#"]}, vals=["10"],
     ... )
     >>> cols["event"], cols["value"]
     (['user'], [10.0])
   """
-  n = len(compiled)
+  events = compiled["events"]
+  n = len(events)
   if len(vals) != n:
     warnings.warn(
         "stats line value count %d != schema key count %d for type=%s dev=%s"
@@ -626,11 +669,10 @@ def _append_compiled_stats_columns(
   cols["jid"].extend((jid,) * n)
   cols["type"].extend((typ,) * n)
   cols["dev"].extend((dev,) * n)
-  events, wids, mults, units = zip(*compiled) if n else ((), (), (), ())
   cols["event"].extend(events)
-  cols["wid"].extend(wids)
-  cols["mult"].extend(mults)
-  cols["unit"].extend(units)
+  cols["wid"].extend(compiled["wids"])
+  cols["mult"].extend(compiled["mults"])
+  cols["unit"].extend(compiled["units"])
   cols["value"].extend(float(v) for v in vals)
 
 
@@ -1761,8 +1803,10 @@ class IncrementalStatsParser:
     line_ctx: Attribute.
     proc_stats: Attribute.
     schema: Attribute.
+    schema_bare: Attribute.
     schema_compiled: Attribute.
     schema_fast: Attribute.
+    schema_fast_bare: Attribute.
     schema_fast_compiled: Attribute.
     start_idx: Attribute.
     _stats_cols: Attribute.
@@ -1796,6 +1840,8 @@ class IncrementalStatsParser:
     self.schema_fast = {}
     self.schema_compiled = {}
     self.schema_fast_compiled = {}
+    self.schema_bare = {}
+    self.schema_fast_bare = {}
     self._stats_cols = _empty_stats_columns()
     self.proc_stats = []
     self.insert = False
@@ -1813,47 +1859,85 @@ class IncrementalStatsParser:
       >>> p.schema = {"cpu": ["user,W=48"]}
       >>> p.schema_fast = {"cpu": ["user,W=48"]}
       >>> p.compile_injected_schema()
-      >>> p.schema_compiled["cpu"][0][0]
+      >>> p.schema_compiled["cpu"]["events"][0]
       'user'
     """
     for typ, tokens in self.schema.items():
-      self.schema_compiled[typ] = _compile_schema_tokens(list(tokens))
+      token_list = list(tokens)
+      self.schema_compiled[typ] = _compile_schema_tokens(token_list)
+      self.schema_bare[typ] = _compile_schema_bare_names(token_list)
     for typ, tokens in self.schema_fast.items():
-      self.schema_fast_compiled[typ] = _compile_schema_tokens(list(tokens))
+      token_list = list(tokens)
+      self.schema_fast_compiled[typ] = _compile_schema_tokens(token_list)
+      self.schema_fast_bare[typ] = _compile_schema_bare_names(token_list)
 
   def _compiled_schema_for(
     self,
     typ: str,
     *,
     fast: bool,
-  ) -> list[tuple[str, int, float, str]]:
+  ) -> dict[str, list]:
     """
-    Return compiled fields for ``typ``, compiling on first use.
+    Return compiled SoA fields for ``typ``, compiling on first use.
 
     Args:
       typ (str): Hardware type label from the stats line.
       fast (bool): True to use ``schema_fast`` (``@fast`` samples).
 
     Returns:
-      list[tuple[str, int, float, str]]: Compiled schema, or empty when the
-        type is unknown.
+      dict[str, list]: Compiled SoA schema, or empty arrays when the type is
+        unknown.
 
     Examples:
       >>> p = IncrementalStatsParser(0)
       >>> p.schema = {"cpu": ["user"]}
-      >>> p._compiled_schema_for("cpu", fast=False)[0][0]
+      >>> p._compiled_schema_for("cpu", fast=False)["events"][0]
       'user'
     """
     store = self.schema_fast_compiled if fast else self.schema_compiled
+    bare_store = self.schema_fast_bare if fast else self.schema_bare
     compiled = store.get(typ)
     if compiled is not None:
       return compiled
     tokens = self.schema_fast.get(typ) if fast else self.schema.get(typ)
     if not tokens:
-      return []
-    compiled = _compile_schema_tokens(list(tokens))
+      return _empty_compiled_schema()
+    token_list = list(tokens)
+    compiled = _compile_schema_tokens(token_list)
     store[typ] = compiled
+    bare_store[typ] = _compile_schema_bare_names(token_list)
     return compiled
+
+  def _proc_bare_keys_for(
+    self,
+    typ: str,
+    schema_keys: list[str],
+    *,
+    fast: bool,
+  ) -> list[str]:
+    """
+    Return compiled proc bare names for ``typ``, compiling on first use.
+
+    Args:
+      typ (str): ``proc`` / ``host_proc`` type label.
+      schema_keys (list[str]): Token list used when bare cache misses.
+      fast (bool): True to use ``schema_fast_bare``.
+
+    Returns:
+      list[str]: Bare key names aligned with ``schema_keys``.
+
+    Examples:
+      >>> p = IncrementalStatsParser(0)
+      >>> p._proc_bare_keys_for("host_proc", ["vm_peak,U=kB"], fast=False)
+      ['vm_peak']
+    """
+    store = self.schema_fast_bare if fast else self.schema_bare
+    bare = store.get(typ)
+    if bare is not None:
+      return bare
+    bare = _compile_schema_bare_names(list(schema_keys))
+    store[typ] = bare
+    return bare
 
   @property
   def stats_len(self) -> int:
@@ -1926,13 +2010,17 @@ class IncrementalStatsParser:
         if vals and vals[0] in _TIER_MARKERS:
           tier_marker = vals[0]
           vals = vals[1:]
-        if tier_marker == "@fast":
+        use_fast = tier_marker == "@fast"
+        if use_fast:
           schema_keys = self.schema_fast.get(typ) or _fast_schema_keys(
               full_schema_keys
           )
         else:
           # ``@full`` or legacy lines without a tier marker use the full KEYS.
           schema_keys = full_schema_keys
+        bare_keys = self._proc_bare_keys_for(
+            typ, list(schema_keys), fast=use_fast,
+        )
         tags2 = self.line_ctx["tags2"]
         row = {
             "time": tags2["time"],
@@ -1944,10 +2032,9 @@ class IncrementalStatsParser:
         for key in HOST_PROC_KEYS:
           # Omitted slow-tier keys on ``@fast`` stay None (never invent 0).
           row[key] = None
-        for i, key in enumerate(schema_keys):
+        for i, bare in enumerate(bare_keys):
           if i >= len(vals):
             break
-          bare = schema_key_basename(key)
           if bare not in _HOST_PROC_KEY_SET:
             continue
           raw = vals[i]
@@ -2025,6 +2112,10 @@ class IncrementalStatsParser:
       self.schema_fast[typ] = _fast_schema_keys(events)
       self.schema_compiled[typ] = _compile_schema_tokens(events)
       self.schema_fast_compiled[typ] = _compile_schema_tokens(
+          self.schema_fast[typ],
+      )
+      self.schema_bare[typ] = _compile_schema_bare_names(events)
+      self.schema_fast_bare[typ] = _compile_schema_bare_names(
           self.schema_fast[typ],
       )
 
