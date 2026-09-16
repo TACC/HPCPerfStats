@@ -3677,23 +3677,27 @@ def test_drain_ingest_marks_quiet_log_fn_none(monkeypatch, tmp_path):
 
 
 def test_drain_ingest_increments_total_ingested(monkeypatch, tmp_path):
-  """Packed outcome=ingested bumps total_ingested; db_skip does not."""
+  """ingested bumps both counters; db_skip only completed; fail neither."""
   qo.reset_total_ingested_for_tests()
   monkeypatch.setattr(
       st, "_record_ingest_marks_from_worker_result", lambda *a, **k: None,
   )
   monkeypatch.setattr(jq, "ack_job", lambda *a, **k: True)
+  monkeypatch.setattr(
+      qo, "_retry_or_dead_letter", lambda *a, **k: "requeued",
+  )
 
   class _Ready:
-    def __init__(self, outcome: str):
+    def __init__(self, outcome: str, ingest_ok: bool = True):
       self._outcome = outcome
+      self._ingest_ok = ingest_ok
 
     def ready(self):
       return True
 
     def get(self, timeout=0):
       del timeout
-      return ("/a", True, True, 0.1, {"outcome": self._outcome})
+      return ("/a", True, self._ingest_ok, 0.1, {"outcome": self._outcome})
 
   def _claim(identity: str) -> jq.ClaimedJob:
     return jq.ClaimedJob(
@@ -3714,6 +3718,7 @@ def test_drain_ingest_increments_total_ingested(monkeypatch, tmp_path):
   )
   assert done == 1
   assert qo.get_total_ingested_for_tests() == 1
+  assert qo.get_total_completed_for_tests() == 1
   done_skip = qo._drain_ingest_ready(
       client,
       inflight={"/skip": _Ready("db_skip")},
@@ -3723,12 +3728,24 @@ def test_drain_ingest_increments_total_ingested(monkeypatch, tmp_path):
   )
   assert done_skip == 1
   assert qo.get_total_ingested_for_tests() == 1
+  assert qo.get_total_completed_for_tests() == 2
+  done_fail = qo._drain_ingest_ready(
+      client,
+      inflight={"/fail": _Ready("parse_fail", ingest_ok=False)},
+      claims={"/fail": _claim("/fail")},
+      tgz_archive_dir="/daily",
+      archive_data_dir=str(tmp_path),
+  )
+  assert done_fail == 1
+  assert qo.get_total_ingested_for_tests() == 1
+  assert qo.get_total_completed_for_tests() == 2
 
 
 def test_census_log_always_includes_total_ingested():
-  """60s census format always includes total_ingested= including 0."""
+  """60s census format always includes total_ingested= and total_completed=."""
   src = inspect.getsource(qo._reconstruct_coordinator_loop)
   assert "total_ingested=%d" in src
+  assert "total_completed=%d" in src
   qo.reset_total_ingested_for_tests()
   census = {
       "ingest": {"queued": 0, "inflight": 0},
@@ -3736,11 +3753,16 @@ def test_census_log_always_includes_total_ingested():
       "discover": {"queued": 0, "inflight": 0},
       "day_close": {"queued": 0, "inflight": 0},
   }
-  line = "queue_orchestrator census %s total_ingested=%d" % (
-      jq.format_queue_census(census),
-      qo.get_total_ingested_for_tests(),
+  line = (
+      "queue_orchestrator census %s total_ingested=%d total_completed=%d"
+      % (
+          jq.format_queue_census(census),
+          qo.get_total_ingested_for_tests(),
+          qo.get_total_completed_for_tests(),
+      )
   )
   assert "total_ingested=0" in line
+  assert "total_completed=0" in line
   assert "ingest=0/0" in line
 
 

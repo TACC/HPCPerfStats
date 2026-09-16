@@ -45,9 +45,12 @@ Attributes:
   _last_idle_reconstruct_mono: Monotonic timestamp of last idle reconstruct.
   PROGRESS_REPORT_INTERVAL_S: Alias of progress module 600s emit interval.
   _TOTAL_INGESTED: Process-lifetime successful ingest ACK count.
-  _TOTAL_INGESTED_LOCK: Guards ``_TOTAL_INGESTED``.
-  reset_total_ingested_for_tests: Zero the counter in unit tests.
-  get_total_ingested_for_tests: Read the counter in unit tests.
+  _TOTAL_COMPLETED: Process-lifetime successful ingest_ok ACK count
+    (includes ``db_skip`` and other archive-complete outcomes).
+  _TOTAL_INGESTED_LOCK: Guards ``_TOTAL_INGESTED`` and ``_TOTAL_COMPLETED``.
+  reset_total_ingested_for_tests: Zero both counters in unit tests.
+  get_total_ingested_for_tests: Read the ingested counter in unit tests.
+  get_total_completed_for_tests: Read the completed counter in unit tests.
 """
 from __future__ import annotations
 
@@ -120,6 +123,7 @@ INGEST_FILL_BLOCK_LOG_INTERVAL_S = 60.0
 APPEND_FILL_SKIP_BUDGET = 8
 _APPEND_DAY_LISTS = AppendDayClaimLists()
 _TOTAL_INGESTED = 0
+_TOTAL_COMPLETED = 0
 _TOTAL_INGESTED_LOCK = threading.Lock()
 _TRANSIENT_DAY_CLOSE_OUTCOMES = frozenset({
     "deferred_age",
@@ -3436,7 +3440,7 @@ def _drain_ingest_ready(
     ... )
     0
   """
-  global _TOTAL_INGESTED
+  global _TOTAL_INGESTED, _TOTAL_COMPLETED
   done = 0
   for identity, async_res in list(inflight.items()):
     if not async_res.ready():
@@ -3570,7 +3574,9 @@ def _drain_ingest_ready(
       progress.record(day_tok, "db_skip", 1)
     else:
       progress.record(day_tok, "ingested", 1)
-      with _TOTAL_INGESTED_LOCK:
+    with _TOTAL_INGESTED_LOCK:
+      _TOTAL_COMPLETED += 1
+      if outcome != "db_skip":
         _TOTAL_INGESTED += 1
     if need_archival and path:
       jq.enqueue_list_job(
@@ -3601,7 +3607,7 @@ def reset_append_day_lists_for_tests() -> None:
 
 def reset_total_ingested_for_tests() -> None:
   """
-  Zero the process-lifetime ingest ACK counter (unit tests).
+  Zero process-lifetime ingest and completed ACK counters (unit tests).
 
   Returns:
     None
@@ -3609,9 +3615,10 @@ def reset_total_ingested_for_tests() -> None:
   Examples:
     >>> reset_total_ingested_for_tests()
   """
-  global _TOTAL_INGESTED
+  global _TOTAL_INGESTED, _TOTAL_COMPLETED
   with _TOTAL_INGESTED_LOCK:
     _TOTAL_INGESTED = 0
+    _TOTAL_COMPLETED = 0
 
 
 def get_total_ingested_for_tests() -> int:
@@ -3629,6 +3636,27 @@ def get_total_ingested_for_tests() -> int:
   """
   with _TOTAL_INGESTED_LOCK:
     return _TOTAL_INGESTED
+
+
+def get_total_completed_for_tests() -> int:
+  """
+  Return the process-lifetime completed ingest ACK count (unit tests).
+
+  Counts every successful ``ingest_ok`` drain ACK, including
+  ``db_skip`` and other archive-complete outcomes. Does not count
+  timeout, parse fail, or mark-fail retries.
+
+  Returns:
+    int: Successful ingest_ok drain ACKs since process start or last
+    reset.
+
+  Examples:
+    >>> reset_total_ingested_for_tests()
+    >>> get_total_completed_for_tests()
+    0
+  """
+  with _TOTAL_INGESTED_LOCK:
+    return _TOTAL_COMPLETED
 
 
 def _try_submit_pending_append_days(
@@ -5292,11 +5320,14 @@ def _reconstruct_coordinator_loop(
         if census:
           with _TOTAL_INGESTED_LOCK:
             total_ingested = _TOTAL_INGESTED
+            total_completed = _TOTAL_COMPLETED
           _log(
-              "queue_orchestrator census %s total_ingested=%d%s"
+              "queue_orchestrator census %s total_ingested=%d "
+              "total_completed=%d%s"
               % (
                   jq.format_queue_census(census),
                   total_ingested,
+                  total_completed,
                   (" " + busy_tok) if busy_tok else "",
               ),
               log_fn=log_fn,
