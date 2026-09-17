@@ -4386,6 +4386,64 @@ def test_rescan_pending_full_every_n_uses_full_find(monkeypatch, tmp_path):
   assert calls[0].get("mtime_days") is None
 
 
+def test_day_scoped_closed_raw_serializes_archive_wide_collect(
+    monkeypatch, tmp_path,
+):
+  """Concurrent day-close workers must not fan out full archive walks."""
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+  first_entered = threading.Event()
+  second_started = threading.Event()
+  second_entered = threading.Event()
+  release_first = threading.Event()
+  calls = 0
+  calls_lock = threading.Lock()
+
+  def _collect(*_args, **_kwargs):
+    nonlocal calls
+    with calls_lock:
+      calls += 1
+      call_n = calls
+    if call_n == 1:
+      first_entered.set()
+      assert release_first.wait(timeout=2.0)
+    else:
+      second_entered.set()
+    return []
+
+  monkeypatch.setattr(helpers, "collect_stats_files_in_range", _collect)
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  args = (str(tmp_path), ".cluster.test", str(daily))
+  first = threading.Thread(
+      target=helpers.build_day_scoped_closed_raw_by_gz,
+      args=(*args, str(daily / "2026-01-01.tar")),
+  )
+
+  def _run_second():
+    second_started.set()
+    helpers.build_day_scoped_closed_raw_by_gz(
+        *args,
+        str(daily / "2026-01-02.tar"),
+    )
+
+  second = threading.Thread(
+      target=_run_second,
+  )
+  first.start()
+  assert first_entered.wait(timeout=1.0)
+  second.start()
+  assert second_started.wait(timeout=1.0)
+  overlapped = second_entered.wait(timeout=0.5)
+  release_first.set()
+  first.join(timeout=2.0)
+  second.join(timeout=2.0)
+
+  assert not overlapped
+  assert not first.is_alive() and not second.is_alive()
+  assert calls == 2
+
+
 def test_build_unprocessed_uses_find_backed_collect(monkeypatch, tmp_path):
   """Unprocessed-raw builder inherits find-backed collect_stats_files_in_range."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers

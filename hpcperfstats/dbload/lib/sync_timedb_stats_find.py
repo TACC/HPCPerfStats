@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -746,13 +747,15 @@ def iter_find_stats_stdout_chunks(
       stat_bin=stat_path,
   )
   read_n = max(1, int(chunk_size))
+  stderr_file = tempfile.TemporaryFile()
   try:
     proc = subprocess.Popen(
         list(argv),
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=stderr_file,
     )
   except FileNotFoundError as exc:
+    stderr_file.close()
     raise FindStatsDiscoveryError(
         "fd/fdfind or GNU stat not found (required for stats discovery)"
     ) from exc
@@ -785,13 +788,12 @@ def iter_find_stats_stdout_chunks(
         # Unreachable while chunks arrive; kept for contract clarity.
         pass
   finally:
-    stderr_b = b""
-    if proc.stderr is not None:
-      try:
-        stderr_b = proc.stderr.read() or b""
-      except Exception:
-        stderr_b = b""
-    rc = proc.wait()
+    try:
+      rc = proc.wait()
+      stderr_file.seek(0)
+      stderr_b = stderr_file.read()
+    finally:
+      stderr_file.close()
   stderr_text = stderr_b.decode("utf-8", errors="replace")
   if rc == 0:
     return

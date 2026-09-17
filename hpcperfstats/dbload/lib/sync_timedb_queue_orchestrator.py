@@ -708,6 +708,47 @@ def discover_job_identity(
   return "rescan|%s|mtime=%s" % (os.path.normpath(archive_dir), window)
 
 
+def _discover_mtime_days_from_identity(
+  identity: str,
+  archive_dir: str,
+  fallback: int | None,
+) -> int | None:
+  """
+  Decode a claimed discover window, falling back for legacy identities.
+
+  Args:
+    identity (str): Claimed discover LIST identity.
+    archive_dir (str): Expected find root.
+    fallback (int | None): Caller window for malformed or legacy identities.
+
+  Returns:
+    int | None: Claimed incremental window, full-scan ``None``, or fallback.
+
+  Examples:
+    >>> _discover_mtime_days_from_identity(
+    ...   discover_job_identity("/a", 1), "/a", None,
+    ... )
+    1
+    >>> _discover_mtime_days_from_identity(
+    ...   discover_job_identity("/a", None), "/a", 1,
+    ... ) is None
+    True
+  """
+  prefix = "rescan|"
+  marker = "|mtime="
+  if not str(identity).startswith(prefix) or marker not in str(identity):
+    return fallback
+  path, window = str(identity)[len(prefix):].rsplit(marker, 1)
+  if os.path.normpath(path) != os.path.normpath(archive_dir):
+    return fallback
+  if window == "all":
+    return None
+  try:
+    return int(window)
+  except ValueError:
+    return fallback
+
+
 def _iter_claim_jobs(claim: Any) -> list[Any]:
   """
   Normalize a single claim or a grouped list of claims.
@@ -972,12 +1013,17 @@ def _run_background_discover(
   if claim is None:
     return
   try:
+    claimed_mtime_days = _discover_mtime_days_from_identity(
+        claim.identity,
+        archive_dir,
+        mtime_days,
+    )
     _boot_stream_discover(
         client,
         archive_dir,
         tgz_archive_dir=tgz_archive_dir,
         log_fn=log_fn,
-        mtime_days=mtime_days,
+        mtime_days=claimed_mtime_days,
         startdate=startdate,
         enddate=enddate,
     )
@@ -5504,12 +5550,13 @@ def run_sync_timedb_queue_orchestrator(
       )
     # Boot discover off MainThread (same executor as idle reconstruct).
     try:
-      jq.enqueue_list_job(
-          client,
-          kind=jq.JOB_KIND_DISCOVER,
-          identity=discover_job_identity(directory, None),
-          dedupe=True,
-      )
+      for boot_mtime_days in (rescan_mtime_days, None):
+        jq.enqueue_list_job(
+            client,
+            kind=jq.JOB_KIND_DISCOVER,
+            identity=discover_job_identity(directory, boot_mtime_days),
+            dedupe=True,
+        )
     except Exception as exc:
       _log(
           "queue_orchestrator boot discover enqueue err=%s"
@@ -5521,7 +5568,7 @@ def run_sync_timedb_queue_orchestrator(
         directory,
         tgz_archive_dir=tgz_archive_dir,
         log_fn=log_fn,
-        mtime_days=None,
+        mtime_days=rescan_mtime_days,
         startdate=startdate,
         enddate=enddate,
     )

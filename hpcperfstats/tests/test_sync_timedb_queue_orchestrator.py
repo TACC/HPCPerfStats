@@ -856,6 +856,56 @@ def test_orchestrator_boot_discover_submitted_log_after_submit():
   assert i_sub > 0 and i_log > i_sub
 
 
+def test_orchestrator_boot_prioritizes_incremental_then_queues_full_scan():
+  """Boot must expose current files before retaining whole-archive catch-up."""
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  boot = src.split("# Boot discover off MainThread", 1)[1].split(
+      "pool_ref =",
+      1,
+  )[0]
+  assert "for boot_mtime_days in (rescan_mtime_days, None):" in boot
+  assert "discover_job_identity(directory, boot_mtime_days)" in boot
+  assert "mtime_days=rescan_mtime_days" in boot
+
+
+def test_background_discover_uses_claimed_scan_window(monkeypatch):
+  """Queued full catch-up must stay full when incremental submit claims it."""
+  client = SyncTimedbJobStore("")
+  full_identity = qo.discover_job_identity("/archive", None)
+  incremental_identity = qo.discover_job_identity("/archive", 1)
+  jq.enqueue_list_job(
+      client,
+      kind=jq.JOB_KIND_DISCOVER,
+      identity=full_identity,
+  )
+  jq.enqueue_list_job(
+      client,
+      kind=jq.JOB_KIND_DISCOVER,
+      identity=incremental_identity,
+  )
+  seen_windows = []
+  monkeypatch.setattr(
+      qo,
+      "_boot_stream_discover",
+      lambda *a, **kw: seen_windows.append(kw["mtime_days"]),
+  )
+
+  qo._run_background_discover(
+      client,
+      "/archive",
+      tgz_archive_dir="/daily",
+      log_fn=None,
+      mtime_days=1,
+      startdate=None,
+      enddate=None,
+  )
+
+  assert seen_windows == [None]
+  assert client.list_slice(jq.JOB_KIND_DISCOVER, 0, -1) == [
+      incremental_identity,
+  ]
+
+
 def test_submit_background_discover_does_not_deadlock_on_lock():
   """Nested Lock+_discover_executor must not hang MainThread (hpcperfstats03)."""
   import threading

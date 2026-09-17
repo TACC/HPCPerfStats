@@ -1,6 +1,7 @@
 """Unit tests for fd -X GNU stat stats discovery."""
 from __future__ import annotations
 
+import io
 import os
 import shutil
 from datetime import datetime
@@ -200,6 +201,72 @@ def test_find_stats_fail_closed_missing_walker(tmp_path):
   fake.chmod(0o755)
   with pytest.raises(sf.FindStatsDiscoveryError):
     sf.run_find_stats(str(tmp_path), find_bin=str(fake))
+
+
+def test_streaming_find_does_not_leave_stderr_pipe_undrained(
+    monkeypatch, tmp_path,
+):
+  """Streaming stdout must not defer reading a child stderr pipe until EOF."""
+  popen_kwargs = {}
+
+  class _UnreadableStderr:
+    def read(self):
+      raise AssertionError("streaming find must not read stderr after stdout EOF")
+
+  class _Proc:
+    stdout = io.BytesIO(b"")
+    stderr = _UnreadableStderr()
+
+    def wait(self):
+      return 0
+
+  def _popen(argv, **kwargs):
+    del argv
+    popen_kwargs.update(kwargs)
+    return _Proc()
+
+  monkeypatch.setattr(sf, "_resolve_find_bin", lambda _value: "fd")
+  monkeypatch.setattr(sf, "_resolve_stat_bin", lambda _value: "stat")
+  monkeypatch.setattr(sf.subprocess, "Popen", _popen)
+
+  assert list(sf.iter_find_stats_stdout_chunks(str(tmp_path))) == []
+  assert popen_kwargs["stderr"] is not sf.subprocess.PIPE
+
+
+@pytest.mark.parametrize(
+    ("stderr", "raises"),
+    [
+      (b"stat: /x.fnctl.lock: No such file or directory\n", False),
+      (b"stat: permission denied\n", True),
+    ],
+)
+def test_streaming_find_preserves_exit_one_stderr_classification(
+    monkeypatch, tmp_path, stderr, raises,
+):
+  """Non-pipe capture must still distinguish lock races from real failures."""
+
+  class _Proc:
+    stdout = io.BytesIO(b"")
+
+    def wait(self):
+      return 1
+
+  def _popen(argv, **kwargs):
+    del argv
+    kwargs["stderr"].write(stderr)
+    kwargs["stderr"].flush()
+    return _Proc()
+
+  monkeypatch.setattr(sf, "_resolve_find_bin", lambda _value: "fd")
+  monkeypatch.setattr(sf, "_resolve_stat_bin", lambda _value: "stat")
+  monkeypatch.setattr(sf.subprocess, "Popen", _popen)
+
+  iterator = sf.iter_find_stats_stdout_chunks(str(tmp_path))
+  if raises:
+    with pytest.raises(sf.FindStatsDiscoveryError):
+      list(iterator)
+  else:
+    assert list(iterator) == []
 
 
 def test_resolve_find_bin_prefers_fdfind_then_fd(monkeypatch):

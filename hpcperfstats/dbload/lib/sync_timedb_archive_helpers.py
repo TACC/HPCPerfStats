@@ -32,6 +32,7 @@ Attributes:
   _DAILY_TAR_BASENAME_RE: Attribute.
   _DAILY_ZST_BASENAME_RE: Attribute.
   _DAY_CLOSE_DISQUALIFY_CODES: Attribute.
+  _DAY_SCOPED_CLOSED_RAW_COLLECT_LOCK: Attribute.
   _DEFERRED_PREWARM_FLUSH_HOOK: Attribute.
   _FNCTL_POPULATE_RETRY_DELAYS_S: Attribute.
   _INGEST_SKIPPED_CALENDAR_DAYS: Attribute.
@@ -60,6 +61,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import threading
 import time
 from collections import OrderedDict, defaultdict
 from datetime import date, datetime, time as dt_time, timedelta
@@ -98,6 +100,8 @@ from hpcperfstats.dbload.lib.file_locking import (
     file_write_lock,
 )
 from hpcperfstats.dbload.lib.print_utils import janitorial_logging, log_print
+
+_DAY_SCOPED_CLOSED_RAW_COLLECT_LOCK = threading.Lock()
 
 
 def get_archive_zstd_thread_count() -> Any:
@@ -7668,6 +7672,8 @@ def build_day_scoped_closed_raw_by_gz(
   
   When ``maintenance_snapshot`` or ``closed_paths_snapshot`` is provided, filter
   those paths only — forbid a full discover/collect for that day.
+  Snapshot-free full collects are process-serialized so concurrent day-close
+  workers cannot fan out archive-wide walkers.
   
   Args:
     archive_data_dir (str): String for archive data dir.
@@ -7698,14 +7704,15 @@ def build_day_scoped_closed_raw_by_gz(
     # ``ts > enddate`` filter (same as single-day ingest windows).
     day_start = datetime(day.year, day.month, day.day)
     day_end = day_start + timedelta(days=1)
-    paths = collect_stats_files_in_range(
-        archive_data_dir,
-        day_start,
-        day_end,
-        host_name_ext,
-        force_full_scan=True,
-        log_fn=None,
-    )
+    with _DAY_SCOPED_CLOSED_RAW_COLLECT_LOCK:
+      paths = collect_stats_files_in_range(
+          archive_data_dir,
+          day_start,
+          day_end,
+          host_name_ext,
+          force_full_scan=True,
+          log_fn=None,
+      )
   aligned = []
   for path in paths or ():
     if not path or not os.path.isfile(path):
