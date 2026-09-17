@@ -112,6 +112,68 @@ def test_parse_full_ingest_and_listend(mod):
     assert metrics.archive_finalize_sum == 4
 
 
+def test_unknown_backlog_eta_is_na(mod):
+    """Unknown disk backlog must not invent a zero-hour finish at log end."""
+    lines = [
+        _ts(0)
+        + "Messages consumed in the last 10 minutes: 1; messages waiting to be "
+        "consumed: 0; current file unlinks (last 10 minutes): 1",
+        _ts(10)
+        + (
+            "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
+            "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10"
+        ),
+        _ts(20)
+        + "Throughput telemetry: active_workers=4 backlog=10 chunk_size=1000 "
+        "bulk_create_batch=10000",
+    ]
+    outcomes = mod.analyze_lines(lines)
+    assert outcomes["backlog_at_start"] == "N/A"
+    assert outcomes["backlog_latest"] == "N/A"
+    assert outcomes["eta_hours_empirical"] == "N/A"
+    assert outcomes["eta_hours_full_ingest"] == "N/A"
+    assert outcomes["eta_hours_archive_done"] == "N/A"
+    assert outcomes["estimated_finish_local"] == "N/A"
+    assert outcomes["estimated_finish_basis"] == "N/A"
+
+
+def test_overlapping_listend_windows_not_double_counted(mod):
+    """Rolling last-10-minute listend reports must not be summed as arrivals."""
+    lines = [
+        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+    ]
+    # Every minute for an hour, listend reports the same rolling 10-minute count.
+    for minute in range(0, 61):
+        lines.append(
+            _ts(minute)
+            + "Messages consumed in the last 10 minutes: 0; messages waiting "
+            "to be consumed: 0; current file unlinks (last 10 minutes): 10"
+        )
+    lines.append(
+        _ts(60)
+        + "Pending stats file list truncated pending=940 max=2000"
+    )
+    for i in range(60):
+        lines.append(
+            _ts(1 + i)
+            + (
+                "ingest file path=/arch/host/%d outcome=ingested elapsed_s=1.0 "
+                "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 "
+                "stats_rows=10"
+            )
+            % (1000 + i)
+        )
+    outcomes = mod.analyze_lines(lines, since_minutes=None, exclude_startup=False)
+    # Non-overlapping keep: t=0,10,20,30,40,50,60 → 7 * 10 = 70 over ~60 min.
+    assert float(outcomes["window_minutes"]) == pytest.approx(60.0, abs=0.1)
+    assert float(outcomes["listend_closed_per_min"]) == pytest.approx(
+        70.0 / 60.0,
+        rel=1e-3,
+    )
+    # Naive sum of every overlapping report would be 61*10=610 → ~10.17/min.
+    assert float(outcomes["listend_closed_per_min"]) < 2.0
+
+
 def test_winning_verdict_and_eta(mod):
     outcomes = mod.analyze_lines(FIXTURE_WINNING)
     assert outcomes["verdict_full_ingest"] == "WINNING"

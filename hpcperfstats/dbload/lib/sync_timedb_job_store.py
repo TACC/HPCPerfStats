@@ -41,7 +41,6 @@ import hashlib
 import os
 import secrets
 import socket
-import threading
 import time
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
@@ -50,6 +49,7 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     load_persistence_document,
     save_persistence_document,
 )
+from hpcperfstats.dbload.lib.sync_timedb_store_lock_timing import TimedRLock
 
 JOB_KIND_DISCOVER = "discover"
 JOB_KIND_INGEST = "ingest"
@@ -160,7 +160,7 @@ class SyncTimedbJobStore:
         """
         self.archive_dir = str(archive_dir)
         self.persist_interval_s = float(persist_interval_s)
-        self._lock = threading.RLock()
+        self._lock = TimedRLock("job_store")
         self._ingest: Dict[str, float] = {}
         self._lists: Dict[str, Deque[str]] = {
             kind: deque() for kind in JOB_KINDS_LIST

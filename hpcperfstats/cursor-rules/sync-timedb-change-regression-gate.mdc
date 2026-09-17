@@ -81,6 +81,16 @@ Regression: ``test_write_stats_payload_timeout_not_swallowed_into_single_insert`
 - Idle-slot fill (RC-3) and giant-tail replenish (RC-D) remain valid **while a batch straggler blocks**; once only supplements remain in flight, return `[]` and log **`giant pool supplement stop reason=batch_paths_complete`**.
 - Regression: `test_imap_batch_terminates_with_ever_growing_closed_snapshot`, `test_supplement_stops_when_only_supplements_in_flight`, `test_supplement_continues_while_original_path_in_flight`, `test_giant_in_flight_still_replenishes_mid_imap` in `test_sync_timedb_ingest_file_timeout.py`.
 
+## Throughput / thread-count changes
+
+Changing **`sync_ingest_pool_processes`** (or recommending a new production ingest width) requires:
+
+1. A scaling artifact under `test_runs/sync_timedb_bench/` from **`tests/run_sync_timedb_benchmark_workflow.sh`** (rootless Podman per **`podman-runtime.mdc`**), or an explicit operator handoff when the Podman/`/data` runtime prerequisite fails closed.
+2. Durable-throughput and lock-wait evidence summarized in **`docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md`**.
+3. Host-safe harness green: `tests/sync_timedb_benchmark` (and the compose benchmark workflow above for free-threaded long studies).
+
+Do not ship an INI-only thread-count change without that evidence trail.
+
 ## Forbidden without plan amend
 
 - One-line supervisor `continue`/`return` stall patches without failing-first test named for the RC

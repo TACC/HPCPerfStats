@@ -2,6 +2,8 @@
 
 This document describes how `sync_timedb` uses **in-process thread pools**, **day_close thread executors**, **ephemeral burst thread pools**, and **subprocess CLI** (zstd/tar). Production coordinator is **`run_sync_timedb_queue_orchestrator`** (`sync-timedb-queue-orchestrator-contract.mdc`). Complements operator stall verification (`OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`).
 
+**Throughput campaign:** interpreted baseline, bottleneck ranking, and experiment backlog live in [`SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md`](SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md). Do not treat the production ingest width as final until that campaign’s scaling artifact and durable-throughput/lock-wait evidence exist.
+
 ## Four categories
 
 | Category | Mechanism | Lifetime | Typical work |

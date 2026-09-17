@@ -29,6 +29,7 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
     load_persistence_document,
     save_persistence_document,
 )
+from hpcperfstats.dbload.lib.sync_timedb_store_lock_timing import TimedRLock
 
 
 def _set_threading_events(
@@ -101,7 +102,7 @@ class SyncTimedbArchiveMembersStore:
           False
         """
         self.archive_dir = str(archive_dir)
-        self._lock = threading.RLock()
+        self._lock = TimedRLock("members_store")
         self._members: Dict[tuple[str, str], Dict[str, int]] = {}
         self._complete: Dict[tuple[str, str], bool] = {}
         self._day_skip: Dict[str, Dict[str, str]] = {}

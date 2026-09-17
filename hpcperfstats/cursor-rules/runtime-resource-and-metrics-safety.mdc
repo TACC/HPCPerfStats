@@ -34,3 +34,4 @@ alwaysApply: false
   - DB aggregation/grouping correctness assumptions
   - retry/failure handling on transient DB/Redis errors
 - Do not consider the task complete until those tests pass in the relevant runtime.
+- **`sync_timedb` ingest width / throughput tuning:** treat thread-count and related pool knobs as evidence-gated. Prefer the scaling/timing harness in `tests/sync_timedb_benchmark` plus campaign ledger `docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md` (see also **`sync-timedb-change-regression-gate.mdc`** → *Throughput / thread-count changes*). Closed-book write/lock telemetry stays default-off (`HPCPERFSTATS_SYNC_INGEST_WRITE_TELEMETRY`, `reset_file_lock_timing`).

@@ -159,6 +159,33 @@ ports (`8080`, `8443`, and `5673`) cannot make the projects contend.
 
 Options: **`--skip-build`**, **`--keep-env`**, **`--skip-playwright-install`** (see script **`--help`**).
 
+### sync_timedb throughput timing and scaling benchmark
+
+Host-safe unit harness (accounting, winner selection, schema contracts; no compose):
+
+```bash
+cd HPCPerfStats
+../.venv/bin/python3 -m pytest tests/sync_timedb_benchmark -q --tb=short
+```
+
+Long compose/Podman study (free-threaded `/opt/python3.14t/bin/python` via
+rootless Podman; see `podman-runtime.mdc`):
+
+```bash
+cd HPCPerfStats
+tests/run_sync_timedb_benchmark_workflow.sh
+```
+
+Derived corpus (identity rewrite; never mutates exemplars):
+
+```bash
+cd HPCPerfStats
+../.venv/bin/python3 scripts/derive_sync_timedb_benchmark_corpus.py \
+  --source-dir /path/to/exemplars --output-dir /path/to/derived
+```
+
+Campaign ledger: `docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md`.
+
 ### Cpuset thread-budget benchmark workflow (sync_timedb priority)
 
 Use the helper below to print process bucket accounting (`real_time`, `normal`, `best_effort`), derive cpuset-aware `S/M/R` (archive slots come from **`sync_archive_pool_processes`** only), and generate a reduced S/M tuning matrix around the derived budget:

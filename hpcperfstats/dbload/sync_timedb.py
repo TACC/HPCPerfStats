@@ -49,7 +49,10 @@ Attributes:
   _SYNC_STATE_TRANSITIONS: Attribute.
   _SYNC_TIMEDB_INGEST_INLINE_ENV: Attribute.
   _TREE_RSS_DEFER_SLEEP_SECONDS: Attribute.
+  INGEST_WRITE_PHASE_KEYS: Closed-book write-phase timing key names.
   _ingest_postgres_s: Attribute.
+  _ingest_write_phases: Per-file write-phase second accumulators.
+  _ingest_write_telem_on: Per-file closed-book write telemetry enable flag.
   _last_supervisor_child_reap_mono: Attribute.
   _sealed_archive_ingest_progress: Attribute.
   archive_thread_count: Attribute.
@@ -2142,23 +2145,87 @@ def _sync_worker_db_task() -> Iterator[Any]:
       pass
 
 
+INGEST_WRITE_PHASE_KEYS: tuple[str, ...] = (
+    "orm_materialize_s",
+    "orm_bulk_prep_s",
+    "db_execute_s",
+    "db_commit_s",
+)
+
 _ingest_postgres_s: contextvars.ContextVar[float] = contextvars.ContextVar(
     "ingest_postgres_s",
     default=0.0,
 )
+_ingest_write_telem_on: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "ingest_write_telem_on",
+    default=False,
+)
+_ingest_write_phases: contextvars.ContextVar[dict[str, float]] = contextvars.ContextVar(
+    "ingest_write_phases",
+    default={},
+)
 
 
-def _reset_ingest_write_timing() -> None:
+def _ingest_write_telemetry_enabled_from_env() -> bool:
   """
-  Zero per-file Postgres-write timing accumulators.
+  Return whether closed-book write telemetry is enabled via environment.
+
+  Returns:
+    bool: True when ``HPCPERFSTATS_SYNC_INGEST_WRITE_TELEMETRY`` is truthy.
+
+  Examples:
+    >>> _ingest_write_telemetry_enabled_from_env() in (True, False)
+    True
+  """
+  raw = os.environ.get("HPCPERFSTATS_SYNC_INGEST_WRITE_TELEMETRY", "")
+  return raw.strip().lower() in ("1", "yes", "true")
+
+
+def _reset_ingest_write_timing(*, enabled: bool | None = None) -> None:
+  """
+  Zero per-file Postgres-write timing accumulators; optionally set enable flag.
+
+  Args:
+    enabled (bool | None): When ``None``, read
+      ``HPCPERFSTATS_SYNC_INGEST_WRITE_TELEMETRY`` from the environment. When
+      ``False``, no ``perf_counter`` holds run for write phases.
 
   Returns:
     None
 
   Examples:
-    >>> _reset_ingest_write_timing()
+    >>> _reset_ingest_write_timing(enabled=False)
   """
+  if enabled is None:
+    enabled = _ingest_write_telemetry_enabled_from_env()
+  _ingest_write_telem_on.set(bool(enabled))
   _ingest_postgres_s.set(0.0)
+  _ingest_write_phases.set({key: 0.0 for key in INGEST_WRITE_PHASE_KEYS})
+
+
+def _add_ingest_write_phase(name: str, delta_s: float) -> None:
+  """
+  Accumulate non-negative seconds into a closed-book write phase dict.
+
+  Args:
+    name (str): A key in ``INGEST_WRITE_PHASE_KEYS``.
+    delta_s (float): Hold duration in seconds (non-positive values ignored).
+
+  Returns:
+    None
+
+  Examples:
+    >>> _reset_ingest_write_timing(enabled=True)
+    >>> _add_ingest_write_phase("db_execute_s", 0.25)
+  """
+  if not _ingest_write_telem_on.get():
+    return
+  delta = float(delta_s)
+  if delta <= 0.0 or name not in INGEST_WRITE_PHASE_KEYS:
+    return
+  acc = dict(_ingest_write_phases.get())
+  acc[name] = float(acc.get(name, 0.0)) + delta
+  _ingest_write_phases.set(acc)
 
 
 def _add_ingest_postgres_s(delta_s: float) -> None:
@@ -2183,19 +2250,26 @@ def _add_ingest_postgres_s(delta_s: float) -> None:
 
 def _snapshot_ingest_write_timing() -> dict[str, float]:
   """
-  Return accumulated ``postgres_s`` for this file.
+  Return accumulated ``postgres_s`` and optional closed-book write phases.
 
   Returns:
-    dict[str, float]: Timing keys for outcome meta / logs.
+    dict[str, float]: ``postgres_s`` always; phase keys only when telemetry is
+      enabled for this file.
 
   Examples:
-    >>> _reset_ingest_write_timing()
+    >>> _reset_ingest_write_timing(enabled=False)
     >>> _snapshot_ingest_write_timing()["postgres_s"]
     0.0
   """
-  return {
+  out = {
       "postgres_s": float(_ingest_postgres_s.get()),
   }
+  if not _ingest_write_telem_on.get():
+    return out
+  acc = _ingest_write_phases.get()
+  for key in INGEST_WRITE_PHASE_KEYS:
+    out[key] = float(acc.get(key, 0.0))
+  return out
 
 
 def _merge_ingest_write_timing_into_meta(meta: Any) -> dict[str, Any]:
@@ -2704,6 +2778,32 @@ def _invalidate_jid_caches(stats: Any, proc_stats: Any) -> None:
 
 
 @contextmanager
+def _held_ingest_write_phase(name: str) -> Iterator[None]:
+  """
+  Hold ``perf_counter`` for a write phase only when telemetry is enabled.
+
+  Args:
+    name (str): A key in ``INGEST_WRITE_PHASE_KEYS``.
+
+  Yields:
+    None
+
+  Examples:
+    >>> _reset_ingest_write_timing(enabled=False)
+    >>> with _held_ingest_write_phase("db_execute_s"):
+    ...   pass
+  """
+  if not _ingest_write_telem_on.get():
+    yield
+    return
+  t0 = time.perf_counter()
+  try:
+    yield
+  finally:
+    _add_ingest_write_phase(name, time.perf_counter() - t0)
+
+
+@contextmanager
 def _held_ingest_write_timing() -> Iterator[None]:
   """
   Time the ORM write body into ``postgres_s``.
@@ -2866,18 +2966,34 @@ def _write_stats_payload_to_db(
       batch = list(itertools.islice(proc_it, bulk_create_batch_size()))
       if not batch:
         break
-      proc_objs = [
-          proc_data(**_proc_data_row_kwargs(row)) for row in batch
-      ]
-      proc_objs = _peak_merge_proc_objs_with_existing(proc_objs)
-      with _held_ingest_write_timing():
-        _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
-        proc_data.objects.bulk_create(
-            proc_objs,
-            update_conflicts=True,
-            unique_fields=["jid", "host", "proc"],
-            update_fields=_PROC_DATA_UPDATE_FIELDS,
-        )
+      if _ingest_write_telem_on.get():
+        with _held_ingest_write_timing():
+          with _held_ingest_write_phase("orm_materialize_s"):
+            proc_objs = [
+                proc_data(**_proc_data_row_kwargs(row)) for row in batch
+            ]
+            proc_objs = _peak_merge_proc_objs_with_existing(proc_objs)
+          with _held_ingest_write_phase("db_execute_s"):
+            _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
+            proc_data.objects.bulk_create(
+                proc_objs,
+                update_conflicts=True,
+                unique_fields=["jid", "host", "proc"],
+                update_fields=_PROC_DATA_UPDATE_FIELDS,
+            )
+      else:
+        proc_objs = [
+            proc_data(**_proc_data_row_kwargs(row)) for row in batch
+        ]
+        proc_objs = _peak_merge_proc_objs_with_existing(proc_objs)
+        with _held_ingest_write_timing():
+          _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
+          proc_data.objects.bulk_create(
+              proc_objs,
+              update_conflicts=True,
+              unique_fields=["jid", "host", "proc"],
+              update_fields=_PROC_DATA_UPDATE_FIELDS,
+          )
   except Exception as e:
     _reraise_if_ingest_control_flow(e)
     if is_database_unavailable_error(e):
@@ -2902,10 +3018,20 @@ def _write_stats_payload_to_db(
         batch = list(itertools.islice(stats_it, bulk_create_batch_size()))
         if not batch:
           break
-        host_objs = [host_data_instance_from_stats_row(row) for row in batch]
-        with _held_ingest_write_timing():
-          _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
-          host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
+        if _ingest_write_telem_on.get():
+          with _held_ingest_write_timing():
+            with _held_ingest_write_phase("orm_materialize_s"):
+              host_objs = [
+                  host_data_instance_from_stats_row(row) for row in batch
+              ]
+            with _held_ingest_write_phase("db_execute_s"):
+              _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
+              host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
+        else:
+          host_objs = [host_data_instance_from_stats_row(row) for row in batch]
+          with _held_ingest_write_timing():
+            _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
+            host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
   except Exception as e:
     _reraise_if_ingest_control_flow(e)
     if is_database_unavailable_error(e):

@@ -5,10 +5,14 @@ Uses fcntl advisory locks with a sidecar lock file per target file:
 `<path>.fnctl.lock`.
 
 Attributes:
+  FILE_LOCK_TELEM_KEYS: Bounded lock wait/hold telemetry key names.
   LOCK_EXPIRY_SECONDS: Attribute.
   LOCK_SUFFIX: Attribute.
   POLL_INTERVAL_SECONDS: Attribute.
   READ_WAIT_TIMEOUT_SECONDS: Attribute.
+  _file_lock_telem_on: Process-wide file-lock timing enable flag.
+  _file_lock_totals: Accumulated SH/EX wait and hold seconds.
+  _file_lock_totals_lock: Mutex protecting lock timing totals.
 """
 from __future__ import annotations
 
@@ -16,14 +20,91 @@ from typing import Any, Iterator
 
 import errno
 import os
+import threading
 import time
 from contextlib import contextmanager
 from fcntl import LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN, flock
+
+FILE_LOCK_TELEM_KEYS: tuple[str, ...] = (
+    "file_lock_sh_wait_s",
+    "file_lock_sh_hold_s",
+    "file_lock_ex_wait_s",
+    "file_lock_ex_hold_s",
+)
 
 LOCK_EXPIRY_SECONDS = 4 * 60 * 60
 READ_WAIT_TIMEOUT_SECONDS = 60
 POLL_INTERVAL_SECONDS = 0.1
 LOCK_SUFFIX = ".fnctl.lock"
+
+_file_lock_telem_on = False
+_file_lock_totals: dict[str, float] = {key: 0.0 for key in FILE_LOCK_TELEM_KEYS}
+_file_lock_totals_lock = threading.Lock()
+
+
+def reset_file_lock_timing(*, enabled: bool = False) -> None:
+  """
+  Zero file-lock wait/hold accumulators; optionally enable telemetry.
+
+  Args:
+    enabled (bool): When ``False``, lock helpers skip timing holds.
+
+  Returns:
+    None
+
+  Examples:
+    >>> reset_file_lock_timing(enabled=False)
+  """
+  global _file_lock_telem_on
+  with _file_lock_totals_lock:
+    _file_lock_telem_on = bool(enabled)
+    for key in FILE_LOCK_TELEM_KEYS:
+      _file_lock_totals[key] = 0.0
+
+
+def snapshot_file_lock_timing() -> dict[str, float]:
+  """
+  Return accumulated SH/EX wait and hold seconds when telemetry is enabled.
+
+  Returns:
+    dict[str, float]: Empty when disabled; else all ``FILE_LOCK_TELEM_KEYS``.
+
+  Examples:
+    >>> reset_file_lock_timing(enabled=False)
+    >>> snapshot_file_lock_timing()
+    {}
+  """
+  if not _file_lock_telem_on:
+    return {}
+  with _file_lock_totals_lock:
+    return {
+        key: float(_file_lock_totals.get(key, 0.0))
+        for key in FILE_LOCK_TELEM_KEYS
+    }
+
+
+def _add_file_lock_timing(key: str, delta_s: float) -> None:
+  """
+  Accumulate non-negative seconds into the global file-lock telemetry dict.
+
+  Args:
+    key (str): A key in ``FILE_LOCK_TELEM_KEYS``.
+    delta_s (float): Hold or wait duration in seconds (non-positive ignored).
+
+  Returns:
+    None
+
+  Examples:
+    >>> reset_file_lock_timing(enabled=True)
+    >>> _add_file_lock_timing("file_lock_ex_wait_s", 0.1)
+  """
+  if not _file_lock_telem_on:
+    return
+  delta = float(delta_s)
+  if delta <= 0.0 or key not in FILE_LOCK_TELEM_KEYS:
+    return
+  with _file_lock_totals_lock:
+    _file_lock_totals[key] = float(_file_lock_totals.get(key, 0.0)) + delta
 
 
 def _lock_path(target_path: str) -> Any:
@@ -383,6 +464,8 @@ def file_write_lock(
   if already_held:
     yield
     return
+  telem_on = _file_lock_telem_on
+  wait_t0 = time.monotonic() if telem_on else 0.0
   start = time.time()
   lock_fd = None
   while True:
@@ -401,10 +484,15 @@ def file_write_lock(
         ) from exc
       time.sleep(POLL_INTERVAL_SECONDS)
 
+  if telem_on:
+    _add_file_lock_timing("file_lock_ex_wait_s", time.monotonic() - wait_t0)
+  hold_t0 = time.monotonic() if telem_on else 0.0
   try:
     _refresh_lock_sidecar_mtime(lock_fd)
     yield
   finally:
+    if telem_on:
+      _add_file_lock_timing("file_lock_ex_hold_s", time.monotonic() - hold_t0)
     lock_path = _lock_path(target_path)
     try:
       flock(lock_fd, LOCK_UN)
@@ -470,6 +558,8 @@ def file_read_lock_wait(
   Examples:
     >>> file_read_lock_wait("x", 0, 0)  # doctest: +SKIP
   """
+  telem_on = _file_lock_telem_on
+  wait_t0 = time.monotonic() if telem_on else 0.0
   start = time.time()
   lock_fd = None
   while True:
@@ -496,9 +586,14 @@ def file_read_lock_wait(
         ) from exc
       time.sleep(POLL_INTERVAL_SECONDS)
 
+  if telem_on:
+    _add_file_lock_timing("file_lock_sh_wait_s", time.monotonic() - wait_t0)
+  hold_t0 = time.monotonic() if telem_on else 0.0
   try:
     yield
   finally:
+    if telem_on:
+      _add_file_lock_timing("file_lock_sh_hold_s", time.monotonic() - hold_t0)
     try:
       flock(lock_fd, LOCK_UN)
     finally:

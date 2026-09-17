@@ -133,10 +133,14 @@ class LogMetrics:
       first_ts: ``first_ts``.
       full_ingest_count: ``full_ingest_count``.
       last_ts: ``last_ts``.
-      listend_unlink_sum: ``listend_unlink_sum``.
+      listend_unlink_samples: Timestamped rolling-window unlink counts.
+      listend_unlink_sum: Effective non-overlapping unlink sum for rates.
       timestamped_lines: ``timestamped_lines``.
       truncate_max_samples: ``truncate_max_samples``.
     """
+    listend_unlink_samples: list[tuple[Optional[datetime], int]] = field(
+        default_factory=list,
+    )
     listend_unlink_sum: int = 0
     full_ingest_count: int = 0
     archive_immediate_sum: int = 0
@@ -419,7 +423,9 @@ def parse_log_lines(
 
         unlink_match = _LISTEND_UNLINKS_RE.search(body)
         if unlink_match:
-            metrics.listend_unlink_sum += int(unlink_match.group(1))
+            metrics.listend_unlink_samples.append(
+                (ts, int(unlink_match.group(1))),
+            )
 
         if _FULL_INGEST_RE.search(body):
             metrics.full_ingest_count += 1
@@ -448,6 +454,9 @@ def parse_log_lines(
                     (ts, int(backlog_match.group(1))),
                 )
 
+    metrics.listend_unlink_sum = _nonoverlapping_listend_unlink_sum(
+        metrics.listend_unlink_samples,
+    )
     return metrics
 
 
@@ -648,21 +657,76 @@ def _ratio_and_verdict(
     return f"{ratio:.4f}", verdict
 
 
+def _nonoverlapping_listend_unlink_sum(
+  samples: list[tuple[Optional[datetime], int]],
+  *,
+  window_minutes: float = LISTEND_REPORT_WINDOW_MINUTES,
+) -> int:
+    """
+    Sum rolling listend unlink counts without double-counting overlaps.
+
+    Each listend line reports closures in the trailing ``window_minutes``.
+    Keep a sample only when it starts a new non-overlapping window (gap
+    >= ``window_minutes`` from the previous kept sample). Untimestamped
+    samples fall back to a raw sum because the caller already treats each
+    report as a full window via ``report_count * window_minutes``.
+
+    Args:
+      samples (list[tuple[Optional[datetime], int]]): Ordered (timestamp,
+        unlink_count) samples from listend reports.
+      window_minutes (float): Rolling report window length in minutes.
+
+    Returns:
+      int: Non-overlapping unlink sum used for arrival-rate estimates.
+
+    Examples:
+      >>> from datetime import datetime, timezone
+      >>> t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+      >>> _nonoverlapping_listend_unlink_sum(
+      ...     [(t0, 10), (t0 + timedelta(minutes=1), 10)],
+      ... )
+      10
+    """
+    if not samples:
+        return 0
+    if any(ts is None for ts, _count in samples):
+        return sum(int(count) for _ts, count in samples)
+    window = timedelta(minutes=float(window_minutes))
+    kept_sum = 0
+    last_kept: Optional[datetime] = None
+    for ts, count in samples:
+        assert ts is not None  # guarded above
+        if last_kept is None or (ts - last_kept) >= window:
+            kept_sum += int(count)
+            last_kept = ts
+    return kept_sum
+
+
 def _eta_hours(backlog: Optional[int], drain_per_min: float) -> str:
     """
-    Internal helper to handle eta hours.
-    
+    Format drain ETA hours, or N/A when backlog/rate cannot support a finish.
+
+    Unknown backlog (``None``) must not become a false zero-hour finish.
+    A measured empty backlog (``<= 0``) returns ``\"0\"``.
+
     Args:
-      backlog (Optional[int]): Backlog, or None when absent.
-      drain_per_min (float): Floating-point value for drain per min.
-    
+      backlog (Optional[int]): Uncapped disk backlog, or None when absent.
+      drain_per_min (float): Positive drain rate in files per minute.
+
     Returns:
-      str: str produced by this call.
-    
+      str: Hours to drain as a fixed-point string, ``\"0\"``, or ``\"N/A\"``.
+
     Examples:
-      >>> _eta_hours(None, 0)  # doctest: +SKIP
+      >>> _eta_hours(None, 1.0)
+      'N/A'
+      >>> _eta_hours(0, 1.0)
+      '0'
+      >>> _eta_hours(120, 2.0)
+      '1.00'
     """
-    if backlog is None or backlog <= 0:
+    if backlog is None:
+        return "N/A"
+    if backlog <= 0:
         return "0"
     if drain_per_min <= 0:
         return "N/A"
@@ -826,6 +890,9 @@ def build_outcomes(
     if window_minutes < 1.0:
         raise ValueError("insufficient log window for rate calculation")
 
+    metrics.listend_unlink_sum = _nonoverlapping_listend_unlink_sum(
+        metrics.listend_unlink_samples,
+    )
     listend_rate = metrics.listend_unlink_sum / window_minutes
     ingest_rate = metrics.full_ingest_count / window_minutes
     archive_done_count = metrics.archive_immediate_sum + metrics.archive_finalize_sum
