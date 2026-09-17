@@ -14,21 +14,26 @@ configuration, container workflow scripts, or the shared Podman adapter.
   Docker socket on this Linux workspace.
 - Keep OCI-standard filenames such as `Dockerfile`, `.dockerignore`, and
   `docker-compose*.yaml`; filename compatibility does not select the runtime.
-- Run committed workflows through `scripts/lib/podman_runtime.sh`. Tests use
-  project `hpcperfstats-test`; the long-running development stack uses
-  `hpcperfstats-dev`. Teardown must stay project-scoped.
+- Run committed workflows through `scripts/lib/podman_runtime.sh`. Production
+  operators use project `hpcperfstats` (network `hpcperfstats_net`) and must
+  **not** require `/data/user/$USER`. Tests use `hpcperfstats-test`; the
+  long-running development stack uses `hpcperfstats-dev`. Teardown must stay
+  project-scoped.
 - Never run global image, build-cache, volume, network, container, or system
   prune on this shared server. `--keep-env` may preserve the selected project.
-- All non-DNF downloads, caches, tools, temporary files, image layers,
-  writable layers, and volumes belong below `/data/user/$USER` or
-  `/data/podman/$USER`. `/run/user/$UID` is allowed for required ephemeral
-  rootless runtime state.
-- `podman_runtime_require` must fail closed unless Podman is rootless and its
-  graph root, image store, volume path, cache, and temporary paths resolve
-  below `/data`.
-- Rootless prerequisites include sufficiently large, non-overlapping
+- For **test/dev only** (`HPCPERFSTATS_LOCAL_DATA_CONTRACT=1`): all non-DNF
+  downloads, caches, tools, temporary files, image layers, writable layers, and
+  volumes belong below `/data/user/$USER` or `/data/podman/$USER`. `/run/user/$UID`
+  is allowed for required ephemeral rootless runtime state.
+- `podman_runtime_require` always checks `podman` and `podman-compose` exist.
+  For test/dev it must also fail closed unless Podman is rootless and its graph
+  root, image store, volume path, cache, and temporary paths resolve below
+  `/data`. Production project skips the `/data` layout and rootless storage
+  checks so operator rebuilds do not invent `/data/user/root`.
+- Rootless prerequisites (test/dev) include sufficiently large, non-overlapping
   `/etc/subuid` and `/etc/subgid` ranges for container uid 901860 and writable,
-  correctly labeled `/data` storage. Do not fall back to rootful Podman.
+  correctly labeled `/data` storage. Do not fall back to rootful Podman for
+  isolated test/dev stacks.
 
 ## Overlap
 

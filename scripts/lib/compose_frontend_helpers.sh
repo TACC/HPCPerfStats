@@ -3,10 +3,16 @@
 # Source from scripts/rebuild_frontend.sh or scripts/rebuild_pipeline.sh (not executed directly).
 
 : "${REPO_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-: "${HPCPERFSTATS_COMPOSE_PROJECT:=hpcperfstats-dev}"
+# Production default matches docker-compose.yaml `name: hpcperfstats`.
+# Isolated stacks must export HPCPERFSTATS_COMPOSE_PROJECT=hpcperfstats-dev|test.
+: "${HPCPERFSTATS_COMPOSE_PROJECT:=hpcperfstats}"
 # shellcheck source=podman_runtime.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/podman_runtime.sh"
-: "${TMPDIR:?podman_runtime.sh must set TMPDIR under /data}"
+: "${TMPDIR:?podman_runtime.sh must set TMPDIR}"
+if [[ "${HPCPERFSTATS_LOCAL_DATA_CONTRACT:-0}" == "1" && "${TMPDIR}" != /data/* ]]; then
+  echo "compose_frontend_helpers: TMPDIR must be under /data for project ${HPCPERFSTATS_COMPOSE_PROJECT}" >&2
+  return 73 2>/dev/null || exit 73
+fi
 : "${CONTAINER_STATIC_ROOT:=/home/hpcperfstats/staticfiles}"
 : "${CONTAINER_STATIC_ROOT_FRONTEND:=${CONTAINER_STATIC_ROOT}/frontend}"
 : "${CONTAINER_STATIC_FRONTEND:=/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend}"

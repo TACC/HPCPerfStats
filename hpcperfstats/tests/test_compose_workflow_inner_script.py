@@ -88,13 +88,17 @@ def test_e2e_workflows_use_compose_bind_mount_work_copy(workflow_rel):
 def test_one_canonical_rootless_podman_adapter():
     adapter = _read("scripts/lib/podman_runtime.sh")
     compose = _read("tests/compose_test_cmd.sh")
+    helpers = _read("scripts/lib/compose_frontend_helpers.sh")
     assert "PODMAN=(podman)" in adapter
     assert "PODMAN_COMPOSE=(" in adapter
     assert "podman-compose" in adapter
-    assert "HPCPERFSTATS_COMPOSE_PROJECT:=hpcperfstats-test" in adapter
+    assert "HPCPERFSTATS_COMPOSE_PROJECT:=hpcperfstats" in adapter
+    assert "HPCPERFSTATS_COMPOSE_PROJECT:=hpcperfstats" in helpers
+    assert "HPCPERFSTATS_COMPOSE_PROJECT:=hpcperfstats-dev" not in helpers
     assert "--project-name" in adapter
     assert "/data/user/${USER}" in adapter
     assert "/data/podman/${USER}" in adapter
+    assert "HPCPERFSTATS_LOCAL_DATA_CONTRACT" in adapter
     assert "scripts/lib/podman_runtime.sh" in compose
     assert "COMPOSE_TEST=(podman-compose" not in compose
 
@@ -112,6 +116,8 @@ def test_adapter_exports_all_non_dnf_state_under_data():
     )
     for export_contract in expected_exports:
         assert export_contract in adapter
+    assert 'HPCPERFSTATS_LOCAL_DATA_CONTRACT=1' in adapter
+    assert 'HPCPERFSTATS_LOCAL_DATA_CONTRACT=0' in adapter
 
 
 def test_adapter_fails_closed_on_effective_podman_storage_fallbacks():
@@ -125,10 +131,12 @@ def test_adapter_fails_closed_on_effective_podman_storage_fallbacks():
     assert ".config/containers/storage.conf" in adapter
     assert 'expected_imagestore="${HPCPERFSTATS_PODMAN_ROOT}/images"' in adapter
     assert "Effective Podman storage mismatch" in adapter
+    assert 'HPCPERFSTATS_LOCAL_DATA_CONTRACT' in adapter
 
 
 def test_adapter_exports_project_specific_network_name():
     adapter = _read("scripts/lib/podman_runtime.sh")
+    assert "hpcperfstats_net" in adapter
     assert "hpcperfstats-test_net" in adapter
     assert "hpcperfstats-dev_net" in adapter
     assert "export HPCPERFSTATS_NETWORK_NAME" in adapter
@@ -148,6 +156,7 @@ def test_adapter_source_exports_effective_data_contract(project, network):
         "HPCPERFSTATS_PODMAN_ROOT",
         "HPCPERFSTATS_HOST_CACHE",
         "HPCPERFSTATS_HOST_TOOLS",
+        "HPCPERFSTATS_LOCAL_DATA_CONTRACT",
         "XDG_CACHE_HOME",
         "TMPDIR",
         "PIP_CACHE_DIR",
@@ -161,7 +170,8 @@ def test_adapter_source_exports_effective_data_contract(project, network):
         ". scripts/lib/podman_runtime.sh; "
         "printf '%s\\n' \"$XDG_CACHE_HOME\" \"$TMPDIR\" \"$PIP_CACHE_DIR\" "
         "\"$npm_config_cache\" \"$npm_config_prefix\" \"$PLAYWRIGHT_BROWSERS_PATH\" "
-        "\"$NEXT_TELEMETRY_DISABLED\" \"$HPCPERFSTATS_NETWORK_NAME\""
+        "\"$NEXT_TELEMETRY_DISABLED\" \"$HPCPERFSTATS_NETWORK_NAME\" "
+        "\"$HPCPERFSTATS_LOCAL_DATA_CONTRACT\""
     )
     result = subprocess.run(
         ["/bin/bash", "-c", command],
@@ -180,7 +190,53 @@ def test_adapter_source_exports_effective_data_contract(project, network):
         "/data/user/contract-user/cache/ms-playwright",
         "1",
         network,
+        "1",
     ]
+
+
+def test_production_compose_project_skips_developer_data_layout():
+    """Operator rebuilds use project hpcperfstats without /data/user/$USER."""
+    env = os.environ.copy()
+    for inherited_name in (
+        "HPCPERFSTATS_HOST_ROOT",
+        "HPCPERFSTATS_PODMAN_ROOT",
+        "HPCPERFSTATS_HOST_CACHE",
+        "HPCPERFSTATS_HOST_TOOLS",
+        "HPCPERFSTATS_LOCAL_DATA_CONTRACT",
+        "XDG_CACHE_HOME",
+        "TMPDIR",
+        "PIP_CACHE_DIR",
+        "npm_config_cache",
+        "npm_config_prefix",
+        "PLAYWRIGHT_BROWSERS_PATH",
+        "_PODMAN_RUNTIME_VERIFIED",
+    ):
+        env.pop(inherited_name, None)
+    env.update(USER="root", HPCPERFSTATS_COMPOSE_PROJECT="hpcperfstats")
+    command = (
+        ". scripts/lib/podman_runtime.sh; "
+        "printf '%s\\n' \"$HPCPERFSTATS_LOCAL_DATA_CONTRACT\" "
+        "\"$HPCPERFSTATS_NETWORK_NAME\" \"${HPCPERFSTATS_HOST_CACHE-UNSET}\" "
+        "\"$TMPDIR\"; "
+        "podman_runtime_require; "
+        "printf 'require=%s\\n' \"$?\""
+    )
+    result = subprocess.run(
+        ["/bin/bash", "-c", command],
+        cwd=_REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.splitlines() == [
+        "0",
+        "hpcperfstats_net",
+        "UNSET",
+        "/tmp",
+        "require=0",
+    ]
+    assert "Required writable /data runtime directory" not in result.stderr
 
 
 def test_workflow_sources_have_no_retired_or_global_runtime_operations():

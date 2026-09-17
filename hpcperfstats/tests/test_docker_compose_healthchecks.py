@@ -128,8 +128,11 @@ def test_docker_compose_network_name_is_parameterized_with_production_default():
   runtime = (repo_root / "scripts" / "lib" / "podman_runtime.sh").read_text()
 
   assert "name: ${HPCPERFSTATS_NETWORK_NAME:-hpcperfstats_net}" in content
+  assert "HPCPERFSTATS_NETWORK_NAME=hpcperfstats_net" in runtime
   assert "HPCPERFSTATS_NETWORK_NAME=hpcperfstats-test_net" in runtime
   assert "HPCPERFSTATS_NETWORK_NAME=hpcperfstats-dev_net" in runtime
+  assert "HPCPERFSTATS_LOCAL_DATA_CONTRACT=0" in runtime
+  assert "HPCPERFSTATS_LOCAL_DATA_CONTRACT=1" in runtime
 
 
 def test_docker_compose_json_file_logging_rotated():

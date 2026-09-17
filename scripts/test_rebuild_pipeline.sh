@@ -47,8 +47,12 @@ if ! grep -q 'podman_runtime.sh' "${HELPERS}"; then
   echo "compose_frontend_helpers.sh must source podman_runtime.sh" >&2
   exit 1
 fi
-if ! grep -q 'HPCPERFSTATS_COMPOSE_PROJECT:=hpcperfstats-dev' "${HELPERS}"; then
-  echo "rebuild helpers must default to the isolated development compose project" >&2
+if ! grep -Eq 'HPCPERFSTATS_COMPOSE_PROJECT:=hpcperfstats([^-]|$)' "${HELPERS}"; then
+  echo "rebuild helpers must default to the production compose project hpcperfstats" >&2
+  exit 1
+fi
+if grep -Eq 'HPCPERFSTATS_COMPOSE_PROJECT:=hpcperfstats-(dev|test)' "${HELPERS}"; then
+  echo "rebuild helpers must not default to isolated -dev/-test projects" >&2
   exit 1
 fi
 if ! grep -q '"${PODMAN_COMPOSE\[@\]}"' "${HELPERS}"; then
@@ -66,13 +70,25 @@ fi
 
 for script in "${PIPELINE_SCRIPT}" "${FRONTEND_SCRIPT}" "${RECREATE_SCRIPT}"; do
   if ! grep -q 'podman_runtime_require' "${script}"; then
-    echo "${script} must enforce the rootless /data Podman runtime contract" >&2
+    echo "${script} must call podman_runtime_require" >&2
     exit 1
   fi
 done
 
 if [[ ! -f "${RUNTIME_ADAPTER}" ]]; then
   echo "missing leaf-2 runtime adapter: ${RUNTIME_ADAPTER}" >&2
+  exit 1
+fi
+if ! grep -q 'HPCPERFSTATS_LOCAL_DATA_CONTRACT' "${RUNTIME_ADAPTER}"; then
+  echo "podman_runtime.sh must gate /data layout behind LOCAL_DATA_CONTRACT" >&2
+  exit 1
+fi
+if ! grep -Fq 'hpcperfstats)' "${RUNTIME_ADAPTER}"; then
+  echo "podman_runtime.sh must allow production project hpcperfstats" >&2
+  exit 1
+fi
+if ! grep -q 'HPCPERFSTATS_NETWORK_NAME=hpcperfstats_net' "${RUNTIME_ADAPTER}"; then
+  echo "podman_runtime.sh must map production project to hpcperfstats_net" >&2
   exit 1
 fi
 
