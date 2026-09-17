@@ -342,6 +342,9 @@ services:
     # Without mem_limit, CGROUP_MAX=max and Erlang binary_alloc can OOM the host.
     mem_limit: 96g
     memswap_limit: 96g
+    # Skip erl_crash.dump + OS cores on OOM (observed /var/log/rabbitmq/erl_crash.dump).
+    ulimits:
+      core: 0
     environment:
       - RABBITMQ_NODENAME=rabbit@rabbitmq-prod
       - RABBITMQ_DEFAULT_USER=guest
@@ -350,6 +353,7 @@ services:
       # mbc (reduces allocator fragmentation under many monitor publishers).
       - ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512
       - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512
+      - ERL_CRASH_DUMP_SECONDS=0
     stop_grace_period: 2m 
     healthcheck:
       # `rabbitmq-diagnostics ping` returns non-zero if the node is not ready.

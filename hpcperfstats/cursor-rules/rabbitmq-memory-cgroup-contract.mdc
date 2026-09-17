@@ -14,23 +14,30 @@ globs:
 ## Law
 
 1. **Compose `mem_limit` and `memswap_limit`** on the **`rabbitmq`** service must both be set (canonical production: **`96g`**).
-2. **`vm_memory_high_watermark.absolute`** in `services-conf/rabbitmq_vm_memory.conf` must be **strictly below** that cgroup limit (canonical: **`80GiB`** under **`96g`** — ~16 GiB headroom).
+2. **`vm_memory_high_watermark.absolute`** in `services-conf/rabbitmq_vm_memory.conf` must be **strictly below** that cgroup limit (canonical: **`80GiB`** under **`96g`** — ~16 GiB headroom). Watermark is a **publisher throttle**, not a hard Erlang RSS ceiling.
 3. Never ship absolute watermark **equal** to the cgroup wall — publishers must block before Erlang `binary_alloc` hits the hard limit.
 4. Prefer **absolute** watermarks over **relative** so huge hosts cannot use 40% of all RAM.
-5. After changing compose limits, the watermark conf, or **`ERL_FLAGS`**, **recreate** the `rabbitmq` service (`docker compose up -d --force-recreate rabbitmq` or podman equivalent). Canonical **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`** (address-order best fit + 512 KiB largest mbc for binary and heap allocators).
+5. After changing compose limits, the watermark conf, **`ERL_FLAGS`**, logging conf, or crash-dump knobs, **recreate** the `rabbitmq` service (`docker compose up -d --force-recreate rabbitmq` or podman equivalent). Canonical **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`** (address-order best fit + 512 KiB largest mbc for binary and heap allocators).
 6. Do **not** “fix” quorum OOM / consume timeouts by converting durable monitor ingest queues to **classic**.
 7. On hosts with less than 96 GiB RAM, **lower mem_limit and watermark together**.
+8. **Console logging:** `services-conf/rabbitmq_logging.conf` must use **`log.console.level = warning`** (not **`error`-only**, which hides memory alarms; not **`info`**, which floods under thousands of publisher connections). Pin **`log.connection.level`** and **`log.channel.level`** to **`error`**. Canonical alarm check remains **`rabbitmqctl status`** → **Alarms**.
+9. **Crash dumps:** rabbitmq compose must set **`ERL_CRASH_DUMP_SECONDS=0`** and **`ulimits.core: 0`** so production OOMs do not write `erl_crash.dump` / OS cores (one-off debug override only — see **`docs/OPERATOR_RABBITMQ_RECOVERY.md`**).
+10. **Stale mnesia:** preserve/extract `rabbit@*` dirs; **never delete** without explicit OK. When the node is down, use `sh -c` conf.d/cgroup/mnesia diagnostics — do not assume cookie mismatch first.
 
 ## Operator verification
 
 - Prefer `docker compose exec rabbitmq rabbitmqctl status` — read **Alarms** and Memory sections.
 - Confirm cgroup: `memory.max` is numeric (not `max`) and matches the compose limit.
 - Do **not** use `rabbitmqctl list_alarms` on RabbitMQ **4.3.x** (command does not exist) — see **`compose-operator-terminal-commands.mdc`**.
+- Recovery playbook: **`docs/OPERATOR_RABBITMQ_RECOVERY.md`**.
 
 ## Regression tests
 
 - `test_docker_compose_rabbitmq_vm_memory_cap_is_96gib` asserts compose `96g` limits + **80GiB** watermark + docs sync.
 - `test_docker_compose_rabbitmq_sets_erl_flags_allocator_tuning` asserts **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`** + docs sync.
+- `test_docker_compose_rabbitmq_logging_warning_not_info` asserts warning console + connection/channel error.
+- `test_docker_compose_rabbitmq_disables_crash_dumps` asserts **`ERL_CRASH_DUMP_SECONDS=0`** + **`core: 0`**.
+- `test_operator_rabbitmq_recovery_runbook_exists` asserts preserve/extract runbook.
 
 ## Overlap
 

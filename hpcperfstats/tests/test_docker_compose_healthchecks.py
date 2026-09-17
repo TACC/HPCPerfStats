@@ -420,6 +420,57 @@ def test_docker_compose_rabbitmq_vm_memory_cap_is_96gib():
   assert "80GiB" in deploy
 
 
+def test_docker_compose_rabbitmq_logging_warning_not_info():
+  """Memory alarms at warning; forbid info flood under publisher fleets."""
+  repo_root = Path(__file__).resolve().parents[2]
+  compose_path = repo_root / "docker-compose.yaml"
+  content = compose_path.read_text()
+  conf_path = repo_root / "services-conf" / "rabbitmq_logging.conf"
+  conf_text = conf_path.read_text()
+
+  assert (
+      "rabbitmq_logging.conf:/etc/rabbitmq/conf.d/30-logging_settings.conf"
+      in content
+  )
+  assert "log.console.level = warning" in conf_text
+  assert "log.console.level = info" not in conf_text
+  assert "log.console.level = error" not in conf_text
+  assert "log.connection.level = error" in conf_text
+  assert "log.channel.level = error" in conf_text
+
+
+def test_docker_compose_rabbitmq_disables_crash_dumps():
+  """Production OOMs must not write erl_crash.dump / OS cores by default."""
+  repo_root = Path(__file__).resolve().parents[2]
+  compose_path = repo_root / "docker-compose.yaml"
+  content = compose_path.read_text()
+  rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[0]
+
+  assert "ERL_CRASH_DUMP_SECONDS=0" in rabbitmq_block
+  assert "ulimits:" in rabbitmq_block
+  assert "core: 0" in rabbitmq_block
+  readme = (repo_root / "README.md").read_text()
+  upgrade = (repo_root / "docs" / "upgrade.md").read_text()
+  assert "ERL_CRASH_DUMP_SECONDS" in readme
+  assert "ERL_CRASH_DUMP_SECONDS" in upgrade
+
+
+def test_operator_rabbitmq_recovery_runbook_exists():
+  """Preserve/extract recovery doc required; never-delete without OK."""
+  repo_root = Path(__file__).resolve().parents[2]
+  path = repo_root / "docs" / "OPERATOR_RABBITMQ_RECOVERY.md"
+  text = path.read_text()
+  assert path.is_file()
+  assert "preserve" in text.lower()
+  assert "extract" in text.lower()
+  assert "never delete" in text.lower()
+  assert "node not running" in text.lower()
+  assert "ERL_CRASH_DUMP" in text
+  assert "classic" in text.lower()
+  readme = (repo_root / "README.md").read_text()
+  assert "OPERATOR_RABBITMQ_RECOVERY.md" in readme
+
+
 def test_docker_compose_proxy_runtime_tls_mount_and_entrypoint_materialize():
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
