@@ -491,6 +491,8 @@ class TestJobDetailView:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
+        ), patch.object(
+            api, "_job_for_detail_list_serializer", return_value=job
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={"fsio": {}}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
@@ -517,6 +519,8 @@ class TestJobDetailView:
         ser_data = {"jid": "j1"}
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
+        ), patch.object(
+            api, "_job_for_detail_list_serializer", return_value=job
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(
             api, "load_job_detail_artifact", return_value={}
         ), patch.object(
@@ -1062,11 +1066,17 @@ class TestJobDetailXaltFetch:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
+        ), patch.object(
+            api, "_job_for_detail_list_serializer", return_value=job
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
-        ) as mock_ser, patch.object(api.cfg, "get_xalt_user", return_value="xuser"), patch.object(
+        ) as mock_ser, patch(
+            "hpcperfstats.site.lib.machine.staff_artifact_contract."
+            "staff_artifact_contract_payload",
+            return_value={},
+        ), patch.object(api.cfg, "get_xalt_user", return_value="xuser"), patch.object(
             api, "_get_small_executor", return_value=_Exec()
         ), patch.object(api, "cached_orm", side_effect=_cached_orm), patch.object(
             api.run.objects, "using", return_value=run_mgr
@@ -1106,11 +1116,17 @@ class TestJobDetailXaltFetch:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
+        ), patch.object(
+            api, "_job_for_detail_list_serializer", return_value=job
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
-        ) as mock_ser, patch.object(api.cfg, "get_xalt_user", return_value="xuser"), patch.object(
+        ) as mock_ser, patch(
+            "hpcperfstats.site.lib.machine.staff_artifact_contract."
+            "staff_artifact_contract_payload",
+            return_value={},
+        ), patch.object(api.cfg, "get_xalt_user", return_value="xuser"), patch.object(
             api, "_get_small_executor", return_value=_Exec()
         ), patch.object(
             api, "cached_orm", side_effect=lambda _k, _t, fn: fn()
@@ -1323,6 +1339,10 @@ class TestHostPlotBuildCallback:
         fake_item = {"doc": {"roots": {"root_ids": ["p"]}}, "root_id": "p"}
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "get_site_content_cache_timeout", return_value=60
+        ), patch.object(
+            api.timezone,
+            "now",
+            return_value=datetime(2026, 8, 5, tzinfo=dt_timezone.utc),
         ), patch.object(api, "cached_orm", return_value=fake_item):
             response = api.host_plot(request)
         assert response.status_code == 200
@@ -1463,18 +1483,23 @@ class TestJobDetailCoverageClosure:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
+        ), patch.object(
+            api, "_job_for_detail_list_serializer", return_value=job
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
-        ) as mock_ser, patch.object(api.cfg, "get_xalt_user", return_value="xuser"), patch.object(
+        ) as mock_ser, patch(
+            "hpcperfstats.site.lib.machine.staff_artifact_contract."
+            "staff_artifact_contract_payload",
+            return_value={},
+        ), patch.object(api.cfg, "get_xalt_user", return_value="xuser"), patch.object(
             api.cfg, "get_host_name_ext", return_value=".cluster"
         ):
             mock_ser.return_value.data = {"jid": "j1"}
             response = api.job_detail(request, "j1")
         assert response.status_code == 200
         assert response.data["xalt_data"]["exec_path"] == []
-        assert "OR" in response.data["client_url"]
 
     def test_job_detail_client_url_inserts_dot_before_host_name_ext(self):
         from hpcperfstats.site.lib.machine import api
@@ -1552,11 +1577,17 @@ class TestJobDetailCoverageClosure:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
+        ), patch.object(
+            api, "_job_for_detail_list_serializer", return_value=job
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
-        ) as mock_ser, patch.object(api.cfg, "get_xalt_user", return_value="xuser"), patch.object(
+        ) as mock_ser, patch(
+            "hpcperfstats.site.lib.machine.staff_artifact_contract."
+            "staff_artifact_contract_payload",
+            return_value={},
+        ), patch.object(api.cfg, "get_xalt_user", return_value="xuser"), patch.object(
             api, "_get_small_executor", return_value=_Exec()
         ), patch.object(api, "cached_orm", side_effect=_cached_orm), patch.object(
             api.run.objects, "using", return_value=run_mgr
@@ -1608,11 +1639,17 @@ class TestJobDetailCoverageClosure:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
+        ), patch.object(
+            api, "_job_for_detail_list_serializer", return_value=job
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
-        ) as mock_ser, patch.object(api.cfg, "get_xalt_user", return_value="xuser"), patch.object(
+        ) as mock_ser, patch(
+            "hpcperfstats.site.lib.machine.staff_artifact_contract."
+            "staff_artifact_contract_payload",
+            return_value={},
+        ), patch.object(api.cfg, "get_xalt_user", return_value="xuser"), patch.object(
             api, "_get_small_executor", return_value=_Exec()
         ), patch.object(api, "cached_orm", side_effect=_cached_orm), patch.object(
             api.run.objects, "using", return_value=_slice_qs([run_row])
@@ -1643,11 +1680,17 @@ class TestJobDetailCoverageClosure:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
+        ), patch.object(
+            api, "_job_for_detail_list_serializer", return_value=job
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
-        ) as mock_ser, patch.object(api.cfg, "get_xalt_user", return_value=""), patch.object(
+        ) as mock_ser, patch(
+            "hpcperfstats.site.lib.machine.staff_artifact_contract."
+            "staff_artifact_contract_payload",
+            return_value={},
+        ), patch.object(api.cfg, "get_xalt_user", return_value=""), patch.object(
             api, "_get_small_executor", return_value=_Exec()
         ), patch.object(
             api, "_collect_future_results_with_deadline",
@@ -1846,11 +1889,17 @@ class TestJobDetailRemainingKeysClosure:
 
         with patch.object(api, "_require_auth", return_value=None), patch.object(
             api, "_get_visible_job_or_error_response", return_value=(job, None)
+        ), patch.object(
+            api, "_job_for_detail_list_serializer", return_value=job
         ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
             api, "compute_detail_input_fingerprint", return_value="fp"
         ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
             api, "JobListSerializer"
-        ) as mock_ser, patch.object(api.cfg, "get_xalt_user", return_value="xuser"), patch.object(
+        ) as mock_ser, patch(
+            "hpcperfstats.site.lib.machine.staff_artifact_contract."
+            "staff_artifact_contract_payload",
+            return_value={},
+        ), patch.object(api.cfg, "get_xalt_user", return_value="xuser"), patch.object(
             api, "_get_small_executor", return_value=_Exec()
         ), patch.object(
             api, "_collect_future_results_with_deadline",

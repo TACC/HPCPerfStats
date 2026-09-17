@@ -82,12 +82,13 @@ cd "<workspace_root>/HPCPerfStats" && "<workspace_root>/.venv/bin/pip3" install 
 
 If `<workspace_root>/.venv` is missing or `python3` cannot be restored, **ask** whether to create/repair it at that path only; do not silently use another location.
 
-## Docker vs host venv
+## Podman vs host venv
 
-- **Local Docker/Colima compose workflows are disabled** on this developer machine until a new Docker test platform is ready — see **`colima-docker-runtime.mdc`**. Do not start Colima or run `tests/run_*_workflow.sh` unless **`HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1`**.
-- **Docker Compose** workflows (`docker-compose run … web`), when enabled, use the image’s Python — that is separate from `.venv` and is required for DB hostname `db`, Redis `redis`, Timescale, and many integration tests.
+- Container workflows use **rootless Podman + `podman-compose`** through the committed adapter and runners; see **`podman-runtime.mdc`**. Do not substitute an alternate or privileged runtime.
+- Compose-backed workflows use the image’s Python — separate from `.venv` and required for DB hostname `db`, Redis `redis`, Timescale, and many integration tests.
+- Host caches, downloads, tools, and temporary files belong below **`/data/user/$USER`**; rootless container storage belongs below **`/data/podman/$USER`**. The adapter fails closed when effective storage escapes those roots.
 - Image **`debian:trixie` / `debian:trixie-slim`** bake GIL **`/opt/python3.14`** (symlinked at **`/usr/local/bin/python3`**) for web/gunicorn/helpers and free-threaded **`/opt/python3.14t/bin/python`** for pipeline daemons (`listend`, `sync_timedb`, `update_metrics`), with jemalloc link + preload — see **`python-image-interpreter-contract.mdc`**. Host `.venv` stays GIL 3.14 (not 3.14t).
-- **Host `.venv`** is for quick scripts, linters, and pytest **only when** tests do not need the compose network (see `docker-compose-non-unit-testing.mdc` and `full-test-with-db-redis.mdc`). While local Docker is disabled, prefer host unit/mock coverage and defer compose-backed gates.
+- **Host `.venv`** is for quick scripts, linters, and pytest **only when** tests do not need the compose network (see `docker-compose-non-unit-testing.mdc` and `full-test-with-db-redis.mdc`).
 
 ## Overlap
 

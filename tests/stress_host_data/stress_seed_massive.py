@@ -8,9 +8,10 @@ with ``HPCPERFSTATS_STRESS_INTERVAL_SEC`` default **1** (1 Hz).
 ``HPCPERFSTATS_STRESS_DURATION_SEC`` to size the grid; row count is
 ``n_hosts × n_steps × len(metric_pairs)``.
 
-Post-``end_time`` **readiness probes** (one row per host) are inserted separately so
-``update_metrics`` readiness (``latest(time) > end_time``) passes without inflating
-the main window row count.
+The main series ends within the configured readiness end margin. Post-``end_time``
+**readiness probes** (one row per host) are inserted separately so both dual-edge
+window coverage and ``latest(time) > end_time`` pass without inflating the main
+window row count.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from datetime import timedelta
 from django.db import connection
 from django.utils import timezone as django_tz
 
-from hpcperfstats.analysis.metrics.lib.gen.utils import (
+from hpcperfstats.dbload.lib.monitor_naming.canonical import (
     INTEL_FP_ARITH_ALL_EVENTS,
     INTEL_FP_ARITH_DOUBLE_EVENTS,
     INTEL_FP_ARITH_SINGLE_EVENTS,
@@ -233,7 +234,7 @@ def insert_stress_job_and_host_data(
   delta = timedelta(seconds=dims.interval_sec)
   t_last = t0 + delta * (dims.n_steps - 1)
   margin = timedelta(seconds=int(os.environ.get(
-      "HPCPERFSTATS_STRESS_JOB_END_MARGIN_SEC", "3600")))
+      "HPCPERFSTATS_STRESS_JOB_END_MARGIN_SEC", "300")))
   end_time = t_last + margin
   probe_delta = timedelta(seconds=int(
       post_end_probe_seconds

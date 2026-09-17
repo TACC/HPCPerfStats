@@ -646,6 +646,8 @@ class TestJobDetailApi:
     jt.end_time = job.end_time
     with patch.object(api, "_require_auth", return_value=None), patch.object(
         api, "_get_visible_job_or_error_response", return_value=(job, None)
+    ), patch.object(
+        api, "_job_for_detail_list_serializer", return_value=job
     ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
         api, "compute_detail_input_fingerprint", return_value="fp"
     ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(

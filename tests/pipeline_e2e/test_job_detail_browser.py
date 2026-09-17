@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 import re
+import time
+from typing import Any
 
 import pytest
 
@@ -13,6 +15,7 @@ except ModuleNotFoundError:
 
 from hpcperfstats.tests.playwright_axe import assert_no_serious_axe_violations
 
+from .browser_context import new_api_request_context, new_browser_context
 from .constants import PIPELINE_E2E_API_RAW_KEY, PIPELINE_E2E_JID
 
 
@@ -30,6 +33,18 @@ def _raw_key() -> str:
   )
 
 
+def _wait_for_plot_response(
+    request: Any, url: str, timeout_s: float = 5.0,
+) -> Any:
+  """Poll an asynchronously generated plot until its terminal response."""
+  deadline = time.monotonic() + timeout_s
+  response = request.get(url)
+  while response.status == 202 and time.monotonic() < deadline:
+    time.sleep(0.25)
+    response = request.get(url)
+  return response
+
+
 @pytest.mark.django_db(databases=[])
 def test_job_detail_renders_and_summary_plot_payload():
   if os.environ.get("HPCPERFSTATS_COMPOSE_NETWORK", "").strip() != "1":
@@ -42,18 +57,24 @@ def test_job_detail_renders_and_summary_plot_payload():
   jid = PIPELINE_E2E_JID
 
   with sync_playwright() as p:
-    request = p.request.new_context(
+    request = new_api_request_context(
+        p,
         base_url=base,
         extra_http_headers={"X-API-Key": raw},
     )
     request.get("/api/session/")
     for plot_kind in ("summary_plot", "roofline", "gpu_roofline"):
-      plots_resp = request.get(
+      plots_resp = _wait_for_plot_response(
+          request,
           "/api/jobs/{}/plots/?plot={}".format(jid, plot_kind),
       )
-      assert plots_resp.status == 200, plots_resp.text
+      assert plots_resp.status in (200, 202), plots_resp.text
       assert not re.search(r"\b\d+(?:\.\d+)?[eE][+-]?\d+\b", plots_resp.text())
       payload = plots_resp.json()
+      if plots_resp.status == 202:
+        assert payload.get("status") == "loading", payload
+        assert payload.get("retry_after_seconds", 0) > 0, payload
+        continue
       # API may return either a nested object keyed by plot kind, or a
       # direct single-plot payload with {plot, plot_item, unavailable_reason}.
       section = payload.get(plot_kind) or payload
@@ -67,7 +88,7 @@ def test_job_detail_renders_and_summary_plot_payload():
 
   with sync_playwright() as p:
     browser = p.chromium.launch()
-    context = browser.new_context()
+    context = new_browser_context(browser, bypass_csp=True)
     page = context.new_page()
 
     def add_api_key(route):

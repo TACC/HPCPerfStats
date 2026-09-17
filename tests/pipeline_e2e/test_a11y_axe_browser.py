@@ -13,6 +13,7 @@ except ModuleNotFoundError:
 
 from hpcperfstats.tests.playwright_axe import assert_no_serious_axe_violations
 
+from .browser_context import new_browser_context
 from .constants import PIPELINE_E2E_API_RAW_KEY, PIPELINE_E2E_JID
 
 
@@ -53,7 +54,7 @@ def test_axe_wcag_smoke_selected_routes():
 
   with sync_playwright() as p:
     browser = p.chromium.launch()
-    context = browser.new_context()
+    context = new_browser_context(browser, bypass_csp=True)
     page = context.new_page()
 
     def add_api_key(route):

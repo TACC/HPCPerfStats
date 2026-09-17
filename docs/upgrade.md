@@ -2,7 +2,31 @@
 
 Use this document when a site **already runs** the Compose stack (or an older layout of it). For a **new** host, follow **[README.md](../README.md)** Installation only.
 
-Do **not** mix these procedures into a greenfield install. Fresh clones should `cp` examples, create empty bind directories, and `docker compose up --build -d` as documented in the README.
+Do **not** mix these procedures into a greenfield install. Fresh clones should `cp` examples, create empty bind directories, and `podman-compose -p hpcperfstats up --build -d` as documented in the README.
+
+---
+
+## Migrate an existing local runtime to rootless Podman
+
+Stop the old stack without global prune. Install DNF-managed Podman,
+`podman-compose -p hpcperfstats`, and Node 24; allocate non-overlapping `/etc/subuid` and
+`/etc/subgid` ranges large enough to represent container uid **901860**. Create
+and own `/data/user/$USER/{cache,tmp,tools}` and
+`/data/podman/$USER/{storage,images,volumes,cache,tmp}`.
+
+Move no active container storage in place. Configure rootless
+`~/.config/containers/storage.conf` with `/data/podman/$USER/storage` graphroot
+and `/data/podman/$USER/images` imagestore, and `containers.conf` with the
+`/data` volume and image-copy temporary paths. Run `podman system migrate`, then
+verify `podman info` before rebuilding. Configure npm, pip, XDG, Playwright, and
+temporary paths below `/data/user/$USER`; remove old root-filesystem caches only
+after the new paths are verified.
+
+Rebuild with `podman-compose -p hpcperfstats up --build -d`. Development uses
+project `hpcperfstats-dev` and ports 8080/8443/1514; tests use
+`hpcperfstats-test`. Never run global Podman prune or enable an alternate
+runtime-compatibility endpoint. OCI filenames (`Dockerfile`, `.dockerignore`,
+`docker-compose*.yaml`) remain unchanged.
 
 ---
 
@@ -10,7 +34,7 @@ Do **not** mix these procedures into a greenfield install. Fresh clones should `
 
 1. Stop app services deliberately. Default compose **`stop_grace_period`** for **`web`** / **`pipeline`** is **30s** (`HPCPERFSTATS_WEB_STOP_GRACE` / **`HPCPERFSTATS_PIPELINE_STOP_GRACE`**); **`scripts/rebuild_pipeline.sh`** uses the same **30s** stop `-t` defaults (`HPCPERFSTATS_PIPELINE_STOP_TIMEOUT` / **`HPCPERFSTATS_WEB_STOP_TIMEOUT`**). That is shorter than sync_timedb’s **`SHUTDOWN_DRAIN_TIMEOUT_S` (120s)** and supervisord **`stopwaitsecs=130`**, so rebuild cutovers may SIGKILL mid-drain — raise the env overrides when you need a full cooperative exit. Approximate solo budgets when grace is long enough: listend ~**20s**, update_metrics ~**30–60s**, sync_timedb up to **120s**. Expected clean SIGTERM-driven exit **143** (see **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`**).
 
-2. Rebuild and recreate the app. A full **`docker compose up --build`** (or equivalent from-scratch image rebuild) plus recreating **`web`** is the primary way to land SPA fixes: startup fingerprint heal syncs the new package frontend into **`staticfiles_data`**.
+2. Rebuild and recreate the app. A full **`podman-compose -p hpcperfstats up --build`** plus recreating **`web`** is the primary way to land SPA fixes: startup fingerprint heal syncs the new package frontend into **`staticfiles_data`**.
 
    | Task | Command |
    |------|---------|
@@ -19,7 +43,7 @@ Do **not** mix these procedures into a greenfield install. Fresh clones should `
    | Detached recreate of web+pipeline only (no image build) | `./scripts/recreate_web_pipeline.sh` |
    | Rebuild just the app and keep persistent services running | `docker compose stop -t 30 web pipeline proxy && docker compose up --build -d web pipeline && docker compose start proxy` |
 
-   **`./scripts/rebuild_pipeline.sh`** rebuilds **`hpcperfstats`**, preserves live SPA, takes **proxy** down (same image), then **`docker compose up -d web proxy pipeline`**. Leaves **db** / **redis** / **rabbitmq** running. After Let's Encrypt renew or changing **`server=`** / TLS source path, **`docker compose restart proxy`**.
+   **`./scripts/rebuild_pipeline.sh`** rebuilds **`hpcperfstats`**, preserves live SPA, takes **proxy** down (same image), then starts **web**, **proxy**, and **pipeline** through the shared Podman adapter. Leaves **db** / **redis** / **rabbitmq** running. After Let's Encrypt renew or changing **`server=`** / TLS source path, run **`podman-compose -p hpcperfstats restart proxy`**.
 
 3. SPA rebuilds and image builds bake the running git SHA into the staff actions menu (`SITE_GIT_COMMIT`). Image builds copy context `.git` into `frontend-builder` for `git rev-parse` (then strip `.git` from the runtime image after `COPY . .`). Optional `HPCPERFSTATS_GIT_COMMIT` build-arg / env still overrides when set. SPA-only **`./scripts/rebuild_frontend.sh`** exports the host SHA the same way.
 
@@ -31,7 +55,7 @@ Do **not** mix these procedures into a greenfield install. Fresh clones should `
 
 ## Compose Redis image
 
-`docker-compose.yaml` pins **Redis Open Source 8.10** (`redis:8.10.0-alpine3.23`) with **`maxmemory 16gb`**, **`volatile-lru`** (Django cache keys keep TTL and remain evictable), **`--io-threads 4`** / **`--io-threads-do-reads yes`**, compact hashes (**`--hash-min-template-entries 1`**), and Unix socket **`unix:///run/redis/redis.sock?db=1`** on the **`redis_runtime`** named volume (TCP **6379** remains for `redis-cli` and non-compose Redis). Do **not** put Redis on **`web`** / **`pipeline`** `depends_on` (podman-compose **`condition:`** leaves Redis created with empty logs). Startup wait remaps hostname **`redis`** to the Unix socket URL, not **`redis://redis:6379/1`** (that hostname is missing until Redis joins the network). Do **not** use **`allkeys-*`** for Django/listend cache keys. `sync_timedb` no longer stores queues or member maps in Redis; durable ingest/append state is `.sync_timedb_job_store.json` plus `.sync_timedb_archive_members/`. Redis has no persistence volume (`appendonly no`), so upgrading still clears cached pages/plots until they are recomputed. Size the host (or Colima) so Redis can use that cap alongside Postgres `shm_size` / `shared_buffers`. After pulling this Redis wiring, recreate **`redis`**, **`web`**, and **`pipeline`** so they all mount **`redis_runtime`**, and bake **`[CACHE] redis_location = unix:///run/redis/redis.sock?db=1`**. Keep **`redis://redis:6379/1`** only for an external Redis host.
+`docker-compose.yaml` pins **Redis Open Source 8.10** (`redis:8.10.0-alpine3.23`) with **`maxmemory 16gb`**, **`volatile-lru`** (Django cache keys keep TTL and remain evictable), **`--io-threads 4`** / **`--io-threads-do-reads yes`**, compact hashes (**`--hash-min-template-entries 1`**), and Unix socket **`unix:///run/redis/redis.sock?db=1`** on the **`redis_runtime`** named volume (TCP **6379** remains for `redis-cli` and non-compose Redis). Do **not** put Redis on **`web`** / **`pipeline`** `depends_on` (podman-compose -p hpcperfstats **`condition:`** leaves Redis created with empty logs). Startup wait remaps hostname **`redis`** to the Unix socket URL, not **`redis://redis:6379/1`** (that hostname is missing until Redis joins the network). Do **not** use **`allkeys-*`** for Django/listend cache keys. `sync_timedb` no longer stores queues or member maps in Redis; durable ingest/append state is `.sync_timedb_job_store.json` plus `.sync_timedb_archive_members/`. Redis has no persistence volume (`appendonly no`), so upgrading still clears cached pages/plots until they are recomputed. Size the Linux Podman host so Redis can use that cap alongside Postgres `shm_size` / `shared_buffers`. After pulling this Redis wiring, recreate **`redis`**, **`web`**, and **`pipeline`** so they all mount **`redis_runtime`**, and bake **`[CACHE] redis_location = unix:///run/redis/redis.sock?db=1`**. Keep **`redis://redis:6379/1`** only for an external Redis host.
 
 On the deployment host:
 

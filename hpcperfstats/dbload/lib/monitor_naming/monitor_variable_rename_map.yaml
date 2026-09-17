@@ -33,6 +33,10 @@ types:
   intel_hsw_cbo: intel_x86_uncore_cbo_hsw
   intel_bdw_cbo: intel_x86_uncore_cbo_bdw
   intel_skx_cha: intel_x86_uncore_cha_skx
+  intel_icx_cha: intel_x86_uncore_cha_icx
+  intel_spr_cha: intel_x86_uncore_cha_spr
+  intel_emr_cha: intel_x86_uncore_cha_emr
+  intel_gnr_cha: intel_x86_uncore_cha_gnr
   intel_snb_qpi: intel_x86_uncore_qpi_snb
   intel_ivb_qpi: intel_x86_uncore_qpi_ivb
   intel_hsw_qpi: intel_x86_uncore_qpi_hsw

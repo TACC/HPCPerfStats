@@ -70,6 +70,12 @@ volumes:
 # Optional knobs — copy a block under `services:` in your local
 # docker-compose.settings.yaml and uncomment as needed for this site.
 #
+# Production defaults remain 80/443/514/5672. For an unprivileged development run,
+# set HPCPERFSTATS_HTTP_PORT=8080, HPCPERFSTATS_HTTPS_PORT=8443, and
+# HPCPERFSTATS_SYSLOG_PORT=1514, HPCPERFSTATS_AMQP_PORT=5673 for that command.
+# Production needs no environment file: site paths stay here and application
+# configuration stays in hpcperfstats.ini.
+#
 # services:
 #   web:
 #     # Publish Django/gunicorn directly on the host (normally only via proxy 80/443).

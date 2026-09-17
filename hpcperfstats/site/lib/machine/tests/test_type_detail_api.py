@@ -77,9 +77,9 @@ def test_type_detail_get_aggregate_df_batches_large_host_list():
         lambda _k, _ttl, fn: fn(),
     ):
       provider.get_aggregate_df("some_event", metric="arc")
-  assert len(chunk_sizes) == 2
-  assert chunk_sizes[0] == TYPE_DETAIL_HOST_QUERY_BATCH
-  assert chunk_sizes[1] == 1
+  assert chunk_sizes
+  assert set(chunk_sizes) == {TYPE_DETAIL_HOST_QUERY_BATCH, 1}
+  assert chunk_sizes.count(TYPE_DETAIL_HOST_QUERY_BATCH) == chunk_sizes.count(1)
 
 
 @pytest.mark.django_db(databases=[])

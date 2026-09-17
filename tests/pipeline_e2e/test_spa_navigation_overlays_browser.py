@@ -11,6 +11,8 @@ try:
 except ModuleNotFoundError:
   sync_playwright = None
 
+from .browser_context import new_browser_context
+
 
 def _base_url() -> str:
   return os.environ.get(
@@ -40,7 +42,7 @@ def test_calendar_day_link_reaches_job_list():
 
   with sync_playwright() as p:
     browser = p.chromium.launch()
-    context = browser.new_context()
+    context = new_browser_context(browser)
     page = context.new_page()
 
     def add_api_key(route):
@@ -76,7 +78,9 @@ def test_staff_menu_lists_all_actions():
 
   with sync_playwright() as p:
     browser = p.chromium.launch()
-    context = browser.new_context(viewport={"width": 1280, "height": 900})
+    context = new_browser_context(
+        browser, viewport={"width": 1280, "height": 900},
+    )
     page = context.new_page()
 
     def add_api_key(route):
@@ -115,7 +119,7 @@ def test_extended_search_help_shows_definition():
 
   with sync_playwright() as p:
     browser = p.chromium.launch()
-    context = browser.new_context()
+    context = new_browser_context(browser)
     page = context.new_page()
 
     def add_api_key(route):

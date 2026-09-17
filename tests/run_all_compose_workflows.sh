@@ -1,16 +1,37 @@
 #!/usr/bin/env bash
-# Run standard compose-backed test workflows (Colima / docker-compose).
+# Run standard rootless Podman compose-backed test workflows.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# shellcheck source=colima_compose_teardown.sh
-. "$(dirname "${BASH_SOURCE[0]}")/colima_compose_teardown.sh"
-colima_export_docker_env
+# shellcheck source=compose_test_cmd.sh
+. "$(dirname "${BASH_SOURCE[0]}")/compose_test_cmd.sh"
+podman_runtime_require
 
 mkdir -p test_runs
-LOG="${1:-test_runs/test_run_log_colima_compose.md}"
+LOG="test_runs/test_run_log_podman_compose.md"
+SKIP_BUILD="${SKIP_BUILD:-0}"
+if [[ $# -gt 0 && "$1" != --* ]]; then
+  LOG="$1"
+  shift
+fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip-build)
+      SKIP_BUILD=1
+      ;;
+    -h|--help)
+      echo "Usage: tests/run_all_compose_workflows.sh [log-path] [--skip-build]"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
 : >"$LOG"
 
 log() { echo "$*" | tee -a "$LOG"; }
@@ -31,12 +52,11 @@ run_step() {
 }
 
 log "# Compose workflow run ($(date -u '+%Y-%m-%d %H:%M:%S UTC'))"
-log "DOCKER_HOST=$DOCKER_HOST"
-colima status 2>&1 | head -5 | tee -a "$LOG" || true
-docker-compose version | tee -a "$LOG"
+log "Compose project=${HPCPERFSTATS_COMPOSE_PROJECT}"
+"${PODMAN[@]}" version | tee -a "$LOG"
+"${PODMAN_COMPOSE[@]}" version | tee -a "$LOG"
 
-SKIP_BUILD="${SKIP_BUILD:-}"
-if [[ -n "${SKIP_BUILD}" ]]; then
+if [[ "$SKIP_BUILD" == "1" ]]; then
   DB_EXTRA=(--skip-build)
   REST_EXTRA=(--skip-build)
 else
@@ -52,6 +72,15 @@ run_step "3. run_web_e2e_workflow.sh" \
   tests/run_web_e2e_workflow.sh "${REST_EXTRA[@]}" || FAIL=$?
 run_step "4. run_pipeline_e2e_workflow.sh" \
   tests/run_pipeline_e2e_workflow.sh "${REST_EXTRA[@]}" || FAIL=$?
+run_step "5. run_update_metrics_diagnosis_workflow.sh" \
+  tests/run_update_metrics_diagnosis_workflow.sh "${REST_EXTRA[@]}" || FAIL=$?
+run_step "6. run_stress_host_data_workflow.sh" \
+  env HPCPERFSTATS_STRESS_HOST_DATA_ROWS=400000 \
+  tests/run_stress_host_data_workflow.sh "${REST_EXTRA[@]}" || FAIL=$?
+run_step "7. run_security_audit_workflow.sh" \
+  tests/run_security_audit_workflow.sh "${REST_EXTRA[@]}" || FAIL=$?
+run_step "8. run_bokeh_browser_workflow.sh" \
+  tests/run_bokeh_browser_workflow.sh "${REST_EXTRA[@]}" || FAIL=$?
 
 log ""
 log "## Summary"
@@ -60,9 +89,5 @@ if [[ "$FAIL" -eq 0 ]]; then
 else
   log "At least one workflow failed (last non-zero exit retained in FAIL=$FAIL)."
 fi
-
-log ""
-log "## Final Colima Docker cleanup"
-bash tests/colima_docker_cleanup.sh 2>&1 | tee -a "$LOG"
 
 exit "$FAIL"

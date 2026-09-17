@@ -240,7 +240,7 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
             </AlertDescription>
           </Alert>
         ) : null}
-        <p className="mb-1 text-sm text-muted-foreground">
+        <p className="mb-1 text-sm text-foreground">
           Search fields are combined (AND). Job ID opens one job (same as Find Job in the header).
         </p>
         <FieldRow
@@ -262,7 +262,7 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
         </FieldRow>
         <fieldset className="mb-3 border-0 p-0">
           <legend className="text-base font-semibold">Job end time</legend>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-foreground">
             Filters use when the job finished (end time), not when it started.
           </p>
           <div className="mb-2 grid grid-cols-1 gap-2 md:grid-cols-12 md:items-start">
@@ -304,7 +304,7 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
             {...register("host")}
             {...ariaLabelledBy("ext-host")}
           />
-          <p className="mb-0 mt-1 text-sm text-muted-foreground">
+          <p className="mb-0 mt-1 text-sm text-foreground">
             Host plus earliest job end date opens the host time-series plot, not the job list.
           </p>
         </FieldRow>
@@ -497,7 +497,7 @@ export default function ExtendedSearch({ onClose }: ExtendedSearchProps) {
                     labelText={getJobMetricShortLabel(m.metric)}
                     enableHelp
                   />{" "}
-                  <span className="text-sm text-muted-foreground">
+                  <span className="text-sm text-foreground">
                     ({m.metric}, {m.units})
                   </span>
                 </span>

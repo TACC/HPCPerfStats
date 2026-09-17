@@ -10,13 +10,13 @@ mkdir -p "$(dirname "${HPCPERFSTATS_UM_DIAG_JSON_OUT}")"
 
 compose_inner_pip_install
 
-python hpcperfstats/site/manage.py migrate --noinput
+python3 hpcperfstats/site/manage.py migrate --noinput
 
 ARGS=()
 if [[ -s /tmp/hpcperfstats_pytest_extra_args ]]; then
   mapfile -t ARGS < /tmp/hpcperfstats_pytest_extra_args
 fi
 
-exec python -m pytest -v \
+exec python3 -m pytest -v \
   hpcperfstats/site/lib/machine/tests/test_update_metrics_diagnosis_compose.py \
   "${ARGS[@]}" --tb=short

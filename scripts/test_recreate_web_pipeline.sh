@@ -2,6 +2,13 @@
 # Static regression for scripts/recreate_web_pipeline.sh (no compose required).
 set -euo pipefail
 
+: "${USER:?USER must identify the static-test account}"
+: "${TMPDIR:=/data/user/${USER}/tmp}"
+[[ "${TMPDIR}" == /data/* ]] || {
+  echo "static recreate tests require TMPDIR under /data" >&2
+  exit 1
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RECREATE_SCRIPT="${SCRIPT_DIR}/recreate_web_pipeline.sh"
 HELPERS="${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"
@@ -52,13 +59,35 @@ if ! grep -q -- '--detach --no-deps' "${HELPERS}"; then
   exit 1
 fi
 
-if ! grep -q 'hpcperfstats_.*_tmp' "${HELPERS}"; then
-  echo "compose_podman_rm_service_containers must remove *_tmp* collision names" >&2
+if ! grep -q '${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_1' "${HELPERS}"; then
+  echo "service container names must derive from the selected compose project" >&2
+  exit 1
+fi
+
+if ! grep -q '${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_tmp' "${HELPERS}"; then
+  echo "temporary container prefixes must derive from the selected compose project" >&2
   exit 1
 fi
 
 if grep -qE 'docker compose up -d (web|pipeline)($|[[:space:]])' "${HELPERS}"; then
   echo "helpers must not use bare 'up -d SERVICE' without --no-deps (use compose_up_service_detached)" >&2
+  exit 1
+fi
+
+if grep -Eq '"\$\{PODMAN_COMPOSE\[@\]\}" ps[[:space:]]+(web|pipeline|proxy)([[:space:]]|$)' \
+  "${RECREATE_SCRIPT}" "${HELPERS}"; then
+  echo "podman-compose ps must not receive positional service arguments" >&2
+  exit 1
+fi
+
+if grep -Eq 'logs[[:space:]].*--tail|logs[[:space:]]+--tail' "${RECREATE_SCRIPT}"; then
+  echo "status guidance must filter full logs before tailing matches" >&2
+  exit 1
+fi
+
+if ! grep -Fq "logs pipeline 2>&1 | grep -Ei 'error|warn|critical|traceback' | tail -40" \
+  "${RECREATE_SCRIPT}"; then
+  echo "status guidance must show full pipeline logs filtered before tail" >&2
   exit 1
 fi
 

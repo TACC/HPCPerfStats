@@ -37,7 +37,9 @@ That runner resets compose state, rebuilds `web` when configured to do so, start
 
 - **Documentation-only** or comment-only changes with **no** user-visible or routing behavior impact.
 - **Hard environment blockers** (no Docker, broken compose health): state the blocker and what was run instead; prefer CI or another machine for the full workflow rather than skipping silently.
-- **Local Docker disabled** on this machine per **`colima-docker-runtime.mdc`** (`HPCPERFSTATS_ENABLE_LOCAL_DOCKER` not `1`): do **not** start Colima or run `tests/run_web_e2e_workflow.sh`; close with **`N/A — local Docker disabled`** and host-safe coverage instead.
+- A rootless Podman/runtime or `/data` storage prerequisite fails closed:
+  report the concrete blocker; do not fall back to an alternate or privileged runtime, or
+  host-only coverage as a substitute for the required E2E gate.
 
 ## Extra coverage when applicable
 

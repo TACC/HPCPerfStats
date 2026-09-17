@@ -39,8 +39,8 @@ def test_openapi_schema_matches_committed_file():
   if not COMMITTED_SCHEMA.is_file():
     pytest.fail(
         "Missing committed OpenAPI at {}. Regenerate with:\n"
-        "  cd HPCPerfStats && python manage.py spectacular "
-        "--file hpcperfstats/site/openapi/openapi.yaml --format openapi".format(
+        "  cd hpcperfstats/site && python3 manage.py spectacular "
+        "--file openapi/openapi.yaml --format openapi".format(
             COMMITTED_SCHEMA,
         ),
     )
@@ -48,8 +48,8 @@ def test_openapi_schema_matches_committed_file():
   committed = _normalize_schema(_load_committed_schema())
   assert live == committed, (
       "OpenAPI schema drift. Regenerate:\n"
-      "  cd HPCPerfStats && python manage.py spectacular "
-      "--file hpcperfstats/site/openapi/openapi.yaml --format openapi"
+    "  cd hpcperfstats/site && python3 manage.py spectacular "
+    "--file openapi/openapi.yaml --format openapi"
   )
 
 

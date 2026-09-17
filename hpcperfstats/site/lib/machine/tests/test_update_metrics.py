@@ -4515,7 +4515,11 @@ def test_main_env_false_disables_default_sleep(monkeypatch):
   monkeypatch.setattr(update_metrics, "log_date_range", lambda *args, **kwargs: None)
   monkeypatch.setattr(update_metrics, "log_print", lambda *args, **kwargs: None)
   monkeypatch.setattr(update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo")
-  monkeypatch.setattr(update_metrics, "update_metrics_for_dates", lambda dates: None)
+  monkeypatch.setattr(
+      update_metrics,
+      "update_metrics_for_dates",
+      lambda dates, **_kwargs: None,
+  )
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics.connections, "close_all", lambda: None)
   update_metrics.shutdown_requested[0] = False

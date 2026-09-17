@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, time as datetime_time, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -12,6 +12,8 @@ from django.db import connection
 
 
 def _json_safe(obj: Any) -> Any:
+  if isinstance(obj, (datetime, date, datetime_time)):
+    return obj.isoformat()
   if isinstance(obj, dict):
     return {k: _json_safe(v) for k, v in obj.items()}
   if isinstance(obj, (list, tuple)):

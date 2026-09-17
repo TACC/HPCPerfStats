@@ -72,9 +72,11 @@ def test_decompress_stderr_is_devnull_to_avoid_pipe_deadlock():
   assert stdout_src.count("stderr=subprocess.PIPE") == 0
 
 
-def test_tar_append_subprocess_has_timeout():
-  """A4: tar append must pass a timeout so a wedged tar cannot hang the slot."""
+def test_tar_append_subprocess_has_progress_idle_protection():
+  """A4: tar append must stop a wedged process after no byte progress."""
   from hpcperfstats.dbload import sync_timedb as st
 
   source = inspect.getsource(st._append_to_tar)
-  assert "timeout=" in source
+  assert "run_subprocess_with_progress(" in source
+  assert "progress_path=tar_path" in source
+  assert "except ProgressIdleError" in source

@@ -2,21 +2,22 @@
 description: Use Docker Compose workflows for integration, stress, E2E, and DB/Redis-backed tests.
 ---
 
-# Docker Compose for Non-Unit Testing
+# Podman Compose for Non-Unit Testing
 
-Host-side `pytest` often **cannot** resolve `db` / `redis`, match production DB settings, or provide Timescale behavior. **Do not** tell users to run integration-style tests with bare `pytest` on the Mac host unless the test is explicitly **unit-only** (mocks, `django_db(databases=[])`).
-
-## Local Docker disable (current machine)
-
-While **`colima-docker-runtime.mdc`** disable is in force, agents **must not** run `tests/run_*_workflow.sh` or start Colima. Workflows exit **78** unless **`HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1`**. Prefer host unit/mock coverage and mark compose validation **deferred**.
+Host-side `pytest` often **cannot** resolve `db` / `redis`, match production DB
+settings, or provide Timescale behavior. Use committed rootless Podman workflows
+for integration tests; bare host pytest is for explicit unit/mock coverage.
 
 ## Test compose overlay
 
-All **`tests/run_*_workflow.sh`** scripts source **`tests/compose_test_cmd.sh`**, which runs:
+All **`tests/run_*_workflow.sh`** scripts source **`tests/compose_test_cmd.sh`**,
+which builds a project-scoped `podman-compose --project-name hpcperfstats-test`
+command with the base and test-overlay compose files.
 
-`docker-compose -f docker-compose.yaml -f tests/docker-compose.test-overlay.yaml`
-
-That overlay remaps **all** production bind-backed volumes from **`docker-compose.settings.yaml`** (site_data, Postgres, RabbitMQ, static/media, SSH under **`/data/...`**, TLS **`proxy_ssl_source`**) to named Docker volumes or checkout-relative test binds so macOS/Colima and CI do not need those host paths. TLS PEMs are materialized at **`proxy`** container start from **`test_proxy_ssl_source:/mnt/ssl-source:ro`** (flat fixture — **no REL env**); **no** operator **`.env`**. **`compose_test_cmd.sh`** ensures settings and the test overlay exist (`cp` from each **`.example`** when missing). **`tests/docker-compose.test-overlay.yaml`** is gitignored; the committed template is **`tests/docker-compose.test-overlay.yaml.example`**. Production deploys use base **`docker compose`** / **`docker compose -p hpcperfstats`** only (settings `include`d; no app overlay).
+The overlay remaps production bind-backed volumes to project-owned named volumes
+or checkout-relative test binds. TLS uses the flat test fixture without a
+production `.env`. The adapter requires rootless storage, caches, and temporary
+paths under `/data`; see `podman-runtime.mdc`.
 
 ## Default runners (from `HPCPerfStats/` containing `docker-compose.yaml`)
 
@@ -31,7 +32,11 @@ Stress tests are **opt-in** (`HPCPERFSTATS_STRESS_HOST_DATA=1`); the workflow sc
 
 ## When adding or changing non-unit tests
 
-- Prefer a **workflow shell script** under `tests/run_*_workflow.sh` that: sources **`tests/compose_test_cmd.sh`** and uses **`compose_test`** (not bare **`docker-compose`**), resets or documents compose state, starts required services, waits for health, runs **`compose_test run … web`**, and on exit calls **`colima_compose_teardown "${COMPOSE_TEST[@]}"`** (compose **`down -v --remove-orphans`** then **`tests/colima_docker_cleanup.sh`**) unless **`--keep-env`**.
+- Prefer a **workflow shell script** under `tests/run_*_workflow.sh` that sources
+  **`tests/compose_test_cmd.sh`**, uses **`compose_test`**, waits for health, and
+  calls **`podman_compose_teardown "${COMPOSE_TEST[@]}"`** unless `--keep-env`.
+- Cleanup is project-scoped. Never globally prune Podman images, build cache,
+  containers, volumes, networks, or system storage.
 - Document the script in `docs/TESTING.md` in the same change.
 - Keep `monitor/` read-only per workspace guardrails unless the user explicitly approves edits there.
 
@@ -40,4 +45,4 @@ Stress tests are **opt-in** (`HPCPERFSTATS_STRESS_HOST_DATA=1`); the workflow sc
 - Complements `full-test-with-db-redis.mdc` and `local-compose-db-lifecycle-for-web-tests.mdc`.
 - Stress-specific: `job-plot-artifacts-caching.mdc` / `runtime-resource-and-metrics-safety.mdc` when touching plot persistence or metrics.
 - Host Python location: **`workspace-layout-and-python-env.mdc`**.
-- Local disable: **`colima-docker-runtime.mdc`**.
+- Runtime and storage: **`podman-runtime.mdc`**.

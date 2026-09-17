@@ -64,8 +64,8 @@ services:
     environment:
       - HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
     ports:
-      - 514:514/udp
-      - 514:514/tcp
+      - "${HPCPERFSTATS_SYSLOG_PORT:-514}:514/udp"
+      - "${HPCPERFSTATS_SYSLOG_PORT:-514}:514/tcp"
     volumes:
       - hpcperfstatsdata:/hpcperfstats/
       - ssh_keys:/hpcperfstats/.ssh/:ro
@@ -76,7 +76,7 @@ services:
           - pipeline
 
   redis:
-    image: redis:8.10.0-alpine3.23
+    image: docker.io/library/redis:8.10.0-alpine3.23
     logging: *hpc-logging
     command:
       - redis-server
@@ -139,8 +139,8 @@ services:
       timeout: 3s
       retries: 10
     ports:
-      - 80:80
-      - 443:443
+      - "${HPCPERFSTATS_HTTP_PORT:-80}:80"
+      - "${HPCPERFSTATS_HTTPS_PORT:-443}:443"
     volumes:
       # TLS source mount (device: in docker-compose.settings.yaml → proxy_ssl_source).
       # Entrypoint materializes PEMs into /etc/ssl/hpcperfstats before nginx -t.
@@ -166,7 +166,7 @@ services:
           - proxy
 
   db:
-    image: timescale/timescaledb:2.28.3-pg15
+    image: docker.io/timescale/timescaledb:2.28.3-pg15
     logging: *hpc-logging
     # Default container /dev/shm is 64MiB; Postgres dynamic shared memory exhausts it easily
     # under parallel workers. Keep shm_size generous for max_connections=500 + modest parallelism.
@@ -334,7 +334,7 @@ services:
 
   rabbitmq:
     # Management plugin (HTTP API on 15672) for Admin Monitor stats.
-    image: rabbitmq:4.3.4-management-alpine
+    image: docker.io/library/rabbitmq:4.3.4-management-alpine
     restart: always
     logging: *hpc-logging
     hostname: rabbitmq-prod
@@ -348,6 +348,7 @@ services:
       - RABBITMQ_DEFAULT_PASS=guest
       # Erlang binary/heap carriers: address-order best fit + 512 KiB largest
       # mbc (reduces allocator fragmentation under many monitor publishers).
+      - ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512
       - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512
     stop_grace_period: 2m 
     healthcheck:
@@ -359,7 +360,7 @@ services:
       timeout: 3s
       retries: 10
     ports:
-      - 5672:5672
+      - "${HPCPERFSTATS_AMQP_PORT:-5672}:5672"
       # Management HTTP API / UI — keep compose-internal only (Django uses
       # http://rabbitmq:15672). Do not publish 15672 on the host by default;
       # uncomment in docker-compose.settings.yaml if needed.
@@ -399,4 +400,4 @@ volumes:
 
 networks:
   hpcperfstats_net:
-    name: hpcperfstats_net
+    name: ${HPCPERFSTATS_NETWORK_NAME:-hpcperfstats_net}

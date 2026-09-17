@@ -10,7 +10,7 @@
 # Usage (from the git checkout that contains docker-compose.yaml):
 #   ./scripts/rebuild_frontend.sh
 #   ./scripts/rebuild_frontend.sh --skip-npm-ci
-#   ./scripts/rebuild_frontend.sh --docker-build
+#   ./scripts/rebuild_frontend.sh --podman-build
 #   ./scripts/rebuild_frontend.sh --no-deploy
 set -euo pipefail
 
@@ -25,7 +25,7 @@ NODE_IMAGE="node:26.5.1-alpine3.23"
 
 SKIP_NPM_CI=0
 DEPLOY=1
-DOCKER_BUILD=0
+PODMAN_BUILD=0
 
 usage() {
   cat <<'EOF'
@@ -37,7 +37,7 @@ immediately. The pipeline service is never stopped or restarted.
 
 Options:
   --skip-npm-ci    Skip "npm ci" before build (use when node_modules is current)
-  --docker-build   Build with a Node container instead of host npm
+  --podman-build   Build with a rootless Podman Node container instead of host npm
   --no-deploy      Build only; do not copy into web STATIC_ROOT/frontend
   -h, --help       Show this help
 EOF
@@ -49,8 +49,8 @@ while [[ $# -gt 0 ]]; do
       SKIP_NPM_CI=1
       shift
       ;;
-    --docker-build)
-      DOCKER_BUILD=1
+    --podman-build)
+      PODMAN_BUILD=1
       shift
       ;;
     --no-deploy)
@@ -77,7 +77,7 @@ fi
 build_on_host() {
   local git_commit
   if ! command -v npm >/dev/null 2>&1; then
-    echo "rebuild_frontend.sh: npm not found on PATH; retry with --docker-build" >&2
+    echo "rebuild_frontend.sh: npm not found on PATH; retry with --podman-build" >&2
     exit 1
   fi
   git_commit="$(resolve_hpcperfstats_git_commit)"
@@ -89,15 +89,16 @@ build_on_host() {
   NEXT_TELEMETRY_DISABLED=1 HPCPERFSTATS_GIT_COMMIT="${git_commit}" npm run build:prod
 }
 
-build_in_docker() {
+build_in_podman() {
   local npm_ci_cmd="npm ci"
   local git_commit
+  podman_runtime_require
   if [[ "${SKIP_NPM_CI}" -ne 0 ]]; then
     npm_ci_cmd="true"
   fi
   git_commit="$(resolve_hpcperfstats_git_commit)"
   export HPCPERFSTATS_GIT_COMMIT="${git_commit}"
-  docker run --rm \
+  "${PODMAN[@]}" run --rm \
     -v "${REPO_ROOT}":/home/hpcperfstats \
     -w /home/hpcperfstats/hpcperfstats/site/frontend \
     -e NEXT_TELEMETRY_DISABLED=1 \
@@ -201,6 +202,7 @@ verify_container_frontend_matches_host() {
 
 deploy_to_compose() {
   cd "${REPO_ROOT}"
+  podman_runtime_require
   if ! web_service_running; then
     echo "web service is not running; skipping deploy (host tree is updated)." >&2
     echo "Start web later and re-run without --no-deploy, or run collectstatic manually." >&2
@@ -233,13 +235,13 @@ deploy_to_compose() {
 
   trap - ERR
 
-  echo "Frontend deploy complete. Use the proxy service (ports 80/443), not web:8000 — Gunicorn does not serve /machine/."
+  echo "Frontend deploy complete. Use proxy host ports ${HPCPERFSTATS_HTTP_PORT:-80}/${HPCPERFSTATS_HTTPS_PORT:-443}, not web:8000 — Gunicorn does not serve /machine/."
   echo "Hard-refresh the browser and confirm the deploy fingerprint above matches page-*.js in DevTools Network."
 }
 
 main() {
-  if [[ "${DOCKER_BUILD}" -eq 1 ]]; then
-    build_in_docker
+  if [[ "${PODMAN_BUILD}" -eq 1 ]]; then
+    build_in_podman
   else
     build_on_host
   fi

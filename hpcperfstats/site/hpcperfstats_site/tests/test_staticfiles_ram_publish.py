@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 from pathlib import Path
 
 import pytest
 
+from hpcperfstats.site.lib import staticfiles_ram_publish as ram_publish
 from hpcperfstats.site.lib.staticfiles_ram_publish import (
     REQUIRED_STATIC_RELPATHS,
     main,
@@ -85,19 +87,37 @@ def test_publish_fail_closed_missing_shells(tmp_path: Path):
   ) == "keep-pub"
 
 
-def test_publish_fail_closed_enospc_or_unwritable(tmp_path: Path):
+def test_publish_fail_closed_unwritable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
   src = _static_src(tmp_path)
   dest = tmp_path / "staticfiles-ram"
   dest.mkdir()
-  dest.chmod(0o555)
-  try:
-    with pytest.raises(SystemExit) as exc:
-      publish_tree_to_ram(
-          src, dest, required_relpaths=REQUIRED_STATIC_RELPATHS
-      )
-    assert exc.value.code == 1
-  finally:
-    dest.chmod(0o755)
+  monkeypatch.setattr(ram_publish.os, "access", lambda *_args: False)
+  with pytest.raises(SystemExit) as exc:
+    publish_tree_to_ram(
+        src, dest, required_relpaths=REQUIRED_STATIC_RELPATHS
+    )
+  assert exc.value.code == 1
+
+
+def test_publish_fail_closed_enospc(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+  src = _static_src(tmp_path)
+  dest = tmp_path / "staticfiles-ram"
+
+  def raise_enospc(*_args, **_kwargs):
+    raise OSError(errno.ENOSPC, "No space left on device")
+
+  monkeypatch.setattr(ram_publish.shutil, "copytree", raise_enospc)
+  with pytest.raises(SystemExit) as exc:
+    publish_tree_to_ram(
+        src, dest, required_relpaths=REQUIRED_STATIC_RELPATHS
+    )
+  assert exc.value.code == 1
 
 
 def test_publish_src_equals_dest_fails(tmp_path: Path):

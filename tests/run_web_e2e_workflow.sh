@@ -3,8 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
-# shellcheck source=colima_compose_teardown.sh
-. "$(dirname "${BASH_SOURCE[0]}")/colima_compose_teardown.sh"
 # shellcheck source=compose_test_cmd.sh
 . "$(dirname "${BASH_SOURCE[0]}")/compose_test_cmd.sh"
 
@@ -20,7 +18,7 @@ SKIP_PLAYWRIGHT_INSTALL=0
 
 usage() {
   cat <<'EOF'
-Run full web/browser E2E workflow in Docker (compose Postgres + migrate + web-pages tests + nginx WSGI contract).
+Run full web/browser E2E workflow with rootless Podman.
 
 Usage:
   tests/run_web_e2e_workflow.sh [options]
@@ -28,7 +26,7 @@ Usage:
 Options:
   --seed-cmd "<command>"         Command to seed/recreate required test data
   --keep-env                     Keep compose services/volumes after run
-  --skip-build                   Skip docker-compose build web
+  --skip-build                   Skip podman-compose build web
   --skip-playwright-install      Skip Playwright browser install in container
   -h, --help                     Show this help
 
@@ -65,7 +63,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-colima_export_docker_env
+podman_runtime_require
 
 cleanup() {
   compose_cleanup_bind_mount
@@ -73,14 +71,14 @@ cleanup() {
     echo "Keeping compose environment (--keep-env)."
     return
   fi
-  colima_compose_teardown "${COMPOSE_TEST[@]}"
+  podman_compose_teardown "${COMPOSE_TEST[@]}"
 }
 trap cleanup EXIT
 
 export COMPOSE_BIND_MOUNT_SKIP_BUILD="$SKIP_BUILD"
 compose_prepare_bind_mount
 
-echo "Resetting Docker compose state and volumes..."
+echo "Resetting test project state and volumes..."
 compose_test down -v --remove-orphans
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
@@ -93,12 +91,12 @@ compose_test up -d db redis
 
 echo "Waiting for healthy db/redis..."
 for _ in $(seq 1 60); do
-  db_id="$(compose_test ps -q db)"
-  redis_id="$(compose_test ps -q redis)"
+  db_id="$(compose_service_container_id db)"
+  redis_id="$(compose_service_container_id redis)"
 
   if [[ -n "$db_id" && -n "$redis_id" ]]; then
-    db_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' "$db_id" 2>/dev/null || true)"
-    redis_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' "$redis_id" 2>/dev/null || true)"
+    db_health="$(compose_container_health "$db_id" 2>/dev/null || true)"
+    redis_health="$(compose_container_health "$redis_id" 2>/dev/null || true)"
     if [[ "$db_health" == "healthy" && "$redis_health" == "healthy" ]]; then
       echo "db and redis are healthy."
       break
@@ -120,7 +118,7 @@ fi
 
 PLAYWRIGHT_SETUP=""
 if [[ "$SKIP_PLAYWRIGHT_INSTALL" -eq 0 ]]; then
-  PLAYWRIGHT_SETUP=" && python -m playwright install --with-deps chromium"
+  PLAYWRIGHT_SETUP=" && python3 -m playwright install --with-deps chromium"
 fi
 
 echo "Running web E2E, browser E2E, and nginx/WSGI contract tests..."
@@ -128,7 +126,7 @@ compose_web_repo_bind_mount_args
 compose_test run --rm \
   -e HPCPERFSTATS_COMPOSE_NETWORK=1 \
   "${compose_web_repo_bind_mount_args[@]}" \
-  --entrypoint "sh -lc 'pip install -e \".[test]\"${PLAYWRIGHT_SETUP} && python hpcperfstats/site/manage.py migrate --noinput && python -m pytest -q hpcperfstats/site/lib/machine/tests/test_web_pages_e2e.py hpcperfstats/site/lib/machine/tests/test_web_pages_browser_e2e.py hpcperfstats/site/hpcperfstats_site/tests/test_nginx_static_wsgi_contract.py'" \
-  web
+  --entrypoint sh \
+  web -lc "python3 -m pip install -e \".[test]\"${PLAYWRIGHT_SETUP} && python3 hpcperfstats/site/manage.py migrate --noinput && python3 -m pytest -q hpcperfstats/site/lib/machine/tests/test_web_pages_e2e.py hpcperfstats/site/lib/machine/tests/test_web_pages_browser_e2e.py hpcperfstats/site/hpcperfstats_site/tests/test_nginx_static_wsgi_contract.py"
 
 echo "E2E workflow completed."

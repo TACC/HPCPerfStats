@@ -393,7 +393,7 @@ def stream_enqueue_ingest_from_find_records(
       progress.record(day_tok, "skip_complete", 1)
     tar = str(plan.tar_path or "").strip()
     if tar and tar not in day_close_seen:
-      if jr.enqueue_day_close_if_needed(
+      if jr.enqueue_cheap_day_close_if_needed(
           client,
           tar,
           calendar_day=plan.calendar_day,

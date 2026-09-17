@@ -799,7 +799,7 @@ def test_append_repairs_truncated_tar_before_restore_from_zst(
 
   monkeypatch.setattr(
       "hpcperfstats.dbload.sync_timedb.filter_paths_head_ingested",
-      lambda paths, log_fn=None: (paths, []),
+      lambda paths, log_fn=None, **_kwargs: (paths, []),
   )
   monkeypatch.setattr(
       "hpcperfstats.dbload.sync_timedb._append_to_tar",
@@ -1415,7 +1415,7 @@ def test_archive_stats_files_returns_false_when_corrupt_tar_restore_fails(monkey
 
   monkeypatch.setattr(
       "hpcperfstats.dbload.sync_timedb.filter_paths_head_ingested",
-      lambda paths, log_fn=None: (paths, []),
+      lambda paths, log_fn=None, **_kwargs: (paths, []),
   )
   monkeypatch.setattr(
       "hpcperfstats.dbload.sync_timedb.verify_tar_archive_readable",
@@ -2480,7 +2480,6 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
       return False
 
   tf_calls = {"count": 0}
-  remove_calls = []
   restore_calls = []
 
   def _tf_mock(path):
@@ -2500,20 +2499,21 @@ def test_get_tar_file_tasks_restores_corrupt_tar_from_gz(monkeypatch, tmp_path):
       lambda p: p in (tar_path, gz_path),
   )
   monkeypatch.setattr(
-      helpers.os,
-      "remove",
-      lambda p: remove_calls.append(p),
-  )
-  monkeypatch.setattr(
       helpers,
-      "decompress_compressed_to_tar",
-      lambda path, out_tar, threads, **_: restore_calls.append((path, out_tar, threads)) or True,
+      "replace_corrupt_tar_from_compressed_backup",
+      lambda out_tar, zst, gz, threads: (
+          restore_calls.append((out_tar, zst, gz, threads)) or True
+      ),
   )
 
   assert get_tar_file_tasks(tar_path) == [(tar_path, "a.txt")]
   assert tf_calls["count"] == 2
-  assert remove_calls == [tar_path]
-  assert restore_calls == [(gz_path, tar_path, helpers.get_archive_zstd_thread_count())]
+  assert restore_calls == [(
+      tar_path,
+      tar_path + ".zst",
+      gz_path,
+      helpers.get_archive_zstd_thread_count(),
+  )]
 
 
 def test_get_tar_file_tasks_raises_when_corrupt_and_no_gz(monkeypatch, tmp_path):

@@ -2,10 +2,19 @@
 # Static regression for scripts/rebuild_pipeline.sh (no compose required).
 set -euo pipefail
 
+: "${USER:?USER must identify the static-test account}"
+: "${TMPDIR:=/data/user/${USER}/tmp}"
+[[ "${TMPDIR}" == /data/* ]] || {
+  echo "static rebuild tests require TMPDIR under /data" >&2
+  exit 1
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE_SCRIPT="${SCRIPT_DIR}/rebuild_pipeline.sh"
 HELPERS="${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"
 FRONTEND_SCRIPT="${SCRIPT_DIR}/rebuild_frontend.sh"
+RECREATE_SCRIPT="${SCRIPT_DIR}/recreate_web_pipeline.sh"
+RUNTIME_ADAPTER="${SCRIPT_DIR}/lib/podman_runtime.sh"
 
 if [[ ! -f "${PIPELINE_SCRIPT}" ]]; then
   echo "missing ${PIPELINE_SCRIPT}" >&2
@@ -24,6 +33,58 @@ fi
 
 if ! bash -n "${HELPERS}"; then
   echo "bash -n failed for compose_frontend_helpers.sh" >&2
+  exit 1
+fi
+
+for script in "${FRONTEND_SCRIPT}" "${RECREATE_SCRIPT}"; do
+  if ! bash -n "${script}"; then
+    echo "bash -n failed for ${script}" >&2
+    exit 1
+  fi
+done
+
+if ! grep -q 'podman_runtime.sh' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must source podman_runtime.sh" >&2
+  exit 1
+fi
+if ! grep -q 'HPCPERFSTATS_COMPOSE_PROJECT:=hpcperfstats-dev' "${HELPERS}"; then
+  echo "rebuild helpers must default to the isolated development compose project" >&2
+  exit 1
+fi
+if ! grep -q '"${PODMAN_COMPOSE\[@\]}"' "${HELPERS}"; then
+  echo "compose_frontend_helpers.sh must use the adapter PODMAN_COMPOSE command" >&2
+  exit 1
+fi
+if ! grep -q '${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_1' "${HELPERS}"; then
+  echo "container cleanup names must follow the selected compose project" >&2
+  exit 1
+fi
+if ! grep -q '${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_tmp' "${HELPERS}"; then
+  echo "temporary container cleanup names must follow the selected compose project" >&2
+  exit 1
+fi
+
+for script in "${PIPELINE_SCRIPT}" "${FRONTEND_SCRIPT}" "${RECREATE_SCRIPT}"; do
+  if ! grep -q 'podman_runtime_require' "${script}"; then
+    echo "${script} must enforce the rootless /data Podman runtime contract" >&2
+    exit 1
+  fi
+done
+
+if [[ ! -f "${RUNTIME_ADAPTER}" ]]; then
+  echo "missing leaf-2 runtime adapter: ${RUNTIME_ADAPTER}" >&2
+  exit 1
+fi
+
+if grep -Eq 'mktemp[[:space:]]+(-d[[:space:]]+)?(/tmp|~|\$\{?HOME)' \
+  "${PIPELINE_SCRIPT}" "${FRONTEND_SCRIPT}" "${RECREATE_SCRIPT}" "${HELPERS}" "${BASH_SOURCE[0]}"; then
+  echo "owned rebuild scripts must place host scratch under TMPDIR" >&2
+  exit 1
+fi
+
+if grep -Eq '"\$\{PODMAN_COMPOSE\[@\]\}" ps[[:space:]]+(web|pipeline|proxy|rabbitmq|redis|db)([[:space:]]|$)' \
+  "${PIPELINE_SCRIPT}" "${RECREATE_SCRIPT}" "${HELPERS}"; then
+  echo "podman-compose ps must not receive positional service arguments" >&2
   exit 1
 fi
 
@@ -52,9 +113,9 @@ if ! grep -q 'start_web_proxy_pipeline' "${PIPELINE_SCRIPT}"; then
   exit 1
 fi
 
-# Bring-up contract: one command, no --no-deps.
-if ! grep -qE 'docker compose up -d web proxy pipeline' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must run: docker compose up -d web proxy pipeline" >&2
+# Bring-up contract: one adapter command, no --no-deps.
+if ! grep -qE '"\$\{PODMAN_COMPOSE\[@\]\}" up -d web proxy pipeline' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must run the adapter compose command for web proxy pipeline" >&2
   exit 1
 fi
 
@@ -164,7 +225,7 @@ if ! declare -F cleanup_pipeline_rebuild_scratch >/dev/null; then
   exit 1
 fi
 
-scratch_root="$(mktemp -d /tmp/hps-test-pipeline-rebuild-scratch.XXXXXX)"
+scratch_root="$(mktemp -d "${TMPDIR:?TMPDIR must be set}/hps-test-pipeline-rebuild-scratch.XXXXXX")"
 scratch_cleanup() { rm -rf "${scratch_root}"; }
 trap scratch_cleanup EXIT
 

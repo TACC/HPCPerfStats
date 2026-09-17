@@ -329,17 +329,23 @@ def test_proxy_dockerfile_wires_ocsp_trust_and_startup_helpers():
 
 def test_proxy_entrypoint_sh_is_tracked_not_gitignored():
   """Regression: *.sh gitignore must not hide services-conf/proxy_entrypoint.sh."""
+  import shutil
   import subprocess
 
   repo_root = _SERVICES.parent
-  ignored = subprocess.run(
-      ["git", "check-ignore", "-v", "services-conf/proxy_entrypoint.sh"],
-      cwd=repo_root,
-      check=False,
-      capture_output=True,
-      text=True,
-  )
-  assert ignored.returncode != 0, ignored.stdout + ignored.stderr
+  git = shutil.which("git")
+  if git is not None and (repo_root / ".git").exists():
+    ignored = subprocess.run(
+        [git, "check-ignore", "-v", "services-conf/proxy_entrypoint.sh"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert ignored.returncode != 0, ignored.stdout + ignored.stderr
+  else:
+    gitignore_lines = (repo_root / ".gitignore").read_text().splitlines()
+    assert "!services-conf/proxy_entrypoint.sh" in gitignore_lines
   assert (_SERVICES / "proxy_entrypoint.sh").is_file()
   assert (_SERVICES / "proxy_entrypoint.sh").stat().st_mode & 0o111
 

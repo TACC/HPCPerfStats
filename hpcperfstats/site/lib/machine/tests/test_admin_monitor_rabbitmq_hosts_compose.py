@@ -37,6 +37,6 @@ def test_job_table_host_fqdns_last_7d_unnest_against_postgres():
     host_list=["old-node.local"],
   )
   hosts = api._job_table_host_fqdns_last_7d()
-  assert "c101-001.local" in hosts
-  assert "c101-002.local" in hosts
-  assert "old-node.local" not in hosts
+  assert api._as_host_data_fqdn("c101-001") in hosts
+  assert api._as_host_data_fqdn("c101-002.local") in hosts
+  assert api._as_host_data_fqdn("old-node.local") not in hosts

@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Shared compose/podman helpers for frontend volume deploy and pipeline rebuild scripts.
+# Shared Podman helpers for frontend volume deploy and pipeline rebuild scripts.
 # Source from scripts/rebuild_frontend.sh or scripts/rebuild_pipeline.sh (not executed directly).
 
 : "${REPO_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+: "${HPCPERFSTATS_COMPOSE_PROJECT:=hpcperfstats-dev}"
+# shellcheck source=podman_runtime.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/podman_runtime.sh"
+: "${TMPDIR:?podman_runtime.sh must set TMPDIR under /data}"
 : "${CONTAINER_STATIC_ROOT:=/home/hpcperfstats/staticfiles}"
 : "${CONTAINER_STATIC_ROOT_FRONTEND:=${CONTAINER_STATIC_ROOT}/frontend}"
 : "${CONTAINER_STATIC_FRONTEND:=/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/static/frontend}"
@@ -15,23 +19,10 @@ REQUIRED_SPA_SHELLS=(
 )
 
 compose_backend_is_podman() {
-  if command -v podman-compose >/dev/null 2>&1; then
-    return 0
-  fi
-  if docker compose version 2>/dev/null | grep -qi podman; then
-    return 0
-  fi
-  return 1
+  return 0
 }
 
 compose_web_image_name() {
-  cd "${REPO_ROOT}"
-  local name
-  name="$(docker compose config --images web 2>/dev/null | head -n 1 | tr -d '[:space:]')"
-  if [[ -n "${name}" ]]; then
-    echo "${name}"
-    return
-  fi
   echo "hpcperfstats"
 }
 
@@ -50,7 +41,7 @@ resolve_hpcperfstats_git_commit() {
   printf '%s\n' "unknown"
 }
 
-# podman-compose does not forward `compose build --target`; use podman/docker build directly.
+# podman-compose does not forward `compose build --target`; use Podman directly.
 build_web_image_with_target() {
   local target="$1"
   local image_name dockerfile git_commit
@@ -66,36 +57,21 @@ build_web_image_with_target() {
   git_commit="$(resolve_hpcperfstats_git_commit)"
   export HPCPERFSTATS_GIT_COMMIT="${git_commit}"
 
-  if compose_backend_is_podman; then
-    local build_cli=(podman build)
-    if ! podman_cli_available; then
-      if command -v docker >/dev/null 2>&1; then
-        build_cli=(docker build)
-      else
-        echo "build_web_image_with_target: podman-compose detected but neither podman nor docker on PATH" >&2
-        return 1
-      fi
-    fi
-    echo "Building ${image_name} target=${target} via ${build_cli[*]} (podman-compose lacks compose build --target) ..."
-    "${build_cli[@]}" \
-      --target "${target}" \
-      --build-arg "HPCPERFSTATS_GIT_COMMIT=${git_commit}" \
-      -f "${dockerfile}" \
-      -t "${image_name}" \
-      "${REPO_ROOT}"
-    return 0
+  if ! podman_cli_available; then
+    echo "build_web_image_with_target: podman not found on PATH" >&2
+    return 1
   fi
-
-  docker compose build web --target "${target}" \
-    --build-arg "HPCPERFSTATS_GIT_COMMIT=${git_commit}"
+  echo "Building ${image_name} target=${target} via podman build (podman-compose lacks compose build --target) ..."
+  "${PODMAN[@]}" build \
+    --target "${target}" \
+    --build-arg "HPCPERFSTATS_GIT_COMMIT=${git_commit}" \
+    -f "${dockerfile}" \
+    -t "${image_name}" \
+    "${REPO_ROOT}"
 }
 
 compose_cp_supported() {
-  if compose_backend_is_podman; then
-    return 1
-  fi
-  cd "${REPO_ROOT}"
-  docker compose cp --help >/dev/null 2>&1
+  return 1
 }
 
 podman_cli_available() {
@@ -104,23 +80,11 @@ podman_cli_available() {
 
 web_service_running() {
   cd "${REPO_ROOT}"
-  docker compose exec -T web true >/dev/null 2>&1
+  "${PODMAN_COMPOSE[@]}" exec -T web true >/dev/null 2>&1
 }
 
 web_container_ref() {
-  cd "${REPO_ROOT}"
-  local id name
-  id="$(docker compose ps -q web 2>/dev/null | head -n 1 | tr -d '[:space:]')"
-  if [[ -n "${id}" ]]; then
-    echo "${id}"
-    return
-  fi
-  name="$(docker compose ps --format '{{.Name}}' web 2>/dev/null | head -n 1 | tr -d '[:space:]')"
-  if [[ -n "${name}" ]]; then
-    echo "${name}"
-    return
-  fi
-  echo "hpcperfstats_web_1"
+  echo "${HPCPERFSTATS_COMPOSE_PROJECT}_web_1"
 }
 
 web_container_id() {
@@ -162,7 +126,7 @@ print_deploy_fingerprint() {
 fingerprint_in_container() {
   local service="$1"
   local container_path="$2"
-  docker compose exec -T "${service}" sh -lc \
+  "${PODMAN_COMPOSE[@]}" exec -T "${service}" sh -lc \
     "grep -oE 'page-[0-9a-f]+\\.js' '${container_path}' 2>/dev/null | head -n 1 || echo unknown"
 }
 
@@ -229,7 +193,7 @@ verify_spa_shells_via_compose() {
   local label="$2"
   local rel missing=()
   for rel in "${REQUIRED_SPA_SHELLS[@]}"; do
-    if ! docker compose exec -T web bash -lc "[[ -f '${container_dir}/${rel}' ]]"; then
+    if ! "${PODMAN_COMPOSE[@]}" exec -T web bash -lc "[[ -f '${container_dir}/${rel}' ]]"; then
       missing+=("${container_dir}/${rel}")
     fi
   done
@@ -250,17 +214,17 @@ count_files_under() {
 
 count_files_in_web_container() {
   local container_dir="$1"
-  docker compose exec -T web bash -lc "find '${container_dir}' -type f 2>/dev/null | wc -l | tr -d ' '"
+  "${PODMAN_COMPOSE[@]}" exec -T web bash -lc "find '${container_dir}' -type f 2>/dev/null | wc -l | tr -d ' '"
 }
 
 count_files_in_proxy_container() {
   local container_dir="$1"
-  docker compose exec -T proxy sh -lc "find '${container_dir}' -type f 2>/dev/null | wc -l | tr -d ' '"
+  "${PODMAN_COMPOSE[@]}" exec -T proxy sh -lc "find '${container_dir}' -type f 2>/dev/null | wc -l | tr -d ' '"
 }
 
 reset_container_dir_via_compose() {
   local target_dir="$1"
-  docker compose exec -T web bash -lc "rm -rf '${target_dir}' && mkdir -p '${target_dir}'"
+  "${PODMAN_COMPOSE[@]}" exec -T web bash -lc "rm -rf '${target_dir}' && mkdir -p '${target_dir}'"
 }
 
 copy_host_tar_into_web() {
@@ -269,28 +233,17 @@ copy_host_tar_into_web() {
   local container_ref="$3"
 
   cd "${REPO_ROOT}"
-  if compose_backend_is_podman; then
-    if ! podman_cli_available; then
-      echo "podman-compose detected but podman not on PATH" >&2
-      return 1
-    fi
-    podman cp "${host_tar}" "${container_ref}:${container_tar}"
-    echo "staged deploy tar → web via podman cp (${container_ref})"
-    return 0
+  if ! podman_cli_available; then
+    echo "podman not found on PATH" >&2
+    return 1
   fi
-
-  if docker compose cp "${host_tar}" "web:${container_tar}"; then
-    echo "staged deploy tar → web via compose cp"
-    return 0
-  fi
-
-  echo "failed to copy deploy tar into web container" >&2
-  return 1
+  "${PODMAN[@]}" cp "${host_tar}" "${container_ref}:${container_tar}"
+  echo "staged deploy tar → web via podman cp (${container_ref})"
 }
 
 verify_staged_tar_in_web() {
   local container_tar="$1"
-  docker compose exec -T web bash -lc "test -s '${container_tar}'"
+  "${PODMAN_COMPOSE[@]}" exec -T web bash -lc "test -s '${container_tar}'"
 }
 
 copy_tree_via_staged_tar_from_dir() {
@@ -300,8 +253,8 @@ copy_tree_via_staged_tar_from_dir() {
   local container_ref host_tar container_tar
 
   container_ref="$(web_container_ref)"
-  host_tar="$(mktemp /tmp/hps-frontend-deploy.XXXXXX.tar)"
-  container_tar="/tmp/hps-frontend-deploy.${$}.${RANDOM}.tar"
+  host_tar="$(mktemp "${TMPDIR}/hps-frontend-deploy.XXXXXX.tar")"
+  container_tar="/run/hps-frontend-deploy.${$}.${RANDOM}.tar"
 
   echo "creating deploy tar from ${host_src_dir} ..."
   tar -C "${host_src_dir}" -cf "${host_tar}" .
@@ -318,7 +271,7 @@ copy_tree_via_staged_tar_from_dir() {
   fi
 
   echo "extracting staged tar into web:${dest} ..."
-  docker compose exec -T web bash -lc \
+  "${PODMAN_COMPOSE[@]}" exec -T web bash -lc \
     "rm -rf '${dest}' && mkdir -p '${dest}' && tar -xf '${container_tar}' -C '${dest}' && rm -f '${container_tar}'"
 
   if [[ -n "${expected_index_html}" && -f "${expected_index_html}" ]]; then
@@ -334,7 +287,7 @@ verify_container_extract_fingerprint() {
 
   host_fp="$(frontend_build_fingerprint "${expected_index_html}")"
   container_fp="$(
-    docker compose exec -T web bash -lc \
+    "${PODMAN_COMPOSE[@]}" exec -T web bash -lc \
       "grep -oE 'page-[0-9a-f]+\\.js' '${probe}' 2>/dev/null | head -n 1 || echo unknown"
   )"
 
@@ -352,7 +305,7 @@ copy_tree_via_compose_cp_from_dir() {
   local host_src_dir="$1"
   local dest="$2"
   reset_container_dir_via_compose "${dest}"
-  docker compose cp "${host_src_dir}/." "web:${dest}/"
+  "${PODMAN[@]}" cp "${host_src_dir}/." "$(web_container_ref):${dest}/"
 }
 
 copy_tree_into_container_from_dir() {
@@ -360,14 +313,8 @@ copy_tree_into_container_from_dir() {
   local dest="$2"
   local expected_index_html="${3:-}"
 
-  if compose_cp_supported; then
-    echo "copying via docker compose cp → ${dest}" >&2
-    copy_tree_via_compose_cp_from_dir "${host_src_dir}" "${dest}"
-    return
-  fi
-
   if ! podman_cli_available; then
-    echo "podman-compose detected but podman not on PATH; cannot deploy into web" >&2
+    echo "podman not found on PATH; cannot deploy into web" >&2
     return 1
   fi
 
@@ -386,43 +333,38 @@ extract_container_dir_to_host() {
   cd "${REPO_ROOT}"
   container_ref="$(web_container_ref)"
 
-  if compose_cp_supported; then
-    docker compose cp "web:${container_src}/." "${host_dest}/"
-    return 0
-  fi
-
   if ! podman_cli_available; then
     echo "cannot extract from web container: podman not on PATH" >&2
     return 1
   fi
 
   local host_tar container_tar
-  host_tar="$(mktemp /tmp/hps-frontend-export.XXXXXX.tar)"
-  container_tar="/tmp/hps-frontend-export.${$}.${RANDOM}.tar"
+  host_tar="$(mktemp "${TMPDIR}/hps-frontend-export.XXXXXX.tar")"
+  container_tar="/run/hps-frontend-export.${$}.${RANDOM}.tar"
 
-  docker compose exec -T web bash -lc \
+  "${PODMAN_COMPOSE[@]}" exec -T web bash -lc \
     "tar -C '${container_src}' -cf '${container_tar}' ."
-  podman cp "${container_ref}:${container_tar}" "${host_tar}"
+  "${PODMAN[@]}" cp "${container_ref}:${container_tar}" "${host_tar}"
   tar -xf "${host_tar}" -C "${host_dest}"
-  docker compose exec -T web bash -lc "rm -f '${container_tar}'" || true
+  "${PODMAN_COMPOSE[@]}" exec -T web bash -lc "rm -f '${container_tar}'" || true
   rm -f "${host_tar}"
 }
 
 sha256_in_web_container() {
   local container_path="$1"
-  docker compose exec -T web bash -lc \
+  "${PODMAN_COMPOSE[@]}" exec -T web bash -lc \
     "if [[ ! -f '${container_path}' ]]; then exit 2; fi; sha256sum '${container_path}' | awk '{print \$1}'"
 }
 
 sha256_in_proxy_container() {
   local container_path="$1"
-  docker compose exec -T proxy sh -lc \
+  "${PODMAN_COMPOSE[@]}" exec -T proxy sh -lc \
     "if [[ ! -f '${container_path}' ]]; then exit 2; fi; sha256sum '${container_path}' | awk '{print \$1}'"
 }
 
 publish_web_static_tree_to_ram() {
   echo "Publishing STATIC_ROOT onto tmpfs for nginx (proxy /srv/static) ..."
-  docker compose exec -T web /usr/local/bin/python3 \
+  "${PODMAN_COMPOSE[@]}" exec -T web /usr/local/bin/python3 \
     -m hpcperfstats.site.lib.staticfiles_ram_publish --kind static
 }
 
@@ -467,9 +409,9 @@ print_podman_deploy_fallback() {
   local static_root_frontend="${1:-${CONTAINER_STATIC_ROOT_FRONTEND}}"
   cat <<EOF >&2
 manual podman fallback (from git checkout):
-  tar -cf /tmp/hps-frontend.tar -C hpcperfstats/site/hpcperfstats_site/static/frontend .
-  podman cp /tmp/hps-frontend.tar hpcperfstats_web_1:/tmp/hps-frontend.tar
-  docker compose exec web bash -lc 'rm -rf ${static_root_frontend} && mkdir -p ${static_root_frontend} && tar -xf /tmp/hps-frontend.tar -C ${static_root_frontend} && rm -f /tmp/hps-frontend.tar'
+  tar -cf "\${TMPDIR}/hps-frontend.tar" -C hpcperfstats/site/hpcperfstats_site/static/frontend .
+  podman cp "\${TMPDIR}/hps-frontend.tar" ${HPCPERFSTATS_COMPOSE_PROJECT}_web_1:/run/hps-frontend.tar
+  podman-compose --project-name ${HPCPERFSTATS_COMPOSE_PROJECT} exec web bash -lc 'rm -rf ${static_root_frontend} && mkdir -p ${static_root_frontend} && tar -xf /run/hps-frontend.tar -C ${static_root_frontend} && rm -f /run/hps-frontend.tar'
 EOF
 }
 
@@ -481,7 +423,7 @@ wait_for_web_http() {
 
   echo "Waiting for web at ${url} (timeout ${timeout_s}s) ..."
   while (( waited < timeout_s )); do
-    if docker compose exec -T web sh -lc \
+    if "${PODMAN_COMPOSE[@]}" exec -T web sh -lc \
       "curl -s -o /dev/null -w '%{http_code}' '${url}'" 2>/dev/null | grep -qE '^[23]'; then
       echo "web responded at ${url}"
       return 0
@@ -498,8 +440,9 @@ COMPOSE_PROXY_WAS_RUNNING="${COMPOSE_PROXY_WAS_RUNNING:-0}"
 
 compose_service_running() {
   local service="$1"
+  local name="${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_1"
   cd "${REPO_ROOT}"
-  docker compose ps --status running --services "${service}" 2>/dev/null | grep -qx "${service}"
+  [[ "$("${PODMAN[@]}" inspect --format '{{.State.Running}}' "${name}" 2>/dev/null)" == "true" ]]
 }
 
 # True if the project container exists (running or stopped). Podman refuses
@@ -507,62 +450,25 @@ compose_service_running() {
 # (hpcperfstats01 2026-09-14: dependent container must be removed).
 compose_service_container_exists() {
   local service="$1"
-  local name="hpcperfstats_${service}_1"
+  local name="${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_1"
   cd "${REPO_ROOT}"
-  if podman_cli_available; then
-    if podman container exists "${name}" >/dev/null 2>&1; then
-      return 0
-    fi
-    if podman ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${name}"; then
-      return 0
-    fi
-  fi
-  if docker compose ps -a --services 2>/dev/null | grep -qx "${service}"; then
-    return 0
-  fi
-  if command -v docker >/dev/null 2>&1     && docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${name}"; then
-    return 0
-  fi
-  return 1
+  "${PODMAN[@]}" container exists "${name}" >/dev/null 2>&1
 }
 
-# podman-compose has no ``rm`` subcommand (Docker Compose v2 only). Remove stale
-# project containers by name/id via podman/docker CLI so ``up --detach`` can reuse
-# fixed names like ``hpcperfstats_web_1``. Also wipe ``*_tmp*`` collision leftovers
-# (hpcperfstats01 2026-09-14: ``hpcperfstats_web_tmp27279`` blocked a real web_1).
+# podman-compose has no ``rm`` subcommand. Remove stale project containers by
+# name/id via Podman so ``up --detach`` can reuse
+# fixed project service names. Also wipe ``*_tmp*`` collision leftovers.
 compose_podman_rm_service_containers() {
-  local service cid name tmp
-  local -a rm_cli
+  local service tmp service_name tmp_prefix
   cd "${REPO_ROOT}"
-  if podman_cli_available; then
-    rm_cli=(podman rm -f)
-  else
-    rm_cli=(docker rm -f)
-  fi
   for service in "$@"; do
-    # podman-compose ``ps`` often exits non-zero; never abort the rebuild on probe.
-    cid="$(docker compose ps -q "${service}" 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)"
-    if [[ -n "${cid}" ]]; then
-      "${rm_cli[@]}" "${cid}" >/dev/null 2>&1 || true
-    fi
-    name="$(docker compose ps --format '{{.Name}}' "${service}" 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)"
-    if [[ -n "${name}" ]]; then
-      "${rm_cli[@]}" "${name}" >/dev/null 2>&1 || true
-    fi
-    "${rm_cli[@]}" "hpcperfstats_${service}_1" >/dev/null 2>&1 || true
-    if podman_cli_available; then
-      # --depend clears podman dependency edges (proxy->web) when present.
-      podman rm -f --depend "hpcperfstats_${service}_1" >/dev/null 2>&1 || true
-      while IFS= read -r tmp; do
-        [[ -n "${tmp}" ]] || continue
-        podman rm -f --depend "${tmp}" >/dev/null 2>&1 || true
-      done < <(podman ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^hpcperfstats_${service}_tmp" || true)
-    elif command -v docker >/dev/null 2>&1; then
-      while IFS= read -r tmp; do
-        [[ -n "${tmp}" ]] || continue
-        docker rm -f "${tmp}" >/dev/null 2>&1 || true
-      done < <(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^hpcperfstats_${service}_tmp" || true)
-    fi
+    service_name="${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_1"
+    tmp_prefix="${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_tmp"
+    "${PODMAN[@]}" rm -f --depend "${service_name}" >/dev/null 2>&1 || true
+    while IFS= read -r tmp; do
+      [[ -n "${tmp}" ]] || continue
+      "${PODMAN[@]}" rm -f --depend "${tmp}" >/dev/null 2>&1 || true
+    done < <("${PODMAN[@]}" ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^${tmp_prefix}" || true)
   done
 }
 
@@ -574,65 +480,41 @@ compose_up_service_detached() {
   shift
   cd "${REPO_ROOT}"
   echo "Starting ${service} detached (--detach --no-deps; will not attach logs) ..."
-  docker compose up --detach --no-deps "$@" "${service}"
+  "${PODMAN_COMPOSE[@]}" up --detach --no-deps "$@" "${service}"
 }
 
 compose_recreate_web_after_image_refresh() {
   cd "${REPO_ROOT}"
   if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
-    if compose_backend_is_podman; then
-      echo "[dry-run] podman: rm proxy (depend); podman rm -f web (+ web_tmp*); compose up --detach --no-deps web"
-    else
-      echo "[dry-run] docker compose up --detach --force-recreate --no-deps web"
-    fi
+    echo "[dry-run] podman: rm proxy (depend); podman rm -f web (+ web_tmp*); podman-compose up --detach --no-deps web"
     return 0
   fi
 
-  if compose_backend_is_podman; then
-    COMPOSE_PROXY_WAS_RUNNING=0
-    # Podman: proxy depends_on web — ``podman rm web`` fails while proxy exists
-    # even if proxy is only stopped. Remove proxy, then restore after web is up.
-    if compose_service_running proxy || compose_service_container_exists proxy; then
-      COMPOSE_PROXY_WAS_RUNNING=1
-      echo "Removing proxy (podman: must clear dependent container before web rm) ..."
-      docker compose stop proxy >/dev/null 2>&1 || true
-      compose_podman_rm_service_containers proxy
-    fi
-    # Do NOT intentionally rm pipeline here; recreate it after web.
-    # (podman rm --depend on web may still drop pipeline if linked — start_app /
-    # recreate_web_pipeline always brings pipeline back up.)
-    echo "Removing stopped web container (and any web_tmp* leftovers) ..."
-    compose_podman_rm_service_containers web
-    compose_up_service_detached web
-    return 0
+  COMPOSE_PROXY_WAS_RUNNING=0
+  # Proxy depends_on web: remove proxy before replacing web, then restore it.
+  if compose_service_running proxy || compose_service_container_exists proxy; then
+    COMPOSE_PROXY_WAS_RUNNING=1
+    echo "Removing proxy (podman: must clear dependent container before web rm) ..."
+    "${PODMAN_COMPOSE[@]}" stop proxy >/dev/null 2>&1 || true
+    compose_podman_rm_service_containers proxy
   fi
-
-  echo "Recreating web with refreshed image ..."
-  compose_up_service_detached web --force-recreate
+  # Do not intentionally remove pipeline here; recreate it after web.
+  echo "Removing stopped web container (and any web_tmp* leftovers) ..."
+  compose_podman_rm_service_containers web
+  compose_up_service_detached web
 }
 
 compose_recreate_pipeline_after_image_refresh() {
   cd "${REPO_ROOT}"
   if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
-    if compose_backend_is_podman; then
-      echo "[dry-run] podman: podman rm -f pipeline (+ pipeline_tmp*); compose up --detach --no-deps pipeline"
-    else
-      echo "[dry-run] docker compose up --detach --force-recreate --no-deps pipeline"
-    fi
+    echo "[dry-run] podman: podman rm -f pipeline (+ pipeline_tmp*); podman-compose up --detach --no-deps pipeline"
     return 0
   fi
 
-  if compose_backend_is_podman; then
-    echo "Removing stopped pipeline container (and any pipeline_tmp* leftovers) ..."
-    compose_podman_rm_service_containers pipeline
-    # --no-deps: pipeline depends_on web; without it podman-compose can wait/attach
-    # on web and look like a foreground ``up``.
-    compose_up_service_detached pipeline
-    return 0
-  fi
-
-  echo "Recreating pipeline with refreshed image ..."
-  compose_up_service_detached pipeline --force-recreate
+  echo "Removing stopped pipeline container (and any pipeline_tmp* leftovers) ..."
+  compose_podman_rm_service_containers pipeline
+  # --no-deps: pipeline depends_on web; without it podman-compose can wait/attach.
+  compose_up_service_detached pipeline
 }
 
 # Remove host scratch created for hpcperfstats-pipeline-refresh (preserve dir,

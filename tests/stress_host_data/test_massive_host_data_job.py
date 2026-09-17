@@ -19,8 +19,9 @@
   ``HPCPERFSTATS_STRESS_N_HOSTS``, ``HPCPERFSTATS_STRESS_INTERVAL_SEC`` (e.g. **30**),
   ``HPCPERFSTATS_STRESS_DURATION_SEC``.
 
-**Readiness:** seed inserts one post-``end_time`` row per host so
-``update_metrics`` readiness filtering passes.
+**Readiness:** the main series reaches the configured end-edge margin and the
+seed inserts one post-``end_time`` row per host so update-metrics dual-edge
+readiness passes.
 
 **Date passed to ``update_metrics``:** uses ``timezone.localtime(job.end_time)`` so
 ``end_time__date`` in ``_jobs_queryset`` matches Django’s configured timezone (UTC

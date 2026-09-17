@@ -1,5 +1,5 @@
 ---
-description: Operator diagnostic commands in plans and chat must be docker-compose copy/paste blocks per service
+description: Operator diagnostics must use copy/paste Compose blocks per service
 alwaysApply: false
 globs: docs/plans/**,.cursor/plans/**,docs/TESTING.md,docs/upgrade.md,HPCPerfStats/README.md
 ---
@@ -8,17 +8,17 @@ globs: docs/plans/**,.cursor/plans/**,docs/TESTING.md,docs/upgrade.md,HPCPerfSta
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Also **Read** when a plan or implementation is **blocked** and you need the operator to run terminal commands to gather facts (logs, DB rows, Redis keys, queue depth, config inside a service).
 
-When a **plan**, **implementation**, or **diagnostic step** needs more information from a terminal and the agent cannot run it locally, give the operator **copy/paste-ready** commands that run **inside the correct Compose service** — not bare host commands that assume `db` / `redis` / Django settings resolve on the Mac.
+When a **plan**, **implementation**, or **diagnostic step** needs more information from a terminal and the agent cannot run it locally, give the operator **copy/paste-ready** commands that run **inside the correct Compose service** — not bare host commands that assume `db` / `redis` / Django settings resolve on the Linux host.
 
 ## Mandatory format
 
-1. **Working directory (prose only)** — state once in plan/chat prose that the operator runs compose from the checkout containing `docker-compose.yaml` (typically `HPCPerfStats/`). **Do not** put `cd …` before `docker compose` / `docker-compose` in operator paste blocks — assume the operator already knows where to run Docker.
-2. **No host `cd` before Docker** — fenced operator blocks must start with `docker compose …` (or `docker-compose …`). **`cd` inside** an `exec`/`run` shell (`su hpcperfstats -c 'sh -lc "cd /path && …"'`) is fine when the path is **inside the container**.
+1. **Working directory (prose only)** — state once in plan/chat prose that the operator runs compose from the checkout containing `docker-compose.yaml` (typically `HPCPerfStats/`). **Do not** put `cd …` before `podman-compose` in operator paste blocks.
+2. **No host `cd` before Compose** — on this Linux workspace, fenced operator blocks start with `podman-compose -p hpcperfstats …`. Do not substitute another runtime's command form. **`cd` inside** an `exec`/`run` shell is fine when the path is inside the container.
 3. **One block per service** — if multiple commands target the same container (`web`, `db`, `redis`, `rabbitmq`, `pipeline`, `proxy`), **combine them into a single command** (chain with `&&`, or wrap in `sh -lc '…'` / `bash -lc '…'`).
 4. **Copy/paste** — each service gets **one fenced `bash` block** the operator can run as-is; label the block with the **service name** and **what output to paste back**.
-5. **Prefer `exec` on a running stack** — `docker compose exec <service> …` when services are already up; use `docker compose run --rm <service> …` only for one-off tasks that do not need the full running stack.
+5. **Prefer `exec` on a running stack** — `podman-compose -p hpcperfstats exec <service> …` when services are already up; use `run --rm` only for one-off tasks that do not need the full running stack.
 6. **Do not split** — avoid numbered micro-steps like “run A, then run B, then run C” on the same service when they can be one block.
-7. **Settings include** — base **`docker-compose.yaml`** `include`s **`docker-compose.settings.yaml`**. Prefer `docker compose -p hpcperfstats …` or `docker compose -f docker-compose.yaml …` — **never** `-f docker-compose.app.yaml` (obsolete). Ensure settings exists (`cp docker-compose.settings.yaml.example docker-compose.settings.yaml`) before operator pastes that need the full stack.
+7. **Settings include** — base **`docker-compose.yaml`** `include`s **`docker-compose.settings.yaml`**. Prefer `podman-compose -p hpcperfstats -f docker-compose.yaml …` — **never** `-f docker-compose.app.yaml` (obsolete). Ensure settings exists before commands that need the full stack.
 8. **Test overlay** — workflow scripts use **`tests/docker-compose.test-overlay.yaml`** (gitignored). Committed template is **`tests/docker-compose.test-overlay.yaml.example`**; **`compose_test_cmd.sh`** copies it when missing. Do not commit local overlay edits without backporting the example.
 
 ## Resolve paths from INI first (mandatory)
@@ -774,7 +774,7 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | Nested `awk "/sync_timedb.py/"` through podman-compose | **`awk: line 1: runaway string constant "/sync_time …`** (hpcperfstats02 2026-09-13) — nested quotes break the outer shell | Prefer `ps -T -p <pid>` / `grep -F` / Python `subprocess` census; never nest `awk "/…/"` inside podman-compose `exec` quoting |
 | `awk '… END{for (k in c) …}'` wchan tally through podman-compose | dash **`sh: … Syntax error: "(" unexpected`** on `END{for (k in c)}` (hpcperfstats04 2026-09-13 frozen-ACK) — awk for-in through podman-compose/`sh -c` is unsafe | Prefer `ps -T -p PID -o wchan:32= \| grep -v "^$" \| sort \| uniq -c \| sort -nr`; never reuse awk for-in tallies in operator paste blocks |
 | `pgrep -f sync_timedb \| head -1` for MainThread / py-spy | Matches an **ingest/archive pool worker** first on multi-process sites | Never use lowest `sync_timedb` PID; use the ingest-pool-parent selector below |
-| `pgrep -f 'sync_timedb.py .[m]ain.' \| head -1` as the py-spy target | **hpcperfstats03 2026-08-19:** lowest `[main]` was leftover **multiprocessing.Manager PID 458** (`Thread-1 (accepter)`, PPID 1, nlwp=2). Live ingest supervisors were **208452** (janitor + `day-close_*`) and **1579581** (ingest-only). py-spy of 458 is idle MainThread + accepter only | Select `sync_timedb.py [main]` whose **children** include `grep -F '[worker:ingest-pool]'`. Skip PPID=1 leftovers with only an accepter thread. **Do not py-spy Manager leftovers.** Python thread **names** are executor `archive-janitor_0` / `day-close_N` (not argv `[thread:archive-janitor]`). **`supervisorctl` is not configured** in `supervisord.conf` — do not use it as a liveness probe; use `docker compose` + process titles. Compose `Archive janitor tick done` count **0** can mean the tick is **in progress** in discover `isfile`, not a dead janitor |
+| `pgrep -f 'sync_timedb.py .[m]ain.' \| head -1` as the py-spy target | **hpcperfstats03 2026-08-19:** lowest `[main]` was leftover **multiprocessing.Manager PID 458** (`Thread-1 (accepter)`, PPID 1, nlwp=2). Live ingest supervisors were **208452** (janitor + `day-close_*`) and **1579581** (ingest-only). py-spy of 458 is idle MainThread + accepter only | Select `sync_timedb.py [main]` whose **children** include `grep -F '[worker:ingest-pool]'`. Skip PPID=1 leftovers with only an accepter thread. **Do not py-spy Manager leftovers.** Python thread **names** are executor `archive-janitor_0` / `day-close_N` (not argv `[thread:archive-janitor]`). **`supervisorctl` is not configured** in `supervisord.conf` — do not use it as a liveness probe; use `podman-compose -p hpcperfstats` + process titles. Compose `Archive janitor tick done` count **0** can mean the tick is **in progress** in discover `isfile`, not a dead janitor |
 | `pgrep -f` matching its own `su … -c` / `sh -lc` wrapper | Wrapper is often root-owned non-Python → `py-spy` **Permission Denied** | Use a **bracket class** in the pattern (`.[m]ain.`, `worker:ingest-[p]ool`) so the `pgrep` command line does not match itself; always `ps -p "$SUP" -o args=` before `py-spy` |
 | Stale log token `ingest file completed` | Current outcome line is `ingest file path=… outcome=… elapsed_s=… size_bytes=… parse_elapsed_s=… stats_rows=… proc_rows=…` | Grep `ingest file path=` (optional `stats_rows_parsed=`) |
 | `podman-compose exec … --pid "$SUP"` as a separate exec | **podman-compose eats `--pid`** — flag never reaches `py-spy` (`ParseIntError` / `InvalidDigit`) | Single `su hpcperfstats -c "sh -lc 'SUP=\$(pgrep …); py-spy dump --pid \"\$SUP\"'"` in one exec |
@@ -792,7 +792,7 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | `docker compose logs pipeline --tail=N` (any N) | **Empty or stale grep** on long-running pipeline — stall lines are often **outside** the tail window (podman-compose retains full stdout buffer) | `docker compose logs pipeline 2>&1` **without `--tail`**, then `grep -E '…'`; optional `\| tail -40` **after** grep |
 | `docker compose … exec redis` with a missing settings file or wrong cwd | Compose cannot resolve included **`docker-compose.settings.yaml`** (or volume binds fail) | From the checkout with **`docker-compose.yaml`**: ensure settings exists (`cp …settings.yaml.example …settings.yaml`), then `docker compose -p hpcperfstats exec redis …` (settings are `include`d — no app overlay `-f`) |
 | Empty/null top-level volume stubs in **`docker-compose.yaml`** (`hpcperfstatsdata:` with no body) merged with settings dicts | **podman-compose** `rec_merge`: **`ValueError: can't merge value of [hpcperfstatsdata] of type NoneType and dict`** on `up`/`down` (hpcperfstats04 2026-08-29) | Define named volumes **only** in **`docker-compose.settings.yaml`** (dicts with `driver` / `driver_opts`). Base compose mounts by name; do **not** reintroduce bare volume stubs in base. **`redis_runtime`** is the exception: a named volume in **base** compose (Unix socket dir), not a settings bind |
-| `depends_on` **`condition:`** for **redis** (`service_healthy` or `service_started`) on web/pipeline | **podman-compose** creates `hpcperfstats_redis_1` then waits forever; Redis never starts; `logs redis` is empty (2026-09-06). `service_started` still hangs | Do **not** list Redis under web/pipeline `depends_on`. Keep the Redis healthcheck for `ps`. Startup wait remaps hostname `redis` to the Unix socket in `rediswait.py`. If already stuck: interrupt `up`, then `podman start hpcperfstats_redis_1` (or `docker start`) |
+| `depends_on` **`condition:`** for **redis** (`service_healthy` or `service_started`) on web/pipeline | **podman-compose** creates `hpcperfstats_redis_1` then waits forever; Redis never starts; `logs redis` is empty (2026-09-06). `service_started` still hangs | Do **not** list Redis under web/pipeline `depends_on`. Keep the Redis healthcheck for `ps`. Startup wait remaps hostname `redis` to the Unix socket in `rediswait.py`. If already stuck: interrupt `up`, then `podman start hpcperfstats_redis_1` |
 | `git checkout -- service-conf/redis_entrypoint.sh` (or no whitelist) | Path is **`services-conf/`**. Root **`*.sh`** ignored the script, so Git never shipped it; Podman created a **directory** at the bind path and Redis exited 0 in <1ms (hpcperfstats04 2026-09-06) | Keep **`!services-conf/redis_entrypoint.sh`** in `.gitignore`. On a host that already has the directory: `rmdir` it, write the script file, `podman rm -f hpcperfstats_redis_1`, then `up -d redis` |
 | Async DAY_CLOSE manifest: `entries[:15]` | **`entries` is a dict** keyed by tar path, not a list → **KeyError** | `sorted(data.get('entries', {}).items())[:15]` or filter by on-disk `.tar` days |
 | `find … \| wc -l` under nested `sh -lc` / podman quoting | **False zero** — pipeline/quoting can drop find stdout; `wc -l` reports 0 while find never ran | Prefer **`find … -printf '.' \| wc -c`** (one byte per match) inside `bash -lc` |
@@ -802,7 +802,7 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | `try_file_write_lock(path, timeout_seconds=0)` or `.release()` / treat as plain lock object | **`TypeError: unexpected keyword argument 'timeout_seconds'`** — `try_file_write_lock` is a **`@contextmanager`** with **no kwargs**; contended → **`TimeoutError`** inside `with` | `with try_file_write_lock(tar): pass` (or print OK); `except TimeoutError: …`. Blocking waits use `file_write_lock(path, timeout_seconds=…)` instead |
 | `docker compose … up -d web` after a crash-loop | **podman-compose** may fail with **name already in use** / exit **125** when `hpcperfstats_web_1` still exists | Prefer `podman start hpcperfstats_web_1` (or `podman rm -f hpcperfstats_web_1` then `up -d web`). SPA shell missing after Vite→Next upgrade is auto-healed by `django_startup` / `spa_static_root_heal` once `web` actually starts with a Next package image |
 | `docker compose rm -sf pipeline web` (rebuild_pipeline podman path) | **podman-compose:** `invalid choice: 'rm'` / exit **2** — no Compose ``rm`` subcommand (hpcperfstats rebuild 2026-08-21) | Use **`podman rm -f hpcperfstats_pipeline_1 hpcperfstats_web_1`** (or IDs from `compose ps -q`); scripts use **`compose_podman_rm_service_containers`** in `scripts/lib/compose_frontend_helpers.sh` |
-| Nested `docker compose …` **inside** an already-running `docker compose exec …` shell | Pipeline/web images have **no** Docker CLI → **`docker: not found`** / exit **127** (hpcperfstats04 2026-08-04). Host compose cannot be re-entered from inside the container | Keep **one** host-side `docker compose exec` per paste. Chain only **in-container** commands (`python3`, `ls`, `grep`). For host logs use **host** `docker compose logs …` (not nested inside `exec`) |
+| Nested `podman-compose -p hpcperfstats …` **inside** an already-running `podman-compose -p hpcperfstats exec …` shell | Pipeline/web images do not carry the host runtime CLI, so the nested command fails with **command not found** / exit **127** (hpcperfstats04 2026-08-04). Host compose cannot be re-entered from inside the container | Keep **one** host-side `podman-compose -p hpcperfstats exec` per paste. Chain only **in-container** commands (`python3`, `ls`, `grep`). For host logs use **host** `podman-compose -p hpcperfstats logs …` (not nested inside `exec`) |
 | Long **web** `python3 -c` census (f-strings, nested quotes, 20+ statements) | podman-compose **truncates** the `-c` payload (hpcperfstats04 2026-08-11, cut at `int("samples"…)`) | Short **pipeline** `su hpcperfstats -c 'python3 -c "…"'` one-liner, or a tiny script file in the container |
 | Mix listend `hardlink` + update_metrics tokens then `tail -80` | Hardlink flood drowns `Date Range` / `candidate_jids` (hpcperfstats04 2026-08-11) | Metrics-only `grep -E 'Date Range\|candidate_jids\|window_rollover\|empty_pass'` on the full log buffer, `tail` **after** grep |
 | `exec rabbitmq sh -lc 'rabbitmqctl …'` | Login `PATH` omits RabbitMQ sbin → **`rabbitmqctl: not found`** (hpcperfstats04 2026-08-11) | `exec rabbitmq rabbitmqctl list_queues name messages consumers` (no wrapping shell) |
@@ -847,7 +847,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
   su hpcperfstats -c "sh -lc 'LOG=\${HPCPERFSTATS_SYNC_TIMEDB_LOG:-/home/hpcperfstats/log/sync_timedb.log}; tail -200 \"\$LOG\" | grep -E \"populate_prewarm|chunk prewarm|ingest may begin|populate stalled\" || true'"
 ```
 
-**Anti-pattern — host `cd` before Docker:**
+**Anti-pattern — host `cd` before Compose:**
 
 ```bash
 cd HPCPerfStats
@@ -859,8 +859,10 @@ Operators already know their compose checkout; leading `cd` adds noise and break
 
 ## Narrow exceptions (host is OK)
 
-- **Colima / Docker availability** — `colima status`, `DOCKER_HOST`, `docker info` per **`colima-docker-runtime.mdc`**.
-- **Starting or stopping the stack** — `docker compose up`, `down`, `logs` without `exec` (see **`README.md`**).
+- **Podman availability/storage** — `podman_runtime_require` per
+  **`podman-runtime.mdc`**.
+- **Starting or stopping the stack** — `podman-compose -p hpcperfstats up`,
+  `down`, or `logs` without `exec` (see **`README.md`**).
 - **Committed workflow scripts** — point operators at `tests/run_*_workflow.sh` instead of re-deriving long `compose_test` invocations when a script already encodes the overlay (`docker-compose-non-unit-testing.mdc`).
 
 ## Plans and blocked work
@@ -875,7 +877,8 @@ Operators already know their compose checkout; leading `cd` adds noise and break
 
 ## Overlap
 
-- **`colima-docker-runtime.mdc`** — host Docker/Colima setup before compose commands.
+- **`podman-runtime.mdc`** — rootless runtime, `/data` storage, project
+  isolation, and conservative cleanup.
 - **`docker-compose-non-unit-testing.mdc`** — agents run `tests/run_*_workflow.sh`; operators doing the same follow those scripts or the one-block `compose_test` pattern inside them.
 - **`readme-installation-sync.mdc`** — long-lived operator docs in `README.md` / `docs/TESTING.md` use the same `docker compose exec` shape.
 - **`workspace-layout-and-python-env.mdc`** — host `.venv` is for agent-side unit work, not operator production diagnostics.

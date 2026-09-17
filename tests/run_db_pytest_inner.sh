@@ -4,15 +4,24 @@ set -euo pipefail
 cd /home/hpcperfstats
 
 export HPCPERFSTATS_COMPOSE_NETWORK=1
+export USER="${USER:-$(id -un)}"
+export PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME:-/tmp}/python-pycache"
 
 compose_inner_pip_install
 
+if ! command -v git >/dev/null 2>&1; then
+  apt-get update -qq
+  apt-get install -y --no-install-recommends git
+  rm -rf /var/lib/apt/lists/*
+fi
+
 if [[ "${DOCKER_PYTEST_SKIP_BROWSER:-0}" != "1" ]]; then
-  python -m playwright install --with-deps chromium
+  python3 -m pip install -q "playwright>=1.60.0"
+  python3 -m playwright install --with-deps chromium
 fi
 
 if [[ "${DOCKER_PYTEST_SKIP_MIGRATE:-0}" != "1" ]]; then
-  python hpcperfstats/site/manage.py migrate --noinput
+  python3 hpcperfstats/site/manage.py migrate --noinput
 fi
 
 if [[ -n "${DOCKER_PYTEST_SEED_CMD:-}" ]]; then
@@ -38,6 +47,6 @@ elif [[ -d "$_pytest_args_file" ]]; then
 fi
 
 if [[ ${#ARGS[@]} -gt 0 ]]; then
-  exec python -m pytest -q "${IGNORE[@]}" "${ARGS[@]}"
+  exec python3 -m pytest -q "${IGNORE[@]}" "${ARGS[@]}"
 fi
-exec python -m pytest -q hpcperfstats "${IGNORE[@]}"
+exec python3 -m pytest -q hpcperfstats "${IGNORE[@]}"

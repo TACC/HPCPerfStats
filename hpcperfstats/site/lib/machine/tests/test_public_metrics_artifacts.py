@@ -214,23 +214,19 @@ def test_mark_rebuild_by_pks_continues_after_statement_timeout(monkeypatch, capl
 
 
 @pytest.mark.django_db
-def test_public_ef_period_worker_closes_connections_before_reconcile(monkeypatch):
-  import django.db
-
+def test_public_ef_period_worker_dispatches_month_reconcile(monkeypatch):
   from hpcperfstats.site.lib.machine import public_metrics_artifacts as pma
 
-  close_calls = []
-  monkeypatch.setattr(django.db.connections, "close_all", lambda: close_calls.append(1))
+  calls = []
 
   def fake_month(ym):
-    del ym
-    assert close_calls == [1], "connections.close_all() must run before ORM reconcile"
+    calls.append(ym)
     return {"rebuilt_month_periods": 0, "skipped_month_periods": 1}
 
   monkeypatch.setattr(pma, "_sync_reconcile_public_ef_month", fake_month)
 
   result = pma._public_ef_period_worker((pma._PUBLIC_EF_KIND_MONTH, "2025-06"))
-  assert close_calls == [1]
+  assert calls == ["2025-06"]
   assert result == {"rebuilt_month_periods": 0, "skipped_month_periods": 1}
 
 

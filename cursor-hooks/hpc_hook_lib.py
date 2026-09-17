@@ -716,7 +716,7 @@ _COMPOSE_SUBCMD_RE = re.compile(
 )
 # Legacy `docker-compose` (hyphen) without the `compose` token.
 _COMPOSE_HYPHEN_SUBCMD_RE = re.compile(
-    r"docker-compose\s+"
+    r"(?:docker|podman)-compose\s+"
     r"(?:(?:-p|--project-name|-f|--file)\s+\S+\s+)*"
     r"(exec|run|logs)\b",
     re.I,
@@ -783,7 +783,7 @@ def _validate_pending_commands_subsection(pending: str) -> list[str]:
             if not stripped or stripped.startswith("#"):
                 continue
             if re.match(r"^cd\s+", stripped) and not re.search(
-                r"docker\s+compose|docker-compose",
+                r"docker\s+compose|(?:docker|podman)-compose",
                 stripped,
                 re.I,
             ):
@@ -796,7 +796,7 @@ def _validate_pending_commands_subsection(pending: str) -> list[str]:
         # --tail / --since on compose logs before a pipe to grep.
         for line in bash_body.splitlines():
             if not re.search(r"docker(?:-compose)?\s+(?:compose\s+)?.*\blogs\b", line, re.I):
-                if not re.search(r"docker-compose\s+.*\blogs\b", line, re.I):
+                if not re.search(r"(?:docker|podman)-compose\s+.*\blogs\b", line, re.I):
                     continue
             if re.search(r"--tail(=|\s)|--since(=|\s)", line, re.I):
                 # Allow only if this logs line already pipes to grep on same line
@@ -821,7 +821,7 @@ def _validate_pending_commands_subsection(pending: str) -> list[str]:
         # Unfiltered compose logs (no grep in the bash block).
         if re.search(
             r"docker(?:-compose)?\s+(?:compose\s+)?(?:(?:-p|--project-name|-f|--file)\s+\S+\s+)*logs\b"
-            r"|docker-compose\s+(?:(?:-p|--project-name|-f|--file)\s+\S+\s+)*logs\b",
+            r"|(?:docker|podman)-compose\s+(?:(?:-p|--project-name|-f|--file)\s+\S+\s+)*logs\b",
             bash_body,
             re.I,
         ) and not re.search(r"\bgrep\b", bash_body, re.I):
@@ -923,7 +923,7 @@ def reconstruct_live_plan_markdown_from_tool_input(
 
 
 def operator_commands_outside_discovery_issues(plan_markdown: str) -> list[str]:
-    """docker compose bash blocks must live under Operator discovery → Pending commands."""
+    """Compose bash blocks must live under Operator discovery → Pending commands."""
     od_match = re.search(r"##\s*Operator discovery\b", plan_markdown or "", re.I)
     if not od_match:
         return []
@@ -932,9 +932,15 @@ def operator_commands_outside_discovery_issues(plan_markdown: str) -> list[str]:
     od_end = od_match.end() + next_h2.start() if next_h2 else len(plan_markdown)
     outside = plan_markdown[: od_match.start()] + plan_markdown[od_end:]
     for block in re.findall(r"```bash\s*\n(.*?)```", outside, re.S | re.I):
-        if re.search(r"docker\s+compose\s+(exec|run|logs)", block, re.I):
+        if re.search(
+            r"(?:docker\s+compose|(?:docker|podman)-compose)"
+            r"(?:\s+(?:-p|--project-name|-f|--file)\s+\S+)*"
+            r"\s+(exec|run|logs)",
+            block,
+            re.I,
+        ):
             return [
-                "Operator commands: docker compose blocks must live under "
+                    "Operator commands: podman-compose blocks must live under "
                 "## Operator discovery → ### Pending commands only "
                 "(compose-operator-terminal-commands.mdc)",
             ]

@@ -1323,7 +1323,19 @@ paths:
           Http404: Raised when the INI flag is off.
 
         Examples:
-          >>> test_login_user(None)  # doctest: +SKIP
+          >>> from unittest.mock import patch
+          >>> from django.http import Http404
+          >>> from django.test import RequestFactory
+          >>> req = RequestFactory().get("/api/test-login/user/")
+          >>> with patch(
+          ...     "hpcperfstats.site.lib.machine.test_login.cfg.get_separate_test_login",
+          ...     return_value=False,
+          ... ):
+          ...     try:
+          ...         test_login_user(req)
+          ...     except Http404:
+          ...         404
+          404
       tags:
       - session
       security:
@@ -1369,7 +1381,19 @@ paths:
           Http404: Raised when the INI flag is off.
 
         Examples:
-          >>> test_login_user(None)  # doctest: +SKIP
+          >>> from unittest.mock import patch
+          >>> from django.http import Http404
+          >>> from django.test import RequestFactory
+          >>> req = RequestFactory().get("/api/test-login/user/")
+          >>> with patch(
+          ...     "hpcperfstats.site.lib.machine.test_login.cfg.get_separate_test_login",
+          ...     return_value=False,
+          ... ):
+          ...     try:
+          ...         test_login_user(req)
+          ...     except Http404:
+          ...         404
+          404
       tags:
       - session
       requestBody:

@@ -107,6 +107,7 @@ describe("ExtendedSearch", () => {
       ).toBeGreaterThan(0);
     }
     expect(screen.getByRole("button", { name: /help: avg_freq/i })).toBeInTheDocument();
+    expect(screen.getByText("(avg_freq, GHz)")).toHaveClass("text-foreground");
   });
 
   it.each([

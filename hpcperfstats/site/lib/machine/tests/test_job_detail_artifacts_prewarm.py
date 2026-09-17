@@ -31,7 +31,7 @@ def _mk_job(jid="detailtest1"):
   )
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_persist_job_detail_null_fsio_metrics_allows_host_fallback(monkeypatch):
   """Catalog FSIO keys with all-null values must not lock out host_data fallback."""
   job = _mk_job("detail-no-data-reuse")
@@ -96,7 +96,7 @@ def test_persist_job_detail_null_fsio_metrics_allows_host_fallback(monkeypatch):
   assert telemetry.get("detail_fsio_metrics_reused", 0) == 0
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_persist_job_detail_skips_type_detail_when_artifact_is_fresh(monkeypatch):
   job = _mk_job("detail-fresh-type-skip")
   fp = jda.compute_detail_input_fingerprint(job)
@@ -137,7 +137,7 @@ def test_persist_job_detail_skips_type_detail_when_artifact_is_fresh(monkeypatch
   jda.persist_job_detail_artifacts_for_jid(job.jid)
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_persist_job_detail_records_type_detail_failure_as_fresh_unavailable(monkeypatch):
   job = _mk_job("detail-type-failure")
 
@@ -195,7 +195,7 @@ def test_persist_job_detail_records_type_detail_failure_as_fresh_unavailable(mon
   )
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_persist_job_detail_prewarms_multiprecision_mix_payload(monkeypatch):
   job = _mk_job("detail-multiprecision-mix")
   for metric_name, metric_type, value, units in (
@@ -247,7 +247,7 @@ def test_persist_job_detail_prewarms_multiprecision_mix_payload(monkeypatch):
   assert payload["gpu_unavailable_reason"] is None
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_persist_job_detail_multiprecision_gpu_uses_available_widths_only(monkeypatch):
   """GPU pie should render with whichever precision widths are present for the job."""
   job = _mk_job("detail-multiprecision-dynamic-widths")
@@ -296,7 +296,7 @@ def test_persist_job_detail_multiprecision_gpu_uses_available_widths_only(monkey
   assert payload["gpu_unavailable_reason"] is None
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_persist_job_detail_multiprecision_gpu_unavailable_without_metrics(monkeypatch):
   """Without persisted GPU avg_*_active metrics, the GPU pie is unavailable
   (no host_data fallback)."""

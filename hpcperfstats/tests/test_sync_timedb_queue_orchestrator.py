@@ -572,8 +572,8 @@ def test_boot_stream_discover_does_not_call_run_find_stats():
   assert "stream_enqueue_ingest_from_find_stdout_chunks" in src
 
 
-def test_idle_reconstruct_enqueues_discover_and_rescans(monkeypatch):
-  """Idle reconstruct must use JOB_KIND_DISCOVER then re-run streaming discover."""
+def test_idle_reconstruct_empty_forced_rescan_reports_zero_work(monkeypatch):
+  """A control discover claim is not work that should keep run_once alive."""
   from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
   from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 
@@ -640,7 +640,7 @@ def test_idle_reconstruct_enqueues_discover_and_rescans(monkeypatch):
       force=True,
   )
   assert calls["boot"] == 1
-  assert n >= 1
+  assert n == 0
   assert any(str(v).startswith("rescan") for _k, v in calls["rpush"])
 
 
@@ -2578,6 +2578,8 @@ def test_missing_path_requeues_ingest_not_ack(monkeypatch, tmp_path):
 
   monkeypatch.setattr(jq, "requeue_job", _requeue)
   monkeypatch.setattr(jq, "ack_job", _ack)
+  monkeypatch.setattr(jq, "bump_job_attempt", lambda *_a, **_k: 1)
+  monkeypatch.setattr(jq, "job_max_attempts", lambda: 3)
   monkeypatch.setattr(jq, "claim_ingest_job", _claim)
   monkeypatch.setattr(jq, "claim_ingest_jobs", _claim_jobs)
   monkeypatch.setattr(os.path, "isfile", lambda p: False)
@@ -2596,6 +2598,7 @@ def test_missing_path_requeues_ingest_not_ack(monkeypatch, tmp_path):
       ingest_pool=_Pool(),
       band_cap=1,
       tgz_archive_dir=str(tmp_path),
+      ingest_is_complete_fn=lambda *_a, **_k: False,
   )
   assert requeued
   assert not acked
@@ -3221,6 +3224,39 @@ def test_drain_append_soft_requeue_requeues_without_ack(monkeypatch):
   assert n == 1
   assert requeues == ["/raw/a"]
   assert acks == []
+
+
+def test_drain_append_failure_log_includes_exception_detail(monkeypatch, tmp_path):
+  """Append worker failures retain the actionable missing-path detail."""
+  logs: list[str] = []
+
+  class _Ready:
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      raise FileNotFoundError("/missing/archive-input")
+
+  class _Claim:
+    identity = "/raw/a"
+    owner_token = "tok"
+
+  monkeypatch.setattr(
+      qo, "_retry_or_dead_letter", lambda *a, **k: "dead_letter",
+  )
+  qo._drain_append_ready(
+      SyncTimedbJobStore(""),
+      inflight={"/d/2026-07-17.tar": _Ready()},
+      claims={"/d/2026-07-17.tar": _Claim()},
+      tgz_archive_dir="/d",
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda message, **_kwargs: logs.append(message),
+  )
+
+  assert any(
+      "err=FileNotFoundError" in line and "/missing/archive-input" in line
+      for line in logs
+  )
 
 
 def test_reconstruct_coordinator_reaps_discover_kind():

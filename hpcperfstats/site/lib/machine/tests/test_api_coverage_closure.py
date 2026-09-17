@@ -427,7 +427,7 @@ class TestHistogramClosure:
 
         request = RequestFactory().get("/api/jobs/histograms/")
         chain = MagicMock()
-        chain.count.side_effect = RuntimeError("db")
+        chain.order_by.return_value.count.side_effect = RuntimeError("db")
         with patch.object(
             api,
             "_build_job_list_queryset_from_request",
@@ -955,7 +955,7 @@ class TestRemainingHelperLinesClosure:
 
         request = RequestFactory().get("/api/jobs/histograms/")
         chain = MagicMock()
-        chain.count.return_value = 7
+        chain.order_by.return_value.count.return_value = 7
         with patch.object(
             api,
             "_build_job_list_queryset_from_request",

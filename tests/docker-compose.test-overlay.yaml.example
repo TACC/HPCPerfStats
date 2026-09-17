@@ -5,8 +5,8 @@
 #
 # Production bind devices live in docker-compose.settings.yaml (from
 # docker-compose.settings.yaml.example; included by docker-compose.yaml).
-# This overlay remaps every bind-backed named volume to a plain Docker named
-# volume so macOS/Colima and CI do not need operator paths under /data.
+# This overlay remaps every bind-backed named volume to a Compose-managed named
+# volume so rootless Podman tests and CI do not need production bind paths.
 # Production deploys use base compose only (settings included; no app overlay).
 # TLS: test_proxy_ssl_source bind-mounts tests/fixtures/proxy-ssl at /mnt/ssl-source;
 # proxy entrypoint materializes real PEM files before nginx starts.

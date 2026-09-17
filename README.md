@@ -194,13 +194,30 @@ Do this from your scheduler’s **prolog** and **epilog**.
 
 This is a container orchestration with Django/PostgreSQL, ingest/archival tools, and RabbitMQ. The steps below assume a **Rocky Linux** host.
 
-1. **Install Docker/Podman:**
+1. **Install rootless Podman, Compose, and Node 24:**
 
    ```bash
-   sudo dnf install docker git podman-compose
+   sudo dnf module reset -y nodejs
+   sudo dnf module enable -y nodejs:24
+   sudo dnf install -y git podman podman-compose nodejs npm \
+     shadow-utils fuse-overlayfs slirp4netns
    ```
 
-   **Redis / Linux kernel:** The Compose stack runs Redis. Redis warns when **`vm.overcommit_memory`** is disabled; background RDB saves use **`fork()`**, and without overcommit the kernel can reject that fork even when RAM is sufficient. On the **Linux machine whose kernel runs the Redis container** (your Docker host on Rocky/Linux; **not** macOS `sysctl` when using Docker Desktop), enable overcommit:
+   Run containers as the unprivileged deployment account—never with `sudo
+   podman`. Rootless subordinate IDs must cover image uid **901860**; allocate a
+   non-overlapping range of at least **1,048,576** IDs in both `/etc/subuid` and
+   `/etc/subgid`, then run `podman system migrate` as that account. Example for
+   user `sharrell` (choose a site-safe unused start):
+
+   ```bash
+   sudo usermod --add-subuids 1000000-2048575 \
+     --add-subgids 1000000-2048575 sharrell
+   podman system migrate
+   ```
+
+   **Redis / Linux kernel:** Redis warns when **`vm.overcommit_memory`** is
+   disabled; background saves use `fork()`, and the kernel can reject that fork
+   even with free RAM. Enable it on the Linux Podman host:
 
    ```bash
    sudo sysctl -w vm.overcommit_memory=1
@@ -213,16 +230,41 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    sudo sysctl --system
    ```
 
-   Alternatively, add **`vm.overcommit_memory = 1`** to **`/etc/sysctl.conf`** and reboot (or run the **`sysctl -w`** command once). On Docker Desktop for macOS, host **`sysctl`** does not apply to the inner Linux VM; tune there only if your setup exposes it, or treat the warning as informational for small dev stacks.
+   Alternatively, add **`vm.overcommit_memory = 1`** to `/etc/sysctl.conf` and
+   reboot (or run the `sysctl -w` command once).
 
    Compose pins **Redis Open Source 8.10** (`redis:8.10.0-alpine3.23`) with **`maxmemory 16gb`**, **`volatile-lru`** (Django cache keys keep TTL and remain evictable), **`--io-threads 4`** / **`--io-threads-do-reads yes`**, Redis 8.10 compact hashes (**`--hash-min-template-entries 1`**, default 0 disables auto-conversion), and a Unix domain socket at **`/run/redis/redis.sock`** shared by **`redis`**, **`web`**, and **`pipeline`** via the **`redis_runtime`** named volume (not a host bind). Do **not** put Redis on **`web`** / **`pipeline`** `depends_on` (any **`condition:`**, including **`service_started`** / **`service_healthy`**) — podman-compose can create `hpcperfstats_redis_1` and never start it, so `logs redis` stays empty. Redis still has a TCP+socket `PING` healthcheck for `ps`. Startup wait uses **`[CACHE] redis_location`**, remaps Compose hostname **`redis`** (including baked **`redis://redis:6379/1`**) to **`unix:///run/redis/redis.sock?db=1`**, and falls back to that socket URL when the INI key is missing. TCP **`6379`** stays up for `redis-cli` and external Redis URLs. Do **not** use **`allkeys-*`** for Django/listend cache keys. Redis has no persistence volume (`appendonly no`). Size the host (or Colima) so Redis can use that cap alongside Postgres `shm_size` / `shared_buffers`. Redis image bumps on an existing host: **[docs/upgrade.md](docs/upgrade.md)**.
 
 2. **Enable container restart after reboot:**
 
    ```bash
-   sudo systemctl enable podman-restart.service
-   sudo systemctl start podman-restart.service
+   sudo loginctl enable-linger sharrell
+   systemctl --user enable --now podman-restart.service
    ```
+
+   Keep every non-DNF download, cache, tool, temporary file, image layer,
+   writable layer, and volume under `/data`. Create the roots once:
+
+   ```bash
+   sudo mkdir -p /data/user/sharrell/{cache,tmp,tools}
+   sudo mkdir -p /data/podman/sharrell/{storage,images,volumes,cache,tmp}
+   sudo chown -R sharrell:sharrell /data/user/sharrell /data/podman/sharrell
+   ```
+
+   Set login exports for
+   `XDG_CACHE_HOME=/data/user/sharrell/cache`,
+   `TMPDIR=/data/user/sharrell/tmp`,
+   `PIP_CACHE_DIR=/data/user/sharrell/cache/pip`,
+   `npm_config_cache=/data/user/sharrell/cache/npm`,
+   `npm_config_prefix=/data/user/sharrell/tools/npm`, and
+   `PLAYWRIGHT_BROWSERS_PATH=/data/user/sharrell/cache/ms-playwright`.
+   Configure rootless `storage.conf` with
+   `graphroot=/data/podman/sharrell/storage` and
+   `imagestore=/data/podman/sharrell/images`; configure `containers.conf` with
+   `volume_path=/data/podman/sharrell/volumes` and
+   `image_copy_tmp_dir=/data/podman/sharrell/tmp`. Small config files may stay
+   under `~/.config`; `/run/user/$UID` remains required ephemeral state.
+   Verify these paths with `podman info` before the first build.
 
 3. **Clone the repo:**
 
@@ -294,7 +336,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    **`[SYSLOG]` in `hpcperfstats.ini`:** set **`allow_from`** to a comma- or line-separated list of **IPv4 CIDRs** that may send remote syslog (for example `10.0.0.0/8, 192.168.50.0/24`). If **`allow_from`** is blank or **`[SYSLOG]`** is omitted, **all IPv4 sources** are accepted (backward compatible). Changing **`allow_from`** requires re-running **`render_syslog_ng_generated`** (then restart syslog-ng) so **`/var/lib/hpcperfstats-syslog/generated.conf`** matches INI — a pipeline recreate alone does **not** refresh that fragment. **`listen_tcp`** / **`listen_udp`** (default `yes`) toggle listeners.
 
-   **Operational notes:** when syslog-ng is running, it emits periodic internal **stats** (`stats(freq(3600))` in `services-conf/syslog-ng.conf`); operators can run **`syslog-ng-ctl stats`** (as root) inside `pipeline` for counters. Monitor **disk use** on the data volume (`logs/log_archive` grows with cluster size and retention). Pipeline process control uses **`docker compose`** (`logs` / `ps` / `stop` / `exec`) — **`supervisorctl` is not configured**. **Troubleshooting:** if packets reach the host but nothing is logged, confirm syslog-ng is actually running, check **firewall rules**, that traffic targets the **published 514** on the host running `pipeline`, **`allow_from`** includes the sender’s IPv4 address, and (for filenames) that forwarders preserve a sensible hostname/FQDN.
+   **Operational notes:** when syslog-ng is running, it emits periodic internal **stats** (`stats(freq(3600))` in `services-conf/syslog-ng.conf`); operators can run **`syslog-ng-ctl stats`** (as root) inside `pipeline` for counters. Monitor **disk use** on the data volume (`logs/log_archive` grows with cluster size and retention). Pipeline process control uses **`podman-compose -p hpcperfstats`** (`logs` / `ps` / `stop` / `exec`) — **`supervisorctl` is not configured**. **Troubleshooting:** if packets reach the host but nothing is logged, confirm syslog-ng is actually running, check **firewall rules**, that traffic targets the **published 514** on the host running `pipeline`, **`allow_from`** includes the sender’s IPv4 address, and (for filenames) that forwarders preserve a sensible hostname/FQDN.
 
 5. **Application config:**
 
@@ -432,7 +474,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 8. **Build and start:**
 
    ```bash
-   sudo docker compose up --build -d
+   podman-compose -p hpcperfstats up --build -d
    ```
 
    View logs (`docker-compose.yaml` uses the **`json-file`** logging driver with
@@ -440,8 +482,21 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    Compose on Docker and Podman and does not flood host syslog/journald):
 
    ```bash
-   sudo docker compose logs
+   podman-compose -p hpcperfstats logs
    ```
+
+   Rootless development uses unprivileged host ports without changing
+   production defaults:
+
+   ```bash
+   HPCPERFSTATS_HTTP_PORT=8080 HPCPERFSTATS_HTTPS_PORT=8443 \
+     HPCPERFSTATS_SYSLOG_PORT=1514 \
+     podman-compose -p hpcperfstats-dev up --build -d
+   ```
+
+   These variables are a development launch override only. Production site
+   configuration remains in `hpcperfstats.ini` and
+   `docker-compose.settings.yaml`, never a required `.env`.
 
    On first startup, the `web` container runs Django migrations
    (`manage.py migrate` only — schema changes ship as reviewed, committed
@@ -470,11 +525,11 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
 | Task | Command |
 |------|---------|
-| Build and start container stack | `sudo docker compose up --build -d` |
-| Stop and remove containers | `sudo docker compose down` |
+| Build and start container stack | `podman-compose -p hpcperfstats up --build -d` |
+| Stop and remove containers | `podman-compose -p hpcperfstats down` |
 | Existing-stack rebuilds / Redis / PG18 / INI | **[docs/upgrade.md](docs/upgrade.md)** |
 | Restart proxy after cert renew or `server=` change | `docker compose restart proxy` |
-| View logs  | `sudo docker compose logs` |
+| View logs  | `podman-compose -p hpcperfstats logs` |
 | PostgreSQL shell | `docker compose exec db psql -h localhost -U hpcperfstats` |
 | Pipeline shell (data/processing) | `docker compose exec pipeline su hpcperfstats` |
 | Get queues and message counts from rabbitmq | `docker compose exec rabbitmq rabbitmqctl list_queues name messages consumers` |

@@ -111,6 +111,7 @@ run_cmd() {
 }
 
 preflight() {
+  podman_runtime_require
   if [[ ! -f "${REPO_ROOT}/docker-compose.yaml" ]]; then
     echo "rebuild_pipeline.sh: docker-compose.yaml not found under ${REPO_ROOT}" >&2
     exit 1
@@ -122,7 +123,7 @@ preflight() {
   cd "${REPO_ROOT}"
   local svc
   for svc in web pipeline; do
-    if ! docker compose config --services 2>/dev/null | grep -qx "${svc}"; then
+    if ! "${PODMAN_COMPOSE[@]}" config --services 2>/dev/null | grep -qx "${svc}"; then
       echo "rebuild_pipeline.sh: compose stack has no ${svc} service" >&2
       exit 1
     fi
@@ -153,29 +154,27 @@ verify_live_frontend_ready() {
 }
 
 backup_live_frontend_volume() {
-  FRONTEND_BACKUP_TAR="$(mktemp /tmp/hps-pipeline-frontend-backup.XXXXXX.tar)"
+  FRONTEND_BACKUP_TAR="$(mktemp "${TMPDIR}/hps-pipeline-frontend-backup.XXXXXX.tar")"
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     echo "[dry-run] would backup ${CONTAINER_STATIC_ROOT_FRONTEND} to ${FRONTEND_BACKUP_TAR}"
     return 0
   fi
   echo "Backing up live frontend volume to ${FRONTEND_BACKUP_TAR} ..."
-  docker compose exec -T web bash -lc \
-    "tar -C '${CONTAINER_STATIC_ROOT_FRONTEND}' -cf /tmp/hps-pipeline-frontend-backup.tar ."
+  "${PODMAN_COMPOSE[@]}" exec -T web bash -lc \
+    "tar -C '${CONTAINER_STATIC_ROOT_FRONTEND}' -cf /run/hps-pipeline-frontend-backup.tar ."
   local container_ref
   container_ref="$(web_container_ref)"
-  if compose_cp_supported; then
-    docker compose cp "web:/tmp/hps-pipeline-frontend-backup.tar" "${FRONTEND_BACKUP_TAR}"
-  elif podman_cli_available; then
-    podman cp "${container_ref}":/tmp/hps-pipeline-frontend-backup.tar "${FRONTEND_BACKUP_TAR}"
+  if podman_cli_available; then
+    "${PODMAN[@]}" cp "${container_ref}":/run/hps-pipeline-frontend-backup.tar "${FRONTEND_BACKUP_TAR}"
   else
     echo "rebuild_pipeline.sh: cannot backup frontend volume from web container" >&2
     exit 1
   fi
-  docker compose exec -T web bash -lc "rm -f /tmp/hps-pipeline-frontend-backup.tar" || true
+  "${PODMAN_COMPOSE[@]}" exec -T web bash -lc "rm -f /run/hps-pipeline-frontend-backup.tar" || true
 }
 
 preserve_frontend_for_build() {
-  echo "Extracting live frontend into ${PRESERVE_FRONTEND_DIR} for Docker build ..."
+  echo "Extracting live frontend into ${PRESERVE_FRONTEND_DIR} for Podman build ..."
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     echo "[dry-run] would populate ${PRESERVE_FRONTEND_DIR} from web:${CONTAINER_STATIC_ROOT_FRONTEND}"
     return 0
@@ -200,7 +199,7 @@ restore_frontend_volume_if_drifted() {
     return 0
   fi
   echo "WARN: collectstatic changed frontend fingerprint (${LIVE_FRONTEND_FINGERPRINT} -> ${post_fp}); restoring backup volume ..."
-  FRONTEND_RESTORE_DIR="$(mktemp -d /tmp/hps-pipeline-frontend-restore.XXXXXX)"
+  FRONTEND_RESTORE_DIR="$(mktemp -d "${TMPDIR}/hps-pipeline-frontend-restore.XXXXXX")"
   tar -xf "${FRONTEND_BACKUP_TAR}" -C "${FRONTEND_RESTORE_DIR}"
   copy_tree_into_container_from_dir \
     "${FRONTEND_RESTORE_DIR}" \
@@ -236,9 +235,9 @@ build_pipeline_image() {
 stop_and_remove_web_pipeline() {
   echo "Leaving db / redis / rabbitmq running. Not rebuilding proxy image."
   echo "Stopping pipeline (grace ${PIPELINE_STOP_TIMEOUT}s) ..."
-  run_cmd docker compose stop -t "${PIPELINE_STOP_TIMEOUT}" pipeline || true
+  run_cmd "${PODMAN_COMPOSE[@]}" stop -t "${PIPELINE_STOP_TIMEOUT}" pipeline || true
   echo "Stopping web (grace ${WEB_STOP_TIMEOUT}s) ..."
-  run_cmd docker compose stop -t "${WEB_STOP_TIMEOUT}" web || true
+  run_cmd "${PODMAN_COMPOSE[@]}" stop -t "${WEB_STOP_TIMEOUT}" web || true
 
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     echo "[dry-run] would down proxy, then rm web+pipeline+proxy"
@@ -246,7 +245,7 @@ stop_and_remove_web_pipeline() {
   fi
 
   echo "Taking proxy down ..."
-  docker compose stop -t "${PROXY_STOP_TIMEOUT}" proxy >/dev/null 2>&1 || true
+  "${PODMAN_COMPOSE[@]}" stop -t "${PROXY_STOP_TIMEOUT}" proxy >/dev/null 2>&1 || true
   compose_podman_rm_service_containers proxy
 
   echo "Removing web + pipeline containers ..."
@@ -261,7 +260,7 @@ start_web_proxy_pipeline() {
     return 0
   fi
   cd "${REPO_ROOT}"
-  docker compose up -d web proxy pipeline
+  "${PODMAN_COMPOSE[@]}" up -d web proxy pipeline
 }
 
 cleanup() {
@@ -313,7 +312,7 @@ main() {
 
   echo "Rebuild complete (built while up → cut over to new image). Status:"
   if [[ "${DRY_RUN}" -eq 0 ]]; then
-    docker compose ps web pipeline proxy 2>/dev/null || docker compose ps 2>/dev/null || true
+    "${PODMAN_COMPOSE[@]}" ps 2>/dev/null | grep -E 'web|pipeline|proxy' || true
   fi
   echo "If you changed frontend/OpenAPI, also run: ./scripts/rebuild_frontend.sh"
 }

@@ -1,0 +1,37 @@
+---
+description: Rootless Podman runtime, isolated projects, and /data storage policy
+globs: docker-compose*.yaml,tests/run_*_workflow.sh,tests/podman_*.sh,tests/compose_test_cmd.sh,scripts/lib/podman_runtime.sh
+alwaysApply: false
+---
+
+# Rootless Podman runtime
+
+**Activation:** `alwaysApply: false` — Read when the task router matches Compose
+configuration, container workflow scripts, or the shared Podman adapter.
+
+- Use unprivileged `podman` and `podman-compose`; never require Docker Desktop,
+  Colima, `docker`, `docker compose`, `docker-compose`, `DOCKER_HOST`, or a
+  Docker socket on this Linux workspace.
+- Keep OCI-standard filenames such as `Dockerfile`, `.dockerignore`, and
+  `docker-compose*.yaml`; filename compatibility does not select the runtime.
+- Run committed workflows through `scripts/lib/podman_runtime.sh`. Tests use
+  project `hpcperfstats-test`; the long-running development stack uses
+  `hpcperfstats-dev`. Teardown must stay project-scoped.
+- Never run global image, build-cache, volume, network, container, or system
+  prune on this shared server. `--keep-env` may preserve the selected project.
+- All non-DNF downloads, caches, tools, temporary files, image layers,
+  writable layers, and volumes belong below `/data/user/$USER` or
+  `/data/podman/$USER`. `/run/user/$UID` is allowed for required ephemeral
+  rootless runtime state.
+- `podman_runtime_require` must fail closed unless Podman is rootless and its
+  graph root, image store, volume path, cache, and temporary paths resolve
+  below `/data`.
+- Rootless prerequisites include sufficiently large, non-overlapping
+  `/etc/subuid` and `/etc/subgid` ranges for container uid 901860 and writable,
+  correctly labeled `/data` storage. Do not fall back to rootful Podman.
+
+## Overlap
+
+- `docker-compose-non-unit-testing.mdc` and
+  `full-test-with-db-redis.mdc` define which committed workflow to run.
+- `workspace-layout-and-python-env.mdc` defines the host Python environment.

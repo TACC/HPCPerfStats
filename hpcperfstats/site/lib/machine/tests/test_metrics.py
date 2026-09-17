@@ -1682,7 +1682,7 @@ def test_metrics_run_uses_supplied_pool(monkeypatch):
   )
   monkeypatch.setattr(
       m,
-      "_worker_process_count",
+      "_worker_thread_count",
       lambda: 4,
   )
 

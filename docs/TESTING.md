@@ -16,7 +16,10 @@ P0 triage notes live in **`docs/chat_failure_registry_p0_triage.json`**. Local r
 
 ## Quick start
 
-**Local Docker/Colima compose workflows are currently disabled** on this developer machine (pending a new Docker-capable test platform). Do **not** run `tests/run_*_workflow.sh` unless you explicitly set **`HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1`**. Scripts exit **78** with a clear message when the flag is unset. Prefer host `.venv` unit/mock tests below. See **`hpcperfstats/cursor-rules/colima-docker-runtime.mdc`**.
+Compose-backed tests run with unprivileged **rootless Podman** and
+**`podman-compose`**. The shared adapter fails closed unless all container
+storage/cache/temp paths are under `/data`; see
+**`hpcperfstats/cursor-rules/podman-runtime.mdc`**.
 
 From the project root (directory containing `pyproject.toml`):
 
@@ -24,7 +27,7 @@ From the project root (directory containing `pyproject.toml`):
 # Install test extras once
 pip install -e ".[test]"
 
-# Unit tests only (no Django DB tests)
+# Host-safe tests only (excludes every django_db-marked test)
 python scripts/run_tests.py --no-django
 
 # Full pytest collection (unit + Django tests)
@@ -74,7 +77,7 @@ Optional bulk upgrade helper (review the diff; must not emit call-site / ellipsi
 
 **`scripts/rebuild_frontend.sh`** rebuilds the SPA with npm and copies artifacts into the running **`web`** container’s **`staticfiles_data`** staging volume without stopping **`pipeline`**, then re-publishes **static** ram so **`proxy`** `/srv/static` matches. Use it as an **optional SPA-only hot path**. The **primary** way to land SPA after code changes is a from-scratch image rebuild (`hpcperfstats-full` / `docker compose up --build`) plus recreating **`web`**: startup [`spa_static_root_heal`](hpcperfstats/site/lib/spa_static_root_heal.py) fingerprint-syncs package frontend into the volume when `machine/index.html` sha256 diverges (see unit tests in `hpcperfstats/site/hpcperfstats_site/tests/test_spa_static_root_heal.py`). `django_startup.sh` runs **`collectstatic --noinput --clear`** so unused hashed files do not persist on the volume (host tests: `hpcperfstats/tests/test_rediswait.py`, `hpcperfstats/site/hpcperfstats_site/tests/test_collectstatic_ignore_map.py`). After heal, [`compress_static_sidecars`](hpcperfstats/site/lib/compress_static_sidecars.py) writes Brotli/Gzip siblings for nginx `brotli_static`/`gzip_static` (host tests: `hpcperfstats/site/hpcperfstats_site/tests/test_compress_static_sidecars.py`), then [`staticfiles_ram_publish`](hpcperfstats/site/lib/staticfiles_ram_publish.py) mirrors `STATIC_ROOT` and `MEDIA_ROOT` onto tmpfs `staticfiles_ram` / `media_ram` (host tests: `hpcperfstats/site/hpcperfstats_site/tests/test_staticfiles_ram_publish.py`). Test overlay remaps those ram volumes to **`test_staticfiles_ram`** / **`test_media_ram`** (plain named volumes). Collectstatic omits `*.map` via [`HPCStaticFilesConfig`](hpcperfstats/site/hpcperfstats_site/staticfiles_config.py).
 
-**`scripts/rebuild_pipeline.sh`** rebuilds the shared **`hpcperfstats`** image (Python/pipeline; skips npm): preserves live **`STATIC_ROOT/frontend`**, stops/removes **web** + **pipeline**, takes **proxy** down (does not rebuild proxy image), builds **`hpcperfstats-pipeline-refresh`**, then **`docker compose up -d web proxy pipeline`**. Leaves **db** / **redis** / **rabbitmq** running. Scratch cleanup on EXIT. Fire-and-forget recreate without build: **`./scripts/recreate_web_pipeline.sh`**. Static: **`./scripts/test_rebuild_pipeline.sh`**.
+**`scripts/rebuild_pipeline.sh`** rebuilds the shared **`hpcperfstats`** image (Python/pipeline; skips npm): preserves live **`STATIC_ROOT/frontend`**, stops/removes **web** + **pipeline**, takes **proxy** down (does not rebuild proxy image), builds **`hpcperfstats-pipeline-refresh`**, then starts **web**, **proxy**, and **pipeline** through the shared Podman adapter. Leaves **db** / **redis** / **rabbitmq** running. Scratch cleanup on EXIT. Fire-and-forget recreate without build: **`./scripts/recreate_web_pipeline.sh`**. Static: **`./scripts/test_rebuild_pipeline.sh`**.
 
 **`hpcperfstats/site/lib/machine/tests` on the host:** tests that need the default PostgreSQL database are **skipped** unless the environment sets **`HPCPERFSTATS_COMPOSE_NETWORK=1`** (the compose workflows `tests/run_db_pytest_workflow.sh` and `tests/run_redis_cache_pytest_workflow.sh` export this inside the `web` container). Tests that only need Django settings and mocks use **`django_db(databases=[])`** and still run on the host. Pure mocks with **no** Django DB fixture use **`@pytest.mark.machine_unit_mock`** (see **`hpcperfstats/conftest.py`**) so pytest does not auto-attach **`django_db`** or skip them for missing Compose. During pytest, Django switches the default cache to **LocMem** unless **`HPCPERFSTATS_PYTEST_LIVE_REDIS=1`** (live Redis workflow).
 
@@ -84,7 +87,7 @@ Optional bulk upgrade helper (review the diff; must not emit call-site / ellipsi
 
 The directory **`tests/stress_host_data/`** is **outside** the default `pytest` `testpaths` (`hpcperfstats` only), so `python scripts/run_tests.py` and `pytest hpcperfstats` never collect it.
 
-**Default way to run (Docker Compose `db` + `redis`, migrate, pytest inside `web`):**
+**Default way to run (rootless Podman Compose `db` + `redis`, migrate, pytest inside `web`):**
 
 ```bash
 cd HPCPerfStats   # directory with docker-compose.yaml
@@ -143,7 +146,14 @@ cd HPCPerfStats   # directory with docker-compose.yaml
 tests/run_pipeline_e2e_workflow.sh
 ```
 
-This uses **`docker-compose -f docker-compose.yaml -f tests/docker-compose.test-overlay.yaml`**: starts **db**, **redis**, **rabbitmq**, migrates, runs phase 1 pytest (**`test_full_ingest_pipeline.py`**: publish rich synthetic monitor payloads (CPU, Intel PMC/IMC, GPU, IB/OPA/LNET, llite, …), **`listend_drain`**, in-process **`run_ingest_entire_archive_once_for_tests()`** — equivalent to **`sync_timedb once backlog`** but uses pytest-django’s **test** database and inline ingest so spawn workers do not open **`[DEFAULT] dbname`** — then **`update_metrics`** and asserts a full **`metrics_data`** catalog with most metrics numeric), then brings up **web** and runs phase 2 Playwright tests (**`test_job_detail_browser.py`**, **`test_all_endpoints_browser.py`**). Phase 2 expects **`HPCPERFSTATS_COMPOSE_NETWORK=1`**, **`HPCPERFSTATS_PIPELINE_E2E_BASE_URL=http://web:8000`**, and Playwright Chromium (installed in-container unless **`--skip-playwright-install`**). Repo-root **`conftest.py`** sets a default **`HPCPERFSTATS_INI`** only when unset so Compose’s **`/home/hpcperfstats/hpcperfstats.ini`** is not replaced inside the container.
+This uses the project-scoped command assembled by
+`tests/compose_test_cmd.sh` (`podman-compose --project-name
+hpcperfstats-test` with the base and test overlay). It starts **db**, **redis**,
+and **rabbitmq**, migrates, runs the synthetic ingest/metrics phase, then starts
+**web** for the endpoint and browser phases. The workflow installs Chromium
+unless `--skip-playwright-install` is set. Its test-project host ports are fixed
+at HTTP `18080`, HTTPS `18443`, and RabbitMQ `15673`; inherited development
+ports (`8080`, `8443`, and `5673`) cannot make the projects contend.
 
 **URL drift guard:** canonical template set lives in **`hpcperfstats/tests/urlconf_route_catalog.py`** as **`EXPECTED_ROUTE_TEMPLATES`**. **`hpcperfstats/tests/test_endpoint_route_snapshot.py`** asserts the live Django resolver matches that set. **`build_pipeline_http_endpoint_specs()`** in the same module expands every template to concrete paths; phase 2 drives each check via Playwright (**`page.goto`** for HTML/redirects, **`APIRequestContext`** for JSON APIs) with status and **`Content-Type`** checks. Adding a URL without updating the catalog + builder fails CI.
 
@@ -166,26 +176,25 @@ cd HPCPerfStats
 ```
 
 The runner applies per-profile overrides with `SYNC_POOL_PROCESS_CAP` and `METRICS_POOL_PROCESS_CAP`, plus overlap/overprovision env settings (`HPCPERFSTATS_PIPELINE_OVERLAP_MODE`, `SYNC_ENABLE_OVERPROVISION_MODE`, `SYNC_BUDGET_OVERCOMMIT_FACTOR`, and sync overprovision multipliers), then calls `tests/run_pipeline_e2e_workflow.sh` for each point. Archive pool size is not env-tuned here — set **`sync_archive_pool_processes`** in the image INI.
-If editable install on the bind mount fails with macOS cloud-sync locking (`Errno 35`), the workflow automatically falls back to `PYTHONPATH=/home/hpcperfstats` plus minimal pytest dependencies so benchmark phases can continue.
+If editable install on the bind mount fails, the workflow falls back to
+`PYTHONPATH=/home/hpcperfstats` plus minimal pytest dependencies so benchmark
+phases can continue.
 
-## Testing on macOS (Docker + full suite)
+## Testing on Linux (rootless Podman + full suite)
 
-**Status:** local Colima/Docker compose gates are **disabled by default**. Set **`HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1`** before any section below that invokes compose workflows. Until then, use host `.venv` pytest only.
+### 1. Verify the runtime and `/data` policy
 
-### 1. Install and start Docker
+Install Podman and `podman-compose` with DNF, configure subordinate IDs and
+rootless storage as described in `README.md`, then verify:
 
-- **Docker Desktop (Homebrew, Apple Silicon):** run in **Terminal.app** (or another interactive shell) so macOS can prompt for your password if needed:
+```bash
+podman info --format '{{.Host.Security.Rootless}} {{.Store.GraphRoot}} {{.Store.VolumePath}}'
+podman-compose version
+```
 
-  ```bash
-  arch -arm64 brew update
-  arch -arm64 brew install --cask docker
-  ```
-
-  If the cask fails with `sudo: a terminal is required` (for example when creating `/usr/local/cli-plugins`), complete the install from an interactive terminal, or install [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/) manually.
-
-- Open **Docker** from **Applications** once so the Linux VM / engine starts (unless you use another supported backend such as Colima or OrbStack with the `docker` CLI).
-
-- **Verify:** `docker info` should complete without errors and show a running server.
+Expected: rootless is `true`; graph/image/volume/cache/temp paths resolve below
+`/data/podman/$USER`. Host npm, pip, Playwright, XDG, and temporary paths resolve
+below `/data/user/$USER`.
 
 ### 2. Python and frontend dependencies
 
@@ -209,7 +218,9 @@ The SPA pins Bokeh via **`@bokeh/bokehjs`** in `package.json`; keep its version 
 
 **Frontend stack:** Next.js 16 App Router (static export, Turbopack), strict TypeScript 6 (`typescript-eslint` peer holds TypeScript below 6.1), TanStack Query, Orval 8 + Zod 4 (from committed `hpcperfstats/site/openapi/openapi.yaml`), React Hook Form + Zod, Vitest 5 + RTL.
 
-**Production static export** (Docker image, `scripts/rebuild_frontend.sh` — omits test-only routes such as `bokeh-playwright-smoke/`):
+**Production static export** (OCI image built by Podman,
+`scripts/rebuild_frontend.sh` — omits test-only routes such as
+`bokeh-playwright-smoke/`):
 
 ```bash
 cd hpcperfstats/site/frontend && npm ci && npm run build:prod
@@ -233,11 +244,15 @@ pytest hpcperfstats/site/lib/machine/tests/test_openapi_schema_drift.py
 
 ### 3. Full compose-backed gate (Django DB, Playwright browser E2E, live Redis)
 
-**Prerequisite:** `export HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1` (otherwise every `tests/run_*_workflow.sh` exits **78** and does not touch Docker/Colima).
-
 All commands below assume your current directory is **`HPCPerfStats/`** (the one with `docker-compose.yaml`).
 
-**Test compose overlay:** Every **`tests/run_*_workflow.sh`** script sources **`tests/compose_test_cmd.sh`**, which ensures **`docker-compose.settings.yaml`** and **`tests/docker-compose.test-overlay.yaml`** exist (copies from each **`.example`** when missing) and runs **`docker-compose -f docker-compose.yaml -f tests/docker-compose.test-overlay.yaml`**. Base compose **`include`s** settings automatically (bind `device:` paths for site data, Postgres, RabbitMQ, static/media, SSH, and TLS **`proxy_ssl_source`**). The test overlay (gitignored; template **`tests/docker-compose.test-overlay.yaml.example`**) replaces **all** of those production bind volumes with named Docker volumes or checkout-relative test binds (including **`test_proxy_ssl_source`** → **`tests/fixtures/proxy-ssl`** and **`test_postgres_data_pg18`** for optional profile **`pg18-migrate`**) so local macOS/Colima machines and CI do not need operator paths under **`/data`**. Until cutover, workflows still bring up Hub **`db`** (PG15); they do not require building `hpcperfstats-db`. Host contract: **`hpcperfstats/tests/test_docker_compose_healthchecks.py`**, **`test_dockerfile_db_postgres.py`**, **`test_pg18_chunk_copy.py`**. Production deploys use **`docker compose`** / **`docker compose -p hpcperfstats`** with settings only (no app overlay). Compose Redis **`maxmemory-policy volatile-lru`** (not **`allkeys-*`**) so Django/listend TTL cache keys stay evictable. `sync_timedb` queues live in `.sync_timedb_job_store.json`, not Redis.
+**Test compose overlay:** Every workflow sources
+**`tests/compose_test_cmd.sh`**, which verifies rootless Podman, creates missing
+local files from their `.example` templates, and invokes
+**`podman-compose --project-name hpcperfstats-test`** with the base and test
+overlay. The overlay replaces production binds with isolated test volumes and
+fixture TLS. Production uses project `hpcperfstats`; the long-running local
+development stack uses `hpcperfstats-dev`.
 
 | Step | Command | What it covers |
 |------|---------|----------------|
@@ -247,7 +262,19 @@ All commands below assume your current directory is **`HPCPerfStats/`** (the one
 | 4 | `tests/run_stress_host_data_workflow.sh --skip-build` | Opt-in **`host_data`** stress (`tests/stress_host_data/`): seed + **`update_metrics`**, JSON report under **`test_runs/stress/`**, default **400000** rows (override row/time-scale env vars; see section above). |
 | 5 | `tests/run_pipeline_e2e_workflow.sh --skip-build` | Opt-in **full pipeline + browser** (`tests/pipeline_e2e/`): RabbitMQ ingest, **`sync_timedb once`**, **`update_metrics`**, then live **web** + Playwright endpoint matrix (see **Opt-in pipeline E2E** above). |
 
-**Smoke orchestrator:** `tests/run_all_compose_workflows.sh` runs steps **1**, **2**, **3**, and **5** only (DB pytest, Redis live, web E2E, pipeline E2E). It does **not** include stress `host_data`, security audit, update_metrics diagnosis, or Bokeh embed browser E2E—run those scripts separately when needed.
+The complete Podman matrix is:
+
+1. `tests/run_db_pytest_workflow.sh`
+2. `tests/run_redis_cache_pytest_workflow.sh`
+3. `tests/run_web_e2e_workflow.sh`
+4. `tests/run_pipeline_e2e_workflow.sh`
+5. `tests/run_update_metrics_diagnosis_workflow.sh`
+6. `tests/run_stress_host_data_workflow.sh` (400,000-row orchestrator smoke)
+7. `tests/run_security_audit_workflow.sh` (pip-audit + npm audit)
+8. `tests/run_bokeh_browser_workflow.sh`
+
+**Full orchestrator:** `tests/run_all_compose_workflows.sh` runs all eight in
+that order and logs to `test_runs/test_run_log_podman_compose.md`.
 
 Faster iteration after the first successful build:
 
@@ -259,16 +286,19 @@ tests/run_stress_host_data_workflow.sh --skip-build
 tests/run_pipeline_e2e_workflow.sh --skip-build
 ```
 
-Each workflow tears down containers and **named volumes** on exit, then runs **Colima Docker cleanup** (prune unused images, build cache, volumes, and networks) unless you pass **`--keep-env`** (see per-script help). Set **`COLIMA_DOCKER_CLEANUP_SKIP=1`** to skip the prune step while still running compose teardown.
+Each workflow tears down only its project containers and named volumes unless
+you pass `--keep-env`. Global Podman prune is forbidden on this shared server.
 
 Manual cleanup from `HPCPerfStats/`:
 
 ```bash
-docker-compose down -v --remove-orphans
-bash tests/colima_docker_cleanup.sh
+podman-compose -p hpcperfstats-test \
+  -f docker-compose.yaml -f tests/docker-compose.test-overlay.yaml \
+  down -v --remove-orphans
 ```
 
-If a follow-up script fails with **`failed to resolve host 'db'`** inside the container, Docker networking may still be cleaning up from a previous run. Run `docker-compose down --remove-orphans` from `HPCPerfStats/` and retry, or wait a few seconds between workflows.
+If a follow-up script cannot resolve `db`, run the project-scoped teardown above
+and retry. Do not remove unrelated networks.
 
 ### 4. In-tree tools package and SPA unit tests
 
@@ -289,7 +319,7 @@ Coverage settings live in `pyproject.toml` (`[tool.coverage.*]`). Typical comman
 # Python package (from repo root with test extras installed)
 python scripts/run_tests.py --no-django --cov=hpcperfstats --cov-report=term-missing --cov-report=html
 
-# Full tree including Django tests (needs Postgres/Redis per your settings, often via Docker)
+# Full tree including Django tests (run through the Podman Compose workflow)
 python scripts/run_tests.py --cov=hpcperfstats --cov-report=term-missing --cov-report=html
 ```
 
@@ -399,17 +429,18 @@ npm run test:coverage -- --run
 
 | Date | Change |
 |------|--------|
-| 2026-09-14 | Local Docker/Colima compose workflows disabled by default (`HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1` to re-enable); `hpcperfstats_require_local_docker` in `tests/colima_compose_teardown.sh` / `compose_test_cmd.sh` |
+| 2026-09-16 | Migrated compose workflows to rootless Podman, isolated projects, project-scoped teardown, and `/data` storage |
 | 2026-06-05 | `api.py` line coverage complete (100% gate); removed `artifacts/api_py_coverage_baseline.md`; added `test_api_coverage_closure.py` and `tests/coverage_api_py_line_only.ini` |
 | 2026-06-05 | Added best-practices section, frontend inventory, `api.py` coverage modules, new dbload/API/frontend unit tests |
-| 2026-06-05 | Colima post-test cleanup: `tests/colima_docker_cleanup.sh`, `tests/colima_compose_teardown.sh`; wired into all `tests/run_*_workflow.sh` scripts |
 
 ## Test layout
 
 | Location | Description |
 |---------|-------------|
-| `tests/colima_docker_cleanup.sh` | After compose workflows: prune stopped containers, unused images, build cache, volumes, and networks (Colima **`DOCKER_HOST`**). No-ops when local Docker is disabled; skip prune with **`COLIMA_DOCKER_CLEANUP_SKIP=1`**. |
-| `tests/colima_compose_teardown.sh` | Shared helper sourced by **`tests/run_*_workflow.sh`**: **`hpcperfstats_require_local_docker`** (exit **78** unless **`HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1`**); **`colima_compose_teardown`** runs compose **`down -v --remove-orphans`** then invokes **`colima_docker_cleanup.sh`**. |
+| `scripts/lib/podman_runtime.sh` | Canonical rootless runtime, `/data` cache/storage validation, project names, and Podman health inspection. |
+| `tests/podman_compose_teardown.sh` | Project-scoped `down -v --remove-orphans`; never global prune. |
+| `tests/verify_podman_project_isolation.sh` | Positive-control regression proving teardown does not remove unrelated Podman assets. |
+| `tests/run_podman_development_stack_verify.sh` | Starts/verifies the isolated `hpcperfstats-dev` stack on unprivileged ports. |
 | `tests/pip_compose_test_extras_fallback.sh` | When `pip install -e ".[test]"` fails on a bind mount, inner compose scripts source this helper so **Django 6.x** and **pytest 9+ / pytest-django 4.12+** match `pyproject.toml` (not legacy `pytest>=7` / `pytest-django>=4.5` floors). |
 | `hpcperfstats/tests/test_sync_timedb_parsing_canonical.py` | Canonical stats-line ingest (semantic PMC/IMC events, no CTL/CTR eventmaps). |
 | `hpcperfstats/tests/test_sync_timedb_parsing_legacy.py` | Legacy ingest path (`map_hardware_counter_vals`, hex eventmaps, KNL type aliases). |
@@ -463,7 +494,9 @@ Then follow `HPCPerfStats/hpcperfstats/cursor-rules/variable-metadata-*.mdc` for
 
 `scripts/run_tests.py` wraps `pytest` and is the easiest default runner:
 
-- `python scripts/run_tests.py --no-django` ignores `hpcperfstats/site/lib/machine/tests`
+- `python scripts/run_tests.py --no-django` ignores
+  `hpcperfstats/site/lib/machine/tests`, excludes every `django_db`-marked test,
+  defaults collection to `hpcperfstats`, and uses quiet output
 - `python scripts/run_tests.py` runs `pytest -v hpcperfstats` by default
 - extra pytest args are forwarded (for example `python scripts/run_tests.py -k metrics`)
 
@@ -474,9 +507,15 @@ Use this for web-page E2E modules plus the nginx/WSGI route contract:
 - `hpcperfstats/site/lib/machine/tests/test_web_pages_e2e.py` (**PostgreSQL on Compose**: root **`conftest.py`** applies **`django_db`** to **`site/lib/machine/tests`** by default when unset; **`pytest_collection_modifyitems`** skips Postgres-backed machine tests unless **`HPCPERFSTATS_COMPOSE_NETWORK=1`**. This workflow passes **`HPCPERFSTATS_COMPOSE_NETWORK=1`** into the **`web`** container and runs **`manage.py migrate --noinput`** before pytest.)
 - `hpcperfstats/site/lib/machine/tests/test_web_pages_browser_e2e.py` (Playwright: Django stub server + **`/machine/*`** and **`/pub/*`** SPA shells return **404** from WSGI per nginx ownership contract)
 - `hpcperfstats/site/hpcperfstats_site/tests/test_nginx_static_wsgi_contract.py` (**`/static/`**, **`/machine/`**, **`/pub/`** WSGI 404 contract + **`/robots.txt`** nginx static / WSGI 404 + edge HSTS/framing headers + OCSP/CSP include contracts + hybrid compression location split)
-- **`test_bokeh_job_list_embed_browser_e2e.py`** is **not** run here (needs CDN and optionally a **Next-built** static tree under **`hpcperfstats_site/static/frontend/`**). Run it separately—compose-backed **`pytest`** on **`web`** after **`pip install ".[test]"`** + **`playwright install chromium`**, or on the host with Playwright installed. For the bundled-Bokeh test, run **`npm run build`** (full export, not `build:prod`) in `hpcperfstats/site/frontend` first. Fixtures: `hpcperfstats/site/frontend/test/fixtures/`. See module docstring for fixture regeneration after **`job_hist`** / queue bar chart changes.
+- **`test_bokeh_job_list_embed_browser_e2e.py`** uses bundled Bokeh and a
+  **Next-built** static tree under
+  **`hpcperfstats_site/static/frontend/`**. Run it through
+  **`tests/run_bokeh_browser_workflow.sh`** after **`npm run build`** (full
+  export, not `build:prod`). Fixtures:
+  `hpcperfstats/site/frontend/test/fixtures/`.
 
-The workflow script handles Docker lifecycle and runs **`migrate`** plus those modules in one session:
+The workflow script handles the isolated Podman lifecycle and runs **`migrate`**
+plus those modules in one session:
 
 ```bash
 tests/run_web_e2e_workflow.sh
@@ -501,9 +540,10 @@ Equivalent seed environment variable:
 E2E_SEED_CMD="python your_seed_script.py" tests/run_web_e2e_workflow.sh
 ```
 
-### `tests/run_db_pytest_workflow.sh` (compose full Python suite, macOS / Linux)
+### `tests/run_db_pytest_workflow.sh` (Podman Compose full Python suite)
 
-Use this when you need **Django / Postgres** tests with `host=db` on the Compose network (for example on macOS, where host-side pytest cannot resolve the `db` hostname from `hpcperfstats.ini.example`).
+Use this when you need **Django / Postgres** tests with `host=db` on the
+isolated Compose network; host-side pytest cannot resolve that service alias.
 
 From the `HPCPerfStats/` directory (where `docker-compose.yaml` lives):
 
@@ -554,7 +594,8 @@ cd HPCPerfStats
 
 Operator CLI (pipeline image, after `job_data` exists): `sync_timedb.py --jid <JID>` — ingest-only (±1h pad around job start/end, plus one earlier and one later raw stats file per host); no archival/day-close. See **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`** → *sync_timedb --jid smoke*.
 
-**sync_timedb ingest archive member cache (host, no compose):** on cloud-sync checkouts prefer `scripts/run_tests.py --no-django` (direct `pytest` on ProtonDrive can hang during collection). Targeted regressions:
+**sync_timedb ingest archive member cache (host, no compose):** use
+`scripts/run_tests.py --no-django` with explicit targets. Targeted regressions:
 
 ```bash
 cd HPCPerfStats
@@ -576,7 +617,12 @@ tests/run_db_pytest_workflow.sh -- \
   hpcperfstats/tests/test_sync_timedb_queue_orchestrator.py
 ```
 
-Implementation detail: `tests/run_db_pytest_inner.sh` runs inside the `web` container via `compose_run_inner_script` in `tests/compose_test_cmd.sh` (streams the inner script from the host via `bash -s` stdin, because virtiofs bind mounts such as ProtonDrive can return `Operation not permitted` when the container opens `.sh` paths on the mount). Workflows call `compose_prepare_bind_mount` before compose **build**, **up**, and **run**: when the checkout path looks like a cloud-sync mount (`*ProtonDrive*`, `*CloudStorage*`, `*iCloud*`), the repo is **rsynced** to `$HOME/.cache/hpcperfstats-compose/stable` by default (Colima shares `$HOME` into the VM; macOS `/tmp` is not bind-mountable unless you start Colima with `--mount /tmp:w` and set `COMPOSE_BIND_MOUNT_USE_TMP=1` or `COMPOSE_BIND_MOUNT_BASE_DIR=/tmp/hpcperfstats-compose`). Compose then uses `--project-directory` on that work copy so image builds do not stream the virtiofs checkout as Docker context. The same directory is bind-mounted to `/home/hpcperfstats` for pytest and for `run_web_e2e_workflow.sh` / `run_pipeline_e2e_workflow.sh`. On teardown, `test_runs/` artifacts from the work copy are rsynced back to the real checkout. `compose_run_inner_script` also overlays `hpcperfstats.ini` from the same mount so a checkout-relative INI bind (still resolved on the cloud-sync path) does not shadow the work copy inside the container. Set `COMPOSE_BIND_MOUNT_WORK_COPY=0` to force mounting the checkout directly (for non-cloud paths or debugging). Set `COMPOSE_BIND_MOUNT_FORCE_WORK_COPY=1` to always rsync. The work copy defaults to `$HOME/.cache/hpcperfstats-compose/stable` (incremental rsync; set `COMPOSE_BIND_MOUNT_KEEP_WORKDIR=0` to delete it on teardown). Use `--skip-build` after the first successful image build; `COMPOSE_BIND_MOUNT_SKIP_BUILD=1` selects a smaller rsync set (~minutes on ProtonDrive). Extra pytest arguments are passed via a mounted temp file (`/tmp/hpcperfstats_pytest_extra_args`). The same mount pattern is used by `run_redis_cache_pytest_workflow.sh`, `run_stress_host_data_workflow.sh`, `run_update_metrics_diagnosis_workflow.sh`, `run_web_e2e_workflow.sh`, and `run_pipeline_e2e_workflow.sh`.
+Implementation detail: `tests/run_db_pytest_inner.sh` streams into `web` via
+`compose_run_inner_script`. Bind-mount work copies and all growth-prone
+temporary state use `/data/user/$USER/tmp`; they must never fall back to
+`$HOME/.cache`, `/tmp`, or `/var/tmp`. Extra pytest arguments are passed through
+the workflow-managed temporary file. The same adapter is used by Redis, stress,
+diagnosis, web, and pipeline workflows.
 
 ### `tests/run_redis_cache_pytest_workflow.sh` (live Redis cache integration)
 
@@ -604,7 +650,7 @@ The SPA and standalone HTML pages aim for **WCAG 2.2 Level AA** for in-app flows
 
 **Automated (frontend — Vitest + jest-axe)**
 
-`jest-axe` and `axe-core` are **devDependencies** only. They are imported from `*.test.{ts,tsx}`, [`test/vitest/setupTests.ts`](hpcperfstats/site/frontend/test/vitest/setupTests.ts), and [`test/vitest/axe-test-utils.ts`](hpcperfstats/site/frontend/test/vitest/axe-test-utils.ts); they are **not** part of the Next production bundle. The Docker **runtime** image does not run `npm install` for the app and excludes `node_modules/` and `frontend/test/` from the build context; the frontend builder uses **`npm run build:prod`**, so axe and test-only static routes are not shipped with production static assets.
+`jest-axe` and `axe-core` are **devDependencies** only. They are imported from `*.test.{ts,tsx}`, [`test/vitest/setupTests.ts`](hpcperfstats/site/frontend/test/vitest/setupTests.ts), and [`test/vitest/axe-test-utils.ts`](hpcperfstats/site/frontend/test/vitest/axe-test-utils.ts); they are **not** part of the Next production bundle. The production container image does not run `npm install` for the app and excludes `node_modules/` and `frontend/test/` from the build context; the frontend builder uses **`npm run build:prod`**, so axe and test-only static routes are not shipped with production static assets.
 
 Colocated page/component tests call `axeSeriousViolations()` (WCAG 2.x / 2.1 AA tag scope, asserting **no serious or critical** violations) for: `Layout` (including Extended Search open), `JobList` (including charts tab with histograms), `JobDetail`, `Search`, `PageApiKey`, `ExtendedSearch` (dialog shell), and `HistogramThumbnails` (thumbnail + open popover). New or materially changed page shells must extend this set per **`frontend-a11y-regression.mdc`**.
 
@@ -638,7 +684,7 @@ Treat the following as a **release gate** alongside automated tests: run through
 
 ## Requirements
 
-- **General**: Python 3.14+, `pip install -e ".[test]"`. Host workspace `.venv` must be GIL CPython 3.14 (Homebrew `python@3.14`). Compose image is built from **`debian:trixie` / `debian:trixie-slim`**: GIL `/opt/python3.14` (via `/usr/local`) for web; pipeline daemons run baked free-threaded `/opt/python3.14t` with `-O3 -march=native`, jemalloc force-link + preload, zlib-ng under /opt/zlib-ng (ZLIB_COMPAT, direct link; no apt zlib1g pin); zstd 1.5.7 under /opt/zstd for CLI + CPython _zstd (no apt zstd pin) (`python-image-interpreter-contract.mdc`). Container `python3` is **not** the ingest interpreter. Image **`python-build`** source-builds numpy (MKL BLAS/LAPACK, `cpu-baseline=native`), numexpr (Intel VML via injected `site.cfg`; unversioned `libmkl_rt.so` symlink for GNU ld), and pandas with `-march=native` against pip Intel MKL (both ABIs); numexpr and pandas installs use **`--no-deps`** so pip cannot replace MKL numpy with a manylinux OpenBLAS wheel, then re-assert MKL after each; **`python-dateutil`** is pinned in `project.dependencies` and installed with the rest wheel layer (pulls `six`); pandas meson needs **`versioneer[toml]`** in the `image-build` extra (`--no-build-isolation`). **Build on the prod host** (native is not portable). That layer is longer than a wheel-only pip. Host unit tests: `hpcperfstats/tests/test_dockerfile_python_deps_cache.py`, `test_dockerfile_mkl_source_stack.py`, `test_dockerfile_jemalloc_cpython.py`, `test_dockerfile_pyspy.py`, `test_pyproject_image_build_extra.py`. After an image rebuild, smoke `numpy.show_config(mode="dicts")` and `numexpr.use_vml` on GIL and `/opt/python3.14t` (expect MKL / VML), plus jemalloc in `/proc/self/maps` and `LD_PRELOAD`/`ld.so.preload`. Do **not** install `.[image-build]` into the host `.venv` (no macOS ARM MKL wheels).
+- **General**: Python 3.14+, `pip install -e ".[test]"`. The only host environment is `/data/HPCPerfStats/.venv`, rebuilt with `/bin/python3.14`. Compose images are built by rootless Podman from **`debian:trixie` / `debian:trixie-slim`**: GIL `/opt/python3.14` (via `/usr/local`) for web; pipeline daemons run baked free-threaded `/opt/python3.14t` with `-O3 -march=native`, jemalloc force-link + preload, zlib-ng under /opt/zlib-ng (ZLIB_COMPAT, direct link; no apt zlib1g pin); zstd 1.5.7 under /opt/zstd for CLI + CPython _zstd (no apt zstd pin) (`python-image-interpreter-contract.mdc`). Container `python3` is **not** the ingest interpreter. Image **`python-build`** source-builds numpy (MKL BLAS/LAPACK, `cpu-baseline=native`), numexpr (Intel VML via injected `site.cfg`; unversioned `libmkl_rt.so` symlink for GNU ld), and pandas with `-march=native` against pip Intel MKL (both ABIs); numexpr and pandas installs use **`--no-deps`** so pip cannot replace MKL numpy with a manylinux OpenBLAS wheel, then re-assert MKL after each; **`python-dateutil`** is pinned in `project.dependencies` and installed with the rest wheel layer (pulls `six`); pandas meson needs **`versioneer[toml]`** in the `image-build` extra (`--no-build-isolation`). **Build on the deployment architecture** (`-march=native` is not portable). That layer is longer than a wheel-only pip. Host unit tests: `hpcperfstats/tests/test_dockerfile_python_deps_cache.py`, `test_dockerfile_mkl_source_stack.py`, `test_dockerfile_jemalloc_cpython.py`, `test_dockerfile_pyspy.py`, `test_pyproject_image_build_extra.py`. After an image rebuild, smoke `numpy.show_config(mode="dicts")` and `numexpr.use_vml` on GIL and `/opt/python3.14t` (expect MKL / VML), plus jemalloc in `/proc/self/maps` and `LD_PRELOAD`/`ld.so.preload`. Do **not** install `.[image-build]` into the host `.venv`.
 - **Django tests**: For a full run matching production hostnames (`db`, `redis`), use `tests/run_db_pytest_workflow.sh`. Host-side `python scripts/run_tests.py` needs a reachable Postgres matching `HPCPERFSTATS_INI` **`[DEFAULT]`** PostgreSQL keys (and typically `host=localhost` with a published port, not `host=db`).
 - **Live Redis cache tests**: Optional; use `tests/run_redis_cache_pytest_workflow.sh` (sets `HPCPERFSTATS_PYTEST_LIVE_REDIS=1`).
 - **Browser E2E tests**: Playwright/Chromium tooling (installed by the DB workflow or E2E workflow script unless skipped).
@@ -665,9 +711,9 @@ Set `HPCPERFSTATS_MEMORY_LEAK_CHECK_LOG=1` for per-workload measurement lines.
 This is the **only** commit hard gate for memory growth — do not add a second
 tracemalloc hard-fail hook alongside it.
 
-**Offline / ad-hoc only (not hooks):** use these on a machine with DB/Redis
-available (for example the Docker Compose `web` service) when investigating RSS
-growth in long-lived workers or CLI jobs.
+**Offline / ad-hoc only (not hooks):** use these with DB/Redis available (for
+example the Podman Compose `web` service) when investigating RSS growth in
+long-lived workers or CLI jobs.
 
 **tracemalloc** (stdlib) around a focused pytest node:
 

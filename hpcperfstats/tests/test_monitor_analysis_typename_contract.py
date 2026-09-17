@@ -35,6 +35,10 @@ _RETIRED_KNL_CANONICAL_TYPES = frozenset({
     "intel_x86_uncore_edc_knl",
     "intel_x86_uncore_cha_knl",
 })
+_HISTORICAL_INTEL_CORE_PMC_TYPES = frozenset({
+    "intel_x86_pmc_gpr8",
+    "intel_x86_pmc_gpr4",
+})
 
 _ST_NAME_RE = re.compile(r'\.st_name\s*=\s*"([^"]+)"')
 _ST_NAME_DEFINE_RE = re.compile(r'#define\s+\w+_ST_NAME\s+"([^"]+)"')
@@ -64,9 +68,12 @@ def test_intel_imc_stats_types_have_roofline_peak_rows():
 
 def test_monitor_st_names_cover_intel_core_pmc_types_ordered():
   monitor = _monitor_st_names_from_sources()
-  for typename in INTEL_CORE_PMC_TYPES_ORDERED:
+  live_types = (
+      set(INTEL_CORE_PMC_TYPES_ORDERED) - _HISTORICAL_INTEL_CORE_PMC_TYPES
+  )
+  for typename in live_types:
     assert typename in monitor, (
-        f"{typename!r} in INTEL_CORE_PMC_TYPES_ORDERED must match monitor .st_name."
+        f"Live {typename!r} in INTEL_CORE_PMC_TYPES_ORDERED must match monitor .st_name."
     )
 
 

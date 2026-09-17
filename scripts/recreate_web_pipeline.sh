@@ -25,7 +25,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/recreate_web_pipeline.sh [options]
 
-Recreate compose web then pipeline from the CURRENT image (no docker build).
+Recreate compose web then pipeline from the CURRENT image (no Podman build).
 Uses --detach --no-deps; prints compose ps and exits (does not attach logs).
 
 For an image rebuild: ./scripts/rebuild_pipeline.sh
@@ -60,17 +60,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 preflight() {
+  podman_runtime_require
   if [[ ! -f "${REPO_ROOT}/docker-compose.yaml" ]]; then
     echo "recreate_web_pipeline.sh: docker-compose.yaml not found under ${REPO_ROOT}" >&2
     exit 1
   fi
   cd "${REPO_ROOT}"
   if [[ "${PIPELINE_ONLY}" -eq 0 ]] \
-    && ! docker compose config --services 2>/dev/null | grep -qx web; then
+    && ! "${PODMAN_COMPOSE[@]}" config --services 2>/dev/null | grep -qx web; then
     echo "recreate_web_pipeline.sh: compose stack has no web service" >&2
     exit 1
   fi
-  if ! docker compose config --services 2>/dev/null | grep -qx pipeline; then
+  if ! "${PODMAN_COMPOSE[@]}" config --services 2>/dev/null | grep -qx pipeline; then
     echo "recreate_web_pipeline.sh: compose stack has no pipeline service" >&2
     exit 1
   fi
@@ -80,7 +81,7 @@ main() {
   preflight
   export HPCPERFSTATS_SCRIPT_DRY_RUN="${DRY_RUN}"
 
-  echo "NOTE: this script does NOT rebuild the image (no docker/podman build)."
+  echo "NOTE: this script does NOT rebuild the image (no podman build)."
   echo "      It only replaces web/pipeline containers from localhost/hpcperfstats:latest."
   echo "      Image rebuild: ./scripts/rebuild_pipeline.sh"
 
@@ -101,8 +102,8 @@ main() {
   fi
 
   echo "Detached recreate finished. Container status:"
-  docker compose ps web pipeline 2>/dev/null || docker compose ps | grep -E 'web|pipeline' || true
-  echo "Optional status sample (non-blocking): docker compose logs --tail=40 pipeline"
+  "${PODMAN_COMPOSE[@]}" ps 2>/dev/null | grep -E 'web|pipeline' || true
+  echo "Optional status sample (non-blocking): podman-compose --project-name ${HPCPERFSTATS_COMPOSE_PROJECT} logs pipeline 2>&1 | grep -Ei 'error|warn|critical|traceback' | tail -40"
 }
 
 main "$@"

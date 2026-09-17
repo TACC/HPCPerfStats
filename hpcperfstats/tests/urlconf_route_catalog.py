@@ -180,7 +180,7 @@ def build_pipeline_http_endpoint_specs(
       200, 299, "application/json", False))
 
   add(PipelineHttpEndpointSpec(
-      "csp-report/", "POST", "/csp-report/", 403, 403, None, False,
+      "csp-report/", "POST", "/csp-report/", 204, 204, None, False,
       csrf_post=False,
       post_data="{}",
       extra_headers={"Content-Type": "application/json"},

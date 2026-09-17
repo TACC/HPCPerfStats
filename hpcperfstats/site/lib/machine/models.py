@@ -596,7 +596,6 @@ class TestLoginUser(models.Model):
     Django model metadata for the enclosing model.
     """
     db_table = "test_login_user"
-    managed = True
 
   def __str__(self) -> str:
     """

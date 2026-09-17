@@ -2,8 +2,8 @@
 """
 Test runner for hpcperfstats. Runs pytest over the package.
 
-Use --no-django for unit tests only; Django tests need PostgreSQL and
-HPCPERFSTATS_INI.
+Use --no-django for host-safe tests without ``django_db`` markers; marked
+Django tests need PostgreSQL and HPCPERFSTATS_INI.
 
 Attributes:
   _root: Attribute.
@@ -24,7 +24,7 @@ if _root not in sys.path:
 
 def main() -> Any:
   """
-  Run pytest with optional --no-django; return exit code from pytest.main.
+  Run pytest, optionally excluding tests marked for Django database access.
   
   Returns:
     Any: Open return polymorphism from ``main``: concrete type depends on
@@ -37,10 +37,13 @@ def main() -> Any:
   args = list(sys.argv[1:])
   if "--no-django" in args:
     args.remove("--no-django")
-    args.extend([
+    host_args = [
         "--ignore=hpcperfstats/site/lib/machine/tests",
-        "-v",
-    ])
+        "-m",
+        "not django_db",
+        "-q",
+    ]
+    args = host_args + (args or ["hpcperfstats"])
   else:
     args = args or ["-v", "hpcperfstats"]
   return pytest.main(args)

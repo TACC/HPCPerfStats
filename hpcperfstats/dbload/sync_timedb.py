@@ -5389,8 +5389,11 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       )
       if repaired and verify_tar_archive_readable(archive_tar_fname):
         tar_unreadable = False
-      if tar_unreadable and not replace_corrupt_tar_from_compressed_backup(
-          archive_tar_fname, zst_path, gz_path, cfg.get_archive_zstd_threads(),
+      if tar_unreadable and (
+          not replace_corrupt_tar_from_compressed_backup(
+              archive_tar_fname, zst_path, gz_path, cfg.get_archive_zstd_threads(),
+          )
+          or not verify_tar_archive_readable(archive_tar_fname)
       ):
         log_print(
             "ERROR: could not restore daily tar before append; leaving raw stats "

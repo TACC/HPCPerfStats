@@ -4,7 +4,7 @@
 set -euo pipefail
 
 compose_inner_pip_test_extras() {
-  pip install -q \
+  python3 -m pip install -q \
     "Django>=6.0.6,<7.0" \
     "pytest>=9.0" \
     "pytest-django>=4.12.0" \
@@ -17,8 +17,8 @@ compose_inner_pip_install() {
     compose_inner_pip_test_extras
     return 0
   fi
-  if ! pip install -q -e ".[test]"; then
-    echo "pip install -e failed; using PYTHONPATH fallback and test extras only."
+  if ! python3 -m pip install -q -e ".[test]"; then
+    echo "python3 -m pip install -e failed; using PYTHONPATH fallback and test extras only."
     compose_inner_pip_test_extras
   fi
 }

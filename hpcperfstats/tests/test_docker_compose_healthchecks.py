@@ -87,6 +87,51 @@ def test_docker_compose_has_healthchecks_for_core_services():
   assert "rabbitmq-diagnostics" in content
 
 
+def test_docker_compose_host_ports_are_parameterized_with_production_defaults():
+  """Rootless development can override ports without changing production defaults."""
+  repo_root = Path(__file__).resolve().parents[2]
+  content = (repo_root / "docker-compose.yaml").read_text()
+  settings = (repo_root / "docker-compose.settings.yaml.example").read_text()
+
+  expected_ports = (
+      '"${HPCPERFSTATS_HTTP_PORT:-80}:80"',
+      '"${HPCPERFSTATS_HTTPS_PORT:-443}:443"',
+      '"${HPCPERFSTATS_SYSLOG_PORT:-514}:514/udp"',
+      '"${HPCPERFSTATS_SYSLOG_PORT:-514}:514/tcp"',
+      '"${HPCPERFSTATS_AMQP_PORT:-5672}:5672"',
+  )
+  for port in expected_ports:
+    assert port in content
+
+  assert "HPCPERFSTATS_HTTP_PORT=8080" in settings
+  assert "HPCPERFSTATS_HTTPS_PORT=8443" in settings
+  assert "HPCPERFSTATS_SYSLOG_PORT=1514" in settings
+  assert "HPCPERFSTATS_AMQP_PORT=5673" in settings
+  assert "Production defaults remain 80/443/514/5672" in settings
+  assert ".env" not in settings
+
+
+def test_docker_compose_registry_images_are_fully_qualified_for_podman():
+  """Noninteractive rootless Podman must never prompt for a short-name registry."""
+  repo_root = Path(__file__).resolve().parents[2]
+  content = (repo_root / "docker-compose.yaml").read_text()
+
+  assert "image: docker.io/library/redis:8.10.0-alpine3.23" in content
+  assert "image: docker.io/timescale/timescaledb:2.28.3-pg15" in content
+  assert "image: docker.io/library/rabbitmq:4.3.4-management-alpine" in content
+
+
+def test_docker_compose_network_name_is_parameterized_with_production_default():
+  """Test and development projects can isolate their shared Compose network."""
+  repo_root = Path(__file__).resolve().parents[2]
+  content = (repo_root / "docker-compose.yaml").read_text()
+  runtime = (repo_root / "scripts" / "lib" / "podman_runtime.sh").read_text()
+
+  assert "name: ${HPCPERFSTATS_NETWORK_NAME:-hpcperfstats_net}" in content
+  assert "HPCPERFSTATS_NETWORK_NAME=hpcperfstats-test_net" in runtime
+  assert "HPCPERFSTATS_NETWORK_NAME=hpcperfstats-dev_net" in runtime
+
+
 def test_docker_compose_json_file_logging_rotated():
   """Stdout logging is file-backed for compose logs (Podman-safe, not journald)."""
   repo_root = Path(__file__).resolve().parents[2]
@@ -300,8 +345,8 @@ def test_docker_compose_rabbitmq_sets_erl_flags_allocator_tuning():
   assert "ERL_FLAGS" in deploy
 
 
-def test_docker_compose_rabbitmq_allows_large_monitor_messages():
-  """Regression: default 16 MiB max_message_size rejects ~41 MiB hpcperfstatsd publishes."""
+def test_docker_compose_rabbitmq_allows_128mib_monitor_messages():
+  """Keep the intentional 128 MiB broker maximum for large monitor payloads."""
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
   content = compose_path.read_text()
@@ -309,8 +354,8 @@ def test_docker_compose_rabbitmq_allows_large_monitor_messages():
 
   assert "rabbitmq_max_message_size.conf:/etc/rabbitmq/conf.d/20-max_message_size.conf" in content
   conf_text = conf_path.read_text()
-  assert "max_message_size = 67108864" in conf_text
-  assert "max_message_size = 134217728" not in conf_text
+  assert "max_message_size = 134217728" in conf_text
+  assert "max_message_size = 67108864" not in conf_text
 
 
 def test_docker_compose_rabbitmq_frame_max_conf():
@@ -621,15 +666,15 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
 
 
 def test_docker_compose_staticfiles_ram_and_media_ram_tmpfs_not_null_stub():
-  """Named tmpfs volumes live in base compose; overlay remaps for Colima/CI."""
+  """Named tmpfs volumes live in base compose; the test overlay remaps them."""
   repo_root = Path(__file__).resolve().parents[2]
   base = (repo_root / "docker-compose.yaml").read_text()
   settings = (repo_root / "docker-compose.settings.yaml.example").read_text()
   overlay = (
       repo_root / "tests" / "docker-compose.test-overlay.yaml.example"
   ).read_text()
-  assert _compose_has_named_tmpfs_volume(base, "staticfiles_ram", "256m")
-  assert _compose_has_named_tmpfs_volume(base, "media_ram", "64m")
+  assert _compose_has_named_tmpfs_volume(base, "staticfiles_ram", "64m")
+  assert _compose_has_named_tmpfs_volume(base, "media_ram", "32m")
   assert "staticfiles_ram:/home/hpcperfstats/staticfiles-ram" in base
   assert "media_ram:/home/hpcperfstats/media-ram" in base
   assert "staticfiles_data:/home/hpcperfstats/staticfiles" in base

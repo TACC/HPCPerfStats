@@ -1,16 +1,25 @@
 #!/usr/bin/env bash
-# Shared docker-compose invocation for test workflows (source, do not execute).
+# Shared podman-compose invocation for test workflows (source, do not execute).
 # Usage: . "$(dirname "${BASH_SOURCE[0]}")/compose_test_cmd.sh"
 #        compose_test up -d db redis
-#
-# Local Docker is OFF unless HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1 (see colima_compose_teardown.sh).
 
-if ! declare -F hpcperfstats_require_local_docker >/dev/null 2>&1; then
-  # shellcheck source=colima_compose_teardown.sh
-  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/colima_compose_teardown.sh"
+_compose_test_repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "${HPCPERFSTATS_COMPOSE_DEVELOPMENT:-0}" == "1" ]]; then
+  HPCPERFSTATS_COMPOSE_PROJECT=hpcperfstats-dev
+else
+  HPCPERFSTATS_COMPOSE_PROJECT=hpcperfstats-test
 fi
+export HPCPERFSTATS_COMPOSE_PROJECT
+# shellcheck source=../scripts/lib/podman_runtime.sh
+. "${_compose_test_repo_root}/scripts/lib/podman_runtime.sh"
+# shellcheck source=podman_compose_teardown.sh
+. "${_compose_test_repo_root}/tests/podman_compose_teardown.sh"
 
-COMPOSE_TEST=(docker-compose -f docker-compose.yaml -f tests/docker-compose.test-overlay.yaml)
+COMPOSE_TEST=(
+  "${PODMAN_COMPOSE[@]}"
+  -f docker-compose.yaml
+  -f tests/docker-compose.test-overlay.yaml
+)
 COMPOSE_BIND_MOUNT_DIR=""
 _COMPOSE_BIND_MOUNT_WORK_COPY=""
 
@@ -48,24 +57,13 @@ compose_ensure_test_overlay_yaml() {
   fi
 }
 
-# virtiofs bind mounts from cloud-sync paths (CloudStorage, iCloud, etc.) can deny listdir/open in
-# the Linux VM (pip, bash, cp all hit EPERM). Rsync to a host work tree first,
-# then bind-mount that tree (not the cloud-sync checkout). Default work copy:
-# $HOME/.cache/hpcperfstats-compose (Colima shares $HOME into the VM). macOS /tmp
-# is not bind-mountable unless Colima is started with --mount /tmp:w; use
-# COMPOSE_BIND_MOUNT_USE_TMP=1 or COMPOSE_BIND_MOUNT_BASE_DIR=/tmp/hpcperfstats-compose
-# only when /tmp is VM-visible.
+# Keep optional bind-mount work copies on the shared /data storage contract.
 compose_work_copy_base_dir() {
   if [[ -n "${COMPOSE_BIND_MOUNT_BASE_DIR:-}" ]]; then
     echo "${COMPOSE_BIND_MOUNT_BASE_DIR}"
     return
   fi
-  if [[ "${COMPOSE_BIND_MOUNT_USE_TMP:-0}" == "1" ]]; then
-    echo "/tmp/hpcperfstats-compose"
-    return
-  fi
-  mkdir -p "${HOME}/.cache"
-  echo "${HOME}/.cache/hpcperfstats-compose"
+  echo "${HPCPERFSTATS_HOST_CACHE}/hpcperfstats-compose"
 }
 
 compose_ensure_work_copy_ini() {
@@ -225,21 +223,26 @@ compose_cleanup_bind_mount() {
   COMPOSE_BIND_MOUNT_DIR=""
 }
 
-compose_test_project_args() {
-  if [[ -n "${COMPOSE_BIND_MOUNT_DIR:-}" ]]; then
-    printf '%s\n' --project-directory "${COMPOSE_BIND_MOUNT_DIR}"
-  fi
-}
-
 compose_test() {
-  hpcperfstats_require_local_docker
+  podman_runtime_require
   compose_ensure_settings_yaml || return 1
   compose_ensure_test_overlay_yaml || return 1
-  local project_args=()
-  if [[ -n "${COMPOSE_BIND_MOUNT_DIR:-}" ]]; then
-    project_args=(--project-directory "${COMPOSE_BIND_MOUNT_DIR}")
-  fi
-  "${COMPOSE_TEST[@]}" "${project_args[@]}" "$@"
+  local repo_root
+  repo_root="$(compose_repo_root)"
+  local project_dir="${COMPOSE_BIND_MOUNT_DIR:-$repo_root}"
+  (cd "$project_dir" && "${COMPOSE_TEST[@]}" "$@")
+}
+
+compose_service_container_id() {
+  local service="$1"
+  "${PODMAN[@]}" inspect --format '{{.Id}}' \
+    "${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_1" 2>/dev/null
+}
+
+compose_container_health() {
+  "${PODMAN[@]}" inspect \
+    --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' \
+    "$1"
 }
 
 # Run tests/*_inner.sh inside the web container.
@@ -252,7 +255,25 @@ compose_run_inner_script() {
   repo_root="$(compose_repo_root)"
   local inner_host="${repo_root}/${inner_rel}"
   local pip_helper="${repo_root}/tests/compose_inner_pip_install.sh"
-  local docker_args=("$@")
+  local docker_args=()
+  local env_spec
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "-e" && $# -ge 2 ]]; then
+      env_spec="$2"
+      if [[ "$env_spec" != *=* ]]; then
+        if [[ -z "${!env_spec+x}" ]]; then
+          shift 2
+          continue
+        fi
+        env_spec="${env_spec}=${!env_spec-}"
+      fi
+      docker_args+=("-e" "$env_spec")
+      shift 2
+      continue
+    fi
+    docker_args+=("$1")
+    shift
+  done
   if [[ ! -f "$inner_host" ]]; then
     echo "compose_run_inner_script: missing ${inner_host}" >&2
     return 1
@@ -272,7 +293,7 @@ compose_run_inner_script() {
     cat "$pip_helper"
     echo
     tail -n +2 "$inner_host"
-  } | compose_test run --rm -i "${docker_args[@]}" \
+  } | compose_test run --rm -T "${docker_args[@]}" \
     "${compose_run_inner_script_bind_mount_env[@]}" \
     --entrypoint bash \
     web -s

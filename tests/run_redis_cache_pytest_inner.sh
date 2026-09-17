@@ -13,6 +13,6 @@ if [[ -s /tmp/hpcperfstats_pytest_extra_args ]]; then
   mapfile -t ARGS < /tmp/hpcperfstats_pytest_extra_args
 fi
 
-exec python -m pytest -q \
+exec python3 -m pytest -q \
   hpcperfstats/site/lib/machine/tests/test_redis_cache_live.py \
   "${ARGS[@]}"

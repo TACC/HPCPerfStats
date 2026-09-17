@@ -1,8 +1,10 @@
 """Tests for dbload ORM row builders."""
 from __future__ import annotations
 
-import pandas as pd
+from datetime import timezone
 from types import SimpleNamespace
+
+import pandas as pd
 
 from hpcperfstats.dbload.lib.io_helpers import (
     host_data_instance_from_stats_row,
@@ -23,7 +25,7 @@ def test_host_data_instance_from_stats_row_maps_fields():
       arc=100.0,
   )
   h = host_data_instance_from_stats_row(row)
-  assert h.time == ts.to_pydatetime(warn=False)
+  assert h.time == ts.to_pydatetime(warn=False).replace(tzinfo=timezone.utc)
   assert h.host == "n.example.com"
   assert h.type == "cpu"
   assert h.dev == ""
@@ -55,7 +57,7 @@ def test_host_data_instance_from_stats_row_nanosecond_timestamp_no_warning():
   assert not any(
       "nanoseconds" in str(w.message).lower() for w in caught
   ), [str(w.message) for w in caught]
-  assert h.time == ts.to_pydatetime(warn=False)
+  assert h.time == ts.to_pydatetime(warn=False).replace(tzinfo=timezone.utc)
 
 
 def test_host_data_instance_from_stats_row_persists_dev():

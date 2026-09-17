@@ -58,8 +58,8 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
   now = django_timezone.now()
   if now.tzinfo is None:
     now = now.replace(tzinfo=dt_timezone.utc)
-  start_job = now - timedelta(hours=4)
-  end_job = now - timedelta(hours=2)
+  end_job = now - timedelta(days=3)
+  start_job = end_job - timedelta(hours=2)
   margin = timedelta(minutes=10)
   job_data.objects.create(
       jid=PIPELINE_E2E_JID,
@@ -75,11 +75,11 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
   )
 
   epoch_samples = [
-      (start_job + timedelta(minutes=12)).timestamp(),
+      start_job.timestamp(),
       (start_job + timedelta(minutes=40)).timestamp(),
       (start_job + timedelta(minutes=95)).timestamp(),
       (start_job + timedelta(minutes=150)).timestamp(),
-      (end_job - timedelta(minutes=40)).timestamp(),
+      (end_job - timedelta(minutes=5)).timestamp(),
       (end_job + margin).timestamp(),
   ]
 
@@ -89,6 +89,7 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
       epoch_samples=epoch_samples,
   )
 
+  os.makedirs(cfg.get_daily_archive_dir_path(), exist_ok=True)
   queue_name = cfg.get_rmq_queue()
   parameters = pika.ConnectionParameters(cfg.get_rmq_server())
   connection = pika.BlockingConnection(parameters)

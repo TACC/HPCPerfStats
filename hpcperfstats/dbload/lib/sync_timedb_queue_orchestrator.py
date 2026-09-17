@@ -1217,7 +1217,6 @@ def _idle_reconstruct_pass(
         break
       if claim is None:
         break
-      work += 1
       stats = _boot_stream_discover(
           client,
           archive_dir,
@@ -3890,8 +3889,8 @@ def _drain_append_ready(
     except Exception as exc:
       failed = True
       _log(
-          "queue_orchestrator append fail path=%s err=%s"
-          % (key, type(exc).__name__),
+          "queue_orchestrator append fail path=%s err=%s detail=%s"
+          % (key, type(exc).__name__, exc),
           log_fn=log_fn,
       )
       for job in jobs:

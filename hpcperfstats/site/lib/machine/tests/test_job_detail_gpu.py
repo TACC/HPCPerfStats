@@ -7,7 +7,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.test import RequestFactory
 
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import JID_TABLE_HOST_QUERY_BATCH
+from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+    TYPE_DETAIL_HOST_QUERY_BATCH,
+)
 from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import gpu_count_total_for_job_window
 from hpcperfstats.site.lib.machine import cache_utils as cu
 from hpcperfstats.site.lib.machine import job_detail_artifacts as job_detail_artifacts_mod
@@ -216,14 +218,14 @@ def test_compute_job_gpu_stats_helper_uses_host_device_aware_active_count():
 
 
 def test_gpu_agg_rows_for_job_batches_host__in():
-  """GPU aggregate ORM path uses jid_table-sized host__in chunks."""
+  """GPU aggregate ORM path uses type-detail-sized host__in chunks."""
   from hpcperfstats.site.lib.machine import api
 
   t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
   j = MagicMock()
   j.start_time = t0
   j.end_time = t0
-  n = JID_TABLE_HOST_QUERY_BATCH + 2
+  n = TYPE_DETAIL_HOST_QUERY_BATCH + 2
   j.acct_host_list = ["h{0}.x".format(i) for i in range(n)]
   chunk_sizes = []
 
@@ -257,7 +259,7 @@ def test_gpu_agg_rows_for_job_batches_host__in():
       Mgr(),
   ):
     api._gpu_agg_rows_for_job(j)
-  assert chunk_sizes == [JID_TABLE_HOST_QUERY_BATCH, 2]
+  assert chunk_sizes == [TYPE_DETAIL_HOST_QUERY_BATCH, 2]
 
 
 def test_job_detail_gpu_from_metrics_data_skips_host_data_cache():

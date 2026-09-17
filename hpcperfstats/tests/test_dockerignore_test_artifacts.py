@@ -151,6 +151,8 @@ def _looks_like_test_artifact(rel_path: str) -> bool:
   rel = rel_path.replace("\\", "/").lstrip("./")
   if _is_under_excluded_tree(rel):
     return False
+  if rel == "hpcperfstats/site/lib/machine/test_login.py":
+    return False
   parts = rel.split("/")
   if "tests" in parts:
     return True

@@ -1022,6 +1022,7 @@ def test_abort_recycle_grace_logs_info_not_error(monkeypatch):
   logs = []
   monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
   pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
+  mph._reset_recycle_tracking(pool)
   mph.abort_if_pool_workers_dead(pool, context="recycle_log")
   assert any("INFO: pool worker recycle in progress" in line for line in logs)
   assert any("grace_deadline_s=" in line for line in logs)
@@ -1307,7 +1308,7 @@ def test_sliding_window_supplements_sub_1g_when_giants_in_flight():
   thread.join(timeout=2.0)
 
 
-def test_supplement_not_used_while_chunk_paths_remain():
+def test_supplement_fills_idle_slot_while_chunk_path_remains_in_flight():
   pool = _ManualPool()
   paths = ["chunk0", "chunk1", "chunk2", "chunk3"]
   supplement_calls = []
@@ -1339,12 +1340,12 @@ def test_supplement_not_used_while_chunk_paths_remain():
   assert pool.submit_count == 2
   assert supplement_calls == []
   deadline = time.monotonic() + 2.0
-  while len(results) < len(paths) and time.monotonic() < deadline:
+  while len(results) < len(paths) + 1 and time.monotonic() < deadline:
     for ar in list(pool.inflight):
       ar.finish()
     time.sleep(0.01)
   thread.join(timeout=2.0)
-  assert len(results) == len(paths)
+  assert sorted(results) == sorted(paths + ["tail0"])
 
 
 def test_supplement_duplicate_only_does_not_busy_spin():

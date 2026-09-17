@@ -51,4 +51,5 @@ Service bodies for **`web`** / **`pipeline`** / infra live in **`docker-compose.
 
 - **`readme-installation-sync.mdc`** — Installation prose when compose wiring or volume layout changes.
 - **`minimal-compose-install-footprint.mdc`** — prefer settings example + `cp` over hand-editing base compose.
-- **`docker-compose-non-unit-testing.mdc`** — test overlay clears settings binds for CI/Colima.
+- **`docker-compose-non-unit-testing.mdc`** — the rootless Podman test overlay
+  clears production settings binds for isolated workflows.

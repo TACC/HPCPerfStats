@@ -4,8 +4,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
-# shellcheck source=colima_compose_teardown.sh
-. "$(dirname "${BASH_SOURCE[0]}")/colima_compose_teardown.sh"
 # shellcheck source=compose_test_cmd.sh
 . "$(dirname "${BASH_SOURCE[0]}")/compose_test_cmd.sh"
 
@@ -17,14 +15,14 @@ ARGS_FILE_OWNED=0
 
 usage() {
   cat <<'EOF'
-Run update_metrics diagnosis integration test in Docker (db + redis hostnames resolve).
+Run update_metrics diagnosis integration test with rootless Podman.
 
 Usage:
   tests/run_update_metrics_diagnosis_workflow.sh [options] [-- pytest_extra_args...]
 
 Options:
   --keep-env      Keep compose services/volumes after run
-  --skip-build    Skip docker-compose build web
+  --skip-build    Skip podman-compose build web
   -h, --help      Show this help
 
 Environment (optional; forwarded into the web container):
@@ -77,7 +75,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-colima_export_docker_env
+podman_runtime_require
 
 cleanup() {
   cleanup_args_file
@@ -86,7 +84,7 @@ cleanup() {
     echo "Keeping compose environment (--keep-env)."
     return
   fi
-  colima_compose_teardown "${COMPOSE_TEST[@]}"
+  podman_compose_teardown "${COMPOSE_TEST[@]}"
 }
 trap cleanup EXIT
 
@@ -95,10 +93,7 @@ if [[ ! -f hpcperfstats.ini ]]; then
   cp hpcperfstats.ini.example hpcperfstats.ini
 fi
 
-# Colima virtiofs only shares $HOME by default; macOS mktemp under /var/folders
-# is not mountable and Docker creates a directory at the container path instead.
-mkdir -p "${HOME}/.cache/hpcperfstats-compose"
-ARGS_FILE="$(mktemp "${HOME}/.cache/hpcperfstats-compose/pytest-extra-args.XXXXXX")"
+ARGS_FILE="$(mktemp "${HPCPERFSTATS_HOST_TMP}/pytest-extra-args.XXXXXX")"
 ARGS_FILE_OWNED=1
 if [[ ${#PYTEST_EXTRA[@]} -gt 0 ]]; then
   printf '%s\n' "${PYTEST_EXTRA[@]}" > "$ARGS_FILE"
@@ -109,7 +104,7 @@ fi
 compose_prepare_bind_mount
 compose_run_inner_script_prepare_env
 
-echo "Resetting Docker compose state and volumes..."
+echo "Resetting test project state and volumes..."
 compose_test down -v --remove-orphans
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
@@ -124,12 +119,12 @@ echo "Waiting for healthy db/redis..."
 db_health=""
 redis_health=""
 for _ in $(seq 1 60); do
-  db_id="$(compose_test ps -q db)"
-  redis_id="$(compose_test ps -q redis)"
+  db_id="$(compose_service_container_id db)"
+  redis_id="$(compose_service_container_id redis)"
 
   if [[ -n "$db_id" && -n "$redis_id" ]]; then
-    db_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' "$db_id" 2>/dev/null || true)"
-    redis_health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' "$redis_id" 2>/dev/null || true)"
+    db_health="$(compose_container_health "$db_id" 2>/dev/null || true)"
+    redis_health="$(compose_container_health "$redis_id" 2>/dev/null || true)"
     if [[ "$db_health" == "healthy" && "$redis_health" == "healthy" ]]; then
       echo "db and redis are healthy."
       break

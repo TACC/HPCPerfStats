@@ -18,6 +18,7 @@ from hpcperfstats.tests.urlconf_route_catalog import (
     build_pipeline_http_endpoint_specs,
 )
 
+from .browser_context import new_api_request_context, new_browser_context
 from .constants import (
     PIPELINE_E2E_API_RAW_KEY,
     PIPELINE_E2E_HOST_SHORT,
@@ -92,7 +93,7 @@ def test_every_configured_http_endpoint_smoke():
 
   with sync_playwright() as p:
     browser = p.chromium.launch()
-    context = browser.new_context()
+    context = new_browser_context(browser)
     page = context.new_page()
 
     def add_api_key(route):
@@ -122,7 +123,8 @@ def test_every_configured_http_endpoint_smoke():
     browser.close()
 
   with sync_playwright() as p:
-    request = p.request.new_context(
+    request = new_api_request_context(
+        p,
         base_url=base,
         extra_http_headers={"X-API-Key": raw},
     )

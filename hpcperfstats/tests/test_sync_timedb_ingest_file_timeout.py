@@ -259,7 +259,7 @@ def test_ingest_timeout_during_streaming_parse_not_quarantined(monkeypatch, tmp_
   def boom(*_a, **_k):
     raise st.IngestPerFileTimeoutError(target, "ingest", 933.4)
 
-  monkeypatch.setattr(st, "parse_stats_file_streaming", boom)
+  monkeypatch.setattr(st, "parse_stats_file_streaming_incremental", boom)
   monkeypatch.setattr(
       st,
       "_quarantine_failed_ingest_parse",
@@ -303,6 +303,7 @@ def test_parse_exception_still_quarantines_non_timeout(monkeypatch, tmp_path):
   monkeypatch.setattr(st.cfg, "get_archive_dir_path", lambda: str(archive_dir))
   monkeypatch.setattr(st, "parse_stats_file_path", lambda _p: ("host.hpc", "bad_raw"))
   monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "_should_stream_stats_file", lambda *_a, **_k: False)
   monkeypatch.setattr(
       st,
       "load_stats_file_lines",

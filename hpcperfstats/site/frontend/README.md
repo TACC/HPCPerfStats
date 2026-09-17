@@ -1,28 +1,48 @@
-# HPCPerfStats Frontend (React + Vite)
+# HPCPerfStats Frontend (Next.js + React)
 
-React SPA that talks to the Django REST API. All data is loaded via AJAX (fetch with credentials).
+Next.js 16 static-export SPA that talks to the Django REST API.
 
 ## Setup
 
+On Rocky Linux, use the DNF-managed Node 24 stream. Keep npm downloads, global
+tools, Playwright browsers, and temporary files under `/data`:
+
 ```bash
-npm install
+sudo dnf module reset -y nodejs
+sudo dnf module enable -y nodejs:24
+sudo dnf install -y nodejs npm
+
+export XDG_CACHE_HOME=/data/user/$USER/cache
+export TMPDIR=/data/user/$USER/tmp
+export npm_config_cache=/data/user/$USER/cache/npm
+export npm_config_prefix=/data/user/$USER/tools/npm
+export PLAYWRIGHT_BROWSERS_PATH=/data/user/$USER/cache/ms-playwright
+npm ci
 ```
+
+Persist those exports in the login environment before running npm, npx, or
+Playwright. `node_modules` stays in this checkout under `/data/HPCPerfStats`;
+do not create growth-prone caches or tool installs under `$HOME` or `/tmp`.
 
 ## Development
 
-Run Vite dev server (proxies `/api` and auth URLs to Django):
+Run the Next development server (proxies `/api` and auth URLs to Django):
 
 ```bash
 npm run dev
 ```
 
-Open http://localhost:5173/machine/ (or use Django’s URL with proxy). Ensure Django is running on port 8000.
+Open http://localhost:3000/machine/ (or use Django’s URL with proxy). Ensure
+Django is running on port 8000.
 
-**Note:** On this port, **Vite** serves `/static/frontend/` (dev bundles only). In production and in Docker Compose with **`proxy`**, **`/static/*`** is served by **nginx** from collected static files, not by Django or Gunicorn.
+**Note:** In production and the Podman Compose stack with **`proxy`**,
+`/static/*` is served by nginx from collected static files, not Django or
+Gunicorn.
 
 ## Production build
 
-Production deploy (Docker image, `rebuild_frontend.sh`) uses **`build:prod`**, which omits test-only static export routes (for example `bokeh-playwright-smoke/`):
+Production container builds use **`build:prod`**, which omits test-only static
+export routes (for example `bokeh-playwright-smoke/`):
 
 ```bash
 npm run build:prod
@@ -40,7 +60,7 @@ Output: `../hpcperfstats_site/static/frontend/`. After `collectstatic`, nginx se
 
 ## Stack
 
-- **Vite** – build and dev server
-- **React 18** – UI
-- **React Router 6** – client-side routes
+- **Next.js 16 App Router** – build, development server, and static export
+- **React 19** – UI
+- **TanStack Query + Orval/Zod** – typed API state and validation
 - **Django REST Framework** – API under `/api/`

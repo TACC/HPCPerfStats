@@ -8,22 +8,21 @@ globs: docker-compose*.yaml
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-When a task changes behavior or configuration that touches PostgreSQL/Timescale, Redis, RabbitMQ, or code paths that depend on compose-network hostnames (`db`, `redis`, `rabbitmq`), validation normally must run through Docker Compose workflows.
+When a task changes behavior or configuration that touches PostgreSQL/Timescale,
+Redis, RabbitMQ, or compose-network hostnames, validation must run through the
+rootless Podman Compose workflows.
 
-## Local Docker disable (current machine)
-
-While **`colima-docker-runtime.mdc`** local-Docker disable is in force (**`HPCPERFSTATS_ENABLE_LOCAL_DOCKER`** unset / not `1`):
-
-- **Do not** start Colima or run compose workflows for this gate.
-- Close with **`N/A — local Docker disabled`** (host unit/mock coverage only).
-- Prefer host `.venv` tests that do not need compose hostnames; document that full compose validation waits for the new Docker test platform (or an explicit `HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1` override).
-
-## Required behavior (when local Docker is enabled)
+## Required behavior
 
 - Do not treat host-only pytest as sufficient for these changes.
-- Use compose-backed runners/scripts for tests and validation (for example `tests/run_db_pytest_workflow.sh`, `tests/run_redis_cache_pytest_workflow.sh`, `tests/run_pipeline_e2e_workflow.sh`, or equivalent `docker-compose run ...` inside the `web` service).
+- Use committed runners such as `tests/run_db_pytest_workflow.sh`,
+  `tests/run_redis_cache_pytest_workflow.sh`, or
+  `tests/run_pipeline_e2e_workflow.sh`.
+- Require the rootless, `/data`-backed runtime in `podman-runtime.mdc`; do not
+  substitute an alternate or privileged runtime.
 - Confirm required services are started and healthy before running tests.
-- Keep teardown/cleanup aligned with project workflows after runs.
+- Keep teardown project-scoped so unrelated resources and the development stack
+  survive.
 
 ## Trigger examples
 
@@ -34,5 +33,5 @@ While **`colima-docker-runtime.mdc`** local-Docker disable is in force (**`HPCPE
 
 ## Completion bar
 
-- When local Docker is **enabled**: a task in this scope is not complete until at least one relevant compose-backed test workflow has been executed and its result reported.
-- When local Docker is **disabled**: host-safe tests + explicit deferral note satisfy this gate on this machine.
+- A task in this scope is not complete until at least one relevant Podman-backed
+  workflow has been executed and its result reported.

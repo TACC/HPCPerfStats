@@ -1407,7 +1407,7 @@ def test_parse_t0_includes_resolve_streaming_ingest_start():
       "def _add_stats_file_to_db_streaming_incremental", 1,
   )[1].split("\ndef ", 1)[0]
   resolve = src.split(
-      "def _resolve_streaming_ingest_start", 1,
+      "def _resolve_streaming_ingest_start_impl", 1,
   )[1].split("\ndef ", 1)[0]
   assert streaming.index("parse_t0") < streaming.index(
       "_resolve_streaming_ingest_start",

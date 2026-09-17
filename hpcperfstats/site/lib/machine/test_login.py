@@ -24,6 +24,7 @@ import hpcperfstats.dbload.lib.conf_parser as cfg
 
 from .models import TestLoginUser
 
+__test__ = False
 TEST_LOGIN_TOKEN_PREFIX = "test-login:"
 TEST_LOGIN_EMAIL_DOMAIN = "test-login.local"
 TEST_LOGIN_PATH = "/test-login/"

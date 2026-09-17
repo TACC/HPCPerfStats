@@ -113,6 +113,28 @@ def test_stream_enqueue_digit_epoch_lands_in_hot():
   assert jq.decode_ingest_band(score) == "hot"
 
 
+def test_stream_discover_skips_day_close_before_min_age(monkeypatch):
+  """A current-day raw file must not create perpetual deferred-age work."""
+  monkeypatch.setattr(
+      jd.jr, "day_close_min_age_elapsed", lambda *_a, **_k: False,
+  )
+  client = SyncTimedbJobStore("")
+  stats = jd.stream_enqueue_ingest_from_find_records(
+      client,
+      [FindStatsRecord(
+          path="/archive/host/1789609956", mtime=1.0, size=10, inode=1,
+      )],
+      tgz_archive_dir="/daily",
+      today=date(2026, 9, 16),
+      calendar_day_fn=lambda _r: date(2026, 9, 16),
+      ingest_is_complete_fn=lambda **_k: False,
+      append_is_complete_fn=lambda **_k: False,
+  )
+
+  assert stats.enqueued_day_close == 0
+  assert client.queued_count("day_close") == 0
+
+
 def test_stream_enqueue_over_cap_still_zadds_hot_skips_catchup(monkeypatch):
   """Catchup-full ingest cap must not abort the walk or refuse hot ZADD."""
   monkeypatch.setattr(jq, "queue_capacity_limit", lambda: 2)

@@ -278,9 +278,10 @@ See `docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md` (T0 host invalidate) and `sync-t
 
 **Post-deploy populate-pool verification (`pipeline` logs):**
 
+Run from the checkout containing `docker-compose.yaml`.
+
 ```bash
-cd HPCPerfStats
-docker compose -p hpcperfstats logs pipeline 2>&1 | \
+podman-compose -p hpcperfstats logs pipeline 2>&1 | \
   grep -E 'populate-pool|chunk prewarm|sealed archive member stream failed|ingest per-file timeout' | tail -40
 ```
 

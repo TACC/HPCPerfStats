@@ -17,11 +17,11 @@ compose_inner_pip_install
 
 cd /home/hpcperfstats
 
-python hpcperfstats/site/manage.py migrate --noinput
+python3 hpcperfstats/site/manage.py migrate --noinput
 
 ARGS=()
 if [[ -s /tmp/hpcperfstats_pytest_extra_args ]]; then
   mapfile -t ARGS < /tmp/hpcperfstats_pytest_extra_args
 fi
 
-exec python -m pytest -v tests/stress_host_data "${ARGS[@]}" --tb=short
+exec python3 -m pytest -v tests/stress_host_data "${ARGS[@]}" --tb=short
