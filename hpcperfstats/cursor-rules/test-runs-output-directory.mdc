@@ -15,7 +15,7 @@ Ephemeral **test execution artifacts** and **runtime verification notes** belong
 |-----------------------|---------------------------|
 | **`docs/TESTING.md`** — how to run tests, prerequisites, workflow commands | Dated run summaries, pass/fail tables, agent verification notes |
 | **`docs/plans/`**, **`docs/artifacts/`** — design baselines and interpreted findings | Raw JSON/stdout captures from a specific machine run |
-| Test source (`test_*.py`, `tests/run_*_workflow.sh`) | Compose orchestrator transcripts, Colima/Docker env snapshots |
+| Test source (`test_*.py`, `tests/run_*_workflow.sh`) | Compose orchestrator transcripts, Podman env snapshots |
 
 ## Required output paths
 
@@ -24,7 +24,7 @@ Create **`test_runs/`** (and subdirs as needed) before writing. Prefer **UTC dat
 | Artifact | Canonical path |
 |----------|----------------|
 | Agent or manual verification log (per task/day) | **`test_runs/test_run_log_YYYY-MM-DD.md`** |
-| **`run_all_compose_workflows.sh`** default log | **`test_runs/test_run_log_colima_compose.md`** (or dated variant via script arg) |
+| **`run_all_compose_workflows.sh`** default log | **`test_runs/test_run_log_podman_compose.md`** (or dated variant via script arg) |
 | Stress **`update_metrics`** JSON reports | **`test_runs/stress/`** (`HPCPERFSTATS_STRESS_REPORT_DIR`) |
 | **`update_metrics` diagnosis** JSON export | **`test_runs/diagnosis/`** (`HPCPERFSTATS_UM_DIAG_JSON_OUT`) |
 | Saved pytest/junit or workflow stdout | **`test_runs/pytest/`** or **`test_runs/workflows/`** |
@@ -41,7 +41,7 @@ When running compose workflows, reporting test outcomes in chat, or closing a ta
 
 Workflow scripts should default artifact env vars and log paths under **`test_runs/`**:
 
-- **`tests/run_all_compose_workflows.sh`** → **`test_runs/test_run_log_colima_compose.md`**
+- **`tests/run_all_compose_workflows.sh`** → **`test_runs/test_run_log_podman_compose.md`**
 - **`tests/run_stress_host_data_inner.sh`** → **`test_runs/stress/`**
 - **`tests/run_update_metrics_diagnosis_inner.sh`** → **`test_runs/diagnosis/update_metrics_diagnosis.json`**
 

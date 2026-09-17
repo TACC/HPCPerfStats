@@ -47,7 +47,7 @@ Then start (or recreate) `db_pg18`:
 docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate up -d --force-recreate db_pg18
 ```
 
-5. Build on the **production CPU** (`-march=native`). Do not ship an ARM/Colima bake to x86 prod.
+5. Build on the **production CPU** (`-march=native`). Do not ship an aarch64 / non-prod-CPU bake to x86_64 production.
 
 ---
 

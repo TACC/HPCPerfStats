@@ -27,6 +27,7 @@ _E2E_WORKFLOWS = (
 _FORBIDDEN_HOST_RUNTIME_TERMS = (
     "colima",
     "docker_host",
+    "hpcperfstats_enable_local_docker",
     "system prune",
     "container prune",
     "image prune",
