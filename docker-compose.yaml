@@ -354,7 +354,7 @@ services:
       - ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512
       - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512
       - ERL_CRASH_DUMP_SECONDS=0
-    stop_grace_period: 2m 
+    stop_grace_period: 10m
     healthcheck:
       # `rabbitmq-diagnostics ping` returns non-zero if the node is not ready.
       test:

@@ -455,6 +455,19 @@ def test_docker_compose_rabbitmq_disables_crash_dumps():
   assert "ERL_CRASH_DUMP_SECONDS" in upgrade
 
 
+def test_docker_compose_rabbitmq_stop_grace_period_is_10m():
+  """RabbitMQ stop_grace_period must stay 10m for orderly broker shutdown."""
+  repo_root = Path(__file__).resolve().parents[2]
+  compose_path = repo_root / "docker-compose.yaml"
+  content = compose_path.read_text()
+  rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[0]
+
+  assert "stop_grace_period: 10m" in rabbitmq_block
+  assert "stop_grace_period: 2m" not in rabbitmq_block
+  readme = (repo_root / "README.md").read_text()
+  assert "stop_grace_period" in readme and "10m" in readme
+
+
 def test_operator_rabbitmq_recovery_runbook_exists():
   """Preserve/extract recovery doc required; never-delete without OK."""
   repo_root = Path(__file__).resolve().parents[2]

@@ -37,6 +37,7 @@ globs:
 - `test_docker_compose_rabbitmq_sets_erl_flags_allocator_tuning` asserts **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`** + docs sync.
 - `test_docker_compose_rabbitmq_logging_warning_not_info` asserts warning console + connection/channel error.
 - `test_docker_compose_rabbitmq_disables_crash_dumps` asserts **`ERL_CRASH_DUMP_SECONDS=0`** + **`core: 0`**.
+- `test_docker_compose_rabbitmq_stop_grace_period_is_10m` asserts **`stop_grace_period: 10m`** + README mention.
 - `test_operator_rabbitmq_recovery_runbook_exists` asserts preserve/extract runbook.
 
 ## Overlap
