@@ -176,12 +176,30 @@ cd HPCPerfStats
 tests/run_sync_timedb_benchmark_workflow.sh
 ```
 
+Ingest-width screening (derived smoke corpus under
+`test_runs/sync_timedb_bench/corpus_smoke`, Timescale via compose db/redis,
+no `update_metrics` in the timed window):
+
+```bash
+cd HPCPerfStats
+# Optional CSV overrides; defaults are 1..96 widths and 2 replicates.
+# HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS=1,2,4,8
+# HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES=2
+tests/run_sync_timedb_benchmark_workflow.sh --screening
+```
+
+Artifacts land in `test_runs/sync_timedb_bench/screening_*.json` (winner is a
+screening hint only, not a production INI change).
+
 Derived corpus (identity rewrite; never mutates exemplars):
 
 ```bash
 cd HPCPerfStats
 ../.venv/bin/python3 scripts/derive_sync_timedb_benchmark_corpus.py \
-  --source-dir /path/to/exemplars --output-dir /path/to/derived
+  --source-dir /path/to/exemplars \
+  --output-dir test_runs/sync_timedb_bench/corpus_smoke \
+  --host-suffix .cluster_name.domain.edu \
+  --max-files 6
 ```
 
 Campaign ledger: `docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md`.

@@ -23,12 +23,20 @@ if ! "$PYT" -m pip install -q -e ".[test]"; then
 fi
 
 export HPCPERFSTATS_SYNC_TIMEDB_BENCH=1
+export HPCPERFSTATS_COMPOSE_NETWORK=1
 
 PYTEST_EXTRA=()
 if [[ -f /tmp/hpcperfstats_pytest_extra_args ]]; then
   mapfile -t PYTEST_EXTRA < /tmp/hpcperfstats_pytest_extra_args
 fi
 
-echo "Running tests/sync_timedb_benchmark under 3.14t..."
+PYTEST_TARGET=(tests/sync_timedb_benchmark)
+if [[ "${HPCPERFSTATS_SYNC_TIMEDB_SCREENING:-}" == "1" ]]; then
+  PYTEST_TARGET=(
+    tests/sync_timedb_benchmark/test_ingest_width_screening.py
+  )
+fi
+
+echo "Running ${PYTEST_TARGET[*]} under 3.14t..."
 "$PYT" -c 'import sys; print(sys.version)'
-exec "$PYT" -m pytest tests/sync_timedb_benchmark -q --tb=short "${PYTEST_EXTRA[@]}"
+exec "$PYT" -m pytest "${PYTEST_TARGET[@]}" -q --tb=short "${PYTEST_EXTRA[@]}"

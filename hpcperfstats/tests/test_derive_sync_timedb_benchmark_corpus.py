@@ -55,6 +55,32 @@ def test_rewrite_stats_identity_host_and_epochs(mod):
   assert "cpu 0 1 2" in out
 
 
+def test_select_smallest_sources_truncates_by_size(mod, tmp_path):
+  big = tmp_path / "big"
+  small = tmp_path / "small"
+  mid = tmp_path / "mid"
+  big.write_bytes(b"x" * 1000)
+  small.write_bytes(b"y" * 10)
+  mid.write_bytes(b"z" * 100)
+  selected = mod.select_smallest_sources([big, small, mid], max_files=2)
+  assert [path.name for path in selected] == ["small", "mid"]
+
+
+def test_derive_corpus_applies_host_suffix(mod, tmp_path):
+  source_path = tmp_path / "src"
+  source_path.write_text(_fixture_text(), encoding="utf-8")
+  manifest = mod.derive_corpus(
+      [source_path],
+      tmp_path / "out",
+      host_suffix=".cluster_name.domain.edu",
+      dry_run=True,
+  )
+  assert manifest["host_suffix"] == ".cluster_name.domain.edu"
+  assert manifest["entries"][0]["derived_host"].endswith(
+      ".cluster_name.domain.edu",
+  )
+
+
 def test_derive_corpus_writes_outputs_and_manifest(mod, tmp_path):
   source_dir = tmp_path / "sources"
   host_dir = source_dir / "orig.example.com"

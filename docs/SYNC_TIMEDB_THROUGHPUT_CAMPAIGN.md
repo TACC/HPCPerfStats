@@ -5,7 +5,8 @@ Canonical interpreted baseline and ongoing optimization ledger for durable
 `test_runs/sync_timedb_bench/` and `test_runs/sync_timedb_campaign/`.
 
 Operational parallelism model: [`SYNC_TIMEDB_PARALLELISM.md`](SYNC_TIMEDB_PARALLELISM.md).
-Live plan: workspace `.cursor/plans/sync-timedb-throughput-scaling.plan.md`.
+Live plan: workspace `.cursor/plans/sync-timedb-campaign-kickoff.plan.md`
+(parent design: `.cursor/plans/sync-timedb-throughput-scaling.plan.md`).
 
 ## Campaign goal
 
@@ -18,9 +19,12 @@ not the end state.
 
 | Site | Role | Notes |
 |------|------|--------|
-| hpcperfstats02 | LS6 / exemplar source | Direct full-ingest ~0.62 files/min (24h); futex-heavy ingest pool at 96 threads |
-| hpcperfstats04 | Horizon / ARM exemplars | Direct full-ingest ~0.15 files/min (24h); ORM/`bulk_create`/pandas dominant in py-spy |
+| hpcperfstats02 | LS6 / exemplar source | Provisional post-redeploy (~28m, diluted `--since-minutes 90`): listend 0.4333/min, full-ingest 0.6444/min, **verdict_full_ingest=WINNING**; archive_done 0; ETA N/A (no disk_pending) |
+| hpcperfstats04 | Horizon / ARM exemplars | Provisional post-redeploy (~31m undiluted): listend 0.5423/min, full-ingest 3.7005/min, **verdict_full_ingest=WINNING**; archive_done 0; ETA N/A |
 | hpcperfstats01 | Stampede3 exemplars | Giant-file strata; corpus only in this baseline |
+
+Mature ~24h recompute deferred (optional). Prior multi-hour LOSING pastes are
+superseded for kickoff by these provisional WINNING snapshots.
 
 Effective concurrency observed on hpcperfstats02 (campaign snapshot):
 
@@ -40,9 +44,8 @@ enabled in production evidence windows.
 2. **Listend rolling windows:** listend `current file unlinks (last 10 minutes)`
    lines are overlapping; non-overlapping decimation is required before using
    arrival rate, ratio, or backlog-gap fields as campaign targets.
-
-Recompute site arrival rates with the fixed analyzer before promoting any
-listend-derived SLA margin.
+3. **Compose timestamps:** operator rate pastes must use `logs --timestamps`;
+   with `--since-minutes`, untimestamped lines are dropped.
 
 ## Corpus
 
@@ -52,8 +55,9 @@ Immutable exemplars (never mutate):
 - `stats_files/hpcperfstats04-exemplars` (Horizon)
 - `stats_files/hpcperfstats01-exemplars` (Stampede3)
 
-Derive identity-shifted copies with
-`scripts/derive_sync_timedb_benchmark_corpus.py` (manifest + SHA-256 oracle).
+Smoke derived corpus (kickoff): `test_runs/sync_timedb_bench/corpus_smoke/`
+via `scripts/derive_sync_timedb_benchmark_corpus.py --max-files N --host-suffix
+.cluster_name.domain.edu` (manifest + SHA-256 oracle; sources unchanged).
 
 ## Bottleneck ranking (pre-study, production-informed)
 
@@ -67,7 +71,7 @@ Confidence is **hypothesis** until controlled timing/scaling artifacts exist.
 | 3 | Ingest width oversubscription / futex waits | 96 threads, ~111 futex waits, ~2.2 cores busy | `sync_ingest_pool_processes` | Low (config) / High if wrong |
 | 4 | Archive flock timeouts on hot days | read-lock timeouts on busy tars | archive/day-close concurrency | High (correctness) |
 | 5 | Connection footprint coexistence | 97 sync + many metrics backends idle | pool sizing / connection reuse | Medium |
-| 6 | Unknown absolute backlog / ETA | missing uncapped pending samples in 24h logs | telemetry + rescan logging | Low |
+| 6 | Unknown absolute backlog / ETA | missing uncapped pending samples in short windows | telemetry + rescan logging | Low |
 
 ## Experiment backlog
 
@@ -76,9 +80,9 @@ acceptance, rollback, status.
 
 | ID | Hypothesis | Target metric | Surface | Status |
 |----|------------|---------------|---------|--------|
-| E1 | Ingest width below 96 raises durable files/s and cuts lock wait | lower CI bound files/s; p95 lock wait | INI `sync_ingest_pool_processes` + scaling study | blocked — compose study abandoned on this host |
+| E1 | Ingest width below 96 raises durable files/s and cuts lock wait | lower CI bound files/s; p95 lock wait | INI `sync_ingest_pool_processes` + scaling study | **screening evidence present** — artifact `test_runs/sync_timedb_bench/screening_3d87ea476cb64f87b0fda69209d7f503.json` (widths 1–96, 2 replicates, early-exit after durable ingest); winner hint **64** threads (narrowest CI near peak). Caveat: smoke corpus (~350KB×3) + early-exit makes files/s nearly flat vs width; treat as harness/knee-hint only. Knee confirmation still pending |
 | E2 | Closed-book residual ≤5% mid-size cohort | residual fraction | write/lock/parse telemetry | harness shipped; full run pending |
-| E3 | Non-overlapping listend rate revises LOSING margin | listend/ingest ratio | analyzer (done) | analyzer fixed; recompute on sites |
+| E3 | Non-overlapping listend rate revises LOSING margin | listend/ingest ratio | analyzer (done) | **complete (provisional)** — fixed analyzer + timestamps pastes on 02/04 show WINNING; mature 24h optional |
 | E4 | Split ORM vs DB execute shrinks false “postgres” blame | phase shares | ingest write phases | helpers shipped; production enable pending |
 | E5 | Reduce day-close overlap contention | flock timeouts / day-close wall | day-close inflight | pending study |
 | E6 | Evidence-led parse merge optimization on LS6 shape | files/s on 02-derived tier | parsing hot path | blocked — needs controlled knee (E1/E2) before product patch |
@@ -102,6 +106,7 @@ Compose / free-threaded long study (rootless Podman; `podman-runtime.mdc`):
 ```bash
 cd HPCPerfStats
 tests/run_sync_timedb_benchmark_workflow.sh
+tests/run_sync_timedb_benchmark_workflow.sh --screening
 ```
 
 ## Selection rule (when study artifacts exist)
@@ -111,19 +116,21 @@ long-lived lock/DB wait, no queue starvation, and ≥20% CPU/memory/DB/storage
 headroom. Prefer the smallest width within 5% of peak unless a larger width
 materially improves backlog-drain SLA without degrading p95 latency >10%.
 
+Screening winner ≠ deployable INI without knee confirmation (follow-on).
+
 ## Negative / invalid results
 
 - 24h archive_done = 0 on analyzer output is **unverified** until token coverage
   is confirmed against current finalize log lines.
 - Provisional listend rates from overlapping sums are **invalid** for SLA math.
+- Short post-redeploy windows are noisy; absolute rates diluted when
+  `--since-minutes` exceeds elapsed span.
 - Local compose scaling execution fails closed only when rootless Podman or the
   `/data` storage contract in `podman-runtime.mdc` is unmet.
 
 ## Next actions
 
-1. Re-run fixed rate analyzer on hpcperfstats02/04 full logs; refresh arrival margin.
-2. Extend `tests/run_sync_timedb_benchmark_workflow.sh` from the green 3.14t unit
-   harness smoke under rootless Podman to the full 1–96 ingest-width matrix with
-   derived corpus and Timescale state.
+1. Knee confirmation (≥5×30m replicates) on a larger derived corpus — follow-on plan.
+2. Mature 24h analyzer recompute on 02/04 when continuous logs exist.
 3. Amend the live plan with measured root-cause lines before any product
    bottleneck fix; retain only paired A/B wins.

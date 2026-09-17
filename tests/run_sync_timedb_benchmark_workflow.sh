@@ -28,10 +28,17 @@ Usage:
 Options:
   --keep-env      Keep compose services/volumes after run
   --skip-build    Skip podman-compose build pipeline
+  --screening     Run ingest-width screening (requires derived corpus under
+                  test_runs/sync_timedb_bench/corpus_smoke by default)
   -h, --help      Show this help
 
 Environment:
-  HPCPERFSTATS_SYNC_TIMEDB_BENCH=1     Set by this script for long benchmark tests
+  HPCPERFSTATS_SYNC_TIMEDB_BENCH=1         Set by this script for long benchmark tests
+  HPCPERFSTATS_SYNC_TIMEDB_SCREENING=1     Set by --screening
+  HPCPERFSTATS_COMPOSE_NETWORK=1           Set by this script for django_db tests
+  HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS   Optional CSV override (default 1..96 matrix)
+  HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES  Optional replicate count (default 2)
+  HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS   Optional corpus path inside container/repo
 
 Runtime:
   Rootless Podman + podman-compose via tests/compose_test_cmd.sh (podman-runtime.mdc).
@@ -46,6 +53,7 @@ EOF
 
 KEEP_ENV=0
 SKIP_BUILD=0
+SCREENING=0
 PYTEST_EXTRA=()
 
 while [[ $# -gt 0 ]]; do
@@ -61,6 +69,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-build)
       SKIP_BUILD=1
+      shift
+      ;;
+    --screening)
+      SCREENING=1
       shift
       ;;
     -h|--help)
@@ -111,9 +123,19 @@ set +e
 RUN_ARGS=(
   run --rm -T
   -e HPCPERFSTATS_SYNC_TIMEDB_BENCH=1
+  -e HPCPERFSTATS_COMPOSE_NETWORK=1
   "${compose_run_inner_script_bind_mount_env[@]}"
   "${compose_web_repo_bind_mount_args[@]}"
 )
+if [[ "$SCREENING" -eq 1 ]]; then
+  [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS=${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS}")
+  [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES=${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES}")
+  [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS=${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS}")
+  RUN_ARGS+=(-e HPCPERFSTATS_SYNC_TIMEDB_SCREENING=1)
+fi
 if [[ -n "$ARGS_FILE" ]]; then
   RUN_ARGS+=(-v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args:ro")
 fi

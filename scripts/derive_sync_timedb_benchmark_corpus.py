@@ -237,11 +237,47 @@ def _assert_no_host_epoch_overlap(
     by_host.setdefault(host, []).append((lo, hi))
 
 
+def select_smallest_sources(
+    source_paths: Sequence[str | Path],
+    max_files: int | None,
+) -> list[Path]:
+  """
+  Return ``source_paths`` ordered by size, optionally truncated.
+
+  Args:
+    source_paths (Sequence[str | Path]): Candidate exemplar raw stats paths.
+    max_files (int | None): When set and positive, keep only the ``max_files``
+      smallest regular files. ``None`` or non-positive keeps all paths sorted
+      by ascending size then path.
+
+  Returns:
+    list[Path]: Resolved paths ordered by ascending size.
+
+  Raises:
+    ValueError: When a path is not a regular file.
+
+  Examples:
+    >>> select_smallest_sources([], 2)
+    []
+  """
+  resolved: list[Path] = []
+  for path in source_paths:
+    candidate = Path(path).resolve()
+    if not candidate.is_file():
+      raise ValueError("source path is not a regular file: %s" % candidate)
+    resolved.append(candidate)
+  ordered = sorted(resolved, key=lambda path: (path.stat().st_size, str(path)))
+  if max_files is None or max_files <= 0:
+    return ordered
+  return ordered[: int(max_files)]
+
+
 def derive_corpus(
     source_paths: Sequence[str | Path],
     output_dir: str | Path,
     *,
     host_prefix: str = "benchhost",
+    host_suffix: str = "",
     epoch_base_offset: int = 1_700_000_000,
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -257,6 +293,9 @@ def derive_corpus(
     output_dir (str | Path): Directory receiving derived host/epoch tree copies.
     host_prefix (str): Prefix for synthetic hostnames (suffix is zero-padded
       index).
+    host_suffix (str): Optional FQDN suffix appended after the zero-padded
+      index (for example ``.cluster_name.domain.edu`` so archive dirs end with
+      ``host_name_ext``).
     epoch_base_offset (int): Base epoch for the first derived file; later files
       are placed in non-overlapping slots after the widest source span.
     dry_run (bool): When ``True``, compute the manifest without writing outputs.
@@ -306,12 +345,13 @@ def derive_corpus(
   slot = max(max_span + 1.0, 1.0)
   entries: list[dict[str, Any]] = []
   host_ranges: list[tuple[str, float, float]] = []
+  suffix = str(host_suffix or "")
 
   for item in prepared:
     index = item["index"]
     source_path = item["source_path"]
     source_before = _sha256_file(source_path)
-    derived_host = "%s%04d" % (host_prefix, index)
+    derived_host = "%s%04d%s" % (host_prefix, index, suffix)
     target_start = epoch_base_offset + index * slot
     epoch_offset = int(round(target_start - item["epoch_min"]))
     derived_text = rewrite_stats_identity(
@@ -351,6 +391,7 @@ def derive_corpus(
   manifest: dict[str, Any] = {
       "version": MANIFEST_VERSION,
       "host_prefix": host_prefix,
+      "host_suffix": suffix,
       "epoch_base_offset": epoch_base_offset,
       "epoch_slot_seconds": slot,
       "dry_run": dry_run,
@@ -473,6 +514,23 @@ def _build_arg_parser() -> argparse.ArgumentParser:
       help="Synthetic hostname prefix (default: benchhost).",
   )
   parser.add_argument(
+      "--host-suffix",
+      default="",
+      help=(
+          "Optional FQDN suffix after the padded index "
+          "(example: .cluster_name.domain.edu)."
+      ),
+  )
+  parser.add_argument(
+      "--max-files",
+      type=int,
+      default=0,
+      help=(
+          "When >0, derive only the N smallest source files "
+          "(smoke/steady tier selection)."
+      ),
+  )
+  parser.add_argument(
       "--epoch-base-offset",
       type=int,
       default=1_700_000_000,
@@ -511,10 +569,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     source_paths = _collect_source_paths(args.source_dir)
     if not source_paths:
       raise ValueError("no source files found under --source-dir paths")
+    source_paths = select_smallest_sources(source_paths, args.max_files)
+    if not source_paths:
+      raise ValueError("no source files remain after --max-files selection")
     derive_corpus(
         source_paths,
         args.output_dir,
         host_prefix=args.host_prefix,
+        host_suffix=args.host_suffix,
         epoch_base_offset=args.epoch_base_offset,
         dry_run=args.dry_run,
     )
