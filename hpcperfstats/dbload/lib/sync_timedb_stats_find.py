@@ -717,6 +717,8 @@ def iter_find_stats_stdout_chunks(
   Does not buffer the entire walker output before the first yield. Callers
   should feed chunks into
   :func:`iter_find_printf_records_streaming` / discover enqueue helpers.
+  Early generator close closes/kills the child before ``wait()`` so a full
+  stdout ``PIPE`` cannot deadlock the caller.
 
   Args:
     archive_dir (str): Archive data directory (walker root).
@@ -763,10 +765,12 @@ def iter_find_stats_stdout_chunks(
   last_progress = time.monotonic()
   idle_s = float(cfg.get_sync_ingest_stall_idle_s())
   bytes_seen = 0
+  finished_stdout = False
   try:
     while True:
       chunk = proc.stdout.read(read_n)
       if not chunk:
+        finished_stdout = True
         break
       bytes_seen += len(chunk)
       now = time.monotonic()
@@ -789,6 +793,19 @@ def iter_find_stats_stdout_chunks(
         pass
   finally:
     try:
+      # Early generator close / exception leaves writers blocked on a full
+      # stdout PIPE; wait() then deadlocks. Close+kill only when we did not
+      # reach EOF so a normal walk still returns its real exit status.
+      if not finished_stdout:
+        try:
+          proc.stdout.close()
+        except Exception:
+          pass
+        if proc.poll() is None:
+          try:
+            proc.kill()
+          except Exception:
+            pass
       rc = proc.wait()
       stderr_file.seek(0)
       stderr_b = stderr_file.read()

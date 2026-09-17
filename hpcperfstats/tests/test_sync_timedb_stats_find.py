@@ -269,6 +269,47 @@ def test_streaming_find_preserves_exit_one_stderr_classification(
     assert list(iterator) == []
 
 
+def test_streaming_find_close_does_not_deadlock_waiting_on_full_stdout(
+    monkeypatch, tmp_path,
+):
+  """Early generator close must not wait() while child stdout is still open."""
+  import threading
+
+  released = threading.Event()
+
+  class _Proc:
+    def __init__(self):
+      self.stdout = io.BytesIO(b"chunk-one\x00")
+      self.returncode = None
+      self._killed = False
+
+    def poll(self):
+      return self.returncode
+
+    def kill(self):
+      self._killed = True
+      self.returncode = -9
+      released.set()
+
+    def wait(self):
+      # Mirrors production: wait forever if stdout was not closed/killed first.
+      if not released.wait(timeout=2.0):
+        raise AssertionError("wait() called while stdout writer still blocked")
+      return int(self.returncode)
+
+  def _popen(argv, **kwargs):
+    del argv, kwargs
+    return _Proc()
+
+  monkeypatch.setattr(sf, "_resolve_find_bin", lambda _value: "fd")
+  monkeypatch.setattr(sf, "_resolve_stat_bin", lambda _value: "stat")
+  monkeypatch.setattr(sf.subprocess, "Popen", _popen)
+
+  iterator = sf.iter_find_stats_stdout_chunks(str(tmp_path), chunk_size=4)
+  assert next(iterator) == b"chun"
+  iterator.close()
+
+
 def test_resolve_find_bin_prefers_fdfind_then_fd(monkeypatch):
   old = os.environ.pop("HPCPERFSTATS_FIND_BIN", None)
 
