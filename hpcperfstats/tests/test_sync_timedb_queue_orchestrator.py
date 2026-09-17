@@ -340,6 +340,263 @@ def test_day_close_skips_tar_drop_when_post_seal_verify_fails(tmp_path, monkeypa
   assert deleted == [str(tar)]
 
 
+def test_day_close_skips_tar_drop_when_post_seal_returns_false(tmp_path, monkeypatch):
+  """Soft-fail False from post_seal verify must keep dual copies (contract D)."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2020-01-03"
+  tar = daily / ("%s.tar" % day)
+  zst = daily / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  zst.write_bytes(b"zst")
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: None,
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def apply_batch_delete(self, _tar_path):
+      return 0
+
+    def run_pre_seal_verify_sync(self, _tar_path):
+      return True
+
+    def run_post_seal_verify_sync(self, _tar_path):
+      return False
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return False
+
+    def try_finish_tar_drop_if_ready(self, _tar_path):
+      raise AssertionError("tar_drop must not run when post_seal is False")
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+  )
+  assert outcome == "incomplete_raw"
+  assert tar.exists()
+  assert zst.exists()
+
+
+def test_day_close_inventory_shrink_after_delete_and_tar_drop(tmp_path, monkeypatch):
+  """After delete+tar_drop only sealed zst remains (space reclaim oracle)."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2020-01-04"
+  tar = daily / ("%s.tar" % day)
+  zst = daily / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  zst.write_bytes(b"zst")
+  raw = tmp_path / "closed.raw"
+  raw.write_bytes(b"raw")
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: None,
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      self._raw_gone = False
+
+    def apply_batch_delete(self, _tar_path):
+      if raw.exists():
+        raw.unlink()
+      self._raw_gone = True
+      return 1
+
+    def run_pre_seal_verify_sync(self, _tar_path):
+      return True
+
+    def run_post_seal_verify_sync(self, _tar_path):
+      return True
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return (not self._raw_gone) and raw.exists()
+
+    def try_finish_tar_drop_if_ready(self, tar_path):
+      if os.path.isfile(tar_path):
+        os.remove(tar_path)
+      return not os.path.isfile(tar_path)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+  )
+  assert outcome == "complete"
+  assert not tar.exists()
+  assert zst.exists()
+  assert not raw.exists()
+
+
+def test_day_close_reseals_after_raw_delete_when_zst_missing(tmp_path, monkeypatch):
+  """Same-job reseal when raw clears and zst is still missing, then tar_drop."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2020-01-05"
+  tar = daily / ("%s.tar" % day)
+  zst = daily / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  seal_calls = []
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+
+  def _seal(*_a, **k):
+    seal_calls.append(1)
+    # Mirror only_when_no_remaining_raw: skip compress while closed raw remains.
+    if k.get("only_when_no_remaining_raw") and k.get("remaining_raw_by_gz"):
+      return
+    zst.write_bytes(b"zst")
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      _seal,
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      self._raw = True
+
+    def apply_batch_delete(self, _tar_path):
+      self._raw = False
+      return 1
+
+    def run_pre_seal_verify_sync(self, _tar_path):
+      return True
+
+    def run_post_seal_verify_sync(self, _tar_path):
+      return os.path.isfile(str(zst))
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return self._raw
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      return {"x": ["raw"]} if self._raw else {}
+
+    def try_finish_tar_drop_if_ready(self, tar_path):
+      if os.path.isfile(tar_path) and os.path.isfile(tar_path + ".zst"):
+        os.remove(tar_path)
+      return not os.path.isfile(tar_path)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+  )
+  assert outcome == "complete"
+  assert len(seal_calls) >= 2
+  assert not tar.exists()
+  assert zst.exists()
+
+
+def test_day_close_phase_done_dual_reclaims_open_tar(tmp_path, monkeypatch):
+  """04 class: phase=done + dual must tar_drop even when append queue is hot."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2020-01-06"
+  tar = daily / ("%s.tar" % day)
+  zst = daily / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  zst.write_bytes(b"zst")
+
+  class _Store:
+    def queued_count(self, kind):
+      return 5 if kind == "append" else 0
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: None,
+  )
+  monkeypatch.setattr(qo, "_day_close_live_ingest_or_populate", lambda *a, **k: False)
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def phase(self, _tar_path):
+      return "done"
+
+    def should_handoff_to_ingest(self, _tar_path):
+      return True
+
+    def apply_batch_delete(self, _tar_path):
+      return 0
+
+    def run_pre_seal_verify_sync(self, _tar_path):
+      return True
+
+    def run_post_seal_verify_sync(self, _tar_path):
+      return True
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      return False
+
+    def try_finish_tar_drop_if_ready(self, tar_path):
+      if os.path.isfile(tar_path):
+        os.remove(tar_path)
+      return True
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      job_store=_Store(),
+      log_fn=lambda *a, **k: None,
+  )
+  assert outcome == "complete"
+  assert not tar.exists()
+  assert zst.exists()
+
+
 def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
   """DC-01 order: pre-seal → reconcile → pre-seal → dedupe → seal → post-seal → delete."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr

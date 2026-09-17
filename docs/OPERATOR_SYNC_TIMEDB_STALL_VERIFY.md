@@ -42,7 +42,7 @@ Production is **one** `sync_timedb.py` process per `archive_dir` (`run_sync_time
 | Tier | When | Pass criteria |
 |------|------|---------------|
 | **T0 smoke** | T+15 min after deploy | Pipeline up; **exactly one** orchestrator flock holder; job-store sidecar present or reconstruct logged incomplete work; populate/ingest/append threads titled; no second `sync_timedb` CLI for the same `archive_dir` |
-| **T1 progress** | T+4 h **or** after first append/day_close progress on head day | In-process ingest hot/catchup depth trending (or reconstruct shows complete); append/day_close lists not wedged forever with filesystem remaining-raw; `progress day=` shows `complete=` cadence on age-eligible no-remaining-raw days (not fake `sealed` ACK); no dual-process flock fight |
+| **T1 progress** | T+4 h **or** after first append/day_close progress on head day | In-process ingest hot/catchup depth trending (or reconstruct shows complete); append/day_close lists not wedged forever with filesystem remaining-raw; `progress day=` shows `complete=` cadence on age-eligible no-remaining-raw days (not fake `sealed` ACK); **space reclaim:** past-day `open_tar_n` / dual `.tar`+`.tar.zst` decline (not `archive_done` alone); sticky `phase=done` dual days show `tar_delete=` / open tar gone; no dual-process flock fight |
 | **T2 catch-up** | T+24 h or when head day advances | Cadence of completed ingest claims continues; day_close jobs drain age-eligible days; no persistence wipe / contract bump used as “fix” |
 
 ```bash

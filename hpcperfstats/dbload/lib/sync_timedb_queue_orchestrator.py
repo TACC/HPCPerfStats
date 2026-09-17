@@ -2054,6 +2054,25 @@ def _run_day_close_job(
         True
       """
       nonlocal skip_merge_remaining_raw
+      phase_fn = getattr(coord, "phase", None)
+      phase = (
+          str(phase_fn(tar_path) or "").strip()
+          if callable(phase_fn)
+          else ""
+      )
+      # phase=done + sealed sibling: reclaim open tar; do not forever-yield
+      # on append/handoff (04 dual retention).
+      if phase == "done" and (
+          os.path.isfile(tar_path + ".zst")
+          or os.path.isfile(tar_path + ".gz")
+      ):
+        skip_merge_remaining_raw = True
+        _log(
+            "queue_orchestrator day_close wait_on_ingest skip_yield "
+            "day=%s reason=phase_done_sealed" % day_token,
+            log_fn=log_fn,
+        )
+        return None
       handoff_fn = getattr(coord, "should_handoff_to_ingest", None)
       needs_wait = bool(
           _day_close_disk_remaining_raw_blocks(coord, tar_path)
@@ -2267,9 +2286,12 @@ def _run_day_close_job(
     if os.path.isfile(tar_path) or os.path.isfile(tar_path + ".zst"):
       _stage_enter("post_seal_verify")
       try:
-        coord.run_post_seal_verify_sync(tar_path)
-        post_seal_ok = True
-        _stage_exit("post_seal_verify", result="ok")
+        post_seal_ok = bool(coord.run_post_seal_verify_sync(tar_path))
+        _stage_exit(
+            "post_seal_verify",
+            result="ok" if post_seal_ok else "fail",
+            **({} if post_seal_ok else {"reason": "verify_false"}),
+        )
       except Exception as exc:
         _log(
             "queue_orchestrator day_close post_seal_verify fail day=%s err=%s"
@@ -2284,27 +2306,87 @@ def _run_day_close_job(
 
     _stage_enter("raw_delete")
     deleted = int(coord.apply_batch_delete(tar_path) or 0)
+    remaining_raw = bool(coord.has_closed_raw_on_disk(tar_path))
     if deleted > 0:
-      remaining_raw = bool(coord.has_closed_raw_on_disk(tar_path))
       progress.record(day_token, "raw_delete", 1)
     _stage_exit("raw_delete", result="ok")
     zst_path = tar_path + ".zst"
     if (
-        os.path.isfile(zst_path)
+        not remaining_raw
         and os.path.isfile(tar_path)
-        and not remaining_raw
-        and post_seal_ok
+        and not os.path.isfile(zst_path)
     ):
+      _stage_enter("seal")
+      remaining_fn = getattr(
+          coord, "remaining_raw_paths_blocking_tar_drop", None,
+      )
+      remaining_for_reseal = (
+          remaining_fn(tar_path) if callable(remaining_fn) else {}
+      )
+      seal_dirty_daily_archives(
+          tgz_archive_dir,
+          local_tz=get_local_timezone(),
+          zstd_threads=get_archive_zstd_threads(),
+          compress_level=get_archive_zstd_level(),
+          keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
+          idle_seconds=0,
+          seal_immediately_if_dirty=True,
+          only_daily_tar_paths={tar_path},
+          only_when_no_remaining_raw=True,
+          remaining_raw_by_gz=remaining_for_reseal,
+          log_fn=quiet,
+      )
+      _stage_exit("seal", result="ok", reason="reseal_after_delete")
+      if os.path.isfile(tar_path) or os.path.isfile(zst_path):
+        _stage_enter("post_seal_verify")
+        try:
+          post_seal_ok = bool(coord.run_post_seal_verify_sync(tar_path))
+          _stage_exit(
+              "post_seal_verify",
+              result="ok" if post_seal_ok else "fail",
+              **({} if post_seal_ok else {"reason": "verify_false"}),
+          )
+        except Exception as exc:
+          post_seal_ok = False
+          _log(
+              "queue_orchestrator day_close post_seal_verify fail "
+              "day=%s err=%s" % (day_token, type(exc).__name__),
+              log_fn=log_fn,
+          )
+          _stage_exit(
+              "post_seal_verify",
+              result="fail",
+              reason=type(exc).__name__,
+          )
+    if (
+        post_seal_ok
+        and os.path.isfile(zst_path)
+        and os.path.isfile(tar_path)
+    ):
+      finish_fn = getattr(coord, "try_finish_tar_drop_if_ready", None)
       _stage_enter("tar_drop")
       try:
-        os.remove(tar_path)
-        tar_dropped = True
-        progress.record(day_token, "tar_delete", 1)
-        _log(
-            "queue_orchestrator day_close tar_drop day=%s" % day_token,
-            log_fn=log_fn,
-        )
-        _stage_exit("tar_drop", result="ok")
+        if callable(finish_fn):
+          finish_fn(tar_path)
+          tar_dropped = not os.path.isfile(tar_path)
+        elif not remaining_raw:
+          os.remove(tar_path)
+          tar_dropped = True
+        if tar_dropped:
+          remaining_raw = False
+          progress.record(day_token, "tar_delete", 1)
+          _log(
+              "queue_orchestrator day_close tar_drop day=%s" % day_token,
+              log_fn=log_fn,
+          )
+          _stage_exit("tar_drop", result="ok")
+        else:
+          remaining_raw = bool(coord.has_closed_raw_on_disk(tar_path))
+          _stage_exit(
+              "tar_drop",
+              result="skip",
+              reason="remaining_raw" if remaining_raw else "tar_present",
+          )
       except OSError as exc:
         _log(
             "queue_orchestrator day_close tar_drop fail day=%s err=%s"

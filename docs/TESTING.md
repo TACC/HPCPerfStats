@@ -191,6 +191,30 @@ tests/run_sync_timedb_benchmark_workflow.sh --screening
 Artifacts land in `test_runs/sync_timedb_bench/screening_*.json` (winner is a
 screening hint only, not a production INI change).
 
+Knee confirmation (derived steady corpus under
+`test_runs/sync_timedb_bench/corpus_steady`, default widths `48,64,80,96`,
+5 replicates, longer per-replicate timeout):
+
+```bash
+cd HPCPerfStats
+# Ambient HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS / _REPLICATES from a prior
+# --screening shell are cleared unless KNEE_ALLOW_SCREEN_ENV=1.
+tests/run_sync_timedb_benchmark_workflow.sh --knee
+```
+
+Artifacts land in `test_runs/sync_timedb_bench/knee_*.json` (knee candidate
+only; still not a production INI change).
+
+Closed-book mid-size E2 timing (same steady corpus; residual ≤5% recorded in
+artifact):
+
+```bash
+cd HPCPerfStats
+tests/run_sync_timedb_benchmark_workflow.sh --e2
+```
+
+Artifacts land in `test_runs/sync_timedb_bench/e2_closed_book_*.json`.
+
 Derived corpus (identity rewrite; never mutates exemplars):
 
 ```bash
@@ -200,6 +224,14 @@ cd HPCPerfStats
   --output-dir test_runs/sync_timedb_bench/corpus_smoke \
   --host-suffix .cluster_name.domain.edu \
   --max-files 6
+# Steady tier example (N smallest across exemplar trees):
+../.venv/bin/python3 scripts/derive_sync_timedb_benchmark_corpus.py \
+  --source-dir /path/to/hpcperfstats02-exemplars \
+  --source-dir /path/to/hpcperfstats04-exemplars \
+  --source-dir /path/to/hpcperfstats01-exemplars \
+  --output-dir test_runs/sync_timedb_bench/corpus_steady \
+  --host-suffix .cluster_name.domain.edu \
+  --max-files 24
 ```
 
 Campaign ledger: `docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md`.
@@ -494,7 +526,8 @@ npm run test:coverage -- --run
 | `hpcperfstats/tests/test_monitor_analysis_typename_contract.py` | Monitor `.st_name` coverage vs `canonical.py` and roofline peak rows. |
 | `hpcperfstats/tests/test_archive_compress.py` | Pure path helpers in `archive_compress.py` (detect format, tar/zst/gz siblings, member maps). |
 | `hpcperfstats/tests/test_sync_timedb_startup_archive_scan.py` | Canonical startup snapshot coordinator helpers (host unit). Queue cutover: day_close discover/seal/raw/tar-drop is owned by **`test_sync_timedb_queue_orchestrator.py`** + B-09 predicates in **`test_sync_timedb_architecture_contract.py`**. |
-| `hpcperfstats/tests/test_sync_timedb_queue_orchestrator.py` | Greenfield **`run_sync_timedb_queue_orchestrator`** cutover: exclusive `archive_dir` flock, `from_parsed` wiring, retired `supervisor_loop`, sliding-window ingest→append enqueue while other ingest inflight, day_close tar-drop when sealed + no closed raw, **day-close `on_handoff_to_ingest`** requeue (host unit). Quick run: `cd HPCPerfStats && ../.venv/bin/python3 -m pytest -q hpcperfstats/tests/test_sync_timedb_queue_orchestrator.py`. |
+| `hpcperfstats/tests/test_sync_timedb_queue_orchestrator.py` | Greenfield **`run_sync_timedb_queue_orchestrator`** cutover: exclusive `archive_dir` flock, `from_parsed` wiring, retired `supervisor_loop`, sliding-window ingest→append enqueue while other ingest inflight, day_close tar-drop when sealed + no closed raw, **day-close `on_handoff_to_ingest`** requeue, **space reclaim** (post_seal False, reseal-after-delete, phase=done dual tar_drop) (host unit). Quick run: `cd HPCPerfStats && ../.venv/bin/python3 -m pytest -q hpcperfstats/tests/test_sync_timedb_queue_orchestrator.py`. |
+| `tests/run_sync_timedb_day_close_soak_workflow.sh` | Day-close **open_tar / dual reclaim** soak without prod wall-clock. Default: host pytest (`tests/sync_timedb_day_close_soak/` + reclaim regressions). Opt-in compose: `HPCPERFSTATS_ENABLE_LOCAL_DOCKER=1 HPCPERFSTATS_DAY_CLOSE_SOAK_COMPOSE=1`. Logs `test_runs/day-close-space-reclaim-soak-*.log`. |
 | `hpcperfstats/tests/test_sync_timedb_ingest_file_timeout.py` | Idle-stall / `_run_ingest_timed` wiring and leftover wall-timeout absence (host unit). |
 | `hpcperfstats/tests/test_leftover_retired_purge.py` | Deleted leftover no-op names (watchdog, deadline ContextVars, always-0 wall getters). |
 | `hpcperfstats/tests/test_sync_timedb_archive.py` (member cache) | DB-complete ingest path: identity-keyed `get_existing_archive_members_for_daily_archive` cache, `daily_archive_has_member_with_size`, ingest **store-backed single-flight populate**, **bad sealed day skip**, L1 skip LRU, sealed point lookup, `invalidate_daily_archive_members_cache`. Drift guard: **`sync-timedb-ingest-pool-io-coordination.mdc`**. |

@@ -4169,6 +4169,9 @@ class DayRawRemovalCoordinator:
     # One closed_raw census for reclassify + delete completion + handoff.
     state._begin_closed_raw_pass_memo()
     try:
+      # 02 sticky: phase=done + verified-not-deleted no-ops without reopen.
+      if state.needs_reopen_for_verified_pending():
+        state.reopen_delete_phase_if_verified_on_disk()
       # Branch C: reclassify under deleting/verification_complete before delete or
       # handoff so post-ingest upgrades are not skipped (F15 keeps phase=deleting).
       upgraded = state._reclassify_retryable_skips_on_disk()

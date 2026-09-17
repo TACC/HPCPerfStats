@@ -1909,6 +1909,31 @@ def test_has_active_raw_removal_work_true_when_done_with_verified_pending(tmp_pa
   assert "pending_verified=1" in token
 
 
+def test_apply_batch_delete_reopens_phase_done_verified_pending(tmp_path):
+  """02 class: coord.apply_batch_delete must reopen phase=done verified pending."""
+  day = datetime(2026, 5, 25)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  seg_str = str(seg)
+  state._record_entry(seg_str, zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verified_count"] = 1
+    state._manifest["deleted_count"] = 0
+    _save_manifest(state._manifest_path, state._manifest)
+
+  assert state.phase() == PHASE_DONE
+  assert state._manifest_verified_pending_count() == 1
+  deleted = coord.apply_batch_delete(tar_path)
+  assert deleted >= 1
+  assert not os.path.isfile(seg_str)
+  assert state._manifest_verified_pending_count() == 0
+  entry = state._manifest["entries"][seg_str]
+  assert entry.get("deleted") is True
+
+
 def test_reopen_done_manifest_pending_without_files_on_disk_unblocks_gate(
     tmp_path,
 ):
