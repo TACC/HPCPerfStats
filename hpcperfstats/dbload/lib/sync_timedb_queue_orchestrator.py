@@ -883,17 +883,20 @@ def _boot_stream_discover(
   Stream fd ``-X`` GNU stat stdout into ingest/append/day_close jobs as paths arrive.
 
   Does **not** call capture-all ``run_find_stats``. Empty job store before or after
-  this call does **not** mean caught up. ``mtime_days=None`` is a full scan
-  (boot); a positive window is the periodic reconstruct rescan. Append
-  skip-complete uses :func:`jr.discover_append_is_complete` (warm members store /
-  open-tar only; never ``populate_and_wait``).
+  this call does **not** mean caught up. ``mtime_days`` is the scan window from the
+  claimed discover identity (or caller fallback): a positive value is the
+  incremental rescan (boot first pass and periodic reconstruct); ``None`` is the
+  whole-archive catch-up. Append skip-complete uses
+  :func:`jr.discover_append_is_complete` (warm members store / open-tar only;
+  never ``populate_and_wait``).
 
   Args:
     client (Any): job store for ``job:v1``.
     archive_dir (str): Archive data directory (find root).
     tgz_archive_dir (str): Daily archive directory for append classify.
     log_fn (Callable[..., None] | None): Optional logger.
-    mtime_days (int | None): Optional fd ``--changed-within`` window.
+    mtime_days (int | None): Optional fd ``--changed-within`` window, or
+      ``None`` for a full archive scan.
     startdate (Any): Inclusive CLI start date, or ``None``.
     enddate (Any): Inclusive CLI end date, or ``None``.
 
