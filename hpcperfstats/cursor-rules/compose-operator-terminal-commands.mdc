@@ -871,12 +871,20 @@ Operators already know their compose checkout; leading `cd` adds noise and break
 ## Plans and blocked work
 
 - In **`.cursor/plans/*.plan.md`** (live plans), record operator commands under **`## Operator discovery`** → **`### Pending commands`** with service-labeled blocks and **expected output** to return. On results, append **`### Completed findings`** (asked vs found), **remove** the spent command block, and update **Problem and facts** if needed (`plan-live-disk-sync.mdc`).
+- **Pending `bash` fences must be fully executable as pasted.** Forbidden inside fences: `#` comments, “Operator: …”, placeholders that require the operator to invent steps, or prose that is not a shell command. Intent / paste-back expectations live only in the `#### service — …` label and prose **outside** the fence.
 - In committed **`docs/plans/`** design baselines, use the same **Operator discovery** shape when the baseline documents operator steps.
 - **Proactively request read-only pastes** during planning when logs, RSS, cgroup stats, file sizes, or DB/Redis facts would improve root-cause analysis or fix design — **no redeploy required** (`deploy-ini-with-code-no-phase-zero.mdc`).
 - Also use commands when **blocked** mid-implementation or for **post-deploy verification** after a release redeploy.
 - **Do not** use command blocks to ask for production **INI edits or container restart** before code ships — that is a redeploy, not data gathering.
 - When facts are missing and would change the plan, **do not guess** — ask for the paste (`plan-creation-contract.mdc` → *Grounding*).
 - When a command **fails**, update this file in the **same task** per **`operator-command-lessons-learned.mdc`** — do not repeat broken patterns in new plans.
+
+**Anti-pattern — `measure_pipeline_ingest_rate.py` positional log path (hpcperfstats02 2026-09-17):** `scripts/measure_pipeline_ingest_rate.py /tmp/….log` fails with `unrecognized arguments`. **Corrected:** pass `--log-file PATH`, or `--fetch-compose`, or stdin — never a bare positional path.
+
+```bash
+podman-compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
+  su hpcperfstats -c 'python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-rates.log'
+```
 
 ## Overlap
 

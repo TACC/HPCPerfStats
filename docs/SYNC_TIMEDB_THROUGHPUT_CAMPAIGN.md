@@ -85,11 +85,11 @@ acceptance, rollback, status.
 | ID | Hypothesis | Target metric | Surface | Status |
 |----|------------|---------------|---------|--------|
 | E1 | Ingest width below 96 raises durable files/s and cuts lock wait | lower CI bound files/s; p95 lock wait | INI `sync_ingest_pool_processes` + scaling study | **knee evidence present** — artifact `test_runs/sync_timedb_bench/knee_6364b97ef38f45c4b0399ea3d20044ca.json` (widths 48/64/80/96, 5 replicates). Winner **48** threads (selection prefers smallest width within CI of peak; means nearly flat ≈0.050–0.053 files/s). Screening hint 64 superseded for knee candidate. Caveat: wall-clock used small/mid derived files under compose; not a production INI change. Harness fixes: `--knee` clears ambient `SCREEN_WIDTHS`/`REPLICATES`; early-shutdown watcher bound to ingest timeout + file-complete marks |
-| E2 | Closed-book residual ≤5% mid-size cohort | residual fraction | write/lock/parse telemetry | **artifact present** — `test_runs/sync_timedb_bench/e2_closed_book_8768f659741f42a28d52ffc07a7ba49d.json` (8 mid hosts from corpus_knee/steady, wall≈165s). `residual_frac=1.0` / `residual_ok=false` (empty phase map — once-mode telemetry still incomplete; contract recorded, not a hard pytest fail) |
-| E3 | Non-overlapping listend rate revises LOSING margin | listend/ingest ratio | analyzer (done) | **complete (LOSING)** — fixed analyzer + timestamps; 02/04 ~4.5h post-redeploy pastes with `--since-minutes 1440` both **verdict_full_ingest=LOSING** (ratios 2.3 / 66.9); absolute rates diluted; true calendar-24h optional later |
-| E4 | Split ORM vs DB execute shrinks false “postgres” blame | phase shares | ingest write phases | helpers shipped; production enable pending |
-| E5 | Reduce day-close overlap contention | flock timeouts / day-close wall | day-close inflight | pending study |
-| E6 | Evidence-led parse merge optimization on LS6 shape | files/s on 02-derived tier | parsing hot path | blocked — needs controlled knee (E1/E2) before product patch |
+| E2 | Closed-book residual ≤5% mid-size cohort | residual fraction | write/lock/parse telemetry | **pass after telem fix** — `test_runs/sync_timedb_bench/e2_closed_book_da92427028ed4dfbb430053defac3d72.json` (wall≈148s, **23 phases**, `residual_frac=0.0`, `residual_ok=true`). Dominant campaign holds: `parse_feed_s`, `parse_build_df_s`, `parse_proc_merge_s`, then `write_postgres_s` / `write_db_execute_s`. (Prior empty-phases artifact `…8768f659…` superseded.) Note: campaign phase seconds can exceed wall when workers run in parallel — residual uses closed-book accounting against wall |
+| E3 | Non-overlapping listend rate revises LOSING margin | listend/ingest ratio | analyzer (done) | **complete (LOSING)** — fixed analyzer + timestamps; 02/04 ~4.5h post-redeploy pastes with `--since-minutes 1440` both **verdict_full_ingest=LOSING** (ratios 2.3 / 66.9); absolute rates diluted; undiluted ~3.2h recompute: **02 ratio 2.76**, **04 ratio 1.24** (both LOSING; archive_done 0) |
+| E4 | Split ORM vs DB execute shrinks false “postgres” blame | phase shares | ingest write phases | helpers + process-global write telem shipped; E2 now shows `write_postgres_s` / `write_db_execute_s` / `write_orm_materialize_s` populated |
+| E5 | Reduce day-close overlap contention | flock timeouts / day-close wall | day-close inflight | **knobs matrix complete** — `knobs_cf29f0b42561480f99280ce0616c973d.json` @ ingest width 48 ×3 reps. Candidates (smallest within 5% of peak): day_close **1**, archive **1**, populate **1**, bulk **2000**. Curves for day_close/archive/populate nearly flat (~0.045–0.047 files/s); bulk slowest absolute (~0.023–0.025) — treat as campaign hint only, early-shutdown clock excludes most day_close wall |
+| E6 | Evidence-led parse merge optimization on LS6 shape | files/s on 02-derived tier | parsing hot path | **unblocked for design** — E2 phases name parse_feed / build_df / proc_merge as top holds; still no product CODE this tranche (paired A/B + CI required first) |
 
 Closed-book store locks: default-off ``TimedRLock`` on job/members stores emits
 ``job_store_wait_s`` / ``job_store_hold_s`` / ``members_store_wait_s`` /
@@ -113,8 +113,14 @@ tests/run_sync_timedb_benchmark_workflow.sh
 tests/run_sync_timedb_benchmark_workflow.sh --screening
 tests/run_sync_timedb_benchmark_workflow.sh --knee
 tests/run_sync_timedb_benchmark_workflow.sh --e2
+tests/run_sync_timedb_benchmark_workflow.sh --knobs
 ```
 
+Supporting knobs (Test 2 stage 3): sequential factor sweeps at fixed ingest
+width **48** via `--knobs` → `knobs_*.json` (day-close / archive / populate /
+bulk-create). Live compose matrix complete 2026-09-18
+(`knobs_cf29f0b42561480f99280ce0616c973d.json`, 9h on 3.14t). Winners remain
+**campaign candidates only** — not production INI.
 ## Selection rule (when study artifacts exist)
 
 Maximize lower-confidence-bound durable throughput subject to correctness, no
@@ -137,9 +143,10 @@ Screening winner ≠ deployable INI without knee confirmation (follow-on).
 ## Next actions
 
 1. ~~Knee confirmation (≥5 replicates, widths 48–96)~~ — done; candidate **48** (flat curve). Still not an INI redeploy.
-2. Closed-book E2 residual artifact + ledger update (same tranche).
-3. Mature 24h analyzer recompute on 02/04 when continuous logs exist.
-4. Amend the live plan with measured root-cause lines before any product
-   bottleneck fix; retain only paired A/B wins.
-5. Operator T0/T1/T2 stall verify on a backlog site when accessible
+2. ~~Compose E2 re-run after telem fix~~ — done 2026-09-17; `residual_frac=0.0`, 23 phases (`e2_closed_book_da92427028ed4dfbb430053defac3d72.json`).
+3. ~~Compose `--knobs` matrix @48~~ — done 2026-09-18; candidates day_close/archive/populate **1**, bulk **2000** (`knobs_cf29f0b42561480f99280ce0616c973d.json`). Flat day-close/archive/populate — do not raise inflight from knobs alone.
+4. Mature 24h analyzer recompute on 02/04 when continuous logs exist.
+5. Evidence-led E6 **product CODE** (parse_feed / build_df / proc_merge) via paired A/B + CI; never INI-only redeploy.
+6. Operator T1/T2 stall verify on a backlog site when accessible
    (agent host lacks BatchMode SSH to 02/04 — Host key verification failed).
+   Undiluted rates + T0 census already recorded (02 ratio 2.76 / 04 ratio 1.24).

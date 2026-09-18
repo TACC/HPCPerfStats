@@ -215,6 +215,19 @@ tests/run_sync_timedb_benchmark_workflow.sh --e2
 
 Artifacts land in `test_runs/sync_timedb_bench/e2_closed_book_*.json`.
 
+Supporting-knob sweeps at fixed ingest width **48** (sequential day-close /
+archive / populate / bulk-create; ≥3 replicates; corpus_steady by default):
+
+```bash
+cd HPCPerfStats
+# Ambient SCREEN_WIDTHS/REPLICATES cleared unless KNEE_ALLOW_SCREEN_ENV=1.
+# Optional: HPCPERFSTATS_SYNC_TIMEDB_KNOBS_WIDTH=48
+tests/run_sync_timedb_benchmark_workflow.sh --knobs
+```
+
+Artifacts land in `test_runs/sync_timedb_bench/knobs_*.json` (campaign candidates
+only; not a production INI change).
+
 Derived corpus (identity rewrite; never mutates exemplars):
 
 ```bash

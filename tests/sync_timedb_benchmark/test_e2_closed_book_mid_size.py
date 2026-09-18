@@ -80,7 +80,7 @@ def test_e2_closed_book_mid_size(monkeypatch):
   )
   from hpcperfstats.dbload.lib.sync_timedb_parsing import (
       reset_parse_stage_timing,
-      snapshot_parse_stage_timing,
+      snapshot_parse_stage_campaign_timing,
   )
   from hpcperfstats.dbload.lib.sync_timedb_queue_orchestrator import (
       request_shutdown,
@@ -176,15 +176,14 @@ def test_e2_closed_book_mid_size(monkeypatch):
   finally:
     stop.set()
     wall_s = time.perf_counter() - wall0
+    file_snap = snapshot_file_lock_timing()
+    store_snap = snapshot_store_lock_timing()
+    parse_snap = snapshot_parse_stage_campaign_timing()
+    write_snap = st._snapshot_ingest_write_campaign_timing()
     reset_file_lock_timing(enabled=False)
     reset_store_lock_timing(enabled=False)
     reset_parse_stage_timing(enabled=False)
     st._reset_ingest_write_timing(enabled=False)
-
-  file_snap = snapshot_file_lock_timing()
-  store_snap = snapshot_store_lock_timing()
-  parse_snap = snapshot_parse_stage_timing()
-  write_snap = getattr(st, "_ingest_write_telem", {}) or {}
 
   phases: dict[str, float] = {}
   for key, value in {
@@ -220,5 +219,7 @@ def test_e2_closed_book_mid_size(monkeypatch):
   assert out.is_file()
   assert "residual_frac" in payload
   # residual_ok records the ≤5% contract; unmet residual is ledger evidence,
-  # not a hard pytest failure (telemetry may still be incomplete in once-mode).
+  # not a hard pytest failure (some wall may remain outside instrumented holds).
   assert isinstance(residual_ok, bool)
+  assert isinstance(phases, dict)
+  assert len(phases) > 0, "closed-book phases must be non-empty after telem fix"

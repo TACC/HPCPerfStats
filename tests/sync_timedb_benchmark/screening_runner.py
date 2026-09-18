@@ -17,6 +17,22 @@ SCREENING_WIDTHS: tuple[int, ...] = (
 KNEE_WIDTHS: tuple[int, ...] = (48, 64, 80, 96)
 DEFAULT_REPLICATES = 2
 DEFAULT_KNEE_REPLICATES = 5
+DEFAULT_KNOBS_WIDTH = 48
+DEFAULT_KNOBS_REPLICATES = 3
+KNOB_SWEEPS: tuple[tuple[str, tuple[int, ...]], ...] = (
+    ("sync_day_close_max_inflight", (1, 2, 4, 8, 16)),
+    ("sync_archive_pool_processes", (1, 2, 4, 8)),
+    ("sync_archive_members_populate_pool_processes", (1, 2, 4, 8)),
+    ("sync_bulk_create_batch_size", (500, 1000, 2000, 4000)),
+)
+KNOB_GETTERS: dict[str, str] = {
+    "sync_day_close_max_inflight": "get_sync_day_close_max_inflight",
+    "sync_archive_pool_processes": "get_sync_archive_pool_processes",
+    "sync_archive_members_populate_pool_processes": (
+        "get_sync_archive_members_populate_pool_processes"
+    ),
+    "sync_bulk_create_batch_size": "get_sync_bulk_create_batch_size",
+}
 ARTIFACT_SUBDIR = Path("test_runs") / "sync_timedb_bench"
 
 
@@ -43,6 +59,128 @@ def knee_mode_enabled(raw: str | None = None) -> bool:
       else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_KNEE", "")
   ).strip().lower()
   return text in ("1", "yes", "true")
+
+
+def knobs_mode_enabled(raw: str | None = None) -> bool:
+  """
+  Return whether supporting-knob sweep mode is enabled.
+
+  Args:
+    raw (str | None): Override string; defaults to
+      ``HPCPERFSTATS_SYNC_TIMEDB_KNOBS``.
+
+  Returns:
+    bool: True when the env/override is a truthy flag.
+
+  Examples:
+    >>> knobs_mode_enabled("1")
+    True
+  """
+  text = (
+      raw
+      if raw is not None
+      else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_KNOBS", "")
+  ).strip().lower()
+  return text in ("1", "yes", "true")
+
+
+def knobs_fixed_width(raw: str | None = None) -> int:
+  """
+  Return the fixed ingest width for supporting-knob sweeps.
+
+  Args:
+    raw (str | None): Override; defaults to
+      ``HPCPERFSTATS_SYNC_TIMEDB_KNOBS_WIDTH`` or
+      :data:`DEFAULT_KNOBS_WIDTH`.
+
+  Returns:
+    int: Positive ingest width.
+
+  Examples:
+    >>> knobs_fixed_width("48")
+    48
+  """
+  text = (
+      raw
+      if raw is not None
+      else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_KNOBS_WIDTH", "")
+  ).strip()
+  if not text:
+    return DEFAULT_KNOBS_WIDTH
+  value = int(text)
+  if value < 1:
+    raise ValueError("knobs width must be >= 1: %r" % text)
+  return value
+
+
+def select_knob_winner(points: Sequence[dict[str, Any]]) -> dict[str, Any]:
+  """
+  Pick the smallest knob value within 5% of the peak mean files/s.
+
+  Args:
+    points (Sequence[dict[str, Any]]): Per-value study points with
+      ``value`` and ``mean_files_per_s``.
+
+  Returns:
+    dict[str, Any]: Winner point (empty when ``points`` is empty).
+
+  Examples:
+    >>> select_knob_winner(
+    ...     [{"value": 2, "mean_files_per_s": 1.0},
+    ...      {"value": 8, "mean_files_per_s": 1.02}],
+    ... )["value"]
+    2
+  """
+  if not points:
+    return {}
+  peak = max(float(point["mean_files_per_s"]) for point in points)
+  threshold = peak * 0.95
+  eligible = [
+      point for point in points
+      if float(point["mean_files_per_s"]) >= threshold
+  ]
+  return min(eligible, key=lambda point: int(point["value"]))
+
+
+def build_knobs_manifest(
+    *,
+    factors: Sequence[dict[str, Any]],
+    ingest_width: int,
+    replicates: int,
+    python_abi: str,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+  """
+  Build a supporting-knobs campaign artifact payload.
+
+  Args:
+    factors (Sequence[dict[str, Any]]): Per-factor sweep results.
+    ingest_width (int): Fixed ingest pool width for the study.
+    replicates (int): Replicates per knob value.
+    python_abi (str): Interpreter identity string.
+    run_id (str | None): Optional run id.
+
+  Returns:
+    dict[str, Any]: Knobs artifact dictionary.
+
+  Examples:
+    >>> build_knobs_manifest(
+    ...     factors=[], ingest_width=48, replicates=3, python_abi="3.14",
+    ... )["kind"]
+    'supporting_knobs'
+  """
+  return {
+      "run_id": run_id or uuid.uuid4().hex,
+      "kind": "supporting_knobs",
+      "python_abi": python_abi,
+      "ingest_width": int(ingest_width),
+      "replicates": int(replicates),
+      "factors": list(factors),
+      "note": (
+          "knob winners are campaign candidates only; not a production "
+          "INI recommendation"
+      ),
+  }
 
 
 def parse_widths_env(raw: str | None = None) -> tuple[int, ...]:
@@ -109,6 +247,8 @@ def parse_replicates_env(raw: str | None = None) -> int:
       else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES", "")
   ).strip()
   if not text:
+    if knobs_mode_enabled():
+      return DEFAULT_KNOBS_REPLICATES
     return (
         DEFAULT_KNEE_REPLICATES if knee_mode_enabled() else DEFAULT_REPLICATES
     )
@@ -116,6 +256,56 @@ def parse_replicates_env(raw: str | None = None) -> int:
   if value < 1:
     raise ValueError("replicates must be >= 1")
   return value
+
+
+def knob_getter_name(factor: str) -> str:
+  """
+  Map a supporting-knob factor key to its ``conf_parser`` getter name.
+
+  Args:
+    factor (str): Campaign knob key (INI-style name).
+
+  Returns:
+    str: ``get_sync_*`` attribute name on ``conf_parser``.
+
+  Raises:
+    KeyError: When ``factor`` is not in :data:`KNOB_GETTERS`.
+
+  Examples:
+    >>> knob_getter_name("sync_day_close_max_inflight")
+    'get_sync_day_close_max_inflight'
+  """
+  return KNOB_GETTERS[factor]
+
+
+def summarize_knob_replicates(
+    value: int,
+    files_per_s_samples: Sequence[float],
+    *,
+    long_lock_wait: bool = False,
+) -> dict[str, Any]:
+  """
+  Build a supporting-knob study point from replicate throughput samples.
+
+  Args:
+    value (int): Knob setting for the point.
+    files_per_s_samples (Sequence[float]): Per-replicate durable files/s.
+    long_lock_wait (bool): When true, mark the point ineligible to win.
+
+  Returns:
+    dict[str, Any]: Point dict with ``value`` and ``mean_files_per_s``.
+
+  Examples:
+    >>> summarize_knob_replicates(8, [1.0, 1.2])["value"]
+    8
+  """
+  point = summarize_width_replicates(
+      value,
+      files_per_s_samples,
+      long_lock_wait=long_lock_wait,
+  )
+  point["value"] = int(point.pop("threads"))
+  return point
 
 
 def corpus_hosts(corpus_dir: Path) -> list[str]:

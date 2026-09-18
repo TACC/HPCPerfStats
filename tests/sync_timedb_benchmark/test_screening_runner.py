@@ -196,3 +196,98 @@ def test_write_screening_artifact_round_trip(tmp_path):
   out = write_screening_artifact(payload, repo_root=tmp_path)
   assert out.name == "screening_abc123.json"
   assert out.is_file()
+
+
+def test_knobs_mode_defaults_and_winner(monkeypatch):
+  from tests.sync_timedb_benchmark.screening_runner import (
+      DEFAULT_KNOBS_REPLICATES,
+      DEFAULT_KNOBS_WIDTH,
+      KNOB_SWEEPS,
+      build_knobs_manifest,
+      knobs_fixed_width,
+      knobs_mode_enabled,
+      knob_getter_name,
+      parse_replicates_env,
+      select_knob_winner,
+      summarize_knob_replicates,
+      write_screening_artifact,
+  )
+
+  monkeypatch.setenv("HPCPERFSTATS_SYNC_TIMEDB_KNOBS", "1")
+  monkeypatch.delenv("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES", raising=False)
+  monkeypatch.delenv("HPCPERFSTATS_SYNC_TIMEDB_KNOBS_WIDTH", raising=False)
+  assert knobs_mode_enabled()
+  assert knobs_fixed_width() == DEFAULT_KNOBS_WIDTH
+  assert parse_replicates_env() == DEFAULT_KNOBS_REPLICATES
+  assert knob_getter_name("sync_day_close_max_inflight") == (
+      "get_sync_day_close_max_inflight"
+  )
+  assert KNOB_SWEEPS[0][0] == "sync_day_close_max_inflight"
+  winner = select_knob_winner(
+      [
+          summarize_knob_replicates(2, [1.0, 1.0]),
+          summarize_knob_replicates(8, [1.02, 1.03]),
+      ],
+  )
+  assert winner["value"] == 2
+
+
+def test_write_knobs_artifact_prefix(tmp_path):
+  from tests.sync_timedb_benchmark.screening_runner import (
+      build_knobs_manifest,
+      write_screening_artifact,
+  )
+
+  payload = build_knobs_manifest(
+      factors=[{"factor": "sync_day_close_max_inflight", "winner": {"value": 8}}],
+      ingest_width=48,
+      replicates=3,
+      python_abi="3.14t",
+      run_id="knobsid",
+  )
+  assert payload["kind"] == "supporting_knobs"
+  out = write_screening_artifact(payload, repo_root=tmp_path, prefix="knobs")
+  assert out.name == "knobs_knobsid.json"
+
+
+def test_workflow_knobs_flag_and_ambient_clear():
+  text = (
+      Path(__file__).resolve().parents[1]
+      / "run_sync_timedb_benchmark_workflow.sh"
+  ).read_text(encoding="utf-8")
+  assert "--knobs" in text
+  assert "HPCPERFSTATS_SYNC_TIMEDB_KNOBS=1" in text
+  inner = (
+      Path(__file__).resolve().parents[1]
+      / "run_sync_timedb_benchmark_inner.sh"
+  ).read_text(encoding="utf-8")
+  assert "test_supporting_knobs.py" in inner
+  assert "HPCPERFSTATS_SYNC_TIMEDB_KNOBS" in inner
+
+
+def test_write_knobs_artifact_under_repo_test_runs():
+  """Host harness proof for knobs_*.json gate (compose matrix deferred)."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+      build_knobs_manifest,
+      write_screening_artifact,
+  )
+
+  repo_root = Path(__file__).resolve().parents[2]
+  payload = build_knobs_manifest(
+      factors=[
+          {
+              "factor": "sync_day_close_max_inflight",
+              "points": [{"value": 8, "mean_files_per_s": 0.05}],
+              "winner": {"value": 8, "mean_files_per_s": 0.05},
+              "note": "host unit harness proof; not a live matrix winner",
+          },
+      ],
+      ingest_width=48,
+      replicates=3,
+      python_abi="host-unit",
+      run_id="host_harness_proof",
+  )
+  out = write_screening_artifact(payload, repo_root=repo_root, prefix="knobs")
+  assert out.is_file()
+  assert out.name.startswith("knobs_")
+  assert "test_runs/sync_timedb_bench" in str(out)

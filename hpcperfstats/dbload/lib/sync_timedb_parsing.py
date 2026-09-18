@@ -11,8 +11,10 @@ Attributes:
   PARSE_STAGE_BUILD_DF_PARTS: Attribute.
   PARSE_STAGE_HOLD_KEYS: Attribute.
   PARSE_STAGE_LOG_KEYS: Attribute.
-  _parse_stage_s: Attribute.
-  _parse_stage_telem_on: Attribute.
+  _parse_stage_campaign: Process-wide closed-book stage totals.
+  _parse_stage_campaign_lock: Mutex for campaign totals.
+  _parse_stage_s: Per-file stage ContextVar.
+  _parse_stage_telem_on: Process-wide parse-stage timing enable flag.
   _STATS_COL_NAMES: Attribute.
   _ARC_GROUP_COLS: Attribute.
   _COLLAPSE_GROUP_COLS: Attribute.
@@ -38,6 +40,7 @@ Attributes:
 from __future__ import annotations
 
 import contextvars
+import threading
 import time
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -124,24 +127,49 @@ PARSE_STAGE_LOG_KEYS: tuple[str, ...] = PARSE_STAGE_HOLD_KEYS + (
     "stages_sum_s",
     "parse_unaccounted_s",
 )
-_parse_stage_telem_on: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "parse_stage_telem_on",
-    default=False,
-)
+_parse_stage_telem_on = False
+_parse_stage_campaign: dict[str, float] = {
+    key: 0.0 for key in PARSE_STAGE_HOLD_KEYS
+}
+_parse_stage_campaign_lock = threading.Lock()
 _parse_stage_s: contextvars.ContextVar[dict[str, float]] = contextvars.ContextVar(
     "parse_stage_s",
     default={},
 )
 
 
-def reset_parse_stage_timing(*, enabled: bool | None = None) -> None:
+def _parse_stage_derived(acc: dict[str, float]) -> dict[str, float]:
   """
-  Zero per-file parse-stage accumulators; optionally set enable flag.
+  Build hold keys plus derived ``build_df_s`` / ``stages_sum_s`` from holds.
 
   Args:
-    enabled (bool | None): When ``None``, read
-      ``sync_ingest_parse_stage_telemetry`` from conf. When ``False``, no
-      ``perf_counter`` holds run for this file.
+    acc (dict[str, float]): Hold-key seconds (missing treated as 0).
+
+  Returns:
+    dict[str, float]: Every hold key plus derived sums.
+
+  Examples:
+    >>> _parse_stage_derived({"feed_s": 1.0})["stages_sum_s"] >= 1.0
+    True
+  """
+  out = {key: float(acc.get(key, 0.0)) for key in PARSE_STAGE_HOLD_KEYS}
+  out["build_df_s"] = sum(out[key] for key in PARSE_STAGE_BUILD_DF_PARTS)
+  out["stages_sum_s"] = sum(out[key] for key in PARSE_STAGE_HOLD_KEYS)
+  return out
+
+
+def reset_parse_stage_timing(*, enabled: bool | None = None) -> None:
+  """
+  Zero per-file parse-stage ContextVar; optionally set process-wide enable.
+
+  Process-wide enable is sticky across per-file ``enabled=None`` resets so
+  ingest pool workers keep recording after a controller enable. Explicit
+  ``enabled=True`` also zeros the campaign totals used by closed-book E2.
+
+  Args:
+    enabled (bool | None): When ``None``, keep process-wide enable if already
+      on; otherwise read ``sync_ingest_parse_stage_telemetry`` from conf.
+      When ``False``, no ``perf_counter`` holds run.
 
   Returns:
     None
@@ -149,16 +177,28 @@ def reset_parse_stage_timing(*, enabled: bool | None = None) -> None:
   Examples:
     >>> reset_parse_stage_timing(enabled=False)
   """
+  global _parse_stage_telem_on
   if enabled is None:
-    from hpcperfstats.dbload.lib import conf_parser as cfg
-    enabled = bool(cfg.get_sync_ingest_parse_stage_telemetry())
-  _parse_stage_telem_on.set(bool(enabled))
+    if not _parse_stage_telem_on:
+      from hpcperfstats.dbload.lib import conf_parser as cfg
+      with _parse_stage_campaign_lock:
+        _parse_stage_telem_on = bool(
+            cfg.get_sync_ingest_parse_stage_telemetry(),
+        )
+        if _parse_stage_telem_on:
+          for key in PARSE_STAGE_HOLD_KEYS:
+            _parse_stage_campaign[key] = 0.0
+  else:
+    with _parse_stage_campaign_lock:
+      _parse_stage_telem_on = bool(enabled)
+      for key in PARSE_STAGE_HOLD_KEYS:
+        _parse_stage_campaign[key] = 0.0
   _parse_stage_s.set({key: 0.0 for key in PARSE_STAGE_HOLD_KEYS})
 
 
 def snapshot_parse_stage_timing() -> dict[str, float]:
   """
-  Return stage seconds when telemetry is enabled for this file.
+  Return per-file stage seconds from the current thread ContextVar.
 
   Returns:
     dict[str, float]: Empty when disabled; else every hold key plus derived
@@ -169,13 +209,27 @@ def snapshot_parse_stage_timing() -> dict[str, float]:
     >>> snapshot_parse_stage_timing()
     {}
   """
-  if not _parse_stage_telem_on.get():
+  if not _parse_stage_telem_on:
     return {}
-  acc = _parse_stage_s.get()
-  out = {key: float(acc.get(key, 0.0)) for key in PARSE_STAGE_HOLD_KEYS}
-  out["build_df_s"] = sum(out[key] for key in PARSE_STAGE_BUILD_DF_PARTS)
-  out["stages_sum_s"] = sum(out[key] for key in PARSE_STAGE_HOLD_KEYS)
-  return out
+  return _parse_stage_derived(_parse_stage_s.get())
+
+
+def snapshot_parse_stage_campaign_timing() -> dict[str, float]:
+  """
+  Return process-wide parse-stage totals accumulated across ingest threads.
+
+  Returns:
+    dict[str, float]: Empty when disabled; else hold keys plus derived sums.
+
+  Examples:
+    >>> reset_parse_stage_timing(enabled=False)
+    >>> snapshot_parse_stage_campaign_timing()
+    {}
+  """
+  if not _parse_stage_telem_on:
+    return {}
+  with _parse_stage_campaign_lock:
+    return _parse_stage_derived(_parse_stage_campaign)
 
 
 def attach_parse_unaccounted(meta: dict[str, Any]) -> dict[str, Any]:
@@ -206,7 +260,7 @@ def attach_parse_unaccounted(meta: dict[str, Any]) -> dict[str, Any]:
 
 def _add_parse_stage_s(stage: str, delta_s: float) -> None:
   """
-  Accumulate non-negative seconds into the parse-stage dict ContextVar.
+  Accumulate non-negative seconds into per-file and campaign parse totals.
 
   Args:
     stage (str): A key in ``PARSE_STAGE_HOLD_KEYS``.
@@ -219,12 +273,18 @@ def _add_parse_stage_s(stage: str, delta_s: float) -> None:
     >>> reset_parse_stage_timing(enabled=True)
     >>> _add_parse_stage_s("feed_s", 0.25)
   """
+  if not _parse_stage_telem_on:
+    return
   delta = float(delta_s)
   if delta <= 0.0 or stage not in PARSE_STAGE_HOLD_KEYS:
     return
   acc = dict(_parse_stage_s.get())
   acc[stage] = float(acc.get(stage, 0.0)) + delta
   _parse_stage_s.set(acc)
+  with _parse_stage_campaign_lock:
+    _parse_stage_campaign[stage] = (
+        float(_parse_stage_campaign.get(stage, 0.0)) + delta
+    )
 
 
 @contextmanager
@@ -243,7 +303,7 @@ def _held_parse_stage(stage: str) -> Iterator[None]:
     >>> with _held_parse_stage("feed_s"):
     ...   pass
   """
-  if not _parse_stage_telem_on.get():
+  if not _parse_stage_telem_on:
     yield
     return
   t0 = time.perf_counter()
@@ -2079,7 +2139,7 @@ class IncrementalStatsParser:
       ...     {"jid": "j", "host": "h", "proc": "p", "vm_peak": 1})
     """
     key = (row.get("jid"), row.get("host"), row.get("proc"))
-    if not _parse_stage_telem_on.get():
+    if not _parse_stage_telem_on:
       existing = self._proc_by_key.get(key)
       if existing is None:
         self._proc_by_key[key] = row

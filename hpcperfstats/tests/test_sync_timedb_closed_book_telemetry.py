@@ -194,3 +194,63 @@ def test_store_lock_telemetry_contended_wait_positive(tmp_path):
     release.set()
     owner.join(timeout=2)
     reset_store_lock_timing(enabled=False)
+
+
+def test_parse_stage_campaign_accumulates_from_worker_thread():
+  """Process-global parse enable must record holds from a worker thread."""
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+      _held_parse_stage,
+      reset_parse_stage_timing,
+      snapshot_parse_stage_campaign_timing,
+      snapshot_parse_stage_timing,
+  )
+
+  reset_parse_stage_timing(enabled=True)
+  try:
+    err: list[BaseException] = []
+
+    def _worker() -> None:
+      try:
+        reset_parse_stage_timing()
+        with _held_parse_stage("feed_s"):
+          time.sleep(0.02)
+      except BaseException as exc:  # noqa: BLE001 — surface in parent
+        err.append(exc)
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    thread.join(timeout=2)
+    assert not err
+    assert thread.is_alive() is False
+    campaign = snapshot_parse_stage_campaign_timing()
+    assert campaign.get("feed_s", 0.0) >= 0.01
+    # Controller thread ContextVar stays empty; campaign holds worker time.
+    assert snapshot_parse_stage_timing().get("feed_s", 0.0) == 0.0
+  finally:
+    reset_parse_stage_timing(enabled=False)
+
+
+def test_ingest_write_campaign_accumulates_from_worker_thread():
+  """Process-global write enable must record phases from a worker thread."""
+  st._reset_ingest_write_timing(enabled=True)
+  try:
+    err: list[BaseException] = []
+
+    def _worker() -> None:
+      try:
+        st._reset_ingest_write_timing()
+        with st._held_ingest_write_timing():
+          with st._held_ingest_write_phase("db_execute_s"):
+            time.sleep(0.02)
+      except BaseException as exc:  # noqa: BLE001 — surface in parent
+        err.append(exc)
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    thread.join(timeout=2)
+    assert not err
+    campaign = st._snapshot_ingest_write_campaign_timing()
+    assert campaign.get("db_execute_s", 0.0) >= 0.01
+    assert campaign.get("postgres_s", 0.0) >= 0.01
+  finally:
+    st._reset_ingest_write_timing(enabled=False)
