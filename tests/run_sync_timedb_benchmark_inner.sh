@@ -31,7 +31,12 @@ if [[ -f /tmp/hpcperfstats_pytest_extra_args ]]; then
 fi
 
 PYTEST_TARGET=(tests/sync_timedb_benchmark)
-if [[ "${HPCPERFSTATS_SYNC_TIMEDB_SCREENING:-}" == "1" ]]; then
+if [[ "${HPCPERFSTATS_SYNC_TIMEDB_E2:-}" == "1" ]]; then
+  PYTEST_TARGET=(
+    tests/sync_timedb_benchmark/test_e2_closed_book_mid_size.py
+  )
+elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_SCREENING:-}" == "1" \
+     || "${HPCPERFSTATS_SYNC_TIMEDB_KNEE:-}" == "1" ]]; then
   PYTEST_TARGET=(
     tests/sync_timedb_benchmark/test_ingest_width_screening.py
   )
@@ -39,4 +44,5 @@ fi
 
 echo "Running ${PYTEST_TARGET[*]} under 3.14t..."
 "$PYT" -c 'import sys; print(sys.version)'
-exec "$PYT" -m pytest "${PYTEST_TARGET[@]}" -q --tb=short "${PYTEST_EXTRA[@]}"
+# -s: show replicate progress (print flush) during long knee/screening matrices.
+exec env PYTHONUNBUFFERED=1 "$PYT" -m pytest "${PYTEST_TARGET[@]}" -s -q --tb=short "${PYTEST_EXTRA[@]}"

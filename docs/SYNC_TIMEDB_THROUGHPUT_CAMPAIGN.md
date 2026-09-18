@@ -5,8 +5,9 @@ Canonical interpreted baseline and ongoing optimization ledger for durable
 `test_runs/sync_timedb_bench/` and `test_runs/sync_timedb_campaign/`.
 
 Operational parallelism model: [`SYNC_TIMEDB_PARALLELISM.md`](SYNC_TIMEDB_PARALLELISM.md).
-Live plan: workspace `.cursor/plans/sync-timedb-campaign-kickoff.plan.md`
-(parent design: `.cursor/plans/sync-timedb-throughput-scaling.plan.md`).
+Live plan: workspace `.cursor/plans/sync-timedb-campaign-knee.plan.md`
+(kickoff complete: `.cursor/plans/sync-timedb-campaign-kickoff.plan.md`;
+parent design: `.cursor/plans/sync-timedb-throughput-scaling.plan.md`).
 
 ## Campaign goal
 
@@ -19,12 +20,11 @@ not the end state.
 
 | Site | Role | Notes |
 |------|------|--------|
-| hpcperfstats02 | LS6 / exemplar source | Provisional post-redeploy (~28m, diluted `--since-minutes 90`): listend 0.4333/min, full-ingest 0.6444/min, **verdict_full_ingest=WINNING**; archive_done 0; ETA N/A (no disk_pending) |
-| hpcperfstats04 | Horizon / ARM exemplars | Provisional post-redeploy (~31m undiluted): listend 0.5423/min, full-ingest 3.7005/min, **verdict_full_ingest=WINNING**; archive_done 0; ETA N/A |
+| hpcperfstats02 | LS6 / exemplar source | **LOSING** (~4.48h post-redeploy span; `--since-minutes 1440` dilutes absolutes): listend 0.5028/min, full-ingest 0.2174/min, ratio 2.3131; archive_done 0; ETA N/A (no disk_pending). Kickoff short-window WINNING superseded. |
+| hpcperfstats04 | Horizon / ARM exemplars | **LOSING** (~4.52h span; same dilution): listend 11.8507/min, full-ingest 0.1771/min, ratio 66.9216; archive_done 0; ETA N/A. Severe arrival≫drain gap. |
 | hpcperfstats01 | Stampede3 exemplars | Giant-file strata; corpus only in this baseline |
 
-Mature ~24h recompute deferred (optional). Prior multi-hour LOSING pastes are
-superseded for kickoff by these provisional WINNING snapshots.
+True calendar-24h still limited by ~4.5h continuous post-redeploy logs; ratios/verdicts usable. Absolute rates undiluted optional (omit `--since-minutes`).
 
 Effective concurrency observed on hpcperfstats02 (campaign snapshot):
 
@@ -59,6 +59,10 @@ Smoke derived corpus (kickoff): `test_runs/sync_timedb_bench/corpus_smoke/`
 via `scripts/derive_sync_timedb_benchmark_corpus.py --max-files N --host-suffix
 .cluster_name.domain.edu` (manifest + SHA-256 oracle; sources unchanged).
 
+Steady corpus (knee): `test_runs/sync_timedb_bench/corpus_steady/` — 24
+smallest exemplars across 01/02/04 (~636 MiB, identity-shifted; sources
+unchanged).
+
 ## Bottleneck ranking (pre-study, production-informed)
 
 Scored from wall share / sensitivity / contention growth / safety risk.
@@ -80,9 +84,9 @@ acceptance, rollback, status.
 
 | ID | Hypothesis | Target metric | Surface | Status |
 |----|------------|---------------|---------|--------|
-| E1 | Ingest width below 96 raises durable files/s and cuts lock wait | lower CI bound files/s; p95 lock wait | INI `sync_ingest_pool_processes` + scaling study | **screening evidence present** — artifact `test_runs/sync_timedb_bench/screening_3d87ea476cb64f87b0fda69209d7f503.json` (widths 1–96, 2 replicates, early-exit after durable ingest); winner hint **64** threads (narrowest CI near peak). Caveat: smoke corpus (~350KB×3) + early-exit makes files/s nearly flat vs width; treat as harness/knee-hint only. Knee confirmation still pending |
-| E2 | Closed-book residual ≤5% mid-size cohort | residual fraction | write/lock/parse telemetry | harness shipped; full run pending |
-| E3 | Non-overlapping listend rate revises LOSING margin | listend/ingest ratio | analyzer (done) | **complete (provisional)** — fixed analyzer + timestamps pastes on 02/04 show WINNING; mature 24h optional |
+| E1 | Ingest width below 96 raises durable files/s and cuts lock wait | lower CI bound files/s; p95 lock wait | INI `sync_ingest_pool_processes` + scaling study | **knee evidence present** — artifact `test_runs/sync_timedb_bench/knee_6364b97ef38f45c4b0399ea3d20044ca.json` (widths 48/64/80/96, 5 replicates). Winner **48** threads (selection prefers smallest width within CI of peak; means nearly flat ≈0.050–0.053 files/s). Screening hint 64 superseded for knee candidate. Caveat: wall-clock used small/mid derived files under compose; not a production INI change. Harness fixes: `--knee` clears ambient `SCREEN_WIDTHS`/`REPLICATES`; early-shutdown watcher bound to ingest timeout + file-complete marks |
+| E2 | Closed-book residual ≤5% mid-size cohort | residual fraction | write/lock/parse telemetry | **artifact present** — `test_runs/sync_timedb_bench/e2_closed_book_8768f659741f42a28d52ffc07a7ba49d.json` (8 mid hosts from corpus_knee/steady, wall≈165s). `residual_frac=1.0` / `residual_ok=false` (empty phase map — once-mode telemetry still incomplete; contract recorded, not a hard pytest fail) |
+| E3 | Non-overlapping listend rate revises LOSING margin | listend/ingest ratio | analyzer (done) | **complete (LOSING)** — fixed analyzer + timestamps; 02/04 ~4.5h post-redeploy pastes with `--since-minutes 1440` both **verdict_full_ingest=LOSING** (ratios 2.3 / 66.9); absolute rates diluted; true calendar-24h optional later |
 | E4 | Split ORM vs DB execute shrinks false “postgres” blame | phase shares | ingest write phases | helpers shipped; production enable pending |
 | E5 | Reduce day-close overlap contention | flock timeouts / day-close wall | day-close inflight | pending study |
 | E6 | Evidence-led parse merge optimization on LS6 shape | files/s on 02-derived tier | parsing hot path | blocked — needs controlled knee (E1/E2) before product patch |
@@ -107,6 +111,8 @@ Compose / free-threaded long study (rootless Podman; `podman-runtime.mdc`):
 cd HPCPerfStats
 tests/run_sync_timedb_benchmark_workflow.sh
 tests/run_sync_timedb_benchmark_workflow.sh --screening
+tests/run_sync_timedb_benchmark_workflow.sh --knee
+tests/run_sync_timedb_benchmark_workflow.sh --e2
 ```
 
 ## Selection rule (when study artifacts exist)
@@ -130,7 +136,10 @@ Screening winner ≠ deployable INI without knee confirmation (follow-on).
 
 ## Next actions
 
-1. Knee confirmation (≥5×30m replicates) on a larger derived corpus — follow-on plan.
-2. Mature 24h analyzer recompute on 02/04 when continuous logs exist.
-3. Amend the live plan with measured root-cause lines before any product
+1. ~~Knee confirmation (≥5 replicates, widths 48–96)~~ — done; candidate **48** (flat curve). Still not an INI redeploy.
+2. Closed-book E2 residual artifact + ledger update (same tranche).
+3. Mature 24h analyzer recompute on 02/04 when continuous logs exist.
+4. Amend the live plan with measured root-cause lines before any product
    bottleneck fix; retain only paired A/B wins.
+5. Operator T0/T1/T2 stall verify on a backlog site when accessible
+   (agent host lacks BatchMode SSH to 02/04 — Host key verification failed).

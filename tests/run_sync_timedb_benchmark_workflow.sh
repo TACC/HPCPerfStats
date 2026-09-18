@@ -30,15 +30,21 @@ Options:
   --skip-build    Skip podman-compose build pipeline
   --screening     Run ingest-width screening (requires derived corpus under
                   test_runs/sync_timedb_bench/corpus_smoke by default)
+  --knee          Run ingest-width knee confirmation (corpus_steady;
+                  widths 48,64,80,96; 5 replicates by default)
+  --e2            Run closed-book mid-size E2 timing against corpus_steady
   -h, --help      Show this help
 
 Environment:
   HPCPERFSTATS_SYNC_TIMEDB_BENCH=1         Set by this script for long benchmark tests
   HPCPERFSTATS_SYNC_TIMEDB_SCREENING=1     Set by --screening
+  HPCPERFSTATS_SYNC_TIMEDB_KNEE=1          Set by --knee
+  HPCPERFSTATS_SYNC_TIMEDB_E2=1            Set by --e2
   HPCPERFSTATS_COMPOSE_NETWORK=1           Set by this script for django_db tests
-  HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS   Optional CSV override (default 1..96 matrix)
-  HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES  Optional replicate count (default 2)
+  HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS   Optional CSV override (default 1..96 or knee)
+  HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES  Optional replicate count
   HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS   Optional corpus path inside container/repo
+  HPCPERFSTATS_SYNC_TIMEDB_SCREEN_TIMEOUT_S  Optional per-replicate ingest timeout
 
 Runtime:
   Rootless Podman + podman-compose via tests/compose_test_cmd.sh (podman-runtime.mdc).
@@ -54,6 +60,8 @@ EOF
 KEEP_ENV=0
 SKIP_BUILD=0
 SCREENING=0
+KNEE=0
+E2=0
 PYTEST_EXTRA=()
 
 while [[ $# -gt 0 ]]; do
@@ -73,6 +81,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --screening)
       SCREENING=1
+      shift
+      ;;
+    --knee)
+      KNEE=1
+      shift
+      ;;
+    --e2)
+      E2=1
       shift
       ;;
     -h|--help)
@@ -127,14 +143,36 @@ RUN_ARGS=(
   "${compose_run_inner_script_bind_mount_env[@]}"
   "${compose_web_repo_bind_mount_args[@]}"
 )
-if [[ "$SCREENING" -eq 1 ]]; then
+if [[ "$KNEE" -eq 1 ]]; then
+  # Ambient screening leftovers (e.g. WIDTHS=1,2,4,8 REPLICATES=2) must not
+  # override knee defaults (48,64,80,96 x5). Opt-in with KNEE_ALLOW_SCREEN_ENV=1.
+  if [[ "${HPCPERFSTATS_SYNC_TIMEDB_KNEE_ALLOW_SCREEN_ENV:-0}" != "1" ]]; then
+    unset HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS
+    unset HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES
+  fi
+fi
+if [[ "$SCREENING" -eq 1 || "$KNEE" -eq 1 ]]; then
   [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS=${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS}")
   [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES=${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES}")
   [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS=${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS}")
+  [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_TIMEOUT_S:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_SCREEN_TIMEOUT_S=${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_TIMEOUT_S}")
+fi
+if [[ "$SCREENING" -eq 1 ]]; then
   RUN_ARGS+=(-e HPCPERFSTATS_SYNC_TIMEDB_SCREENING=1)
+fi
+if [[ "$KNEE" -eq 1 ]]; then
+  RUN_ARGS+=(-e HPCPERFSTATS_SYNC_TIMEDB_KNEE=1)
+  # Knee reuses the width-screening pytest module with knee defaults.
+  RUN_ARGS+=(-e HPCPERFSTATS_SYNC_TIMEDB_SCREENING=1)
+fi
+if [[ "$E2" -eq 1 ]]; then
+  RUN_ARGS+=(-e HPCPERFSTATS_SYNC_TIMEDB_E2=1)
+  [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS=${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS}")
 fi
 if [[ -n "$ARGS_FILE" ]]; then
   RUN_ARGS+=(-v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args:ro")

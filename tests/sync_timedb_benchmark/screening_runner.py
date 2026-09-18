@@ -14,8 +14,35 @@ from typing import Any, Callable, Sequence
 SCREENING_WIDTHS: tuple[int, ...] = (
     1, 2, 4, 8, 16, 24, 32, 40, 48, 64, 80, 96,
 )
+KNEE_WIDTHS: tuple[int, ...] = (48, 64, 80, 96)
 DEFAULT_REPLICATES = 2
+DEFAULT_KNEE_REPLICATES = 5
 ARTIFACT_SUBDIR = Path("test_runs") / "sync_timedb_bench"
+
+
+def knee_mode_enabled(raw: str | None = None) -> bool:
+  """
+  Return whether knee-confirmation mode is enabled.
+
+  Args:
+    raw (str | None): Override string; defaults to
+      ``HPCPERFSTATS_SYNC_TIMEDB_KNEE``.
+
+  Returns:
+    bool: True when the env/override is a truthy flag.
+
+  Examples:
+    >>> knee_mode_enabled("1")
+    True
+    >>> knee_mode_enabled("")
+    False
+  """
+  text = (
+      raw
+      if raw is not None
+      else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_KNEE", "")
+  ).strip().lower()
+  return text in ("1", "yes", "true")
 
 
 def parse_widths_env(raw: str | None = None) -> tuple[int, ...]:
@@ -42,7 +69,7 @@ def parse_widths_env(raw: str | None = None) -> tuple[int, ...]:
       else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS", "")
   ).strip()
   if not text:
-    return SCREENING_WIDTHS
+    return KNEE_WIDTHS if knee_mode_enabled() else SCREENING_WIDTHS
   widths: list[int] = []
   for token in text.split(","):
     token = token.strip()
@@ -53,7 +80,7 @@ def parse_widths_env(raw: str | None = None) -> tuple[int, ...]:
       raise ValueError("ingest width must be >= 1: %r" % token)
     widths.append(value)
   if not widths:
-    return SCREENING_WIDTHS
+    return KNEE_WIDTHS if knee_mode_enabled() else SCREENING_WIDTHS
   return tuple(sorted(set(widths)))
 
 
@@ -82,7 +109,9 @@ def parse_replicates_env(raw: str | None = None) -> int:
       else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES", "")
   ).strip()
   if not text:
-    return DEFAULT_REPLICATES
+    return (
+        DEFAULT_KNEE_REPLICATES if knee_mode_enabled() else DEFAULT_REPLICATES
+    )
   value = int(text)
   if value < 1:
     raise ValueError("replicates must be >= 1")
@@ -288,9 +317,22 @@ def build_screening_manifest(
     ... )["replicates"]
     2
   """
+  kind = (
+      "ingest_width_knee"
+      if knee_mode_enabled()
+      else "ingest_width_screening"
+  )
+  note = (
+      "winner is a knee candidate; not a production INI recommendation"
+      if kind == "ingest_width_knee"
+      else (
+          "winner is a screening hint only; not a production INI "
+          "recommendation"
+      )
+  )
   return {
       "run_id": run_id or uuid.uuid4().hex,
-      "kind": "ingest_width_screening",
+      "kind": kind,
       "python_abi": python_abi,
       "widths": list(widths),
       "replicates": int(replicates),
@@ -299,9 +341,7 @@ def build_screening_manifest(
       ),
       "points": list(points),
       "winner": dict(winner),
-      "note": (
-          "winner is a screening hint only; not a production INI recommendation"
-      ),
+      "note": note,
   }
 
 
@@ -309,14 +349,17 @@ def write_screening_artifact(
     payload: dict[str, Any],
     *,
     repo_root: Path,
+    prefix: str | None = None,
 ) -> Path:
   """
-  Write ``payload`` under ``test_runs/sync_timedb_bench/screening_*.json``.
+  Write ``payload`` under ``test_runs/sync_timedb_bench/{prefix}_*.json``.
 
   Args:
     payload (dict[str, Any]): Screening manifest from
       :func:`build_screening_manifest`.
     repo_root (Path): HPCPerfStats checkout root.
+    prefix (str | None): Filename prefix; defaults to ``knee`` when knee
+      mode is enabled, otherwise ``screening``.
 
   Returns:
     Path: Absolute path of the written JSON file.
@@ -327,7 +370,10 @@ def write_screening_artifact(
   out_dir = repo_root / ARTIFACT_SUBDIR
   out_dir.mkdir(parents=True, exist_ok=True)
   run_id = str(payload.get("run_id") or uuid.uuid4().hex)
-  out_path = out_dir / ("screening_%s.json" % run_id)
+  name_prefix = prefix
+  if name_prefix is None:
+    name_prefix = "knee" if knee_mode_enabled() else "screening"
+  out_path = out_dir / ("%s_%s.json" % (name_prefix, run_id))
   out_path.write_text(
       json.dumps(payload, indent=2, sort_keys=True) + "\n",
       encoding="utf-8",

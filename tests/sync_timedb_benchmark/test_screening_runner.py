@@ -94,7 +94,67 @@ def test_empty_screen_corpus_env_falls_back_to_default():
   """Empty SCREEN_CORPUS env must not resolve to the process cwd."""
   from tests.sync_timedb_benchmark import test_ingest_width_screening as mod
 
-  assert mod.DEFAULT_CORPUS.name == "corpus_smoke"
+  assert mod.DEFAULT_SMOKE_CORPUS.name == "corpus_smoke"
+  assert mod.DEFAULT_STEADY_CORPUS.name == "corpus_steady"
+
+
+def test_knee_mode_defaults_widths_and_replicates(monkeypatch):
+  from tests.sync_timedb_benchmark.screening_runner import (
+      DEFAULT_KNEE_REPLICATES,
+      KNEE_WIDTHS,
+      parse_replicates_env,
+      parse_widths_env,
+  )
+
+  monkeypatch.setenv("HPCPERFSTATS_SYNC_TIMEDB_KNEE", "1")
+  monkeypatch.delenv("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS", raising=False)
+  monkeypatch.delenv("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES", raising=False)
+  assert parse_widths_env() == KNEE_WIDTHS
+  assert parse_replicates_env() == DEFAULT_KNEE_REPLICATES
+  assert KNEE_WIDTHS == (48, 64, 80, 96)
+  assert DEFAULT_KNEE_REPLICATES == 5
+
+
+def test_workflow_knee_unsets_ambient_screen_width_env():
+  """--knee must clear leftover SCREEN_WIDTHS/REPLICATES unless explicitly allowed."""
+  text = (
+      Path(__file__).resolve().parents[1]
+      / "run_sync_timedb_benchmark_workflow.sh"
+  ).read_text(encoding="utf-8")
+  assert "HPCPERFSTATS_SYNC_TIMEDB_KNEE_ALLOW_SCREEN_ENV" in text
+  assert "unset HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS" in text
+  assert "unset HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES" in text
+
+
+def test_screening_watcher_uses_ingest_timeout_not_fixed_90s():
+  """Large-file knee hangs if the early-shutdown watcher dies at 90s."""
+  text = (
+      Path(__file__).resolve().parent / "test_ingest_width_screening.py"
+  ).read_text(encoding="utf-8")
+  assert "time() + 90.0" not in text
+  assert "ingest_timeout_s" in text
+  assert "has_file_complete_ingest_mark" in text
+
+
+def test_write_knee_artifact_prefix(tmp_path, monkeypatch):
+  from tests.sync_timedb_benchmark.screening_runner import (
+      build_screening_manifest,
+      write_screening_artifact,
+  )
+
+  monkeypatch.setenv("HPCPERFSTATS_SYNC_TIMEDB_KNEE", "1")
+  payload = build_screening_manifest(
+      points=[{"threads": 64}],
+      winner={"threads": 64},
+      corpus_manifest_path=Path("manifest.json"),
+      widths=(48, 64, 80, 96),
+      replicates=5,
+      python_abi="3.14t",
+      run_id="kneeid",
+  )
+  assert payload["kind"] == "ingest_width_knee"
+  out = write_screening_artifact(payload, repo_root=tmp_path)
+  assert out.name == "knee_kneeid.json"
 
 
 def test_reset_screening_state_wipes_foreign_hosts(tmp_path):

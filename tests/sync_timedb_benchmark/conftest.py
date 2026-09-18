@@ -40,6 +40,22 @@ def _screening_enabled() -> bool:
   )
 
 
+def _knee_enabled() -> bool:
+  return os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_KNEE", "").strip().lower() in (
+      "1",
+      "yes",
+      "true",
+  )
+
+
+def _e2_enabled() -> bool:
+  return os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_E2", "").strip().lower() in (
+      "1",
+      "yes",
+      "true",
+  )
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config,
     items: list[pytest.Item],
@@ -47,8 +63,9 @@ def pytest_collection_modifyitems(
   """
   Skip long benchmark tests unless ``HPCPERFSTATS_SYNC_TIMEDB_BENCH=1``.
 
-  Also defer ``django_db`` for ingest-width screening until compose screening is
-  enabled so host unit sessions do not attempt PostgreSQL at hostname ``db``.
+  Also defer ``django_db`` for ingest-width screening/knee/E2 until compose
+  flags are enabled so host unit sessions do not attempt PostgreSQL at
+  hostname ``db``.
 
   Args:
     config (pytest.Config): Active pytest configuration.
@@ -66,18 +83,32 @@ def pytest_collection_modifyitems(
       if "sync_timedb_bench" in item.keywords:
         item.add_marker(skip)
 
-  screening_on = _compose_network_enabled() and _screening_enabled()
-  skip_screening = pytest.mark.skip(
+  width_study_on = _compose_network_enabled() and (
+      _screening_enabled() or _knee_enabled()
+  )
+  skip_width = pytest.mark.skip(
       reason=(
           "Requires HPCPERFSTATS_COMPOSE_NETWORK=1 and "
-          "HPCPERFSTATS_SYNC_TIMEDB_SCREENING=1 (workflow --screening)"
+          "HPCPERFSTATS_SYNC_TIMEDB_SCREENING=1 or "
+          "HPCPERFSTATS_SYNC_TIMEDB_KNEE=1"
+      ),
+  )
+  e2_on = _compose_network_enabled() and _e2_enabled()
+  skip_e2 = pytest.mark.skip(
+      reason=(
+          "Requires HPCPERFSTATS_COMPOSE_NETWORK=1 and "
+          "HPCPERFSTATS_SYNC_TIMEDB_E2=1 (workflow --e2)"
       ),
   )
   db_mark = pytest.mark.django_db(transaction=True)
   for item in items:
-    if "test_ingest_width_screening" not in item.nodeid:
-      continue
-    if screening_on:
-      item.add_marker(db_mark)
-    else:
-      item.add_marker(skip_screening)
+    if "test_ingest_width_screening" in item.nodeid:
+      if width_study_on:
+        item.add_marker(db_mark)
+      else:
+        item.add_marker(skip_width)
+    if "test_e2_closed_book_mid_size" in item.nodeid:
+      if e2_on:
+        item.add_marker(db_mark)
+      else:
+        item.add_marker(skip_e2)

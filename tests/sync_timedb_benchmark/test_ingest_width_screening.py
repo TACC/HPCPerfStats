@@ -11,6 +11,7 @@ from tests.sync_timedb_benchmark.scaling_selection import select_thread_winner
 from tests.sync_timedb_benchmark.screening_runner import (
     build_screening_manifest,
     corpus_hosts,
+    knee_mode_enabled,
     parse_replicates_env,
     parse_widths_env,
     reset_screening_state,
@@ -19,8 +20,11 @@ from tests.sync_timedb_benchmark.screening_runner import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CORPUS = (
+DEFAULT_SMOKE_CORPUS = (
     REPO_ROOT / "test_runs" / "sync_timedb_bench" / "corpus_smoke"
+)
+DEFAULT_STEADY_CORPUS = (
+    REPO_ROOT / "test_runs" / "sync_timedb_bench" / "corpus_steady"
 )
 
 
@@ -38,9 +42,12 @@ def test_ingest_width_screening_smoke(monkeypatch):
   ``update_metrics`` in the timed window.
   """
   corpus_env = os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS", "").strip()
-  corpus_dir = Path(corpus_env) if corpus_env else DEFAULT_CORPUS
+  default_corpus = (
+      DEFAULT_STEADY_CORPUS if knee_mode_enabled() else DEFAULT_SMOKE_CORPUS
+  )
+  corpus_dir = Path(corpus_env) if corpus_env else default_corpus
   if not corpus_dir.is_dir() or not corpus_hosts(corpus_dir):
-    pytest.fail("missing smoke corpus at %s" % corpus_dir)
+    pytest.fail("missing corpus at %s" % corpus_dir)
 
   import hpcperfstats.dbload.lib.conf_parser as cfg
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
@@ -115,27 +122,65 @@ def test_ingest_width_screening_smoke(monkeypatch):
         reset_inprocess=_reset_inprocess,
     )
 
+  default_timeout = "3600" if knee_mode_enabled() else "180"
+  ingest_timeout_s = float(
+      os.environ.get(
+          "HPCPERFSTATS_SYNC_TIMEDB_SCREEN_TIMEOUT_S",
+          default_timeout,
+      )
+  )
+
   def _run_ingest_for_screening() -> None:
     """
     Run once-mode ingest, then request shutdown once files are marked complete.
 
     Full supervisor once-mode otherwise spends minutes in day_close/discover
     after durable ingest is already done; screening only needs ingest wall.
+
+    The watcher must outlive large-file ingest (knee mid/steady corpora): a
+    fixed 90s deadline exits before ``host_data`` / file-complete marks land,
+    leaving the orchestrator idle until the matrix timeout.
     """
     import threading
     import time as time_mod
 
+    from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
+        has_file_complete_ingest_mark,
+    )
     from hpcperfstats.dbload.lib.sync_timedb_queue_orchestrator import (
         request_shutdown,
     )
 
     stop = threading.Event()
+    archive_root = str(archive_dir)
+
+    def _planted_paths() -> list[str]:
+      paths: list[str] = []
+      for host in hosts:
+        host_dir = archive_dir / host
+        if not host_dir.is_dir():
+          continue
+        for path in host_dir.iterdir():
+          if path.is_file():
+            paths.append(str(path))
+      return paths
+
+    def _durable_complete() -> bool:
+      if host_data.objects.filter(host__in=list(hosts)).count() >= file_count:
+        return True
+      planted = _planted_paths()
+      if len(planted) < file_count:
+        return False
+      return all(
+          has_file_complete_ingest_mark(path, archive_data_dir=archive_root)
+          for path in planted
+      )
 
     def _watch_ingest_complete() -> None:
-      deadline = time_mod.time() + 90.0
+      # Bound to the same per-replicate timeout as run_width_matrix.
+      deadline = time_mod.time() + float(ingest_timeout_s)
       while not stop.is_set() and time_mod.time() < deadline:
-        # Durable ingest marks: host_data rows appear as files land.
-        if host_data.objects.filter(host__in=list(hosts)).count() >= file_count:
+        if _durable_complete():
           time_mod.sleep(2.0)
           request_shutdown()
           return
@@ -159,9 +204,7 @@ def test_ingest_width_screening_smoke(monkeypatch):
       set_width=_set_width,
       reset_and_plant=_reset_and_plant,
       run_ingest=_run_ingest_for_screening,
-      ingest_timeout_s=float(
-          os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_TIMEOUT_S", "180")
-      ),
+      ingest_timeout_s=ingest_timeout_s,
   )
   winner = select_thread_winner(points)
   assert winner, "screening produced no eligible winner points"
@@ -179,4 +222,5 @@ def test_ingest_width_screening_smoke(monkeypatch):
   )
   out = write_screening_artifact(payload, repo_root=REPO_ROOT)
   assert out.is_file()
-  assert out.name.startswith("screening_")
+  expected_prefix = "knee_" if knee_mode_enabled() else "screening_"
+  assert out.name.startswith(expected_prefix)
