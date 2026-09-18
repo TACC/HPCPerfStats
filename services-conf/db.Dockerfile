@@ -47,8 +47,8 @@ RUN gcc -march=native -mtune=native -Q --help=target
 # zstd links /opt/lz4 + /opt/zlib-ng, so it stays after both even though zstd
 # itself ships ~yearly. Postgres + Timescale consume every /opt lib.
 
-ARG JEMALLOC_VERSION=5.3.1
-ARG JEMALLOC_SHA256=3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92
+ARG JEMALLOC_VERSION=5.4.0
+ARG JEMALLOC_SHA256=200776fac271093e7c2f21edd6d62657ecd2be578d9328633f2a86bfa6ef4f1d
 # --- jemalloc ---
 RUN set -eux; \
   curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2" \
@@ -108,8 +108,8 @@ RUN set -eux; \
   make install; \
   rm -rf /usr/src/liburing /tmp/liburing.tar.gz
 
-ARG ZLIB_NG_VERSION=2.2.5
-ARG ZLIB_NG_SHA256=5b3b022489f3ced82384f06db1e13ba148cbce38c7941e424d6cb414416acd18
+ARG ZLIB_NG_VERSION=2.3.3
+ARG ZLIB_NG_SHA256=f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1
 # --- zlib-ng (ZLIB_COMPAT → libz.so; match Python image /opt/zlib-ng pin) ---
 RUN set -eux; \
   curl -fsSL "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" \
@@ -225,8 +225,8 @@ RUN set -eux; \
   strip --strip-unneeded /usr/local/bin/postgres /usr/local/bin/psql || true; \
   postgres --version
 
-ARG TIMESCALEDB_VERSION=2.30.0
-ARG TIMESCALEDB_SHA256=dac2fba0cd4eee9f4adcd04c91b7929850e24bc36f62eaee8bda4230a9fcee66
+ARG TIMESCALEDB_VERSION=2.30.1
+ARG TIMESCALEDB_SHA256=4b7af2be944280cc6be397b76fad3d6588ac93e771fdb19a485b358b21a50326
 # --- TimescaleDB (not APACHE_ONLY). timescaledb.so must NOT DT_NEEDED jemalloc
 # (or lz4/zstd): the extension is loaded into the postgres process, which
 # already has jemalloc via DT_NEEDED + LD_PRELOAD. unset LDFLAGS is not enough

@@ -48,7 +48,7 @@ def test_image_build_extra_is_image_only_and_pinned():
     assert "x86_64" in line
 
   assert "mkl==2026.1.0" in "\n".join(mkl_lines)
-  assert any("meson-python==0.20.0" in d for d in build)
+  assert any("meson-python==0.21.1" in d for d in build)
   assert any(d.startswith("setuptools>=") for d in build)
   assert "scipy" not in runtime
   assert "bokeh==3.10.0" in proj["dependencies"]

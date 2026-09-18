@@ -76,7 +76,7 @@ services:
           - pipeline
 
   redis:
-    image: docker.io/library/redis:8.10.0-alpine3.23
+    image: docker.io/library/redis:8.10.1-alpine3.23
     logging: *hpc-logging
     command:
       - redis-server
@@ -334,7 +334,7 @@ services:
 
   rabbitmq:
     # Management plugin (HTTP API on 15672) for Admin Monitor stats.
-    image: docker.io/library/rabbitmq:4.3.4-management-alpine
+    image: docker.io/library/rabbitmq:4.3.5-management-alpine
     restart: always
     logging: *hpc-logging
     hostname: rabbitmq-prod

@@ -116,9 +116,9 @@ def test_docker_compose_registry_images_are_fully_qualified_for_podman():
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.yaml").read_text()
 
-  assert "image: docker.io/library/redis:8.10.0-alpine3.23" in content
+  assert "image: docker.io/library/redis:8.10.1-alpine3.23" in content
   assert "image: docker.io/timescale/timescaledb:2.28.3-pg15" in content
-  assert "image: docker.io/library/rabbitmq:4.3.4-management-alpine" in content
+  assert "image: docker.io/library/rabbitmq:4.3.5-management-alpine" in content
 
 
 def test_docker_compose_network_name_is_parameterized_with_production_default():
@@ -567,11 +567,11 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
   assert "ARG NGINX_VERSION=1.31.5" in dockerfile
   assert "ARG NGINX_SHA256=" in dockerfile
-  assert "ARG JEMALLOC_VERSION=5.3.1" in dockerfile
+  assert "ARG JEMALLOC_VERSION=5.4.0" in dockerfile
   assert "ARG JEMALLOC_SHA256=" in dockerfile
-  assert "ARG ZLIB_NG_VERSION=2.2.5" in dockerfile
+  assert "ARG ZLIB_NG_VERSION=2.3.3" in dockerfile
   assert "ARG ZLIB_NG_SHA256=" in dockerfile
-  assert "ARG OPENSSL_VERSION=3.5.7" in dockerfile
+  assert "ARG OPENSSL_VERSION=3.5.8" in dockerfile
   assert "ARG OPENSSL_SHA256=" in dockerfile
   assert "ARG NGX_BROTLI_VERSION=" in dockerfile
   assert "ARG NGX_BROTLI_SHA256=" in dockerfile

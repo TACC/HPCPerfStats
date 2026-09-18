@@ -27,22 +27,22 @@ def test_db_dockerfile_pins_postgres_18_sha_and_timescale() -> None:
     text = _dockerfile()
     assert "ARG PG_VERSION=18.6" in text
     assert "555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f" in text
-    assert "ARG TIMESCALEDB_VERSION=2.30.0" in text
-    assert "dac2fba0cd4eee9f4adcd04c91b7929850e24bc36f62eaee8bda4230a9fcee66" in text
+    assert "ARG TIMESCALEDB_VERSION=2.30.1" in text
+    assert "4b7af2be944280cc6be397b76fad3d6588ac93e771fdb19a485b358b21a50326" in text
 
 
 def test_db_dockerfile_pins_jemalloc_icu_liburing_lz4_zlib_ng_zstd() -> None:
     text = _dockerfile()
-    assert "ARG JEMALLOC_VERSION=5.3.1" in text
-    assert "3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92" in text
+    assert "ARG JEMALLOC_VERSION=5.4.0" in text
+    assert "200776fac271093e7c2f21edd6d62657ecd2be578d9328633f2a86bfa6ef4f1d" in text
     assert "ARG ICU_VERSION=78.3" in text
     assert "3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0" in text
     assert "ARG LIBURING_VERSION=2.15" in text
     assert "8d052f2622dcb3678cbaee5ff582a87572672a6c0a56533cdda5b65cb636120a" in text
     assert "ARG LZ4_VERSION=1.10.0" in text
     assert "537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b" in text
-    assert "ARG ZLIB_NG_VERSION=2.2.5" in text
-    assert "5b3b022489f3ced82384f06db1e13ba148cbce38c7941e424d6cb414416acd18" in text
+    assert "ARG ZLIB_NG_VERSION=2.3.3" in text
+    assert "f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1" in text
     assert "ARG ZSTD_VERSION=1.5.7" in text
     assert "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3" in text
     assert "jemalloc-${JEMALLOC_VERSION}.tar.bz2" in text

@@ -1,6 +1,6 @@
 # Build frontend assets in a dedicated node stage.
 # COPY is scoped to frontend inputs so Python/backend changes do not bust npm layers.
-FROM node:26.5.1-alpine3.23 AS frontend-builder
+FROM node:26.9.0-alpine3.23 AS frontend-builder
 # Pin npm 12+ before package install: dependency lifecycle scripts are opt-in
 # (allowScripts) so wormed preinstall hooks cannot run by default.
 ARG NPM_VERSION=12.0.2
@@ -83,7 +83,7 @@ RUN /bin/bash -o pipefail -c '\
 
 RUN gcc -march=native -mtune=native -Q --help=target
 
-# jemalloc 5.3.1 (shared; keep default initial-exec TLS — do not disable it).
+# jemalloc 5.4.0 (shared; keep default initial-exec TLS — do not disable it).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   PAGE_SIZE="$(getconf PAGE_SIZE)"; \
@@ -95,9 +95,9 @@ RUN /bin/bash -o pipefail -c '\
   test "${N}" -eq 1; \
   test "$((1 << LG_PAGE))" -eq "${PAGE_SIZE}"; \
   echo "jemalloc --with-lg-page=${LG_PAGE} (PAGE_SIZE=${PAGE_SIZE})"; \
-  curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/5.3.1/jemalloc-5.3.1.tar.bz2" \
+  curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/5.4.0/jemalloc-5.4.0.tar.bz2" \
     -o /tmp/jemalloc.tar.bz2; \
-  echo "3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92  /tmp/jemalloc.tar.bz2" | sha256sum -c -; \
+  echo "200776fac271093e7c2f21edd6d62657ecd2be578d9328633f2a86bfa6ef4f1d  /tmp/jemalloc.tar.bz2" | sha256sum -c -; \
   mkdir -p /usr/src/jemalloc; \
   tar -xjf /tmp/jemalloc.tar.bz2 -C /usr/src/jemalloc --strip-components=1; \
   rm -f /tmp/jemalloc.tar.bz2; \
@@ -111,12 +111,12 @@ RUN /bin/bash -o pipefail -c '\
   ldconfig; \
   rm -rf /usr/src/jemalloc'
 
-# zlib-ng 2.2.5 (ZLIB_COMPAT → libz.so.1). CPython and source builds link this; no apt zlib*.
+# zlib-ng 2.3.3 (ZLIB_COMPAT → libz.so.1). CPython and source builds link this; no apt zlib*.
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  curl -fsSL "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/2.2.5.tar.gz" \
+  curl -fsSL "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/2.3.3.tar.gz" \
     -o /tmp/zlib-ng.tar.gz; \
-  echo "5b3b022489f3ced82384f06db1e13ba148cbce38c7941e424d6cb414416acd18  /tmp/zlib-ng.tar.gz" | sha256sum -c -; \
+  echo "f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1  /tmp/zlib-ng.tar.gz" | sha256sum -c -; \
   mkdir -p /usr/src/zlib-ng; \
   tar -xzf /tmp/zlib-ng.tar.gz -C /usr/src/zlib-ng --strip-components=1; \
   rm -f /tmp/zlib-ng.tar.gz; \

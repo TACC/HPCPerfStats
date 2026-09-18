@@ -39,20 +39,22 @@ def test_dockerfile_uses_debian_trixie_builder_and_slim_runtime():
 def test_compiled_library_pins_are_latest_known():
   """Lock Dockerfile compile-from-source pins (bump when intentionally upgrading)."""
   build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
-  assert "jemalloc-5.3.1.tar.bz2" in build
-  assert "3826bc80232f22ed5c4662f3034f799ca316e819103bdc7bb99018a421706f92" in build
+  assert "jemalloc-5.4.0.tar.bz2" in build
+  assert "200776fac271093e7c2f21edd6d62657ecd2be578d9328633f2a86bfa6ef4f1d" in build
   assert "mpdecimal-4.0.1.tar.gz" in build
   assert "96d33abb4bb0070c7be0fed4246cd38416188325f820468214471938545b1ac8" in build
   assert "libffi-3.8.0.tar.gz" in build
   assert "7da3e2d9a171eb0a038f592ecad3ff2bb2550f3496d87b3b29ad0cf4430c0db4" in build
-  assert "zlib-ng/archive/refs/tags/2.2.5.tar.gz" in build
-  assert "5b3b022489f3ced82384f06db1e13ba148cbce38c7941e424d6cb414416acd18" in build
+  assert "zlib-ng/archive/refs/tags/2.3.3.tar.gz" in build
+  assert "f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1" in build
   assert "zstd-1.5.7.tar.gz" in build
   assert "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3" in build
   # Stale pins must not linger.
+  assert "jemalloc-5.3.1.tar.bz2" not in build
   assert "jemalloc-5.3.0.tar.bz2" not in build
   assert "mpdecimal-4.0.0.tar.gz" not in build
   assert "libffi-3.4.8.tar.gz" not in build
+  assert "zlib-ng/archive/refs/tags/2.2.5.tar.gz" not in build
 
 
 def test_zlib_ng_compat_opt_direct_link_no_explicit_apt_zlib():
