@@ -64,6 +64,14 @@ def _knobs_enabled() -> bool:
   )
 
 
+def _e6_enabled() -> bool:
+  return os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_E6", "").strip().lower() in (
+      "1",
+      "yes",
+      "true",
+  )
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config,
     items: list[pytest.Item],
@@ -71,8 +79,8 @@ def pytest_collection_modifyitems(
   """
   Skip long benchmark tests unless ``HPCPERFSTATS_SYNC_TIMEDB_BENCH=1``.
 
-  Also defer ``django_db`` for ingest-width screening/knee/E2/knobs until compose
-  flags are enabled so host unit sessions do not attempt PostgreSQL at
+  Also defer ``django_db`` for ingest-width screening/knee/E2/knobs/E6 until
+  compose flags are enabled so host unit sessions do not attempt PostgreSQL at
   hostname ``db``.
 
   Args:
@@ -115,6 +123,13 @@ def pytest_collection_modifyitems(
           "HPCPERFSTATS_SYNC_TIMEDB_KNOBS=1 (workflow --knobs)"
       ),
   )
+  e6_on = _compose_network_enabled() and _e6_enabled()
+  skip_e6 = pytest.mark.skip(
+      reason=(
+          "Requires HPCPERFSTATS_COMPOSE_NETWORK=1 and "
+          "HPCPERFSTATS_SYNC_TIMEDB_E6=1 (workflow --e6)"
+      ),
+  )
   db_mark = pytest.mark.django_db(transaction=True)
   for item in items:
     if "test_ingest_width_screening" in item.nodeid:
@@ -132,3 +147,8 @@ def pytest_collection_modifyitems(
         item.add_marker(db_mark)
       else:
         item.add_marker(skip_knobs)
+    if "test_e6_parse_feed_ab" in item.nodeid:
+      if e6_on:
+        item.add_marker(db_mark)
+      else:
+        item.add_marker(skip_e6)

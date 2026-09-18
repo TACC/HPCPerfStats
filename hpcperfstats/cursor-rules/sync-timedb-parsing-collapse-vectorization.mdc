@@ -92,3 +92,4 @@ Add or extend an equivalence test (`vectorized` vs apply / row-wise reference or
 - `duplicate-threshold-helper-mandate.mdc` — shared `_groupby_sum_min_count` for sum paths
 - `runtime-resource-and-metrics-safety.mdc` — ingest hot-path resource discipline
 - `sync-timedb-persistence-contract.mdc` — zero-host mark must use parsed row counts, not post-collapse lengths
+- **E6 campaign (parse_feed A/B):** closed-book dominant hold is `parse_feed_s` first; ship surgical Python `feed_line` changes only after paired A/B at fixed ingest width; **retain only** when candidate lower CI clears the campaign files/s gate; Cython/numba still forbidden until a post-patch flamegraph shows leftover exclusive time in `feed_line` / `split` / `float`

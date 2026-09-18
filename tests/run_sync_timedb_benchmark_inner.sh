@@ -39,6 +39,10 @@ elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_KNOBS:-}" == "1" ]]; then
   PYTEST_TARGET=(
     tests/sync_timedb_benchmark/test_supporting_knobs.py
   )
+elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_E6:-}" == "1" ]]; then
+  PYTEST_TARGET=(
+    tests/sync_timedb_benchmark/test_e6_parse_feed_ab.py
+  )
 elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_SCREENING:-}" == "1" \
      || "${HPCPERFSTATS_SYNC_TIMEDB_KNEE:-}" == "1" ]]; then
   PYTEST_TARGET=(

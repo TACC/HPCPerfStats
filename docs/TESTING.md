@@ -228,6 +228,23 @@ tests/run_sync_timedb_benchmark_workflow.sh --knobs
 Artifacts land in `test_runs/sync_timedb_bench/knobs_*.json` (campaign candidates
 only; not a production INI change).
 
+E6 parse_feed paired A/B at fixed ingest width **48** (baseline arm, then
+candidate arm after a `feed_line` product patch; ≥5 replicates by default):
+
+```bash
+cd HPCPerfStats
+# Ambient SCREEN_WIDTHS/REPLICATES cleared unless KNEE_ALLOW_SCREEN_ENV=1.
+# Optional: HPCPERFSTATS_SYNC_TIMEDB_E6_WIDTH=48
+# Optional: HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES=5
+HPCPERFSTATS_E6_ARM=baseline tests/run_sync_timedb_benchmark_workflow.sh --e6
+# Apply feed_line candidate patch, then:
+HPCPERFSTATS_E6_ARM=candidate tests/run_sync_timedb_benchmark_workflow.sh --e6
+```
+
+Artifacts: `test_runs/sync_timedb_bench/e6_arm_baseline_*.json` then
+`e6_parse_feed_ab_*.json` (`retain` true/false per lower-CI gate). Still not a
+production INI change.
+
 Derived corpus (identity rewrite; never mutates exemplars):
 
 ```bash

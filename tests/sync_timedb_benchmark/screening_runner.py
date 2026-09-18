@@ -19,6 +19,8 @@ DEFAULT_REPLICATES = 2
 DEFAULT_KNEE_REPLICATES = 5
 DEFAULT_KNOBS_WIDTH = 48
 DEFAULT_KNOBS_REPLICATES = 3
+DEFAULT_E6_WIDTH = 48
+DEFAULT_E6_REPLICATES = 5
 KNOB_SWEEPS: tuple[tuple[str, tuple[int, ...]], ...] = (
     ("sync_day_close_max_inflight", (1, 2, 4, 8, 16)),
     ("sync_archive_pool_processes", (1, 2, 4, 8)),
@@ -82,6 +84,189 @@ def knobs_mode_enabled(raw: str | None = None) -> bool:
       else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_KNOBS", "")
   ).strip().lower()
   return text in ("1", "yes", "true")
+
+
+def e6_mode_enabled(raw: str | None = None) -> bool:
+  """
+  Return whether E6 parse_feed A/B mode is enabled.
+
+  Args:
+    raw (str | None): Override string; defaults to
+      ``HPCPERFSTATS_SYNC_TIMEDB_E6``.
+
+  Returns:
+    bool: True when the env/override is a truthy flag.
+
+  Examples:
+    >>> e6_mode_enabled("1")
+    True
+  """
+  text = (
+      raw
+      if raw is not None
+      else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_E6", "")
+  ).strip().lower()
+  return text in ("1", "yes", "true")
+
+
+def e6_arm(raw: str | None = None) -> str:
+  """
+  Return the E6 A/B arm name (``baseline`` or ``candidate``).
+
+  Args:
+    raw (str | None): Override; defaults to ``HPCPERFSTATS_E6_ARM`` or
+      ``baseline``.
+
+  Returns:
+    str: ``baseline`` or ``candidate``.
+
+  Raises:
+    ValueError: When the arm name is not recognized.
+
+  Examples:
+    >>> e6_arm("candidate")
+    'candidate'
+  """
+  text = (
+      raw
+      if raw is not None
+      else os.environ.get("HPCPERFSTATS_E6_ARM", "baseline")
+  ).strip().lower()
+  if text not in ("baseline", "candidate"):
+    raise ValueError("E6 arm must be baseline|candidate: %r" % text)
+  return text
+
+
+def e6_fixed_width(raw: str | None = None) -> int:
+  """
+  Return the fixed ingest width for E6 A/B runs.
+
+  Args:
+    raw (str | None): Override; defaults to
+      ``HPCPERFSTATS_SYNC_TIMEDB_E6_WIDTH`` or :data:`DEFAULT_E6_WIDTH`.
+
+  Returns:
+    int: Positive ingest width.
+
+  Examples:
+    >>> e6_fixed_width("48")
+    48
+  """
+  text = (
+      raw
+      if raw is not None
+      else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_E6_WIDTH", "")
+  ).strip()
+  if not text:
+    return DEFAULT_E6_WIDTH
+  value = int(text)
+  if value < 1:
+    raise ValueError("E6 width must be >= 1: %r" % text)
+  return value
+
+
+def e6_retain_candidate(
+    *,
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+) -> bool:
+  """
+  Return True when candidate lower CI clears the E6 retain gate.
+
+  Retain only when candidate ``lower_ci_files_per_s`` is at least the
+  baseline mean **and** at least 5% above baseline ``lower_ci_files_per_s``.
+
+  Args:
+    baseline (dict[str, Any]): Baseline arm stats with mean/lower CI.
+    candidate (dict[str, Any]): Candidate arm stats with mean/lower CI.
+
+  Returns:
+    bool: True when the candidate should be retained.
+
+  Examples:
+    >>> e6_retain_candidate(
+    ...     baseline={"mean_files_per_s": 1.0, "lower_ci_files_per_s": 0.9},
+    ...     candidate={"mean_files_per_s": 1.2, "lower_ci_files_per_s": 1.05},
+    ... )
+    True
+  """
+  base_mean = float(baseline["mean_files_per_s"])
+  base_lo = float(baseline["lower_ci_files_per_s"])
+  cand_lo = float(candidate["lower_ci_files_per_s"])
+  return cand_lo >= base_mean and cand_lo >= base_lo * 1.05
+
+
+def build_e6_ab_manifest(
+    *,
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+    ingest_width: int,
+    replicates: int,
+    python_abi: str,
+    retain: bool,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+  """
+  Build the paired E6 parse_feed A/B artifact payload.
+
+  Args:
+    baseline (dict[str, Any]): Baseline arm summary point.
+    candidate (dict[str, Any]): Candidate arm summary point.
+    ingest_width (int): Fixed ingest pool width.
+    replicates (int): Replicates per arm.
+    python_abi (str): Interpreter identity string.
+    retain (bool): Whether the candidate cleared the retain gate.
+    run_id (str | None): Optional run id.
+
+  Returns:
+    dict[str, Any]: E6 A/B artifact dictionary.
+
+  Examples:
+    >>> build_e6_ab_manifest(
+    ...     baseline={"mean_files_per_s": 1.0, "lower_ci_files_per_s": 0.9},
+    ...     candidate={"mean_files_per_s": 1.2, "lower_ci_files_per_s": 1.05},
+    ...     ingest_width=48, replicates=5, python_abi="3.14", retain=True,
+    ... )["kind"]
+    'e6_parse_feed_ab'
+  """
+  return {
+      "run_id": run_id or uuid.uuid4().hex,
+      "kind": "e6_parse_feed_ab",
+      "python_abi": python_abi,
+      "ingest_width": int(ingest_width),
+      "replicates": int(replicates),
+      "baseline": dict(baseline),
+      "candidate": dict(candidate),
+      "retain": bool(retain),
+      "note": (
+          "retain True only when candidate lower CI clears the E6 gate; "
+          "not a production INI change"
+      ),
+  }
+
+
+def latest_e6_baseline_artifact(repo_root: Path) -> Path | None:
+  """
+  Return the newest ``e6_arm_baseline_*.json`` under the bench artifact dir.
+
+  Args:
+    repo_root (Path): HPCPerfStats checkout root.
+
+  Returns:
+    Path | None: Newest baseline arm path, or None when none exist.
+
+  Examples:
+    >>> latest_e6_baseline_artifact(Path("/tmp")) is None
+    True
+  """
+  out_dir = repo_root / ARTIFACT_SUBDIR
+  if not out_dir.is_dir():
+    return None
+  files = sorted(
+      out_dir.glob("e6_arm_baseline_*.json"),
+      key=lambda path: path.stat().st_mtime,
+  )
+  return files[-1] if files else None
 
 
 def knobs_fixed_width(raw: str | None = None) -> int:
@@ -247,6 +432,8 @@ def parse_replicates_env(raw: str | None = None) -> int:
       else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES", "")
   ).strip()
   if not text:
+    if e6_mode_enabled():
+      return DEFAULT_E6_REPLICATES
     if knobs_mode_enabled():
       return DEFAULT_KNOBS_REPLICATES
     return (
