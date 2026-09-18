@@ -23,6 +23,7 @@ globs:
 8. **Console logging:** `services-conf/rabbitmq_logging.conf` must use **`log.console.level = warning`** (not **`error`-only**, which hides memory alarms; not **`info`**, which floods under thousands of publisher connections). Pin **`log.connection.level`** and **`log.channel.level`** to **`error`**. Canonical alarm check remains **`rabbitmqctl status`** → **Alarms**.
 9. **Crash dumps:** rabbitmq compose must set **`ERL_CRASH_DUMP_SECONDS=0`** and **`ulimits.core: 0`** so production OOMs do not write `erl_crash.dump` / OS cores (one-off debug override only — see **`docs/OPERATOR_RABBITMQ_RECOVERY.md`**).
 10. **Stale mnesia:** preserve/extract `rabbit@*` dirs; **never delete** without explicit OK. When the node is down, use `sh -c` conf.d/cgroup/mnesia diagnostics — do not assume cookie mismatch first.
+11. **Pipeline memory scream:** supervisord program **`rabbitmq-watcher`** (`hpcperfstats/rabbitmq_watcher.py`) polls management **`/api/nodes`** every **5 minutes**, always logs a line prefixed **`[rabbitmq-watcher]`**, and inserts literal **`ERROR`** when `mem_used` is at/above **40 GiB** and at each **+10 GiB** band (50/60/…). Soft-fails on HTTP errors without ERROR paging. Recreate **pipeline** after shipping. Does **not** replace `rabbitmqctl status` Alarms.
 
 ## Operator verification
 
@@ -30,6 +31,7 @@ globs:
 - Confirm cgroup: `memory.max` is numeric (not `max`) and matches the compose limit.
 - Do **not** use `rabbitmqctl list_alarms` on RabbitMQ **4.3.x** (command does not exist) — see **`compose-operator-terminal-commands.mdc`**.
 - Recovery playbook: **`docs/OPERATOR_RABBITMQ_RECOVERY.md`**.
+- Watcher correlation: `docker compose logs pipeline 2>&1 | grep '\[rabbitmq-watcher\]'`.
 
 ## Regression tests
 
@@ -39,6 +41,7 @@ globs:
 - `test_docker_compose_rabbitmq_disables_crash_dumps` asserts **`ERL_CRASH_DUMP_SECONDS=0`** + **`core: 0`**.
 - `test_docker_compose_rabbitmq_stop_grace_period_is_10m` asserts **`stop_grace_period: 10m`** + README mention.
 - `test_operator_rabbitmq_recovery_runbook_exists` asserts preserve/extract runbook.
+- `test_rabbitmq_watcher.py` + supervisord tests assert 5 min / 40 GiB / +10 GiB scream + GIL program wire.
 
 ## Overlap
 

@@ -38,6 +38,15 @@ def test_pipeline_programs_use_opt_python314t():
     assert "/usr/local/bin/python3" not in command, (program, command)
 
 
+def test_rabbitmq_watcher_uses_gil_python3_not_ft():
+  """Memory scream is poll-only; stay on GIL /usr/local/bin/python3."""
+  text = _supervisord_text()
+  command = _program_command(text, "rabbitmq-watcher")
+  assert "rabbitmq_watcher.py" in command
+  assert "/usr/local/bin/python3" in command
+  assert "/opt/python3.14t" not in command
+
+
 def test_pipeline_programs_set_ft_malloc_conf_without_clearing_preload():
   """FT daemons may enable jemalloc background_thread; must not unset LD_PRELOAD."""
   text = _supervisord_text()

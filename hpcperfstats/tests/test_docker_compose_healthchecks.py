@@ -480,8 +480,10 @@ def test_operator_rabbitmq_recovery_runbook_exists():
   assert "node not running" in text.lower()
   assert "ERL_CRASH_DUMP" in text
   assert "classic" in text.lower()
+  assert "rabbitmq-watcher" in text
   readme = (repo_root / "README.md").read_text()
   assert "OPERATOR_RABBITMQ_RECOVERY.md" in readme
+  assert "rabbitmq-watcher" in readme
 
 
 def test_docker_compose_proxy_runtime_tls_mount_and_entrypoint_materialize():

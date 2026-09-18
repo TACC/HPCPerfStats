@@ -78,6 +78,22 @@ def test_supervisord_rsync_data_program_uses_wrapper():
   assert not (_repo_root() / "services-conf" / "supervisord.conf.example").exists()
 
 
+def test_supervisord_rabbitmq_watcher_program_uses_gil_python3():
+  """rabbitmq-watcher is a GIL poll daemon after listend; not free-threaded."""
+  config = configparser.ConfigParser()
+  config.read(_supervisord_conf_path())
+
+  section = "program:rabbitmq-watcher"
+  assert config.has_section(section)
+  command = config.get(section, "command")
+  assert "rabbitmq_watcher.py" in command
+  assert "/usr/local/bin/python3" in command
+  assert "/opt/python3.14t" not in command
+  assert "sleep 30" in command
+  assert config.get(section, "user") == "hpcperfstats"
+  assert 'HOME="/home/hpcperfstats"' in config.get(section, "environment")
+
+
 def test_supervisor_startup_wait_order_is_db_then_redis_then_web():
   repo_root = _repo_root()
   script_path = repo_root / "services-conf" / "supervisor_startup.sh"

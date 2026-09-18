@@ -20,6 +20,7 @@ _PR_SET_PDEATHSIG = 1
 _MODULE_PROCESS_TITLES: dict[str, str] = {
     "hpcperfstats.seal_syslog_daily": "seal_syslog_daily.py",
     "hpcperfstats.render_syslog_ng_generated": "render_syslog_ng_generated.py",
+    "hpcperfstats.rabbitmq_watcher": "rabbitmq_watcher.py",
 }
 
 

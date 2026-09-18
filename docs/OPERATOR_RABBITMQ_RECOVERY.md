@@ -12,6 +12,7 @@ Use this after Erlang `binary_alloc` OOM, quorum consume **541** storms, or when
 | Crash dumps | `ERL_CRASH_DUMP_SECONDS=0` + `ulimits.core: 0` — no `erl_crash.dump` / OS core by default |
 | Nodename | Static `hostname: rabbitmq-prod` / `RABBITMQ_NODENAME=rabbit@rabbitmq-prod` |
 | Alarms truth | `rabbitmqctl status` → **Alarms** (not `list_alarms` on 4.3.x) |
+| Pipeline scream | supervisord `rabbitmq-watcher` — every **5 min** logs `[rabbitmq-watcher]` with `mem_used`; literal **`ERROR`** at **40 GiB** and every **+10 GiB** band (50/60/…) for log pagers |
 
 ## When `rabbitmqctl` fails (node not running)
 
@@ -54,7 +55,21 @@ Check **Alarms**, Memory vs 80 GiB watermark, and that listend reaches consume
 podman-compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'AMQP quorum consume-setup|Begining Consume|Starting Connection|timed out consuming' | tail -80
 ```
 
+Correlate memory trajectory (watcher emits every 5 minutes; ERROR bands at 40/50/60 GiB):
+
+```bash
+podman-compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep '\[rabbitmq-watcher\]' | tail -40
+```
+
 Expect no new `Crash dump is being written to: …/erl_crash.dump` lines after OOM (dumps disabled).
+
+## Recreate pipeline after watcher ships
+
+Watcher is a supervisord program — recreate **pipeline** (not only rabbitmq) so the new program starts:
+
+```bash
+podman-compose -p hpcperfstats -f docker-compose.yaml up -d --force-recreate pipeline
+```
 
 ## One-off debug crash dump
 
