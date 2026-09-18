@@ -19,13 +19,14 @@ When changing ingest, archive, or raw-stats removal under `hpcperfstats/dbload/s
 
 ## Definition: archive/delete ready
 
-Closed segment is archive/delete-ready when **either**:
+Closed segment is archive/delete-ready when **any** of:
 
-1. **Host head+tail** — both of (only when **`listend_db_ingest_enabled` is off**):
+1. **Durable sync_timedb file-complete mark** (`sync_timedb_file_complete_ingest_mark.py`, written after successful ingest or `db_skip=full_scan`) — qualifies **whether `listend_db_ingest_enabled` is on or off**. Prefer this over head+tail I/O when the mark exists.
+2. **Durable zero-host ingest mark** — successful ingest wrote **no parsed host stats records** (`stats_rows_parsed=0` / empty host payload, typically `proc_rows>0`) and recorded a fingerprint mark under `{archive_dir}/.sync_timedb_zero_host_ingest_mark.json` (`sync_timedb_zero_host_ingest_mark.py`). Gate on **parsed** counts, never post-collapse write counts alone (RC-0). **`proc_data` has no `time` column** — do not invent proc head/tail probes. Keep **`need_archival=True`** for these paths; do **not** clear archival marks as a substitute for gate readiness.
+3. **Host head+tail** — only when **`listend_db_ingest_enabled` is off** and marks miss:
    - The **first** digit-leading timestamp line's **hostname token** has at least one **`host_data`** row in the **same Unix second**.
    - The **last** digit-leading timestamp line's **hostname token** has at least one **`host_data`** row in the **same Unix second**.
-2. **Durable zero-host ingest mark** — successful ingest wrote **no parsed host stats records** (`stats_rows_parsed=0` / empty host payload, typically `proc_rows>0`) and recorded a fingerprint mark under `{archive_dir}/.sync_timedb_zero_host_ingest_mark.json` (`sync_timedb_zero_host_ingest_mark.py`). Gate on **parsed** counts, never post-collapse write counts alone (RC-0). **`proc_data` has no `time` column** — do not invent proc head/tail probes. Keep **`need_archival=True`** for these paths; do **not** clear archival marks as a substitute for gate readiness.
-3. **When `listend_db_ingest_enabled`:** do **not** treat live-only head+tail as ready. Require a **sync_timedb file-complete mark** (`sync_timedb_file_complete_ingest_mark.py`, written after successful ingest or `db_skip=full_scan`) **or** the zero-host mark. Live listend never writes the file-complete mark. Weak ingest `_try_db_complete_head_tail_fast_path` / `_try_db_complete_tail_window_fast_path` return `None` when live on — fall through to duplicate-timestamp scan. See **`listend-live-db-ingest-contract.mdc`**.
+4. **When `listend_db_ingest_enabled`:** do **not** treat live-only head+tail as ready. Require file-complete **or** zero-host mark. Live listend never writes the file-complete mark. Weak ingest `_try_db_complete_head_tail_fast_path` / `_try_db_complete_tail_window_fast_path` return `None` when live on — fall through to duplicate-timestamp scan. See **`listend-live-db-ingest-contract.mdc`**.
 
 - Monitor fractional seconds; do not use exact `time=` equality (Unix-second windows).
 - **`host` must be the hostname token from the stats file line** (same field written to `host_data.host` during ingest). Do **not** use the archive path's parent directory name (often FQDN) for the DB lookup.
@@ -38,6 +39,8 @@ Closed segment is archive/delete-ready when **either**:
 ## Performance
 
 - Per-path gate reads only the file **head** (until first digit-leading line) and a **bounded EOF-backward tail** (default 64KB chunks) — **no full-file load**.
+- **Append hot path:** `_archive_stats_files_body` partitions mark-ready paths (file-complete / zero-host) and calls **`collect_gate_identities_for_paths` only for unresolved paths** — skip parallel gate-tail EOF I/O when marks already prove ready (live on or off).
+- After a successful open-tar membership scan (`members_source=tar_scan`), skip the redundant pre-append **`verify_tar_archive_readable`** full `tar tf` (tvf already proved readability); keep repair/restore when tvf fails and keep post-append verify. Open-tar SoT unchanged (`sync-timedb-lock-and-archive-contract.mdc`).
 - Maintenance `ready_paths` reuse `gate_identities_by_path` built from head metadata plus parallel tail reads (`collect_gate_identities_for_paths`); no strided full-file sample pass.
 - Batched membership uses `sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present` for the small head+tail second sets (typically ≤2 per host); overflow (cardinality cap **or** statement/lock timeout on wide scan) → cached per-second exists (same as ingest duplicate scan).
 - **Ingest duplicate head/tail fast path:** tail second membership uses **`host_timestamp_second_present_in_db`** (indexed per-second `exists()` + 60s TTL cache), not a wide itimes window scan.

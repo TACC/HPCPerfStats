@@ -24,6 +24,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 - **`ingest fill empty deep_queue`** — rate-limited when local inflight is zero but the ingest score map is deep; includes `fill_block=` and per-reason `stats=` counters plus **`hot_used=` / `catch_used=`** census.
 - **`ingest fill under-capacity`** — rate-limited when local inflight is **below pool** (may be non-zero) but the score map is deep and the fill submitted 0; same `fill_block=` / `stats=` tokens and census fields.
 - **`archive_job_done`** — single INFO per append job (`tar_bytes`, `members_source`, `mapped`/`to_add`/`appended`, `outcome=`). Do not require `archive_job_begin` / `archive_job_duty` / `Archived batch` at INFO.
+- **Archive throughput (gate-tail / tvf reuse):** after the live-off file_complete + skip-collect / skip-redundant-`tar tf` wave, expect mark-ready append jobs without long `Gate tail metadata` batches for file_complete paths; open-tar jobs with `members_source=tar_scan` should not pay a second full pre-append `tar tf`. Smaller `sync_timedb_tar_append_batch_size` (default **256**) shortens per-job wall time; `sync_archive_pool_processes` (default **4**) raises multi-day append concurrency.
 - **`ingest per-file timeout`** — includes `size_bytes=` and `bytes_per_s=` for size/time judgment.
 - **Not primary:** `Archive/delete gate: skipped` and `handoff_to_ingest … reason=gate_skip` (demoted; use day `gate_skip=` / `ingest_handoff=`).
 

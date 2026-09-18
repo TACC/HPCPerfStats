@@ -683,6 +683,36 @@ def test_build_head_ingest_ready_set_live_on_ignores_head_tail(
   assert str(seg) in ready
 
 
+def test_build_head_ingest_ready_set_live_off_file_complete_without_head_tail(
+  monkeypatch,
+  tmp_path,
+):
+  """Live-off file_complete qualifies even when gate identities are empty."""
+  monkeypatch.setattr(
+    readiness.cfg, "get_sync_archive_require_db_ingest", lambda: True
+  )
+  monkeypatch.setattr(
+    readiness.cfg, "get_listend_db_ingest_enabled", lambda: False
+  )
+  monkeypatch.setattr(
+    readiness, "stats_file_is_active_segment", lambda _p: False
+  )
+  monkeypatch.setattr(
+    readiness, "_path_ready_via_file_complete_mark", lambda _p: True
+  )
+  monkeypatch.setattr(
+    readiness, "_path_ready_via_zero_host_mark", lambda _p: False
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.sync_timedb._sync_worker_db_task",
+    lambda: _NullCtx(),
+  )
+  seg = tmp_path / "seg"
+  seg.write_text("x")
+  ready = readiness.build_head_ingest_ready_set([str(seg)], {}, log_fn=None)
+  assert str(seg) in ready
+
+
 def test_stats_file_head_ingested_missing_path_false(monkeypatch, tmp_path):
   monkeypatch.setattr(
     readiness.cfg, "get_sync_archive_require_db_ingest", lambda: True

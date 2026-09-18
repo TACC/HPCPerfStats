@@ -389,18 +389,18 @@ def stats_file_head_ingested_in_db(
 ) -> Any:
   """
   Return True when the path is archive/delete ready.
-  
-  Default (live ingest off): host_data head+tail **or** zero-host mark.
-  When listend live DB ingest is on: sync_timedb file-complete mark **or**
-  zero-host mark (never live-only head+tail).
-  
+
+  Closed segments are ready via durable file-complete or zero-host marks
+  (live on or off). When listend live DB ingest is off and marks miss,
+  host_data head+tail also qualifies. Live-on never uses live-only head+tail.
+
   Args:
     path (str): String for path.
     log_fn (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> stats_file_head_ingested_in_db("x", None)  # doctest: +SKIP
   """
@@ -421,15 +421,12 @@ def stats_file_head_ingested_in_db(
 
     ready = False
     if not stats_file_is_active_segment(path):
-      if _live_db_ingest_enabled():
-        ready = (
-            _path_ready_via_file_complete_mark(path)
-            or _path_ready_via_zero_host_mark(path)
-        )
-      else:
+      ready = (
+          _path_ready_via_file_complete_mark(path)
+          or _path_ready_via_zero_host_mark(path)
+      )
+      if not ready and not _live_db_ingest_enabled():
         ready = _path_head_tail_ready_in_db(path)
-        if not ready:
-          ready = _path_ready_via_zero_host_mark(path)
 
     _PATH_READY_CACHE[fp] = {"ready": bool(ready), "checked_at": now}
     _trim_path_ready_cache()
@@ -444,18 +441,19 @@ def build_head_ingest_ready_set(
 ) -> Any:
   """
   Return paths ready via host_data gate seconds OR durable ingest marks.
-  
-  When listend live DB ingest is on, host_data head+tail alone is insufficient —
-  require the sync_timedb file-complete mark (or zero-host mark for proc-only).
-  
+
+  File-complete and zero-host marks qualify live on or off. When live ingest
+  is off, host_data head+tail from ``gate_identities_by_path`` also qualifies.
+  Live-on never treats head+tail alone as ready.
+
   Args:
     closed_paths (Any): Iterable of filesystem paths as strings.
     gate_identities_by_path (str): String for gate identities by path.
     log_fn (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> build_head_ingest_ready_set(None, "x", None)  # doctest: +SKIP
   """
@@ -496,13 +494,10 @@ def build_head_ingest_ready_set(
         continue
       if stats_file_is_active_segment(path):
         continue
-      if live_on:
-        if (
-            _path_ready_via_file_complete_mark(path)
-            or _path_ready_via_zero_host_mark(path)
-        ):
-          ready_paths.add(path)
-      elif _path_ready_via_zero_host_mark(path):
+      if (
+          _path_ready_via_file_complete_mark(path)
+          or _path_ready_via_zero_host_mark(path)
+      ):
         ready_paths.add(path)
     return ready_paths
 
@@ -523,8 +518,8 @@ def filter_paths_head_ingested(
   pass ``gate_identities_by_path`` for the batched path, otherwise each path is
   probed with streaming head+tail reads.
   
-  Ready when host_data head+tail passes **or** a durable zero-host ingest mark
-  is present for the path fingerprint.
+  Ready when host_data head+tail passes **or** a durable file-complete /
+  zero-host ingest mark is present for the path fingerprint (live on or off).
   
   Args:
     paths (Any): Iterable of filesystem paths as strings.

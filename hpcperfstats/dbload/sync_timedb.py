@@ -50,9 +50,12 @@ Attributes:
   _SYNC_TIMEDB_INGEST_INLINE_ENV: Attribute.
   _TREE_RSS_DEFER_SLEEP_SECONDS: Attribute.
   INGEST_WRITE_PHASE_KEYS: Closed-book write-phase timing key names.
-  _ingest_postgres_s: Attribute.
-  _ingest_write_phases: Per-file write-phase second accumulators.
-  _ingest_write_telem_on: Per-file closed-book write telemetry enable flag.
+  _ingest_postgres_campaign: Process-wide postgres_s campaign total.
+  _ingest_postgres_s: Per-file postgres_s ContextVar.
+  _ingest_write_campaign: Process-wide write-phase campaign totals.
+  _ingest_write_campaign_lock: Mutex for write campaign totals.
+  _ingest_write_phases: Per-file write-phase ContextVar.
+  _ingest_write_telem_on: Process-wide closed-book write telemetry enable.
   _last_supervisor_child_reap_mono: Attribute.
   _sealed_archive_ingest_progress: Attribute.
   archive_thread_count: Attribute.
@@ -71,6 +74,7 @@ import contextvars
 import gc
 import itertools
 import os
+import threading
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -208,6 +212,8 @@ from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
 
 from hpcperfstats.dbload.lib import sync_timedb_host_itimes
 from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
+  _path_ready_via_file_complete_mark,
+  _path_ready_via_zero_host_mark,
   filter_paths_head_ingested,
   head_timestamp_present_in_db,
   reset_sync_ingest_readiness_caches,
@@ -2152,13 +2158,15 @@ INGEST_WRITE_PHASE_KEYS: tuple[str, ...] = (
     "db_commit_s",
 )
 
+_ingest_write_telem_on = False
+_ingest_write_campaign: dict[str, float] = {
+    key: 0.0 for key in INGEST_WRITE_PHASE_KEYS
+}
+_ingest_postgres_campaign = 0.0
+_ingest_write_campaign_lock = threading.Lock()
 _ingest_postgres_s: contextvars.ContextVar[float] = contextvars.ContextVar(
     "ingest_postgres_s",
     default=0.0,
-)
-_ingest_write_telem_on: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "ingest_write_telem_on",
-    default=False,
 )
 _ingest_write_phases: contextvars.ContextVar[dict[str, float]] = contextvars.ContextVar(
     "ingest_write_phases",
@@ -2183,11 +2191,15 @@ def _ingest_write_telemetry_enabled_from_env() -> bool:
 
 def _reset_ingest_write_timing(*, enabled: bool | None = None) -> None:
   """
-  Zero per-file Postgres-write timing accumulators; optionally set enable flag.
+  Zero per-file write ContextVars; optionally set process-wide enable.
+
+  Process-wide enable is sticky across per-file ``enabled=None`` resets so
+  ingest pool workers keep recording after a controller enable. Explicit
+  ``enabled=True`` also zeros campaign totals used by closed-book E2.
 
   Args:
-    enabled (bool | None): When ``None``, read
-      ``HPCPERFSTATS_SYNC_INGEST_WRITE_TELEMETRY`` from the environment. When
+    enabled (bool | None): When ``None``, keep process-wide enable if already
+      on; otherwise read ``HPCPERFSTATS_SYNC_INGEST_WRITE_TELEMETRY``. When
       ``False``, no ``perf_counter`` holds run for write phases.
 
   Returns:
@@ -2196,16 +2208,28 @@ def _reset_ingest_write_timing(*, enabled: bool | None = None) -> None:
   Examples:
     >>> _reset_ingest_write_timing(enabled=False)
   """
+  global _ingest_write_telem_on, _ingest_postgres_campaign
   if enabled is None:
-    enabled = _ingest_write_telemetry_enabled_from_env()
-  _ingest_write_telem_on.set(bool(enabled))
+    if not _ingest_write_telem_on:
+      with _ingest_write_campaign_lock:
+        _ingest_write_telem_on = _ingest_write_telemetry_enabled_from_env()
+        if _ingest_write_telem_on:
+          _ingest_postgres_campaign = 0.0
+          for key in INGEST_WRITE_PHASE_KEYS:
+            _ingest_write_campaign[key] = 0.0
+  else:
+    with _ingest_write_campaign_lock:
+      _ingest_write_telem_on = bool(enabled)
+      _ingest_postgres_campaign = 0.0
+      for key in INGEST_WRITE_PHASE_KEYS:
+        _ingest_write_campaign[key] = 0.0
   _ingest_postgres_s.set(0.0)
   _ingest_write_phases.set({key: 0.0 for key in INGEST_WRITE_PHASE_KEYS})
 
 
 def _add_ingest_write_phase(name: str, delta_s: float) -> None:
   """
-  Accumulate non-negative seconds into a closed-book write phase dict.
+  Accumulate non-negative seconds into per-file and campaign write phases.
 
   Args:
     name (str): A key in ``INGEST_WRITE_PHASE_KEYS``.
@@ -2218,7 +2242,7 @@ def _add_ingest_write_phase(name: str, delta_s: float) -> None:
     >>> _reset_ingest_write_timing(enabled=True)
     >>> _add_ingest_write_phase("db_execute_s", 0.25)
   """
-  if not _ingest_write_telem_on.get():
+  if not _ingest_write_telem_on:
     return
   delta = float(delta_s)
   if delta <= 0.0 or name not in INGEST_WRITE_PHASE_KEYS:
@@ -2226,6 +2250,10 @@ def _add_ingest_write_phase(name: str, delta_s: float) -> None:
   acc = dict(_ingest_write_phases.get())
   acc[name] = float(acc.get(name, 0.0)) + delta
   _ingest_write_phases.set(acc)
+  with _ingest_write_campaign_lock:
+    _ingest_write_campaign[name] = (
+        float(_ingest_write_campaign.get(name, 0.0)) + delta
+    )
 
 
 def _add_ingest_postgres_s(delta_s: float) -> None:
@@ -2242,19 +2270,23 @@ def _add_ingest_postgres_s(delta_s: float) -> None:
     >>> _reset_ingest_write_timing()
     >>> _add_ingest_postgres_s(0.5)
   """
+  global _ingest_postgres_campaign
   delta = float(delta_s)
   if delta <= 0.0:
     return
   _ingest_postgres_s.set(float(_ingest_postgres_s.get()) + delta)
+  if _ingest_write_telem_on:
+    with _ingest_write_campaign_lock:
+      _ingest_postgres_campaign = float(_ingest_postgres_campaign) + delta
 
 
 def _snapshot_ingest_write_timing() -> dict[str, float]:
   """
-  Return accumulated ``postgres_s`` and optional closed-book write phases.
+  Return per-file ``postgres_s`` and optional closed-book write phases.
 
   Returns:
     dict[str, float]: ``postgres_s`` always; phase keys only when telemetry is
-      enabled for this file.
+      enabled.
 
   Examples:
     >>> _reset_ingest_write_timing(enabled=False)
@@ -2264,12 +2296,33 @@ def _snapshot_ingest_write_timing() -> dict[str, float]:
   out = {
       "postgres_s": float(_ingest_postgres_s.get()),
   }
-  if not _ingest_write_telem_on.get():
+  if not _ingest_write_telem_on:
     return out
   acc = _ingest_write_phases.get()
   for key in INGEST_WRITE_PHASE_KEYS:
     out[key] = float(acc.get(key, 0.0))
   return out
+
+
+def _snapshot_ingest_write_campaign_timing() -> dict[str, float]:
+  """
+  Return process-wide write-phase totals across ingest threads.
+
+  Returns:
+    dict[str, float]: Empty when disabled; else ``postgres_s`` plus phase keys.
+
+  Examples:
+    >>> _reset_ingest_write_timing(enabled=False)
+    >>> _snapshot_ingest_write_campaign_timing()
+    {}
+  """
+  if not _ingest_write_telem_on:
+    return {}
+  with _ingest_write_campaign_lock:
+    out = {"postgres_s": float(_ingest_postgres_campaign)}
+    for key in INGEST_WRITE_PHASE_KEYS:
+      out[key] = float(_ingest_write_campaign.get(key, 0.0))
+    return out
 
 
 def _merge_ingest_write_timing_into_meta(meta: Any) -> dict[str, Any]:
@@ -2295,7 +2348,6 @@ def _merge_ingest_write_timing_into_meta(meta: Any) -> dict[str, Any]:
     out.update(stage)
     attach_parse_unaccounted(out)
   return out
-
 
 @dataclass(frozen=True)
 class ArchiveTask:
@@ -2793,7 +2845,7 @@ def _held_ingest_write_phase(name: str) -> Iterator[None]:
     >>> with _held_ingest_write_phase("db_execute_s"):
     ...   pass
   """
-  if not _ingest_write_telem_on.get():
+  if not _ingest_write_telem_on:
     yield
     return
   t0 = time.perf_counter()
@@ -2966,7 +3018,7 @@ def _write_stats_payload_to_db(
       batch = list(itertools.islice(proc_it, bulk_create_batch_size()))
       if not batch:
         break
-      if _ingest_write_telem_on.get():
+      if _ingest_write_telem_on:
         with _held_ingest_write_timing():
           with _held_ingest_write_phase("orm_materialize_s"):
             proc_objs = [
@@ -3018,7 +3070,7 @@ def _write_stats_payload_to_db(
         batch = list(itertools.islice(stats_it, bulk_create_batch_size()))
         if not batch:
           break
-        if _ingest_write_telem_on.get():
+        if _ingest_write_telem_on:
           with _held_ingest_write_timing():
             with _held_ingest_write_phase("orm_materialize_s"):
               host_objs = [
@@ -5049,7 +5101,7 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
   paths so argv stays tiny and absolute ``-T`` path warnings are avoided.
   Always passes ``--posix`` (pax) so members larger than 8 GiB - 1 succeed on
   pax-capable archives. Skips paths that disappeared before append (race).
-  Batches via ``sync_timedb_tar_append_batch_size`` (default 1024).
+  Batches via ``sync_timedb_tar_append_batch_size`` (default 256).
   
   Args:
     tar_path (str): String for tar path.
@@ -5328,28 +5380,46 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         collect_gate_identities_for_paths,
     )
 
-    head_identity_by_path = {}
+    mark_ready = []
+    need_probe = []
     for path in stats_files:
-      try:
-        host, timestamp_utc = read_stats_file_head_identity(path)
-      except Exception:
-        continue
-      if host is None or timestamp_utc is None:
-        continue
-      head_identity_by_path[path] = (
-          str(host).strip(),
-          int(timestamp_utc.timestamp()),
+      if (
+          not stats_file_is_active_segment(path)
+          and (
+              _path_ready_via_file_complete_mark(path)
+              or _path_ready_via_zero_host_mark(path)
+          )
+      ):
+        mark_ready.append(path)
+      else:
+        need_probe.append(path)
+    gate_skipped = []
+    if need_probe:
+      head_identity_by_path = {}
+      for path in need_probe:
+        try:
+          host, timestamp_utc = read_stats_file_head_identity(path)
+        except Exception:
+          continue
+        if host is None or timestamp_utc is None:
+          continue
+        head_identity_by_path[path] = (
+            str(host).strip(),
+            int(timestamp_utc.timestamp()),
+        )
+      gate_identities_by_path, _gate_stats = collect_gate_identities_for_paths(
+          need_probe,
+          head_identity_by_path,
+          log_fn=log_print,
       )
-    gate_identities_by_path, _gate_stats = collect_gate_identities_for_paths(
-        stats_files,
-        head_identity_by_path,
-        log_fn=log_print,
-    )
-    stats_files, gate_skipped = filter_paths_head_ingested(
-        stats_files,
-        log_fn=log_print,
-        gate_identities_by_path=gate_identities_by_path,
-    )
+      probed_ready, gate_skipped = filter_paths_head_ingested(
+          need_probe,
+          log_fn=log_print,
+          gate_identities_by_path=gate_identities_by_path,
+      )
+      stats_files = mark_ready + list(probed_ready)
+    else:
+      stats_files = mark_ready
     if not stats_files:
       job_outcome = "gate_skip"
       return ArchiveAppendOutcome(
@@ -5413,6 +5483,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
           store_warm_members = get_existing_archive_members_for_daily_archive(
               canonical,
           )
+    open_tar_tvf_ok = False
     if sealed_exists or os.path.exists(archive_tar_fname):
       try:
         existing_members, members_source = (
@@ -5437,6 +5508,10 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         _ensure_job_begin_logged(members_source)
       else:
         _ensure_job_begin_logged(members_source)
+        open_tar_tvf_ok = (
+            members_source == "tar_scan"
+            and os.path.exists(archive_tar_fname)
+        )
         if store_warm_members is not None:
           maybe_invalidate_open_tar_store_divergence_for_append_batch(
               archive_fname,
@@ -5488,9 +5563,10 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
 
     # Corrupt/truncated .tar can make Python's tarfile reader return {} while GNU
     # tar still refuses append (exit 2). Recover before append so we never raise
-    # without trying restore-from-.gz (same as post-append path).
+    # without trying restore-from-.gz (same as post-append path). Successful
+    # open-tar tvf in this job already proved readability — skip a second tf.
     tar_unreadable = False
-    if os.path.isfile(archive_tar_fname):
+    if os.path.isfile(archive_tar_fname) and not open_tar_tvf_ok:
       try:
         tar_unreadable = not verify_tar_archive_readable(archive_tar_fname)
       except TimeoutError:

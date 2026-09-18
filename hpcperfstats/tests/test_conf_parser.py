@@ -651,14 +651,14 @@ def test_build_postgres_options_always_set_application_name(
 
 
 def test_sync_archive_pool_processes_ini_knob_default_and_override(temp_ini, monkeypatch):
-  """Archive slots come only from sync_archive_pool_processes (default 2)."""
+  """Archive slots come only from sync_archive_pool_processes (default 4)."""
   monkeypatch.delenv("SYNC_ARCHIVE_POOL_PROCESS_CAP", raising=False)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
-  assert cfg.get_sync_archive_pool_processes() == 2
+  assert cfg.get_sync_archive_pool_processes() == 4
   assert not hasattr(cfg, "get_sync_archive_pool_process_cap")
   with open(temp_ini) as f:
     content = f.read()
@@ -669,9 +669,14 @@ def test_sync_archive_pool_processes_ini_knob_default_and_override(temp_ini, mon
     )
   else:
     content = content.replace(
-        "sync_archive_pool_processes = 2",
+        "sync_archive_pool_processes = 4",
         "sync_archive_pool_processes = 5",
     )
+    if "sync_archive_pool_processes = 5" not in content:
+      content = content.replace(
+          "sync_archive_pool_processes = 2",
+          "sync_archive_pool_processes = 5",
+      )
   with open(temp_ini, "w") as f:
     f.write(content)
   importlib.reload(cfg)
@@ -875,7 +880,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_retry_backoff_base_seconds() == 1.0
   assert cfg.get_sync_archive_retry_backoff_max_seconds() == 60.0
   assert cfg.get_sync_checkpoint_flush_batch_size() == 100
-  assert cfg.get_sync_timedb_tar_append_batch_size() == 1024
+  assert cfg.get_sync_timedb_tar_append_batch_size() == 256
   assert cfg.get_sync_bulk_create_batch_size() == 10000
   assert cfg.get_sync_pool_poll_timeout_s() == 5.0
   assert cfg.get_sync_pool_worker_recycle_grace_seconds() == 60.0

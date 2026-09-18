@@ -2458,7 +2458,7 @@ def test_sliding_window_refills_idle_worker_slot(monkeypatch):
 
 
 def test_archive_worker_process_count_uses_sync_archive_pool(monkeypatch):
-  """Archive multiprocessing pool uses get_sync_archive_pool_processes (default 2)."""
+  """Archive multiprocessing pool uses get_sync_archive_pool_processes (default 4)."""
   monkeypatch.setattr(sta.cfg, "get_sync_archive_pool_processes", lambda: 4)
   assert sta._archive_worker_process_count() == 4
   monkeypatch.setattr(sta.cfg, "get_sync_archive_pool_processes", lambda: 2)
@@ -2801,11 +2801,149 @@ def test_archive_stats_files_builds_gate_identities_once(monkeypatch, tmp_path):
       "read_stats_file_head_identity",
       lambda path: ("cn001", __import__("datetime").datetime.utcfromtimestamp(1709123456)),
   )
+  monkeypatch.setattr(st, "_path_ready_via_file_complete_mark", lambda _p: False)
+  monkeypatch.setattr(st, "_path_ready_via_zero_host_mark", lambda _p: False)
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
 
   result = st.archive_stats_files((archive_key, [str(raw_file)]))
   assert isinstance(result, st.ArchiveAppendOutcome)
   assert result.gate_skipped is True
   assert collect_calls["n"] == 1
+
+
+def test_archive_stats_files_skips_gate_tail_collect_when_marks_ready(
+    monkeypatch, tmp_path,
+):
+  """Mark-ready paths must not pay collect_gate_identities_for_paths."""
+  import hpcperfstats.dbload.sync_timedb as st
+
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-02.tar.zst")
+  collect_calls = {"n": 0}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint."
+      "collect_gate_identities_for_paths",
+      lambda *a, **k: collect_calls.__setitem__("n", collect_calls["n"] + 1) or ({}, {}),
+  )
+  monkeypatch.setattr(st, "_path_ready_via_file_complete_mark", lambda _p: True)
+  monkeypatch.setattr(st, "_path_ready_via_zero_host_mark", lambda _p: False)
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(
+      st,
+      "_lookup_existing_members_for_archive_append",
+      lambda *_a, **_k: ({}, "store"),
+  )
+  monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
+  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(
+      st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files),
+  )
+  monkeypatch.setattr(
+      st, "_decompress_compressed_archive", lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      st, "ensure_daily_tar_restored_for_append", lambda *_a, **_k: True,
+  )
+
+  # Missing sealed sibling → new-tar path; mark-ready still skips collect.
+  result = st.archive_stats_files((archive_key, [str(raw_file)]))
+  assert collect_calls["n"] == 0
+  assert result is not False
+
+
+def test_archive_stats_files_still_collects_gate_tail_for_unmarked(
+    monkeypatch, tmp_path,
+):
+  """Unmarked paths still collect gate identities then filter."""
+  import hpcperfstats.dbload.sync_timedb as st
+
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-02.tar.zst")
+  collect_calls = {"n": 0, "paths": None}
+
+  def _collect(paths, head_identity_by_path, **kwargs):
+    collect_calls["n"] += 1
+    collect_calls["paths"] = list(paths)
+    return ({}, {})
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_maint."
+      "collect_gate_identities_for_paths",
+      _collect,
+  )
+  monkeypatch.setattr(st, "_path_ready_via_file_complete_mark", lambda _p: False)
+  monkeypatch.setattr(st, "_path_ready_via_zero_host_mark", lambda _p: False)
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(
+      st,
+      "filter_paths_head_ingested",
+      lambda paths, **kwargs: ([], list(paths)),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+      "read_stats_file_head_identity",
+      lambda path: ("cn001", __import__("datetime").datetime.utcfromtimestamp(1709123456)),
+  )
+
+  result = st.archive_stats_files((archive_key, [str(raw_file)]))
+  assert isinstance(result, st.ArchiveAppendOutcome)
+  assert result.gate_skipped is True
+  assert collect_calls["n"] == 1
+  assert collect_calls["paths"] == [str(raw_file)]
+
+
+def test_archive_stats_files_skips_pre_append_tf_after_successful_tvf(
+    monkeypatch, tmp_path,
+):
+  """Successful open-tar tvf must not pay a second pre-append tar tf."""
+  import hpcperfstats.dbload.sync_timedb as st
+
+  raw_file = tmp_path / "1709123456"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-05.tar.zst")
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  os.makedirs(os.path.dirname(tar_path) or ".", exist_ok=True)
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(raw_file), arcname="existing")
+  open(archive_key, "wb").write(b"sealed")
+
+  verify_calls = {"n": 0}
+  real_verify = st.verify_tar_archive_readable
+
+  def _count_verify(path, **kwargs):
+    verify_calls["n"] += 1
+    return real_verify(path, **kwargs)
+
+  _patch_archive_gate_pass(monkeypatch)
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(st, "_path_ready_via_file_complete_mark", lambda _p: False)
+  monkeypatch.setattr(st, "_path_ready_via_zero_host_mark", lambda _p: False)
+  monkeypatch.setattr(
+      st,
+      "_lookup_existing_members_for_archive_append",
+      lambda *_a, **_k: ({}, "tar_scan"),
+  )
+  monkeypatch.setattr(st, "verify_tar_archive_readable", _count_verify)
+  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(
+      st, "filter_files_to_add_to_archive", lambda files, *_a, **_k: list(files),
+  )
+  monkeypatch.setattr(
+      st, "prepare_paths_for_giant_member_append",
+      lambda _tar, files, **_k: (list(files), []),
+  )
+  monkeypatch.setattr(
+      st, "ensure_daily_tar_restored_for_append", lambda *_a, **_k: True,
+  )
+
+  new_raw = tmp_path / "1709123457"
+  new_raw.write_text("1709123457 job2 cn002\n")
+  assert st._archive_stats_files_body((archive_key, [str(new_raw)]))
+  # Pre-append tf skipped; post-append integrity check remains (exactly one).
+  assert verify_calls["n"] == 1
 
 
 def test_archive_stats_files_skips_append_when_not_head_ingested(monkeypatch, tmp_path):

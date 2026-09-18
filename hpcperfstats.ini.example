@@ -206,8 +206,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Absolute sync_timedb ingest pool size; archive discovery/day-raw use the same getter (default 64).
 # sync_ingest_pool_processes = 64
 
-# Concurrent daily-tar append slots / archive spawn pool size (default 2).
-# sync_archive_pool_processes = 2
+# Concurrent daily-tar append slots / archive spawn pool size (default 4).
+# sync_archive_pool_processes = 4
 
 # Max concurrent sealed-day streams for sync_timedb_archive backfill (default 1).
 # sync_timedb_archive_max_concurrent_sealed_days = 1
@@ -240,8 +240,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Processed-file checkpoint writes per batch (default 100).
 # sync_checkpoint_flush_batch_size = 100
 
-# Max raw paths per tar -T append batch in sync_timedb (default 1024).
-# sync_timedb_tar_append_batch_size = 1024
+# Max raw paths per tar -T append batch in sync_timedb (default 256).
+# sync_timedb_tar_append_batch_size = 256
 
 # host_data/proc_data bulk_create batch size and incremental parse flush threshold (default 10000).
 # Also drives archive DB gate sample stride (batch_size // 2 timestamp lines, plus last line at EOF).

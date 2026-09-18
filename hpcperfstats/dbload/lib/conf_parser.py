@@ -260,7 +260,7 @@ INI_OPTION_DEFAULTS = {
     'metrics_readiness_start_margin_seconds': '600',
     'metrics_readiness_end_margin_seconds': '600',
     'sync_ingest_pool_processes': '64',
-    'sync_archive_pool_processes': '2',
+    'sync_archive_pool_processes': '4',
         'sync_ingest_queue_max_size': '3000',
     'sync_ingest_rescan_mtime_days': '1',
     'sync_archive_queue_max_size': '1000',
@@ -270,7 +270,7 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_retry_backoff_base_seconds': '1',
     'sync_archive_retry_backoff_max_seconds': '60',
     'sync_checkpoint_flush_batch_size': '100',
-    'sync_timedb_tar_append_batch_size': '1024',
+    'sync_timedb_tar_append_batch_size': '256',
     'sync_host_itimes_cache_max_timestamps_per_entry': '100000',
     'sync_pool_poll_timeout_s': '5',
     'sync_pool_stall_defer_log_interval_s': '60',
@@ -2132,7 +2132,7 @@ def get_sync_ingest_pool_processes() -> Any:
 
 def get_sync_archive_pool_processes() -> Any:
   """
-  Archive pool size / concurrent daily-tar append slots (INI default 2).
+  Archive pool size / concurrent daily-tar append slots (INI default 4).
   
   Sole source of archive append concurrency — not derived from cpuset budget.
   

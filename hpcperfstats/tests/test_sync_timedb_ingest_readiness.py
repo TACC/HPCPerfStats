@@ -484,3 +484,28 @@ def test_without_mark_and_without_host_data_still_skipped(monkeypatch, tmp_path)
       readiness, "head_timestamp_present_in_db", lambda _h, _t: False,
   )
   assert readiness.stats_file_head_ingested_in_db(seg) is False
+
+
+def test_live_off_file_complete_ready_without_head_tail(monkeypatch, tmp_path):
+  """Live-off file_complete mark is ready without host_data head+tail I/O."""
+  host_dir = tmp_path / "host.cluster"
+  host_dir.mkdir()
+  archive_dir = tmp_path / "archive"
+  archive_dir.mkdir()
+  seg = _write_stats_segment(host_dir / "marked", "cn001", 1_700_100_300)
+
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_listend_db_ingest_enabled", lambda: False)
+  monkeypatch.setattr(cfg, "get_archive_dir_path", lambda: str(archive_dir))
+  monkeypatch.setattr(
+      readiness, "_path_head_tail_ready_in_db", lambda _p: (_ for _ in ()).throw(
+          AssertionError("head+tail must not run when file_complete"),
+      ),
+  )
+  monkeypatch.setattr(
+      readiness, "_path_ready_via_file_complete_mark", lambda _p: True,
+  )
+  monkeypatch.setattr(
+      readiness, "_path_ready_via_zero_host_mark", lambda _p: False,
+  )
+  assert readiness.stats_file_head_ingested_in_db(seg) is True

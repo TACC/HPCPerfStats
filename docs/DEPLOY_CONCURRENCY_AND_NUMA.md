@@ -50,8 +50,8 @@ Ingest is always-on under **`run_sync_timedb_queue_orchestrator`**. Cold-path ar
 | **`sync_ingest_hot_days`** | **`3`** (min **1**) | Hot-band calendar-day window for ingest ZSET scoring (`age < N`: today + prior N−1 days when N≥2; today only when N=1) |
 | **`archive_keep_uncompressed_tar`** | **`no`** | Drop prior-day `.tar` at seal when raw is gone; global `yes` retains until tar-drop |
 | **`archive_today_uncompressed_tar_grace_hours`** | **`24`** | Keep calendar-today `.tar` after local midnight (hours) when global keep is `no` |
-| **`sync_archive_pool_processes`** | **`2`** | Sole knob: archive thread pool workers **and** concurrent daily-tar append slots (one day per slot) |
-| **`sync_timedb_tar_append_batch_size`** | **`1024`** | Max raw paths per ``tar -T`` append invocation |
+| **`sync_archive_pool_processes`** | **`4`** | Sole knob: archive thread pool workers **and** concurrent daily-tar append slots (one day per slot). On backlog sites with many open daily tars, set **4+** (or drop an explicit pin of `2`) on the same wave as this release; same calendar day remains single-writer |
+| **`sync_timedb_tar_append_batch_size`** | **`256`** | Max raw paths per ``tar -T`` append invocation (smaller batches finish gate/tvf sooner; pair with site ingest pool as needed) |
 | **`sync_archive_worker_stall_seconds`** | **`600`** | Log stalled append workers (observability) |
 | **`sync_enable_ingest_first_durability_mode`** | **`yes`** | Checkpoint after DB even when append is deferred |
 
