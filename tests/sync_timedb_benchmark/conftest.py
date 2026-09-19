@@ -72,6 +72,14 @@ def _e6_enabled() -> bool:
   )
 
 
+def _e7_enabled() -> bool:
+  return os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_E7", "").strip().lower() in (
+      "1",
+      "yes",
+      "true",
+  )
+
+
 def _contention_enabled() -> bool:
   return os.environ.get(
       "HPCPERFSTATS_SYNC_TIMEDB_CONTENTION",
@@ -90,7 +98,7 @@ def pytest_collection_modifyitems(
   """
   Skip long benchmark tests unless ``HPCPERFSTATS_SYNC_TIMEDB_BENCH=1``.
 
-  Also defer ``django_db`` for ingest-width screening/knee/E2/knobs/E6/
+  Also defer ``django_db`` for ingest-width screening/knee/E2/knobs/E6/E7/
   contention until compose flags are enabled so host unit sessions do not
   attempt PostgreSQL at hostname ``db``.
 
@@ -141,6 +149,13 @@ def pytest_collection_modifyitems(
           "HPCPERFSTATS_SYNC_TIMEDB_E6=1 (workflow --e6)"
       ),
   )
+  e7_on = _compose_network_enabled() and _e7_enabled()
+  skip_e7 = pytest.mark.skip(
+      reason=(
+          "Requires HPCPERFSTATS_COMPOSE_NETWORK=1 and "
+          "HPCPERFSTATS_SYNC_TIMEDB_E7=1 (workflow --e7)"
+      ),
+  )
   contention_on = _compose_network_enabled() and _contention_enabled()
   skip_contention = pytest.mark.skip(
       reason=(
@@ -170,6 +185,11 @@ def pytest_collection_modifyitems(
         item.add_marker(db_mark)
       else:
         item.add_marker(skip_e6)
+    if "test_e7_proc_build_ab" in item.nodeid:
+      if e7_on:
+        item.add_marker(db_mark)
+      else:
+        item.add_marker(skip_e7)
     if "test_contention_ab" in item.nodeid:
       if contention_on:
         item.add_marker(db_mark)

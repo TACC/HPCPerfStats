@@ -89,7 +89,8 @@ acceptance, rollback, status.
 | E3 | Non-overlapping listend rate revises LOSING margin | listend/ingest ratio | analyzer (done) | **complete (LOSING)** — fixed analyzer + timestamps; 02/04 ~4.5h post-redeploy pastes with `--since-minutes 1440` both **verdict_full_ingest=LOSING** (ratios 2.3 / 66.9); absolute rates diluted; undiluted ~3.2h recompute: **02 ratio 2.76**, **04 ratio 1.24** (both LOSING; archive_done 0) |
 | E4 | Split ORM vs DB execute shrinks false “postgres” blame | phase shares | ingest write phases | helpers + process-global write telem shipped; E2 now shows `write_postgres_s` / `write_db_execute_s` / `write_orm_materialize_s` populated |
 | E5 | Reduce day-close overlap contention | flock timeouts / day-close wall | day-close inflight | **knobs matrix complete** — `knobs_cf29f0b42561480f99280ce0616c973d.json` @ ingest width 48 ×3 reps. Candidates (smallest within 5% of peak): day_close **1**, archive **1**, populate **1**, bulk **2000**. Curves for day_close/archive/populate nearly flat (~0.045–0.047 files/s); bulk slowest absolute (~0.023–0.025) — treat as campaign hint only, early-shutdown clock excludes most day_close wall |
-| E6 | Evidence-led parse merge optimization on LS6 shape | files/s on 02-derived tier | parsing hot path | **complete-negative (feed_line)** — paired A/B @ width 48 ×5 reps: baseline `e6_arm_baseline_1e7943f6b3c6424d879996f32b6ca407.json` (mean≈0.0472 files/s, lo≈0.0457); candidate after surgical `feed_line` micro-opts `e6_parse_feed_ab_31a8582e4c864e34a5af28cac99ee189.json` (mean≈0.0459, lo≈0.0451, **retain=false**). Product patch **reverted**. Next CODE candidate: `parse_proc_merge_s` / `parse_build_df_s` (new plan). Harness `--e6` retained. |
+| E6 | Evidence-led parse merge optimization on LS6 shape | files/s on 02-derived tier | parsing hot path | **complete-negative (feed_line)** — paired A/B @ width 48 ×5 reps: baseline `e6_arm_baseline_1e7943f6b3c6424d879996f32b6ca407.json` (mean≈0.0472 files/s, lo≈0.0457); candidate after surgical `feed_line` micro-opts `e6_parse_feed_ab_31a8582e4c864e34a5af28cac99ee189.json` (mean≈0.0459, lo≈0.0451, **retain=false**). Product patch **reverted**. Harness `--e6` retained. |
+| E7 | Residual `parse_proc_merge_s` / `parse_build_df_s` after Wave4 online merge | files/s on 02-derived tier | parsing hot path | **complete-negative** — paired A/B @ width 48 ×5 reps: baseline `e7_arm_baseline_c710cd12e05a4831bb40004125265cb9.json` (mean≈0.0505 files/s, lo≈0.0446); candidate skip-redundant-dedupe + columnar `take_proc` `e7_proc_build_ab_da062d9bdc6f45ce8a1a11f95e02ebb6.json` (mean≈0.0488, lo≈0.0443, **retain=false**). Product patch **reverted**. Harness `--e7` retained. High baseline CI width (lo≪mean) — noise floor; no CI win. |
 | CONTENTION | FT contention P0–P3 sequential A/B @ width 48 | files/s + store wait | caches / park / manifest / members shard / … | **complete** (`--contention`). **retain=true:** `caches` (FT-safe RLock L1/mark/head/itimes), `thread_id` (pid:tid registry). **retain=false (reverted):** `park_resume`, `manifest_io`, `members_shard`, `claim_heap`, `tar_ex`, `pool_split`, `log_drain`, `discover` (`contention_discover_ab_86729faa67ae437db356e7f8d2acaf2b.json`), `telem_tls` (`contention_telem_tls_ab_d7edcd13c4d74153aa15cead3c50338d.json`; campaign telem forced on both arms). |
 
 Closed-book store locks: default-off ``TimedRLock`` on job/members stores emits
@@ -117,6 +118,8 @@ tests/run_sync_timedb_benchmark_workflow.sh --e2
 tests/run_sync_timedb_benchmark_workflow.sh --knobs
 # E6 A/B: HPCPERFSTATS_E6_ARM=baseline|candidate
 tests/run_sync_timedb_benchmark_workflow.sh --e6
+# E7 A/B: HPCPERFSTATS_E7_ARM=baseline|candidate
+tests/run_sync_timedb_benchmark_workflow.sh --e7
 ```
 
 Supporting knobs (Test 2 stage 3): sequential factor sweeps at fixed ingest
@@ -129,6 +132,11 @@ E6 parse_feed A/B (Test 2 evidence-led CODE): `--e6` with
 `HPCPERFSTATS_E6_ARM=baseline` then `candidate` → `e6_arm_baseline_*.json` /
 `e6_parse_feed_ab_*.json`. Feed_line micro-opt arm **retain=false** 2026-09-18;
 product patch reverted.
+
+E7 residual proc_merge/build_df A/B: `--e7` with
+`HPCPERFSTATS_E7_ARM=baseline` then `candidate` → `e7_arm_baseline_*.json` /
+`e7_proc_build_ab_*.json`. Skip-dedupe + columnar take arm **retain=false**
+2026-09-19; product patch reverted.
 ## Selection rule (when study artifacts exist)
 
 Maximize lower-confidence-bound durable throughput subject to correctness, no
@@ -153,10 +161,11 @@ Screening winner ≠ deployable INI without knee confirmation (follow-on).
 1. ~~Knee confirmation (≥5 replicates, widths 48–96)~~ — done; candidate **48** (flat curve). Still not an INI redeploy.
 2. ~~Compose E2 re-run after telem fix~~ — done 2026-09-17; `residual_frac=0.0`, 23 phases (`e2_closed_book_da92427028ed4dfbb430053defac3d72.json`).
 3. ~~Compose `--knobs` matrix @48~~ — done 2026-09-18; candidates day_close/archive/populate **1**, bulk **2000** (`knobs_cf29f0b42561480f99280ce0616c973d.json`). Flat day-close/archive/populate — do not raise inflight from knobs alone.
-4. ~~E6 feed_line product CODE A/B~~ — done 2026-09-18 **negative** (`e6_parse_feed_ab_31a8582e4c864e34a5af28cac99ee189.json`, retain=false); patch reverted. Next CODE surface: `parse_proc_merge_s` / `parse_build_df_s` (new plan).
-5. Coexistence matrix (`update_metrics` + listend) at width 48.
-6. Finalists + soak (Test 2 stage 5).
-7. Mature 24h analyzer recompute on 02/04 when continuous logs exist.
-8. Operator T1/T2 stall verify on a backlog site when accessible
+4. ~~E6 feed_line product CODE A/B~~ — done 2026-09-18 **negative** (`e6_parse_feed_ab_31a8582e4c864e34a5af28cac99ee189.json`, retain=false); patch reverted.
+5. ~~E7 residual proc_merge/build_df product CODE A/B~~ — done 2026-09-19 **negative** (`e7_proc_build_ab_da062d9bdc6f45ce8a1a11f95e02ebb6.json`, retain=false); patch reverted. Harness `--e7` kept. Evidence-led Python CODE tranche on closed-book parse holds is exhausted for corpus_steady @48 without a new flamegraph / larger cohort.
+6. Coexistence matrix (`update_metrics` + listend) at width 48.
+7. Finalists + soak (Test 2 stage 5).
+8. Mature 24h analyzer recompute on 02/04 when continuous logs exist.
+9. Operator T1/T2 stall verify on a backlog site when accessible
    (agent host lacks BatchMode SSH to 02/04 — Host key verification failed).
    Undiluted rates + T0 census already recorded (02 ratio 2.76 / 04 ratio 1.24).

@@ -245,6 +245,25 @@ Artifacts: `test_runs/sync_timedb_bench/e6_arm_baseline_*.json` then
 `e6_parse_feed_ab_*.json` (`retain` true/false per lower-CI gate). Still not a
 production INI change.
 
+E7 residual `proc_merge` / `build_df` paired A/B at fixed ingest width **48**
+(baseline arm, then candidate arm after skip-redundant-dedupe + columnar
+`take_proc` product patch; ≥5 replicates by default; same retain gate as E6):
+
+```bash
+cd HPCPerfStats
+# Ambient SCREEN_WIDTHS/REPLICATES cleared unless KNEE_ALLOW_SCREEN_ENV=1.
+# Optional: HPCPERFSTATS_SYNC_TIMEDB_E7_WIDTH=48
+# Optional: HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES=5
+HPCPERFSTATS_E7_ARM=baseline tests/run_sync_timedb_benchmark_workflow.sh --e7
+# Apply residual merge/build_df candidate patch, then:
+HPCPERFSTATS_E7_ARM=candidate tests/run_sync_timedb_benchmark_workflow.sh --e7
+```
+
+Artifacts: `test_runs/sync_timedb_bench/e7_arm_baseline_*.json` then
+`e7_proc_build_ab_*.json` (`retain` true/false). 2026-09-19 candidate
+**retain=false** (product reverted; harness kept). Still not a production INI
+change.
+
 FT contention wave A/B at fixed ingest width **48** (one wave product patch at a
 time; ≥5 replicates by default). Set ``HPCPERFSTATS_CONTENTION_WAVE`` to a wave
 id (`caches`, `park_resume`, `manifest_io`, `members_shard`, `claim_heap`,

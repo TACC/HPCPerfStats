@@ -343,6 +343,53 @@ def test_e6_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):
   assert latest_e6_baseline_artifact(tmp_path) == out
 
 
+def test_e7_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):
+  from tests.sync_timedb_benchmark.screening_runner import (
+      DEFAULT_E7_REPLICATES,
+      DEFAULT_E7_WIDTH,
+      build_e7_ab_manifest,
+      e6_retain_candidate,
+      e7_arm,
+      e7_fixed_width,
+      e7_mode_enabled,
+      latest_e7_baseline_artifact,
+      parse_replicates_env,
+      write_screening_artifact,
+  )
+
+  monkeypatch.setenv("HPCPERFSTATS_SYNC_TIMEDB_E7", "1")
+  monkeypatch.delenv("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES", raising=False)
+  monkeypatch.delenv("HPCPERFSTATS_SYNC_TIMEDB_E7_WIDTH", raising=False)
+  monkeypatch.delenv("HPCPERFSTATS_E7_ARM", raising=False)
+  assert e7_mode_enabled()
+  assert e7_fixed_width() == DEFAULT_E7_WIDTH
+  assert parse_replicates_env() == DEFAULT_E7_REPLICATES
+  assert e7_arm() == "baseline"
+  assert e7_arm("candidate") == "candidate"
+  baseline = {"mean_files_per_s": 1.0, "lower_ci_files_per_s": 0.9}
+  assert e6_retain_candidate(
+      baseline=baseline,
+      candidate={"mean_files_per_s": 1.2, "lower_ci_files_per_s": 1.05},
+  )
+  payload = build_e7_ab_manifest(
+      baseline=baseline,
+      candidate={"mean_files_per_s": 1.2, "lower_ci_files_per_s": 1.05},
+      ingest_width=48,
+      replicates=5,
+      python_abi="3.14t",
+      retain=True,
+      run_id="e7id",
+  )
+  assert payload["kind"] == "e7_proc_build_ab"
+  assert payload["retain"] is True
+  out = write_screening_artifact(
+      {"kind": "e7_arm_baseline", "baseline": baseline},
+      repo_root=tmp_path,
+      prefix="e7_arm_baseline",
+  )
+  assert latest_e7_baseline_artifact(tmp_path) == out
+
+
 def test_workflow_e6_flag_and_inner_target():
   text = (
       Path(__file__).resolve().parents[1]
@@ -356,6 +403,21 @@ def test_workflow_e6_flag_and_inner_target():
   ).read_text(encoding="utf-8")
   assert "test_e6_parse_feed_ab.py" in inner
   assert "HPCPERFSTATS_SYNC_TIMEDB_E6" in inner
+
+
+def test_workflow_e7_flag_and_inner_target():
+  text = (
+      Path(__file__).resolve().parents[1]
+      / "run_sync_timedb_benchmark_workflow.sh"
+  ).read_text(encoding="utf-8")
+  assert "--e7" in text
+  assert "HPCPERFSTATS_SYNC_TIMEDB_E7=1" in text
+  inner = (
+      Path(__file__).resolve().parents[1]
+      / "run_sync_timedb_benchmark_inner.sh"
+  ).read_text(encoding="utf-8")
+  assert "test_e7_proc_build_ab.py" in inner
+  assert "HPCPERFSTATS_SYNC_TIMEDB_E7" in inner
 
 
 def test_contention_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):

@@ -43,6 +43,10 @@ elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_E6:-}" == "1" ]]; then
   PYTEST_TARGET=(
     tests/sync_timedb_benchmark/test_e6_parse_feed_ab.py
   )
+elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_E7:-}" == "1" ]]; then
+  PYTEST_TARGET=(
+    tests/sync_timedb_benchmark/test_e7_proc_build_ab.py
+  )
 elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_CONTENTION:-}" == "1" ]]; then
   PYTEST_TARGET=(
     tests/sync_timedb_benchmark/test_contention_ab.py
