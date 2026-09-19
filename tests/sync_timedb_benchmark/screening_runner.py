@@ -21,6 +21,24 @@ DEFAULT_KNOBS_WIDTH = 48
 DEFAULT_KNOBS_REPLICATES = 3
 DEFAULT_E6_WIDTH = 48
 DEFAULT_E6_REPLICATES = 5
+DEFAULT_CONTENTION_WIDTH = 48
+DEFAULT_CONTENTION_REPLICATES = 5
+CONTENTION_WAVES: tuple[str, ...] = (
+    "caches",
+    "park_resume",
+    "manifest_io",
+    "members_shard",
+    "claim_heap",
+    "tar_ex",
+    "thread_id",
+    "pool_split",
+    "log_drain",
+    "discover",
+    "telem_tls",
+)
+CONTENTION_NO_REGRESSION_WAVES: frozenset[str] = frozenset(
+    {"caches", "thread_id"},
+)
 KNOB_SWEEPS: tuple[tuple[str, tuple[int, ...]], ...] = (
     ("sync_day_close_max_inflight", (1, 2, 4, 8, 16)),
     ("sync_archive_pool_processes", (1, 2, 4, 8)),
@@ -269,6 +287,238 @@ def latest_e6_baseline_artifact(repo_root: Path) -> Path | None:
   return files[-1] if files else None
 
 
+def contention_mode_enabled(raw: str | None = None) -> bool:
+  """
+  Return whether FT contention A/B mode is enabled.
+
+  Args:
+    raw (str | None): Override; defaults to
+      ``HPCPERFSTATS_SYNC_TIMEDB_CONTENTION``.
+
+  Returns:
+    bool: True when the env/override is a truthy flag.
+
+  Examples:
+    >>> contention_mode_enabled("1")
+    True
+  """
+  text = (
+      raw
+      if raw is not None
+      else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_CONTENTION", "")
+  ).strip().lower()
+  return text in ("1", "yes", "true")
+
+
+def contention_arm(raw: str | None = None) -> str:
+  """
+  Return the contention A/B arm name.
+
+  Args:
+    raw (str | None): Override; defaults to
+      ``HPCPERFSTATS_CONTENTION_ARM`` or ``baseline``.
+
+  Returns:
+    str: ``baseline`` or ``candidate``.
+
+  Raises:
+    ValueError: When the arm name is not recognized.
+
+  Examples:
+    >>> contention_arm("candidate")
+    'candidate'
+  """
+  text = (
+      raw
+      if raw is not None
+      else os.environ.get("HPCPERFSTATS_CONTENTION_ARM", "baseline")
+  ).strip().lower()
+  if text not in ("baseline", "candidate"):
+    raise ValueError("contention arm must be baseline|candidate: %r" % text)
+  return text
+
+
+def contention_wave(raw: str | None = None) -> str:
+  """
+  Return the contention A/B wave id.
+
+  Args:
+    raw (str | None): Override; defaults to
+      ``HPCPERFSTATS_CONTENTION_WAVE``.
+
+  Returns:
+    str: Wave id from :data:`CONTENTION_WAVES`.
+
+  Raises:
+    ValueError: When the wave id is missing or unknown.
+
+  Examples:
+    >>> contention_wave("caches")
+    'caches'
+  """
+  text = (
+      raw
+      if raw is not None
+      else os.environ.get("HPCPERFSTATS_CONTENTION_WAVE", "")
+  ).strip().lower()
+  if text not in CONTENTION_WAVES:
+    raise ValueError(
+        "contention wave must be one of %s: %r"
+        % (",".join(CONTENTION_WAVES), text),
+    )
+  return text
+
+
+def contention_fixed_width(raw: str | None = None) -> int:
+  """
+  Return the fixed ingest width for contention A/B runs.
+
+  Args:
+    raw (str | None): Override; defaults to
+      ``HPCPERFSTATS_SYNC_TIMEDB_CONTENTION_WIDTH`` or
+      :data:`DEFAULT_CONTENTION_WIDTH`.
+
+  Returns:
+    int: Positive ingest width.
+
+  Examples:
+    >>> contention_fixed_width("48")
+    48
+  """
+  text = (
+      raw
+      if raw is not None
+      else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_CONTENTION_WIDTH", "")
+  ).strip()
+  if not text:
+    return DEFAULT_CONTENTION_WIDTH
+  value = int(text)
+  if value < 1:
+    raise ValueError("contention width must be >= 1: %r" % text)
+  return value
+
+
+def contention_retain_candidate(
+    *,
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+    wave: str,
+) -> bool:
+  """
+  Return True when the candidate clears the wave-specific retain gate.
+
+  Throughput waves use the E6 gate. No-regression waves (caches, thread_id)
+  retain unless candidate lower CI falls more than 5% below baseline lower CI.
+
+  Args:
+    baseline (dict[str, Any]): Baseline arm stats.
+    candidate (dict[str, Any]): Candidate arm stats.
+    wave (str): Contention wave id.
+
+  Returns:
+    bool: True when the candidate should be retained.
+
+  Examples:
+    >>> contention_retain_candidate(
+    ...     baseline={"mean_files_per_s": 1.0, "lower_ci_files_per_s": 1.0},
+    ...     candidate={"mean_files_per_s": 0.99, "lower_ci_files_per_s": 0.96},
+    ...     wave="caches",
+    ... )
+    True
+  """
+  base_lo = float(baseline["lower_ci_files_per_s"])
+  cand_lo = float(candidate["lower_ci_files_per_s"])
+  if wave in CONTENTION_NO_REGRESSION_WAVES:
+    return cand_lo >= base_lo * 0.95
+  return e6_retain_candidate(baseline=baseline, candidate=candidate)
+
+
+def build_contention_ab_manifest(
+    *,
+    wave: str,
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+    ingest_width: int,
+    replicates: int,
+    python_abi: str,
+    retain: bool,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+  """
+  Build a contention wave A/B artifact payload.
+
+  Args:
+    wave (str): Wave id.
+    baseline (dict[str, Any]): Baseline arm summary.
+    candidate (dict[str, Any]): Candidate arm summary.
+    ingest_width (int): Fixed ingest pool width.
+    replicates (int): Replicates per arm.
+    python_abi (str): Interpreter identity string.
+    retain (bool): Whether the candidate cleared the retain gate.
+    run_id (str | None): Optional run id.
+
+  Returns:
+    dict[str, Any]: Contention A/B artifact dictionary.
+
+  Examples:
+    >>> build_contention_ab_manifest(
+    ...     wave="caches",
+    ...     baseline={"mean_files_per_s": 1.0, "lower_ci_files_per_s": 0.9},
+    ...     candidate={"mean_files_per_s": 1.0, "lower_ci_files_per_s": 0.9},
+    ...     ingest_width=48, replicates=5, python_abi="3.14", retain=True,
+    ... )["kind"]
+    'contention_caches_ab'
+  """
+  return {
+      "run_id": run_id or uuid.uuid4().hex,
+      "kind": "contention_%s_ab" % wave,
+      "wave": wave,
+      "python_abi": python_abi,
+      "ingest_width": int(ingest_width),
+      "replicates": int(replicates),
+      "baseline": dict(baseline),
+      "candidate": dict(candidate),
+      "retain": bool(retain),
+      "gate": (
+          "no_regression"
+          if wave in CONTENTION_NO_REGRESSION_WAVES
+          else "throughput"
+      ),
+      "note": (
+          "contention wave A/B; not a production INI change"
+      ),
+  }
+
+
+def latest_contention_baseline_artifact(
+    repo_root: Path,
+    wave: str,
+) -> Path | None:
+  """
+  Return the newest baseline artifact for ``wave``.
+
+  Args:
+    repo_root (Path): HPCPerfStats checkout root.
+    wave (str): Wave id.
+
+  Returns:
+    Path | None: Newest baseline path, or None when none exist.
+
+  Examples:
+    >>> latest_contention_baseline_artifact(Path("/tmp"), "caches") is None
+    True
+  """
+  out_dir = repo_root / ARTIFACT_SUBDIR
+  if not out_dir.is_dir():
+    return None
+  pattern = "contention_%s_arm_baseline_*.json" % wave
+  files = sorted(
+      out_dir.glob(pattern),
+      key=lambda path: path.stat().st_mtime,
+  )
+  return files[-1] if files else None
+
+
 def knobs_fixed_width(raw: str | None = None) -> int:
   """
   Return the fixed ingest width for supporting-knob sweeps.
@@ -432,6 +682,8 @@ def parse_replicates_env(raw: str | None = None) -> int:
       else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES", "")
   ).strip()
   if not text:
+    if contention_mode_enabled():
+      return DEFAULT_CONTENTION_REPLICATES
     if e6_mode_enabled():
       return DEFAULT_E6_REPLICATES
     if knobs_mode_enabled():

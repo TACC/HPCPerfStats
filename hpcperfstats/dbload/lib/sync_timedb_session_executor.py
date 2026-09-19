@@ -428,11 +428,17 @@ class SyncTimedbThreadPool:
         >>> callable(_run)
         True
       """
+      from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+          reset_worker_pool_kind,
+          set_worker_pool_kind,
+      )
+
       set_daemon_thread_title(
           "",
           script_name=self.process_title,
           role=self.thread_role,
       )
+      pool_token = set_worker_pool_kind(self.thread_role)
       apply_libpq_application_name()
       close_old_connections()
       if self._initializer is not None:
@@ -440,6 +446,7 @@ class SyncTimedbThreadPool:
       try:
         return fn(*args, **kwargs)
       finally:
+        reset_worker_pool_kind(pool_token)
         close_thread_local_django_connections()
 
     return ThreadPoolAsyncResult(self._executor.submit(_run))
@@ -487,11 +494,17 @@ class SyncTimedbThreadPool:
         >>> callable(_run)
         True
       """
+      from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+          reset_worker_pool_kind,
+          set_worker_pool_kind,
+      )
+
       set_daemon_thread_title(
           "",
           script_name=self.process_title,
           role=self.thread_role,
       )
+      pool_token = set_worker_pool_kind(self.thread_role)
       apply_libpq_application_name()
       close_old_connections()
       if self._initializer is not None:
@@ -499,6 +512,7 @@ class SyncTimedbThreadPool:
       try:
         return fn(item)
       finally:
+        reset_worker_pool_kind(pool_token)
         close_thread_local_django_connections()
 
     return ThreadPoolUnorderedIterator(self._executor, _run, items)

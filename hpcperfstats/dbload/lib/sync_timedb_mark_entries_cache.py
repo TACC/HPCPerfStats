@@ -7,14 +7,17 @@ sidecars when the on-disk file identity is unchanged.
 
 Attributes:
   _ENTRIES_CACHE: mark_path -> (mtime_ns, size, entries dict).
+  _ENTRIES_CACHE_LOCK: FT-safe RLock guarding ``_ENTRIES_CACHE``.
 """
 from __future__ import annotations
 
 import os
+import threading
 from typing import Callable
 
 # mark_path -> (mtime_ns, size, entries)
 _ENTRIES_CACHE: dict[str, tuple[int, int, dict]] = {}
+_ENTRIES_CACHE_LOCK = threading.RLock()
 
 
 def clear_mark_entries_cache(mark_path: str | None = None) -> None:
@@ -30,10 +33,11 @@ def clear_mark_entries_cache(mark_path: str | None = None) -> None:
   Examples:
     >>> clear_mark_entries_cache(None)  # doctest: +SKIP
   """
-  if mark_path is None:
-    _ENTRIES_CACHE.clear()
-    return
-  _ENTRIES_CACHE.pop(str(mark_path), None)
+  with _ENTRIES_CACHE_LOCK:
+    if mark_path is None:
+      _ENTRIES_CACHE.clear()
+      return
+    _ENTRIES_CACHE.pop(str(mark_path), None)
 
 
 def load_cached_mark_entries(
@@ -68,15 +72,17 @@ def load_cached_mark_entries(
     clear_mark_entries_cache(path)
     return dict(load_uncached(path) or {})
   identity = (int(st.st_mtime_ns), int(st.st_size))
-  cached = _ENTRIES_CACHE.get(path)
-  if (
-      cached is not None
-      and cached[0] == identity[0]
-      and cached[1] == identity[1]
-  ):
-    return dict(cached[2])
+  with _ENTRIES_CACHE_LOCK:
+    cached = _ENTRIES_CACHE.get(path)
+    if (
+        cached is not None
+        and cached[0] == identity[0]
+        and cached[1] == identity[1]
+    ):
+      return dict(cached[2])
   entries = dict(load_uncached(path) or {})
-  _ENTRIES_CACHE[path] = (identity[0], identity[1], dict(entries))
+  with _ENTRIES_CACHE_LOCK:
+    _ENTRIES_CACHE[path] = (identity[0], identity[1], dict(entries))
   return dict(entries)
 
 

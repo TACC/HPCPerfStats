@@ -245,6 +245,30 @@ Artifacts: `test_runs/sync_timedb_bench/e6_arm_baseline_*.json` then
 `e6_parse_feed_ab_*.json` (`retain` true/false per lower-CI gate). Still not a
 production INI change.
 
+FT contention wave A/B at fixed ingest width **48** (one wave product patch at a
+time; ≥5 replicates by default). Set ``HPCPERFSTATS_CONTENTION_WAVE`` to a wave
+id (`caches`, `park_resume`, `manifest_io`, `members_shard`, `claim_heap`,
+`tar_ex`, `thread_id`, `pool_split`, `log_drain`, `discover`, `telem_tls`):
+
+```bash
+cd HPCPerfStats
+# Ambient SCREEN_WIDTHS/REPLICATES cleared unless KNEE_ALLOW_SCREEN_ENV=1.
+# Optional: HPCPERFSTATS_SYNC_TIMEDB_CONTENTION_WIDTH=48
+# Optional: HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES=5
+HPCPERFSTATS_CONTENTION_WAVE=caches HPCPERFSTATS_CONTENTION_ARM=baseline \
+  tests/run_sync_timedb_benchmark_workflow.sh --contention
+# Apply that wave's candidate product patch, then:
+HPCPERFSTATS_CONTENTION_WAVE=caches HPCPERFSTATS_CONTENTION_ARM=candidate \
+  tests/run_sync_timedb_benchmark_workflow.sh --contention
+```
+
+Artifacts: `test_runs/sync_timedb_bench/contention_<wave>_arm_baseline_*.json`
+then `contention_<wave>_ab_*.json` (`retain` plus `gate` =
+`throughput`|`no_regression`). Not a production INI change. Campaign close
+(2026-09-19): **retain=true** `caches`, `thread_id`; all other listed waves
+**retain=false** (product diffs reverted). See
+`docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md` CONTENTION row.
+
 Derived corpus (identity rewrite; never mutates exemplars):
 
 ```bash

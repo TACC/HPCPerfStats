@@ -36,6 +36,9 @@ Options:
   --knobs         Run supporting-knob sweeps at fixed width 48 (corpus_steady)
   --e6            Run E6 parse_feed A/B arm at width 48 (corpus_steady).
                   Set HPCPERFSTATS_E6_ARM=baseline|candidate (default baseline)
+  --contention    Run FT contention wave A/B at width 48 (corpus_steady).
+                  Set HPCPERFSTATS_CONTENTION_WAVE=<id> and
+                  HPCPERFSTATS_CONTENTION_ARM=baseline|candidate
   -h, --help      Show this help
 
 Environment:
@@ -45,7 +48,10 @@ Environment:
   HPCPERFSTATS_SYNC_TIMEDB_E2=1            Set by --e2
   HPCPERFSTATS_SYNC_TIMEDB_KNOBS=1         Set by --knobs
   HPCPERFSTATS_SYNC_TIMEDB_E6=1            Set by --e6
+  HPCPERFSTATS_SYNC_TIMEDB_CONTENTION=1    Set by --contention
   HPCPERFSTATS_E6_ARM                      baseline|candidate (default baseline)
+  HPCPERFSTATS_CONTENTION_ARM              baseline|candidate (default baseline)
+  HPCPERFSTATS_CONTENTION_WAVE             Wave id (caches, park_resume, ...)
   HPCPERFSTATS_COMPOSE_NETWORK=1           Set by this script for django_db tests
   HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS   Optional CSV override (default 1..96 or knee)
   HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES  Optional replicate count
@@ -53,6 +59,7 @@ Environment:
   HPCPERFSTATS_SYNC_TIMEDB_SCREEN_TIMEOUT_S  Optional per-replicate ingest timeout
   HPCPERFSTATS_SYNC_TIMEDB_KNOBS_WIDTH     Optional fixed ingest width for --knobs
   HPCPERFSTATS_SYNC_TIMEDB_E6_WIDTH        Optional fixed ingest width for --e6
+  HPCPERFSTATS_SYNC_TIMEDB_CONTENTION_WIDTH  Optional fixed width for --contention
 
 Runtime:
   Rootless Podman + podman-compose via tests/compose_test_cmd.sh (podman-runtime.mdc).
@@ -72,6 +79,7 @@ KNEE=0
 E2=0
 KNOBS=0
 E6=0
+CONTENTION=0
 PYTEST_EXTRA=()
 
 while [[ $# -gt 0 ]]; do
@@ -107,6 +115,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --e6)
       E6=1
+      shift
+      ;;
+    --contention)
+      CONTENTION=1
       shift
       ;;
     -h|--help)
@@ -161,15 +173,16 @@ RUN_ARGS=(
   "${compose_run_inner_script_bind_mount_env[@]}"
   "${compose_web_repo_bind_mount_args[@]}"
 )
-if [[ "$KNEE" -eq 1 || "$KNOBS" -eq 1 || "$E6" -eq 1 ]]; then
+if [[ "$KNEE" -eq 1 || "$KNOBS" -eq 1 || "$E6" -eq 1 || "$CONTENTION" -eq 1 ]]; then
   # Ambient screening leftovers (e.g. WIDTHS=1,2,4,8 REPLICATES=2) must not
-  # override knee/knobs/e6 defaults. Opt-in with KNEE_ALLOW_SCREEN_ENV=1.
+  # override knee/knobs/e6/contention defaults. Opt-in with KNEE_ALLOW_SCREEN_ENV=1.
   if [[ "${HPCPERFSTATS_SYNC_TIMEDB_KNEE_ALLOW_SCREEN_ENV:-0}" != "1" ]]; then
     unset HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS
     unset HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES
   fi
 fi
-if [[ "$SCREENING" -eq 1 || "$KNEE" -eq 1 || "$KNOBS" -eq 1 || "$E6" -eq 1 ]]; then
+if [[ "$SCREENING" -eq 1 || "$KNEE" -eq 1 || "$KNOBS" -eq 1 \
+   || "$E6" -eq 1 || "$CONTENTION" -eq 1 ]]; then
   [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS=${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS}")
   [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES:-}" ]] && \
@@ -202,6 +215,17 @@ if [[ "$E6" -eq 1 ]]; then
   RUN_ARGS+=(-e "HPCPERFSTATS_E6_ARM=${HPCPERFSTATS_E6_ARM:-baseline}")
   [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_E6_WIDTH:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_E6_WIDTH=${HPCPERFSTATS_SYNC_TIMEDB_E6_WIDTH}")
+fi
+if [[ "$CONTENTION" -eq 1 ]]; then
+  if [[ -z "${HPCPERFSTATS_CONTENTION_WAVE:-}" ]]; then
+    echo "HPCPERFSTATS_CONTENTION_WAVE is required with --contention" >&2
+    exit 2
+  fi
+  RUN_ARGS+=(-e HPCPERFSTATS_SYNC_TIMEDB_CONTENTION=1)
+  RUN_ARGS+=(-e "HPCPERFSTATS_CONTENTION_WAVE=${HPCPERFSTATS_CONTENTION_WAVE}")
+  RUN_ARGS+=(-e "HPCPERFSTATS_CONTENTION_ARM=${HPCPERFSTATS_CONTENTION_ARM:-baseline}")
+  [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_CONTENTION_WIDTH:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_CONTENTION_WIDTH=${HPCPERFSTATS_SYNC_TIMEDB_CONTENTION_WIDTH}")
 fi
 if [[ -n "$ARGS_FILE" ]]; then
   RUN_ARGS+=(-v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args:ro")

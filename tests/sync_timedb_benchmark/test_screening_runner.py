@@ -356,3 +356,90 @@ def test_workflow_e6_flag_and_inner_target():
   ).read_text(encoding="utf-8")
   assert "test_e6_parse_feed_ab.py" in inner
   assert "HPCPERFSTATS_SYNC_TIMEDB_E6" in inner
+
+
+def test_contention_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):
+  from tests.sync_timedb_benchmark.screening_runner import (
+      CONTENTION_NO_REGRESSION_WAVES,
+      CONTENTION_WAVES,
+      DEFAULT_CONTENTION_REPLICATES,
+      DEFAULT_CONTENTION_WIDTH,
+      build_contention_ab_manifest,
+      contention_arm,
+      contention_fixed_width,
+      contention_mode_enabled,
+      contention_retain_candidate,
+      contention_wave,
+      latest_contention_baseline_artifact,
+      parse_replicates_env,
+      write_screening_artifact,
+  )
+
+  monkeypatch.setenv("HPCPERFSTATS_SYNC_TIMEDB_CONTENTION", "1")
+  monkeypatch.setenv("HPCPERFSTATS_CONTENTION_WAVE", "caches")
+  monkeypatch.delenv("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES", raising=False)
+  monkeypatch.delenv("HPCPERFSTATS_SYNC_TIMEDB_CONTENTION_WIDTH", raising=False)
+  monkeypatch.delenv("HPCPERFSTATS_CONTENTION_ARM", raising=False)
+  assert contention_mode_enabled()
+  assert contention_fixed_width() == DEFAULT_CONTENTION_WIDTH
+  assert parse_replicates_env() == DEFAULT_CONTENTION_REPLICATES
+  assert contention_arm() == "baseline"
+  assert contention_wave() == "caches"
+  assert "caches" in CONTENTION_WAVES
+  assert "caches" in CONTENTION_NO_REGRESSION_WAVES
+  baseline = {"mean_files_per_s": 1.0, "lower_ci_files_per_s": 1.0}
+  assert contention_retain_candidate(
+      baseline=baseline,
+      candidate={"mean_files_per_s": 0.99, "lower_ci_files_per_s": 0.96},
+      wave="caches",
+  )
+  assert not contention_retain_candidate(
+      baseline=baseline,
+      candidate={"mean_files_per_s": 0.9, "lower_ci_files_per_s": 0.94},
+      wave="caches",
+  )
+  assert contention_retain_candidate(
+      baseline=baseline,
+      candidate={"mean_files_per_s": 1.2, "lower_ci_files_per_s": 1.05},
+      wave="park_resume",
+  )
+  assert not contention_retain_candidate(
+      baseline=baseline,
+      candidate={"mean_files_per_s": 1.01, "lower_ci_files_per_s": 0.95},
+      wave="park_resume",
+  )
+  payload = build_contention_ab_manifest(
+      wave="caches",
+      baseline=baseline,
+      candidate={"mean_files_per_s": 0.99, "lower_ci_files_per_s": 0.96},
+      ingest_width=48,
+      replicates=5,
+      python_abi="3.14t",
+      retain=True,
+      run_id="cid",
+  )
+  assert payload["kind"] == "contention_caches_ab"
+  assert payload["gate"] == "no_regression"
+  assert payload["retain"] is True
+  out = write_screening_artifact(
+      {"kind": "contention_caches_arm_baseline", "baseline": baseline},
+      repo_root=tmp_path,
+      prefix="contention_caches_arm_baseline",
+  )
+  assert latest_contention_baseline_artifact(tmp_path, "caches") == out
+
+
+def test_workflow_contention_flag_and_inner_target():
+  text = (
+      Path(__file__).resolve().parents[1]
+      / "run_sync_timedb_benchmark_workflow.sh"
+  ).read_text(encoding="utf-8")
+  assert "--contention" in text
+  assert "HPCPERFSTATS_SYNC_TIMEDB_CONTENTION=1" in text
+  assert "HPCPERFSTATS_CONTENTION_WAVE" in text
+  inner = (
+      Path(__file__).resolve().parents[1]
+      / "run_sync_timedb_benchmark_inner.sh"
+  ).read_text(encoding="utf-8")
+  assert "test_contention_ab.py" in inner
+  assert "HPCPERFSTATS_SYNC_TIMEDB_CONTENTION" in inner

@@ -14,9 +14,11 @@ probes use Unix-second windows, not exact ``time=`` equality.
 Attributes:
   _GATE_DISABLED_LOGGED: Attribute.
   _HEAD_DB_CACHE: Attribute.
+  _HEAD_DB_CACHE_LOCK: FT-safe RLock for head-DB L1 cache.
   _HEAD_DB_CACHE_MAX_ENTRIES: Attribute.
   _HEAD_DB_CACHE_REFRESH_SECONDS: Attribute.
   _PATH_READY_CACHE: Attribute.
+  _PATH_READY_CACHE_LOCK: FT-safe RLock for path-ready L1 cache.
   _PATH_READY_CACHE_MAX_ENTRIES: Attribute.
   _PATH_READY_CACHE_REFRESH_SECONDS: Attribute.
   sampled_identities_ready_in_db: Attribute.
@@ -26,6 +28,7 @@ from __future__ import annotations
 from typing import Any
 
 import os
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -39,6 +42,8 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
 
 _HEAD_DB_CACHE = {}
 _PATH_READY_CACHE = {}
+_HEAD_DB_CACHE_LOCK = threading.RLock()
+_PATH_READY_CACHE_LOCK = threading.RLock()
 _HEAD_DB_CACHE_REFRESH_SECONDS = 60
 _HEAD_DB_CACHE_MAX_ENTRIES = 20000
 _PATH_READY_CACHE_REFRESH_SECONDS = 60
@@ -56,8 +61,10 @@ def reset_sync_ingest_readiness_caches() -> None:
   Examples:
     >>> reset_sync_ingest_readiness_caches()  # doctest: +SKIP
   """
-  _HEAD_DB_CACHE.clear()
-  _PATH_READY_CACHE.clear()
+  with _HEAD_DB_CACHE_LOCK:
+    _HEAD_DB_CACHE.clear()
+  with _PATH_READY_CACHE_LOCK:
+    _PATH_READY_CACHE.clear()
   global _GATE_DISABLED_LOGGED
   _GATE_DISABLED_LOGGED = False
 
@@ -92,14 +99,15 @@ def _trim_head_db_cache() -> None:
   Examples:
     >>> _trim_head_db_cache()  # doctest: +SKIP
   """
-  if len(_HEAD_DB_CACHE) <= _HEAD_DB_CACHE_MAX_ENTRIES:
-    return
-  oldest_keys = sorted(
-      _HEAD_DB_CACHE.keys(),
-      key=lambda k: _HEAD_DB_CACHE[k]["checked_at"],
-  )[:1000]
-  for drop_key in oldest_keys:
-    _HEAD_DB_CACHE.pop(drop_key, None)
+  with _HEAD_DB_CACHE_LOCK:
+    if len(_HEAD_DB_CACHE) <= _HEAD_DB_CACHE_MAX_ENTRIES:
+      return
+    oldest_keys = sorted(
+        _HEAD_DB_CACHE.keys(),
+        key=lambda k: _HEAD_DB_CACHE[k]["checked_at"],
+    )[:1000]
+    for drop_key in oldest_keys:
+      _HEAD_DB_CACHE.pop(drop_key, None)
 
 
 def _trim_path_ready_cache() -> None:
@@ -112,14 +120,15 @@ def _trim_path_ready_cache() -> None:
   Examples:
     >>> _trim_path_ready_cache()  # doctest: +SKIP
   """
-  if len(_PATH_READY_CACHE) <= _PATH_READY_CACHE_MAX_ENTRIES:
-    return
-  oldest_keys = sorted(
-      _PATH_READY_CACHE.keys(),
-      key=lambda k: _PATH_READY_CACHE[k]["checked_at"],
-  )[:1000]
-  for drop_key in oldest_keys:
-    _PATH_READY_CACHE.pop(drop_key, None)
+  with _PATH_READY_CACHE_LOCK:
+    if len(_PATH_READY_CACHE) <= _PATH_READY_CACHE_MAX_ENTRIES:
+      return
+    oldest_keys = sorted(
+        _PATH_READY_CACHE.keys(),
+        key=lambda k: _PATH_READY_CACHE[k]["checked_at"],
+    )[:1000]
+    for drop_key in oldest_keys:
+      _PATH_READY_CACHE.pop(drop_key, None)
 
 
 def head_unix_second_window(timestamp_utc: Any) -> Any:
@@ -160,15 +169,17 @@ def head_timestamp_present_in_db(hostname: Any, timestamp_utc: Any) -> Any:
   _ts_sec, ts_start, ts_end = head_unix_second_window(timestamp_utc)
   key = (hostname, _ts_sec)
   now = time.time()
-  cached = _HEAD_DB_CACHE.get(key)
-  if cached and (now - cached["checked_at"] <= _HEAD_DB_CACHE_REFRESH_SECONDS):
-    return bool(cached["present"])
+  with _HEAD_DB_CACHE_LOCK:
+    cached = _HEAD_DB_CACHE.get(key)
+    if cached and (now - cached["checked_at"] <= _HEAD_DB_CACHE_REFRESH_SECONDS):
+      return bool(cached["present"])
   present = host_data.objects.filter(
       host=hostname,
       time__gte=ts_start,
       time__lt=ts_end,
   ).exists()
-  _HEAD_DB_CACHE[key] = {"present": bool(present), "checked_at": now}
+  with _HEAD_DB_CACHE_LOCK:
+    _HEAD_DB_CACHE[key] = {"present": bool(present), "checked_at": now}
   _trim_head_db_cache()
   return present
 
@@ -415,9 +426,12 @@ def stats_file_head_ingested_in_db(
     if fp is None:
       return False
     now = time.time()
-    path_cached = _PATH_READY_CACHE.get(fp)
-    if path_cached and (now - path_cached["checked_at"] <= _PATH_READY_CACHE_REFRESH_SECONDS):
-      return bool(path_cached["ready"])
+    with _PATH_READY_CACHE_LOCK:
+      path_cached = _PATH_READY_CACHE.get(fp)
+      if path_cached and (
+          now - path_cached["checked_at"] <= _PATH_READY_CACHE_REFRESH_SECONDS
+      ):
+        return bool(path_cached["ready"])
 
     ready = False
     if not stats_file_is_active_segment(path):
@@ -428,7 +442,8 @@ def stats_file_head_ingested_in_db(
       if not ready and not _live_db_ingest_enabled():
         ready = _path_head_tail_ready_in_db(path)
 
-    _PATH_READY_CACHE[fp] = {"ready": bool(ready), "checked_at": now}
+    with _PATH_READY_CACHE_LOCK:
+      _PATH_READY_CACHE[fp] = {"ready": bool(ready), "checked_at": now}
     _trim_path_ready_cache()
     return ready
 

@@ -72,6 +72,17 @@ def _e6_enabled() -> bool:
   )
 
 
+def _contention_enabled() -> bool:
+  return os.environ.get(
+      "HPCPERFSTATS_SYNC_TIMEDB_CONTENTION",
+      "",
+  ).strip().lower() in (
+      "1",
+      "yes",
+      "true",
+  )
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config,
     items: list[pytest.Item],
@@ -79,9 +90,9 @@ def pytest_collection_modifyitems(
   """
   Skip long benchmark tests unless ``HPCPERFSTATS_SYNC_TIMEDB_BENCH=1``.
 
-  Also defer ``django_db`` for ingest-width screening/knee/E2/knobs/E6 until
-  compose flags are enabled so host unit sessions do not attempt PostgreSQL at
-  hostname ``db``.
+  Also defer ``django_db`` for ingest-width screening/knee/E2/knobs/E6/
+  contention until compose flags are enabled so host unit sessions do not
+  attempt PostgreSQL at hostname ``db``.
 
   Args:
     config (pytest.Config): Active pytest configuration.
@@ -130,6 +141,13 @@ def pytest_collection_modifyitems(
           "HPCPERFSTATS_SYNC_TIMEDB_E6=1 (workflow --e6)"
       ),
   )
+  contention_on = _compose_network_enabled() and _contention_enabled()
+  skip_contention = pytest.mark.skip(
+      reason=(
+          "Requires HPCPERFSTATS_COMPOSE_NETWORK=1 and "
+          "HPCPERFSTATS_SYNC_TIMEDB_CONTENTION=1 (workflow --contention)"
+      ),
+  )
   db_mark = pytest.mark.django_db(transaction=True)
   for item in items:
     if "test_ingest_width_screening" in item.nodeid:
@@ -152,3 +170,8 @@ def pytest_collection_modifyitems(
         item.add_marker(db_mark)
       else:
         item.add_marker(skip_e6)
+    if "test_contention_ab" in item.nodeid:
+      if contention_on:
+        item.add_marker(db_mark)
+      else:
+        item.add_marker(skip_contention)

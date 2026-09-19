@@ -11,6 +11,7 @@ from typing import Any, Iterator
 
 import contextvars
 import os
+import threading
 import time
 
 _registry = None
@@ -214,6 +215,74 @@ def apply_ingest_pool_worker_init(
     pass
 
 
+def worker_registry_key() -> str:
+  """
+  Return the registry key for the calling worker (``pid:tid``).
+
+  Free-threaded ingest uses one OS PID for many pool threads, so the key
+  includes ``threading.get_ident()`` to avoid clobbering peer stages.
+
+  Returns:
+    str: ``\"{os.getpid()}:{threading.get_ident()}\"``.
+
+  Examples:
+    >>> ":" in worker_registry_key()
+    True
+  """
+  return "%s:%s" % (os.getpid(), threading.get_ident())
+
+
+def registry_key_os_pid(key: Any) -> str:
+  """
+  Return the OS PID prefix from a worker registry key.
+
+  Args:
+    key (Any): Registry map key (``pid``, ``pid:tid``, or ``dispatch:…``).
+
+  Returns:
+    str: Decimal PID string, or ``\"\"`` for dispatch placeholders.
+
+  Examples:
+    >>> registry_key_os_pid("12:34")
+    '12'
+    >>> registry_key_os_pid("dispatch:/a")
+    ''
+  """
+  text = str(key or "")
+  if not text or text.startswith("dispatch:"):
+    return ""
+  if ":" in text:
+    return text.split(":", 1)[0]
+  return text
+
+
+def registry_key_matches_alive_pids(key: Any, alive_pids: Any) -> bool:
+  """
+  Return True when ``key`` belongs to an alive spawn-pool worker PID.
+
+  Args:
+    key (Any): Registry map key.
+    alive_pids (Any): Iterable of decimal PID strings from pool children.
+
+  Returns:
+    bool: True when the key equals a PID or its ``pid:`` prefix matches.
+
+  Examples:
+    >>> registry_key_matches_alive_pids("12:99", {"12"})
+    True
+    >>> registry_key_matches_alive_pids("13:1", {"12"})
+    False
+  """
+  alive = {str(pid) for pid in (alive_pids or ())}
+  if not alive:
+    return False
+  text = str(key or "")
+  if text in alive:
+    return True
+  pid = registry_key_os_pid(text)
+  return bool(pid) and pid in alive
+
+
 def record_worker_stage(
   path: str,
   stage: Any,
@@ -255,8 +324,7 @@ def record_worker_stage(
       payload["timeout_s"] = "%.1f" % float(timeout_s)
     except (TypeError, ValueError):
       payload["timeout_s"] = str(timeout_s)
-  pid = str(os.getpid())
-  _registry_set(registry, pid, payload)
+  _registry_set(registry, worker_registry_key(), payload)
 
 
 def clear_worker_stage() -> None:
@@ -272,8 +340,7 @@ def clear_worker_stage() -> None:
   registry = _resolve_registry()
   if registry is None:
     return
-  pid = str(os.getpid())
-  _registry_pop(registry, pid)
+  _registry_pop(registry, worker_registry_key())
 
 
 def seed_dispatch_worker_stages(registry: Any, paths: Any) -> None:
@@ -349,17 +416,17 @@ def update_worker_substage(substage: Any, **extra: Any) -> None:
   registry = _resolve_registry()
   if registry is None:
     return
-  pid = str(os.getpid())
+  key = worker_registry_key()
   try:
-    entry = dict(registry.get(pid) or {})
+    entry = dict(registry.get(key) or {})
     if not entry:
       return
     entry["substage"] = str(substage)
     entry["t0"] = time.monotonic()
-    for key, value in extra.items():
+    for name, value in extra.items():
       if value is not None:
-        entry[key] = str(value)
-    _registry_set(registry, pid, entry)
+        entry[name] = str(value)
+    _registry_set(registry, key, entry)
   except Exception:
     pass
 
@@ -529,7 +596,7 @@ def worker_registry_shows_member_match_wait(
     pid_s = str(pid)
     if pid_s.startswith("dispatch:"):
       continue
-    if alive_pids and pid_s not in alive_pids:
+    if alive_pids and not registry_key_matches_alive_pids(pid_s, alive_pids):
       continue
     if not isinstance(raw, dict):
       continue
@@ -645,7 +712,7 @@ def worker_registry_shows_recent_progress(
     pid_s = str(pid)
     if pid_s.startswith("dispatch:"):
       continue
-    if alive_pids and pid_s not in alive_pids:
+    if alive_pids and not registry_key_matches_alive_pids(pid_s, alive_pids):
       continue
     if not isinstance(raw, dict):
       continue
@@ -684,7 +751,7 @@ def prune_stale_worker_stages(
   alive = {str(pid) for pid in (alive_pids or ())}
   try:
     for pid, raw in list(registry.items()):
-      if pid in alive:
+      if registry_key_matches_alive_pids(pid, alive):
         continue
       if not isinstance(raw, dict):
         _registry_pop(registry, pid)

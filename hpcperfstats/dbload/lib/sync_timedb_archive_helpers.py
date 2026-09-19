@@ -26,7 +26,9 @@ Attributes:
   USTAR_MAX_MEMBER_BYTES: Attribute.
   _ARCHIVE_MEMBERS_INVALIDATION_HOOK: Attribute.
   _DAILY_ARCHIVE_MEMBERS_CACHE: Attribute.
+  _DAILY_ARCHIVE_MEMBERS_CACHE_LOCK: FT-safe RLock for L1 members cache.
   _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE: Attribute.
+  _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK: FT-safe RLock for mutable-tar cache.
   _DAILY_GZ_BASENAME_RE: Attribute.
   _DAILY_ISO_DATE_RE: Attribute.
   _DAILY_TAR_BASENAME_RE: Attribute.
@@ -3469,16 +3471,17 @@ def merge_daily_archive_members_l1_cache(
     return
   canonical = normalize_daily_compressed_path(canonical)
   cache_key = _daily_archive_members_cache_key(canonical)
-  cached = _DAILY_ARCHIVE_MEMBERS_CACHE.get(cache_key)
-  if cached is None:
-    return
-  merged = dict(cached)
-  for name, size in member_map.items():
-    size = int(size)
-    prev = merged.get(name)
-    if prev is None or size > prev:
-      merged[name] = size
-  _DAILY_ARCHIVE_MEMBERS_CACHE[cache_key] = merged
+  with _DAILY_ARCHIVE_MEMBERS_CACHE_LOCK:
+    cached = _DAILY_ARCHIVE_MEMBERS_CACHE.get(cache_key)
+    if cached is None:
+      return
+    merged = dict(cached)
+    for name, size in member_map.items():
+      size = int(size)
+      prev = merged.get(name)
+      if prev is None or size > prev:
+        merged[name] = size
+    _DAILY_ARCHIVE_MEMBERS_CACHE[cache_key] = merged
 
 
 def build_tar_append_member_map(stats_paths: Any) -> Any:
@@ -4426,7 +4429,9 @@ def _build_archive_validation_cache_key(compressed_path: str) -> Any:
 
 
 _DAILY_ARCHIVE_MEMBERS_CACHE = {}
+_DAILY_ARCHIVE_MEMBERS_CACHE_LOCK = threading.RLock()
 _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE: dict[str, dict[str, int]] = {}
+_MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK = threading.RLock()
 
 
 def _trim_mutable_tar_authority_members_cache() -> None:
@@ -4443,9 +4448,10 @@ def _trim_mutable_tar_authority_members_cache() -> None:
     >>> _trim_mutable_tar_authority_members_cache()  # doctest: +SKIP
   """
   max_entries = cfg.get_sync_archive_members_cache_max_entries()
-  while len(_MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE) > max_entries:
-    oldest_key = next(iter(_MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE))
-    _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.pop(oldest_key, None)
+  with _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK:
+    while len(_MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE) > max_entries:
+      oldest_key = next(iter(_MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE))
+      _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.pop(oldest_key, None)
 
 
 def clear_mutable_tar_authority_members_cache() -> None:
@@ -4458,7 +4464,8 @@ def clear_mutable_tar_authority_members_cache() -> None:
   Examples:
     >>> clear_mutable_tar_authority_members_cache()  # doctest: +SKIP
   """
-  _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.clear()
+  with _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK:
+    _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.clear()
 
 
 def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
@@ -4485,9 +4492,10 @@ def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
   tar_norm = os.path.normpath(str(tar_path or ""))
   if not tar_norm:
     return {}
-  cached = _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.get(tar_norm)
-  if cached is not None:
-    return cached
+  with _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK:
+    cached = _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.get(tar_norm)
+    if cached is not None:
+      return cached
   members: dict[str, int] = {}
   if os.path.isfile(tar_norm):
     try:
@@ -4499,7 +4507,8 @@ def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
       members = {}
     finally:
       _remove_read_lock_sidecar(tar_norm)
-  _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE[tar_norm] = members
+  with _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK:
+    _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE[tar_norm] = members
   _trim_mutable_tar_authority_members_cache()
   return members
 
@@ -4576,7 +4585,8 @@ def clear_daily_archive_members_cache() -> None:
   Examples:
     >>> clear_daily_archive_members_cache()  # doctest: +SKIP
   """
-  _DAILY_ARCHIVE_MEMBERS_CACHE.clear()
+  with _DAILY_ARCHIVE_MEMBERS_CACHE_LOCK:
+    _DAILY_ARCHIVE_MEMBERS_CACHE.clear()
   clear_mutable_tar_authority_members_cache()
   _INGEST_SKIPPED_CALENDAR_DAYS.clear()
   _LOGGED_ARCHIVE_DAY_INGEST_SKIP.clear()
@@ -4774,13 +4784,15 @@ def invalidate_daily_archive_members_cache(
       daily_tar_path_from_compressed(canonical),
   )
   day_token = day_date.isoformat() if day_date is not None else None
-  drop_keys = [
-      key for key in _DAILY_ARCHIVE_MEMBERS_CACHE if key[0] == canonical
-  ]
-  for key in drop_keys:
-    _DAILY_ARCHIVE_MEMBERS_CACHE.pop(key, None)
+  with _DAILY_ARCHIVE_MEMBERS_CACHE_LOCK:
+    drop_keys = [
+        key for key in _DAILY_ARCHIVE_MEMBERS_CACHE if key[0] == canonical
+    ]
+    for key in drop_keys:
+      _DAILY_ARCHIVE_MEMBERS_CACHE.pop(key, None)
   tar_path = daily_tar_path_from_compressed(canonical)
-  _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.pop(os.path.normpath(tar_path), None)
+  with _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK:
+    _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.pop(os.path.normpath(tar_path), None)
   try:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
         invalidate_archive_members,
@@ -4818,9 +4830,10 @@ def _trim_daily_archive_members_cache() -> None:
     >>> _trim_daily_archive_members_cache()  # doctest: +SKIP
   """
   max_entries = cfg.get_sync_archive_members_cache_max_entries()
-  while len(_DAILY_ARCHIVE_MEMBERS_CACHE) > max_entries:
-    oldest_key = next(iter(_DAILY_ARCHIVE_MEMBERS_CACHE))
-    _DAILY_ARCHIVE_MEMBERS_CACHE.pop(oldest_key, None)
+  with _DAILY_ARCHIVE_MEMBERS_CACHE_LOCK:
+    while len(_DAILY_ARCHIVE_MEMBERS_CACHE) > max_entries:
+      oldest_key = next(iter(_DAILY_ARCHIVE_MEMBERS_CACHE))
+      _DAILY_ARCHIVE_MEMBERS_CACHE.pop(oldest_key, None)
 
 
 def _daily_archive_members_cache_key(canonical_zst_path: str) -> Any:
@@ -4914,10 +4927,11 @@ def _lookup_daily_archive_members_cache(compressed_path: str) -> Any:
     return None
   canonical = normalize_daily_compressed_path(compressed_path)
   cache_key = _daily_archive_members_cache_key(canonical)
-  cached = _DAILY_ARCHIVE_MEMBERS_CACHE.get(cache_key)
-  if cached is None:
-    return None
-  return dict(cached)
+  with _DAILY_ARCHIVE_MEMBERS_CACHE_LOCK:
+    cached = _DAILY_ARCHIVE_MEMBERS_CACHE.get(cache_key)
+    if cached is None:
+      return None
+    return dict(cached)
 
 
 def _store_daily_archive_members_cache(
@@ -4941,7 +4955,8 @@ def _store_daily_archive_members_cache(
     return
   canonical = normalize_daily_compressed_path(compressed_path)
   cache_key = _daily_archive_members_cache_key(canonical)
-  _DAILY_ARCHIVE_MEMBERS_CACHE[cache_key] = dict(members)
+  with _DAILY_ARCHIVE_MEMBERS_CACHE_LOCK:
+    _DAILY_ARCHIVE_MEMBERS_CACHE[cache_key] = dict(members)
   _trim_daily_archive_members_cache()
 
 

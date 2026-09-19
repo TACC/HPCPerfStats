@@ -558,14 +558,15 @@ def test_record_worker_stage_publishes_timeout_s():
       clear_worker_stage,
       record_worker_stage,
       set_worker_diagnostics_registry,
+      worker_registry_key,
   )
 
   registry = {}
   set_worker_diagnostics_registry(registry)
   try:
     record_worker_stage("/tmp/host/1", "ingest", timeout_s=2121.8)
-    pid = str(__import__("os").getpid())
-    assert registry[pid]["timeout_s"] == "2121.8"
+    key = worker_registry_key()
+    assert registry[key]["timeout_s"] == "2121.8"
     assert st._max_effective_ingest_timeout_from_registry(registry) == 2121.8
   finally:
     clear_worker_stage()
