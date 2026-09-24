@@ -12,6 +12,7 @@ Attributes:
 """
 from __future__ import annotations
 
+import copy
 import os
 import threading
 import time
@@ -339,7 +340,9 @@ class DayCloseManifestCoordinator:
         entry["recovered_at"] = now
         downgraded.append(tar_norm)
       if recovered or downgraded:
-        _save_manifest(self._manifest_path, self._manifest)
+        _manifest_snap = copy.deepcopy(self._manifest)
+    if recovered or downgraded:
+      _save_manifest(self._manifest_path, _manifest_snap)
     for tar_norm in downgraded:
       self.log_fn(
           "janitor: day_close stale complete downgraded tar=%s" % tar_norm,
@@ -379,6 +382,8 @@ class DayCloseManifestCoordinator:
         entry.pop("detail", None)
         entry["submitted_at"] = time.time()
         self._touch_manifest_locked("queued", tar_norm=tar_norm)
+        _manifest_snap = copy.deepcopy(self._manifest)
+      _save_manifest(self._manifest_path, _manifest_snap)
 
   def entry_progress_snapshot(self, tar_path: str) -> Dict[str, Any]:
     """
@@ -607,7 +612,9 @@ class DayCloseManifestCoordinator:
         entry["recovered_at"] = time.time()
         reenqueue.append(tar_norm)
       if reenqueue:
-        _save_manifest(self._manifest_path, self._manifest)
+        _manifest_snap = copy.deepcopy(self._manifest)
+    if reenqueue:
+      _save_manifest(self._manifest_path, _manifest_snap)
     for tar_norm in reenqueue:
       self.log_fn(
           "janitor: day_close ghost manifest reconcile tar=%s" % tar_norm,
@@ -626,7 +633,8 @@ class DayCloseManifestCoordinator:
         with self._lock:
           entries = self._manifest.setdefault("entries", {})
           entries.pop(tar_norm, None)
-          _save_manifest(self._manifest_path, self._manifest)
+          _manifest_snap = copy.deepcopy(self._manifest)
+        _save_manifest(self._manifest_path, _manifest_snap)
         continue
       # Debt push succeeded: restore worker-slot queued (not limbo deferred).
       with self._lock:
@@ -639,6 +647,8 @@ class DayCloseManifestCoordinator:
         entry.pop("detail", None)
         entry["submitted_at"] = time.time()
         self._touch_manifest_locked("queued", tar_norm=tar_norm)
+        _manifest_snap = copy.deepcopy(self._manifest)
+      _save_manifest(self._manifest_path, _manifest_snap)
     return len(reenqueue)
 
   def clear_deferred_waiting_on_ingest(self, tar_path: str) -> bool:
@@ -663,7 +673,8 @@ class DayCloseManifestCoordinator:
         return False
       entries = self._manifest.setdefault("entries", {})
       entries.pop(tar_norm, None)
-      _save_manifest(self._manifest_path, self._manifest)
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
     self.log_fn(
         "janitor: day_close deferred cleared tar=%s" % tar_norm,
         flush=True,
@@ -799,12 +810,17 @@ class DayCloseManifestCoordinator:
             "detail": "waiting_on_ingest",
             "submitted_at": time.time(),
         }
-        _save_manifest(self._manifest_path, self._manifest)
         self._touch_manifest_locked("deferred_waiting_on_ingest", tar_norm=tar_norm)
-        return
-      status = str(entry.get("status") or "")
-      if status not in _DAY_CLOSE_PIPELINE_PENDING_STATUSES:
-        return
+        _manifest_snap = copy.deepcopy(self._manifest)
+        created = True
+      else:
+        created = False
+        status = str(entry.get("status") or "")
+        if status not in _DAY_CLOSE_PIPELINE_PENDING_STATUSES:
+          return
+    if created:
+      _save_manifest(self._manifest_path, _manifest_snap)
+      return
     self._set_entry_status(tar_norm, "deferred", detail="waiting_on_ingest")
     self._touch_manifest("deferred_waiting_on_ingest", tar_norm=tar_norm)
 
@@ -977,6 +993,8 @@ class DayCloseManifestCoordinator:
         inflight = set(self.get_inflight_tar_paths_fn() or ())
       except Exception:
         inflight = set()
+    promoted = False
+    _manifest_snap: Dict[str, Any] | None = None
     with self._lock:
       entry = self._manifest.get("entries", {}).get(tar_norm)
       if _is_day_close_pipeline_pending_entry(entry):
@@ -994,13 +1012,9 @@ class DayCloseManifestCoordinator:
             entry.pop("detail", None)
             entry["submitted_at"] = time.time()
             self._touch_manifest_locked("queued", tar_norm=tar_norm)
-            self.log_fn(
-                "janitor: day_close enqueue tar=%s reason=%s"
-                % (tar_norm, reason or "promoted_from_deferred"),
-                flush=True,
-            )
-            return True, reason or "promoted_from_deferred"
-          # Not on heap yet — fall through to enqueue_day_close_fn.
+            _manifest_snap = copy.deepcopy(self._manifest)
+            promoted = True
+          # else: Not on heap yet — fall through to enqueue_day_close_fn.
         elif _is_deferred_waiting_on_ingest_entry(entry):
           # Soft-state only: not queued work. Discover must not treat as success.
           return False, "deferred_waiting_on_ingest"
@@ -1009,6 +1023,15 @@ class DayCloseManifestCoordinator:
         # Pending worker-slot without heap debt — fall through to re-push.
       elif tar_norm in inflight:
         return True, "already_inflight"
+    if promoted:
+      assert _manifest_snap is not None
+      _save_manifest(self._manifest_path, _manifest_snap)
+      self.log_fn(
+          "janitor: day_close enqueue tar=%s reason=%s"
+          % (tar_norm, reason or "promoted_from_deferred"),
+          flush=True,
+      )
+      return True, reason or "promoted_from_deferred"
     enqueued = False
     if self.enqueue_day_close_fn is not None:
       try:
@@ -1025,6 +1048,8 @@ class DayCloseManifestCoordinator:
           "submitted_at": time.time(),
       }
       self._touch_manifest_locked("queued", tar_norm=tar_norm)
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
     self.log_fn(
         "janitor: day_close enqueue tar=%s reason=%s" % (tar_norm, reason),
         flush=True,
@@ -1052,7 +1077,6 @@ class DayCloseManifestCoordinator:
       if isinstance(entry, dict):
         entry["last_progress"] = stage
         entry["last_progress_at"] = time.time()
-    _save_manifest(self._manifest_path, self._manifest)
 
   def _touch_manifest(self, stage: str, *, tar_norm: str = "") -> None:
     """
@@ -1070,6 +1094,8 @@ class DayCloseManifestCoordinator:
     """
     with self._lock:
       self._touch_manifest_locked(stage, tar_norm=tar_norm)
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
 
   def touch_progress(self, stage: str, *, tar_path: str = "") -> None:
     """
@@ -1110,8 +1136,9 @@ class DayCloseManifestCoordinator:
         self._manifest["entries"][tar_norm] = entry
       entry["status"] = status
       entry.update(extra)
-      _save_manifest(self._manifest_path, self._manifest)
+      _manifest_snap = copy.deepcopy(self._manifest)
 
+    _save_manifest(self._manifest_path, _manifest_snap)
   def _notify_phase(self, tar_norm: str, phase: str) -> None:
     """
     Internal helper to handle notify phase.

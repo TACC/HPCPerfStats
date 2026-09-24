@@ -1175,6 +1175,83 @@ def test_replace_corrupt_tar_replaces_via_rebuild_tmp(monkeypatch, tmp_path):
   assert not Path(str(tar_path) + ".rebuild.tmp").exists()
 
 
+def test_replace_corrupt_decompress_outside_write_lock(monkeypatch, tmp_path):
+  """Decompress to ``.rebuild.tmp`` must not hold ``file_write_lock``."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.file_locking import try_file_write_lock
+
+  tar_path = tmp_path / "2020-01-03e.tar"
+  zst_path = tmp_path / "2020-01-03e.tar.zst"
+  gz_path = tmp_path / "2020-01-03e.tar.gz"
+  tar_path.write_text("bad")
+  zst_path.write_text("not-used")
+  lock_free = []
+
+  def _fake_decomp(
+      compressed_path, out_tar_path, thread_count, *,
+      remove_compressed=True, **kwargs,
+  ):
+    del compressed_path, thread_count, remove_compressed, kwargs
+    try:
+      with try_file_write_lock(str(tar_path)):
+        lock_free.append(True)
+    except TimeoutError:
+      lock_free.append(False)
+    inner = tmp_path / "inn.txt"
+    inner.write_text("ok")
+    with tarfile.open(str(out_tar_path), "w") as tf:
+      tf.add(str(inner), arcname="only.txt")
+    return True
+
+  monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decomp)
+  assert replace_corrupt_tar_from_compressed_backup(
+      str(tar_path), str(zst_path), str(gz_path), 1)
+  assert lock_free == [True]
+  assert verify_tar_archive_readable(str(tar_path))
+
+
+def test_rebuild_union_member_copy_outside_write_lock(tmp_path, monkeypatch):
+  """Union member copy must not hold exclusive write lock on the daily tar."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.file_locking import try_file_write_lock
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+      rebuild_daily_tar_member_union_in_place,
+  )
+
+  tar_path = tmp_path / "2024-05-01.tar"
+  zst_path = tmp_path / "2024-05-01.tar.zst"
+  member = tmp_path / "m.txt"
+  member.write_text("hello")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(member), arcname="m.txt")
+  zst_path.write_text("unused")
+  lock_free = []
+  real_copy = helpers._copy_union_member_into_tar
+
+  def _tracking_copy(*args, **kwargs):
+    try:
+      with try_file_write_lock(str(tar_path)):
+        lock_free.append(True)
+    except TimeoutError:
+      lock_free.append(False)
+    return real_copy(*args, **kwargs)
+
+  monkeypatch.setattr(helpers, "_copy_union_member_into_tar", _tracking_copy)
+  monkeypatch.setattr(
+      helpers, "invalidate_after_daily_tar_mutation", lambda *_a, **_k: None,
+  )
+  ok = rebuild_daily_tar_member_union_in_place(
+      str(tar_path),
+      str(zst_path),
+      {"m.txt": member.stat().st_size},
+      log_fn=lambda *a, **k: None,
+      stall_warn_s=9999,
+      stall_yield_s=99999,
+  )
+  assert ok is True
+  assert lock_free == [True]
+
+
 def test_seal_skip_rejects_same_aggregate_different_members(monkeypatch, tmp_path):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 

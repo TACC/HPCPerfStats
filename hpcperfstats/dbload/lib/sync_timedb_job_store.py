@@ -38,6 +38,7 @@ from itertools import islice
 from typing import Any, Deque, Dict, Iterable, List, Optional, Tuple
 
 import hashlib
+import heapq
 import os
 import secrets
 import socket
@@ -128,6 +129,8 @@ class SyncTimedbJobStore:
       persist_interval_s: Minimum seconds between automatic snapshot writes.
       _dirty: True when durable queues changed since the last snapshot.
       _ingest: Identity to score map for queued ingest work.
+      _ingest_heap_catchup: Lazy min-heap of catchup-band ``(score, id)``.
+      _ingest_heap_hot: Lazy min-heap of hot-band ``(score, id)``.
       _inflight: Per-kind in-flight map of deadline, owner, and score.
       _last_persist: Epoch seconds of the last successful snapshot write.
       _leases: Owner token by (kind, identity).
@@ -162,6 +165,10 @@ class SyncTimedbJobStore:
         self.persist_interval_s = float(persist_interval_s)
         self._lock = TimedRLock("job_store")
         self._ingest: Dict[str, float] = {}
+        # Lazy min-heaps per score band; stale (score, ident) entries are
+        # skipped on claim when _ingest no longer matches.
+        self._ingest_heap_hot: List[Tuple[float, str]] = []
+        self._ingest_heap_catchup: List[Tuple[float, str]] = []
         self._lists: Dict[str, Deque[str]] = {
             kind: deque() for kind in JOB_KINDS_LIST
         }
@@ -354,6 +361,7 @@ class SyncTimedbJobStore:
                 }
         with self._lock:
             self._ingest = ingest_built
+            self._ingest_rebuild_heaps_locked()
             for kind in JOB_KINDS_LIST:
                 self._lists[kind] = lists_built[kind]
                 self._pending[kind] = pending_built[kind]
@@ -365,6 +373,86 @@ class SyncTimedbJobStore:
                 active=self._queued_identities_locked(),
             )
             self._dirty = False
+
+    def _ingest_heap_for_band_locked(
+        self,
+        band: str,
+    ) -> List[Tuple[float, str]]:
+        """
+        Return the mutable lazy heap for one ingest score band.
+
+        Args:
+          band (str): ``hot`` or ``catchup``.
+
+        Returns:
+          list[tuple[float, str]]: Min-heap of ``(score, identity)``.
+
+        Examples:
+          >>> store = SyncTimedbJobStore("/tmp/empty")
+          >>> store._ingest_heap_for_band_locked("hot") == []
+          True
+        """
+        if str(band) == "hot":
+            return self._ingest_heap_hot
+        return self._ingest_heap_catchup
+
+    def _ingest_heap_push_locked(self, identity: str, score: float) -> None:
+        """
+        Push one live ingest score onto the band heap (lazy duplicates ok).
+
+        Args:
+          identity (str): Queued ingest identity.
+          score (float): Current score from ``_ingest``.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbJobStore("/tmp/empty")
+          >>> store._ingest_heap_push_locked("/a", 1.0) is None
+          True
+        """
+        scored = float(score)
+        heap = self._ingest_heap_for_band_locked(decode_ingest_band(scored))
+        heapq.heappush(heap, (scored, str(identity)))
+
+    def _ingest_set_locked(self, identity: str, score: float) -> None:
+        """
+        Record a live ingest score and arm the matching band heap.
+
+        Args:
+          identity (str): Queued ingest identity.
+          score (float): Band-encoded score.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbJobStore("/tmp/empty")
+          >>> store._ingest_set_locked("/a", 1.0) is None
+          True
+        """
+        ident = str(identity)
+        scored = float(score)
+        self._ingest[ident] = scored
+        self._ingest_heap_push_locked(ident, scored)
+
+    def _ingest_rebuild_heaps_locked(self) -> None:
+        """
+        Rebuild both band heaps from the live ``_ingest`` map.
+
+        Returns:
+          None
+
+        Examples:
+          >>> store = SyncTimedbJobStore("/tmp/empty")
+          >>> store._ingest_rebuild_heaps_locked() is None
+          True
+        """
+        self._ingest_heap_hot = []
+        self._ingest_heap_catchup = []
+        for ident, score in self._ingest.items():
+            self._ingest_heap_push_locked(ident, float(score))
 
     def _queued_identities_locked(self) -> set[tuple[str, str]]:
         """
@@ -500,7 +588,7 @@ class SyncTimedbJobStore:
             ):
                 if decode_ingest_band(score) != "hot":
                     return 0
-            self._ingest[ident] = float(score)
+            self._ingest_set_locked(ident, float(score))
             if fingerprint:
                 self._payloads.setdefault(
                     (JOB_KIND_INGEST, ident), {},
@@ -593,16 +681,20 @@ class SyncTimedbJobStore:
         deadline = now + ttl
         claimed: List[ClaimedJob] = []
         with self._lock:
-            snapshot = list(self._ingest.items())
-        ranked = sorted(snapshot, key=lambda item: item[1])
-        with self._lock:
-            for ident, _snap_score in ranked:
-                if len(claimed) >= want:
-                    break
+            heap = self._ingest_heap_for_band_locked(band)
+            while len(claimed) < want and heap:
+                snap_score, ident = heapq.heappop(heap)
                 if ident in self._inflight[JOB_KIND_INGEST]:
                     continue
                 live = self._ingest.get(ident)
-                if live is None or not (lo <= float(live) <= hi):
+                if live is None:
+                    continue
+                if float(live) != float(snap_score):
+                    # Stale heap entry after reband/score bump; re-arm live.
+                    self._ingest_heap_push_locked(ident, float(live))
+                    continue
+                if not (lo <= float(live) <= hi):
+                    self._ingest_heap_push_locked(ident, float(live))
                     continue
                 self._ingest.pop(ident, None)
                 self._inflight[JOB_KIND_INGEST][ident] = (
@@ -754,7 +846,7 @@ class SyncTimedbJobStore:
             self._leases.pop((kind, ident), None)
             if str(kind) == JOB_KIND_INGEST:
                 restore = CATCHUP_SCORE_BASE if score is None else float(score)
-                self._ingest[ident] = restore
+                self._ingest_set_locked(ident, restore)
             else:
                 self._lists[kind].append(ident)
                 self._pending[kind].add(ident)
@@ -2238,8 +2330,9 @@ def reap_expired_inflight(
             store._leases.pop((kind, ident), None)
             if str(kind) == JOB_KIND_INGEST:
                 restore = CATCHUP_SCORE_BASE if score is None else float(score)
-                store._ingest[ident] = restore + float(
-                    LEASE_CONFLICT_SCORE_PENALTY,
+                store._ingest_set_locked(
+                    ident,
+                    restore + float(LEASE_CONFLICT_SCORE_PENALTY),
                 )
             else:
                 store._lists[kind].append(ident)

@@ -9,6 +9,7 @@ import pandas as pd
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     HOST_PROC_KEYS,
     IncrementalStatsParser,
+    OnlineMergedProcRows,
     _cluster_mean_sum_sorted,
     _compile_schema_token,
     _nullable_int_max,
@@ -445,6 +446,56 @@ def test_online_proc_merge_equals_batch_dedupe():
   batch_by = {r["proc"]: r for r in dedupe_proc_stats_peak_merge(explicit)}
   assert by_proc["python"]["vm_peak"] == batch_by["python"]["vm_peak"]
   assert by_proc["python"]["threads"] == batch_by["python"]["threads"]
+  assert isinstance(online, OnlineMergedProcRows)
+
+
+def test_online_merged_rows_skip_timed_dedupe_frame_parity():
+  """OnlineMergedProcRows must skip batch dedupe but match DataFrame peaks."""
+  raw = [
+      {
+          "jid": "j",
+          "host": "h",
+          "proc": "python",
+          "vm_peak": 9000,
+          "threads": 1,
+      },
+      {
+          "jid": "j",
+          "host": "h",
+          "proc": "python",
+          "vm_peak": 8000,
+          "threads": 8,
+      },
+  ]
+  online = OnlineMergedProcRows(dedupe_proc_stats_peak_merge(raw))
+  _s1, proc_online = build_stats_dataframes([], online)
+  _s2, proc_batch = build_stats_dataframes([], list(raw))
+  assert int(proc_online.iloc[0]["vm_peak"]) == 9000
+  assert int(proc_online.iloc[0]["threads"]) == 8
+  assert int(proc_batch.iloc[0]["vm_peak"]) == 9000
+  assert int(proc_batch.iloc[0]["threads"]) == 8
+
+
+def test_columnar_take_proc_frame_equals_records():
+  """take_proc_stats_columns SoA frame must match OnlineMergedProcRows frame."""
+  schema = _host_proc_schema_line()
+  lines = [
+      schema,
+      "1709123456 job1 cn001\n",
+      f"host_proc python/1/0/0 {_host_proc_vals(vm_peak=9000, threads=1)}\n",
+      "1709123457 job1 cn001\n",
+      f"host_proc python/1/0/0 {_host_proc_vals(vm_peak=8000, threads=8)}\n",
+  ]
+  parser_a = IncrementalStatsParser(0)
+  parser_a.feed_lines(lines)
+  rows = parser_a.take_proc_stats()
+  parser_b = IncrementalStatsParser(0)
+  parser_b.feed_lines(lines)
+  cols = parser_b.take_proc_stats_columns()
+  _s1, from_rows = build_stats_dataframes([], rows)
+  _s2, from_cols = build_stats_dataframes([], cols)
+  assert list(from_rows["vm_peak"]) == list(from_cols["vm_peak"])
+  assert list(from_rows["threads"]) == list(from_cols["threads"])
 
 
 def test_nullable_int_max_fastpath_and_dirty():

@@ -278,17 +278,53 @@ def test_claim_ingest_lock_hold_live_score_skip(tmp_path, monkeypatch):
     store = SyncTimedbJobStore(str(tmp_path / "archive"))
     zadd_ingest_job(store, identity="/raw/a", score=1.0)
     owner = make_lease_owner_token(pid=1, hostname="h", boot_id="b")
-    real_sorted = sorted
+    real_heappop = job_store_mod.heapq.heappop
 
-    def reband_sorted(*args, **kwargs):
+    def reband_heappop(heap):
         with store._lock:
             store._ingest["/raw/a"] = float(CATCHUP_SCORE_BASE)
-        return real_sorted(*args, **kwargs)
+        return real_heappop(heap)
 
-    monkeypatch.setattr("builtins.sorted", reband_sorted)
+    monkeypatch.setattr(job_store_mod.heapq, "heappop", reband_heappop)
     claimed = store.claim_ingest(band="hot", owner_token=owner, max_n=1)
     assert claimed == []
     assert store.ingest_score("/raw/a") == float(CATCHUP_SCORE_BASE)
+    catch = store.claim_ingest(
+        band="catchup",
+        owner_token=owner,
+        max_n=1,
+    )
+    assert [job.identity for job in catch] == ["/raw/a"]
+
+
+@pytest.mark.django_db(databases=[])
+def test_claim_ingest_heap_order_and_band_separation(tmp_path):
+    store = SyncTimedbJobStore(str(tmp_path / "archive"))
+    zadd_ingest_job(store, identity="/raw/hot-hi", score=5.0)
+    zadd_ingest_job(store, identity="/raw/hot-lo", score=1.0)
+    zadd_ingest_job(
+        store,
+        identity="/raw/catch",
+        score=float(CATCHUP_SCORE_BASE) + 1.0,
+    )
+    owner = make_lease_owner_token(pid=1, hostname="h", boot_id="b")
+    hot = store.claim_ingest(band="hot", owner_token=owner, max_n=2)
+    assert [job.identity for job in hot] == ["/raw/hot-lo", "/raw/hot-hi"]
+    catch = store.claim_ingest(band="catchup", owner_token=owner, max_n=1)
+    assert [job.identity for job in catch] == ["/raw/catch"]
+
+
+@pytest.mark.django_db(databases=[])
+def test_claim_ingest_heap_rebuilds_on_load(tmp_path):
+    archive = str(tmp_path / "archive")
+    store = SyncTimedbJobStore(archive)
+    zadd_ingest_job(store, identity="/raw/b", score=2.0)
+    zadd_ingest_job(store, identity="/raw/a", score=1.0)
+    store.persist(force=True)
+    reloaded = SyncTimedbJobStore(archive)
+    owner = make_lease_owner_token(pid=1, hostname="h", boot_id="b")
+    claimed = reloaded.claim_ingest(band="hot", owner_token=owner, max_n=2)
+    assert [job.identity for job in claimed] == ["/raw/a", "/raw/b"]
 
 
 @pytest.mark.django_db(databases=[])

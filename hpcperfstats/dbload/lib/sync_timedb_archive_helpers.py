@@ -6158,7 +6158,8 @@ def replace_corrupt_tar_from_compressed_backup(
   """
   Restore a corrupt ``tar_path`` from ``.tar.zst`` or legacy ``.gz``.
 
-  Writes a sibling ``.rebuild.tmp``, then ``os.replace`` onto ``tar_path``
+  Writes a sibling ``.rebuild.tmp`` **outside** the exclusive write lock,
+  then ``os.replace`` onto ``tar_path`` under a short ``file_write_lock``
   only after decompress returns True. Never unlinks ``tar_path`` before a
   verified replacement exists.
 
@@ -6179,29 +6180,30 @@ def replace_corrupt_tar_from_compressed_backup(
   Examples:
     >>> replace_corrupt_tar_from_compressed_backup("x", "x", "x", None)
   """
+  rebuild = tar_path + ".rebuild.tmp"
   try:
-    with file_write_lock(tar_path):
-      remove_compressed = _decompress_should_unlink_compressed(tar_path)
-      rebuild = tar_path + ".rebuild.tmp"
-      try:
-        if os.path.exists(rebuild):
-          os.remove(rebuild)
-      except OSError:
-        pass
-      for sealed_src in (zst_path, gz_path):
-        if not os.path.isfile(sealed_src):
-          continue
-        if decompress_compressed_to_tar(
-            sealed_src,
-            rebuild,
-            zstd_threads,
-            remove_compressed=remove_compressed,
-            restore_reason="corrupt_tar",
-            restore_caller="replace_corrupt_tar_from_compressed_backup",
-            already_locked=True,
-        ):
-          os.replace(rebuild, tar_path)
-          return True
+    if os.path.exists(rebuild):
+      os.remove(rebuild)
+  except OSError:
+    pass
+  remove_compressed = _decompress_should_unlink_compressed(tar_path)
+  restored = False
+  try:
+    for sealed_src in (zst_path, gz_path):
+      if not os.path.isfile(sealed_src):
+        continue
+      if decompress_compressed_to_tar(
+          sealed_src,
+          rebuild,
+          zstd_threads,
+          remove_compressed=remove_compressed,
+          restore_reason="corrupt_tar",
+          restore_caller="replace_corrupt_tar_from_compressed_backup",
+          already_locked=False,
+      ):
+        restored = True
+        break
+    if not restored:
       try:
         if os.path.exists(rebuild):
           os.remove(rebuild)
@@ -6209,6 +6211,11 @@ def replace_corrupt_tar_from_compressed_backup(
         pass
       if os.path.isfile(zst_path) or os.path.isfile(gz_path):
         return False
+      return True
+    with file_write_lock(tar_path):
+      if not os.path.isfile(rebuild):
+        return False
+      os.replace(rebuild, tar_path)
       return True
   except TimeoutError:
     return False
@@ -8968,7 +8975,9 @@ def rebuild_daily_tar_member_union_in_place(
   Emits rate-limited ``stage_progress`` lines. Yields cooperatively when
   ``members_done`` is unchanged for ``stall_yield_s`` (default 1800s) at a
   safe checkpoint between member copies — not because total merge elapsed
-  time is large while the counter still advances.
+  time is large while the counter still advances. Member copy and tmp
+  verify run **outside** the exclusive write lock; ``file_write_lock`` wraps
+  only the final yield check and ``os.replace``.
 
   Args:
     tar_path (str): Daily ``.tar`` path to rewrite.
@@ -9097,42 +9106,48 @@ def rebuild_daily_tar_member_union_in_place(
     )
 
   try:
+    for member_name in sorted(union_members):
+      _maybe_stall_yield_at_checkpoint()
+      if not _copy_union_member_into_tar(
+          tmp_path,
+          member_name,
+          union_members[member_name],
+          tar_path=tar_path,
+          zst_path=zst_path,
+          extract_dir=extract_dir,
+      ):
+        try:
+          os.remove(tmp_path)
+        except OSError:
+          pass
+        return False
+      members_done += 1
+      last_progress_mono = float(clock())
+      warn_emitted = False
+      if callable(on_merge_progress):
+        try:
+          on_merge_progress(
+              members_done, members_total, last_progress_mono,
+          )
+        except Exception:
+          pass
+      _emit_reconcile_stage_progress(
+          day_token,
+          members_done=members_done,
+          members_total=members_total,
+          elapsed_s=last_progress_mono - merge_started,
+          advancing=True,
+          stuck_s=0.0,
+          log_fn=log_fn,
+          force=False,
+      )
+    if not verify_tar_archive_readable(tmp_path):
+      try:
+        os.remove(tmp_path)
+      except OSError:
+        pass
+      return False
     with file_write_lock(tar_path):
-      for member_name in sorted(union_members):
-        _maybe_stall_yield_at_checkpoint()
-        if not _copy_union_member_into_tar(
-            tmp_path,
-            member_name,
-            union_members[member_name],
-            tar_path=tar_path,
-            zst_path=zst_path,
-            extract_dir=extract_dir,
-        ):
-          try:
-            os.remove(tmp_path)
-          except OSError:
-            pass
-          return False
-        members_done += 1
-        last_progress_mono = float(clock())
-        warn_emitted = False
-        if callable(on_merge_progress):
-          try:
-            on_merge_progress(
-                members_done, members_total, last_progress_mono,
-            )
-          except Exception:
-            pass
-        _emit_reconcile_stage_progress(
-            day_token,
-            members_done=members_done,
-            members_total=members_total,
-            elapsed_s=last_progress_mono - merge_started,
-            advancing=True,
-            stuck_s=0.0,
-            log_fn=log_fn,
-            force=False,
-        )
       requested, reason = day_close_yield_requested(
           tar_path,
           tgz_archive_dir=tgz_archive_dir,
@@ -9140,12 +9155,6 @@ def rebuild_daily_tar_member_union_in_place(
       )
       if requested:
         raise DayCloseYieldError(tar_path, phase=yield_phase, reason=reason)
-      if not verify_tar_archive_readable(tmp_path):
-        try:
-          os.remove(tmp_path)
-        except OSError:
-          pass
-        return False
       os.replace(tmp_path, tar_path)
     invalidate_after_daily_tar_mutation(
         tar_path,

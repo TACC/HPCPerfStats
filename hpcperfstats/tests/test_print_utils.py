@@ -7,6 +7,7 @@ import sys
 
 from hpcperfstats.dbload.lib.print_utils import (
     _script_prefix,
+    flush_log_print_queue,
     ingest_logging,
     janitorial_logging,
     log_print,
@@ -20,6 +21,11 @@ def test_script_prefix_uses_main_file(monkeypatch):
 
   monkeypatch.setitem(__import__("sys").modules, "__main__", DummyMain)
   assert _script_prefix() == "[sync_timedb]"
+
+
+def _await_log_drain() -> None:
+  """Wait for async drain so assertions see written lines."""
+  flush_log_print_queue(timeout_s=2.0)
 
 
 def _capture_log_writes(monkeypatch):
@@ -47,6 +53,7 @@ def test_log_print_single_atomic_write(monkeypatch):
 
   log_print("hello", 123)
 
+  _await_log_drain()
   assert writes == ["[tool:main] hello 123\n"], (
       "log_print must one write() the full line so compose/podman logs "
       "do not inject a container prefix between prefix and body"
@@ -63,6 +70,7 @@ def test_log_print_prefixes_output(monkeypatch):
 
   log_print("hello", 123, end="!")
 
+  _await_log_drain()
   assert writes == ["[tool:main] hello 123!"]
 
 
@@ -74,6 +82,7 @@ def test_log_print_strips_redundant_script_body_prefix(monkeypatch):
   set_log_role("main")
   writes, _buf = _capture_log_writes(monkeypatch)
   log_print("sync_timedb: pending reconcile cap begin")
+  _await_log_drain()
   assert writes == ["[sync_timedb:main] pending reconcile cap begin\n"]
   set_log_role(None)
 
@@ -87,6 +96,7 @@ def test_log_print_adds_janitor_body_prefix_for_main(monkeypatch):
   writes, _buf = _capture_log_writes(monkeypatch)
   with janitorial_logging():
     log_print("day-scoped closed_raw tar=2026-06-05.tar")
+  _await_log_drain()
   assert writes == [
       "[sync_timedb:main] janitor: day-scoped closed_raw tar=2026-06-05.tar\n"
   ]
@@ -102,6 +112,7 @@ def test_log_print_adds_janitor_body_prefix_for_day_close_role(monkeypatch):
   writes, _buf = _capture_log_writes(monkeypatch)
   with janitorial_logging():
     log_print("seal begin day=2026-06-05")
+  _await_log_drain()
   assert writes == [
       "[sync_timedb:thread:day-close-0] janitor: seal begin day=2026-06-05\n"
   ]
@@ -117,6 +128,7 @@ def test_log_print_strips_body_janitor_when_role_has_janitor(monkeypatch):
   writes, _buf = _capture_log_writes(monkeypatch)
   with janitorial_logging():
     log_print("janitor: discover_ready_day_close reason=tick")
+  _await_log_drain()
   assert writes == [
       "[sync_timedb:thread:archive-janitor] "
       "discover_ready_day_close reason=tick\n"
@@ -135,6 +147,7 @@ def test_log_print_keeps_single_janitor_when_already_present_for_day_close(
   writes, _buf = _capture_log_writes(monkeypatch)
   with janitorial_logging():
     log_print("janitor: day_close defer tar=x")
+  _await_log_drain()
   assert writes == [
       "[sync_timedb:thread:day-close-1] janitor: day_close defer tar=x\n"
   ]
@@ -150,6 +163,7 @@ def test_log_print_adds_ingest_body_prefix_for_main(monkeypatch):
   writes, _buf = _capture_log_writes(monkeypatch)
   with ingest_logging():
     log_print("post_finalize_reconcile oldest_tar=x")
+  _await_log_drain()
   assert writes == [
       "[sync_timedb:main] ingest: post_finalize_reconcile oldest_tar=x\n"
   ]
@@ -165,6 +179,7 @@ def test_log_print_does_not_double_ingest_prefix(monkeypatch):
   writes, _buf = _capture_log_writes(monkeypatch)
   with ingest_logging():
     log_print("ingest: pending reconcile")
+  _await_log_drain()
   assert writes == ["[sync_timedb:main] ingest: pending reconcile\n"]
   set_log_role(None)
 
@@ -179,6 +194,7 @@ def test_log_print_janitorial_wins_over_ingest_on_main(monkeypatch):
   with ingest_logging():
     with janitorial_logging():
       log_print("day-scoped closed_raw")
+  _await_log_drain()
   assert writes == ["[sync_timedb:main] janitor: day-scoped closed_raw\n"]
   set_log_role(None)
 
@@ -192,6 +208,7 @@ def test_log_print_ingest_scope_skips_pool_worker_role(monkeypatch):
   writes, _buf = _capture_log_writes(monkeypatch)
   with ingest_logging():
     log_print("File successfully added to DB")
+  _await_log_drain()
   assert writes == [
       "[sync_timedb:worker:ingest-pool] File successfully added to DB\n"
   ]
@@ -207,6 +224,7 @@ def test_log_print_oneshot_kwargs(monkeypatch):
   writes, _buf = _capture_log_writes(monkeypatch)
   log_print("day close note", janitorial=True)
   log_print("chunk note", ingest=True)
+  _await_log_drain()
   assert writes == [
       "[sync_timedb:main] janitor: day close note\n",
       "[sync_timedb:main] ingest: chunk note\n",
@@ -223,6 +241,7 @@ def test_log_print_unset_role_treated_as_main_for_ingest(monkeypatch):
   writes, _buf = _capture_log_writes(monkeypatch)
   with ingest_logging():
     log_print("pending reconcile")
+  _await_log_drain()
   assert writes == ["[sync_timedb:main] ingest: pending reconcile\n"]
 
 
@@ -261,7 +280,8 @@ def test_log_print_flush_lock_hold_after_release(monkeypatch):
   assert acquired == [True]
 
 
-def test_log_print_flush_lock_hold_write_still_under_lock(monkeypatch):
+def test_log_print_flush_write_releases_lock_for_peers(monkeypatch):
+  """Async drain must not hold ``_log_print_lock`` across ``stream.write``."""
   import threading
   import time
 
@@ -294,4 +314,4 @@ def test_log_print_flush_lock_hold_write_still_under_lock(monkeypatch):
   waiter_thread.start()
   log_print("hello", file=SlowWriteStream(), flush=True)
   waiter_thread.join(timeout=3)
-  assert acquired == [False]
+  assert acquired == [True]

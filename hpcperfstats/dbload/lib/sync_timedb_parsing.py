@@ -6,6 +6,7 @@ Attributes:
   EVENTMAPS_BY_TYPE: Attribute.
   HOST_PROC_KEYS: Attribute.
   HOST_PROC_PEAK_KEYS: Attribute.
+  OnlineMergedProcRows: Marker list for already peak-merged host_proc rows.
   STREAM_PARSE_LINE_BATCH: Attribute.
   _HOST_PROC_KEY_SET: Attribute.
   PARSE_STAGE_BUILD_DF_PARTS: Attribute.
@@ -43,7 +44,7 @@ import contextvars
 import threading
 import time
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
 import os
 import warnings
@@ -459,6 +460,47 @@ def dedupe_proc_stats_peak_merge(
       # Take ownership — callers must not mutate ``row`` after pass-in.
       by_key[key] = row
   return list(by_key.values())
+
+
+class OnlineMergedProcRows(list):
+  """
+  ``list`` subclass marking host_proc rows already peak-merged online.
+
+  ``build_stats_dataframes`` skips timed ``dedupe_proc_stats_peak_merge`` for
+  this type. Ordinary ``list`` inputs still run batch dedupe.
+  """
+
+
+def _proc_rows_to_columns(
+    rows: Sequence[dict[str, Any]],
+) -> dict[str, list[Any]]:
+  """
+  Convert sparse host_proc row dicts into a columnar SoA payload.
+
+  Args:
+    rows (Sequence[dict[str, Any]]): Peak-merged (or raw) host_proc rows.
+
+  Returns:
+    dict[str, list[Any]]: Column name to value lists (aligned by row index).
+
+  Examples:
+    >>> _proc_rows_to_columns([{"proc": "p", "vm_peak": 1}])["proc"]
+    ['p']
+  """
+  if not rows:
+    return {}
+  keys: list[str] = []
+  seen: set[str] = set()
+  for row in rows:
+    for key in row:
+      if key not in seen:
+        seen.add(key)
+        keys.append(key)
+  cols: dict[str, list[Any]] = {key: [] for key in keys}
+  for row in rows:
+    for key in keys:
+      cols[key].append(row.get(key))
+  return cols
 
 
 def apply_proc_peak_attrs_from_earlier(earlier: Any, later: Any) -> Any:
@@ -2108,20 +2150,35 @@ class IncrementalStatsParser:
     for row in value:
       self._merge_proc_row_online(row)
 
-  def take_proc_stats(self) -> list[dict[str, Any]]:
+  def take_proc_stats(self) -> OnlineMergedProcRows:
     """
     Return and clear online-merged host_proc rows for a flush.
 
     Returns:
-      list[dict[str, Any]]: Peak-merged rows; map is empty afterward.
+      OnlineMergedProcRows: Peak-merged rows; map is empty afterward.
 
     Examples:
       >>> IncrementalStatsParser(0).take_proc_stats()
       []
     """
-    rows = list(self._proc_by_key.values())
+    rows = OnlineMergedProcRows(self._proc_by_key.values())
     self._proc_by_key = {}
     return rows
+
+  def take_proc_stats_columns(self) -> dict[str, list[Any]]:
+    """
+    Return and clear online-merged host_proc rows as a columnar SoA payload.
+
+    Returns:
+      dict[str, list[Any]]: Empty dict when no rows; else column lists.
+
+    Examples:
+      >>> IncrementalStatsParser(0).take_proc_stats_columns()
+      {}
+    """
+    rows = list(self._proc_by_key.values())
+    self._proc_by_key = {}
+    return _proc_rows_to_columns(rows)
 
   def _merge_proc_row_online(self, row: dict[str, Any]) -> None:
     """
@@ -2565,7 +2622,8 @@ def build_stats_dataframes(stats_list: Any, proc_stats_list: Any) -> Any:
 
   Args:
     stats_list (Any): Columnar hardware stats or a list of row dicts.
-    proc_stats_list (Any): Parsed host_proc row dicts, or empty/``None``.
+    proc_stats_list (Any): Parsed host_proc row dicts, columnar SoA dict,
+      :class:`OnlineMergedProcRows`, or empty/``None``.
 
   Returns:
     Any: Tuple ``(stats_df, proc_stats_df)``.
@@ -2577,9 +2635,17 @@ def build_stats_dataframes(stats_list: Any, proc_stats_list: Any) -> Any:
   """
   if not proc_stats_list:
     proc_stats_df = DataFrame()
+  elif isinstance(proc_stats_list, dict):
+    with _held_parse_stage("proc_df_s"):
+      proc_stats_df = _stats_payload_to_frame(proc_stats_list)
+  elif isinstance(proc_stats_list, OnlineMergedProcRows):
+    with _held_parse_stage("proc_df_s"):
+      cols = _proc_rows_to_columns(proc_stats_list)
+      proc_stats_df = (
+          DataFrame(cols, copy=False) if cols else DataFrame()
+      )
   else:
     with _held_parse_stage("proc_merge_s"):
-      # Parser flushes already collapse online; dedupe is O(unique) + ownership.
       merged = dedupe_proc_stats_peak_merge(proc_stats_list)
     with _held_parse_stage("proc_df_s"):
       proc_stats_df = DataFrame(merged) if merged else DataFrame()
@@ -3021,7 +3087,10 @@ def parse_stats_file_streaming_incremental(
               if pending_flush or parser.stats_len >= flush_rows:
                 if parser.stats_len or parser._proc_by_key:
                   emit.append(
-                      (parser.take_stats_columns(), parser.take_proc_stats()),
+                      (
+                          parser.take_stats_columns(),
+                          parser.take_proc_stats_columns(),
+                      ),
                   )
                 pending_flush = False
             parser.feed_line(line)
@@ -3030,7 +3099,10 @@ def parse_stats_file_streaming_incremental(
         for stats_chunk, proc_chunk in emit:
           on_chunk(stats_chunk, proc_chunk)
     if parser.stats_len or parser._proc_by_key:
-      on_chunk(parser.take_stats_columns(), parser.take_proc_stats())
+      on_chunk(
+          parser.take_stats_columns(),
+          parser.take_proc_stats_columns(),
+      )
     pending_flush = False
   except FileNotFoundError:
     return

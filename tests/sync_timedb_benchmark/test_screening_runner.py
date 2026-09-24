@@ -46,6 +46,170 @@ def test_plant_corpus_into_archive_copies_host_trees(tmp_path):
   )
 
 
+def test_reset_screening_state_signature_has_no_daily_archive_dir():
+  """Regression: loaded48 smoke failed on unexpected daily_archive_dir kwarg."""
+  import inspect
+
+  from tests.sync_timedb_benchmark.screening_runner import reset_screening_state
+
+  params = inspect.signature(reset_screening_state).parameters
+  assert "daily_archive_dir" not in params
+  assert "corpus_dir" in params and "archive_dir" in params
+  soak_src = (
+      Path(__file__).resolve().parent / "test_loaded48_soak.py"
+  ).read_text(encoding="utf-8")
+  assert "reset_screening_state(" in soak_src
+  assert "daily_archive_dir=" not in soak_src
+
+
+def test_refill_corpus_epochs_mixes_small_medium_large(tmp_path):
+  """Loaded-48 refill must plant heterogeneous byte sizes, not uniform clones."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+      corpus_template_files_by_size_tier,
+      refill_corpus_epochs,
+  )
+
+  corpus = tmp_path / "corpus"
+  for i, size in enumerate((100, 1000, 10000, 200, 2000, 20000, 300, 3000, 30000)):
+    host = corpus / ("benchhost%04d.cluster_name.domain.edu" % i)
+    host.mkdir(parents=True)
+    (host / ("epoch_%d" % i)).write_bytes(b"x" * size)
+  small, medium, large = corpus_template_files_by_size_tier(corpus)
+  assert small and medium and large
+  assert max(p.stat().st_size for p in small) < min(p.stat().st_size for p in large)
+  archive = tmp_path / "archive"
+  n = refill_corpus_epochs(corpus, archive, copies_per_host=3, mix_size_tiers=True)
+  assert n >= 9
+  sizes = sorted(
+      path.stat().st_size
+      for host_dir in archive.iterdir()
+      if host_dir.is_dir()
+      for path in host_dir.iterdir()
+      if path.is_file()
+  )
+  assert sizes[0] <= 300
+  assert sizes[-1] >= 10000
+  # Span at least 10x between smallest and largest planted file.
+  assert sizes[-1] >= sizes[0] * 10
+
+
+def test_loaded48_helpers_hours_occupancy_manifest():
+  """Host-safe loaded48 helper contracts (no compose)."""
+  from tests.sync_timedb_benchmark import screening_runner as mod
+
+  assert mod.loaded48_mode_enabled("1") is True
+  assert mod.loaded48_hours("0.1") == 0.1
+  assert mod.loaded48_hours("3") == 3.0
+  assert mod.loaded48_fixed_width("48") == 48
+  assert mod.loaded48_fixed_width("96") == 96
+  assert mod.loaded48_occupancy_ok(
+      [(0.0, 10), (400.0, 48), (430.0, 48)],
+      width=48,
+      warmup_s=300.0,
+  )
+  assert mod.loaded48_occupancy_ok(
+      [(0.0, 10), (400.0, 96), (430.0, 96)],
+      width=96,
+      warmup_s=300.0,
+  )
+  assert not mod.loaded48_occupancy_ok(
+      [(400.0, 10), (430.0, 20)],
+      width=48,
+      warmup_s=300.0,
+  )
+  # Idle empty-queue ticks must not tank occupancy (discovery lag).
+  assert mod.loaded48_occupancy_ok(
+      [
+          (400.0, 0, 0, 0),
+          (410.0, 0, 0, 0),
+          (420.0, 48, 200, 12),
+          (430.0, 48, 180, 8),
+      ],
+      width=48,
+      warmup_s=300.0,
+  )
+  assert not mod.loaded48_occupancy_ok(
+      [(400.0, 0, 0, 0), (430.0, 0, 0, 0)],
+      width=48,
+      warmup_s=300.0,
+  )
+  m = mod.build_loaded48_manifest(
+      hours=0.1,
+      ingest_width=48,
+      mean_files_per_s=0.05,
+      lower_ci_files_per_s=0.04,
+      upper_ci_files_per_s=0.06,
+      occupancy_ok=True,
+      occupancy_full_frac=0.99,
+      python_abi="3.14",
+  )
+  assert m["kind"] == "loaded48_arm"
+  assert m["occupancy_ok"] is True
+  m2 = mod.build_loaded48_manifest(
+      hours=0.1,
+      ingest_width=96,
+      mean_files_per_s=1.0,
+      lower_ci_files_per_s=1.0,
+      upper_ci_files_per_s=1.0,
+      occupancy_ok=True,
+      occupancy_full_frac=0.29,
+      python_abi="3.14",
+      peak_post_warmup=96,
+      occupancy_gate="smoke_peak",
+  )
+  assert m2["peak_post_warmup"] == 96
+  assert m2["occupancy_gate"] == "smoke_peak"
+
+
+def test_plant_corpus_into_archive_respects_max_file_bytes(tmp_path):
+  """Loaded-48 seed must be able to skip multi-MB corpus exemplars."""
+  from tests.sync_timedb_benchmark.screening_runner import plant_corpus_into_archive
+
+  corpus = tmp_path / "corpus"
+  host = corpus / "benchhost0000.cluster_name.domain.edu"
+  host.mkdir(parents=True)
+  (host / "tiny").write_bytes(b"x" * 100)
+  (host / "huge").write_bytes(b"y" * 2_000_000)
+  archive = tmp_path / "archive"
+  plant_corpus_into_archive(corpus, archive, max_file_bytes=1_000_000)
+  planted = list((archive / host.name).iterdir())
+  assert [p.name for p in planted] == ["tiny"]
+
+
+def test_plant_loaded48_queue_padding_writes_tiny_files(tmp_path):
+  """Padding clones real templates under fresh epoch basenames."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+      plant_loaded48_queue_padding,
+  )
+
+  archive = tmp_path / "archive"
+  hosts = [
+      "benchhost0000.cluster_name.domain.edu",
+      "benchhost0001.cluster_name.domain.edu",
+  ]
+  tmpl_dir = tmp_path / "tmpl"
+  tmpl_dir.mkdir()
+  t1 = tmpl_dir / "1700000000"  # old epoch name must NOT be reused
+  t2 = tmpl_dir / "1700000001"
+  t1.write_bytes(b"real-a")
+  t2.write_bytes(b"real-bb")
+  n = plant_loaded48_queue_padding(
+      archive, hosts, count=4, templates=[t1, t2],
+  )
+  assert n == 4
+  files = [p for p in archive.rglob("*") if p.is_file()]
+  assert len(files) == 4
+  assert {p.stat().st_size for p in files} == {6, 7}
+  # Must not plant under legacy template epoch basenames (day-close deletes).
+  assert not any(p.name.startswith("170000000") for p in files)
+  assert all(p.name.split("_")[0].isdigit() for p in files)
+  assert plant_loaded48_queue_padding(archive, hosts, count=3) == 0
+  n2 = plant_loaded48_queue_padding(
+      archive, hosts, count=3, payload_bytes=64,
+  )
+  assert n2 == 3
+
+
 def test_summarize_and_winner_integration():
   points = [
       summarize_width_replicates(16, [8.0, 8.5]),

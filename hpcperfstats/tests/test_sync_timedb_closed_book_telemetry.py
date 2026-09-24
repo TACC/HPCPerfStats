@@ -157,7 +157,7 @@ def test_store_lock_telemetry_job_and_members_hold_positive(tmp_path):
     with job_store._lock:
       time.sleep(0.02)
     members = SyncTimedbArchiveMembersStore(str(tmp_path / "members"))
-    with members._lock:
+    with members._day_lock("2026-01-01"):
       time.sleep(0.02)
     snap = snapshot_store_lock_timing()
     for key in STORE_LOCK_TELEM_KEYS:

@@ -38,9 +38,12 @@ Options:
                   Set HPCPERFSTATS_E6_ARM=baseline|candidate (default baseline)
   --e7            Run E7 proc_merge/build_df A/B arm at width 48 (corpus_steady).
                   Set HPCPERFSTATS_E7_ARM=baseline|candidate (default baseline)
-  --contention    Run FT contention wave A/B at width 48 (corpus_steady).
-                  Set HPCPERFSTATS_CONTENTION_WAVE=<id> and
+  --contention    Run FT contention wave A/B arm at width 48 (corpus_steady).
+                  Requires HPCPERFSTATS_CONTENTION_WAVE; set
                   HPCPERFSTATS_CONTENTION_ARM=baseline|candidate
+  --loaded48      Run loaded-48 continuous-refill soak (mixed small/medium/large
+                  corpus files; width 48). Set HPCPERFSTATS_LOADED48_HOURS
+                  (default 6; use 0.1 for smoke).
   -h, --help      Show this help
 
 Environment:
@@ -52,10 +55,12 @@ Environment:
   HPCPERFSTATS_SYNC_TIMEDB_E6=1            Set by --e6
   HPCPERFSTATS_SYNC_TIMEDB_E7=1            Set by --e7
   HPCPERFSTATS_SYNC_TIMEDB_CONTENTION=1    Set by --contention
+  HPCPERFSTATS_SYNC_TIMEDB_LOADED48=1      Set by --loaded48
   HPCPERFSTATS_E6_ARM                      baseline|candidate (default baseline)
   HPCPERFSTATS_E7_ARM                      baseline|candidate (default baseline)
   HPCPERFSTATS_CONTENTION_ARM              baseline|candidate (default baseline)
   HPCPERFSTATS_CONTENTION_WAVE             Wave id (caches, park_resume, ...)
+  HPCPERFSTATS_LOADED48_HOURS              Soak wall hours (default 6)
   HPCPERFSTATS_COMPOSE_NETWORK=1           Set by this script for django_db tests
   HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS   Optional CSV override (default 1..96 or knee)
   HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES  Optional replicate count
@@ -65,6 +70,7 @@ Environment:
   HPCPERFSTATS_SYNC_TIMEDB_E6_WIDTH        Optional fixed ingest width for --e6
   HPCPERFSTATS_SYNC_TIMEDB_E7_WIDTH        Optional fixed ingest width for --e7
   HPCPERFSTATS_SYNC_TIMEDB_CONTENTION_WIDTH  Optional fixed width for --contention
+  HPCPERFSTATS_SYNC_TIMEDB_LOADED48_WIDTH  Optional fixed width for --loaded48
 
 Runtime:
   Rootless Podman + podman-compose via tests/compose_test_cmd.sh (podman-runtime.mdc).
@@ -86,6 +92,7 @@ KNOBS=0
 E6=0
 E7=0
 CONTENTION=0
+LOADED48=0
 PYTEST_EXTRA=()
 
 while [[ $# -gt 0 ]]; do
@@ -129,6 +136,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --contention)
       CONTENTION=1
+      shift
+      ;;
+    --loaded48)
+      LOADED48=1
       shift
       ;;
     -h|--help)
@@ -184,16 +195,17 @@ RUN_ARGS=(
   "${compose_web_repo_bind_mount_args[@]}"
 )
 if [[ "$KNEE" -eq 1 || "$KNOBS" -eq 1 || "$E6" -eq 1 || "$E7" -eq 1 \
-   || "$CONTENTION" -eq 1 ]]; then
+   || "$CONTENTION" -eq 1 || "$LOADED48" -eq 1 ]]; then
   # Ambient screening leftovers (e.g. WIDTHS=1,2,4,8 REPLICATES=2) must not
-  # override knee/knobs/e6/e7/contention defaults. Opt-in with KNEE_ALLOW_SCREEN_ENV=1.
+  # override knee/knobs/e6/e7/contention/loaded48 defaults. Opt-in with KNEE_ALLOW_SCREEN_ENV=1.
   if [[ "${HPCPERFSTATS_SYNC_TIMEDB_KNEE_ALLOW_SCREEN_ENV:-0}" != "1" ]]; then
     unset HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS
     unset HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES
   fi
 fi
 if [[ "$SCREENING" -eq 1 || "$KNEE" -eq 1 || "$KNOBS" -eq 1 \
-   || "$E6" -eq 1 || "$E7" -eq 1 || "$CONTENTION" -eq 1 ]]; then
+   || "$E6" -eq 1 || "$E7" -eq 1 || "$CONTENTION" -eq 1 \
+   || "$LOADED48" -eq 1 ]]; then
   [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS=${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS}")
   [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES:-}" ]] && \
@@ -243,6 +255,12 @@ if [[ "$CONTENTION" -eq 1 ]]; then
   RUN_ARGS+=(-e "HPCPERFSTATS_CONTENTION_ARM=${HPCPERFSTATS_CONTENTION_ARM:-baseline}")
   [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_CONTENTION_WIDTH:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_CONTENTION_WIDTH=${HPCPERFSTATS_SYNC_TIMEDB_CONTENTION_WIDTH}")
+fi
+if [[ "$LOADED48" -eq 1 ]]; then
+  RUN_ARGS+=(-e HPCPERFSTATS_SYNC_TIMEDB_LOADED48=1)
+  RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_HOURS=${HPCPERFSTATS_LOADED48_HOURS:-6}")
+  [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_LOADED48_WIDTH:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_LOADED48_WIDTH=${HPCPERFSTATS_SYNC_TIMEDB_LOADED48_WIDTH}")
 fi
 if [[ -n "$ARGS_FILE" ]]; then
   RUN_ARGS+=(-v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args:ro")

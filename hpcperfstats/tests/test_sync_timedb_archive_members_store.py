@@ -262,24 +262,26 @@ class _SlowMemberMap(Mapping):
 
 @pytest.mark.django_db(databases=[])
 def test_persist_day_copy_releases_lock(tmp_path):
-    """Giant persist copy must not serialize ingest waiters on the store RLock."""
+    """Giant persist copy must not serialize ingest waiters on the day RLock."""
     store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    day = "2026-09-01"
     started = threading.Event()
     slow = _SlowMemberMap({"host/1": 11}, started, hold_s=0.5)
-    with store._lock:
-        store._members[("2026-09-01", "id-a")] = slow
-        store._complete[("2026-09-01", "id-a")] = True
+    shard = store._shard(day)
+    with shard.lock:
+        shard.members["id-a"] = slow
+        shard.complete["id-a"] = True
     acquired = []
 
     def persist() -> None:
-        store.persist_day("2026-09-01")
+        store.persist_day(day)
 
     def waiter() -> None:
         assert started.wait(timeout=2)
-        got = store._lock.acquire(timeout=0.05)
+        got = shard.lock.acquire(timeout=0.05)
         acquired.append(got)
         if got:
-            store._lock.release()
+            shard.lock.release()
 
     persist_thread = threading.Thread(target=persist)
     waiter_thread = threading.Thread(target=waiter)
@@ -289,29 +291,31 @@ def test_persist_day_copy_releases_lock(tmp_path):
     waiter_thread.join(timeout=3)
     assert acquired == [True]
     revived = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
-    assert revived.lookup_member("2026-09-01", "id-a", "host/1") == 11
+    assert revived.lookup_member(day, "id-a", "host/1") == 11
 
 
 @pytest.mark.django_db(databases=[])
 def test_lookup_complete_map_copy_releases_lock(tmp_path):
-    """lookup_complete_map must copy the map after releasing the store RLock."""
+    """lookup_complete_map must copy the map after releasing the day RLock."""
     store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    day = "2026-09-01"
     started = threading.Event()
     slow = _SlowMemberMap({"host/1": 11}, started, hold_s=0.5)
-    with store._lock:
-        store._members[("2026-09-01", "id-a")] = slow
-        store._complete[("2026-09-01", "id-a")] = True
+    shard = store._shard(day)
+    with shard.lock:
+        shard.members["id-a"] = slow
+        shard.complete["id-a"] = True
     acquired = []
 
     def lookup() -> None:
-        assert store.lookup_complete_map("2026-09-01", "id-a") == {"host/1": 11}
+        assert store.lookup_complete_map(day, "id-a") == {"host/1": 11}
 
     def waiter() -> None:
         assert started.wait(timeout=2)
-        got = store._lock.acquire(timeout=0.05)
+        got = shard.lock.acquire(timeout=0.05)
         acquired.append(got)
         if got:
-            store._lock.release()
+            shard.lock.release()
 
     lookup_thread = threading.Thread(target=lookup)
     waiter_thread = threading.Thread(target=waiter)
@@ -324,26 +328,28 @@ def test_lookup_complete_map_copy_releases_lock(tmp_path):
 
 @pytest.mark.django_db(databases=[])
 def test_wait_for_complete_copy_releases_lock(tmp_path):
-    """wait_for_complete success path must copy after releasing the RLock."""
+    """wait_for_complete success path must copy after releasing the day RLock."""
     store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    day = "2026-09-01"
     started = threading.Event()
     slow = _SlowMemberMap({"host/1": 11}, started, hold_s=0.5)
-    with store._lock:
-        store._members[("2026-09-01", "id-a")] = slow
-        store._complete[("2026-09-01", "id-a")] = True
+    shard = store._shard(day)
+    with shard.lock:
+        shard.members["id-a"] = slow
+        shard.complete["id-a"] = True
     acquired = []
 
     def wait() -> None:
         assert store.wait_for_complete(
-            "2026-09-01", "id-a", timeout_s=2.0,
+            day, "id-a", timeout_s=2.0,
         ) == {"host/1": 11}
 
     def waiter() -> None:
         assert started.wait(timeout=2)
-        got = store._lock.acquire(timeout=0.05)
+        got = shard.lock.acquire(timeout=0.05)
         acquired.append(got)
         if got:
-            store._lock.release()
+            shard.lock.release()
 
     wait_thread = threading.Thread(target=wait)
     waiter_thread = threading.Thread(target=waiter)
@@ -398,14 +404,15 @@ class _SlowEvent(threading.Event):
 @pytest.mark.django_db(databases=[])
 def test_finish_populate_lock_hold_normalizes_before_rlock(tmp_path):
     store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
-    assert store.try_begin_populate("2026-09-01", "id-a")
+    day = "2026-09-01"
+    assert store.try_begin_populate(day, "id-a")
     started = threading.Event()
-    acquired, waiter = _lock_hold_waiter(store._lock, started)
+    acquired, waiter = _lock_hold_waiter(store._day_lock(day), started)
     slow = _SlowItems({"host/1": 11}, started)
 
     def finish() -> None:
         store.finish_populate(
-            "2026-09-01", "id-a", members=slow, complete=True,
+            day, "id-a", members=slow, complete=True,
         )
 
     finish_thread = threading.Thread(target=finish)
@@ -415,18 +422,19 @@ def test_finish_populate_lock_hold_normalizes_before_rlock(tmp_path):
     finish_thread.join(timeout=3)
     waiter_thread.join(timeout=3)
     assert acquired == [True]
-    assert store.lookup_member("2026-09-01", "id-a", "host/1") == 11
+    assert store.lookup_member(day, "id-a", "host/1") == 11
 
 
 @pytest.mark.django_db(databases=[])
 def test_store_complete_lock_hold_normalizes_before_rlock(tmp_path):
     store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    day = "2026-09-01"
     started = threading.Event()
-    acquired, waiter = _lock_hold_waiter(store._lock, started)
+    acquired, waiter = _lock_hold_waiter(store._day_lock(day), started)
     slow = _SlowItems({"host/1": 11}, started)
 
     def complete() -> None:
-        store.store_complete("2026-09-01", "id-a", slow)
+        store.store_complete(day, "id-a", slow)
 
     complete_thread = threading.Thread(target=complete)
     waiter_thread = threading.Thread(target=waiter)
@@ -435,7 +443,7 @@ def test_store_complete_lock_hold_normalizes_before_rlock(tmp_path):
     complete_thread.join(timeout=3)
     waiter_thread.join(timeout=3)
     assert acquired == [True]
-    assert store.lookup_complete_map("2026-09-01", "id-a") == {"host/1": 11}
+    assert store.lookup_complete_map(day, "id-a") == {"host/1": 11}
 
 
 @pytest.mark.django_db(databases=[])
@@ -470,15 +478,17 @@ def test_merge_members_lock_hold_concurrent_cas(tmp_path):
 @pytest.mark.django_db(databases=[])
 def test_merge_members_lock_hold_copy_releases_lock(tmp_path):
     store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    day = "2026-09-01"
     started = threading.Event()
     slow = _SlowMemberMap({"host/1": 11}, started, hold_s=0.5)
-    with store._lock:
-        store._members[("2026-09-01", "id-a")] = slow
-        store._complete[("2026-09-01", "id-a")] = True
-    acquired, waiter = _lock_hold_waiter(store._lock, started)
+    shard = store._shard(day)
+    with shard.lock:
+        shard.members["id-a"] = slow
+        shard.complete["id-a"] = True
+    acquired, waiter = _lock_hold_waiter(shard.lock, started)
 
     def merge() -> None:
-        assert store.merge_members("2026-09-01", "id-a", {"host/2": 22}) is True
+        assert store.merge_members(day, "id-a", {"host/2": 22}) is True
 
     merge_thread = threading.Thread(target=merge)
     waiter_thread = threading.Thread(target=waiter)
@@ -487,7 +497,7 @@ def test_merge_members_lock_hold_copy_releases_lock(tmp_path):
     merge_thread.join(timeout=3)
     waiter_thread.join(timeout=3)
     assert acquired == [True]
-    assert store.lookup_complete_map("2026-09-01", "id-a") == {
+    assert store.lookup_complete_map(day, "id-a") == {
         "host/1": 11, "host/2": 22,
     }
 
@@ -498,8 +508,9 @@ def test_members_load_hydrate_lock_hold_builds_outside_rlock(
 ):
     archive = str(tmp_path / "archive")
     store = SyncTimedbArchiveMembersStore(archive)
+    day = "2026-09-01"
     started = threading.Event()
-    acquired, waiter = _lock_hold_waiter(store._lock, started)
+    acquired, waiter = _lock_hold_waiter(store._day_lock(day), started)
 
     def fake_isdir(_path: str) -> bool:
         return True
@@ -509,7 +520,7 @@ def test_members_load_hydrate_lock_hold_builds_outside_rlock(
 
     def fake_load(_path: str, _kind: str, default=None):
         return {
-            "day_token": "2026-09-01",
+            "day_token": day,
             "identities": {
                 "id-a": {
                     "complete": True,
@@ -537,12 +548,13 @@ def test_members_load_hydrate_lock_hold_builds_outside_rlock(
     load_thread.join(timeout=3)
     waiter_thread.join(timeout=3)
     assert acquired == [True]
-    assert store.lookup_member("2026-09-01", "id-a", "host/1") == 11
+    assert store.lookup_member(day, "id-a", "host/1") == 11
 
 
 @pytest.mark.django_db(databases=[])
 def test_get_day_skip_lock_hold_copies_after_release(tmp_path):
     store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    day = "2026-09-01"
     started = threading.Event()
 
     class SlowSkip(Mapping):
@@ -561,12 +573,13 @@ def test_get_day_skip_lock_hold_copies_after_release(tmp_path):
             return len(self._data)
 
     slow = SlowSkip({"kind": "read_error", "detail": "x"})
-    with store._lock:
-        store._day_skip["2026-09-01"] = slow
-    acquired, waiter = _lock_hold_waiter(store._lock, started)
+    shard = store._shard(day)
+    with shard.lock:
+        shard.day_skip = slow
+    acquired, waiter = _lock_hold_waiter(shard.lock, started)
 
     def lookup() -> None:
-        assert store.get_day_skip("2026-09-01") == {
+        assert store.get_day_skip(day) == {
             "kind": "read_error", "detail": "x",
         }
 
@@ -582,16 +595,18 @@ def test_get_day_skip_lock_hold_copies_after_release(tmp_path):
 @pytest.mark.django_db(databases=[])
 def test_event_set_lock_hold_after_release(tmp_path):
     store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
-    assert store.try_begin_populate("2026-09-01", "id-a")
+    day = "2026-09-01"
+    assert store.try_begin_populate(day, "id-a")
     started = threading.Event()
     slow_event = _SlowEvent(started)
-    with store._lock:
-        store._events[("2026-09-01", "id-a")] = slow_event
-    acquired, waiter = _lock_hold_waiter(store._lock, started)
+    shard = store._shard(day)
+    with shard.lock:
+        shard.events["id-a"] = slow_event
+    acquired, waiter = _lock_hold_waiter(shard.lock, started)
 
     def finish() -> None:
         store.finish_populate(
-            "2026-09-01", "id-a", members={"host/1": 11}, complete=True,
+            day, "id-a", members={"host/1": 11}, complete=True,
         )
 
     finish_thread = threading.Thread(target=finish)
@@ -621,3 +636,57 @@ def test_dequeue_populate_prefers_hot_over_cold_without_scan(tmp_path):
     assert third["day_token"] == "2026-01-01"
     assert store.dequeue_populate(timeout_s=0.01) is None
     assert store._populate_queue_empty_locked()
+
+
+@pytest.mark.django_db(databases=[])
+def test_distinct_calendar_days_lock_concurrently(tmp_path):
+    """Two calendar-day shards must not serialize on one process RLock."""
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    day_a = "2026-09-01"
+    day_b = "2026-09-02"
+    held_a = threading.Event()
+    held_b = threading.Event()
+    release_a = threading.Event()
+    release_b = threading.Event()
+    errors: list[BaseException] = []
+
+    def hold_day(day: str, held: threading.Event, release: threading.Event) -> None:
+        try:
+            with store._day_lock(day):
+                held.set()
+                assert release.wait(timeout=2)
+        except BaseException as exc:
+            errors.append(exc)
+
+    t_a = threading.Thread(
+        target=hold_day, args=(day_a, held_a, release_a),
+    )
+    t_b = threading.Thread(
+        target=hold_day, args=(day_b, held_b, release_b),
+    )
+    t_a.start()
+    t_b.start()
+    assert held_a.wait(timeout=1)
+    assert held_b.wait(timeout=1)
+    release_a.set()
+    release_b.set()
+    t_a.join(timeout=2)
+    t_b.join(timeout=2)
+    assert errors == []
+    assert store._day_lock(day_a) is not store._day_lock(day_b)
+    assert store._day_lock(day_a) is not store._lock
+
+
+@pytest.mark.django_db(databases=[])
+def test_warm_lookup_across_shards(tmp_path):
+    """Warm point lookup and complete-map copy still work per day shard."""
+    store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
+    store.store_complete("2026-09-01", "id-a", {"host/1": 11})
+    store.store_complete("2026-09-02", "id-b", {"host/2": 22})
+    assert store.is_fully_warm("2026-09-01", "id-a")
+    assert store.is_fully_warm("2026-09-02", "id-b")
+    assert store.lookup_member("2026-09-01", "id-a", "host/1") == 11
+    assert store.lookup_member("2026-09-02", "id-b", "host/2") == 22
+    assert store.lookup_complete_map("2026-09-01", "id-a") == {"host/1": 11}
+    assert store.lookup_member("2026-09-01", "id-b", "host/2") is None
+    assert store.lookup_member("2026-09-02", "id-a", "host/1") is None

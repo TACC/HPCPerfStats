@@ -1656,13 +1656,8 @@ def describe_archive_members_populate_for_day(
     store = get_process_archive_members_store()
     if store is None:
         return "store=unset"
-    complete = 0
-    with store._lock:
-        for (day, _identity), flag in store._complete.items():
-            if day == day_token and flag:
-                complete += 1
     return "complete_identities=%d degraded=%s skip=%s" % (
-        complete,
+        store.complete_identity_count(day_token),
         "yes" if store.is_degraded(day_token) else "no",
         "yes" if store.get_day_skip(day_token) else "no",
     )
@@ -1691,11 +1686,7 @@ def archive_members_populate_owner_active_for_day(day_token: str) -> bool:
     store = get_process_archive_members_store()
     if store is None:
         return False
-    with store._lock:
-        for (day, _identity) in store._populate_owner:
-            if day == day_token:
-                return True
-    return False
+    return store.populate_owner_active(day_token)
 
 
 def archive_members_populate_shows_progress_for_day(
@@ -1725,11 +1716,7 @@ def archive_members_populate_shows_progress_for_day(
     store = get_process_archive_members_store()
     if store is None:
         return False
-    with store._lock:
-        for (day, _identity), flag in store._complete.items():
-            if day == day_token and flag:
-                return True
-    return False
+    return store.any_complete_identity(day_token)
 
 
 def enqueue_archive_members_populate(

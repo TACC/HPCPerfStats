@@ -113,7 +113,8 @@ class TimedRLock:
     Create a timed re-entrant lock for one store family.
 
     Args:
-      kind (str): ``job_store`` or ``members_store``.
+      kind (str): ``job_store``, ``members_store``, or ``members_store_day``
+        (day-shard locks roll up into ``members_store_*`` telem keys).
 
     Returns:
       None
@@ -125,9 +126,12 @@ class TimedRLock:
       >>> TimedRLock("job_store").kind
       'job_store'
     """
-    if kind not in ("job_store", "members_store"):
+    if kind not in ("job_store", "members_store", "members_store_day"):
       raise ValueError("unsupported store lock kind: %r" % kind)
-    self.kind = kind
+    # Day shards share the members_store telem bucket.
+    self.kind = (
+        "members_store" if kind == "members_store_day" else kind
+    )
     self._lock = threading.RLock()
     self._local = threading.local()
 

@@ -17,6 +17,7 @@ Attributes:
 """
 from __future__ import annotations
 
+import copy
 import os
 import threading
 import time
@@ -530,7 +531,8 @@ class _DayRawRemovalState:
       self._manifest["phase"] = PHASE_VERIFYING
       # Clear stage so _close_one_day re-runs verify (avoid VERIFYING+POST_SEAL trap).
       self._manifest["verify_stage"] = VERIFY_STAGE_NONE
-      _save_manifest(self._manifest_path, self._manifest)
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
     if self.log_fn:
       self.log_fn(
           "Day raw removal reopen stale done (all skipped on disk) day=%s"
@@ -577,7 +579,8 @@ class _DayRawRemovalState:
       return False
     with self._lock:
       self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
-      _save_manifest(self._manifest_path, self._manifest)
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
     if self.log_fn:
       self.log_fn(
           "Day raw removal promote phase=verification_complete "
@@ -894,7 +897,8 @@ class _DayRawRemovalState:
       if self._manifest.get("phase") != PHASE_DONE:
         self._manifest["phase"] = PHASE_DONE
         self._manifest["completed_at"] = time.time()
-        _save_manifest(self._manifest_path, self._manifest)
+        _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
     if self.log_fn:
       self.log_fn(
           "Day raw removal tar drop complete day=%s"
@@ -981,8 +985,9 @@ class _DayRawRemovalState:
     """
     with self._lock:
       self._manifest = _new_manifest(self.tar_path)
-      _save_manifest(self._manifest_path, self._manifest)
+      _manifest_snap = copy.deepcopy(self._manifest)
 
+    _save_manifest(self._manifest_path, _manifest_snap)
   def _all_closed_raw_terminal_or_gone(self) -> bool:
     """
     Internal helper to handle all closed raw terminal or gone.
@@ -1237,7 +1242,8 @@ class _DayRawRemovalState:
         return
       self._manifest["phase"] = PHASE_DONE
       self._manifest["completed_at"] = time.time()
-      _save_manifest(self._manifest_path, self._manifest)
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
     if self.log_fn:
       self.log_fn(
           "Day raw removal quarantine-terminal done day=%s on_disk=%d"
@@ -1269,7 +1275,8 @@ class _DayRawRemovalState:
           entry.pop("delete_failed", None)
           entry.pop("delete_reason", None)
       self._manifest["phase"] = PHASE_DELETING
-      _save_manifest(self._manifest_path, self._manifest)
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
     if self.log_fn:
       self.log_fn(
           "Day raw removal ghost delete retry day=%s paths=%d"
@@ -1367,7 +1374,8 @@ class _DayRawRemovalState:
         still_skipped += 1
     if upgraded:
       with self._lock:
-        _save_manifest(self._manifest_path, self._manifest)
+        _manifest_snap = copy.deepcopy(self._manifest)
+      _save_manifest(self._manifest_path, _manifest_snap)
       if self.log_fn:
         self.log_fn(
             "Day raw removal reclassify retryable skips day=%s "
@@ -1593,7 +1601,8 @@ class _DayRawRemovalState:
     with self._lock:
       self._manifest["phase"] = PHASE_DONE
       self._manifest["completed_at"] = time.time()
-      _save_manifest(self._manifest_path, self._manifest)
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
     if self.log_fn:
       self.log_fn(
           "Day raw removal deferring to done (waiting_on_ingest) day=%s retryable=%d"
@@ -1694,7 +1703,8 @@ class _DayRawRemovalState:
     pending_on_disk = self._verified_pending_paths_on_disk()
     with self._lock:
       self._manifest["phase"] = PHASE_DELETING
-      _save_manifest(self._manifest_path, self._manifest)
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
     if self.log_fn:
       self.log_fn(
           "Day raw removal pending delete reopen day=%s "
@@ -1724,11 +1734,13 @@ class _DayRawRemovalState:
       phase = self._manifest.get("phase")
       if phase == PHASE_VERIFICATION_COMPLETE:
         self._manifest["phase"] = PHASE_DELETING
-        _save_manifest(self._manifest_path, self._manifest)
+        _manifest_snap = copy.deepcopy(self._manifest)
       elif phase == PHASE_DONE and (pending_delete or blocking):
         self._manifest["phase"] = PHASE_DELETING
-        _save_manifest(self._manifest_path, self._manifest)
-
+        _manifest_snap = copy.deepcopy(self._manifest)
+      else:
+        return
+    _save_manifest(self._manifest_path, _manifest_snap)
   def _record_entry(
     self,
     path: str,
@@ -1838,7 +1850,8 @@ class _DayRawRemovalState:
         self._record_entry(path, zst_path, status, reason)
     with self._lock:
       self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
-      _save_manifest(self._manifest_path, self._manifest)
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
     _log_day_raw_verify_complete(
         self.log_fn,
         label="",
@@ -1880,8 +1893,9 @@ class _DayRawRemovalState:
         self._manifest["members_total"] = int(members_total)
       if last_progress_ts is not None:
         self._manifest["last_progress_ts"] = float(last_progress_ts)
-      _save_manifest(self._manifest_path, self._manifest)
+      _manifest_snap = copy.deepcopy(self._manifest)
 
+    _save_manifest(self._manifest_path, _manifest_snap)
   def _pre_seal_verify_body(
     self,
     *,
@@ -2063,7 +2077,8 @@ class _DayRawRemovalState:
       batches_run += 1
       with self._lock:
         self._manifest["pre_seal_classify_index"] = cursor
-        _save_manifest(self._manifest_path, self._manifest)
+        _manifest_snap = copy.deepcopy(self._manifest)
+      _save_manifest(self._manifest_path, _manifest_snap)
       if self.log_fn:
         self.log_fn(
             "janitor: day_close pre_seal_verify classify progress "
@@ -2082,7 +2097,8 @@ class _DayRawRemovalState:
       self._manifest["verify_stage"] = VERIFY_STAGE_PRE_SEAL
       self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
       self._manifest.pop("pre_seal_classify_index", None)
-      _save_manifest(self._manifest_path, self._manifest)
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
     _log_day_raw_verify_complete(
         self.log_fn,
         label="pre-seal",
@@ -2113,7 +2129,8 @@ class _DayRawRemovalState:
     if ok:
       with self._lock:
         self._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
-        _save_manifest(self._manifest_path, self._manifest)
+        _manifest_snap = copy.deepcopy(self._manifest)
+      _save_manifest(self._manifest_path, _manifest_snap)
       if self.log_fn:
         self.log_fn(
             "Day raw removal post-seal verify complete day=%s"
@@ -2307,11 +2324,13 @@ class _DayRawRemovalState:
         if completion["unmanifested_paths"]:
           with self._lock:
             self._manifest["phase"] = PHASE_VERIFYING
-            _save_manifest(self._manifest_path, self._manifest)
+            _manifest_snap = copy.deepcopy(self._manifest)
+          _save_manifest(self._manifest_path, _manifest_snap)
           return deleted
         with self._lock:
           self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
-          _save_manifest(self._manifest_path, self._manifest)
+          _manifest_snap = copy.deepcopy(self._manifest)
+        _save_manifest(self._manifest_path, _manifest_snap)
         return deleted
       remove_verified_uncompressed_daily_tars(
           self.tgz_archive_dir,
@@ -2323,7 +2342,8 @@ class _DayRawRemovalState:
       with self._lock:
         self._manifest["phase"] = PHASE_DONE
         self._manifest["completed_at"] = time.time()
-        _save_manifest(self._manifest_path, self._manifest)
+        _manifest_snap = copy.deepcopy(self._manifest)
+      _save_manifest(self._manifest_path, _manifest_snap)
       if self.log_fn:
         self.log_fn(
             "Day raw removal delete complete day=%s deleted=%d"
@@ -2332,7 +2352,8 @@ class _DayRawRemovalState:
         )
     else:
       with self._lock:
-        _save_manifest(self._manifest_path, self._manifest)
+        _manifest_snap = copy.deepcopy(self._manifest)
+      _save_manifest(self._manifest_path, _manifest_snap)
     return deleted
 
 

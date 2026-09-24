@@ -24,6 +24,9 @@ Attributes:
   _JANITOR_BODY_PREFIX: Attribute.
   _ingest_depth: Attribute.
   _janitorial_depth: Attribute.
+  _log_drain_cond: Attribute.
+  _log_drain_queue: Attribute.
+  _log_drain_started: Attribute.
   _log_print_lock: Attribute.
   _log_role: Attribute.
 """
@@ -33,9 +36,11 @@ from typing import Any, Iterator
 
 import contextvars
 import inspect
+import io
 import sys
 import threading
 from contextlib import contextmanager
+from collections import deque
 
 _log_role: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "hpc_log_role",
@@ -50,9 +55,92 @@ _ingest_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
     default=0,
 )
 _log_print_lock = threading.Lock()
+_log_drain_cond = threading.Condition(_log_print_lock)
+_log_drain_queue: deque[
+    tuple[Any, str, bool, threading.Event | None]
+] = deque()
+_log_drain_started = False
 
 _JANITOR_BODY_PREFIX = "janitor:"
 _INGEST_BODY_PREFIX = "ingest:"
+
+
+def _ensure_log_drain_thread() -> None:
+  """
+  Start the single async log drain thread once per process.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _ensure_log_drain_thread() is None
+    True
+  """
+  global _log_drain_started
+  with _log_drain_cond:
+    if _log_drain_started:
+      return
+    _log_drain_started = True
+    thread = threading.Thread(
+        target=_log_drain_loop,
+        name="hps-log-drain",
+        daemon=True,
+    )
+    thread.start()
+
+
+def _log_drain_loop() -> None:
+  """
+  Pop queued log lines and write them without caller-held I/O wait.
+
+  Returns:
+    None
+
+  Examples:
+    >>> # started by _ensure_log_drain_thread; not invoked directly
+    >>> None is None
+    True
+  """
+  while True:
+    with _log_drain_cond:
+      while not _log_drain_queue:
+        _log_drain_cond.wait()
+      stream, line, flush, done = _log_drain_queue.popleft()
+    try:
+      stream.write(line)
+      if flush:
+        stream.flush()
+    except Exception:
+      pass
+    finally:
+      if done is not None:
+        done.set()
+
+
+def flush_log_print_queue(timeout_s: float = 30.0) -> None:
+  """
+  Block until the async log drain queue has flushed prior lines.
+
+  Appends a barrier event so in-flight writes that already left the queue
+  are still observed before return (empty-queue alone races the writer).
+
+  Args:
+    timeout_s (float): Maximum seconds to wait for the queue to drain.
+
+  Returns:
+    None
+
+  Examples:
+    >>> flush_log_print_queue(timeout_s=0.1) is None
+    True
+  """
+  done = threading.Event()
+  _ensure_log_drain_thread()
+  with _log_drain_cond:
+    # Null stream: barrier only; drain loop still sets ``done``.
+    _log_drain_queue.append((io.StringIO(), "", False, done))
+    _log_drain_cond.notify()
+  done.wait(timeout=float(timeout_s))
 
 
 def set_log_role(role: str | None) -> None:
@@ -356,7 +444,10 @@ def log_print(*args: Any, **kwargs: Any) -> None:
   )
   stream = sys.stdout if file is None else file
   line = sep.join(str(part) for part in (prefix, *args)) + end
-  with _log_print_lock:
-    stream.write(line)
-  if flush:
-    stream.flush()
+  done: threading.Event | None = threading.Event() if flush else None
+  _ensure_log_drain_thread()
+  with _log_drain_cond:
+    _log_drain_queue.append((stream, line, flush, done))
+    _log_drain_cond.notify()
+  if done is not None:
+    done.wait(timeout=30.0)

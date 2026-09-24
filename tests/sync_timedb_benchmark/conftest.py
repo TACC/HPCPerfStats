@@ -91,6 +91,17 @@ def _contention_enabled() -> bool:
   )
 
 
+def _loaded48_enabled() -> bool:
+  return os.environ.get(
+      "HPCPERFSTATS_SYNC_TIMEDB_LOADED48",
+      "",
+  ).strip().lower() in (
+      "1",
+      "yes",
+      "true",
+  )
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config,
     items: list[pytest.Item],
@@ -99,8 +110,8 @@ def pytest_collection_modifyitems(
   Skip long benchmark tests unless ``HPCPERFSTATS_SYNC_TIMEDB_BENCH=1``.
 
   Also defer ``django_db`` for ingest-width screening/knee/E2/knobs/E6/E7/
-  contention until compose flags are enabled so host unit sessions do not
-  attempt PostgreSQL at hostname ``db``.
+  contention/loaded48 until compose flags are enabled so host unit sessions do
+  not attempt PostgreSQL at hostname ``db``.
 
   Args:
     config (pytest.Config): Active pytest configuration.
@@ -163,6 +174,13 @@ def pytest_collection_modifyitems(
           "HPCPERFSTATS_SYNC_TIMEDB_CONTENTION=1 (workflow --contention)"
       ),
   )
+  loaded48_on = _compose_network_enabled() and _loaded48_enabled()
+  skip_loaded48 = pytest.mark.skip(
+      reason=(
+          "Requires HPCPERFSTATS_COMPOSE_NETWORK=1 and "
+          "HPCPERFSTATS_SYNC_TIMEDB_LOADED48=1 (workflow --loaded48)"
+      ),
+  )
   db_mark = pytest.mark.django_db(transaction=True)
   for item in items:
     if "test_ingest_width_screening" in item.nodeid:
@@ -195,3 +213,8 @@ def pytest_collection_modifyitems(
         item.add_marker(db_mark)
       else:
         item.add_marker(skip_contention)
+    if "test_loaded48_soak" in item.nodeid:
+      if loaded48_on:
+        item.add_marker(db_mark)
+      else:
+        item.add_marker(skip_loaded48)

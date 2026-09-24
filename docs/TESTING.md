@@ -260,9 +260,25 @@ HPCPERFSTATS_E7_ARM=candidate tests/run_sync_timedb_benchmark_workflow.sh --e7
 ```
 
 Artifacts: `test_runs/sync_timedb_bench/e7_arm_baseline_*.json` then
-`e7_proc_build_ab_*.json` (`retain` true/false). 2026-09-19 candidate
-**retain=false** (product reverted; harness kept). Still not a production INI
-change.
+`e7_proc_build_ab_*.json` (`retain` true/false). 2026-09-19 short A/B
+**retain=false**; product later restored for loaded-48 retest (see campaign
+patch index). Still not a production INI change.
+
+Loaded-48 continuous-refill soak at ingest width **48** (mixed
+small/medium/large corpus size terciles; occupancy oracle after warm-up).
+Default wall **6h**; use `0.1` for smoke:
+
+```bash
+cd HPCPerfStats
+# Ambient SCREEN_WIDTHS/REPLICATES cleared unless KNEE_ALLOW_SCREEN_ENV=1.
+# Optional: HPCPERFSTATS_SYNC_TIMEDB_LOADED48_WIDTH=48
+HPCPERFSTATS_LOADED48_HOURS=0.1 tests/run_sync_timedb_benchmark_workflow.sh --loaded48
+HPCPERFSTATS_LOADED48_HOURS=6 tests/run_sync_timedb_benchmark_workflow.sh --loaded48
+```
+
+Artifacts: `test_runs/sync_timedb_bench/loaded48_arm_baseline_*.json`
+(`occupancy_ok`, files/s). Patch index:
+`docs/SYNC_TIMEDB_CAMPAIGN_PATCH_INDEX.md`.
 
 FT contention wave A/B at fixed ingest width **48** (one wave product patch at a
 time; ≥5 replicates by default). Set ``HPCPERFSTATS_CONTENTION_WAVE`` to a wave

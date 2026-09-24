@@ -4,7 +4,9 @@ populate.
 
 Complete member maps and sticky day-skip flags persist under the archive
 directory. Populate locks, tar-hot, append-inflight, and restore tokens stay
-in memory.
+in memory. Day-scoped maps live on per-calendar-day shards so concurrent
+days do not serialize on one RLock; the populate job queues stay
+process-wide for FIFO + ingest-hot preference.
 
 Attributes:
   ARCHIVE_MEMBERS_STORE_DIR_KIND: Persistence registry kind for the sidecar
@@ -12,9 +14,10 @@ Attributes:
   ARCHIVE_MEMBERS_STORE_DIR_RELPATH: Sidecar directory basename.
   MEMBERS_DAY_SCHEMA_VERSION: Schema version written into each day file.
   SyncTimedbArchiveMembersStore: Thread-safe in-process member store.
+  _DayShard: Per-calendar-day lock and maps.
   _PROCESS_STORE: Process-local store installed by the orchestrator.
   _PROCESS_STORE_LOCK: Lock covering process-local store install/get.
-  _set_threading_events: Wake Events after the store RLock is released.
+  _set_threading_events: Wake Events after a day-shard RLock is released.
 """
 from __future__ import annotations
 
@@ -36,11 +39,11 @@ def _set_threading_events(
     events: Iterable[threading.Event | None],
 ) -> None:
     """
-    Wake Events collected under the members-store RLock after release.
+    Wake Events collected under a day-shard RLock after release.
 
     Args:
       events (Iterable[threading.Event | None]): Events popped while holding
-        the store lock. ``None`` entries are skipped.
+        a day lock. ``None`` entries are skipped.
 
     Returns:
       None
@@ -58,31 +61,76 @@ ARCHIVE_MEMBERS_STORE_DIR_RELPATH = ".sync_timedb_archive_members"
 MEMBERS_DAY_SCHEMA_VERSION = 1
 
 
+class _DayShard:
+    """
+    Per-calendar-day maps and ``TimedRLock`` for the members store.
+
+    The enclosing store holds a process lock only for the shard table.
+    Day-scoped mutate and lookup take this shard lock so distinct days
+    do not serialize.
+
+    Attributes:
+      day_token: ISO calendar day for this shard.
+      lock: Day-local re-entrant lock (``members_store_day`` telem kind).
+      members: Identity to member-name/size map.
+      complete: Identities marked complete.
+      day_skip: Sticky skip payload, or None when unset.
+      degraded: True when populate-degraded is set.
+      dedupe_hint: True when the day saw duplicate tar members.
+      events: Populate completion events by identity.
+      populate_owner: Thread ident of the populate owner by identity.
+      tar_hot: In-memory ingest-tar-hot reason, or empty.
+      append_inflight: True when an append is in flight.
+      restore: In-memory restore owner token, or empty.
+      populate_source: Ephemeral populate-source token by canonical path.
+    """
+
+    def __init__(self, day_token: str) -> None:
+        """
+        Create an empty day shard.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          None
+
+        Examples:
+          >>> _DayShard("2026-01-01").day_token
+          '2026-01-01'
+        """
+        self.day_token = str(day_token)
+        self.lock = TimedRLock("members_store_day")
+        self.members: Dict[str, Dict[str, int]] = {}
+        self.complete: Dict[str, bool] = {}
+        self.day_skip: Dict[str, str] | None = None
+        self.degraded: bool = False
+        self.dedupe_hint: bool = False
+        self.events: Dict[str, threading.Event] = {}
+        self.populate_owner: Dict[str, int] = {}
+        self.tar_hot: str = ""
+        self.append_inflight: bool = False
+        self.restore: str = ""
+        self.populate_source: Dict[str, str] = {}
+
+
 class SyncTimedbArchiveMembersStore:
     """
     Thread-safe member maps keyed by calendar day and archive identity.
 
     One populate owner per identity; waiters block on an Event until the
-    owner stores a complete map or a sticky skip.
+    owner stores a complete map or a sticky skip. Day-scoped state lives
+    on ``_DayShard`` instances; populate job queues remain process-wide.
 
     Attributes:
       archive_dir: Archive data directory that owns the sidecar directory.
-      _append_inflight: Calendar days with an in-memory append in flight.
-      _complete: Identity maps marked complete.
-      _day_skip: Sticky skip payload by calendar day.
-      _degraded: Calendar days marked populate-degraded.
-      _dedupe_hint: Calendar days that saw duplicate tar members.
-      _events: Populate completion events by (day, identity).
-      _lock: Re-entrant lock covering maps and flags.
-      _members: Member name to size maps by (day, identity).
-      _populate_owner: Thread ident of the populate owner by (day, identity).
+      _lock: Process-level lock for populate queues (compat alias).
       _populate_jobs_hot: Ingest-hot populate jobs (deque; not persisted).
       _populate_jobs_cold: Cold populate jobs (deque; not persisted).
       _populate_queued: Calendar days already queued for populate.
       _populate_cv: Condition used by populate waiters and owners.
-      _populate_source: Ephemeral populate-source token by canonical path.
-      _restore: In-memory restore tokens by calendar day.
-      _tar_hot: In-memory ingest-tar-hot reason by calendar day.
+      _shards: Day token to ``_DayShard``.
+      _shards_lock: Lock covering create/lookup of ``_shards`` only.
     """
 
     def __init__(self, archive_dir: str) -> None:
@@ -102,18 +150,10 @@ class SyncTimedbArchiveMembersStore:
           False
         """
         self.archive_dir = str(archive_dir)
+        self._shards_lock = threading.Lock()
+        self._shards: Dict[str, _DayShard] = {}
+        # Populate FIFO + ingest-hot preference stays process-wide.
         self._lock = TimedRLock("members_store")
-        self._members: Dict[tuple[str, str], Dict[str, int]] = {}
-        self._complete: Dict[tuple[str, str], bool] = {}
-        self._day_skip: Dict[str, Dict[str, str]] = {}
-        self._degraded: Dict[str, bool] = {}
-        self._dedupe_hint: Dict[str, bool] = {}
-        self._events: Dict[tuple[str, str], threading.Event] = {}
-        self._populate_owner: Dict[tuple[str, str], int] = {}
-        self._tar_hot: Dict[str, str] = {}
-        self._append_inflight: Dict[str, bool] = {}
-        self._restore: Dict[str, str] = {}
-        self._populate_source: Dict[str, str] = {}
         self._populate_jobs_hot: Deque[Any] = deque()
         self._populate_jobs_cold: Deque[Any] = deque()
         self._populate_queued: set[str] = set()
@@ -121,6 +161,49 @@ class SyncTimedbArchiveMembersStore:
         if self.archive_dir:
             os.makedirs(self._store_dir(), exist_ok=True)
             self.load()
+
+    def _shard(self, day_token: str) -> _DayShard:
+        """
+        Return the day shard, creating it under the shard-table lock.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          _DayShard: Day-local lock and maps.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/a")._shard(
+          ...   "2026-01-01",
+          ... ).day_token
+          '2026-01-01'
+        """
+        day = str(day_token)
+        with self._shards_lock:
+            shard = self._shards.get(day)
+            if shard is None:
+                shard = _DayShard(day)
+                self._shards[day] = shard
+            return shard
+
+    def _day_lock(self, day_token: str) -> TimedRLock:
+        """
+        Return the TimedRLock for one calendar day.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          TimedRLock: Day-shard lock.
+
+        Examples:
+          >>> isinstance(
+          ...   SyncTimedbArchiveMembersStore("/tmp/a")._day_lock("d"),
+          ...   TimedRLock,
+          ... )
+          True
+        """
+        return self._shard(day_token).lock
 
     def _store_dir(self) -> str:
         """
@@ -155,41 +238,45 @@ class SyncTimedbArchiveMembersStore:
         """
         return os.path.join(self._store_dir(), "%s.json" % day_token)
 
-    def _event(self, day_token: str, identity: str) -> threading.Event:
+    def _event_locked(
+        self,
+        shard: _DayShard,
+        identity: str,
+    ) -> threading.Event:
         """
-        Return the populate Event for one identity, creating it if needed.
+        Return the populate Event for one identity on a held day shard.
 
         Args:
-          day_token (str): ISO calendar day.
+          shard (_DayShard): Day shard (caller holds ``shard.lock``).
           identity (str): Archive identity suffix.
 
         Returns:
           threading.Event: Shared completion event.
 
         Examples:
-          >>> isinstance(
-          ...   SyncTimedbArchiveMembersStore("/tmp/a")._event("d", "i"),
-          ...   threading.Event,
-          ... )
+          >>> store = SyncTimedbArchiveMembersStore("/tmp/a")
+          >>> shard = store._shard("d")
+          >>> with shard.lock:
+          ...   isinstance(store._event_locked(shard, "i"), threading.Event)
           True
         """
-        key = (str(day_token), str(identity))
-        event = self._events.get(key)
+        key = str(identity)
+        event = shard.events.get(key)
         if event is None:
             event = threading.Event()
-            self._events[key] = event
+            shard.events[key] = event
         return event
 
     def _wake_and_drop_event_locked(
         self,
-        day_token: str,
+        shard: _DayShard,
         identity: str,
     ) -> Optional[threading.Event]:
         """
         Drop the waiter Event for one identity; caller sets it after unlock.
 
         Args:
-          day_token (str): ISO calendar day.
+          shard (_DayShard): Day shard (caller holds ``shard.lock``).
           identity (str): Archive identity suffix.
 
         Returns:
@@ -197,14 +284,16 @@ class SyncTimedbArchiveMembersStore:
 
         Examples:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
-          >>> store._wake_and_drop_event_locked("2026-01-01", "id") is None
+          >>> shard = store._shard("2026-01-01")
+          >>> with shard.lock:
+          ...   store._wake_and_drop_event_locked(shard, "id") is None
           True
         """
-        return self._events.pop((str(day_token), str(identity)), None)
+        return shard.events.pop(str(identity), None)
 
-    def _drop_stale_identities_for_day_locked(
+    def _drop_stale_identities_locked(
         self,
-        day_token: str,
+        shard: _DayShard,
         keep_identity: str,
     ) -> list[threading.Event]:
         """
@@ -212,10 +301,10 @@ class SyncTimedbArchiveMembersStore:
 
         Identity drift (T1→T2) otherwise leaves Events and incomplete maps
         for the rest of the supervisor life. Caller sets popped Events after
-        releasing the store RLock.
+        releasing the day-shard RLock.
 
         Args:
-          day_token (str): ISO calendar day.
+          shard (_DayShard): Day shard (caller holds ``shard.lock``).
           keep_identity (str): Identity that just became complete.
 
         Returns:
@@ -223,19 +312,20 @@ class SyncTimedbArchiveMembersStore:
 
         Examples:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
-          >>> store._drop_stale_identities_for_day_locked("2026-01-01", "id")
+          >>> shard = store._shard("2026-01-01")
+          >>> with shard.lock:
+          ...   store._drop_stale_identities_locked(shard, "id")
           []
         """
-        day = str(day_token)
-        keep = (day, str(keep_identity))
+        keep = str(keep_identity)
         events: list[threading.Event] = []
-        for key in list(self._members):
-            if key[0] == day and key != keep and key not in self._populate_owner:
-                self._members.pop(key, None)
-                self._complete.pop(key, None)
-        for key in list(self._events):
-            if key[0] == day and key != keep and key not in self._populate_owner:
-                events.append(self._events.pop(key))
+        for identity in list(shard.members):
+            if identity != keep and identity not in shard.populate_owner:
+                shard.members.pop(identity, None)
+                shard.complete.pop(identity, None)
+        for identity in list(shard.events):
+            if identity != keep and identity not in shard.populate_owner:
+                events.append(shard.events.pop(identity))
         return events
 
     def try_begin_populate(self, day_token: str, identity: str) -> bool:
@@ -254,14 +344,15 @@ class SyncTimedbArchiveMembersStore:
           >>> store.try_begin_populate("2026-01-01", "id")
           True
         """
-        key = (str(day_token), str(identity))
-        with self._lock:
-            if key in self._populate_owner:
+        ident = str(identity)
+        shard = self._shard(day_token)
+        with shard.lock:
+            if ident in shard.populate_owner:
                 return False
-            if self._complete.get(key):
+            if shard.complete.get(ident):
                 return False
-            self._populate_owner[key] = threading.get_ident()
-            self._event(day_token, identity).clear()
+            shard.populate_owner[ident] = threading.get_ident()
+            self._event_locked(shard, ident).clear()
             return True
 
     def finish_populate(
@@ -292,27 +383,24 @@ class SyncTimedbArchiveMembersStore:
           ...   "2026-01-01", "id", members={}, complete=True,
           ... )
         """
-        key = (str(day_token), str(identity))
+        ident = str(identity)
         normalized = None
         if members is not None:
             normalized = {
                 str(name): int(size) for name, size in members.items()
             }
         events: list[threading.Event | None] = []
-        with self._lock:
+        shard = self._shard(day_token)
+        with shard.lock:
             if normalized is not None:
-                self._members[key] = normalized
+                shard.members[ident] = normalized
             if complete:
-                self._complete[key] = True
-            self._populate_owner.pop(key, None)
-            events.append(
-                self._wake_and_drop_event_locked(day_token, identity),
-            )
+                shard.complete[ident] = True
+            shard.populate_owner.pop(ident, None)
+            events.append(self._wake_and_drop_event_locked(shard, ident))
             if complete:
                 events.extend(
-                    self._drop_stale_identities_for_day_locked(
-                        day_token, identity,
-                    ),
+                    self._drop_stale_identities_locked(shard, ident),
                 )
         _set_threading_events(events)
         if complete:
@@ -343,17 +431,18 @@ class SyncTimedbArchiveMembersStore:
           ... ) is None
           True
         """
-        key = (str(day_token), str(identity))
+        ident = str(identity)
+        shard = self._shard(day_token)
         deadline = time.time() + float(timeout_s)
         while time.time() < deadline:
             members_ref = None
-            with self._lock:
-                if day_token in self._day_skip:
+            with shard.lock:
+                if shard.day_skip is not None:
                     return None
-                if self._complete.get(key):
-                    members_ref = self._members.get(key) or {}
+                if shard.complete.get(ident):
+                    members_ref = shard.members.get(ident) or {}
                 else:
-                    event = self._event(day_token, identity)
+                    event = self._event_locked(shard, ident)
             if members_ref is not None:
                 return dict(members_ref)
             remaining = deadline - time.time()
@@ -361,9 +450,9 @@ class SyncTimedbArchiveMembersStore:
                 break
             event.wait(timeout=min(0.25, remaining))
         members_ref = None
-        with self._lock:
-            if self._complete.get(key):
-                members_ref = self._members.get(key) or {}
+        with shard.lock:
+            if shard.complete.get(ident):
+                members_ref = shard.members.get(ident) or {}
         if members_ref is not None:
             return dict(members_ref)
         return None
@@ -392,24 +481,19 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.store_complete("2026-01-01", "id", {"a": 1})
         """
-        key = (str(day_token), str(identity))
+        ident = str(identity)
         normalized = {
             str(name): int(size) for name, size in members.items()
         }
         events: list[threading.Event | None] = []
-        with self._lock:
-            self._members[key] = normalized
-            self._complete[key] = True
+        shard = self._shard(day_token)
+        with shard.lock:
+            shard.members[ident] = normalized
+            shard.complete[ident] = True
             if saw_duplicates:
-                self._dedupe_hint[str(day_token)] = True
-            events.append(
-                self._wake_and_drop_event_locked(day_token, identity),
-            )
-            events.extend(
-                self._drop_stale_identities_for_day_locked(
-                    day_token, identity,
-                ),
-            )
+                shard.dedupe_hint = True
+            events.append(self._wake_and_drop_event_locked(shard, ident))
+            events.extend(self._drop_stale_identities_locked(shard, ident))
         _set_threading_events(events)
         self.persist_day(day_token)
 
@@ -430,8 +514,9 @@ class SyncTimedbArchiveMembersStore:
           ... )
           False
         """
-        with self._lock:
-            return bool(self._complete.get((str(day_token), str(identity))))
+        shard = self._shard(day_token)
+        with shard.lock:
+            return bool(shard.complete.get(str(identity)))
 
     def lookup_member(
         self,
@@ -457,10 +542,11 @@ class SyncTimedbArchiveMembersStore:
           ... ) is None
           True
         """
-        with self._lock:
-            if str(day_token) in self._day_skip:
+        shard = self._shard(day_token)
+        with shard.lock:
+            if shard.day_skip is not None:
                 return None
-            members = self._members.get((str(day_token), str(identity)))
+            members = shard.members.get(str(identity))
             if members is None:
                 return None
             size = members.get(str(name))
@@ -489,15 +575,14 @@ class SyncTimedbArchiveMembersStore:
           >>> store.set_day_skip("2026-01-01", kind="read_error")
         """
         events: list[threading.Event] = []
-        with self._lock:
-            self._day_skip[str(day_token)] = {
+        shard = self._shard(day_token)
+        with shard.lock:
+            shard.day_skip = {
                 "kind": str(kind),
                 "detail": str(detail),
             }
-            day = str(day_token)
-            for key in list(self._events):
-                if key[0] == day:
-                    events.append(self._events.pop(key))
+            events.extend(list(shard.events.values()))
+            shard.events.clear()
         _set_threading_events(events)
         self.persist_day(day_token)
 
@@ -517,8 +602,9 @@ class SyncTimedbArchiveMembersStore:
           ... ) is None
           True
         """
-        with self._lock:
-            payload = self._day_skip.get(str(day_token))
+        shard = self._shard(day_token)
+        with shard.lock:
+            payload = shard.day_skip
         if payload is None:
             return None
         return dict(payload)
@@ -537,8 +623,9 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.clear_day_skip("2026-01-01")
         """
-        with self._lock:
-            self._day_skip.pop(str(day_token), None)
+        shard = self._shard(day_token)
+        with shard.lock:
+            shard.day_skip = None
         self.persist_day(day_token)
 
     def lookup_complete_map(
@@ -562,11 +649,12 @@ class SyncTimedbArchiveMembersStore:
           ... ) is None
           True
         """
-        with self._lock:
-            key = (str(day_token), str(identity))
-            if not self._complete.get(key):
+        shard = self._shard(day_token)
+        with shard.lock:
+            ident = str(identity)
+            if not shard.complete.get(ident):
                 return None
-            members_ref = self._members.get(key) or {}
+            members_ref = shard.members.get(ident) or {}
         return dict(members_ref)
 
     def is_fully_warm(self, day_token: str, identity: str) -> bool:
@@ -586,11 +674,12 @@ class SyncTimedbArchiveMembersStore:
           ... )
           False
         """
-        with self._lock:
-            key = (str(day_token), str(identity))
-            if not self._complete.get(key):
+        shard = self._shard(day_token)
+        with shard.lock:
+            ident = str(identity)
+            if not shard.complete.get(ident):
                 return False
-            members = self._members.get(key)
+            members = shard.members.get(ident)
             return bool(members)
 
     def merge_members(
@@ -617,38 +706,41 @@ class SyncTimedbArchiveMembersStore:
           >>> SyncTimedbArchiveMembersStore("/tmp/empty").merge_members(
           ...   "2026-01-01", "id", {"a": 1},
           ... )
+          True
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").merge_members(
+          ...   "2026-01-01", "id", {},
+          ... )
           False
         """
         if not member_map:
             return False
-        key = (str(day_token), str(identity))
+        ident = str(identity)
         incoming = {
             str(name): int(size) for name, size in member_map.items()
         }
+        shard = self._shard(day_token)
         while True:
-            with self._lock:
-                members_ref = self._members.get(key)
+            with shard.lock:
+                members_ref = shard.members.get(ident)
             current = dict(members_ref) if members_ref is not None else {}
             for name, size_i in incoming.items():
                 prev = current.get(name)
                 if prev is None or size_i > int(prev):
                     current[name] = size_i
             events: list[threading.Event | None] = []
-            with self._lock:
-                if self._members.get(key) is not members_ref:
+            with shard.lock:
+                if shard.members.get(ident) is not members_ref:
                     continue
-                self._members[key] = current
-                self._complete[key] = True
+                shard.members[ident] = current
+                shard.complete[ident] = True
                 if saw_duplicates:
-                    self._dedupe_hint[str(day_token)] = True
-                self._degraded.pop(str(day_token), None)
+                    shard.dedupe_hint = True
+                shard.degraded = False
                 events.append(
-                    self._wake_and_drop_event_locked(day_token, identity),
+                    self._wake_and_drop_event_locked(shard, ident),
                 )
                 events.extend(
-                    self._drop_stale_identities_for_day_locked(
-                        day_token, identity,
-                    ),
+                    self._drop_stale_identities_locked(shard, ident),
                 )
             _set_threading_events(events)
             self.persist_day(day_token)
@@ -669,14 +761,15 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.clear_incomplete("2026-01-01", "id")
         """
-        key = (str(day_token), str(identity))
+        ident = str(identity)
         event = None
-        with self._lock:
-            if self._complete.get(key):
+        shard = self._shard(day_token)
+        with shard.lock:
+            if shard.complete.get(ident):
                 return
-            self._members.pop(key, None)
-            self._populate_owner.pop(key, None)
-            event = self._wake_and_drop_event_locked(day_token, identity)
+            shard.members.pop(ident, None)
+            shard.populate_owner.pop(ident, None)
+            event = self._wake_and_drop_event_locked(shard, ident)
         _set_threading_events([event])
 
     def set_degraded(self, day_token: str) -> None:
@@ -693,8 +786,9 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.set_degraded("2026-01-01")
         """
-        with self._lock:
-            self._degraded[str(day_token)] = True
+        shard = self._shard(day_token)
+        with shard.lock:
+            shard.degraded = True
         self.persist_day(day_token)
 
     def clear_degraded(self, day_token: str) -> None:
@@ -711,8 +805,9 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.clear_degraded("2026-01-01")
         """
-        with self._lock:
-            self._degraded.pop(str(day_token), None)
+        shard = self._shard(day_token)
+        with shard.lock:
+            shard.degraded = False
         self.persist_day(day_token)
 
     def is_degraded(self, day_token: str) -> bool:
@@ -731,8 +826,9 @@ class SyncTimedbArchiveMembersStore:
           ... )
           False
         """
-        with self._lock:
-            return bool(self._degraded.get(str(day_token)))
+        shard = self._shard(day_token)
+        with shard.lock:
+            return bool(shard.degraded)
 
     def set_populate_source(self, canonical: str, source: str) -> None:
         """
@@ -749,8 +845,10 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.set_populate_source("/d/2026-01-01.tar", "tar_populated")
         """
-        with self._lock:
-            self._populate_source[str(canonical)] = str(source)
+        day = self._day_token_from_canonical(canonical)
+        shard = self._shard(day)
+        with shard.lock:
+            shard.populate_source[str(canonical)] = str(source)
 
     def peek_populate_source(self, canonical: str) -> Optional[str]:
         """
@@ -768,8 +866,10 @@ class SyncTimedbArchiveMembersStore:
           ... ) is None
           True
         """
-        with self._lock:
-            value = self._populate_source.get(str(canonical))
+        day = self._day_token_from_canonical(canonical)
+        shard = self._shard(day)
+        with shard.lock:
+            value = shard.populate_source.get(str(canonical))
             return None if value is None else str(value)
 
     def consume_populate_source(self, canonical: str) -> Optional[str]:
@@ -788,28 +888,51 @@ class SyncTimedbArchiveMembersStore:
           ... ) is None
           True
         """
-        with self._lock:
-            value = self._populate_source.pop(str(canonical), None)
+        day = self._day_token_from_canonical(canonical)
+        shard = self._shard(day)
+        with shard.lock:
+            value = shard.populate_source.pop(str(canonical), None)
             return None if value is None else str(value)
 
-    def _drop_populate_source_for_day_locked(self, day_token: str) -> None:
+    def _day_token_from_canonical(self, canonical: str) -> str:
         """
-        Drop ephemeral populate-source tokens whose path names this day.
+        Best-effort calendar day from a canonical archive basename.
 
         Args:
-          day_token (str): ISO calendar day.
+          canonical (str): Canonical daily archive path.
+
+        Returns:
+          str: ISO day token, or the basename stem when no date is found.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/a")._day_token_from_canonical(
+          ...   "/d/2026-01-01.tar",
+          ... )
+          '2026-01-01'
+        """
+        base = os.path.basename(str(canonical))
+        for suffix in (".tar.zst", ".tar.gz", ".tar"):
+            if base.endswith(suffix):
+                return base[: -len(suffix)]
+        return base or "unknown"
+
+    def _drop_populate_source_locked(self, shard: _DayShard) -> None:
+        """
+        Drop ephemeral populate-source tokens on one day shard.
+
+        Args:
+          shard (_DayShard): Day shard (caller holds ``shard.lock``).
 
         Returns:
           None
 
         Examples:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
-          >>> store._drop_populate_source_for_day_locked("2026-01-01")
+          >>> shard = store._shard("2026-01-01")
+          >>> with shard.lock:
+          ...   store._drop_populate_source_locked(shard)
         """
-        day = str(day_token)
-        for key in list(self._populate_source):
-            if day in str(key):
-                self._populate_source.pop(key, None)
+        shard.populate_source.clear()
 
     def enqueue_populate(self, job: Any) -> bool:
         """
@@ -829,30 +952,41 @@ class SyncTimedbArchiveMembersStore:
         day = ""
         if isinstance(job, dict):
             day = str(job.get("day_token") or "")
+        hot_rank = self._populate_job_hot_rank(job)
         with self._populate_cv:
             if day and day in self._populate_queued:
                 return False
             if day:
                 self._populate_queued.add(day)
-            self._enqueue_populate_job_locked(job)
+            self._enqueue_populate_job_locked(job, hot_rank=hot_rank)
             self._populate_cv.notify()
         return True
 
-    def _enqueue_populate_job_locked(self, job: Any) -> None:
+    def _enqueue_populate_job_locked(
+        self,
+        job: Any,
+        *,
+        hot_rank: int | None = None,
+    ) -> None:
         """
         Append one populate job to the hot or cold deque by ingest-hot rank.
 
         Args:
           job (Any): Populate job payload.
+          hot_rank (int | None): Precomputed prefer rank, or None to
+            resolve from the day shard under a separate lock.
 
         Returns:
           None
 
         Examples:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
-          >>> store._enqueue_populate_job_locked({"day_token": "x"})
+          >>> store._enqueue_populate_job_locked(
+          ...   {"day_token": "x"}, hot_rank=0,
+          ... )
         """
-        if self._populate_job_hot_rank_locked(job) > 0:
+        rank = 0 if hot_rank is None else int(hot_rank)
+        if rank > 0:
             self._populate_jobs_hot.append(job)
         else:
             self._populate_jobs_cold.append(job)
@@ -870,7 +1004,7 @@ class SyncTimedbArchiveMembersStore:
         """
         return not self._populate_jobs_hot and not self._populate_jobs_cold
 
-    def _populate_job_hot_rank_locked(self, job: Any) -> int:
+    def _populate_job_hot_rank(self, job: Any) -> int:
         """
         Return ingest-hot prefer rank for one queued populate job.
 
@@ -882,13 +1016,15 @@ class SyncTimedbArchiveMembersStore:
 
         Examples:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
-          >>> store._populate_job_hot_rank_locked({"day_token": "x"})
+          >>> store._populate_job_hot_rank({"day_token": "x"})
           0
         """
         if not isinstance(job, dict):
             return 0
         day = str(job.get("day_token") or "")
-        reason = str(self._tar_hot.get(day, ""))
+        if not day:
+            return 0
+        reason = self.ingest_tar_hot_reason(day)
         return {
             "chunk_prewarm": 3,
             "populate_wait": 2,
@@ -960,8 +1096,9 @@ class SyncTimedbArchiveMembersStore:
         """
         if not isinstance(job, dict):
             return
+        hot_rank = self._populate_job_hot_rank(job)
         with self._populate_cv:
-            self._enqueue_populate_job_locked(job)
+            self._enqueue_populate_job_locked(job, hot_rank=hot_rank)
             self._populate_cv.notify()
 
     def invalidate(self, day_token: str, identity: str) -> None:
@@ -979,14 +1116,15 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.invalidate("2026-01-01", "id")
         """
-        key = (str(day_token), str(identity))
+        ident = str(identity)
         event = None
-        with self._lock:
-            self._members.pop(key, None)
-            self._complete.pop(key, None)
-            self._populate_owner.pop(key, None)
-            self._drop_populate_source_for_day_locked(day_token)
-            event = self._wake_and_drop_event_locked(day_token, identity)
+        shard = self._shard(day_token)
+        with shard.lock:
+            shard.members.pop(ident, None)
+            shard.complete.pop(ident, None)
+            shard.populate_owner.pop(ident, None)
+            self._drop_populate_source_locked(shard)
+            event = self._wake_and_drop_event_locked(shard, ident)
         _set_threading_events([event])
         self.persist_day(day_token)
 
@@ -1003,19 +1141,24 @@ class SyncTimedbArchiveMembersStore:
           >>> SyncTimedbArchiveMembersStore("/tmp/empty").invalidate_all()
         """
         events: list[threading.Event] = []
-        with self._lock:
-            self._members.clear()
-            self._complete.clear()
-            self._day_skip.clear()
-            self._degraded.clear()
-            self._dedupe_hint.clear()
-            self._populate_owner.clear()
-            events.extend(self._events.values())
-            self._events.clear()
-            self._tar_hot.clear()
-            self._append_inflight.clear()
-            self._restore.clear()
-            self._populate_source.clear()
+        with self._shards_lock:
+            shards = list(self._shards.values())
+            self._shards.clear()
+        for shard in shards:
+            with shard.lock:
+                events.extend(list(shard.events.values()))
+                shard.events.clear()
+                shard.members.clear()
+                shard.complete.clear()
+                shard.day_skip = None
+                shard.degraded = False
+                shard.dedupe_hint = False
+                shard.populate_owner.clear()
+                shard.tar_hot = ""
+                shard.append_inflight = False
+                shard.restore = ""
+                shard.populate_source.clear()
+        with self._populate_cv:
             self._populate_jobs_hot.clear()
             self._populate_jobs_cold.clear()
             self._populate_queued.clear()
@@ -1048,8 +1191,9 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.set_ingest_tar_hot("2026-01-01", reason="populate")
         """
-        with self._lock:
-            self._tar_hot[str(day_token)] = str(reason)
+        shard = self._shard(day_token)
+        with shard.lock:
+            shard.tar_hot = str(reason)
 
     def ingest_tar_hot_reason(self, day_token: str) -> str:
         """
@@ -1067,8 +1211,9 @@ class SyncTimedbArchiveMembersStore:
           ... )
           ''
         """
-        with self._lock:
-            return str(self._tar_hot.get(str(day_token), ""))
+        shard = self._shard(day_token)
+        with shard.lock:
+            return str(shard.tar_hot)
 
     def clear_ingest_tar_hot(self, day_token: str) -> None:
         """
@@ -1084,8 +1229,9 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.clear_ingest_tar_hot("2026-01-01")
         """
-        with self._lock:
-            self._tar_hot.pop(str(day_token), None)
+        shard = self._shard(day_token)
+        with shard.lock:
+            shard.tar_hot = ""
 
     def ingest_tar_hot(self, day_token: str) -> bool:
         """
@@ -1103,8 +1249,7 @@ class SyncTimedbArchiveMembersStore:
           ... )
           False
         """
-        with self._lock:
-            return str(day_token) in self._tar_hot
+        return bool(self.ingest_tar_hot_reason(day_token))
 
     def set_append_inflight(self, day_token: str) -> None:
         """
@@ -1120,8 +1265,9 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.set_append_inflight("2026-01-01")
         """
-        with self._lock:
-            self._append_inflight[str(day_token)] = True
+        shard = self._shard(day_token)
+        with shard.lock:
+            shard.append_inflight = True
 
     def clear_append_inflight(self, day_token: str) -> None:
         """
@@ -1137,8 +1283,9 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.clear_append_inflight("2026-01-01")
         """
-        with self._lock:
-            self._append_inflight.pop(str(day_token), None)
+        shard = self._shard(day_token)
+        with shard.lock:
+            shard.append_inflight = False
 
     def append_inflight(self, day_token: str) -> bool:
         """
@@ -1156,14 +1303,15 @@ class SyncTimedbArchiveMembersStore:
           ... )
           False
         """
-        with self._lock:
-            return bool(self._append_inflight.get(str(day_token)))
+        shard = self._shard(day_token)
+        with shard.lock:
+            return bool(shard.append_inflight)
 
     def persist_day(self, day_token: str) -> None:
         """
         Write one calendar day's durable maps to the sidecar directory.
 
-        Snapshot identity refs and cheap flags under the store lock, then
+        Snapshot identity refs and cheap flags under the day lock, then
         copy giant member maps and persist after the lock is released.
 
         Args:
@@ -1178,17 +1326,18 @@ class SyncTimedbArchiveMembersStore:
           ... )
         """
         day = str(day_token)
-        with self._lock:
+        shard = self._shard(day)
+        with shard.lock:
             snapshots = tuple(
                 (identity, members)
-                for (stored_day, identity), members in self._members.items()
-                if stored_day == day and self._complete.get((day, identity))
+                for identity, members in shard.members.items()
+                if shard.complete.get(identity)
             )
-            skip = self._day_skip.get(day)
+            skip = shard.day_skip
             if isinstance(skip, dict):
                 skip = dict(skip)
-            degraded = bool(self._degraded.get(day))
-            dedupe = bool(self._dedupe_hint.get(day))
+            degraded = bool(shard.degraded)
+            dedupe = bool(shard.dedupe_hint)
         payload = {
             "schema_version": MEMBERS_DAY_SCHEMA_VERSION,
             "day_token": day,
@@ -1235,26 +1384,27 @@ class SyncTimedbArchiveMembersStore:
                     "kind": str(skip.get("kind")),
                     "detail": str(skip.get("detail") or ""),
                 }
-            members_ready: Dict[tuple[str, str], Dict[str, int]] = {}
+            members_ready: Dict[str, Dict[str, int]] = {}
             if isinstance(identities, dict):
                 for identity, body in identities.items():
                     if not isinstance(body, dict) or not body.get("complete"):
                         continue
                     members = body.get("members") or {}
-                    members_ready[(day, str(identity))] = {
+                    members_ready[str(identity)] = {
                         str(member): int(size)
                         for member, size in members.items()
                     }
-            with self._lock:
+            shard = self._shard(day)
+            with shard.lock:
                 if skip_payload is not None:
-                    self._day_skip[day] = skip_payload
+                    shard.day_skip = skip_payload
                 if raw.get("degraded"):
-                    self._degraded[day] = True
+                    shard.degraded = True
                 if raw.get("dedupe_hint"):
-                    self._dedupe_hint[day] = True
-                self._members.update(members_ready)
-                for key in members_ready:
-                    self._complete[key] = True
+                    shard.dedupe_hint = True
+                shard.members.update(members_ready)
+                for identity in members_ready:
+                    shard.complete[identity] = True
 
     def try_acquire_restore(self, day_token: str, token: str) -> bool:
         """
@@ -1275,11 +1425,12 @@ class SyncTimedbArchiveMembersStore:
         day = str(day_token)
         if not day or day == "unknown":
             return False
-        with self._lock:
-            current = self._restore.get(day)
+        shard = self._shard(day)
+        with shard.lock:
+            current = shard.restore
             if current and current != str(token):
                 return False
-            self._restore[day] = str(token)
+            shard.restore = str(token)
             return True
 
     def renew_restore(self, day_token: str, token: str) -> bool:
@@ -1300,9 +1451,9 @@ class SyncTimedbArchiveMembersStore:
           >>> store.renew_restore("2026-01-01", "t1")
           True
         """
-        day = str(day_token)
-        with self._lock:
-            return self._restore.get(day) == str(token)
+        shard = self._shard(day_token)
+        with shard.lock:
+            return shard.restore == str(token)
 
     def clear_restore(self, day_token: str, token: str | None = None) -> None:
         """
@@ -1319,10 +1470,10 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.clear_restore("2026-01-01")
         """
-        day = str(day_token)
-        with self._lock:
-            if token is None or self._restore.get(day) == str(token):
-                self._restore.pop(day, None)
+        shard = self._shard(day_token)
+        with shard.lock:
+            if token is None or shard.restore == str(token):
+                shard.restore = ""
 
     def restore_in_progress(self, day_token: str) -> bool:
         """
@@ -1340,8 +1491,9 @@ class SyncTimedbArchiveMembersStore:
           ... )
           False
         """
-        with self._lock:
-            return str(day_token) in self._restore
+        shard = self._shard(day_token)
+        with shard.lock:
+            return bool(shard.restore)
 
     def restore_reason(self, day_token: str) -> str:
         """
@@ -1359,8 +1511,9 @@ class SyncTimedbArchiveMembersStore:
           ... )
           ''
         """
-        with self._lock:
-            return str(self._restore.get(str(day_token), ""))
+        shard = self._shard(day_token)
+        with shard.lock:
+            return str(shard.restore)
 
     def dedupe_hint_is_set(self, day_token: str) -> bool:
         """
@@ -1378,8 +1531,9 @@ class SyncTimedbArchiveMembersStore:
           ... )
           False
         """
-        with self._lock:
-            return bool(self._dedupe_hint.get(str(day_token)))
+        shard = self._shard(day_token)
+        with shard.lock:
+            return bool(shard.dedupe_hint)
 
     def clear_dedupe_hint(self, day_token: str) -> None:
         """
@@ -1395,8 +1549,9 @@ class SyncTimedbArchiveMembersStore:
           >>> store = SyncTimedbArchiveMembersStore("/tmp/empty")
           >>> store.clear_dedupe_hint("2026-01-01")
         """
-        with self._lock:
-            self._dedupe_hint.pop(str(day_token), None)
+        shard = self._shard(day_token)
+        with shard.lock:
+            shard.dedupe_hint = False
         self.persist_day(day_token)
 
     def list_dedupe_hint_days(self) -> list[str]:
@@ -1410,10 +1565,221 @@ class SyncTimedbArchiveMembersStore:
           >>> SyncTimedbArchiveMembersStore("/tmp/empty").list_dedupe_hint_days()
           []
         """
-        with self._lock:
-            return sorted(
-                day for day, flag in self._dedupe_hint.items() if flag
-            )
+        with self._shards_lock:
+            shards = list(self._shards.items())
+        days: list[str] = []
+        for day, shard in shards:
+            with shard.lock:
+                if shard.dedupe_hint:
+                    days.append(day)
+        return sorted(days)
+
+    def complete_identity_count(self, day_token: str) -> int:
+        """
+        Return how many identities are marked complete for one day.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          int: Count of complete identities.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").complete_identity_count(
+          ...   "2026-01-01",
+          ... )
+          0
+        """
+        shard = self._shard(day_token)
+        with shard.lock:
+            return sum(1 for flag in shard.complete.values() if flag)
+
+    def populate_owner_active(self, day_token: str) -> bool:
+        """
+        Return True when any populate owner is set for the day.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          bool: True when a populate owner thread holds this day.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").populate_owner_active(
+          ...   "2026-01-01",
+          ... )
+          False
+        """
+        shard = self._shard(day_token)
+        with shard.lock:
+            return bool(shard.populate_owner)
+
+    def any_complete_identity(self, day_token: str) -> bool:
+        """
+        Return True when at least one identity is complete for the day.
+
+        Args:
+          day_token (str): ISO calendar day.
+
+        Returns:
+          bool: True when any complete flag is set.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty").any_complete_identity(
+          ...   "2026-01-01",
+          ... )
+          False
+        """
+        return self.complete_identity_count(day_token) > 0
+
+    # --- Test/compat aggregators (flat (day, identity) views) ---
+
+    @property
+    def _events(self) -> Dict[tuple[str, str], threading.Event]:
+        """
+        Aggregate populate Events across day shards for tests.
+
+        Returns:
+          dict[tuple[str, str], threading.Event]: Flat event map.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty")._events
+          {}
+        """
+        with self._shards_lock:
+            shards = list(self._shards.items())
+        out: Dict[tuple[str, str], threading.Event] = {}
+        for day, shard in shards:
+            with shard.lock:
+                for identity, event in shard.events.items():
+                    out[(day, identity)] = event
+        return out
+
+    @property
+    def _members(self) -> Dict[tuple[str, str], Dict[str, int]]:
+        """
+        Aggregate member maps across day shards for tests.
+
+        Returns:
+          dict[tuple[str, str], dict[str, int]]: Flat member map.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty")._members
+          {}
+        """
+        with self._shards_lock:
+            shards = list(self._shards.items())
+        out: Dict[tuple[str, str], Dict[str, int]] = {}
+        for day, shard in shards:
+            with shard.lock:
+                for identity, members in shard.members.items():
+                    out[(day, identity)] = members
+        return out
+
+    @property
+    def _complete(self) -> Dict[tuple[str, str], bool]:
+        """
+        Aggregate complete flags across day shards for tests and coord.
+
+        Returns:
+          dict[tuple[str, str], bool]: Flat complete map.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty")._complete
+          {}
+        """
+        with self._shards_lock:
+            shards = list(self._shards.items())
+        out: Dict[tuple[str, str], bool] = {}
+        for day, shard in shards:
+            with shard.lock:
+                for identity, flag in shard.complete.items():
+                    out[(day, identity)] = flag
+        return out
+
+    @property
+    def _populate_owner(self) -> Dict[tuple[str, str], int]:
+        """
+        Aggregate populate owners across day shards for tests and coord.
+
+        Returns:
+          dict[tuple[str, str], int]: Flat owner map.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty")._populate_owner
+          {}
+        """
+        with self._shards_lock:
+            shards = list(self._shards.items())
+        out: Dict[tuple[str, str], int] = {}
+        for day, shard in shards:
+            with shard.lock:
+                for identity, owner in shard.populate_owner.items():
+                    out[(day, identity)] = owner
+        return out
+
+    @property
+    def _tar_hot(self) -> Dict[str, str]:
+        """
+        Aggregate ingest-tar-hot reasons across day shards for tests.
+
+        Returns:
+          dict[str, str]: Day to reason.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty")._tar_hot
+          {}
+        """
+        with self._shards_lock:
+            shards = list(self._shards.items())
+        out: Dict[str, str] = {}
+        for day, shard in shards:
+            with shard.lock:
+                if shard.tar_hot:
+                    out[day] = shard.tar_hot
+        return out
+
+    @property
+    def _append_inflight(self) -> Dict[str, bool]:
+        """
+        Aggregate append-inflight flags across day shards for tests.
+
+        Returns:
+          dict[str, bool]: Day to flag.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty")._append_inflight
+          {}
+        """
+        with self._shards_lock:
+            shards = list(self._shards.items())
+        out: Dict[str, bool] = {}
+        for day, shard in shards:
+            with shard.lock:
+                if shard.append_inflight:
+                    out[day] = True
+        return out
+
+    @property
+    def _day_skip(self) -> Dict[str, Dict[str, str]]:
+        """
+        Aggregate sticky day-skip payloads across day shards for tests.
+
+        Returns:
+          dict[str, dict[str, str]]: Day to skip payload.
+
+        Examples:
+          >>> SyncTimedbArchiveMembersStore("/tmp/empty")._day_skip
+          {}
+        """
+        with self._shards_lock:
+            shards = list(self._shards.items())
+        out: Dict[str, Dict[str, str]] = {}
+        for day, shard in shards:
+            with shard.lock:
+                if shard.day_skip is not None:
+                    out[day] = shard.day_skip
+        return out
 
 
 _PROCESS_STORE: SyncTimedbArchiveMembersStore | None = None

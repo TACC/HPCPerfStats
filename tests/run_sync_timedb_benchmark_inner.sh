@@ -51,6 +51,10 @@ elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_CONTENTION:-}" == "1" ]]; then
   PYTEST_TARGET=(
     tests/sync_timedb_benchmark/test_contention_ab.py
   )
+elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_LOADED48:-}" == "1" ]]; then
+  PYTEST_TARGET=(
+    tests/sync_timedb_benchmark/test_loaded48_soak.py
+  )
 elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_SCREENING:-}" == "1" \
      || "${HPCPERFSTATS_SYNC_TIMEDB_KNEE:-}" == "1" ]]; then
   PYTEST_TARGET=(
