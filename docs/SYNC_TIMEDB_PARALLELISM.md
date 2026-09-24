@@ -28,7 +28,7 @@ This document describes how `sync_timedb` uses **in-process thread pools**, **da
 
 **Archive dispatch:** append jobs use `archive_pool` with **one daily tar per slot**; concurrent slots follow **`sync_archive_pool_processes`**. Sliding-window refill on completion — never join an entire batch before the next hop.
 
-**Ingest dispatch:** orchestrator fill/drain submits `apply_async` on the ingest thread pool. Populate workers are long-lived `apply_async` loops that claim the in-process populate queue.
+**Ingest dispatch:** orchestrator fill/drain submits `apply_async` on the ingest thread pool. Populate workers are long-lived `apply_async` loops that claim the in-process populate queue. Fill also enforces a **raw-byte in-flight budget** derived from ``sync_process_tree_rss_limit_mb / PEAK_CGROUP_PER_RAW_FILE_BYTE`` (**2.5** → **40%** of the tree roof; gate off when the roof is **0**). Oversized files wait for empty inflight then alone-admit. Census shows ``ingest_mem_blocked=…`` when fill skips for budget. Do **not** treat pool width as concurrent data volume.
 
 ## Ingest band reservation (job store)
 

@@ -6,6 +6,9 @@ Attributes:
   REAP_FAILURE: Attribute.
   REAP_KEEP: Attribute.
   REAP_RSS: Attribute.
+  PEAK_CGROUP_PER_RAW_FILE_BYTE: Design peak cgroup bytes per in-flight
+    raw ``st_size`` byte (admit budget = tree RSS roof / this).
+  _MIB_BYTES: Bytes in one mebibyte (``1024 * 1024``).
   _FAILED_OUTCOMES: Attribute.
   _LIBC: Cached ``ctypes.CDLL("libc.so.6")`` handle for malloc_trim.
   _WORKER_TASKS_ON_WORKER: Attribute.
@@ -24,6 +27,12 @@ from hpcperfstats.dbload.lib.print_utils import log_print
 REAP_KEEP = "keep"
 REAP_FAILURE = "failure_reap"
 REAP_RSS = "rss_reap"
+
+# Design peak cgroup bytes per in-flight raw ``st_size`` byte (page cache ≈1×
+# + parse/DF/jemalloc ≈1–1.5×). Ingest admit budget = tree RSS roof / this.
+# See plan sync-timedb-oom-sep24 + docs/DEPLOY_CONCURRENCY_AND_NUMA.md § OOM.
+PEAK_CGROUP_PER_RAW_FILE_BYTE = 2.5
+_MIB_BYTES = 1024 * 1024
 
 _FAILED_OUTCOMES = frozenset({
     "parse_fail",
@@ -185,6 +194,69 @@ def compute_rss_recycle_threshold_mib() -> Any:
     return 0.0
   fraction = float(cfg.get_sync_ingest_cooperative_recycle_rss_fraction())
   return round(fraction * tree_limit / ingest_pool_width(), 1)
+
+
+def compute_ingest_inflight_raw_bytes_budget() -> int:
+  """
+  Return max sum of in-flight raw ``st_size`` bytes for ingest admit.
+
+  Equals ``tree_rss_limit_bytes / PEAK_CGROUP_PER_RAW_FILE_BYTE``.
+  When ``sync_process_tree_rss_limit_mb`` is ``0``, return ``0`` (gate off).
+
+  Returns:
+    int: Budget in bytes, or ``0`` when the tree RSS roof is disabled.
+
+  Examples:
+    >>> compute_ingest_inflight_raw_bytes_budget()  # doctest: +SKIP
+  """
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  tree_limit_mib = int(cfg.get_sync_process_tree_rss_limit_mb())
+  if tree_limit_mib <= 0:
+    return 0
+  return int(
+      (tree_limit_mib * _MIB_BYTES) / float(PEAK_CGROUP_PER_RAW_FILE_BYTE),
+  )
+
+
+def can_admit_ingest_raw_bytes(
+  inflight_bytes: int,
+  size: int,
+  budget_bytes: int,
+) -> bool:
+  """
+  Return True when a raw file of ``size`` may join in-flight ingest.
+
+  When ``budget_bytes <= 0`` the gate is off. A file larger than the budget
+  is admitted only when nothing else is in flight (alone-oversized progress).
+
+  Args:
+    inflight_bytes (int): Sum of ``st_size`` already admitted.
+    size (int): Candidate file on-disk size in bytes.
+    budget_bytes (int): Admit ceiling from
+      :func:`compute_ingest_inflight_raw_bytes_budget`.
+
+  Returns:
+    bool: True when the candidate may be submitted.
+
+  Examples:
+    >>> can_admit_ingest_raw_bytes(0, 10, 100)
+    True
+    >>> can_admit_ingest_raw_bytes(90, 20, 100)
+    False
+    >>> can_admit_ingest_raw_bytes(0, 200, 100)
+    True
+  """
+  budget = int(budget_bytes or 0)
+  if budget <= 0:
+    return True
+  cur = max(0, int(inflight_bytes or 0))
+  need = max(0, int(size or 0))
+  if cur + need <= budget:
+    return True
+  if cur == 0 and need > budget:
+    return True
+  return False
 
 
 def _worker_rss_mib() -> Any:

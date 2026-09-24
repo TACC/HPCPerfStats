@@ -23,6 +23,8 @@ Attributes:
     steal and this-owner orphan lease reconcile when under pool capacity.
   INGEST_FILL_BLOCK_LOG_INTERVAL_S: Rate limit for fill-block / deep-queue logs.
   _FILL_BLOCK_KEYS: Ordered ingest fill failure counter names for telemetry.
+  _INGEST_MEM_BLOCK_STATE: Process-local census fields when fill waits on
+    the in-flight raw-byte budget (``ingest_mem_blocked=…``).
   APPEND_FILL_SKIP_BUDGET: Max impossible append claims (missing path /
     unresolved daily tar) ACK-dropped per fill tick before yielding.
   _APPEND_DAY_LISTS: Process-local calendar-day deques of claimed append
@@ -69,6 +71,7 @@ from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
 from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 from hpcperfstats.dbload.lib import sync_timedb_progress_report as progress
+from hpcperfstats.dbload.lib import sync_timedb_worker_memory as worker_memory
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
   create_sync_timedb_thread_pool,
 )
@@ -2638,6 +2641,7 @@ def _reconcile_local_ingest_maps_to_store(
   ingest_leases: dict[str, Any],
   ingest_submitted: dict[str, float],
   band_used: dict[str, int] | None = None,
+  inflight_sizes: dict[str, int] | None = None,
   log_fn: Callable[..., None] | None = None,
 ) -> int:
   """
@@ -2652,6 +2656,7 @@ def _reconcile_local_ingest_maps_to_store(
     ingest_leases (dict[str, Any]): Local claim map (mutated).
     ingest_submitted (dict[str, float]): Submit-time map (mutated).
     band_used (dict[str, int] | None): Optional hot/catchup counters.
+    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -2694,6 +2699,7 @@ def _reconcile_local_ingest_maps_to_store(
     claim = ingest_leases.pop(identity, None)
     ingest_inflight.pop(identity, None)
     ingest_submitted.pop(identity, None)
+    _release_ingest_inflight_size(inflight_sizes, identity)
     if band_used is not None and claim is not None:
       key = _ingest_claim_band_key(claim)
       band_used[key] = max(0, int(band_used.get(key, 0)) - 1)
@@ -2747,6 +2753,7 @@ def _requeue_pool_collateral(
   inflight: dict[str, AsyncResult],
   claims: dict[str, Any],
   submitted: dict[str, float],
+  inflight_sizes: dict[str, int] | None = None,
   log_fn: Callable[..., None] | None = None,
 ) -> int:
   """
@@ -2761,6 +2768,7 @@ def _requeue_pool_collateral(
     inflight (dict[str, AsyncResult]): In-flight ingest map (cleared).
     claims (dict[str, Any]): Claim map (cleared).
     submitted (dict[str, float]): Submit-time map (cleared).
+    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -2777,6 +2785,7 @@ def _requeue_pool_collateral(
     claim = claims.pop(identity, None)
     inflight.pop(identity, None)
     submitted.pop(identity, None)
+    _release_ingest_inflight_size(inflight_sizes, identity)
     if claim is None:
       continue
     try:
@@ -2841,9 +2850,18 @@ _FILL_BLOCK_KEYS = (
     "skip_missing",
     "skip_lock",
     "skip_fp",
+    "skip_budget_bytes",
     "band_cap",
     "submit_err",
 )
+
+# Census / status: set when fill skips for raw-byte budget; cleared when a
+# fill tick admits without ``skip_budget_bytes``.
+_INGEST_MEM_BLOCK_STATE: dict[str, Any] = {
+    "blocked": False,
+    "inflight_raw_mib": 0,
+    "budget_mib": 0,
+}
 
 
 def _empty_ingest_fill_stats() -> dict[str, int]:
@@ -2858,6 +2876,82 @@ def _empty_ingest_fill_stats() -> dict[str, int]:
     0
   """
   return {k: 0 for k in _FILL_BLOCK_KEYS}
+
+
+def _note_ingest_mem_block_state(
+  *,
+  blocked: bool,
+  inflight_sizes: dict[str, int] | None,
+  budget_bytes: int,
+) -> None:
+  """
+  Update process-local census fields for ingest raw-byte budget waits.
+
+  Args:
+    blocked (bool): True when fill skipped for ``skip_budget_bytes``.
+    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
+    budget_bytes (int): Current admit budget in bytes (``0`` = gate off).
+
+  Returns:
+    None
+
+  Examples:
+    >>> _note_ingest_mem_block_state(
+    ...   blocked=False, inflight_sizes={}, budget_bytes=0,
+    ... )
+  """
+  sizes = inflight_sizes if isinstance(inflight_sizes, dict) else {}
+  inflight_sum = sum(int(v or 0) for v in sizes.values())
+  _INGEST_MEM_BLOCK_STATE["blocked"] = bool(blocked)
+  _INGEST_MEM_BLOCK_STATE["inflight_raw_mib"] = int(
+      inflight_sum // (1024 * 1024),
+  )
+  _INGEST_MEM_BLOCK_STATE["budget_mib"] = int(
+      max(0, int(budget_bytes or 0)) // (1024 * 1024),
+  )
+
+
+def format_ingest_mem_block_census_suffix() -> str:
+  """
+  Return census token when ingest fill is waiting on raw-byte budget.
+
+  Returns:
+    str: Empty when not blocked; otherwise ``ingest_mem_blocked=yes …``.
+
+  Examples:
+    >>> isinstance(format_ingest_mem_block_census_suffix(), str)
+    True
+  """
+  if not _INGEST_MEM_BLOCK_STATE.get("blocked"):
+    return ""
+  return (
+      " ingest_mem_blocked=yes inflight_raw_mib=%d budget_mib=%d"
+      % (
+          int(_INGEST_MEM_BLOCK_STATE.get("inflight_raw_mib", 0) or 0),
+          int(_INGEST_MEM_BLOCK_STATE.get("budget_mib", 0) or 0),
+      )
+  )
+
+
+def _release_ingest_inflight_size(
+  inflight_sizes: dict[str, int] | None,
+  identity: str,
+) -> None:
+  """
+  Drop ``identity`` from the in-flight raw-size map when present.
+
+  Args:
+    inflight_sizes (dict[str, int] | None): Identity → size map (mutated).
+    identity (str): Ingest job identity.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _release_ingest_inflight_size({}, "/a")
+  """
+  if isinstance(inflight_sizes, dict):
+    inflight_sizes.pop(str(identity), None)
 
 
 def _merge_ingest_fill_stats(
@@ -3037,6 +3131,7 @@ def _fill_ingest_band(
   skip_budget: int | None = None,
   probe_depth: int | None = None,
   fill_stats: dict[str, int] | None = None,
+  inflight_sizes: dict[str, int] | None = None,
   log_fn: Callable[..., None] | None = None,
 ) -> int:
   """
@@ -3064,6 +3159,9 @@ def _fill_ingest_band(
     skip_budget (int | None): Max skip/requeue iterations this tick.
     probe_depth (int | None): Lua claim probe depth override.
     fill_stats (dict[str, int] | None): Optional per-tick failure counters.
+    inflight_sizes (dict[str, int] | None): Identity → on-disk ``st_size``
+      for in-flight admits (mutated). When ``None``, byte-budget gate is
+      skipped (unit tests).
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -3227,6 +3325,33 @@ def _fill_ingest_band(
         if skipped >= budget:
           break
         continue
+      size_bytes = int(st_now.st_size)
+      if inflight_sizes is not None:
+        budget_bytes = int(
+            worker_memory.compute_ingest_inflight_raw_bytes_budget(),
+        )
+        inflight_sum = sum(int(v or 0) for v in inflight_sizes.values())
+        if not worker_memory.can_admit_ingest_raw_bytes(
+            inflight_sum, size_bytes, budget_bytes,
+        ):
+          _requeue_ingest_fill_skip(
+              client,
+              claim=claim,
+              archive_data_dir=archive_data_dir,
+              reason="skip_budget_bytes",
+              score=claim.score,
+              log_fn=log_fn,
+          )
+          skipped += 1
+          stats["skip_budget_bytes"] += 1
+          _note_ingest_mem_block_state(
+              blocked=True,
+              inflight_sizes=inflight_sizes,
+              budget_bytes=budget_bytes,
+          )
+          if skipped >= budget:
+            break
+          continue
       try:
         async_res = ingest_pool.apply_async(
             _ingest_worker, (path,),
@@ -3244,10 +3369,20 @@ def _fill_ingest_band(
       inflight[claim.identity] = async_res
       claims[claim.identity] = claim
       submitted[claim.identity] = time.monotonic()
+      if inflight_sizes is not None:
+        inflight_sizes[claim.identity] = size_bytes
       used_map[band] = int(used_map.get(band, 0)) + 1
       submitted_n += 1
     if skipped >= budget:
       break
+  if inflight_sizes is not None and int(stats.get("skip_budget_bytes", 0) or 0) == 0:
+    _note_ingest_mem_block_state(
+        blocked=False,
+        inflight_sizes=inflight_sizes,
+        budget_bytes=int(
+            worker_memory.compute_ingest_inflight_raw_bytes_budget(),
+        ),
+    )
   return submitted_n
 
 
@@ -3492,6 +3627,7 @@ def _drop_expired_ingest_timeout_sentinels(
   inflight: dict[str, Any],
   claims: dict[str, Any],
   submitted: dict[str, float] | None = None,
+  inflight_sizes: dict[str, int] | None = None,
 ) -> int:
   """
   Drop H7 sentinels whose store inflight HASH entry is gone.
@@ -3501,6 +3637,7 @@ def _drop_expired_ingest_timeout_sentinels(
     inflight (dict[str, Any]): Local ingest inflight map.
     claims (dict[str, Any]): Local claim map.
     submitted (dict[str, float] | None): Submit-time map.
+    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
 
   Returns:
     int: Number of sentinels dropped.
@@ -3525,6 +3662,7 @@ def _drop_expired_ingest_timeout_sentinels(
     claims.pop(ident, None)
     if submitted is not None:
       submitted.pop(ident, None)
+    _release_ingest_inflight_size(inflight_sizes, ident)
     dropped += 1
   return dropped
 
@@ -3537,6 +3675,7 @@ def _drain_ingest_ready(
   tgz_archive_dir: str,
   archive_data_dir: str,
   submitted: dict[str, float] | None = None,
+  inflight_sizes: dict[str, int] | None = None,
   log_fn: Callable[..., None] | None = None,
 ) -> int:
   """
@@ -3554,6 +3693,7 @@ def _drain_ingest_ready(
     tgz_archive_dir (str): Daily archive dir (unused; append uses path).
     archive_data_dir (str): Archive data root for the dead-letter sidecar.
     submitted (dict[str, float] | None): Submit-time map to clear (mutated).
+    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -3590,6 +3730,7 @@ def _drain_ingest_ready(
       inflight.pop(identity, None)
       if submitted is not None:
         submitted.pop(identity, None)
+      _release_ingest_inflight_size(inflight_sizes, identity)
       done += 1
       _log_orchestrator_ingest_timeout(
           identity=identity,
@@ -3611,6 +3752,7 @@ def _drain_ingest_ready(
       inflight.pop(identity, None)
       if submitted is not None:
         submitted.pop(identity, None)
+      _release_ingest_inflight_size(inflight_sizes, identity)
       done += 1
       _log(
           "queue_orchestrator ingest fail identity=%s err=%s"
@@ -3635,6 +3777,7 @@ def _drain_ingest_ready(
     inflight.pop(identity, None)
     if submitted is not None:
       submitted.pop(identity, None)
+    _release_ingest_inflight_size(inflight_sizes, identity)
     done += 1
     ingest_ok = False
     need_archival = False
@@ -4702,6 +4845,7 @@ def _ingest_coordinator_fill_tick(
   ingest_submitted: dict[str, float],
   skip_budget: int,
   fill_stats: dict[str, int],
+  inflight_sizes: dict[str, int] | None = None,
   log_fn: Callable[..., None] | None = None,
 ) -> tuple[int, int, int, int]:
   """
@@ -4726,6 +4870,7 @@ def _ingest_coordinator_fill_tick(
     ingest_submitted (dict[str, float]): Submit monotonic times.
     skip_budget (int): Max skip iterations per band fill.
     fill_stats (dict[str, int]): Per-tick failure counters (mutated).
+    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -4763,6 +4908,7 @@ def _ingest_coordinator_fill_tick(
       "tgz_archive_dir": tgz_archive_dir,
       "archive_data_dir": directory,
       "band_used": band_used,
+      "inflight_sizes": inflight_sizes,
       "log_fn": log_fn,
   }
   while len(ingest_inflight) < hot_cap:
@@ -4882,7 +5028,8 @@ def _ingest_coordinator_loop(
   ingest_submitted: dict[str, float],
   busy_flags: dict[str, bool],
   busy_lock: threading.Lock,
-  log_fn: Callable[..., None] | None,
+  inflight_sizes: dict[str, int] | None = None,
+  log_fn: Callable[..., None] | None = None,
 ) -> None:
   """
   Own ingest fill/drain/abandon and kind-scoped ingest reap.
@@ -4907,6 +5054,7 @@ def _ingest_coordinator_loop(
     ingest_submitted (dict[str, float]): Submit monotonic times.
     busy_flags (dict[str, bool]): Shared busy flags (mutated under lock).
     busy_lock (threading.Lock): Guards ``busy_flags``.
+    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -4947,6 +5095,7 @@ def _ingest_coordinator_loop(
               inflight=ingest_inflight,
               claims=ingest_leases,
               submitted=ingest_submitted,
+              inflight_sizes=inflight_sizes,
               tgz_archive_dir=tgz_archive_dir,
               archive_data_dir=directory,
               log_fn=log_fn,
@@ -4981,6 +5130,7 @@ def _ingest_coordinator_loop(
               ingest_inflight=ingest_inflight,
               ingest_leases=ingest_leases,
               ingest_submitted=ingest_submitted,
+              inflight_sizes=inflight_sizes,
               log_fn=log_fn,
           )
         last_runtime_steal = _ingest_runtime_lease_hygiene(
@@ -5006,6 +5156,7 @@ def _ingest_coordinator_loop(
             "ingest_submitted": ingest_submitted,
             "skip_budget": skip_budget,
             "fill_stats": fill_stats,
+            "inflight_sizes": inflight_sizes,
             "log_fn": log_fn,
         }
         did, hot_queued, zcard, _hot_n = _ingest_coordinator_fill_tick(
@@ -5017,6 +5168,7 @@ def _ingest_coordinator_loop(
             inflight=ingest_inflight,
             claims=ingest_leases,
             submitted=ingest_submitted,
+            inflight_sizes=inflight_sizes,
             tgz_archive_dir=tgz_archive_dir,
             archive_data_dir=directory,
             log_fn=log_fn,
@@ -5092,6 +5244,7 @@ def _ingest_coordinator_loop(
             inflight=ingest_inflight,
             claims=ingest_leases,
             submitted=ingest_submitted,
+            inflight_sizes=inflight_sizes,
             tgz_archive_dir=tgz_archive_dir,
             archive_data_dir=directory,
             log_fn=log_fn,
@@ -5114,6 +5267,7 @@ def _ingest_coordinator_loop(
             inflight=ingest_inflight,
             claims=ingest_leases,
             submitted=ingest_submitted,
+            inflight_sizes=inflight_sizes,
         )
       with busy_lock:
         busy_flags["ingest"] = bool(ingest_inflight)
@@ -5451,14 +5605,16 @@ def _reconstruct_coordinator_loop(
           with _TOTAL_INGESTED_LOCK:
             total_ingested = _TOTAL_INGESTED
             total_completed = _TOTAL_COMPLETED
+          mem_tok = format_ingest_mem_block_census_suffix()
           _log(
               "queue_orchestrator census %s total_ingested=%d "
-              "total_completed=%d%s"
+              "total_completed=%d%s%s"
               % (
                   jq.format_queue_census(census),
                   total_ingested,
                   total_completed,
                   (" " + busy_tok) if busy_tok else "",
+                  mem_tok,
               ),
               log_fn=log_fn,
           )
@@ -5584,6 +5740,7 @@ def run_sync_timedb_queue_orchestrator(
     ingest_inflight: dict[str, AsyncResult] = {}
     ingest_leases: dict[str, Any] = {}
     ingest_submitted: dict[str, float] = {}
+    ingest_inflight_sizes: dict[str, int] = {}
     append_inflight: dict[str, AsyncResult] = {}
     append_leases: dict[str, Any] = {}
     day_inflight: dict[str, Future] = {}
@@ -5725,6 +5882,7 @@ def run_sync_timedb_queue_orchestrator(
             "ingest_inflight": ingest_inflight,
             "ingest_leases": ingest_leases,
             "ingest_submitted": ingest_submitted,
+            "inflight_sizes": ingest_inflight_sizes,
             "busy_flags": busy_flags,
             "busy_lock": busy_lock,
             "log_fn": log_fn,

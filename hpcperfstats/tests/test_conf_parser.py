@@ -41,9 +41,9 @@ def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
   import importlib
   import hpcperfstats.dbload.lib.conf_parser as cfg
   importlib.reload(cfg)
-  assert cfg.INI_OPTION_DEFAULTS["sync_ingest_pool_processes"] == "64"
+  assert cfg.INI_OPTION_DEFAULTS["sync_ingest_pool_processes"] == "96"
   assert cfg.INI_OPTION_DEFAULTS["metrics_pool_processes"] == "32"
-  assert cfg.get_sync_ingest_pool_processes() == 64
+  assert cfg.get_sync_ingest_pool_processes() == 96
   assert cfg.get_metrics_pool_processes() == 32
   assert cfg.get_sync_ingest_hot_days() == 3
   assert cfg.get_gunicorn_workers() == 32
@@ -1229,7 +1229,7 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert not hasattr(cfg, "get_db_connection_string")
   assert not hasattr(cfg, "get_machine_name")
   assert cfg.get_sync_day_close_manifest_stale_seconds() == 7200.0
-  assert cfg.get_sync_ingest_pool_processes() == 64
+  assert cfg.get_sync_ingest_pool_processes() == 96
   assert not hasattr(cfg, "get_sync_archive_pool_process_cap")
 
 
