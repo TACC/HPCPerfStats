@@ -1929,16 +1929,6 @@ def _run_day_close_job(
             )
         ),
     )
-    day_state = None
-    get_day = getattr(coord, "_get_or_create_day", None)
-    if callable(get_day):
-      try:
-        day_state = get_day(tar_path)
-        begin_memo = getattr(day_state, "_begin_closed_raw_pass_memo", None)
-        if callable(begin_memo):
-          begin_memo()
-      except Exception:
-        day_state = None
 
     def _stage_enter(name: str) -> None:
       """
@@ -1992,6 +1982,21 @@ def _run_day_close_job(
             % (day_token, name, result),
             log_fn=log_fn,
         )
+
+    # H22 soak (04 2026-09-24): emit stage breadcrumb before get_day/manifest
+    # load so leftover hang cannot occupy inflight with empty stage_ logs.
+    day_state = None
+    if os.path.isfile(tar_path):
+      _stage_enter("disk_remaining_raw")
+    get_day = getattr(coord, "_get_or_create_day", None)
+    if callable(get_day):
+      try:
+        day_state = get_day(tar_path)
+        begin_memo = getattr(day_state, "_begin_closed_raw_pass_memo", None)
+        if callable(begin_memo):
+          begin_memo()
+      except Exception:
+        day_state = None
 
     def _run_pre_seal_verify() -> str | None:
       """
@@ -2136,8 +2141,8 @@ def _run_day_close_job(
 
     # H17 DC-01: disk remaining-raw / verify-handoff before merge → merge →
     # verify → dedupe → seal → post-seal → delete → tar-drop.
+    # stage_enter disk_remaining_raw already emitted before get_day above.
     if os.path.isfile(tar_path):
-      _stage_enter("disk_remaining_raw")
       early = _maybe_yield_disk_remaining_raw()
       if early:
         return early

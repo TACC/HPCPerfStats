@@ -2550,6 +2550,23 @@ def test_day_close_job_entry_stage_enter_before_remaining_raw_probe():
   assert enter_idx < disk_raw_call
 
 
+def test_day_close_job_entry_stage_enter_before_get_day_manifest_load():
+  """H22 soak: stage_enter before get_day/begin_memo so hang leaves a breadcrumb.
+
+  hpcperfstats04 2026-09-24: H24 deployed, claim|stage count=0 with day_close at
+  cap — hang/manifest work before first stage_enter occupied all inflight slots.
+  """
+  src = inspect.getsource(qo._run_day_close_job)
+  enter_idx = src.index('_stage_enter("disk_remaining_raw")')
+  get_day_idx = src.index('getattr(coord, "_get_or_create_day"')
+  begin_memo_idx = src.index("_begin_closed_raw_pass_memo")
+  disk_raw_call = src.index("early = _maybe_yield_disk_remaining_raw()")
+  assert enter_idx < get_day_idx
+  assert enter_idx < begin_memo_idx
+  assert enter_idx < disk_raw_call
+  assert src.count('_stage_enter("disk_remaining_raw")') == 1
+
+
 def test_day_close_disk_remaining_raw_blocks_uses_cheap_phase_not_has_closed():
   """Leftover verifying phase must not call remaining-raw find helpers."""
 
