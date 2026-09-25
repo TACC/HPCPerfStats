@@ -8,6 +8,8 @@ See also: `sync-timedb-change-regression-gate.mdc`, `sync-timedb-queue-orchestra
 
 **Loaded-96 campaign soak (2026-09-24):** harness `tests/run_loaded96_landed_compare.sh` runs WIDTH=96 continuous-refill soaks. Treat **`occupancy_ok=false`** / collapsed busy seconds after warmup as a **harness/feed or stall-class signal** — escalate with the same T0/T1/T2 greps below (`census`, `progress day=`, `fill_block=`), not as a throughput A/B retain decision. Production verify remains T0→T1→T2 on backlog sites (never T0-only).
 
+**Width-sweep harness (48/64/96 × 3h, 2026-09-24):** `tests/run_loaded_width_sweep_ab.sh` (launch with `nohup setsid`). Same rule: harness `occupancy_ok=false` is a stall-class signal for the compose soak, not a production retain gate — use T0/T1/T2 on backlog sites for live verify.
+
 ### T0 — 10-minute progress + status (primary)
 
 After an interpreter-only redeploy (CPython 3.14 / baked pipeline **3.14t**), T0 also means: confirm live `sync_timedb` / `listend` / `update_metrics` argv is **`/opt/python3.14t/bin/python`** (not GIL `/usr/local/bin/python3`) and greppable `python_abi … Py_GIL_DISABLED=1`. Skip T1/T2 unless ingest/day_close/pool semantics changed.

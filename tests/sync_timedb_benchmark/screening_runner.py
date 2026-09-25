@@ -221,6 +221,112 @@ def e6_retain_candidate(
   return cand_lo >= base_mean and cand_lo >= base_lo * 1.05
 
 
+DEFAULT_WIDTH_SWEEP_WIDTHS: tuple[int, ...] = (48, 64, 96)
+DEFAULT_WIDTH_SWEEP_HOURS = 3.0
+DEFAULT_WIDTH_SWEEP_SMOKE_HOURS = 0.1
+
+
+def width_sweep_gate_would_retain(
+    *,
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+) -> bool:
+  """
+  Return report-only retain for a loaded width-sweep candidate vs baseline.
+
+  Uses the E6 lower-CI gate, then fails closed when ``occupancy_ok`` is
+  explicitly False on the candidate arm.
+
+  Args:
+    baseline (dict[str, Any]): Baseline arm stats (typically WIDTH=48 soak).
+    candidate (dict[str, Any]): Candidate arm stats (WIDTH=64 or 96).
+
+  Returns:
+    bool: Informational retain; never drives product revert.
+
+  Examples:
+    >>> width_sweep_gate_would_retain(
+    ...     baseline={"mean_files_per_s": 1.0, "lower_ci_files_per_s": 0.9},
+    ...     candidate={
+    ...         "mean_files_per_s": 1.2,
+    ...         "lower_ci_files_per_s": 1.05,
+    ...         "occupancy_ok": True,
+    ...     },
+    ... )
+    True
+  """
+  if candidate.get("occupancy_ok") is False:
+    return False
+  return e6_retain_candidate(baseline=baseline, candidate=candidate)
+
+
+def build_width_sweep_ab_manifest(
+    *,
+    baseline: dict[str, Any],
+    arms: dict[int, dict[str, Any]],
+    hours: float,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+  """
+  Build the multi-width loaded-soak A/B artifact (baseline @48 + candidates).
+
+  Args:
+    baseline (dict[str, Any]): This-run 3h@48 arm summary.
+    arms (dict[int, dict[str, Any]]): Candidate width -> arm summary
+        (keys typically 64 and 96).
+    hours (float): Soak wall hours per full arm.
+    run_id (str | None): Optional run id.
+
+  Returns:
+    dict[str, Any]: ``kind=width_sweep_ab`` payload with per-arm
+    ``gate_would_retain``.
+
+  Examples:
+    >>> m = build_width_sweep_ab_manifest(
+    ...     baseline={
+    ...         "mean_files_per_s": 1.0,
+    ...         "lower_ci_files_per_s": 0.9,
+    ...         "ingest_width": 48,
+    ...     },
+    ...     arms={
+    ...         64: {
+    ...             "mean_files_per_s": 1.2,
+    ...             "lower_ci_files_per_s": 1.05,
+    ...             "occupancy_ok": True,
+    ...             "ingest_width": 64,
+    ...         },
+    ...     },
+    ...     hours=3.0,
+    ...     run_id="wsweep",
+    ... )
+    >>> m["kind"]
+    'width_sweep_ab'
+    >>> m["gates"]["64"]
+    True
+  """
+  gates: dict[str, bool] = {}
+  for width, cand in sorted(arms.items(), key=lambda kv: int(kv[0])):
+    gates[str(int(width))] = width_sweep_gate_would_retain(
+        baseline=baseline, candidate=cand,
+    )
+  return {
+      "run_id": run_id or uuid.uuid4().hex,
+      "kind": "width_sweep_ab",
+      "gate": "throughput_report_only",
+      "retain": "n/a",
+      "baseline_width": 48,
+      "hours": float(hours),
+      "widths": list(DEFAULT_WIDTH_SWEEP_WIDTHS),
+      "baseline": dict(baseline),
+      "arms": {str(int(w)): dict(a) for w, a in arms.items()},
+      "gates": gates,
+      "note": (
+          "report-only compare of loaded soaks at 48/64/96 vs this-run "
+          "@48 baseline; never revert product; not a production INI change"
+      ),
+  }
+
+
 def build_e6_ab_manifest(
     *,
     baseline: dict[str, Any],

@@ -280,6 +280,22 @@ Artifacts: `test_runs/sync_timedb_bench/loaded48_arm_baseline_*.json`
 (`occupancy_ok`, files/s). Patch index:
 `docs/SYNC_TIMEDB_CAMPAIGN_PATCH_INDEX.md`.
 
+Width sweep A/B (same continuous-refill harness; **report-only**): serial
+**48 → 64 → 96**, each **0.1h smoke + 3h soak**; baseline = this-run 3h@48.
+Must survive SSH disconnect — launch with `nohup setsid -f`:
+
+```bash
+cd HPCPerfStats
+LOG="/data/HPCPerfStats/test_runs/loaded-width-sweep-$(date +%Y%m%dT%H%M%S).log"
+PIDF="/data/HPCPerfStats/test_runs/loaded-width-sweep.pid"
+nohup setsid bash tests/run_loaded_width_sweep_ab.sh \
+  >"$LOG" 2>&1 < /dev/null &
+echo $! >"$PIDF"
+```
+
+Artifacts: `test_runs/sync_timedb_bench/width_sweep_ab_*.json` (`gates` per
+candidate width). Not a production INI change.
+
 FT contention wave A/B at fixed ingest width **48** (one wave product patch at a
 time; ≥5 replicates by default). Set ``HPCPERFSTATS_CONTENTION_WAVE`` to a wave
 id (`caches`, `park_resume`, `manifest_io`, `members_shard`, `claim_heap`,

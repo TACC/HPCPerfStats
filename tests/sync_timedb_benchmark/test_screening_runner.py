@@ -507,6 +507,57 @@ def test_e6_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):
   assert latest_e6_baseline_artifact(tmp_path) == out
 
 
+def test_width_sweep_widths_gate_and_manifest():
+  """Loaded width-sweep helpers: 48/64/96, occupancy fail-closed, report-only."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+      DEFAULT_WIDTH_SWEEP_WIDTHS,
+      build_width_sweep_ab_manifest,
+      width_sweep_gate_would_retain,
+  )
+
+  assert DEFAULT_WIDTH_SWEEP_WIDTHS == (48, 64, 96)
+  baseline = {
+      "mean_files_per_s": 1.0,
+      "lower_ci_files_per_s": 0.9,
+      "ingest_width": 48,
+      "occupancy_ok": True,
+  }
+  win = {
+      "mean_files_per_s": 1.2,
+      "lower_ci_files_per_s": 1.05,
+      "ingest_width": 64,
+      "occupancy_ok": True,
+  }
+  lose_ci = {
+      "mean_files_per_s": 1.01,
+      "lower_ci_files_per_s": 0.95,
+      "ingest_width": 64,
+      "occupancy_ok": True,
+  }
+  lose_occ = {
+      "mean_files_per_s": 1.2,
+      "lower_ci_files_per_s": 1.05,
+      "ingest_width": 96,
+      "occupancy_ok": False,
+  }
+  assert width_sweep_gate_would_retain(baseline=baseline, candidate=win)
+  assert not width_sweep_gate_would_retain(baseline=baseline, candidate=lose_ci)
+  assert not width_sweep_gate_would_retain(baseline=baseline, candidate=lose_occ)
+  payload = build_width_sweep_ab_manifest(
+      baseline=baseline,
+      arms={64: win, 96: lose_occ},
+      hours=3.0,
+      run_id="wsweep1",
+  )
+  assert payload["kind"] == "width_sweep_ab"
+  assert payload["baseline_width"] == 48
+  assert payload["gate"] == "throughput_report_only"
+  assert payload["retain"] == "n/a"
+  assert payload["gates"]["64"] is True
+  assert payload["gates"]["96"] is False
+  assert "64" in payload["arms"] and "96" in payload["arms"]
+
+
 def test_e7_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):
   from tests.sync_timedb_benchmark.screening_runner import (
       DEFAULT_E7_REPLICATES,
