@@ -132,6 +132,12 @@ from hpcperfstats.dbload.lib.db_unavailable import (
 )
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
 from hpcperfstats.dbload.lib.io_helpers import host_data_instance_from_stats_row
+from hpcperfstats.dbload.lib.sync_timedb_host_data_insert import (
+  insert_host_data_batch,
+)
+from hpcperfstats.dbload.lib.sync_timedb_proc_data_insert import (
+  insert_proc_data_batch,
+)
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
   MultiprocessingWorkerExitError,
   alive_pool_worker_count,
@@ -252,7 +258,7 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   load_persistence_document,
   save_persistence_document,
 )
-from hpcperfstats.site.lib.machine.models import host_data, proc_data
+from hpcperfstats.site.lib.machine.models import proc_data
 
 # archive toggle
 should_archive = True
@@ -3027,12 +3033,7 @@ def _write_stats_payload_to_db(
             proc_objs = _peak_merge_proc_objs_with_existing(proc_objs)
           with _held_ingest_write_phase("db_execute_s"):
             _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
-            proc_data.objects.bulk_create(
-                proc_objs,
-                update_conflicts=True,
-                unique_fields=["jid", "host", "proc"],
-                update_fields=_PROC_DATA_UPDATE_FIELDS,
-            )
+            insert_proc_data_batch(proc_objs)
       else:
         proc_objs = [
             proc_data(**_proc_data_row_kwargs(row)) for row in batch
@@ -3040,12 +3041,7 @@ def _write_stats_payload_to_db(
         proc_objs = _peak_merge_proc_objs_with_existing(proc_objs)
         with _held_ingest_write_timing():
           _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
-          proc_data.objects.bulk_create(
-              proc_objs,
-              update_conflicts=True,
-              unique_fields=["jid", "host", "proc"],
-              update_fields=_PROC_DATA_UPDATE_FIELDS,
-          )
+          insert_proc_data_batch(proc_objs)
   except Exception as e:
     _reraise_if_ingest_control_flow(e)
     if is_database_unavailable_error(e):
@@ -3078,12 +3074,12 @@ def _write_stats_payload_to_db(
               ]
             with _held_ingest_write_phase("db_execute_s"):
               _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
-              host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
+              insert_host_data_batch(host_objs)
         else:
           host_objs = [host_data_instance_from_stats_row(row) for row in batch]
           with _held_ingest_write_timing():
             _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
-            host_data.objects.bulk_create(host_objs, ignore_conflicts=True)
+            insert_host_data_batch(host_objs)
   except Exception as e:
     _reraise_if_ingest_control_flow(e)
     if is_database_unavailable_error(e):

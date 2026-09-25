@@ -27,6 +27,8 @@ def _one_proc_frame() -> pd.DataFrame:
 
 
 def _patch_write_path_no_db(monkeypatch, *, bulk_create):
+  monkeypatch.setenv("HPCPERFSTATS_HOST_INSERT_ARM", "baseline")
+  monkeypatch.setenv("HPCPERFSTATS_PROC_INSERT_ARM", "baseline")
   monkeypatch.setattr(st, "_peak_merge_proc_objs_with_existing", lambda objs: objs)
   monkeypatch.setattr(
       st,

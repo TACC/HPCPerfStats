@@ -55,6 +55,14 @@ elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_LOADED48:-}" == "1" ]]; then
   PYTEST_TARGET=(
     tests/sync_timedb_benchmark/test_loaded48_soak.py
   )
+elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_HOST_INSERT:-}" == "1" ]]; then
+  PYTEST_TARGET=(
+    tests/sync_timedb_benchmark/test_host_data_insert_ab.py
+  )
+elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_PROC_INSERT:-}" == "1" ]]; then
+  PYTEST_TARGET=(
+    tests/sync_timedb_benchmark/test_proc_data_insert_ab.py
+  )
 elif [[ "${HPCPERFSTATS_SYNC_TIMEDB_SCREENING:-}" == "1" \
      || "${HPCPERFSTATS_SYNC_TIMEDB_KNEE:-}" == "1" ]]; then
   PYTEST_TARGET=(

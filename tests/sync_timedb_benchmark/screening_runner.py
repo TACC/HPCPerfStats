@@ -221,6 +221,169 @@ def e6_retain_candidate(
   return cand_lo >= base_mean and cand_lo >= base_lo * 1.05
 
 
+DEFAULT_HOST_INSERT_ROWS = 100_000
+DEFAULT_HOST_INSERT_REPLICATES = 5
+
+
+def host_insert_mode_enabled() -> bool:
+  """
+  Return whether write-only host_data insert A/B mode is enabled.
+
+  Returns:
+    bool: True when ``HPCPERFSTATS_SYNC_TIMEDB_HOST_INSERT`` is truthy.
+
+  Examples:
+    >>> host_insert_mode_enabled() in (True, False)
+    True
+  """
+  return os.environ.get(
+      "HPCPERFSTATS_SYNC_TIMEDB_HOST_INSERT",
+      "",
+  ).strip().lower() in ("1", "yes", "true")
+
+
+def host_insert_row_count() -> int:
+  """
+  Return the configured host insert A/B row count (≥100000 default).
+
+  Returns:
+    int: Number of ``host_data`` rows to insert per replicate.
+
+  Examples:
+    >>> host_insert_row_count() >= 1
+    True
+  """
+  raw = os.environ.get("HPCPERFSTATS_HOST_INSERT_ROWS", "").strip()
+  if not raw:
+    return DEFAULT_HOST_INSERT_ROWS
+  return max(1, int(raw))
+
+
+def host_insert_replicates() -> int:
+  """
+  Return the configured host insert A/B replicate count.
+
+  Returns:
+    int: Replicates per arm.
+
+  Examples:
+    >>> host_insert_replicates() >= 1
+    True
+  """
+  raw = os.environ.get("HPCPERFSTATS_HOST_INSERT_REPLICATES", "").strip()
+  if not raw:
+    return DEFAULT_HOST_INSERT_REPLICATES
+  return max(1, int(raw))
+
+
+def summarize_write_s_replicates(
+    write_s_samples: Sequence[float],
+) -> dict[str, Any]:
+  """
+  Summarize write-only wall samples (min/max as CI proxy, matching E6).
+
+  Args:
+    write_s_samples (Sequence[float]): Per-replicate write seconds.
+
+  Returns:
+    dict[str, Any]: mean/lower/upper write_s and replicate count.
+
+  Raises:
+    ValueError: When ``write_s_samples`` is empty.
+
+  Examples:
+    >>> summarize_write_s_replicates([1.0, 1.2])["mean_write_s"]
+    1.1
+  """
+  if not write_s_samples:
+    raise ValueError("write_s_samples must not be empty")
+  values = [float(sample) for sample in write_s_samples]
+  return {
+      "mean_write_s": float(statistics.fmean(values)),
+      "lower_ci_write_s": min(values),
+      "upper_ci_write_s": max(values),
+      "replicates": len(values),
+      "samples_s": values,
+  }
+
+
+def host_insert_retain_candidate(
+    *,
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+) -> bool:
+  """
+  Return True when candidate write latency clears the retain gate.
+
+  Latency gate (lower is better): candidate lower CI is below baseline mean
+  and at least 5% below baseline lower CI.
+
+  Args:
+    baseline (dict[str, Any]): Baseline arm with mean/lower write_s.
+    candidate (dict[str, Any]): Candidate arm with mean/lower write_s.
+
+  Returns:
+    bool: True when COPY should be retained.
+
+  Examples:
+    >>> host_insert_retain_candidate(
+    ...     baseline={"mean_write_s": 10.0, "lower_ci_write_s": 9.0},
+    ...     candidate={"mean_write_s": 7.0, "lower_ci_write_s": 6.0},
+    ... )
+    True
+  """
+  base_mean = float(baseline["mean_write_s"])
+  base_lo = float(baseline["lower_ci_write_s"])
+  cand_lo = float(candidate["lower_ci_write_s"])
+  return cand_lo < base_mean and cand_lo <= base_lo * 0.95
+
+
+def build_host_insert_ab_manifest(
+    *,
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+    row_count: int,
+    retain: bool,
+    python_abi: str,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+  """
+  Build the host_data insert A/B artifact payload.
+
+  Args:
+    baseline (dict[str, Any]): Baseline write summary.
+    candidate (dict[str, Any]): Candidate write summary.
+    row_count (int): Rows inserted per replicate.
+    retain (bool): Whether candidate cleared the retain gate.
+    python_abi (str): Interpreter identity string.
+    run_id (str | None): Optional run id.
+
+  Returns:
+    dict[str, Any]: Artifact dictionary.
+
+  Examples:
+    >>> build_host_insert_ab_manifest(
+    ...     baseline={"mean_write_s": 1.0, "lower_ci_write_s": 0.9},
+    ...     candidate={"mean_write_s": 0.5, "lower_ci_write_s": 0.4},
+    ...     row_count=100000, retain=True, python_abi="3.14",
+    ... )["kind"]
+    'host_data_insert_ab'
+  """
+  return {
+      "run_id": run_id or uuid.uuid4().hex,
+      "kind": "host_data_insert_ab",
+      "python_abi": python_abi,
+      "row_count": int(row_count),
+      "baseline": dict(baseline),
+      "candidate": dict(candidate),
+      "retain": bool(retain),
+      "note": (
+          "retain True only when candidate write lower CI clears the "
+          "latency gate (below baseline mean and ≤95% of baseline lower CI)"
+      ),
+  }
+
+
 DEFAULT_WIDTH_SWEEP_WIDTHS: tuple[int, ...] = (48, 64, 96)
 DEFAULT_WIDTH_SWEEP_HOURS = 3.0
 DEFAULT_WIDTH_SWEEP_SMOKE_HOURS = 0.1

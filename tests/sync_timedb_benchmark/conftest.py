@@ -102,6 +102,28 @@ def _loaded48_enabled() -> bool:
   )
 
 
+def _host_insert_enabled() -> bool:
+  return os.environ.get(
+      "HPCPERFSTATS_SYNC_TIMEDB_HOST_INSERT",
+      "",
+  ).strip().lower() in (
+      "1",
+      "yes",
+      "true",
+  )
+
+
+def _proc_insert_enabled() -> bool:
+  return os.environ.get(
+      "HPCPERFSTATS_SYNC_TIMEDB_PROC_INSERT",
+      "",
+  ).strip().lower() in (
+      "1",
+      "yes",
+      "true",
+  )
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config,
     items: list[pytest.Item],
@@ -181,6 +203,20 @@ def pytest_collection_modifyitems(
           "HPCPERFSTATS_SYNC_TIMEDB_LOADED48=1 (workflow --loaded48)"
       ),
   )
+  host_insert_on = _compose_network_enabled() and _host_insert_enabled()
+  skip_host_insert = pytest.mark.skip(
+      reason=(
+          "Requires HPCPERFSTATS_COMPOSE_NETWORK=1 and "
+          "HPCPERFSTATS_SYNC_TIMEDB_HOST_INSERT=1 (workflow --host-insert)"
+      ),
+  )
+  proc_insert_on = _compose_network_enabled() and _proc_insert_enabled()
+  skip_proc_insert = pytest.mark.skip(
+      reason=(
+          "Requires HPCPERFSTATS_COMPOSE_NETWORK=1 and "
+          "HPCPERFSTATS_SYNC_TIMEDB_PROC_INSERT=1 (workflow --proc-insert)"
+      ),
+  )
   db_mark = pytest.mark.django_db(transaction=True)
   for item in items:
     if "test_ingest_width_screening" in item.nodeid:
@@ -218,3 +254,13 @@ def pytest_collection_modifyitems(
         item.add_marker(db_mark)
       else:
         item.add_marker(skip_loaded48)
+    if "test_host_data_insert_ab" in item.nodeid:
+      if host_insert_on:
+        item.add_marker(db_mark)
+      else:
+        item.add_marker(skip_host_insert)
+    if "test_proc_data_insert_ab" in item.nodeid:
+      if proc_insert_on:
+        item.add_marker(db_mark)
+      else:
+        item.add_marker(skip_proc_insert)

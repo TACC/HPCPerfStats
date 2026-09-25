@@ -317,6 +317,26 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
     occ_ok = True
     occupancy_gate = "smoke_peak"
   abi = "%s" % (getattr(sys, "version", "unknown"),)
+  # Insert-path A/B: HOST/PROC insert arms (COPY vs bulk_create). Default
+  # product path is candidate after retain; baseline forces ORM bulk_create.
+  host_arm = os.environ.get("HPCPERFSTATS_HOST_INSERT_ARM", "").strip().lower()
+  proc_arm = os.environ.get("HPCPERFSTATS_PROC_INSERT_ARM", "").strip().lower()
+  if host_arm not in ("baseline", "candidate"):
+    from hpcperfstats.dbload.lib.sync_timedb_host_data_insert import (
+        host_insert_arm,
+    )
+    host_arm = host_insert_arm()
+  if proc_arm not in ("baseline", "candidate"):
+    from hpcperfstats.dbload.lib.sync_timedb_proc_data_insert import (
+        proc_insert_arm,
+    )
+    proc_arm = proc_insert_arm()
+  # Artifact arm = candidate only when both insert paths use COPY.
+  soak_arm = (
+      "candidate"
+      if host_arm == "candidate" and proc_arm == "candidate"
+      else "baseline"
+  )
   payload = build_loaded48_manifest(
       hours=hours,
       ingest_width=ingest_width,
@@ -326,14 +346,16 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
       occupancy_ok=occ_ok,
       occupancy_full_frac=float(full_frac),
       python_abi=abi,
-      arm="baseline",
+      arm=soak_arm,
       peak_post_warmup=int(peak_post),
       occupancy_gate=occupancy_gate,
   )
+  payload["host_insert_arm"] = host_arm
+  payload["proc_insert_arm"] = proc_arm
   out = write_screening_artifact(
       payload,
       repo_root=REPO_ROOT,
-      prefix="loaded48_arm_baseline",
+      prefix="loaded48_arm_%s" % soak_arm,
   )
   assert out.is_file()
   assert occ_ok, (
