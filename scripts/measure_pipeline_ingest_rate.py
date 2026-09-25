@@ -40,16 +40,23 @@ Attributes:
   _BOOT_MARKERS: Attribute.
   _CHUNK_IMMEDIATE_RE: Attribute.
   _FULL_INGEST_RE: Attribute.
+  _GIB_BYTES: Attribute.
+  _INGEST_ELAPSED_S_RE: Attribute.
+  _INGEST_POSTGRES_S_RE: Attribute.
+  _INGEST_SIZE_BYTES_RE: Attribute.
   _INGEST_START_FALLBACK_MARKERS: Attribute.
   _LISTEND_UNLINKS_RE: Attribute.
   _LOG_TS_CONTAINER_FIRST_RE: Attribute.
   _LOG_TS_CONTAINER_PIPE_RE: Attribute.
   _LOG_TS_LEADING_RE: Attribute.
   _LOG_TS_PIPE_RE: Attribute.
+  _MIB_BYTES: Attribute.
   _PENDING_RESCAN_RE: Attribute.
   _PENDING_TRUNCATE_RE: Attribute.
   _QUEUE_SATURATION_DISK_FACTOR: Attribute.
   _RFC3339_TS: Attribute.
+  _SIZE_TIER_BOUNDS: Attribute.
+  _SIZE_TIER_NAMES: Attribute.
   _THROUGHPUT_BACKLOG_RE: Attribute.
 """
 
@@ -61,6 +68,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from statistics import median
 from typing import Iterable, Iterator, Optional
 
 # Docker / podman compose log prefixes (RFC3339, optional nanoseconds).
@@ -91,6 +99,19 @@ _FULL_INGEST_RE = re.compile(
     r"ingest file path=\S+ .*outcome=ingested\b"
     r"(?=.*\bingest_ok=yes\b)(?=.*\bdb_skip=no\b)"
 )
+# Named-field extracts (token order on ingest outcome lines is unordered).
+_INGEST_SIZE_BYTES_RE = re.compile(r"size_bytes=(?P<size>[0-9]+)")
+_INGEST_ELAPSED_S_RE = re.compile(r"elapsed_s=(?P<elapsed>[0-9.]+)")
+_INGEST_POSTGRES_S_RE = re.compile(r"postgres_s=(?P<postgres>[0-9.]+)")
+_MIB_BYTES = 1024 * 1024
+_GIB_BYTES = 1024 * _MIB_BYTES
+_SIZE_TIER_BOUNDS = (
+    ("lt_64mib", 0, 64 * _MIB_BYTES),
+    ("64mib_1gib", 64 * _MIB_BYTES, _GIB_BYTES),
+    ("1_4gib", _GIB_BYTES, 4 * _GIB_BYTES),
+    ("ge_4gib", 4 * _GIB_BYTES, None),
+)
+_SIZE_TIER_NAMES = tuple(name for name, _lo, _hi in _SIZE_TIER_BOUNDS)
 _CHUNK_IMMEDIATE_RE = re.compile(
     r"(?:sync_timedb:\s+)?(?:ingest:\s+)?chunk ingest summary .*checkpoint_immediate_n=(\d+)"
 )
@@ -132,6 +153,10 @@ class LogMetrics:
       backlog_throughput_samples: ``backlog_throughput_samples``.
       first_ts: ``first_ts``.
       full_ingest_count: ``full_ingest_count``.
+      full_ingest_bytes: Sum of ``size_bytes`` on full-ingest lines (0 when absent).
+      full_ingest_elapsed_by_tier: Per-tier ``elapsed_s`` samples.
+      full_ingest_postgres_by_tier: Per-tier ``postgres_s`` samples.
+      full_ingest_count_by_tier: Per-tier full-ingest counts.
       last_ts: ``last_ts``.
       listend_unlink_samples: Timestamped rolling-window unlink counts.
       listend_unlink_sum: Effective non-overlapping unlink sum for rates.
@@ -143,6 +168,16 @@ class LogMetrics:
     )
     listend_unlink_sum: int = 0
     full_ingest_count: int = 0
+    full_ingest_bytes: int = 0
+    full_ingest_elapsed_by_tier: dict[str, list[float]] = field(
+        default_factory=lambda: {name: [] for name in _SIZE_TIER_NAMES},
+    )
+    full_ingest_postgres_by_tier: dict[str, list[float]] = field(
+        default_factory=lambda: {name: [] for name in _SIZE_TIER_NAMES},
+    )
+    full_ingest_count_by_tier: dict[str, int] = field(
+        default_factory=lambda: {name: 0 for name in _SIZE_TIER_NAMES},
+    )
     archive_immediate_sum: int = 0
     archive_finalize_sum: int = 0
     # Uncapped on-disk pending (rescan done + truncate pending=N).
@@ -168,6 +203,107 @@ class LogMetrics:
           >>> LogMetrics().backlog_rescan_samples()  # doctest: +SKIP
         """
         return self.backlog_disk_samples
+
+
+def _size_tier_name(size_bytes: int) -> str:
+    """
+    Map ``size_bytes`` to a cohort label for analyzer summaries.
+
+    Args:
+      size_bytes (int): File size from ingest outcome ``size_bytes=``.
+
+    Returns:
+      str: Tier name from ``_SIZE_TIER_NAMES``.
+
+    Examples:
+      >>> _size_tier_name(0)  # doctest: +SKIP
+    """
+    for name, lo, hi in _SIZE_TIER_BOUNDS:
+        if size_bytes < lo:
+            continue
+        if hi is None or size_bytes < hi:
+            return name
+    return _SIZE_TIER_NAMES[-1]
+
+
+def _optional_float_group(
+    match: Optional[re.Match[str]],
+    group: str,
+) -> Optional[float]:
+    """
+    Parse a named float group when the regex matched.
+
+    Args:
+      match (Optional[re.Match[str]]): Match object, or None.
+      group (str): Named group to read.
+
+    Returns:
+      Optional[float]: Parsed float, or None when absent/unparseable.
+
+    Examples:
+      >>> _optional_float_group(None, "elapsed")  # doctest: +SKIP
+    """
+    if match is None:
+        return None
+    raw = match.group(group)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _record_full_ingest(metrics: LogMetrics, body: str) -> None:
+    """
+    Count a full ingest and accumulate size/elapsed/postgres tier samples.
+
+    Token order on outcome lines is unordered; extracts use named-field regex.
+
+    Args:
+      metrics (LogMetrics): Accumulator.
+      body (str): Log body after timestamp strip.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _record_full_ingest(LogMetrics(), "")  # doctest: +SKIP
+    """
+    metrics.full_ingest_count += 1
+    size_match = _INGEST_SIZE_BYTES_RE.search(body)
+    elapsed = _optional_float_group(_INGEST_ELAPSED_S_RE.search(body), "elapsed")
+    postgres = _optional_float_group(_INGEST_POSTGRES_S_RE.search(body), "postgres")
+    size_bytes: Optional[int] = None
+    if size_match is not None:
+        try:
+            size_bytes = int(size_match.group("size"))
+        except (TypeError, ValueError):
+            size_bytes = None
+    if size_bytes is not None and size_bytes >= 0:
+        metrics.full_ingest_bytes += size_bytes
+        tier = _size_tier_name(size_bytes)
+        metrics.full_ingest_count_by_tier[tier] += 1
+        if elapsed is not None:
+            metrics.full_ingest_elapsed_by_tier[tier].append(elapsed)
+        if postgres is not None:
+            metrics.full_ingest_postgres_by_tier[tier].append(postgres)
+
+
+def _fmt_optional_median(samples: list[float]) -> str:
+    """
+    Format median of samples, or ``N/A`` when empty.
+
+    Args:
+      samples (list[float]): Numeric samples.
+
+    Returns:
+      str: Median formatted to 3 decimals, or ``N/A``.
+
+    Examples:
+      >>> _fmt_optional_median([])  # doctest: +SKIP
+    """
+    if not samples:
+        return "N/A"
+    return f"{median(samples):.3f}"
 
 
 def _normalize_iso_timestamp(text: str) -> str:
@@ -428,7 +564,7 @@ def parse_log_lines(
             )
 
         if _FULL_INGEST_RE.search(body):
-            metrics.full_ingest_count += 1
+            _record_full_ingest(metrics, body)
 
         immediate_match = _CHUNK_IMMEDIATE_RE.search(body)
         if immediate_match:
@@ -940,10 +1076,15 @@ def build_outcomes(
         eta_archive_done=eta_archive_done,
     )
 
+    mib_per_min = 0.0
+    if window_minutes > 0:
+        mib_per_min = (metrics.full_ingest_bytes / float(_MIB_BYTES)) / window_minutes
+
     outcomes = {
         "window_minutes": f"{window_minutes:.2f}",
         "listend_closed_per_min": _fmt_rate(listend_rate),
         "sync_full_ingest_per_min": _fmt_rate(ingest_rate),
+        "sync_full_ingest_mib_per_min": _fmt_rate(mib_per_min),
         "sync_archive_done_per_min": _fmt_rate(archive_rate),
         "ratio_listend_over_full_ingest": ratio_ingest,
         "verdict_full_ingest": verdict_ingest,
@@ -967,6 +1108,17 @@ def build_outcomes(
         "estimated_finish_local": finish_local,
         "estimated_finish_basis": finish_basis,
     }
+    for tier in _SIZE_TIER_NAMES:
+        count = int(metrics.full_ingest_count_by_tier.get(tier, 0))
+        tier_rate = (count / window_minutes) if window_minutes > 0 else 0.0
+        outcomes[f"tier_{tier}_count"] = str(count)
+        outcomes[f"tier_{tier}_per_min"] = _fmt_rate(tier_rate)
+        outcomes[f"tier_{tier}_median_elapsed_s"] = _fmt_optional_median(
+            metrics.full_ingest_elapsed_by_tier.get(tier, []),
+        )
+        outcomes[f"tier_{tier}_median_postgres_s"] = _fmt_optional_median(
+            metrics.full_ingest_postgres_by_tier.get(tier, []),
+        )
     return outcomes
 
 
@@ -1049,6 +1201,7 @@ def format_stdout(outcomes: dict[str, str]) -> str:
         "window_minutes",
         "listend_closed_per_min",
         "sync_full_ingest_per_min",
+        "sync_full_ingest_mib_per_min",
         "sync_archive_done_per_min",
         "ratio_listend_over_full_ingest",
         "verdict_full_ingest",
@@ -1072,7 +1225,19 @@ def format_stdout(outcomes: dict[str, str]) -> str:
         "estimated_finish_local",
         "estimated_finish_basis",
     )
-    return "\n".join(f"{key}={outcomes[key]}" for key in order)
+    tier_keys: list[str] = []
+    for tier in _SIZE_TIER_NAMES:
+        tier_keys.extend(
+            (
+                f"tier_{tier}_count",
+                f"tier_{tier}_per_min",
+                f"tier_{tier}_median_elapsed_s",
+                f"tier_{tier}_median_postgres_s",
+            )
+        )
+    return "\n".join(
+        f"{key}={outcomes[key]}" for key in (*order, *tier_keys)
+    )
 
 
 def analyze_lines(

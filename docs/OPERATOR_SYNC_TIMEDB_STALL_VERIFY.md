@@ -779,7 +779,9 @@ python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-full.lo
 python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-full.log --include-startup
 ```
 
-Stdout prints only outcome keys (`listend_closed_per_min`, `sync_full_ingest_per_min`, `verdict_full_ingest`, `eta_hours_*`, etc.). **WINNING** means sync is catching up or even; **LOSING** means listend outruns sync. Warnings go to stderr.
+Stdout prints only outcome keys (`listend_closed_per_min`, `sync_full_ingest_per_min`, `sync_full_ingest_mib_per_min`, `tier_*_count` / `tier_*_per_min` / `tier_*_median_elapsed_s` / `tier_*_median_postgres_s`, `verdict_full_ingest`, `eta_hours_*`, etc.). **WINNING** means sync is catching up or even; **LOSING** means listend outruns sync. Size tiers: `lt_64mib`, `64mib_1gib`, `1_4gib`, `ge_4gib`. Warnings go to stderr. **Do not** treat ≤30 min post-redeploy windows as steady-state (hpcperfstats04 2026-09-24: ~5.3 ingest/min warm-up vs ~1.65/min at 289 min under width 96).
+
+**Post width-48 redeploy T0 (hpcperfstats04 rate-match):** after image with default `sync_ingest_pool_processes=48` is live, re-run the measure block above (≥4 h preferred; ≥90 min minimum). Compare `ratio_listend_over_full_ingest` to baseline **3.72**; note mid-tier median elapsed/postgres vs multi-ks walls. Census `ingest=` should track ~48 when the queue is deep — **not** 96. Do **not** raise the pool if ratio remains LOSING; use analyzer tiers to choose write-path vs parse vs giant follow-on.
 
 ### Stats file disappeared vs day-close delete (delete race)
 

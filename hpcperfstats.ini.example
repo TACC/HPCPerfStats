@@ -203,8 +203,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # End edge tolerance seconds (default 600): MAX(time) in window must be >= end - margin.
 # metrics_readiness_end_margin_seconds = 600
 
-# Absolute sync_timedb ingest pool size; archive discovery/day-raw use the same getter (default 96).
-# sync_ingest_pool_processes = 96
+# Absolute sync_timedb ingest pool size; archive discovery/day-raw use the same getter (default 48).
+# Width 96 full-fill inflated mid-file walls on Horizon; knee study winner is 48 — do not raise without new evidence.
+# sync_ingest_pool_processes = 48
 
 # Concurrent daily-tar append slots / archive spawn pool size (default 4).
 # sync_archive_pool_processes = 4

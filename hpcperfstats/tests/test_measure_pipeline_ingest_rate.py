@@ -368,13 +368,91 @@ def test_stdout_only_key_count(mod):
     lines = text.splitlines()
     assert all("=" in line for line in lines)
     assert lines[0].startswith("window_minutes=")
-    assert len(lines) == 25
+    # 26 base keys + 4 tiers × 4 fields
+    assert len(lines) == 42
+    assert "sync_full_ingest_mib_per_min=" in text
+    assert "tier_lt_64mib_count=" in text
     assert "ingest_queue_depth_latest=" in text
     assert "ingest_queue_depth_at_start=" in text
     assert "ingest_start_utc=" in text
     assert "estimated_finish_local=" in text
     assert "estimated_finish_basis=" in text
     assert "container_start_utc=" not in text
+
+
+def test_full_ingest_mib_per_min_and_size_tiers(mod):
+    """MiB/min and size-tier medians from known size_bytes / elapsed / postgres."""
+    mib = 1024 * 1024
+    gib = 1024 * mib
+    lines = [
+        _ts(0)
+        + "Messages consumed in the last 10 minutes: 1; messages waiting to "
+        "be consumed: 0; current file unlinks (last 10 minutes): 1",
+        _ts(0) + "sync_timedb: pending rescan done pending=10 elapsed_s=1.0",
+        # lt_64mib — unordered tokens (postgres before size before elapsed)
+        _ts(10)
+        + (
+            "ingest file path=/arch/a outcome=ingested postgres_s=10.0 "
+            "ingest_ok=yes db_skip=no size_bytes=%d elapsed_s=40.0 archive=yes"
+            % (32 * mib)
+        ),
+        # 64mib_1gib
+        _ts(20)
+        + (
+            "ingest file path=/arch/b outcome=ingested elapsed_s=100.0 "
+            "ingest_ok=yes archive=yes db_skip=no size_bytes=%d postgres_s=50.0"
+            % (128 * mib)
+        ),
+        # 1_4gib
+        _ts(30)
+        + (
+            "ingest file path=/arch/c outcome=ingested size_bytes=%d "
+            "ingest_ok=yes db_skip=no elapsed_s=200.0 postgres_s=80.0 archive=yes"
+            % (2 * gib)
+        ),
+        # ge_4gib
+        _ts(40)
+        + (
+            "ingest file path=/arch/d outcome=ingested elapsed_s=300.0 "
+            "postgres_s=120.0 size_bytes=%d ingest_ok=yes archive=yes db_skip=no"
+            % (5 * gib)
+        ),
+        _ts(60)
+        + "Messages consumed in the last 10 minutes: 1; messages waiting to "
+        "be consumed: 0; current file unlinks (last 10 minutes): 1",
+        _ts(60) + "Pending stats file list truncated pending=6 max=2000",
+    ]
+    outcomes = mod.analyze_lines(lines)
+    # (32+128) MiB + 2 GiB + 5 GiB = 160 MiB + 7168 MiB = 7328 MiB / 60 min
+    expected_mib = (32 + 128 + 2 * 1024 + 5 * 1024) / 60.0
+    assert float(outcomes["sync_full_ingest_mib_per_min"]) == pytest.approx(
+        expected_mib, rel=1e-6,
+    )
+    assert outcomes["tier_lt_64mib_count"] == "1"
+    assert outcomes["tier_lt_64mib_median_elapsed_s"] == "40.000"
+    assert outcomes["tier_lt_64mib_median_postgres_s"] == "10.000"
+    assert outcomes["tier_64mib_1gib_count"] == "1"
+    assert outcomes["tier_64mib_1gib_median_elapsed_s"] == "100.000"
+    assert outcomes["tier_64mib_1gib_median_postgres_s"] == "50.000"
+    assert outcomes["tier_1_4gib_count"] == "1"
+    assert outcomes["tier_ge_4gib_count"] == "1"
+    assert outcomes["tier_ge_4gib_median_elapsed_s"] == "300.000"
+    assert outcomes["tier_ge_4gib_median_postgres_s"] == "120.000"
+
+
+def test_unordered_size_elapsed_postgres_tokens(mod):
+    """Named-field regex must not require size_bytes before elapsed_s."""
+    body = (
+        "ingest file path=/x outcome=ingested postgres_s=1.5 "
+        "ingest_ok=yes db_skip=no elapsed_s=9.0 size_bytes=1024 archive=yes"
+    )
+    metrics = mod.LogMetrics()
+    mod._record_full_ingest(metrics, body)
+    assert metrics.full_ingest_count == 1
+    assert metrics.full_ingest_bytes == 1024
+    assert metrics.full_ingest_count_by_tier["lt_64mib"] == 1
+    assert metrics.full_ingest_elapsed_by_tier["lt_64mib"] == [9.0]
+    assert metrics.full_ingest_postgres_by_tier["lt_64mib"] == [1.5]
 
 
 def test_cli_script_runs_from_repo(tmp_path):

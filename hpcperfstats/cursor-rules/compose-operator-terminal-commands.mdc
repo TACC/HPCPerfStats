@@ -370,6 +370,23 @@ print(\"metrics_pool_threads\", cfg.get_metrics_pool_processes())
 "'
 ```
 
+### Anti-pattern — inventing `conf_parser.get_listend_pool_processes`
+
+`conf_parser` has **no** `get_listend_pool_processes()`. Operator pastes that call it raise **`AttributeError`** (hpcperfstats04 2026-09-24 rate-match classify). The real getter is **`get_listend_db_ingest_pool_processes()`** (listend live DB ingest thread pool). Ingest width for `sync_timedb` remains **`get_sync_ingest_pool_processes()`**.
+
+| Do | Don't |
+|----|-------|
+| `print(cfg.get_listend_db_ingest_pool_processes())` | `cfg.get_listend_pool_processes()` |
+| `print(cfg.get_sync_ingest_pool_processes())` for sync width | Invent a shortened `get_listend_pool_*` name |
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as cfg
+print(cfg.get_listend_db_ingest_pool_processes())
+print(cfg.get_sync_ingest_pool_processes())
+"'
+```
+
 ### Anti-pattern — inventing `job_data.metrics_complete`
 
 `job_data` has **no** `metrics_complete` field. Operator ORM `.values("metrics_complete")` raises **`FieldError: Cannot resolve keyword 'metrics_complete'`** (hpcperfstats03, 2026-07-23). Use **`metrics_distinct_time_count`** (and related telemetry fields) for metrics readiness.

@@ -259,7 +259,7 @@ INI_OPTION_DEFAULTS = {
     'metrics_readiness_require_window_coverage': 'yes',
     'metrics_readiness_start_margin_seconds': '600',
     'metrics_readiness_end_margin_seconds': '600',
-    'sync_ingest_pool_processes': '96',
+    'sync_ingest_pool_processes': '48',
     'sync_archive_pool_processes': '4',
         'sync_ingest_queue_max_size': '3000',
     'sync_ingest_rescan_mtime_days': '1',
@@ -2119,7 +2119,8 @@ def get_sync_ingest_pool_processes() -> Any:
   Absolute ``sync_timedb`` ingest process pool size.
 
   Also used as the archive discovery / day-raw thread ceiling (replace,
-  do not alias a separate discovery key). INI default **96**.
+  do not alias a separate discovery key). INI default **48** (knee study
+  winner; width-96 full-fill inflated per-file walls on Horizon catch-up).
 
   Returns:
     Any: Positive int process/thread count.

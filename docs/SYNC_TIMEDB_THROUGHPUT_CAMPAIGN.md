@@ -84,7 +84,7 @@ acceptance, rollback, status.
 
 | ID | Hypothesis | Target metric | Surface | Status |
 |----|------------|---------------|---------|--------|
-| E1 | Ingest width below 96 raises durable files/s and cuts lock wait | lower CI bound files/s; p95 lock wait | INI `sync_ingest_pool_processes` + scaling study | **knee evidence present** — artifact `test_runs/sync_timedb_bench/knee_6364b97ef38f45c4b0399ea3d20044ca.json` (widths 48/64/80/96, 5 replicates). Winner **48** threads (selection prefers smallest width within CI of peak; means nearly flat ≈0.050–0.053 files/s). Screening hint 64 superseded for knee candidate. Caveat: wall-clock used small/mid derived files under compose; not a production INI change. Harness fixes: `--knee` clears ambient `SCREEN_WIDTHS`/`REPLICATES`; early-shutdown watcher bound to ingest timeout + file-complete marks |
+| E1 | Ingest width below 96 raises durable files/s and cuts lock wait | lower CI bound files/s; p95 lock wait | INI `sync_ingest_pool_processes` + scaling study | **shipped default 48** — knee artifact `test_runs/sync_timedb_bench/knee_6364b97ef38f45c4b0399ea3d20044ca.json` (widths 48/64/80/96, 5 replicates). Winner **48**. **hpcperfstats04 2026-09-24 steady @ width 96:** window **289 min**, listend **6.15**/min, full-ingest **1.65**/min, ratio **3.72 LOSING** (warm-up ~16 min had ~5.3 ingest/min — not steady). Mid-file walls multi-ks with `postgres_s` ≈ half. Default registry/example → **48**; do **not** raise pool. Analyzer now emits `sync_full_ingest_mib_per_min` + size-tier median elapsed/postgres for post-48 soak decisions. |
 | E2 | Closed-book residual ≤5% mid-size cohort | residual fraction | write/lock/parse telemetry | **pass after telem fix** — `test_runs/sync_timedb_bench/e2_closed_book_da92427028ed4dfbb430053defac3d72.json` (wall≈148s, **23 phases**, `residual_frac=0.0`, `residual_ok=true`). Dominant campaign holds: `parse_feed_s`, `parse_build_df_s`, `parse_proc_merge_s`, then `write_postgres_s` / `write_db_execute_s`. (Prior empty-phases artifact `…8768f659…` superseded.) Note: campaign phase seconds can exceed wall when workers run in parallel — residual uses closed-book accounting against wall |
 | E3 | Non-overlapping listend rate revises LOSING margin | listend/ingest ratio | analyzer (done) | **complete (LOSING)** — fixed analyzer + timestamps; 02/04 ~4.5h post-redeploy pastes with `--since-minutes 1440` both **verdict_full_ingest=LOSING** (ratios 2.3 / 66.9); absolute rates diluted; undiluted ~3.2h recompute: **02 ratio 2.76**, **04 ratio 1.24** (both LOSING; archive_done 0) |
 | E4 | Split ORM vs DB execute shrinks false “postgres” blame | phase shares | ingest write phases | helpers + process-global write telem shipped; E2 now shows `write_postgres_s` / `write_db_execute_s` / `write_orm_materialize_s` populated |
@@ -158,14 +158,15 @@ Screening winner ≠ deployable INI without knee confirmation (follow-on).
 
 ## Next actions
 
-1. ~~Knee confirmation (≥5 replicates, widths 48–96)~~ — done; candidate **48** (flat curve). Still not an INI redeploy.
+1. ~~Knee confirmation (≥5 replicates, widths 48–96)~~ — done; candidate **48** (flat curve). **Shipped** as `sync_ingest_pool_processes` default **48** (2026-09-24 rate-match plan); do not raise toward 96 without new evidence.
 2. ~~Compose E2 re-run after telem fix~~ — done 2026-09-17; `residual_frac=0.0`, 23 phases (`e2_closed_book_da92427028ed4dfbb430053defac3d72.json`).
 3. ~~Compose `--knobs` matrix @48~~ — done 2026-09-18; candidates day_close/archive/populate **1**, bulk **2000** (`knobs_cf29f0b42561480f99280ce0616c973d.json`). Flat day-close/archive/populate — do not raise inflight from knobs alone.
 4. ~~E6 feed_line product CODE A/B~~ — done 2026-09-18 **negative** (`e6_parse_feed_ab_31a8582e4c864e34a5af28cac99ee189.json`, retain=false); patch reverted.
 5. ~~E7 residual proc_merge/build_df product CODE A/B~~ — done 2026-09-19 **negative** (`e7_proc_build_ab_da062d9bdc6f45ce8a1a11f95e02ebb6.json`, retain=false); patch reverted. Harness `--e7` kept. Evidence-led Python CODE tranche on closed-book parse holds is exhausted for corpus_steady @48 without a new flamegraph / larger cohort.
-6. Coexistence matrix (`update_metrics` + listend) at width 48.
-7. Finalists + soak (Test 2 stage 5).
-8. Mature 24h analyzer recompute on 02/04 when continuous logs exist.
-9. Operator T1/T2 stall verify on a backlog site when accessible
+6. **Post width-48 redeploy soak (hpcperfstats04):** ≥4 h `measure_pipeline_ingest_rate.py` — compare ratio vs baseline **3.72**; use `sync_full_ingest_mib_per_min` + `tier_*_median_elapsed_s` / `tier_*_median_postgres_s` to pick write-path vs parse vs giant scheduling (see plan decision table). Short ≤30 min windows are warm-up only.
+7. Coexistence matrix (`update_metrics` + listend) at width 48.
+8. Finalists + soak (Test 2 stage 5).
+9. Mature 24h analyzer recompute on 02/04 when continuous logs exist.
+10. Operator T1/T2 stall verify on a backlog site when accessible
    (agent host lacks BatchMode SSH to 02/04 — Host key verification failed).
-   Undiluted rates + T0 census already recorded (02 ratio 2.76 / 04 ratio 1.24).
+   Undiluted rates + T0 census already recorded (02 ratio 2.76 / 04 ratio 1.24 @ earlier redeploy; 04 Sep-24 width-96 steady ratio **3.72**).
