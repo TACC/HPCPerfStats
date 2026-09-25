@@ -51,6 +51,9 @@ Attributes:
   _LOG_TS_LEADING_RE: Attribute.
   _LOG_TS_PIPE_RE: Attribute.
   _MIB_BYTES: Attribute.
+  _MID_TIER_NAME: Mid size-tier name for overnight decision pack.
+  _PARSE_HOLD_TOKEN_NAMES: Parse-stage token names scraped from ingest lines.
+  _PHASE_TOKEN_RES: Compiled named-field regexes for write/parse tokens.
   _PENDING_RESCAN_RE: Attribute.
   _PENDING_TRUNCATE_RE: Attribute.
   _QUEUE_SATURATION_DISK_FACTOR: Attribute.
@@ -58,6 +61,7 @@ Attributes:
   _SIZE_TIER_BOUNDS: Attribute.
   _SIZE_TIER_NAMES: Attribute.
   _THROUGHPUT_BACKLOG_RE: Attribute.
+  _WRITE_PHASE_TOKEN_NAMES: Write-phase token names scraped from ingest lines.
 """
 
 from __future__ import annotations
@@ -103,6 +107,35 @@ _FULL_INGEST_RE = re.compile(
 _INGEST_SIZE_BYTES_RE = re.compile(r"size_bytes=(?P<size>[0-9]+)")
 _INGEST_ELAPSED_S_RE = re.compile(r"elapsed_s=(?P<elapsed>[0-9.]+)")
 _INGEST_POSTGRES_S_RE = re.compile(r"postgres_s=(?P<postgres>[0-9.]+)")
+_WRITE_PHASE_TOKEN_NAMES = (
+    "orm_materialize_s",
+    "orm_bulk_prep_s",
+    "db_execute_s",
+    "db_commit_s",
+    "copy_s",
+    "conflict_insert_s",
+)
+_PARSE_HOLD_TOKEN_NAMES = (
+    "lock_s",
+    "decode_s",
+    "feed_s",
+    "proc_merge_s",
+    "hw_df_s",
+    "proc_df_s",
+    "delta_s",
+    "collapse_s",
+    "arc_s",
+    "concat_s",
+    "start_s",
+    "build_df_s",
+    "stages_sum_s",
+    "parse_unaccounted_s",
+)
+_PHASE_TOKEN_RES = {
+    name: re.compile(r"%s=(?P<v>[0-9.]+)" % re.escape(name))
+    for name in (_WRITE_PHASE_TOKEN_NAMES + _PARSE_HOLD_TOKEN_NAMES)
+}
+_MID_TIER_NAME = "64mib_1gib"
 _MIB_BYTES = 1024 * 1024
 _GIB_BYTES = 1024 * _MIB_BYTES
 _SIZE_TIER_BOUNDS = (
@@ -157,6 +190,7 @@ class LogMetrics:
       full_ingest_elapsed_by_tier: Per-tier ``elapsed_s`` samples.
       full_ingest_postgres_by_tier: Per-tier ``postgres_s`` samples.
       full_ingest_count_by_tier: Per-tier full-ingest counts.
+      full_ingest_phases_by_tier: Per-tier write/parse phase sample lists.
       last_ts: ``last_ts``.
       listend_unlink_samples: Timestamped rolling-window unlink counts.
       listend_unlink_sum: Effective non-overlapping unlink sum for rates.
@@ -177,6 +211,14 @@ class LogMetrics:
     )
     full_ingest_count_by_tier: dict[str, int] = field(
         default_factory=lambda: {name: 0 for name in _SIZE_TIER_NAMES},
+    )
+    full_ingest_phases_by_tier: dict[str, dict[str, list[float]]] = field(
+        default_factory=lambda: {
+            name: {tok: [] for tok in (
+                _WRITE_PHASE_TOKEN_NAMES + _PARSE_HOLD_TOKEN_NAMES
+            )}
+            for name in _SIZE_TIER_NAMES
+        },
     )
     archive_immediate_sum: int = 0
     archive_finalize_sum: int = 0
@@ -286,6 +328,88 @@ def _record_full_ingest(metrics: LogMetrics, body: str) -> None:
             metrics.full_ingest_elapsed_by_tier[tier].append(elapsed)
         if postgres is not None:
             metrics.full_ingest_postgres_by_tier[tier].append(postgres)
+        phase_bucket = metrics.full_ingest_phases_by_tier[tier]
+        for tok, cre in _PHASE_TOKEN_RES.items():
+            val = _optional_float_group(cre.search(body), "v")
+            if val is not None:
+                phase_bucket[tok].append(val)
+
+
+def _median_or_none(samples: list[float]) -> Optional[float]:
+    """
+    Return the median of samples, or ``None`` when the list is empty.
+
+    Args:
+      samples (list[float]): Numeric samples.
+
+    Returns:
+      Optional[float]: Median, or ``None`` when empty.
+
+    Examples:
+      >>> _median_or_none([]) is None
+      True
+    """
+    if not samples:
+        return None
+    return float(median(samples))
+
+
+def _decision_next(
+    *,
+    ratio_ingest: str,
+    window_minutes: float,
+    metrics: LogMetrics,
+    mid_postgres_frac: Optional[float],
+    mid_top_parse_hold: Optional[str],
+    mid_write_dominates: bool,
+    ge_1gib_wall_share: Optional[float],
+) -> str:
+    """
+    Map overnight analyzer signals to the locked next-CODE token.
+
+    Args:
+      ratio_ingest (str): ``listend/full_ingest`` ratio string or ``N/A``.
+      window_minutes (float): Analyzed window length.
+      metrics (LogMetrics): Parsed metrics (for tier counts).
+      mid_postgres_frac (Optional[float]): Mid-tier postgres/elapsed median frac.
+      mid_top_parse_hold (Optional[str]): Largest mid-tier parse hold name.
+      mid_write_dominates (bool): True when execute/copy dominate write phases.
+      ge_1gib_wall_share (Optional[float]): Share of elapsed samples in large tiers.
+
+    Returns:
+      str: Decision token for operators (never empty).
+
+    Examples:
+      >>> _decision_next(  # doctest: +SKIP
+      ...   ratio_ingest="0.5", window_minutes=480.0, metrics=LogMetrics(),
+      ...   mid_postgres_frac=0.1, mid_top_parse_hold=None,
+      ...   mid_write_dominates=False, ge_1gib_wall_share=0.0,
+      ... )
+    """
+    if window_minutes < 60.0:
+        return "short_window_re_soak"
+    try:
+        ratio = float(ratio_ingest)
+    except (TypeError, ValueError):
+        return "insufficient_rate_samples"
+    mid_n = int(metrics.full_ingest_count_by_tier.get(_MID_TIER_NAME, 0))
+    small_n = int(metrics.full_ingest_count_by_tier.get("lt_64mib", 0))
+    large_n = int(metrics.full_ingest_count_by_tier.get("1_4gib", 0)) + int(
+        metrics.full_ingest_count_by_tier.get("ge_4gib", 0),
+    )
+    if ratio <= 1.0 + EVEN_RATIO_TOLERANCE:
+        return "stop_ingest_rate_watch_archive"
+    if ge_1gib_wall_share is not None and ge_1gib_wall_share >= 0.5 and large_n > 0:
+        return "giant_scheduling_plan"
+    if mid_write_dominates or (
+        mid_postgres_frac is not None and mid_postgres_frac >= 0.35
+    ):
+        return "write_timescale_path"
+    if mid_top_parse_hold:
+        return "parse_hold_%s" % mid_top_parse_hold
+    if mid_n == 0 and small_n == 0:
+        return "insufficient_mid_tier_samples"
+    return "parse_or_refill_investigate"
 
 
 def _fmt_optional_median(samples: list[float]) -> str:
@@ -1119,6 +1243,94 @@ def build_outcomes(
         outcomes[f"tier_{tier}_median_postgres_s"] = _fmt_optional_median(
             metrics.full_ingest_postgres_by_tier.get(tier, []),
         )
+        elapsed_samples = metrics.full_ingest_elapsed_by_tier.get(tier, [])
+        postgres_samples = metrics.full_ingest_postgres_by_tier.get(tier, [])
+        fracs: list[float] = []
+        for e_s, p_s in zip(elapsed_samples, postgres_samples):
+            if e_s and e_s > 0:
+                fracs.append(float(p_s) / float(e_s))
+        outcomes[f"tier_{tier}_median_postgres_frac"] = _fmt_optional_median(fracs)
+        phase_map = metrics.full_ingest_phases_by_tier.get(tier, {})
+        for tok in (_WRITE_PHASE_TOKEN_NAMES + _PARSE_HOLD_TOKEN_NAMES):
+            outcomes[f"tier_{tier}_median_{tok}"] = _fmt_optional_median(
+                phase_map.get(tok, []),
+            )
+
+    # Overnight decision pack (mid-tier 64mib_1gib; fall back to lt_64mib).
+    mid_tier = _MID_TIER_NAME
+    if int(metrics.full_ingest_count_by_tier.get(mid_tier, 0)) == 0:
+        mid_tier = "lt_64mib"
+    mid_elapsed = _median_or_none(
+        metrics.full_ingest_elapsed_by_tier.get(mid_tier, []),
+    )
+    mid_postgres = _median_or_none(
+        metrics.full_ingest_postgres_by_tier.get(mid_tier, []),
+    )
+    mid_postgres_frac = None
+    if mid_elapsed and mid_elapsed > 0 and mid_postgres is not None:
+        mid_postgres_frac = mid_postgres / mid_elapsed
+    mid_phases = metrics.full_ingest_phases_by_tier.get(mid_tier, {})
+    write_medians = {
+        tok: _median_or_none(mid_phases.get(tok, []))
+        for tok in _WRITE_PHASE_TOKEN_NAMES
+    }
+    parse_medians = {
+        tok: _median_or_none(mid_phases.get(tok, []))
+        for tok in _PARSE_HOLD_TOKEN_NAMES
+        if tok not in ("stages_sum_s", "parse_unaccounted_s", "build_df_s")
+    }
+    write_sum = sum(v for v in write_medians.values() if v is not None)
+    exec_like = 0.0
+    for tok in ("db_execute_s", "copy_s", "conflict_insert_s"):
+        if write_medians.get(tok) is not None:
+            exec_like += float(write_medians[tok])
+    write_share = (
+        (write_sum / float(mid_elapsed)) if mid_elapsed and mid_elapsed > 0 else 0.0
+    )
+    exec_of_write = (exec_like / write_sum) if write_sum > 0 else 0.0
+    mid_write_dominates = bool(
+        (mid_postgres_frac is not None and mid_postgres_frac >= 0.35)
+        or (write_share >= 0.35 and exec_of_write >= 0.5),
+    )
+    mid_top_parse = None
+    top_val = -1.0
+    for tok, val in parse_medians.items():
+        if val is not None and val > top_val:
+            top_val = float(val)
+            mid_top_parse = tok
+    if mid_top_parse is not None and (
+        mid_postgres_frac is not None and mid_postgres_frac >= 0.35
+    ):
+        # Prefer write branch when postgres frac is high.
+        mid_top_parse = None
+    total_elapsed_samples = sum(
+        len(metrics.full_ingest_elapsed_by_tier.get(t, []))
+        for t in _SIZE_TIER_NAMES
+    )
+    large_elapsed_n = len(
+        metrics.full_ingest_elapsed_by_tier.get("1_4gib", []),
+    ) + len(metrics.full_ingest_elapsed_by_tier.get("ge_4gib", []))
+    ge_share = (
+        (large_elapsed_n / float(total_elapsed_samples))
+        if total_elapsed_samples else None
+    )
+    outcomes["mid_tier_name"] = mid_tier
+    outcomes["mid_tier_median_postgres_frac"] = (
+        f"{mid_postgres_frac:.3f}" if mid_postgres_frac is not None else "N/A"
+    )
+    outcomes["mid_tier_top_parse_hold"] = mid_top_parse or "N/A"
+    outcomes["mid_tier_write_exec_dominates"] = (
+        "yes" if mid_write_dominates else "no"
+    )
+    outcomes["decision_next"] = _decision_next(
+        ratio_ingest=ratio_ingest,
+        window_minutes=window_minutes,
+        metrics=metrics,
+        mid_postgres_frac=mid_postgres_frac,
+        mid_top_parse_hold=mid_top_parse if not mid_write_dominates else None,
+        mid_write_dominates=mid_write_dominates,
+        ge_1gib_wall_share=ge_share,
+    )
     return outcomes
 
 
@@ -1224,6 +1436,11 @@ def format_stdout(outcomes: dict[str, str]) -> str:
         "eta_hours_archive_done",
         "estimated_finish_local",
         "estimated_finish_basis",
+        "mid_tier_name",
+        "mid_tier_median_postgres_frac",
+        "mid_tier_top_parse_hold",
+        "mid_tier_write_exec_dominates",
+        "decision_next",
     )
     tier_keys: list[str] = []
     for tier in _SIZE_TIER_NAMES:
@@ -1233,10 +1450,13 @@ def format_stdout(outcomes: dict[str, str]) -> str:
                 f"tier_{tier}_per_min",
                 f"tier_{tier}_median_elapsed_s",
                 f"tier_{tier}_median_postgres_s",
+                f"tier_{tier}_median_postgres_frac",
             )
         )
+        for tok in ("db_execute_s", "copy_s", "conflict_insert_s", "orm_materialize_s", "feed_s", "collapse_s", "build_df_s"):
+            tier_keys.append(f"tier_{tier}_median_{tok}")
     return "\n".join(
-        f"{key}={outcomes[key]}" for key in (*order, *tier_keys)
+        f"{key}={outcomes[key]}" for key in (*order, *tier_keys) if key in outcomes
     )
 
 

@@ -54,6 +54,9 @@ def test_ingest_write_telemetry_on_emits_all_phase_keys():
     for key in st.INGEST_WRITE_PHASE_KEYS:
       assert key in snap
       assert snap[key] >= 0.0
+    for key in st.INGEST_WRITE_DETAIL_KEYS:
+      assert key in snap
+      assert snap[key] == 0.0
     assert snap["orm_bulk_prep_s"] == 0.0
     assert snap["db_commit_s"] == 0.0
     phase_sum = sum(snap[key] for key in st.INGEST_WRITE_PHASE_KEYS)
@@ -62,6 +65,74 @@ def test_ingest_write_telemetry_on_emits_all_phase_keys():
     assert snap["db_execute_s"] >= 0.02
   finally:
     st._reset_ingest_write_timing(enabled=False)
+
+
+def test_write_phase_on_ingest_log_when_telem_on(monkeypatch):
+  """Write phases and insert arms must appear on ingest file log lines."""
+  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 100)
+  logged: list[str] = []
+
+  def _capture(*args, **kwargs):
+    del kwargs
+    logged.append(" ".join(str(a) for a in args))
+
+  old = st.log_print
+  st.log_print = _capture
+  try:
+    outcome = st._ingest_file_outcome_from_worker(
+        "/x",
+        False,
+        True,
+        10.0,
+        {
+            "outcome": "ingested",
+            "orm_materialize_s": 1.5,
+            "db_execute_s": 2.5,
+            "copy_s": 1.0,
+            "conflict_insert_s": 1.5,
+            "postgres_s": 4.0,
+        },
+    )
+    st._log_ingest_file_outcome(outcome)
+  finally:
+    st.log_print = old
+  joined = " ".join(logged)
+  assert "orm_materialize_s=1.5" in joined
+  assert "db_execute_s=2.5" in joined
+  assert "copy_s=1.0" in joined
+  assert "conflict_insert_s=1.5" in joined
+  assert "host_insert_arm=" in joined
+  assert "proc_insert_arm=" in joined
+
+
+def test_write_phase_absent_on_ingest_log_when_telem_off(monkeypatch):
+  """Telem-off must not promote write phase tokens onto the log line."""
+  monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 100)
+  logged: list[str] = []
+
+  def _capture(*args, **kwargs):
+    del kwargs
+    logged.append(" ".join(str(a) for a in args))
+
+  old = st.log_print
+  st.log_print = _capture
+  st._reset_ingest_write_timing(enabled=False)
+  try:
+    outcome = st._ingest_file_outcome_from_worker(
+        "/x",
+        False,
+        True,
+        10.0,
+        {"outcome": "ingested", "postgres_s": 1.0},
+    )
+    st._log_ingest_file_outcome(outcome)
+  finally:
+    st.log_print = old
+  joined = " ".join(logged)
+  assert "orm_materialize_s=" not in joined
+  assert "db_execute_s=" not in joined
+  assert "host_insert_arm=" in joined
+  assert "proc_insert_arm=" in joined
 
 
 def test_file_lock_telemetry_off_snapshot_empty(tmp_path):

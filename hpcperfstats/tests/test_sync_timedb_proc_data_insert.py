@@ -54,5 +54,65 @@ def test_proc_copy_sql_has_conflict_update():
   assert "vm_rss = EXCLUDED.vm_rss" in sql
 
 
+def test_bulk_insert_proc_copy_s_and_conflict_insert_under_write_telem(
+    monkeypatch,
+):
+  """COPY upsert must accumulate copy_s and conflict_insert_s when write telem on."""
+  from hpcperfstats.dbload import sync_timedb as st
+
+  class _CopyCtx:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *a):
+      return False
+
+    def write(self, data: bytes):
+      del data
+
+  class _Cursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *a):
+      return False
+
+    def execute(self, sql, params=None):
+      del sql, params
+
+    def copy(self, sql):
+      del sql
+      return _CopyCtx()
+
+  class _Conn:
+    def cursor(self):
+      return _Cursor()
+
+  class _Atomic:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *a):
+      return False
+
+  import django.db as django_db
+
+  monkeypatch.setattr(django_db, "connection", _Conn())
+  monkeypatch.setattr(
+      django_db,
+      "transaction",
+      type("T", (), {"atomic": staticmethod(lambda: _Atomic())})(),
+  )
+  st._reset_ingest_write_timing(enabled=True)
+  try:
+    with st._held_ingest_write_timing():
+      pdi.bulk_insert_proc_data_update_conflicts([_obj()])
+    snap = st._snapshot_ingest_write_timing()
+    assert snap["copy_s"] > 0.0
+    assert snap["conflict_insert_s"] > 0.0
+  finally:
+    st._reset_ingest_write_timing(enabled=False)
+
+
 def test_zzz_proc_data_insert_unit_ok_marker():
   print("proc_data_insert_unit_ok")

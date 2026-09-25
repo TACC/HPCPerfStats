@@ -142,6 +142,28 @@ def test_parse_stage_telemetry_outcome_log_tokens(monkeypatch):
   assert joined.count("feed_s=") == 1
 
 
+def test_parse_stage_telemetry_env_override_enables_without_ini(monkeypatch):
+  """HPCPERFSTATS_SYNC_INGEST_PARSE_STAGE_TELEMETRY=1 enables without INI yes."""
+  monkeypatch.setenv("HPCPERFSTATS_SYNC_INGEST_PARSE_STAGE_TELEMETRY", "1")
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_parse_stage_telemetry",
+      lambda: False,
+  )
+  reset_parse_stage_timing(enabled=False)
+  reset_parse_stage_timing(enabled=None)
+  try:
+    parser = IncrementalStatsParser(0)
+    parser.feed_lines(_MINIMAL_LINES)
+    snap = snapshot_parse_stage_timing()
+    assert snap  # env forced on
+    assert "feed_s" in snap
+  finally:
+    reset_parse_stage_timing(enabled=False)
+    monkeypatch.delenv(
+        "HPCPERFSTATS_SYNC_INGEST_PARSE_STAGE_TELEMETRY", raising=False,
+    )
+
+
 def test_build_stats_dataframes_has_no_outer_build_df_hold():
   """Outer build_df hold must be gone; split holds remain in source."""
   text = Path(__file__).resolve().parents[1].joinpath(

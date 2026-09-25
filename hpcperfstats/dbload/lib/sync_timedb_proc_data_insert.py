@@ -160,6 +160,8 @@ def bulk_insert_proc_data_update_conflicts(objs: Sequence[Any]) -> None:
   """
   Upsert ``proc_data`` via COPY staging with ON CONFLICT DO UPDATE.
 
+  When write telemetry is on, records ``copy_s`` and ``conflict_insert_s``.
+
   Args:
     objs (Sequence[Any]): Peak-merged instances to upsert.
 
@@ -171,17 +173,28 @@ def bulk_insert_proc_data_update_conflicts(objs: Sequence[Any]) -> None:
   """
   if not objs:
     return
+  from contextlib import nullcontext
+
   from django.db import connection, transaction
 
   payload = proc_data_objs_to_copy_bytes(objs)
   col_list = ", ".join(PROC_DATA_COPY_COLUMNS)
   copy_sql = "COPY proc_data_ingest_stage (%s) FROM STDIN" % col_list
+  from hpcperfstats.dbload import sync_timedb as st
+
+  telem = bool(getattr(st, "_ingest_write_telem_on", False))
+  copy_cm = st._held_ingest_write_phase("copy_s") if telem else nullcontext()
+  conflict_cm = (
+      st._held_ingest_write_phase("conflict_insert_s") if telem else nullcontext()
+  )
   with transaction.atomic():
     with connection.cursor() as cursor:
       cursor.execute(_STAGE_DDL)
-      with cursor.copy(copy_sql) as copy:
-        copy.write(payload)
-      cursor.execute(_stage_upsert_sql())
+      with copy_cm:
+        with cursor.copy(copy_sql) as copy:
+          copy.write(payload)
+      with conflict_cm:
+        cursor.execute(_stage_upsert_sql())
 
 
 def bulk_create_proc_data_update_conflicts(objs: Sequence[Any]) -> None:

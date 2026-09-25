@@ -50,6 +50,8 @@ Attributes:
   _SYNC_TIMEDB_INGEST_INLINE_ENV: Attribute.
   _TREE_RSS_DEFER_SLEEP_SECONDS: Attribute.
   INGEST_WRITE_PHASE_KEYS: Closed-book write-phase timing key names.
+  INGEST_WRITE_DETAIL_KEYS: COPY detail phases nested under db_execute (logged).
+  INGEST_WRITE_LOG_KEYS: Phase + detail keys emitted on ingest outcome lines.
   _ingest_postgres_campaign: Process-wide postgres_s campaign total.
   _ingest_postgres_s: Per-file postgres_s ContextVar.
   _ingest_write_campaign: Process-wide write-phase campaign totals.
@@ -133,10 +135,12 @@ from hpcperfstats.dbload.lib.db_unavailable import (
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
 from hpcperfstats.dbload.lib.io_helpers import host_data_instance_from_stats_row
 from hpcperfstats.dbload.lib.sync_timedb_host_data_insert import (
+  host_insert_arm,
   insert_host_data_batch,
 )
 from hpcperfstats.dbload.lib.sync_timedb_proc_data_insert import (
   insert_proc_data_batch,
+  proc_insert_arm,
 )
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
   MultiprocessingWorkerExitError,
@@ -2163,10 +2167,18 @@ INGEST_WRITE_PHASE_KEYS: tuple[str, ...] = (
     "db_execute_s",
     "db_commit_s",
 )
+# Detail keys nest inside db_execute (COPY path); logged but not residual-summed.
+INGEST_WRITE_DETAIL_KEYS: tuple[str, ...] = (
+    "copy_s",
+    "conflict_insert_s",
+)
+INGEST_WRITE_LOG_KEYS: tuple[str, ...] = (
+    INGEST_WRITE_PHASE_KEYS + INGEST_WRITE_DETAIL_KEYS
+)
 
 _ingest_write_telem_on = False
 _ingest_write_campaign: dict[str, float] = {
-    key: 0.0 for key in INGEST_WRITE_PHASE_KEYS
+    key: 0.0 for key in INGEST_WRITE_LOG_KEYS
 }
 _ingest_postgres_campaign = 0.0
 _ingest_write_campaign_lock = threading.Lock()
@@ -2221,16 +2233,16 @@ def _reset_ingest_write_timing(*, enabled: bool | None = None) -> None:
         _ingest_write_telem_on = _ingest_write_telemetry_enabled_from_env()
         if _ingest_write_telem_on:
           _ingest_postgres_campaign = 0.0
-          for key in INGEST_WRITE_PHASE_KEYS:
+          for key in INGEST_WRITE_LOG_KEYS:
             _ingest_write_campaign[key] = 0.0
   else:
     with _ingest_write_campaign_lock:
       _ingest_write_telem_on = bool(enabled)
       _ingest_postgres_campaign = 0.0
-      for key in INGEST_WRITE_PHASE_KEYS:
+      for key in INGEST_WRITE_LOG_KEYS:
         _ingest_write_campaign[key] = 0.0
   _ingest_postgres_s.set(0.0)
-  _ingest_write_phases.set({key: 0.0 for key in INGEST_WRITE_PHASE_KEYS})
+  _ingest_write_phases.set({key: 0.0 for key in INGEST_WRITE_LOG_KEYS})
 
 
 def _add_ingest_write_phase(name: str, delta_s: float) -> None:
@@ -2251,7 +2263,7 @@ def _add_ingest_write_phase(name: str, delta_s: float) -> None:
   if not _ingest_write_telem_on:
     return
   delta = float(delta_s)
-  if delta <= 0.0 or name not in INGEST_WRITE_PHASE_KEYS:
+  if delta <= 0.0 or name not in INGEST_WRITE_LOG_KEYS:
     return
   acc = dict(_ingest_write_phases.get())
   acc[name] = float(acc.get(name, 0.0)) + delta
@@ -2305,7 +2317,7 @@ def _snapshot_ingest_write_timing() -> dict[str, float]:
   if not _ingest_write_telem_on:
     return out
   acc = _ingest_write_phases.get()
-  for key in INGEST_WRITE_PHASE_KEYS:
+  for key in INGEST_WRITE_LOG_KEYS:
     out[key] = float(acc.get(key, 0.0))
   return out
 
@@ -2326,9 +2338,9 @@ def _snapshot_ingest_write_campaign_timing() -> dict[str, float]:
     return {}
   with _ingest_write_campaign_lock:
     out = {"postgres_s": float(_ingest_postgres_campaign)}
-    for key in INGEST_WRITE_PHASE_KEYS:
+    for key in INGEST_WRITE_LOG_KEYS:
       out[key] = float(_ingest_write_campaign.get(key, 0.0))
-    return out
+  return out
 
 
 def _merge_ingest_write_timing_into_meta(meta: Any) -> dict[str, Any]:
@@ -3370,7 +3382,7 @@ def _ingest_file_outcome_from_worker(
   timeout_s = meta.get("timeout_s")
   stage = {
       key: float(meta[key])
-      for key in PARSE_STAGE_LOG_KEYS
+      for key in (*PARSE_STAGE_LOG_KEYS, *INGEST_WRITE_LOG_KEYS)
       if meta.get(key) is not None
   }
   return IngestFileOutcome(
@@ -3455,7 +3467,7 @@ def _log_ingest_file_outcome(
   if outcome.postgres_s is not None:
     parts.append("postgres_s=%.1f" % float(outcome.postgres_s))
   if outcome.parse_stage:
-    for key in PARSE_STAGE_LOG_KEYS:
+    for key in (*PARSE_STAGE_LOG_KEYS, *INGEST_WRITE_LOG_KEYS):
       if key in outcome.parse_stage:
         parts.append("%s=%.1f" % (key, float(outcome.parse_stage[key])))
   if outcome.stats_rows is not None:
@@ -3464,6 +3476,8 @@ def _log_ingest_file_outcome(
     parts.append("stats_rows_parsed=%d" % int(outcome.stats_rows_parsed))
   if outcome.proc_rows is not None:
     parts.append("proc_rows=%d" % int(outcome.proc_rows))
+  parts.append("host_insert_arm=%s" % host_insert_arm())
+  parts.append("proc_insert_arm=%s" % proc_insert_arm())
   if outcome.fail_reason:
     parts.append("fail_reason=%s" % outcome.fail_reason)
   if remaining is not None:

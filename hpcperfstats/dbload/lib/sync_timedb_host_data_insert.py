@@ -156,7 +156,8 @@ def bulk_insert_host_data_ignore_conflicts(objs: Sequence[Any]) -> None:
   Insert ``host_data`` rows via COPY staging with conflict skip.
 
   Matches Django ``bulk_create(..., ignore_conflicts=True)`` semantics on
-  unique ``(time, host, type, event, dev)``.
+  unique ``(time, host, type, event, dev)``. When write telemetry is on,
+  records ``copy_s`` and ``conflict_insert_s`` detail phases.
 
   Args:
     objs (Sequence[Any]): Unsaved ``host_data`` model instances to insert.
@@ -169,6 +170,8 @@ def bulk_insert_host_data_ignore_conflicts(objs: Sequence[Any]) -> None:
   """
   if not objs:
     return
+  from contextlib import nullcontext
+
   from django.db import connection, transaction
 
   payload = host_data_objs_to_copy_bytes(objs)
@@ -176,13 +179,22 @@ def bulk_insert_host_data_ignore_conflicts(objs: Sequence[Any]) -> None:
   copy_sql = (
       f"COPY host_data_ingest_stage ({col_list}) FROM STDIN"
   )
+  from hpcperfstats.dbload import sync_timedb as st
+
+  telem = bool(getattr(st, "_ingest_write_telem_on", False))
+  copy_cm = st._held_ingest_write_phase("copy_s") if telem else nullcontext()
+  conflict_cm = (
+      st._held_ingest_write_phase("conflict_insert_s") if telem else nullcontext()
+  )
   # Django defaults to autocommit; keep TEMP visible for COPY + INSERT.
   with transaction.atomic():
     with connection.cursor() as cursor:
       cursor.execute(_STAGE_DDL)
-      with cursor.copy(copy_sql) as copy:
-        copy.write(payload)
-      cursor.execute(_STAGE_INSERT)
+      with copy_cm:
+        with cursor.copy(copy_sql) as copy:
+          copy.write(payload)
+      with conflict_cm:
+        cursor.execute(_STAGE_INSERT)
 
 
 def bulk_create_host_data_ignore_conflicts(objs: Sequence[Any]) -> None:

@@ -143,6 +143,66 @@ def test_bulk_insert_host_data_ignore_conflicts_uses_stage_and_conflict(
   assert copy_writes[0].count(b"\n") == 2
 
 
+def test_bulk_insert_host_copy_s_and_conflict_insert_under_write_telem(
+    monkeypatch,
+):
+  """COPY path must accumulate copy_s and conflict_insert_s when write telem on."""
+  from hpcperfstats.dbload import sync_timedb as st
+
+  class _CopyCtx:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *a):
+      return False
+
+    def write(self, data: bytes):
+      del data
+
+  class _Cursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *a):
+      return False
+
+    def execute(self, sql, params=None):
+      del sql, params
+
+    def copy(self, sql):
+      del sql
+      return _CopyCtx()
+
+  class _Conn:
+    def cursor(self):
+      return _Cursor()
+
+  class _Atomic:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *a):
+      return False
+
+  import django.db as django_db
+
+  monkeypatch.setattr(django_db, "connection", _Conn())
+  monkeypatch.setattr(
+      django_db,
+      "transaction",
+      type("T", (), {"atomic": staticmethod(lambda: _Atomic())})(),
+  )
+  st._reset_ingest_write_timing(enabled=True)
+  try:
+    with st._held_ingest_write_timing():
+      hdi.bulk_insert_host_data_ignore_conflicts([_obj()])
+    snap = st._snapshot_ingest_write_timing()
+    assert snap["copy_s"] > 0.0
+    assert snap["conflict_insert_s"] > 0.0
+  finally:
+    st._reset_ingest_write_timing(enabled=False)
+
+
 def test_write_stats_payload_uses_insert_host_data_batch(monkeypatch):
   """sync_timedb host write path must call insert_host_data_batch."""
   from hpcperfstats.dbload import sync_timedb as st

@@ -346,8 +346,12 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # sync_ingest_worker_memory_telemetry_every_n_chunks = 1
 
 # Parse-stage shares on ingest outcome lines (default no; Wave 4 ranking / soak).
+# Prefer overnight opt-in via env HPCPERFSTATS_SYNC_INGEST_PARSE_STAGE_TELEMETRY=1
+# (still default off) instead of baking yes into production INI.
 # sync_ingest_parse_stage_telemetry = no
 
+# Write-phase shares on ingest outcome lines: env only (default off).
+# HPCPERFSTATS_SYNC_INGEST_WRITE_TELEMETRY=1
 # Cooperative recycle when maxtasksperchild=0 (supervisor retires worker after result).
 # sync_ingest_recycle_worker_on_failure = yes
 # sync_ingest_cooperative_recycle_rss_fraction = 0.5

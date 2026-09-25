@@ -904,6 +904,8 @@ podman-compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
   su hpcperfstats -c 'python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-rates.log'
 ```
 
+**Anti-pattern — write telem on but no write-phase tokens on `ingest file` lines (04 overnight plan 2026-09-25):** `HPCPERFSTATS_SYNC_INGEST_WRITE_TELEMETRY=1` with outcome lines missing `orm_materialize_s=` / `db_execute_s=` / `copy_s=` means the image predates log-plumbing (phases lived in meta only). **Corrected:** redeploy CODE that promotes `INGEST_WRITE_LOG_KEYS` onto the outcome log; confirm with a fresh ingested line. Do not treat flat files/s as proof the write path is unchanged.
+
 ## Overlap
 
 - **`podman-runtime.mdc`** — rootless runtime, `/data` storage, project
