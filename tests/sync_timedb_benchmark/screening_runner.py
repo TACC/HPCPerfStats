@@ -221,6 +221,195 @@ def e6_retain_candidate(
   return cand_lo >= base_mean and cand_lo >= base_lo * 1.05
 
 
+DEFAULT_E8_WIDTH = 48
+DEFAULT_E8_REPLICATES = 5
+
+
+def e8_mode_enabled(raw: str | None = None) -> bool:
+  """
+  Return whether E8 delta/collapse hold A/B mode is enabled.
+
+  Args:
+    raw (str | None): Override; defaults to ``HPCPERFSTATS_SYNC_TIMEDB_E8``.
+
+  Returns:
+    bool: True when the env/override is truthy.
+
+  Examples:
+    >>> e8_mode_enabled("1")
+    True
+  """
+  text = (
+      raw
+      if raw is not None
+      else os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_E8", "")
+  ).strip().lower()
+  return text in ("1", "yes", "true")
+
+
+def summarize_hold_s_replicates(
+    hold_s_samples: Sequence[float],
+) -> dict[str, Any]:
+  """
+  Summarize hold-seconds samples (min/max as CI proxy).
+
+  Args:
+    hold_s_samples (Sequence[float]): Per-replicate hold seconds.
+
+  Returns:
+    dict[str, Any]: mean/lower/upper hold_s and replicate count.
+
+  Raises:
+    ValueError: When ``hold_s_samples`` is empty.
+
+  Examples:
+    >>> summarize_hold_s_replicates([1.0, 1.2])["mean_s"]
+    1.1
+  """
+  if not hold_s_samples:
+    raise ValueError("hold_s_samples must not be empty")
+  values = [float(sample) for sample in hold_s_samples]
+  return {
+      "mean_s": float(statistics.fmean(values)),
+      "lower_ci_s": min(values),
+      "upper_ci_s": max(values),
+      "replicates": len(values),
+      "samples_s": values,
+  }
+
+
+def e8_retain_hold_seconds(
+    *,
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+) -> bool:
+  """
+  Return True when candidate hold seconds clear the E8 latency gate.
+
+  Lower is better. Retain when candidate ``upper_ci_s`` is at most the
+  baseline mean **and** at most 95% of baseline ``lower_ci_s`` (plan
+  ``04-parse-delta-collapse``).
+
+  Args:
+    baseline (dict[str, Any]): Baseline hold stats (``mean_s`` / CI).
+    candidate (dict[str, Any]): Candidate hold stats (``mean_s`` / CI).
+
+  Returns:
+    bool: True when this hold should retain.
+
+  Examples:
+    >>> e8_retain_hold_seconds(
+    ...     baseline={"mean_s": 1.0, "lower_ci_s": 0.9},
+    ...     candidate={"mean_s": 0.7, "upper_ci_s": 0.8},
+    ... )
+    True
+  """
+  base_mean = float(baseline["mean_s"])
+  base_lo = float(baseline["lower_ci_s"])
+  cand_hi = float(candidate["upper_ci_s"])
+  return cand_hi <= base_mean and cand_hi <= base_lo * 0.95
+
+
+def e8_retain_candidate(
+    *,
+    baseline_delta: dict[str, Any],
+    candidate_delta: dict[str, Any],
+    baseline_collapse: dict[str, Any],
+    candidate_collapse: dict[str, Any],
+) -> dict[str, bool]:
+  """
+  Gate ``delta_s`` and ``collapse_s`` separately; ``retain`` is AND.
+
+  Args:
+    baseline_delta (dict[str, Any]): Baseline ``delta_s`` hold stats.
+    candidate_delta (dict[str, Any]): Candidate ``delta_s`` hold stats.
+    baseline_collapse (dict[str, Any]): Baseline ``collapse_s`` hold stats.
+    candidate_collapse (dict[str, Any]): Candidate ``collapse_s`` hold stats.
+
+  Returns:
+    dict[str, bool]: ``retain_delta_s``, ``retain_collapse_s``, ``retain``.
+
+  Examples:
+    >>> e8_retain_candidate(
+    ...     baseline_delta={"mean_s": 1.0, "lower_ci_s": 0.9},
+    ...     candidate_delta={"mean_s": 0.7, "upper_ci_s": 0.8},
+    ...     baseline_collapse={"mean_s": 1.0, "lower_ci_s": 0.9},
+    ...     candidate_collapse={"mean_s": 0.7, "upper_ci_s": 0.8},
+    ... )["retain"]
+    True
+  """
+  retain_delta = e8_retain_hold_seconds(
+      baseline=baseline_delta, candidate=candidate_delta,
+  )
+  retain_collapse = e8_retain_hold_seconds(
+      baseline=baseline_collapse, candidate=candidate_collapse,
+  )
+  return {
+      "retain_delta_s": retain_delta,
+      "retain_collapse_s": retain_collapse,
+      "retain": bool(retain_delta and retain_collapse),
+  }
+
+
+def build_e8_ab_manifest(
+    *,
+    baseline_delta: dict[str, Any],
+    candidate_delta: dict[str, Any],
+    baseline_collapse: dict[str, Any],
+    candidate_collapse: dict[str, Any],
+    retain_delta_s: bool,
+    retain_collapse_s: bool,
+    retain: bool,
+    replicates: int,
+    python_abi: str,
+    run_id: str,
+) -> dict[str, Any]:
+  """
+  Build the E8 delta/collapse A/B artifact payload.
+
+  Args:
+    baseline_delta (dict[str, Any]): Baseline delta hold stats.
+    candidate_delta (dict[str, Any]): Candidate delta hold stats.
+    baseline_collapse (dict[str, Any]): Baseline collapse hold stats.
+    candidate_collapse (dict[str, Any]): Candidate collapse hold stats.
+    retain_delta_s (bool): Per-hold retain for delta.
+    retain_collapse_s (bool): Per-hold retain for collapse.
+    retain (bool): Combined AND retain.
+    replicates (int): Replicate count.
+    python_abi (str): Interpreter label.
+    run_id (str): Run identifier.
+
+  Returns:
+    dict[str, Any]: JSON-serializable manifest.
+
+  Examples:
+    >>> build_e8_ab_manifest(
+    ...     baseline_delta={"mean_s": 1.0}, candidate_delta={"mean_s": 0.5},
+    ...     baseline_collapse={"mean_s": 1.0}, candidate_collapse={"mean_s": 0.5},
+    ...     retain_delta_s=True, retain_collapse_s=True, retain=True,
+    ...     replicates=5, python_abi="3.14", run_id="x",
+    ... )["kind"]
+    'e8_delta_collapse_ab'
+  """
+  return {
+      "kind": "e8_delta_collapse_ab",
+      "retain_meter": "mid_tier_median_delta_s_and_collapse_s_seconds",
+      "retain_delta_s": bool(retain_delta_s),
+      "retain_collapse_s": bool(retain_collapse_s),
+      "retain": bool(retain),
+      "baseline_delta_s": baseline_delta,
+      "candidate_delta_s": candidate_delta,
+      "baseline_collapse_s": baseline_collapse,
+      "candidate_collapse_s": candidate_collapse,
+      "replicates": int(replicates),
+      "python_abi": str(python_abi),
+      "run_id": str(run_id),
+      "note": (
+          "files/s report-only; retain requires both hold-second gates"
+      ),
+  }
+
+
 DEFAULT_HOST_INSERT_ROWS = 100_000
 DEFAULT_HOST_INSERT_REPLICATES = 5
 

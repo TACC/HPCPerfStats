@@ -1245,19 +1245,28 @@ def _optional_jid_first_agg(df: Any) -> dict[str, tuple[str, str]]:
 def _groupby_sum_min_count(df: Any, gcols: Any) -> Any:
   """
   Sum value/delta across devs with pandas ``sum(min_count=1)`` NaN semantics.
-  
+
+  When every ``gcols`` key is unique (common for GPU-with-dev and many
+  host metrics), skip ``groupby`` factorize — return the projection.
+
   Args:
     df (Any): Df passed to this helper.
     gcols (Any): Gcols passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _groupby_sum_min_count(None, None)  # doctest: +SKIP
   """
   if df.empty:
     return _empty_delta_arc_frame()
+  # Identity groups: groupby.factorize dominates Horizon-sized unique frames.
+  if not df.duplicated(gcols).any():
+    keep = list(gcols) + ["value", "delta"]
+    if "jid" in getattr(df, "columns", ()):
+      keep.append("jid")
+    return df.loc[:, keep].reset_index(drop=True)
   grouped = df.groupby(gcols, observed=True, sort=False)
   out = grouped[["value", "delta"]].sum(min_count=1)
   if "jid" in getattr(df, "columns", ()):
@@ -2725,19 +2734,26 @@ def _stats_df_has_required_delta_cols(stats_df: Any) -> Any:
 def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
   """
   Apply counter diffs; optional cross-flush ``carry.raw`` continuity.
-  
+
   Carry paths must stay vectorized (groupby head/tail + array extract).
-  
+  Object group keys are cast to ``category`` before sort/diff to cut
+  ``factorize_array`` cost on Horizon-sized frames.
+
   Args:
     stats_df (Any): Stats df passed to this helper.
     carry (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _apply_counter_deltas(None, None)  # doctest: +SKIP
   """
+  for col in _COUNTER_GROUP_COLS:
+    if col in stats_df.columns and not isinstance(
+        stats_df[col].dtype, pd.CategoricalDtype,
+    ):
+      stats_df[col] = stats_df[col].astype("category")
   stats_df = stats_df.sort_values(by=_COUNTER_GROUP_COLS + ["time"])
   stats_df["delta"] = stats_df.groupby(
       _COUNTER_GROUP_COLS, observed=True)["value"].diff()
@@ -2745,16 +2761,17 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
   if carry is not None and carry.raw:
     first = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).head(1)
     if not first.empty:
-      hosts = first["host"].to_numpy()
-      types = first["type"].to_numpy()
-      devs = first["dev"].to_numpy()
-      events = first["event"].to_numpy()
+      hosts = first["host"].astype(object).to_numpy()
+      types = first["type"].astype(object).to_numpy()
+      devs = first["dev"].astype(object).to_numpy()
+      events = first["event"].astype(object).to_numpy()
       values = first["value"].to_numpy(dtype=np.float64, copy=False)
       idxs = first.index.to_numpy()
       carry_deltas = np.full(len(first), np.nan, dtype=np.float64)
       apply_mask = np.zeros(len(first), dtype=bool)
+      raw = carry.raw
       for i in range(len(first)):
-        prev = carry.raw.get((hosts[i], types[i], devs[i], events[i]))
+        prev = raw.get((hosts[i], types[i], devs[i], events[i]))
         if prev is None:
           continue
         prev_value = prev[0] if isinstance(prev, tuple) else prev["value"]
@@ -2763,23 +2780,29 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
       if apply_mask.any():
         stats_df.loc[idxs[apply_mask], "delta"] = carry_deltas[apply_mask]
 
-  stats_df["delta"] = stats_df["delta"].mask(
-      stats_df["delta"] < 0, 2 ** stats_df["wid"] + stats_df["delta"])
-  stats_df["delta"] = stats_df["delta"] * stats_df["mult"]
+  wid = stats_df["wid"].to_numpy(dtype=np.float64, copy=False)
+  delta = stats_df["delta"].to_numpy(dtype=np.float64, copy=False)
+  wrap = (delta < 0) & np.isfinite(delta)
+  if wrap.any():
+    delta = delta.copy()
+    delta[wrap] = (2.0 ** wid[wrap]) + delta[wrap]
+  mult = stats_df["mult"].to_numpy(dtype=np.float64, copy=False)
+  stats_df["delta"] = delta * mult
 
   if carry is not None:
     last = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).tail(1)
     if not last.empty:
-      hosts = last["host"].to_numpy()
-      types = last["type"].to_numpy()
-      devs = last["dev"].to_numpy()
-      events = last["event"].to_numpy()
+      hosts = last["host"].astype(object).to_numpy()
+      types = last["type"].astype(object).to_numpy()
+      devs = last["dev"].astype(object).to_numpy()
+      events = last["event"].astype(object).to_numpy()
       values = last["value"].to_numpy(dtype=np.float64, copy=False)
       wids = last["wid"].to_numpy(copy=False)
       mults = last["mult"].to_numpy(dtype=np.float64, copy=False)
       times = last["time"].to_numpy(dtype=np.float64, copy=False)
+      raw = carry.raw
       for i in range(len(last)):
-        carry.raw[(hosts[i], types[i], devs[i], events[i])] = (
+        raw[(hosts[i], types[i], devs[i], events[i])] = (
             float(values[i]),
             int(wids[i]),
             float(mults[i]),
@@ -2861,7 +2884,12 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
     if "dev" not in collapsed.columns:
       collapsed["dev"] = ""
     else:
-      collapsed["dev"] = collapsed["dev"].fillna("").astype(str)
+      # Avoid mandatory object astype when already string-like without NA.
+      dev = collapsed["dev"]
+      if bool(dev.isna().any()):
+        collapsed["dev"] = dev.fillna("").astype(str)
+      elif str(dev.dtype) != "object":
+        collapsed["dev"] = dev.astype(str)
     return collapsed.sort_values(by=_ARC_GROUP_COLS + ["time"])
 
 

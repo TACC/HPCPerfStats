@@ -507,6 +507,54 @@ def test_e6_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):
   assert latest_e6_baseline_artifact(tmp_path) == out
 
 
+def test_e8_retain_gates_delta_and_collapse_separately():
+  """E8 retain requires both hold-second gates; does not use files/s."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+      build_e8_ab_manifest,
+      e8_retain_candidate,
+      e8_retain_hold_seconds,
+  )
+
+  win = {"mean_s": 0.7, "lower_ci_s": 0.65, "upper_ci_s": 0.8}
+  base = {"mean_s": 1.0, "lower_ci_s": 0.9, "upper_ci_s": 1.1}
+  lose = {"mean_s": 0.95, "lower_ci_s": 0.9, "upper_ci_s": 1.0}
+  assert e8_retain_hold_seconds(baseline=base, candidate=win)
+  assert not e8_retain_hold_seconds(baseline=base, candidate=lose)
+  both = e8_retain_candidate(
+      baseline_delta=base,
+      candidate_delta=win,
+      baseline_collapse=base,
+      candidate_collapse=win,
+  )
+  assert both["retain"] is True
+  assert both["retain_delta_s"] is True
+  assert both["retain_collapse_s"] is True
+  one_side = e8_retain_candidate(
+      baseline_delta=base,
+      candidate_delta=win,
+      baseline_collapse=base,
+      candidate_collapse=lose,
+  )
+  assert one_side["retain"] is False
+  assert one_side["retain_delta_s"] is True
+  assert one_side["retain_collapse_s"] is False
+  payload = build_e8_ab_manifest(
+      baseline_delta=base,
+      candidate_delta=win,
+      baseline_collapse=base,
+      candidate_collapse=win,
+      retain_delta_s=True,
+      retain_collapse_s=True,
+      retain=True,
+      replicates=5,
+      python_abi="3.14",
+      run_id="e8id",
+  )
+  assert payload["kind"] == "e8_delta_collapse_ab"
+  assert "retain_delta_s" in payload and "retain_collapse_s" in payload
+  print("e8_retain_tests_ok")
+
+
 def test_width_sweep_widths_gate_and_manifest():
   """Loaded width-sweep helpers: 48/64/96, occupancy fail-closed, report-only."""
   from tests.sync_timedb_benchmark.screening_runner import (

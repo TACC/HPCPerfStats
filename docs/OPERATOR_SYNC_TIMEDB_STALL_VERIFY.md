@@ -92,6 +92,8 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
 
 **Overnight decision soak (hpcperfstats04, post-COPY):** after CODE redeploy with **`sync_ingest_telemetry=yes`** in site INI, soak ≥8 h continuous. Morning: capture full pipeline log with **`logs --timestamps`** (redirect `>file 2>&1`), run `python3 scripts/measure_pipeline_ingest_rate.py --log-file … --since-minutes 480`, read **`decision_next=`** plus mid-tier postgres frac / top parse hold. Do **not** treat flat files/s as “write unchanged” (loaded48 showed postgres_s collapse with flat files/s). Do **not** raise ingest pool. Do **not** enable telem via compose `environment:`.
 
+**E8 post-redeploy T0 (delta/collapse CODE):** with **`sync_ingest_telemetry=yes`**, confirm mid-file **`delta_s=`** / **`collapse_s=`** are lower than the 2026-09-26 overnight cohort (~680–780 / ~540–580 on 13–17 MiB) and that campaign artifact `e8_delta_collapse_ab_*.json` recorded **`retain_delta_s`** and **`retain_collapse_s`**. files/s alone is not the retain meter.
+
 **Soak oracle (closed-book):** after redeploy with telem on, require mid-cohort ≥50 and median `|parse_unaccounted_s| / parse_elapsed_s| ≤ 0.05` (or document why residual remains) before ranking Wave 4 product cuts. Coarse `feed_s`/`collapse_s`/`build_df_s`-only soaks are **not** closed-book.
 
 **Wave 4 product cut (hpcperfstats02 2026-09-15 telem v2):** mid median **`proc_merge_s`/parse ≈ 0.84** (hw/proc_df/feed/collapse negligible). Ship **online** `(jid,host,proc)` peak-merge in `IncrementalStatsParser` + ownership/`int` fast-paths. Post-redeploy soak should show lower mid `elapsed_s` / `parse_elapsed_s` and lower absolute `proc_merge_s` (share may remain high if merge is still the work). Do **not** raise ingest pool.

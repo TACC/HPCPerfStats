@@ -38,6 +38,8 @@ Options:
                   Set HPCPERFSTATS_E6_ARM=baseline|candidate (default baseline)
   --e7            Run E7 proc_merge/build_df A/B arm at width 48 (corpus_steady).
                   Set HPCPERFSTATS_E7_ARM=baseline|candidate (default baseline)
+  --e8            Run E8 delta_s/collapse_s hold-seconds A/B (Horizon frame;
+                  retain on per-hold seconds, not files/s)
   --contention    Run FT contention wave A/B arm at width 48 (corpus_steady).
                   Requires HPCPERFSTATS_CONTENTION_WAVE; set
                   HPCPERFSTATS_CONTENTION_ARM=baseline|candidate
@@ -99,6 +101,7 @@ E2=0
 KNOBS=0
 E6=0
 E7=0
+E8=0
 CONTENTION=0
 LOADED48=0
 HOST_INSERT=0
@@ -142,6 +145,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --e7)
       E7=1
+      shift
+      ;;
+    --e8)
+      E8=1
       shift
       ;;
     --contention)
@@ -213,8 +220,8 @@ RUN_ARGS=(
   "${compose_web_repo_bind_mount_args[@]}"
 )
 if [[ "$KNEE" -eq 1 || "$KNOBS" -eq 1 || "$E6" -eq 1 || "$E7" -eq 1 \
-   || "$CONTENTION" -eq 1 || "$LOADED48" -eq 1 || "$HOST_INSERT" -eq 1 \
-   || "$PROC_INSERT" -eq 1 ]]; then
+   || "$E8" -eq 1 || "$CONTENTION" -eq 1 || "$LOADED48" -eq 1 \
+   || "$HOST_INSERT" -eq 1 || "$PROC_INSERT" -eq 1 ]]; then
   # Ambient screening leftovers (e.g. WIDTHS=1,2,4,8 REPLICATES=2) must not
   # override knee/knobs/e6/e7/contention/loaded48 defaults. Opt-in with KNEE_ALLOW_SCREEN_ENV=1.
   if [[ "${HPCPERFSTATS_SYNC_TIMEDB_KNEE_ALLOW_SCREEN_ENV:-0}" != "1" ]]; then
@@ -223,7 +230,7 @@ if [[ "$KNEE" -eq 1 || "$KNOBS" -eq 1 || "$E6" -eq 1 || "$E7" -eq 1 \
   fi
 fi
 if [[ "$SCREENING" -eq 1 || "$KNEE" -eq 1 || "$KNOBS" -eq 1 \
-   || "$E6" -eq 1 || "$E7" -eq 1 || "$CONTENTION" -eq 1 \
+   || "$E6" -eq 1 || "$E7" -eq 1 || "$E8" -eq 1 || "$CONTENTION" -eq 1 \
    || "$LOADED48" -eq 1 || "$HOST_INSERT" -eq 1 || "$PROC_INSERT" -eq 1 ]]; then
   [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS=${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_WIDTHS}")
@@ -263,6 +270,11 @@ if [[ "$E7" -eq 1 ]]; then
   RUN_ARGS+=(-e "HPCPERFSTATS_E7_ARM=${HPCPERFSTATS_E7_ARM:-baseline}")
   [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_E7_WIDTH:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_E7_WIDTH=${HPCPERFSTATS_SYNC_TIMEDB_E7_WIDTH}")
+fi
+if [[ "$E8" -eq 1 ]]; then
+  RUN_ARGS+=(-e HPCPERFSTATS_SYNC_TIMEDB_E8=1)
+  [[ -n "${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES=${HPCPERFSTATS_SYNC_TIMEDB_SCREEN_REPLICATES}")
 fi
 if [[ "$CONTENTION" -eq 1 ]]; then
   if [[ -z "${HPCPERFSTATS_CONTENTION_WAVE:-}" ]]; then

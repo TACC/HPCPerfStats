@@ -80,6 +80,15 @@ def _e7_enabled() -> bool:
   )
 
 
+def _e8_enabled() -> bool:
+  """E8 hold-seconds A/B is host-unit; compose network not required."""
+  return os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_E8", "").strip().lower() in (
+      "1",
+      "yes",
+      "true",
+  )
+
+
 def _contention_enabled() -> bool:
   return os.environ.get(
       "HPCPERFSTATS_SYNC_TIMEDB_CONTENTION",
@@ -189,6 +198,10 @@ def pytest_collection_modifyitems(
           "HPCPERFSTATS_SYNC_TIMEDB_E7=1 (workflow --e7)"
       ),
   )
+  e8_on = _e8_enabled()
+  skip_e8 = pytest.mark.skip(
+      reason="Requires HPCPERFSTATS_SYNC_TIMEDB_E8=1 (workflow --e8)",
+  )
   contention_on = _compose_network_enabled() and _contention_enabled()
   skip_contention = pytest.mark.skip(
       reason=(
@@ -244,6 +257,9 @@ def pytest_collection_modifyitems(
         item.add_marker(db_mark)
       else:
         item.add_marker(skip_e7)
+    if "test_e8_delta_collapse_ab" in item.nodeid:
+      if not e8_on:
+        item.add_marker(skip_e8)
     if "test_contention_ab" in item.nodeid:
       if contention_on:
         item.add_marker(db_mark)

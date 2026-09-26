@@ -92,6 +92,8 @@ Changing **`sync_ingest_pool_processes`** (or recommending a new production inge
 
 Do not ship an INI-only thread-count change without that evidence trail.
 
+**Paired A/B retain meter = hypothesis under test:** do **not** default every campaign to files/s. Examples: feed/merge throughput → files/s (`e6_retain_candidate`); COPY write path → `mean_write_s`; **E8 delta/collapse** → mid-tier median **`delta_s`** and **`collapse_s`** seconds gated **separately** (`retain_delta_s` AND `retain_collapse_s` — never sum). Flat files/s with a real hold cut is a known false negative (loaded48 insert A/B / 04 overnight).
+
 ## Forbidden without plan amend
 
 - One-line supervisor `continue`/`return` stall patches without failing-first test named for the RC
