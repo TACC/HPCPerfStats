@@ -2268,12 +2268,20 @@ def _run_day_close_job(
           _stage_exit("dedupe", result="fail", reason=type(exc).__name__)
 
     _stage_enter("seal")
-    remaining_fn = getattr(
-        coord, "remaining_raw_paths_blocking_tar_drop", None,
-    )
-    remaining_for_seal = (
-        remaining_fn(tar_path) if callable(remaining_fn) else {}
-    )
+    # H19 skip_merge already answered remaining-raw cheaply; do not re-find
+    # at seal entry (hpcperfstats01 2026-09-25: 07-28 hung after stage_enter
+    # seal with no stage_exit on remaining_raw_paths_blocking_tar_drop).
+    # Pass a cheap non-empty map so only_when_no_remaining_raw still no-ops
+    # seal while remaining raw exists (empty {} would incorrectly compress).
+    if skip_merge_remaining_raw:
+      remaining_for_seal = {tar_path: ["skip_merge_remaining_raw"]}
+    else:
+      remaining_fn = getattr(
+          coord, "remaining_raw_paths_blocking_tar_drop", None,
+      )
+      remaining_for_seal = (
+          remaining_fn(tar_path) if callable(remaining_fn) else {}
+      )
     seal_dirty_daily_archives(
         tgz_archive_dir,
         local_tz=get_local_timezone(),
@@ -2325,12 +2333,16 @@ def _run_day_close_job(
         and not os.path.isfile(zst_path)
     ):
       _stage_enter("seal")
-      remaining_fn = getattr(
-          coord, "remaining_raw_paths_blocking_tar_drop", None,
-      )
-      remaining_for_reseal = (
-          remaining_fn(tar_path) if callable(remaining_fn) else {}
-      )
+      # Post-delete: raw cleared; allow reseal without remaining-raw find.
+      if skip_merge_remaining_raw:
+        remaining_for_reseal = {}
+      else:
+        remaining_fn = getattr(
+            coord, "remaining_raw_paths_blocking_tar_drop", None,
+        )
+        remaining_for_reseal = (
+            remaining_fn(tar_path) if callable(remaining_fn) else {}
+        )
       seal_dirty_daily_archives(
           tgz_archive_dir,
           local_tz=get_local_timezone(),
