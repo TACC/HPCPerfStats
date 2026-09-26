@@ -159,24 +159,6 @@ def _parse_stage_derived(acc: dict[str, float]) -> dict[str, float]:
   return out
 
 
-def _parse_stage_telemetry_enabled_from_env() -> bool:
-  """
-  Return whether parse-stage telemetry is enabled via environment.
-
-  Returns:
-    bool: True when ``HPCPERFSTATS_SYNC_INGEST_PARSE_STAGE_TELEMETRY`` is
-      truthy (``1``/``true``/``yes``/``on``).
-
-  Examples:
-    >>> _parse_stage_telemetry_enabled_from_env() in (True, False)
-    True
-  """
-  import os
-
-  raw = os.environ.get("HPCPERFSTATS_SYNC_INGEST_PARSE_STAGE_TELEMETRY", "")
-  return raw.strip().lower() in ("1", "true", "yes", "on")
-
-
 def reset_parse_stage_timing(*, enabled: bool | None = None) -> None:
   """
   Zero per-file parse-stage ContextVar; optionally set process-wide enable.
@@ -187,9 +169,9 @@ def reset_parse_stage_timing(*, enabled: bool | None = None) -> None:
 
   Args:
     enabled (bool | None): When ``None``, keep process-wide enable if already
-      on; otherwise prefer env
-      ``HPCPERFSTATS_SYNC_INGEST_PARSE_STAGE_TELEMETRY``, else read
-      ``sync_ingest_parse_stage_telemetry`` from conf. When ``False``, no
+      on; otherwise prefer test env
+      ``HPCPERFSTATS_SYNC_INGEST_TELEMETRY``, else read
+      ``sync_ingest_telemetry`` from conf. When ``False``, no
       ``perf_counter`` holds run.
 
   Returns:
@@ -203,12 +185,10 @@ def reset_parse_stage_timing(*, enabled: bool | None = None) -> None:
     if not _parse_stage_telem_on:
       from hpcperfstats.dbload.lib import conf_parser as cfg
       with _parse_stage_campaign_lock:
-        if _parse_stage_telemetry_enabled_from_env():
+        if cfg.ingest_telemetry_enabled_from_env():
           _parse_stage_telem_on = True
         else:
-          _parse_stage_telem_on = bool(
-              cfg.get_sync_ingest_parse_stage_telemetry(),
-          )
+          _parse_stage_telem_on = bool(cfg.get_sync_ingest_telemetry())
         if _parse_stage_telem_on:
           for key in PARSE_STAGE_HOLD_KEYS:
             _parse_stage_campaign[key] = 0.0

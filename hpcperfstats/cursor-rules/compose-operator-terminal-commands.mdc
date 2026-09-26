@@ -710,7 +710,7 @@ ps -eo pid,ppid,pcpu,rss,stat,wchan:32,args | grep "[w]orker:populate-pool" || t
 
 **Anti-pattern — treat `parse_elapsed_s≈elapsed_s` on giant files as a parse-algo bug (hpcperfstats02 2026-09-14):** multi‑MiB / 100k+ `stats_rows_parsed` files are expected CPU; small files with high parse wall-time under full fill are **contention**. Do **not** raise ingest pool size or rewrite streaming parse as a stall fix; reduce competing mark/find/gate work first. Distinct-day `daily_tar_restore … reason=missing_tar` is **expected** unseal, not same-day restore thrash.
 
-**Anti-pattern — mid-cohort size-before-elapsed order (hpcperfstats02 2026-09-15):** a Python filter that requires the log substring `size_bytes=` to appear *before* `elapsed_s=` (or any fixed token order) yields **`mid_cohort_n 0`** even when mid files are present — outcome tokens are unordered. **Corrected:** named-field regex, e.g. `elapsed_s=(?P<elapsed>[0-9.]+)` and `size_bytes=(?P<size>[0-9]+)`, then filter on the groups. Exhaustive stage fields (`lock_s`…`parse_unaccounted_s`) appear when `sync_ingest_parse_stage_telemetry=yes`; do **not** ship another coarse three-bucket telem soak — use closed-book residual.
+**Anti-pattern — mid-cohort size-before-elapsed order (hpcperfstats02 2026-09-15):** a Python filter that requires the log substring `size_bytes=` to appear *before* `elapsed_s=` (or any fixed token order) yields **`mid_cohort_n 0`** even when mid files are present — outcome tokens are unordered. **Corrected:** named-field regex, e.g. `elapsed_s=(?P<elapsed>[0-9.]+)` and `size_bytes=(?P<size>[0-9]+)`, then filter on the groups. Exhaustive stage fields (`lock_s`…`parse_unaccounted_s`) appear when `sync_ingest_telemetry=yes`; do **not** ship another coarse three-bucket telem soak — use closed-book residual.
 
 **Anti-pattern — Wave 3 three-bucket telem as closed-book (hpcperfstats02 2026-09-15):** `feed_s`+`collapse_s`+`build_df_s` ≪ `parse_elapsed_s` on combined ingest because ORM (`postgres_s`) nests inside the parse wall and several holds were missing. **Corrected:** exhaustive hold set + `parse_unaccounted_s = parse_elapsed_s - stages_sum_s - postgres_s`.
 
@@ -906,7 +906,7 @@ podman-compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
   su hpcperfstats -c 'python3 scripts/measure_pipeline_ingest_rate.py --log-file /tmp/pipeline-rates.log'
 ```
 
-**Anti-pattern — write telem on but no write-phase tokens on `ingest file` lines (04 overnight plan 2026-09-25):** `HPCPERFSTATS_SYNC_INGEST_WRITE_TELEMETRY=1` with outcome lines missing `orm_materialize_s=` / `db_execute_s=` / `copy_s=` means the image predates log-plumbing (phases lived in meta only). **Corrected:** redeploy CODE that promotes `INGEST_WRITE_LOG_KEYS` onto the outcome log; confirm with a fresh ingested line. Do not treat flat files/s as proof the write path is unchanged.
+**Anti-pattern — write telem on but no write-phase tokens on `ingest file` lines (04 overnight plan 2026-09-25):** INI `sync_ingest_telemetry=yes` (or a pre-fix image that claimed telem-on) with outcome lines missing `orm_materialize_s=` / `db_execute_s=` / `copy_s=` means the image predates log-plumbing (phases lived in meta only) — **not** “forgot a second env”. **Corrected:** redeploy CODE that promotes `INGEST_WRITE_LOG_KEYS` onto the outcome log; confirm with a fresh ingested line. Do not treat flat files/s as proof the write path is unchanged. Do not document dual PARSE/WRITE env as the production enable path (`no-production-env-for-ini-config.mdc`).
 
 ## Overlap
 

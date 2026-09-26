@@ -143,7 +143,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_malloc_trim_after_file"),
     ("PIPELINE", "sync_ingest_worker_memory_telemetry"),
     ("PIPELINE", "sync_ingest_worker_memory_telemetry_every_n_chunks"),
-    ("PIPELINE", "sync_ingest_parse_stage_telemetry"),
+    ("PIPELINE", "sync_ingest_telemetry"),
     ("PIPELINE", "sync_ingest_recycle_worker_on_failure"),
     ("PIPELINE", "sync_ingest_cooperative_recycle_rss_fraction"),
     ("PIPELINE", "sync_ingest_rss_recheck_delay_ms"),
@@ -298,7 +298,7 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_malloc_trim_after_file': 'yes',
     'sync_ingest_worker_memory_telemetry': 'no',
     'sync_ingest_worker_memory_telemetry_every_n_chunks': '1',
-    'sync_ingest_parse_stage_telemetry': 'no',
+    'sync_ingest_telemetry': 'no',
     'sync_ingest_recycle_worker_on_failure': 'yes',
     'sync_ingest_cooperative_recycle_rss_fraction': '0.5',
     'sync_ingest_rss_recheck_delay_ms': '50',
@@ -3653,21 +3653,39 @@ def get_sync_ingest_worker_memory_telemetry_every_n_chunks() -> Any:
   return max(1, _pipeline_getint("sync_ingest_worker_memory_telemetry_every_n_chunks"))
 
 
-def get_sync_ingest_parse_stage_telemetry() -> Any:
+def get_sync_ingest_telemetry() -> Any:
   """
-  Append feed_s/collapse_s/build_df_s on ingest outcome lines (default no).
+  Append parse-stage and write/COPY tokens on ingest outcome lines (default no).
 
   Returns:
-    Any: Bool-like from ``sync_ingest_parse_stage_telemetry`` (default off).
+    Any: Bool-like from ``sync_ingest_telemetry`` (default off).
 
   Examples:
-    >>> get_sync_ingest_parse_stage_telemetry() in (True, False)
+    >>> get_sync_ingest_telemetry() in (True, False)
     True
   """
   _ensure_cfg_loaded()
   return _parse_bool(
-      _pipeline_get("sync_ingest_parse_stage_telemetry"),
+      _pipeline_get("sync_ingest_telemetry"),
   )
+
+
+def ingest_telemetry_enabled_from_env() -> bool:
+  """
+  Return whether ingest outcome-line telemetry is forced on via test env.
+
+  Production enable path is INI ``sync_ingest_telemetry`` — not env
+  (``no-production-env-for-ini-config.mdc``). Env is test/CI override only.
+
+  Returns:
+    bool: True when ``HPCPERFSTATS_SYNC_INGEST_TELEMETRY`` is truthy.
+
+  Examples:
+    >>> ingest_telemetry_enabled_from_env() in (True, False)
+    True
+  """
+  raw = os.environ.get("HPCPERFSTATS_SYNC_INGEST_TELEMETRY", "")
+  return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 def get_sync_ingest_recycle_worker_on_failure() -> Any:

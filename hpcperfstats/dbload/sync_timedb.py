@@ -2192,21 +2192,6 @@ _ingest_write_phases: contextvars.ContextVar[dict[str, float]] = contextvars.Con
 )
 
 
-def _ingest_write_telemetry_enabled_from_env() -> bool:
-  """
-  Return whether closed-book write telemetry is enabled via environment.
-
-  Returns:
-    bool: True when ``HPCPERFSTATS_SYNC_INGEST_WRITE_TELEMETRY`` is truthy.
-
-  Examples:
-    >>> _ingest_write_telemetry_enabled_from_env() in (True, False)
-    True
-  """
-  raw = os.environ.get("HPCPERFSTATS_SYNC_INGEST_WRITE_TELEMETRY", "")
-  return raw.strip().lower() in ("1", "yes", "true")
-
-
 def _reset_ingest_write_timing(*, enabled: bool | None = None) -> None:
   """
   Zero per-file write ContextVars; optionally set process-wide enable.
@@ -2217,8 +2202,10 @@ def _reset_ingest_write_timing(*, enabled: bool | None = None) -> None:
 
   Args:
     enabled (bool | None): When ``None``, keep process-wide enable if already
-      on; otherwise read ``HPCPERFSTATS_SYNC_INGEST_WRITE_TELEMETRY``. When
-      ``False``, no ``perf_counter`` holds run for write phases.
+      on; otherwise prefer test env
+      ``HPCPERFSTATS_SYNC_INGEST_TELEMETRY``, else
+      ``sync_ingest_telemetry`` from conf. When ``False``, no
+      ``perf_counter`` holds run for write phases.
 
   Returns:
     None
@@ -2229,8 +2216,12 @@ def _reset_ingest_write_timing(*, enabled: bool | None = None) -> None:
   global _ingest_write_telem_on, _ingest_postgres_campaign
   if enabled is None:
     if not _ingest_write_telem_on:
+      from hpcperfstats.dbload.lib import conf_parser as cfg
       with _ingest_write_campaign_lock:
-        _ingest_write_telem_on = _ingest_write_telemetry_enabled_from_env()
+        if cfg.ingest_telemetry_enabled_from_env():
+          _ingest_write_telem_on = True
+        else:
+          _ingest_write_telem_on = bool(cfg.get_sync_ingest_telemetry())
         if _ingest_write_telem_on:
           _ingest_postgres_campaign = 0.0
           for key in INGEST_WRITE_LOG_KEYS:

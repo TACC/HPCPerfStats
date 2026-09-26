@@ -41,6 +41,45 @@ def test_ingest_write_telemetry_off_snapshot_has_no_phase_keys():
     st._reset_ingest_write_timing(enabled=False)
 
 
+def test_ingest_telemetry_env_override_enables_write_without_ini(monkeypatch):
+  """HPCPERFSTATS_SYNC_INGEST_TELEMETRY=1 enables write phases without INI yes."""
+  monkeypatch.setenv("HPCPERFSTATS_SYNC_INGEST_TELEMETRY", "1")
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_telemetry",
+      lambda: False,
+  )
+  st._reset_ingest_write_timing(enabled=False)
+  st._reset_ingest_write_timing(enabled=None)
+  try:
+    with st._held_ingest_write_phase("db_execute_s"):
+      time.sleep(0.01)
+    snap = st._snapshot_ingest_write_timing()
+    assert "db_execute_s" in snap
+    assert snap["db_execute_s"] >= 0.005
+  finally:
+    st._reset_ingest_write_timing(enabled=False)
+    monkeypatch.delenv("HPCPERFSTATS_SYNC_INGEST_TELEMETRY", raising=False)
+
+
+def test_ingest_telemetry_ini_yes_enables_write_without_env(monkeypatch):
+  """INI sync_ingest_telemetry=yes enables write phases when env unset."""
+  monkeypatch.delenv("HPCPERFSTATS_SYNC_INGEST_TELEMETRY", raising=False)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_telemetry",
+      lambda: True,
+  )
+  st._reset_ingest_write_timing(enabled=False)
+  st._reset_ingest_write_timing(enabled=None)
+  try:
+    with st._held_ingest_write_phase("orm_materialize_s"):
+      time.sleep(0.01)
+    snap = st._snapshot_ingest_write_timing()
+    assert "orm_materialize_s" in snap
+    assert snap["orm_materialize_s"] >= 0.005
+  finally:
+    st._reset_ingest_write_timing(enabled=False)
+
+
 def test_ingest_write_telemetry_on_emits_all_phase_keys():
   """When enabled, every write phase key is present and sums near postgres_s."""
   st._reset_ingest_write_timing(enabled=True)

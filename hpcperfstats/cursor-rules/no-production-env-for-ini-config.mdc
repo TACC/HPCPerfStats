@@ -1,7 +1,7 @@
 ---
 description: Production must not require .env or shell env flags for site config already in hpcperfstats.ini
 alwaysApply: false
-globs: docker-compose*.yaml,hpcperfstats.ini.example,services-conf/resolve_proxy_ssl_certs_dir.py,HPCPerfStats/README.md,README.md,docs/upgrade.md
+globs: docker-compose*.yaml,hpcperfstats.ini.example,services-conf/resolve_proxy_ssl_certs_dir.py,HPCPerfStats/README.md,README.md,docs/upgrade.md,hpcperfstats/dbload/sync_timedb.py,hpcperfstats/dbload/lib/sync_timedb_parsing.py,hpcperfstats/dbload/lib/conf_parser.py,docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md,docs/SYNC_TIMEDB_THROUGHPUT_CAMPAIGN.md,docs/DEPLOY_CONCURRENCY_AND_NUMA.md,.cursor/plans/**
 ---
 
 # No Production `.env` For INI Config
@@ -10,9 +10,22 @@ globs: docker-compose*.yaml,hpcperfstats.ini.example,services-conf/resolve_proxy
 
 ## Law (non-negotiable)
 
-**Production deploys must not require operators to create a Compose `.env` file or export shell environment variables for site configuration that already lives in `hpcperfstats.ini` or `docker-compose.settings.yaml`.**
+**Production deploys must not require operators to create a Compose `.env` file, export shell environment variables, or add pipeline `environment:` entries for site/pipeline configuration that belongs in `hpcperfstats.ini` or `docker-compose.settings.yaml`.**
 
-If a knob belongs in INI or settings — for example **`server=`**, paths, pool sizes, or TLS **`proxy_ssl_source.device`** — Compose / install docs must consume it from those files. Do **not** make **`export FOO=…`**, **`.env`**, or **`${FOO:?…}`** the production contract for that knob.
+If a knob belongs in INI or settings — for example **`server=`**, paths, pool sizes, **ingest telemetry**, or TLS **`proxy_ssl_source.device`** — Compose / install / soak docs must consume it from those files. Do **not** make **`export FOO=…`**, **`.env`**, **`${FOO:?…}`**, or **“set `HPCPERFSTATS_*=1` on the pipeline container”** the production contract for that knob.
+
+**Operator law (hpcperfstats04 2026-09-26):** production operators do **not** use environment variables for soak/telem toggles. Agents must not invent env-only production contracts for knobs that should be `[PIPELINE]` INI keys.
+
+## Pipeline / soak telemetry (canonical)
+
+| Knob | Production surface | Forbidden as production contract |
+|------|--------------------|----------------------------------|
+| Parse-stage **and** write/COPY shares on `ingest file` lines | **`[PIPELINE] sync_ingest_telemetry`** (default **no**) — one knob for both token families | Dual INI keys; `HPCPERFSTATS_SYNC_INGEST_TELEMETRY` (or retired PARSE/WRITE env names) for overnight/prod enable |
+| Worker memory batch lines | **`[PIPELINE] sync_ingest_worker_memory_telemetry`** | New env-only memory telem |
+
+Ship INI keys + `conf_parser` getters + commented `# key = no` in **`hpcperfstats.ini.example`** in the **same task** as the telem feature (`hpcperfstats-ini-format.mdc`, `deploy-ini-with-code-no-phase-zero.mdc`). Overnight enable = bake **`sync_ingest_telemetry = yes`** into site INI on the **same redeploy** as the CODE that needs it — not compose `environment:`. Test/CI may set **`HPCPERFSTATS_SYNC_INGEST_TELEMETRY=1`** to override INI default-off.
+
+**Incident — overnight decision soak (04, 2026-09-26):** write telem was documented as env-only while parse used a separate INI key; operator left env empty; parse stages appeared while write phases were absent. Do not ship multiple outcome-line telem toggles or env as the production enable path.
 
 ## Proxy TLS (canonical example)
 
@@ -29,13 +42,14 @@ If a knob belongs in INI or settings — for example **`server=`**, paths, pool 
 
 - **Process titles / container runtime** already set in compose (`HPCPERFSTATS_INI=…` inside the image path).
 - **Optional LE subpath** via **`HPCPERFSTATS_SSL_CERTS_REL`** in **`docker-compose.settings.yaml`** (commented in `.example`); unset for flat PEM dirs.
-- **Test/CI-only** exports inside **`tests/compose_test_cmd.sh`** / workflow scripts (never the production install path).
+- **Test/CI-only** exports inside **`tests/compose_test_cmd.sh`** / workflow scripts / Podman A/B arms (never the production install or overnight soak path). Env may **override** an INI telem default inside unit tests; it must **not** be the documented production enable path.
 - **One-shot diagnostics** where the operator pastes a command that substitutes a resolved path — prefer the resolve helper over a standing env var.
 
 ## Agent requirements
 
 - When adding Compose interpolation for site identity/paths, prefer settings + INI over new **`HPCPERFSTATS_*`** production env contracts.
-- Update **`README.md` Installation** in the same task (`readme-installation-sync.mdc`).
+- When adding **opt-in telemetry / soak / closed-book** toggles for pipeline daemons, add **`[PIPELINE]` INI** + getter first; document enable as INI `= yes` on redeploy.
+- Update **`README.md` Installation** in the same task when install steps change (`readme-installation-sync.mdc`).
 - Dual-register this rule when triggers change (`agent-discipline-core.mdc` + `hook_task_router.py`).
 
 ## Overlap
@@ -43,3 +57,5 @@ If a knob belongs in INI or settings — for example **`server=`**, paths, pool 
 - **`immutable-image-ini-policy.mdc`** — bake INI into images; no runtime INI bind; TLS via settings volume + entrypoint.
 - **`hpcperfstats-ini-format.mdc`** — INI is the site config surface (TLS path is **not** in INI).
 - **`minimal-compose-install-footprint.mdc`** — keep operator compose edits minimal.
+- **`deploy-ini-with-code-no-phase-zero.mdc`** — INI change ships with CODE redeploy; no env workaround.
+- **`compose-operator-terminal-commands.mdc`** — Pending soak commands must ask for INI telem keys, not pipeline env.

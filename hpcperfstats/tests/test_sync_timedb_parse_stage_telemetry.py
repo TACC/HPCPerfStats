@@ -142,11 +142,11 @@ def test_parse_stage_telemetry_outcome_log_tokens(monkeypatch):
   assert joined.count("feed_s=") == 1
 
 
-def test_parse_stage_telemetry_env_override_enables_without_ini(monkeypatch):
-  """HPCPERFSTATS_SYNC_INGEST_PARSE_STAGE_TELEMETRY=1 enables without INI yes."""
-  monkeypatch.setenv("HPCPERFSTATS_SYNC_INGEST_PARSE_STAGE_TELEMETRY", "1")
+def test_ingest_telemetry_env_override_enables_parse_without_ini(monkeypatch):
+  """HPCPERFSTATS_SYNC_INGEST_TELEMETRY=1 enables parse stages without INI yes."""
+  monkeypatch.setenv("HPCPERFSTATS_SYNC_INGEST_TELEMETRY", "1")
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_parse_stage_telemetry",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_telemetry",
       lambda: False,
   )
   reset_parse_stage_timing(enabled=False)
@@ -159,9 +159,43 @@ def test_parse_stage_telemetry_env_override_enables_without_ini(monkeypatch):
     assert "feed_s" in snap
   finally:
     reset_parse_stage_timing(enabled=False)
-    monkeypatch.delenv(
-        "HPCPERFSTATS_SYNC_INGEST_PARSE_STAGE_TELEMETRY", raising=False,
-    )
+    monkeypatch.delenv("HPCPERFSTATS_SYNC_INGEST_TELEMETRY", raising=False)
+
+
+def test_ingest_telemetry_ini_yes_enables_parse_without_env(monkeypatch):
+  """INI sync_ingest_telemetry=yes enables parse stages when env unset."""
+  monkeypatch.delenv("HPCPERFSTATS_SYNC_INGEST_TELEMETRY", raising=False)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_telemetry",
+      lambda: True,
+  )
+  reset_parse_stage_timing(enabled=False)
+  reset_parse_stage_timing(enabled=None)
+  try:
+    parser = IncrementalStatsParser(0)
+    parser.feed_lines(_MINIMAL_LINES)
+    snap = snapshot_parse_stage_timing()
+    assert snap
+    assert "feed_s" in snap
+  finally:
+    reset_parse_stage_timing(enabled=False)
+
+
+def test_ingest_telemetry_off_when_ini_no_and_env_unset(monkeypatch):
+  """INI no + env unset leaves parse-stage telem off after enabled=None reset."""
+  monkeypatch.delenv("HPCPERFSTATS_SYNC_INGEST_TELEMETRY", raising=False)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_telemetry",
+      lambda: False,
+  )
+  reset_parse_stage_timing(enabled=False)
+  reset_parse_stage_timing(enabled=None)
+  try:
+    parser = IncrementalStatsParser(0)
+    parser.feed_lines(_MINIMAL_LINES)
+    assert snapshot_parse_stage_timing() == {}
+  finally:
+    reset_parse_stage_timing(enabled=False)
 
 
 def test_build_stats_dataframes_has_no_outer_build_df_hold():

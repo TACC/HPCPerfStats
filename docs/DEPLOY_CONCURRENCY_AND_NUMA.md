@@ -176,7 +176,7 @@ Jobs with long monitor prolog gaps (telemetry begins hours after Slurm start) st
 ## Observability
 
 - Run **`python hpcperfstats/site/manage.py pg_connection_stats`** from the repo root (with **`HPCPERFSTATS_INI`** / config and DB reachable) to print **`pg_stat_activity`** totals for the current database (`machine` app management command).
-- **Overnight ingest decision telem (default off):** set pipeline env **`HPCPERFSTATS_SYNC_INGEST_WRITE_TELEMETRY=1`** and **`HPCPERFSTATS_SYNC_INGEST_PARSE_STAGE_TELEMETRY=1`** for a soak wave only (do not bake ON). Outcome lines then include write/parse phase tokens; analyze with **`scripts/measure_pipeline_ingest_rate.py --log-file … --since-minutes 480`** and read **`decision_next=`**. See **`OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`** overnight section.
+- **Overnight ingest decision telem (default off):** set **`[PIPELINE] sync_ingest_telemetry = yes`** in site INI on the **same** CODE redeploy (do not bake ON in `hpcperfstats.ini.example`; do **not** use pipeline env — `no-production-env-for-ini-config.mdc`). Outcome lines then include write+parse phase tokens; analyze with **`scripts/measure_pipeline_ingest_rate.py --log-file … --since-minutes 480`** and read **`decision_next=`**. See **`OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`** overnight section.
 
 ## Archive janitor and seal/append lock contention
 
