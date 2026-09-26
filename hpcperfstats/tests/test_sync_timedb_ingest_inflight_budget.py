@@ -15,10 +15,10 @@ def test_peak_cgroup_constant_and_budget_from_roof(monkeypatch):
   assert wm.PEAK_CGROUP_PER_RAW_FILE_BYTE == 2.5
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser.get_sync_process_tree_rss_limit_mb",
-      lambda: 110000,
+      lambda: 80000,
   )
   budget = wm.compute_ingest_inflight_raw_bytes_budget()
-  expect = int((110000 * 1024 * 1024) / 2.5)
+  expect = int((80000 * 1024 * 1024) / 2.5)
   assert budget == expect
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.conf_parser.get_sync_process_tree_rss_limit_mb",

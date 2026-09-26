@@ -289,7 +289,7 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_members_populate_pool_processes': '4',
     'sync_bulk_create_batch_size': '10000',
     'sync_supervisor_rss_limit_mb': '0',
-    'sync_process_tree_rss_limit_mb': '110000',
+    'sync_process_tree_rss_limit_mb': '80000',
     'sync_process_tree_rss_exit_mb': '0',
     'sync_ingest_max_file_read_bytes': '536870912',
     'sync_ingest_stream_duplicate_scan_bytes': '8388608',
@@ -3494,7 +3494,7 @@ def get_sync_supervisor_rss_limit_mb() -> Any:
 
 def get_sync_process_tree_rss_limit_mb() -> Any:
   """
-  Process-tree RSS defer limit in MiB; 0 disables backpressure (default 110000).
+  Process-tree RSS defer limit in MiB; 0 disables backpressure (default 80000).
   
   Returns:
     Any: Open return polymorphism from ``get_sync_process_tree_rss_limit_mb``:
