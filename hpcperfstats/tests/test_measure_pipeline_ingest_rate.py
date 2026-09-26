@@ -509,7 +509,8 @@ def test_overnight_pack_decision_next_parse_hold(mod):
                 "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
                 "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
                 "postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 "
-                "orm_materialize_s=1.0 feed_s=70.0 collapse_s=10.0"
+                "orm_materialize_s=1.0 feed_s=70.0 collapse_s=10.0 "
+                "parse_unaccounted_s=5.0"
                 % (i, 128 * mib)
             ),
         )
@@ -524,6 +525,77 @@ def test_overnight_pack_decision_next_parse_hold(mod):
     outcomes = mod.analyze_lines(lines)
     assert outcomes["decision_next"] == "parse_hold_feed_s"
     assert outcomes["mid_tier_top_parse_hold"] == "feed_s"
+    assert outcomes["mid_tier_parse_unaccounted_dominates"] == "no"
+
+
+def test_overnight_pack_decision_next_parse_unaccounted(mod):
+    """Unaccounted median ≥ top named hold → parse_unaccounted_investigate."""
+    mib = 1024 * 1024
+    lines = [
+        _ts(0)
+        + "Messages consumed in the last 10 minutes: 100; messages waiting "
+        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+    ]
+    for i in range(12):
+        lines.append(
+            _ts(10 + i * 5)
+            + (
+                "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
+                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+                "postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 "
+                "orm_materialize_s=1.0 feed_s=20.0 collapse_s=10.0 "
+                "parse_unaccounted_s=80.0"
+                % (i, 128 * mib)
+            ),
+        )
+    lines.append(
+        _ts(70)
+        + "Messages consumed in the last 10 minutes: 100; messages waiting "
+        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    )
+    lines.append(
+        _ts(70) + "Pending stats file list truncated pending=900 max=2000",
+    )
+    outcomes = mod.analyze_lines(lines)
+    assert outcomes["decision_next"] == "parse_unaccounted_investigate"
+    assert outcomes["mid_tier_parse_unaccounted_dominates"] == "yes"
+    assert outcomes["mid_tier_top_parse_hold"] == "feed_s"
+
+
+def test_overnight_pack_decision_next_telem_incomplete(mod, capsys):
+    """Parse holds without write-phase tokens → telem_incomplete_re_soak."""
+    mib = 1024 * 1024
+    lines = [
+        _ts(0)
+        + "Messages consumed in the last 10 minutes: 100; messages waiting "
+        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+    ]
+    for i in range(12):
+        lines.append(
+            _ts(10 + i * 5)
+            + (
+                "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
+                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+                "postgres_s=5.0 feed_s=70.0 collapse_s=10.0 "
+                "parse_unaccounted_s=5.0"
+                % (i, 128 * mib)
+            ),
+        )
+    lines.append(
+        _ts(70)
+        + "Messages consumed in the last 10 minutes: 100; messages waiting "
+        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    )
+    lines.append(
+        _ts(70) + "Pending stats file list truncated pending=900 max=2000",
+    )
+    outcomes = mod.analyze_lines(lines)
+    assert outcomes["decision_next"] == "telem_incomplete_re_soak"
+    assert outcomes["mid_tier_telem_incomplete"] == "yes"
+    err = capsys.readouterr().err
+    assert "telem_incomplete_re_soak" in err or "write-phase" in err
 
 
 def test_cli_script_runs_from_repo(tmp_path):

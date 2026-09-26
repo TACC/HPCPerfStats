@@ -363,6 +363,8 @@ def _decision_next(
     mid_top_parse_hold: Optional[str],
     mid_write_dominates: bool,
     ge_1gib_wall_share: Optional[float],
+    telem_incomplete: bool = False,
+    parse_unaccounted_dominates: bool = False,
 ) -> str:
     """
     Map overnight analyzer signals to the locked next-CODE token.
@@ -375,6 +377,8 @@ def _decision_next(
       mid_top_parse_hold (Optional[str]): Largest mid-tier parse hold name.
       mid_write_dominates (bool): True when execute/copy dominate write phases.
       ge_1gib_wall_share (Optional[float]): Share of elapsed samples in large tiers.
+      telem_incomplete (bool): Parse holds present but no write-phase tokens.
+      parse_unaccounted_dominates (bool): Mid ``parse_unaccounted_s`` ≥ top named hold.
 
     Returns:
       str: Decision token for operators (never empty).
@@ -401,10 +405,14 @@ def _decision_next(
         return "stop_ingest_rate_watch_archive"
     if ge_1gib_wall_share is not None and ge_1gib_wall_share >= 0.5 and large_n > 0:
         return "giant_scheduling_plan"
+    if telem_incomplete:
+        return "telem_incomplete_re_soak"
     if mid_write_dominates or (
         mid_postgres_frac is not None and mid_postgres_frac >= 0.35
     ):
         return "write_timescale_path"
+    if parse_unaccounted_dominates:
+        return "parse_unaccounted_investigate"
     if mid_top_parse_hold:
         return "parse_hold_%s" % mid_top_parse_hold
     if mid_n == 0 and small_n == 0:
@@ -1303,6 +1311,32 @@ def build_outcomes(
     ):
         # Prefer write branch when postgres frac is high.
         mid_top_parse = None
+    unaccounted_med = _median_or_none(
+        mid_phases.get("parse_unaccounted_s", []),
+    )
+    if unaccounted_med is None:
+        parse_unaccounted_dominates = False
+    elif mid_top_parse is not None:
+        parse_unaccounted_dominates = float(unaccounted_med) >= float(top_val)
+    else:
+        parse_unaccounted_dominates = float(unaccounted_med) > 0.0
+    named_parse_sample_n = sum(
+        len(mid_phases.get(tok, []))
+        for tok in _PARSE_HOLD_TOKEN_NAMES
+        if tok not in ("stages_sum_s", "parse_unaccounted_s", "build_df_s")
+    )
+    write_sample_n = sum(
+        len(mid_phases.get(tok, [])) for tok in _WRITE_PHASE_TOKEN_NAMES
+    )
+    telem_incomplete = bool(named_parse_sample_n > 0 and write_sample_n == 0)
+    if telem_incomplete:
+        print(
+            "WARN: mid-tier parse holds present but no write-phase tokens "
+            "(orm_materialize_s/db_execute_s/copy_s/…); "
+            "decision_next=telem_incomplete_re_soak — enable "
+            "sync_ingest_telemetry=yes on redeploy",
+            file=sys.stderr,
+        )
     total_elapsed_samples = sum(
         len(metrics.full_ingest_elapsed_by_tier.get(t, []))
         for t in _SIZE_TIER_NAMES
@@ -1322,6 +1356,12 @@ def build_outcomes(
     outcomes["mid_tier_write_exec_dominates"] = (
         "yes" if mid_write_dominates else "no"
     )
+    outcomes["mid_tier_telem_incomplete"] = (
+        "yes" if telem_incomplete else "no"
+    )
+    outcomes["mid_tier_parse_unaccounted_dominates"] = (
+        "yes" if parse_unaccounted_dominates else "no"
+    )
     outcomes["decision_next"] = _decision_next(
         ratio_ingest=ratio_ingest,
         window_minutes=window_minutes,
@@ -1330,6 +1370,10 @@ def build_outcomes(
         mid_top_parse_hold=mid_top_parse if not mid_write_dominates else None,
         mid_write_dominates=mid_write_dominates,
         ge_1gib_wall_share=ge_share,
+        telem_incomplete=telem_incomplete,
+        parse_unaccounted_dominates=(
+            parse_unaccounted_dominates and not mid_write_dominates
+        ),
     )
     return outcomes
 
@@ -1440,6 +1484,8 @@ def format_stdout(outcomes: dict[str, str]) -> str:
         "mid_tier_median_postgres_frac",
         "mid_tier_top_parse_hold",
         "mid_tier_write_exec_dominates",
+        "mid_tier_telem_incomplete",
+        "mid_tier_parse_unaccounted_dominates",
         "decision_next",
     )
     tier_keys: list[str] = []

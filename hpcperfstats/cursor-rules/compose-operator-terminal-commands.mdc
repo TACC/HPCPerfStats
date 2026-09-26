@@ -361,13 +361,31 @@ docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost 
 | Do | Don't |
 |----|-------|
 | `print(cfg.get_metrics_pool_processes())` | `cfg.get_metrics_pool()` |
-| Separate host-side `logs … \| grep` block | `python … && logs …` after a fallible one-liner |
+| Separate host-side `logs … \| grep` block **or** `;` before logs | `python … && logs …` after a fallible one-liner |
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c 'python3 -c "
 from hpcperfstats.dbload.lib import conf_parser as cfg
 print(\"metrics_pool_threads\", cfg.get_metrics_pool_processes())
 "'
+```
+
+### Anti-pattern — assuming `get_sync_ingest_telemetry` on every image
+
+Pre–`ingest-telemetry-single-ini` images have **no** `conf_parser.get_sync_ingest_telemetry` (hpcperfstats04 2026-09-26 — `AttributeError`). Do **not** `&&`-chain pipeline logs after that getter. Fingerprint with `getattr(cfg, "get_sync_ingest_telemetry", None)` (or call only after redeploy that ships the getter). Production enable remains INI **`sync_ingest_telemetry=yes`** on the same CODE redeploy (`no-production-env-for-ini-config.mdc`) — not env.
+
+| Do | Don't |
+|----|-------|
+| `fn = getattr(cfg, "get_sync_ingest_telemetry", None); print("missing" if fn is None else fn())` | Bare `cfg.get_sync_ingest_telemetry()` on unknown image age |
+| `python3 -c '…' ; podman-compose … logs --timestamps …` | `python3 -c '…get_sync_ingest_telemetry…' && logs …` |
+
+```bash
+podman-compose -p hpcperfstats -f docker-compose.yaml exec pipeline su hpcperfstats -c 'python3 -c "
+from hpcperfstats.dbload.lib import conf_parser as cfg
+print(cfg.get_sync_ingest_pool_processes())
+fn = getattr(cfg, \"get_sync_ingest_telemetry\", None)
+print(\"get_sync_ingest_telemetry\", \"missing\" if fn is None else fn())
+"' ; podman-compose -p hpcperfstats -f docker-compose.yaml logs --timestamps pipeline 2>&1 | rg -m 5 'ingest file path=.*(delta_s=|orm_materialize_s=)' || true
 ```
 
 ### Anti-pattern — inventing `conf_parser.get_listend_pool_processes`
