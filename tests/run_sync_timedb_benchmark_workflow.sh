@@ -34,10 +34,10 @@ Options:
                   widths 48,64,80,96; 5 replicates by default)
   --e2            Run closed-book mid-size E2 timing against corpus_steady
   --knobs         Run supporting-knob sweeps at fixed width 48 (corpus_steady)
-  --e6            Run E6 parse_feed A/B arm at width 48 (corpus_steady).
-                  Set HPCPERFSTATS_E6_ARM=baseline|candidate (default baseline)
-  --e7            Run E7 proc_merge/build_df A/B arm at width 48 (corpus_steady).
-                  Set HPCPERFSTATS_E7_ARM=baseline|candidate (default baseline)
+  --e6            Run E6 feed_line hold-seconds A/B (host-unit microbench;
+                  HPCPERFSTATS_SYNC_TIMEDB_E6=1). Files/s report-only.
+  --e7            Run E7 proc_merge/build_df hold-seconds A/B (OnlineMerged
+                  on vs list+dedupe; HPCPERFSTATS_SYNC_TIMEDB_E7=1).
   --e8            Run E8 delta_s/collapse_s hold-seconds A/B (Horizon frame;
                   retain on per-hold seconds, not files/s)
   --contention    Run FT contention wave A/B arm at width 48 (corpus_steady).

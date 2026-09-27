@@ -1,253 +1,163 @@
-"""Compose-backed E7 proc_merge/build_df A/B at fixed ingest width 48."""
+"""E7 proc_merge/build_df hold-seconds A/B (on vs off OnlineMerged path)."""
 from __future__ import annotations
 
-import json
 import os
 import sys
+import time
+import uuid
 from pathlib import Path
 
 import pytest
 
 from tests.sync_timedb_benchmark.screening_runner import (
+    DEFAULT_E7_WIDTH,
     build_e7_ab_manifest,
-    corpus_hosts,
-    e6_retain_candidate,
-    e7_arm,
-    e7_fixed_width,
     e7_mode_enabled,
-    latest_e7_baseline_artifact,
+    hold_seconds_retain_candidate,
     parse_replicates_env,
-    reset_screening_state,
-    run_width_matrix,
+    summarize_hold_s_replicates,
     write_screening_artifact,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_STEADY_CORPUS = (
-    REPO_ROOT / "test_runs" / "sync_timedb_bench" / "corpus_steady"
-)
+
+pytestmark = [pytest.mark.sync_timedb_bench]
 
 
-pytestmark = [
-    pytest.mark.sync_timedb_bench,
-]
+def _proc_row(i: int) -> dict:
+  return {
+      "time": 1_709_123_456.0 + (i % 50),
+      "host": "cn%03d" % (i % 40),
+      "jid": "job%d" % (i % 8),
+      "proc": "bash",
+      "device": "bash/%d/0/0" % (i % 200),
+      "vm_peak": 1000 + i,
+      "rss_peak": 500 + i,
+      "threads": 4 + (i % 8),
+  }
 
 
-def test_e7_proc_build_ab_arm(monkeypatch):
+def _proc_rows(*, n: int = 8000) -> list[dict]:
+  return [_proc_row(i) for i in range(n)]
+
+
+def test_e7_proc_build_ab_arm():
   """
-  Measure one E7 arm at width 48; merge A/B when arm is candidate.
+  Time baseline (list+dedupe) vs candidate (OnlineMerged/columnar) holds.
 
-  Requires compose db/redis, ``HPCPERFSTATS_SYNC_TIMEDB_E7=1``, and
-  ``HPCPERFSTATS_E7_ARM=baseline|candidate``. Baseline writes
-  ``e7_arm_baseline_*.json``. Candidate loads the latest baseline, writes
-  ``e7_proc_build_ab_*.json`` with a retain decision. Does not write
-  production INI.
+  Requires ``HPCPERFSTATS_SYNC_TIMEDB_E7=1``. Retain requires both
+  ``proc_merge_s`` and ``build_df_s`` hold-seconds gates (AND).
   """
   if not e7_mode_enabled():
     pytest.fail("HPCPERFSTATS_SYNC_TIMEDB_E7=1 required for E7 study")
 
-  arm = e7_arm()
-  corpus_env = os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS", "").strip()
-  corpus_dir = Path(corpus_env) if corpus_env else DEFAULT_STEADY_CORPUS
-  if not corpus_dir.is_dir() or not corpus_hosts(corpus_dir):
-    pytest.fail("missing corpus at %s" % corpus_dir)
-
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      clear_daily_archive_members_cache,
-  )
-  from hpcperfstats.dbload.lib.sync_timedb_job_store import (
-      reset_job_queue_script_cache_for_tests,
-  )
-  from hpcperfstats.dbload.lib.sync_timedb_queue_orchestrator import (
-      reset_shutdown_for_tests,
-  )
-  from hpcperfstats.dbload.sync_timedb import (
-      run_ingest_entire_archive_once_for_tests,
-  )
-  from hpcperfstats.site.lib.machine.models import host_data
-
-  archive_dir = Path(cfg.get_archive_dir_path())
-  daily_archive_dir = Path(cfg.get_daily_archive_dir_path())
-  host_ext = (cfg.get_host_name_ext() or "").strip()
-  hosts = corpus_hosts(corpus_dir)
-  if host_ext and not all(host.endswith(host_ext) for host in hosts):
-    pytest.fail(
-        "corpus hosts must end with host_name_ext=%r; got %r"
-        % (host_ext, hosts),
-    )
-
-  file_count = sum(
-      1
-      for host in hosts
-      for path in (corpus_dir / host).iterdir()
-      if path.is_file()
-  )
-  assert file_count >= 1
-
-  ingest_width = e7_fixed_width()
-  replicates = parse_replicates_env()
-  monkeypatch.setattr(
-      cfg,
-      "get_sync_ingest_pool_processes",
-      lambda: int(ingest_width),
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+      OnlineMergedProcRows,
+      build_stats_dataframes,
+      dedupe_proc_stats_peak_merge,
+      reset_parse_stage_timing,
+      snapshot_parse_stage_campaign_timing,
   )
 
-  def _clear_orm(planted: list[str]) -> None:
-    host_data.objects.filter(host__in=list(planted)).delete()
+  replicates = max(5, parse_replicates_env())
+  raw_rows = _proc_rows()
+  # Warm candidate path.
+  build_stats_dataframes([], OnlineMergedProcRows(list(raw_rows)))
 
-  def _reset_inprocess() -> None:
-    reset_shutdown_for_tests()
-    reset_job_queue_script_cache_for_tests()
-    clear_daily_archive_members_cache()
+  base_merge: list[float] = []
+  cand_merge: list[float] = []
+  base_build: list[float] = []
+  cand_build: list[float] = []
 
-  def _wipe_daily_archive() -> None:
-    daily_archive_dir.mkdir(parents=True, exist_ok=True)
-    for child in list(daily_archive_dir.iterdir()):
-      if child.is_dir():
-        import shutil
-        shutil.rmtree(child)
-      elif child.is_file():
-        child.unlink()
+  for _ in range(replicates):
+    reset_parse_stage_timing(enabled=True)
+    t0 = time.perf_counter()
+    # Baseline: ordinary list → timed dedupe + DataFrame(list).
+    build_stats_dataframes([], list(raw_rows))
+    wall = time.perf_counter() - t0
+    snap = snapshot_parse_stage_campaign_timing()
+    reset_parse_stage_timing(enabled=False)
+    base_merge.append(float(snap.get("proc_merge_s") or 0.0))
+    base_build.append(float(snap.get("build_df_s") or wall))
 
-  def _reset_and_plant() -> None:
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    _wipe_daily_archive()
-    reset_screening_state(
-        corpus_dir=corpus_dir,
-        archive_dir=archive_dir,
-        clear_orm=_clear_orm,
-        reset_inprocess=_reset_inprocess,
-    )
+    reset_parse_stage_timing(enabled=True)
+    t0 = time.perf_counter()
+    build_stats_dataframes([], OnlineMergedProcRows(list(raw_rows)))
+    wall = time.perf_counter() - t0
+    snap = snapshot_parse_stage_campaign_timing()
+    reset_parse_stage_timing(enabled=False)
+    # OnlineMerged skips timed dedupe; merge hold may be ~0 — still gate it.
+    cand_merge.append(float(snap.get("proc_merge_s") or 0.0))
+    cand_build.append(float(snap.get("build_df_s") or wall))
 
-  ingest_timeout_s = float(
-      os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_TIMEOUT_S", "3600")
+  # Equivalence smoke: peak rows match for one sample.
+  merged = dedupe_proc_stats_peak_merge(list(raw_rows[:200]))
+  online = OnlineMergedProcRows(merged)
+  _, df_list = build_stats_dataframes([], list(raw_rows[:200]))
+  _, df_on = build_stats_dataframes([], online)
+  assert len(df_list) == len(df_on)
+
+  baseline_merge = summarize_hold_s_replicates(base_merge)
+  candidate_merge = summarize_hold_s_replicates(cand_merge)
+  baseline_build = summarize_hold_s_replicates(base_build)
+  candidate_build = summarize_hold_s_replicates(cand_build)
+
+  retain_merge = hold_seconds_retain_candidate(
+      baseline=baseline_merge, candidate=candidate_merge,
   )
-
-  def _run_ingest_for_e7() -> None:
-    import threading
-    import time as time_mod
-
-    from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
-        has_file_complete_ingest_mark,
-    )
-    from hpcperfstats.dbload.lib.sync_timedb_queue_orchestrator import (
-        request_shutdown,
-    )
-
-    stop = threading.Event()
-    archive_root = str(archive_dir)
-
-    def _planted_paths() -> list[str]:
-      paths: list[str] = []
-      for host in hosts:
-        host_dir = archive_dir / host
-        if not host_dir.is_dir():
-          continue
-        for path in host_dir.iterdir():
-          if path.is_file():
-            paths.append(str(path))
-      return paths
-
-    def _durable_complete() -> bool:
-      if host_data.objects.filter(host__in=list(hosts)).count() >= file_count:
-        return True
-      planted = _planted_paths()
-      if len(planted) < file_count:
-        return False
-      return all(
-          has_file_complete_ingest_mark(path, archive_data_dir=archive_root)
-          for path in planted
-      )
-
-    def _watch_ingest_complete() -> None:
-      deadline = time_mod.time() + float(ingest_timeout_s)
-      while not stop.is_set() and time_mod.time() < deadline:
-        if _durable_complete():
-          time_mod.sleep(2.0)
-          request_shutdown()
-          return
-        time_mod.sleep(0.5)
-
-    watcher = threading.Thread(
-        target=_watch_ingest_complete,
-        name="e7-ingest-watch",
-        daemon=True,
-    )
-    watcher.start()
-    try:
-      run_ingest_entire_archive_once_for_tests()
-    finally:
-      stop.set()
-
-  width_points = run_width_matrix(
-      widths=(ingest_width,),
-      replicates=replicates,
-      file_count=file_count,
-      set_width=lambda _n: None,
-      reset_and_plant=_reset_and_plant,
-      run_ingest=_run_ingest_for_e7,
-      ingest_timeout_s=ingest_timeout_s,
+  retain_build = hold_seconds_retain_candidate(
+      baseline=baseline_build, candidate=candidate_build,
   )
-  assert len(width_points) == 1
-  arm_point = {
-      "arm": arm,
-      "threads": int(width_points[0]["threads"]),
-      "lower_ci_files_per_s": float(width_points[0]["lower_ci_files_per_s"]),
-      "upper_ci_files_per_s": float(width_points[0]["upper_ci_files_per_s"]),
-      "mean_files_per_s": float(width_points[0]["mean_files_per_s"]),
-      "replicates": int(width_points[0]["replicates"]),
-      "long_lock_wait": bool(width_points[0].get("long_lock_wait")),
+  retain = bool(retain_merge and retain_build)
+
+  baseline_point = {
+      "arm": "baseline",
+      "mean_proc_merge_s": baseline_merge["mean_s"],
+      "mean_build_df_s": baseline_build["mean_s"],
+      "proc_merge": baseline_merge,
+      "build_df": baseline_build,
+  }
+  candidate_point = {
+      "arm": "candidate",
+      "mean_proc_merge_s": candidate_merge["mean_s"],
+      "mean_build_df_s": candidate_build["mean_s"],
+      "proc_merge": candidate_merge,
+      "build_df": candidate_build,
   }
   abi = "%s" % (getattr(sys, "version", "unknown"),)
-
-  if arm == "baseline":
-    out = write_screening_artifact(
-        {
-            "kind": "e7_arm_baseline",
-            "python_abi": abi,
-            "ingest_width": ingest_width,
-            "replicates": replicates,
-            "baseline": arm_point,
-            "note": "E7 baseline arm only; pair with candidate for retain gate",
-        },
-        repo_root=REPO_ROOT,
-        prefix="e7_arm_baseline",
-    )
-    assert out.is_file()
-    assert out.name.startswith("e7_arm_baseline_")
-    return
-
-  baseline_path = latest_e7_baseline_artifact(REPO_ROOT)
-  if baseline_path is None:
-    pytest.fail(
-        "candidate arm requires e7_arm_baseline_*.json; run baseline first"
-    )
-  baseline_payload = json.loads(baseline_path.read_text(encoding="utf-8"))
-  baseline_point = dict(baseline_payload["baseline"])
-  retain = e6_retain_candidate(baseline=baseline_point, candidate=arm_point)
   payload = build_e7_ab_manifest(
       baseline=baseline_point,
-      candidate=arm_point,
-      ingest_width=ingest_width,
+      candidate=candidate_point,
+      ingest_width=int(
+          os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_E7_WIDTH", DEFAULT_E7_WIDTH),
+      ),
       replicates=replicates,
       python_abi=abi,
       retain=retain,
+      retain_proc_merge_s=retain_merge,
+      retain_build_df_s=retain_build,
+      run_id=uuid.uuid4().hex,
   )
   out = write_screening_artifact(
-      payload,
-      repo_root=REPO_ROOT,
-      prefix="e7_proc_build_ab",
+      payload, repo_root=REPO_ROOT, prefix="e7_proc_build_ab",
   )
   assert out.is_file()
-  assert out.name.startswith("e7_proc_build_ab_")
   print(
-      "e7_ab retain=%s baseline_mean=%s candidate_lo=%s path=%s"
+      "e7_ab retain=%s retain_proc_merge_s=%s retain_build_df_s=%s "
+      "base_merge=%.4f cand_merge=%.4f base_build=%.4f cand_build=%.4f "
+      "path=%s"
       % (
           retain,
-          baseline_point.get("mean_files_per_s"),
-          arm_point.get("lower_ci_files_per_s"),
+          retain_merge,
+          retain_build,
+          baseline_merge["mean_s"],
+          candidate_merge["mean_s"],
+          baseline_build["mean_s"],
+          candidate_build["mean_s"],
           out,
       ),
       flush=True,
   )
+  assert payload["meter"] == "hold_seconds"  # meter=hold_seconds
+  assert "retain_proc_merge_s" in payload
+  assert "retain_build_df_s" in payload

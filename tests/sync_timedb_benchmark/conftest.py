@@ -184,19 +184,14 @@ def pytest_collection_modifyitems(
           "HPCPERFSTATS_SYNC_TIMEDB_KNOBS=1 (workflow --knobs)"
       ),
   )
-  e6_on = _compose_network_enabled() and _e6_enabled()
+  # E6/E7 hold-seconds rescore is host-unit microbench (like E8); no compose.
+  e6_on = _e6_enabled()
   skip_e6 = pytest.mark.skip(
-      reason=(
-          "Requires HPCPERFSTATS_COMPOSE_NETWORK=1 and "
-          "HPCPERFSTATS_SYNC_TIMEDB_E6=1 (workflow --e6)"
-      ),
+      reason="Requires HPCPERFSTATS_SYNC_TIMEDB_E6=1 (workflow --e6)",
   )
-  e7_on = _compose_network_enabled() and _e7_enabled()
+  e7_on = _e7_enabled()
   skip_e7 = pytest.mark.skip(
-      reason=(
-          "Requires HPCPERFSTATS_COMPOSE_NETWORK=1 and "
-          "HPCPERFSTATS_SYNC_TIMEDB_E7=1 (workflow --e7)"
-      ),
+      reason="Requires HPCPERFSTATS_SYNC_TIMEDB_E7=1 (workflow --e7)",
   )
   e8_on = _e8_enabled()
   skip_e8 = pytest.mark.skip(
@@ -248,14 +243,10 @@ def pytest_collection_modifyitems(
       else:
         item.add_marker(skip_knobs)
     if "test_e6_parse_feed_ab" in item.nodeid:
-      if e6_on:
-        item.add_marker(db_mark)
-      else:
+      if not e6_on:
         item.add_marker(skip_e6)
     if "test_e7_proc_build_ab" in item.nodeid:
-      if e7_on:
-        item.add_marker(db_mark)
-      else:
+      if not e7_on:
         item.add_marker(skip_e7)
     if "test_e8_delta_collapse_ab" in item.nodeid:
       if not e8_on:

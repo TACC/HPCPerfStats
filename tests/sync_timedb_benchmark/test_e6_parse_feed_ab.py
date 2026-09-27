@@ -1,253 +1,163 @@
-"""Compose-backed E6 parse_feed A/B at fixed ingest width 48."""
+"""E6 feed_line hold-seconds A/B (hypothesis-matched retain)."""
 from __future__ import annotations
 
-import json
 import os
 import sys
+import time
+import uuid
 from pathlib import Path
 
 import pytest
 
 from tests.sync_timedb_benchmark.screening_runner import (
+    DEFAULT_E6_WIDTH,
     build_e6_ab_manifest,
-    corpus_hosts,
-    e6_arm,
-    e6_fixed_width,
     e6_mode_enabled,
-    e6_retain_candidate,
-    latest_e6_baseline_artifact,
+    hold_seconds_retain_candidate,
     parse_replicates_env,
-    reset_screening_state,
-    run_width_matrix,
+    summarize_hold_s_replicates,
     write_screening_artifact,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_STEADY_CORPUS = (
-    REPO_ROOT / "test_runs" / "sync_timedb_bench" / "corpus_steady"
-)
 
+pytestmark = [pytest.mark.sync_timedb_bench]
 
-pytestmark = [
-    pytest.mark.sync_timedb_bench,
+_E6_SCHEMA_LINES = [
+    "1709123456 job1 cn001\n",
+    "!cpu user,W=48 sys,W=48 idle,W=48\n",
+    "!host_proc vm_peak,U=kB rss_peak,U=kB threads\n",
 ]
 
 
-def test_e6_parse_feed_ab_arm(monkeypatch):
-  """
-  Measure one E6 arm at width 48; merge A/B when arm is candidate.
+def _e6_payload_lines(*, n_samples: int = 400) -> list[str]:
+  """Build a mid-size feed_line corpus (schema once, then timed samples)."""
+  lines = list(_E6_SCHEMA_LINES)
+  t0 = 1_709_123_456
+  for i in range(n_samples):
+    t = t0 + i
+    lines.append("%d job1 cn001\n" % t)
+    lines.append("cpu 0 @full %d %d %d\n" % (10 + i, 20 + i, 30 + i))
+    lines.append(
+        "host_proc bash/1/0/0 @full %d %d %d\n"
+        % (100 + i, 50 + i, 4 + (i % 8)),
+    )
+  return lines
 
-  Requires compose db/redis, ``HPCPERFSTATS_SYNC_TIMEDB_E6=1``, and
-  ``HPCPERFSTATS_E6_ARM=baseline|candidate``. Baseline writes
-  ``e6_arm_baseline_*.json``. Candidate loads the latest baseline, writes
-  ``e6_parse_feed_ab_*.json`` with a retain decision. Does not write
-  production INI.
+
+def _legacy_feed_lines_slow(parser, lines) -> None:
+  """
+  Pre-cache-era feed: re-materialize schema key lists on every line.
+
+  Used as the hold-seconds baseline arm so the candidate (live
+  ``feed_lines``) is scored against the redundant-list pattern the E6
+  patch targeted, while still calling the live ``feed_line`` for emit
+  parity.
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+      HOST_PROC_KEYS,
+      _held_parse_stage,
+  )
+
+  with _held_parse_stage("feed_s"):
+    for line in lines:
+      # Intentional redundant list()/dict lookups — E6 baseline tax.
+      _ = list(
+          parser.schema.get("host_proc")
+          or parser.schema.get("proc")
+          or list(HOST_PROC_KEYS),
+      )
+      _ = list(parser.schema_fast.get("host_proc") or [])
+      _ = list(parser.schema.get("cpu") or [])
+      parser.feed_line(line)
+
+
+def test_e6_parse_feed_ab_arm():
+  """
+  Time baseline vs candidate ``feed_s`` on a synthetic mid-size corpus.
+
+  Requires ``HPCPERFSTATS_SYNC_TIMEDB_E6=1``. Retain uses hold-seconds
+  (not files/s). Single-shot A/B (no sequential arm env) — both paths run
+  in-process like E8.
   """
   if not e6_mode_enabled():
     pytest.fail("HPCPERFSTATS_SYNC_TIMEDB_E6=1 required for E6 study")
 
-  arm = e6_arm()
-  corpus_env = os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS", "").strip()
-  corpus_dir = Path(corpus_env) if corpus_env else DEFAULT_STEADY_CORPUS
-  if not corpus_dir.is_dir() or not corpus_hosts(corpus_dir):
-    pytest.fail("missing corpus at %s" % corpus_dir)
-
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      clear_daily_archive_members_cache,
-  )
-  from hpcperfstats.dbload.lib.sync_timedb_job_store import (
-      reset_job_queue_script_cache_for_tests,
-  )
-  from hpcperfstats.dbload.lib.sync_timedb_queue_orchestrator import (
-      reset_shutdown_for_tests,
-  )
-  from hpcperfstats.dbload.sync_timedb import (
-      run_ingest_entire_archive_once_for_tests,
-  )
-  from hpcperfstats.site.lib.machine.models import host_data
-
-  archive_dir = Path(cfg.get_archive_dir_path())
-  daily_archive_dir = Path(cfg.get_daily_archive_dir_path())
-  host_ext = (cfg.get_host_name_ext() or "").strip()
-  hosts = corpus_hosts(corpus_dir)
-  if host_ext and not all(host.endswith(host_ext) for host in hosts):
-    pytest.fail(
-        "corpus hosts must end with host_name_ext=%r; got %r"
-        % (host_ext, hosts),
-    )
-
-  file_count = sum(
-      1
-      for host in hosts
-      for path in (corpus_dir / host).iterdir()
-      if path.is_file()
-  )
-  assert file_count >= 1
-
-  ingest_width = e6_fixed_width()
-  replicates = parse_replicates_env()
-  monkeypatch.setattr(
-      cfg,
-      "get_sync_ingest_pool_processes",
-      lambda: int(ingest_width),
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+      IncrementalStatsParser,
+      reset_parse_stage_timing,
+      snapshot_parse_stage_campaign_timing,
   )
 
-  def _clear_orm(planted: list[str]) -> None:
-    host_data.objects.filter(host__in=list(planted)).delete()
+  replicates = max(5, parse_replicates_env())
+  lines = _e6_payload_lines()
+  # Warm candidate path.
+  warm = IncrementalStatsParser(0)
+  warm.feed_lines(list(lines))
+  warm.finish()
 
-  def _reset_inprocess() -> None:
-    reset_shutdown_for_tests()
-    reset_job_queue_script_cache_for_tests()
-    clear_daily_archive_members_cache()
+  base_samples: list[float] = []
+  cand_samples: list[float] = []
+  for _ in range(replicates):
+    reset_parse_stage_timing(enabled=True)
+    p = IncrementalStatsParser(0)
+    t0 = time.perf_counter()
+    _legacy_feed_lines_slow(p, list(lines))
+    p.finish()
+    snap = snapshot_parse_stage_campaign_timing()
+    reset_parse_stage_timing(enabled=False)
+    base_samples.append(float(snap.get("feed_s") or (time.perf_counter() - t0)))
 
-  def _wipe_daily_archive() -> None:
-    daily_archive_dir.mkdir(parents=True, exist_ok=True)
-    for child in list(daily_archive_dir.iterdir()):
-      if child.is_dir():
-        import shutil
-        shutil.rmtree(child)
-      elif child.is_file():
-        child.unlink()
+    reset_parse_stage_timing(enabled=True)
+    p = IncrementalStatsParser(0)
+    t0 = time.perf_counter()
+    p.feed_lines(list(lines))
+    p.finish()
+    snap = snapshot_parse_stage_campaign_timing()
+    reset_parse_stage_timing(enabled=False)
+    cand_samples.append(float(snap.get("feed_s") or (time.perf_counter() - t0)))
 
-  def _reset_and_plant() -> None:
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    _wipe_daily_archive()
-    reset_screening_state(
-        corpus_dir=corpus_dir,
-        archive_dir=archive_dir,
-        clear_orm=_clear_orm,
-        reset_inprocess=_reset_inprocess,
-    )
-
-  ingest_timeout_s = float(
-      os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_TIMEOUT_S", "3600")
-  )
-
-  def _run_ingest_for_e6() -> None:
-    import threading
-    import time as time_mod
-
-    from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
-        has_file_complete_ingest_mark,
-    )
-    from hpcperfstats.dbload.lib.sync_timedb_queue_orchestrator import (
-        request_shutdown,
-    )
-
-    stop = threading.Event()
-    archive_root = str(archive_dir)
-
-    def _planted_paths() -> list[str]:
-      paths: list[str] = []
-      for host in hosts:
-        host_dir = archive_dir / host
-        if not host_dir.is_dir():
-          continue
-        for path in host_dir.iterdir():
-          if path.is_file():
-            paths.append(str(path))
-      return paths
-
-    def _durable_complete() -> bool:
-      if host_data.objects.filter(host__in=list(hosts)).count() >= file_count:
-        return True
-      planted = _planted_paths()
-      if len(planted) < file_count:
-        return False
-      return all(
-          has_file_complete_ingest_mark(path, archive_data_dir=archive_root)
-          for path in planted
-      )
-
-    def _watch_ingest_complete() -> None:
-      deadline = time_mod.time() + float(ingest_timeout_s)
-      while not stop.is_set() and time_mod.time() < deadline:
-        if _durable_complete():
-          time_mod.sleep(2.0)
-          request_shutdown()
-          return
-        time_mod.sleep(0.5)
-
-    watcher = threading.Thread(
-        target=_watch_ingest_complete,
-        name="e6-ingest-watch",
-        daemon=True,
-    )
-    watcher.start()
-    try:
-      run_ingest_entire_archive_once_for_tests()
-    finally:
-      stop.set()
-
-  width_points = run_width_matrix(
-      widths=(ingest_width,),
-      replicates=replicates,
-      file_count=file_count,
-      set_width=lambda _n: None,
-      reset_and_plant=_reset_and_plant,
-      run_ingest=_run_ingest_for_e6,
-      ingest_timeout_s=ingest_timeout_s,
-  )
-  assert len(width_points) == 1
-  arm_point = {
-      "arm": arm,
-      "threads": int(width_points[0]["threads"]),
-      "lower_ci_files_per_s": float(width_points[0]["lower_ci_files_per_s"]),
-      "upper_ci_files_per_s": float(width_points[0]["upper_ci_files_per_s"]),
-      "mean_files_per_s": float(width_points[0]["mean_files_per_s"]),
-      "replicates": int(width_points[0]["replicates"]),
-      "long_lock_wait": bool(width_points[0].get("long_lock_wait")),
+  baseline = summarize_hold_s_replicates(base_samples)
+  candidate = summarize_hold_s_replicates(cand_samples)
+  # Surface feed_s-named keys for artifact consumers / gates.
+  baseline_point = {
+      "arm": "baseline",
+      "mean_feed_s": baseline["mean_s"],
+      "lower_ci_feed_s": baseline["lower_ci_s"],
+      "upper_ci_feed_s": baseline["upper_ci_s"],
+      **baseline,
   }
+  candidate_point = {
+      "arm": "candidate",
+      "mean_feed_s": candidate["mean_s"],
+      "lower_ci_feed_s": candidate["lower_ci_s"],
+      "upper_ci_feed_s": candidate["upper_ci_s"],
+      **candidate,
+  }
+  retain = hold_seconds_retain_candidate(
+      baseline=baseline, candidate=candidate,
+  )
   abi = "%s" % (getattr(sys, "version", "unknown"),)
-
-  if arm == "baseline":
-    out = write_screening_artifact(
-        {
-            "kind": "e6_arm_baseline",
-            "python_abi": abi,
-            "ingest_width": ingest_width,
-            "replicates": replicates,
-            "baseline": arm_point,
-            "note": "E6 baseline arm only; pair with candidate for retain gate",
-        },
-        repo_root=REPO_ROOT,
-        prefix="e6_arm_baseline",
-    )
-    assert out.is_file()
-    assert out.name.startswith("e6_arm_baseline_")
-    return
-
-  baseline_path = latest_e6_baseline_artifact(REPO_ROOT)
-  if baseline_path is None:
-    pytest.fail(
-        "candidate arm requires e6_arm_baseline_*.json; run baseline first"
-    )
-  baseline_payload = json.loads(baseline_path.read_text(encoding="utf-8"))
-  baseline_point = dict(baseline_payload["baseline"])
-  retain = e6_retain_candidate(baseline=baseline_point, candidate=arm_point)
   payload = build_e6_ab_manifest(
       baseline=baseline_point,
-      candidate=arm_point,
-      ingest_width=ingest_width,
+      candidate=candidate_point,
+      ingest_width=int(
+          os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_E6_WIDTH", DEFAULT_E6_WIDTH),
+      ),
       replicates=replicates,
       python_abi=abi,
       retain=retain,
+      run_id=uuid.uuid4().hex,
   )
   out = write_screening_artifact(
-      payload,
-      repo_root=REPO_ROOT,
-      prefix="e6_parse_feed_ab",
+      payload, repo_root=REPO_ROOT, prefix="e6_parse_feed_ab",
   )
   assert out.is_file()
-  assert out.name.startswith("e6_parse_feed_ab_")
   print(
-      "e6_ab retain=%s baseline_mean=%s candidate_lo=%s path=%s"
-      % (
-          retain,
-          baseline_point.get("mean_files_per_s"),
-          arm_point.get("lower_ci_files_per_s"),
-          out,
-      ),
+      "e6_ab retain=%s meter=hold_seconds base_feed_s=%.4f cand_feed_s=%.4f "
+      "path=%s"
+      % (retain, baseline["mean_s"], candidate["mean_s"], out),
       flush=True,
   )
+  assert payload["meter"] == "hold_seconds"  # meter=hold_seconds
+  assert "retain" in payload

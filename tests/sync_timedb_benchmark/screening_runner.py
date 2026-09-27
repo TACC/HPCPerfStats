@@ -288,7 +288,8 @@ def e8_retain_hold_seconds(
 
   Lower is better. Retain when candidate ``upper_ci_s`` is at most the
   baseline mean **and** at most 95% of baseline ``lower_ci_s`` (plan
-  ``04-parse-delta-collapse``).
+  ``04-parse-delta-collapse``). Same gate for E6/E7 hold-seconds rescore
+  via :func:`hold_seconds_retain_candidate`.
 
   Args:
     baseline (dict[str, Any]): Baseline hold stats (``mean_s`` / CI).
@@ -308,6 +309,31 @@ def e8_retain_hold_seconds(
   base_lo = float(baseline["lower_ci_s"])
   cand_hi = float(candidate["upper_ci_s"])
   return cand_hi <= base_mean and cand_hi <= base_lo * 0.95
+
+
+def hold_seconds_retain_candidate(
+    *,
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+) -> bool:
+  """
+  Alias of :func:`e8_retain_hold_seconds` for E6/E7 hold-seconds A/B.
+
+  Args:
+    baseline (dict[str, Any]): Baseline hold stats (``mean_s`` / CI).
+    candidate (dict[str, Any]): Candidate hold stats (``mean_s`` / CI).
+
+  Returns:
+    bool: True when the candidate hold should be retained.
+
+  Examples:
+    >>> hold_seconds_retain_candidate(
+    ...     baseline={"mean_s": 1.0, "lower_ci_s": 0.9},
+    ...     candidate={"mean_s": 0.7, "upper_ci_s": 0.8},
+    ... )
+    True
+  """
+  return e8_retain_hold_seconds(baseline=baseline, candidate=candidate)
 
 
 def e8_retain_candidate(
@@ -715,6 +741,8 @@ def build_e6_ab_manifest(
   return {
       "run_id": run_id or uuid.uuid4().hex,
       "kind": "e6_parse_feed_ab",
+      "meter": "hold_seconds",
+      "retain_meter": "feed_s",
       "python_abi": python_abi,
       "ingest_width": int(ingest_width),
       "replicates": int(replicates),
@@ -722,8 +750,8 @@ def build_e6_ab_manifest(
       "candidate": dict(candidate),
       "retain": bool(retain),
       "note": (
-          "retain True only when candidate lower CI clears the E6 gate; "
-          "not a production INI change"
+          "retain True only when candidate feed_s upper CI clears the "
+          "hold-seconds gate; files/s report-only; not a production INI change"
       ),
   }
 
@@ -839,6 +867,8 @@ def build_e7_ab_manifest(
     replicates: int,
     python_abi: str,
     retain: bool,
+    retain_proc_merge_s: bool | None = None,
+    retain_build_df_s: bool | None = None,
     run_id: str | None = None,
 ) -> dict[str, Any]:
   """
@@ -847,10 +877,12 @@ def build_e7_ab_manifest(
   Args:
     baseline (dict[str, Any]): Baseline arm summary point.
     candidate (dict[str, Any]): Candidate arm summary point.
-    ingest_width (int): Fixed ingest pool width.
+    ingest_width (int): Fixed ingest pool width (report-only for microbench).
     replicates (int): Replicates per arm.
     python_abi (str): Interpreter identity string.
-    retain (bool): Whether the candidate cleared the retain gate.
+    retain (bool): Combined AND retain across hold gates.
+    retain_proc_merge_s (bool | None): Per-hold retain for ``proc_merge_s``.
+    retain_build_df_s (bool | None): Per-hold retain for ``build_df_s``.
     run_id (str | None): Optional run id.
 
   Returns:
@@ -858,15 +890,17 @@ def build_e7_ab_manifest(
 
   Examples:
     >>> build_e7_ab_manifest(
-    ...     baseline={"mean_files_per_s": 1.0, "lower_ci_files_per_s": 0.9},
-    ...     candidate={"mean_files_per_s": 1.2, "lower_ci_files_per_s": 1.05},
+    ...     baseline={"mean_s": 1.0}, candidate={"mean_s": 0.5},
     ...     ingest_width=48, replicates=5, python_abi="3.14", retain=True,
-    ... )["kind"]
-    'e7_proc_build_ab'
+    ...     retain_proc_merge_s=True, retain_build_df_s=True,
+    ... )["meter"]
+    'hold_seconds'
   """
-  return {
+  out = {
       "run_id": run_id or uuid.uuid4().hex,
       "kind": "e7_proc_build_ab",
+      "meter": "hold_seconds",
+      "retain_meter": "proc_merge_s_and_build_df_s",
       "python_abi": python_abi,
       "ingest_width": int(ingest_width),
       "replicates": int(replicates),
@@ -874,10 +908,15 @@ def build_e7_ab_manifest(
       "candidate": dict(candidate),
       "retain": bool(retain),
       "note": (
-          "retain True only when candidate lower CI clears the E6/E7 gate; "
-          "not a production INI change"
+          "retain True only when proc_merge_s AND build_df_s hold-seconds "
+          "gates clear; files/s report-only; not a production INI change"
       ),
   }
+  if retain_proc_merge_s is not None:
+    out["retain_proc_merge_s"] = bool(retain_proc_merge_s)
+  if retain_build_df_s is not None:
+    out["retain_build_df_s"] = bool(retain_build_df_s)
+  return out
 
 
 def latest_e7_baseline_artifact(repo_root: Path) -> Path | None:

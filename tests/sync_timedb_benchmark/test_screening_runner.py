@@ -465,6 +465,7 @@ def test_e6_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):
       e6_fixed_width,
       e6_mode_enabled,
       e6_retain_candidate,
+      hold_seconds_retain_candidate,
       latest_e6_baseline_artifact,
       parse_replicates_env,
       write_screening_artifact,
@@ -479,6 +480,7 @@ def test_e6_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):
   assert parse_replicates_env() == DEFAULT_E6_REPLICATES
   assert e6_arm() == "baseline"
   assert e6_arm("candidate") == "candidate"
+  # Throughput gate retained for historical helpers / other campaigns.
   baseline = {"mean_files_per_s": 1.0, "lower_ci_files_per_s": 0.9}
   assert e6_retain_candidate(
       baseline=baseline,
@@ -488,9 +490,17 @@ def test_e6_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):
       baseline=baseline,
       candidate={"mean_files_per_s": 1.01, "lower_ci_files_per_s": 0.95},
   )
+  # E6 rescore primary meter is hold-seconds.
+  hold_base = {"mean_s": 1.0, "lower_ci_s": 0.9, "upper_ci_s": 1.1}
+  hold_win = {"mean_s": 0.7, "lower_ci_s": 0.65, "upper_ci_s": 0.8}
+  hold_lose = {"mean_s": 0.95, "lower_ci_s": 0.9, "upper_ci_s": 1.0}
+  assert hold_seconds_retain_candidate(baseline=hold_base, candidate=hold_win)
+  assert not hold_seconds_retain_candidate(
+      baseline=hold_base, candidate=hold_lose,
+  )
   payload = build_e6_ab_manifest(
-      baseline=baseline,
-      candidate={"mean_files_per_s": 1.2, "lower_ci_files_per_s": 1.05},
+      baseline={"mean_feed_s": 1.0, **hold_base},
+      candidate={"mean_feed_s": 0.7, **hold_win},
       ingest_width=48,
       replicates=5,
       python_abi="3.14t",
@@ -498,6 +508,7 @@ def test_e6_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):
       run_id="e6id",
   )
   assert payload["kind"] == "e6_parse_feed_ab"
+  assert payload["meter"] == "hold_seconds"
   assert payload["retain"] is True
   out = write_screening_artifact(
       {"kind": "e6_arm_baseline", "baseline": baseline},
@@ -505,6 +516,7 @@ def test_e6_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):
       prefix="e6_arm_baseline",
   )
   assert latest_e6_baseline_artifact(tmp_path) == out
+  print("hold_seconds unit verification passed")
 
 
 def test_e8_retain_gates_delta_and_collapse_separately():
@@ -611,10 +623,10 @@ def test_e7_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):
       DEFAULT_E7_REPLICATES,
       DEFAULT_E7_WIDTH,
       build_e7_ab_manifest,
-      e6_retain_candidate,
       e7_arm,
       e7_fixed_width,
       e7_mode_enabled,
+      hold_seconds_retain_candidate,
       latest_e7_baseline_artifact,
       parse_replicates_env,
       write_screening_artifact,
@@ -629,24 +641,27 @@ def test_e7_mode_defaults_retain_and_manifest(monkeypatch, tmp_path):
   assert parse_replicates_env() == DEFAULT_E7_REPLICATES
   assert e7_arm() == "baseline"
   assert e7_arm("candidate") == "candidate"
-  baseline = {"mean_files_per_s": 1.0, "lower_ci_files_per_s": 0.9}
-  assert e6_retain_candidate(
-      baseline=baseline,
-      candidate={"mean_files_per_s": 1.2, "lower_ci_files_per_s": 1.05},
-  )
+  hold_base = {"mean_s": 1.0, "lower_ci_s": 0.9, "upper_ci_s": 1.1}
+  hold_win = {"mean_s": 0.7, "lower_ci_s": 0.65, "upper_ci_s": 0.8}
+  assert hold_seconds_retain_candidate(baseline=hold_base, candidate=hold_win)
   payload = build_e7_ab_manifest(
-      baseline=baseline,
-      candidate={"mean_files_per_s": 1.2, "lower_ci_files_per_s": 1.05},
+      baseline={"proc_merge": hold_base, "build_df": hold_base},
+      candidate={"proc_merge": hold_win, "build_df": hold_win},
       ingest_width=48,
       replicates=5,
       python_abi="3.14t",
       retain=True,
+      retain_proc_merge_s=True,
+      retain_build_df_s=True,
       run_id="e7id",
   )
   assert payload["kind"] == "e7_proc_build_ab"
+  assert payload["meter"] == "hold_seconds"
   assert payload["retain"] is True
+  assert payload["retain_proc_merge_s"] is True
+  assert payload["retain_build_df_s"] is True
   out = write_screening_artifact(
-      {"kind": "e7_arm_baseline", "baseline": baseline},
+      {"kind": "e7_arm_baseline", "baseline": hold_base},
       repo_root=tmp_path,
       prefix="e7_arm_baseline",
   )
