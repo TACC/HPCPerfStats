@@ -1528,16 +1528,16 @@ def populate_archive_members(
             store.store_complete(
                 keys.day_token,
                 keys.identity,
-                dict(running_max),
+                running_max,
                 saw_duplicates=saw_duplicates,
             )
+            # store_complete already published the map; finish only releases owner.
             store.finish_populate(
                 keys.day_token,
                 keys.identity,
-                members=dict(running_max),
                 complete=True,
             )
-            return dict(running_max)
+            return running_max
         except Exception:
             populate_failed = True
             raise

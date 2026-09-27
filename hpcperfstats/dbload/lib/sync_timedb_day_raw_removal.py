@@ -293,7 +293,6 @@ class _DayRawRemovalState:
   Attributes:
     _closed_raw_pass_memo: Attribute.
     _closed_raw_pass_memo_active: Attribute.
-    _closed_raw_paths_pass_memo: Attribute.
     _lock: Attribute.
     _manifest: Attribute.
     _manifest_path: Attribute.
@@ -386,7 +385,6 @@ class _DayRawRemovalState:
     # Memoize day-scoped closed_raw within one apply_batch_delete / handoff
     # pass (soak: uncached rebuild logged hundreds of times per tick).
     self._closed_raw_pass_memo: Optional[Dict[str, List[str]]] = None
-    self._closed_raw_paths_pass_memo: Optional[List[str]] = None
     self._closed_raw_pass_memo_active: bool = False
 
   def phase(self) -> str:
@@ -650,7 +648,6 @@ class _DayRawRemovalState:
       >>> _DayRawRemovalState()._clear_closed_raw_pass_memo()  # doctest: +SKIP
     """
     self._closed_raw_pass_memo = None
-    self._closed_raw_paths_pass_memo = None
     self._closed_raw_pass_memo_active = False
 
   def _begin_closed_raw_pass_memo(self) -> None:
@@ -664,7 +661,6 @@ class _DayRawRemovalState:
       >>> _DayRawRemovalState()._begin_closed_raw_pass_memo()  # doctest: +SKIP
     """
     self._closed_raw_pass_memo = None
-    self._closed_raw_paths_pass_memo = None
     self._closed_raw_pass_memo_active = True
 
   def _manifest_paths_on_disk(self) -> List[str]:
@@ -694,17 +690,10 @@ class _DayRawRemovalState:
       if blocking:
         return blocking
       return []
-    if (
-        self._closed_raw_pass_memo_active
-        and self._closed_raw_paths_pass_memo is not None
-    ):
-      return list(self._closed_raw_paths_pass_memo)
     remaining = self._build_remaining_raw_for_daily_tar()
     paths: List[str] = []
     for raw_list in (remaining or {}).values():
       paths.extend(raw_list or [])
-    if self._closed_raw_pass_memo_active:
-      self._closed_raw_paths_pass_memo = list(paths)
     return paths
 
   def _has_closed_raw_existing_on_disk(self) -> bool:

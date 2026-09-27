@@ -3475,13 +3475,11 @@ def merge_daily_archive_members_l1_cache(
     cached = _DAILY_ARCHIVE_MEMBERS_CACHE.get(cache_key)
     if cached is None:
       return
-    merged = dict(cached)
     for name, size in member_map.items():
-      size = int(size)
-      prev = merged.get(name)
-      if prev is None or size > prev:
-        merged[name] = size
-    _DAILY_ARCHIVE_MEMBERS_CACHE[cache_key] = merged
+      size_i = int(size)
+      prev = cached.get(name)
+      if prev is None or size_i > prev:
+        cached[name] = size_i
 
 
 def build_tar_append_member_map(stats_paths: Any) -> Any:
@@ -4466,6 +4464,26 @@ def clear_mutable_tar_authority_members_cache() -> None:
   """
   with _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK:
     _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.clear()
+
+
+def invalidate_mutable_tar_authority_members(tar_path: str) -> None:
+  """
+  Drop one open-tar authority map after the on-disk ``.tar`` mutates.
+
+  Args:
+    tar_path (str): Path to ``YYYY-MM-DD.tar``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> invalidate_mutable_tar_authority_members("")  # doctest: +SKIP
+  """
+  tar_norm = os.path.normpath(str(tar_path or ""))
+  if not tar_norm:
+    return
+  with _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK:
+    _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.pop(tar_norm, None)
 
 
 def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
@@ -5805,7 +5823,6 @@ def _stream_compressed_archive_members(
       if already_locked
       else _archive_file_read_lock_wait(compressed_path)
   )
-  occurrences: list[tuple[str, int]] = []
   result = (False, {}, False, None)
   try:
     with lock_cm:
@@ -5814,8 +5831,8 @@ def _stream_compressed_archive_members(
           zstd_thread_count_for_wrap(apply_priority_wrap),
           apply_priority_wrap=apply_priority_wrap,
       ) as tf:
-        by_name = defaultdict(list)
-        seen_names = set()
+        members: dict[str, int] = {}
+        seen_names: set[str] = set()
         saw_duplicates = False
         for m in _iter_tar_members(tf):
           if not m.isfile():
@@ -5823,16 +5840,15 @@ def _stream_compressed_archive_members(
           if m.name in seen_names:
             saw_duplicates = True
           seen_names.add(m.name)
-          by_name[m.name].append(m.size)
-          if on_member is not None:
-            if defer_on_member:
-              occurrences.append((m.name, m.size))
-            else:
-              on_member(m.name, m.size)
-        members = {name: max(sizes) for name, sizes in by_name.items()}
+          prev = members.get(m.name)
+          size_i = int(m.size)
+          if prev is None or size_i > prev:
+            members[m.name] = size_i
+          if on_member is not None and not defer_on_member:
+            on_member(m.name, m.size)
         result = (True, members, saw_duplicates, None)
-    if defer_on_member and on_member is not None:
-      for name, size in occurrences:
+    if defer_on_member and on_member is not None and result[0]:
+      for name, size in result[1].items():
         on_member(name, size)
     return result
   except _MemberStreamEarlyExit:
@@ -6158,7 +6174,7 @@ def replace_corrupt_tar_from_compressed_backup(
   """
   Restore a corrupt ``tar_path`` from ``.tar.zst`` or legacy ``.gz``.
 
-  Writes a sibling ``.rebuild.tmp`` **outside** the exclusive write lock,
+  Writes a sibling ``.decomp.tmp`` **outside** the exclusive write lock,
   then ``os.replace`` onto ``tar_path`` under a short ``file_write_lock``
   only after decompress returns True. Never unlinks ``tar_path`` before a
   verified replacement exists.
@@ -6180,7 +6196,7 @@ def replace_corrupt_tar_from_compressed_backup(
   Examples:
     >>> replace_corrupt_tar_from_compressed_backup("x", "x", "x", None)
   """
-  rebuild = tar_path + ".rebuild.tmp"
+  rebuild = tar_path + ".decomp.tmp"
   try:
     if os.path.exists(rebuild):
       os.remove(rebuild)
@@ -6290,19 +6306,26 @@ def _run_gnu_tvf_file_members(
   if not os.path.isfile(tar_path):
     return [], 1, ""
   tar_bin = _tar_list_executable()
-  result = subprocess.run(
+  proc = subprocess.Popen(
       [tar_bin, "tvf", tar_path],
-      capture_output=True,
+      stdout=subprocess.PIPE,
+      stderr=subprocess.PIPE,
       text=True,
-      check=False,
   )
   occurrences: list[tuple[str, int]] = []
-  for raw_line in (result.stdout or "").splitlines():
-    parsed = _parse_tar_tvf_size_and_name(raw_line)
-    if parsed is None:
-      continue
-    occurrences.append(parsed)
-  return occurrences, result.returncode, (result.stderr or "")
+  try:
+    assert proc.stdout is not None
+    for raw_line in proc.stdout:
+      parsed = _parse_tar_tvf_size_and_name(raw_line)
+      if parsed is None:
+        continue
+      occurrences.append(parsed)
+  finally:
+    stderr_text = ""
+    if proc.stderr is not None:
+      stderr_text = proc.stderr.read() or ""
+    rc = proc.wait()
+  return occurrences, rc, stderr_text
 
 
 def _run_gnu_tf_member_names(archive_path: str) -> tuple[list[str], int, str]:

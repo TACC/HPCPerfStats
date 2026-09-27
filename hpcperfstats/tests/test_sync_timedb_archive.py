@@ -1060,7 +1060,7 @@ def test_replace_corrupt_tar_from_compressed_backup_restores_via_zstd(monkeypatc
       remove_compressed=True, **kwargs,
   ):
     assert compressed_path == str(zst_path)
-    assert out_tar_path == str(tar_path) + ".rebuild.tmp"
+    assert out_tar_path == str(tar_path) + ".decomp.tmp"
     inner = tmp_path / "inn.txt"
     inner.write_text("ok")
     with tarfile.open(str(out_tar_path), "w") as tf:
@@ -1124,7 +1124,7 @@ def test_replace_corrupt_tar_returns_false_when_zst_only_restore_fails(
   assert tar_path.exists()
   assert tar_path.read_text() == "bad"
   assert zst_path.is_file()
-  assert not (tmp_path / "2020-01-03b.tar.rebuild.tmp").exists()
+  assert not (tmp_path / "2020-01-03b.tar.decomp.tmp").exists()
 
 
 def test_replace_corrupt_tar_keeps_tar_when_restore_fails(monkeypatch, tmp_path):
@@ -1142,8 +1142,8 @@ def test_replace_corrupt_tar_keeps_tar_when_restore_fails(monkeypatch, tmp_path)
   assert tar_path.read_text() == "only-copy"
 
 
-def test_replace_corrupt_tar_replaces_via_rebuild_tmp(monkeypatch, tmp_path):
-  """Restore must write ``.rebuild.tmp`` then replace; never unlink-first."""
+def test_replace_corrupt_tar_replaces_via_decomp_tmp(monkeypatch, tmp_path):
+  """Restore must write ``.decomp.tmp`` then replace; never unlink-first."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_path = tmp_path / "2020-01-03d.tar"
@@ -1169,14 +1169,14 @@ def test_replace_corrupt_tar_replaces_via_rebuild_tmp(monkeypatch, tmp_path):
   monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decomp)
   assert replace_corrupt_tar_from_compressed_backup(
       str(tar_path), str(zst_path), str(gz_path), 1)
-  assert seen["dest"] == str(tar_path) + ".rebuild.tmp"
+  assert seen["dest"] == str(tar_path) + ".decomp.tmp"
   assert seen["tar_during_restore"] == "bad"
   assert verify_tar_archive_readable(str(tar_path))
-  assert not Path(str(tar_path) + ".rebuild.tmp").exists()
+  assert not Path(str(tar_path) + ".decomp.tmp").exists()
 
 
 def test_replace_corrupt_decompress_outside_write_lock(monkeypatch, tmp_path):
-  """Decompress to ``.rebuild.tmp`` must not hold ``file_write_lock``."""
+  """Decompress to ``.decomp.tmp`` must not hold ``file_write_lock``."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   from hpcperfstats.dbload.lib.file_locking import try_file_write_lock
 

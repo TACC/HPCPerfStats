@@ -494,13 +494,16 @@ def _popen_zstd(
 def _verify_uncompressed_tar_readable(tar_path: str) -> bool:
   """
   Internal helper to handle verify uncompressed tar readable.
-  
+
+  Uses ``tar tf`` RC only (stdout/stderr to DEVNULL) so giant listings are
+  never retained in the supervisor heap.
+
   Args:
     tar_path (str): String for tar path.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _verify_uncompressed_tar_readable("x")  # doctest: +SKIP
   """
@@ -509,8 +512,8 @@ def _verify_uncompressed_tar_readable(tar_path: str) -> bool:
   try:
     result = subprocess.run(
         [tar_bin, "tf", tar_path],
-        capture_output=True,
-        text=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         check=False,
     )
     ok = result.returncode == 0
@@ -564,15 +567,22 @@ def _decompress_to_path(
     cmd.append(compressed_path)
   else:
     raise ValueError("unsupported compressed archive format: %s" % compressed_path)
-  result = _run_zstd(cmd, capture_output=True, text=True, check=False)
+  result = _run_zstd(
+      cmd,
+      stdout=subprocess.DEVNULL,
+      stderr=subprocess.PIPE,
+      text=True,
+      check=False,
+  )
   if result.returncode != 0:
     raise subprocess.CalledProcessError(
         result.returncode,
         cmd,
-        output=result.stdout,
+        output=None,
         stderr=result.stderr,
     )
-  zstd_drop_page_cache_for_paths(compressed_path, output_path)
+  # Drop compressed pages only; keep output_path warm for verify / replace.
+  zstd_drop_page_cache_for_paths(compressed_path)
 
 
 def _tar_dest_is_nonempty(tar_path: str) -> bool:
