@@ -396,7 +396,7 @@ def test_day_close_skips_tar_drop_when_post_seal_returns_false(tmp_path, monkeyp
 
 
 def test_day_close_inventory_shrink_after_delete_and_tar_drop(tmp_path, monkeypatch):
-  """After delete+tar_drop only sealed zst remains (space reclaim oracle)."""
+  """Delete on skip_merge claim; tar_drop on a later no-remaining claim."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
   from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 
@@ -446,20 +446,30 @@ def test_day_close_inventory_shrink_after_delete_and_tar_drop(tmp_path, monkeypa
       "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
       _Coord,
   )
-  outcome = qo._run_day_close_job(
+  # Claim 1: H19 append_idle remaining → delete without has_closed re-find.
+  outcome1 = qo._run_day_close_job(
       day,
       tgz_archive_dir=str(daily),
       archive_data_dir=str(tmp_path),
       log_fn=lambda *a, **k: None,
   )
-  assert outcome == "complete"
+  assert outcome1 == "incomplete_raw"
+  assert not raw.exists()
+  assert tar.exists()
+  # Claim 2: remaining gone → tar_drop.
+  outcome2 = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+  )
+  assert outcome2 == "complete"
   assert not tar.exists()
   assert zst.exists()
-  assert not raw.exists()
 
 
 def test_day_close_reseals_after_raw_delete_when_zst_missing(tmp_path, monkeypatch):
-  """Same-job reseal when raw clears and zst is still missing, then tar_drop."""
+  """Reseal+tar_drop on a later claim after skip_merge delete clears raw."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
   from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
 
@@ -488,11 +498,13 @@ def test_day_close_reseals_after_raw_delete_when_zst_missing(tmp_path, monkeypat
   )
 
   class _Coord:
+    raw_left = True
+
     def __init__(self, **_kw):
-      self._raw = True
+      pass
 
     def apply_batch_delete(self, _tar_path):
-      self._raw = False
+      type(self).raw_left = False
       return 1
 
     def run_pre_seal_verify_sync(self, _tar_path):
@@ -502,10 +514,10 @@ def test_day_close_reseals_after_raw_delete_when_zst_missing(tmp_path, monkeypat
       return os.path.isfile(str(zst))
 
     def has_closed_raw_on_disk(self, _tar_path):
-      return self._raw
+      return type(self).raw_left
 
     def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
-      return {"x": ["raw"]} if self._raw else {}
+      return {"x": ["raw"]} if type(self).raw_left else {}
 
     def try_finish_tar_drop_if_ready(self, tar_path):
       if os.path.isfile(tar_path) and os.path.isfile(tar_path + ".zst"):
@@ -516,13 +528,21 @@ def test_day_close_reseals_after_raw_delete_when_zst_missing(tmp_path, monkeypat
       "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
       _Coord,
   )
-  outcome = qo._run_day_close_job(
+  outcome1 = qo._run_day_close_job(
       day,
       tgz_archive_dir=str(daily),
       archive_data_dir=str(tmp_path),
       log_fn=lambda *a, **k: None,
   )
-  assert outcome == "complete"
+  assert outcome1 == "incomplete_raw"
+  assert tar.exists()
+  outcome2 = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+  )
+  assert outcome2 == "complete"
   assert len(seal_calls) >= 2
   assert not tar.exists()
   assert zst.exists()
@@ -2284,6 +2304,101 @@ def test_day_close_skip_merge_seal_skips_remaining_raw_find(
   rem = seal_kw[0].get("remaining_raw_by_gz") if seal_kw else None
   assert rem and list(rem.values()) == [["skip_merge_remaining_raw"]]
   assert outcome in ("complete", "incomplete_raw")
+
+
+def test_day_close_skip_merge_post_seal_skips_has_closed_raw_find(
+    tmp_path, monkeypatch,
+):
+  """H19 skip_merge then post-seal must not call has_closed_raw_on_disk.
+
+  hpcperfstats01 2026-09-26: after seal_exit ok, hung on has_closed before
+  post_seal_verify; 02 reached raw_delete then stuck on remaining find.
+  """
+  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  day = "2026-07-29"
+  tar = daily / ("%s.tar" % day)
+  zst = daily / ("%s.tar.zst" % day)
+  tar.write_bytes(b"tar")
+  zst.write_bytes(b"zst")
+  logs = []
+  deletes = []
+
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+      lambda *a, **k: None,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+      lambda *a, **k: True,
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def phase(self, _tar_path):
+      return "deleting"
+
+    def has_closed_raw_on_disk(self, _tar_path):
+      raise AssertionError("has_closed find after skip_merge")
+
+    def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
+      raise AssertionError("remaining-raw find after skip_merge")
+
+    def should_handoff_to_ingest(self, _tar_path):
+      return False
+
+    def complete_handoff_to_ingest(self, _tar_path, reason=""):
+      raise AssertionError("complete_handoff remaining-raw")
+
+    def kick_closed_raw_unblock(self, tar_path, reason=""):
+      return "delete_reopen"
+
+    def kick_closed_raw_paths_to_ingest(self, tar_path, reason=""):
+      raise AssertionError("remaining-raw kick")
+
+    def run_pre_seal_verify_sync(self, _tar_path, **_kw):
+      return True
+
+    def run_post_seal_verify_sync(self, _tar_path):
+      return True
+
+    def apply_batch_delete(self, tar_path):
+      deletes.append(tar_path)
+      return 1
+
+    def try_finish_tar_drop_if_ready(self, _tar_path):
+      raise AssertionError("try_finish remaining find after skip_merge")
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+      _Coord,
+  )
+  outcome = qo._run_day_close_job(
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      job_store=SyncTimedbJobStore(str(tmp_path)),
+      log_fn=lambda msg, **k: logs.append(str(msg)),
+  )
+  joined = "\n".join(logs)
+  assert "skip_merge" in joined and "append_idle_remaining_raw" in joined
+  assert any("stage_exit" in ln and "seal" in ln for ln in logs)
+  assert any("stage_enter" in ln and "post_seal_verify" in ln for ln in logs)
+  assert any("stage_exit" in ln and "raw_delete" in ln for ln in logs)
+  assert any(
+      "stage_exit" in ln and "tar_drop" in ln and "remaining_raw" in ln
+      for ln in logs
+  )
+  assert deletes
+  assert outcome == "incomplete_raw"
+  assert os.path.isfile(tar)
 
 
 def test_day_close_append_active_still_yields_before_merge(tmp_path, monkeypatch):

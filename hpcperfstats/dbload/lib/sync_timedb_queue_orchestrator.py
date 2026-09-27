@@ -2042,6 +2042,9 @@ def _run_day_close_job(
       return None
 
     skip_merge_remaining_raw = False
+    # True only on H19 append_idle remaining path (not phase_done_sealed):
+    # remaining already answered; do not re-find post-seal / after delete.
+    remaining_raw_cheap = False
 
     def _wait_on_ingest_or_advance() -> str | None:
       """
@@ -2061,7 +2064,7 @@ def _run_day_close_job(
         >>> None is None
         True
       """
-      nonlocal skip_merge_remaining_raw
+      nonlocal skip_merge_remaining_raw, remaining_raw_cheap
       phase_fn = getattr(coord, "phase", None)
       phase = (
           str(phase_fn(tar_path) or "").strip()
@@ -2101,6 +2104,7 @@ def _run_day_close_job(
         )
         return "yielded"
       skip_merge_remaining_raw = True
+      remaining_raw_cheap = True
       _log(
           "queue_orchestrator day_close wait_on_ingest skip_yield "
           "day=%s reason=append_idle" % day_token,
@@ -2296,7 +2300,30 @@ def _run_day_close_job(
         log_fn=quiet,
     )
     _stage_exit("seal", result="ok")
-    remaining_raw = bool(coord.has_closed_raw_on_disk(tar_path))
+    # H19 append_idle already answered remaining; do not re-find at post-seal
+    # (01 2026-09-26: hung on has_closed after seal exit, before post_seal).
+    # phase_done_sealed sets skip_merge but not remaining_raw_cheap — still find.
+    def _closed_raw_remains() -> bool:
+      """
+      Return True when closed raw still blocks tar_drop this claim.
+
+      H19 append_idle sets ``remaining_raw_cheap`` so giant days do not
+      re-call ``has_closed_raw_on_disk`` after seal / delete. ``phase_done``
+      skip_merge does not set cheap — still probes the coord.
+
+      Returns:
+        bool: True when remaining closed raw is known or on disk.
+
+      Examples:
+        >>> # nested helper inside _run_day_close_job
+        >>> None is None
+        True
+      """
+      if remaining_raw_cheap:
+        return True
+      return bool(coord.has_closed_raw_on_disk(tar_path))
+
+    remaining_raw = _closed_raw_remains()
 
     post_seal_ok = False
     if os.path.isfile(tar_path) or os.path.isfile(tar_path + ".zst"):
@@ -2322,7 +2349,7 @@ def _run_day_close_job(
 
     _stage_enter("raw_delete")
     deleted = int(coord.apply_batch_delete(tar_path) or 0)
-    remaining_raw = bool(coord.has_closed_raw_on_disk(tar_path))
+    remaining_raw = _closed_raw_remains()
     if deleted > 0:
       progress.record(day_token, "raw_delete", 1)
     _stage_exit("raw_delete", result="ok")
@@ -2386,13 +2413,34 @@ def _run_day_close_job(
       finish_fn = getattr(coord, "try_finish_tar_drop_if_ready", None)
       _stage_enter("tar_drop")
       try:
-        if callable(finish_fn):
+        # Known remaining (incl. skip_merge cheap True): skip try_finish find.
+        if remaining_raw:
+          _stage_exit(
+              "tar_drop",
+              result="skip",
+              reason="remaining_raw",
+          )
+        elif callable(finish_fn):
           finish_fn(tar_path)
           tar_dropped = not os.path.isfile(tar_path)
-        elif not remaining_raw:
+          if tar_dropped:
+            remaining_raw = False
+            progress.record(day_token, "tar_delete", 1)
+            _log(
+                "queue_orchestrator day_close tar_drop day=%s" % day_token,
+                log_fn=log_fn,
+            )
+            _stage_exit("tar_drop", result="ok")
+          else:
+            remaining_raw = _closed_raw_remains()
+            _stage_exit(
+                "tar_drop",
+                result="skip",
+                reason="remaining_raw" if remaining_raw else "tar_present",
+            )
+        else:
           os.remove(tar_path)
           tar_dropped = True
-        if tar_dropped:
           remaining_raw = False
           progress.record(day_token, "tar_delete", 1)
           _log(
@@ -2400,13 +2448,6 @@ def _run_day_close_job(
               log_fn=log_fn,
           )
           _stage_exit("tar_drop", result="ok")
-        else:
-          remaining_raw = bool(coord.has_closed_raw_on_disk(tar_path))
-          _stage_exit(
-              "tar_drop",
-              result="skip",
-              reason="remaining_raw" if remaining_raw else "tar_present",
-          )
       except OSError as exc:
         _log(
             "queue_orchestrator day_close tar_drop fail day=%s err=%s"
