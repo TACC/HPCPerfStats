@@ -110,6 +110,9 @@ def _sql_literal(value: Any) -> str:
   """
   Format one COPY text-format field (tab-separated).
 
+  Float values from pandas-promoted sparse bigint columns are emitted as
+  integer text (``0`` not ``0.0``); NaN becomes NULL.
+
   Args:
     value (Any): Python value from a ``proc_data`` instance field.
 
@@ -119,11 +122,18 @@ def _sql_literal(value: Any) -> str:
   Examples:
     >>> _sql_literal(None) == "\\\\N"
     True
+    >>> _sql_literal(0.0)
+    '0'
   """
   if value is None:
     return "\\N"
   if isinstance(value, bool):
     return "t" if value else "f"
+  # Sparse proc ints become pandas float64; bigint COPY rejects "0.0".
+  if isinstance(value, float):
+    if value != value:  # NaN
+      return "\\N"
+    return str(int(value))
   text = str(value)
   return (
       text.replace("\\", "\\\\")

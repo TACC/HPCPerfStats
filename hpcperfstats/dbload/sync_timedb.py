@@ -4732,17 +4732,22 @@ def _remove_processed_path(
 
 def _proc_field_or_none(row: Any, name: Any) -> Any:
   """
-  Return a scalar proc_data field from an itertuples row, mapping NaN to None.
-  
+  Return a scalar proc_data field from an itertuples row.
+
+  Maps NaN to None and coerces pandas/numpy floats to ``int`` for bigint
+  HOST_PROC_KEYS. String ``device`` attributes stay unchanged.
+
   Args:
-    row (Any): Value to inspect (typically a numeric scalar).
-    name (Any): Name passed to this helper.
-  
+    row (Any): Named row (itertuples / SimpleNamespace) with field attrs.
+    name (Any): Attribute name to read from ``row``.
+
   Returns:
-    Any: Value produced by this call (type depends on inputs).
-  
+    Any: ``None``, ``int``, or unchanged non-numeric value (e.g. device str).
+
   Examples:
-    >>> _proc_field_or_none(None, None)  # doctest: +SKIP
+    >>> from types import SimpleNamespace
+    >>> _proc_field_or_none(SimpleNamespace(uid=0.0), "uid")
+    0
   """
   val = getattr(row, name, None)
   if val is None:
@@ -4753,6 +4758,14 @@ def _proc_field_or_none(row: Any, name: Any) -> Any:
       return None
   except Exception:
     pass
+  # Coerce pandas/numpy floats to int for bigint fields; keep str (device).
+  if isinstance(val, float):
+    return int(val)
+  if type(val).__module__ == "numpy":
+    try:
+      return int(val)
+    except (TypeError, ValueError, OverflowError):
+      return None
   return val
 
 

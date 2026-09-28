@@ -54,6 +54,50 @@ def test_proc_copy_sql_has_conflict_update():
   assert "vm_rss = EXCLUDED.vm_rss" in sql
 
 
+def test_proc_copy_bytes_coerces_float_bigint_fields():
+  """
+  Pandas float64 on sparse proc ints must not become COPY text like ``0.0``.
+
+  Production signature (2026-09-28): Postgres rejected bigint COPY tokens
+  ``\"0.0\"`` / ``\"236948.0\"`` for ``uid`` / ``vm_swap`` / ``vm_size``.
+  """
+  payload = pdi.proc_data_objs_to_copy_bytes(
+      [
+          _obj(
+              uid=0.0,
+              vm_swap=0.0,
+              vm_size=236948.0,
+              threads=1.0,
+          )
+      ]
+  ).decode("utf-8")
+  fields = payload.strip().split("\t")
+  # PROC_DATA_COPY_COLUMNS: jid host proc device uid … vm_size … vm_swap threads
+  assert "0.0" not in fields
+  assert "236948.0" not in fields
+  assert fields[4] == "0"  # uid
+  assert fields[6] == "236948"  # vm_size
+  assert fields[15] == "0"  # vm_swap
+  assert fields[16] == "1"  # threads
+  assert pdi._sql_literal(float("nan")) == "\\N"
+
+
+def test_proc_field_or_none_coerces_float_keeps_device_str():
+  """Materialize ints from float64; do not int()-coerce string device."""
+  from types import SimpleNamespace
+
+  from hpcperfstats.dbload import sync_timedb as st
+  from hpcperfstats.dbload.lib import listend_db_ingest as ldi
+
+  row = SimpleNamespace(uid=0.0, vm_size=236948.0, device="bash/1", bog=float("nan"))
+  assert st._proc_field_or_none(row, "uid") == 0
+  assert st._proc_field_or_none(row, "vm_size") == 236948
+  assert st._proc_field_or_none(row, "device") == "bash/1"
+  assert st._proc_field_or_none(row, "bog") is None
+  assert ldi._proc_field_or_none(row, "uid") == 0
+  assert ldi._proc_field_or_none(row, "device") == "bash/1"
+
+
 def test_bulk_insert_proc_copy_s_and_conflict_insert_under_write_telem(
     monkeypatch,
 ):
