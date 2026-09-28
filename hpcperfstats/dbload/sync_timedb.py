@@ -2167,6 +2167,7 @@ INGEST_WRITE_PHASE_KEYS: tuple[str, ...] = (
     "orm_bulk_prep_s",
     "db_execute_s",
     "db_commit_s",
+    "batch_iter_s",
 )
 # Detail keys nest inside db_execute (COPY path); logged but not residual-summed.
 INGEST_WRITE_DETAIL_KEYS: tuple[str, ...] = (
@@ -3025,11 +3026,12 @@ def _write_stats_payload_to_db(
     proc_it = proc_stats.itertuples(index=False)
     while True:
       _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
-      batch = list(itertools.islice(proc_it, bulk_create_batch_size()))
-      if not batch:
-        break
       if _ingest_write_telem_on:
         with _held_ingest_write_timing():
+          with _held_ingest_write_phase("batch_iter_s"):
+            batch = list(itertools.islice(proc_it, bulk_create_batch_size()))
+          if not batch:
+            break
           with _held_ingest_write_phase("orm_materialize_s"):
             proc_objs = [
                 proc_data(**_proc_data_row_kwargs(row)) for row in batch
@@ -3039,6 +3041,9 @@ def _write_stats_payload_to_db(
             _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
             insert_proc_data_batch(proc_objs)
       else:
+        batch = list(itertools.islice(proc_it, bulk_create_batch_size()))
+        if not batch:
+          break
         proc_objs = [
             proc_data(**_proc_data_row_kwargs(row)) for row in batch
         ]
@@ -3067,19 +3072,25 @@ def _write_stats_payload_to_db(
       stats_it = stats.itertuples(index=False)
       while True:
         _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
-        batch = list(itertools.islice(stats_it, bulk_create_batch_size()))
-        if not batch:
-          break
         if _ingest_write_telem_on:
           with _held_ingest_write_timing():
+            with _held_ingest_write_phase("batch_iter_s"):
+              batch = list(itertools.islice(stats_it, bulk_create_batch_size()))
+            if not batch:
+              break
             with _held_ingest_write_phase("orm_materialize_s"):
               host_objs = [
                   host_data_instance_from_stats_row(row) for row in batch
               ]
             with _held_ingest_write_phase("db_execute_s"):
-              _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
+              _raise_if_ingest_per_file_deadline_exceeded(
+                  stats_file, "db_write_host",
+              )
               insert_host_data_batch(host_objs)
         else:
+          batch = list(itertools.islice(stats_it, bulk_create_batch_size()))
+          if not batch:
+            break
           host_objs = [host_data_instance_from_stats_row(row) for row in batch]
           with _held_ingest_write_timing():
             _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
@@ -3993,8 +4004,9 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
           True
         """
         nonlocal parsed_n
-        parsed_n += stats_payload_row_count(stats_payload)
-        update_worker_substage("parse:dataframes")
+        with _held_parse_stage("chunk_setup_s"):
+          parsed_n += stats_payload_row_count(stats_payload)
+          update_worker_substage("parse:dataframes")
         stats_chunk, proc_chunk = build_stats_dataframes(
             stats_payload, proc_payload,
         )
@@ -4110,8 +4122,9 @@ def _add_stats_file_to_db_streaming_incremental(
     """
     nonlocal need_archival, ingest_ok, total_stats_rows
     nonlocal total_stats_rows_parsed, total_proc_rows
-    parsed_stats_n = stats_payload_row_count(stats_list)
-    update_worker_substage("parse:dataframes")
+    with _held_parse_stage("chunk_setup_s"):
+      parsed_stats_n = stats_payload_row_count(stats_list)
+      update_worker_substage("parse:dataframes")
     stats_chunk, proc_chunk = build_stats_dataframes(stats_list, proc_stats_list)
     del stats_list
     del proc_stats_list
@@ -4144,7 +4157,8 @@ def _add_stats_file_to_db_streaming_incremental(
       total_stats_rows += chunk_stats_rows
       total_stats_rows_parsed += parsed_stats_n
       total_proc_rows += chunk_proc_rows
-    _release_ingest_worker_heap()
+    with _held_parse_stage("heap_release_s"):
+      _release_ingest_worker_heap()
 
   _pack_quarantine = lambda failure: (
       lambda unpacked: _pack_ingest_worker_result(

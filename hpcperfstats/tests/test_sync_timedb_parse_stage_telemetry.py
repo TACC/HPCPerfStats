@@ -40,7 +40,7 @@ def test_parse_stage_telemetry_off_snapshot_empty():
 
 
 def test_parse_stage_telemetry_on_emits_all_hold_and_derived_keys():
-  """When enabled, every hold key plus derived build_df/stages_sum is present."""
+  """When enabled, every hold key plus derived build_df/collapse/stages_sum."""
   reset_parse_stage_timing(enabled=True)
   try:
     parser = IncrementalStatsParser(0)
@@ -54,9 +54,17 @@ def test_parse_stage_telemetry_on_emits_all_hold_and_derived_keys():
       assert key in snap
       assert snap[key] >= 0.0
     assert "build_df_s" in snap and "stages_sum_s" in snap
+    assert "collapse_s" in snap
     assert abs(
         snap["build_df_s"]
         - sum(snap[k] for k in PARSE_STAGE_BUILD_DF_PARTS)
+    ) < 1e-9
+    from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+        PARSE_STAGE_COLLAPSE_PARTS,
+    )
+    assert abs(
+        snap["collapse_s"]
+        - sum(snap[k] for k in PARSE_STAGE_COLLAPSE_PARTS)
     ) < 1e-9
     assert abs(
         snap["stages_sum_s"]
@@ -212,3 +220,7 @@ def test_build_stats_dataframes_has_no_outer_build_df_hold():
   assert '_held_parse_stage("decode_s")' in text
   assert '_held_parse_stage("delta_s")' in text
   assert '_held_parse_stage("arc_s")' in text
+  assert '_held_parse_stage("collapse_host_sum_s")' in text
+  assert '_held_parse_stage("collapse_s")' not in text.split(
+      "def _collapse_stats_with_deltas",
+  )[1].split("\ndef ")[0]

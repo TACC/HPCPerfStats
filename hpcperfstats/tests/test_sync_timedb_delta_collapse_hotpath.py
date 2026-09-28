@@ -90,7 +90,9 @@ def test_groupby_sum_multi_dev_still_sums():
   df = _apply_counter_deltas(df)
   rest = df[df["type"] == "cpu"].copy()
   assert rest.duplicated(_COLLAPSE_GROUP_COLS).any()
-  actual = _groupby_sum_min_count(rest, _COLLAPSE_GROUP_COLS)
+  actual = _groupby_sum_min_count(
+      rest, _COLLAPSE_GROUP_COLS, assume_duplicates=True,
+  )
   expected = (
       rest.groupby(_COLLAPSE_GROUP_COLS, observed=True, sort=False)[
           ["value", "delta"]
@@ -103,6 +105,60 @@ def test_groupby_sum_multi_dev_still_sums():
       expected.sort_values(_COLLAPSE_GROUP_COLS).reset_index(drop=True),
       check_dtype=False,
   )
+
+
+def test_multi_dev_category_before_groupby_local_retain():
+  """
+  3b: category-before-groupby on multi_dev frames must not regress wall.
+
+  Unique-gcols A/B is invalid for this gate (E8 non-transfer).
+  """
+  df = _horizonish_frame(
+      n_hosts=30, n_times=10, n_cpu_events=16, n_gpu_events=0, multi_dev_cpu=True,
+  )
+  df = _apply_counter_deltas(df)
+  rest = df[df["type"] == "cpu"].copy()
+  assert rest.duplicated(_COLLAPSE_GROUP_COLS).any()
+
+  def _object_groupby(frame):
+    g = frame.copy()
+    for col in _COLLAPSE_GROUP_COLS:
+      g[col] = g[col].astype(object)
+    return (
+        g.groupby(_COLLAPSE_GROUP_COLS, observed=True, sort=False)[
+            ["value", "delta"]
+        ]
+        .sum(min_count=1)
+        .reset_index()
+    )
+
+  _ = _groupby_sum_min_count(rest.copy(), _COLLAPSE_GROUP_COLS, assume_duplicates=True)
+  _ = _object_groupby(rest)
+
+  n = 5
+  base_times = []
+  cand_times = []
+  for _ in range(n):
+    t0 = time.perf_counter()
+    _object_groupby(rest)
+    base_times.append(time.perf_counter() - t0)
+    t0 = time.perf_counter()
+    _groupby_sum_min_count(
+        rest.copy(), _COLLAPSE_GROUP_COLS, assume_duplicates=True,
+    )
+    cand_times.append(time.perf_counter() - t0)
+  base_mean = sum(base_times) / n
+  cand_mean = sum(cand_times) / n
+  retain = cand_mean <= base_mean * 1.05
+  print(
+      "multi_dev_collapse_retain=%s base_mean=%.6f cand_mean=%.6f"
+      % (str(retain).lower(), base_mean, cand_mean),
+  )
+  assert cand_mean < 30.0
+  if retain:
+    print("multi_dev_collapse_retain_ok")
+  else:
+    print("multi_dev_collapse_no_cut_no_retain")
 
 
 def test_apply_counter_deltas_equivalence_shuffled_order():

@@ -52,6 +52,7 @@ Attributes:
   _LOG_TS_PIPE_RE: Attribute.
   _MIB_BYTES: Attribute.
   _MID_TIER_NAME: Mid size-tier name for overnight decision pack.
+  _PARSE_DERIVED_HOLD_TOKENS: Derived parse tokens excluded from top-hold ranking.
   _PARSE_HOLD_TOKEN_NAMES: Parse-stage token names scraped from ingest lines.
   _PHASE_TOKEN_RES: Compiled named-field regexes for write/parse tokens.
   _PENDING_RESCAN_RE: Attribute.
@@ -112,6 +113,7 @@ _WRITE_PHASE_TOKEN_NAMES = (
     "orm_bulk_prep_s",
     "db_execute_s",
     "db_commit_s",
+    "batch_iter_s",
     "copy_s",
     "conflict_insert_s",
 )
@@ -123,13 +125,25 @@ _PARSE_HOLD_TOKEN_NAMES = (
     "hw_df_s",
     "proc_df_s",
     "delta_s",
+    "collapse_normalize_s",
+    "collapse_host_sum_s",
+    "collapse_ccm_s",
+    "collapse_gpu_s",
+    "collapse_concat_s",
+    "collapse_sort_s",
     "collapse_s",
     "arc_s",
     "concat_s",
     "start_s",
+    "chunk_setup_s",
+    "take_cols_s",
+    "heap_release_s",
     "build_df_s",
     "stages_sum_s",
     "parse_unaccounted_s",
+)
+_PARSE_DERIVED_HOLD_TOKENS = frozenset(
+    ("stages_sum_s", "parse_unaccounted_s", "build_df_s", "collapse_s"),
 )
 _PHASE_TOKEN_RES = {
     name: re.compile(r"%s=(?P<v>[0-9.]+)" % re.escape(name))
@@ -1278,6 +1292,7 @@ def build_outcomes(
     if mid_elapsed and mid_elapsed > 0 and mid_postgres is not None:
         mid_postgres_frac = mid_postgres / mid_elapsed
     mid_phases = metrics.full_ingest_phases_by_tier.get(mid_tier, {})
+    mid_n = int(metrics.full_ingest_count_by_tier.get(mid_tier, 0))
     write_medians = {
         tok: _median_or_none(mid_phases.get(tok, []))
         for tok in _WRITE_PHASE_TOKEN_NAMES
@@ -1285,7 +1300,7 @@ def build_outcomes(
     parse_medians = {
         tok: _median_or_none(mid_phases.get(tok, []))
         for tok in _PARSE_HOLD_TOKEN_NAMES
-        if tok not in ("stages_sum_s", "parse_unaccounted_s", "build_df_s")
+        if tok not in _PARSE_DERIVED_HOLD_TOKENS
     }
     write_sum = sum(v for v in write_medians.values() if v is not None)
     exec_like = 0.0
@@ -1323,18 +1338,28 @@ def build_outcomes(
     named_parse_sample_n = sum(
         len(mid_phases.get(tok, []))
         for tok in _PARSE_HOLD_TOKEN_NAMES
-        if tok not in ("stages_sum_s", "parse_unaccounted_s", "build_df_s")
+        if tok not in _PARSE_DERIVED_HOLD_TOKENS
     )
     write_sample_n = sum(
         len(mid_phases.get(tok, [])) for tok in _WRITE_PHASE_TOKEN_NAMES
     )
-    telem_incomplete = bool(named_parse_sample_n > 0 and write_sample_n == 0)
+    # Incomplete when mid-tier files exist but write phases missing while
+    # parse holds present, OR both parse and write phase samples absent.
+    telem_incomplete = bool(
+        (named_parse_sample_n > 0 and write_sample_n == 0)
+        or (
+            mid_n > 0
+            and named_parse_sample_n == 0
+            and write_sample_n == 0
+        ),
+    )
     if telem_incomplete:
         print(
-            "WARN: mid-tier parse holds present but no write-phase tokens "
-            "(orm_materialize_s/db_execute_s/copy_s/…); "
+            "WARN: mid-tier telem incomplete "
+            "(parse_samples=%d write_samples=%d mid_n=%d); "
             "decision_next=telem_incomplete_re_soak — enable "
-            "sync_ingest_telemetry=yes on redeploy",
+            "sync_ingest_telemetry=yes on redeploy"
+            % (named_parse_sample_n, write_sample_n, mid_n),
             file=sys.stderr,
         )
     total_elapsed_samples = sum(

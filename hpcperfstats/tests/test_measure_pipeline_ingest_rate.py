@@ -595,7 +595,41 @@ def test_overnight_pack_decision_next_telem_incomplete(mod, capsys):
     assert outcomes["decision_next"] == "telem_incomplete_re_soak"
     assert outcomes["mid_tier_telem_incomplete"] == "yes"
     err = capsys.readouterr().err
-    assert "telem_incomplete_re_soak" in err or "write-phase" in err
+    assert "telem_incomplete_re_soak" in err or "write-phase" in err or "telem incomplete" in err
+
+
+def test_overnight_pack_decision_next_telem_all_phases_absent(mod, capsys):
+    """Mid-tier files with no parse and no write phase tokens → incomplete."""
+    mib = 1024 * 1024
+    lines = [
+        _ts(0)
+        + "Messages consumed in the last 10 minutes: 100; messages waiting "
+        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+    ]
+    for i in range(12):
+        lines.append(
+            _ts(10 + i * 5)
+            + (
+                "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
+                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+                "postgres_s=5.0"
+                % (i, 128 * mib)
+            ),
+        )
+    lines.append(
+        _ts(70)
+        + "Messages consumed in the last 10 minutes: 100; messages waiting "
+        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    )
+    lines.append(
+        _ts(70) + "Pending stats file list truncated pending=900 max=2000",
+    )
+    outcomes = mod.analyze_lines(lines)
+    assert outcomes["decision_next"] == "telem_incomplete_re_soak"
+    assert outcomes["mid_tier_telem_incomplete"] == "yes"
+    err = capsys.readouterr().err
+    assert "telem_incomplete" in err or "telem incomplete" in err
 
 
 def test_cli_script_runs_from_repo(tmp_path):

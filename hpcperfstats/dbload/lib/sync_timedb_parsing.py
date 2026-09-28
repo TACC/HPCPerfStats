@@ -10,6 +10,7 @@ Attributes:
   STREAM_PARSE_LINE_BATCH: Attribute.
   _HOST_PROC_KEY_SET: Attribute.
   PARSE_STAGE_BUILD_DF_PARTS: Attribute.
+  PARSE_STAGE_COLLAPSE_PARTS: Collapse sub-hold keys summed into derived collapse_s.
   PARSE_STAGE_HOLD_KEYS: Attribute.
   PARSE_STAGE_LOG_KEYS: Attribute.
   _parse_stage_campaign: Process-wide closed-book stage totals.
@@ -104,7 +105,16 @@ HOST_PROC_KEYS = (
 _HOST_PROC_KEY_SET = frozenset(HOST_PROC_KEYS)
 
 # Exhaustive parse-stage telemetry (INI-gated; default off).
-# Hold keys are timed; build_df_s / stages_sum_s / parse_unaccounted_s are derived.
+# Hold keys are timed; build_df_s / collapse_s / stages_sum_s /
+# parse_unaccounted_s are derived (collapse_s = sum of COLLAPSE_PARTS).
+PARSE_STAGE_COLLAPSE_PARTS: tuple[str, ...] = (
+    "collapse_normalize_s",
+    "collapse_host_sum_s",
+    "collapse_ccm_s",
+    "collapse_gpu_s",
+    "collapse_concat_s",
+    "collapse_sort_s",
+)
 PARSE_STAGE_HOLD_KEYS: tuple[str, ...] = (
     "lock_s",
     "decode_s",
@@ -113,10 +123,13 @@ PARSE_STAGE_HOLD_KEYS: tuple[str, ...] = (
     "hw_df_s",
     "proc_df_s",
     "delta_s",
-    "collapse_s",
+    *PARSE_STAGE_COLLAPSE_PARTS,
     "arc_s",
     "concat_s",
     "start_s",
+    "chunk_setup_s",
+    "take_cols_s",
+    "heap_release_s",
 )
 PARSE_STAGE_BUILD_DF_PARTS: tuple[str, ...] = (
     "proc_merge_s",
@@ -125,6 +138,7 @@ PARSE_STAGE_BUILD_DF_PARTS: tuple[str, ...] = (
 )
 PARSE_STAGE_LOG_KEYS: tuple[str, ...] = PARSE_STAGE_HOLD_KEYS + (
     "build_df_s",
+    "collapse_s",
     "stages_sum_s",
     "parse_unaccounted_s",
 )
@@ -155,6 +169,7 @@ def _parse_stage_derived(acc: dict[str, float]) -> dict[str, float]:
   """
   out = {key: float(acc.get(key, 0.0)) for key in PARSE_STAGE_HOLD_KEYS}
   out["build_df_s"] = sum(out[key] for key in PARSE_STAGE_BUILD_DF_PARTS)
+  out["collapse_s"] = sum(out[key] for key in PARSE_STAGE_COLLAPSE_PARTS)
   out["stages_sum_s"] = sum(out[key] for key in PARSE_STAGE_HOLD_KEYS)
   return out
 
@@ -1242,16 +1257,26 @@ def _optional_jid_first_agg(df: Any) -> dict[str, tuple[str, str]]:
   return {}
 
 
-def _groupby_sum_min_count(df: Any, gcols: Any) -> Any:
+def _groupby_sum_min_count(
+  df: Any,
+  gcols: Any,
+  *,
+  assume_duplicates: bool = False,
+) -> Any:
   """
   Sum value/delta across devs with pandas ``sum(min_count=1)`` NaN semantics.
 
   When every ``gcols`` key is unique (common for GPU-with-dev and many
   host metrics), skip ``groupby`` factorize — return the projection.
+  Host multi-dev collapse drops ``dev`` from ``gcols``, so callers that
+  already know rows duplicate should pass ``assume_duplicates=True`` to
+  skip the wasted uniqueness scan and cast keys to ``category`` before
+  ``groupby`` (production Horizon path).
 
   Args:
     df (Any): Df passed to this helper.
     gcols (Any): Gcols passed to this helper.
+    assume_duplicates (bool): Skip identity short-circuit; cast categories.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -1262,11 +1287,16 @@ def _groupby_sum_min_count(df: Any, gcols: Any) -> Any:
   if df.empty:
     return _empty_delta_arc_frame()
   # Identity groups: groupby.factorize dominates Horizon-sized unique frames.
-  if not df.duplicated(gcols).any():
+  if not assume_duplicates and not df.duplicated(gcols).any():
     keep = list(gcols) + ["value", "delta"]
     if "jid" in getattr(df, "columns", ()):
       keep.append("jid")
     return df.loc[:, keep].reset_index(drop=True)
+  for col in gcols:
+    if col == "time" or col not in getattr(df, "columns", ()):
+      continue
+    if not isinstance(df[col].dtype, pd.CategoricalDtype):
+      df[col] = df[col].astype("category")
   grouped = df.groupby(gcols, observed=True, sort=False)
   out = grouped[["value", "delta"]].sum(min_count=1)
   if "jid" in getattr(df, "columns", ()):
@@ -2837,46 +2867,57 @@ def _normalize_collapse_dev_column(stats_df: Any) -> Any:
 def _collapse_stats_with_deltas(stats_df: Any) -> Any:
   """
   Collapse multi-row samples; GPU types keep ``dev``, others sum across devices.
-  
+
   Args:
     stats_df (Any): Stats df passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _collapse_stats_with_deltas(None)  # doctest: +SKIP
   """
-  with _held_parse_stage("collapse_s"):
+  with _held_parse_stage("collapse_normalize_s"):
     stats_df = _normalize_collapse_dev_column(stats_df)
     gcols = _COLLAPSE_GROUP_COLS
     gcols_gpu = _COLLAPSE_GROUP_COLS_WITH_DEV
     nv_df = stats_df[stats_df["type"] == "nvidia_gpu"]
     other_gpu_df = stats_df[stats_df["type"].isin({"amd_gpu", "intel_gpu"})]
     rest_df = stats_df[~stats_df["type"].isin(_GPU_STATS_TYPES)]
-    parts = []
+    ccm_power_df = rest_df.iloc[0:0]
+    rest_other = rest_df
     if not rest_df.empty:
       ccm_power_mask = (
           rest_df["type"].isin(_HOST_CPU_HW_TYPES)
           & rest_df["event"].isin(_DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS))
       ccm_power_df = rest_df[ccm_power_mask]
       rest_other = rest_df[~ccm_power_mask]
-      if not rest_other.empty:
-        collapsed_rest = _groupby_sum_min_count(rest_other, gcols)
-        collapsed_rest["dev"] = ""
-        parts.append(collapsed_rest)
-      if not ccm_power_df.empty:
-        collapsed_ccm = _collapse_dcg_cpu_power_vectorized(ccm_power_df, gcols)
-        collapsed_ccm["dev"] = ""
-        parts.append(collapsed_ccm)
-    if not other_gpu_df.empty:
-      # Identity groups when each (host,dev,event,time) is unique.
-      parts.append(_groupby_sum_min_count(other_gpu_df, gcols_gpu))
-    if not nv_df.empty:
-      parts.append(_collapse_nvidia_gpu_vectorized(nv_df, gcols_gpu))
+  parts = []
+  if not rest_other.empty:
+    with _held_parse_stage("collapse_host_sum_s"):
+      # Multi-dev host paths always duplicate gcols (dev dropped); skip
+      # identity probe and category-cast before groupby (E8 non-transfer).
+      collapsed_rest = _groupby_sum_min_count(
+          rest_other, gcols, assume_duplicates=True,
+      )
+      collapsed_rest["dev"] = ""
+      parts.append(collapsed_rest)
+  if not ccm_power_df.empty:
+    with _held_parse_stage("collapse_ccm_s"):
+      collapsed_ccm = _collapse_dcg_cpu_power_vectorized(ccm_power_df, gcols)
+      collapsed_ccm["dev"] = ""
+      parts.append(collapsed_ccm)
+  if not other_gpu_df.empty or not nv_df.empty:
+    with _held_parse_stage("collapse_gpu_s"):
+      if not other_gpu_df.empty:
+        # Identity groups when each (host,dev,event,time) is unique.
+        parts.append(_groupby_sum_min_count(other_gpu_df, gcols_gpu))
+      if not nv_df.empty:
+        parts.append(_collapse_nvidia_gpu_vectorized(nv_df, gcols_gpu))
 
-    if not parts:
-      return _empty_delta_arc_frame()
+  if not parts:
+    return _empty_delta_arc_frame()
+  with _held_parse_stage("collapse_concat_s"):
     collapsed = (
         concat(parts, ignore_index=True) if len(parts) > 1 else parts[0]
     )
@@ -2890,6 +2931,7 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
         collapsed["dev"] = dev.fillna("").astype(str)
       elif str(dev.dtype) != "object":
         collapsed["dev"] = dev.astype(str)
+  with _held_parse_stage("collapse_sort_s"):
     return collapsed.sort_values(by=_ARC_GROUP_COLS + ["time"])
 
 
@@ -3117,6 +3159,8 @@ def parse_stats_file_streaming_incremental(
                 line, parser._line_index, parser.start_idx):
               if pending_flush or parser.stats_len >= flush_rows:
                 if parser.stats_len or parser._proc_by_key:
+                  # take_cols stays inside feed_s (must flush before next
+                  # sample); mid-flush take is attributed to feed_s.
                   emit.append(
                       (
                           parser.take_stats_columns(),
@@ -3130,10 +3174,10 @@ def parse_stats_file_streaming_incremental(
         for stats_chunk, proc_chunk in emit:
           on_chunk(stats_chunk, proc_chunk)
     if parser.stats_len or parser._proc_by_key:
-      on_chunk(
-          parser.take_stats_columns(),
-          parser.take_proc_stats_columns(),
-      )
+      with _held_parse_stage("take_cols_s"):
+        _final_stats = parser.take_stats_columns()
+        _final_proc = parser.take_proc_stats_columns()
+      on_chunk(_final_stats, _final_proc)
     pending_flush = False
   except FileNotFoundError:
     return
