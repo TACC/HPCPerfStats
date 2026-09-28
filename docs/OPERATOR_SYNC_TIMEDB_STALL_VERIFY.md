@@ -17,7 +17,7 @@ After an interpreter-only redeploy (CPython 3.14 / baked pipeline **3.14t**), T0
 Prefer these lines over firehose greps for backlog diagnosis:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator progress day=|queue_orchestrator status |queue_orchestrator census |archive_job_done |ingest per-file timeout' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator progress day=|queue_orchestrator status |queue_orchestrator census |sync_timedb_mem_telemetry:|skip_cgroup_headroom|archive_job_done |ingest per-file timeout' | tail -80
 ```
 
 - **`progress day=`** — omit-zeros day counters (`gate_skip`, `ingest_handoff`, ingest outcomes, archive, day_close, reconstruct, …).

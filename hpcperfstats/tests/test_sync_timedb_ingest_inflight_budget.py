@@ -155,8 +155,136 @@ def test_fill_admits_alone_when_file_exceeds_budget(monkeypatch, tmp_path):
 
 def test_fill_block_keys_include_skip_budget_bytes():
   assert "skip_budget_bytes" in qo._FILL_BLOCK_KEYS
+  assert "skip_cgroup_headroom" in qo._FILL_BLOCK_KEYS
   stats = qo._empty_ingest_fill_stats()
   assert stats["skip_budget_bytes"] == 0
+  assert stats["skip_cgroup_headroom"] == 0
   assert qo._dominant_ingest_fill_block(
       {"skip_budget_bytes": 3, "claim_none": 1},
   ) == "skip_budget_bytes"
+
+
+def test_fill_skips_cgroup_headroom(monkeypatch, tmp_path):
+  p = tmp_path / "ok"
+  p.write_bytes(b"z" * 10)
+  identity = str(p)
+  claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity=identity,
+      owner_token="n:h:b:1",
+      deadline=1e9,
+      score=1.0,
+      fingerprint=jq.ingest_fingerprint(
+          os.stat(identity).st_size, os.stat(identity).st_mtime_ns,
+      ),
+  )
+  monkeypatch.setattr(
+      jq, "claim_ingest_jobs", lambda *_a, **_k: [claim],
+  )
+  requeued = []
+  monkeypatch.setattr(
+      jq,
+      "requeue_job",
+      lambda *a, **k: requeued.append(k.get("reason") or a),
+  )
+  monkeypatch.setattr(jq, "bump_job_attempt", lambda *_a, **_k: 1)
+  monkeypatch.setattr(jq, "job_max_attempts", lambda: 3)
+  monkeypatch.setattr(
+      wm, "compute_ingest_inflight_raw_bytes_budget", lambda: 10 ** 12,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_cgroup_admit_headroom_mib",
+      lambda: 16384,
+  )
+  monkeypatch.setattr(
+      qo, "cgroup_admit_headroom_ok", lambda *_a, **_k: False,
+  )
+
+  class _Pool:
+    def apply_async(self, fn, args):
+      raise AssertionError("must not submit under headroom block")
+
+  stats = qo._empty_ingest_fill_stats()
+  n = qo._fill_ingest_band(
+      SyncTimedbJobStore(""),
+      band="hot",
+      cap=1,
+      inflight={},
+      claims={},
+      submitted={},
+      ingest_pool=_Pool(),
+      inflight_sizes={},
+      fill_stats=stats,
+      tgz_archive_dir=str(tmp_path),
+  )
+  assert n == 0
+  assert stats.get("skip_cgroup_headroom", 0) >= 1
+
+
+def test_fill_append_returns_zero_when_headroom_blocked(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_cgroup_admit_headroom_mib",
+      lambda: 16384,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_timedb_tar_append_batch_size",
+      lambda: 8,
+  )
+  monkeypatch.setattr(qo, "cgroup_admit_headroom_ok", lambda *_a, **_k: False)
+  n = qo._fill_append_slots(
+      SyncTimedbJobStore(""),
+      cap=4,
+      inflight={},
+      claims={},
+      archive_pool=None,
+      tgz_archive_dir="/d",
+  )
+  assert n == 0
+
+
+def test_alone_oversized_still_admits_when_headroom_blocked(monkeypatch, tmp_path):
+  p = tmp_path / "giant"
+  p.write_bytes(b"y" * 200)
+  identity = str(p)
+  claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity=identity,
+      owner_token="n:h:b:1",
+      deadline=1e9,
+      score=1.0,
+      fingerprint=jq.ingest_fingerprint(
+          os.stat(identity).st_size, os.stat(identity).st_mtime_ns,
+      ),
+  )
+  monkeypatch.setattr(
+      jq, "claim_ingest_jobs", lambda *_a, **_k: [claim],
+  )
+  monkeypatch.setattr(jq, "requeue_job", lambda *_a, **_k: None)
+  monkeypatch.setattr(
+      wm, "compute_ingest_inflight_raw_bytes_budget", lambda: 50,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_cgroup_admit_headroom_mib",
+      lambda: 16384,
+  )
+  monkeypatch.setattr(qo, "cgroup_admit_headroom_ok", lambda *_a, **_k: False)
+
+  class _Pool:
+    def apply_async(self, fn, args):
+      return SimpleNamespace(ready=lambda: False)
+
+  inflight = {}
+  sizes = {}
+  n = qo._fill_ingest_band(
+      SyncTimedbJobStore(""),
+      band="hot",
+      cap=1,
+      inflight=inflight,
+      claims={},
+      submitted={},
+      ingest_pool=_Pool(),
+      inflight_sizes=sizes,
+      tgz_archive_dir=str(tmp_path),
+  )
+  assert n == 1
+  assert identity in inflight

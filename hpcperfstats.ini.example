@@ -347,6 +347,12 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # sync_ingest_worker_memory_telemetry = no
 # sync_ingest_worker_memory_telemetry_every_n_chunks = 1
 
+# Exhaustive OOM attribution lines (cgroup/stat/RSS/inflight/headroom). Default no; enable for soak.
+# sync_timedb_mem_telemetry = no
+# Require this many MiB free under memory.max before multi-file ingest admit / append fill (default 16384; 0=off).
+# Does not block alone-oversized ingest when inflight is empty. Soft roof unchanged.
+# sync_cgroup_admit_headroom_mib = 16384
+
 # Parse-stage + write/COPY shares on ingest outcome lines (default no; overnight soak).
 # Enable with sync_ingest_telemetry = yes on the same redeploy as CODE
 # (no-production-env-for-ini-config.mdc — not pipeline environment=).

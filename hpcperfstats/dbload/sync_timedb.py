@@ -4445,6 +4445,14 @@ def add_stats_file_to_db(
           ),
       )
   finally:
+    if stats_file:
+      try:
+        from hpcperfstats.dbload.lib.zstd_cli import (
+            zstd_drop_page_cache_for_paths,
+        )
+        zstd_drop_page_cache_for_paths(stats_file)
+      except Exception:
+        pass
     mem_meta = _release_ingest_worker_memory(stats_file)
     if result is not None:
       result = _merge_worker_memory_meta(result, mem_meta)

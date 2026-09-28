@@ -1,9 +1,15 @@
 """
 Lightweight process memory helpers for supervisor RSS guards.
+
+Attributes:
+  _MIB: Bytes in one mebibyte.
+  _MEMORY_STAT_MIB_KEYS: ``memory.stat`` keys converted to MiB for telemetry.
+  _MEMORY_STAT_COUNT_KEYS: ``memory.stat`` counter keys left as integers.
 """
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import iter_pool_worker_processes
@@ -220,3 +226,234 @@ def format_tree_rss_breakdown_mb(ingest_pool: Any, archive_pool: Any) -> Any:
       "archive_pool_mb": archive / (1024.0 * 1024.0),
       "tree_total_mb": (supervisor + ingest + archive) / (1024.0 * 1024.0),
   }
+
+
+_MIB = 1024 * 1024
+
+# memory.stat keys emitted by sync_timedb_mem_telemetry (bytes → MiB except faults).
+_MEMORY_STAT_MIB_KEYS = (
+    "anon",
+    "file",
+    "file_mapped",
+    "shmem",
+    "active_anon",
+    "inactive_anon",
+    "active_file",
+    "inactive_file",
+    "unevictable",
+    "slab",
+)
+_MEMORY_STAT_COUNT_KEYS = ("pgfault", "pgmajfault")
+
+
+def read_cgroup_memory_peak_bytes() -> Any:
+  """
+  Return cgroup ``memory.peak`` in bytes (0 when unknown).
+
+  Returns:
+    Any: Peak bytes or 0.
+
+  Examples:
+    >>> read_cgroup_memory_peak_bytes()  # doctest: +SKIP
+  """
+  value = _read_cgroup_memory_file("memory.peak")
+  return int(value) if value is not None else 0
+
+
+def read_cgroup_memory_stat() -> Any:
+  """
+  Parse cgroup ``memory.stat`` into a dict of int counters (empty if unavailable).
+
+  Returns:
+    Any: Mapping of key → int.
+
+  Examples:
+    >>> isinstance(read_cgroup_memory_stat(), dict)
+    True
+  """
+  for path in (
+      "/sys/fs/cgroup/memory.stat",
+      "/sys/fs/cgroup/memory/memory.stat",
+  ):
+    try:
+      with open(path, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    except OSError:
+      continue
+    out: dict[str, int] = {}
+    for line in text.splitlines():
+      parts = line.split()
+      if len(parts) < 2:
+        continue
+      try:
+        out[parts[0]] = int(parts[1])
+      except ValueError:
+        continue
+    return out
+  return {}
+
+
+def cgroup_admit_headroom_ok(headroom_mib: Any) -> bool:
+  """
+  Return True when multi-file admit / append may proceed under cgroup headroom.
+
+  When ``headroom_mib <= 0`` or ``memory.max`` is unknown, the gate is off
+  (fail open). When current and max are readable, require
+  ``(max - current) >= headroom_mib`` MiB.
+
+  Args:
+    headroom_mib (Any): Required free MiB under ``memory.max``.
+
+  Returns:
+    bool: True when admit/append may proceed.
+
+  Examples:
+    >>> cgroup_admit_headroom_ok(0)
+    True
+  """
+  need = max(0, int(headroom_mib or 0))
+  if need <= 0:
+    return True
+  cgroup_max = read_cgroup_memory_max_bytes()
+  if cgroup_max is None or int(cgroup_max) <= 0:
+    return True
+  current = int(read_cgroup_memory_current_bytes() or 0)
+  left = int(cgroup_max) - current
+  return left >= (need * _MIB)
+
+
+def read_process_nlwp(pid: Any | None = None) -> int:
+  """
+  Return thread count from ``/proc/<pid>/status`` Threads (0 if unknown).
+
+  Args:
+    pid (Any | None): Target pid or None for self.
+
+  Returns:
+    int: Thread count.
+
+  Examples:
+    >>> read_process_nlwp(None)  # doctest: +SKIP
+  """
+  proc_pid = "self" if pid is None else int(pid)
+  status_path = "/proc/%s/status" % proc_pid
+  try:
+    with open(status_path, "r", encoding="utf-8") as fh:
+      for line in fh:
+        if line.startswith("Threads:"):
+          parts = line.split()
+          if len(parts) >= 2:
+            return int(parts[1])
+  except (OSError, ValueError):
+    return 0
+  return 0
+
+
+def _cmdline_of(pid: int) -> str:
+  """
+  Return space-joined ``/proc/<pid>/cmdline`` (empty on error).
+
+  Args:
+    pid (int): Target process id.
+
+  Returns:
+    str: Cmdline text.
+
+  Examples:
+    >>> isinstance(_cmdline_of(1), str)
+    True
+  """
+  try:
+    with open("/proc/%d/cmdline" % pid, "rb") as fh:
+      raw = fh.read().replace(b"\x00", b" ").decode("utf-8", "replace")
+    return raw.strip()
+  except OSError:
+    return ""
+
+
+def read_daemon_rss_by_cmdline() -> dict[str, int]:
+  """
+  Sum VmRSS bytes for listend / update_metrics / sync_timedb by cmdline match.
+
+  Returns:
+    dict[str, int]: Keys ``sync``, ``listend``, ``metrics`` → RSS bytes.
+
+  Examples:
+    >>> sorted(read_daemon_rss_by_cmdline().keys())
+    ['listend', 'metrics', 'sync']
+  """
+  out = {"sync": 0, "listend": 0, "metrics": 0}
+  try:
+    pids = [int(name) for name in os.listdir("/proc") if name.isdigit()]
+  except OSError:
+    return out
+  for pid in pids:
+    cmd = _cmdline_of(pid)
+    if not cmd:
+      continue
+    low = cmd.lower()
+    if "sync_timedb" in low:
+      out["sync"] += read_process_rss_bytes(pid)
+    elif "listend" in low:
+      out["listend"] += read_process_rss_bytes(pid)
+    elif "update_metrics" in low:
+      out["metrics"] += read_process_rss_bytes(pid)
+  return out
+
+
+def read_other_cgroup_rss(
+  exclude_pids: set[int] | None = None,
+) -> dict[str, Any]:
+  """
+  Sum RSS of PIDs under this cgroup excluding known daemons; note top ≥1 GiB.
+
+  Args:
+    exclude_pids (set[int] | None): PIDs to skip (daemon mains).
+
+  Returns:
+    dict[str, Any]: ``other_rss_bytes``, ``other_top`` (basename or empty).
+
+  Examples:
+    >>> "other_rss_bytes" in read_other_cgroup_rss()
+    True
+  """
+  exclude = set(exclude_pids or ())
+  # Prefer cgroup.procs; fall back to all /proc pids.
+  proc_list: list[int] = []
+  for path in (
+      "/sys/fs/cgroup/cgroup.procs",
+      "/sys/fs/cgroup/memory/cgroup.procs",
+  ):
+    try:
+      with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+          line = line.strip()
+          if line.isdigit():
+            proc_list.append(int(line))
+      break
+    except OSError:
+      continue
+  if not proc_list:
+    try:
+      proc_list = [int(n) for n in os.listdir("/proc") if n.isdigit()]
+    except OSError:
+      return {"other_rss_bytes": 0, "other_top": ""}
+  other = 0
+  top_name = ""
+  top_rss = 0
+  for pid in proc_list:
+    if pid in exclude:
+      continue
+    cmd = _cmdline_of(pid)
+    low = cmd.lower()
+    if "sync_timedb" in low or "listend" in low or "update_metrics" in low:
+      continue
+    rss = read_process_rss_bytes(pid)
+    if rss <= 0:
+      continue
+    other += rss
+    if rss >= _MIB and rss > top_rss:
+      top_rss = rss
+      base = cmd.split()[0] if cmd else str(pid)
+      top_name = os.path.basename(base)
+  return {"other_rss_bytes": other, "other_top": top_name}

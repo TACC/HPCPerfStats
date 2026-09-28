@@ -143,6 +143,8 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_malloc_trim_after_file"),
     ("PIPELINE", "sync_ingest_worker_memory_telemetry"),
     ("PIPELINE", "sync_ingest_worker_memory_telemetry_every_n_chunks"),
+    ("PIPELINE", "sync_timedb_mem_telemetry"),
+    ("PIPELINE", "sync_cgroup_admit_headroom_mib"),
     ("PIPELINE", "sync_ingest_telemetry"),
     ("PIPELINE", "sync_ingest_recycle_worker_on_failure"),
     ("PIPELINE", "sync_ingest_cooperative_recycle_rss_fraction"),
@@ -298,6 +300,8 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_malloc_trim_after_file': 'yes',
     'sync_ingest_worker_memory_telemetry': 'no',
     'sync_ingest_worker_memory_telemetry_every_n_chunks': '1',
+    'sync_timedb_mem_telemetry': 'no',
+    'sync_cgroup_admit_headroom_mib': '16384',
     'sync_ingest_telemetry': 'no',
     'sync_ingest_recycle_worker_on_failure': 'yes',
     'sync_ingest_cooperative_recycle_rss_fraction': '0.5',
@@ -3634,6 +3638,42 @@ def get_sync_ingest_worker_memory_telemetry() -> Any:
   return _parse_bool(
       _pipeline_get("sync_ingest_worker_memory_telemetry"),
   )
+
+
+def get_sync_timedb_mem_telemetry() -> Any:
+  """
+  Emit exhaustive ``sync_timedb_mem_telemetry:`` OOM attribution lines (default no).
+
+  Distinct from ``sync_ingest_worker_memory_telemetry`` (worker recycle summaries).
+
+  Returns:
+    Any: Bool-like from INI (default off).
+
+  Examples:
+    >>> get_sync_timedb_mem_telemetry() in (True, False)
+    True
+  """
+  _ensure_cfg_loaded()
+  return _parse_bool(
+      _pipeline_get("sync_timedb_mem_telemetry"),
+  )
+
+
+def get_sync_cgroup_admit_headroom_mib() -> Any:
+  """
+  Require this many MiB free under ``memory.max`` before multi-file admit / append.
+
+  Default ``16384``. ``0`` disables the cgroup-headroom gate (fail open).
+
+  Returns:
+    Any: Non-negative integer MiB.
+
+  Examples:
+    >>> get_sync_cgroup_admit_headroom_mib() >= 0
+    True
+  """
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_cgroup_admit_headroom_mib"))
 
 
 def get_sync_ingest_worker_memory_telemetry_every_n_chunks() -> Any:

@@ -25,6 +25,8 @@ Attributes:
   _FILL_BLOCK_KEYS: Ordered ingest fill failure counter names for telemetry.
   _INGEST_MEM_BLOCK_STATE: Process-local census fields when fill waits on
     the in-flight raw-byte budget (``ingest_mem_blocked=…``).
+  _MEM_TELEM_RUNTIME: Best-effort inflight/submitted/queue snapshots for
+    gated ``sync_timedb_mem_telemetry`` census lines.
   APPEND_FILL_SKIP_BUDGET: Max impossible append claims (missing path /
     unresolved daily tar) ACK-dropped per fill tick before yielding.
   _APPEND_DAY_LISTS: Process-local calendar-day deques of claimed append
@@ -72,10 +74,12 @@ from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 from hpcperfstats.dbload.lib import sync_timedb_progress_report as progress
 from hpcperfstats.dbload.lib import sync_timedb_worker_memory as worker_memory
+from hpcperfstats.dbload.lib import sync_timedb_mem_telemetry as mem_telem
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
   create_sync_timedb_thread_pool,
 )
 from hpcperfstats.dbload.lib.print_utils import log_print
+from hpcperfstats.dbload.lib.process_memory import cgroup_admit_headroom_ok
 from hpcperfstats.dbload.lib.process_title import (
   set_daemon_thread_title,
 )
@@ -2909,6 +2913,7 @@ _FILL_BLOCK_KEYS = (
     "skip_lock",
     "skip_fp",
     "skip_budget_bytes",
+    "skip_cgroup_headroom",
     "band_cap",
     "submit_err",
 )
@@ -2919,6 +2924,17 @@ _INGEST_MEM_BLOCK_STATE: dict[str, Any] = {
     "blocked": False,
     "inflight_raw_mib": 0,
     "budget_mib": 0,
+}
+
+# Best-effort snapshots for mem telemetry census (updated by ingest fill).
+_MEM_TELEM_RUNTIME: dict[str, Any] = {
+    "inflight_sizes": {},
+    "submitted": {},
+    "append_inflight_n": 0,
+    "day_close_inflight_n": 0,
+    "hot_used": 0,
+    "catch_used": 0,
+    "fill_block": None,
 }
 
 
@@ -2966,6 +2982,102 @@ def _note_ingest_mem_block_state(
   )
   _INGEST_MEM_BLOCK_STATE["budget_mib"] = int(
       max(0, int(budget_bytes or 0)) // (1024 * 1024),
+  )
+  if isinstance(inflight_sizes, dict):
+    _MEM_TELEM_RUNTIME["inflight_sizes"] = dict(inflight_sizes)
+
+
+def note_mem_telem_runtime(**kwargs: Any) -> None:
+  """
+  Update process-local mem-telemetry runtime fields (ingest/append coordinators).
+
+  Args:
+    **kwargs: Keys among ``submitted``, ``append_inflight_n``,
+      ``day_close_inflight_n``, ``hot_used``, ``catch_used``, ``fill_block``,
+      ``inflight_sizes``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> note_mem_telem_runtime(append_inflight_n=0)
+  """
+  for key, val in kwargs.items():
+    if key in _MEM_TELEM_RUNTIME:
+      _MEM_TELEM_RUNTIME[key] = val
+
+
+def _census_kind_q(census: dict[str, Any], kind: str) -> str:
+  """
+  Format ``inflight/queued`` for one job-store census kind.
+
+  Args:
+    census (dict[str, Any]): ``queue_census`` result.
+    kind (str): Job kind key.
+
+  Returns:
+    str: ``inflight/queued`` token.
+
+  Examples:
+    >>> _census_kind_q({"ingest": {"inflight": 1, "queued": 2}}, "ingest")
+    '1/2'
+  """
+  row = census.get(kind) or {}
+  return "%s/%s" % (
+      int(row.get("inflight", 0) or 0),
+      int(row.get("queued", 0) or 0),
+  )
+
+
+def _emit_mem_telem_event(event: str, log_fn: Any = None, **extra: Any) -> None:
+  """
+  Emit gated mem telemetry using runtime snapshot + optional overrides.
+
+  Args:
+    event (str): Telemetry event name.
+    log_fn (Any): Optional logger (defaults to ``log_print``).
+    **extra: Overrides including ``inflight_sizes``, ``submitted``, ``census``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _emit_mem_telem_event("census")
+  """
+  sizes = extra.pop("inflight_sizes", None)
+  if sizes is None:
+    sizes = _MEM_TELEM_RUNTIME.get("inflight_sizes") or {}
+  submitted = extra.pop("submitted", None)
+  if submitted is None:
+    submitted = _MEM_TELEM_RUNTIME.get("submitted") or {}
+  census = extra.pop("census", None)
+  ingest_q = append_q = discover_q = day_close_q = None
+  if isinstance(census, dict):
+    ingest_q = _census_kind_q(census, jq.JOB_KIND_INGEST)
+    append_q = _census_kind_q(census, jq.JOB_KIND_APPEND)
+    discover_q = _census_kind_q(census, jq.JOB_KIND_DISCOVER)
+    day_close_q = _census_kind_q(census, jq.JOB_KIND_DAY_CLOSE)
+  with _TOTAL_INGESTED_LOCK:
+    total_ingested = _TOTAL_INGESTED
+    total_completed = _TOTAL_COMPLETED
+  mem_telem.maybe_emit_mem_telemetry(
+      event,
+      log_fn or log_print,
+      inflight_sizes=sizes if isinstance(sizes, dict) else {},
+      submitted=submitted if isinstance(submitted, dict) else {},
+      ingest_mem_blocked=bool(_INGEST_MEM_BLOCK_STATE.get("blocked")),
+      total_ingested=total_ingested,
+      total_completed=total_completed,
+      hot_used=_MEM_TELEM_RUNTIME.get("hot_used"),
+      catch_used=_MEM_TELEM_RUNTIME.get("catch_used"),
+      fill_block=_MEM_TELEM_RUNTIME.get("fill_block"),
+      ingest_q=ingest_q,
+      append_q=append_q,
+      discover_q=discover_q,
+      day_close_q=day_close_q,
+      append_inflight_n=_MEM_TELEM_RUNTIME.get("append_inflight_n"),
+      day_close_inflight_n=_MEM_TELEM_RUNTIME.get("day_close_inflight_n"),
+      **extra,
   )
 
 
@@ -3407,9 +3519,52 @@ def _fill_ingest_band(
               inflight_sizes=inflight_sizes,
               budget_bytes=budget_bytes,
           )
+          _emit_mem_telem_event(
+              "skip_budget",
+              log_fn,
+              inflight_sizes=inflight_sizes,
+              submitted=submitted,
+          )
           if skipped >= budget:
             break
           continue
+        headroom_mib = int(cfg.get_sync_cgroup_admit_headroom_mib())
+        alone_oversized = (
+            inflight_sum == 0
+            and budget_bytes > 0
+            and size_bytes > budget_bytes
+        )
+        if (
+            not alone_oversized
+            and not cgroup_admit_headroom_ok(headroom_mib)
+        ):
+          _requeue_ingest_fill_skip(
+              client,
+              claim=claim,
+              archive_data_dir=archive_data_dir,
+              reason="skip_cgroup_headroom",
+              score=claim.score,
+              log_fn=log_fn,
+          )
+          skipped += 1
+          stats["skip_cgroup_headroom"] += 1
+          _emit_mem_telem_event(
+              "skip_cgroup_headroom",
+              log_fn,
+              inflight_sizes=inflight_sizes,
+              submitted=submitted,
+          )
+          if skipped >= budget:
+            break
+          continue
+        if alone_oversized:
+          _emit_mem_telem_event(
+              "admit_alone",
+              log_fn,
+              inflight_sizes=inflight_sizes,
+              submitted=submitted,
+              alone_oversized=True,
+          )
       try:
         async_res = ingest_pool.apply_async(
             _ingest_worker, (path,),
@@ -3429,6 +3584,12 @@ def _fill_ingest_band(
       submitted[claim.identity] = time.monotonic()
       if inflight_sizes is not None:
         inflight_sizes[claim.identity] = size_bytes
+      note_mem_telem_runtime(
+          submitted=dict(submitted),
+          inflight_sizes=(
+              dict(inflight_sizes) if isinstance(inflight_sizes, dict) else {}
+          ),
+      )
       used_map[band] = int(used_map.get(band, 0)) + 1
       submitted_n += 1
     if skipped >= budget:
@@ -4114,6 +4275,9 @@ def _fill_append_slots(
   skipped = 0
   batch_size = max(1, int(cfg.get_sync_timedb_tar_append_batch_size()))
   store_exhausted = False
+  if not cgroup_admit_headroom_ok(cfg.get_sync_cgroup_admit_headroom_mib()):
+    _emit_mem_telem_event("skip_cgroup_headroom", None)
+    return 0
   while len(inflight) < cap:
     submitted += _try_submit_pending_append_days(
         client=client,
@@ -5675,6 +5839,41 @@ def _reconstruct_coordinator_loop(
                   mem_tok,
               ),
               log_fn=log_fn,
+          )
+          snap = mem_telem.snapshot_pipeline_mem_telemetry(
+              inflight_sizes=_MEM_TELEM_RUNTIME.get("inflight_sizes") or {},
+              submitted=_MEM_TELEM_RUNTIME.get("submitted") or {},
+              ingest_mem_blocked=bool(_INGEST_MEM_BLOCK_STATE.get("blocked")),
+              total_ingested=total_ingested,
+              total_completed=total_completed,
+              hot_used=_MEM_TELEM_RUNTIME.get("hot_used"),
+              catch_used=_MEM_TELEM_RUNTIME.get("catch_used"),
+              fill_block=_MEM_TELEM_RUNTIME.get("fill_block"),
+              ingest_q="%s/%s" % (
+                  int((census.get(jq.JOB_KIND_INGEST) or {}).get("inflight", 0)),
+                  int((census.get(jq.JOB_KIND_INGEST) or {}).get("queued", 0)),
+              ),
+              append_q="%s/%s" % (
+                  int((census.get(jq.JOB_KIND_APPEND) or {}).get("inflight", 0)),
+                  int((census.get(jq.JOB_KIND_APPEND) or {}).get("queued", 0)),
+              ),
+              discover_q="%s/%s" % (
+                  int((census.get(jq.JOB_KIND_DISCOVER) or {}).get("inflight", 0)),
+                  int((census.get(jq.JOB_KIND_DISCOVER) or {}).get("queued", 0)),
+              ),
+              day_close_q="%s/%s" % (
+                  int((census.get(jq.JOB_KIND_DAY_CLOSE) or {}).get("inflight", 0)),
+                  int((census.get(jq.JOB_KIND_DAY_CLOSE) or {}).get("queued", 0)),
+              ),
+              append_inflight_n=_MEM_TELEM_RUNTIME.get("append_inflight_n"),
+              day_close_inflight_n=_MEM_TELEM_RUNTIME.get("day_close_inflight_n"),
+          )
+          for edge in mem_telem.detect_edge_events(snap):
+            mem_telem.maybe_emit_mem_telemetry(
+                edge, log_fn or log_print, snap=snap,
+            )
+          mem_telem.maybe_emit_mem_telemetry(
+              "census", log_fn or log_print, snap=snap,
           )
       _emit_progress_report_if_due(
           client,

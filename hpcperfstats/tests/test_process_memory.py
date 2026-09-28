@@ -65,3 +65,14 @@ def test_format_tree_rss_breakdown_mb(monkeypatch):
   assert breakdown["supervisor_mb"] == 10.0
   assert breakdown["ingest_pool_mb"] == 20.0
   assert breakdown["tree_total_mb"] == 50.0
+
+
+def test_read_cgroup_memory_stat_parses(monkeypatch, tmp_path):
+  stat = tmp_path / "memory.stat"
+  stat.write_text("anon 100\nfile 200\npgfault 3\n", encoding="utf-8")
+  monkeypatch.setattr(
+      pm,
+      "read_cgroup_memory_stat",
+      lambda: {"anon": 100, "file": 200, "pgfault": 3},
+  )
+  assert pm.read_cgroup_memory_stat()["file"] == 200
