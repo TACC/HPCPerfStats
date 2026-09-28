@@ -2,7 +2,7 @@
 
 One-line overview of the outcome.
 
-**Governed by:** `agent-discipline-core.mdc` (always-on), `plan-completion-gate.mdc`, `plan-creation-contract.mdc` (plan authoring), `implementation-review-workflow.mdc`.
+**Governed by:** `agent-discipline-core.mdc` (always-on), `plan-completion-gate.mdc`, `plan-creation-contract.mdc` (plan authoring), `plan-live-disk-sync.mdc` (disk authority — chat does not count), `implementation-review-workflow.mdc`.
 
 **Applies to:** pre-code chat plans, committed design docs in `HPCPerfStats/monitor/docs/plans/`, monitor **Consumer follow-up plan** sections, and Cursor Plan mode output.
 
@@ -18,7 +18,7 @@ Use any of these when you want the agent to follow this template and the close g
 - **“Include final code review per plan-creation-contract”**
 - **“Implement this plan”** (with attached plan or Cursor Plan todos)
 
-The agent must read this file, include **Final code review** and **Post-implementation review** sections, add the **`post-implementation-review`** todo last, and for bug/hotfix/regression plans fill **Root Cause Analysis** (Problem and facts) plus Approach subsections **Target File & Line Numbers** and **Minimally Invasive Fix**. See **`plan-template-enforcement.mdc`** and **`plan-completion-gate.mdc`**.
+The agent must read this file, **Write the plan to** `.cursor/plans/<name>.plan.md` (chat and CreatePlan alone do not count — `plan-live-disk-sync.mdc`), include **Plan disk file**, **Final code review**, and **Post-implementation review** sections, add the **`post-implementation-review`** todo last, and for bug/hotfix/regression plans fill **Root Cause Analysis** (Problem and facts) plus Approach subsections **Target File & Line Numbers**, **Minimally Invasive Fix**, **Fix compression sequence**, and **Compression metric block**. See **`plan-template-enforcement.mdc`**, **`plan-completion-gate.mdc`**, and **`grok-surgical-bug-fix-mandate.mdc`**.
 
 **Do not mark implementation done** until the **close sequence** is complete (see **`plan-completion-gate.mdc`** → *Blocking close gate*): (1) **Agent rule dispatch** — list triggered **`*.mdc`** rules Read or N/A, (2) senior final code review on the diff and affected workflows finds no unfixed gaps, and (3) structured chat self-review is delivered (**Why it works**, **Edge cases**, **Convention check**). This applies to **all non-trivial code changes**, not only plan-driven work. **When implementing a plan:** also sync plan YAML todos (`status: completed` for every finished step—status-only plan edits are allowed even when plan prose must not change) and complete **`post-implementation-review`**.
 
@@ -46,6 +46,18 @@ isProject: false
 
 ---
 
+## Plan disk file (authority — chat does not count)
+
+Per `plan-live-disk-sync.mdc` — update this block on **every** plan edit.
+
+| Field | Value |
+|-------|-------|
+| **Live path** | `<workspace_root>/.cursor/plans/<short-kebab-name>.plan.md` |
+| **Last updated** | YYYY-MM-DD |
+| **Authority** | Only Write/StrReplace to the live path counts; chat summaries, CreatePlan-only output, and TodoWrite do not. |
+
+---
+
 ## 1. Problem and facts
 
 **Grounding (no guessing)** — per `plan-creation-contract.mdc`:
@@ -61,9 +73,13 @@ isProject: false
 
 - [1 sentence explaining exactly why the bug is happening]
 
+Before the first product-code edit, complete Approach **Fix compression sequence** (Expansion Fix mental draft → Compression Refactor of the root-cause block → Readability & Safety Audit) and the **Compression metric block**. Do not dump raw chain-of-thought in chat (`implementation-review-workflow.mdc`).
+
 ## 2. Approach
 
 Ordered steps with trade-offs.
+
+**One Approach group per change (required):** When the plan has **N distinct changes**, write **N Approach groups**. Each group must include **Target File & Line Numbers**, **Fix compression sequence**, **Minimally Invasive Fix**, and a **Compression metric block**. Do not collapse N root-cause blocks into one Approach group.
 
 **Industry best practices** — name what informs the plan (e.g. test pyramid — unit `make check` before full static bundle; bounded hot-path work for HPC daemons). Prefer project rules (`monitor-c-testing-standards.mdc`, `monitor-jitter-and-fidelity-priority.mdc`) where they already encode local practice.
 
@@ -80,17 +96,39 @@ sequenceDiagram
 
 ### Target File & Line Numbers
 
-**Required** for bug/hotfix/regression plans (same N/A rule as Root Cause Analysis).
+**Required** for bug/hotfix/regression plans (same N/A rule as Root Cause Analysis). Name the root-cause **block** (typically the failing function plus ~30 surrounding lines), not an unrelated neighbor.
 
 - [Path/to/file.py] around lines [X to Y]
 
+### Fix compression sequence
+
+**Required** for bug/hotfix/regression plans (same N/A rule as Root Cause Analysis). Record this sequence **in the plan** before writing a diff (`grok-surgical-bug-fix-mandate.mdc`):
+
+1. **Expansion Fix (mental draft):** the raw, naive patch (extra nested `if`, wrapper, or branch). **Do not ship this draft.**
+2. **Compression Refactor:** how the Target File block absorbs that fix while **netting negative (or zero) lines** — flatten nests, merge conditions, early returns, existing helpers. Delete redundant blocks in the same range. This is the patch of the failing block, not unrelated adjacent cleanup.
+3. **Readability & Safety Audit:** condensed code stays readable; bounds checks, error handling, and hot-path performance are not sacrificed. **No cryptic code golf.**
+
 ### Minimally Invasive Fix
 
-**Required** for bug/hotfix/regression plans (same N/A rule as Root Cause Analysis). Show the exact 1–5 lines of code you will change, add, or delete. Do not show or change anything else.
+**Required** for bug/hotfix/regression plans (same N/A rule as Root Cause Analysis).
+
+**Zero-expansion:** Do not append a structural patch or nested conditionals to cover the edge case. If complexity caused the bug, rewrite the root-cause block so the corrected logic is concise and naturally immune (100% functional parity). Prefer modern syntax that **removes** boilerplate (early return, shared helper already in-file, a data-driven table) over adding branches.
+
+Preferred when that rewrite is already a tiny patch: show the exact 1–5 lines of code you will change, add, or delete. Do not show or change anything else.
+
+If the Expansion Fix would grow the block, **replace the snippet below with the compressed rewrite** of the Target File range (not the naive draft). Unrelated lines outside that range stay untouched.
 
 ```
 [Show the exact 1-5 lines of code you will change, add, or delete. Do not show or change anything else.]
 ```
+
+### Compression metric block
+
+**Required** for bug/hotfix/regression plans (same N/A rule as Root Cause Analysis). Place at the **bottom of Approach**, before Testing. Greenfield: **N/A**.
+
+- **Redundant Blocks Slated for Deletion:** [Identify lines/functions]
+- **Target Modern Syntax/Refactoring Mechanism:** [e.g. Flattening nest to early returns, merging duplicate branches]
+- **Projected Net Line Impact:** [e.g. -14 lines, or 0 if the 1–5 line patch is already immune]
 
 ## 3. Testing
 
@@ -134,13 +172,15 @@ make -C .build-static distclean
 3. Append results to **`test_runs/test_run_log_YYYY-MM-DD.md`** (command, exit code, blockers) — not `docs/`.
 4. Record residual risks if anything was skipped (name the arch family and the dual-verify table row).
 
+**Bugfix / regression** — also follow `traceback-fix-discipline.mdc` and `grok-surgical-bug-fix-mandate.mdc` when chasing a specific failure signature.
+
 ## 4. Implementation
 
 | Concern | Location |
 |---------|----------|
 | … | `HPCPerfStats/monitor/src/…` |
 
-When Approach has **Minimally Invasive Fix**, stay inside those **1–5 lines** unless Root Cause Analysis is revised first. Omit this section for answer-only or doc-only work with no logic change.
+When Approach has **Minimally Invasive Fix**, stay inside the **Target File & Line Numbers** range unless Root Cause Analysis is revised first. Prefer the **1–5 line** patch when it is already zero-expansion; when **Fix compression sequence** rewrites the block, ship that rewrite (not the Expansion Fix draft). Omit this section for answer-only or doc-only work with no logic change.
 
 ## 5. Cursor rules / docs sync
 

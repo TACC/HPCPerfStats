@@ -571,9 +571,16 @@ def test_plan_template_includes_root_cause_surgical_fix_block():
       "### Root Cause Analysis",
       "### Target File & Line Numbers",
       "### Minimally Invasive Fix",
+      "### Fix compression sequence",
+      "### Compression metric block",
       "1 sentence explaining exactly why the bug is happening",
       "[Path/to/file.py] around lines [X to Y]",
       "Show the exact 1-5 lines of code you will change, add, or delete",
+      "Expansion Fix (mental draft)",
+      "Redundant Blocks Slated for Deletion",
+      "Target Modern Syntax/Refactoring Mechanism",
+      "Projected Net Line Impact",
+      "Zero-expansion",
   )
   for template in templates:
     text = template.read_text(encoding="utf-8")
@@ -587,31 +594,26 @@ def test_plan_template_includes_root_cause_surgical_fix_block():
     assert "### Root Cause Analysis" in facts
     assert "### Target File & Line Numbers" not in facts
     assert "### Minimally Invasive Fix" not in facts
+    assert "### Fix compression sequence" not in facts
+    assert "### Compression metric block" not in facts
     assert "### Target File & Line Numbers" in approach
     assert "### Minimally Invasive Fix" in approach
-
-  hps = repo_root / "docs" / "plans" / "PLAN_TEMPLATE.md"
-  hps_text = hps.read_text(encoding="utf-8")
-  hps_facts_idx = hps_text.index("## 1. Problem and facts")
-  hps_approach_idx = hps_text.index("## 2. Approach")
-  hps_testing_idx = hps_text.index("## 3. Testing")
-  hps_approach = hps_text[hps_approach_idx:hps_testing_idx]
-  for snippet in (
-      "### Fix compression sequence",
-      "Expansion Fix (mental draft)",
-      "### Compression metric block",
-      "Redundant Blocks Slated for Deletion",
-      "Target Modern Syntax/Refactoring Mechanism",
-      "Projected Net Line Impact",
-      "Zero-expansion",
-  ):
-    assert snippet in hps_text, f"HPCPerfStats PLAN_TEMPLATE missing {snippet!r}"
-  assert "### Fix compression sequence" in hps_approach
-  assert "### Compression metric block" in hps_approach
-  assert "### Compression metric block" not in hps_text[hps_facts_idx:hps_approach_idx]
+    assert "### Fix compression sequence" in approach
+    assert "### Compression metric block" in approach
 
 
-def test_plan_content_issues_requires_git_hooks_pre_close_todo():
+def test_triggered_rules_monitor_src_dispatches_surgical_bug_fix():
+  src_rules = triggered_rules_for_paths(
+      ["HPCPerfStats/monitor/src/stats_buffer_rmq.c"],
+  )
+  assert "grok-surgical-bug-fix-mandate.mdc" in src_rules
+  assert "refactor-dedup-priorities.mdc" in src_rules
+  test_rules = triggered_rules_for_paths(
+      ["HPCPerfStats/monitor/tests/test_ib_sysfs_parsing.c"],
+  )
+  assert "grok-surgical-bug-fix-mandate.mdc" in test_rules
+  assert "refactor-dedup-priorities.mdc" in test_rules
+
   body = _minimal_plan_markdown().replace(
       "  - id: git-hooks-pre-close\n"
       "    content: run commit and push hooks\n"

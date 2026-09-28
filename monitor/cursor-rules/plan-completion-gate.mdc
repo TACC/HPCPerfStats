@@ -67,7 +67,7 @@ Look for:
 
 **Fix anything found** and re-run relevant tests. Do not proceed to step 2 or mark todos complete while open review items remain.
 
-Aligns with **`plan-creation-contract.mdc`** step 6 and **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`** → *Final code review*.
+Aligns with **`plan-creation-contract.mdc`** step 6 and **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`** → *Final code review*. When a plan has **N distinct changes**, that template requires **N Approach groups** (one Target File / compression / minimally invasive block per change).
 
 ### 2. Structured chat self-review
 
@@ -113,3 +113,4 @@ When behavior changes, also run **`logic-change-checklist.mdc`** mentally and co
 - **`plan-creation-contract.mdc`** — plan authoring structure and **`PLAN_TEMPLATE.md`**; step 6 *Final code review* is implemented here as close-sequence step 1.
 - **`implementation-review-workflow.mdc`** — pre-code plan + post-code review content; close-sequence step 2 matches its three chat sections.
 - **`every-error-regression-test.mdc`** — fixes require a regression test before close.
+- **`grok-surgical-bug-fix-mandate.mdc`** — bug plans: zero-expansion compression of the failing block; metric block on `PLAN_TEMPLATE.md`.

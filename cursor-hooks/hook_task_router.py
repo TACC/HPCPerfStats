@@ -960,6 +960,23 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
         ],
     },
     {
+        "id": "monitor_surgical_bug_fix",
+        "patterns": [
+            "HPCPerfStats/monitor/src/**",
+            "HPCPerfStats/monitor/tests/**",
+            "monitor/src/**",
+            "monitor/tests/**",
+            "HPCPerfStats/monitor/cursor-rules/grok-surgical-bug-fix-mandate.mdc",
+            "HPCPerfStats/monitor/cursor-rules/refactor-dedup-priorities.mdc",
+            "monitor/cursor-rules/grok-surgical-bug-fix-mandate.mdc",
+            "monitor/cursor-rules/refactor-dedup-priorities.mdc",
+        ],
+        "rules": [
+            "grok-surgical-bug-fix-mandate.mdc",
+            "refactor-dedup-priorities.mdc",
+        ],
+    },
+    {
         "id": "monitor_packaging",
         "patterns": [
             "HPCPerfStats/monitor/hpcperfstats.spec",

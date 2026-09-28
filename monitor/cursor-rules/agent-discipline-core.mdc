@@ -80,7 +80,8 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | Trigger paths | Read these rules |
 |---------------|------------------|
 | `HPCPerfStats/monitor/tests/**` | `monitor-c-testing-standards.mdc`, `monitor-c-new-function-unittests.mdc`, `global-testing-discipline.mdc`, `monitor-valgrind-cpp-linter-gate.mdc` |
-| Traceback / runtime error / test failure fix | `traceback-fix-discipline.mdc`, `logic-change-checklist.mdc`, `every-error-regression-test.mdc` |
+| Traceback / runtime error / test failure fix | `traceback-fix-discipline.mdc`, `logic-change-checklist.mdc`, `every-error-regression-test.mdc`, `grok-surgical-bug-fix-mandate.mdc`, `refactor-dedup-priorities.mdc` |
+| `HPCPerfStats/monitor/src/**`, `HPCPerfStats/monitor/tests/**` (bug-fix / ticket / error-refactor patches) | `grok-surgical-bug-fix-mandate.mdc`, `refactor-dedup-priorities.mdc` |
 
 ### Docs and README
 
@@ -115,6 +116,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 
 - **Test-first** for behavior changes: `test-first-discipline.mdc`, `monitor-c-testing-standards.mdc`
 - **Canonical verify** for monitor C: `build_static_bundle.sh` + `make check` on arches that compile the change; `cross_compile_test.sh` only for portable / multi-arch diffs per **`monitor-dual-verify-cross-and-static.mdc`** (shared LIKWID adapters and both-arch bundle scripts need **x86 and aarch64**; skip ARM only for x86-only uncore/RAPL/CPUID); on plan close also **`run_valgrind_check.sh`** + **`run_cpp_linter.sh`** per **`monitor-valgrind-cpp-linter-gate.mdc`**
+- **Surgical bug-fixes:** zero-expansion repair of the root-cause block (compress, do not append nested conditionals; no unrelated adjacent cleanup) — Read `grok-surgical-bug-fix-mandate.mdc` and `refactor-dedup-priorities.mdc` before the first product-code patch
 - **Consumer contract** — read `listend.py` before changing emit shape; attach **Consumer follow-up plan** when needed (`monitor-consumer-side-plan.mdc`)
 - **Scope** — default monitor-only; explicit user override required for `hpcperfstats/` edits
 

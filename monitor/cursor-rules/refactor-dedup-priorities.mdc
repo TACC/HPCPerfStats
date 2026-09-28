@@ -1,0 +1,42 @@
+---
+description: Refactor and deduplication priorities (less code, simplicity, branches, merge surface) — including bug-fix compression of the root-cause block
+globs: HPCPerfStats/monitor/src/**,HPCPerfStats/monitor/tests/**
+alwaysApply: false
+---
+
+# Refactor And Deduplication Priorities
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+## Mandatory deduplication threshold
+
+If **substantive** logic exists in **three or more** places under **`HPCPerfStats/monitor/`**, extract a shared helper in the same task. The priorities below govern *how* to extract, not whether to extract at that threshold. Prefer linkable `.c`/`.h` so helpers stay unit-testable (`monitor-c-new-function-unittests.mdc`).
+
+When refactoring or removing duplication (C under `HPCPerfStats/monitor/src/` and tests under `HPCPerfStats/monitor/tests/`), **choose approaches in this strict order**:
+
+1. **Less code** — Net fewer lines and fewer moving parts; delete the second copy. Do **not** add new modules or layers unless they **clearly** reduce total code and ongoing duplication—**except** at the 3+ copy threshold, where a helper is **required**; still pick the smallest net win.
+2. **Simplicity** — Shallow nesting, obvious data flow, names that match behavior. **Do not** replace readable code with a dense one-liner that saves lines but hurts comprehension.
+3. **Execution branch reduction** — Fewer `if` / `else` chains and symmetric duplicate branches; prefer one parameterized path or a small data-driven table when it **reduces** branches **and** fits 1–2.
+4. **Merge surface reduction** — One canonical place for shared logic so fewer files need parallel edits. Treat as a **bonus** after 1–3, unless it coincides with deleting a duplicate.
+
+## Bug-fix Boy Scout (root-cause block only)
+
+When the task is a **bug/hotfix** (`grok-surgical-bug-fix-mandate.mdc`), apply priorities 1–2 **inside the failing block** (~30 surrounding lines): absorb the fix by flattening nests and deleting redundant branches so net lines go down (or stay zero). Do **not** append nested conditionals. Do **not** restyle or rewrite unrelated neighbors. Record projected net line impact on bug plans (`PLAN_TEMPLATE.md` → **Compression metric block**).
+
+## Heuristics
+
+- After a refactor, if a named helper is only referenced **once**, **inline** it unless the name makes the call site materially clearer.
+- Prefer **deleting** duplicate implementations over introducing abstractions that add indirection without a net line/branch win.
+- When extracting shared collectors or parsers, verify the extraction **removes** more repetition than it adds (call sites, headers, test surface).
+- Hot paths (`st_collect`, `sample_timer`, `send_timer`) still obey **`monitor-jitter-and-fidelity-priority.mdc`** — do not “simplify” by adding allocations or unbounded work.
+
+## Tests (refactors)
+
+- Before changing behavior-bearing code, add or extend **unit tests** that lock current behavior (`tests/test_*.c`).
+- After the refactor, run the **relevant** tests (`make check` / static bundle per **`global-testing-discipline.mdc`**) and keep them green before considering the task done.
+- Full-file C modernizations follow **`monitor-c-refactor-standards.mdc`**; this rule is the **decision order** for how to shrink code.
+
+## Overlap
+
+- Complements `monitor-c-refactor-standards.mdc` (C style and safety on touched code) and `monitor-c-new-function-unittests.mdc` (new helpers need tests). This rule is the **decision order** for refactors; those rules still govern style, safety, and verification.
+- **`grok-surgical-bug-fix-mandate.mdc`** — bug patches compress the failing block per this order; they do not become whole-file cleanups.

@@ -8,10 +8,16 @@ globs: HPCPerfStats/monitor/src/**,HPCPerfStats/monitor/tests/**
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-- When a traceback or runtime error log is provided, identify the **first frame in project-owned code** (any language) and fix the root cause there. Plans must fill **Root Cause Analysis** in Problem and facts, plus Approach subsections **Target File & Line Numbers** and **Minimally Invasive Fix** in **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`**: one-sentence RCA, target file and line numbers, and the exact 1–5 lines to change — nothing else.
+- When a traceback or runtime error log is provided, identify the **first frame in project-owned code** (any language) and fix the root cause there. Plans must fill **Root Cause Analysis** in Problem and facts, plus Approach subsections **Target File & Line Numbers**, **Fix compression sequence**, **Minimally Invasive Fix**, and **Compression metric block** in **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`**: one-sentence RCA; target block (~30 surrounding lines); Expansion Fix mental draft (do not ship); compressed rewrite that nets negative or zero lines; metric block (deletions, mechanism, projected net lines). Prefer the exact 1–5 lines when that patch is already zero-expansion.
 - Do not implement symptom-only patches in downstream code paths when the upstream cause is actionable.
 - Add or update regression tests that fail before the fix and pass after the fix.
 - Use unit tests by default; use integration tests when the failure spans multiple components.
 - If traceback-driven changes alter API output, verify serializer/response shape compatibility with calling UI or client code.
 
 **Monitor workspace note**: Fixes may land in C under `HPCPerfStats/monitor/` while the traceback is from Python (e.g. consumer). Still prefer the owning component for the defect; do not violate monitor-workspace-contract by editing non-monitor code without an explicit user override in the chat.
+
+## Overlap
+
+- **`grok-surgical-bug-fix-mandate.mdc`** — zero-expansion: compress the root-cause block; chat RCA + compression metrics before the first product-code edit; no unrelated adjacent cleanup.
+- **`refactor-dedup-priorities.mdc`** — less code first inside the failing block; no golf.
+- **`every-error-regression-test.mdc`** — every fix needs a regression test before close.

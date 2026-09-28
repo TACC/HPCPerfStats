@@ -34,7 +34,9 @@ Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 - **`monitor-amd-epyc-likwid.mdc`** — Intel + EPYC LIKWID-only core/DF/RAPL; PERF-only HPM (no DIRECT MSR / `power_read`); no gpr4/8 fallback; family DF `st_name`s
 - **`monitor-likwid-rapl-refactor.mdc`** — RAPL via LIKWID PWR* + powercap; init order before RAPL collect; no Variorum
 - **`monitor-debug-vs-symbols.mdc`** — `--enable-debug` vs `-g`; release quiet logging (startup + hourly + first-fail RMQ)
-- **`plan-creation-contract.mdc`** / **`plan-template-enforcement.mdc`** — plan authoring; template at **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`**
+- **`plan-creation-contract.mdc`** / **`plan-template-enforcement.mdc`** — plan authoring; template at **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`** (bug plans: RCA + Target File + Fix compression sequence + Minimally Invasive Fix + Compression metric block)
+- **`grok-surgical-bug-fix-mandate.mdc`** — bug-fix / ticket / error-refactor patches are zero-expansion repairs of the root-cause block (compress that block; do not append nested conditionals; no unrelated adjacent cleanup; no new helpers unless 3+ copies or the user asks); RCA + compression metrics in chat (or PLAN_TEMPLATE metric block) before the first product-code edit; **not** always-on (description + globs + router)
+- **`refactor-dedup-priorities.mdc`** — less code first, simplicity, branch reduction; bug-fix Boy Scout compresses only the failing ~30-line block
 
 Adding a new domain rule (same task, non-optional):
 
