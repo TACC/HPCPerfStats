@@ -2230,3 +2230,96 @@ def test_day_close_job_scoped_closed_raw_pass_memo(tmp_path, monkeypatch):
       "(got %d)" % len(census_calls)
   )
 
+
+def test_manifest_fast_no_full_remaining_handoff_verification_complete(
+    tmp_path, monkeypatch,
+):
+  """T1b: handoff probes after verify must not call build_remaining_raw."""
+  day = datetime(2026, 7, 28)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(
+      str(seg),
+      zst,
+      "skipped_not_in_archive",
+      "not_in_sealed_archive",
+  )
+  with state._lock:
+    state._manifest["phase"] = PHASE_DELETING
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["skipped_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: pytest.fail("manifest-fast handoff must not full-scan"),
+  )
+  assert state._only_waiting_on_ingest_blocks_completion()
+  assert coord.should_handoff_to_ingest(tar_path)
+  assert state.handoff_paths_for_ingest() == [str(seg)]
+  assert state._has_closed_raw_existing_on_disk()
+
+
+def test_manifest_fast_no_full_remaining_delete_tar_drop(tmp_path, monkeypatch):
+  """T1b: delete completion tar_drop must not full-scan when manifest terminal."""
+  day = datetime(2026, 8, 3)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 10)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_DELETING
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+  seg.unlink()
+  with state._lock:
+    state._manifest["entries"][str(seg)]["deleted"] = True
+    state._manifest["deleted_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: pytest.fail("delete tar_drop must not full-scan"),
+  )
+  deleted = coord.apply_batch_delete(tar_path)
+  assert deleted == 0
+  assert coord.phase(tar_path) == PHASE_DONE
+  assert not os.path.isfile(tar_path)
+
+
+def test_pre_seal_classify_paths_cache_skips_second_find(tmp_path, monkeypatch):
+  """Pre-seal resume must not repeat build_remaining_raw when paths cached."""
+  day = datetime(2026, 7, 30)
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True, exist_ok=True)
+  ts0 = int(datetime(day.year, day.month, day.day, 10, 0, 0).timestamp())
+  ts1 = int(datetime(day.year, day.month, day.day, 11, 0, 0).timestamp())
+  seg0 = host / str(ts0)
+  seg1 = host / str(ts1)
+  seg0.write_text("%d job1 cn001\nline\n" % ts0)
+  seg1.write_text("%d job1 cn001\nline\n" % ts1)
+  os.utime(seg0, (ts0, ts0))
+  os.utime(seg1, (ts1, ts1))
+  tar_path, _zst = _seal_day(tmp_path, seg0, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
+  state = coord._get_or_create_day(tar_path)
+  with state._lock:
+    state._manifest["pre_seal_classify_paths"] = [str(seg0), str(seg1)]
+    state._manifest["pre_seal_classify_index"] = 0
+    _save_manifest(state._manifest_path, state._manifest)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: pytest.fail("cached pre_seal must not full-scan"),
+  )
+  monkeypatch.setattr(cfg, "get_sync_day_close_raw_paths_per_batch", lambda: 1)
+  assert coord.run_pre_seal_verify_sync(tar_path, max_classify_batches=1) is False
+  assert int(state._manifest.get("pre_seal_classify_index", 0)) == 1
+  assert coord.run_pre_seal_verify_sync(tar_path, max_classify_batches=1) is True
+  assert "pre_seal_classify_paths" not in state._manifest
+

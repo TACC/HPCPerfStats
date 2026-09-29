@@ -717,6 +717,12 @@ class _DayRawRemovalState:
       if self._ghost_deleted_paths_on_disk():
         return False
       return False
+    if self.verification_complete():
+      if self._blocking_manifest_paths_on_disk():
+        return True
+      if self._ghost_deleted_paths_on_disk():
+        return True
+      return bool(self._manifest_retryable_paths_on_disk())
     remaining = self._build_remaining_raw_for_daily_tar()
     zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
     return remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path)
@@ -778,6 +784,12 @@ class _DayRawRemovalState:
       self._finalize_quarantine_terminal_done()
       return {}
     if self.delete_phase_done():
+      blocking = self._blocking_manifest_paths_on_disk()
+      if blocking:
+        zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
+        return {zst_path: blocking}
+      return {}
+    if self.verification_complete():
       blocking = self._blocking_manifest_paths_on_disk()
       if blocking:
         zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
@@ -987,6 +999,18 @@ class _DayRawRemovalState:
     Examples:
       >>> _DayRawRemovalState()._all_closed_raw_terminal_or_gone()
     """
+    if self.verification_complete() and not self.delete_phase_done():
+      for _path, entry in self._manifest_entries_on_disk():
+        if self._entry_is_quarantine_terminal_skip(entry):
+          continue
+        if self._entry_is_retryable_skip(entry):
+          return False
+        if (
+            str(entry.get("status") or "") == "verified"
+            and not entry.get("deleted")
+        ):
+          return False
+      return True
     with self._lock:
       entries = dict(self._manifest.get("entries", {}))
     for path in self._closed_raw_paths_on_disk():
@@ -1013,7 +1037,7 @@ class _DayRawRemovalState:
     """
     with self._lock:
       entries = dict(self._manifest.get("entries", {}))
-    if self.delete_phase_done():
+    if self.delete_phase_done() or self.verification_complete():
       return []
     unmanifested: List[str] = []
     for path in self._closed_raw_paths_on_disk():
@@ -1413,6 +1437,8 @@ class _DayRawRemovalState:
     """
     if self.delete_phase_done():
       return self._manifest_only_waiting_on_ingest()
+    if self.verification_complete():
+      return self._manifest_only_waiting_on_ingest()
     if self._unmanifested_closed_raw_paths():
       return False
     with self._lock:
@@ -1506,6 +1532,8 @@ class _DayRawRemovalState:
       return self._manifest_retryable_paths_on_disk()
     # Pre-ingest: no day-scoped census — known manifest retryables only.
     if not self.get_allow_day_scoped_closed_raw():
+      return self._manifest_retryable_paths_on_disk()
+    if self.verification_complete():
       return self._manifest_retryable_paths_on_disk()
     with self._lock:
       entries = dict(self._manifest.get("entries", {}))
@@ -1954,22 +1982,30 @@ class _DayRawRemovalState:
           flush=True,
       )
     zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
-    remaining = self._build_remaining_raw_for_daily_tar()
-    raw_paths: List[str] = []
-    for paths in (remaining or {}).values():
-      raw_paths.extend(paths or [])
-    skip_paths = set(self.get_quarantine_skip_paths() or ())
-    filtered: List[str] = []
-    for path in raw_paths:
-      if stats_file_is_active_segment(path):
-        self._record_entry(path, zst_path, "skipped_active_segment", "active_segment")
-        continue
-      if path in skip_paths:
-        self._record_entry(path, zst_path, "skipped_quarantine", "quarantine")
-        continue
-      filtered.append(path)
     with self._lock:
       cursor = int(self._manifest.get("pre_seal_classify_index", 0))
+      cached_filtered = self._manifest.get("pre_seal_classify_paths")
+    if isinstance(cached_filtered, list) and cached_filtered:
+      filtered = [str(p) for p in cached_filtered]
+    else:
+      remaining = self._build_remaining_raw_for_daily_tar()
+      raw_paths: List[str] = []
+      for paths in (remaining or {}).values():
+        raw_paths.extend(paths or [])
+      skip_paths = set(self.get_quarantine_skip_paths() or ())
+      filtered: List[str] = []
+      for path in raw_paths:
+        if stats_file_is_active_segment(path):
+          self._record_entry(path, zst_path, "skipped_active_segment", "active_segment")
+          continue
+        if path in skip_paths:
+          self._record_entry(path, zst_path, "skipped_quarantine", "quarantine")
+          continue
+        filtered.append(path)
+      with self._lock:
+        self._manifest["pre_seal_classify_paths"] = list(filtered)
+        _manifest_snap = copy.deepcopy(self._manifest)
+      _save_manifest(self._manifest_path, _manifest_snap)
     if cursor > len(filtered):
       cursor = 0
     gate_fn = (
@@ -2086,6 +2122,7 @@ class _DayRawRemovalState:
       self._manifest["verify_stage"] = VERIFY_STAGE_PRE_SEAL
       self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
       self._manifest.pop("pre_seal_classify_index", None)
+      self._manifest.pop("pre_seal_classify_paths", None)
       _manifest_snap = copy.deepcopy(self._manifest)
     _save_manifest(self._manifest_path, _manifest_snap)
     _log_day_raw_verify_complete(
