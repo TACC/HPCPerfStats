@@ -52,6 +52,7 @@ Attributes:
   _LOG_TS_PIPE_RE: Attribute.
   _MIB_BYTES: Attribute.
   _MID_TIER_NAME: Mid size-tier name for overnight decision pack.
+  _MID_TIER_PREF: Preference order for overnight decision mid-tier selection.
   _PARSE_DERIVED_HOLD_TOKENS: Derived parse tokens excluded from top-hold ranking.
   _PARSE_HOLD_TOKEN_NAMES: Parse-stage token names scraped from ingest lines.
   _PHASE_TOKEN_RES: Compiled named-field regexes for write/parse tokens.
@@ -114,6 +115,7 @@ _WRITE_PHASE_TOKEN_NAMES = (
     "db_execute_s",
     "db_commit_s",
     "batch_iter_s",
+    "write_setup_s",
     "copy_s",
     "conflict_insert_s",
 )
@@ -138,6 +140,7 @@ _PARSE_HOLD_TOKEN_NAMES = (
     "chunk_setup_s",
     "take_cols_s",
     "heap_release_s",
+    "jid_invalidate_s",
     "build_df_s",
     "stages_sum_s",
     "parse_unaccounted_s",
@@ -149,16 +152,25 @@ _PHASE_TOKEN_RES = {
     name: re.compile(r"%s=(?P<v>[0-9.]+)" % re.escape(name))
     for name in (_WRITE_PHASE_TOKEN_NAMES + _PARSE_HOLD_TOKEN_NAMES)
 }
-_MID_TIER_NAME = "64mib_1gib"
+_MID_TIER_NAME = "8mib_64mib"
 _MIB_BYTES = 1024 * 1024
 _GIB_BYTES = 1024 * _MIB_BYTES
+# Horizon dense mid-files are ~13–17 MiB; split former lt_64mib so decision
+# pack is not diluted by tiny files when 64mib_1gib is empty.
 _SIZE_TIER_BOUNDS = (
-    ("lt_64mib", 0, 64 * _MIB_BYTES),
+    ("lt_8mib", 0, 8 * _MIB_BYTES),
+    ("8mib_64mib", 8 * _MIB_BYTES, 64 * _MIB_BYTES),
     ("64mib_1gib", 64 * _MIB_BYTES, _GIB_BYTES),
     ("1_4gib", _GIB_BYTES, 4 * _GIB_BYTES),
     ("ge_4gib", 4 * _GIB_BYTES, None),
 )
 _SIZE_TIER_NAMES = tuple(name for name, _lo, _hi in _SIZE_TIER_BOUNDS)
+# Preference order for overnight decision_next mid-tier.
+_MID_TIER_PREF = (
+    "64mib_1gib",
+    "8mib_64mib",
+    "lt_8mib",
+)
 _CHUNK_IMMEDIATE_RE = re.compile(
     r"(?:sync_timedb:\s+)?(?:ingest:\s+)?chunk ingest summary .*checkpoint_immediate_n=(\d+)"
 )
@@ -410,8 +422,10 @@ def _decision_next(
         ratio = float(ratio_ingest)
     except (TypeError, ValueError):
         return "insufficient_rate_samples"
-    mid_n = int(metrics.full_ingest_count_by_tier.get(_MID_TIER_NAME, 0))
-    small_n = int(metrics.full_ingest_count_by_tier.get("lt_64mib", 0))
+    mid_n = sum(
+        int(metrics.full_ingest_count_by_tier.get(t, 0)) for t in _MID_TIER_PREF
+    )
+    small_n = int(metrics.full_ingest_count_by_tier.get("lt_8mib", 0))
     large_n = int(metrics.full_ingest_count_by_tier.get("1_4gib", 0)) + int(
         metrics.full_ingest_count_by_tier.get("ge_4gib", 0),
     )
@@ -1278,10 +1292,12 @@ def build_outcomes(
                 phase_map.get(tok, []),
             )
 
-    # Overnight decision pack (mid-tier 64mib_1gib; fall back to lt_64mib).
+    # Overnight decision pack: prefer 64mib_1gib, else Horizon dense 8–64 MiB.
     mid_tier = _MID_TIER_NAME
-    if int(metrics.full_ingest_count_by_tier.get(mid_tier, 0)) == 0:
-        mid_tier = "lt_64mib"
+    for cand in _MID_TIER_PREF:
+        if int(metrics.full_ingest_count_by_tier.get(cand, 0)) > 0:
+            mid_tier = cand
+            break
     mid_elapsed = _median_or_none(
         metrics.full_ingest_elapsed_by_tier.get(mid_tier, []),
     )

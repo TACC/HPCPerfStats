@@ -114,14 +114,39 @@ def test_release_ingest_worker_heap_calls_malloc_trim_when_enabled(monkeypatch):
   )
   st._HOST_ITIMES_CACHE["probe"] = set()
   st._HOST_SECOND_PRESENT_CACHE["probe"] = True
+  st._heap_release_chunk_n.set(0)
 
-  st._release_ingest_worker_heap()
+  # Cadence: collect on every Nth mid-chunk call (force bypasses throttle).
+  st._release_ingest_worker_heap(force=True)
 
   assert collect_calls == [True]
   assert trim_calls == [0]
   assert st._HOST_ITIMES_CACHE == {}
   assert st._HOST_SECOND_PRESENT_CACHE == {}
   assert l1_clear_calls == []
+
+
+def test_release_ingest_worker_heap_throttles_collect_until_cadence(monkeypatch):
+  collect_calls = []
+
+  class _Libc:
+    @staticmethod
+    def malloc_trim(_arg):
+      return 1
+
+  worker_memory.reset_libc_handle_for_tests()
+  monkeypatch.setattr(st.cfg, "get_sync_ingest_malloc_trim_after_file", lambda: True)
+  monkeypatch.setattr(st, "gc", gc)
+  monkeypatch.setattr(st.gc, "collect", lambda: collect_calls.append(True))
+  monkeypatch.setattr(worker_memory.ctypes, "CDLL", lambda _name: _Libc())
+  monkeypatch.setattr(st, "clear_daily_archive_members_cache", lambda: None)
+  st._heap_release_chunk_n.set(0)
+  n = st._HEAP_RELEASE_EVERY_N_CHUNKS
+  for _ in range(n - 1):
+    st._release_ingest_worker_heap()
+  assert collect_calls == []
+  st._release_ingest_worker_heap()
+  assert collect_calls == [True]
 
 
 def test_release_ingest_worker_memory_clears_l1_and_returns_meta(monkeypatch):
@@ -159,7 +184,8 @@ def test_release_ingest_worker_heap_skips_malloc_trim_when_disabled(monkeypatch)
       lambda _name: pytest.fail("CDLL should not run when trim disabled"),
   )
   st._HOST_ITIMES_CACHE["x"] = {1}
-  st._release_ingest_worker_heap()
+  st._heap_release_chunk_n.set(0)
+  st._release_ingest_worker_heap(force=True)
   assert st._HOST_ITIMES_CACHE == {}
 
 

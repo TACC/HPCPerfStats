@@ -31,6 +31,11 @@ Attributes:
   _NVIDIA_GPU_MEAN_EVENTS: Attribute.
   _NVIDIA_GPU_OR_EVENTS: Attribute.
   _NVIDIA_GPU_SUM_EVENTS: Attribute.
+  _NVIDIA_EVENT_TO_CLASS: Event name → collapse class code for single-pass partition.
+  _NVIDIA_EVENT_CLASS_SUM: Attribute.
+  _NVIDIA_EVENT_CLASS_MAX: Attribute.
+  _NVIDIA_EVENT_CLASS_MEAN: Attribute.
+  _NVIDIA_EVENT_CLASS_OR: Attribute.
   _NVIDIA_GROUP_KEY_EVENT_INDEX: Attribute.
   _READ_LOOP_DEADLINE_EVERY_BYTES: Attribute.
   _READ_LOOP_DEADLINE_EVERY_LINES: Attribute.
@@ -130,6 +135,7 @@ PARSE_STAGE_HOLD_KEYS: tuple[str, ...] = (
     "chunk_setup_s",
     "take_cols_s",
     "heap_release_s",
+    "jid_invalidate_s",
 )
 PARSE_STAGE_BUILD_DF_PARTS: tuple[str, ...] = (
     "proc_merge_s",
@@ -1208,6 +1214,18 @@ _NVIDIA_GPU_KNOWN_EVENTS = frozenset().union(
     _NVIDIA_GPU_MEAN_EVENTS,
     _NVIDIA_GPU_OR_EVENTS,
 )
+# Single-pass event→class map for NVIDIA collapse (0=sum/default, 1=max,
+# 2=mean, 3=OR). Unknown events stay sum/default (legacy behavior).
+_NVIDIA_EVENT_CLASS_SUM = 0
+_NVIDIA_EVENT_CLASS_MAX = 1
+_NVIDIA_EVENT_CLASS_MEAN = 2
+_NVIDIA_EVENT_CLASS_OR = 3
+_NVIDIA_EVENT_TO_CLASS: dict[str, int] = {
+    **{name: _NVIDIA_EVENT_CLASS_SUM for name in _NVIDIA_GPU_SUM_EVENTS},
+    **{name: _NVIDIA_EVENT_CLASS_MAX for name in _NVIDIA_GPU_MAX_EVENTS},
+    **{name: _NVIDIA_EVENT_CLASS_MEAN for name in _NVIDIA_GPU_MEAN_EVENTS},
+    **{name: _NVIDIA_EVENT_CLASS_OR for name in _NVIDIA_GPU_OR_EVENTS},
+}
 
 
 def _nvidia_bitwise_or_values(series: Any) -> Any:
@@ -1332,30 +1350,43 @@ def _nvidia_nan_out_dcgm_blanks(nv_df: Any) -> Any:
 
 def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
   """
-  Collapse NVIDIA GPU metrics via native groupby aggregations (not.
-  
-    groupby.apply).
-  
+  Collapse NVIDIA GPU metrics via native groupby aggregations (not
+  groupby.apply).
+
+  Partitions event classes with one ``map`` pass (not four ``isin`` scans)
+  and casts non-time group keys to ``category`` before groupby.
+
   Args:
     nv_df (Any): Nv df passed to this helper.
     gcols (Any): Gcols passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _collapse_nvidia_gpu_vectorized(None, None)  # doctest: +SKIP
   """
   nv_df = _nvidia_nan_out_dcgm_blanks(nv_df)
+  if nv_df.empty:
+    return _empty_delta_arc_frame()
+  for col in gcols:
+    if col == "time" or col not in nv_df.columns:
+      continue
+    if not isinstance(nv_df[col].dtype, pd.CategoricalDtype):
+      nv_df[col] = nv_df[col].astype("category")
+  # One map pass: unknown events → sum/default (class 0).
+  event_class = (
+      nv_df["event"]
+      .map(_NVIDIA_EVENT_TO_CLASS)
+      .fillna(_NVIDIA_EVENT_CLASS_SUM)
+      .to_numpy(dtype=np.int8, copy=False)
+  )
   parts = []
-  sum_mask = (
-      nv_df["event"].isin(_NVIDIA_GPU_SUM_EVENTS)
-      | ~nv_df["event"].isin(_NVIDIA_GPU_KNOWN_EVENTS))
-  sum_df = nv_df.loc[sum_mask]
+  sum_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_SUM]
   if not sum_df.empty:
     parts.append(_groupby_sum_min_count(sum_df, gcols))
 
-  max_df = nv_df.loc[nv_df["event"].isin(_NVIDIA_GPU_MAX_EVENTS)]
+  max_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_MAX]
   if not max_df.empty:
     parts.append(
         max_df.groupby(gcols, observed=True).agg(
@@ -1365,7 +1396,7 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
         ).reset_index()
     )
 
-  mean_df = nv_df.loc[nv_df["event"].isin(_NVIDIA_GPU_MEAN_EVENTS)]
+  mean_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_MEAN]
   if not mean_df.empty:
     parts.append(
         mean_df.groupby(gcols, observed=True).agg(
@@ -1375,7 +1406,7 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
         ).reset_index()
     )
 
-  or_df = nv_df.loc[nv_df["event"].isin(_NVIDIA_GPU_OR_EVENTS)]
+  or_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_OR]
   if not or_df.empty:
     or_collapsed = or_df.groupby(gcols, observed=True).agg(
         value=("value", _nvidia_bitwise_or_values),

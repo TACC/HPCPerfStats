@@ -181,6 +181,233 @@ def test_collapse_after_delta_preserves_gpu_dev():
   assert set(nv["dev"].astype(str)) == {"0", "1", "2", "3"}
 
 
+def test_collapse_nvidia_gpu_single_pass_matches_isin_partition():
+  """Event-class map partition must match four-isin class frames."""
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+      _COLLAPSE_GROUP_COLS_WITH_DEV,
+      _NVIDIA_GPU_MAX_EVENTS,
+      _NVIDIA_GPU_MEAN_EVENTS,
+      _NVIDIA_GPU_OR_EVENTS,
+      _NVIDIA_GPU_SUM_EVENTS,
+      _collapse_nvidia_gpu_vectorized,
+      _groupby_sum_min_count,
+      _nvidia_bitwise_or_values,
+      _optional_jid_first_agg,
+  )
+
+  rng = np.random.default_rng(7)
+  sum_ev = sorted(_NVIDIA_GPU_SUM_EVENTS)[:6]
+  max_ev = sorted(_NVIDIA_GPU_MAX_EVENTS)
+  mean_ev = sorted(_NVIDIA_GPU_MEAN_EVENTS)
+  or_ev = sorted(_NVIDIA_GPU_OR_EVENTS)
+  events = sum_ev + max_ev + mean_ev + or_ev
+  rows = []
+  for h in ("c0001", "c0002"):
+    for t in (1_700_000_000.0, 1_700_000_010.0):
+      for d in ("0", "1", "2", "3"):
+        for e in events:
+          rows.append(
+              (
+                  h, "nvidia_gpu", d, e, "none", t,
+                  float(rng.integers(1, 1000)), 0.0,
+              ),
+          )
+  nv = pd.DataFrame(
+      rows,
+      columns=["host", "type", "dev", "event", "unit", "time", "value", "delta"],
+  )
+  gcols = list(_COLLAPSE_GROUP_COLS_WITH_DEV)
+  actual = _collapse_nvidia_gpu_vectorized(nv.copy(), gcols)
+
+  def _legacy_isin(frame):
+    parts = []
+    known = (
+        _NVIDIA_GPU_SUM_EVENTS
+        | _NVIDIA_GPU_MAX_EVENTS
+        | _NVIDIA_GPU_MEAN_EVENTS
+        | _NVIDIA_GPU_OR_EVENTS
+    )
+    sum_df = frame.loc[
+        ~frame["event"].isin(
+            _NVIDIA_GPU_MAX_EVENTS
+            | _NVIDIA_GPU_MEAN_EVENTS
+            | _NVIDIA_GPU_OR_EVENTS,
+        )
+    ]
+    if not sum_df.empty:
+      parts.append(_groupby_sum_min_count(sum_df, gcols))
+    max_df = frame.loc[frame["event"].isin(_NVIDIA_GPU_MAX_EVENTS)]
+    if not max_df.empty:
+      parts.append(
+          max_df.groupby(gcols, observed=True).agg(
+              value=("value", "max"),
+              delta=("delta", "mean"),
+              **_optional_jid_first_agg(max_df),
+          ).reset_index(),
+      )
+    mean_df = frame.loc[frame["event"].isin(_NVIDIA_GPU_MEAN_EVENTS)]
+    if not mean_df.empty:
+      parts.append(
+          mean_df.groupby(gcols, observed=True).agg(
+              value=("value", "mean"),
+              delta=("delta", "mean"),
+              **_optional_jid_first_agg(mean_df),
+          ).reset_index(),
+      )
+    or_df = frame.loc[frame["event"].isin(_NVIDIA_GPU_OR_EVENTS)]
+    if not or_df.empty:
+      or_collapsed = or_df.groupby(gcols, observed=True).agg(
+          value=("value", _nvidia_bitwise_or_values),
+          delta=("delta", "sum"),
+          _delta_n=("delta", "count"),
+          **_optional_jid_first_agg(or_df),
+      ).reset_index()
+      or_collapsed["delta"] = or_collapsed["delta"].where(
+          or_collapsed["_delta_n"] > 0,
+      )
+      parts.append(or_collapsed.drop(columns=["_delta_n"]))
+    assert known
+    return pd.concat(parts, ignore_index=True)
+
+  expected = _legacy_isin(nv.copy())
+  keys = gcols + ["event"]
+  actual = actual.sort_values(keys).reset_index(drop=True)
+  expected = expected.sort_values(keys).reset_index(drop=True)
+  pd.testing.assert_frame_equal(
+      actual, expected, check_dtype=False, check_categorical=False,
+  )
+
+
+def test_collapse_gpu_single_pass_local_retain():
+  """
+  Wave2: single-pass event map must not regress wall vs four ``isin`` scans.
+
+  Prints retain marker for gates; soft-fail only if absolute wall is absurd.
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+      _COLLAPSE_GROUP_COLS_WITH_DEV,
+      _NVIDIA_GPU_MAX_EVENTS,
+      _NVIDIA_GPU_MEAN_EVENTS,
+      _NVIDIA_GPU_OR_EVENTS,
+      _NVIDIA_GPU_SUM_EVENTS,
+      _collapse_nvidia_gpu_vectorized,
+      _groupby_sum_min_count,
+      _nvidia_bitwise_or_values,
+      _optional_jid_first_agg,
+  )
+
+  rng = np.random.default_rng(11)
+  events = (
+      sorted(_NVIDIA_GPU_SUM_EVENTS)[:10]
+      + sorted(_NVIDIA_GPU_MAX_EVENTS)
+      + sorted(_NVIDIA_GPU_MEAN_EVENTS)
+      + sorted(_NVIDIA_GPU_OR_EVENTS)
+  )
+  rows = []
+  for h_i in range(20):
+    h = f"c{h_i:04d}"
+    for t_i in range(8):
+      t = float(1_700_000_000 + t_i * 10)
+      for d in range(8):
+        for e in events:
+          rows.append(
+              (
+                  h, "nvidia_gpu", str(d), e, "none", t,
+                  float(rng.integers(1, 10_000)), 0.0,
+              ),
+          )
+  nv = pd.DataFrame(
+      rows,
+      columns=["host", "type", "dev", "event", "unit", "time", "value", "delta"],
+  )
+  gcols = list(_COLLAPSE_GROUP_COLS_WITH_DEV)
+
+  def _legacy_isin(frame):
+    parts = []
+    sum_df = frame.loc[
+        ~frame["event"].isin(
+            _NVIDIA_GPU_MAX_EVENTS
+            | _NVIDIA_GPU_MEAN_EVENTS
+            | _NVIDIA_GPU_OR_EVENTS,
+        )
+    ]
+    if not sum_df.empty:
+      parts.append(_groupby_sum_min_count(sum_df, gcols))
+    max_df = frame.loc[frame["event"].isin(_NVIDIA_GPU_MAX_EVENTS)]
+    if not max_df.empty:
+      parts.append(
+          max_df.groupby(gcols, observed=True).agg(
+              value=("value", "max"),
+              delta=("delta", "mean"),
+              **_optional_jid_first_agg(max_df),
+          ).reset_index(),
+      )
+    mean_df = frame.loc[frame["event"].isin(_NVIDIA_GPU_MEAN_EVENTS)]
+    if not mean_df.empty:
+      parts.append(
+          mean_df.groupby(gcols, observed=True).agg(
+              value=("value", "mean"),
+              delta=("delta", "mean"),
+              **_optional_jid_first_agg(mean_df),
+          ).reset_index(),
+      )
+    or_df = frame.loc[frame["event"].isin(_NVIDIA_GPU_OR_EVENTS)]
+    if not or_df.empty:
+      or_collapsed = or_df.groupby(gcols, observed=True).agg(
+          value=("value", _nvidia_bitwise_or_values),
+          delta=("delta", "sum"),
+          _delta_n=("delta", "count"),
+          **_optional_jid_first_agg(or_df),
+      ).reset_index()
+      or_collapsed["delta"] = or_collapsed["delta"].where(
+          or_collapsed["_delta_n"] > 0,
+      )
+      parts.append(or_collapsed.drop(columns=["_delta_n"]))
+    return pd.concat(parts, ignore_index=True)
+
+  _ = _collapse_nvidia_gpu_vectorized(nv.copy(), gcols)
+  _ = _legacy_isin(nv.copy())
+  n = 4
+  base_times = []
+  cand_times = []
+  for _ in range(n):
+    t0 = time.perf_counter()
+    _legacy_isin(nv.copy())
+    base_times.append(time.perf_counter() - t0)
+    t0 = time.perf_counter()
+    _collapse_nvidia_gpu_vectorized(nv.copy(), gcols)
+    cand_times.append(time.perf_counter() - t0)
+  base_mean = sum(base_times) / n
+  cand_mean = sum(cand_times) / n
+  retain = cand_mean <= base_mean * 1.05
+  print(
+      "collapse_gpu_retain=%s base_mean=%.6f cand_mean=%.6f"
+      % (str(retain).lower(), base_mean, cand_mean),
+  )
+  assert cand_mean < 60.0
+  if retain:
+    print("collapse_gpu_retain_ok")
+  else:
+    print("collapse_gpu_no_cut_no_retain")
+
+
+def test_delta_wave2_multi_dev_no_cut_documented():
+  """
+  Wave2 delta co-cut: profile only; do not ship without multi_dev retain.
+
+  Marker documents the no-cut decision for campaign E11.
+  """
+  df = _horizonish_frame(
+      n_hosts=24, n_times=8, n_cpu_events=12, n_gpu_events=0, multi_dev_cpu=True,
+  )
+  t0 = time.perf_counter()
+  out = _apply_counter_deltas(df)
+  elapsed = time.perf_counter() - t0
+  assert not out.empty
+  assert elapsed < 30.0
+  print("delta_wave2_no_cut_ok elapsed=%.6f" % elapsed)
+
+
 def test_delta_collapse_hotpath_smoke_timing():
   """Smoke: full delta+collapse on mid frame finishes; prints marker for gates."""
   df = _horizonish_frame()

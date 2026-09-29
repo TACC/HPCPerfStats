@@ -44,6 +44,8 @@ Attributes:
   _HOST_SECOND_PRESENT_CACHE: Attribute.
   _HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES: Attribute.
   _HOST_SECOND_PRESENT_CACHE_TTL_S: Attribute.
+  _HEAP_RELEASE_EVERY_N_CHUNKS: Mid-chunk gc.collect / malloc_trim cadence.
+  _heap_release_chunk_n: Per-task mid-chunk heap-release counter ContextVar.
   _PROC_DATA_UPDATE_FIELDS: Attribute.
   _SUPERVISOR_CHILD_REAP_INTERVAL_S: Attribute.
   _SYNC_STATE_TRANSITIONS: Attribute.
@@ -1798,13 +1800,29 @@ def _clear_ingest_worker_memory_caches() -> None:
   clear_daily_archive_members_cache()
 
 
-def _release_ingest_worker_heap() -> None:
+# Mid-chunk heap release cadence (gc.collect + malloc_trim). End-of-file
+# ``_release_ingest_worker_memory`` still force-trims every task.
+_HEAP_RELEASE_EVERY_N_CHUNKS = 8
+_heap_release_chunk_n: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "heap_release_chunk_n",
+    default=0,
+)
+
+
+def _release_ingest_worker_heap(*, force: bool = False) -> None:
   """
   Return parse heap to the OS on Linux (mid-task or end-of-task trim).
-  
+
+  Mid-chunk calls throttle ``gc.collect`` / ``malloc_trim`` to every
+  ``_HEAP_RELEASE_EVERY_N_CHUNKS`` invocations (soak: ``heap_release_s``
+  ~155–220 s/file). Pass ``force=True`` for end-of-file paths.
+
+  Args:
+    force (bool): When True, always collect+trim.
+
   Returns:
     None
-  
+
   Examples:
     >>> _release_ingest_worker_heap()  # doctest: +SKIP
   """
@@ -1812,6 +1830,10 @@ def _release_ingest_worker_heap() -> None:
 
   _clear_ingest_worker_file_caches()
   if not cfg.get_sync_ingest_malloc_trim_after_file():
+    return
+  n = int(_heap_release_chunk_n.get()) + 1
+  _heap_release_chunk_n.set(n)
+  if not force and (n % _HEAP_RELEASE_EVERY_N_CHUNKS) != 0:
     return
   gc.collect()
   libc = _libc_handle()
@@ -1825,13 +1847,13 @@ def _release_ingest_worker_heap() -> None:
 def _release_ingest_worker_memory(stats_file: str = "") -> Any:
   """
   Full per-task worker memory release; returns telemetry meta for supervisor.
-  
+
   Args:
     stats_file (str): String for stats file.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _release_ingest_worker_memory("x")  # doctest: +SKIP
   """
@@ -1839,6 +1861,8 @@ def _release_ingest_worker_memory(stats_file: str = "") -> Any:
       release_spawn_pool_worker_memory,
   )
 
+  # Reset mid-chunk cadence; end-of-file trim lives in release_spawn.
+  _heap_release_chunk_n.set(0)
   release_spawn_pool_worker_memory()
   increment_worker_tasks_on_worker()
   return measure_worker_rss_after_release(stats_file)
@@ -2168,6 +2192,7 @@ INGEST_WRITE_PHASE_KEYS: tuple[str, ...] = (
     "db_execute_s",
     "db_commit_s",
     "batch_iter_s",
+    "write_setup_s",
 )
 # Detail keys nest inside db_execute (COPY path); logged but not residual-summed.
 INGEST_WRITE_DETAIL_KEYS: tuple[str, ...] = (
@@ -3023,7 +3048,12 @@ def _write_stats_payload_to_db(
   update_worker_substage("db_write")
   individual_need_archival = None
   try:
-    proc_it = proc_stats.itertuples(index=False)
+    if _ingest_write_telem_on:
+      with _held_ingest_write_timing():
+        with _held_ingest_write_phase("write_setup_s"):
+          proc_it = proc_stats.itertuples(index=False)
+    else:
+      proc_it = proc_stats.itertuples(index=False)
     while True:
       _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
       if _ingest_write_telem_on:
@@ -3069,7 +3099,12 @@ def _write_stats_payload_to_db(
           message=".*[Dd]iscarding nonzero nanoseconds.*",
           category=UserWarning,
       )
-      stats_it = stats.itertuples(index=False)
+      if _ingest_write_telem_on:
+        with _held_ingest_write_timing():
+          with _held_ingest_write_phase("write_setup_s"):
+            stats_it = stats.itertuples(index=False)
+      else:
+        stats_it = stats.itertuples(index=False)
       while True:
         _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
         if _ingest_write_telem_on:
@@ -3108,7 +3143,8 @@ def _write_stats_payload_to_db(
       need_archival = _insert_host_data_individually(stats)
       individual_need_archival = need_archival
 
-  _invalidate_jid_caches(stats, proc_stats)
+  with _held_parse_stage("jid_invalidate_s"):
+    _invalidate_jid_caches(stats, proc_stats)
   if DEBUG:
     log_print("File successfully added to DB")
   return (

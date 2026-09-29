@@ -373,7 +373,8 @@ def test_stdout_only_key_count(mod):
     assert "decision_next=" in text
     assert "mid_tier_median_postgres_frac=" in text
     assert "sync_full_ingest_mib_per_min=" in text
-    assert "tier_lt_64mib_count=" in text
+    assert "tier_lt_8mib_count=" in text
+    assert "tier_8mib_64mib_count=" in text
     assert "ingest_queue_depth_latest=" in text
     assert "ingest_queue_depth_at_start=" in text
     assert "ingest_start_utc=" in text
@@ -391,12 +392,19 @@ def test_full_ingest_mib_per_min_and_size_tiers(mod):
         + "Messages consumed in the last 10 minutes: 1; messages waiting to "
         "be consumed: 0; current file unlinks (last 10 minutes): 1",
         _ts(0) + "sync_timedb: pending rescan done pending=10 elapsed_s=1.0",
-        # lt_64mib — unordered tokens (postgres before size before elapsed)
+        # lt_8mib — unordered tokens (postgres before size before elapsed)
         _ts(10)
         + (
             "ingest file path=/arch/a outcome=ingested postgres_s=10.0 "
             "ingest_ok=yes db_skip=no size_bytes=%d elapsed_s=40.0 archive=yes"
-            % (32 * mib)
+            % (4 * mib)
+        ),
+        # 8mib_64mib (Horizon dense mid-tier)
+        _ts(15)
+        + (
+            "ingest file path=/arch/a2 outcome=ingested postgres_s=12.0 "
+            "ingest_ok=yes db_skip=no size_bytes=%d elapsed_s=45.0 archive=yes"
+            % (16 * mib)
         ),
         # 64mib_1gib
         _ts(20)
@@ -425,14 +433,17 @@ def test_full_ingest_mib_per_min_and_size_tiers(mod):
         _ts(60) + "Pending stats file list truncated pending=6 max=2000",
     ]
     outcomes = mod.analyze_lines(lines)
-    # (32+128) MiB + 2 GiB + 5 GiB = 160 MiB + 7168 MiB = 7328 MiB / 60 min
-    expected_mib = (32 + 128 + 2 * 1024 + 5 * 1024) / 60.0
+    # (4+16+128) MiB + 2 GiB + 5 GiB = 148 MiB + 7168 MiB = 7316 MiB / 60 min
+    expected_mib = (4 + 16 + 128 + 2 * 1024 + 5 * 1024) / 60.0
     assert float(outcomes["sync_full_ingest_mib_per_min"]) == pytest.approx(
         expected_mib, rel=1e-6,
     )
-    assert outcomes["tier_lt_64mib_count"] == "1"
-    assert outcomes["tier_lt_64mib_median_elapsed_s"] == "40.000"
-    assert outcomes["tier_lt_64mib_median_postgres_s"] == "10.000"
+    assert outcomes["tier_lt_8mib_count"] == "1"
+    assert outcomes["tier_lt_8mib_median_elapsed_s"] == "40.000"
+    assert outcomes["tier_lt_8mib_median_postgres_s"] == "10.000"
+    assert outcomes["tier_8mib_64mib_count"] == "1"
+    assert outcomes["tier_8mib_64mib_median_elapsed_s"] == "45.000"
+    assert outcomes["tier_8mib_64mib_median_postgres_s"] == "12.000"
     assert outcomes["tier_64mib_1gib_count"] == "1"
     assert outcomes["tier_64mib_1gib_median_elapsed_s"] == "100.000"
     assert outcomes["tier_64mib_1gib_median_postgres_s"] == "50.000"
@@ -452,9 +463,59 @@ def test_unordered_size_elapsed_postgres_tokens(mod):
     mod._record_full_ingest(metrics, body)
     assert metrics.full_ingest_count == 1
     assert metrics.full_ingest_bytes == 1024
-    assert metrics.full_ingest_count_by_tier["lt_64mib"] == 1
-    assert metrics.full_ingest_elapsed_by_tier["lt_64mib"] == [9.0]
-    assert metrics.full_ingest_postgres_by_tier["lt_64mib"] == [1.5]
+    assert metrics.full_ingest_count_by_tier["lt_8mib"] == 1
+    assert metrics.full_ingest_elapsed_by_tier["lt_8mib"] == [9.0]
+    assert metrics.full_ingest_postgres_by_tier["lt_8mib"] == [1.5]
+
+
+def test_overnight_pack_prefers_dense_8mib_when_64mib_empty(mod):
+    """When 64mib_1gib is empty, decision pack must use 8mib_64mib (not lt_8mib)."""
+    mib = 1024 * 1024
+    lines = [
+        _ts(0)
+        + "Messages consumed in the last 10 minutes: 100; messages waiting "
+        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+    ]
+    for i in range(6):
+        # Tiny files — must not drive mid_tier when dense samples exist.
+        lines.append(
+            _ts(5 + i)
+            + (
+                "ingest file path=/arch/tiny/%d outcome=ingested elapsed_s=20.0 "
+                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+                "postgres_s=1.0 db_execute_s=0.5 copy_s=0.2 "
+                "orm_materialize_s=0.2 feed_s=15.0 collapse_gpu_s=1.0 "
+                "parse_unaccounted_s=1.0"
+                % (i, 2 * mib)
+            ),
+        )
+    for i in range(12):
+        lines.append(
+            _ts(20 + i * 5)
+            + (
+                "ingest file path=/arch/dense/%d outcome=ingested elapsed_s=100.0 "
+                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+                "postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 "
+                "orm_materialize_s=1.0 feed_s=10.0 collapse_gpu_s=70.0 "
+                "parse_unaccounted_s=5.0"
+                % (i, 16 * mib)
+            ),
+        )
+    lines.append(
+        _ts(90)
+        + "Messages consumed in the last 10 minutes: 100; messages waiting "
+        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    )
+    lines.append(
+        _ts(90) + "Pending stats file list truncated pending=900 max=2000",
+    )
+    outcomes = mod.analyze_lines(lines)
+    assert outcomes["mid_tier_name"] == "8mib_64mib"
+    assert outcomes["decision_next"] == "parse_hold_collapse_gpu_s"
+    assert outcomes["mid_tier_top_parse_hold"] == "collapse_gpu_s"
+    assert outcomes["tier_lt_8mib_count"] == "6"
+    assert outcomes["tier_8mib_64mib_count"] == "12"
 
 
 def test_overnight_pack_decision_next_write_path(mod):
