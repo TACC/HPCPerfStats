@@ -94,6 +94,8 @@ Compose **`mem_limit` / `memswap_limit` 96g** plus `services-conf/rabbitmq_vm_me
 
 Compose keeps Hub **`timescale/timescaledb:2.28.3-pg15`** as hostname **`db`**. Homemade Alpine PG18 + Timescale (`services-conf/db.Dockerfile`, image `hpcperfstats-db`) is service **`db_pg18`** under profile **`pg18-migrate`** (alias **`db18`**, volume **`postgres_data_pg18`**). Logical chunk copy + freeze cutover: **`docs/OPERATOR_PG18_MIGRATION.md`**. Do **not** use `pg_upgrade`. Bake the DB image on the production CPU (`-march=native`). Do **not** change **`db`** or dual-run **`db_pg18`** `shm_size: "16gb"`.
 
+**Checkpoint / WAL GUC updates** (bgwriter, `wal_compression`, `max_wal_size`, `checkpoint_timeout`, etc.) ship in **`docker-compose.yaml`** `command:` on both **`db`** and **`db_pg18`**. Recreate the affected service so Postgres reloads startup GUCs — e.g. **`podman-compose -p hpcperfstats -f docker-compose.yaml up -d --force-recreate db`**. PG15 uses **`wal_compression=on`**; PG18 uses **`wal_compression=lz4`**. Archive-heavy sites: confirm **`df`** on the PG bind (e.g. `/data/hpcperfstats_db/pg15`) separately from **`/data/hpcperfstats_data`** before raising WAL caps.
+
 Create the PG18 bind (Alpine postgres uid/gid **70**) before starting the profile:
 
 ```bash

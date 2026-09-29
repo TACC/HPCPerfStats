@@ -179,7 +179,7 @@ services:
     #
     # statement_timeout / idle_in_transaction_session_timeout: align with Django OPTIONS in settings
     # (defaults 120s / 300s in ms). Shed runaway queries; tune bulk jobs if needed.
-    # max_wal_size: reduce checkpoint churn under sustained write load.
+    # max_wal_size / bgwriter / wal_compression: reduce WAL-requested checkpoint churn under ingest.
     shm_size: "16gb"
     command:
       - -c
@@ -199,13 +199,22 @@ services:
       - -c
       - temp_buffers=4MB
       - -c
-      - checkpoint_timeout=15min
+      - checkpoint_timeout=30min
       - -c
       - checkpoint_completion_target=0.9
       - -c
-      - min_wal_size=2GB
+      - min_wal_size=4GB
       - -c
-      - max_wal_size=6GB
+      - max_wal_size=12GB
+      # PG15 Hub: boolean wal_compression only (pglz when on).
+      - -c
+      - wal_compression=on
+      - -c
+      - bgwriter_lru_maxpages=800
+      - -c
+      - bgwriter_lru_multiplier=5
+      - -c
+      - maintenance_io_concurrency=64
       - -c
       - max_worker_processes=32
       - -c
@@ -290,13 +299,22 @@ services:
       - -c
       - temp_buffers=4MB
       - -c
-      - checkpoint_timeout=15min
+      - checkpoint_timeout=30min
       - -c
       - checkpoint_completion_target=0.9
       - -c
-      - min_wal_size=2GB
+      - min_wal_size=4GB
       - -c
-      - max_wal_size=6GB
+      - max_wal_size=12GB
+      # PG18 homemade image: /opt/lz4 WAL compression (AVX-friendly native build).
+      - -c
+      - wal_compression=lz4
+      - -c
+      - bgwriter_lru_maxpages=800
+      - -c
+      - bgwriter_lru_multiplier=5
+      - -c
+      - maintenance_io_concurrency=64
       - -c
       - max_worker_processes=32
       - -c
