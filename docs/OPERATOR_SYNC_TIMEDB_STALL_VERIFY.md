@@ -17,7 +17,7 @@ After an interpreter-only redeploy (CPython 3.14 / baked pipeline **3.14t**), T0
 Prefer these lines over firehose greps for backlog diagnosis:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator progress day=|queue_orchestrator status |queue_orchestrator census |sync_timedb_mem_telemetry:|skip_cgroup_headroom|archive_job_done |ingest per-file timeout' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator progress day=|queue_orchestrator status |queue_orchestrator census |sync_timedb_mem_telemetry:|skip_cgroup_headroom|stuck_cohort_recycle|dead_letter|archive_job_done |ingest per-file timeout' | tail -80
 ```
 
 - **`progress day=`** — omit-zeros day counters (`gate_skip`, `ingest_handoff`, ingest outcomes, archive, day_close, reconstruct, …).
@@ -31,6 +31,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 - **Archive throughput (gate-tail / tvf reuse):** after the live-off file_complete + skip-collect / skip-redundant-`tar tf` wave, expect mark-ready append jobs without long `Gate tail metadata` batches for file_complete paths; open-tar jobs with `members_source=tar_scan` should not pay a second full pre-append `tar tf`. Smaller `sync_timedb_tar_append_batch_size` (default **256**) shortens per-job wall time; `sync_archive_pool_processes` (default **4**) raises multi-day append concurrency.
 - **`ingest per-file timeout`** — includes `size_bytes=` and `bytes_per_s=` for size/time judgment.
 - **Not primary:** `Archive/delete gate: skipped` and `handoff_to_ingest … reason=gate_skip` (demoted; use day `gate_skip=` / `ingest_handoff=`).
+- **OOM telem soak (Sep-29):** with `sync_timedb_mem_telemetry=yes`, expect `skip_cgroup_headroom` / `skip_budget` under pressure **without** `dead_letter … reason=skip_cgroup_headroom` (or `skip_budget_bytes`). Multi-hour sticky `oldest_inflight_s` should emit `stuck_cohort_recycle` / `queue_orchestrator stuck_cohort_recycle` once past `sync_ingest_stuck_inflight_recycle_s` (default 3600), then decline. Soft roof stays **50000**. After overnight verify, set telem back to **no**.
 
 **Agent stall heuristics (2–3 status lines):** (1) queues non-zero + Δqueued≈0 + no day acks → stall; (2) inflight without `busy=` → orphan; (3) `gate_skip` without `ingest_handoff` → ACK thrash class; (4) empty queues + no `reconstruct_enq`/`incomplete_seen` on backlog site → false done.
 

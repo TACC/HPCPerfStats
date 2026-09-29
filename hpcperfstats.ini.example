@@ -352,6 +352,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Require this many MiB free under memory.max before multi-file ingest admit / append fill (default 16384; 0=off).
 # Does not block alone-oversized ingest when inflight is empty. Soft roof unchanged.
 # sync_cgroup_admit_headroom_mib = 16384
+# Recycle ingest pool when oldest inflight submit age reaches this many seconds (default 3600; 0=off).
+# Requeues collateral without attempt burn via the MainThread pause protocol (stuck_cohort_recycle telem).
+# sync_ingest_stuck_inflight_recycle_s = 3600
 
 # Parse-stage + write/COPY shares on ingest outcome lines (default no; overnight soak).
 # Enable with sync_ingest_telemetry = yes on the same redeploy as CODE

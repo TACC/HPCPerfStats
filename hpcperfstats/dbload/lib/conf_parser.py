@@ -145,6 +145,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_worker_memory_telemetry_every_n_chunks"),
     ("PIPELINE", "sync_timedb_mem_telemetry"),
     ("PIPELINE", "sync_cgroup_admit_headroom_mib"),
+    ("PIPELINE", "sync_ingest_stuck_inflight_recycle_s"),
     ("PIPELINE", "sync_ingest_telemetry"),
     ("PIPELINE", "sync_ingest_recycle_worker_on_failure"),
     ("PIPELINE", "sync_ingest_cooperative_recycle_rss_fraction"),
@@ -302,6 +303,7 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_worker_memory_telemetry_every_n_chunks': '1',
     'sync_timedb_mem_telemetry': 'no',
     'sync_cgroup_admit_headroom_mib': '16384',
+    'sync_ingest_stuck_inflight_recycle_s': '3600',
     'sync_ingest_telemetry': 'no',
     'sync_ingest_recycle_worker_on_failure': 'yes',
     'sync_ingest_cooperative_recycle_rss_fraction': '0.5',
@@ -3674,6 +3676,23 @@ def get_sync_cgroup_admit_headroom_mib() -> Any:
   """
   _ensure_cfg_loaded()
   return max(0, _pipeline_getint("sync_cgroup_admit_headroom_mib"))
+
+
+def get_sync_ingest_stuck_inflight_recycle_s() -> Any:
+  """
+  Recycle ingest pool when oldest inflight submit age reaches this many seconds.
+
+  Default ``3600``. ``0`` disables stuck-cohort recycle.
+
+  Returns:
+    Any: Non-negative integer seconds.
+
+  Examples:
+    >>> get_sync_ingest_stuck_inflight_recycle_s() >= 0
+    True
+  """
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_ingest_stuck_inflight_recycle_s"))
 
 
 def get_sync_ingest_worker_memory_telemetry_every_n_chunks() -> Any:

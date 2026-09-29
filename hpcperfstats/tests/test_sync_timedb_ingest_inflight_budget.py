@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from types import SimpleNamespace
 
 from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
@@ -219,6 +220,152 @@ def test_fill_skips_cgroup_headroom(monkeypatch, tmp_path):
   )
   assert n == 0
   assert stats.get("skip_cgroup_headroom", 0) >= 1
+  assert requeued
+
+
+def test_fill_cgroup_headroom_skip_never_dead_letters(monkeypatch, tmp_path):
+  """Sustained headroom skips must requeue without bumping attempts."""
+  p = tmp_path / "ok"
+  p.write_bytes(b"z" * 10)
+  identity = str(p)
+  claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity=identity,
+      owner_token="n:h:b:1",
+      deadline=1e9,
+      score=1.0,
+      fingerprint=jq.ingest_fingerprint(
+          os.stat(identity).st_size, os.stat(identity).st_mtime_ns,
+      ),
+  )
+  claim_calls = {"n": 0}
+
+  def _claim(*_a, **_k):
+    claim_calls["n"] += 1
+    return [claim] if claim_calls["n"] <= 5 else []
+
+  bumps: list[int] = []
+  requeues: list[str] = []
+  letters: list[str] = []
+  monkeypatch.setattr(jq, "claim_ingest_jobs", _claim)
+  monkeypatch.setattr(
+      jq,
+      "requeue_job",
+      lambda *a, **k: requeues.append(k.get("identity") or "") or True,
+  )
+  monkeypatch.setattr(
+      jq,
+      "bump_job_attempt",
+      lambda *_a, **_k: bumps.append(1) or 99,
+  )
+  monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
+  monkeypatch.setattr(
+      jq,
+      "append_queue_dead_letter",
+      lambda *_a, **k: letters.append(str(k.get("reason"))),
+  )
+  monkeypatch.setattr(
+      wm, "compute_ingest_inflight_raw_bytes_budget", lambda: 10 ** 12,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_cgroup_admit_headroom_mib",
+      lambda: 16384,
+  )
+  monkeypatch.setattr(
+      qo, "cgroup_admit_headroom_ok", lambda *_a, **_k: False,
+  )
+
+  class _Pool:
+    def apply_async(self, fn, args):
+      raise AssertionError("must not submit under headroom block")
+
+  stats = qo._empty_ingest_fill_stats()
+  for _ in range(5):
+    qo._fill_ingest_band(
+        SyncTimedbJobStore(""),
+        band="hot",
+        cap=1,
+        inflight={},
+        claims={},
+        submitted={},
+        ingest_pool=_Pool(),
+        inflight_sizes={},
+        fill_stats=stats,
+        tgz_archive_dir=str(tmp_path),
+    )
+  assert stats.get("skip_cgroup_headroom", 0) >= 5
+  assert len(requeues) >= 5
+  assert bumps == []
+  assert letters == []
+
+
+def test_fill_budget_skip_never_dead_letters(monkeypatch, tmp_path):
+  """skip_budget_bytes must requeue without bumping attempts."""
+  p = tmp_path / "big"
+  p.write_bytes(b"x" * 40)
+  identity = str(p)
+  claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity=identity,
+      owner_token="n:h:b:1",
+      deadline=1e9,
+      score=1.0,
+      fingerprint=jq.ingest_fingerprint(
+          os.stat(identity).st_size, os.stat(identity).st_mtime_ns,
+      ),
+  )
+  bumps: list[int] = []
+  requeues: list[str] = []
+  letters: list[str] = []
+  monkeypatch.setattr(
+      jq, "claim_ingest_jobs", lambda *_a, **_k: [claim],
+  )
+  monkeypatch.setattr(
+      jq,
+      "requeue_job",
+      lambda *a, **k: requeues.append(k.get("identity") or "") or True,
+  )
+  monkeypatch.setattr(
+      jq,
+      "bump_job_attempt",
+      lambda *_a, **_k: bumps.append(1) or 99,
+  )
+  monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
+  monkeypatch.setattr(
+      jq,
+      "append_queue_dead_letter",
+      lambda *_a, **k: letters.append(str(k.get("reason"))),
+  )
+  monkeypatch.setattr(
+      wm, "compute_ingest_inflight_raw_bytes_budget", lambda: 50,
+  )
+
+  class _Pool:
+    def apply_async(self, fn, args):
+      return SimpleNamespace(ready=lambda: False)
+
+  inflight = {}
+  sizes = {}
+  # Occupy budget so the next claim is skip_budget_bytes.
+  inflight["hold"] = SimpleNamespace(ready=lambda: False)
+  sizes["hold"] = 40
+  stats = qo._empty_ingest_fill_stats()
+  qo._fill_ingest_band(
+      SyncTimedbJobStore(""),
+      band="catchup",
+      cap=3,
+      inflight=inflight,
+      claims={},
+      submitted={"hold": time.monotonic()},
+      ingest_pool=_Pool(),
+      inflight_sizes=sizes,
+      fill_stats=stats,
+      tgz_archive_dir=str(tmp_path),
+  )
+  assert stats.get("skip_budget_bytes", 0) >= 1
+  assert requeues
+  assert bumps == []
+  assert letters == []
 
 
 def test_fill_append_returns_zero_when_headroom_blocked(monkeypatch):

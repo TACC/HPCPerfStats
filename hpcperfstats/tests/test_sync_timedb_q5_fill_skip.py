@@ -146,3 +146,54 @@ def test_requeue_ingest_fill_skip_penalty_then_dead_letter(
     )
     assert letters == ["skip_missing"]
     assert acks
+
+
+def test_requeue_ingest_fill_skip_backpressure_no_attempt_burn(monkeypatch):
+    """skip_cgroup_headroom / skip_budget_bytes must not bump or dead-letter."""
+    client = jq.SyncTimedbJobStore("")
+    claim = jq.ClaimedJob(
+        kind=jq.JOB_KIND_INGEST,
+        identity="/bp",
+        owner_token="n:h:b:1",
+        deadline=1060.0,
+        score=5.0,
+    )
+    bumps: list[int] = []
+    requeues: list[dict] = []
+    letters: list[str] = []
+
+    def _bump(*_a, **_k):
+        bumps.append(1)
+        return 99
+
+    monkeypatch.setattr(jq, "bump_job_attempt", _bump)
+    monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
+    monkeypatch.setattr(
+        jq,
+        "requeue_job",
+        lambda *_a, **k: requeues.append(dict(k)) or True,
+    )
+    monkeypatch.setattr(
+        jq,
+        "append_queue_dead_letter",
+        lambda *_a, **k: letters.append(str(k.get("reason"))),
+    )
+    for reason in ("skip_cgroup_headroom", "skip_budget_bytes"):
+        bumps.clear()
+        requeues.clear()
+        letters.clear()
+        assert (
+            qo._requeue_ingest_fill_skip(
+                client,
+                claim=claim,
+                archive_data_dir="/a",
+                reason=reason,
+                score=5.0,
+            )
+            == "requeued"
+        )
+        assert bumps == []
+        assert letters == []
+        assert len(requeues) == 1
+        assert requeues[0]["identity"] == "/bp"
+        assert requeues[0]["score"] == qo._penalized_ingest_requeue_score(5.0)

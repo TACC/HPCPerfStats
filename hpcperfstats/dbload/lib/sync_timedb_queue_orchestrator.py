@@ -23,6 +23,8 @@ Attributes:
     steal and this-owner orphan lease reconcile when under pool capacity.
   INGEST_FILL_BLOCK_LOG_INTERVAL_S: Rate limit for fill-block / deep-queue logs.
   _FILL_BLOCK_KEYS: Ordered ingest fill failure counter names for telemetry.
+  _INGEST_BACKPRESSURE_SKIP_REASONS: Fill skip reasons that requeue without
+    bumping attempt (``skip_budget_bytes``, ``skip_cgroup_headroom``).
   _INGEST_MEM_BLOCK_STATE: Process-local census fields when fill waits on
     the in-flight raw-byte budget (``ingest_mem_blocked=…``).
   _MEM_TELEM_RUNTIME: Best-effort inflight/submitted/queue snapshots for
@@ -2868,6 +2870,110 @@ def _requeue_pool_collateral(
   return requeued
 
 
+def _oldest_ingest_inflight_age_s(
+  submitted: dict[str, float] | None,
+  *,
+  now: float | None = None,
+) -> tuple[float, str | None]:
+  """
+  Return age in seconds of the oldest submit timestamp in ``submitted``.
+
+  Args:
+    submitted (dict[str, float] | None): Identity → monotonic submit time.
+    now (float | None): Optional monotonic clock; defaults to ``time.monotonic``.
+
+  Returns:
+    tuple[float, str | None]: ``(age_s, oldest_identity)``; ``(0.0, None)``
+    when empty.
+
+  Examples:
+    >>> _oldest_ingest_inflight_age_s({})
+    (0.0, None)
+  """
+  if not isinstance(submitted, dict) or not submitted:
+    return 0.0, None
+  clock = float(time.monotonic() if now is None else now)
+  oldest_id = min(submitted, key=lambda k: float(submitted[k]))
+  return max(0.0, clock - float(submitted[oldest_id])), str(oldest_id)
+
+
+def _maybe_request_stuck_cohort_recycle(
+  *,
+  recycle_gate: IngestRecycleGate,
+  client: Any,
+  inflight: dict[str, AsyncResult],
+  claims: dict[str, Any],
+  submitted: dict[str, float],
+  inflight_sizes: dict[str, int] | None,
+  last_stuck_recycle_mono: float,
+  log_fn: Callable[..., None] | None = None,
+) -> float:
+  """
+  Request ingest pool recycle when oldest inflight exceeds the INI age gate.
+
+  Requeues collateral without attempt burn, then sets
+  ``recycle_gate.recycle_requested`` for the MainThread pause protocol.
+  Rate-limits to at most one request per threshold window. ``0`` INI disables.
+
+  Args:
+    recycle_gate (IngestRecycleGate): Pause protocol with MainThread.
+    client (Any): job store.
+    inflight (dict[str, AsyncResult]): Local ingest AsyncResult map.
+    claims (dict[str, Any]): Local ingest claim map.
+    submitted (dict[str, float]): Submit monotonic times.
+    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
+    last_stuck_recycle_mono (float): Prior recycle request monotonic time.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    float: Updated ``last_stuck_recycle_mono`` (unchanged when not triggered).
+
+  Examples:
+    >>> isinstance(_maybe_request_stuck_cohort_recycle, object)
+    True
+  """
+  threshold = int(cfg.get_sync_ingest_stuck_inflight_recycle_s())
+  if threshold <= 0:
+    return last_stuck_recycle_mono
+  if recycle_gate.recycle_requested.is_set():
+    return last_stuck_recycle_mono
+  if not inflight or not submitted:
+    return last_stuck_recycle_mono
+  age_s, oldest_id = _oldest_ingest_inflight_age_s(submitted)
+  if age_s < float(threshold):
+    return last_stuck_recycle_mono
+  now = time.monotonic()
+  if (
+      last_stuck_recycle_mono > 0.0
+      and (now - last_stuck_recycle_mono) < float(threshold)
+  ):
+    return last_stuck_recycle_mono
+  requeued = _requeue_pool_collateral(
+      client,
+      inflight=inflight,
+      claims=claims,
+      submitted=submitted,
+      inflight_sizes=inflight_sizes,
+      log_fn=log_fn,
+  )
+  recycle_gate.recycle_requested.set()
+  _emit_mem_telem_event(
+      "stuck_cohort_recycle",
+      log_fn,
+      submitted=dict(submitted),
+      inflight_sizes=(
+          dict(inflight_sizes) if isinstance(inflight_sizes, dict) else {}
+      ),
+  )
+  _log(
+      "queue_orchestrator stuck_cohort_recycle oldest=%s age_s=%.0f "
+      "threshold_s=%d requeued=%d"
+      % (oldest_id, age_s, threshold, requeued),
+      log_fn=log_fn,
+  )
+  return now
+
+
 def _recycle_ingest_pool(pool: Any, *, factory: Callable[[], Any]) -> Any:
   """
   Terminate a pool with a presumed-dead worker and build a replacement.
@@ -3192,6 +3298,14 @@ def _penalized_ingest_requeue_score(score: float | int | None) -> float:
   return base + float(jq.LEASE_CONFLICT_SCORE_PENALTY)
 
 
+# Fill skips that are backpressure waits, not hard failures. Must requeue
+# without bumping attempt / dead-letter (hpcperfstats01 2026-09-29 telem).
+_INGEST_BACKPRESSURE_SKIP_REASONS = frozenset({
+    "skip_budget_bytes",
+    "skip_cgroup_headroom",
+})
+
+
 def _requeue_ingest_fill_skip(
   client: Any,
   *,
@@ -3202,13 +3316,18 @@ def _requeue_ingest_fill_skip(
   log_fn: Callable[..., None] | None = None,
 ) -> str:
   """
-  Penalty-requeue or dead-letter an ingest fill skip (RC9).
+  Penalty-requeue an ingest fill skip; dead-letter only for hard failures.
+
+  Backpressure reasons (``skip_budget_bytes``, ``skip_cgroup_headroom``)
+  requeue without ``bump_job_attempt`` so sustained cgroup pressure cannot
+  dead-letter good work. Hard skips (``skip_missing``, ``skip_fp``, …) still
+  use :func:`_retry_or_dead_letter`.
 
   Args:
     client (Any): job store.
     claim (Any): Claimed ingest job.
     archive_data_dir (str | None): Archive root for dead-letter sidecar.
-    reason (str): ``skip_missing`` or ``skip_fp`` for logs.
+    reason (str): Skip reason token (e.g. ``skip_fp``, ``skip_cgroup_headroom``).
     score (float | int | None): Requeue score override (default claim score).
     log_fn (Callable[..., None] | None): Optional logger.
 
@@ -3225,6 +3344,15 @@ def _requeue_ingest_fill_skip(
   penalized = _penalized_ingest_requeue_score(
       score if score is not None else getattr(claim, "score", None),
   )
+  if reason in _INGEST_BACKPRESSURE_SKIP_REASONS:
+    jq.requeue_job(
+        client,
+        kind=jq.JOB_KIND_INGEST,
+        identity=claim.identity,
+        owner_token=claim.owner_token,
+        score=penalized,
+    )
+    return "requeued"
   return _retry_or_dead_letter(
       client,
       kind=jq.JOB_KIND_INGEST,
@@ -5300,6 +5428,7 @@ def _ingest_coordinator_loop(
   last_fill_empty_log = 0.0
   last_fill_block_log = 0.0
   last_runtime_steal = 0.0
+  last_stuck_recycle = 0.0
   try:
     while True:
       draining = barrier.draining.is_set() or shutdown_requested()
@@ -5473,6 +5602,17 @@ def _ingest_coordinator_loop(
         )
       # Coordinator wall-clock ingest watchdog retired (idle stall + statement
       # timeout own give-up; do not fall back to submit-age abandon).
+      if not draining:
+        last_stuck_recycle = _maybe_request_stuck_cohort_recycle(
+            recycle_gate=recycle_gate,
+            client=client,
+            inflight=ingest_inflight,
+            claims=ingest_leases,
+            submitted=ingest_submitted,
+            inflight_sizes=inflight_sizes,
+            last_stuck_recycle_mono=last_stuck_recycle,
+            log_fn=log_fn,
+        )
       now = time.monotonic()
       if now - last_reap >= max(poll_s, 5.0):
         last_reap = now
