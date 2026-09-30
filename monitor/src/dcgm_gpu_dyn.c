@@ -2,6 +2,7 @@
 #include "dcgm_gpu_dyn.h"
 
 #include "dcgm_agent.h"
+#include "dyn_lib_path.h"
 
 #include <dlfcn.h>
 #include <stdio.h>
@@ -120,6 +121,10 @@ int dcgm_gpu_dyn_load(void)
   g_dcgm_last_error[0] = '\0';
   override = getenv("HPCPERFSTATS_DCGM_LIB");
   if (override != NULL && override[0] != '\0') {
+    if (!dyn_lib_path_allowed(override)) {
+      dcgm_gpu_dyn_set_error("HPCPERFSTATS_DCGM_LIB path not allowed");
+      return -1;
+    }
     if (dcgm_gpu_dyn_try_open(override) < 0)
       return -1;
   } else {

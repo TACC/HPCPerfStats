@@ -20,9 +20,9 @@ alwaysApply: false
 ## Implementation
 
 - **Permissions**: directory `0700`, files `0600` (payloads contain jobid, host, metrics).
-- **Dir resilience**: each write calls `stats_buffer_debug_shm_ensure_dir()` (`mkdir` + ignore `EEXIST`) so a mid-run `rm -rf` of the mirror dir is recreated on the next sample/schema write — daemon does not abort.
-- **Atomic write**: tmp + `rename`; log failures via `monitor_log_debug` (do not `(void)` discard).
-- **Env**: copy `HPCPERFSTATS_DEBUG_SHM_DIR` into owned storage — do not retain `getenv()` pointer.
+- **Dir resilience**: each write calls `stats_buffer_debug_shm_ensure_dir()` → `ensure_private_dir` so a mid-run `rm -rf` of the mirror dir is recreated on the next sample/schema write — daemon does not abort; reject non-owned / group-writable dirs.
+- **Atomic write**: `O_CREAT|O_EXCL|O_NOFOLLOW` tmp + `rename`; log failures via `monitor_log_debug` (do not `(void)` discard).
+- **Env**: copy `HPCPERFSTATS_DEBUG_SHM_DIR` into owned storage — do not retain `getenv()` pointer; allow only absolute paths under `/dev/shm/` without `..`.
 - **Gating**:
   - `stats_buffer_debug_shm_schema_wanted(write_hdr, payload_ok)` → schema file when `write_hdr && payload_ok`
   - `stats_buffer_debug_shm_sample_wanted(write_hdr, payload_ok)` → sample files when `!write_hdr && payload_ok`

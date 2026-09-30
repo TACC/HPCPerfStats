@@ -13,6 +13,7 @@
 #include "monitor_cli.h"
 #include "monitor_daemon.h"
 #include "monitor_log.h"
+#include "secure_path.h"
 #include "stats_buffer.h"
 #include "stats_buffer_debug_shm.h"
 #include "stats_runtime.h"
@@ -24,10 +25,8 @@
 
 static void monitor_try_mk_dumpdir(void)
 {
-  if (mkdir(dumpfile_dir, 0777) < 0) {
-    if (errno != EEXIST)
-      ERROR("Cannot create directory %s\n", dumpfile_dir);
-  }
+  if (ensure_private_dir(dumpfile_dir, 0700) < 0)
+    ERROR("Cannot create or validate private dump directory %s: %m\n", dumpfile_dir);
 }
 
 static void monitor_install_ev_handlers(struct sf_ring_buffer *rb)

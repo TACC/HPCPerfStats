@@ -74,6 +74,10 @@ hpcperfstatsd_SOURCES = \
 	intel_processor.c \
 	daemonize.h \
 	daemonize.c \
+	secure_path.h \
+	secure_path.c \
+	dyn_lib_path.h \
+	dyn_lib_path.c \
 	monitor_log.h \
 	monitor_log.c \
 	dict.h \

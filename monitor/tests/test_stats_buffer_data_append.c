@@ -26,6 +26,9 @@ int main(void)
   assert(stats_buffer_data_append_bytes(&d, &len, &cap, "z", 1) == 0);
   assert(len == 4u + 100u + 1u && d[len] == '\0' && d[len - 1] == 'z');
 
+  /* Overflow: n near SIZE_MAX must fail without wrapping. */
+  assert(stats_buffer_data_append_bytes(&d, &len, &cap, "x", (size_t)-2) < 0);
+
   free(d);
   printf("test_stats_buffer_data_append passed\n");
   return 0;

@@ -14,6 +14,7 @@
 #include "string1.h"
 #include "stats.h"
 #include "stats_file.h"
+#include "secure_path.h"
 #include "trace.h"
 #include "path_open_fail_once.h"
 #include "pscanf.h"
@@ -47,7 +48,7 @@ static int open_lock_timeout(const char *path, int timeout)
 
   if (path_open_is_skipped(path))
     return -1;
-  int fd = open(path, O_CREAT | O_RDWR, 0600);
+  int fd = open(path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
   if (fd < 0) {
     path_open_record_failure_once(path);
     return -1;
@@ -214,10 +215,8 @@ int main(int argc, char *argv[])
 
   main_refresh_time_and_topology();
 
-  if (mkdir(STATS_DIR_PATH, 0777) < 0) {
-    if (errno != EEXIST)
-      FATAL("cannot create directory `%s': %m\n", STATS_DIR_PATH);
-  }
+  if (ensure_private_dir(STATS_DIR_PATH, 0700) < 0)
+    FATAL("cannot create or validate directory `%s': %m\n", STATS_DIR_PATH);
 
   struct stats_file sf;
   if (stats_file_open(&sf, current_path) < 0) {

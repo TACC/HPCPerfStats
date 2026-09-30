@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "dyn_lib_path.h"
+
 #define IB_MAD_DYN_SYM_LIST                                                                        \
   X(mad_rpc_open_port)                                                                             \
   X(mad_rpc_close_port)                                                                            \
@@ -104,6 +106,10 @@ int ib_mad_dyn_load(void)
   g_ibmad_last_error[0] = '\0';
   override = getenv("HPCPERFSTATS_IBMAD_LIB");
   if (override != NULL && override[0] != '\0') {
+    if (!dyn_lib_path_allowed(override)) {
+      ib_mad_dyn_set_error("HPCPERFSTATS_IBMAD_LIB path not allowed");
+      return -1;
+    }
     if (ib_mad_dyn_try_open(override) < 0)
       return -1;
   } else {

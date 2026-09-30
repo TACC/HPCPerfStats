@@ -115,7 +115,7 @@ mkdir -p %{buildroot}%{_sysconfdir}/sysconfig/
 mkdir -p %{buildroot}%{_unitdir}/
 mkdir -p %{buildroot}%{_libexecdir}/hpcperfstats/stubs/
 install -m 0755 .build-static/src/hpcperfstatsd %{buildroot}%{_sbindir}/hpcperfstatsd
-install -m 0644 src/hpcperfstats.conf %{buildroot}%{_sysconfdir}/hpcperfstats/hpcperfstats.conf
+install -m 0600 src/hpcperfstats.conf %{buildroot}%{_sysconfdir}/hpcperfstats/hpcperfstats.conf
 install -m 0644 src/hpcperfstatsd.sysconfig %{buildroot}%{_sysconfdir}/sysconfig/hpcperfstatsd
 install -m 0644 src/hpcperfstats.service %{buildroot}%{_unitdir}/hpcperfstats.service
 install -m 0755 scripts/stubs/lshw %{buildroot}%{_libexecdir}/hpcperfstats/stubs/lshw

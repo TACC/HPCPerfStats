@@ -1,6 +1,8 @@
 /* opa_mad_dyn — runtime dlopen of liboib_utils for host_opa STL MAD. */
 #include "opa_mad_dyn.h"
 
+#include "dyn_lib_path.h"
+
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -108,6 +110,11 @@ int opa_mad_dyn_load(void)
   g_oib_last_error[0] = '\0';
   override = getenv("HPCPERFSTATS_OIB_LIB");
   if (override != NULL && override[0] != '\0') {
+    if (!dyn_lib_path_allowed(override)) {
+      opa_mad_dyn_set_error("HPCPERFSTATS_OIB_LIB path not allowed");
+      g_oib_load_failed = 1;
+      return -1;
+    }
     if (opa_mad_dyn_try_open(override) < 0) {
       g_oib_load_failed = 1;
       return -1;

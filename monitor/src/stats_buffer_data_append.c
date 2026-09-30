@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <limits.h>
 
 #include "stats_buffer_data_append.h"
 
@@ -17,8 +19,11 @@ static int stats_buffer_data_ensure_cap(char **data, size_t *cap, size_t need)
     return 0;
 
   ncap = *cap ? *cap : 64;
-  while (ncap < need)
+  while (ncap < need) {
+    if (ncap > SIZE_MAX / 2)
+      return -1;
     ncap *= 2;
+  }
 
   {
     char *q = realloc(*data, ncap);
@@ -37,7 +42,8 @@ int stats_buffer_data_append_bytes(char **data, size_t *len, size_t *cap, const 
 
   if (data == NULL || len == NULL || cap == NULL)
     return -1;
-
+  if (n > SIZE_MAX - *len - 1)
+    return -1;
   need = *len + n + 1;
   if (stats_buffer_data_ensure_cap(data, cap, need) < 0)
     return -1;

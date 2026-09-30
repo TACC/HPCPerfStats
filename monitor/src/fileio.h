@@ -30,7 +30,7 @@ static inline FILE *file_fopen_read(const char *path)
 
 static inline FILE *file_fopen_append(const char *path)
 {
-  int fd = open(path, O_RDWR | O_CREAT | O_APPEND, 0666);
+  int fd = open(path, O_RDWR | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
   FILE *fp;
 
   if (fd < 0)

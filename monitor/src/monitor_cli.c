@@ -11,7 +11,7 @@ const char monitor_cli_lit_queue[] = "default";
 const char monitor_cli_lit_port[] = "5672";
 const char monitor_cli_lit_rmq_user[] = "hpcperfstats";
 const char monitor_cli_lit_rmq_password[] = "hpcperfstats";
-const char monitor_cli_lit_dumpfile_dir[] = "/tmp/hpcperfstats";
+const char monitor_cli_lit_dumpfile_dir[] = "/var/lib/hpcperfstats/dump";
 const char monitor_cli_lit_jobid_file_path[] = "/var/run/stats_jobid";
 
 void monitor_cli_heap_dup_setting(char **slot, const char *default_literal, const char *value)

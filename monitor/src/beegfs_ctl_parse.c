@@ -249,9 +249,20 @@ int beegfs_path_is_safe(const char *path)
 
   if (path == NULL || path[0] != '/')
     return 0;
-  for (p = path; *p != '\0'; p++) {
-    if (!(isalnum((unsigned char)*p) || *p == '/' || *p == '_' || *p == '-' || *p == '.'))
+  for (p = path; *p != '\0';) {
+    if (*p == '/') {
+      p++;
+      continue;
+    }
+    if (p[0] == '.' && (p[1] == '/' || p[1] == '\0'))
       return 0;
+    if (p[0] == '.' && p[1] == '.' && (p[2] == '/' || p[2] == '\0'))
+      return 0;
+    while (*p != '\0' && *p != '/') {
+      unsigned char c = (unsigned char)*p++;
+      if (!(isalnum(c) || c == '_' || c == '-' || c == '.'))
+        return 0;
+    }
   }
   return 1;
 }
@@ -276,7 +287,7 @@ int beegfs_ctl_build_clientstats_argv(struct beegfs_ctl_argv *out, const char *n
   if (rwunit_b)
     snprintf(out->rwunit_eq, sizeof(out->rwunit_eq), "%s", "--rwunit=B");
 
-  out->argv[ai++] = "beegfs-ctl";
+  out->argv[ai++] = "/usr/sbin/beegfs-ctl";
   out->argv[ai++] = "--clientstats";
   out->argv[ai++] = "--interval=0";
   out->argv[ai++] = "--perinterval";

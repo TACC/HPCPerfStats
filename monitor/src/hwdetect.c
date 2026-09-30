@@ -153,7 +153,7 @@ void hwdetect_probe_optional_stack_presence(int *has_nvidia_gpu, int *has_amd_gp
   int intel = 0;
   int ib = 0;
   int opa = 0;
-  FILE *fp = popen("lspci -nn 2>/dev/null", "r");
+  FILE *fp = popen("/usr/sbin/lspci -nn 2>/dev/null", "r");
   char line[1024];
 
   if (g_probe_cache.valid && now_mono_us > 0 && ttl_us > 0 &&

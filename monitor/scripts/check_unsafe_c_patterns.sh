@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fail if monitor src/ contains forbidden unbounded string APIs.
+# Fail if monitor src/ contains forbidden unbounded string APIs or unsafe exec helpers.
 # Allowlist: scripts/check_unsafe_c_patterns.allowlist (file:line per entry).
 set -euo pipefail
 
@@ -45,10 +45,35 @@ scan_pattern() {
   done < <(grep -rnE "$pat" "$SRC" --include='*.c' --include='*.h' 2>/dev/null || true)
 }
 
+# Absolute popen("...") is allowed without allowlist; relative / PATH-based popen must be listed.
+scan_relative_popen() {
+  local line file num rest cmd
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    total_hits=$((total_hits + 1))
+    file="${line%%:*}"
+    rest="${line#*:}"
+    num="${rest%%:*}"
+    file="${file#"$SRC/"}"
+    cmd="${rest#*:}"
+    # Allow only when the first string literal after popen( begins with /
+    if [[ "$cmd" =~ popen[[:space:]]*\([[:space:]]*\"/ ]]; then
+      continue
+    fi
+    if ! is_allowlisted "$file" "$num"; then
+      violations+=("${file}:${rest}")
+    fi
+  done < <(grep -rnE '(^|[^a-zA-Z0-9_])popen[[:space:]]*\(' "$SRC" --include='*.c' --include='*.h' 2>/dev/null || true)
+}
+
 # Exclude fgets/asprintf/vasprintf via non-word char before token (portable grep).
 scan_pattern '(^|[^a-zA-Z0-9_])gets[[:space:]]*\('
 scan_pattern 'strcpy[[:space:]]*\('
 scan_pattern '(^|[^a-zA-Z0-9_])sprintf[[:space:]]*\('
+scan_pattern '(^|[^a-zA-Z0-9_])system[[:space:]]*\('
+scan_pattern '(^|[^a-zA-Z0-9_])execvp[[:space:]]*\('
+scan_relative_popen
 
 if ((${#violations[@]} > 0)); then
   echo "check_unsafe_c_patterns: forbidden API use (not in allowlist):" >&2

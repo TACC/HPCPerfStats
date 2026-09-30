@@ -116,7 +116,7 @@ static int intel_gpu_xpumcli_capture(char *const argv[], char *out, size_t out_c
         close(nullfd);
       }
     }
-    execvp(argv[0], argv);
+    execv(argv[0], argv);
     _exit(127);
   }
   close(pipefd[1]);
@@ -440,7 +440,7 @@ int intel_gpu_xpumcli_collect(struct stats_type *type)
   if (type == NULL || !type->st_enabled)
     return -1;
 
-  argv_disc[0] = "xpumcli";
+  argv_disc[0] = "/usr/bin/xpumcli";
   argv_disc[1] = "discovery";
   argv_disc[2] = NULL;
   if (intel_gpu_xpumcli_capture(argv_disc, disc_buf, sizeof(disc_buf)) != 0) {
@@ -464,7 +464,7 @@ int intel_gpu_xpumcli_collect(struct stats_type *type)
   }
 
   ai = 0;
-  argv_dump[ai++] = "xpumcli";
+  argv_dump[ai++] = "/usr/bin/xpumcli";
   argv_dump[ai++] = "dump";
   argv_dump[ai++] = "-d";
   argv_dump[ai++] = dev_csv;

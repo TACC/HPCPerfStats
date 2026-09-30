@@ -2,3 +2,5 @@
 # Format: relative/path/from/src:line_number  (optional trailing comment)
 #
 # All known strcpy/gets/sprintf violations have been refactored (Phase 0–8).
+# Absolute popen("/…") is allowed by the scanner without an entry.
+# system()/execvp() and relative popen() require an entry until removed.

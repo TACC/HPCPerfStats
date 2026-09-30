@@ -129,6 +129,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | Archive header / schema suffix / directive class / marks (file mode) | `stats_file_format.c`, `stats_file_format.h` (`stats_file_classify_header_directive`, `stats_file_fprint_mark_multiline`, …); orchestration in `stats_file.c`. |
 | RMQ text payloads | `stats_buffer.c` + `stats_buffer_data_append.c` (persistent AMQP; cached `uname` for header + sample lines; batched rows; declare `syslog` INFO in `DEBUG` only). Soft merge cap **`STATS_BUFFER_RMQ_SOFT_MAX_BYTES` (~32 MiB)** stops adding samples to one AMQP body when the next would exceed the limit; the resend loop still publishes **multiple** such messages in one drain call. A single oversize sample/`$` may publish alone. |
 | DEBUG shm mirror (`@fast`/`@full` snapshots) | `stats_buffer_debug_shm.c`, `stats_buffer_debug_shm.h` (`DEBUG` builds only). |
+| Private dirs / privileged `dlopen` path gate | `secure_path.c`, `dyn_lib_path.c` (`ensure_private_dir`, `dyn_lib_path_allowed`). |
 | Intel CPUID / generation gating | `cpuid.c`, `intel_cpuid_match.c`, `intel_processor.c` |
 | AMD EPYC CPUID / DF types | `amd_cpuid_match.c`, `amd_processor.c`, `amd_x86_uncore_df.c` |
 | LIKWID core + uncore PMU | `likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`, `likwid_uncore_profiles.c`, `likwid_result_convert.c` |
@@ -374,11 +375,22 @@ outbound payloads** under **`/dev/shm/hpcperfstatsd-debug/`**:
 | `fast` | Latest `@fast` sample |
 | `full` | Latest `@full` (or legacy full-width) sample |
 
-Override the base directory with **`HPCPERFSTATS_DEBUG_SHM_DIR`**. Payloads
+Override the base directory with **`HPCPERFSTATS_DEBUG_SHM_DIR`** (must be an
+absolute path under **`/dev/shm/`** with no `..` components). Payloads
 contain job id, hostname, and workload metrics — treat as sensitive on shared
-nodes. Files are created mode `0600` under a `0700` directory (atomic `*.tmp` +
+nodes. Files are created mode `0600` under a `0700` directory owned by the
+daemon euid (`ensure_private_dir`; atomic `O_EXCL|O_NOFOLLOW` `*.tmp` +
 `rename`). If the directory is removed while the daemon runs, the next sample
 recreates it (writes do not abort the process).
+
+### Dumpfiles and conf permissions
+
+When RabbitMQ send fails, the daemon may spool samples under the configured
+**dumpfile** directory (default **`/var/lib/hpcperfstats/dump`**, mode `0700`
+via `ensure_private_dir` — not world-writable `/tmp`). Append creates use
+`O_NOFOLLOW` and mode `0600`. RPM install places **`hpcperfstats.conf`** mode
+**`0600`** (broker credentials). Systemd sandbox fields (`PrivateTmp`, …) are
+tracked separately from this package’s path hardening.
 
 **RPM debug path** (symbols + behavioral DEBUG for `/dev/shm`):
 

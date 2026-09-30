@@ -1,6 +1,8 @@
 /* xpum_gpu_dyn — runtime dlopen of libxpum for intel_gpu (no link-time -lxpum). */
 #include "xpum_gpu_dyn.h"
 
+#include "dyn_lib_path.h"
+
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -110,6 +112,10 @@ int xpum_gpu_dyn_load(void)
   g_xpum_last_error[0] = '\0';
   override = getenv("HPCPERFSTATS_XPUM_LIB");
   if (override != NULL && override[0] != '\0') {
+    if (!dyn_lib_path_allowed(override)) {
+      xpum_gpu_dyn_set_error("HPCPERFSTATS_XPUM_LIB path not allowed");
+      return -1;
+    }
     if (xpum_gpu_dyn_try_open(override) < 0)
       return -1;
   } else {

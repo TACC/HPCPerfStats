@@ -1,0 +1,51 @@
+---
+description: Privileged FS/exec/dlopen hardening for hpcperfstatsd (dump, shm, paths)
+globs:
+  - HPCPerfStats/monitor/src/secure_path.*
+  - HPCPerfStats/monitor/src/dyn_lib_path.*
+  - HPCPerfStats/monitor/src/fileio.h
+  - HPCPerfStats/monitor/src/daemonize.c
+  - HPCPerfStats/monitor/src/monitor_daemon.c
+  - HPCPerfStats/monitor/src/stats_buffer_debug_shm.*
+  - HPCPerfStats/monitor/src/*_dyn.c
+  - HPCPerfStats/monitor/src/beegfs*
+  - HPCPerfStats/monitor/src/intel_gpu_xpumcli.c
+  - HPCPerfStats/monitor/src/hwdetect.c
+  - HPCPerfStats/monitor/src/roofline_hw_peak*
+  - HPCPerfStats/monitor/hpcperfstats.spec
+  - HPCPerfStats/monitor/scripts/check_unsafe_c_patterns*
+alwaysApply: false
+---
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file (`monitor-security-hardening.mdc`) before editing**. Triggered rules are mandatory, not optional.
+
+# Monitor security hardening (non-F6)
+
+Root-privileged daemon paths must not trust world-writable directories, PATH lookups, or unrestricted env `dlopen`.
+
+## Required contracts
+
+| Area | Law |
+|------|-----|
+| Dump / stats dirs | Default dump under `/var/lib/hpcperfstats/dump` (not `/tmp`); create/validate via `ensure_private_dir(..., 0700)` |
+| Append / create | `O_NOFOLLOW` (+ `O_CLOEXEC`); create mode `0600` (or tighter) — never `0666` |
+| Daemon umask | Prefer restrictive `umask(0077)` after fork; do not rely on umask alone |
+| Dumpfile list | Single-pass growable list with authoritative `out_n`; no precount/`calloc(n)` TOCTOU |
+| DEBUG shm | `ensure_private_dir`; atomic writes `O_CREAT\|O_EXCL\|O_NOFOLLOW`; env dir only under `/dev/shm/` without `..` |
+| Env `dlopen` | Gate overrides with `dyn_lib_path_allowed()` (`/usr/lib64/`, `/usr/lib/` absolute regular files; reject `..`); **non-empty disallowed override fail-closes** (do not fall back to defaults) |
+| Child exec | Absolute `execv` paths (`/usr/sbin/beegfs-ctl`, `/usr/bin/xpumcli`, …); no `execvp` on PATH |
+| `popen` | Absolute binary path in the command string; allowlist via `check_unsafe_c_patterns.sh` |
+| BeeGFS cfg | `beegfs_path_is_safe` rejects `.` / `..` path components |
+| Conf install | `hpcperfstats.conf` RPM install mode **`0600`** (holds broker secrets) |
+
+## Out of scope here
+
+- **F6** systemd least-privilege / `PrivateTmp` / capability drop — separate plan (`.cursor/plans/f6-privilege-hardening.plan.md`)
+- **F12** default RabbitMQ sample credentials — won't-fix
+
+## Tests / scripts
+
+- Unit: `tests/test_secure_path.c`, `tests/test_dyn_lib_path.c`, overflow cases in `test_stats_buffer_data_append.c`, BeeGFS path tests in `test_beegfs_ctl_parse.c`
+- `scripts/check_unsafe_c_patterns.sh` — forbid new `system` / `execvp` / relative `popen`
+
+Cross-links: **monitor-debug-shm**, **monitor-c-conventions**, **monitor-version-and-packaging**.

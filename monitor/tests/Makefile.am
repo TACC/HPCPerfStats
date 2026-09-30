@@ -43,7 +43,7 @@ endif
 
 AM_CPPFLAGS = -I$(top_builddir)/src -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_cpuid_signature test_amd_cpuid_match test_amd_df_likwid_profiles test_amd_x86_uncore_df_schema test_likwid_rapl_support test_likwid_rapl_pwr_events test_rapl_powercap test_amd64_rapl_likwid_ready test_intel_rapl_likwid_ready test_likwid_pmc_force_env test_likwid_pmc_access_mode test_likwid_pmc_schema_map test_likwid_arch_map_spr test_likwid_arch_map_grace test_likwid_uncore_profiles test_likwid_uncore_adapter test_host_edac_mem_topology test_intel_skx_imc_schema test_intel_icx_imc_schema test_intel_spr_imc_schema test_intel_emr_imc_schema test_intel_gnr_imc_schema test_intel_srf_imc_schema test_string1 test_stats_buffer_data_append test_stats_buffer_uts test_stats_buffer_rows test_stats_buffer_rmq_policy test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_monitor_log test_monitor_release_logging test_monitor_options_kv test_pscanf test_schema_parse test_stats_file_format test_stats_file_format_extra test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_likwid_overlay_map test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_roofline_detect_fixture test_roofline_hw_peak_identity test_nfs_schema_subset test_ib_schema_contract test_host_schema_contract test_lustre_schema_contract test_lustre_proc_stats test_beegfs_schema_contract test_beegfs_ctl_parse test_opa_schema_contract test_opa_sysfs_map test_opa_mad_backoff test_ib_hca_is_opa_hfi test_opa_lspci_match test_lnet_schema_contract test_arm_aarch64_imc_schema test_metric_profiler test_hwdetect_policy test_hwdetect_lspci test_gpu_pci_detect test_intel_gpu_schema_contract test_intel_gpu_publish test_intel_gpu_xpumcli_parse test_xpum_gpu_dyn test_dcgm_gpu_dyn test_dcgm_session test_ib_mad_dyn test_opa_mad_dyn test_ib_port_state test_ib_port_collectible test_ib_foreach_hca_port test_ib_family test_stats_runtime_type_controls test_stats_runtime_likwid_begin_order test_stats_runtime_collect test_collect_tier_table test_collect_phase test_collect_tier_gate test_stats_set_tier_gate test_dict test_host_key_alias test_proc_status_order test_schema_emit test_procfile_kv test_collect_str test_nvidia_gpu_estimate test_nvidia_gpu_dcgm_field test_nvidia_gpu_dcgm_profiles test_daemonize
+check_PROGRAMS = test_cpuid_signature test_amd_cpuid_match test_amd_df_likwid_profiles test_amd_x86_uncore_df_schema test_likwid_rapl_support test_likwid_rapl_pwr_events test_rapl_powercap test_amd64_rapl_likwid_ready test_intel_rapl_likwid_ready test_likwid_pmc_force_env test_likwid_pmc_access_mode test_likwid_pmc_schema_map test_likwid_arch_map_spr test_likwid_arch_map_grace test_likwid_uncore_profiles test_likwid_uncore_adapter test_host_edac_mem_topology test_intel_skx_imc_schema test_intel_icx_imc_schema test_intel_spr_imc_schema test_intel_emr_imc_schema test_intel_gnr_imc_schema test_intel_srf_imc_schema test_string1 test_secure_path test_dyn_lib_path test_stats_buffer_data_append test_stats_buffer_uts test_stats_buffer_rows test_stats_buffer_rmq_policy test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_monitor_log test_monitor_release_logging test_monitor_options_kv test_pscanf test_schema_parse test_stats_file_format test_stats_file_format_extra test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_likwid_overlay_map test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_roofline_detect_fixture test_roofline_hw_peak_identity test_nfs_schema_subset test_ib_schema_contract test_host_schema_contract test_lustre_schema_contract test_lustre_proc_stats test_beegfs_schema_contract test_beegfs_ctl_parse test_opa_schema_contract test_opa_sysfs_map test_opa_mad_backoff test_ib_hca_is_opa_hfi test_opa_lspci_match test_lnet_schema_contract test_arm_aarch64_imc_schema test_metric_profiler test_hwdetect_policy test_hwdetect_lspci test_gpu_pci_detect test_intel_gpu_schema_contract test_intel_gpu_publish test_intel_gpu_xpumcli_parse test_xpum_gpu_dyn test_dcgm_gpu_dyn test_dcgm_session test_ib_mad_dyn test_opa_mad_dyn test_ib_port_state test_ib_port_collectible test_ib_foreach_hca_port test_ib_family test_stats_runtime_type_controls test_stats_runtime_likwid_begin_order test_stats_runtime_collect test_collect_tier_table test_collect_phase test_collect_tier_gate test_stats_set_tier_gate test_dict test_host_key_alias test_proc_status_order test_schema_emit test_procfile_kv test_collect_str test_nvidia_gpu_estimate test_nvidia_gpu_dcgm_field test_nvidia_gpu_dcgm_profiles test_daemonize
 if INFINIBAND
 check_PROGRAMS += test_ib_mad_backoff test_ib_mad_decode test_ib_mad_sw_swap
 endif
@@ -487,14 +487,16 @@ test_gpu_pci_detect_CPPFLAGS = $(AM_CPPFLAGS) -DGPU_PCI_DETECT_FIXTURE=\"$(srcdi
 
 test_dcgm_gpu_dyn_SOURCES = \
 	test_dcgm_gpu_dyn.c \
-	$(top_srcdir)/src/dcgm_gpu_dyn.c
+	$(top_srcdir)/src/dcgm_gpu_dyn.c \
+	$(top_srcdir)/src/dyn_lib_path.c
 
 test_dcgm_gpu_dyn_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/nvidia-dcgm
 
 test_dcgm_session_SOURCES = \
 	test_dcgm_session.c \
 	$(top_srcdir)/src/dcgm_session.c \
-	$(top_srcdir)/src/dcgm_gpu_dyn.c
+	$(top_srcdir)/src/dcgm_gpu_dyn.c \
+	$(top_srcdir)/src/dyn_lib_path.c
 
 test_dcgm_session_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/nvidia-dcgm \
 	-DMONITOR_GPU_DCGM_DLOPEN -DDCGM_SESSION_TEST
@@ -509,6 +511,7 @@ test_intel_gpu_publish_SOURCES = \
 	$(top_srcdir)/src/intel_gpu_xpum_helpers.c \
 	$(top_srcdir)/src/intel_gpu_xpumcli.c \
 	$(top_srcdir)/src/xpum_gpu_dyn.c \
+	$(top_srcdir)/src/dyn_lib_path.c \
 	$(top_srcdir)/src/monitor_log.c
 test_intel_gpu_publish_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/intel-xpum \
 	-DINTEL_GPU_TEST_BUILD
@@ -522,18 +525,21 @@ test_intel_gpu_xpumcli_parse_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/src
 
 test_xpum_gpu_dyn_SOURCES = \
 	test_xpum_gpu_dyn.c \
-	$(top_srcdir)/src/xpum_gpu_dyn.c
+	$(top_srcdir)/src/xpum_gpu_dyn.c \
+	$(top_srcdir)/src/dyn_lib_path.c
 test_xpum_gpu_dyn_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/intel-xpum
 
 test_ib_mad_dyn_SOURCES = \
 	test_ib_mad_dyn.c \
-	$(top_srcdir)/src/ib_mad_dyn.c
+	$(top_srcdir)/src/ib_mad_dyn.c \
+	$(top_srcdir)/src/dyn_lib_path.c
 test_ib_mad_dyn_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/ibmad-shim \
 	-DMONITOR_IB_MAD_DLOPEN
 
 test_opa_mad_dyn_SOURCES = \
 	test_opa_mad_dyn.c \
-	$(top_srcdir)/src/opa_mad_dyn.c
+	$(top_srcdir)/src/opa_mad_dyn.c \
+	$(top_srcdir)/src/dyn_lib_path.c
 test_opa_mad_dyn_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/oib-shim \
 	-DMONITOR_OPA_MAD_DLOPEN
 
@@ -765,6 +771,17 @@ test_cpu_counter_dcgm_publish_likwid_LDADD = $(LDADD)
 test_likwid_overlay_map_LDADD = $(LDADD)
 test_likwid_arch_map_grace_LDADD = $(LDADD)
 test_string1_LDADD = $(LDADD)
+
+test_secure_path_SOURCES = \
+	test_secure_path.c \
+	$(top_srcdir)/src/secure_path.c
+test_secure_path_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/src
+test_dyn_lib_path_SOURCES = \
+	test_dyn_lib_path.c \
+	$(top_srcdir)/src/dyn_lib_path.c
+test_dyn_lib_path_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/src
+test_secure_path_LDADD = $(LDADD)
+test_dyn_lib_path_LDADD = $(LDADD)
 test_stats_buffer_data_append_LDADD = $(LDADD)
 test_stats_buffer_uts_LDADD = $(LDADD)
 test_stats_buffer_rows_LDADD = $(LDADD)

@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <math.h>
 #include <limits.h>
+#include <stdint.h>
 #include <sys/fcntl.h>
 #include <sys/time.h>
 #include <sys/stat.h>
@@ -480,62 +481,77 @@ static int get_dumpfile_number(void)
   return n_files;
 }
 
-static char **get_dumpfile_list(void)
+static char **get_dumpfile_list(int *out_n)
 {
   DIR *d;
   struct dirent *dir;
   char **name_list = NULL;
-  int n_files = get_dumpfile_number();
-  int i = 0;
+  size_t cap = 0;
+  size_t n = 0;
+
+  if (out_n == NULL)
+    return NULL;
+  *out_n = 0;
 
   d = opendir(dumpfile_dir);
   if (!d)
     return NULL;
 
-  name_list = (char **)calloc((size_t)n_files, sizeof(char *));
-  if (name_list == NULL) {
-    closedir(d);
-    return NULL;
-  }
-
   while ((dir = readdir(d)) != NULL) {
+    size_t path_len;
+    char **grown;
+
     if (dir->d_type != DT_REG)
       continue;
-    size_t path_len = strlen(dumpfile_dir) + 1 + strlen(dir->d_name) + 1;
-    name_list[i] = (char *)malloc(path_len);
-    if (name_list[i] == NULL) {
-      for (int j = 0; j < i; j++)
-        free(name_list[j]);
-      free(name_list);
-      closedir(d);
-      return NULL;
+    if (dir->d_name[0] == '\0' || strchr(dir->d_name, '/') != NULL)
+      continue;
+    if (n == cap) {
+      size_t ncap = cap ? cap * 2 : 16;
+      if (ncap < cap || ncap > SIZE_MAX / sizeof(*name_list))
+        goto fail;
+      grown = realloc(name_list, ncap * sizeof(*name_list));
+      if (grown == NULL)
+        goto fail;
+      name_list = grown;
+      cap = ncap;
     }
-    snprintf(name_list[i], path_len, "%s/%s", dumpfile_dir, dir->d_name);
-    i++;
+    path_len = strlen(dumpfile_dir) + 1 + strlen(dir->d_name) + 1;
+    name_list[n] = malloc(path_len);
+    if (name_list[n] == NULL)
+      goto fail;
+    snprintf(name_list[n], path_len, "%s/%s", dumpfile_dir, dir->d_name);
+    n++;
   }
   closedir(d);
+  *out_n = (int)n;
   return name_list;
+
+fail:
+  closedir(d);
+  monitor_daemon_free_dumpfile_paths(name_list, (int)n);
+  *out_n = -1;
+  return NULL;
 }
 
 static char *get_current_dumpfile(void)
 {
   struct timeval tp;
-  gettimeofday(&tp, NULL);
-  time_t t = tp.tv_sec;
-  struct tm *time_info = localtime(&t);
-  char *time_str = (char *)malloc(sizeof(char) * 16);
+  time_t t;
+  struct tm *time_info;
+  char time_str[16];
   char *file_str;
 
-  if (time_str == NULL)
+  if (dumpfile_dir == NULL)
     return NULL;
-  strftime(time_str, 16, "%Y-%m-%d.sf", time_info);
-  file_str = (char *)malloc(sizeof(char) * 64);
-  if (file_str == NULL) {
-    free(time_str);
+  gettimeofday(&tp, NULL);
+  t = tp.tv_sec;
+  time_info = localtime(&t);
+  if (time_info == NULL)
     return NULL;
-  }
-  snprintf(file_str, sizeof(char) * 64, "%s/%s", dumpfile_dir, time_str);
-  free(time_str);
+  if (strftime(time_str, sizeof(time_str), "%Y-%m-%d.sf", time_info) == 0)
+    return NULL;
+  if (asprintf(&file_str, "%s/%s", dumpfile_dir, time_str) < 0)
+    return NULL;
   return file_str;
 }
 
@@ -631,17 +647,21 @@ static int monitor_daemon_replay_one_dumpfile(const char *path, struct sf_ring_b
 
 static void send_dumpfile_stats(struct sf_ring_buffer *w)
 {
-  int n_files = get_dumpfile_number();
+  int n_files = 0;
   int n_files_attempted = 0;
   int n_files_deleted = 0;
   char **file_list;
   int i;
 
-  if (w == NULL || n_files <= 0)
+  if (w == NULL)
     return;
-  file_list = get_dumpfile_list();
-  if (file_list == NULL) {
+  file_list = get_dumpfile_list(&n_files);
+  if (n_files < 0) {
     ERROR("Error listing dumpfiles in `%s'\n", dumpfile_dir);
+    return;
+  }
+  if (n_files == 0) {
+    free(file_list);
     return;
   }
   for (i = 0; i < n_files; i++) {

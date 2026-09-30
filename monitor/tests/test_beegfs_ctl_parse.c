@@ -126,6 +126,7 @@ static void test_clientstats_argv_equals_form(void)
 
   assert(beegfs_ctl_build_clientstats_argv(&av, "storage", "/etc/beegfs/beegfs-client.conf", 1) >
          0);
+  assert(av.argv[0] != NULL && strcmp(av.argv[0], "/usr/sbin/beegfs-ctl") == 0);
   assert(argv_has(&av, "--nodetype=storage"));
   assert(argv_has(&av, "--cfgFile=/etc/beegfs/beegfs-client.conf"));
   assert(argv_has(&av, "--rwunit=B"));
@@ -144,6 +145,8 @@ static void test_clientstats_argv_equals_form(void)
   assert(beegfs_ctl_build_clientstats_argv(&av, "bogus", "/etc/beegfs/beegfs-client.conf", 0) < 0);
   assert(beegfs_path_is_safe("/etc/beegfs/beegfs-client.conf") == 1);
   assert(beegfs_path_is_safe("etc/beegfs/beegfs-client.conf") == 0);
+  assert(beegfs_path_is_safe("/etc/beegfs/../../tmp/evil.conf") == 0);
+  assert(beegfs_path_is_safe("/etc/beegfs/./client.conf") == 0);
 }
 
 static void test_idents_add_ib_aliases(void)

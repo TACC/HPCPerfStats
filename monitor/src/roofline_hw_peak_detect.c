@@ -397,7 +397,7 @@ static void apply_cpu_mem_identity_fallback(double *cpu_bw, double *cpu_hbm_bw,
 /* Confirmed fields on Horizon: name,clocks.max.sm,compute_cap (+ SM-count identity). */
 static double detect_nvidia_fp64_peak_via_nvidia_smi(void)
 {
-  FILE *fp = popen("nvidia-smi --query-gpu=name,clocks.max.sm,compute_cap "
+  FILE *fp = popen("/usr/bin/nvidia-smi --query-gpu=name,clocks.max.sm,compute_cap "
                    "--format=csv,noheader,nounits 2>/dev/null",
                    "r");
   char line[768];
@@ -444,7 +444,7 @@ static void detect_nvidia_mem_io_via_smi(double *mem_bw, double *io_bw, double *
   if (used_identity_mem != NULL)
     *used_identity_mem = 0;
 
-  fp = popen("nvidia-smi --query-gpu=name,memory.total,clocks.max.memory,"
+  fp = popen("/usr/bin/nvidia-smi --query-gpu=name,memory.total,clocks.max.memory,"
              "pcie.link.gen.max,pcie.link.width.max "
              "--format=csv,noheader,nounits 2>/dev/null",
              "r");
@@ -583,7 +583,7 @@ static double amd_fp64_ratio_from_gfx(const char *gfx)
 
 static double detect_amd_fp64_peak_via_rocminfo(void)
 {
-  FILE *fp = popen("rocminfo 2>/dev/null", "r");
+  FILE *fp = popen("/usr/bin/rocminfo 2>/dev/null", "r");
   char line[512];
   char gfx[64] = "";
   int cu = 0;

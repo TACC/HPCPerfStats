@@ -82,7 +82,7 @@ static void daemonize_write_pid_lock(void)
     return;
 
   monitor_log_info("%s\n", pid_file_name);
-  pid_fd = open(pid_file_name, O_RDWR | O_CREAT, 0640);
+  pid_fd = open(pid_file_name, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0640);
   if (pid_fd < 0)
     daemonize_exit_on_failure();
   if (lockf(pid_fd, F_TLOCK, 0) < 0) {
@@ -105,7 +105,7 @@ void daemonize(void)
   daemonize_setup_session();
   daemonize_first_fork();
 
-  umask(0);
+  umask(0077);
   if (chdir("/") != 0)
     daemonize_exit_on_failure();
 

@@ -226,7 +226,7 @@ static int beegfs_ctl_capture(const char *cfgfile, const char *nodetype, int rwu
         close(nullfd);
       }
     }
-    execvp(av.argv[0], av.argv);
+    execv(av.argv[0], av.argv);
     _exit(127);
   }
 
