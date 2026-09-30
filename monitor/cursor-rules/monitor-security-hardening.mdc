@@ -14,12 +14,14 @@ globs:
   - HPCPerfStats/monitor/src/roofline_hw_peak*
   - HPCPerfStats/monitor/hpcperfstats.spec
   - HPCPerfStats/monitor/scripts/check_unsafe_c_patterns*
+  - HPCPerfStats/monitor/src/hpcperfstats.service
+  - HPCPerfStats/monitor/src/monitor_cli.c
 alwaysApply: false
 ---
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file (`monitor-security-hardening.mdc`) before editing**. Triggered rules are mandatory, not optional.
 
-# Monitor security hardening (non-F6)
+# Monitor security hardening
 
 Root-privileged daemon paths must not trust world-writable directories, PATH lookups, or unrestricted env `dlopen`.
 
@@ -37,10 +39,10 @@ Root-privileged daemon paths must not trust world-writable directories, PATH loo
 | `popen` | Absolute binary path in the command string; allowlist via `check_unsafe_c_patterns.sh` |
 | BeeGFS cfg | `beegfs_path_is_safe` rejects `.` / `..` path components |
 | Conf install | `hpcperfstats.conf` RPM install mode **`0600`** (holds broker secrets) |
+| systemd unit (F6) | Shipped **`hpcperfstats.service`** must keep `PrivateTmp`, `ProtectSystem=strict`, `ProtectHome`, `ProtectKernelTunables`, `ProtectControlGroups`, `NoNewPrivileges`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`, `ReadWritePaths=/var/lib/hpcperfstats /run`; **do not** add `PrivateDevices=true` (IB/GPU/perf nodes). Do not remove sandbox keys without fleet justification; no in-process setuid-drop claims without a dedicated plan |
 
 ## Out of scope here
 
-- **F6** systemd least-privilege / `PrivateTmp` / capability drop — separate plan (`.cursor/plans/f6-privilege-hardening.plan.md`)
 - **F12** default RabbitMQ sample credentials — won't-fix
 
 ## Tests / scripts

@@ -17,6 +17,11 @@ static void next_cli_test(void)
   optind = 1;
 }
 
+static void test_dumpfile_default_literal(void)
+{
+  assert(strcmp(monitor_cli_lit_dumpfile_dir, "/var/lib/hpcperfstats/dump") == 0);
+}
+
 static void test_heap_dup_from_default_literal(void)
 {
   char *slot = (char *)monitor_cli_lit_queue;
@@ -197,6 +202,7 @@ static void test_conf_freq_alias_maps_to_sample_freq(void)
 
 int main(void)
 {
+  test_dumpfile_default_literal();
   test_heap_dup_from_default_literal();
   test_heap_dup_replaces_heap_value();
   test_parse_sets_server();

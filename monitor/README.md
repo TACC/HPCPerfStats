@@ -389,8 +389,27 @@ When RabbitMQ send fails, the daemon may spool samples under the configured
 **dumpfile** directory (default **`/var/lib/hpcperfstats/dump`**, mode `0700`
 via `ensure_private_dir` — not world-writable `/tmp`). Append creates use
 `O_NOFOLLOW` and mode `0600`. RPM install places **`hpcperfstats.conf`** mode
-**`0600`** (broker credentials). Systemd sandbox fields (`PrivateTmp`, …) are
-tracked separately from this package’s path hardening.
+**`0600`** (broker credentials).
+
+### Privilege model
+
+`hpcperfstatsd` runs as **root** (euid 0) for the life of the process: perf/LIKWID,
+InfiniBand/OPA MAD, DCGM/GPU, and helper binaries need elevated access. There is no
+in-process `setuid` drop today.
+
+The shipped **`hpcperfstats.service`** adds a systemd sandbox (defense in depth, not
+a substitute for root):
+
+- `PrivateTmp=true`, `ProtectSystem=strict`, `ProtectHome=true`
+- `ProtectKernelTunables=true`, `ProtectControlGroups=true`, `NoNewPrivileges=true`
+- `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`
+- `ReadWritePaths=/var/lib/hpcperfstats /run` (dumpfiles + pid/runtime)
+- **`PrivateDevices` is intentionally unset** so `/dev/infiniband`, GPU nodes, and
+  perf remain available.
+
+**Residual risk:** code execution or library injection inside the daemon is still uid
+0 within that sandbox. Follow-up work may narrow **`CapabilityBoundingSet`** or add a
+dedicated **`User=`** after measuring device and perf ACLs on fleet nodes.
 
 **RPM debug path** (symbols + behavioral DEBUG for `/dev/shm`):
 

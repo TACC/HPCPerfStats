@@ -3,6 +3,14 @@ Description=Job-level Monitoring Service
 
 [Service]
 Type=simple
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+ReadWritePaths=/var/lib/hpcperfstats /run
 # Default per-process soft FD limit is often 1024; collectors + LIKWID + dumpfiles can exceed it (EMFILE).
 LimitNOFILE=1048576
 EnvironmentFile=-/etc/sysconfig/hpcperfstatsd
