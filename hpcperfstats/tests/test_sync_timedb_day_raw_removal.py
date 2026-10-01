@@ -1993,7 +1993,15 @@ def test_handoff_ingest_complete_triggers_delete_not_second_handoff(tmp_path):
 
 def test_pre_seal_verify_slices_by_paths_per_tick(tmp_path, monkeypatch):
   day = datetime(2026, 5, 22)
-  segs = [_make_closed_segment(tmp_path, "cluster.integration.test", day) for _ in range(5)]
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True, exist_ok=True)
+  segs = []
+  for hour in range(5):
+    ts = int(datetime(day.year, day.month, day.day, hour, 0, 0).timestamp())
+    seg = host / str(ts)
+    seg.write_text("%d job1 cn001\nline\n" % ts)
+    os.utime(seg, (ts, ts))
+    segs.append(seg)
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
   tar_path = str(tgz_dir / "2026-05-22.tar")
@@ -2008,8 +2016,12 @@ def test_pre_seal_verify_slices_by_paths_per_tick(tmp_path, monkeypatch):
     return {"host": seg_paths}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
       _remaining,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: pytest.fail("pre_seal seed must not full-scan remaining"),
   )
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.ensure_daily_tar_restored_for_append",
@@ -2063,8 +2075,12 @@ def test_pre_seal_verify_completes_large_day_without_budget_log(tmp_path, monkey
       yield path, "verified", "ok"
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
       _remaining,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: pytest.fail("pre_seal seed must not full-scan remaining"),
   )
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.ensure_daily_tar_restored_for_append",
@@ -2292,6 +2308,32 @@ def test_manifest_fast_no_full_remaining_delete_tar_drop(tmp_path, monkeypatch):
   assert not os.path.isfile(tar_path)
 
 
+def test_pre_seal_first_seed_uses_day_scoped_not_full_remaining(
+    tmp_path, monkeypatch,
+):
+  """Oct-1 3F: first pre_seal claim must not call build_remaining_raw_for_daily_tar."""
+  day = datetime(2026, 8, 16)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
+  day_scoped_calls = []
+
+  def _day_scoped(*_a, **_k):
+    day_scoped_calls.append(1)
+    return {"z": [str(seg)]}
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
+      _day_scoped,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: pytest.fail("pre_seal first seed must not full-scan"),
+  )
+  assert coord.run_pre_seal_verify_sync(tar_path) is True
+  assert day_scoped_calls == [1]
+
+
 def test_pre_seal_classify_paths_cache_skips_second_find(tmp_path, monkeypatch):
   """Pre-seal resume must not repeat build_remaining_raw when paths cached."""
   day = datetime(2026, 7, 30)
@@ -2313,6 +2355,10 @@ def test_pre_seal_classify_paths_cache_skips_second_find(tmp_path, monkeypatch):
     state._manifest["pre_seal_classify_index"] = 0
     _save_manifest(state._manifest_path, state._manifest)
 
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
+      lambda *_a, **_k: pytest.fail("cached pre_seal must not day-scoped seed"),
+  )
   monkeypatch.setattr(
       "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
       lambda *_a, **_k: pytest.fail("cached pre_seal must not full-scan"),

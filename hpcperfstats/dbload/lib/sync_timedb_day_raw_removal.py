@@ -29,6 +29,7 @@ from django.db import close_old_connections
 
 from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    build_day_scoped_closed_raw_by_gz,
     build_remaining_raw_for_daily_tar,
     calendar_date_from_daily_tar_path,
     classify_removable_raw_paths_for_daily_gz,
@@ -1913,6 +1914,32 @@ class _DayRawRemovalState:
       _manifest_snap = copy.deepcopy(self._manifest)
 
     _save_manifest(self._manifest_path, _manifest_snap)
+
+  def _pre_seal_seed_remaining_by_gz(self) -> Dict[str, List[str]]:
+    """
+    Day-scoped closed_raw for pre-seal classify seeding only.
+
+    Avoids ``build_remaining_raw_for_daily_tar`` (maintenance snapshot / full
+    remaining census) on first pre_seal claim; result is persisted in
+    ``pre_seal_classify_paths`` for resume.
+
+    Returns:
+      Dict[str, List[str]]: Compressed gz key to aligned closed raw paths.
+
+    Examples:
+      >>> _DayRawRemovalState()._pre_seal_seed_remaining_by_gz()  # doctest: +SKIP
+    """
+    if not self.get_allow_day_scoped_closed_raw():
+      return {}
+    return build_day_scoped_closed_raw_by_gz(
+        self.archive_data_dir,
+        self.host_name_ext,
+        self.tgz_archive_dir,
+        self.tar_path,
+        log_fn=self.log_fn,
+        maintenance_snapshot=None,
+    )
+
   def _pre_seal_verify_body(
     self,
     *,
@@ -1988,10 +2015,18 @@ class _DayRawRemovalState:
     if isinstance(cached_filtered, list) and cached_filtered:
       filtered = [str(p) for p in cached_filtered]
     else:
-      remaining = self._build_remaining_raw_for_daily_tar()
+      remaining = self._pre_seal_seed_remaining_by_gz()
       raw_paths: List[str] = []
+      seen_raw: Set[str] = set()
       for paths in (remaining or {}).values():
-        raw_paths.extend(paths or [])
+        for path in paths or []:
+          if path and path not in seen_raw:
+            seen_raw.add(path)
+            raw_paths.append(path)
+      for path in self._blocking_manifest_paths_on_disk():
+        if path not in seen_raw:
+          seen_raw.add(path)
+          raw_paths.append(path)
       skip_paths = set(self.get_quarantine_skip_paths() or ())
       filtered: List[str] = []
       for path in raw_paths:
