@@ -49,6 +49,12 @@ def test_compiled_library_pins_are_latest_known():
   assert "f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1" in build
   assert "zstd-1.5.7.tar.gz" in build
   assert "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3" in build
+  assert "PYTHON_VERSION=3.14.8" in build
+  _py314_8_sha = (
+      "a65b20a728f169f4e66ae143f40b1bd3d33c38d770251663f627c9767b79b210"
+  )
+  assert build.count(_py314_8_sha) == 2  # GIL + free-threaded source tarballs
+  assert "62859805f6fdf25e2bcbf3fa3217801e1996887ca33e6a2af80674bdfa2dbe07" not in build
   # Stale pins must not linger.
   assert "jemalloc-5.3.1.tar.bz2" not in build
   assert "jemalloc-5.3.0.tar.bz2" not in build

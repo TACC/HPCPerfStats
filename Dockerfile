@@ -212,7 +212,7 @@ RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   curl -fsSL "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
     -o /tmp/Python.tgz; \
-  echo "62859805f6fdf25e2bcbf3fa3217801e1996887ca33e6a2af80674bdfa2dbe07  /tmp/Python.tgz" | sha256sum -c -; \
+  echo "a65b20a728f169f4e66ae143f40b1bd3d33c38d770251663f627c9767b79b210  /tmp/Python.tgz" | sha256sum -c -; \
   mkdir -p /usr/src/python; \
   tar -xzf /tmp/Python.tgz -C /usr/src/python --strip-components=1; \
   rm -f /tmp/Python.tgz; \
@@ -273,7 +273,7 @@ RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   curl -fsSL "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
     -o /tmp/Python.tgz; \
-  echo "62859805f6fdf25e2bcbf3fa3217801e1996887ca33e6a2af80674bdfa2dbe07  /tmp/Python.tgz" | sha256sum -c -; \
+  echo "a65b20a728f169f4e66ae143f40b1bd3d33c38d770251663f627c9767b79b210  /tmp/Python.tgz" | sha256sum -c -; \
   mkdir -p /usr/src/python; \
   tar -xzf /tmp/Python.tgz -C /usr/src/python --strip-components=1; \
   rm -f /tmp/Python.tgz; \
