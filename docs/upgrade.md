@@ -74,6 +74,17 @@ Expect `redis_version:8.8.x` (or the pin in compose). Roll back by restoring the
 
 **Upgrading from an older ini layout:** PostgreSQL keys moved from **`[PORTAL]`** to **`[DEFAULT]`**; ingest/archive/metrics keys moved from **`[DEFAULT]`** / **`[PORTAL]`** to **`[PIPELINE]`**. Existing deployments keep working via legacy section fallbacks in `conf_parser` until you migrate keys into the new sections. Compare production INI to **`hpcperfstats.ini.example`** on the next image bake (immutable-image policy: bake INI into the image; do not bind-mount a mutable INI over production).
 
+### Process-tree roof: absolute MiB → cgroup percentage (breaking)
+
+Remove **`sync_process_tree_rss_limit_mb`** and **`sync_process_tree_rss_exit_mb`** from baked site INI; they are **no longer read**. Add under **`[PIPELINE]`**:
+
+| Old key | New key | 128g production default |
+| --- | --- | --- |
+| `sync_process_tree_rss_limit_mb=50000` | **`sync_process_tree_rss_limit_cgroup_pct=40`** | **40** → effective roof **52428** MiB, raw budget **≈20971** MiB (`/ 2.5`) |
+| `sync_process_tree_rss_exit_mb=0` | **`sync_process_tree_rss_exit_cgroup_pct=0`** | **0** = hard exit off |
+
+Effective MiB = ``(memory.max × pct // 100) // (1024×1024)`` at runtime. **`limit_cgroup_pct=0`** disables defer and the raw-byte admit gate (same as old **`limit_mb=0`**). Recompute pct on non-128g hosts: ``round(100 × desired_roof_mib / memory_max_mib)``. Telem prints **`rss_limit_cgroup_pct=`** plus effective **`rss_limit_mib=`**. See **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § OOM.
+
 ---
 
 ## Cluster syslog volume layout

@@ -188,8 +188,9 @@ def compute_rss_recycle_threshold_mib() -> Any:
     >>> compute_rss_recycle_threshold_mib()  # doctest: +SKIP
   """
   import hpcperfstats.dbload.lib.conf_parser as cfg
+  from hpcperfstats.dbload.lib import process_memory as pm
 
-  tree_limit = int(cfg.get_sync_process_tree_rss_limit_mb())
+  tree_limit = int(pm.effective_process_tree_rss_limit_mib())
   if tree_limit <= 0:
     return 0.0
   fraction = float(cfg.get_sync_ingest_cooperative_recycle_rss_fraction())
@@ -201,7 +202,7 @@ def compute_ingest_inflight_raw_bytes_budget() -> int:
   Return max sum of in-flight raw ``st_size`` bytes for ingest admit.
 
   Equals ``tree_rss_limit_bytes / PEAK_CGROUP_PER_RAW_FILE_BYTE``.
-  When ``sync_process_tree_rss_limit_mb`` is ``0``, return ``0`` (gate off).
+  When effective roof MiB is ``0`` (pct 0 or unknown ``memory.max``), return ``0``.
 
   Returns:
     int: Budget in bytes, or ``0`` when the tree RSS roof is disabled.
@@ -209,9 +210,9 @@ def compute_ingest_inflight_raw_bytes_budget() -> int:
   Examples:
     >>> compute_ingest_inflight_raw_bytes_budget()  # doctest: +SKIP
   """
-  import hpcperfstats.dbload.lib.conf_parser as cfg
+  from hpcperfstats.dbload.lib import process_memory as pm
 
-  tree_limit_mib = int(cfg.get_sync_process_tree_rss_limit_mb())
+  tree_limit_mib = int(pm.effective_process_tree_rss_limit_mib())
   if tree_limit_mib <= 0:
     return 0
   return int(

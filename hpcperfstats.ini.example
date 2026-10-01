@@ -302,17 +302,13 @@ daily_archive_dir = %(data_dir)s/daily_archive
 
 # Check supervisor RSS every N ingest chunks (default 1).
 
-# Process-tree RSS defer limit MiB (supervisor + pool workers); 0 off (default 50000).
-# Also derives ingest in-flight raw-byte admit budget as limit_bytes / 2.5 (40%);
-# no separate sync_ingest_inflight_raw_bytes_budget_mb INI key.
-# On 128g pipeline cgroup hosts, 50000 leaves ~78g outside the sync soft roof
-# for listend/update_metrics (hpcperfstats02 2026-09-25 cgroup OOM).
-# sync_process_tree_rss_limit_mb = 50000
+# Process-tree defer roof as percent of pipeline cgroup memory.max (0–100; 0 off).
+# Default 40 → ~52428 MiB effective roof on 128g compose; ingest raw-byte budget
+# = effective_roof_bytes / 2.5 (~20971 MiB at default; no separate budget INI).
+# sync_process_tree_rss_limit_cgroup_pct = 40
 
-# Check process-tree RSS every N ingest chunks (default 1).
-
-# Hard exit when process-tree RSS exceeds MiB; 0 off (default 0).
-# sync_process_tree_rss_exit_mb = 0
+# Hard exit when process-tree RSS exceeds this percent of memory.max; 0 off.
+# sync_process_tree_rss_exit_cgroup_pct = 0
 
 # Max stats file size for readlines fast path; larger files stream-parse (default 512 MiB).
 # sync_ingest_max_file_read_bytes = 536870912

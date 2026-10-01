@@ -187,8 +187,14 @@ def snapshot_pipeline_mem_telemetry(
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   snap: dict[str, Any] = {
-      "rss_limit_mib": int(cfg.get_sync_process_tree_rss_limit_mb()),
-      "rss_exit_mib": int(cfg.get_sync_process_tree_rss_exit_mb()),
+      "rss_limit_cgroup_pct": int(
+          cfg.get_sync_process_tree_rss_limit_cgroup_pct(),
+      ),
+      "rss_exit_cgroup_pct": int(
+          cfg.get_sync_process_tree_rss_exit_cgroup_pct(),
+      ),
+      "rss_limit_mib": int(pm.effective_process_tree_rss_limit_mib()),
+      "rss_exit_mib": int(pm.effective_process_tree_rss_exit_mib()),
       "peak_factor": float(PEAK_CGROUP_PER_RAW_FILE_BYTE),
       "budget_mib": _mib(compute_ingest_inflight_raw_bytes_budget()),
       "headroom_cfg_mib": int(cfg.get_sync_cgroup_admit_headroom_mib()),
@@ -337,6 +343,7 @@ def format_sync_timedb_mem_telemetry_line(
   )
   parts = ["sync_timedb_mem_telemetry: event=%s" % event]
   order = (
+      "rss_limit_cgroup_pct", "rss_exit_cgroup_pct",
       "rss_limit_mib", "rss_exit_mib", "peak_factor", "budget_mib",
       "headroom_cfg_mib", "headroom_left_mib", "headroom_ok",
       "file_cache_cfg_mib", "file_cache_ok",

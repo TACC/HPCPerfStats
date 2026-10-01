@@ -134,8 +134,8 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_archive_members_populate_pool_processes"),
     ("PIPELINE", "sync_bulk_create_batch_size"),
     ("PIPELINE", "sync_supervisor_rss_limit_mb"),
-    ("PIPELINE", "sync_process_tree_rss_limit_mb"),
-    ("PIPELINE", "sync_process_tree_rss_exit_mb"),
+    ("PIPELINE", "sync_process_tree_rss_limit_cgroup_pct"),
+    ("PIPELINE", "sync_process_tree_rss_exit_cgroup_pct"),
     ("PIPELINE", "sync_ingest_max_file_read_bytes"),
     ("PIPELINE", "sync_ingest_stream_duplicate_scan_bytes"),
     ("PIPELINE", "sync_ingest_db_complete_tail_window_lines"),
@@ -293,8 +293,8 @@ INI_OPTION_DEFAULTS = {
     'sync_archive_members_populate_pool_processes': '4',
     'sync_bulk_create_batch_size': '10000',
     'sync_supervisor_rss_limit_mb': '0',
-    'sync_process_tree_rss_limit_mb': '50000',
-    'sync_process_tree_rss_exit_mb': '0',
+    'sync_process_tree_rss_limit_cgroup_pct': '40',
+    'sync_process_tree_rss_exit_cgroup_pct': '0',
     'sync_ingest_max_file_read_bytes': '536870912',
     'sync_ingest_stream_duplicate_scan_bytes': '8388608',
     'sync_ingest_db_complete_tail_window_lines': '500',
@@ -3500,36 +3500,36 @@ def get_sync_supervisor_rss_limit_mb() -> Any:
   return max(0, _pipeline_getint("sync_supervisor_rss_limit_mb"))
 
 
-def get_sync_process_tree_rss_limit_mb() -> Any:
+def get_sync_process_tree_rss_limit_cgroup_pct() -> Any:
   """
-  Process-tree RSS defer limit in MiB; 0 disables backpressure (default 50000).
-  
+  Process-tree defer roof as percent of cgroup ``memory.max`` (0–100).
+
+  ``0`` disables backpressure and the raw-byte ingest budget gate (default 40).
+
   Returns:
-    Any: Open return polymorphism from ``get_sync_process_tree_rss_limit_mb``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Integer percentage clamped to 0–100.
+
   Examples:
-    >>> get_sync_process_tree_rss_limit_mb()  # doctest: +SKIP
+    >>> get_sync_process_tree_rss_limit_cgroup_pct()  # doctest: +SKIP
   """
   _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_process_tree_rss_limit_mb"))
+  return max(0, min(100, _pipeline_getint("sync_process_tree_rss_limit_cgroup_pct")))
 
 
-def get_sync_process_tree_rss_exit_mb() -> Any:
+def get_sync_process_tree_rss_exit_cgroup_pct() -> Any:
   """
-  Hard exit when process-tree RSS exceeds MiB; 0 disables (default 0).
-  
+  Hard exit when process-tree RSS exceeds this percent of ``memory.max``.
+
+  ``0`` disables (default 0).
+
   Returns:
-    Any: Open return polymorphism from ``get_sync_process_tree_rss_exit_mb``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-  
+    Any: Integer percentage clamped to 0–100.
+
   Examples:
-    >>> get_sync_process_tree_rss_exit_mb()  # doctest: +SKIP
+    >>> get_sync_process_tree_rss_exit_cgroup_pct()  # doctest: +SKIP
   """
   _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_process_tree_rss_exit_mb"))
+  return max(0, min(100, _pipeline_getint("sync_process_tree_rss_exit_cgroup_pct")))
 
 
 def get_sync_ingest_max_file_read_bytes() -> Any:

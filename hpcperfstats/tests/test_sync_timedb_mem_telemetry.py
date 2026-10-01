@@ -47,11 +47,21 @@ def test_format_includes_contract_tokens(monkeypatch):
       lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_process_tree_rss_limit_mb",
-      lambda: 50000,
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_process_tree_rss_limit_cgroup_pct",
+      lambda: 40,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_process_tree_rss_exit_mb",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_process_tree_rss_exit_cgroup_pct",
+      lambda: 0,
+  )
+  monkeypatch.setattr(
+      pm,
+      "effective_process_tree_rss_limit_mib",
+      lambda: 52428,
+  )
+  monkeypatch.setattr(
+      pm,
+      "effective_process_tree_rss_exit_mib",
       lambda: 0,
   )
   monkeypatch.setattr(
@@ -144,6 +154,7 @@ def test_format_includes_contract_tokens(monkeypatch):
   )
   assert line.startswith("INFO: sync_timedb_mem_telemetry: event=census")
   for tok in (
+      "rss_limit_cgroup_pct=", "rss_exit_cgroup_pct=",
       "rss_limit_mib=", "budget_mib=", "headroom_cfg_mib=", "file_cache_cfg_mib=",
       "file_cache_ok=", "drop_page_cache=yes",
       "cgroup_mib=", "ev_oom_kill=", "ev_max=", "anon_mib=", "file_mib=",

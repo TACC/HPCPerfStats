@@ -14,15 +14,21 @@ from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 
 def test_peak_cgroup_constant_and_budget_from_roof(monkeypatch):
   assert wm.PEAK_CGROUP_PER_RAW_FILE_BYTE == 2.5
+  max_128g = 128 * 1024 ** 3
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_process_tree_rss_limit_mb",
-      lambda: 50000,
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_process_tree_rss_limit_cgroup_pct",
+      lambda: 40,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_max_bytes",
+      lambda: max_128g,
   )
   budget = wm.compute_ingest_inflight_raw_bytes_budget()
-  expect = int((50000 * 1024 * 1024) / 2.5)
+  roof_mib = (max_128g * 40 // 100) // (1024 * 1024)
+  expect = int((roof_mib * 1024 * 1024) / 2.5)
   assert budget == expect
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_process_tree_rss_limit_mb",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_process_tree_rss_limit_cgroup_pct",
       lambda: 0,
   )
   assert wm.compute_ingest_inflight_raw_bytes_budget() == 0

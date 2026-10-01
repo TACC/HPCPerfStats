@@ -67,6 +67,28 @@ def test_format_tree_rss_breakdown_mb(monkeypatch):
   assert breakdown["tree_total_mb"] == 50.0
 
 
+def test_effective_roof_mib_from_cgroup_pct(monkeypatch):
+  max_128g = 137438953472
+  monkeypatch.setattr(pm, "read_cgroup_memory_max_bytes", lambda: max_128g)
+  assert pm.effective_process_tree_rss_mib_from_cgroup_pct(0) == 0
+  assert pm.effective_process_tree_rss_mib_from_cgroup_pct(40) == 52428
+  monkeypatch.setattr(pm, "read_cgroup_memory_max_bytes", lambda: None)
+  assert pm.effective_process_tree_rss_mib_from_cgroup_pct(40) == 0
+
+
+def test_effective_limit_mib_uses_ini_pct(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_process_tree_rss_limit_cgroup_pct",
+      lambda: 40,
+  )
+  monkeypatch.setattr(
+      pm,
+      "read_cgroup_memory_max_bytes",
+      lambda: 128 * 1024 ** 3,
+  )
+  assert pm.effective_process_tree_rss_limit_mib() == 52428
+
+
 def test_read_cgroup_memory_stat_parses(monkeypatch, tmp_path):
   stat = tmp_path / "memory.stat"
   stat.write_text("anon 100\nfile 200\npgfault 3\n", encoding="utf-8")

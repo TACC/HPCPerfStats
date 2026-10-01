@@ -107,6 +107,72 @@ def read_cgroup_memory_max_bytes() -> Any:
   return _read_cgroup_memory_file("memory.max")
 
 
+def effective_process_tree_rss_mib_from_cgroup_pct(pct: Any) -> int:
+  """
+  Return process-tree roof/exit MiB from ``memory.max`` × ``pct`` (0–100).
+
+  When ``pct <= 0`` or ``memory.max`` is unknown, return ``0`` (fail open).
+
+  Args:
+    pct (Any): Percentage of cgroup ``memory.max``.
+
+  Returns:
+    int: Effective MiB (integer floor).
+
+  Examples:
+    >>> effective_process_tree_rss_mib_from_cgroup_pct(0)
+    0
+  """
+  try:
+    pct_i = int(pct or 0)
+  except (TypeError, ValueError):
+    pct_i = 0
+  if pct_i <= 0:
+    return 0
+  pct_i = min(100, max(0, pct_i))
+  cgroup_max = read_cgroup_memory_max_bytes()
+  if cgroup_max is None:
+    return 0
+  max_b = int(cgroup_max)
+  if max_b <= 0:
+    return 0
+  return (max_b * pct_i // 100) // _MIB
+
+
+def effective_process_tree_rss_limit_mib() -> int:
+  """
+  Effective defer roof MiB from INI ``sync_process_tree_rss_limit_cgroup_pct``.
+
+  Returns:
+    int: MiB from runtime cgroup max × pct, or ``0`` when disabled.
+
+  Examples:
+    >>> effective_process_tree_rss_limit_mib()  # doctest: +SKIP
+  """
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  return effective_process_tree_rss_mib_from_cgroup_pct(
+      cfg.get_sync_process_tree_rss_limit_cgroup_pct(),
+  )
+
+
+def effective_process_tree_rss_exit_mib() -> int:
+  """
+  Effective hard-exit MiB from INI ``sync_process_tree_rss_exit_cgroup_pct``.
+
+  Returns:
+    int: MiB from runtime cgroup max × pct, or ``0`` when disabled.
+
+  Examples:
+    >>> effective_process_tree_rss_exit_mib()  # doctest: +SKIP
+  """
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  return effective_process_tree_rss_mib_from_cgroup_pct(
+      cfg.get_sync_process_tree_rss_exit_cgroup_pct(),
+  )
+
+
 def _read_cgroup_memory_events_raw() -> Any:
   """
   Return raw ``memory.events`` text (empty when unavailable).
