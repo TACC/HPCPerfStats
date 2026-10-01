@@ -21,6 +21,25 @@ def test_cgroup_admit_headroom_ok_fail_open_and_block(monkeypatch):
   assert pm.cgroup_admit_headroom_ok(16384) is True
 
 
+def test_cgroup_admit_file_cache_ok_fail_open_and_block(monkeypatch):
+  assert pm.cgroup_admit_file_cache_ok(0) is True
+  monkeypatch.setattr(pm, "read_cgroup_memory_stat", lambda: {})
+  assert pm.cgroup_admit_file_cache_ok(81920) is True
+  monkeypatch.setattr(
+      pm,
+      "read_cgroup_memory_stat",
+      lambda: {"file": 90 * 1024 ** 3},
+  )
+  assert pm.cgroup_admit_file_cache_ok(81920) is False
+  assert pm.cgroup_admit_file_cache_ok(65536) is False
+  monkeypatch.setattr(
+      pm,
+      "read_cgroup_memory_stat",
+      lambda: {"file": 80 * 1024 ** 3},
+  )
+  assert pm.cgroup_admit_file_cache_ok(81920) is True
+
+
 def test_format_includes_contract_tokens(monkeypatch):
   mt.reset_mem_telemetry_state_for_tests()
   monkeypatch.setattr(
@@ -125,7 +144,8 @@ def test_format_includes_contract_tokens(monkeypatch):
   )
   assert line.startswith("INFO: sync_timedb_mem_telemetry: event=census")
   for tok in (
-      "rss_limit_mib=", "budget_mib=", "headroom_cfg_mib=", "drop_page_cache=yes",
+      "rss_limit_mib=", "budget_mib=", "headroom_cfg_mib=", "file_cache_cfg_mib=",
+      "file_cache_ok=", "drop_page_cache=yes",
       "cgroup_mib=", "ev_oom_kill=", "ev_max=", "anon_mib=", "file_mib=",
       "sync_rss_mib=", "listend_rss_mib=", "metrics_rss_mib=", "gap_mib=",
       "inflight_n=", "top_inflight=", "largest_inflight=",

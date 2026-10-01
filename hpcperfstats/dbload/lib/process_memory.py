@@ -322,6 +322,31 @@ def cgroup_admit_headroom_ok(headroom_mib: Any) -> bool:
   return left >= (need * _MIB)
 
 
+def cgroup_admit_file_cache_ok(max_file_mib: Any) -> bool:
+  """
+  Return True when multi-file admit / append may proceed under file page cache.
+
+  When ``max_file_mib <= 0`` or ``memory.stat`` ``file`` is unavailable, the
+  gate is off (fail open). Otherwise require ``file <= max_file_mib`` MiB.
+
+  Args:
+    max_file_mib (Any): Maximum cgroup ``memory.stat`` ``file`` in MiB.
+
+  Returns:
+    bool: True when admit/append may proceed.
+
+  Examples:
+    >>> cgroup_admit_file_cache_ok(0)
+    True
+  """
+  cap = max(0, int(max_file_mib or 0))
+  if cap <= 0:
+    return True
+  stat = read_cgroup_memory_stat()
+  file_bytes = int(stat.get("file", 0) or 0)
+  return file_bytes <= (cap * _MIB)
+
+
 def read_process_nlwp(pid: Any | None = None) -> int:
   """
   Return thread count from ``/proc/<pid>/status`` Threads (0 if unknown).

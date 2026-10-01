@@ -178,7 +178,11 @@ def test_requeue_ingest_fill_skip_backpressure_no_attempt_burn(monkeypatch):
         "append_queue_dead_letter",
         lambda *_a, **k: letters.append(str(k.get("reason"))),
     )
-    for reason in ("skip_cgroup_headroom", "skip_budget_bytes"):
+    for reason in (
+        "skip_cgroup_headroom",
+        "skip_budget_bytes",
+        "skip_file_cache_pressure",
+    ):
         bumps.clear()
         requeues.clear()
         letters.clear()

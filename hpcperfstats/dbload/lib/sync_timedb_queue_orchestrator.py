@@ -24,7 +24,8 @@ Attributes:
   INGEST_FILL_BLOCK_LOG_INTERVAL_S: Rate limit for fill-block / deep-queue logs.
   _FILL_BLOCK_KEYS: Ordered ingest fill failure counter names for telemetry.
   _INGEST_BACKPRESSURE_SKIP_REASONS: Fill skip reasons that requeue without
-    bumping attempt (``skip_budget_bytes``, ``skip_cgroup_headroom``).
+    bumping attempt (``skip_budget_bytes``, ``skip_cgroup_headroom``,
+    ``skip_file_cache_pressure``).
   _INGEST_MEM_BLOCK_STATE: Process-local census fields when fill waits on
     the in-flight raw-byte budget (``ingest_mem_blocked=…``).
   _MEM_TELEM_RUNTIME: Best-effort inflight/submitted/queue snapshots for
@@ -81,7 +82,10 @@ from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
   create_sync_timedb_thread_pool,
 )
 from hpcperfstats.dbload.lib.print_utils import log_print
-from hpcperfstats.dbload.lib.process_memory import cgroup_admit_headroom_ok
+from hpcperfstats.dbload.lib.process_memory import (
+  cgroup_admit_file_cache_ok,
+  cgroup_admit_headroom_ok,
+)
 from hpcperfstats.dbload.lib.process_title import (
   set_daemon_thread_title,
 )
@@ -3020,6 +3024,7 @@ _FILL_BLOCK_KEYS = (
     "skip_fp",
     "skip_budget_bytes",
     "skip_cgroup_headroom",
+    "skip_file_cache_pressure",
     "band_cap",
     "submit_err",
 )
@@ -3303,6 +3308,7 @@ def _penalized_ingest_requeue_score(score: float | int | None) -> float:
 _INGEST_BACKPRESSURE_SKIP_REASONS = frozenset({
     "skip_budget_bytes",
     "skip_cgroup_headroom",
+    "skip_file_cache_pressure",
 })
 
 
@@ -3318,7 +3324,8 @@ def _requeue_ingest_fill_skip(
   """
   Penalty-requeue an ingest fill skip; dead-letter only for hard failures.
 
-  Backpressure reasons (``skip_budget_bytes``, ``skip_cgroup_headroom``)
+  Backpressure reasons (``skip_budget_bytes``, ``skip_cgroup_headroom``,
+  ``skip_file_cache_pressure``)
   requeue without ``bump_job_attempt`` so sustained cgroup pressure cannot
   dead-letter good work. Hard skips (``skip_missing``, ``skip_fp``, …) still
   use :func:`_retry_or_dead_letter`.
@@ -3678,6 +3685,30 @@ def _fill_ingest_band(
           stats["skip_cgroup_headroom"] += 1
           _emit_mem_telem_event(
               "skip_cgroup_headroom",
+              log_fn,
+              inflight_sizes=inflight_sizes,
+              submitted=submitted,
+          )
+          if skipped >= budget:
+            break
+          continue
+        file_cache_cap_mib = int(cfg.get_sync_cgroup_admit_max_file_cache_mib())
+        if (
+            not alone_oversized
+            and not cgroup_admit_file_cache_ok(file_cache_cap_mib)
+        ):
+          _requeue_ingest_fill_skip(
+              client,
+              claim=claim,
+              archive_data_dir=archive_data_dir,
+              reason="skip_file_cache_pressure",
+              score=claim.score,
+              log_fn=log_fn,
+          )
+          skipped += 1
+          stats["skip_file_cache_pressure"] += 1
+          _emit_mem_telem_event(
+              "skip_file_cache_pressure",
               log_fn,
               inflight_sizes=inflight_sizes,
               submitted=submitted,
@@ -4405,6 +4436,9 @@ def _fill_append_slots(
   store_exhausted = False
   if not cgroup_admit_headroom_ok(cfg.get_sync_cgroup_admit_headroom_mib()):
     _emit_mem_telem_event("skip_cgroup_headroom", None)
+    return 0
+  if not cgroup_admit_file_cache_ok(cfg.get_sync_cgroup_admit_max_file_cache_mib()):
+    _emit_mem_telem_event("skip_file_cache_pressure", None)
     return 0
   while len(inflight) < cap:
     submitted += _try_submit_pending_append_days(

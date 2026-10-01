@@ -145,6 +145,7 @@ _INI_OPTION_REGISTRY_KEYS = (
     ("PIPELINE", "sync_ingest_worker_memory_telemetry_every_n_chunks"),
     ("PIPELINE", "sync_timedb_mem_telemetry"),
     ("PIPELINE", "sync_cgroup_admit_headroom_mib"),
+    ("PIPELINE", "sync_cgroup_admit_max_file_cache_mib"),
     ("PIPELINE", "sync_ingest_stuck_inflight_recycle_s"),
     ("PIPELINE", "sync_ingest_telemetry"),
     ("PIPELINE", "sync_ingest_recycle_worker_on_failure"),
@@ -303,6 +304,7 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_worker_memory_telemetry_every_n_chunks': '1',
     'sync_timedb_mem_telemetry': 'no',
     'sync_cgroup_admit_headroom_mib': '16384',
+    'sync_cgroup_admit_max_file_cache_mib': '0',
     'sync_ingest_stuck_inflight_recycle_s': '3600',
     'sync_ingest_telemetry': 'no',
     'sync_ingest_recycle_worker_on_failure': 'yes',
@@ -3676,6 +3678,23 @@ def get_sync_cgroup_admit_headroom_mib() -> Any:
   """
   _ensure_cfg_loaded()
   return max(0, _pipeline_getint("sync_cgroup_admit_headroom_mib"))
+
+
+def get_sync_cgroup_admit_max_file_cache_mib() -> Any:
+  """
+  Maximum cgroup ``memory.stat`` ``file`` MiB before multi-file admit / append.
+
+  Default ``0``. ``0`` disables the file-cache gate (fail open).
+
+  Returns:
+    Any: Non-negative integer MiB.
+
+  Examples:
+    >>> get_sync_cgroup_admit_max_file_cache_mib() >= 0
+    True
+  """
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_cgroup_admit_max_file_cache_mib"))
 
 
 def get_sync_ingest_stuck_inflight_recycle_s() -> Any:

@@ -192,6 +192,7 @@ def snapshot_pipeline_mem_telemetry(
       "peak_factor": float(PEAK_CGROUP_PER_RAW_FILE_BYTE),
       "budget_mib": _mib(compute_ingest_inflight_raw_bytes_budget()),
       "headroom_cfg_mib": int(cfg.get_sync_cgroup_admit_headroom_mib()),
+      "file_cache_cfg_mib": int(cfg.get_sync_cgroup_admit_max_file_cache_mib()),
       "drop_page_cache": (
           "yes" if cfg.get_archive_zstd_drop_page_cache() else "no"
       ),
@@ -221,6 +222,14 @@ def snapshot_pipeline_mem_telemetry(
       )
     else:
       snap["headroom_ok"] = "n/a"
+
+  cap_mib = int(snap.get("file_cache_cfg_mib", 0) or 0)
+  if cap_mib <= 0:
+    snap["file_cache_ok"] = "n/a"
+  else:
+    snap["file_cache_ok"] = (
+        "yes" if pm.cgroup_admit_file_cache_ok(cap_mib) else "no"
+    )
 
   events = pm.read_cgroup_memory_events()
   if events:
@@ -330,6 +339,7 @@ def format_sync_timedb_mem_telemetry_line(
   order = (
       "rss_limit_mib", "rss_exit_mib", "peak_factor", "budget_mib",
       "headroom_cfg_mib", "headroom_left_mib", "headroom_ok",
+      "file_cache_cfg_mib", "file_cache_ok",
       "drop_page_cache", "ingest_pool", "listend_pool", "metrics_pool",
       "cgroup_mib", "cgroup_peak_mib", "cgroup_max_mib",
       "ev_low", "ev_high", "ev_max", "ev_oom", "ev_oom_kill",

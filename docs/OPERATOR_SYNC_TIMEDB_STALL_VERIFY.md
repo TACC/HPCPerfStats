@@ -17,7 +17,7 @@ After an interpreter-only redeploy (CPython 3.14 / baked pipeline **3.14t**), T0
 Prefer these lines over firehose greps for backlog diagnosis:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator progress day=|queue_orchestrator status |queue_orchestrator census |sync_timedb_mem_telemetry:|skip_cgroup_headroom|stuck_cohort_recycle|dead_letter|archive_job_done |ingest per-file timeout' | tail -80
+docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator progress day=|queue_orchestrator status |queue_orchestrator census |sync_timedb_mem_telemetry:|skip_cgroup_headroom|skip_file_cache_pressure|stuck_cohort_recycle|dead_letter|archive_job_done |ingest per-file timeout' | tail -80
 ```
 
 - **`progress day=`** — omit-zeros day counters (`gate_skip`, `ingest_handoff`, ingest outcomes, archive, day_close, reconstruct, …).
@@ -32,6 +32,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 - **`ingest per-file timeout`** — includes `size_bytes=` and `bytes_per_s=` for size/time judgment.
 - **Not primary:** `Archive/delete gate: skipped` and `handoff_to_ingest … reason=gate_skip` (demoted; use day `gate_skip=` / `ingest_handoff=`).
 - **OOM telem soak (Sep-29):** with `sync_timedb_mem_telemetry=yes`, expect `skip_cgroup_headroom` / `skip_budget` under pressure **without** `dead_letter … reason=skip_cgroup_headroom` (or `skip_budget_bytes`). Multi-hour sticky `oldest_inflight_s` should emit `stuck_cohort_recycle` / `queue_orchestrator stuck_cohort_recycle` once past `sync_ingest_stuck_inflight_recycle_s` (default 3600), then decline. Soft roof stays **50000**. After overnight verify, set telem back to **no**.
+- **File-cache admit (Oct-1, hpcperfstats02-class):** when **`sync_cgroup_admit_max_file_cache_mib` > 0** in site INI, census includes `file_cache_cfg_mib=` / `file_cache_ok=`; under pressure expect `event=skip_file_cache_pressure` **without** `dead_letter … reason=skip_file_cache_pressure`. In-flight ingest/append may continue while **new** admits pause; `total_completed` should still advance when workers finish. Tune cap from telem `file_mib=` vs `cgroup_mib=` (typical trial band **65536–81920** MiB).
 
 **Agent stall heuristics (2–3 status lines):** (1) queues non-zero + Δqueued≈0 + no day acks → stall; (2) inflight without `busy=` → orphan; (3) `gate_skip` without `ingest_handoff` → ACK thrash class; (4) empty queues + no `reconstruct_enq`/`incomplete_seen` on backlog site → false done.
 
