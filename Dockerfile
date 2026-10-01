@@ -1,9 +1,9 @@
 # Build frontend assets in a dedicated node stage.
 # COPY is scoped to frontend inputs so Python/backend changes do not bust npm layers.
-FROM node:26.9.0-alpine3.23 AS frontend-builder
+FROM node:26.10.0-alpine3.24 AS frontend-builder
 # Pin npm 12+ before package install: dependency lifecycle scripts are opt-in
 # (allowScripts) so wormed preinstall hooks cannot run by default.
-ARG NPM_VERSION=12.0.2
+ARG NPM_VERSION=12.2.0
 RUN apk add --no-cache bash git \
     && npm install -g "npm@${NPM_VERSION}" \
     && npm --version
@@ -50,13 +50,13 @@ RUN /bin/bash -o pipefail -c "\
     mkdir -p /tmp/frontend-static && \
     cp -a hpcperfstats/site/hpcperfstats_site/static/frontend/. /tmp/frontend-static/"
 
-# Build both CPython 3.14.7 ABIs + jemalloc + native libmpdec/libffi on Debian trixie.
+# Build both CPython 3.14.8 ABIs + jemalloc + native libmpdec/libffi on Debian trixie.
 # -march=native: build on the prod host that runs the image (same as MKL stack).
 # GIL: --without-mimalloc so jemalloc owns process + object-arena malloc.
 # FT: keep mimalloc for objects; still force-link jemalloc for side allocation.
 # Jemalloc both ways: DT_NEEDED here + runtime LD_PRELOAD + /etc/ld.so.preload for wheels.
 FROM debian:trixie AS python-build
-ENV PYTHON_VERSION=3.14.7 \
+ENV PYTHON_VERSION=3.14.8 \
     MAKEFLAGS=-j40 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -207,7 +207,7 @@ RUN /bin/bash -o pipefail -c '\
   ldconfig; \
   rm -rf /usr/src/libffi'
 
-# GIL CPython 3.14.7 (--without-mimalloc; force-link jemalloc).
+# GIL CPython 3.14.8 (--without-mimalloc; force-link jemalloc).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   curl -fsSL "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
@@ -268,7 +268,7 @@ RUN /bin/bash -o pipefail -c '\
   done; \
   rm -rf /usr/src/python'
 
-# Free-threaded CPython 3.14.7 (mimalloc required; still force-link jemalloc).
+# Free-threaded CPython 3.14.8 (mimalloc required; still force-link jemalloc).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   curl -fsSL "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \

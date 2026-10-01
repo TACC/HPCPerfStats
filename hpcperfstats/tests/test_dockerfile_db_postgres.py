@@ -16,7 +16,7 @@ def _dockerfile() -> str:
 
 def test_db_dockerfile_pins_alpine_3_24_not_latest_or_trixie() -> None:
     text = _dockerfile()
-    assert "ARG ALPINE_VERSION=3.24.1" in text
+    assert "ARG ALPINE_VERSION=3.24.2" in text
     assert "FROM alpine:${ALPINE_VERSION}" in text
     assert "alpine:latest" not in text
     assert "alpine:edge" not in text
@@ -27,8 +27,8 @@ def test_db_dockerfile_pins_postgres_18_sha_and_timescale() -> None:
     text = _dockerfile()
     assert "ARG PG_VERSION=18.6" in text
     assert "555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f" in text
-    assert "ARG TIMESCALEDB_VERSION=2.30.1" in text
-    assert "4b7af2be944280cc6be397b76fad3d6588ac93e771fdb19a485b358b21a50326" in text
+    assert "ARG TIMESCALEDB_VERSION=2.30.2" in text
+    assert "a7003a70836477dc8d575d95a4c515d8a22ed219d0cb03b3640bb813f04e1b42" in text
 
 
 def test_db_dockerfile_pins_jemalloc_icu_liburing_lz4_zlib_ng_zstd() -> None:

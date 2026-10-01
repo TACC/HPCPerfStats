@@ -116,9 +116,9 @@ def test_docker_compose_registry_images_are_fully_qualified_for_podman():
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.yaml").read_text()
 
-  assert "image: docker.io/library/redis:8.10.1-alpine3.23" in content
+  assert "image: docker.io/library/redis:8.10.2-alpine3.23" in content
   assert "image: docker.io/timescale/timescaledb:2.28.3-pg15" in content
-  assert "image: docker.io/library/rabbitmq:4.3.5-management-alpine" in content
+  assert "image: docker.io/library/rabbitmq:4.3.6-management-alpine" in content
 
 
 def test_docker_compose_network_name_is_parameterized_with_production_default():
@@ -565,13 +565,13 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   """Regression: proxy must SHA-pin source nginx/jemalloc/zlib-ng/OpenSSL/brotli; no apk edge nginx."""
   repo_root = Path(__file__).resolve().parents[2]
   dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
-  assert "ARG NGINX_VERSION=1.31.5" in dockerfile
+  assert "ARG NGINX_VERSION=1.31.6" in dockerfile
   assert "ARG NGINX_SHA256=" in dockerfile
   assert "ARG JEMALLOC_VERSION=5.4.0" in dockerfile
   assert "ARG JEMALLOC_SHA256=" in dockerfile
   assert "ARG ZLIB_NG_VERSION=2.3.3" in dockerfile
   assert "ARG ZLIB_NG_SHA256=" in dockerfile
-  assert "ARG OPENSSL_VERSION=3.5.8" in dockerfile
+  assert "ARG OPENSSL_VERSION=3.5.9" in dockerfile
   assert "ARG OPENSSL_SHA256=" in dockerfile
   assert "ARG NGX_BROTLI_VERSION=" in dockerfile
   assert "ARG NGX_BROTLI_SHA256=" in dockerfile
@@ -599,8 +599,8 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   # Hybrid compression: pin Facebook zstd + GetPageSpeed (tokers fork) module.
   assert "ARG ZSTD_VERSION=1.5.7" in dockerfile
   assert "ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3" in dockerfile
-  assert "ARG ZSTD_NGINX_MODULE_VERSION=0.2.1" in dockerfile
-  assert "ARG ZSTD_NGINX_MODULE_SHA256=1ea7bf2f9973593a8c3055fe7d99e4e2d226c35b12b674830f79d5d22f079465" in dockerfile
+  assert "ARG ZSTD_NGINX_MODULE_VERSION=0.2.2" in dockerfile
+  assert "ARG ZSTD_NGINX_MODULE_SHA256=d4db8937f035ebb5e7efca833492611f8f5e4f710dbd3fbdd2f1aa5a85d3fe5e" in dockerfile
   assert "GetPageSpeed/zstd-nginx-module" in dockerfile
   assert 'MOREFLAGS="${OPT_CFLAGS_LIBS}"' in dockerfile
   assert "HAVE_ZLIB=0" in dockerfile

@@ -3,7 +3,7 @@
 # Context: ./services-conf (compose build.context).
 # Do not use a floating Alpine tag. Do not copy docker-library --disable-rpath.
 
-ARG ALPINE_VERSION=3.24.1
+ARG ALPINE_VERSION=3.24.2
 
 FROM alpine:${ALPINE_VERSION} AS db-build
 
@@ -225,8 +225,8 @@ RUN set -eux; \
   strip --strip-unneeded /usr/local/bin/postgres /usr/local/bin/psql || true; \
   postgres --version
 
-ARG TIMESCALEDB_VERSION=2.30.1
-ARG TIMESCALEDB_SHA256=4b7af2be944280cc6be397b76fad3d6588ac93e771fdb19a485b358b21a50326
+ARG TIMESCALEDB_VERSION=2.30.2
+ARG TIMESCALEDB_SHA256=a7003a70836477dc8d575d95a4c515d8a22ed219d0cb03b3640bb813f04e1b42
 # --- TimescaleDB (not APACHE_ONLY). timescaledb.so must NOT DT_NEEDED jemalloc
 # (or lz4/zstd): the extension is loaded into the postgres process, which
 # already has jemalloc via DT_NEEDED + LD_PRELOAD. unset LDFLAGS is not enough

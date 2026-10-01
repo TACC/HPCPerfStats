@@ -314,7 +314,7 @@ After a successful soak, operators may archive/delete `/data/hpcperfstats_db/pg1
 
 | Item | Contract |
 |------|----------|
-| Base | `alpine:3.24.1` (not `latest`) |
+| Base | `alpine:3.24.2` (not `latest`) |
 | Postgres | 18.x SHA-pinned in `services-conf/db.Dockerfile` |
 | Timescale | 2.30.x (not `APACHE_ONLY`; no external lz4/zstd DT_NEEDED on `timescaledb.so`) |
 | `/opt` | Bake order (slowest independent pin first): jemalloc, lz4, icu, liburing, **zlib-ng**, zstd. zstd after lz4+zlib-ng (link). rpath on **postgres** + zstd CLI (`HAVE_ZLIB=1` + `HAVE_LZ4=1`; no apk `zlib`) |
