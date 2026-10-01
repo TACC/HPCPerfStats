@@ -492,12 +492,17 @@ def warm_job_cache_entries(job_instances: Any, timeout: int) -> None:
     pass
 
 
-def invalidate_jid_derived_cache_keys(jids: Any) -> None:
+def invalidate_jid_derived_cache_keys(
+    jids: Any,
+    *,
+    ingest_fast: bool = False,
+) -> None:
   """
   Remove per-job aggregate caches after host_data / proc_data ingest.
   
   Args:
     jids (Any): Jids passed to this helper.
+    ingest_fast (bool): When True, skip SCAN-based window-row invalidation.
   
   Returns:
     None
@@ -507,7 +512,7 @@ def invalidate_jid_derived_cache_keys(jids: Any) -> None:
   """
   if not jids:
     return
-  invalidate_jid_host_window_row_count_cache(jids)
+  invalidate_jid_host_window_row_count_cache(jids, ingest_fast=ingest_fast)
   try:
     from hpcperfstats.site.lib.machine.models import job_data as _job_data_model
 
@@ -560,12 +565,17 @@ def _get_redis_py_client() -> Any:
   return client
 
 
-def invalidate_job_plot_cache_keys_for_jids(jids: Any) -> None:
+def invalidate_job_plot_cache_keys_for_jids(
+    jids: Any,
+    *,
+    ingest_fast: bool = False,
+) -> None:
   """
   Delete JOB_PLOTS_JSON / JOB_PLOTS_DATA Redis keys for the given jids (SCAN).
   
   Args:
     jids (Any): Jids passed to this helper.
+    ingest_fast (bool): When True, use keyset deletes only (no wildcard SCAN).
   
   Returns:
     None
@@ -592,15 +602,16 @@ def invalidate_job_plot_cache_keys_for_jids(jids: Any) -> None:
           client.delete(keyset_name)
         except Exception:
           pass
-        for needle in (f":JOB_PLOTS_JSON:{jid}:", f":JOB_PLOTS_DATA:{jid}:"):
-          try:
-            for raw_key in client.scan_iter(match=f"*{needle}*", count=500):
-              try:
-                client.delete(raw_key)
-              except Exception:
-                pass
-          except Exception:
-            pass
+        if not ingest_fast:
+          for needle in (f":JOB_PLOTS_JSON:{jid}:", f":JOB_PLOTS_DATA:{jid}:"):
+            try:
+              for raw_key in client.scan_iter(match=f"*{needle}*", count=500):
+                try:
+                  client.delete(raw_key)
+                except Exception:
+                  pass
+            except Exception:
+              pass
     except Exception:
       pass
   try:
@@ -766,12 +777,17 @@ def register_job_plot_cache_key(jid: Any, cache_key: Any) -> None:
 KEY_JID_HOST_WINDOW_ROW_COUNT = "jid_hwrow"
 
 
-def invalidate_jid_host_window_row_count_cache(jids: Any) -> None:
+def invalidate_jid_host_window_row_count_cache(
+    jids: Any,
+    *,
+    ingest_fast: bool = False,
+) -> None:
   """
   Drop cached window row counts for ``jid_table`` large-job gating.
   
   Args:
     jids (Any): Jids passed to this helper.
+    ingest_fast (bool): When True, skip Redis wildcard SCAN (TTL expiry).
   
   Returns:
     None
@@ -779,7 +795,7 @@ def invalidate_jid_host_window_row_count_cache(jids: Any) -> None:
   Examples:
     >>> invalidate_jid_host_window_row_count_cache(None)  # doctest: +SKIP
   """
-  if not jids:
+  if not jids or ingest_fast:
     return
   client = _get_redis_py_client()
   if client is None:

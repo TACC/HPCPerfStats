@@ -51,8 +51,11 @@ Attributes:
   _LOG_TS_LEADING_RE: Attribute.
   _LOG_TS_PIPE_RE: Attribute.
   _MIB_BYTES: Attribute.
+  _MID_TIER_MIN_SAMPLES: Minimum ingest count before a tier drives decision pack.
   _MID_TIER_NAME: Mid size-tier name for overnight decision pack.
   _MID_TIER_PREF: Preference order for overnight decision mid-tier selection.
+  _DENSE_TIER_NAME: Horizon dense cohort for decision_next_dense.
+  _TIER_STDOUT_EXTRA_PARSE_TOKENS: Extra parse hold medians on stdout tier lines.
   _PARSE_DERIVED_HOLD_TOKENS: Derived parse tokens excluded from top-hold ranking.
   _PARSE_HOLD_TOKEN_NAMES: Parse-stage token names scraped from ingest lines.
   _PHASE_TOKEN_RES: Compiled named-field regexes for write/parse tokens.
@@ -75,7 +78,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from statistics import median
-from typing import Iterable, Iterator, Optional
+from typing import Any, Iterable, Iterator, Optional
 
 # Docker / podman compose log prefixes (RFC3339, optional nanoseconds).
 _RFC3339_TS = (
@@ -153,6 +156,15 @@ _PHASE_TOKEN_RES = {
     for name in (_WRITE_PHASE_TOKEN_NAMES + _PARSE_HOLD_TOKEN_NAMES)
 }
 _MID_TIER_NAME = "8mib_64mib"
+_DENSE_TIER_NAME = "8mib_64mib"
+_MID_TIER_MIN_SAMPLES = 12
+_TIER_STDOUT_EXTRA_PARSE_TOKENS = (
+    "collapse_gpu_s",
+    "delta_s",
+    "jid_invalidate_s",
+    "heap_release_s",
+    "write_setup_s",
+)
 _MIB_BYTES = 1024 * 1024
 _GIB_BYTES = 1024 * _MIB_BYTES
 # Horizon dense mid-files are ~13–17 MiB; split former lt_64mib so decision
@@ -446,6 +458,170 @@ def _decision_next(
     if mid_n == 0 and small_n == 0:
         return "insufficient_mid_tier_samples"
     return "parse_or_refill_investigate"
+
+
+def _select_mid_tier(metrics: LogMetrics) -> str:
+    """
+    Pick the overnight decision cohort with enough samples.
+
+    Prefer ``64mib_1gib`` only when it meets ``_MID_TIER_MIN_SAMPLES``; else
+    dense ``8mib_64mib`` when it meets the minimum (Horizon default).
+
+    Args:
+      metrics (LogMetrics): Parsed ingest metrics.
+
+    Returns:
+      str: Tier name from ``_SIZE_TIER_NAMES``.
+
+    Examples:
+      >>> _select_mid_tier(LogMetrics())  # doctest: +SKIP
+    """
+    counts = metrics.full_ingest_count_by_tier
+    if int(counts.get("64mib_1gib", 0)) >= _MID_TIER_MIN_SAMPLES:
+        return "64mib_1gib"
+    if int(counts.get("8mib_64mib", 0)) >= _MID_TIER_MIN_SAMPLES:
+        return "8mib_64mib"
+    for cand in _MID_TIER_PREF:
+        if int(counts.get(cand, 0)) > 0:
+            return cand
+    return _MID_TIER_NAME
+
+
+def _decision_next_parse_ranking(
+    *,
+    mid_top_parse: Optional[str],
+    parse_unaccounted_dominates: bool,
+) -> str:
+    """
+    Parse-only next-CODE token for dense Horizon cohort (E12).
+
+    Ignores write/postgres_frac gates so operators can rank parse cuts when
+    Postgres is ClientRead idle but ``postgres_s`` still grows on the clock.
+
+    Args:
+      mid_top_parse (Optional[str]): Largest named parse hold for the tier.
+      parse_unaccounted_dominates (bool): Residual dominates named holds.
+
+    Returns:
+      str: Decision token.
+
+    Examples:
+      >>> _decision_next_parse_ranking(
+      ...   mid_top_parse="jid_invalidate_s",
+      ...   parse_unaccounted_dominates=False,
+      ... )
+      'parse_hold_jid_invalidate_s'
+    """
+    if parse_unaccounted_dominates:
+        return "parse_unaccounted_investigate"
+    if mid_top_parse:
+        return "parse_hold_%s" % mid_top_parse
+    return "parse_or_refill_investigate"
+
+
+def _tier_decision_pack(
+    metrics: LogMetrics,
+    tier: str,
+    *,
+    clear_top_parse_when_write_heavy: bool,
+) -> dict[str, Any]:
+    """
+    Compute mid-tier decision inputs for one size tier.
+
+    Args:
+      metrics (LogMetrics): Parsed ingest metrics.
+      tier (str): Size tier name.
+      clear_top_parse_when_write_heavy (bool): When True, null top parse hold
+        if ``postgres_frac >= 0.35`` (legacy ``decision_next`` behavior).
+
+    Returns:
+      dict[str, Any]: Pack fields for outcomes and decision tokens.
+
+    Examples:
+      >>> _tier_decision_pack(LogMetrics(), "8mib_64mib", clear_top_parse_when_write_heavy=False)  # doctest: +SKIP
+    """
+    mid_elapsed = _median_or_none(
+        metrics.full_ingest_elapsed_by_tier.get(tier, []),
+    )
+    mid_postgres = _median_or_none(
+        metrics.full_ingest_postgres_by_tier.get(tier, []),
+    )
+    mid_postgres_frac = None
+    if mid_elapsed and mid_elapsed > 0 and mid_postgres is not None:
+        mid_postgres_frac = mid_postgres / mid_elapsed
+    mid_phases = metrics.full_ingest_phases_by_tier.get(tier, {})
+    mid_n = int(metrics.full_ingest_count_by_tier.get(tier, 0))
+    write_medians = {
+        tok: _median_or_none(mid_phases.get(tok, []))
+        for tok in _WRITE_PHASE_TOKEN_NAMES
+    }
+    parse_medians = {
+        tok: _median_or_none(mid_phases.get(tok, []))
+        for tok in _PARSE_HOLD_TOKEN_NAMES
+        if tok not in _PARSE_DERIVED_HOLD_TOKENS
+    }
+    write_sum = sum(v for v in write_medians.values() if v is not None)
+    exec_like = 0.0
+    for tok in ("db_execute_s", "copy_s", "conflict_insert_s"):
+        if write_medians.get(tok) is not None:
+            exec_like += float(write_medians[tok])
+    write_share = (
+        (write_sum / float(mid_elapsed)) if mid_elapsed and mid_elapsed > 0 else 0.0
+    )
+    exec_of_write = (exec_like / write_sum) if write_sum > 0 else 0.0
+    mid_write_dominates = bool(
+        (mid_postgres_frac is not None and mid_postgres_frac >= 0.35)
+        or (write_share >= 0.35 and exec_of_write >= 0.5),
+    )
+    mid_top_parse = None
+    top_val = -1.0
+    for tok, val in parse_medians.items():
+        if val is not None and val > top_val:
+            top_val = float(val)
+            mid_top_parse = tok
+    if (
+        clear_top_parse_when_write_heavy
+        and mid_top_parse is not None
+        and mid_postgres_frac is not None
+        and mid_postgres_frac >= 0.35
+    ):
+        mid_top_parse = None
+    unaccounted_med = _median_or_none(
+        mid_phases.get("parse_unaccounted_s", []),
+    )
+    if unaccounted_med is None:
+        parse_unaccounted_dominates = False
+    elif mid_top_parse is not None:
+        parse_unaccounted_dominates = float(unaccounted_med) >= float(top_val)
+    else:
+        parse_unaccounted_dominates = float(unaccounted_med) > 0.0
+    named_parse_sample_n = sum(
+        len(mid_phases.get(tok, []))
+        for tok in _PARSE_HOLD_TOKEN_NAMES
+        if tok not in _PARSE_DERIVED_HOLD_TOKENS
+    )
+    write_sample_n = sum(
+        len(mid_phases.get(tok, [])) for tok in _WRITE_PHASE_TOKEN_NAMES
+    )
+    telem_incomplete = bool(
+        (named_parse_sample_n > 0 and write_sample_n == 0)
+        or (
+            mid_n > 0
+            and named_parse_sample_n == 0
+            and write_sample_n == 0
+        ),
+    )
+    return {
+        "mid_elapsed": mid_elapsed,
+        "mid_postgres_frac": mid_postgres_frac,
+        "mid_top_parse": mid_top_parse,
+        "mid_write_dominates": mid_write_dominates,
+        "telem_incomplete": telem_incomplete,
+        "parse_unaccounted_dominates": parse_unaccounted_dominates,
+        "mid_n": mid_n,
+        "named_parse_sample_n": named_parse_sample_n,
+        "write_sample_n": write_sample_n,
+    }
 
 
 def _fmt_optional_median(samples: list[float]) -> str:
@@ -1292,83 +1468,34 @@ def build_outcomes(
                 phase_map.get(tok, []),
             )
 
-    # Overnight decision pack: prefer 64mib_1gib, else Horizon dense 8–64 MiB.
-    mid_tier = _MID_TIER_NAME
-    for cand in _MID_TIER_PREF:
-        if int(metrics.full_ingest_count_by_tier.get(cand, 0)) > 0:
-            mid_tier = cand
-            break
-    mid_elapsed = _median_or_none(
-        metrics.full_ingest_elapsed_by_tier.get(mid_tier, []),
+    mid_tier = _select_mid_tier(metrics)
+    pack = _tier_decision_pack(
+        metrics,
+        mid_tier,
+        clear_top_parse_when_write_heavy=True,
     )
-    mid_postgres = _median_or_none(
-        metrics.full_ingest_postgres_by_tier.get(mid_tier, []),
+    mid_postgres_frac = pack["mid_postgres_frac"]
+    mid_top_parse = pack["mid_top_parse"]
+    mid_write_dominates = pack["mid_write_dominates"]
+    telem_incomplete = pack["telem_incomplete"]
+    parse_unaccounted_dominates = pack["parse_unaccounted_dominates"]
+    mid_n = pack["mid_n"]
+    named_parse_sample_n = pack["named_parse_sample_n"]
+    write_sample_n = pack["write_sample_n"]
+    dense_tier = _DENSE_TIER_NAME
+    dense_n = int(metrics.full_ingest_count_by_tier.get(dense_tier, 0))
+    dense_pack = _tier_decision_pack(
+        metrics,
+        dense_tier,
+        clear_top_parse_when_write_heavy=False,
     )
-    mid_postgres_frac = None
-    if mid_elapsed and mid_elapsed > 0 and mid_postgres is not None:
-        mid_postgres_frac = mid_postgres / mid_elapsed
-    mid_phases = metrics.full_ingest_phases_by_tier.get(mid_tier, {})
-    mid_n = int(metrics.full_ingest_count_by_tier.get(mid_tier, 0))
-    write_medians = {
-        tok: _median_or_none(mid_phases.get(tok, []))
-        for tok in _WRITE_PHASE_TOKEN_NAMES
-    }
-    parse_medians = {
-        tok: _median_or_none(mid_phases.get(tok, []))
-        for tok in _PARSE_HOLD_TOKEN_NAMES
-        if tok not in _PARSE_DERIVED_HOLD_TOKENS
-    }
-    write_sum = sum(v for v in write_medians.values() if v is not None)
-    exec_like = 0.0
-    for tok in ("db_execute_s", "copy_s", "conflict_insert_s"):
-        if write_medians.get(tok) is not None:
-            exec_like += float(write_medians[tok])
-    write_share = (
-        (write_sum / float(mid_elapsed)) if mid_elapsed and mid_elapsed > 0 else 0.0
-    )
-    exec_of_write = (exec_like / write_sum) if write_sum > 0 else 0.0
-    mid_write_dominates = bool(
-        (mid_postgres_frac is not None and mid_postgres_frac >= 0.35)
-        or (write_share >= 0.35 and exec_of_write >= 0.5),
-    )
-    mid_top_parse = None
-    top_val = -1.0
-    for tok, val in parse_medians.items():
-        if val is not None and val > top_val:
-            top_val = float(val)
-            mid_top_parse = tok
-    if mid_top_parse is not None and (
-        mid_postgres_frac is not None and mid_postgres_frac >= 0.35
-    ):
-        # Prefer write branch when postgres frac is high.
-        mid_top_parse = None
-    unaccounted_med = _median_or_none(
-        mid_phases.get("parse_unaccounted_s", []),
-    )
-    if unaccounted_med is None:
-        parse_unaccounted_dominates = False
-    elif mid_top_parse is not None:
-        parse_unaccounted_dominates = float(unaccounted_med) >= float(top_val)
+    if dense_n > 0:
+        decision_next_dense = _decision_next_parse_ranking(
+            mid_top_parse=dense_pack["mid_top_parse"],
+            parse_unaccounted_dominates=dense_pack["parse_unaccounted_dominates"],
+        )
     else:
-        parse_unaccounted_dominates = float(unaccounted_med) > 0.0
-    named_parse_sample_n = sum(
-        len(mid_phases.get(tok, []))
-        for tok in _PARSE_HOLD_TOKEN_NAMES
-        if tok not in _PARSE_DERIVED_HOLD_TOKENS
-    )
-    write_sample_n = sum(
-        len(mid_phases.get(tok, [])) for tok in _WRITE_PHASE_TOKEN_NAMES
-    )
-    # Incomplete when mid-tier files exist but write phases missing while
-    # parse holds present, OR both parse and write phase samples absent.
-    telem_incomplete = bool(
-        (named_parse_sample_n > 0 and write_sample_n == 0)
-        or (
-            mid_n > 0
-            and named_parse_sample_n == 0
-            and write_sample_n == 0
-        ),
-    )
+        decision_next_dense = "insufficient_dense_tier_samples"
     if telem_incomplete:
         print(
             "WARN: mid-tier telem incomplete "
@@ -1403,6 +1530,13 @@ def build_outcomes(
     outcomes["mid_tier_parse_unaccounted_dominates"] = (
         "yes" if parse_unaccounted_dominates else "no"
     )
+    outcomes["dense_tier_name"] = dense_tier if dense_n > 0 else "N/A"
+    outcomes["dense_tier_top_parse_hold"] = (
+        dense_pack["mid_top_parse"] or "N/A"
+        if dense_n > 0
+        else "N/A"
+    )
+    outcomes["decision_next_dense"] = decision_next_dense
     outcomes["decision_next"] = _decision_next(
         ratio_ingest=ratio_ingest,
         window_minutes=window_minutes,
@@ -1527,6 +1661,9 @@ def format_stdout(outcomes: dict[str, str]) -> str:
         "mid_tier_write_exec_dominates",
         "mid_tier_telem_incomplete",
         "mid_tier_parse_unaccounted_dominates",
+        "dense_tier_name",
+        "dense_tier_top_parse_hold",
+        "decision_next_dense",
         "decision_next",
     )
     tier_keys: list[str] = []
@@ -1540,7 +1677,16 @@ def format_stdout(outcomes: dict[str, str]) -> str:
                 f"tier_{tier}_median_postgres_frac",
             )
         )
-        for tok in ("db_execute_s", "copy_s", "conflict_insert_s", "orm_materialize_s", "feed_s", "collapse_s", "build_df_s"):
+        for tok in (
+            "db_execute_s",
+            "copy_s",
+            "conflict_insert_s",
+            "orm_materialize_s",
+            "feed_s",
+            "collapse_s",
+            "build_df_s",
+            *_TIER_STDOUT_EXTRA_PARSE_TOKENS,
+        ):
             tier_keys.append(f"tier_{tier}_median_{tok}")
     return "\n".join(
         f"{key}={outcomes[key]}" for key in (*order, *tier_keys) if key in outcomes

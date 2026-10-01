@@ -518,6 +518,53 @@ def test_overnight_pack_prefers_dense_8mib_when_64mib_empty(mod):
     assert outcomes["tier_8mib_64mib_count"] == "12"
 
 
+def test_overnight_pack_prefers_dense_when_64mib_sparse(mod):
+    """Four 64mib files must not beat twelve dense 8–64 MiB samples."""
+    mib = 1024 * 1024
+    lines = [
+        _ts(0)
+        + "Messages consumed in the last 10 minutes: 100; messages waiting "
+        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+    ]
+    for i in range(4):
+        lines.append(
+            _ts(5 + i)
+            + (
+                "ingest file path=/arch/big/%d outcome=ingested elapsed_s=2000.0 "
+                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+                "postgres_s=1000.0 db_execute_s=100.0 copy_s=10.0 "
+                "orm_materialize_s=900.0 feed_s=50.0"
+                % (i, 128 * mib)
+            ),
+        )
+    for i in range(12):
+        lines.append(
+            _ts(30 + i * 5)
+            + (
+                "ingest file path=/arch/dense/%d outcome=ingested elapsed_s=800.0 "
+                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+                "postgres_s=200.0 db_execute_s=50.0 copy_s=5.0 "
+                "orm_materialize_s=30.0 feed_s=40.0 delta_s=120.0 "
+                "jid_invalidate_s=130.0 collapse_gpu_s=90.0 "
+                "parse_unaccounted_s=2.0"
+                % (i, 16 * mib)
+            ),
+        )
+    lines.append(
+        _ts(120)
+        + "Messages consumed in the last 10 minutes: 100; messages waiting "
+        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    )
+    lines.append(
+        _ts(120) + "Pending stats file list truncated pending=900 max=2000",
+    )
+    outcomes = mod.analyze_lines(lines)
+    assert outcomes["mid_tier_name"] == "8mib_64mib"
+    assert outcomes["decision_next_dense"] == "parse_hold_jid_invalidate_s"
+    assert outcomes["dense_tier_top_parse_hold"] == "jid_invalidate_s"
+
+
 def test_overnight_pack_decision_next_write_path(mod):
     """High mid-tier postgres_frac must yield write_timescale_path."""
     mib = 1024 * 1024

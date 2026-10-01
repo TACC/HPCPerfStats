@@ -2859,8 +2859,8 @@ def _invalidate_jid_caches(stats: Any, proc_stats: Any) -> None:
     if proc_stats is not None and not proc_stats.empty and "jid" in proc_stats.columns:
       jids.update(str(x) for x in proc_stats["jid"].dropna().unique())
     if jids:
-      invalidate_jid_derived_cache_keys(jids)
-      invalidate_job_plot_cache_keys_for_jids(jids)
+      invalidate_jid_derived_cache_keys(jids, ingest_fast=True)
+      invalidate_job_plot_cache_keys_for_jids(jids, ingest_fast=True)
   except Exception:
     pass
 
