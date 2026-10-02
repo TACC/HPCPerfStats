@@ -91,7 +91,7 @@ Remove **`sync_cgroup_admit_max_file_cache_mib`** from baked site INI; it is **n
 
 | Old key | New key | 128g production trial |
 | --- | --- | --- |
-| `sync_cgroup_admit_max_file_cache_mib=81920` (or any MiB) | **`sync_cgroup_admit_max_file_cache_cgroup_pct=60`** | **60** → effective cap **≈78643** MiB; **`0`** = gate off |
+| `sync_cgroup_admit_max_file_cache_mib=81920` (or any MiB) | **`sync_cgroup_admit_max_file_cache_cgroup_pct=60`** (shipped default **60**) | **60** → effective cap **≈78643** MiB on 128g; **`0`** = gate off |
 
 Effective MiB = ``process_memory.effective_cgroup_admit_max_file_cache_mib()`` (same formula as roof pct). Telem prints **`file_cache_cgroup_pct=`** plus effective **`file_cache_cfg_mib=`**. Tune **`file_cache_cgroup_pct`** only on file-cache-heavy hosts (not a separate MiB INI).
 

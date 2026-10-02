@@ -343,13 +343,13 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # sync_ingest_worker_memory_telemetry = no
 # sync_ingest_worker_memory_telemetry_every_n_chunks = 1
 
-# Exhaustive OOM attribution lines (cgroup/stat/RSS/inflight/headroom). Default no; enable for soak.
+# Exhaustive OOM attribution lines (cgroup/stat/RSS/inflight/headroom/file_cache). Default no.
 # sync_timedb_mem_telemetry = no
 # Require this many MiB free under memory.max before multi-file ingest admit / append fill (default 16384; 0=off).
 # Does not block alone-oversized ingest when inflight is empty. Soft roof unchanged.
 # sync_cgroup_admit_headroom_mib = 16384
-# Max cgroup memory.stat file as percent of memory.max before multi-file admit (0=off).
-# Effective MiB at runtime; e.g. 60 on 128g compose ≈78643 MiB. hpcperfstats02 trial: 60.
+# Max cgroup memory.stat file as percent of memory.max before multi-file admit (default 60).
+# Effective MiB at runtime; 60 on 128g ≈78643 MiB. Set 0 on small compose to disable gate.
 # sync_cgroup_admit_max_file_cache_cgroup_pct = 60
 # Recycle ingest pool when oldest inflight submit age reaches this many seconds (default 3600; 0=off).
 # Requeues collateral without attempt burn via the MainThread pause protocol (stuck_cohort_recycle telem).

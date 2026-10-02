@@ -304,7 +304,7 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_worker_memory_telemetry_every_n_chunks': '1',
     'sync_timedb_mem_telemetry': 'no',
     'sync_cgroup_admit_headroom_mib': '16384',
-    'sync_cgroup_admit_max_file_cache_cgroup_pct': '0',
+    'sync_cgroup_admit_max_file_cache_cgroup_pct': '60',
     'sync_ingest_stuck_inflight_recycle_s': '3600',
     'sync_ingest_telemetry': 'no',
     'sync_ingest_recycle_worker_on_failure': 'yes',
@@ -3684,8 +3684,9 @@ def get_sync_cgroup_admit_max_file_cache_cgroup_pct() -> Any:
   """
   Max cgroup ``memory.stat`` ``file`` as percent of ``memory.max`` before admit.
 
-  Default ``0``. ``0`` disables the file-cache gate (fail open). Effective MiB
-  at runtime: ``process_memory.effective_cgroup_admit_max_file_cache_mib()``.
+  Default ``60`` (≈78643 MiB effective on 128g ``memory.max``). ``0`` disables
+  the file-cache gate (fail open). Effective MiB at runtime:
+  ``process_memory.effective_cgroup_admit_max_file_cache_mib()``.
 
   Returns:
     Any: Integer 0–100.
