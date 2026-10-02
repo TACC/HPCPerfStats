@@ -391,21 +391,64 @@ def test_collapse_gpu_single_pass_local_retain():
     print("collapse_gpu_no_cut_no_retain")
 
 
-def test_delta_wave2_multi_dev_no_cut_documented():
-  """
-  Wave2 delta co-cut: profile only; do not ship without multi_dev retain.
+def _apply_counter_deltas_legacy_sort_groupby(stats_df: pd.DataFrame) -> pd.DataFrame:
+  """Pre-E13 sort + groupby diff reference for local retain gate only."""
+  frame = stats_df.copy()
+  for col in ("host", "type", "dev", "event"):
+    if col in frame.columns and not isinstance(
+        frame[col].dtype, pd.CategoricalDtype,
+    ):
+      frame[col] = frame[col].astype("category")
+  frame = frame.sort_values(by=["host", "type", "dev", "event", "time"])
+  frame["delta"] = frame.groupby(
+      ["host", "type", "dev", "event"], observed=True)["value"].diff()
+  wid = frame["wid"].to_numpy(dtype=np.float64, copy=False)
+  delta = frame["delta"].to_numpy(dtype=np.float64, copy=False)
+  wrap = (delta < 0) & np.isfinite(delta)
+  if wrap.any():
+    delta = delta.copy()
+    delta[wrap] = (2.0 ** wid[wrap]) + delta[wrap]
+  mult = frame["mult"].to_numpy(dtype=np.float64, copy=False)
+  frame["delta"] = delta * mult
+  frame.drop(columns=["wid", "mult"], inplace=True)
+  return frame
 
-  Marker documents the no-cut decision for campaign E11.
+
+def test_delta_e13_lexsort_multi_dev_retain():
+  """
+  E13: lexsort + vectorized diff must retain vs legacy sort/groupby on multi_dev.
   """
   df = _horizonish_frame(
-      n_hosts=24, n_times=8, n_cpu_events=12, n_gpu_events=0, multi_dev_cpu=True,
+      n_hosts=80, n_times=24, n_cpu_events=32, n_gpu_events=0, multi_dev_cpu=True,
   )
-  t0 = time.perf_counter()
-  out = _apply_counter_deltas(df)
-  elapsed = time.perf_counter() - t0
-  assert not out.empty
-  assert elapsed < 30.0
-  print("delta_wave2_no_cut_ok elapsed=%.6f" % elapsed)
+  keys = ["host", "type", "dev", "event", "time"]
+  n = 3
+  base_times = []
+  cand_times = []
+  for _ in range(n):
+    t0 = time.perf_counter()
+    _apply_counter_deltas_legacy_sort_groupby(df.copy())
+    base_times.append(time.perf_counter() - t0)
+    t0 = time.perf_counter()
+    _apply_counter_deltas(df.copy())
+    cand_times.append(time.perf_counter() - t0)
+  base_mean = sum(base_times) / n
+  cand_mean = sum(cand_times) / n
+  retain = cand_mean <= base_mean * 1.05
+  legacy = _apply_counter_deltas_legacy_sort_groupby(df.copy())
+  current = _apply_counter_deltas(df.copy())
+  legacy = legacy.sort_values(keys).reset_index(drop=True)
+  current = current.sort_values(keys).reset_index(drop=True)
+  pd.testing.assert_series_equal(
+      legacy["delta"], current["delta"], check_names=False,
+  )
+  print(
+      "delta_e13_retain=%s base_mean=%.6f cand_mean=%.6f"
+      % (str(retain).lower(), base_mean, cand_mean),
+  )
+  assert cand_mean < 60.0
+  assert retain
+  print("delta_wave2_retain_ok")
 
 
 def test_delta_collapse_hotpath_smoke_timing():

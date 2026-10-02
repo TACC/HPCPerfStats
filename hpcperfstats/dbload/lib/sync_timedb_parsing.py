@@ -2796,9 +2796,9 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
   """
   Apply counter diffs; optional cross-flush ``carry.raw`` continuity.
 
-  Carry paths must stay vectorized (groupby head/tail + array extract).
-  Object group keys are cast to ``category`` before sort/diff to cut
-  ``factorize_array`` cost on Horizon-sized frames.
+  Carry paths use group boundary masks after ``lexsort`` (not per-group
+  ``head``/``tail`` groupby). Object group keys are cast to ``category``
+  before reorder/diff to cut ``factorize_array`` cost on Horizon frames.
 
   Args:
     stats_df (Any): Stats df passed to this helper.
@@ -2815,12 +2815,44 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
         stats_df[col].dtype, pd.CategoricalDtype,
     ):
       stats_df[col] = stats_df[col].astype("category")
-  stats_df = stats_df.sort_values(by=_COUNTER_GROUP_COLS + ["time"])
-  stats_df["delta"] = stats_df.groupby(
-      _COUNTER_GROUP_COLS, observed=True)["value"].diff()
+  code_cols = [
+      stats_df[col].cat.codes.to_numpy(dtype=np.int64, copy=False)
+      for col in _COUNTER_GROUP_COLS
+  ]
+  sizes = tuple(int(c.max()) + 1 for c in code_cols)
+  times = stats_df["time"].to_numpy(dtype=np.float64, copy=False)
+  if int(np.prod(sizes, dtype=np.float64)) <= (2**63 - 1):
+    gid = np.ravel_multi_index(np.vstack(code_cols), sizes)
+    order = np.lexsort((times, gid))
+    stats_df = stats_df.iloc[order].reset_index(drop=True)
+    gid = gid[order]
+    n = len(gid)
+    values = stats_df["value"].to_numpy(dtype=np.float64, copy=False)
+    same = np.ones(n, dtype=bool)
+    if n > 1:
+      same[1:] = gid[1:] == gid[:-1]
+    delta = np.empty(n, dtype=np.float64)
+    delta[0] = np.nan
+    if n > 1:
+      delta[1:] = np.where(same[1:], values[1:] - values[:-1], np.nan)
+    stats_df["delta"] = delta
+    is_first = np.ones(n, dtype=bool)
+    if n > 1:
+      is_first[1:] = gid[1:] != gid[:-1]
+    is_last = np.ones(n, dtype=bool)
+    if n > 1:
+      is_last[:-1] = gid[:-1] != gid[1:]
+  else:
+    stats_df = stats_df.sort_values(by=_COUNTER_GROUP_COLS + ["time"])
+    stats_df["delta"] = stats_df.groupby(
+        _COUNTER_GROUP_COLS, observed=True)["value"].diff()
+    is_first = is_last = None
 
   if carry is not None and carry.raw:
-    first = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).head(1)
+    if is_first is not None:
+      first = stats_df.loc[is_first]
+    else:
+      first = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).head(1)
     if not first.empty:
       hosts = first["host"].astype(object).to_numpy()
       types = first["type"].astype(object).to_numpy()
@@ -2851,7 +2883,10 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
   stats_df["delta"] = delta * mult
 
   if carry is not None:
-    last = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).tail(1)
+    if is_last is not None:
+      last = stats_df.loc[is_last]
+    else:
+      last = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).tail(1)
     if not last.empty:
       hosts = last["host"].astype(object).to_numpy()
       types = last["type"].astype(object).to_numpy()
@@ -2860,14 +2895,14 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
       values = last["value"].to_numpy(dtype=np.float64, copy=False)
       wids = last["wid"].to_numpy(copy=False)
       mults = last["mult"].to_numpy(dtype=np.float64, copy=False)
-      times = last["time"].to_numpy(dtype=np.float64, copy=False)
+      times_last = last["time"].to_numpy(dtype=np.float64, copy=False)
       raw = carry.raw
       for i in range(len(last)):
         raw[(hosts[i], types[i], devs[i], events[i])] = (
             float(values[i]),
             int(wids[i]),
             float(mults[i]),
-            float(times[i]),
+            float(times_last[i]),
         )
 
   stats_df.drop(columns=["wid", "mult"], inplace=True)
