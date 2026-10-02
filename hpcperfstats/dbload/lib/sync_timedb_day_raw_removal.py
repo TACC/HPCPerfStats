@@ -24,39 +24,42 @@ import time
 from datetime import date
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-import hpcperfstats.dbload.lib.conf_parser as cfg
 from django.db import close_old_connections
 
+import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
-from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-    build_day_scoped_closed_raw_by_gz,
-    build_remaining_raw_for_daily_tar,
-    calendar_date_from_daily_tar_path,
-    classify_removable_raw_paths_for_daily_gz,
-    classify_removable_raw_paths_for_open_tar,
-    ensure_daily_tar_restored_for_append,
-    filter_remaining_raw_aligned_to_tar,
-    quarantine_dir_for_archive,
-    remaining_raw_by_gz_has_paths_on_disk,
-    remove_verified_uncompressed_daily_tars,
-    stats_file_is_active_segment,
-    stats_path_aligned_to_daily_tar,
-    validate_open_tar_for_raw_removal,
-    validate_post_seal_tar_zst_parity,
+from hpcperfstats.dbload.lib.file_locking import (
+  cleanup_orphan_fnctl_lock_sidecars,
+  try_file_write_lock,
 )
 from hpcperfstats.dbload.lib.print_utils import janitorial_logging
+from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
+from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+  build_day_scoped_closed_raw_by_gz,
+  build_remaining_raw_for_daily_tar,
+  calendar_date_from_daily_tar_path,
+  classify_removable_raw_paths_for_daily_gz,
+  classify_removable_raw_paths_for_open_tar,
+  ensure_daily_tar_restored_for_append,
+  filter_remaining_raw_aligned_to_tar,
+  quarantine_dir_for_archive,
+  remaining_raw_by_gz_has_paths_on_disk,
+  remove_verified_uncompressed_daily_tars,
+  stats_file_is_active_segment,
+  stats_path_aligned_to_daily_tar,
+  validate_open_tar_for_raw_removal,
+  validate_post_seal_tar_zst_parity,
+)
 from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
-    filter_paths_head_ingested,
+  filter_paths_head_ingested,
 )
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
-    load_persistence_document,
-    save_persistence_document,
+  load_persistence_document,
+  save_persistence_document,
 )
-from hpcperfstats.dbload.lib.file_locking import cleanup_orphan_fnctl_lock_sidecars, try_file_write_lock
-from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
-    SessionSingleFlightExecutor,
-    iter_bounded_thread_pool,
+  SessionSingleFlightExecutor,
+  iter_bounded_thread_pool,
 )
 
 MANIFEST_VERSION = 1
@@ -568,7 +571,9 @@ class _DayRawRemovalState:
     elif stage == VERIFY_STAGE_PRE_SEAL:
       if not self._only_waiting_on_ingest_blocks_completion():
         return False
-      from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
+      from hpcperfstats.dbload.lib.archive_compress import (
+        compressed_sibling_paths,
+      )
 
       zst_path, gz_path = compressed_sibling_paths(self.tar_path)
       if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
@@ -691,8 +696,20 @@ class _DayRawRemovalState:
       if blocking:
         return blocking
       return []
+    if self.verification_complete() or self.phase() == PHASE_DELETING:
+      seen: Set[str] = set()
+      paths: List[str] = []
+      for path in self._blocking_manifest_paths_on_disk():
+        if path not in seen:
+          seen.add(path)
+          paths.append(path)
+      for path in self._manifest_retryable_paths_on_disk():
+        if path not in seen:
+          seen.add(path)
+          paths.append(path)
+      return paths
     remaining = self._build_remaining_raw_for_daily_tar()
-    paths: List[str] = []
+    paths = []
     for raw_list in (remaining or {}).values():
       paths.extend(raw_list or [])
     return paths
@@ -810,6 +827,23 @@ class _DayRawRemovalState:
     Examples:
       >>> _DayRawRemovalState()._count_quarantine_accrual_paths_on_disk()
     """
+    if self.verification_complete() or self.phase() == PHASE_DELETING:
+      blocking = self._remaining_raw_paths_blocking_tar_drop()
+      skip_paths = set(self.get_quarantine_skip_paths() or ())
+      with self._lock:
+        entries = dict(self._manifest.get("entries", {}))
+      count = 0
+      for paths in (blocking or {}).values():
+        for path in paths or []:
+          if not os.path.isfile(path):
+            continue
+          if path in skip_paths:
+            count += 1
+            continue
+          entry = entries.get(path)
+          if entry is not None and self._entry_is_quarantine_terminal_skip(entry):
+            count += 1
+      return count
     remaining = self._build_remaining_raw_for_daily_tar()
     skip_paths = set(self.get_quarantine_skip_paths() or ())
     with self._lock:
@@ -899,7 +933,7 @@ class _DayRawRemovalState:
       if self._manifest.get("phase") != PHASE_DONE:
         self._manifest["phase"] = PHASE_DONE
         self._manifest["completed_at"] = time.time()
-        _manifest_snap = copy.deepcopy(self._manifest)
+      _manifest_snap = copy.deepcopy(self._manifest)
     _save_manifest(self._manifest_path, _manifest_snap)
     if self.log_fn:
       self.log_fn(
@@ -1940,6 +1974,95 @@ class _DayRawRemovalState:
         maintenance_snapshot=None,
     )
 
+  def _stats_path_candidates_for_tar_member(
+      self,
+      member_name: str,
+  ) -> List[str]:
+    """
+    Resolve a tar member name to on-disk stats path candidates.
+
+    Args:
+      member_name (str): Tar member basename (``get_tar_member_name`` form).
+
+    Returns:
+      List[str]: Existing file paths to try, longest-first.
+
+    Examples:
+      >>> _DayRawRemovalState()._stats_path_candidates_for_tar_member("x")
+    """
+    name = str(member_name or "").strip()
+    if not name:
+      return []
+    candidates: List[str] = []
+    if name.startswith("/"):
+      candidates.append(name)
+    else:
+      candidates.append(os.path.join("/", name))
+      candidates.append(name)
+    out: List[str] = []
+    seen: Set[str] = set()
+    for path in candidates:
+      if path in seen:
+        continue
+      seen.add(path)
+      if os.path.isfile(path):
+        out.append(path)
+    return out
+
+  def _pre_seal_raw_paths_for_classify(
+      self,
+      members: Dict[str, int],
+  ) -> List[str]:
+    """
+    Classify seed paths without day-wide ``collect_stats_files_in_range``.
+
+    Prefer manifest entries and tar-member path resolution; day-scoped
+    collect only when no manifest or member paths resolve.
+
+    Args:
+      members (Dict[str, int]): Open daily tar member map (name -> size).
+
+    Returns:
+      List[str]: Raw stats paths to classify this pre_seal pass.
+
+    Examples:
+      >>> _DayRawRemovalState()._pre_seal_raw_paths_for_classify({})  # doctest: +SKIP
+    """
+    seen: Set[str] = set()
+    out: List[str] = []
+
+    for path, entry in self._manifest_entries_on_disk():
+      if self._entry_is_verified_ghost_on_disk(entry):
+        continue
+      if self._entry_is_quarantine_terminal_skip(entry):
+        continue
+      if path and path not in seen:
+        seen.add(path)
+        out.append(path)
+    for path in self._blocking_manifest_paths_on_disk():
+      if path and path not in seen:
+        seen.add(path)
+        out.append(path)
+    if members:
+      for member_name in members:
+        for path in self._stats_path_candidates_for_tar_member(member_name):
+          if stats_path_aligned_to_daily_tar(
+              path,
+              self.tar_path,
+              tgz_archive_dir=self.tgz_archive_dir,
+          ):
+            if path and path not in seen:
+              seen.add(path)
+              out.append(path)
+    if out:
+      return out
+    for paths in (self._pre_seal_seed_remaining_by_gz() or {}).values():
+      for path in paths or []:
+        if path and path not in seen:
+          seen.add(path)
+          out.append(path)
+    return out
+
   def _pre_seal_verify_body(
     self,
     *,
@@ -2015,18 +2138,7 @@ class _DayRawRemovalState:
     if isinstance(cached_filtered, list) and cached_filtered:
       filtered = [str(p) for p in cached_filtered]
     else:
-      remaining = self._pre_seal_seed_remaining_by_gz()
-      raw_paths: List[str] = []
-      seen_raw: Set[str] = set()
-      for paths in (remaining or {}).values():
-        for path in paths or []:
-          if path and path not in seen_raw:
-            seen_raw.add(path)
-            raw_paths.append(path)
-      for path in self._blocking_manifest_paths_on_disk():
-        if path not in seen_raw:
-          seen_raw.add(path)
-          raw_paths.append(path)
+      raw_paths = self._pre_seal_raw_paths_for_classify(members)
       skip_paths = set(self.get_quarantine_skip_paths() or ())
       filtered: List[str] = []
       for path in raw_paths:

@@ -2331,7 +2331,75 @@ def test_pre_seal_first_seed_uses_day_scoped_not_full_remaining(
       lambda *_a, **_k: pytest.fail("pre_seal first seed must not full-scan"),
   )
   assert coord.run_pre_seal_verify_sync(tar_path) is True
-  assert day_scoped_calls == [1]
+  assert day_scoped_calls == []
+
+
+def test_pre_seal_many_tar_members_no_day_scoped_collect(tmp_path, monkeypatch):
+  """Oct-2 3G: large open_tar_members must not run day-scoped collect on first seed."""
+  day = datetime(2026, 8, 24)
+  host = tmp_path / "n.cluster.integration.test"
+  host.mkdir(parents=True, exist_ok=True)
+  seg_paths = []
+  for hour in range(8):
+    ts = int(datetime(day.year, day.month, day.day, hour, 0, 0).timestamp())
+    seg = host / str(ts)
+    seg.write_text("%d job1 cn001\nline\n" % ts)
+    os.utime(seg, (ts, ts))
+    seg_paths.append(str(seg))
+  tgz_dir = tmp_path / "daily"
+  tgz_dir.mkdir()
+  tar_path = str(tgz_dir / "2026-08-24.tar")
+  open(tar_path, "wb").close()
+  members = {get_tar_member_name(p): os.path.getsize(p) for p in seg_paths}
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: False)
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.ensure_daily_tar_restored_for_append",
+      lambda *_a, **_k: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.validate_open_tar_for_raw_removal",
+      lambda *_a, **_k: (True, dict(members)),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.collect_stats_files_in_range",
+      lambda *_a, **_k: pytest.fail("3G must not day-wide collect on first pre_seal seed"),
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
+      lambda *_a, **_k: pytest.fail("3G must not day_scoped when members resolve"),
+  )
+
+  def _classify(_tar, paths, **_k):
+    for path in paths:
+      yield path, "verified", "ok"
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.classify_removable_raw_paths_for_open_tar",
+      _classify,
+  )
+  coord = _make_coordinator(tmp_path)
+  assert coord.run_pre_seal_verify_sync(tar_path) is True
+
+
+def test_closed_raw_on_disk_manifest_fast_when_verifying_complete(tmp_path, monkeypatch):
+  """3H: delete/handoff probes must not full-scan when verification_complete."""
+  day = datetime(2026, 8, 6)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(str(seg), zst, "verified", "verified")
+  with state._lock:
+    state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["verified_count"] = 1
+    _save_manifest(state._manifest_path, state._manifest)
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+      lambda *_a, **_k: pytest.fail("verification_complete closed_raw must be manifest-fast"),
+  )
+  assert state._closed_raw_paths_on_disk() == [str(seg)]
 
 
 def test_pre_seal_classify_paths_cache_skips_second_find(tmp_path, monkeypatch):
