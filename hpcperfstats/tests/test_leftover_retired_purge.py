@@ -80,6 +80,9 @@ def test_always_zero_wall_timeout_getters_gone():
   assert "sync_pool_stall_abort_after_timeouts" not in registry_opts
   assert "sync_ingest_per_file_timeout_s" not in registry_opts
   assert "sync_ingest_per_file_timeout_s_per_mib" not in registry_opts
+  assert "sync_cgroup_admit_max_file_cache_mib" not in registry_opts
+  assert not hasattr(cfg, "get_sync_cgroup_admit_max_file_cache_mib")
+  assert hasattr(cfg, "get_sync_cgroup_admit_max_file_cache_cgroup_pct")
   assert hasattr(cfg, "get_sync_ingest_per_file_timeout_max_s")
   assert hasattr(cfg, "get_sync_ingest_stall_idle_s")
 

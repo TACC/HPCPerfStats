@@ -475,7 +475,7 @@ def test_fill_cgroup_file_cache_blocks_when_over_cap(monkeypatch, tmp_path):
       lambda: 0,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_cgroup_admit_max_file_cache_mib",
+      "hpcperfstats.dbload.lib.process_memory.effective_cgroup_admit_max_file_cache_mib",
       lambda: 81920,
   )
   monkeypatch.setattr(qo, "cgroup_admit_headroom_ok", lambda *_a, **_k: True)
@@ -509,7 +509,7 @@ def test_fill_append_returns_zero_when_file_cache_blocked(monkeypatch):
       lambda: 0,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_cgroup_admit_max_file_cache_mib",
+      "hpcperfstats.dbload.lib.process_memory.effective_cgroup_admit_max_file_cache_mib",
       lambda: 81920,
   )
   monkeypatch.setattr(
@@ -555,7 +555,7 @@ def test_alone_oversized_still_admits_when_file_cache_blocked(monkeypatch, tmp_p
       lambda: 16384,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_cgroup_admit_max_file_cache_mib",
+      "hpcperfstats.dbload.lib.process_memory.effective_cgroup_admit_max_file_cache_mib",
       lambda: 81920,
   )
   monkeypatch.setattr(qo, "cgroup_admit_headroom_ok", lambda *_a, **_k: True)

@@ -85,6 +85,16 @@ Remove **`sync_process_tree_rss_limit_mb`** and **`sync_process_tree_rss_exit_mb
 
 Effective MiB = ``(memory.max × pct // 100) // (1024×1024)`` at runtime. **`limit_cgroup_pct=0`** disables defer and the raw-byte admit gate (same as old **`limit_mb=0`**). Recompute pct on non-128g hosts: ``round(100 × desired_roof_mib / memory_max_mib)``. Telem prints **`rss_limit_cgroup_pct=`** plus effective **`rss_limit_mib=`**. See **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § OOM.
 
+### File-cache admit: absolute MiB → cgroup percentage (breaking)
+
+Remove **`sync_cgroup_admit_max_file_cache_mib`** from baked site INI; it is **no longer read**. Add under **`[PIPELINE]`**:
+
+| Old key | New key | 128g production trial |
+| --- | --- | --- |
+| `sync_cgroup_admit_max_file_cache_mib=81920` (or any MiB) | **`sync_cgroup_admit_max_file_cache_cgroup_pct=60`** | **60** → effective cap **≈78643** MiB; **`0`** = gate off |
+
+Effective MiB = ``process_memory.effective_cgroup_admit_max_file_cache_mib()`` (same formula as roof pct). Telem prints **`file_cache_cgroup_pct=`** plus effective **`file_cache_cfg_mib=`**. Tune **`file_cache_cgroup_pct`** only on file-cache-heavy hosts (not a separate MiB INI).
+
 ---
 
 ## Cluster syslog volume layout

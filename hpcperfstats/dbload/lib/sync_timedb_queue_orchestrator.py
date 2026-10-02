@@ -85,6 +85,7 @@ from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.process_memory import (
   cgroup_admit_file_cache_ok,
   cgroup_admit_headroom_ok,
+  effective_cgroup_admit_max_file_cache_mib,
 )
 from hpcperfstats.dbload.lib.process_title import (
   set_daemon_thread_title,
@@ -3692,7 +3693,7 @@ def _fill_ingest_band(
           if skipped >= budget:
             break
           continue
-        file_cache_cap_mib = int(cfg.get_sync_cgroup_admit_max_file_cache_mib())
+        file_cache_cap_mib = int(effective_cgroup_admit_max_file_cache_mib())
         if (
             not alone_oversized
             and not cgroup_admit_file_cache_ok(file_cache_cap_mib)
@@ -4437,7 +4438,7 @@ def _fill_append_slots(
   if not cgroup_admit_headroom_ok(cfg.get_sync_cgroup_admit_headroom_mib()):
     _emit_mem_telem_event("skip_cgroup_headroom", None)
     return 0
-  if not cgroup_admit_file_cache_ok(cfg.get_sync_cgroup_admit_max_file_cache_mib()):
+  if not cgroup_admit_file_cache_ok(effective_cgroup_admit_max_file_cache_mib()):
     _emit_mem_telem_event("skip_file_cache_pressure", None)
     return 0
   while len(inflight) < cap:

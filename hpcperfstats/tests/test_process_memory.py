@@ -89,6 +89,32 @@ def test_effective_limit_mib_uses_ini_pct(monkeypatch):
   assert pm.effective_process_tree_rss_limit_mib() == 52428
 
 
+def test_effective_file_cache_mib_from_pct(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_cgroup_admit_max_file_cache_cgroup_pct",
+      lambda: 60,
+  )
+  monkeypatch.setattr(
+      pm,
+      "read_cgroup_memory_max_bytes",
+      lambda: 128 * 1024 ** 3,
+  )
+  assert pm.effective_cgroup_admit_max_file_cache_mib() == 78643
+
+
+def test_effective_file_cache_mib_zero_when_pct_off(monkeypatch):
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_cgroup_admit_max_file_cache_cgroup_pct",
+      lambda: 0,
+  )
+  monkeypatch.setattr(
+      pm,
+      "read_cgroup_memory_max_bytes",
+      lambda: 128 * 1024 ** 3,
+  )
+  assert pm.effective_cgroup_admit_max_file_cache_mib() == 0
+
+
 def test_read_cgroup_memory_stat_parses(monkeypatch, tmp_path):
   stat = tmp_path / "memory.stat"
   stat.write_text("anon 100\nfile 200\npgfault 3\n", encoding="utf-8")
