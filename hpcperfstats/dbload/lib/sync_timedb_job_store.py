@@ -1137,7 +1137,9 @@ def _tie_break_from_identity(identity: str) -> int:
     >>> 0 <= _tie_break_from_identity("x") < SCORE_STRIDE
     True
   """
-  digest = hashlib.sha1(str(identity).encode("utf-8")).digest()
+  digest = hashlib.sha1(  # noqa: S324 — non-crypto score tie-break only
+    str(identity).encode("utf-8")
+  ).digest()
   return int.from_bytes(digest[:4], "big") % SCORE_STRIDE
 
 

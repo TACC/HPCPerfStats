@@ -4187,9 +4187,11 @@ def collect_sync_timedb_non_default_settings() -> Any:
   non_default = []
   for name, getter in _iter_sync_timedb_config_audit_getters():
     current = getter()
-    with _cleared_sync_timedb_config_audit_env():
-      with _cfg_audit_context(baseline, _SYNC_TIMEDB_CONFIG_BASELINE_PATH):
-        default = getter()
+    with (
+      _cleared_sync_timedb_config_audit_env(),
+      _cfg_audit_context(baseline, _SYNC_TIMEDB_CONFIG_BASELINE_PATH),
+    ):
+      default = getter()
     if not _audit_values_equal(current, default):
       non_default.append((name, current))
   non_default.sort(key=lambda item: item[0])

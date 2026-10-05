@@ -307,10 +307,11 @@ def check_for_tokens(request: Any) -> Any:
           return False
         access_token = session.get("access_token")
       if _token_validation_due(session, now_epoch):
-        if not _validate_access_token(access_token):
-          if not _refresh_access_token(session, now_epoch):
-            session.flush()
-            return False
+        if not _validate_access_token(
+          access_token
+        ) and not _refresh_access_token(session, now_epoch):
+          session.flush()
+          return False
         session["oauth_last_validated_epoch"] = now_epoch
       session["oauth_last_seen_epoch"] = now_epoch
       return True

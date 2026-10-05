@@ -3209,7 +3209,7 @@ class jid_table:
         if "event" in df.columns:
           df = df.copy()
           df["event"] = df["event"].map(
-            lambda e: canonical_event_name_for_type(typ, str(e))
+            lambda e, _typ=typ: canonical_event_name_for_type(_typ, str(e))
           )
           df = (
             df.groupby("event", as_index=False)["delta_sum"]
@@ -3443,7 +3443,7 @@ class jid_table:
         if "event" in df.columns:
           df = df.copy()
           df["event"] = df["event"].map(
-            lambda e: canonical_event_name_for_type(typ, str(e))
+            lambda e, _typ=typ: canonical_event_name_for_type(_typ, str(e))
           )
           df = (
             df.groupby("event", as_index=False)["delta_sum"]

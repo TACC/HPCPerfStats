@@ -951,7 +951,10 @@ def _decompress_stdout(
     input_path (str | None): One of ``str``, ``None``.
 
   Yields:
-    Iterator[BinaryIO]: Iterator[BinaryIO] produced by this call.
+    Iterator[BinaryIO]: Decompressed stdout stream.
+
+  Raises:
+    RuntimeError: When the child stdout pipe is missing.
 
   Examples:
     >>> _decompress_stdout([], True, None)  # doctest: +SKIP
@@ -964,7 +967,8 @@ def _decompress_stdout(
     stderr=subprocess.DEVNULL,
     apply_priority_wrap=apply_priority_wrap,
   )
-  assert proc.stdout is not None
+  if proc.stdout is None:
+    raise RuntimeError("subprocess stdout pipe missing")
   try:
     yield proc.stdout
   finally:

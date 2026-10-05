@@ -625,10 +625,104 @@ def _self_attr_name(target: ast.AST) -> str | None:
   Examples:
     >>> _self_attr_name(None)  # doctest: +SKIP
   """
-  if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
-    if target.value.id in ("self", "cls"):
-      return target.attr
+  if (
+    isinstance(target, ast.Attribute)
+    and isinstance(target.value, ast.Name)
+    and target.value.id in ("self", "cls")
+  ):
+    return target.attr
   return None
+
+
+def _collect_init_method_instance_attrs(
+  method: ast.FunctionDef | ast.AsyncFunctionDef,
+  names: set[str],
+) -> None:
+  """
+  Walk one ``__init__``/``__new__`` body and add ``self``/``cls`` attr names.
+
+  Args:
+    method (ast.FunctionDef | ast.AsyncFunctionDef): Constructor method node.
+    names (set[str]): Mutable name accumulator.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _collect_init_method_instance_attrs(None, set())  # doctest: +SKIP
+  """
+
+  class _AttrWalk(ast.NodeVisitor):
+    """Collect ``self``/``cls`` attribute names assigned in one constructor."""
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+      """
+      Descend only through the bound constructor ``FunctionDef``.
+
+      Args:
+        node (ast.FunctionDef): AST node.
+
+      Returns:
+        None
+
+      Examples:
+        >>> _AttrWalk().visit_FunctionDef(None)  # doctest: +SKIP
+      """
+      if node is method:
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+      """
+      Descend only through the bound constructor ``AsyncFunctionDef``.
+
+      Args:
+        node (ast.AsyncFunctionDef): AST node.
+
+      Returns:
+        None
+
+      Examples:
+        >>> _AttrWalk().visit_AsyncFunctionDef(None)  # doctest: +SKIP
+      """
+      if node is method:
+        self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+      """
+      Record ``self.attr`` / ``cls.attr`` assignment targets.
+
+      Args:
+        node (ast.Assign): AST node.
+
+      Returns:
+        None
+
+      Examples:
+        >>> _AttrWalk().visit_Assign(None)  # doctest: +SKIP
+      """
+      for t in node.targets:
+        attr = _self_attr_name(t)
+        if attr:
+          names.add(attr)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+      """
+      Record annotated ``self.attr`` / ``cls.attr`` assignment targets.
+
+      Args:
+        node (ast.AnnAssign): AST node.
+
+      Returns:
+        None
+
+      Examples:
+        >>> _AttrWalk().visit_AnnAssign(None)  # doctest: +SKIP
+      """
+      attr = _self_attr_name(node.target)
+      if attr:
+        names.add(attr)
+
+  _AttrWalk().visit(method)
 
 
 def collect_class_instance_attrs(cls: ast.ClassDef) -> list[str]:
@@ -653,85 +747,7 @@ def collect_class_instance_attrs(cls: ast.ClassDef) -> list[str]:
     if item.name not in ("__init__", "__new__"):
       continue
 
-    class _AttrWalk(ast.NodeVisitor):
-      """
-      Internal helper to handle AttrWalk.
-
-      Subclasses ``NodeVisitor``, extending that type with this class's fields
-      and behavior.
-
-      Subclasses ``NodeVisitor``, extending that type with this class's fields
-      and behavior.
-      """
-
-      def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        """
-        Visit a ``FunctionDef`` node while walking the AST.
-
-        Args:
-          node (ast.FunctionDef): Node.
-
-        Returns:
-          None
-
-        Examples:
-          >>> _AttrWalk().visit_FunctionDef(None)  # doctest: +SKIP
-        """
-        if node is item:
-          self.generic_visit(node)
-
-      def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        """
-        Visit a ``AsyncFunctionDef`` node while walking the AST.
-
-        Args:
-          node (ast.AsyncFunctionDef): Node.
-
-        Returns:
-          None
-
-        Examples:
-          >>> _AttrWalk().visit_AsyncFunctionDef(None)  # doctest: +SKIP
-        """
-        if node is item:
-          self.generic_visit(node)
-
-      def visit_Assign(self, node: ast.Assign) -> None:
-        """
-        Visit a ``Assign`` node while walking the AST.
-
-        Args:
-          node (ast.Assign): Node.
-
-        Returns:
-          None
-
-        Examples:
-          >>> _AttrWalk().visit_Assign(None)  # doctest: +SKIP
-        """
-        for t in node.targets:
-          attr = _self_attr_name(t)
-          if attr:
-            names.add(attr)
-
-      def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        """
-        Visit a ``AnnAssign`` node while walking the AST.
-
-        Args:
-          node (ast.AnnAssign): Node.
-
-        Returns:
-          None
-
-        Examples:
-          >>> _AttrWalk().visit_AnnAssign(None)  # doctest: +SKIP
-        """
-        attr = _self_attr_name(node.target)
-        if attr:
-          names.add(attr)
-
-    _AttrWalk().visit(item)
+    _collect_init_method_instance_attrs(item, names)
   return sorted(names)
 
 

@@ -6300,7 +6300,7 @@ def _run_gnu_tvf_file_members(
   tar_path: str,
 ) -> tuple[list[tuple[str, int]], int, str]:
   """
-  Run ``tar tvf`` and parse every file-member line (does not raise).
+  Run ``tar tvf`` and parse every file-member line.
 
   Args:
     tar_path (str): Path to an uncompressed daily ``.tar``.
@@ -6308,6 +6308,9 @@ def _run_gnu_tvf_file_members(
   Returns:
     tuple[list[tuple[str, int]], int, str]: Occurrences ``(name, size)`` in
     archive order, process exit code, and stderr text.
+
+  Raises:
+    RuntimeError: When the child stdout pipe is missing.
 
   Examples:
     >>> _run_gnu_tvf_file_members("/missing.tar")  # doctest: +SKIP
@@ -6323,7 +6326,8 @@ def _run_gnu_tvf_file_members(
   )
   occurrences: list[tuple[str, int]] = []
   try:
-    assert proc.stdout is not None
+    if proc.stdout is None:
+      raise RuntimeError("subprocess stdout pipe missing")
     for raw_line in proc.stdout:
       parsed = _parse_tar_tvf_size_and_name(raw_line)
       if parsed is None:

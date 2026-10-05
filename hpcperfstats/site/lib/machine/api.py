@@ -345,11 +345,9 @@ def _collect_future_results_with_deadline(
     for future in as_completed(future_to_key, timeout=max_wait_seconds):
       key = future_to_key[future]
       remaining_keys.discard(key)
-      try:
-        results_by_key[key] = future.result()
-      except Exception:
+      with suppress(Exception):
         # Best-effort: if a task fails, job_detail should still render.
-        pass
+        results_by_key[key] = future.result()
   except FuturesTimeoutError:
     # Deadline exceeded; we'll return partial results for completed tasks.
     pass
@@ -1948,14 +1946,15 @@ def _job_table_host_fqdns_last_7d() -> list[str]:
   hosts: list[str] = []
   seen: set[str] = set()
   try:
-    with _pg_session_statement_timeout_for_admin_host_stats_query():
-      with connection.cursor() as cursor:
-        cursor.execute(
-          "SELECT DISTINCT unnest(host_list) "
-          "FROM job_data WHERE end_time >= %s",
-          [cutoff],
-        )
-        rows = cursor.fetchall()
+    with (
+      _pg_session_statement_timeout_for_admin_host_stats_query(),
+      connection.cursor() as cursor,
+    ):
+      cursor.execute(
+        "SELECT DISTINCT unnest(host_list) FROM job_data WHERE end_time >= %s",
+        [cutoff],
+      )
+      rows = cursor.fetchall()
     for row in rows:
       raw = row[0] if row else None
       fqdn = str(_as_host_data_fqdn(raw) or "").strip()

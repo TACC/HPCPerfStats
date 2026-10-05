@@ -53,7 +53,8 @@ if [[ -z "${got}" ]]; then
   exit 1
 fi
 
-if ! printf '%s\n%s\n' "${min}" "${got}" | sort -C -V; then
+# BusyBox sort (Alpine) has -c -V but not GNU -C; compare via sort -V only.
+if [[ "$(printf '%s\n%s\n' "${min}" "${got}" | sort -V | head -n1)" != "${min}" ]]; then
   echo "assert_gcc_min_version: need gcc >= ${min}, got ${got}" >&2
   exit 1
 fi

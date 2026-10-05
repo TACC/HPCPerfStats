@@ -1466,6 +1466,33 @@ def populate_archive_members(
   store = require_process_archive_members_store()
   started = time.monotonic()
   max_seconds = _populate_max_seconds()
+  running_max: dict[str, int] = {}
+  saw_duplicates = False
+  seen_in_stream: set[str] = set()
+
+  def _on_member(name: str, size: int) -> None:
+    """
+    Collect one scanned member size for the current populate attempt.
+
+    Args:
+      name (str): Member name.
+      size (int): Member size.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _on_member("a", 1)  # doctest: +SKIP
+    """
+    nonlocal saw_duplicates
+    size_i = int(size)
+    if name in seen_in_stream:
+      saw_duplicates = True
+    seen_in_stream.add(name)
+    prev = running_max.get(name)
+    if prev is None or size_i > prev:
+      running_max[name] = size_i
+
   while True:
     if max_seconds > 0 and (time.monotonic() - started) >= max_seconds:
       raise ArchiveMembersPopulateStalledError(
@@ -1506,32 +1533,9 @@ def populate_archive_members(
         source_decision.get("gz_path", ""),
         source_decision.get("sealed_path") or "",
       )
-    running_max: dict[str, int] = {}
+    running_max.clear()
     saw_duplicates = False
-    seen_in_stream: set[str] = set()
-
-    def _on_member(name: str, size: int) -> None:
-      """
-      Collect one scanned member size.
-
-      Args:
-        name (str): Member name.
-        size (int): Member size.
-
-      Returns:
-        None
-
-      Examples:
-        >>> _on_member("a", 1)
-      """
-      nonlocal saw_duplicates
-      size_i = int(size)
-      if name in seen_in_stream:
-        saw_duplicates = True
-      seen_in_stream.add(name)
-      prev = running_max.get(name)
-      if prev is None or size_i > prev:
-        running_max[name] = size_i
+    seen_in_stream.clear()
 
     populate_failed = False
     try:

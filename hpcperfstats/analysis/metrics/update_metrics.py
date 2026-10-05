@@ -427,6 +427,29 @@ def _bump_producer_progress_clock(
   )
 
 
+def _scheduler_record_deferred_hit(
+  hits: list[tuple[Any, Any]],
+  jid: Any,
+  candidate: Any | None = None,
+) -> None:
+  """
+  Append one deferred-readiness hit for scheduler probe accounting.
+
+  Args:
+    hits (list[tuple[Any, Any]]): Mutable hit list for this probe iteration.
+    jid (Any): Job id.
+    candidate (Any | None): Readiness candidate, if any.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _scheduler_record_deferred_hit([], 1)  # doctest: +SKIP
+  """
+  rt = getattr(candidate, "runtime_s", None) if candidate is not None else None
+  hits.append((jid, rt))
+
+
 def _job_window_runtime_seconds(start_time: Any, end_time: Any) -> Any:
   """
   Return job accounting-window length in seconds, or None if not computable.
@@ -1056,7 +1079,7 @@ def _drain_prewarm_imap(
           f"prewarm imap stall: no completed jids for {stalled_for:.1f}s "
           f"(tasks={total} completed={done})",
           partial_results=list(results),
-        )
+        ) from None
       now = time.monotonic()
       if now - last_heartbeat_log_at >= COMPUTE_BATCH_HEARTBEAT_LOG_INTERVAL_S:
         last_heartbeat_log_at = now
@@ -5300,28 +5323,10 @@ def _start_readiness_producer(
           prev_errors = stats["readiness_error_chunks"]
           probe_cap = readiness_probe_target["value"]
         local_ready = deque()
-        deferred_hits = []
-
-        def _defer_hit(jid: Any, candidate: Any | None = None) -> None:
-          """
-          Internal helper to handle defer hit.
-
-          Args:
-            jid (Any): Jid passed to this helper.
-            candidate (Any | None): One of ``Any``, ``None``.
-
-          Returns:
-            None
-
-          Examples:
-            >>> _defer_hit(None, None)  # doctest: +SKIP
-          """
-          rt = (
-            getattr(candidate, "runtime_s", None)
-            if candidate is not None
-            else None
-          )
-          deferred_hits.append((jid, rt))
+        deferred_hits: list[tuple[Any, Any]] = []
+        defer_cb = functools.partial(
+          _scheduler_record_deferred_hit, deferred_hits
+        )
 
         now = time.monotonic()
         deferred_due = [
@@ -5383,7 +5388,7 @@ def _start_readiness_producer(
               strict_check_cooldown_until=strict_check_cooldown_until,
               rr_cursor={"idx": 0},
               scheduler_shared_lock=scheduler_shared_lock,
-              on_not_ready_jid=_defer_hit,
+              on_not_ready_jid=defer_cb,
               on_candidate_jid=_remember_candidate,
             )
           except DatabaseUnavailableExit:
@@ -5433,7 +5438,9 @@ def _start_readiness_producer(
             strict_check_cooldown_until=strict_check_cooldown_until,
             rr_cursor=rr_cursor,
             scheduler_shared_lock=scheduler_shared_lock,
-            on_not_ready_jid=_defer_hit,
+            on_not_ready_jid=functools.partial(
+              _scheduler_record_deferred_hit, deferred_hits
+            ),
             on_candidate_jid=_remember_candidate,
           )
         except DatabaseUnavailableExit:
@@ -6811,6 +6818,7 @@ def update_metrics_for_dates(
       telemetry_detail_gpu_metrics_reused = 0
       telemetry_detail_fsio_fallback_queries = 0
       telemetry_detail_gpu_fallback_queries = 0
+      batch_supplement_dequeued = [0]
       try:
         while not shutdown_requested[0]:
           if _maybe_trigger_consumer_stall_exit(
@@ -6925,7 +6933,7 @@ def update_metrics_for_dates(
             scheduler_shared_lock,
           )
           compute_batch_heartbeat.begin(len(job_refs))
-          batch_dequeued = [len(job_refs)]
+          batch_supplement_dequeued[0] = 0
 
           def _on_supplements_taken(n: int) -> None:
             """
@@ -6945,7 +6953,7 @@ def update_metrics_for_dates(
             with scheduler_shared_lock:
               stats["ready_dequeued_total"] += int(n)
               stats["inflight_jids"] += int(n)
-              batch_dequeued[0] += int(n)
+              batch_supplement_dequeued[0] += int(n)
 
           with phase_timer.phase("metrics_compute_s"):
             succeeded_jids = []
@@ -7065,7 +7073,8 @@ def update_metrics_for_dates(
             stats["parent_persist_failures_total"] += parent_persist_failures
             stats["inflight_jids"] = max(
               0,
-              stats["inflight_jids"] - int(batch_dequeued[0]),
+              stats["inflight_jids"]
+              - (len(job_refs) + int(batch_supplement_dequeued[0])),
             )
             proc_total = stats["processed"]
             fail_total = stats["failed"]

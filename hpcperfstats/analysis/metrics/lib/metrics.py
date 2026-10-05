@@ -1719,7 +1719,7 @@ def _drain_metrics_imap(
           pool_reset_confirmed=False,
           partial_outcomes=list(outcomes),
           pending_jobs=pending_jobs,
-        )
+        ) from None
       now = time.monotonic()
       if now - last_heartbeat_log_at >= 60.0:
         last_heartbeat_log_at = now
@@ -2537,7 +2537,7 @@ class Metrics:
         pool_reset_confirmed=reset_confirmed,
         partial_outcomes=exc.partial_outcomes,
         pending_jobs=exc.pending_jobs,
-      )
+      ) from exc
     except Exception as exc:
       _log_exception_details("Metrics.run failure", exc)
       raise

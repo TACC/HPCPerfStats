@@ -2105,12 +2105,30 @@ _ingest_postgres_s: contextvars.ContextVar[float] = contextvars.ContextVar(
   "ingest_postgres_s",
   default=0.0,
 )
-_ingest_write_phases: contextvars.ContextVar[dict[str, float]] = (
+_ingest_write_phases: contextvars.ContextVar[dict[str, float] | None] = (
   contextvars.ContextVar(
     "ingest_write_phases",
-    default={},
+    default=None,
   )
 )
+
+
+def _ingest_write_phases_acc() -> dict[str, float]:
+  """
+  Return per-context write-phase accumulator, lazily initialized when enabled.
+
+  Returns:
+    dict[str, float]: Mutable write-phase seconds map for the current context.
+
+  Examples:
+    >>> isinstance(_ingest_write_phases_acc(), dict)
+    True
+  """
+  cur = _ingest_write_phases.get()
+  if cur is None:
+    cur = dict.fromkeys(INGEST_WRITE_LOG_KEYS, 0.0)
+    _ingest_write_phases.set(cur)
+  return cur
 
 
 def _reset_ingest_write_timing(*, enabled: bool | None = None) -> None:
@@ -2178,7 +2196,7 @@ def _add_ingest_write_phase(name: str, delta_s: float) -> None:
   delta = float(delta_s)
   if delta <= 0.0 or name not in INGEST_WRITE_LOG_KEYS:
     return
-  acc = dict(_ingest_write_phases.get())
+  acc = dict(_ingest_write_phases_acc())
   acc[name] = float(acc.get(name, 0.0)) + delta
   _ingest_write_phases.set(acc)
   with _ingest_write_campaign_lock:
@@ -2229,7 +2247,7 @@ def _snapshot_ingest_write_timing() -> dict[str, float]:
   }
   if not _ingest_write_telem_on:
     return out
-  acc = _ingest_write_phases.get()
+  acc = _ingest_write_phases_acc()
   for key in INGEST_WRITE_LOG_KEYS:
     out[key] = float(acc.get(key, 0.0))
   return out

@@ -31,10 +31,10 @@ def _scope_throttle_rate(scope: str) -> str:
   """
   try:
     return api_settings.DEFAULT_THROTTLE_RATES[scope]
-  except KeyError:
+  except KeyError as err:
     raise ImproperlyConfigured(
       f"No default throttle rate set for '{scope}' scope"
-    )
+    ) from err
 
 
 def _request_api_key_fingerprint(request: Any) -> Any:

@@ -72,7 +72,15 @@ def test_pyproject_ruff_select_includes_isort_and_whitespace():
     (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
   )
   select = set(data["tool"]["ruff"]["lint"]["select"])
-  assert {"I", "W"}.issubset(select)
+  assert {"I", "W", "S"}.issubset(select)
+
+
+def test_pyproject_ruff_line_length_enforced_by_formatter():
+  data = tomllib.loads(
+    (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+  )
+  assert data["tool"]["ruff"]["line-length"] == 80
+  assert "E501" in data["tool"]["ruff"]["lint"]["ignore"]
 
 
 def test_pre_commit_config_exists():

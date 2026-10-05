@@ -968,6 +968,9 @@ class DayCloseManifestCoordinator:
     Returns:
       tuple[bool, str]: tuple[bool, str] produced by this call.
 
+    Raises:
+      RuntimeError: When manifest state is inconsistent after promote.
+
     Examples:
       >>> DayCloseManifestCoordinator()._enqueue_day_close_impl("x", "x", None)
     """
@@ -1030,7 +1033,8 @@ class DayCloseManifestCoordinator:
       elif tar_norm in inflight:
         return True, "already_inflight"
     if promoted:
-      assert _manifest_snap is not None
+      if _manifest_snap is None:
+        raise RuntimeError("manifest snapshot missing after promote")
       _save_manifest(self._manifest_path, _manifest_snap)
       self.log_fn(
         f"janitor: day_close enqueue tar={tar_norm} reason={reason or 'promoted_from_deferred'}",

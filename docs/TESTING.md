@@ -923,7 +923,7 @@ pip install -e ".[dev]"
 ./scripts/install-git-hooks.sh
 ```
 
-**Pre-commit** (staged files): **`ruff check --fix`** and **`ruff format`** on staged Python under `hpcperfstats/`, `cursor-hooks/`, `scripts/`, `services-conf/`, and `hpcperfstats-tools/` (policy from `pyproject.toml`: isort **`I`**, whitespace **`W291`/`W292`/`W293`**, plus **`E`/`F`/`B`/`UP`/`SIM`/`RUF`/`C4`/`PIE`/`PGH`**; **`E501`** ignored — use the formatter); ESLint on staged `hpcperfstats/site/frontend` TypeScript; python def inventory `--check`; **memray** curated memory-leak smoke (`python-memory-leak-check`) on staged `hpcperfstats/` / `scripts/` Python.
+**Pre-commit** (staged files): **`ruff check --fix`** and **`ruff format`** on staged Python under `hpcperfstats/`, `cursor-hooks/`, `scripts/`, `services-conf/`, and `hpcperfstats-tools/` (policy from `pyproject.toml`: isort **`I`**, whitespace **`W291`/`W292`/`W293`**, plus **`E`/`F`/`B`/`UP`/`SIM`/`RUF`/`C4`/`PIE`/`PGH`/`S`** (Bandit); **`E501`** ignored in the linter — **line length is enforced by `ruff format --check`** at **`line-length = 80`**); ESLint on staged `hpcperfstats/site/frontend` TypeScript; python def inventory `--check`; **memray** curated memory-leak smoke (`python-memory-leak-check`) on staged `hpcperfstats/` / `scripts/` Python.
 
 **Pre-push:** frontend `npm run typecheck` and `npm run lint:dead` (knip); `vulture hpcperfstats scripts/vulture_whitelist.py --min-confidence 80`.
 

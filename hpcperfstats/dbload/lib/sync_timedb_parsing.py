@@ -165,12 +165,30 @@ _parse_stage_campaign: dict[str, float] = dict.fromkeys(
   PARSE_STAGE_HOLD_KEYS, 0.0
 )
 _parse_stage_campaign_lock = threading.Lock()
-_parse_stage_s: contextvars.ContextVar[dict[str, float]] = (
+_parse_stage_s: contextvars.ContextVar[dict[str, float] | None] = (
   contextvars.ContextVar(
     "parse_stage_s",
-    default={},
+    default=None,
   )
 )
+
+
+def _parse_stage_acc() -> dict[str, float]:
+  """
+  Return per-context stage accumulator, lazily initialized when telemetry is on.
+
+  Returns:
+    dict[str, float]: Mutable hold-key seconds map for the current context.
+
+  Examples:
+    >>> isinstance(_parse_stage_acc(), dict)
+    True
+  """
+  cur = _parse_stage_s.get()
+  if cur is None:
+    cur = dict.fromkeys(PARSE_STAGE_HOLD_KEYS, 0.0)
+    _parse_stage_s.set(cur)
+  return cur
 
 
 def _parse_stage_derived(acc: dict[str, float]) -> dict[str, float]:
@@ -251,7 +269,7 @@ def snapshot_parse_stage_timing() -> dict[str, float]:
   """
   if not _parse_stage_telem_on:
     return {}
-  return _parse_stage_derived(_parse_stage_s.get())
+  return _parse_stage_derived(_parse_stage_acc())
 
 
 def snapshot_parse_stage_campaign_timing() -> dict[str, float]:
@@ -318,7 +336,7 @@ def _add_parse_stage_s(stage: str, delta_s: float) -> None:
   delta = float(delta_s)
   if delta <= 0.0 or stage not in PARSE_STAGE_HOLD_KEYS:
     return
-  acc = dict(_parse_stage_s.get())
+  acc = dict(_parse_stage_acc())
   acc[stage] = float(acc.get(stage, 0.0)) + delta
   _parse_stage_s.set(acc)
   with _parse_stage_campaign_lock:

@@ -373,10 +373,12 @@ def fetch_source_chunks(
     >>> callable(fetch_source_chunks)
     True
   """
-  with connect_pg(host=host, port=port, user=user, database=database) as conn:
-    with conn.cursor() as cur:
-      cur.execute(list_source_chunks_sql())
-      raw_rows = cur.fetchall()
+  with (
+    connect_pg(host=host, port=port, user=user, database=database) as conn,
+    conn.cursor() as cur,
+  ):
+    cur.execute(list_source_chunks_sql())
+    raw_rows = cur.fetchall()
   rows: list[ChunkRow] = []
   for schema, name, start, end, compressed in raw_rows:
     rows.append(

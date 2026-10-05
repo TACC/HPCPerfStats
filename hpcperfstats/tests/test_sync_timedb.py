@@ -1548,6 +1548,21 @@ def test_streaming_resume_matches_nonstreaming_parse(tmp_path):
   stats_file = tmp_path / "host.example.com" / "1709123456"
   stats_file.parent.mkdir(parents=True)
   stats_file.write_text("".join(lines), encoding="utf-8")
+  chunks: list[tuple] = []
+
+  def on_chunk(stats_list, proc_list) -> None:
+    proc_rows = (
+      stats_payload_to_records(proc_list)
+      if isinstance(proc_list, dict)
+      else list(proc_list)
+    )
+    chunks.append(
+      (
+        stats_payload_to_records(stats_list),
+        proc_rows,
+      )
+    )
+
   for start_idx in range(len(lines) + 1):
     expected_stats, expected_proc = parse_stats_lines(lines, start_idx)
     stream_stats, stream_proc = parse_stats_file_streaming(
@@ -1556,20 +1571,7 @@ def test_streaming_resume_matches_nonstreaming_parse(tmp_path):
     )
     assert stream_stats == expected_stats, f"streaming start_idx={start_idx}"
     assert stream_proc == expected_proc, f"streaming proc start_idx={start_idx}"
-    chunks = []
-
-    def on_chunk(stats_list, proc_list):
-      proc_rows = (
-        stats_payload_to_records(proc_list)
-        if isinstance(proc_list, dict)
-        else list(proc_list)
-      )
-      chunks.append(
-        (
-          stats_payload_to_records(stats_list),
-          proc_rows,
-        )
-      )
+    chunks.clear()
 
     parse_stats_file_streaming_incremental(
       str(stats_file),

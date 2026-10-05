@@ -2833,7 +2833,7 @@ def imap_unordered_watch_pool(
           dead_pids=[],
           context=context,
           exit_code=124,
-        )
+        ) from None
       continue
     consecutive_timeouts = 0
     yield item

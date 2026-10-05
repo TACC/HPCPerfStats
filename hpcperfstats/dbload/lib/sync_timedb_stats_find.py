@@ -733,6 +733,7 @@ def iter_find_stats_stdout_chunks(
   Raises:
     FindStatsDiscoveryError: When fd/fdfind or GNU stat is missing or the
       walker exits non-zero (except benign fnctl race exit 1).
+    RuntimeError: When the child stdout pipe is missing.
 
   Examples:
     >>> list(iter_find_stats_stdout_chunks("/nope"))
@@ -761,7 +762,8 @@ def iter_find_stats_stdout_chunks(
     raise FindStatsDiscoveryError(
       "fd/fdfind or GNU stat not found (required for stats discovery)"
     ) from exc
-  assert proc.stdout is not None
+  if proc.stdout is None:
+    raise RuntimeError("subprocess stdout pipe missing")
   last_progress = time.monotonic()
   idle_s = float(cfg.get_sync_ingest_stall_idle_s())
   bytes_seen = 0

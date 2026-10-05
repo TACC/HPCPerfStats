@@ -1320,11 +1320,13 @@ def _class_help_text(cls: ast.ClassDef) -> str | None:
   for stmt in cls.body:
     if isinstance(stmt, ast.Assign):
       for t in stmt.targets:
-        if isinstance(t, ast.Name) and t.id == "help":
-          if isinstance(stmt.value, ast.Constant) and isinstance(
-            stmt.value.value, str
-          ):
-            return stmt.value.value
+        if (
+          isinstance(t, ast.Name)
+          and t.id == "help"
+          and isinstance(stmt.value, ast.Constant)
+          and isinstance(stmt.value.value, str)
+        ):
+          return stmt.value.value
   return None
 
 
