@@ -122,7 +122,6 @@ from django.db.models import (
   Exists,
   IntegerField,
   Max,
-  Min,
   OuterRef,
   Q,
   Subquery,
@@ -3706,7 +3705,7 @@ def _in_window_per_host_bounds(
 
   def run(hosts_list: Any, tf_cur: Any) -> Any:
     """
-    Per-host Min/Max time for one hostxtime chunk.
+    Per-host Min/Max time for one hostxtime chunk (single SQL GROUP BY).
 
     Args:
       hosts_list (Any): Hostnames for this attempt.
@@ -3719,15 +3718,11 @@ def _in_window_per_host_bounds(
       >>> True
       True
     """
-    qs = (
-      host_data.objects.filter(
-        host__in=hosts_list,
-        **(tf_cur or {}),
-      )
-      .values("host")
-      .annotate(mn=Min("time"), mx=Max("time"))
+    from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
+      in_window_per_host_min_max_rows,
     )
-    return list(qs)
+
+    return in_window_per_host_min_max_rows(list(hosts_list), tf_cur or {})
 
   def merge(left: Any, right: Any) -> Any:
     """

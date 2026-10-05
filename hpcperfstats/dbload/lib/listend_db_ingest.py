@@ -399,18 +399,14 @@ def _write_proc_chunk_with_timeout_bisect(
   from django.db import close_old_connections, connections
   from django.db.utils import OperationalError
 
-  from hpcperfstats.site.lib.machine.models import proc_data
-
   if not chunk:
     return
   try:
-    merged = _peak_merge_proc_chunk_with_existing(chunk)
-    proc_data.objects.bulk_create(
-      merged,
-      update_conflicts=True,
-      unique_fields=["jid", "host", "proc"],
-      update_fields=update_fields,
+    from hpcperfstats.dbload.lib.sync_timedb_proc_data_insert import (
+      insert_proc_data_batch,
     )
+
+    insert_proc_data_batch(chunk)
   except OperationalError as exc:
     if _is_listend_statement_timeout(exc) and len(chunk) > 1:
       with contextlib.suppress(Exception):

@@ -94,7 +94,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import types
 import warnings
 from collections import deque
 from dataclasses import dataclass
@@ -219,11 +218,9 @@ from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
   EVENTMAPS_BY_TYPE,
   HOST_PROC_KEYS,
-  HOST_PROC_PEAK_KEYS,
   PARSE_STAGE_LOG_KEYS,
   DeltaCarryState,
   _held_parse_stage,
-  apply_proc_peak_attrs_from_earlier,
   attach_parse_unaccounted,
   build_stats_dataframes,
   compute_deltas_and_arc,
@@ -2988,7 +2985,6 @@ def _write_stats_payload_to_db(
             proc_objs = [
               proc_data(**_proc_data_row_kwargs(row)) for row in batch
             ]
-            proc_objs = _peak_merge_proc_objs_with_existing(proc_objs)
           with _held_ingest_write_phase("db_execute_s"):
             _raise_if_ingest_per_file_deadline_exceeded(
               stats_file, "db_write_proc"
@@ -2999,7 +2995,6 @@ def _write_stats_payload_to_db(
         if not batch:
           break
         proc_objs = [proc_data(**_proc_data_row_kwargs(row)) for row in batch]
-        proc_objs = _peak_merge_proc_objs_with_existing(proc_objs)
         with _held_ingest_write_timing():
           _raise_if_ingest_per_file_deadline_exceeded(
             stats_file, "db_write_proc"
@@ -4893,27 +4888,11 @@ def _insert_proc_data_individually(proc_stats_df: Any) -> None:
     Examples:
       >>> _save_proc_row(None)  # doctest: +SKIP
     """
-    kwargs = _proc_data_row_kwargs(row)
-    try:
-      prior = proc_data.objects.only(
-        "jid", "host", "proc", *HOST_PROC_PEAK_KEYS
-      ).get(jid=kwargs["jid"], host=kwargs["host"], proc=kwargs["proc"])
-    except proc_data.DoesNotExist:
-      prior = None
-    if prior is not None:
-      peak_holder = types.SimpleNamespace(
-        **{k: kwargs.get(k) for k in HOST_PROC_PEAK_KEYS}
-      )
-      apply_proc_peak_attrs_from_earlier(prior, peak_holder)
-      for key in HOST_PROC_PEAK_KEYS:
-        kwargs[key] = getattr(peak_holder, key)
-    defaults = {k: kwargs[k] for k in _PROC_DATA_UPDATE_FIELDS}
-    proc_data.objects.update_or_create(
-      jid=kwargs["jid"],
-      host=kwargs["host"],
-      proc=kwargs["proc"],
-      defaults=defaults,
+    from hpcperfstats.dbload.lib.sync_timedb_proc_data_insert import (
+      insert_proc_data_batch,
     )
+
+    insert_proc_data_batch([proc_data(**_proc_data_row_kwargs(row))])
 
   unique_violations = _insert_rows_individually(
     rows=proc_stats_df.itertuples(index=False),

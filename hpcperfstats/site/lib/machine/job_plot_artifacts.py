@@ -32,9 +32,6 @@ from django.utils import timezone as dj_tz
 import hpcperfstats.analysis.metrics.lib.gen.jid_table as jid_table
 import hpcperfstats.analysis.metrics.lib.plot as plots
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.analysis.metrics.lib.live_host_sample_count import (
-  live_distinct_host_time_count_expression,
-)
 
 from .bokeh_plot_layout import (
   _apply_zoom_layout_to_bokeh_model,
@@ -217,19 +214,18 @@ def get_live_distinct_time_count_for_jid(jid: str) -> int:
       .first()
     )
     return int(v) if v is not None else 0
-  suffix = "." + cfg.get_host_name_ext()
-  row = (
+  bounds = (
     job_data.objects.filter(jid=jid)
-    .annotate(
-      live_distinct_time_count=live_distinct_host_time_count_expression(suffix),
-    )
-    .values("live_distinct_time_count")
+    .values_list("start_time", "end_time")
     .first()
   )
-  if not row:
+  if not bounds or bounds[0] is None or bounds[1] is None:
     return 0
-  v = row.get("live_distinct_time_count")
-  return int(v) if v is not None else 0
+  from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
+    jid_scoped_distinct_host_time_count,
+  )
+
+  return jid_scoped_distinct_host_time_count(jid, bounds[0], bounds[1])
 
 
 def compute_plot_input_fingerprint(

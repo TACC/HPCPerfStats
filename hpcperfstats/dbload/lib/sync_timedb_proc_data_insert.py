@@ -18,7 +18,10 @@ import os
 from collections.abc import Sequence
 from typing import Any
 
-from hpcperfstats.dbload.lib.sync_timedb_parsing import HOST_PROC_KEYS
+from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+  HOST_PROC_KEYS,
+  HOST_PROC_PEAK_KEYS,
+)
 
 PROC_DATA_COPY_COLUMNS: tuple[str, ...] = (
   "jid",
@@ -53,6 +56,27 @@ CREATE TEMP TABLE proc_data_ingest_stage (
 """
 
 
+def _sql_nullable_int_max(existing_col: str, excluded_col: str) -> str:
+  """
+  SQL equivalent of ``_nullable_int_max`` for ON CONFLICT updates.
+
+  Args:
+    existing_col (str): Existing table column reference (e.g. ``proc_data.vm_peak``).
+    excluded_col (str): EXCLUDED column reference.
+
+  Returns:
+    str: CASE expression for peak merge semantics.
+
+  Examples:
+    >>> _sql_nullable_int_max("a", "b")  # doctest: +SKIP
+  """
+  return (
+    f"CASE WHEN {existing_col} IS NULL THEN {excluded_col} "
+    f"WHEN {excluded_col} IS NULL THEN {existing_col} "
+    f"ELSE GREATEST({existing_col}, {excluded_col}) END"
+  )
+
+
 def _stage_upsert_sql() -> str:
   """
   Build INSERT...SELECT...ON CONFLICT DO UPDATE for ``proc_data``.
@@ -65,9 +89,15 @@ def _stage_upsert_sql() -> str:
     True
   """
   cols = ", ".join(PROC_DATA_COPY_COLUMNS)
-  set_clause = ", ".join(
-    f"{field} = EXCLUDED.{field}" for field in PROC_DATA_UPDATE_FIELDS
-  )
+  set_parts: list[str] = []
+  for field in PROC_DATA_UPDATE_FIELDS:
+    if field in HOST_PROC_PEAK_KEYS:
+      set_parts.append(
+        f"{field} = {_sql_nullable_int_max(f'proc_data.{field}', f'EXCLUDED.{field}')}"
+      )
+    else:
+      set_parts.append(f"{field} = EXCLUDED.{field}")
+  set_clause = ", ".join(set_parts)
   return (
     f"INSERT INTO proc_data ({cols}) SELECT {cols} FROM proc_data_ingest_stage "
     f"ON CONFLICT (jid, host, proc) DO UPDATE SET {set_clause}"

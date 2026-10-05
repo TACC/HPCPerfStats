@@ -57,6 +57,7 @@ def test_proc_copy_sql_has_conflict_update():
   sql = pdi._stage_upsert_sql()
   assert "ON CONFLICT (jid, host, proc) DO UPDATE SET" in sql
   assert "vm_rss = EXCLUDED.vm_rss" in sql
+  assert "GREATEST(proc_data.vm_peak" in sql
 
 
 def test_proc_copy_bytes_coerces_float_bigint_fields():

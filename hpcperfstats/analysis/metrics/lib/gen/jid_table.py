@@ -1797,6 +1797,14 @@ def _strided_distinct_times_date_bin_via_grouped_max_sql(
     nb = 2
   step_sec = max(span_sec / float(nb - 1), 1e-9)
 
+  from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
+    strided_bucket_max_times,
+  )
+
+  via_fn = strided_bucket_max_times(hosts, start_dt, end_dt, nb)
+  if via_fn:
+    return via_fn
+
   conn = connections["default"]
   if conn.vendor != "postgresql":
     return []
@@ -2948,6 +2956,26 @@ class jid_table:
               break
             chunk_df = None
             for candidate_typ in type_probe_names(typ):
+              if not group_by_dev and not reject_dcgm_blank:
+                from django.db import connection as dj_conn
+
+                if dj_conn.vendor == "postgresql":
+                  from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
+                    host_data_sum_metric_per_sample_rows,
+                  )
+
+                  fn_rows = host_data_sum_metric_per_sample_rows(
+                    [str(h) for h in host_chunk],
+                    tf,
+                    candidate_typ,
+                    list(probed_events),
+                    val_col,
+                  )
+                  if fn_rows:
+                    chunk_df = host_data_restore_time_column(
+                      pd.DataFrame(fn_rows)
+                    )
+                    break
 
               def build_qs_sql(
                 host_subchunk: Any,

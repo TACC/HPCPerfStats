@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -280,6 +280,84 @@ def host_timestamp_second_present_in_db(host: Any, unix_second: Any) -> Any:
   return present
 
 
+def host_timestamp_seconds_present_batch(
+  pairs: Iterable[tuple[Any, Any]],
+) -> dict[tuple[str, int], bool]:
+  """
+  Batched ``(host, unix_second)`` presence probe (one SQL round trip).
+
+  Oracle for this helper is sequential ``host_timestamp_second_present_in_db``
+  calls on the same pairs.
+
+  Args:
+    pairs (Iterable[tuple[Any, Any]]): Host and Unix-second pairs.
+
+  Returns:
+    dict[tuple[str, int], bool]: Presence map keyed by ``(host, unix_second)``.
+
+  Examples:
+    >>> host_timestamp_seconds_present_batch([])  # doctest: +SKIP
+    {}
+  """
+  normalized: list[tuple[str, int]] = []
+  seen: set[tuple[str, int]] = set()
+  for host, unix_second in pairs:
+    key = (str(host).strip(), int(unix_second))
+    if key in seen:
+      continue
+    seen.add(key)
+    normalized.append(key)
+  if not normalized:
+    return {}
+  now = time.time()
+  out: dict[tuple[str, int], bool] = {}
+  with _HOST_SECOND_PRESENT_CACHE_LOCK:
+    pending: list[tuple[str, int]] = []
+    for key in normalized:
+      cached = _HOST_SECOND_PRESENT_CACHE.get(key)
+      if cached and (now - cached[1] <= _HOST_SECOND_PRESENT_CACHE_TTL_S):
+        out[key] = cached[0]
+      else:
+        pending.append(key)
+  if not pending:
+    return out
+  from django.db import connection
+
+  hosts = [k[0] for k in pending]
+  seconds = [k[1] for k in pending]
+  sql = """
+    WITH probes AS (
+      SELECT * FROM unnest(%s::text[], %s::bigint[]) AS t(host, unix_second)
+    )
+    SELECT p.host, p.unix_second,
+      EXISTS (
+        SELECT 1 FROM host_data hd
+        WHERE hd.host = p.host
+          AND hd.time >= to_timestamp(p.unix_second)
+          AND hd.time < to_timestamp(p.unix_second + 1)
+      ) AS present
+    FROM probes p
+  """
+  with connection.cursor() as cursor:
+    cursor.execute(sql, [hosts, seconds])
+    for host, unix_second, present in cursor.fetchall():
+      key = (str(host).strip(), int(unix_second))
+      out[key] = bool(present)
+      with _HOST_SECOND_PRESENT_CACHE_LOCK:
+        _HOST_SECOND_PRESENT_CACHE[key] = (out[key], now)
+        if (
+          len(_HOST_SECOND_PRESENT_CACHE)
+          > _HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES
+        ):
+          oldest = sorted(
+            _HOST_SECOND_PRESENT_CACHE.keys(),
+            key=lambda k: _HOST_SECOND_PRESENT_CACHE[k][1],
+          )[:1000]
+          for drop_key in oldest:
+            _HOST_SECOND_PRESENT_CACHE.pop(drop_key, None)
+  return out
+
+
 def host_sampled_timestamp_seconds_all_present(
   host: Any,
   unix_seconds: int,
@@ -307,8 +385,10 @@ def host_sampled_timestamp_seconds_all_present(
   ts_high = datetime.fromtimestamp(max(seconds), tz=UTC) + timedelta(seconds=1)
   itimes_set = host_recent_timestamps_cached(host_key, ts_low, ts_high)
   if itimes_set is HOST_ITIMES_SET_OVERFLOW:
-    for unix_second in seconds:
-      if not host_timestamp_second_present_in_db(host_key, unix_second):
-        return False
-    return True
+    batch = host_timestamp_seconds_present_batch(
+      (host_key, unix_second) for unix_second in seconds
+    )
+    return all(
+      batch.get((host_key, unix_second), False) for unix_second in seconds
+    )
   return all(unix_second in itimes_set for unix_second in seconds)

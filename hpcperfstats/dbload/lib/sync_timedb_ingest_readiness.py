@@ -253,9 +253,19 @@ def gate_identities_ready_in_db(gate_by_host: Any) -> Any:
   """
   if not gate_by_host:
     return False
+  pairs: list[tuple[Any, Any]] = []
   for host, seconds in gate_by_host.items():
-    if not host_timestamp_seconds_all_present(host, seconds):
-      return False
+    host_key = str(host).strip()
+    for sec in seconds:
+      pairs.append((host_key, int(sec)))
+  if not pairs:
+    return False
+  present = sync_timedb_host_itimes.host_timestamp_seconds_present_batch(pairs)
+  for host, seconds in gate_by_host.items():
+    host_key = str(host).strip()
+    for sec in seconds:
+      if not present.get((host_key, int(sec)), False):
+        return False
   return True
 
 

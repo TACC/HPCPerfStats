@@ -2627,6 +2627,24 @@ class Metrics:
     for typ in type_probe_names(typename):
       if not _metric_type_events_feasible(schema, typ, events):
         continue
+      ev = _flatten_event_names_for_host_data_query(events, typ=typ)
+      from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
+        job_arc_cluster_aggregate_value,
+      )
+
+      sql_value = job_arc_cluster_aggregate_value(
+        list(hosts),
+        tkw,
+        typ,
+        ev,
+        float(conv),
+        nonnegative_rate=nonnegative_rate,
+        host_aggregate=agg,
+      )
+      if sql_value is not None:
+        if cache is not None:
+          cache[cache_key] = sql_value
+        return sql_value
       # Instantaneous total at each sample time (events x devices) is summed in
       # SQL; pulling every device row into pandas exhausted the statement
       # budget on multi-node PMC jobs.
@@ -3409,10 +3427,16 @@ class Metrics:
       simple_metric_cache = {}
       host_data_rows_cache = {}
 
-      job_view = _JobForMetrics(jt)
-      distinct_time_count = job_view.per_host_distinct_time_sum
+      from hpcperfstats.site.lib.machine.job_plot_artifacts import (
+        get_live_distinct_time_count_for_jid,
+      )
 
-      if job_view.times.size == 0:
+      distinct_time_count = int(
+        get_live_distinct_time_count_for_jid(str(job.jid))
+      )
+      job_view = None
+
+      if not jt._host_data_qs().exists():
         # Still persist schema + job-detail GPU/FSIO aggregates (ORM paths) for API.
         try:
           sch = getattr(jt, "schema", None) or {}
@@ -3788,7 +3812,9 @@ class Metrics:
       except Exception:
         pass
 
-      u = utils(job_view)
+      if self.complex_metrics_list:
+        job_view = _JobForMetrics(jt)
+      u = utils(job_view) if job_view is not None else None
 
       for metric_name in self.complex_metrics_list:
         if metric_name == "max_node_power_est_w":
