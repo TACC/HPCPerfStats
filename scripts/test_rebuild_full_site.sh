@@ -108,8 +108,24 @@ if grep -q 'podman build' <<<"${up_default_body}${up_db_body}"; then
   echo "rebuild_full_site.sh must not podman build inside up_* helpers" >&2
   exit 1
 fi
-if grep -qE 'compose build|PODMAN_COMPOSE.* build' <<<"${up_default_body}${up_db_body}"; then
-  echo "rebuild_full_site.sh must not compose build inside up_* helpers" >&2
+if ! grep -q 'verify_default_stack_running' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must verify stack running after up" >&2
+  exit 1
+fi
+if ! grep -qF 'starting podman-compose up' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must log before compose up" >&2
+  exit 1
+fi
+if ! grep -q 'print_stack_summary' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must print stack summary (containers + network) after up" >&2
+  exit 1
+fi
+if ! grep -q 'HPCPERFSTATS_NETWORK_NAME' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh stack summary must include compose network id" >&2
+  exit 1
+fi
+if ! grep -q 'UP_COMPLETED=1' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must set UP_COMPLETED after successful up" >&2
   exit 1
 fi
 

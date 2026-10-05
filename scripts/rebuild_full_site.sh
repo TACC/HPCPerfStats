@@ -84,8 +84,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 run_cmd() {
+  printf '+'
+  printf ' %q' "$@"
+  printf '\n'
   if [[ "${DRY_RUN}" -eq 1 ]]; then
-    echo "[dry-run] $*"
+    echo "[dry-run] (not executed) $*"
     return 0
   fi
   "$@"
@@ -125,33 +128,97 @@ up_db_pg18() {
   run_cmd "${PODMAN_COMPOSE[@]}" --profile "${PG18_PROFILE}" up -d --force-recreate "${PG18_SERVICE}"
 }
 
+verify_default_stack_running() {
+  local svc name
+  for svc in web pipeline redis proxy db rabbitmq; do
+    name="${HPCPERFSTATS_COMPOSE_PROJECT}_${svc}_1"
+    if [[ "$("${PODMAN[@]}" inspect --format '{{.State.Running}}' "${name}" 2>/dev/null)" != "true" ]]; then
+      echo "rebuild_full_site.sh: after up, ${name} is not running" >&2
+      return 1
+    fi
+  done
+}
+
+PHASE=preflight
+UP_COMPLETED=0
+
+on_exit() {
+  local ec=$?
+  if [[ "${UP_COMPLETED}" -eq 0 && "${BUILD_ONLY}" -eq 0 && "${NO_START}" -eq 0 && "${DRY_RUN}" -eq 0 ]]; then
+    echo "rebuild_full_site.sh: exited (code ${ec}) before podman-compose up finished (phase=${PHASE})." >&2
+    echo "rebuild_full_site.sh: image-only output (e.g. collectstatic in Dockerfile) is NOT a full rebuild — run ./scripts/rebuild_full_site.sh with no flags, or look above for FINISHED BUILD ONLY / errors." >&2
+  fi
+}
+
+print_stack_summary() {
+  local net_id svc name
+  echo ""
+  echo "=== Stack summary: project=${HPCPERFSTATS_COMPOSE_PROJECT} network=${HPCPERFSTATS_NETWORK_NAME} ==="
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    echo "[dry-run] skipped stack summary"
+    return 0
+  fi
+  net_id="$("${PODMAN[@]}" network inspect "${HPCPERFSTATS_NETWORK_NAME}" --format '{{.Id}}' 2>/dev/null || echo 'MISSING')"
+  echo "Network ${HPCPERFSTATS_NETWORK_NAME} id=${net_id}"
+  echo ""
+  echo "--- podman-compose ps -a ---"
+  "${PODMAN_COMPOSE[@]}" ps -a 2>/dev/null || true
+  echo ""
+  echo "--- Containers (name / container ID / image ID / status) ---"
+  "${PODMAN[@]}" ps -a \
+    --filter "label=io.podman.compose.project=${HPCPERFSTATS_COMPOSE_PROJECT}" \
+    --format 'table {{.Names}}\t{{.ID}}\t{{.ImageID}}\t{{.Status}}' 2>/dev/null || true
+  echo ""
+  echo "--- Per-service inspect (container + image) ---"
+  for svc in web pipeline redis proxy db rabbitmq "${PG18_SERVICE}"; do
+    name="${HPCPERFSTATS_COMPOSE_PROJECT}_${svc}_1"
+    if "${PODMAN[@]}" container exists "${name}" 2>/dev/null; then
+      "${PODMAN[@]}" inspect "${name}" --format "${svc}: container={{.Id}} image={{.Image}}" 2>/dev/null || true
+    else
+      echo "${svc}: (no container ${name})"
+    fi
+  done
+}
+
 main() {
+  trap on_exit EXIT
   preflight
+  PHASE=build
+  echo "rebuild_full_site.sh: project=${HPCPERFSTATS_COMPOSE_PROJECT} DRY_RUN=${DRY_RUN} BUILD_ONLY=${BUILD_ONLY} NO_START=${NO_START}"
+  if [[ "${BUILD_ONLY}" -eq 1 || "${NO_START}" -eq 1 || "${DRY_RUN}" -eq 1 ]]; then
+    echo "NOTE: up -d --force-recreate runs only when all three flags above are 0." >&2
+  fi
   build_musl_gcc_toolchain_image
   build_default_stack_images
   build_db_pg18_image
 
   if [[ "${BUILD_ONLY}" -eq 1 ]]; then
-    echo "Skipping up -d (--build-only). Images built; containers unchanged."
+    echo "rebuild_full_site.sh: FINISHED BUILD ONLY — did not run podman-compose up (use without --build-only to recreate containers)." >&2
+    UP_COMPLETED=1
     return 0
   fi
 
   if [[ "${NO_START}" -eq 1 ]]; then
-    echo "Skipping up -d (--no-start). Run compose up when ready."
+    echo "rebuild_full_site.sh: FINISHED WITHOUT UP — did not run podman-compose up (use without --no-start to recreate containers)." >&2
+    UP_COMPLETED=1
     return 0
   fi
 
+  PHASE=up
+  echo "=== rebuild_full_site.sh: starting podman-compose up (force-recreate, no --build) ==="
   up_default_stack
   up_db_pg18
+  verify_default_stack_running || exit 1
+  UP_COMPLETED=1
 
+  PHASE=memory_high
   if [[ "${DRY_RUN}" -eq 0 ]]; then
     apply_pipeline_memory_high || exit 1
   fi
 
-  echo "Full-site rebuild complete. Status:"
-  if [[ "${DRY_RUN}" -eq 0 ]]; then
-    "${PODMAN_COMPOSE[@]}" ps 2>/dev/null || true
-  fi
+  PHASE=summary
+  echo "Full-site rebuild complete (build + up + memory.high)."
+  print_stack_summary
 }
 
 main "$@"
