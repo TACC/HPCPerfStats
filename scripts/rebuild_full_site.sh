@@ -97,6 +97,10 @@ preflight() {
     echo "rebuild_full_site.sh: docker-compose.yaml not found under ${REPO_ROOT}" >&2
     exit 1
   fi
+  if [[ ! -f "${REPO_ROOT}/services-conf/assert_gcc_min_version.sh" ]]; then
+    echo "rebuild_full_site.sh: missing services-conf/assert_gcc_min_version.sh (sync git checkout)" >&2
+    exit 1
+  fi
   cd "${REPO_ROOT}"
 }
 

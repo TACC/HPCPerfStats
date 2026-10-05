@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 # Musl GCC 16.2 toolchain exported at /opt/gcc-16 for db/proxy build stages.
 # Build on the production CPU (-march=native consumers). Tag: hpcperfstats-gcc-musl:16.2
-# Context: ./services-conf (same as db.Dockerfile), e.g. podman build -f gcc-alpine.Dockerfile .
+# Context: ./services-conf, e.g. podman build -f gcc-alpine.Dockerfile .
+# Assert gate is embedded below (must match services-conf/assert_gcc_min_version.sh).
 
 ARG ALPINE_VERSION=3.24.2
 ARG GCC_VERSION=16.2.0
@@ -31,7 +32,34 @@ RUN set -eux; \
     texinfo \
     zlib-dev
 
-COPY assert_gcc_min_version.sh /usr/local/bin/assert_gcc_min_version.sh
+COPY <<'ASSERT_GCC_EOF' /usr/local/bin/assert_gcc_min_version.sh
+#!/usr/bin/env bash
+# Fail closed when the active gcc is older than GCC_MIN_VERSION (e.g. 16.2).
+set -euo pipefail
+
+min="${GCC_MIN_VERSION:-16.2}"
+if [[ $# -ge 1 ]]; then
+  min="$1"
+fi
+
+if ! command -v gcc >/dev/null 2>&1; then
+  echo "assert_gcc_min_version: gcc not found in PATH" >&2
+  exit 1
+fi
+
+got="$(gcc -dumpfullversion)"
+if [[ -z "${got}" ]]; then
+  echo "assert_gcc_min_version: gcc -dumpfullversion returned empty" >&2
+  exit 1
+fi
+
+if ! printf '%s\n%s\n' "${min}" "${got}" | sort -C -V; then
+  echo "assert_gcc_min_version: need gcc >= ${min}, got ${got}" >&2
+  exit 1
+fi
+
+echo "assert_gcc_min_version: gcc ${got} >= ${min}"
+ASSERT_GCC_EOF
 RUN chmod +x /usr/local/bin/assert_gcc_min_version.sh
 
 WORKDIR /usr/src
